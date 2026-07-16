@@ -207,6 +207,11 @@ if ($uvCmd) {
 if ($LASTEXITCODE -ne 0) { Die "Takton 安装失败" }
 
 Info "自检..."
+# Settings 在 import 时要求非默认密钥，自检前注入临时值
+$env:TAKTON_JWT_SECRET = "install-selfcheck-" + [guid]::NewGuid().ToString("N")
+$env:TAKTON_API_KEY = "install-selfcheck-" + [guid]::NewGuid().ToString("N")
+$env:TAKTON_SETTINGS_ENCRYPTION_SALT = [guid]::NewGuid().ToString("N").Substring(0, 16)
+$env:TAKTON_SINGLE_USER_MODE = "true"
 & $python -c "import fastapi, uvicorn, sqlalchemy, aiosqlite, httpx, jose, backend.main; print('import_ok')"
 if ($LASTEXITCODE -ne 0) { Die "自检失败" }
 Ok "运行环境就绪（$VENV）"

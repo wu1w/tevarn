@@ -138,7 +138,11 @@ else
   fi
   pip install -e "$SRC" -q
 fi
-
+info "自检关键模块..."
+export TAKTON_JWT_SECRET="install-selfcheck-$(python -c 'import secrets; print(secrets.token_hex(16))')"
+export TAKTON_API_KEY="install-selfcheck-$(python -c 'import secrets; print(secrets.token_hex(16))')"
+export TAKTON_SETTINGS_ENCRYPTION_SALT="$(python -c 'import secrets; print(secrets.token_hex(8))')"
+export TAKTON_SINGLE_USER_MODE=true
 python -c "import fastapi, uvicorn, sqlalchemy, aiosqlite, httpx, jose, backend.main; print('import_ok')"
 ok "运行环境就绪"
 
