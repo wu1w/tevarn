@@ -4,6 +4,8 @@
 
 仓库：https://github.com/wu1w/takton
 
+> **平台支持：** Windows、Linux 为主要支持目标。**macOS 因无 Mac 测试机，脚本仅实验性提供，不保证可用。**
+
 ---
 
 ## 选哪种安装方式？
@@ -12,7 +14,8 @@
 |--------|----------|------------|
 | 完全小白（Windows） | **① 安装包 Setup.exe** | 双击 → 下一步 → 打开 |
 | 会打开 PowerShell | **② Windows 一行命令** | 复制粘贴一行 |
-| Linux / macOS | **③ 一行 shell** | 复制粘贴一行 |
+| Linux | **③ 一行 shell** | 复制粘贴一行 |
+| macOS | **③ 一行 shell（实验）** | 复制粘贴一行；**未在真机验证，不保证可用** |
 | 开发者 / 改代码 | **④ 源码开发安装** | venv + pip |
 | 公司内网、不能上网装依赖 | **⑤ 离线 wheel 包** | 见文末 |
 
@@ -86,6 +89,8 @@ irm https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.ps1 | iex
 ---
 
 ## ③ Linux / macOS 一行命令
+
+> ⚠️ **macOS 说明：** 当前维护环境没有 Mac 真机，安装脚本与运行路径**未做完整测试**，仅按通用 Unix 逻辑编写，**不保证能装上或稳定使用**。欢迎反馈 Issue；正式使用请优先 Windows / Linux。
 
 ### 你需要事先有的
 
@@ -223,6 +228,7 @@ curl http://127.0.0.1:8090/api/health
 | 克隆很慢 / 超时 | 检查代理或 GitHub 访问；可设 `TAKTON_SOURCE` 指向已下载的源码目录 |
 | 端口被占用 | `$env:TAKTON_PORT=18090` 或 `TAKTON_PORT=18090` 再装/再启动 |
 | 想重装 | 删掉 `~/.takton`（Win: `%USERPROFILE%\.takton`）后重新跑安装命令 |
+| macOS 装不上 / 跑不起来 | **预期内可能失败**：我们没有 Mac 测试机，不保证可用；请用 Windows/Linux 或自助排查后提 Issue |
 | 为什么不直接发 venv？ | 不能跨机使用；详见 [docs/PACKAGING-VENV.md](./docs/PACKAGING-VENV.md) |
 
 ---
