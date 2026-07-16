@@ -1507,4 +1507,88 @@ export async function testChannel(channelId: string): Promise<{ success: boolean
 }
 
 
+
+
+// ─── Evolution (TEE) ───────────────────────────────────────────
+
+export type EvolutionAsset = {
+  id: string;
+  kind: string;
+  name: string;
+  summary: string;
+  source: string;
+  status: string;
+  use_count: number;
+  view_count: number;
+  last_used_at: string | null;
+  created_at: string;
+  updated_at: string;
+  content?: string;
+  gen: number;
+  last_score: number | null;
+  meta?: Record<string, unknown>;
+};
+
+export async function getEvolutionStatus() {
+  const res = await api.get('/evolution/status');
+  return res.data;
+}
+
+export async function getEvolutionStats() {
+  const res = await api.get('/evolution/stats');
+  return res.data;
+}
+
+export async function enableEvolution(body: {
+  enabled: boolean;
+  auto_apply_skills?: boolean;
+  mode?: string;
+}) {
+  const res = await api.post('/evolution/enable', body);
+  return res.data;
+}
+
+export async function getEvolutionAssets(params?: {
+  kind?: string;
+  status?: string;
+  source?: string;
+  unused_only?: boolean;
+  sort?: string;
+}) {
+  const res = await api.get('/evolution/assets', { params });
+  return res.data as EvolutionAsset[];
+}
+
+export async function deleteEvolutionAsset(id: string) {
+  const res = await api.delete(`/evolution/assets/${id}`);
+  return res.data;
+}
+
+export async function bulkDeleteEvolution(body: { ids?: string[]; filter?: string }) {
+  const res = await api.post('/evolution/assets/bulk_delete', body);
+  return res.data;
+}
+
+export async function setEvolutionAssetEnabled(id: string, enabled: boolean) {
+  const res = await api.post(`/evolution/assets/${id}/${enabled ? 'enable' : 'disable'}`);
+  return res.data;
+}
+
+export async function runEvolutionTask(name: string) {
+  const res = await api.post(`/evolution/run_task/${encodeURIComponent(name)}`);
+  return res.data;
+}
+
+
+export async function getSftCorpusInfo(): Promise<{
+  enabled: boolean;
+  path: string;
+  help?: string;
+  files?: string[];
+  setting_key?: string;
+}> {
+  const res = await api.get('/settings/sft-corpus');
+  return res.data;
+}
+
 export default api;

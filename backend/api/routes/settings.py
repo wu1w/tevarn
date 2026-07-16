@@ -1777,10 +1777,12 @@ async def apply_settings_batch(
         "image_base_url": "image",
         "image_api_key": "image",
         "rag_enabled": "rag",
-        "qdrant_url": "rag",
-        "qdrant_collection": "rag",
-        "system_name": "general",
-    }
+                "qdrant_url": "rag",
+                "qdrant_collection": "rag",
+                "system_name": "general",
+                "sft_usage_log_enabled": "privacy",
+                "sft_usage_log_path": "privacy",
+            }
 
     # 元数据字段只用于登记目录，不落库为独立 setting
     META_SKIP = {
@@ -2034,6 +2036,50 @@ async def test_llm_connection(
         }
 
 
+
+@router.get("/sft-corpus")
+async def get_sft_corpus_info(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+    repo: Annotated[SettingRepository, Depends(get_setting_repo)],
+):
+    """使用日志 / SFT 语料收集状态与本地路径。"""
+    from backend.services.sft_collector import (
+        SETTING_KEY,
+        corpus_path_display,
+        is_enabled,
+    )
+
+    row = await repo.get_by_key(SETTING_KEY)
+    raw = None
+    if row is not None:
+        raw = getattr(row, "value", row)
+    enabled = await is_enabled()
+    root = corpus_path_display()
+    files: list[str] = []
+    try:
+        from pathlib import Path
+
+        p = Path(root)
+        if p.is_dir():
+            files = sorted([f.name for f in p.glob("sft_*.md")] + [f.name for f in p.glob("sft_*.jsonl")])[
+                -30:
+            ]
+    except Exception:
+        files = []
+    return {
+        "enabled": enabled,
+        "setting_key": SETTING_KEY,
+        "path": root,
+        "files": files,
+        "stored_value": raw,
+        "help": (
+            f"此功能开启后，Agent 将会自动收集用户指令和运行轨迹数据，"
+            f"所有数据均将以 SFT 语料（Markdown + JSONL）的形式存在本地路径：{root}"
+        ),
+    }
+
+
+
 @router.get("/{key}", response_model=SettingRead)
 async def get_setting(
     key: str,
@@ -2070,6 +2116,13 @@ async def upsert_setting(
         category=data.category or "general",
         description=data.description,
     )
+    if key == "sft_usage_log_enabled":
+        try:
+            from backend.services.sft_collector import invalidate_enabled_cache
+
+            invalidate_enabled_cache()
+        except Exception:
+            pass
     # upsert 已返回明文；再保险一次
     plain = decrypt_setting(setting.value, key=key) if isinstance(setting.value, str) else data.value
     if apply_setting_value(key, plain):
@@ -2100,7 +2153,6 @@ async def delete_setting(
     if not success:
         raise HTTPException(status_code=404, detail="Setting not found")
     return {"deleted": True}
-
 
 @router.get("/rag-status")
 async def rag_capability_status(

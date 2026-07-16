@@ -19,6 +19,8 @@ import {
   type CatalogProvider,
   type ProviderPreset,
   type RagStackPreset,
+  updateSetting,
+  getSftCorpusInfo,
 } from '@/lib/api';
 import { useToastStore } from '@/stores/toastStore';
 
@@ -125,6 +127,11 @@ const btnGhost =
 
 export default function SettingsPage() {
   const addToast = useToastStore((s) => s.addToast);
+  const [sftLogEnabled, setSftLogEnabled] = useState(false);
+  const [sftLogPath, setSftLogPath] = useState('');
+  const [sftLogHelp, setSftLogHelp] = useState('');
+  const [sftSaving, setSftSaving] = useState(false);
+  const [sftHelpOpen, setSftHelpOpen] = useState(false);
   const { data: settings = [], isLoading: loading, refetch } = useSettings();
 
   const [presets, setPresets] = useState<ProviderPreset[]>([]);
@@ -230,6 +237,7 @@ export default function SettingsPage() {
     setContextWindow(numVal(settings, 'context_window', 128000));
     setContextCompressModel(mapVal(settings, 'context_compress_model', ''));
     setSystemName(mapVal(settings, 'system_name', 'Takton'));
+    setSftLogEnabled(boolVal(settings, 'sft_usage_log_enabled'));
 
     setEmbedProvider(mapVal(settings, 'embedding_provider', 'openai-compatible') || 'openai-compatible');
     setEmbedUrl(mapVal(settings, 'embedding_base_url'));
@@ -694,6 +702,33 @@ export default function SettingsPage() {
     };
     if (rerankKey.trim()) items.reranker_api_key = rerankKey.trim();
     await applyRagItems(items, 'Reranker 已保存');
+  };
+
+
+  const handleToggleSftLog = async (on: boolean) => {
+    setSftSaving(true);
+    try {
+      await updateSetting(
+        'sft_usage_log_enabled',
+        on ? 'true' : 'false',
+        'privacy',
+        '收集使用日志用于本地 SFT 语料'
+      );
+      setSftLogEnabled(on);
+      try {
+        const info = await getSftCorpusInfo();
+        if (info?.path) setSftLogPath(info.path);
+        if (info?.help) setSftLogHelp(info.help);
+      } catch {
+        /* ignore */
+      }
+      addToast(on ? '已开启使用日志收集' : '已关闭使用日志收集', 'success');
+      await refetch();
+    } catch (e: any) {
+      addToast(e?.response?.data?.detail || e?.message || '保存失败', 'error');
+    } finally {
+      setSftSaving(false);
+    }
   };
 
   const handleToggleRag = async (on: boolean) => {
@@ -1580,6 +1615,60 @@ export default function SettingsPage() {
                 </Field>
                 <button type="button" onClick={handleSaveImage} disabled={imageSaving} className={btnPrimary}>
                                   {imageSaving ? '保存中…' : '保存图片配置'}
+                                </button>
+                              </div>
+                            </section>
+
+                            
+                            {/* 数据与隐私 · SFT 使用日志 */}
+                            <section>
+                              <SectionTitle title="数据与隐私" hint="可选 · 默认关闭" />
+                              <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border-subtle bg-card-bg/60 px-4 py-3">
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                                    <span>收集使用日志（SFT 语料）</span>
+                                    <button
+                                      type="button"
+                                      title="说明"
+                                      aria-label="功能说明"
+                                      onClick={() => setSftHelpOpen((v) => !v)}
+                                      className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-border-subtle text-[11px] font-semibold text-foreground-muted hover:border-brand-cyan/40 hover:text-brand-cyan"
+                                    >
+                                      ?
+                                    </button>
+                                  </div>
+                                  <div className="mt-1 text-xs text-foreground-muted">
+                                    默认关闭。开启后在本机写入 Markdown / JSONL，便于导出做模型微调。
+                                  </div>
+                                  {sftHelpOpen && (
+                                    <div className="mt-2 rounded-lg border border-brand-cyan/20 bg-brand-cyan/5 px-3 py-2 text-[11px] leading-relaxed text-foreground-muted">
+                                      {sftLogHelp ||
+                                        `此功能开启后，Agent 将会自动收集用户指令和运行轨迹数据，所有数据均将以 SFT 语料的形式存在本地路径 ${sftLogPath || '（打开设置时自动显示）'}`}
+                                    </div>
+                                  )}
+                                  {sftLogPath && (
+                                    <div className="mt-1.5 break-all font-mono text-[10px] text-foreground-dim">
+                                      路径：{sftLogPath}
+                                    </div>
+                                  )}
+                                </div>
+                                <button
+                                  type="button"
+                                  role="switch"
+                                  aria-checked={sftLogEnabled}
+                                  onClick={() => void handleToggleSftLog(!sftLogEnabled)}
+                                  disabled={sftSaving}
+                                  className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border-2 border-transparent transition ${
+                                    sftLogEnabled
+                                      ? 'bg-gradient-to-r from-brand-purple to-brand-cyan'
+                                      : 'bg-elevated-bg'
+                                  }`}
+                                >
+                                  <span
+                                    className={`inline-block h-5 w-5 transform rounded-full bg-card-bg shadow transition ${
+                                      sftLogEnabled ? 'translate-x-5' : 'translate-x-0.5'
+                                    }`}
+                                  />
                                 </button>
                               </div>
                             </section>

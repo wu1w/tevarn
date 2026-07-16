@@ -530,6 +530,7 @@ class NexusAgentLoop:
 
         # 8. Agent Loop
         final_content = ""
+        _sft_tools: list = []  # SFT usage log buffer
         accumulated_content = ""
         goal_nudge_count = 0
 
@@ -907,6 +908,31 @@ class NexusAgentLoop:
                             status="completed",
                             result=tool_result,
                         )
+                        # TEE: 记录工具轨迹 / 使用次数
+                        try:
+                            from backend.evolution.manager import get_evolution_manager
+
+                            get_evolution_manager().record_tool(
+                                str(session_id),
+                                name=tc.name,
+                                arguments=args_dict,
+                                result=str(tool_result)[:2000],
+                                ok=True,
+                            )
+                        except Exception:
+                            pass
+
+                        try:
+                            _sft_tools.append(
+                                {
+                                    "name": tc.name,
+                                    "arguments": args_dict if isinstance(args_dict, dict) else {},
+                                    "result": str(tool_result)[:2000],
+                                    "ok": True,
+                                }
+                            )
+                        except Exception:
+                            pass
 
                         # manage_goal 结果推送到前端 Goal 面板
                         if tc.name == "manage_goal":
@@ -918,10 +944,32 @@ class NexusAgentLoop:
                         tool_result = f"[Error] Tool '{tc.name}' timed out after {_to:.0f}s"
                         query = ""
                         logger.warning("Tool %s timed out after %ss", tc.name, _to)
+                        try:
+                            _sft_tools.append(
+                                {
+                                    "name": tc.name,
+                                    "arguments": args_dict if isinstance(args_dict, dict) else {},
+                                    "result": str(tool_result)[:2000],
+                                    "ok": False,
+                                }
+                            )
+                        except Exception:
+                            pass
 
                     except Exception as e:
                         logger.error(f"Tool execution error: {e}")
                         tool_result = f"[Error] Failed to execute {tc.name}: {e}"
+                        try:
+                            _sft_tools.append(
+                                {
+                                    "name": tc.name,
+                                    "arguments": args_dict if isinstance(args_dict, dict) else {},
+                                    "result": str(tool_result)[:2000],
+                                    "ok": False,
+                                }
+                            )
+                        except Exception:
+                            pass
                         await self._persist_tool_failure(task_id, tc.name, str(e))
                         if task_id is not None:
                             await self._push_task_update(
@@ -1166,6 +1214,34 @@ class NexusAgentLoop:
                 _suppress_content_stream = False
         except Exception as e:
             logger.warning("multi-source aggregate skipped: %s", e)
+
+        # 7.6 TEE 自主进化：验收/归因/过门后 auto_apply（默认关总开关）
+        try:
+            from backend.evolution.config import get_evolution_config
+            from backend.evolution.manager import get_evolution_manager
+
+            if get_evolution_config().enabled and final_content and not self._should_stop:
+                await get_evolution_manager().on_turn_final(
+                    str(session_id),
+                    user_input=user_input or "",
+                    final_content=final_content or "",
+                )
+        except Exception as e:
+            logger.warning("evolution turn hook skipped: %s", e)
+
+        # 7.7 SFT / 使用日志（设置里开关，默认关）
+        try:
+            from backend.services.sft_collector import collect_if_enabled
+
+            await collect_if_enabled(
+                session_id=str(session_id),
+                user_input=user_input or "",
+                assistant_output=final_content or "",
+                tools=list(_sft_tools),
+                meta={"source": "agent_loop"},
+            )
+        except Exception as e:
+            logger.debug("sft collect skipped: %s", e)
 
         # 8. 保存最终回复 + 同步 CtxItem + 状态 + 通知（同一事务）
         try:

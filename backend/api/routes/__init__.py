@@ -14,6 +14,7 @@ from . import (
     cron,
     cron_hook,
     devices,
+    evolution,
     files,
     git,
     images,
@@ -54,6 +55,7 @@ def register_routes(app, prefix: str = "") -> None:
     app.include_router(messages.router, prefix=p)
     app.include_router(tasks.router, prefix=p)
     app.include_router(skills.router, prefix=p)
+    app.include_router(evolution.router, prefix=p)
     app.include_router(tools.router, prefix=p)
     app.include_router(context.router, prefix=p)
     app.include_router(packages.router, prefix=p)

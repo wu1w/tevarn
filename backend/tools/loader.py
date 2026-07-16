@@ -73,6 +73,14 @@ async def load_all_tools(include_db: bool = False) -> None:
     ToolRegistry.clear()
     await load_builtin_tools()
     await load_dynamic_skills()
+    # TEE: 进化 playbook 挂入 ToolRegistry（可被模型直接调用）
+    try:
+        from backend.evolution.runtime_tools import load_active_evolution_tools
+
+        n = load_active_evolution_tools()
+        logger.info(f"Loaded {n} evolution playbook tools")
+    except Exception as e:
+        logger.warning(f"Failed to load evolution tools: {e}")
     # v3.0: 加载新的 BUILTIN 工具实现，覆盖数据库中同名的旧工具
     for cls in BUILTIN_TOOL_CLASSES:
         ToolRegistry.register(cls())
