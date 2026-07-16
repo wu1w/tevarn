@@ -280,10 +280,21 @@ export async function deleteSession(sessionId: string): Promise<{ deleted: boole
 
 // ====== Message APIs ======
 
-export async function getMessages(sessionId: string, limit = 100, offset = 0): Promise<Message[]> {
+export async function getMessages(sessionId: string, limit = 200, offset = 0): Promise<Message[]> {
   const res = await api.get(`/sessions/${sessionId}/messages`, {
     params: { limit, offset },
   });
+  return res.data;
+}
+
+/** Goal / checkpoint 状态（切回会话时恢复任务看板） */
+export async function getSessionCheckpoint(sessionId: string): Promise<{
+  checkpoint: unknown;
+  goal: import('@/types').GoalState | null;
+  can_resume: boolean;
+  resume_preview?: string | null;
+}> {
+  const res = await api.get(`/sessions/${sessionId}/checkpoint`);
   return res.data;
 }
 

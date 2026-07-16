@@ -22,11 +22,11 @@ router = APIRouter(prefix="/sessions", tags=["Messages"])
 async def get_messages(
     session_id: uuid.UUID,
     current_user: Annotated[UserRead, Depends(get_current_user)],
-    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
     offset: Annotated[int, Query(ge=0)] = 0,
     q: Annotated[str, Query(max_length=200)] = "",
 ):
-    """分页获取会话的历史消息（支持 q 参数全文搜索）"""
+    """分页获取会话的历史消息（默认最近 limit 条；支持 q 全文搜索）"""
     async with UnitOfWork() as uow:
         session = await uow.sessions.get_by_id(session_id)
         if session is None:

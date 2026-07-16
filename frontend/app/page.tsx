@@ -76,20 +76,42 @@ export default function HomePage() {
     const { addToast } = useToastStore();
 
 
-  // session 切换 / 初始化：清流式与 Goal 状态，加载历史
+  // session 切换 / 初始化：清流式、加载历史、恢复 Goal 面板
     React.useEffect(() => {
       let cancelled = false;
       const sid = currentSession?.id;
-      Promise.resolve().then(() => {
+      (async () => {
         if (cancelled) return;
         setIsStreaming(false);
         setStreamingContent('');
+        setLiveToolCalls([]);
+        setStreamStatusDetail(null);
         setEditingContent(null);
         setActiveGoal(null);
-        if (sid) {
-          loadMessages(sid).catch(console.error);
+        if (!sid) return;
+        try {
+          await loadMessages(sid);
+        } catch (e) {
+          console.error(e);
         }
-      });
+        if (cancelled) return;
+        try {
+          const { getSessionCheckpoint } = await import('@/lib/api');
+          const cp = await getSessionCheckpoint(sid);
+          if (cancelled) return;
+          if (cp?.goal) {
+            setActiveGoal(cp.goal);
+            if (
+              cp.goal.status === 'active' ||
+              (cp.goal.todos && cp.goal.todos.length > 0)
+            ) {
+              setIsTaskPanelOpen(true);
+            }
+          }
+        } catch (e) {
+          console.error('restore goal failed', e);
+        }
+      })();
       return () => {
         cancelled = true;
       };
