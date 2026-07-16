@@ -255,16 +255,17 @@ class NexusAgentLoop:
                 if card is not None:
                     try:
                         await self._persist_user_input(session_id, user_input, attachments)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning("persist user input (@device) failed: %s", e)
                     try:
                         await self._persist_final_response(session_id, card)
-                    except Exception:
+                    except Exception as e:
+                        logger.warning("persist final response (@device) failed: %s", e)
                         # fallback plain save
                         try:
                             await self.message_repo.save_message(session_id, "assistant", card)
-                        except Exception:
-                            pass
+                        except Exception as e2:
+                            logger.error("fallback save assistant message failed: %s", e2)
                     await self._push_status(session_id, "idle", "remote device command done")
                     return card
             except Exception as e:
@@ -1687,7 +1688,7 @@ class NexusAgentLoop:
                 "session_id": session_id,
                 "scope": "session",
                 "kind": "message",
-                "key": f"user_{int(datetime.now().timestamp() * 1000)}",
+                "key": f"user_{int(datetime.now(timezone.utc).timestamp() * 1000)}",
                 "value": enriched_input,
                 "tokens": max(8, round(len(enriched_input) / 3.4)),
                 "pinned": False,
@@ -1757,7 +1758,7 @@ class NexusAgentLoop:
                     "session_id": session_id,
                     "scope": "knowledge",
                     "kind": "rag",
-                    "key": f"rag_query_{int(datetime.now().timestamp())}",
+                    "key": f"rag_query_{int(datetime.now(timezone.utc).timestamp())}",
                     "value": f"Query: {query}\n\n{tool_result}",
                     "tokens": max(8, round(len(tool_result) / 3.4)),
                     "pinned": False,
@@ -1797,7 +1798,7 @@ class NexusAgentLoop:
                     "session_id": session_id,
                     "scope": "session",
                     "kind": "message",
-                    "key": f"assistant_{int(datetime.now().timestamp() * 1000)}",
+                    "key": f"assistant_{int(datetime.now(timezone.utc).timestamp() * 1000)}",
                     "value": final_content,
                     "tokens": max(8, round(len(final_content) / 3.4)),
                     "pinned": False,

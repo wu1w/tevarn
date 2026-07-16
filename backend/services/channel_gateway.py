@@ -12,7 +12,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+import time
 import uuid
+from collections import OrderedDict
 from typing import Any, Optional
 
 from backend.services.slash_commands import resolve_command, build_help_text, CommandDef
@@ -146,6 +149,13 @@ class ChannelGateway:
 
         # Agent stop 标记：session_id → True
         self._stop_flags: dict[uuid.UUID, bool] = {}
+
+        # 消息去重：platform:chat_id:msg_id → monotonic 时间
+        # 缓解网络抖动/平台重推导致的重复处理
+        self._seen_msgs: OrderedDict[str, float] = OrderedDict()
+        self._seen_ttl_s = 300.0
+        self._seen_max = 2000
+        self._seen_lock = asyncio.Lock()
 
     # ─── 生命周期 ──────────────────────────────────────────
 
@@ -586,8 +596,8 @@ class ChannelGateway:
                 if raw_tools is None or raw_tools == [] or raw_tools == ["*"]:
                     return None  # 全部
                 return set(raw_tools)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("_get_session_tools failed for %s: %s", chat_key, e)
         return None
 
     async def _toggle_session_tool(self, chat_key: str, tool_name: str, enable: bool) -> str:
@@ -682,8 +692,8 @@ class ChannelGateway:
                 message_repo = await get_message_repo()
                 messages = await message_repo.list_by_session(sid, limit=1000)
                 lines.append(f"📝 消息数: {len(messages)}")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("status: list messages failed: %s", e)
         else:
             lines.append("💬 会话: 未创建")
 
@@ -707,6 +717,28 @@ class ChannelGateway:
         return "⚠️ 当前没有活跃会话"
 
     # ─── 消息处理 ──────────────────────────────────────────
+
+    async def _is_duplicate_message(
+        self, platform: str, chat_id: str, msg_id: str
+    ) -> bool:
+        """基于 platform+chat+message_id 的短时去重。无 msg_id 时不拦截。"""
+        if not msg_id:
+            return False
+        key = f"{platform}:{chat_id}:{msg_id}"
+        now = time.monotonic()
+        async with self._seen_lock:
+            # 过期清理
+            while self._seen_msgs:
+                oldest_key, oldest_ts = next(iter(self._seen_msgs.items()))
+                if now - oldest_ts <= self._seen_ttl_s:
+                    break
+                self._seen_msgs.popitem(last=False)
+            if key in self._seen_msgs:
+                return True
+            self._seen_msgs[key] = now
+            while len(self._seen_msgs) > self._seen_max:
+                self._seen_msgs.popitem(last=False)
+        return False
 
     async def _on_channel_message(self, event_type: str, data: dict):
         """通用消息回调 — 支持 QQ/Telegram/Discord/Slack/飞书/钉钉/Signal。"""
@@ -775,10 +807,17 @@ class ChannelGateway:
         if not content.strip():
             return
 
+        # 平台重推 / 网络抖动去重
+        if await self._is_duplicate_message(platform, str(chat_id), str(reply_to_id or "")):
+            logger.info(
+                "%s duplicate message dropped: chat=%s msg_id=%s",
+                platform, str(chat_id)[:16], str(reply_to_id)[:32],
+            )
+            return
+
         # 去掉 @bot 标记
         user_msg = content
         if event_type in ("AT_MESSAGE_CREATE", "GROUP_AT_MESSAGE_CREATE") and platform == "qqbot":
-            import re
             user_msg = re.sub(r'<@!\d+>', '', content).strip()
 
         if not user_msg:

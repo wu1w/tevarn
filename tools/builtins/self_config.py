@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from backend.core.config import settings
 from backend.tools.base import BaseTool, ToolSource, ToolRiskLevel
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -38,6 +41,29 @@ FIELD_SENSITIVITY: dict[str, Literal["low", "medium", "high"]] = {
     "llm_provider": "medium",
     "embedding_provider": "medium",
     "reranker_provider": "medium",
+}
+
+# 配置键 → 分类（与 settings 路由保持一致）
+_SETTING_CATEGORY: dict[str, str] = {
+    "llm_provider": "llm",
+    "llm_model": "llm",
+    "llm_base_url": "llm",
+    "llm_api_key": "llm",
+    "max_tokens": "llm",
+    "context_window": "llm",
+    "temperature": "llm",
+    "embedding_provider": "embedding",
+    "embedding_model": "embedding",
+    "embedding_base_url": "embedding",
+    "embedding_api_key": "embedding",
+    "reranker_provider": "reranker",
+    "reranker_model": "reranker",
+    "reranker_base_url": "reranker",
+    "reranker_api_key": "reranker",
+    "rag_enabled": "rag",
+    "qdrant_url": "rag",
+    "qdrant_collection": "rag",
+    "system_name": "general",
 }
 
 
@@ -94,7 +120,8 @@ class GetSystemStatus(BaseTool):
                 result = await db.execute(text("SELECT COUNT(*) FROM cron_jobs WHERE enabled = 1"))
                 row = result.scalar()
                 status["active_cron_jobs"] = row or 0
-        except Exception:
+        except Exception as e:
+            logger.warning("get_system_status: cron_jobs count failed: %s", e)
             status["active_cron_jobs"] = "—"
 
         return ToolResult(
@@ -134,37 +161,44 @@ class UpdateConfig(BaseTool):
                 message=f"⚠️ 修改 `{key}` 是高风险操作（涉及 API 凭证或服务地址）。请确认是否继续？"
             )
 
-        # 执行更新
+        # 执行更新：走 SettingRepository（含加密）+ 立即应用到运行时单例
+        # 注意：不要 import 不存在的 update_setting（会 ImportError 导致写入永远失败）
         try:
-            from backend.api.routes.settings import update_setting
-            from backend.database import get_db_context
-            from sqlalchemy import text
+            from backend.repositories.setting_repo import AsyncSettingRepository
+            from backend.core.runtime_settings import apply_setting_value, reset_factories_for_keys
 
-            async with get_db_context() as db:
-                # 查找或创建 setting
-                result = await db.execute(
-                    text("SELECT * FROM settings WHERE key = :key"),
-                    {"key": key}
-                )
-                row = result.mappings().first()
-                if row:
-                    await db.execute(
-                        text("UPDATE settings SET value = :value WHERE key = :key"),
-                        {"key": key, "value": value}
+            # 避免把脱敏占位写回
+            if key.endswith("_api_key") and isinstance(value, str):
+                if not value or "..." in value or value == "***":
+                    return ToolResult(
+                        success=False,
+                        data={"key": key},
+                        message="❌ API Key 不能为空或为脱敏占位（sk-xx...yy）",
                     )
-                else:
-                    await db.execute(
-                        text("INSERT INTO settings (key, value, category, description) VALUES (:key, :value, 'general', '')"),
-                        {"key": key, "value": value}
-                    )
-                await db.commit()
 
+            cat = _SETTING_CATEGORY.get(key, "general")
+            repo = AsyncSettingRepository()
+            setting = await repo.upsert(key=key, value=value, category=cat)
+            plain = setting.value  # repo.upsert 已返回明文
+            applied = apply_setting_value(key, plain)
+            if applied:
+                reset_factories_for_keys([key])
+            display = value if not key.endswith("_api_key") else ("*" * min(8, len(value)) + "…")
             return ToolResult(
                 success=True,
-                data={"key": key, "value": value, "sensitivity": sensitivity},
-                message=f"✅ `{key}` 已更新为 `{value[:50]}{'...' if len(value) > 50 else ''}`"
+                data={
+                    "key": key,
+                    "value": display,
+                    "sensitivity": sensitivity,
+                    "runtime_applied": applied,
+                },
+                message=(
+                    f"✅ `{key}` 已更新为 `{display[:50]}{'...' if len(display) > 50 else ''}`"
+                    + ("" if applied else "（已落库；该键无对应运行时字段，重启后仍生效于 DB）")
+                ),
             )
         except Exception as e:
+            logger.exception("UpdateConfig failed for key=%s", key)
             return ToolResult(success=False, data={}, message=f"❌ 更新失败: {e}")
 
 

@@ -8,11 +8,15 @@ LLMServiceFactory 仍会一直使用启动时的环境变量默认值。
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any, Iterable
 
 from backend.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# 保护内存 Settings 单例的并发读写（FastAPI/多任务可能同时 apply）
+_settings_lock = threading.RLock()
 
 # DB key -> Settings 字段名（同名时可省略，这里显式列出便于维护）
 _KEY_MAP: dict[str, str] = {
@@ -116,12 +120,13 @@ def apply_setting_value(key: str, value: Any) -> bool:
     if key.endswith("_api_key") and isinstance(value, str):
         if not value or "..." in value or value == "***":
             return False
-    try:
-        setattr(settings, attr, _coerce(attr, value))
-        return True
-    except Exception as e:
-        logger.warning("Failed to apply setting %s: %s", key, e)
-        return False
+    with _settings_lock:
+        try:
+            setattr(settings, attr, _coerce(attr, value))
+            return True
+        except Exception as e:
+            logger.warning("Failed to apply setting %s: %s", key, e)
+            return False
 
 
 def reset_factories_for_keys(keys: Iterable[str]) -> None:
@@ -165,9 +170,20 @@ def reset_factories_for_keys(keys: Iterable[str]) -> None:
 def apply_settings_dict(items: dict[str, Any], *, reset: bool = True) -> list[str]:
     """批量应用 {key: value}，返回实际写入的 key 列表。"""
     applied: list[str] = []
-    for key, value in items.items():
-        if apply_setting_value(key, value):
-            applied.append(key)
+    with _settings_lock:
+        for key, value in items.items():
+            # 内联 apply 逻辑避免重复拿锁；与 apply_setting_value 语义一致
+            attr = _KEY_MAP.get(key)
+            if not attr or not hasattr(settings, attr):
+                continue
+            if key.endswith("_api_key") and isinstance(value, str):
+                if not value or "..." in value or value == "***":
+                    continue
+            try:
+                setattr(settings, attr, _coerce(attr, value))
+                applied.append(key)
+            except Exception as e:
+                logger.warning("Failed to apply setting %s: %s", key, e)
     if reset and applied:
         reset_factories_for_keys(applied)
     return applied
