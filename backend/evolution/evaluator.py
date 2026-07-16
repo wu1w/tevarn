@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import json
 import re
 import subprocess
@@ -12,6 +13,34 @@ from typing import Any
 import httpx
 
 logger = __import__("logging").getLogger(__name__)
+
+
+def _resolve_repo_path(path: str) -> Path:
+    """Resolve relative paths against cwd, PYTHONPATH roots, and backend package root."""
+    raw = (path or "").strip()
+    if not raw:
+        return Path(".")
+    p = Path(raw)
+    if p.is_absolute():
+        return p
+    candidates: list[Path] = [Path.cwd() / raw]
+    try:
+        import backend
+
+        root = Path(backend.__file__).resolve().parent.parent
+        candidates.append(root / raw)
+    except Exception:
+        pass
+    for entry in (os.environ.get("PYTHONPATH") or "").split(os.pathsep):
+        if entry:
+            candidates.append(Path(entry) / raw)
+    for c in candidates:
+        try:
+            if c.exists():
+                return c
+        except Exception:
+            continue
+    return candidates[0] if candidates else p
 
 
 async def evaluate_criteria(
@@ -49,12 +78,12 @@ async def _eval_one(
 ) -> tuple[bool, str, str, float]:
     ctype = (c.get("type") or "").strip()
     if ctype == "file_exists":
-        path = Path(c.get("path") or "")
+        path = _resolve_repo_path(c.get("path") or "")
         ok = path.exists()
         return ok, f"exists={ok}: {path}", "" if ok else "file_missing", 0.0
 
     if ctype == "content_match":
-        path = Path(c.get("path") or "")
+        path = _resolve_repo_path(c.get("path") or "")
         pattern = c.get("pattern") or c.get("contains") or ""
         if not path.exists():
             return False, f"missing {path}", "file_missing", 0.0

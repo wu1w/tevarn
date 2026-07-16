@@ -184,6 +184,7 @@ set -a
 source "$ENV_FILE"
 set +a
 export PYTHONPATH="$SRC\${PYTHONPATH:+:\$PYTHONPATH}"
+cd "$SRC"
 exec "$VENV/bin/python" -m backend.cli "\$@"
 EOF
 chmod +x "$BIN_DIR/takton"
