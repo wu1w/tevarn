@@ -2,6 +2,7 @@
 #   irm https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.ps1 | iex
 #
 # Downloads Takton-Setup from GitHub Releases and runs NSIS installer.
+# Note: file must stay UTF-8 without BOM for Windows PowerShell irm|iex (PS 5.1 safe).
 # Does NOT set up a separate "web-only" server stack.
 
 $ErrorActionPreference = "Stop"
