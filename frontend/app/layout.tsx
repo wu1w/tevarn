@@ -1,26 +1,19 @@
 import type { Metadata } from "next";
-import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { AppShell } from "@/components/layout/AppShell";
 import { QueryProvider } from "@/components/QueryProvider";
 import Toasts from "@/components/Toasts";
 import { ThemeProvider } from "@/components/ThemeProvider";
 
-/** 拉丁 UI：Inter — 现代产品默认高级感 */
-const inter = Inter({
-  variable: "--font-inter",
-  subsets: ["latin"],
-  display: "swap",
-  weight: ["400", "500", "600", "700"],
-});
-
-/** 代码 / 模型 ID */
-const jetbrainsMono = JetBrains_Mono({
-  variable: "--font-jetbrains",
-  subsets: ["latin"],
-  display: "swap",
-  weight: ["400", "500", "600"],
-});
+/**
+ * 不依赖 Google Fonts 在线拉取（离线/代理构建会失败）。
+ */
+const fontStyle = {
+  ["--font-inter" as string]:
+    "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', sans-serif",
+  ["--font-jetbrains" as string]:
+    "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
+} as React.CSSProperties;
 
 export const metadata: Metadata = {
   title: "Takton - 个人专属 Agent 终端",
@@ -36,7 +29,8 @@ export default function RootLayout({
     <html
       lang="zh-CN"
       suppressHydrationWarning
-      className={`${inter.variable} ${jetbrainsMono.variable} h-full antialiased`}
+      className="h-full antialiased"
+      style={fontStyle}
     >
       <head>
         <script
