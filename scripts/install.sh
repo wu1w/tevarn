@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
-# Takton one-line installer for Linux / macOS
-# 小白用法：
+# Takton one-line installer (Linux / macOS)
 #   curl -fsSL https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.sh | bash
 #
-# Env:
-#   TAKTON_HOME / TAKTON_REPO / TAKTON_REF / TAKTON_PORT / TAKTON_NO_START / TAKTON_SOURCE
+# 没有系统 Python 3.10–3.13 时，会自动安装 uv 并用它下载便携 CPython 3.12。
 
 set -euo pipefail
 
@@ -15,6 +13,7 @@ TAKTON_PORT="${TAKTON_PORT:-8090}"
 TAKTON_NO_START="${TAKTON_NO_START:-0}"
 VENV="$TAKTON_HOME/venv"
 SRC="$TAKTON_HOME/src"
+TOOLS="$TAKTON_HOME/tools"
 
 bold() { printf '\033[1m%s\033[0m\n' "$*"; }
 info() { printf '[takton] %s\n' "$*"; }
@@ -23,22 +22,16 @@ err()  { printf '[takton] ERROR: %s\n' "$*" >&2; }
 
 need_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
-    err "缺少命令: $1"
-    case "$1" in
-      git) err "Debian/Ubuntu: sudo apt install -y git" ;;
-      curl) err "Debian/Ubuntu: sudo apt install -y curl" ;;
-    esac
+    err "缺少: $1"
     exit 1
   fi
 }
 
 pick_python() {
-  # Prefer 3.11–3.13; skip 3.14+ until wheels mature
   for c in python3.12 python3.11 python3.13 python3.10 python3; do
     if command -v "$c" >/dev/null 2>&1; then
       ver=$("$c" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")' 2>/dev/null || true)
-      major=${ver%%.*}
-      minor=${ver#*.}
+      major=${ver%%.*}; minor=${ver#*.}
       if [ "${major:-0}" -eq 3 ] && [ "${minor:-0}" -ge 10 ] && [ "${minor:-0}" -le 13 ]; then
         echo "$c"
         return 0
@@ -48,37 +41,64 @@ pick_python() {
   return 1
 }
 
-bold "Takton 一键安装 (Linux / macOS)"
-info "将自动：选 Python → 拉代码 → 装依赖 → 自检 → 启动"
+ensure_uv() {
+  if command -v uv >/dev/null 2>&1; then
+    command -v uv
+    return 0
+  fi
+  mkdir -p "$TOOLS"
+  if [ -x "$TOOLS/uv" ]; then
+    echo "$TOOLS/uv"
+    return 0
+  fi
+  info "安装 uv（用于自动下载便携 Python）..."
+  curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="$TOOLS" sh
+  if [ -x "$TOOLS/uv" ]; then
+    echo "$TOOLS/uv"
+    return 0
+  fi
+  if [ -x "$HOME/.local/bin/uv" ]; then
+    echo "$HOME/.local/bin/uv"
+    return 0
+  fi
+  err "uv 安装失败"
+  exit 1
+}
 
+ensure_python() {
+  if PY="$(pick_python)"; then
+    ok "系统 Python: $PY ($($PY --version 2>&1))"
+    echo "$PY"
+    return 0
+  fi
+  UV="$(ensure_uv)"
+  info "用 uv 安装便携 Python 3.12..."
+  "$UV" python install 3.12
+  PY="$("$UV" python find 3.12)"
+  ok "便携 Python: $PY"
+  echo "$PY"
+}
+
+bold "Takton 一键安装 — 尽量零配置"
 need_cmd curl
 need_cmd git
 
-PY="$(pick_python || true)"
-if [ -z "${PY:-}" ]; then
-  err "需要 Python 3.10–3.13（推荐 3.11/3.12）。"
-  err "Debian/Ubuntu: sudo apt install -y python3.12 python3.12-venv python3-pip"
-  err "Fedora: sudo dnf install -y python3.12"
-  err "macOS: brew install python@3.12"
-  exit 1
-fi
-ok "Python: $PY ($($PY --version 2>&1))"
-
+PY="$(ensure_python)"
 mkdir -p "$TAKTON_HOME/data/uploads" "$TAKTON_HOME/data/workspace"
 
 if [ -n "${TAKTON_SOURCE:-}" ]; then
   SRC="$(cd "$TAKTON_SOURCE" && pwd)"
-  info "使用本地源码: $SRC"
+  info "本地源码: $SRC"
 elif [ -f "$(pwd)/backend/main.py" ] && [ -f "$(pwd)/pyproject.toml" ]; then
   SRC="$(pwd)"
-  info "使用当前目录: $SRC"
+  info "当前目录: $SRC"
 else
   if [ -d "$SRC/.git" ]; then
-    info "更新 $SRC ($TAKTON_REF) ..."
+    info "更新源码..."
     git -C "$SRC" fetch --depth 1 origin "$TAKTON_REF"
     git -C "$SRC" checkout -q FETCH_HEAD
   else
-    info "从 GitHub 克隆（首次可能 1–3 分钟）..."
+    info "从 GitHub 克隆..."
     rm -rf "$SRC"
     git clone --depth 1 --branch "$TAKTON_REF" "$TAKTON_REPO" "$SRC" \
       || git clone --depth 1 "$TAKTON_REPO" "$SRC"
@@ -86,62 +106,59 @@ else
   ok "源码就绪"
 fi
 
-if [ ! -f "$SRC/backend/main.py" ]; then
-  err "源码不完整: $SRC/backend/main.py"
-  exit 1
-fi
+[ -f "$SRC/backend/main.py" ] || { err "缺少 backend/main.py"; exit 1; }
 
-info "创建独立 venv: $VENV"
+info "创建本机独立环境 $VENV ..."
 rm -rf "$VENV"
-"$PY" -m venv "$VENV"
+if command -v uv >/dev/null 2>&1 || [ -x "$TOOLS/uv" ]; then
+  UV="$(command -v uv 2>/dev/null || echo "$TOOLS/uv")"
+  "$UV" venv "$VENV" --python "$PY" --clear
+else
+  "$PY" -m venv "$VENV"
+fi
 # shellcheck disable=SC1091
 . "$VENV/bin/activate"
-export PYTHONPATH=
-export PYTHONHOME=
-export PYTHONNOUSERSITE=1
+export PYTHONPATH= PYTHONHOME= PYTHONNOUSERSITE=1
 
-python -m pip install -U pip setuptools wheel -q
-
-info "安装运行依赖..."
-if [ -f "$SRC/backend/requirements-prod.txt" ]; then
-  pip install -r "$SRC/backend/requirements-prod.txt" -q \
-    || pip install -r "$SRC/backend/requirements.txt" -q
-elif [ -f "$SRC/backend/requirements.txt" ]; then
-  pip install -r "$SRC/backend/requirements.txt" -q
-fi
-pip install -e "$SRC" -q
-
-info "自检关键模块..."
-python -c "import fastapi, uvicorn, sqlalchemy, aiosqlite, httpx, jose, backend.main; print('import_ok')"
-ok "依赖自检通过"
-
-STATIC_INDEX="$SRC/backend/static/index.html"
-if [ ! -f "$STATIC_INDEX" ]; then
-  if command -v npm >/dev/null 2>&1; then
-    info "构建前端静态资源..."
-    if ! takton build; then
-      info "前端构建失败 — 仍可 API 启动；有 Node 时再: takton build"
-    fi
+info "安装依赖..."
+if command -v uv >/dev/null 2>&1 || [ -x "$TOOLS/uv" ]; then
+  UV="$(command -v uv 2>/dev/null || echo "$TOOLS/uv")"
+  if [ -f "$SRC/backend/requirements-prod.txt" ]; then
+    "$UV" pip install -r "$SRC/backend/requirements-prod.txt" --python "$VENV/bin/python"
   else
-    info "仓库应含 backend/static；若缺失，安装 Node 后: takton build"
+    "$UV" pip install -r "$SRC/backend/requirements.txt" --python "$VENV/bin/python"
   fi
+  "$UV" pip install -e "$SRC" --python "$VENV/bin/python"
+else
+  python -m pip install -U pip setuptools wheel -q
+  if [ -f "$SRC/backend/requirements-prod.txt" ]; then
+    pip install -r "$SRC/backend/requirements-prod.txt" -q
+  else
+    pip install -r "$SRC/backend/requirements.txt" -q
+  fi
+  pip install -e "$SRC" -q
+fi
+
+python -c "import fastapi, uvicorn, sqlalchemy, aiosqlite, httpx, jose, backend.main; print('import_ok')"
+ok "运行环境就绪"
+
+if [ ! -f "$SRC/backend/static/index.html" ]; then
+  info "未找到预构建前端；有 npm 时可: takton build"
 else
   ok "前端静态资源已内置"
 fi
 
 ENV_FILE="$TAKTON_HOME/.env"
 if [ ! -f "$ENV_FILE" ]; then
-  info "生成本地配置与密钥..."
   JWT=$(python -c 'import secrets; print(secrets.token_hex(32))')
   API=$(python -c 'import secrets; print(secrets.token_hex(32))')
   SALT=$(python -c 'import secrets; print(secrets.token_hex(16))')
-  DB_PATH="$TAKTON_HOME/data/takton.db"
   cat >"$ENV_FILE" <<EOF
-# Auto-generated by Takton installer — do not commit
+# Auto-generated — do not commit
 TAKTON_JWT_SECRET=$JWT
 TAKTON_API_KEY=$API
 TAKTON_SETTINGS_ENCRYPTION_SALT=$SALT
-TAKTON_DB_URL=sqlite+aiosqlite:///$DB_PATH
+TAKTON_DB_URL=sqlite+aiosqlite:///$TAKTON_HOME/data/takton.db
 TAKTON_APP_HOST=127.0.0.1
 TAKTON_APP_PORT=$TAKTON_PORT
 TAKTON_SINGLE_USER_MODE=true
@@ -157,13 +174,9 @@ mkdir -p "$BIN_DIR"
 cat >"$BIN_DIR/takton" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-# shellcheck disable=SC1091
 source "$VENV/bin/activate"
-export PYTHONPATH=
-export PYTHONHOME=
-export PYTHONNOUSERSITE=1
+export PYTHONPATH= PYTHONHOME= PYTHONNOUSERSITE=1
 set -a
-# shellcheck disable=SC1091
 source "$ENV_FILE"
 set +a
 export PYTHONPATH="$SRC\${PYTHONPATH:+:\$PYTHONPATH}"
@@ -171,37 +184,28 @@ exec "$VENV/bin/python" -m backend.cli "\$@"
 EOF
 chmod +x "$BIN_DIR/takton"
 
-SHELL_RC=""
 case "${SHELL:-}" in
-  */zsh) SHELL_RC="$HOME/.zshrc" ;;
-  */bash) SHELL_RC="$HOME/.bashrc" ;;
-  *) SHELL_RC="$HOME/.profile" ;;
+  */zsh) RC="$HOME/.zshrc" ;;
+  */bash) RC="$HOME/.bashrc" ;;
+  *) RC="$HOME/.profile" ;;
 esac
-if [ -n "$SHELL_RC" ] && [ -f "$SHELL_RC" ] && ! grep -Fq "$BIN_DIR" "$SHELL_RC" 2>/dev/null; then
-  {
-    echo ""
-    echo "# Takton"
-    echo "export PATH=\"$BIN_DIR:\$PATH\""
-  } >>"$SHELL_RC"
-  info "已写入 PATH 到 $SHELL_RC（新开终端后可直接 takton）"
+if [ -f "$RC" ] && ! grep -Fq "$BIN_DIR" "$RC" 2>/dev/null; then
+  printf '\n# Takton\nexport PATH="%s:$PATH"\n' "$BIN_DIR" >>"$RC"
+  info "PATH 已写入 $RC"
 fi
 
 bold "安装完成"
 info "启动: $BIN_DIR/takton start"
 info "打开: http://127.0.0.1:$TAKTON_PORT"
-info "配置: $ENV_FILE"
+info "提示: 环境在 $VENV（本机生成，勿跨机拷贝 venv）"
 
-if [ "$TAKTON_NO_START" = "1" ]; then
-  exit 0
-fi
+if [ "$TAKTON_NO_START" = "1" ]; then exit 0; fi
 
-info "正在启动..."
 set -a
 # shellcheck disable=SC1091
 source "$ENV_FILE"
 set +a
-export PYTHONPATH="$SRC${PYTHONPATH:+:$PYTHONPATH}"
-export PYTHONNOUSERSITE=1
+export PYTHONPATH="$SRC${PYTHONPATH:+:$PYTHONPATH}" PYTHONNOUSERSITE=1
 if command -v xdg-open >/dev/null 2>&1; then
   (sleep 2; xdg-open "http://127.0.0.1:$TAKTON_PORT" >/dev/null 2>&1 || true) &
 elif command -v open >/dev/null 2>&1; then
