@@ -1,70 +1,127 @@
+"""Kill old Takton, sync local backend into installed app, start Takton.exe, wait health."""
+from __future__ import annotations
+
+import shutil
 import subprocess
 import time
 import urllib.request
 from pathlib import Path
 
-# kill
-subprocess.run(
-    ["taskkill", "/F", "/IM", "Takton.exe"],
-    capture_output=True,
+SRC = Path(__file__).parent.parent / "backend"
+DST = Path.home() / "AppData" / "Local" / "Programs" / "Takton" / "resources" / "backend"
+EXE = Path.home() / "AppData" / "Local" / "Programs" / "Takton" / "Takton.exe"
+HEALTHS = (
+    "http://127.0.0.1:8000/api/health",
+    "http://127.0.0.1:8090/api/health",
 )
-ps_kill = r"""
-Get-CimInstance Win32_Process |
-  Where-Object { $_.CommandLine -like '*uvicorn backend.main*' } |
-  ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+
+SKIP_DIRS = {"__pycache__", ".pytest_cache", "node_modules", ".git", "data", "logs", "uploads"}
+
+
+def kill() -> None:
+    subprocess.run(["taskkill", "/F", "/IM", "Takton.exe"], capture_output=True)
+    # kill uvicorn/backend.cli related python
+    ps = r"""
+$patterns = @('*uvicorn backend.main*', '*backend.cli*', '*taktonl-0.1.0*backend*', '*Programs\\Takton*uvicorn*')
+Get-CimInstance Win32_Process | Where-Object {
+  $cl = $_.CommandLine
+  if (-not $cl) { return $false }
+  foreach ($p in $patterns) { if ($cl -like $p) { return $true } }
+  return $false
+} | ForEach-Object {
+  Write-Host ("kill {0} {1}" -f $_.ProcessId, $_.CommandLine.Substring(0, [Math]::Min(120, $_.CommandLine.Length)))
+  Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+}
+# free common ports
+foreach ($port in 8000,8001,8090) {
+  $conns = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+  foreach ($c in $conns) {
+    try { Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue; Write-Host "kill port $port pid $($c.OwningProcess)" } catch {}
+  }
+}
 """
-subprocess.run(["powershell.exe", "-Command", ps_kill], capture_output=True)
-time.sleep(2)
+    subprocess.run(["powershell.exe", "-NoProfile", "-Command", ps], capture_output=False)
+    time.sleep(2)
 
-# ensure code copied
-src = Path(r"E:/项目/taktonl-0.1.0/backend")
-dst = Path(r"C:/Users/developer/AppData/Local/Programs/Takton/resources/backend")
-for rel in [
-    "agent/loop.py",
-    "services/channel_gateway.py",
-    "services/llm/schemas.py",
-    "services/llm/openai_compatible.py",
-]:
-    s, d = src / rel, dst / rel
-    d.parent.mkdir(parents=True, exist_ok=True)
-    d.write_bytes(s.read_bytes())
-    print("copied", rel)
 
-gw = (dst / "services/channel_gateway.py").read_text(encoding="utf-8")
-print("progress.ack?", "progress.ack" in gw)
-print("hardcoded send ack?", 'await self._send("收到' in gw or "await self._send('收到" in gw)
+def sync_backend() -> None:
+    if not SRC.is_dir() or not DST.is_dir():
+        raise SystemExit(f"missing src/dst: {SRC} {DST}")
+    copied = 0
+    for path in SRC.rglob("*"):
+        if not path.is_file():
+            continue
+        if any(part in SKIP_DIRS for part in path.parts):
+            continue
+        # skip huge static rebuild noise optional - still sync static for UI
+        rel = path.relative_to(SRC)
+        dest = DST / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            if dest.exists() and dest.stat().st_size == path.stat().st_size and dest.stat().st_mtime >= path.stat().st_mtime:
+                continue
+        except OSError:
+            pass
+        shutil.copy2(path, dest)
+        copied += 1
+    print(f"synced files: {copied}")
+    # quick markers
+    for rel in [
+        "evolution/manager.py",
+        "services/sft_collector.py",
+        "api/routes/evolution.py",
+        "agent/loop.py",
+    ]:
+        ok = (DST / rel).exists()
+        print(f"  {rel}: {'OK' if ok else 'MISSING'}")
 
-# start
-subprocess.Popen(
-    [r"C:\Users\developer\AppData\Local\Programs\Takton\Takton.exe"],
-    cwd=r"C:\Users\developer\AppData\Local\Programs\Takton",
-)
-for i in range(30):
-    try:
-        print("health", urllib.request.urlopen("http://127.0.0.1:8000/api/health", timeout=2).read().decode())
-        break
-    except Exception:
+
+def start() -> None:
+    if not EXE.exists():
+        raise SystemExit(f"missing {EXE}")
+    subprocess.Popen([str(EXE)], cwd=str(EXE.parent))
+    print("started Takton.exe")
+
+
+def wait_health() -> str | None:
+    for i in range(40):
+        for url in HEALTHS:
+            try:
+                body = urllib.request.urlopen(url, timeout=2).read().decode()
+                print(f"health {url} -> {body}")
+                return url
+            except Exception:
+                pass
         time.sleep(1)
-else:
     print("health FAIL")
+    return None
 
-out = subprocess.check_output(
-    [
-        "powershell.exe",
-        "-Command",
-        "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*uvicorn backend.main*' } | ForEach-Object { $_.ProcessId.ToString() + ' | ' + $_.CommandLine }",
-    ],
-    text=True,
-    errors="replace",
-)
-print("uvicorn lines:\n", out)
-out2 = subprocess.check_output(
-    [
-        "powershell.exe",
-        "-Command",
-        "(Get-Process Takton -ErrorAction SilentlyContinue | Measure-Object).Count",
-    ],
-    text=True,
-    errors="replace",
-)
-print("takton count", out2.strip())
+
+def main() -> None:
+    print("=== kill ===")
+    kill()
+    print("=== sync ===")
+    sync_backend()
+    print("=== start ===")
+    start()
+    print("=== wait ===")
+    url = wait_health()
+    # process counts
+    out = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-Command",
+            "(Get-Process Takton -ErrorAction SilentlyContinue | Measure-Object).Count",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    print("takton processes:", (out.stdout or "").strip())
+    if not url:
+        raise SystemExit(1)
+    print("READY", url)
+
+
+if __name__ == "__main__":
+    main()

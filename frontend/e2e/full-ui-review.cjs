@@ -7,7 +7,7 @@ const path = require('path');
 
 const BASE = 'http://127.0.0.1:3000';
 const API = 'http://127.0.0.1:8000/api';
-const OUT = path.join('E:/项目/taktonl-0.1.0/frontend/e2e/screenshots/full-ui-review');
+const OUT = path.join(__dirname, 'screenshots', 'full-ui-review');
 
 const ROUTES = [
   { id: 'home', path: '/' },
