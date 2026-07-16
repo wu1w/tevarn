@@ -40,6 +40,21 @@ from .context import ContextManager
 
 logger = logging.getLogger(__name__)
 
+
+def _sanitize_tool_error(tool_name: str, exc: Exception) -> str:
+    """工具错误脱敏：生产模式不回传 SQL/堆栈，调试模式带详情。"""
+    import os
+
+    if os.environ.get("TAKTON_DEBUG", "").lower() in ("1", "true", "yes"):
+        return f"[Error] Failed to execute {tool_name}: {exc}"
+    # 提取异常类型名，不带内部细节
+    exc_type = type(exc).__name__
+    return (
+        f"[Error] 工具 {tool_name} 执行失败（{exc_type}）。"
+        f"请检查服务端日志获取详情，或设 TAKTON_DEBUG=1 查看完整错误。"
+    )
+
+
 # 安全修复：按 session_id 的并发锁，防止同一 session 的 agent loop 竞态执行
 _session_locks: dict[uuid.UUID, asyncio.Lock] = {}
 _SESSION_LOCK_MAX = 1024  # 防止内存泄漏：最多保留的锁数量
@@ -947,8 +962,12 @@ class NexusAgentLoop:
                         # manage_goal 结果推送到前端 Goal 面板
                         if tc.name == "manage_goal":
                             await self._push_goal_update(session_id)
-                            await save_goal_to_db(session_id)
+                            try:
+                                from backend.agent.goal_state import save_goal_to_db as _save_goal
 
+                                await _save_goal(session_id)
+                            except Exception as e:
+                                logger.debug("save_goal_to_db skipped: %s", e)
                     except asyncio.TimeoutError:
                         _to = float(getattr(settings, "agent_tool_timeout_seconds", 180) or 180)
                         tool_result = f"[Error] Tool '{tc.name}' timed out after {_to:.0f}s"
@@ -968,7 +987,7 @@ class NexusAgentLoop:
 
                     except Exception as e:
                         logger.error(f"Tool execution error: {e}")
-                        tool_result = f"[Error] Failed to execute {tc.name}: {e}"
+                        tool_result = _sanitize_tool_error(tc.name, e)
                         try:
                             _sft_tools.append(
                                 {

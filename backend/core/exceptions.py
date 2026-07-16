@@ -18,6 +18,17 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 logger = logging.getLogger(__name__)
 
+def _sanitize_for_json(obj: Any) -> Any:
+    """递归将 bytes 转为 str，防止 JSON 序列化失败"""
+    if isinstance(obj, bytes):
+        return obj.decode("utf-8", errors="replace")
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_for_json(item) for item in obj]
+    return obj
+
+
 
 # ============================================================
 # 异常层次结构
@@ -118,10 +129,10 @@ def _make_error_response(
         },
     }
     if details is not None:
-        body["error"]["details"] = details
+        body["error"]["details"] = _sanitize_for_json(details)
     if request_id:
         body["error"]["request_id"] = request_id
-    return JSONResponse(status_code=http_status, content=body)
+    return JSONResponse(status_code=http_status, content=_sanitize_for_json(body))
 
 
 async def biz_exception_handler(request: Request, exc: BizException) -> JSONResponse:

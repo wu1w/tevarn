@@ -88,10 +88,19 @@ class QdrantRAGService(RAGService):
                 "must": [{"key": "user_id", "match": {"value": user_id}}]
             }
 
+        # collection 不存在时自动创建（避免 wiki_pages 等新 collection 404 刷屏）
+        await self._ensure_collection(collection)
+
         async with aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=30)
         ) as session:
             async with session.post(url, json=payload) as resp:
+                if resp.status == 404:
+                    logger.warning(
+                        "Collection %s not found on Qdrant (auto-create may have failed), returning empty",
+                        collection,
+                    )
+                    return []
                 resp.raise_for_status()
                 data = await resp.json()
                 results = []
@@ -106,6 +115,44 @@ class QdrantRAGService(RAGService):
                         )
                     )
                 return results
+
+    async def _ensure_collection(self, collection: str) -> None:
+        """确保 Qdrant collection 存在；不存在则自动创建（幂等，带进程内缓存）。"""
+        if collection in self._ensured_collections:
+            return
+        try:
+            import aiohttp
+
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as session:
+                # 检查是否存在
+                async with session.get(
+                    f"{self.qdrant_url}/collections/{collection}"
+                ) as resp:
+                    if resp.status == 200:
+                        self._ensured_collections.add(collection)
+                        return
+                # 不存在则创建（默认 1024 维 cosine，与主流 embedding 兼容）
+                dim = getattr(settings, "embedding_dimensions", 1024) or 1024
+                payload = {
+                    "vectors": {"size": dim, "distance": "Cosine"},
+                    "optimizers_config": {"default_segment_number": 2},
+                }
+                async with session.put(
+                    f"{self.qdrant_url}/collections/{collection}", json=payload
+                ) as resp:
+                    if resp.status in (200, 201):
+                        logger.info("Auto-created Qdrant collection: %s (dim=%d)", collection, dim)
+                        self._ensured_collections.add(collection)
+                    else:
+                        body = await resp.text()
+                        logger.warning(
+                            "Failed to auto-create collection %s: %s %s",
+                            collection, resp.status, body[:200],
+                        )
+        except Exception as e:
+            logger.debug("ensure_collection %s skipped: %s", collection, e)
 
     async def _vector_only_search(
         self,
@@ -128,10 +175,19 @@ class QdrantRAGService(RAGService):
                 "must": [{"key": "user_id", "match": {"value": user_id}}]
             }
 
+        # N1: 404 自愈 — 先确保 collection 存在
+        await self._ensure_collection(collection)
+
         async with aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=30)
         ) as session:
             async with session.post(url, json=payload) as resp:
+                if resp.status == 404:
+                    logger.warning(
+                        "Collection %s not found on Qdrant (auto-create attempted), returning empty",
+                        collection,
+                    )
+                    return []
                 resp.raise_for_status()
                 data = await resp.json()
                 results = []

@@ -67,7 +67,7 @@ class LocalRerankerService(RerankerService):
                 results.sort(key=lambda x: x.score, reverse=True)
                 return results[:top_n]
         except Exception as e:
-            logger.error("Local rerank error: %s", e)
+            logger.warning("Local rerank error: %s", e)
             return await self._embedding_similarity_rerank(query, documents, top_n)
 
     async def _embedding_similarity_rerank(
@@ -110,7 +110,7 @@ class LocalRerankerService(RerankerService):
             scored.sort(key=lambda x: x.score, reverse=True)
             return scored[:top_n]
         except Exception as e:
-            logger.error("Embedding similarity rerank fallback error: %s", e)
+            logger.warning("Embedding similarity rerank fallback error: %s", e)
             return [
                 RerankedResult(text=doc, score=1.0 - i * 0.01, original_index=i)
                 for i, doc in enumerate(documents[:top_n])

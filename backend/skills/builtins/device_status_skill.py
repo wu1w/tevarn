@@ -35,6 +35,14 @@ class DeviceStatusSkill(BaseSkill):
 
         if not user_id:
             return "缺少用户上下文，无法列出设备。"
+        # user_id 可能是 str（loop 注入），统一转 UUID
+        import uuid as _uuid
+
+        if isinstance(user_id, str):
+            try:
+                user_id = _uuid.UUID(user_id)
+            except (ValueError, AttributeError):
+                return f"用户 ID 格式异常: {user_id!r}"
         repo = AsyncDeviceRepository()
         devices = await repo.list_by_user(user_id) or []
         if not devices:

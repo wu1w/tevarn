@@ -85,6 +85,11 @@ async def _seed_default_user() -> None:
     if default:
         logger.info(f"Default user already exists: {default.id}")
         return
+    # 竞态防护：同时检查 username 唯一性（email 和 username 都有 UNIQUE 约束）
+    existing_uname = await repo.get_by_username("admin")
+    if existing_uname:
+        logger.info(f"Default user 'admin' already taken by {existing_uname.id}, skipping seed")
+        return
     from backend.core.security import get_password_hash
     import os
     default_pw = (
@@ -103,7 +108,11 @@ async def _seed_default_user() -> None:
         logger.info(f"Default user created: {user.id}")
     except Exception as e:
         # 并发创建冲突时忽略，由请求侧重试读取
-        logger.warning(f"Default user seeding skipped (will be resolved on first request): {e}")
+        from sqlalchemy.exc import IntegrityError
+        if isinstance(e, IntegrityError) and "UNIQUE" in str(e):
+            logger.info(f"Default user seed race resolved: {e.orig}")
+        else:
+            logger.warning(f"Default user seeding skipped (will be resolved on first request): {e}")
 
 
 async def _seed_settings() -> None:
