@@ -142,9 +142,17 @@ if ($env:TAKTON_SOURCE) {
   } else {
     Info "从 GitHub 下载（首次 1–3 分钟）..."
     if (Test-Path $SRC) { Remove-Item -Recurse -Force $SRC }
-    git clone --depth 1 --branch $TAKTON_REF $TAKTON_REPO $SRC 2>$null
-    if ($LASTEXITCODE -ne 0) { git clone --depth 1 $TAKTON_REPO $SRC }
-    if ($LASTEXITCODE -ne 0) { Die "git clone 失败，请确认能访问 github.com" }
+    # git 把进度打到 stderr，在 $ErrorActionPreference=Stop 下会被当成终止错误
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    git clone --depth 1 --branch $TAKTON_REF $TAKTON_REPO $SRC 2>&1 | Out-Null
+    $cloneCode = $LASTEXITCODE
+    if ($cloneCode -ne 0) {
+      git clone --depth 1 $TAKTON_REPO $SRC 2>&1 | Out-Null
+      $cloneCode = $LASTEXITCODE
+    }
+    $ErrorActionPreference = $prevEap
+    if ($cloneCode -ne 0) { Die "git clone 失败，请确认能访问 github.com" }
   }
   Ok "源码就绪"
 }
