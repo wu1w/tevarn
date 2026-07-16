@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "takton-backend"
+version = "0.1.0"
+description = "Takton backend - single-user AI agent platform"
+requires-python = ">=3.10"
+
+[tool.setuptools]
+packages = ["backend"]
+package-dir = {"" = "."}
+
+[tool.pytest.ini_options]
+pythonpath = [".."]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+testpaths = ["tests"]
+addopts = "-ra -q"

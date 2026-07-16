@@ -1,0 +1,6 @@
+# Dev / test only — not shipped in desktop installers
+-r requirements-prod.txt
+asyncpg==0.30.0
+pytest==8.3.5
+pytest-asyncio==0.24.0
+asgi-lifespan==2.1.0

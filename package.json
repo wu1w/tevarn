@@ -1,0 +1,168 @@
+{
+  "name": "takton",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Takton - 个人专属 Agent 终端",
+  "author": "developer <developer@takton.dev>",
+  "homepage": "https://github.com/wu1w/takton",
+  "desktopName": "Takton",
+  "main": "electron/dist/main.js",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "build:electron": "cd electron && npx tsc -p tsconfig.json",
+    "start": "next start",
+    "electron:dev": "concurrently --kill-others \"cross-env NEXT_PUBLIC_API_URL=http://127.0.0.1:8000/api NEXT_PUBLIC_WS_URL=ws://127.0.0.1:8000/api next dev\" \"wait-on http://localhost:3000 && cross-env ELECTRON_START_URL=http://localhost:3000 electron .\"",
+    "electron:prod": "npm run build && npm run build:electron && electron .",
+    "pack": "npm run prepare:win-python && cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder --dir",
+    "dist": "npm run prepare:win-python && cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder",
+    "dist:linux": "cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder --linux",
+    "dist:win": "npm run prepare:win-python && cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder --win",
+    "dist:mac": "cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder --mac",
+    "prepare:win-python": "node ../scripts/prepare-win-python.js",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "@tailwindcss/postcss": "^4",
+    "@tanstack/react-query": "^5.101.2",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "axios": "^1.18.1",
+    "concurrently": "^10.0.3",
+    "cross-env": "^10.1.0",
+    "electron": "^43.1.0",
+    "electron-builder": "^26.15.3",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.10",
+    "lucide-react": "^1.24.0",
+    "mermaid": "^11.16.0",
+    "next": "16.2.10",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "tailwindcss": "^4",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3",
+    "wait-on": "^9.0.10",
+    "zod": "^4.4.3",
+    "zustand": "^5.0.14"
+  },
+  "build": {
+    "appId": "com.takton.agent",
+    "productName": "Takton",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/dist/**/*",
+      "package.json",
+      "!**/*.{md,map}",
+      "!**/node_modules/**"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "**/*.{node,dll}"
+    ],
+    "extraResources": [
+      {
+        "from": "../backend",
+        "to": "backend",
+        "filter": [
+          "**/*.py",
+          "pyproject.toml",
+          "requirements.txt",
+          "requirements-prod.txt",
+          "!**/__pycache__/**",
+          "!**/tests/**",
+          "!**/*.egg-info/**",
+          "!**/*.db",
+          "!**/*.db-*",
+          "!**/uploads/**",
+          "!workspace_state.json"
+        ]
+      },
+      {
+        "from": "tray-icon.png",
+        "to": "tray-icon.png"
+      }
+    ],
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": ["x64"]
+        },
+        {
+          "target": "deb",
+          "arch": ["x64"]
+        }
+      ],
+      "category": "Utility",
+      "icon": "public/icon.png",
+      "syncDesktopName": true,
+      "extraResources": [
+        {
+          "from": "../.venv",
+          "to": "backend/.venv",
+          "filter": ["**/*", "!**/__pycache__/**", "!**/*.pyc"]
+        }
+      ]
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "public/icon.png",
+      "extraResources": [
+        {
+          "from": "../win-python",
+          "to": "python",
+          "filter": [
+            "**/*",
+            "!**/__pycache__/**",
+            "!**/*.pdb",
+            "!**/*.chm",
+            "!**/pip/_vendor/**/tests/**",
+            "!**/setuptools/tests/**",
+            "!**/numpy/tests/**",
+            "!**/numpy/_pyinstaller/**",
+            "!**/pytest*/**",
+            "!**/_pytest/**"
+          ]
+        }
+      ]
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "zip",
+          "arch": ["x64", "arm64"]
+        }
+      ],
+      "category": "public.app-category.utilities",
+      "icon": "public/icon.png"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
+      "shortcutName": "Takton",
+      "uninstallDisplayName": "Takton",
+      "deleteAppDataOnUninstall": false
+    },
+    "electronLanguages": ["en-US", "zh-CN"]
+  }
+}

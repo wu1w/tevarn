@@ -1,0 +1,36 @@
+1:"$Sreact.fragment"
+3:I[81275,["/_next/static/chunks/2ej97fr2l1-az.js","/_next/static/chunks/2qc9kc2j3jnlj.js","/_next/static/chunks/3ixra_yp4lasn.js","/_next/static/chunks/0o3dc-vlk659u.js","/_next/static/chunks/2sswpbnhrliq0.js"],"ThemeProvider"]
+4:I[52809,["/_next/static/chunks/2ej97fr2l1-az.js","/_next/static/chunks/2qc9kc2j3jnlj.js","/_next/static/chunks/3ixra_yp4lasn.js","/_next/static/chunks/0o3dc-vlk659u.js","/_next/static/chunks/2sswpbnhrliq0.js"],"QueryProvider"]
+5:I[65295,["/_next/static/chunks/2ej97fr2l1-az.js","/_next/static/chunks/2qc9kc2j3jnlj.js","/_next/static/chunks/3ixra_yp4lasn.js","/_next/static/chunks/0o3dc-vlk659u.js","/_next/static/chunks/2sswpbnhrliq0.js"],"AppShell"]
+6:I[32035,["/_next/static/chunks/2ej97fr2l1-az.js","/_next/static/chunks/2qc9kc2j3jnlj.js","/_next/static/chunks/3ixra_yp4lasn.js","/_next/static/chunks/0o3dc-vlk659u.js","/_next/static/chunks/2sswpbnhrliq0.js"],"default"]
+7:I[73621,["/_next/static/chunks/2ej97fr2l1-az.js","/_next/static/chunks/2qc9kc2j3jnlj.js","/_next/static/chunks/3ixra_yp4lasn.js","/_next/static/chunks/0o3dc-vlk659u.js","/_next/static/chunks/2sswpbnhrliq0.js","/_next/static/chunks/2z3wgvxa7fwku.js"],"default"]
+8:I[91168,["/_next/static/chunks/2ej97fr2l1-az.js","/_next/static/chunks/2qc9kc2j3jnlj.js","/_next/static/chunks/3ixra_yp4lasn.js","/_next/static/chunks/0o3dc-vlk659u.js","/_next/static/chunks/2sswpbnhrliq0.js"],"default"]
+9:I[80804,["/_next/static/chunks/2ej97fr2l1-az.js","/_next/static/chunks/2qc9kc2j3jnlj.js","/_next/static/chunks/3ixra_yp4lasn.js","/_next/static/chunks/0o3dc-vlk659u.js","/_next/static/chunks/2sswpbnhrliq0.js"],"default"]
+:HL["/_next/static/chunks/3a-n2o5v3lnpb.css","style"]
+:HL["/_next/static/chunks/3z6fkzaalkg2l.css","style"]
+2:T446,
+            (function() {
+              try {
+                var pref = 'system';
+                var raw = localStorage.getItem('takton-theme');
+                if (raw) {
+                  try {
+                    var parsed = JSON.parse(raw);
+                    if (parsed && parsed.state && parsed.state.theme) {
+                      pref = parsed.state.theme;
+                    } else if (raw === 'light' || raw === 'dark' || raw === 'system') {
+                      pref = raw;
+                    }
+                  } catch (e1) {
+                    if (raw === 'light' || raw === 'dark' || raw === 'system') pref = raw;
+                  }
+                }
+                var resolved = pref;
+                if (pref === 'system' || !pref) {
+                  resolved = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+                }
+                document.documentElement.setAttribute('data-theme', resolved);
+                document.documentElement.style.colorScheme = resolved;
+              } catch(e) {}
+            })();
+          0:{"rsc":["$","$1","c",{"children":[[["$","link","0",{"rel":"stylesheet","href":"/_next/static/chunks/3a-n2o5v3lnpb.css","precedence":"next"}],["$","link","1",{"rel":"stylesheet","href":"/_next/static/chunks/3z6fkzaalkg2l.css","precedence":"next"}],["$","script","script-0",{"src":"/_next/static/chunks/2ej97fr2l1-az.js","async":true}],["$","script","script-1",{"src":"/_next/static/chunks/2qc9kc2j3jnlj.js","async":true}],["$","script","script-2",{"src":"/_next/static/chunks/3ixra_yp4lasn.js","async":true}],["$","script","script-3",{"src":"/_next/static/chunks/0o3dc-vlk659u.js","async":true}],["$","script","script-4",{"src":"/_next/static/chunks/2sswpbnhrliq0.js","async":true}]],["$","html",null,{"lang":"zh-CN","suppressHydrationWarning":true,"className":"inter_55e7864c-module__Z2_8rW__variable jetbrains_mono_622bd138-module__kIZXTq__variable h-full antialiased","children":[["$","head",null,{"children":["$","script",null,{"dangerouslySetInnerHTML":{"__html":"$2"}}]}],["$","body",null,{"className":"font-sans h-full overflow-hidden flex flex-col bg-page-bg text-foreground text-ui","children":["$","$L3",null,{"children":["$","$L4",null,{"children":[["$","$L5",null,{"children":["$","$L6",null,{"parallelRouterKey":"children","error":"$7","errorStyles":[],"errorScripts":[["$","script","script-0",{"src":"/_next/static/chunks/2z3wgvxa7fwku.js","async":true}]],"template":["$","$L8",null,{}],"notFound":[[["$","title",null,{"children":"404: This page could not be found."}],["$","div",null,{"style":{"fontFamily":"system-ui,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif,\"Apple Color Emoji\",\"Segoe UI Emoji\"","height":"100vh","textAlign":"center","display":"flex","flexDirection":"column","alignItems":"center","justifyContent":"center"},"children":["$","div",null,{"children":[["$","style",null,{"dangerouslySetInnerHTML":{"__html":"body{color:#000;background:#fff;margin:0}.next-error-h1{border-right:1px solid rgba(0,0,0,.3)}@media (prefers-color-scheme:dark){body{color:#fff;background:#000}.next-error-h1{border-right:1px solid rgba(255,255,255,.3)}}"}}],["$","h1",null,{"className":"next-error-h1","style":{"display":"inline-block","margin":"0 20px 0 0","padding":"0 23px 0 0","fontSize":24,"fontWeight":500,"verticalAlign":"top","lineHeight":"49px"},"children":404}],["$","div",null,{"style":{"display":"inline-block"},"children":["$","h2",null,{"style":{"fontSize":14,"fontWeight":400,"lineHeight":"49px","margin":0},"children":"This page could not be found."}]}]]}]}]],[]]}]}],["$","$L9",null,{}]]}]}]}]]}]]}],"isPartial":false,"staleTime":300,"varyParams":null,"buildId":"0SqaGKLU_uPVqj8zuv2pb"}

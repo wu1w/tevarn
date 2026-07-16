@@ -1,0 +1,58 @@
+# Python / envs
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.db
+*.sqlite3
+.env
+.env.*
+!.env.example
+
+# Node / frontend build junk (keep backend/static for install)
+node_modules/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/release/
+frontend/.asar-stage/
+frontend/e2e/screenshots/
+frontend/e2e/test-results/
+frontend/playwright-report/
+**/win-unpacked/
+**/*.asar
+win-python/
+
+# IDE / OS
+.idea/
+.vscode/
+.hermes/
+.DS_Store
+Thumbs.db
+*.log
+uploads/
+workspace/
+workspace_state.json
+takton.db
+test_extract/
+*.png
+!docs/**/*.png
+!public/**/*.png
+!frontend/public/**/*.png
+
+# Secrets / local
+**/secrets.json
+**/*token*
+!**/tokenizer*
+*.pem
+*.key
+
+# Large local only
+tray-icon.png
+*.exe
+*.msi
+*.AppImage
