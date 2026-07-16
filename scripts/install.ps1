@@ -1,4 +1,4 @@
-﻿# Takton one-click installer (Windows) — installs desktop client (Setup.exe)
+# Takton one-click installer (Windows) - installs desktop client (Setup.exe)
 #   irm https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.ps1 | iex
 #
 # Downloads Takton-Setup from GitHub Releases and runs NSIS installer.
@@ -21,7 +21,7 @@ function Write-Ok([string]$m) { Write-Host "[takton] OK $m" -ForegroundColor Gre
 function Write-Err([string]$m) { Write-Host "[takton] ERROR: $m" -ForegroundColor Red }
 
 Write-Host ""
-Write-Host "Takton desktop client — one-click install" -ForegroundColor Cyan
+Write-Host "Takton desktop client - one-click install" -ForegroundColor Cyan
 Write-Host ""
 
 $work = Join-Path $env:TEMP ("takton-setup-" + [guid]::NewGuid().ToString("n").Substring(0, 8))
@@ -37,7 +37,6 @@ $downloaded = $false
 foreach ($url in $urls) {
   try {
     Write-Info "Downloading: $url"
-    # BITS / Invoke-WebRequest
     Invoke-WebRequest -Uri $url -OutFile $setupPath -UseBasicParsing
     if ((Test-Path $setupPath) -and ((Get-Item $setupPath).Length -gt 1MB)) {
       $downloaded = $true
@@ -59,10 +58,10 @@ Write-Info "Running installer (one-click NSIS)..."
 # electron-builder NSIS oneClick: running the exe is enough; /S is silent if supported
 $p = Start-Process -FilePath $setupPath -ArgumentList @("/S") -Wait -PassThru
 # If silent exit non-zero, retry interactive
-if ($p.ExitCode -ne 0 -and $p.ExitCode -ne $null) {
+if ($null -ne $p.ExitCode -and $p.ExitCode -ne 0) {
   Write-Info "Silent install exit $($p.ExitCode), trying interactive..."
   $p2 = Start-Process -FilePath $setupPath -Wait -PassThru
-  if ($p2.ExitCode -ne 0 -and $p2.ExitCode -ne $null) {
+  if ($null -ne $p2.ExitCode -and $p2.ExitCode -ne 0) {
     Write-Err "Installer failed with exit code $($p2.ExitCode)"
     exit $p2.ExitCode
   }
@@ -71,16 +70,18 @@ if ($p.ExitCode -ne 0 -and $p.ExitCode -ne $null) {
 Write-Ok "Client installed"
 
 # Common install locations
+$pf86 = ${env:ProgramFiles(x86)}
 $candidates = @(
   (Join-Path $env:LOCALAPPDATA "Programs\Takton\Takton.exe"),
   (Join-Path $env:LOCALAPPDATA "Programs\takton\Takton.exe"),
-  (Join-Path ${env:ProgramFiles} "Takton\Takton.exe"),
-  (Join-Path ${env:ProgramFiles(x86)} "Takton\Takton.exe")
+  (Join-Path $env:ProgramFiles "Takton\Takton.exe")
 )
+if ($pf86) {
+  $candidates += (Join-Path $pf86 "Takton\Takton.exe")
+}
 $exe = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 
 if (-not $exe) {
-  # search shortcuts
   $desk = Join-Path ([Environment]::GetFolderPath("Desktop")) "Takton.lnk"
   if (Test-Path $desk) {
     Write-Ok "Shortcut on Desktop: $desk"
