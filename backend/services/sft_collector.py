@@ -30,17 +30,35 @@ _SECRET_RE = re.compile(
 )
 
 
+def _normalize_fs_path(p: str | Path) -> Path:
+    """Normalize git-bash/MSYS paths like /c/Users/... on Windows."""
+    s = str(p).strip()
+    if not s:
+        return Path(".")
+    if os.name == "nt":
+        # /c/Users/foo -> C:\Users\foo
+        m = re.match(r"^/([A-Za-z])(/.*)?$", s.replace("\\", "/"))
+        if m:
+            drive = m.group(1).upper()
+            rest = (m.group(2) or "").replace("/", "\\")
+            s = f"{drive}:{rest}"
+        elif s.startswith("/") and not s.startswith("//"):
+            # bare /Users/... unlikely; leave as-is
+            pass
+    return Path(s)
+
+
 def corpus_root() -> Path:
     """Resolved local directory for SFT markdown/jsonl."""
     override = os.getenv("TAKTON_SFT_CORPUS_DIR", "").strip()
     if override:
-        p = Path(override)
+        p = _normalize_fs_path(override)
         p.mkdir(parents=True, exist_ok=True)
         return p.resolve()
 
     home = os.getenv("TAKTON_HOME")
     if home:
-        p = Path(home) / "sft_corpus"
+        p = _normalize_fs_path(home) / "sft_corpus"
     else:
         # Prefer next to uploads / data
         try:
@@ -48,12 +66,12 @@ def corpus_root() -> Path:
 
             up = getattr(settings, "uploads_dir", None)
             if up:
-                p = Path(up).resolve().parent / "sft_corpus"
+                p = _normalize_fs_path(up).resolve().parent / "sft_corpus"
             else:
                 p = Path.cwd() / "data" / "sft_corpus"
         except Exception:
             user = os.getenv("USERPROFILE") or os.getenv("HOME") or "."
-            p = Path(user) / ".takton" / "sft_corpus"
+            p = _normalize_fs_path(user) / ".takton" / "sft_corpus"
     p.mkdir(parents=True, exist_ok=True)
     return p.resolve()
 

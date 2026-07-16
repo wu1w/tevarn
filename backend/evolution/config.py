@@ -54,12 +54,12 @@ class EvolutionConfig:
 
     def resolve_db_path(self) -> Path:
         if self.db_path:
-            return Path(self.db_path)
+            return _norm(self.db_path)
         # Prefer user takton home, else local data
         home = os.getenv("TAKTON_HOME") or os.getenv("USERPROFILE") or os.getenv("HOME") or "."
-        base = Path(home)
+        base = _norm(home)
         if (base / ".takton").exists() or os.getenv("TAKTON_HOME"):
-            root = Path(os.getenv("TAKTON_HOME", base / ".takton"))
+            root = _norm(os.getenv("TAKTON_HOME", base / ".takton"))
         else:
             try:
                 from backend.core.config import settings
@@ -67,13 +67,27 @@ class EvolutionConfig:
                 # settings may have uploads_dir parent
                 up = getattr(settings, "uploads_dir", None)
                 if up:
-                    root = Path(up).resolve().parent
+                    root = _norm(up).resolve().parent
                 else:
                     root = Path.cwd() / "data"
             except Exception:
                 root = Path.cwd() / "data"
         root.mkdir(parents=True, exist_ok=True)
         return root / "evolution.db"
+
+
+def _norm(p) -> Path:
+    """Normalize git-bash/MSYS /c/Users paths on Windows."""
+    import re
+
+    s = str(p).strip()
+    if os.name == "nt":
+        m = re.match(r"^/([A-Za-z])(/.*)?$", s.replace("\\", "/"))
+        if m:
+            drive = m.group(1).upper()
+            rest = (m.group(2) or "").replace("/", "\\")
+            return Path(f"{drive}:{rest}")
+    return Path(s)
 
 
 _config: EvolutionConfig | None = None
