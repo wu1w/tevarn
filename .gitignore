@@ -35,9 +35,11 @@ win-python/
 Thumbs.db
 *.log
 uploads/
-workspace/
-workspace_state.json
+/workspace/
+/workspace_state.json
 takton.db
+**/takton.db
+**/takton.db-*
 test_extract/
 *.png
 !docs/**/*.png
