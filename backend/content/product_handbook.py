@@ -17,7 +17,7 @@ Takton 是**自托管多机 Agent 工作台**。目标：尽量在**对话框**�
 - 「看看现在系统状态 / 用的什么模型」
 - 「把温度调到 0.3」「max_tokens 改成 8000」
 - 「怎么配模型 / RAG / 远程设备 / 通道」
-- 「帮我配对 local」「列出现在的设备」
+- 「帮我配对 remote-pc」「列出现在的设备」
 - 「教我用知识库 / 定时任务 / 工作流」
 - 「我是小白，从头教」
 
@@ -114,9 +114,9 @@ Takton 是**自托管多机 Agent 工作台**。目标：尽量在**对话框**�
         "body": """# 远程设备（多机）
 
 ## 对话可以说
-- 「我有哪些设备」「local 在线吗」
+- 「我有哪些设备」「remote-pc 在线吗」
 - 「怎么配对新电脑」
-- 「@local 看看磁盘」
+- 「@remote-pc 看看磁盘」
 
 ## 架构
 - **控制面**：本机/中枢 Takton 后端  
@@ -128,7 +128,7 @@ Takton 是**自托管多机 Agent 工作台**。目标：尽量在**对话框**�
 cd ~/takton-agent
 PYTHONPATH=$PWD .venv/bin/python -m takton_agent \\
   --host 0.0.0.0 --port 19876 \\
-  --token 你的密钥 --root ~/projects --name local
+  --token 你的密钥 --root ~/projects --name remote-pc
 ```
 
 ## 本机配对
@@ -138,7 +138,7 @@ PYTHONPATH=$PWD .venv/bin/python -m takton_agent \\
 4. 主 CTA：**用此设备对话**（预填 `@name `）。
 
 ## 对话执行
-- `@local hostname`
+- `@remote-pc hostname`
 - `@win-local dir`
 - `list:.` / `read:路径`（agent 协议支持）
 
@@ -336,8 +336,8 @@ Agent 侧有 `generate_workflow` / `validate_dag` 等工具时可对话生成草
 
 ## 设备
 - 列出所有设备
-- 怎么配对 local？
-- @local hostname
+- 怎么配对 remote-pc？
+- @remote-pc hostname
 
 ## 日常
 - 现在几点 / 北京天气
@@ -360,7 +360,7 @@ Agent 侧有 `generate_workflow` / `validate_dag` 等工具时可对话生成草
 1. **对话模型**可用（能正常回一句话）  
 2. （可选）**Embedding + Qdrant** → 开 RAG  
 3. 上传 1 份测试文档到**知识**并检索  
-4. （可选）本机或 LOCAL 跑 **takton-agent** 并配对  
+4. （可选）本机或另一台电脑跑 **takton-agent** 并配对  
 5. 试 `@设备 echo ok`  
 6. （可选）接**通道**，确认只推思考不刷工具  
 7. （可选）建一个**定时任务**  

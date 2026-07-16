@@ -1031,7 +1031,7 @@ async def test_embedding(
     if not base or not model:
         return {
             "ok": False,
-            "message": "请填写 Embedding 服务地址和模型名（例：http://192.168.5.27:8086 + embedding-model）",
+            "message": "请填写 Embedding 服务地址和模型名（例：http://127.0.0.1:8086 + embedding-model）",
         }
 
     if provider in ("", "none", "null"):
@@ -1086,7 +1086,7 @@ async def test_qdrant(
         apply_settings_dict(items, reset=True)
     url = (app_settings.qdrant_url or "").rstrip("/")
     if not url:
-        return {"ok": False, "message": "请填写 Qdrant URL（例：http://192.168.5.27:6333）"}
+        return {"ok": False, "message": "请填写 Qdrant URL（例：http://127.0.0.1:6333）"}
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8)) as session:
             ok, message, used = await probe_qdrant(session, url)

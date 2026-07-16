@@ -39,8 +39,8 @@ def test_full_mode_when_emb_and_qdrant_configured(monkeypatch):
 
     monkeypatch.setattr(cfg.settings, "embedding_provider", "openai-compatible")
     monkeypatch.setattr(cfg.settings, "embedding_model", "embedding-model")
-    monkeypatch.setattr(cfg.settings, "embedding_base_url", "http://192.168.5.27:8086")
-    monkeypatch.setattr(cfg.settings, "qdrant_url", "http://192.168.5.27:6333")
+    monkeypatch.setattr(cfg.settings, "embedding_base_url", "http://127.0.0.1:8086")
+    monkeypatch.setattr(cfg.settings, "qdrant_url", "http://127.0.0.1:6333")
     monkeypatch.setattr(cfg.settings, "rag_enabled", True)
     monkeypatch.setattr(cfg.settings, "reranker_provider", "")
     st = compute_rag_status()

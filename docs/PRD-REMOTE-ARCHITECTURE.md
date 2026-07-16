@@ -20,7 +20,7 @@ L1 局域网 → L2 NetBird P2P → L3 VPS/TURN（Phase 1 **只做 L1**）
 
 | 项 | 默认 |
 |----|------|
-| 控制面 | **当前 Takton 后端**（可配置；日后可指 m920x） |
+| 控制面 | **当前 Takton 后端**（可配置；日后可指 control-host） |
 | Desktop | 可当控制面，也可只跑 agent |
 | 发现 | **手动 host:port + 配对 token** 为主；mDNS 后补 |
 | 能力 | WS + `file.list` / `file.read` + 受限 `exec.run` |

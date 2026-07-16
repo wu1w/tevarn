@@ -11,7 +11,7 @@ class DeviceStatusSkill(BaseSkill):
     name = "list_devices"
     description = (
         "列出已配对的远程/本机设备及在线状态、延迟。"
-        "当用户问「我有哪些电脑」「local 在线吗」「设备连上了吗」时调用。"
+        "当用户问「我有哪些电脑」「remote-pc 在线吗」「设备连上了吗」时调用。"
         "执行命令请用对话里 @设备名 命令，或设备页。"
     )
     parameters = {
@@ -72,5 +72,5 @@ class DeviceStatusSkill(BaseSkill):
                 except Exception as e:
                     line += f" | ping失败: {e}"
             lines.append(line)
-        lines.append("对话中执行远程命令示例：@local hostname")
+        lines.append("对话中执行远程命令示例：@remote-pc hostname")
         return "\n".join(lines)

@@ -391,7 +391,7 @@ app = FastAPI(
 # CORS 配置
 _ALLOWED_ORIGINS = os.environ.get(
     "CORS_ALLOWED_ORIGINS",
-    "http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3020,http://127.0.0.1:3000,http://127.0.0.1:3001,http://127.0.0.1:3002,http://127.0.0.1:3020,http://192.168.5.27:3000,http://192.168.5.32:3000"
+    "http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3020,http://127.0.0.1:3000,http://127.0.0.1:3001,http://127.0.0.1:3002,http://127.0.0.1:3020,http://127.0.0.1:3000,http://127.0.0.1:3000"
 ).split(",")
 _ALLOWED_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
 _ALLOWED_HEADERS = ["Content-Type", "Authorization", "X-Requested-With", "X-API-Key"]

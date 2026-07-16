@@ -32,7 +32,7 @@ const TAGS = [
 const EXAMPLES = [
   { text: '按开箱清单一步步带我配置 Takton', tag: '对话配置' },
   { text: '当前系统状态和模型是什么？', tag: '状态' },
-  { text: '@local hostname && df -h', tag: '远程设备' },
+  { text: '@remote-pc hostname && df -h', tag: '远程设备' },
   { text: '北京明天天气怎么样？', tag: '日常' },
 ];
 
