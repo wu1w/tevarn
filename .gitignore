@@ -58,3 +58,4 @@ tray-icon.png
 *.exe
 *.msi
 *.AppImage
+frontend/dist/
