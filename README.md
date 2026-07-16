@@ -4,22 +4,45 @@
 
 仓库：https://github.com/wu1w/takton
 
-## 快速安装（复制即用）
+## 快速安装（默认推荐客户端）
 
-**Windows（PowerShell）：**
+### Windows 桌面客户端（最推荐 · 小白首选）
+
+1. 打开 [Releases](https://github.com/wu1w/takton/releases)
+2. 下载 **`Takton Setup x.y.z.exe`**（或资源里的安装包）
+3. 双击安装 → 从开始菜单 / 桌面打开 **Takton**
+
+- 这是 **Electron 桌面客户端**（内嵌后端 + 内嵌 Python 依赖）
+- **不需要**自己装 Git / Python / 跑命令行
+
+> 若 Releases 里还没有安装包：请维护者发布 `frontend/release/Takton Setup *.exe`，或暂时用下面的「一行命令（仅服务端）」。
+
+### 一行命令（仅服务端 + 浏览器，**不会**安装桌面客户端）
+
+适合开发 / 服务器 / 暂时没有 Setup.exe 时：
+
+**Windows（PowerShell）— 装源码与本机 venv，浏览器打开，不是 Takton.exe：**
 
 ```powershell
 irm https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.ps1 | iex
 ```
 
-**Linux：**
+**Linux — 同上，浏览器访问，不是桌面 App：**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.sh | tr -d '\015' | bash
 ```
 
-> 装好后打开 `http://127.0.0.1:8090`。Windows 需已装 [Git](https://git-scm.com/download/win)；Linux 需 `curl` + `git`。  
+装好后打开 `http://127.0.0.1:8090`（或脚本提示的端口）。  
+Windows 需 [Git](https://git-scm.com/download/win)；Linux 需 `curl` + `git`。
+
+| 方式 | 得到什么 | 安装桌面客户端？ |
+|------|----------|------------------|
+| **Setup.exe / Takton 客户端** | 桌面窗口 + 内嵌后端 | **是** |
+| 一行 `install.ps1` / `install.sh` | 源码 + venv + 后端服务 | **否**（用浏览器） |
+
 > **macOS** 无真机测试，不保证可用。更多方式见下文。
+
 
 ---
 
