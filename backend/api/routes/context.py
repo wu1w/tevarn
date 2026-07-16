@@ -355,6 +355,20 @@ async def get_system_layers(
         except Exception:
             pass
 
+    try:
+        from backend.agent.file_context import load_workspace_persona_bundle
+
+        persona_id, persona_ctx, _persona_meta = load_workspace_persona_bundle()
+        if persona_id and not identity:
+            identity = persona_id
+        if persona_ctx:
+            if context_files and context_files.strip():
+                context_files = persona_ctx + "\n\n" + context_files.strip()
+            else:
+                context_files = persona_ctx
+    except Exception:
+        pass
+
     model = getattr(settings, "llm_model", "") or ""
     parts = build_system_prompt(
         identity=identity,

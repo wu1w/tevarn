@@ -681,6 +681,15 @@ class NexusAgentLoop:
 
                     # 结束标记
                     if chunk.finish_reason:
+                        if chunk.finish_reason == "error" and not (accumulated_content or "").strip():
+                            if chunk.delta:
+                                accumulated_content = chunk.delta
+                            else:
+                                accumulated_content = (
+                                    "[LLM Error] 模型返回失败且无正文。"
+                                    "若使用 Kimi Plan/Kimi Code，请将模型设为 "
+                                    "kimi-for-coding 或 kimi-for-coding-highspeed（不要用 k3）。"
+                                )
                         break
 
                 if self._should_stop:

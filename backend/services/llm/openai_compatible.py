@@ -26,10 +26,37 @@ class OpenAICompatibleService(LLMService):
     def __init__(self, config=None):
         self.config = config or settings.get_llm_config()
         self.base_url = self.config.base_url.rstrip("/")
-        self.model = self.config.model
+        self.model = self._normalize_model_id(
+            getattr(self.config, "model", "") or "",
+            self.base_url,
+        )
         self.max_tokens = self.config.max_tokens
         self.temperature = getattr(self.config, "temperature", 0.7)
         self.api_key = getattr(self.config, "api_key", None)
+
+    @staticmethod
+    def _normalize_model_id(model: str, base_url: str) -> str:
+        """Kimi Code 仅接受 kimi-for-coding / kimi-for-coding-highspeed。"""
+        m = (model or "").strip()
+        b = (base_url or "").lower()
+        if "kimi.com/coding" in b or "api.kimi.com/coding" in b:
+            aliases = {
+                "k3": "kimi-for-coding",
+                "kimi-k3": "kimi-for-coding",
+                "kimi_k3": "kimi-for-coding",
+                "k3-highspeed": "kimi-for-coding-highspeed",
+                "k3_highspeed": "kimi-for-coding-highspeed",
+                "k3-hs": "kimi-for-coding-highspeed",
+            }
+            key = m.lower()
+            if key in aliases:
+                fixed = aliases[key]
+                logger.warning("Kimi Code model id %r mapped to %r", m, fixed)
+                return fixed
+            if m and m not in ("kimi-for-coding", "kimi-for-coding-highspeed"):
+                logger.warning("Kimi Code unexpected model %r; use kimi-for-coding", m)
+                return "kimi-for-coding"
+        return m
 
     def _get_headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -127,15 +154,34 @@ class OpenAICompatibleService(LLMService):
                         )
             except aiohttp.ClientResponseError as e:
                 logger.error(f"OpenAI-compatible chat error: status={e.status}, message='{e.message}', url='{e.request_info.url}'")
+
+                body = ""
                 try:
                     body = await e.response.text()
                     logger.error(f"Response body: {body[:2000]}")
-                except:
+                except Exception:
                     pass
-                yield LLMChunk(message_id=message_id, delta="", finish_reason="error")
+                if getattr(e, "status", None) in (429, 500, 502, 503, 504):
+                    raise
+                detail = (body or getattr(e, "message", "") or str(e)).strip()
+                if len(detail) > 800:
+                    detail = detail[:800] + "…"
+                hint = ""
+                url = str(getattr(getattr(e, "request_info", None), "url", "") or "")
+                if getattr(e, "status", None) == 400 and "kimi.com/coding" in url:
+                    hint = (
+                        " Kimi Code model 须为 kimi-for-coding / kimi-for-coding-highspeed"
+                        f"（当前 model={self.model!r}）。"
+                    )
+                status = getattr(e, "status", "error")
+                yield LLMChunk(
+                    message_id=message_id,
+                    delta=f"[LLM Error {status}] {detail}{hint}",
+                    finish_reason="error",
+                )
             except Exception as e:
                 logger.error(f"OpenAI-compatible chat error: {e}")
-                yield LLMChunk(message_id=message_id, delta="", finish_reason="error")
+                yield LLMChunk(message_id=message_id, delta=f"[LLM Error] {e}", finish_reason="error")
             return
 
         accumulated_tool_calls: dict[int, dict[str, Any]] = {}
@@ -265,18 +311,30 @@ class OpenAICompatibleService(LLMService):
 
         except aiohttp.ClientResponseError as e:
             logger.error(f"OpenAI-compatible chat error: status={e.status}, message='{e.message}', url='{e.request_info.url}'")
+            body = ""
             try:
                 body = await e.response.text()
                 logger.error(f"Response body: {body[:2000]}")
             except Exception:
                 pass
-            # 5xx/429 抛出让 agent 层重试；其它仍 yield error chunk
             if e.status in (429, 500, 502, 503, 504):
                 raise
-            yield LLMChunk(message_id=message_id, delta="", finish_reason="error")
+            detail = (body or e.message or "").strip()
+            if len(detail) > 800:
+                detail = detail[:800] + "…"
+            hint = ""
+            if e.status == 400 and "kimi.com/coding" in str(e.request_info.url):
+                hint = (
+                    " Kimi Code model 须为 kimi-for-coding / kimi-for-coding-highspeed"
+                    f"（当前 model={self.model!r}）。"
+                )
+            yield LLMChunk(
+                message_id=message_id,
+                delta=f"[LLM Error {e.status}] {detail or e.message}{hint}",
+                finish_reason="error",
+            )
         except Exception as e:
             logger.error(f"OpenAI-compatible chat error: {e}")
-            # 网络类错误抛出以便重试
             name = type(e).__name__
             if name in (
                 "ClientConnectorError",
@@ -286,7 +344,7 @@ class OpenAICompatibleService(LLMService):
                 "TimeoutError",
             ) or "timeout" in str(e).lower() or "connect" in str(e).lower():
                 raise
-            yield LLMChunk(message_id=message_id, delta="", finish_reason="error")
+            yield LLMChunk(message_id=message_id, delta=f"[LLM Error] {e}", finish_reason="error")
 
     async def chat_complete(
         self,

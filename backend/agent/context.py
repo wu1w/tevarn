@@ -104,6 +104,26 @@ class ContextManager:
             if parts:
                 user_system_prompt = "\n\n".join(parts)
 
+        # 持久人设：workspace IDENTITY/SOUL/CLAUDE/AGENTS.md（重启仍在）
+        try:
+            from backend.agent.file_context import load_workspace_persona_bundle
+
+            persona_id, persona_ctx, persona_meta = load_workspace_persona_bundle()
+            if persona_id and not identity:
+                identity = persona_id
+                logger.info(
+                    "Loaded workspace IDENTITY.md (%s chars) from %s",
+                    len(persona_id),
+                    persona_meta.get("identity"),
+                )
+            if persona_ctx:
+                if context_files and context_files.strip():
+                    context_files = persona_ctx + "\n\n" + context_files.strip()
+                else:
+                    context_files = persona_ctx
+        except Exception as e:
+            logger.warning("workspace persona load failed: %s", e)
+
         # 文件驱动记忆
         if not memory_block:
             try:
