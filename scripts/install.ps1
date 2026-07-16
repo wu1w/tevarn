@@ -1,4 +1,4 @@
-# Takton one-line installer for Windows (PowerShell)
+﻿# Takton one-line installer for Windows (PowerShell)
 # 小白整行粘贴：
 #   irm https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.ps1 | iex
 #
