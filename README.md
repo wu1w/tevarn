@@ -8,10 +8,18 @@
 
 ### Windows（推荐）
 
-PowerShell 一行安装并打开 **Takton** 客户端：
+PowerShell（建议管理员或普通用户均可）一行安装：
 
 ```powershell
-irm https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.ps1 | iex
+iex ((irm https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.ps1) -replace '^\uFEFF','')
+```
+
+> 说明：`-replace '^\uFEFF',''` 去掉 UTF-8 BOM，避免 Windows PowerShell 5.1 把首行注释误执行。
+
+若 CDN 缓存异常，可用 commit 固定地址：
+
+```powershell
+iex (irm https://raw.githubusercontent.com/wu1w/takton/e73ea04/scripts/install.ps1)
 ```
 
 或手动下载安装包：
