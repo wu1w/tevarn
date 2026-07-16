@@ -11,8 +11,8 @@ REPO="${TAKTON_REPO:-wu1w/takton}"
 if [[ "$REPO" =~ github.com[:/]([^/]+)/([^/.]+) ]]; then
   REPO="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
 fi
-TAG="${TAKTON_RELEASE_TAG:-v0.1.0}"
-ASSET="${TAKTON_APPIMAGE_ASSET:-Takton-0.1.0.AppImage}"
+TAG="${TAKTON_RELEASE_TAG:-v0.1.1}"
+ASSET="${TAKTON_APPIMAGE_ASSET:-Takton-0.1.1.AppImage}"
 NO_START="${TAKTON_NO_START:-0}"
 INSTALL_DIR="${TAKTON_HOME:-$HOME/.local/share/takton}"
 BIN_DIR="${TAKTON_BIN_DIR:-$HOME/.local/bin}"

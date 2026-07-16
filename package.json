@@ -1,6 +1,6 @@
 {
   "name": "takton",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Takton - 个人专属 Agent 终端",
   "author": "developer <developer@takton.dev>",
@@ -97,11 +97,15 @@
       "target": [
         {
           "target": "AppImage",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "deb",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "category": "Utility",
@@ -111,7 +115,11 @@
         {
           "from": "../.venv",
           "to": "backend/.venv",
-          "filter": ["**/*", "!**/__pycache__/**", "!**/*.pyc"]
+          "filter": [
+            "**/*",
+            "!**/__pycache__/**",
+            "!**/*.pyc"
+          ]
         }
       ]
     },
@@ -119,7 +127,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "public/icon.png",
@@ -146,7 +156,10 @@
       "target": [
         {
           "target": "zip",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         }
       ],
       "category": "public.app-category.utilities",
@@ -163,6 +176,9 @@
       "uninstallDisplayName": "Takton",
       "deleteAppDataOnUninstall": false
     },
-    "electronLanguages": ["en-US", "zh-CN"]
+    "electronLanguages": [
+      "en-US",
+      "zh-CN"
+    ]
   }
 }

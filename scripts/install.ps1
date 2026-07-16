@@ -13,8 +13,8 @@ $Repo = if ($env:TAKTON_REPO) { $env:TAKTON_REPO } else { "wu1w/takton" }
 if ($Repo -match "github\.com[:/](?<o>[^/]+)/(?<n>[^/.]+)") {
   $Repo = "$($Matches.o)/$($Matches.n)"
 }
-$Tag = if ($env:TAKTON_RELEASE_TAG) { $env:TAKTON_RELEASE_TAG } else { "v0.1.0" }
-$AssetName = if ($env:TAKTON_SETUP_ASSET) { $env:TAKTON_SETUP_ASSET } else { "Takton-Setup-0.1.0.exe" }
+$Tag = if ($env:TAKTON_RELEASE_TAG) { $env:TAKTON_RELEASE_TAG } else { "v0.1.1" }
+$AssetName = if ($env:TAKTON_SETUP_ASSET) { $env:TAKTON_SETUP_ASSET } else { "Takton-Setup-0.1.1.exe" }
 $NoStart = $env:TAKTON_NO_START -eq "1"
 
 function Write-Info([string]$m) { Write-Host "[takton] $m" }

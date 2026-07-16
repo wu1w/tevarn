@@ -103,6 +103,26 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS evo_observations (
+            id TEXT PRIMARY KEY,
+            session_id TEXT,
+            fingerprint TEXT NOT NULL,
+            tools_json TEXT,
+            user_input TEXT,
+            final_content TEXT,
+            failure_codes TEXT,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_evo_obs_fp ON evo_observations(fingerprint);
+
+        CREATE TABLE IF NOT EXISTS evo_clusters (
+            fingerprint TEXT PRIMARY KEY,
+            hit_count INTEGER NOT NULL DEFAULT 0,
+            sample_input TEXT,
+            skill_created TEXT,
+            updated_at TEXT NOT NULL
+        );
         """
     )
 
@@ -501,3 +521,129 @@ def _asset_row(row: sqlite3.Row) -> dict[str, Any]:
         "last_score": row["last_score"],
         "meta": json.loads(row["meta_json"] or "{}"),
     }
+
+
+def patch_asset_meta(asset_id: str, meta: dict[str, Any]) -> dict[str, Any] | None:
+    with _db() as conn:
+        conn.execute(
+            "UPDATE evo_assets SET meta_json=?, updated_at=? WHERE id=?",
+            (json.dumps(meta or {}, ensure_ascii=False), _utc(), asset_id),
+        )
+    return get_asset(asset_id)
+
+
+def find_similar_asset(
+    *,
+    kind: str,
+    name: str,
+    summary: str,
+    threshold: float = 0.72,
+) -> dict[str, Any] | None:
+    """Return latest auto asset with similar name/summary for dedupe/patch."""
+    from backend.evolution.improver import text_similarity
+
+    candidates = list_assets(kind=kind, source="auto", limit=100)
+    best = None
+    best_s = 0.0
+    for a in candidates:
+        s1 = text_similarity(name, a.get("name") or "")
+        s2 = text_similarity(summary, a.get("summary") or "")
+        s = max(s1, s2 * 0.9)
+        if s > best_s:
+            best_s = s
+            best = a
+    if best and best_s >= threshold:
+        best = dict(best)
+        best["_similarity"] = best_s
+        return best
+    return None
+
+
+def add_observation(
+    *,
+    session_id: str,
+    fingerprint: str,
+    tools: list[dict[str, Any]],
+    user_input: str = "",
+    final_content: str = "",
+    failure_codes: list[str] | None = None,
+) -> str:
+    oid = str(uuid.uuid4())
+    with _db() as conn:
+        conn.execute(
+            """INSERT INTO evo_observations
+               (id, session_id, fingerprint, tools_json, user_input, final_content, failure_codes, created_at)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (
+                oid,
+                session_id,
+                fingerprint,
+                json.dumps(tools, ensure_ascii=False)[:20000],
+                (user_input or "")[:1000],
+                (final_content or "")[:2000],
+                json.dumps(failure_codes or [], ensure_ascii=False),
+                _utc(),
+            ),
+        )
+    return oid
+
+
+def bump_cluster(
+    fingerprint: str,
+    *,
+    session_id: str = "",
+    sample_input: str = "",
+) -> dict[str, Any]:
+    now = _utc()
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT * FROM evo_clusters WHERE fingerprint=?", (fingerprint,)
+        ).fetchone()
+        if row:
+            conn.execute(
+                """UPDATE evo_clusters SET hit_count=hit_count+1, updated_at=?,
+                   sample_input=COALESCE(NULLIF(?,''), sample_input) WHERE fingerprint=?""",
+                (now, sample_input or "", fingerprint),
+            )
+        else:
+            conn.execute(
+                """INSERT INTO evo_clusters (fingerprint, hit_count, sample_input, skill_created, updated_at)
+                   VALUES (?,?,?,?,?)""",
+                (fingerprint, 1, sample_input or "", None, now),
+            )
+        row = conn.execute(
+            "SELECT * FROM evo_clusters WHERE fingerprint=?", (fingerprint,)
+        ).fetchone()
+        return {
+            "fingerprint": row["fingerprint"],
+            "hit_count": row["hit_count"],
+            "sample_input": row["sample_input"],
+            "skill_created": row["skill_created"],
+            "updated_at": row["updated_at"],
+        }
+
+
+def mark_cluster_skill(fingerprint: str, skill_name: str) -> None:
+    with _db() as conn:
+        conn.execute(
+            "UPDATE evo_clusters SET skill_created=?, updated_at=? WHERE fingerprint=?",
+            (skill_name, _utc(), fingerprint),
+        )
+
+
+def list_clusters(limit: int = 50) -> list[dict[str, Any]]:
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM evo_clusters ORDER BY hit_count DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [
+            {
+                "fingerprint": r["fingerprint"],
+                "hit_count": r["hit_count"],
+                "sample_input": r["sample_input"],
+                "skill_created": r["skill_created"],
+                "updated_at": r["updated_at"],
+            }
+            for r in rows
+        ]
+

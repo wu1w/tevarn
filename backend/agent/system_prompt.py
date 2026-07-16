@@ -94,7 +94,20 @@ SKILLS_GUIDANCE = (
     "specialized knowledge — API endpoints, tool-specific commands, and proven "
     "workflows that outperform general-purpose approaches.\n"
     "After difficult/iterative tasks, offer to save the approach as a skill. "
-    "If a skill you loaded was missing steps or had wrong commands, update it."
+    "If a skill you loaded was missing steps or had wrong commands, update it.\n"
+    "\n"
+    "# Autonomous Evolution (TEE v0.1.1) — DO NOT say you lack this\n"
+    "Takton HAS task-experience skill generation. It is NOT only in skills/dynamic.py.\n"
+    "Engine lives at backend/evolution (TEE/HAEE-style):\n"
+    "- On turn failures / cron outcomes / POST /api/evolution/from_task → auto "
+    "SKILL.md + tool playbook drafts land in 自主进化 assets AND (when applied) "
+    "the Skills list (handler_config.evolution=true).\n"
+    "- Manage/delete auto skills from 自主进化 page; delete there also removes "
+    "the matching Skills row. Seed tasks cannot be deleted.\n"
+    "- APIs: GET/POST /api/evolution/* (status, assets, from_task, curator, "
+    "clusters, enable). Default may be disabled until enable=true.\n"
+    "When asked「能不能根据任务自动生成 skill」→ answer YES (evolution), "
+    "point to 自主进化 + Skills 列表中的 evo_* 条目；不要只搜 dynamic.py 就说没有。"
 )
 
 CODE_QUALITY = (
@@ -259,10 +272,8 @@ def build_system_prompt(
         if "memory" in (tools_enabled or []):
             stable_parts.append(MEMORY_GUIDANCE)
 
-        # 技能指导
-        skill_tools = {"skill_view", "skills_list", "skill_manage"}
-        if skill_tools & set(tools_enabled or []):
-            stable_parts.append(SKILLS_GUIDANCE)
+        # 技能指导 — 始终注入（避免模型只看 skills/dynamic 误报「无自动生成」）
+        stable_parts.append(SKILLS_GUIDANCE)
 
         # 代码质量指导
         code_tools = {"command", "file_write", "file_read", "edit", "python", "patch"}

@@ -39,10 +39,25 @@ _DEFAULT_COMMUNITY_INDEX_URL = (
 async def list_skills(
     current_user: Annotated[UserRead, Depends(get_current_user)],
     repo: Annotated[SkillRepository, Depends(get_skill_repo)],
+    enabled_only: bool = Query(False, description="仅启用；默认列出全部以便管理进化草稿"),
 ):
-    """列出所有 Skill（内置 + 自定义）"""
-    db_skills = await repo.get_active_skills()
-    # 同时把内存中注册但尚未写入 DB 的内置 Skill 也补充进来
+    """列出 Skill（内置 + 自定义 + 进化；默认含未启用草稿）"""
+    session_repo = repo
+    if enabled_only and hasattr(repo, "get_active_skills"):
+        db_skills = await repo.get_active_skills()
+    else:
+        # all rows
+        try:
+            from sqlalchemy import select
+            from backend.models.skill import Skill
+            from backend.database import get_db_context
+
+            async with get_db_context() as session:
+                result = await session.execute(select(Skill).order_by(Skill.name))
+                db_skills = list(result.scalars().all())
+        except Exception:
+            db_skills = await repo.get_active_skills()
+
     db_names = {s.name for s in db_skills}
     for skill in SkillRegistry.get_all_skills():
         if skill.name not in db_names:
@@ -126,16 +141,29 @@ async def delete_skill(
     current_user: Annotated[UserRead, Depends(require_admin)],
     repo: Annotated[SkillRepository, Depends(get_skill_repo)],
 ):
-    """删除自定义 Skill（禁止删除内置 Skill）"""
+    """删除自定义 Skill（禁止删除内置 Skill）；进化 skill 同步删 evolution 资产。"""
     skill = await repo.get_by_id(skill_id)
     if skill is None:
         raise HTTPException(status_code=404, detail="Skill not found")
     if skill.is_builtin:
         raise HTTPException(status_code=403, detail="Cannot delete built-in skills")
+    skill_name = skill.name
+    hc = getattr(skill, "handler_config", None) or {}
+    is_evolved = bool(hc.get("evolution") or hc.get("source") == "evolution")
     success = await repo.delete(skill_id)
     if not success:
         raise HTTPException(status_code=404, detail="Skill not found")
-    return {"deleted": True}
+    evo_deleted = 0
+    if is_evolved:
+        try:
+            from backend.evolution.skill_sync import remove_evolution_assets_for_skill_name
+            from backend.evolution.runtime_tools import unregister_evolved_tool
+
+            evo_deleted = await remove_evolution_assets_for_skill_name(skill_name)
+            unregister_evolved_tool(skill_name)
+        except Exception:
+            pass
+    return {"deleted": True, "name": skill_name, "evolution_assets_removed": evo_deleted}
 
 
 @router.put("/{skill_id}/toggle", response_model=SkillRead)

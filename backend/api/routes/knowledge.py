@@ -208,6 +208,8 @@ async def index_document(
         text=content,
         user_id=doc.user_id or current_user.id,
         source=doc.source or "",
+        skip_wiki=(doc.source == "builtin-seed"),
+        replace_chunks=True,
     )
     if not result.get("ok"):
         raise HTTPException(status_code=502, detail=result.get("message") or "索引失败")
@@ -479,6 +481,8 @@ async def _bg_rebuild_index(collection: str, user_id: str) -> None:
                 text=content,
                 user_id=doc.user_id,
                 source=doc.source or "",
+                skip_wiki=(doc.source == "builtin-seed"),
+                replace_chunks=True,
             )
             if result.get("ok"):
                 success += 1

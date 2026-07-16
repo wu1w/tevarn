@@ -224,5 +224,18 @@ class AsyncChunkRepository(AsyncBaseRepository, ChunkRepository):
         finally:
             await self._close_session(session)
 
+    async def delete_by_document(self, doc_id: uuid.UUID) -> int:
+        """Remove all chunks for a document (before re-index)."""
+        session = await self._get_session()
+        try:
+            result = await session.execute(select(Chunk).where(Chunk.document_id == doc_id))
+            rows = list(result.scalars().all())
+            for ch in rows:
+                await session.delete(ch)
+            await self._maybe_commit(session)
+            return len(rows)
+        finally:
+            await self._close_session(session)
+
     async def update_vector_id(self, chunk_id: uuid.UUID, vector_id: str) -> Chunk | None:
         return await self.update(chunk_id, {"vector_id": vector_id})

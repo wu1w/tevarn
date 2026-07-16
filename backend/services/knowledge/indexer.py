@@ -136,10 +136,14 @@ async def index_document_text(
     text: str,
     user_id: uuid.UUID | None = None,
     source: str = "",
+    skip_wiki: bool = False,
+    replace_chunks: bool = True,
 ) -> dict[str, Any]:
     """
     对文档正文建索引：切块、embedding、写 DB chunks + Qdrant。
     向量栈未就绪时优雅失败（本地模式默认）。
+    skip_wiki: 预置 seed 等场景跳过 Wiki 抽取，避免长时间卡住。
+    replace_chunks: 重建前删除该文档旧 chunks。
     """
     from backend.services.rag.capability import get_rag_status
 
@@ -169,11 +173,17 @@ async def index_document_text(
         return {"ok": False, "message": "文档内容为空，无法索引", "chunks": 0}
 
     try:
+        if replace_chunks:
+            try:
+                n_del = await chunk_repo.delete_by_document(document_id)
+                if n_del:
+                    logger.info("Replaced %s old chunks for doc %s", n_del, document_id)
+            except Exception as e:
+                logger.warning("delete old chunks failed: %s", e)
+
         embedder = EmbeddingServiceFactory.get_service()
-        # 智能批量大小：根据维度动态选择
         from backend.services.embedding.dimension import DimensionManager
 
-        # 先用默认 batch 做第一轮，获取维度后再调整
         vectors: list[list[float]] = []
         first_batch = True
         batch = DimensionManager.DEFAULT_BATCH_SIZE
@@ -185,16 +195,13 @@ async def index_document_text(
                 raise RuntimeError("Embedding 返回数量与文本块不一致")
             vectors.extend(vecs)
 
-            # 第一轮后获取维度，调整 batch size
             if first_batch and vectors:
                 dim = len(vectors[0])
                 smart_batch = DimensionManager.get_batch_size(dim)
                 if smart_batch != batch:
-                    logger.info(f"Smart batch: dim={dim} → batch={smart_batch} (was {batch})")
+                    logger.info("Smart batch: dim=%s → batch=%s (was %s)", dim, smart_batch, batch)
                     batch = smart_batch
                 first_batch = False
-
-                # 更新维度元数据
                 await DimensionManager.update_on_embed_success(dim)
 
         dim = len(vectors[0]) if vectors else 0
@@ -206,7 +213,6 @@ async def index_document_text(
             await doc_repo.update_status(document_id, "error")
             return {"ok": False, "message": col.get("message") or "Qdrant 不可用", "chunks": 0}
 
-        # 清理旧 chunks（简单：不删旧向量，新 point id 覆盖同 uuid5）
         points = []
         created = 0
         for idx, (content, vec) in enumerate(zip(pieces, vectors)):
@@ -247,15 +253,13 @@ async def index_document_text(
                 "chunks": created,
             }
 
-        # 更新 chunks_count
         await doc_repo.update(
             document_id,
             {"status": "indexed", "chunks_count": created},
         )
 
-        # 文档内容足够长时，自动抽取 Wiki 实体关系
         wiki_extracted: dict[str, Any] = {"entities": 0, "relations": 0}
-        if len(text.strip()) >= 300:
+        if (not skip_wiki) and len(text.strip()) >= 300:
             try:
                 from backend.services.wiki.extractor import extract_and_merge
 
@@ -277,31 +281,43 @@ async def index_document_text(
                             if key in existing_by_name:
                                 name_to_entity[ent.name] = existing_by_name[key]
                                 continue
-                            entity = await uow.wiki_entities.create({
-                                "name": ent.name,
-                                "entity_type": ent.entity_type,
-                                "description": ent.description,
-                                "aliases": ent.aliases,
-                                "meta": {"source": "auto_extraction", "document_id": str(document_id)},
-                            })
+                            entity = await uow.wiki_entities.create(
+                                {
+                                    "name": ent.name,
+                                    "entity_type": ent.entity_type,
+                                    "description": ent.description,
+                                    "aliases": ent.aliases,
+                                    "meta": {
+                                        "source": "auto_extraction",
+                                        "document_id": str(document_id),
+                                    },
+                                }
+                            )
                             existing_by_name[key] = entity
                             name_to_entity[ent.name] = entity
 
                         for rel in extraction.relations:
-                            source = name_to_entity.get(rel.source_name)
-                            target = name_to_entity.get(rel.target_name)
-                            if not source or not target or source.id == target.id:
+                            source_e = name_to_entity.get(rel.source_name)
+                            target_e = name_to_entity.get(rel.target_name)
+                            if not source_e or not target_e or source_e.id == target_e.id:
                                 continue
-                            existing_rel = await uow.wiki_relations.get_between(source.id, target.id)
+                            existing_rel = await uow.wiki_relations.get_between(
+                                source_e.id, target_e.id
+                            )
                             if existing_rel:
                                 continue
-                            await uow.wiki_relations.create({
-                                "source_id": source.id,
-                                "target_id": target.id,
-                                "relation_type": rel.relation_type,
-                                "evidence": rel.evidence[:512],
-                                "meta": {"source": "auto_extraction", "document_id": str(document_id)},
-                            })
+                            await uow.wiki_relations.create(
+                                {
+                                    "source_id": source_e.id,
+                                    "target_id": target_e.id,
+                                    "relation_type": rel.relation_type,
+                                    "evidence": rel.evidence[:512],
+                                    "meta": {
+                                        "source": "auto_extraction",
+                                        "document_id": str(document_id),
+                                    },
+                                }
+                            )
                             wiki_extracted["relations"] += 1
 
                     wiki_extracted["entities"] = len(extraction.entities)
@@ -323,3 +339,4 @@ async def index_document_text(
         except Exception:
             pass
         return {"ok": False, "message": f"索引失败: {e}", "chunks": 0}
+
