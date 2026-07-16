@@ -340,21 +340,40 @@ class ManageKnowledge(BaseTool):
 
 
 class ManageCron(BaseTool):
-    """定时任务管理工具（合并 create/list/update/delete）"""
+    """定时任务管理工具 — 对齐 cron_jobs(workflow_id) 与调度器"""
 
     def __init__(self):
         super().__init__(
             name="manage_cron",
-            description="管理定时任务。action: create(创建), list(列出), update(更新), delete(删除), toggle(启用/禁用)",
+            description=(
+                "管理定时任务（绑定工作流按 schedule 执行）。"
+                "action: create/list/update/delete/toggle。"
+                "create 需要 name + schedule，建议提供 workflow_id（工作流 UUID）；"
+                "也可用 workflow_name 按名称匹配。"
+            ),
             parameters={
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["create", "list", "update", "delete", "toggle"], "description": "操作类型"},
+                    "action": {
+                        "type": "string",
+                        "enum": ["create", "list", "update", "delete", "toggle"],
+                        "description": "操作类型",
+                    },
                     "job_id": {"type": "string", "description": "update/delete/toggle 时: 任务 ID"},
-                    "name": {"type": "string", "description": "create 时: 任务名称"},
-                    "schedule": {"type": "string", "description": "create/update 时: Cron 表达式或描述，如 '0 9 * * *' 或 '每天9点'"},
-                    "command": {"type": "string", "description": "create/update 时: 执行命令或描述"},
-                    "enabled": {"type": "boolean", "description": "create/update 时: 是否启用"},
+                    "name": {"type": "string", "description": "create/update: 任务名称"},
+                    "schedule": {
+                        "type": "string",
+                        "description": "create/update: Cron 表达式，如 '0 9 * * *' 或 'every 1h'",
+                    },
+                    "workflow_id": {
+                        "type": "string",
+                        "description": "create/update: 绑定的工作流 UUID",
+                    },
+                    "workflow_name": {
+                        "type": "string",
+                        "description": "create/update: 按名称查找工作流（workflow_id 优先）",
+                    },
+                    "enabled": {"type": "boolean", "description": "create/update: 是否启用"},
                 },
                 "required": ["action"],
             },
@@ -362,100 +381,206 @@ class ManageCron(BaseTool):
             risk_level=ToolRiskLevel.MEDIUM,
         )
 
+    async def _resolve_workflow_id(self, kwargs: dict[str, Any]) -> Any | None:
+        import uuid as uuid_mod
+
+        from backend.repositories.workflow_repo import AsyncWorkflowRepository
+
+        raw = (kwargs.get("workflow_id") or "").strip()
+        if raw:
+            try:
+                return uuid_mod.UUID(raw)
+            except ValueError:
+                raise ValueError(f"workflow_id 不是合法 UUID: {raw}")
+
+        name = (kwargs.get("workflow_name") or kwargs.get("command") or "").strip()
+        # command 兼容旧参数：若看起来像 UUID 当 id，否则当 workflow 名
+        if not name:
+            return None
+        try:
+            return uuid_mod.UUID(name)
+        except ValueError:
+            pass
+
+        repo = AsyncWorkflowRepository()
+        # list_by_status("") → 全部
+        try:
+            wfs = await repo.list_by_status("")
+        except Exception:
+            wfs = []
+        name_l = name.lower()
+        for w in wfs or []:
+            if str(getattr(w, "name", "") or "").lower() == name_l:
+                return w.id
+        for w in wfs or []:
+            if name_l in str(getattr(w, "name", "") or "").lower():
+                return w.id
+        raise ValueError(f"找不到工作流: {name}")
+
+    def _job_to_dict(self, job: Any) -> dict[str, Any]:
+        return {
+            "id": str(job.id),
+            "name": job.name,
+            "schedule": job.schedule,
+            "workflow_id": str(job.workflow_id) if job.workflow_id else None,
+            "enabled": bool(job.enabled),
+            "last_status": getattr(job, "last_status", None),
+            "last_error": getattr(job, "last_error", None),
+            "last_run_at": job.last_run_at.isoformat() if getattr(job, "last_run_at", None) else None,
+            "next_run_at": job.next_run_at.isoformat() if getattr(job, "next_run_at", None) else None,
+        }
+
+    def _notify_scheduler(self, job: Any | None, *, deleted_id: str | None = None) -> None:
+        try:
+            from backend.services.cron_scheduler import scheduler
+
+            if deleted_id:
+                scheduler._unschedule_job(str(deleted_id))
+            elif job is not None:
+                scheduler.reschedule(job)
+        except Exception as e:
+            logger.warning("cron scheduler notify failed: %s", e)
+
     async def execute(self, action: str, **kwargs: Any) -> ToolResult:
-        from backend.database import get_db_context
-        from sqlalchemy import text
+        import uuid as uuid_mod
+
+        from backend.repositories.cron_repo import AsyncCronJobRepository
+        from backend.services.cron_scheduler import compute_next_run
+
+        repo = AsyncCronJobRepository()
 
         if action == "create":
-            name = kwargs.get("name", "")
-            schedule = kwargs.get("schedule", "")
-            command = kwargs.get("command", "")
-            if not all([name, schedule, command]):
-                return ToolResult(success=False, data={}, message="create 需要提供 name, schedule, command")
+            name = (kwargs.get("name") or "").strip()
+            schedule = (kwargs.get("schedule") or "").strip()
+            if not name or not schedule:
+                return ToolResult(
+                    success=False,
+                    data={},
+                    message="create 需要提供 name, schedule；建议再提供 workflow_id 或 workflow_name",
+                )
             try:
-                async with get_db_context() as db:
-                    result = await db.execute(
-                        text("INSERT INTO cron_jobs (name, schedule, command, enabled) VALUES (:name, :schedule, :command, :enabled)"),
-                        {"name": name, "schedule": schedule, "command": command, "enabled": kwargs.get("enabled", True)}
-                    )
-                    await db.commit()
-                    job_id = result.lastrowid
-                return ToolResult(success=True, data={"job_id": job_id}, message=f"✅ 定时任务 `{name}` 已创建")
+                workflow_id = await self._resolve_workflow_id(kwargs)
+            except ValueError as e:
+                return ToolResult(success=False, data={}, message=f"❌ {e}")
+
+            enabled = bool(kwargs.get("enabled", True))
+            next_run = compute_next_run(schedule) if enabled else None
+            try:
+                job = await repo.create(
+                    {
+                        "name": name,
+                        "schedule": schedule,
+                        "workflow_id": workflow_id,
+                        "enabled": enabled,
+                        "last_status": "pending",
+                        "next_run_at": next_run,
+                    }
+                )
+                self._notify_scheduler(job)
+                return ToolResult(
+                    success=True,
+                    data=self._job_to_dict(job),
+                    message=f"✅ 定时任务 `{name}` 已创建"
+                    + ("" if workflow_id else "（未绑定工作流，启用后也不会执行业务）"),
+                )
             except Exception as e:
                 return ToolResult(success=False, data={}, message=f"❌ 创建失败: {e}")
 
         elif action == "list":
             try:
-                async with get_db_context() as db:
-                    result = await db.execute(text("SELECT * FROM cron_jobs ORDER BY created_at DESC"))
-                    rows = result.mappings().all()
-                    jobs = [dict(r) for r in rows]
+                jobs = await repo.list_all()
+                data = [self._job_to_dict(j) for j in jobs]
                 return ToolResult(
                     success=True,
-                    data={"jobs": jobs, "count": len(jobs)},
-                    message=f"共 {len(jobs)} 个定时任务"
+                    data={"jobs": data, "count": len(data)},
+                    message=f"共 {len(data)} 个定时任务",
                 )
             except Exception as e:
                 return ToolResult(success=False, data={}, message=f"❌ 列出失败: {e}")
 
         elif action == "update":
-            job_id = kwargs.get("job_id", "")
+            job_id = (kwargs.get("job_id") or "").strip()
             if not job_id:
                 return ToolResult(success=False, data={}, message="update 需要提供 job_id")
             try:
-                updates = []
-                params: dict[str, Any] = {"job_id": job_id}
-                if "schedule" in kwargs:
-                    updates.append("schedule = :schedule")
-                    params["schedule"] = kwargs["schedule"]
-                if "command" in kwargs:
-                    updates.append("command = :command")
-                    params["command"] = kwargs["command"]
-                if "enabled" in kwargs:
-                    updates.append("enabled = :enabled")
-                    params["enabled"] = kwargs["enabled"]
-                if "name" in kwargs:
-                    updates.append("name = :name")
-                    params["name"] = kwargs["name"]
-                if not updates:
-                    return ToolResult(success=False, data={}, message="update 至少需要提供一项更新")
-                async with get_db_context() as db:
-                    await db.execute(
-                        text(f"UPDATE cron_jobs SET {', '.join(updates)} WHERE id = :job_id"),
-                        params
-                    )
-                    await db.commit()
-                return ToolResult(success=True, data={"job_id": job_id}, message=f"✅ 任务 `{job_id}` 已更新")
+                jid = uuid_mod.UUID(job_id)
+            except ValueError:
+                return ToolResult(success=False, data={}, message="job_id 不是合法 UUID")
+
+            patch: dict[str, Any] = {}
+            if "name" in kwargs and kwargs["name"] is not None:
+                patch["name"] = str(kwargs["name"]).strip()
+            if "schedule" in kwargs and kwargs["schedule"] is not None:
+                patch["schedule"] = str(kwargs["schedule"]).strip()
+            if "enabled" in kwargs and kwargs["enabled"] is not None:
+                patch["enabled"] = bool(kwargs["enabled"])
+            if any(k in kwargs for k in ("workflow_id", "workflow_name", "command")):
+                try:
+                    patch["workflow_id"] = await self._resolve_workflow_id(kwargs)
+                except ValueError as e:
+                    return ToolResult(success=False, data={}, message=f"❌ {e}")
+            if not patch:
+                return ToolResult(success=False, data={}, message="update 至少需要提供一项更新")
+
+            if "schedule" in patch or patch.get("enabled") is True:
+                sched = patch.get("schedule")
+                if sched is None:
+                    existing = await repo.get_by_id(jid)
+                    sched = existing.schedule if existing else None
+                if sched and patch.get("enabled", True):
+                    patch["next_run_at"] = compute_next_run(sched)
+
+            try:
+                job = await repo.update(jid, patch)
+                if job is None:
+                    return ToolResult(success=False, data={}, message="任务不存在")
+                self._notify_scheduler(job)
+                return ToolResult(
+                    success=True,
+                    data=self._job_to_dict(job),
+                    message=f"✅ 任务 `{job_id}` 已更新",
+                )
             except Exception as e:
                 return ToolResult(success=False, data={}, message=f"❌ 更新失败: {e}")
 
         elif action == "delete":
-            job_id = kwargs.get("job_id", "")
+            job_id = (kwargs.get("job_id") or "").strip()
             if not job_id:
                 return ToolResult(success=False, data={}, message="delete 需要提供 job_id")
             try:
-                async with get_db_context() as db:
-                    await db.execute(text("DELETE FROM cron_jobs WHERE id = :job_id"), {"job_id": job_id})
-                    await db.commit()
+                jid = uuid_mod.UUID(job_id)
+                ok = await repo.delete(jid)
+                if not ok:
+                    return ToolResult(success=False, data={}, message="任务不存在")
+                self._notify_scheduler(None, deleted_id=job_id)
                 return ToolResult(success=True, data={"job_id": job_id}, message=f"✅ 任务 `{job_id}` 已删除")
+            except ValueError:
+                return ToolResult(success=False, data={}, message="job_id 不是合法 UUID")
             except Exception as e:
                 return ToolResult(success=False, data={}, message=f"❌ 删除失败: {e}")
 
         elif action == "toggle":
-            job_id = kwargs.get("job_id", "")
+            job_id = (kwargs.get("job_id") or "").strip()
             if not job_id:
                 return ToolResult(success=False, data={}, message="toggle 需要提供 job_id")
             try:
-                async with get_db_context() as db:
-                    result = await db.execute(
-                        text("UPDATE cron_jobs SET enabled = NOT enabled WHERE id = :job_id RETURNING enabled"),
-                        {"job_id": job_id}
-                    )
-                    row = result.mappings().first()
-                    await db.commit()
-                    enabled = row["enabled"] if row else None
-                return ToolResult(success=True, data={"job_id": job_id, "enabled": enabled}, message=f"✅ 任务 `{job_id}` 已{'启用' if enabled else '禁用'}"
+                jid = uuid_mod.UUID(job_id)
+                job = await repo.get_by_id(jid)
+                if job is None:
+                    return ToolResult(success=False, data={}, message="任务不存在")
+                new_enabled = not bool(job.enabled)
+                patch: dict[str, Any] = {"enabled": new_enabled}
+                if new_enabled:
+                    patch["next_run_at"] = compute_next_run(job.schedule)
+                job = await repo.update(jid, patch)
+                self._notify_scheduler(job)
+                return ToolResult(
+                    success=True,
+                    data=self._job_to_dict(job) if job else {"job_id": job_id, "enabled": new_enabled},
+                    message=f"✅ 任务 `{job_id}` 已{'启用' if new_enabled else '禁用'}",
                 )
+            except ValueError:
+                return ToolResult(success=False, data={}, message="job_id 不是合法 UUID")
             except Exception as e:
                 return ToolResult(success=False, data={}, message=f"❌ 切换失败: {e}")
 
