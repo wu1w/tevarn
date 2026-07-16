@@ -15,13 +15,15 @@ irm https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.ps1 | iex
 **Linux：**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.sh | tr -d '' | bash```
+curl -fsSL https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.sh | sed 's/$//' | bash
+```
 
 > 装好后打开 `http://127.0.0.1:8090`。Windows 需已装 [Git](https://git-scm.com/download/win)；Linux 需 `curl` + `git`。  
 > **macOS** 无真机测试，不保证可用。更多方式见下文。
 
 
 ---
+
 
 > **平台支持：** Windows、Linux 为主要支持目标。**macOS 因无 Mac 测试机，脚本仅实验性提供，不保证可用。**
 
@@ -130,13 +132,13 @@ sudo apt install -y curl git
 
 ```bash
 # 推荐：过滤 CRLF，避免 bash 报「pipefail 无效选项」
-curl -fsSL https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.sh | tr -d '' | bash
+curl -fsSL https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.sh | sed 's/$//' | bash
 ```
 
 若 `raw.githubusercontent.com` 的 `main` 缓存仍是旧文件，可钉死提交：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/wu1w/takton/dda6eaf/scripts/install.sh | tr -d '' | bash
+curl -fsSL https://raw.githubusercontent.com/wu1w/takton/dda6eaf/scripts/install.sh | sed 's/$//' | bash
 ```
 
 ### 装好后
@@ -150,7 +152,7 @@ takton start          # 若已写入 PATH
 ~/.takton/bin/takton start
 
 # 只安装不启动
-TAKTON_NO_START=1 curl -fsSL https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.sh | tr -d '' | bash
+TAKTON_NO_START=1 curl -fsSL https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.sh | sed 's/$//' | bash
 ```
 
 ### 可选环境变量
