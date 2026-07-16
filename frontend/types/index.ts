@@ -215,9 +215,10 @@ export interface CronJob {
   user_id: string | null;
   name: string;
   schedule: string;
-  command: string;
+  /** 绑定的工作流；调度器按此执行 */
+  workflow_id: string | null;
   enabled: boolean;
-  last_status: 'pending' | 'success' | 'failed';
+  last_status: 'pending' | 'success' | 'failed' | string;
   last_error: string | null;
   last_run_at: string | null;
   next_run_at: string | null;

@@ -62,7 +62,22 @@ async def create_cron_job(
     await _validate_workflow_id(data.workflow_id, workflow_repo, current_user)
     payload = data.model_dump()
     payload["user_id"] = current_user.id
-    return await repo.create(payload)
+    # 预计算 next_run_at
+    try:
+        from backend.services.cron_scheduler import compute_next_run
+
+        if payload.get("enabled", True):
+            payload["next_run_at"] = compute_next_run(payload.get("schedule") or "")
+    except Exception:
+        pass
+    job = await repo.create(payload)
+    try:
+        from backend.services.cron_scheduler import scheduler
+
+        scheduler.reschedule(job)
+    except Exception:
+        pass
+    return job
 
 
 @router.get("/{cron_id}", response_model=CronJobRead)
@@ -95,9 +110,25 @@ async def update_cron_job(
     if not _is_job_owner_or_admin(job, current_user):
         raise HTTPException(status_code=403, detail="Access denied")
     await _validate_workflow_id(data.workflow_id, workflow_repo, current_user)
-    job = await repo.update(cron_id, data.model_dump(exclude_unset=True))
+    patch = data.model_dump(exclude_unset=True)
+    try:
+        from backend.services.cron_scheduler import compute_next_run
+
+        sched = patch.get("schedule", job.schedule)
+        enabled = patch.get("enabled", job.enabled)
+        if enabled and ("schedule" in patch or "enabled" in patch):
+            patch["next_run_at"] = compute_next_run(sched)
+    except Exception:
+        pass
+    job = await repo.update(cron_id, patch)
     if job is None:
         raise HTTPException(status_code=404, detail="Cron job not found")
+    try:
+        from backend.services.cron_scheduler import scheduler
+
+        scheduler.reschedule(job)
+    except Exception:
+        pass
     return job
 
 
@@ -132,4 +163,10 @@ async def delete_cron_job(
     success = await repo.delete(cron_id)
     if not success:
         raise HTTPException(status_code=404, detail="Cron job not found")
+    try:
+        from backend.services.cron_scheduler import scheduler
+
+        scheduler._unschedule_job(str(cron_id))
+    except Exception:
+        pass
     return {"deleted": True}
