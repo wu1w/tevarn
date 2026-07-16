@@ -15,9 +15,9 @@ VENV="$TAKTON_HOME/venv"
 SRC="$TAKTON_HOME/src"
 TOOLS="$TAKTON_HOME/tools"
 
-bold() { printf '\033[1m%s\033[0m\n' "$*"; }
-info() { printf '[takton] %s\n' "$*"; }
-ok()   { printf '[takton] ✓ %s\n' "$*"; }
+bold() { printf '\033[1m%s\033[0m\n' "$*" >&2; }
+info() { printf '[takton] %s\n' "$*" >&2; }
+ok()   { printf '[takton] ✓ %s\n' "$*" >&2; }
 err()  { printf '[takton] ERROR: %s\n' "$*" >&2; }
 
 need_cmd() {
