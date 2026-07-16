@@ -35,12 +35,13 @@ need_cmd() {
 }
 
 pick_python() {
-  for c in python3.12 python3.11 python3.10 python3; do
+  # Prefer 3.11–3.13; skip 3.14+ until wheels mature (pydantic-core etc.)
+  for c in python3.12 python3.11 python3.13 python3.10 python3; do
     if command -v "$c" >/dev/null 2>&1; then
       ver=$("$c" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")' 2>/dev/null || true)
       major=${ver%%.*}
       minor=${ver#*.}
-      if [ "${major:-0}" -gt 3 ] || { [ "${major:-0}" -eq 3 ] && [ "${minor:-0}" -ge 10 ]; }; then
+      if [ "${major:-0}" -eq 3 ] && [ "${minor:-0}" -ge 10 ] && [ "${minor:-0}" -le 13 ]; then
         echo "$c"
         return 0
       fi

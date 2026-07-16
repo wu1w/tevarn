@@ -1,8 +1,6 @@
 # Takton one-line installer for Windows (PowerShell)
 # Usage:
 #   irm https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.ps1 | iex
-#   # local:
-#   powershell -ExecutionPolicy Bypass -File scripts/install.ps1
 #
 # Env (optional):
 #   $env:TAKTON_HOME = "$env:USERPROFILE\.takton"
@@ -25,24 +23,57 @@ function Die([string]$m)  { Write-Host "[takton] ERROR: $m" -ForegroundColor Red
 
 Write-Host "Takton installer (Windows)" -ForegroundColor Cyan
 
-# Python
-$py = $null
-foreach ($c in @("py", "python", "python3")) {
-  try {
-    $v = & $c -c "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')" 2>$null
-    if ($LASTEXITCODE -eq 0 -and $v) {
-      $parts = $v.Trim().Split(".")
-      if ([int]$parts[0] -gt 3 -or ([int]$parts[0] -eq 3 -and [int]$parts[1] -ge 10)) {
-        $py = $c
-        break
-      }
+function Get-PythonCmd {
+  # Prefer 3.11/3.12/3.13 — 3.14 still breaks many wheels (pydantic-core etc.)
+  $candidates = @()
+  if (Get-Command py -ErrorAction SilentlyContinue) {
+    foreach ($v in @("3.11", "3.12", "3.13", "3.10")) {
+      try {
+        $out = & py "-$v" -c "import sys; print(sys.executable)" 2>$null
+        if ($LASTEXITCODE -eq 0 -and $out) { $candidates += $out.Trim() }
+      } catch {}
     }
-  } catch {}
-}
-if (-not $py) { Die "需要 Python >= 3.10。请从 https://www.python.org/downloads/ 安装并勾选 Add to PATH。" }
-Info "Using Python launcher: $py ($(& $py --version 2>&1))"
+  }
+  foreach ($c in @("python3.11", "python3.12", "python3.13", "python3.10", "python3", "python")) {
+    if (Get-Command $c -ErrorAction SilentlyContinue) {
+      try {
+        $exe = & $c -c "import sys; print(sys.executable)" 2>$null
+        if ($LASTEXITCODE -eq 0 -and $exe) { $candidates += $exe.Trim() }
+      } catch {}
+    }
+  }
+  # uv-managed CPython common path
+  $uvRoot = Join-Path $env:APPDATA "uv\python"
+  if (Test-Path $uvRoot) {
+    Get-ChildItem $uvRoot -Directory -ErrorAction SilentlyContinue |
+      Where-Object { $_.Name -match "cpython-3\.(11|12|13)" } |
+      ForEach-Object {
+        $p = Join-Path $_.FullName "python.exe"
+        if (Test-Path $p) { $candidates += $p }
+      }
+  }
 
-# git
+  foreach ($exe in $candidates) {
+    try {
+      $ver = & $exe -c "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')" 2>$null
+      if (-not $ver) { continue }
+      $parts = $ver.Trim().Split(".")
+      $maj = [int]$parts[0]; $min = [int]$parts[1]
+      if ($maj -eq 3 -and $min -ge 10 -and $min -le 13) {
+        return @{ Exe = $exe; Ver = $ver.Trim() }
+      }
+    } catch {}
+  }
+  return $null
+}
+
+$pyInfo = Get-PythonCmd
+if (-not $pyInfo) {
+  Die "需要 Python 3.10–3.13（推荐 3.11/3.12）。当前若只有 3.14，请先安装 3.11：https://www.python.org/downloads/"
+}
+$pyExe = $pyInfo.Exe
+Info "Using Python: $pyExe ($($pyInfo.Ver))"
+
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
   Die "需要 git。请安装 Git for Windows: https://git-scm.com/download/win"
 }
@@ -63,10 +94,13 @@ if ($env:TAKTON_SOURCE) {
   } else {
     Info "Cloning $TAKTON_REPO ($TAKTON_REF) -> $SRC"
     if (Test-Path $SRC) { Remove-Item -Recurse -Force $SRC }
-    git clone --depth 1 --branch $TAKTON_REF $TAKTON_REPO $SRC
+    $cloneOk = $true
+    git clone --depth 1 --branch $TAKTON_REF $TAKTON_REPO $SRC 2>$null
     if ($LASTEXITCODE -ne 0) {
       git clone --depth 1 $TAKTON_REPO $SRC
+      if ($LASTEXITCODE -ne 0) { $cloneOk = $false }
     }
+    if (-not $cloneOk) { Die "git clone 失败" }
   }
 }
 
@@ -75,17 +109,29 @@ if (-not (Test-Path (Join-Path $SRC "backend\main.py"))) {
 }
 
 Info "Creating venv at $VENV"
-& $py -m venv $VENV
-$pip = Join-Path $VENV "Scripts\pip.exe"
+if (Test-Path $VENV) { Remove-Item -Recurse -Force $VENV }
+& $pyExe -m venv $VENV --clear
 $python = Join-Path $VENV "Scripts\python.exe"
+if (-not (Test-Path $python)) { Die "venv 创建失败: $python" }
+
+# Isolate from ambient PYTHONPATH / other venvs
+$env:VIRTUAL_ENV = $VENV
+$env:PYTHONPATH = ""
+$env:PYTHONNOUSERSITE = "1"
+$env:PATH = "$(Join-Path $VENV 'Scripts');$env:PATH"
+
 & $python -m pip install -U pip setuptools wheel -q
 
-Info "Installing Takton ..."
+Info "Installing Takton into isolated venv ..."
 $prodReq = Join-Path $SRC "backend\requirements-prod.txt"
 if (Test-Path $prodReq) {
-  & $pip install -r $prodReq -q
+  & $python -m pip install -r $prodReq -q
 }
-& $pip install -e $SRC -q
+& $python -m pip install -e $SRC -q
+
+# sanity import
+& $python -c "import fastapi, uvicorn, backend.main; print('import_ok')"
+if ($LASTEXITCODE -ne 0) { Die "依赖导入失败，请检查 Python 版本与网络" }
 
 $envFile = Join-Path $TAKTON_HOME ".env"
 if (-not (Test-Path $envFile)) {
@@ -96,32 +142,31 @@ TAKTON_PORT=$TAKTON_PORT
 "@ | Set-Content -Path $envFile -Encoding UTF8
 }
 
-# shim
 $binDir = Join-Path $TAKTON_HOME "bin"
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null
 $shim = Join-Path $binDir "takton.cmd"
 @"
 @echo off
+set VIRTUAL_ENV=$VENV
+set PYTHONPATH=
+set PYTHONNOUSERSITE=1
 "$python" -m backend.cli %*
 "@ | Set-Content -Path $shim -Encoding ASCII
 
-# PATH hint
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if ($userPath -notlike "*$binDir*") {
-  Info "Add to User PATH: $binDir (optional)"
   try {
     [Environment]::SetEnvironmentVariable("Path", "$userPath;$binDir", "User")
     $env:Path = "$env:Path;$binDir"
-    Info "PATH updated for current user"
+    Info "PATH updated for current user (+ $binDir)"
   } catch {
-    Info "Could not update PATH automatically. Run via: $shim"
+    Info "Could not update PATH automatically. Use: $shim"
   }
 }
 
 Info "Install complete."
 Info "  Source: $SRC"
 Info "  Start:  $shim start --port $TAKTON_PORT"
-Info "  Or:     & '$python' -m backend.cli start --port $TAKTON_PORT"
 
 if ($TAKTON_NO_START -ne "1") {
   Info "Starting on http://127.0.0.1:$TAKTON_PORT ..."
