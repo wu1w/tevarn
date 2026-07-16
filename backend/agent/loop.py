@@ -1785,33 +1785,41 @@ class NexusAgentLoop:
         self, session_id: uuid.UUID, final_content: str
     ) -> None:
         """原子化保存最终回复：Message + CtxItem + Session 状态 + 通知"""
+        text = (final_content or "").strip()
+        if not text:
+            text = (
+                "（本轮未生成可见正文：可能只调用了工具且后续未总结。"
+                "请再发一条消息，或点「请继续」。若持续空白，可检查设备/RAG 相关工具是否报错。）"
+            )
         async with get_db_context() as db:
             msg_repo = AsyncMessageRepository(db)
             ctx_repo = AsyncCtxItemRepository(db)
             session_repo = AsyncSessionRepository(db)
 
-            # 估算 token 数
-            token_estimate = max(8, round(len(final_content) / 3.4))
-            await msg_repo.save_message(session_id, "assistant", final_content, token_count=token_estimate)
+            token_estimate = max(8, round(len(text) / 3.4))
+            await msg_repo.save_message(session_id, "assistant", text, token_count=token_estimate)
             if self.ctx_item_repo is not None:
                 await ctx_repo.create({
                     "session_id": session_id,
                     "scope": "session",
                     "kind": "message",
                     "key": f"assistant_{int(datetime.now(timezone.utc).timestamp() * 1000)}",
-                    "value": final_content,
-                    "tokens": max(8, round(len(final_content) / 3.4)),
+                    "value": text,
+                    "tokens": token_estimate,
                     "pinned": False,
                     "ttl": "session",
                     "origin": f"agent:{self.agent_name}",
                 })
-            await session_repo.update_status(session_id, "idle")
+            await session_repo.update(
+                session_id,
+                {"status": "idle", "updated_at": datetime.now(timezone.utc)},
+            )
             if self.notification_repo is not None and self.user_id is not None:
                 await AsyncNotificationRepository(db).create({
                     "user_id": self.user_id,
                     "type": "message",
                     "title": "New assistant message",
-                    "content": final_content[:200],
+                    "content": text[:200],
                     "data": {"session_id": str(session_id)},
                     "source_id": str(session_id),
                 })

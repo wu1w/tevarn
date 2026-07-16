@@ -150,11 +150,11 @@ class AsyncSessionRepository(AsyncBaseRepository, SessionRepository):
         session = await self._get_session()
         try:
             uid = uuid.UUID(user_id) if isinstance(user_id, str) else user_id
-            # 返回该用户的全部会话（含空白会话），避免新建会话未发消息前就从列表消失
+            # 按最近活动排序（消息会刷新 updated_at）
             result = await session.execute(
                 select(Session)
                 .where(Session.user_id == uid)
-                .order_by(Session.created_at.desc())
+                .order_by(Session.updated_at.desc(), Session.created_at.desc())
             )
             return [SessionRead.model_validate(obj) for obj in result.scalars().all()]
         except Exception:

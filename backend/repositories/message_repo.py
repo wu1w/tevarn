@@ -152,15 +152,37 @@ class AsyncMessageRepository(AsyncBaseRepository, MessageRepository):
         tool_calls: list[dict[str, Any]] | None = None,
         token_count: int | None = None,
     ) -> MessageRead:
-        return await self.create(
+        """保存单条消息，并刷新所属会话 updated_at（列表排序用）。"""
+        msg = await self.create(
             {
                 "session_id": session_id,
                 "role": role,
-                "content": content,
+                "content": content if content is not None else "",
                 "tool_calls": tool_calls,
                 "token_count": token_count,
             }
         )
+        try:
+            from datetime import datetime, timezone
+
+            from sqlalchemy import update as sa_update
+
+            from backend.models.session import Session as SessionModel
+
+            session = await self._get_session()
+            try:
+                await session.execute(
+                    sa_update(SessionModel)
+                    .where(SessionModel.id == session_id)
+                    .values(updated_at=datetime.now(timezone.utc))
+                )
+                await self._maybe_commit(session)
+            finally:
+                await self._close_session(session)
+        except Exception:
+            # 排序刷新失败不阻断消息写入
+            pass
+        return msg
 
     async def truncate_history_by_token_limit(
         self,

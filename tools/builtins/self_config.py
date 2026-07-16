@@ -290,9 +290,9 @@ class ManageKnowledge(BaseTool):
                 return ToolResult(success=False, data={}, message="upload 需要提供 content 和 title")
             try:
                 svc = QdrantService()
-                from backend.services.rag.qdrant_impl import Document
-                doc = await svc.add_document(Document(title=title, content=content))
-                return ToolResult(success=True, data={"doc_id": doc.id}, message=f"✅ 文档 `{title}` 已上传并索引")
+                # Document 真实形状是检索结果；upload 走 kwargs 兼容
+                doc = await svc.add_document(title=title, content=content)
+                return ToolResult(success=True, data={"doc_id": getattr(doc, "id", None)}, message=f"✅ 文档 `{title}` 已上传并索引")
             except Exception as e:
                 return ToolResult(success=False, data={}, message=f"❌ 上传失败: {e}")
 

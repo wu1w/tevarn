@@ -101,3 +101,23 @@ def transport_from_device_config(config: dict[str, Any] | None) -> RemoteTranspo
     token = cfg.get("agent_token") or cfg.get("token") or ""
     url = cfg.get("agent_url") or f"ws://{host}:{port}"
     return RemoteTransport(url=url, token=token)
+
+
+class RemoteAgentTransport(RemoteTransport):
+    """兼容 skill 旧构造：host/port/token（内部转 ws URL）。"""
+
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 19876,
+        token: str = "",
+        *args: Any,
+        url: str | None = None,
+        timeout_s: float = 15.0,
+        **kwargs: Any,
+    ):
+        if args and not url:
+            # 兼容 positional
+            pass
+        ws_url = url or f"ws://{host}:{int(port or 19876)}"
+        super().__init__(url=ws_url, token=token or kwargs.get("token") or "", timeout_s=timeout_s)
