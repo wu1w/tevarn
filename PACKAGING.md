@@ -22,7 +22,7 @@ npm run dist:win
 ### Linux / macOS（一行安装）
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.sh | tr -d '\015' | bash
 ```
 
 本地源码调试安装：
@@ -42,6 +42,30 @@ takton version
 ```
 
 环境变量见 `scripts/install.sh` 头部注释（`TAKTON_HOME` / `TAKTON_PORT` / `TAKTON_NO_START`）。
+
+### Linux 桌面包构建要点（重要）
+
+Electron Linux 包会把**仓库根目录**的 `.venv` 打进
+`resources/backend/.venv`。若构建前没有 `.venv`，包会缺 Python 依赖，
+干净机首次启动会失败。
+
+构建前请先：
+
+```bash
+# 在仓库根（与 frontend/ 同级）
+python3 -m venv --copies .venv
+.venv/bin/pip install -U pip setuptools wheel
+.venv/bin/pip install -r backend/requirements-prod.txt
+cd frontend && npm run dist:linux
+```
+
+可用脚本（LOCAL/CI 友好）：
+
+```bash
+bash scripts/build-linux-desktop.sh
+```
+
+产物：`frontend/release/Takton-0.1.0.AppImage`、`takton_0.1.0_amd64.deb`。
 
 ---
 
