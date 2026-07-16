@@ -204,28 +204,30 @@ export default function SettingsPage() {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const [p, rp] = await Promise.all([getProviderPresets(), getRagPresets()]);
-        if (!cancelled) {
-          setPresets(p);
-          setRagPresets(rp);
+      let cancelled = false;
+      (async () => {
+        try {
+          const [p, rp] = await Promise.all([getProviderPresets(), getRagPresets()]);
+          if (!cancelled) {
+            setPresets(p);
+            setRagPresets(rp);
+          }
+        } catch {
+          if (!cancelled) {
+            setPresets([]);
+            setRagPresets([]);
+          }
+        } finally {
+          if (!cancelled) setPresetsLoading(false);
         }
-      } catch {
-        if (!cancelled) {
-          setPresets([]);
-          setRagPresets([]);
-        }
-      } finally {
-        if (!cancelled) setPresetsLoading(false);
-      }
-      if (!cancelled) await refreshCatalog(false);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [refreshCatalog]);
+        // 先快速用缓存回显，再后台实时刷新（成功会写回 cached_models）
+        if (!cancelled) await refreshCatalog(false);
+        if (!cancelled) await refreshCatalog(true);
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [refreshCatalog]);
 
   const formInited = React.useRef(false);
   useEffect(() => {

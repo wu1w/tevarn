@@ -38,7 +38,10 @@ async def get_agent_repo() -> AsyncSubAgentRepository:
 # ────────────────── 模型池 Inventory ──────────────────
 
 async def _build_inventory_from_catalog() -> list[ModelInventoryItem]:
-    """从 llm_model_catalog 展平模型池，供子代理选择。"""
+    """从 llm_model_catalog 展平模型池，供子代理选择。
+
+    优先用 cached_models；若缓存为空且供应商已连接，则 live 拉一次并写回缓存。
+    """
     inventory: list[ModelInventoryItem] = []
     try:
         from backend.core import model_catalog as model_catalog_mod
@@ -49,6 +52,8 @@ async def _build_inventory_from_catalog() -> list[ModelInventoryItem]:
     except Exception as e:
         logger.warning("load model catalog for inventory failed: %s", e)
         catalog = {}
+        repo = None  # type: ignore
+        model_catalog_mod = None  # type: ignore
 
     active_pid = str(catalog.get("active_provider_id") or "")
     active_model = str(catalog.get("active_model") or "")
@@ -61,6 +66,8 @@ async def _build_inventory_from_catalog() -> list[ModelInventoryItem]:
     if not isinstance(providers, list):
         providers = []
 
+    catalog_dirty = False
+
     for p in providers:
         if not isinstance(p, dict):
             continue
@@ -72,26 +79,74 @@ async def _build_inventory_from_catalog() -> list[ModelInventoryItem]:
         pname = str(p.get("name") or pid)
         picon = str(p.get("icon") or "🤖")
         disabled = set(p.get("disabled_models") or [])
+
         models: list[str] = []
-        cached = p.get("cached_models") or []
-        if isinstance(cached, list) and cached:
-            models = [str(m).strip() for m in cached if str(m).strip()]
-        # 至少保证当前激活模型在列表里
-        am = str(p.get("active_model") or "").strip()
-        if am and am not in models:
-            models.insert(0, am)
-        if pid == active_pid and active_model and active_model not in models:
-            models.insert(0, active_model)
-        if not models:
-            continue
+        if model_catalog_mod is not None:
+            models = model_catalog_mod.provider_models_for_display(
+                p,
+                global_active_provider_id=active_pid,
+                global_active_model=active_model,
+            )
+        else:
+            cached = p.get("cached_models") or []
+            if isinstance(cached, list) and cached:
+                models = [str(m).strip() for m in cached if str(m).strip()]
+            am = str(p.get("active_model") or "").strip()
+            if am and am not in models:
+                models.insert(0, am)
+            if pid == active_pid and active_model and active_model not in models:
+                models.insert(0, active_model)
+
         has_key = bool(p.get("llm_api_key") or p.get("has_api_key"))
-        # local / ollama 等无 key 也算可用
         connected = has_key or str(p.get("llm_provider") or "").lower() in {
             "ollama",
             "openai-compatible",
             "local",
             "custom",
         } or bool(p.get("llm_base_url"))
+
+        # 缓存空且已连接 → 尝试 live 拉并落盘
+        if (
+            not models
+            and connected
+            and repo is not None
+            and model_catalog_mod is not None
+        ):
+            try:
+                from backend.api.routes.settings import fetch_provider_models
+
+                listed = await fetch_provider_models(
+                    str(p.get("llm_provider") or "openai-compatible"),
+                    str(p.get("llm_base_url") or ""),
+                    str(p.get("llm_api_key") or ""),
+                )
+                live = [
+                    str(m).strip()
+                    for m in (listed.get("models") or [])
+                    if str(m).strip()
+                ]
+                if listed.get("ok") and live:
+                    catalog = model_catalog_mod.set_provider_cached_models(
+                        catalog,
+                        pid,
+                        live,
+                        active_model=(p.get("active_model") or None),
+                    )
+                    catalog_dirty = True
+                    p = next(
+                        (x for x in catalog["providers"] if x["id"] == pid),
+                        p,
+                    )
+                    models = model_catalog_mod.provider_models_for_display(
+                        p,
+                        global_active_provider_id=active_pid,
+                        global_active_model=active_model,
+                    )
+            except Exception as e:
+                logger.warning("live fetch models for inventory %s failed: %s", pid, e)
+
+        if not models:
+            continue
 
         for mname in models:
             if mname in disabled:
@@ -115,6 +170,12 @@ async def _build_inventory_from_catalog() -> list[ModelInventoryItem]:
                     connected=connected,
                 )
             )
+
+    if catalog_dirty and repo is not None and model_catalog_mod is not None:
+        try:
+            await model_catalog_mod.save_catalog(repo, catalog)
+        except Exception as e:
+            logger.warning("save inventory model cache failed: %s", e)
 
     # 兜底：catalog 为空时用 runtime settings
     if not inventory:

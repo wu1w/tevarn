@@ -129,6 +129,17 @@ def normalize_catalog(raw: Any) -> dict[str, Any]:
             active_cred = creds[0]["id"]
         elif active_cred and not any(c["id"] == active_cred for c in creds) and creds:
             active_cred = creds[0]["id"]
+        cached_raw = p.get("cached_models") or []
+        if not isinstance(cached_raw, list):
+            cached_raw = []
+        # 去重保序
+        seen: set[str] = set()
+        cached_models: list[str] = []
+        for m in cached_raw:
+            mid = str(m).strip()
+            if mid and mid not in seen:
+                seen.add(mid)
+                cached_models.append(mid)
         entry = {
             "id": pid,
             "name": str(p.get("name") or pid),
@@ -142,6 +153,10 @@ def normalize_catalog(raw: Any) -> dict[str, Any]:
             "llm_api_key": "",
             "enabled": bool(p.get("enabled", True)),
             "disabled_models": [str(m) for m in disabled if m],
+            # 上次成功拉取的模型列表（离开设置页后仍可回显 / 子代理库存）
+            "cached_models": cached_models,
+            # 该供应商上次选用的模型
+            "active_model": str(p.get("active_model") or "").strip(),
         }
         entry["llm_api_key"] = _active_api_key(entry)
         cleaned.append(entry)
@@ -325,6 +340,8 @@ def upsert_provider(
             "llm_api_key": llm_api_key or "",
             "enabled": True,
             "disabled_models": [],
+            "cached_models": [],
+            "active_model": (active_model or "").strip(),
         }
         cat["providers"].append(found)
     else:
@@ -334,6 +351,9 @@ def upsert_provider(
         found["llm_provider"] = llm_provider or found["llm_provider"]
         found["llm_base_url"] = (llm_base_url or found["llm_base_url"]).rstrip("/")
         found["enabled"] = True
+        found.setdefault("cached_models", [])
+        if active_model:
+            found["active_model"] = str(active_model).strip()
         creds = list(found.get("credentials") or [])
 
         valid_key = (
@@ -390,8 +410,71 @@ def upsert_provider(
         cat["active_provider_id"] = pid
         if active_model:
             cat["active_model"] = active_model
+            found["active_model"] = str(active_model).strip()
+            # 至少把当前选用模型放进缓存，避免回访显示 0
+            cached = list(found.get("cached_models") or [])
+            am = str(active_model).strip()
+            if am and am not in cached:
+                cached.insert(0, am)
+                found["cached_models"] = cached
     # re-normalize to sync llm_api_key
     return normalize_catalog(cat)
+
+
+def set_provider_cached_models(
+    catalog: dict[str, Any],
+    provider_id: str,
+    models: list[str],
+    *,
+    active_model: str | None = None,
+) -> dict[str, Any]:
+    """写入某供应商的模型缓存（live 拉取成功后调用）。"""
+    cat = normalize_catalog(catalog)
+    pid = (provider_id or "").strip()
+    p = next((x for x in cat["providers"] if x["id"] == pid), None)
+    if p is None:
+        return cat
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for m in models or []:
+        mid = str(m).strip()
+        if mid and mid not in seen:
+            seen.add(mid)
+            cleaned.append(mid)
+    am = (active_model or p.get("active_model") or "").strip()
+    if am and am not in seen:
+        cleaned.insert(0, am)
+    p["cached_models"] = cleaned
+    if active_model is not None and str(active_model).strip():
+        p["active_model"] = str(active_model).strip()
+    return normalize_catalog(cat)
+
+
+def provider_models_for_display(
+    provider: dict[str, Any],
+    *,
+    global_active_provider_id: str = "",
+    global_active_model: str = "",
+) -> list[str]:
+    """合并 cached_models + 供应商/全局 active，供不拉远端时的回显。"""
+    seen: set[str] = set()
+    out: list[str] = []
+    for m in provider.get("cached_models") or []:
+        mid = str(m).strip()
+        if mid and mid not in seen:
+            seen.add(mid)
+            out.append(mid)
+    am = str(provider.get("active_model") or "").strip()
+    if am and am not in seen:
+        seen.add(am)
+        out.insert(0, am)
+    if (
+        str(provider.get("id") or "") == global_active_provider_id
+        and global_active_model
+        and global_active_model not in seen
+    ):
+        out.insert(0, global_active_model)
+    return out
 
 
 def add_or_update_credential(
