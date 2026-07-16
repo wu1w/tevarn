@@ -1,17 +1,10 @@
 #!/usr/bin/env bash
 # Takton one-line installer for Linux / macOS
-# Usage:
+# 小白用法：
 #   curl -fsSL https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.sh | bash
-#   # or from a local checkout:
-#   bash scripts/install.sh
 #
-# Env overrides:
-#   TAKTON_HOME      install dir (default: $HOME/.takton)
-#   TAKTON_REPO      git url (default: https://github.com/wu1w/takton.git)
-#   TAKTON_REF       git ref (default: main)
-#   TAKTON_PORT      listen port (default: 8090)
-#   TAKTON_NO_START  set to 1 to install only
-#   TAKTON_SOURCE    path to existing source tree (skip git clone)
+# Env:
+#   TAKTON_HOME / TAKTON_REPO / TAKTON_REF / TAKTON_PORT / TAKTON_NO_START / TAKTON_SOURCE
 
 set -euo pipefail
 
@@ -25,17 +18,22 @@ SRC="$TAKTON_HOME/src"
 
 bold() { printf '\033[1m%s\033[0m\n' "$*"; }
 info() { printf '[takton] %s\n' "$*"; }
+ok()   { printf '[takton] ✓ %s\n' "$*"; }
 err()  { printf '[takton] ERROR: %s\n' "$*" >&2; }
 
 need_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
-    err "需要命令: $1"
+    err "缺少命令: $1"
+    case "$1" in
+      git) err "Debian/Ubuntu: sudo apt install -y git" ;;
+      curl) err "Debian/Ubuntu: sudo apt install -y curl" ;;
+    esac
     exit 1
   fi
 }
 
 pick_python() {
-  # Prefer 3.11–3.13; skip 3.14+ until wheels mature (pydantic-core etc.)
+  # Prefer 3.11–3.13; skip 3.14+ until wheels mature
   for c in python3.12 python3.11 python3.13 python3.10 python3; do
     if command -v "$c" >/dev/null 2>&1; then
       ver=$("$c" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")' 2>/dev/null || true)
@@ -50,81 +48,96 @@ pick_python() {
   return 1
 }
 
-bold "Takton installer (Linux / macOS)"
+bold "Takton 一键安装 (Linux / macOS)"
+info "将自动：选 Python → 拉代码 → 装依赖 → 自检 → 启动"
 
 need_cmd curl
 need_cmd git
 
 PY="$(pick_python || true)"
 if [ -z "${PY:-}" ]; then
-  err "需要 Python >= 3.10。请先安装 python3。"
+  err "需要 Python 3.10–3.13（推荐 3.11/3.12）。"
+  err "Debian/Ubuntu: sudo apt install -y python3.12 python3.12-venv python3-pip"
+  err "Fedora: sudo dnf install -y python3.12"
+  err "macOS: brew install python@3.12"
   exit 1
 fi
-info "Using Python: $PY ($($PY --version 2>&1))"
+ok "Python: $PY ($($PY --version 2>&1))"
 
-mkdir -p "$TAKTON_HOME"
+mkdir -p "$TAKTON_HOME/data/uploads" "$TAKTON_HOME/data/workspace"
 
 if [ -n "${TAKTON_SOURCE:-}" ]; then
   SRC="$(cd "$TAKTON_SOURCE" && pwd)"
-  info "Using existing source: $SRC"
+  info "使用本地源码: $SRC"
 elif [ -f "$(pwd)/backend/main.py" ] && [ -f "$(pwd)/pyproject.toml" ]; then
   SRC="$(pwd)"
-  info "Using current directory as source: $SRC"
+  info "使用当前目录: $SRC"
 else
   if [ -d "$SRC/.git" ]; then
-    info "Updating $SRC ($TAKTON_REF) ..."
+    info "更新 $SRC ($TAKTON_REF) ..."
     git -C "$SRC" fetch --depth 1 origin "$TAKTON_REF"
     git -C "$SRC" checkout -q FETCH_HEAD
   else
-    info "Cloning $TAKTON_REPO ($TAKTON_REF) → $SRC"
+    info "从 GitHub 克隆（首次可能 1–3 分钟）..."
     rm -rf "$SRC"
     git clone --depth 1 --branch "$TAKTON_REF" "$TAKTON_REPO" "$SRC" \
       || git clone --depth 1 "$TAKTON_REPO" "$SRC"
   fi
+  ok "源码就绪"
 fi
 
 if [ ! -f "$SRC/backend/main.py" ]; then
-  err "源码不完整: $SRC/backend/main.py 不存在"
+  err "源码不完整: $SRC/backend/main.py"
   exit 1
 fi
 
-info "Creating venv at $VENV"
+info "创建独立 venv: $VENV"
+rm -rf "$VENV"
 "$PY" -m venv "$VENV"
 # shellcheck disable=SC1091
 . "$VENV/bin/activate"
+export PYTHONPATH=
+export PYTHONHOME=
+export PYTHONNOUSERSITE=1
+
 python -m pip install -U pip setuptools wheel -q
 
-info "Installing Takton (editable) ..."
-# Prefer prod requirements for speed/size
+info "安装运行依赖..."
 if [ -f "$SRC/backend/requirements-prod.txt" ]; then
-  pip install -r "$SRC/backend/requirements-prod.txt" -q
+  pip install -r "$SRC/backend/requirements-prod.txt" -q \
+    || pip install -r "$SRC/backend/requirements.txt" -q
+elif [ -f "$SRC/backend/requirements.txt" ]; then
+  pip install -r "$SRC/backend/requirements.txt" -q
 fi
 pip install -e "$SRC" -q
 
-# Frontend static: build if Node available and static missing
+info "自检关键模块..."
+python -c "import fastapi, uvicorn, sqlalchemy, aiosqlite, httpx, jose, backend.main; print('import_ok')"
+ok "依赖自检通过"
+
 STATIC_INDEX="$SRC/backend/static/index.html"
 if [ ! -f "$STATIC_INDEX" ]; then
   if command -v npm >/dev/null 2>&1; then
-    info "Building frontend static assets (needs Node/npm) ..."
+    info "构建前端静态资源..."
     if ! takton build; then
-      info "前端构建失败 — 仍可 API-only 启动；浏览器 UI 需稍后: takton build"
+      info "前端构建失败 — 仍可 API 启动；有 Node 时再: takton build"
     fi
   else
-    info "未检测到 npm，跳过前端构建。安装 Node.js 后执行: takton build"
-    info "或将预构建的 static 放到: $SRC/backend/static/"
+    info "仓库应含 backend/static；若缺失，安装 Node 后: takton build"
   fi
+else
+  ok "前端静态资源已内置"
 fi
 
-# Secrets / env
 ENV_FILE="$TAKTON_HOME/.env"
 if [ ! -f "$ENV_FILE" ]; then
-  info "Writing $ENV_FILE"
+  info "生成本地配置与密钥..."
   JWT=$(python -c 'import secrets; print(secrets.token_hex(32))')
   API=$(python -c 'import secrets; print(secrets.token_hex(32))')
   SALT=$(python -c 'import secrets; print(secrets.token_hex(16))')
   DB_PATH="$TAKTON_HOME/data/takton.db"
-  mkdir -p "$TAKTON_HOME/data" "$TAKTON_HOME/data/uploads" "$TAKTON_HOME/data/workspace"
   cat >"$ENV_FILE" <<EOF
+# Auto-generated by Takton installer — do not commit
 TAKTON_JWT_SECRET=$JWT
 TAKTON_API_KEY=$API
 TAKTON_SETTINGS_ENCRYPTION_SALT=$SALT
@@ -136,9 +149,9 @@ TAKTON_UPLOADS_DIR=$TAKTON_HOME/data/uploads
 TAKTON_FILE_BROWSER_ROOT=$TAKTON_HOME/data/workspace
 TAKTON_LOG_LEVEL=info
 EOF
+  ok "配置: $ENV_FILE"
 fi
 
-# Convenience launcher
 BIN_DIR="$TAKTON_HOME/bin"
 mkdir -p "$BIN_DIR"
 cat >"$BIN_DIR/takton" <<EOF
@@ -146,43 +159,52 @@ cat >"$BIN_DIR/takton" <<EOF
 set -euo pipefail
 # shellcheck disable=SC1091
 source "$VENV/bin/activate"
+export PYTHONPATH=
+export PYTHONHOME=
+export PYTHONNOUSERSITE=1
 set -a
 # shellcheck disable=SC1091
 source "$ENV_FILE"
 set +a
 export PYTHONPATH="$SRC\${PYTHONPATH:+:\$PYTHONPATH}"
-exec "$VENV/bin/takton" "\$@"
+exec "$VENV/bin/python" -m backend.cli "\$@"
 EOF
 chmod +x "$BIN_DIR/takton"
 
-# PATH hint
 SHELL_RC=""
 case "${SHELL:-}" in
   */zsh) SHELL_RC="$HOME/.zshrc" ;;
   */bash) SHELL_RC="$HOME/.bashrc" ;;
   *) SHELL_RC="$HOME/.profile" ;;
 esac
-PATH_LINE="export PATH=\"$BIN_DIR:\$PATH\""
-if [ -f "$SHELL_RC" ] && ! grep -Fq "$BIN_DIR" "$SHELL_RC" 2>/dev/null; then
-  echo "" >>"$SHELL_RC"
-  echo "# Takton" >>"$SHELL_RC"
-  echo "$PATH_LINE" >>"$SHELL_RC"
-  info "Added $BIN_DIR to PATH via $SHELL_RC"
+if [ -n "$SHELL_RC" ] && [ -f "$SHELL_RC" ] && ! grep -Fq "$BIN_DIR" "$SHELL_RC" 2>/dev/null; then
+  {
+    echo ""
+    echo "# Takton"
+    echo "export PATH=\"$BIN_DIR:\$PATH\""
+  } >>"$SHELL_RC"
+  info "已写入 PATH 到 $SHELL_RC（新开终端后可直接 takton）"
 fi
 
-bold "Install complete."
-info "Command: $BIN_DIR/takton start"
-info "Open:    http://127.0.0.1:$TAKTON_PORT"
-info "Config:  $ENV_FILE"
+bold "安装完成"
+info "启动: $BIN_DIR/takton start"
+info "打开: http://127.0.0.1:$TAKTON_PORT"
+info "配置: $ENV_FILE"
 
 if [ "$TAKTON_NO_START" = "1" ]; then
   exit 0
 fi
 
-info "Starting Takton ..."
-# shellcheck disable=SC1091
+info "正在启动..."
 set -a
+# shellcheck disable=SC1091
 source "$ENV_FILE"
 set +a
 export PYTHONPATH="$SRC${PYTHONPATH:+:$PYTHONPATH}"
-exec "$VENV/bin/takton" start --host 127.0.0.1 --port "$TAKTON_PORT"
+export PYTHONNOUSERSITE=1
+if command -v xdg-open >/dev/null 2>&1; then
+  (sleep 2; xdg-open "http://127.0.0.1:$TAKTON_PORT" >/dev/null 2>&1 || true) &
+elif command -v open >/dev/null 2>&1; then
+  (sleep 2; open "http://127.0.0.1:$TAKTON_PORT" >/dev/null 2>&1 || true) &
+fi
+exec "$VENV/bin/python" -m backend.cli start --host 127.0.0.1 --port "$TAKTON_PORT"

@@ -324,11 +324,18 @@ async function ensureDependencies(python) {
         console.log('[Takton] Python dependencies OK');
         return USER_SITE_PACKAGES;
     }
-    const reqPath = isDev
-        ? path.join(ROOT_DIR, 'backend', 'requirements.txt')
-        : path.join(process.resourcesPath, 'backend', 'requirements.txt');
-    if (!fs.existsSync(reqPath)) {
-        console.error('[Takton] requirements.txt not found, backend may fail to start');
+    const reqCandidates = isDev
+        ? [
+            path.join(ROOT_DIR, 'backend', 'requirements-prod.txt'),
+            path.join(ROOT_DIR, 'backend', 'requirements.txt'),
+        ]
+        : [
+            path.join(process.resourcesPath, 'backend', 'requirements-prod.txt'),
+            path.join(process.resourcesPath, 'backend', 'requirements.txt'),
+        ];
+    const reqPath = reqCandidates.find((p) => fs.existsSync(p));
+    if (!reqPath) {
+        console.error('[Takton] requirements-prod/requirements.txt not found, backend may fail to start');
         return USER_SITE_PACKAGES;
     }
     if (!fs.existsSync(USER_SITE_PACKAGES)) {
