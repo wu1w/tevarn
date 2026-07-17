@@ -11,6 +11,7 @@ import {
 } from '@/lib/api';
 import { useConfirm } from '@/components/desktop/ConfirmDialog';
 import { EmptyState } from '@/components/desktop/EmptyState';
+import { LoadingPage } from '@/components/ui/LoadingSpinner';
 
 type CronForm = {
   name: string;
@@ -216,7 +217,7 @@ export default function CronPage() {
       )}
 
       {loading ? (
-        <div className="py-12 text-center text-foreground-muted">加载中...</div>
+        <LoadingPage text="加载定时任务..." />
       ) : jobs.length === 0 ? (
         <div className="rounded-xl border border-border-default bg-card-bg">
           <EmptyState

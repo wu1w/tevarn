@@ -57,6 +57,12 @@ export default function RootLayout({
                   resolved = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
                 }
                 document.documentElement.setAttribute('data-theme', resolved);
+                // 同时添加/移除 dark class，因为 Tailwind 使用 .dark 选择器
+                if (resolved === 'dark') {
+                  document.documentElement.classList.add('dark');
+                } else {
+                  document.documentElement.classList.remove('dark');
+                }
                 document.documentElement.style.colorScheme = resolved;
               } catch(e) {}
             })();

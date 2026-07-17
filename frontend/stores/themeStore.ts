@@ -34,6 +34,12 @@ function applyToDom(pref: ThemePreference): ResolvedTheme {
   const resolved = resolveTheme(pref);
   if (typeof document !== 'undefined') {
     document.documentElement.setAttribute('data-theme', resolved);
+    // 同时添加/移除 dark class，因为 Tailwind 使用 .dark 选择器
+    if (resolved === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
     // 同步 color-scheme，让原生控件/滚动条也跟系统感一致
     document.documentElement.style.colorScheme = resolved;
   }

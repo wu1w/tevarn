@@ -64,16 +64,38 @@ export function MessageInput({
   const [uploading, setUploading] = useState(false);
   const [subAgents, setSubAgents] = useState<SubAgent[]>([]);
   const [selectedSubAgentIds, setSelectedSubAgentIds] = useState<string[]>([]);
-    const [devices, setDevices] = useState<Device[]>([]);
-    const [mentionOpen, setMentionOpen] = useState(false);
-    const [mentionFilter, setMentionFilter] = useState('');
-    const [mentionIndex, setMentionIndex] = useState(0);
-    const fileInputRef = useRef<HTMLInputElement>(null);
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionFilter, setMentionFilter] = useState('');
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const sendingRef = useRef(false);
   const isEditing = !!initialContent;
   const inputLocked = disabled || uploading;
   const clusterOn = activeModes.has('cluster');
+
+  // P2 修复：自动保存草稿到 localStorage
+  useEffect(() => {
+    if (isEditing) return; // 编辑模式不自动保存
+    const timer = setTimeout(() => {
+      if (content.trim()) {
+        localStorage.setItem('takton-chat-draft', content);
+      } else {
+        localStorage.removeItem('takton-chat-draft');
+      }
+    }, 500); // 500ms 防抖
+    return () => clearTimeout(timer);
+  }, [content, isEditing]);
+
+  // P2 修复：组件挂载时恢复草稿
+  useEffect(() => {
+    if (isEditing) return;
+    const draft = localStorage.getItem('takton-chat-draft');
+    if (draft && !content) {
+      setContent(draft);
+    }
+  }, []); // 仅在挂载时执行
 
   useEffect(() => {
       if (!clusterOn) return;
@@ -171,6 +193,8 @@ export function MessageInput({
       onGenerateImage(trimmed);
       setContent('');
       setAttachments([]);
+      // P2 修复：发送后清除草稿
+      localStorage.removeItem('takton-chat-draft');
       setActiveModes((prev) => {
         const next = new Set(prev);
         next.delete('image');
@@ -198,6 +222,8 @@ export function MessageInput({
     onSend(trimmed, attachments, mode, subIds);
     setContent('');
     setAttachments([]);
+    // P2 修复：发送后清除草稿
+    localStorage.removeItem('takton-chat-draft');
     setActiveModes((prev) => {
       const next = new Set(prev);
       next.delete('ppt');
