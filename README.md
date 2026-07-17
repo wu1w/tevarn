@@ -1,96 +1,105 @@
 # Takton
 
-个人多机 Agent 工作台（桌面客户端 · 对话调度本机 / 远程设备）。
+个人专属 AI Agent 工作台 —— 桌面客户端，支持对话调度、任务自动化、知识库管理与工作流编排。
 
-仓库：https://github.com/wu1w/takton
+![Version](https://img.shields.io/badge/version-0.1.2-blue)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey)
+![License](https://img.shields.io/badge/license-MIT-green)
 
-## 安装（桌面客户端）
+## ✨ 核心功能
 
-### Windows（推荐）
+| 模块 | 说明 |
+|------|------|
+| **💬 智能对话** | 多会话管理，支持上下文压缩、目标追踪、断点续传 |
+| **⚡ 任务系统** | 定时任务（Cron）、Webhook 触发、工作流编排 |
+| **📚 知识库** | RAG 检索增强，支持文档上传、向量化存储（Qdrant） |
+| **🔧 工具集成** | MCP 协议支持，可扩展自定义工具 |
+| **🤖 多 Agent** | 子 Agent 集群、Agent 画像配置、技能系统 |
+| **📱 多通道** | 支持 Web、API、Webhook 等多种接入方式 |
 
-PowerShell（建议管理员或普通用户均可）一行安装：
+## 🚀 快速开始
+
+### 桌面客户端（推荐）
+
+#### Windows
 
 ```powershell
+# PowerShell 一行安装
 iex ((irm https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.ps1) -replace '^\uFEFF','')
 ```
 
-> 说明：`-replace '^\uFEFF',''` 去掉 UTF-8 BOM，避免 Windows PowerShell 5.1 把首行注释误执行。
+或手动下载：[Takton-Setup-0.1.2.exe](https://github.com/wu1w/takton/releases/download/v0.1.2/Takton-Setup-0.1.2.exe)
 
-若 CDN 缓存异常，可用 commit 固定地址：
-
-```powershell
-iex (irm https://raw.githubusercontent.com/wu1w/takton/e73ea04/scripts/install.ps1)
-```
-
-或手动下载安装包：
-
-- [Takton-Setup-0.1.0.exe](https://github.com/wu1w/takton/releases/download/v0.1.0/Takton-Setup-0.1.0.exe)
-- 更多版本见 [Releases](https://github.com/wu1w/takton/releases)
-
-### Linux
+#### Linux
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.sh | tr -d '\015' | bash
 ```
 
 或手动下载：
+- [Takton-0.1.2.AppImage](https://github.com/wu1w/takton/releases/download/v0.1.2/Takton-0.1.2.AppImage)
+- [takton_0.1.2_amd64.deb](https://github.com/wu1w/takton/releases/download/v0.1.2/takton_0.1.2_amd64.deb)
 
-- [Takton-0.1.0.AppImage](https://github.com/wu1w/takton/releases/download/v0.1.0/Takton-0.1.0.AppImage)
+> **macOS**：暂无真机测试，可从源码构建。
 
-> **macOS**：无真机测试，不保证可用。
-
----
-
-## 说明
-
-| 方式 | 结果 |
-|------|------|
-| 一行脚本 / Setup.exe / AppImage | **桌面客户端**（内嵌后端） |
-| 开发改代码 | 见下方「开发者」 |
-
-一键脚本会从 GitHub Releases **下载客户端安装包并安装**，不是单独搭一套仅浏览器环境。
-
-需要：
-
-- Windows：能上网；建议已装 [Git](https://git-scm.com/download/win)（一般不必）
-- Linux：`curl` 或 `wget`
-
-可选环境变量：
-
-| 变量 | 含义 |
-|------|------|
-| `TAKTON_RELEASE_TAG` | 默认 `v0.1.0` |
-| `TAKTON_NO_START=1` | 只装不自动启动 |
-| `TAKTON_HOME` | Linux AppImage 安装目录（默认 `~/.local/share/takton`） |
-
----
-
-## 开发者
-
-源码开发、改引擎、跑测试：
+### 源码运行
 
 ```bash
+# 克隆仓库
 git clone https://github.com/wu1w/takton.git
 cd takton
+
+# 一键启动（自动检测 Python，启动前后端）
+python start.py
+
+# 或分别启动：
 # 后端
-python -m venv .venv
-# Windows: .venv\Scripts\activate
-source .venv/bin/activate
-pip install -r backend/requirements.txt  # 或 requirements-prod.txt
+pip install -r backend/requirements.txt
+python backend/main.py
+
 # 前端
 cd frontend && npm install && npm run dev
 ```
 
-打桌面安装包：
+访问 http://localhost:3000
+
+## 📖 文档
+
+- [技术手册](docs/TECHNICAL_MANUAL.md) — 架构、API、数据库设计
+- [AGENTS.md](AGENTS.md) — AI 编程助手配置指南
+
+## 🛠️ 技术栈
+
+| 层级 | 技术 |
+|------|------|
+| **前端** | Next.js 16, React 19, Tailwind CSS 4, Electron |
+| **后端** | FastAPI, SQLAlchemy 2.0, SQLite/PostgreSQL, Qdrant |
+| **AI/LLM** | OpenAI-compatible API, MCP Protocol, RAG |
+| **部署** | Electron Builder, Docker (可选) |
+
+## 📦 构建安装包
 
 ```bash
 cd frontend
+
+# Windows
 npm run dist:win    # → release/Takton Setup *.exe
+
+# Linux
 npm run dist:linux  # → AppImage / deb
+
+# macOS（未测试）
+npm run dist:mac
 ```
+
+## 🤝 贡献
+
+欢迎提交 Issue 和 Pull Request。
+
+## 📄 许可证
+
+MIT License — 详见 [LICENSE](LICENSE)
 
 ---
 
-## 许可证与其它
-
-详见仓库内文档与源码。问题与需求请开 Issue。
+**Takton** — 让 AI 成为你的专属工作伙伴 🎯
