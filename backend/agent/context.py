@@ -42,6 +42,8 @@ class ContextManager:
         self.ctx_item_repo = ctx_item_repo
         self.max_messages = max_messages
         self.max_tokens = max_tokens
+        self.last_system_layers = None
+        self.last_prompt_skill_plan: dict[str, Any] | None = None
 
     async def build_messages(
         self,
@@ -169,6 +171,47 @@ class ContextManager:
                 pkg_block = "# Attached Takton Packages\n" + "\n\n".join(pkg_block_parts)
                 ctx = parts.get("context") or ""
                 parts["context"] = (ctx + "\n\n" + pkg_block).strip() if ctx else pkg_block
+
+        # 挂载已安装的 prompt-skills（~/.takton/skills/ 下的 SKILL.md）到 Context 层
+        # 策略：summary | auto(摘要+相关全文) | full — 见 settings.prompt_skill_*
+        try:
+            from backend.services.skill_store.prompt_skill_loader import (
+                get_prompt_skill_loader,
+            )
+
+            loader = get_prompt_skill_loader()
+            installed_skills = loader.list_installed()
+            logger.info("prompt-skills: found %d installed", len(installed_skills))
+            prompt_skills_block, plan = loader.build_injection_block(
+                user_input or "",
+                skills=installed_skills,
+            )
+            self.last_prompt_skill_plan = {
+                "mode": plan.mode,
+                "summary_skills": plan.summary_skills,
+                "full_skills": plan.full_skills,
+                "scores": plan.scores,
+                "block_chars": plan.block_chars,
+            }
+            if prompt_skills_block:
+                logger.info(
+                    "prompt-skills: inject mode=%s full=%s chars=%d scores=%s",
+                    plan.mode,
+                    plan.full_skills,
+                    plan.block_chars,
+                    {k: v for k, v in list(plan.scores.items())[:6]},
+                )
+                ctx = parts.get("context") or ""
+                parts["context"] = (
+                    (ctx + "\n\n" + prompt_skills_block).strip()
+                    if ctx
+                    else prompt_skills_block
+                )
+            else:
+                logger.info("prompt-skills: injection empty, skip")
+        except Exception as e:
+            self.last_prompt_skill_plan = None
+            logger.warning("prompt-skills block failed: %s", e, exc_info=True)
 
         system_content = merge_prompt_parts(parts)
 

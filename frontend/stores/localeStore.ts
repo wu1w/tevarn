@@ -1,0 +1,191 @@
+import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
+
+export type Locale = 'zh' | 'en';
+
+interface LocaleStore {
+  locale: Locale;
+  setLocale: (l: Locale) => void;
+  toggle: () => void;
+}
+
+export const useLocaleStore = create<LocaleStore>()(
+  persist(
+    (set, get) => ({
+      locale: 'zh',
+      setLocale: (l) => set({ locale: l }),
+      toggle: () => set({ locale: get().locale === 'zh' ? 'en' : 'zh' }),
+    }),
+    { name: 'takton-locale' }
+  )
+);
+
+/* ── 翻译字典 ── */
+
+const zh = {
+  // 通用
+  'common.save': '保存',
+  'common.saving': '保存中...',
+  'common.cancel': '取消',
+  'common.confirm': '确认',
+  'common.delete': '删除',
+  'common.edit': '编辑',
+  'common.loading': '加载中...',
+  'common.success': '成功',
+  'common.error': '错误',
+  'common.back': '返回',
+  'common.search': '搜索',
+  'common.settings': '设置',
+  'common.language': '语言',
+  'common.required': '必配',
+
+  // 登录页
+  'login.title': '个人 Agent 终端 · 本地优先',
+  'login.localMode': '以本地模式继续',
+  'login.localModeLoading': '正在进入本地模式...',
+  'login.localModeHint1': '使用本机默认 admin 账号，数据仅保存在本机。',
+  'login.localModeHint2': '适合个人开发者单设备使用。',
+  'login.accountMode': '使用账号登录 / 注册（多设备或团队）',
+  'login.email': '邮箱',
+  'login.username': '用户名',
+  'login.password': '密码',
+  'login.login': '登录',
+  'login.register': '注册',
+  'login.hasAccount': '已有账号？去登录',
+  'login.noAccount': '没有账号？去注册',
+  'login.backToLocal': '返回本地模式',
+  'login.electronHint': '桌面端建议直接使用本地模式',
+  'login.processing': '处理中...',
+  'login.passwordMinLength': '密码长度至少为 8 位',
+  'login.usernameMinLength': '用户名长度至少为 3 位',
+  'login.localUnavailable': '本地模式不可用：后端接口未找到。请确认后端已启动。',
+  'login.localDisabled': '本地模式已禁用（single_user_mode=false）。请使用账号登录。',
+  'login.localFailed': '本地模式登录失败',
+  'login.requestFailed': '请求失败',
+  'login.invalidFormat': '输入信息格式不正确（如密码太短）',
+  'login.apiNotFound': '接口未找到 (404)。请确认后端已启动且端口正确。',
+  'login.passwordPlaceholder': '至少8位密码',
+  'login.emailPlaceholder': 'you@example.com',
+  'login.usernamePlaceholder': 'username',
+
+  // 设置页
+  'settings.title': '设置',
+  'settings.llmConfig': 'LLM 模型配置',
+  'settings.llmConfigHint': '选择模型供应商并填写 API 密钥',
+  'settings.generation': '生成参数',
+  'settings.generationHint': '控制模型输出行为',
+  'settings.rag': 'RAG 检索增强',
+  'settings.ragHint': '配置向量数据库和嵌入模型',
+  'settings.image': '图像生成',
+  'settings.imageHint': '可选：配置图像生成模型',
+  'settings.sft': 'SFT 数据记录',
+  'settings.sftHint': '记录对话数据用于微调',
+  'settings.testConnection': '测试连接',
+  'settings.fetchModels': '拉取模型列表',
+  'settings.apiKey': 'API 密钥',
+  'settings.model': '模型',
+  'settings.baseUrl': '服务地址',
+  'settings.temperature': '温度',
+  'settings.maxTokens': '最大 Token 数',
+  'settings.contextWindow': '上下文窗口',
+  'settings.systemName': '系统名称',
+  'settings.fallbackModel': '备用模型',
+  'settings.compressModel': '压缩模型',
+  'settings.saveLlm': '保存 LLM 配置',
+  'settings.saveGeneration': '保存生成参数',
+  'settings.saveRag': '保存 RAG 配置',
+  'settings.provider': '供应商',
+  'settings.language': '界面语言',
+  'settings.languageHint': '切换界面显示语言',
+};
+
+const en: Record<keyof typeof zh, string> = {
+  // Common
+  'common.save': 'Save',
+  'common.saving': 'Saving...',
+  'common.cancel': 'Cancel',
+  'common.confirm': 'Confirm',
+  'common.delete': 'Delete',
+  'common.edit': 'Edit',
+  'common.loading': 'Loading...',
+  'common.success': 'Success',
+  'common.error': 'Error',
+  'common.back': 'Back',
+  'common.search': 'Search',
+  'common.settings': 'Settings',
+  'common.language': 'Language',
+  'common.required': 'Required',
+
+  // Login
+  'login.title': 'Personal Agent Terminal · Local First',
+  'login.localMode': 'Continue in Local Mode',
+  'login.localModeLoading': 'Entering local mode...',
+  'login.localModeHint1': 'Uses the default admin account on this machine. Data stays local.',
+  'login.localModeHint2': 'Ideal for solo developers on a single device.',
+  'login.accountMode': 'Sign in / Register with account (multi-device or team)',
+  'login.email': 'Email',
+  'login.username': 'Username',
+  'login.password': 'Password',
+  'login.login': 'Sign In',
+  'login.register': 'Register',
+  'login.hasAccount': 'Already have an account? Sign in',
+  'login.noAccount': "Don't have an account? Register",
+  'login.backToLocal': 'Back to Local Mode',
+  'login.electronHint': 'Desktop app recommends Local Mode',
+  'login.processing': 'Processing...',
+  'login.passwordMinLength': 'Password must be at least 8 characters',
+  'login.usernameMinLength': 'Username must be at least 3 characters',
+  'login.localUnavailable': 'Local mode unavailable: backend API not found. Please ensure the backend is running.',
+  'login.localDisabled': 'Local mode is disabled (single_user_mode=false). Please sign in with an account.',
+  'login.localFailed': 'Local mode login failed',
+  'login.requestFailed': 'Request failed',
+  'login.invalidFormat': 'Invalid input format (e.g. password too short)',
+  'login.apiNotFound': 'API not found (404). Please ensure the backend is running on the correct port.',
+  'login.passwordPlaceholder': 'At least 8 characters',
+  'login.emailPlaceholder': 'you@example.com',
+  'login.usernamePlaceholder': 'username',
+
+  // Settings
+  'settings.title': 'Settings',
+  'settings.llmConfig': 'LLM Model Configuration',
+  'settings.llmConfigHint': 'Select a model provider and enter your API key',
+  'settings.generation': 'Generation Parameters',
+  'settings.generationHint': 'Control model output behavior',
+  'settings.rag': 'RAG (Retrieval-Augmented Generation)',
+  'settings.ragHint': 'Configure vector database and embedding model',
+  'settings.image': 'Image Generation',
+  'settings.imageHint': 'Optional: configure image generation model',
+  'settings.sft': 'SFT Data Logging',
+  'settings.sftHint': 'Record conversation data for fine-tuning',
+  'settings.testConnection': 'Test Connection',
+  'settings.fetchModels': 'Fetch Models',
+  'settings.apiKey': 'API Key',
+  'settings.model': 'Model',
+  'settings.baseUrl': 'Base URL',
+  'settings.temperature': 'Temperature',
+  'settings.maxTokens': 'Max Tokens',
+  'settings.contextWindow': 'Context Window',
+  'settings.systemName': 'System Name',
+  'settings.fallbackModel': 'Fallback Model',
+  'settings.compressModel': 'Compression Model',
+  'settings.saveLlm': 'Save LLM Config',
+  'settings.saveGeneration': 'Save Generation Params',
+  'settings.saveRag': 'Save RAG Config',
+  'settings.provider': 'Provider',
+  'settings.language': 'Interface Language',
+  'settings.languageHint': 'Switch interface display language',
+};
+
+const dictionaries: Record<Locale, Record<string, string>> = { zh, en };
+
+/** 获取翻译文本 */
+export function t(key: keyof typeof zh, locale?: Locale): string {
+  const l = locale || useLocaleStore.getState().locale;
+  return dictionaries[l]?.[key] || dictionaries.zh[key] || key;
+}
+
+/** React hook: 获取当前语言的翻译函数 */
+export function useT() {
+  const locale = useLocaleStore((s) => s.locale);
+  return (key: keyof typeof zh) => t(key, locale);
+}

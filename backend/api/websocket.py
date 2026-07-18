@@ -271,7 +271,77 @@ async def websocket_endpoint(
             return
 
     effective_token = token_from_query or token_from_message or ""
-    if not effective_token:
+
+    user_id: uuid.UUID | None = None
+
+    if effective_token:
+        payload = decode_access_token(effective_token)
+        if not payload or "sub" not in payload:
+            await _accept_once()
+            try:
+                await websocket.send_json(
+                    {"type": "error", "detail": "Invalid or expired token"}
+                )
+            except Exception:
+                pass
+            await self._safe_close(websocket, code=1008, reason="Invalid or expired token")
+            return
+
+        try:
+            user_id = uuid.UUID(payload["sub"])
+        except ValueError:
+            await _accept_once()
+            try:
+                await websocket.send_json(
+                    {"type": "error", "detail": "Invalid token"}
+                )
+            except Exception:
+                pass
+            await self._safe_close(websocket, code=1008, reason="Invalid token")
+            return
+
+        # 单用户模式下：如果 token 里的 user_id 在数据库中不存在，
+        # 可能是前端缓存了旧 token，回退到默认用户（admin@takton.dev）。
+        if settings.single_user_mode:
+            from backend.repositories.user_repo import AsyncUserRepository
+            user_repo_check = AsyncUserRepository()
+            existing = await user_repo_check.get_by_id(user_id)
+            if not existing:
+                default_user = await user_repo_check.get_by_email("admin@takton.dev")
+                if default_user:
+                    user_id = default_user.id
+                    logger.info(
+                        f"Single-user fallback: token sub not found, using default user {user_id}"
+                    )
+    elif settings.single_user_mode:
+        # 单用户免认证直连：本机无 token 时回落默认 admin
+        from backend.repositories.user_repo import AsyncUserRepository
+        user_repo_check = AsyncUserRepository()
+        default_user = await user_repo_check.get_by_email("admin@takton.dev")
+        if default_user:
+            user_id = default_user.id
+        else:
+            from backend.core.security import get_password_hash
+            user_id = uuid.uuid4()
+            try:
+                await user_repo_check.create(
+                    {
+                        "id": user_id,
+                        "email": "admin@takton.dev",
+                        "username": "admin",
+                        "hashed_password": get_password_hash(
+                            (settings.default_admin_password or "").strip() or "admin"
+                        ),
+                        "is_superuser": True,
+                        "is_active": True,
+                    }
+                )
+            except Exception:
+                default_user = await user_repo_check.get_by_email("admin@takton.dev")
+                if default_user:
+                    user_id = default_user.id
+        logger.info(f"Single-user WS: no token, using default user {user_id}")
+    else:
         await _accept_once()
         try:
             await websocket.send_json(
@@ -281,45 +351,6 @@ async def websocket_endpoint(
             pass
         await self._safe_close(websocket, code=1008, reason="Authentication required")
         return
-
-    payload = decode_access_token(effective_token)
-    if not payload or "sub" not in payload:
-        await _accept_once()
-        try:
-            await websocket.send_json(
-                {"type": "error", "detail": "Invalid or expired token"}
-            )
-        except Exception:
-            pass
-        await self._safe_close(websocket, code=1008, reason="Invalid or expired token")
-        return
-
-    try:
-        user_id = uuid.UUID(payload["sub"])
-    except ValueError:
-        await _accept_once()
-        try:
-            await websocket.send_json(
-                {"type": "error", "detail": "Invalid token"}
-            )
-        except Exception:
-            pass
-        await self._safe_close(websocket, code=1008, reason="Invalid token")
-        return
-
-    # 单用户模式下：如果 token 里的 user_id 在数据库中不存在，
-    # 可能是前端缓存了旧 token，回退到默认用户（admin@takton.dev）。
-    if settings.single_user_mode:
-        from backend.repositories.user_repo import AsyncUserRepository
-        user_repo_check = AsyncUserRepository()
-        existing = await user_repo_check.get_by_id(user_id)
-        if not existing:
-            default_user = await user_repo_check.get_by_email("admin@takton.dev")
-            if default_user:
-                user_id = default_user.id
-                logger.info(
-                    f"Single-user fallback: token sub not found, using default user {user_id}"
-                )
 
     # query-token 路径此前尚未 accept
     await _accept_once()
@@ -339,8 +370,12 @@ async def websocket_endpoint(
                     await self._safe_close(websocket, code=1008, reason="Session expired")
                     return
 
-                # 会话用户隔离检查
-                if session.user_id != user_id:
+                # 会话用户隔离检查（单用户模式本机不卡）
+                if (
+                    not settings.single_user_mode
+                    and session.user_id is not None
+                    and session.user_id != user_id
+                ):
                     await websocket.send_json(
                         {"type": "error", "detail": "Session access denied"}
                     )

@@ -13,7 +13,7 @@ import { useActionLock } from '@/hooks/useActionLock';
 import { useSessionStore } from '@/stores/sessionStore';
 import { FilePreview } from '@/components/filetree/FilePreview';
 import { GitStatusWidget } from '@/components/layout/GitStatus';
-import { getAgentMdFiles, ensureAgentMdFile, type AgentMdItem } from '@/lib/api';
+import { getAgentMdFiles, ensureAgentMdFile, openAgentMdFile, type AgentMdItem } from '@/lib/api';
 import { useToastStore } from '@/stores/toastStore';
 
 interface NavItem {
@@ -43,6 +43,7 @@ const HELP_TEXTS: Record<string, { text: string; href?: string }> = {
     '/mcp': { text: '配置 Model Context Protocol 服务器连接。', href: '/mcp' },
   '/profiles': { text: '配置子代理人物卡片：任务名、模型、system prompt；主对话可集群协作。', href: '/profiles' },
   '/context': { text: '查看和管理当前会话的上下文记忆。', href: '/context' },
+  '/memory': { text: '跨会话长期记忆：实体、项目、偏好管理。', href: '/memory' },
   '/cron': { text: '设置定时任务，按 Cron 表达式自动执行。', href: '/cron' },
   '/knowledge': { text: '上传文档让 AI 阅读并记住，支持检索和问答。', href: '/knowledge' },
   '/wiki': { text: '可视化浏览和管理知识图谱。', href: '/wiki' },
@@ -84,6 +85,7 @@ const navGroups: NavGroup[] = [
     title: '记忆',
     items: [
       { label: '知识库', href: '/knowledge', icon: ic('M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253') },
+      { label: '长期记忆', href: '/memory', icon: ic('M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z') },
       { label: 'Wiki 图谱', href: '/wiki', icon: ic('M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1') },
     ],
   },
@@ -298,6 +300,56 @@ export function Sidebar() {
       }
     },
     [loadAgentMd, addToast]
+  );
+
+  /** 双击：用本机默认编辑器打开（路径由后端按 file_browser_root 解析，无死路径） */
+  const handleOpenAgentMdLocal = useCallback(
+    async (item: AgentMdItem) => {
+      try {
+        let rel = item.path;
+        if (!item.exists) {
+          const ens = await ensureAgentMdFile(item.path);
+          rel = ens.path || item.path;
+          await loadAgentMd();
+        }
+
+        // 优先 Electron shell.openPath（桌面端）；否则走后端本机打开
+        const electronAPI = (window as unknown as {
+          electronAPI?: { openPath?: (p: string) => Promise<string> };
+        }).electronAPI;
+
+        let opened = false;
+        if (electronAPI?.openPath) {
+          // abs_path 来自 API 动态 root，fallback 用 root + rel 拼接
+          const abs =
+            item.abs_path ||
+            (agentMdRoot
+              ? (() => {
+                  const root = agentMdRoot.replace(/[\\/]+$/, '');
+                  const sep = root.includes('\\') ? '\\' : '/';
+                  return `${root}${sep}${rel.replace(/[\\/]/g, sep)}`;
+                })()
+              : '');
+          if (abs) {
+            const err = await electronAPI.openPath(abs);
+            if (!err) opened = true;
+          }
+        }
+        if (!opened) {
+          const res = await openAgentMdFile(rel);
+          opened = !!res?.ok;
+        }
+        if (opened) {
+          addToast(`已用系统编辑器打开 ${item.label}`, 'success');
+        } else {
+          addToast('无法打开本地文件', 'error');
+        }
+      } catch (e: any) {
+        console.error(e);
+        addToast(`打开失败: ${e?.response?.data?.detail || e?.message || e}`, 'error');
+      }
+    },
+    [loadAgentMd, addToast, agentMdRoot]
   );
 
   const handleSelectFile = useCallback((path: string) => {
@@ -718,6 +770,11 @@ export function Sidebar() {
                                   key={item.key}
                                   type="button"
                                   onClick={() => handleOpenAgentMd(item)}
+                                  onDoubleClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    void handleOpenAgentMdLocal(item);
+                                  }}
                                   className={`flex w-full items-start gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors ${
                                     active
                                       ? 'bg-white/[0.06] text-foreground'
@@ -725,7 +782,7 @@ export function Sidebar() {
                                         ? 'text-foreground-muted hover:bg-white/[0.04] hover:text-foreground'
                                         : 'text-foreground-dim/70 hover:bg-white/[0.03] hover:text-foreground-muted'
                                   }`}
-                                  title={item.desc}
+                                  title={`${item.desc || item.label}\n单击预览 · 双击用系统编辑器打开`}
                                 >
                                   <span
                                     className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${

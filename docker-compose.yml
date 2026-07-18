@@ -1,0 +1,86 @@
+version: '3.8'
+
+services:
+  takton-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:///./data/takton.db
+      - QDRANT_URL=http://qdrant:6333
+      - REDIS_URL=redis://redis:6379
+      - TAKTON_SECRET_KEY=${TAKTON_SECRET_KEY:-change-me-in-production}
+      - TAKTON_ENCRYPTION_SALT=${TAKTON_ENCRYPTION_SALT:-change-me-salt}
+    volumes:
+      - takton_data:/app/data
+      - takton_logs:/app/logs
+    depends_on:
+      - qdrant
+      - redis
+    restart: unless-stopped
+    networks:
+      - takton
+
+  takton-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://takton-backend:8000
+    depends_on:
+      - takton-backend
+    restart: unless-stopped
+    networks:
+      - takton
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+    networks:
+      - takton
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - takton
+
+  # 可选：PostgreSQL（替代 SQLite）
+  postgres:
+    image: postgres:15-alpine
+    profiles:
+      - postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=takton
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-takton}
+      - POSTGRES_DB=takton
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - takton
+
+volumes:
+  takton_data:
+  takton_logs:
+  qdrant_data:
+  redis_data:
+  postgres_data:
+
+networks:
+  takton:
+    driver: bridge

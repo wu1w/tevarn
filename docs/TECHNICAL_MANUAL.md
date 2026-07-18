@@ -1,6 +1,6 @@
 # Takton 技术手册
 
-版本：0.1.2  
+版本：0.2.0  
 更新：2026-07-17
 
 ---
@@ -640,6 +640,24 @@ npx playwright test
   - P2: 输入草稿自动保存
   - P3: 主题保持修复
   - P3: Loading 组件统一
+
+- **v0.2.0** (2026-07-17)
+  - 中英双语界面（i18n）：登录页 + 设置页语言切换，Zustand persist 持久化
+  - 自动集群模式：任务复杂度 ≥ 0.7 时自动拆分子代理并行执行
+  - Desktop Agent：7 个桌面操作工具（截图/点击/输入/滚动/文件读写），三级权限模型
+  - 透明化面板：实时展示 Agent 思考过程和工具调用链
+  - 长期记忆系统：Entity 自动提取 + Wiki 知识图谱
+  - Prompt-Skill 集成：SKILL.md 自动注入 Agent system prompt
+  - MCP 商店：多源（精选 + Official Registry）一键安装/转换
+  - workspace 路径修复：解决 file_write 双层嵌套问题（`_resolve_workspace_path`）
+  - 依赖修复：tzdata（时区）、croniter（cron 表达式解析）
+  - shadcn/ui 组件库：11 个 UI 组件（button/card/badge/input/textarea/label/checkbox/separator/progress/scroll-area/tooltip/select）
+  - GitHub README 中英双语重写：品牌 badge + 截图展示 + 架构图
+
+- **v0.1.2** (2026-07-17)
+  - 工作区人设持久化（IDENTITY.md / SOUL.md / CLAUDE.md / AGENTS.md）
+  - Kimi Code 模型修复（kimi-for-coding / kimi-for-coding-highspeed）
+  - 目标面板与对话尾部恢复
 
 - **v0.1.1** (2026-07-16)
   - N1-N8 系列错误修复

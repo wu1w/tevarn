@@ -35,6 +35,8 @@ import type {
   WikiEntity,
   WikiRelation,
   Workflow,
+  WorkflowNode,
+  WorkflowEdge,
   WorkflowNodeType,
   WorkflowExecuteResult,
 } from '@/types';
@@ -348,6 +350,125 @@ export async function getCommunitySkills(url?: string): Promise<Skill[]> {
 
 export async function importCommunitySkills(selected: string[], url?: string): Promise<{ imported: number }> {
   const res = await api.post('/skills/community/import', { selected, url });
+  return res.data;
+}
+
+// ====== Skill Store APIs (multi-source) ======
+
+export type SkillSource = 'takton' | 'clawhub' | 'awesome-claude' | 'awesome-hermes' | 'custom';
+
+export interface SkillStats {
+  stars: number;
+  downloads: number;
+  installs: number;
+  forks: number;
+  versions: number;
+}
+
+export interface UnifiedSkill {
+  id: string;
+  name: string;
+  display_name: string;
+  summary: string;
+  description: string;
+  source: SkillSource;
+  source_url: string;
+  source_repo: string;
+  skill_md_url: string;
+  topics: string[];
+  tags: string[];
+  license: string | null;
+  author: string;
+  version: string;
+  stats: SkillStats;
+  install_command: string;
+  compatibility: string[];
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface SkillStoreSource {
+  id: SkillSource;
+  display_name: string;
+}
+
+export interface SkillStoreResponse {
+  items: UnifiedSkill[];
+  total: number;
+  sources: SkillSource[];
+  errors: Record<string, string>;
+}
+
+export interface InstalledSkill {
+  source: string;
+  name: string;
+  path: string;
+  size: number;
+}
+
+export interface ActivePromptSkill {
+  source: string;
+  name: string;
+  display_name: string;
+  description: string;
+  path: string;
+  size: number;
+}
+
+export interface InstallResult {
+  success: boolean;
+  skill_id: string;
+  source: string;
+  path?: string;
+  error?: string;
+}
+
+export async function getStoreSources(): Promise<SkillStoreSource[]> {
+  const res = await api.get('/skills/store/sources');
+  return res.data;
+}
+
+export async function listStoreSkills(params: {
+  source?: SkillSource;
+  search?: string;
+  topic?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<SkillStoreResponse> {
+  const res = await api.get('/skills/store/list', { params });
+  return res.data;
+}
+
+export async function getStoreSkillDetail(source: SkillSource, skillId: string): Promise<UnifiedSkill> {
+  const res = await api.get(`/skills/store/skill/${source}/${skillId}`);
+  return res.data;
+}
+
+export async function installStoreSkill(source: SkillSource, skillId: string): Promise<InstallResult> {
+  const res = await api.post('/skills/store/install', { source, skill_id: skillId });
+  return res.data;
+}
+
+export async function uninstallStoreSkill(source: SkillSource, skillId: string): Promise<InstallResult> {
+  const res = await api.post('/skills/store/uninstall', { source, skill_id: skillId });
+  return res.data;
+}
+
+export async function listInstalledStoreSkills(): Promise<InstalledSkill[]> {
+  const res = await api.get('/skills/store/installed');
+  return res.data;
+}
+
+/** 已激活并会注入 system prompt 的 prompt-skills */
+export async function listActivePromptSkills(): Promise<ActivePromptSkill[]> {
+  const res = await api.get('/skills/store/active');
+  return res.data;
+}
+
+export async function refreshStoreCache(source?: SkillSource): Promise<{ refreshed: string }> {
+  const res = await api.post('/skills/store/refresh', null, {
+    params: source ? { source } : {},
+  });
   return res.data;
 }
 
@@ -739,6 +860,8 @@ export interface AgentMdItem {
   key: string;
   label: string;
   path: string;
+  /** 服务端解析出的绝对路径（随 file_browser_root 变化，非死路径） */
+  abs_path?: string;
   exists: boolean;
   size: number;
   desc: string;
@@ -754,6 +877,14 @@ export async function ensureAgentMdFile(
   path: string
 ): Promise<{ path: string; created: boolean; exists: boolean; size: number }> {
   const res = await api.post('/files/agent-md/ensure', null, { params: { path } });
+  return res.data;
+}
+
+/** 用本机默认编辑器打开沙箱内 agent md（相对路径） */
+export async function openAgentMdFile(
+  path: string
+): Promise<{ ok: boolean; path: string; abs_path: string }> {
+  const res = await api.post('/files/agent-md/open', null, { params: { path } });
   return res.data;
 }
 
@@ -1412,6 +1543,79 @@ export async function deleteMCPServer(serverId: string): Promise<{ deleted: bool
 
 export async function reloadMCPServers(): Promise<{ status: string }> {
   const res = await api.post('/mcp/reload');
+  return res.data;
+}
+
+// ====== MCP Store（跨生态目录）======
+
+export type MCPStoreSourceId = 'curated' | 'official' | 'custom' | 'all';
+
+export interface UnifiedMCPStoreItem {
+  id: string;
+  name: string;
+  display_name: string;
+  summary: string;
+  description: string;
+  source: string;
+  source_url: string;
+  icon: string;
+  category: string;
+  tags: string[];
+  transport: 'stdio' | 'sse';
+  command: string;
+  args: string[];
+  url: string;
+  env_hint: string;
+  risk_level: string;
+  version: string;
+  registry_type: string;
+  package_id: string;
+  popularity: number;
+  compatibility: string[];
+  installable: boolean;
+  note: string;
+}
+
+export interface MCPStoreSourceInfo {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  error: string | null;
+  count: number;
+}
+
+export async function listMCPStoreSources(): Promise<MCPStoreSourceInfo[]> {
+  const res = await api.get('/mcp/store/sources');
+  return res.data;
+}
+
+export async function listMCPStore(params?: {
+  source?: string;
+  search?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<{
+  items: UnifiedMCPStoreItem[];
+  total: number;
+  sources: MCPStoreSourceInfo[];
+  query: string;
+}> {
+  const res = await api.get('/mcp/store/list', { params });
+  return res.data;
+}
+
+export async function installMCPFromStore(
+  source: string,
+  id: string
+): Promise<{
+  success: boolean;
+  server_id?: string | null;
+  server_name?: string | null;
+  message: string;
+  need_env: string[];
+}> {
+  const res = await api.post('/mcp/store/install', { source, id });
   return res.data;
 }
 

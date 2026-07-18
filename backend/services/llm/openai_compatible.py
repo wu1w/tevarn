@@ -25,7 +25,8 @@ class OpenAICompatibleService(LLMService):
 
     def __init__(self, config=None):
         self.config = config or settings.get_llm_config()
-        self.base_url = self.config.base_url.rstrip("/")
+        base = (self.config.base_url or "").strip().strip("\"'")
+        self.base_url = base.rstrip("/")
         self.model = self._normalize_model_id(
             getattr(self.config, "model", "") or "",
             self.base_url,
@@ -180,7 +181,7 @@ class OpenAICompatibleService(LLMService):
                     finish_reason="error",
                 )
             except Exception as e:
-                logger.error(f"OpenAI-compatible chat error: {e}")
+                logger.error(f"OpenAI-compatible stream error: {e}")
                 yield LLMChunk(message_id=message_id, delta=f"[LLM Error] {e}", finish_reason="error")
             return
 

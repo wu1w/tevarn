@@ -264,6 +264,7 @@ async def list_agent_md_files(
                 "key": spec["key"],
                 "label": spec["label"],
                 "path": rel,
+                "abs_path": str(found.resolve()) if found is not None else str((root / preferred).resolve()),
                 "exists": exists,
                 "size": size,
                 "desc": spec["desc"],
@@ -288,6 +289,7 @@ async def list_agent_md_files(
                             "key": f"daily_{stem}",
                             "label": p.name,
                             "path": rel,
+                            "abs_path": str(p.resolve()),
                             "exists": True,
                             "size": p.stat().st_size,
                             "desc": f"短记忆 · {stem}",
@@ -305,6 +307,7 @@ async def list_agent_md_files(
                         "key": f"daily_flat_{name}",
                         "label": name,
                         "path": name,
+                        "abs_path": str(p.resolve()),
                         "exists": True,
                         "size": p.stat().st_size,
                         "desc": "短记忆（扁平）",
@@ -324,6 +327,47 @@ async def list_agent_md_files(
     return {
         "root": str(root),
         "items": items,
+    }
+
+
+@router.post("/agent-md/open")
+async def open_agent_md_file(
+    path: str = Query(..., description="Relative path under sandbox, e.g. memory.md"),
+    current_user: Annotated[UserRead, Depends(get_current_user)] = None,
+):
+    """用系统默认应用打开沙箱内的 agent md（本机编辑）。
+
+    路径相对 file_browser_root 解析，禁止 .. 与绝对路径穿越。
+    Windows: os.startfile；macOS: open；Linux: xdg-open。
+    """
+    import subprocess
+    import sys
+
+    raw = (path or "").strip().replace("\\", "/").lstrip("/")
+    if not raw or ".." in raw.split("/") or not raw.lower().endswith(".md"):
+        raise HTTPException(status_code=400, detail="Only .md paths under workspace allowed")
+
+    target, base = _resolve_path("sandbox", raw)
+    _check_access(target, base)
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail=f"File not found: {raw}")
+
+    abs_path = str(target.resolve())
+    try:
+        if sys.platform == "win32":
+            os.startfile(abs_path)  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", abs_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            subprocess.Popen(["xdg-open", abs_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as e:
+        logger.warning("open agent-md failed path=%s err=%s", abs_path, e)
+        raise HTTPException(status_code=500, detail=f"Failed to open file: {e}") from e
+
+    return {
+        "ok": True,
+        "path": raw,
+        "abs_path": abs_path,
     }
 
 

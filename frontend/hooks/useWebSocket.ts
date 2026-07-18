@@ -70,8 +70,12 @@ function resolveWsBaseUrl(): string {
   if (typeof window !== 'undefined') {
     const hostname = window.location.hostname;
     if (hostname === 'localhost' || hostname === '127.0.0.1') {
-      // 开发默认：与页面同源优先，其次 8000
+      // 浏览器开发模式：Next rewrites 不支持 WS upgrade 代理，
+      // 直连后端 8090（同源 :3000 会因 upgrade 失败而断开）。
       const port = window.location.port;
+      if (port === '3000') {
+        return 'ws://127.0.0.1:8090/api';
+      }
       if (port && port !== '8000') {
         const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         return `${wsProto}//${hostname}:${port}/api`;
@@ -444,13 +448,18 @@ export function useWebSocket(options: UseWebSocketOptions) {
 
   // sessionId 变化时连接 / 断开
   useEffect(() => {
-    if (!sessionId) {
-      disconnect();
-      return;
-    }
-    reconnectAttempts.current = 0;
-    connect(sessionId);
+    // 连接/断开均推迟到当前渲染周期之后（setTimeout 0），
+    // 避免 effect 同步路径 setState 触发跨组件级联更新告警。
+    const timer = setTimeout(() => {
+      if (!sessionId) {
+        disconnect();
+        return;
+      }
+      reconnectAttempts.current = 0;
+      connect(sessionId);
+    }, 0);
     return () => {
+      clearTimeout(timer);
       // 仅在 session 真正卸载时不断开过早——由下一次 effect 处理
     };
   }, [sessionId, connect, disconnect]);

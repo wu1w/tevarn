@@ -53,6 +53,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   installUpdate: (): Promise<void> => ipcRenderer.invoke('install-update'),
 
+  /** 用系统默认应用打开本地文件（编辑 agent md 等） */
+  openPath: (filePath: string): Promise<string> => ipcRenderer.invoke('open-path', filePath),
+
   /** 在系统浏览器中打开外链（OAuth 等） */
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke('open-external', url),
 

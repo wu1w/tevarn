@@ -17,7 +17,7 @@ from backend.schemas.session import (
 )
 from backend.schemas.user import UserRead
 
-from ..dependencies import get_current_user, get_session_repo
+from ..dependencies import get_current_user, get_session_repo, assert_session_owner
 from backend.repositories import SessionRepository
 
 router = APIRouter(prefix="/sessions", tags=["Sessions"])
@@ -57,9 +57,7 @@ async def get_session(
         session = await uow.sessions.get_by_id(session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
-        # 用户隔离检查
-        if getattr(session, "user_id", None) and session.user_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Access denied")
+        assert_session_owner(getattr(session, "user_id", None), current_user)
         return session
 
 
@@ -74,8 +72,7 @@ async def update_session_config(
         session = await uow.sessions.get_by_id(session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
-        if getattr(session, "user_id", None) and session.user_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Access denied")
+        assert_session_owner(getattr(session, "user_id", None), current_user)
         return await uow.sessions.update_config(
             session_id, data.config.model_dump()
         )
@@ -91,8 +88,7 @@ async def delete_session(
         session = await uow.sessions.get_by_id(session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
-        if getattr(session, "user_id", None) and session.user_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Access denied")
+        assert_session_owner(getattr(session, "user_id", None), current_user)
         success = await uow.sessions.delete(session_id)
         if not success:
             raise HTTPException(status_code=404, detail="Session not found")
@@ -109,8 +105,7 @@ async def get_session_checkpoint(
         session = await uow.sessions.get_by_id(session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
-        if getattr(session, "user_id", None) and session.user_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Access denied")
+        assert_session_owner(getattr(session, "user_id", None), current_user)
     from backend.agent.checkpoint import load_checkpoint
     from backend.agent.goal_state import get_goal, load_goal_from_db
     from backend.agent.resume import build_resume_prompt
@@ -137,8 +132,7 @@ async def resume_session(
         session = await uow.sessions.get_by_id(session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
-        if getattr(session, "user_id", None) and session.user_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Access denied")
+        assert_session_owner(getattr(session, "user_id", None), current_user)
 
     from backend.agent.resume import build_resume_prompt, resume_session_agent
 

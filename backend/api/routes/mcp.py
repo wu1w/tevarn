@@ -37,7 +37,8 @@ async def list_mcp_servers(
     repo: Annotated[AsyncMCPServerRepository, Depends(get_mcp_server_repo)],
 ):
     """列出所有 MCP Server 配置"""
-    return await repo.list_all()
+    rows = await repo.list_all()
+    return [MCPServerConfig.model_validate(r) for r in rows]
 
 
 @router.post("", response_model=MCPServerConfig)
@@ -51,7 +52,7 @@ async def create_mcp_server(
     if existing:
         raise HTTPException(status_code=409, detail=f"MCP server '{data.name}' already exists")
     server = await repo.create(data)
-    return server
+    return MCPServerConfig.model_validate(server)
 
 
 @router.put("/{server_id}", response_model=MCPServerConfig)
@@ -65,7 +66,7 @@ async def update_mcp_server(
     updated = await repo.update(server_id, data)
     if updated is None:
         raise HTTPException(status_code=404, detail="MCP server not found")
-    return updated
+    return MCPServerConfig.model_validate(updated)
 
 
 @router.put("/{server_id}/toggle", response_model=MCPServerConfig)
@@ -79,7 +80,7 @@ async def toggle_mcp_server(
     server = await repo.toggle(server_id, data.enabled)
     if server is None:
         raise HTTPException(status_code=404, detail="MCP server not found")
-    return server
+    return MCPServerConfig.model_validate(server)
 
 
 @router.delete("/{server_id}")

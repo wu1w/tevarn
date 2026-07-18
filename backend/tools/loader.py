@@ -108,4 +108,13 @@ async def load_all_tools(include_db: bool = False) -> None:
         logger.warning(f"Failed to load workflow tools: {e}")
     if include_db:
         await load_db_tools()
+    
+    # v0.2: 加载 Desktop 工具
+    try:
+        from backend.services.desktop.tools import register_desktop_tools
+        n = register_desktop_tools(ToolRegistry)
+        logger.info(f"Loaded {n} desktop tools")
+    except Exception as e:
+        logger.warning(f"Failed to load desktop tools: {e}")
+    
     logger.info(f"Unified ToolRegistry loaded: {len(ToolRegistry.get_all())} tools")

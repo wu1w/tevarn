@@ -19,6 +19,27 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
+def _resolve_workspace_path(base_path: str, filepath: str) -> tuple[str, str]:
+    """解析 workspace 内的安全路径，去掉 filepath 中重复的 workspace 前缀。
+    
+    Returns:
+        (full_path, base_abs) 元组
+    """
+    _fp = filepath.replace("\\", "/").lstrip("/")
+    # 用 basename 匹配前缀，兼容绝对路径 base_path（如 E:\项目\takton\workspace）
+    _basename = os.path.basename(base_path.rstrip("/\\").replace("\\", "/"))
+    _bp_rel = base_path.replace("\\", "/").rstrip("/").lstrip("./")
+    # 同时检查 basename 和相对路径两种前缀
+    for prefix in {_basename, _bp_rel}:
+        if prefix and _fp.startswith(prefix + "/"):
+            _fp = _fp[len(prefix) + 1:]
+            break
+    full_path = os.path.abspath(os.path.join(base_path, _fp))
+    base_abs = os.path.abspath(base_path)
+    return full_path, base_abs
+
+
 # 安全命令白名单（仅允许这些命令名，不是前缀匹配）
 _SAFE_COMMANDS: set[str] = {
     "ls", "cat", "head", "tail", "grep", "find", "pwd", "echo",
@@ -160,8 +181,7 @@ async def execute_file_read(config: dict[str, Any], arguments: dict[str, Any]) -
         return "[Error] filepath is required"
 
     base_path = config.get("base_path", "./workspace")
-    full_path = os.path.abspath(os.path.join(base_path, filepath))
-    base_abs = os.path.abspath(base_path)
+    full_path, base_abs = _resolve_workspace_path(base_path, filepath)
 
     # 路径安全检查：防止目录遍历
     if not full_path.startswith(base_abs):
@@ -192,8 +212,7 @@ async def execute_file_write(config: dict[str, Any], arguments: dict[str, Any]) 
         return "[Error] filepath is required"
 
     base_path = config.get("base_path", "./workspace")
-    full_path = os.path.abspath(os.path.join(base_path, filepath))
-    base_abs = os.path.abspath(base_path)
+    full_path, base_abs = _resolve_workspace_path(base_path, filepath)
 
     # 路径安全检查
     if not full_path.startswith(base_abs):
@@ -427,8 +446,7 @@ async def execute_edit(config: dict[str, Any], arguments: dict[str, Any]) -> str
         return "[Error] filepath and old_text are required"
 
     base_path = config.get("base_path", "./workspace")
-    full_path = os.path.abspath(os.path.join(base_path, filepath))
-    base_abs = os.path.abspath(base_path)
+    full_path, base_abs = _resolve_workspace_path(base_path, filepath)
 
     # 路径安全检查
     if not full_path.startswith(base_abs):
@@ -509,8 +527,7 @@ async def execute_grep(config: dict[str, Any], arguments: dict[str, Any]) -> str
         return "[Error] pattern and path are required"
 
     base_path = config.get("base_path", "./workspace")
-    base_abs = os.path.abspath(base_path)
-    target_path = os.path.abspath(os.path.join(base_abs, path))
+    target_path, base_abs = _resolve_workspace_path(base_path, path)
 
     # 路径安全检查
     if not target_path.startswith(base_abs):
@@ -573,8 +590,7 @@ async def execute_sqlite_query(
         return "[Error] database and query are required"
 
     base_path = config.get("base_path", "./workspace")
-    base_abs = os.path.abspath(base_path)
-    db_path = os.path.abspath(os.path.join(base_abs, database))
+    db_path, base_abs = _resolve_workspace_path(base_path, database)
 
     # 路径安全检查
     if not db_path.startswith(base_abs):

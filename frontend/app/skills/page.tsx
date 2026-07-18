@@ -15,8 +15,9 @@ import { useToastStore } from '@/stores/toastStore';
 import { useConfirm } from '@/components/desktop/ConfirmDialog';
 import { Skeleton } from '@/components/desktop/Skeleton';
 import { EmptyState } from '@/components/desktop/EmptyState';
+import SkillStorePanel from '@/components/skills/SkillStorePanel';
 
-type TabKey = 'builtin' | 'custom' | 'community';
+type TabKey = 'builtin' | 'custom' | 'community' | 'store';
 
 const DEFAULT_COMMUNITY_URL =
   'https://raw.githubusercontent.com/takton-ai/community-skills/main/index.json';
@@ -328,6 +329,7 @@ export default function SkillsPage() {
                 { key: 'builtin', label: `内置 (${builtinSkills.length})` },
                 { key: 'custom', label: `自定义 (${customSkills.length})` },
                 { key: 'community', label: '社区' },
+                { key: 'store', label: '🛍 商店' },
               ].map((tab) => (
                 <button
                   key={tab.key}
@@ -343,7 +345,7 @@ export default function SkillsPage() {
               ))}
             </div>
 
-            {activeTab !== 'community' && (
+            {activeTab !== 'community' && activeTab !== 'store' && (
               <div className="mb-4 flex flex-wrap gap-1.5">
                 {SKILL_CATEGORIES.map((c) => {
                   const pool = activeTab === 'builtin' ? builtinSkills : customSkills;
@@ -369,7 +371,7 @@ export default function SkillsPage() {
               </div>
             )}
 
-            {loading ? (
+            {loading && activeTab !== 'store' ? (
               <div className="space-y-2">
                 {[1, 2, 3].map((i) => (
                   <Skeleton key={i} height="72px" borderRadius="8px" />
@@ -487,6 +489,8 @@ export default function SkillsPage() {
               )}
             </div>
           )}
+
+          {activeTab === 'store' && <SkillStorePanel />}
         </>
       )}
 

@@ -65,8 +65,8 @@ class Settings(BaseSettings):
     db_url: str = "sqlite+aiosqlite:///./takton.db"
 
     # Security
-    jwt_secret: str = "change-me"
-    api_key: str = "nexus-api-key-change-me"
+    jwt_secret: str = "takton-dev-secret-key-2026"
+    api_key: str = "takton-dev-api-key-2026"
 
     # LLM — 默认空，引导用户在设置页选择服务商
     llm_provider: Literal["ollama", "vllm", "openai", "anthropic", "openai-compatible"] = "openai-compatible"
@@ -110,6 +110,13 @@ class Settings(BaseSettings):
     context_enable_l5: bool = True
     # 空 = 使用主 LLM；可单独指定便宜模型做 L5 摘要
     context_compress_model: str = ""
+
+    # Prompt-Skill 注入策略（商店安装的 SKILL.md）
+    # summary=仅目录摘要 | auto=摘要+相关全文 | full=尽量全文（仍受限额）
+    prompt_skill_mode: Literal["summary", "auto", "full"] = "auto"
+    prompt_skill_max_full: int = 2  # 单轮最多注入几个全文 skill
+    prompt_skill_full_max_chars: int = 6000  # 单个 skill 正文上限
+    prompt_skill_match_threshold: float = 0.85  # auto 模式相关度阈值
 
     # Embedding — 默认空，未配置时不启用
     embedding_provider: Literal["ollama", "openai", "openai-compatible", ""] = ""

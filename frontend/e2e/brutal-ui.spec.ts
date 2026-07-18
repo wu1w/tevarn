@@ -57,7 +57,6 @@ async function createSession(token: string) {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
-    json: undefined as any,
     body: JSON.stringify({ config: { identity: 'brutal-ui-test' } }),
   });
   if (!r.ok) throw new Error(`create session ${r.status}`);

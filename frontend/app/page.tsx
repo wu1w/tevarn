@@ -4,6 +4,7 @@ import React, { useState, useCallback, useRef } from 'react';
 import { ChatWindow } from '@/components/chat/ChatWindow';
 import { MessageInput, Attachment, ChatMode } from '@/components/chat/MessageInput';
 import { TaskPanel } from '@/components/tasks/TaskPanel';
+import { TransparencyPanel } from '@/components/chat/TransparencyPanel';
 import { GlobalSearch } from '@/components/search/GlobalSearch';
 import { useSession } from '@/hooks/useSession';
 import { useWebSocket } from '@/hooks/useWebSocket';
@@ -51,6 +52,7 @@ export default function HomePage() {
       }, []);
 
     const [isTaskPanelOpen, setIsTaskPanelOpen] = useState(false);
+    const [isTransparencyOpen, setIsTransparencyOpen] = useState(false);
     const [highlightMessageId, setHighlightMessageId] = useState<string | null>(null);
     const [isStreaming, setIsStreaming] = useState(false);
     const [streamingContent, setStreamingContent] = useState('');
@@ -651,6 +653,12 @@ export default function HomePage() {
                                 </span>
                               )}
                               <button
+                                onClick={() => setIsTransparencyOpen(true)}
+                                className="rounded-lg border border-border-subtle bg-card-bg px-3.5 py-1.5 text-xs font-medium text-foreground-muted transition-all hover:border-border-default hover:bg-card-bg-hover"
+                              >
+                                🔍 透明化
+                              </button>
+                              <button
                                 onClick={() => setIsTaskPanelOpen(true)}
                                 className="relative rounded-lg border border-border-subtle bg-card-bg px-3.5 py-1.5 text-xs font-medium text-foreground-muted transition-all hover:border-border-default hover:bg-card-bg-hover"
                               >
@@ -740,6 +748,11 @@ export default function HomePage() {
                                               setHighlightMessageId(null);
                                             }, 1600);
                                           }}
+                                        />
+                                        <TransparencyPanel
+                                          sessionId={currentSession?.id || ''}
+                                          visible={isTransparencyOpen}
+                                          onClose={() => setIsTransparencyOpen(false)}
                                         />
                                       </div>
 

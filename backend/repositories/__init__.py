@@ -14,6 +14,8 @@ from .setting_repo import SettingRepository
 from .skill_repo import SkillRepository
 from .sub_agent_repo import SubAgentRepository, AsyncSubAgentRepository
 from .task_repo import TaskRepository
+from .trace_repo import TraceRepository
+from .entity_repo import EntityRepository
 from .tool_repo import ToolRepository
 from .user_repo import UserRepository
 from .webhook_repo import WebhookRepository, AsyncWebhookRepository, AsyncWebhookDeliveryLogRepository
@@ -54,4 +56,6 @@ __all__ = [
     "AsyncCronHookExecutionLogRepository",
     "SubAgentRepository",
     "AsyncSubAgentRepository",
+    "TraceRepository",
+    "EntityRepository",
 ]

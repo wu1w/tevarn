@@ -179,7 +179,7 @@ function ChannelEditPanel({
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string; detail?: string } | null>(null);
   const addToast = useToastStore((s) => s.addToast);
-  const confirm = useConfirm();
+  const { confirm, ConfirmDialogComponent } = useConfirm();
 
   useEffect(() => {
     const init: Record<string, any> = {
@@ -344,6 +344,7 @@ function ChannelEditPanel({
           </button>
         </div>
       </div>
+      {ConfirmDialogComponent}
     </div>
   );
 }

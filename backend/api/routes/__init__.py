@@ -10,9 +10,11 @@ from . import (
     auth,
     channels,
     chat,
+    cluster,
     context,
     cron,
     cron_hook,
+    desktop,
     devices,
     evolution,
     files,
@@ -20,16 +22,20 @@ from . import (
     images,
     knowledge,
     mcp,
+    mcp_store,
     messages,
     notifications,
     packages,
     sessions,
     settings,
     skills,
+    skill_store,
     smoke_test,
     sub_agents,
     tasks,
     tools,
+    traces,
+    entities,
     upload,
     webhook,
     wiki,
@@ -54,7 +60,10 @@ def register_routes(app, prefix: str = "") -> None:
     app.include_router(sessions.router, prefix=p)
     app.include_router(messages.router, prefix=p)
     app.include_router(tasks.router, prefix=p)
+    app.include_router(traces.router, prefix=p)
+    app.include_router(entities.router, prefix=p)
     app.include_router(skills.router, prefix=p)
+    app.include_router(skill_store.router, prefix=f"{p}/skills")
     app.include_router(evolution.router, prefix=p)
     app.include_router(tools.router, prefix=p)
     app.include_router(context.router, prefix=p)
@@ -74,6 +83,9 @@ def register_routes(app, prefix: str = "") -> None:
     app.include_router(images.router, prefix=p)
     app.include_router(upload.router, prefix=p)
     app.include_router(mcp.router, prefix=p)
+    app.include_router(mcp_store.router, prefix=p)
+    app.include_router(desktop.router, prefix=p)
+    app.include_router(cluster.router, prefix=p)
     app.include_router(workspace.router, prefix=p)
     app.include_router(webhook.router, prefix=p)
     app.include_router(workflow_templates.router, prefix=p)

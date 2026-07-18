@@ -73,21 +73,41 @@ async def verify_api_key(x_api_key: Annotated[str, Header()]) -> str:
 # ---- Authentication ----
 
 async def get_current_user(
-    authorization: str | None = None,
+    authorization: str | None = Header(default=None, alias="Authorization"),
     user_repo: UserRepository = Depends(lambda: _user_repo),
 ) -> UserRead:
-    """从 Authorization Header 提取并验证 JWT，返回当前用户
-    单用户模式下如果请求没有 token，则自动返回默认用户
+    """从 Authorization Header 提取并验证 JWT，返回当前用户。
+
+    - 有 Bearer 且有效 → 对应用户
+    - 有 Bearer 但无效/过期 → 401（禁止静默回落，避免会话 403 身份错乱）
+    - 无 Bearer 且 single_user_mode → 默认 admin@takton.dev
     """
-    if authorization and authorization.startswith("Bearer "):
-        token = authorization[7:]  # Remove "Bearer "
+    has_bearer = bool(authorization and authorization.startswith("Bearer "))
+    if has_bearer:
+        token = authorization[7:]  # type: ignore[index]
         payload = decode_access_token(token)
         if payload and "sub" in payload:
             import uuid
-            user_id = uuid.UUID(payload["sub"])
-            user = await user_repo.get_by_id(user_id)
-            if user and getattr(user, "is_active", True):
-                return UserRead.model_validate(user)
+
+            try:
+                user_id = uuid.UUID(str(payload["sub"]))
+            except (ValueError, TypeError):
+                user_id = None  # type: ignore[assignment]
+            if user_id is not None:
+                user = await user_repo.get_by_id(user_id)
+                if user and getattr(user, "is_active", True):
+                    return UserRead.model_validate(user)
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="User not found or deactivated",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+        # token 无法解码 / 缺 sub：明确 401，让前端清 token 重登
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     if settings.single_user_mode:
         # 查找或创建默认用户
@@ -98,19 +118,22 @@ async def get_current_user(
         from backend.core.security import get_password_hash
         from sqlalchemy.exc import IntegrityError
         import os
+
         default_pw = (
             (settings.default_admin_password or "").strip()
             or os.environ.get("TAKTON_DEFAULT_ADMIN_PASSWORD", "").strip()
             or "admin"
         )
         try:
-            user = await user_repo.create({
-                "email": "admin@takton.dev",
-                "username": "admin",
-                "hashed_password": get_password_hash(default_pw),
-                "is_superuser": True,
-                "is_active": True,
-            })
+            user = await user_repo.create(
+                {
+                    "email": "admin@takton.dev",
+                    "username": "admin",
+                    "hashed_password": get_password_hash(default_pw),
+                    "is_superuser": True,
+                    "is_active": True,
+                }
+            )
             return UserRead.model_validate(user)
         except IntegrityError:
             # 并发创建导致唯一约束冲突，回滚后重新获取
@@ -125,7 +148,7 @@ async def get_current_user(
             detail="Missing or invalid authorization header",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    token = authorization[7:]  # Remove "Bearer "
+    token = authorization[7:]
     payload = decode_access_token(token)
     if not payload or "sub" not in payload:
         raise HTTPException(
@@ -134,6 +157,7 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     import uuid
+
     user_id = uuid.UUID(payload["sub"])
     user = await user_repo.get_by_id(user_id)
     if not user:
@@ -162,6 +186,21 @@ async def require_admin(
             detail="Admin access required",
         )
     return current_user
+
+
+def assert_session_owner(session_user_id, current_user: UserRead) -> None:
+    """校验会话归属。
+
+    single_user_mode 下本机可访问任意会话（桌面单用户产品语义，
+    避免 admin@takton.dev 与其它本地账号之间的 403 错乱）。
+    多用户模式仍严格按 user_id 隔离。
+    """
+    if session_user_id is None:
+        return
+    if settings.single_user_mode:
+        return
+    if session_user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
 
 # ---- Services (工厂模式) ----

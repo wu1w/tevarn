@@ -946,6 +946,22 @@ electron_1.ipcMain.handle('open-external', async (_event, url) => {
         await electron_1.shell.openExternal(url);
     }
 });
+/** 用系统默认应用打开本地文件路径；成功返回空串，失败返回错误信息（与 shell.openPath 一致） */
+electron_1.ipcMain.handle('open-path', async (_event, filePath) => {
+    if (typeof filePath !== 'string' || !filePath.trim()) {
+        return 'invalid path';
+    }
+    // 仅允许绝对路径，避免被注入相对恶意路径
+    if (!path.isAbsolute(filePath)) {
+        return 'path must be absolute';
+    }
+    try {
+        return await electron_1.shell.openPath(filePath);
+    }
+    catch (e) {
+        return e instanceof Error ? e.message : String(e);
+    }
+});
 // preload 同步注入用（避免渲染进程模块加载竞态）
 electron_1.ipcMain.on('get-backend-url-sync', (event) => {
     event.returnValue = getApiBase();

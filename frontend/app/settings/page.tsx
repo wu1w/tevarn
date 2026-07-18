@@ -23,6 +23,8 @@ import {
   getSftCorpusInfo,
 } from '@/lib/api';
 import { useToastStore } from '@/stores/toastStore';
+import { useT } from '@/stores/localeStore';
+import { LanguageCard } from '@/components/ui/LanguageSwitcher';
 
 function mapVal(settings: Setting[], key: string, fallback = ''): string {
   const s = settings.find((x) => x.key === key);
@@ -127,6 +129,7 @@ const btnGhost =
 
 export default function SettingsPage() {
   const addToast = useToastStore((s) => s.addToast);
+  const t = useT();
   const [sftLogEnabled, setSftLogEnabled] = useState(false);
   const [sftLogPath, setSftLogPath] = useState('');
   const [sftLogHelp, setSftLogHelp] = useState('');
@@ -817,16 +820,19 @@ export default function SettingsPage() {
     <div className="min-h-0 flex-1 overflow-y-auto p-6 pb-16">
       <div className="mx-auto max-w-3xl space-y-8">
         <div>
-          <h1 className="text-lg font-semibold tracking-tight text-foreground">模型与服务</h1>
+          <h1 className="text-lg font-semibold tracking-tight text-foreground">{t('settings.title')}</h1>
           <p className="mt-1 text-sm text-foreground-muted">
-            已配置供应商一目了然；下方可新增或修改。向量 RAG 仅在填写 Embedding + Qdrant 后生效。
+            {t('settings.llmConfigHint')}
           </p>
         </div>
+
+        {/* 语言切换 — 醒目位置 */}
+        <LanguageCard />
 
         {loading || presetsLoading ? (
           <div className="py-16 text-center text-foreground-dim">
             <div className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-violet-500/30 border-t-violet-500" />
-            <p className="mt-2 text-sm">加载中...</p>
+            <p className="mt-2 text-sm">{t('common.loading')}</p>
           </div>
         ) : (
           <>
