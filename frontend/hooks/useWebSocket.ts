@@ -36,19 +36,15 @@ function resolveWsBaseUrl(): string {
   if (typeof window !== 'undefined') {
     const { hostname, port, protocol } = window.location;
     const isLocalHost = hostname === '127.0.0.1' || hostname === 'localhost';
-
-    // 桌面端 / 本地静态服：优先同源 WS（主进程会把 /api 反代到真实后端端口）
-    // 这样不会死连默认 8000，也不会因为后端换到 8001 而一直「正在连接」
-    if (isLocalHost && (port === '3000' || port === '3001' || port === '')) {
-      const wsProto = protocol === 'https:' ? 'wss:' : 'ws:';
-      const host = port ? `${hostname}:${port}` : hostname;
-      return `${wsProto}//${host}/api`;
-    }
+    const hasElectron = Boolean(
+      (window as unknown as { electronAPI?: unknown }).electronAPI
+    );
 
     const injected = (window as unknown as { __TAKTON_WS_URL__?: string }).__TAKTON_WS_URL__;
     if (injected) return injected.replace(/\/$/, '');
 
-    if ((window as unknown as { electronAPI?: unknown }).electronAPI) {
+    // Electron 桌面：主进程反代 /api → 真实后端，走同源 WS
+    if (hasElectron) {
       try {
         const api = (window as unknown as {
           electronAPI?: { getWsUrlSync?: () => string; getBackendUrlSync?: () => string };
@@ -60,8 +56,14 @@ function resolveWsBaseUrl(): string {
       } catch {
         /* ignore */
       }
-      // 桌面回退仍走同源（由主进程反代），不要写死 8000
-      return 'ws://127.0.0.1:3000/api';
+      const wsProto = protocol === 'https:' ? 'wss:' : 'ws:';
+      const host = port ? `${hostname}:${port}` : hostname;
+      return `${wsProto}//${host}/api`;
+    }
+
+    // 浏览器 + next dev（:3000/:3001）：Next rewrites 不支持 WS upgrade，必须直连后端 8090
+    if (isLocalHost && (port === '3000' || port === '3001')) {
+      return 'ws://127.0.0.1:8090/api';
     }
   }
   if (process.env.NEXT_PUBLIC_WS_URL) {
@@ -70,10 +72,8 @@ function resolveWsBaseUrl(): string {
   if (typeof window !== 'undefined') {
     const hostname = window.location.hostname;
     if (hostname === 'localhost' || hostname === '127.0.0.1') {
-      // 浏览器开发模式：Next rewrites 不支持 WS upgrade 代理，
-      // 直连后端 8090（同源 :3000 会因 upgrade 失败而断开）。
       const port = window.location.port;
-      if (port === '3000') {
+      if (port === '3000' || port === '3001') {
         return 'ws://127.0.0.1:8090/api';
       }
       if (port && port !== '8000') {
