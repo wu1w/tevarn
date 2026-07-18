@@ -848,6 +848,13 @@ export default function SettingsPage() {
                   <span className="truncate text-[11px] text-foreground-muted">
                     {t('settings.current')}{' '}
                     <span className="font-medium text-foreground">{catalog.active_model}</span>
+                    {defaultLlmModel ? (
+                      <>
+                        {' · '}
+                        {t('settings.defaultSessionModel')}:{' '}
+                        <span className="font-medium text-foreground">{defaultLlmModel}</span>
+                      </>
+                    ) : null}
                   </span>
                 )}
               </div>

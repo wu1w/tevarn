@@ -1149,6 +1149,9 @@ const zh = {
   'contextDash.items': '上下文项 ({filtered}/{total})',
   'contextDash.accessLog': '📋 访问记录 ({n})',
   'contextDash.nItems': '{n} 项',
+  'chat.stopGenerating': '停止生成',
+  'chat.stopHint': '生成中，点击停止可打断',
+  'settings.defaultSessionModelShort': '新会话默认模型（可与当前激活模型不同）',
 };
 
 const en: Record<keyof typeof zh, string> = {
@@ -2278,6 +2281,9 @@ const en: Record<keyof typeof zh, string> = {
   'contextDash.items': 'Context items ({filtered}/{total})',
   'contextDash.accessLog': '📋 Access log ({n})',
   'contextDash.nItems': '{n} items',
+  'chat.stopGenerating': 'Stop',
+  'chat.stopHint': 'Generating — click to stop',
+  'settings.defaultSessionModelShort': 'Default model for new chats (can differ from active)',
 };
 
 const dictionaries: Record<Locale, Record<string, string>> = { zh, en };

@@ -28,6 +28,9 @@ interface MessageInputProps {
   onClearEdit?: () => void;
   showModelPicker?: boolean;
   onModelChanged?: (providerId: string, model: string, providerName: string) => void;
+  /** 回答生成中：显示停止按钮，允许打断 */
+  isStreaming?: boolean;
+  onStopStreaming?: () => void;
 }
 
 const TOOLS = [
@@ -57,6 +60,8 @@ export function MessageInput({
   onClearEdit,
   showModelPicker = true,
   onModelChanged,
+  isStreaming = false,
+  onStopStreaming,
 }: MessageInputProps) {
   const t = useT();
   const [content, setContent] = useState(initialContent || '');
@@ -511,14 +516,22 @@ export function MessageInput({
                     )}
                   </label>
         <button
-          type="button"
-          onClick={handleSend}
-          disabled={!canSend}
-          className="inline-flex flex-shrink-0 items-center gap-2 rounded-2xl bg-gradient-to-r from-brand-purple to-brand-cyan px-5 py-3 text-[0.8125rem] font-semibold tracking-tight text-white shadow-lg shadow-brand-purple/15 transition-all hover:opacity-90 disabled:opacity-30"
-        >
-          <span>{t('chat.sendBtn')}</span>
-          <IconSend className="h-4 w-4 opacity-95" />
-        </button>
+                  type="button"
+                  onClick={isStreaming ? () => onStopStreaming?.() : handleSend}
+                  disabled={isStreaming ? !onStopStreaming : !canSend}
+                  aria-label={isStreaming ? t('chat.stopGenerating') : t('chat.sendBtn')}
+                  className={`inline-flex flex-shrink-0 items-center gap-2 rounded-2xl px-5 py-3 text-[0.8125rem] font-semibold tracking-tight text-white shadow-lg transition-all hover:opacity-90 disabled:opacity-30 ${
+                    isStreaming
+                      ? 'bg-gradient-to-r from-rose-500 to-orange-500 shadow-rose-500/20'
+                      : 'bg-gradient-to-r from-brand-purple to-brand-cyan shadow-brand-purple/15'
+                  }`}
+                >
+                  <span>{isStreaming ? t('chat.stopGenerating') : t('chat.sendBtn')}</span>
+                  {!isStreaming && <IconSend className="h-4 w-4 opacity-95" />}
+                  {isStreaming && (
+                    <span className="inline-block h-3.5 w-3.5 rounded-sm bg-white/95" aria-hidden />
+                  )}
+                </button>
       </div>
 
       <input

@@ -698,28 +698,30 @@ export default function HomePage() {
                         </div>
                       )}
                       <MessageInput
-                        key={editingContent ?? 'default'}
-                        onSend={handleSend}
-                        onGenerateImage={handleGenerateImage}
-                        disabled={isStreaming || isGeneratingImage || creatingSession}
-                        placeholder={
-                          creatingSession
-                            ? t('chat.creating')
-                            : isStreaming
-                              ? t('chat.aiReplying')
-                              : uiMode === 'pro' && !workspaceRoot
-                                ? t('chat.proSelectProject')
-                                : !currentSession
-                                  ? t('chat.inputHint')
-                                  : isConnecting
-                                    ? t('chat.connectingCanSend')
-                                    : !isConnected
-                                      ? t('chat.sendAutoConnect')
-                                      : t('chat.send')
-                        }
-                        initialContent={editingContent ?? undefined}
-                        onClearEdit={() => setEditingContent(null)}
-                      />
+                                              key={editingContent ?? 'default'}
+                                              onSend={handleSend}
+                                              onGenerateImage={handleGenerateImage}
+                                              disabled={isStreaming || isGeneratingImage || creatingSession}
+                                              isStreaming={isStreaming}
+                                              onStopStreaming={handleStopStreaming}
+                                              placeholder={
+                                                creatingSession
+                                                  ? t('chat.creating')
+                                                  : isStreaming
+                                                    ? t('chat.aiReplying')
+                                                    : uiMode === 'pro' && !workspaceRoot
+                                                      ? t('chat.proSelectProject')
+                                                      : !currentSession
+                                                        ? t('chat.inputHint')
+                                                        : isConnecting
+                                                          ? t('chat.connectingCanSend')
+                                                          : !isConnected
+                                                            ? t('chat.sendAutoConnect')
+                                                            : t('chat.send')
+                                              }
+                                              initialContent={editingContent ?? undefined}
+                                              onClearEdit={() => setEditingContent(null)}
+                                            />
                     </main>
 
                     <WorkspaceDock />
