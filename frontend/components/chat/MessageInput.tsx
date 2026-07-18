@@ -6,6 +6,7 @@ import { ModelPicker } from './ModelPicker';
 import { CHAT_TOOL_ICONS, IconSend } from '@/components/icons/ChatIcons';
 import { ClusterModePanel } from '@/components/subagent/SubAgentPanel';
 import { subAgentApi } from '@/lib/subagent-api';
+import { useT } from '@/stores/localeStore';
 import type { SubAgent } from '@/types/subagent';
 import type { Device } from '@/types';
 
@@ -30,14 +31,14 @@ interface MessageInputProps {
 }
 
 const TOOLS = [
-  { key: 'attachment', label: '附件', toggle: false, group: 'utility' },
-  { key: 'goal', label: 'Goal 模式', toggle: true, group: 'think' },
-  { key: 'cluster', label: '集群模式', toggle: true, group: 'think' },
-  { key: 'deepthink', label: '深度思考', toggle: true, group: 'think' },
-  { key: 'search', label: '联网搜索', toggle: true, group: 'think' },
-  { key: 'image', label: '图片生成', toggle: true, group: 'action' },
-  { key: 'ppt', label: '制作PPT', toggle: true, group: 'action' },
-  { key: 'report', label: '生成报告', toggle: true, group: 'action' },
+  { key: 'attachment', toggle: false, group: 'utility' },
+  { key: 'goal', toggle: true, group: 'think' },
+  { key: 'cluster', toggle: true, group: 'think' },
+  { key: 'deepthink', toggle: true, group: 'think' },
+  { key: 'search', toggle: true, group: 'think' },
+  { key: 'image', toggle: true, group: 'action' },
+  { key: 'ppt', toggle: true, group: 'action' },
+  { key: 'report', toggle: true, group: 'action' },
 ] as const;
 
 /**
@@ -51,12 +52,13 @@ export function MessageInput({
   onSend,
   onGenerateImage,
   disabled = false,
-  placeholder = '发送消息...',
+  placeholder,
   initialContent,
   onClearEdit,
   showModelPicker = true,
   onModelChanged,
 }: MessageInputProps) {
+  const t = useT();
   const [content, setContent] = useState(initialContent || '');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -345,7 +347,7 @@ export function MessageInput({
     >
       {uploadError && (
         <div className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
-          ⚠ 上传失败：{uploadError}
+          {t('chat.uploadFailed')}{uploadError}
         </div>
       )}
       {attachments.length > 0 && (
@@ -404,17 +406,17 @@ export function MessageInput({
                       ? 'border border-brand-purple/25 bg-brand-purple/12 text-brand-cyan shadow-sm'
                       : 'border border-transparent text-foreground-muted hover:bg-card-bg-hover hover:text-foreground'
                   } disabled:opacity-40`}
-                  title={tool.label}
+                  title={t(`chat.tool.${tool.key}` as never)}
                 >
                   {ToolIcon ? <ToolIcon className="h-3.5 w-3.5" /> : null}
-                  <span className="hidden text-[11px] font-medium lg:inline">{tool.label}</span>
+                  <span className="hidden text-[11px] font-medium lg:inline">{t(`chat.tool.${tool.key}` as never)}</span>
                 </button>
               );
             })}
           </React.Fragment>
         ))}
         {uploading && (
-          <span className="animate-pulse text-xs text-foreground-dim">上传中...</span>
+          <span className="animate-pulse text-xs text-foreground-dim">{t('chat.uploading')}</span>
         )}
       </div>
 
@@ -422,13 +424,13 @@ export function MessageInput({
         <label className="relative min-w-0 flex-1 cursor-text">
           {isEditing && (
             <div className="absolute -top-6 left-0 right-0 flex items-center justify-between">
-              <span className="text-[10px] font-medium text-brand-cyan">编辑消息中</span>
+              <span className="text-[10px] font-medium text-brand-cyan">{t('chat.editingMsg')}</span>
               <button
                 type="button"
                 onClick={onClearEdit}
                 className="text-[10px] text-foreground-dim transition-colors hover:text-foreground-muted"
               >
-                取消编辑
+                {t('chat.cancelEdit')}
               </button>
             </div>
           )}
@@ -457,10 +459,10 @@ export function MessageInput({
                       }}
                       placeholder={
                         isEditing
-                          ? '编辑消息...'
+                          ? t('chat.editPlaceholder')
                           : clusterOn
-                            ? '向集群发送任务…（发送时自动带上所选子代理）'
-                            : placeholder
+                            ? t('chat.clusterPlaceholder')
+                            : (placeholder ?? t('chat.send'))
                       }
                       readOnly={inputLocked}
                       rows={2}
@@ -514,7 +516,7 @@ export function MessageInput({
           disabled={!canSend}
           className="inline-flex flex-shrink-0 items-center gap-2 rounded-2xl bg-gradient-to-r from-brand-purple to-brand-cyan px-5 py-3 text-[0.8125rem] font-semibold tracking-tight text-white shadow-lg shadow-brand-purple/15 transition-all hover:opacity-90 disabled:opacity-30"
         >
-          <span>发送</span>
+          <span>{t('chat.sendBtn')}</span>
           <IconSend className="h-4 w-4 opacity-95" />
         </button>
       </div>

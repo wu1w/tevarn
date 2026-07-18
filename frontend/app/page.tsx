@@ -21,6 +21,7 @@ import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { WorkspaceDock } from '@/components/workspace/WorkspaceDock';
 import { OpenProjectModal } from '@/components/workspace/OpenProjectModal';
 import { useToastStore } from '@/stores/toastStore';
+import { useT } from '@/stores/localeStore';
 import { useWsStore } from '@/stores/wsStore';
 
 export default function HomePage() {
@@ -76,6 +77,7 @@ export default function HomePage() {
 
     const [creatingSession, setCreatingSession] = useState(false);
     const { addToast } = useToastStore();
+    const t = useT();
 
 
   // session 切换 / 初始化：清流式、加载历史、恢复 Goal 面板
@@ -160,10 +162,10 @@ export default function HomePage() {
             return [...prev, ended];
           });
           if (msg.phase === 'start') {
-            setStreamStatusDetail(`正在执行 ${msg.name}…`);
+            setStreamStatusDetail(`${t('chat.executing')} ${msg.name}…`);
           } else {
             setStreamStatusDetail(
-              msg.status === 'failed' ? `${msg.name} 失败` : `${msg.name} 完成`
+              msg.status === 'failed' ? `${msg.name} ${t('chat.failed')}` : `${msg.name} ${t('chat.completed')}`
             );
           }
 
@@ -200,7 +202,7 @@ export default function HomePage() {
         if (msg.detail) setStreamStatusDetail(msg.detail);
       } else if (msg.state === 'error') {
         setIsStreaming(false);
-        setStreamStatusDetail(msg.detail || '出错了');
+        setStreamStatusDetail(msg.detail || t('chat.error'));
       } else if (msg.state === 'idle') {
         setIsStreaming(false);
         setStreamStatusDetail(null);
@@ -277,13 +279,13 @@ export default function HomePage() {
             session = await createAndLoadSession();
           } catch (e) {
             console.error('创建会话失败:', e);
-            addToast('创建对话失败，请确认已登录且后端正常运行', 'error');
+            addToast(t('chat.createSessionFailed'), 'error');
             return;
           } finally {
             setCreatingSession(false);
           }
           if (!session) {
-            addToast('创建对话失败，请稍后重试', 'error');
+            addToast(t('chat.createSessionFailed2'), 'error');
             return;
           }
         }
@@ -291,13 +293,13 @@ export default function HomePage() {
         // 等待该 session 的 WebSocket 就绪（新建会话后需要一点时间建连）
         const ready = await waitForConnection(session.id, 15000);
         if (!ready) {
-          addToast('聊天通道未连接。请确认后端已启动，或稍后重试。', 'error');
+          addToast(t('chat.channelNotConnected'), 'error');
           setIsStreaming(false);
           return;
         }
 
         if (mode === 'cluster' && (!subAgentIds || subAgentIds.length === 0)) {
-          addToast('集群模式请至少选择一个子代理', 'error');
+          addToast(t('chat.clusterNeedAgent'), 'error');
           return;
         }
 
@@ -319,13 +321,13 @@ export default function HomePage() {
         addMessage(userMsg);
         const sent = sendMessage(content, attachments, mode, subAgentIds);
         if (!sent) {
-          addToast('消息发送失败，连接已断开，请重试', 'error');
+          addToast(t('chat.sendFailedDisconnected'), 'error');
           return;
         }
         setIsStreaming(true);
         setStreamingContent('');
         setLiveToolCalls([]);
-        setStreamStatusDetail(mode === 'cluster' ? '集群协作中…' : '思考中…');
+        setStreamStatusDetail(mode === 'cluster' ? t('chat.clusterWorking') : t('chat.thinking'));
       },
       [currentSession, addMessage, sendMessage, createAndLoadSession, waitForConnection]
     );
@@ -339,7 +341,7 @@ export default function HomePage() {
       if (!lastUserMsg?.content) return;
       const ready = await waitForConnection(currentSession.id, 15000);
       if (!ready) {
-        addToast('聊天通道未连接，请稍后重试', 'error');
+        addToast(t('chat.channelNotConnected2'), 'error');
         return;
       }
       if (sendMessage(lastUserMsg.content, [], 'default')) {
@@ -368,7 +370,7 @@ export default function HomePage() {
         id: generateUUID(),
         session_id: currentSession.id,
         role: 'user',
-        content: `[图片生成] ${prompt}`,
+        content: `[${t('chat.imageGenTag')}] ${prompt}`,
         tool_calls: null,
         token_count: null,
         created_at: new Date().toISOString(),
@@ -380,14 +382,14 @@ export default function HomePage() {
         const imageUrls = (result.images || [])
           .map((img) => {
             if (img.url && /^https?:\/\//i.test(img.url)) {
-              return `![生成图片](${img.url})`;
+              return `![${t('chat.imageGenAlt')}](${img.url})`;
             }
             return '';
           })
           .filter(Boolean)
           .join('\n');
 
-        const assistantContent = imageUrls || '图片生成完成';
+        const assistantContent = imageUrls || t('chat.imageGenDone');
         addMessage({
           id: generateUUID(),
           session_id: currentSession.id,
@@ -403,7 +405,7 @@ export default function HomePage() {
           id: generateUUID(),
           session_id: currentSession.id,
           role: 'assistant',
-          content: `[Error] 图片生成失败: ${err instanceof Error ? err.message : String(err)}`,
+          content: `[Error] ${t('chat.imageGenFailed')}: ${err instanceof Error ? err.message : String(err)}`,
           tool_calls: null,
           token_count: null,
           created_at: new Date().toISOString(),
@@ -500,7 +502,7 @@ export default function HomePage() {
       for (const file of Array.from(files)) {
         try {
           const result = await uploadFile(file);
-          const content = `[附件: ${result.filename}](${result.url})`;
+          const content = `[${t('chat.attachment')}: ${result.filename}](${result.url})`;
           addMessage({
             id: generateUUID(),
             session_id: currentSession.id,
@@ -568,7 +570,7 @@ export default function HomePage() {
             <svg className="mx-auto h-12 w-12 text-brand-purple/60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
             </svg>
-            <p className="mt-3 text-sm font-medium text-foreground-muted">释放以上传文件</p>
+            <p className="mt-3 text-sm font-medium text-foreground-muted">{t('chat.dropToUpload')}</p>
           </div>
         </div>
       )}
@@ -587,9 +589,9 @@ export default function HomePage() {
                     type="button"
                     onClick={() => setForceProjectOpen(true)}
                     className="max-w-[200px] truncate rounded-full border border-border-subtle bg-card-bg px-2.5 py-0.5 text-[11px] text-foreground-muted hover:border-brand-purple/40"
-                    title={workspaceRoot || '选择项目文件夹'}
+                    title={workspaceRoot || t('chat.selectProjectTitle')}
                   >
-                    📁 {workspaceName || workspaceRoot || '选择项目…'}
+                    📁 {workspaceName || workspaceRoot || t('chat.selectProject')}
                   </button>
                 )}
               </div>
@@ -605,7 +607,7 @@ export default function HomePage() {
                                       : 'text-foreground-dim hover:text-foreground'
                                   }`}
                                 >
-                                  简洁
+                                  {t('chat.simple')}
                                 </button>
                                 <button
                                   type="button"
@@ -616,7 +618,7 @@ export default function HomePage() {
                                       : 'text-foreground-dim hover:text-foreground'
                                   }`}
                                 >
-                                  专业
+                                  {t('chat.pro')}
                                 </button>
                               </div>
                               {uiMode === 'pro' && (
@@ -624,9 +626,9 @@ export default function HomePage() {
                                   type="button"
                                   onClick={toggleDock}
                                   className="relative rounded-lg border border-border-subtle px-2 py-1 text-[11px] text-foreground-muted hover:bg-card-bg-hover"
-                                  title="文件与终端侧栏 (Ctrl+B)"
+                                  title={t('chat.dockTitle')}
                                 >
-                                  {dockOpen ? '隐藏侧栏' : '文件/终端'}
+                                  {dockOpen ? t('chat.hideDock') : t('chat.showDock')}
                                   {unreadTerminal && !dockOpen && (
                                     <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-brand-cyan" />
                                   )}
@@ -638,31 +640,31 @@ export default function HomePage() {
                                   type="button"
                                   onClick={() => connect()}
                                   className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-200 hover:bg-amber-500/15"
-                                  title="点击重连会话"
+                                  title={t('chat.reconnectTitle')}
                                 >
-                                  会话未连接 · 重连
+                                  {t('chat.reconnect')}
                                 </button>
                               )}
                               {isConnecting && (
-                                <span className="text-[11px] text-foreground-dim">连接中…</span>
+                                <span className="text-[11px] text-foreground-dim">{t('chat.connecting')}</span>
                               )}
                               {isGeneratingImage && (
                                 <span className="flex items-center gap-1.5 text-xs text-brand-cyan">
                                   <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand-cyan" />
-                                  生成图片中...
+                                  {t('chat.generatingImage')}
                                 </span>
                               )}
                               <button
                                 onClick={() => setIsTransparencyOpen(true)}
                                 className="rounded-lg border border-border-subtle bg-card-bg px-3.5 py-1.5 text-xs font-medium text-foreground-muted transition-all hover:border-border-default hover:bg-card-bg-hover"
                               >
-                                🔍 透明化
+                                {t('chat.transparency')}
                               </button>
                               <button
                                 onClick={() => setIsTaskPanelOpen(true)}
                                 className="relative rounded-lg border border-border-subtle bg-card-bg px-3.5 py-1.5 text-xs font-medium text-foreground-muted transition-all hover:border-border-default hover:bg-card-bg-hover"
                               >
-                                任务看板
+                                {t('chat.taskBoard')}
                                 {activeGoal &&
                                   (activeGoal.status === 'active' ||
                                     (activeGoal.todos && activeGoal.todos.length > 0)) && (
@@ -691,7 +693,7 @@ export default function HomePage() {
                       </div>
                       {!isConnected && !isConnecting && !!currentSession && (
                         <div className="mx-3 mb-2 flex items-center justify-between gap-2 rounded-lg border border-border-subtle bg-card-bg/60 px-3 py-1.5 text-[11px] text-foreground-dim">
-                          <span>会话通道空闲 — 发送消息时会自动连接</span>
+                          <span>{t('chat.channelIdle')}</span>
                         </div>
                       )}
                       <MessageInput
@@ -701,18 +703,18 @@ export default function HomePage() {
                         disabled={isStreaming || isGeneratingImage || creatingSession}
                         placeholder={
                           creatingSession
-                            ? '正在创建对话…'
+                            ? t('chat.creating')
                             : isStreaming
-                              ? 'AI 回复中…'
+                              ? t('chat.aiReplying')
                               : uiMode === 'pro' && !workspaceRoot
-                                ? '专业模式：请先选择项目文件夹…'
+                                ? t('chat.proSelectProject')
                                 : !currentSession
-                                  ? '输入消息开始对话，或点上方示例…'
+                                  ? t('chat.inputHint')
                                   : isConnecting
-                                    ? '正在连接…（仍可发送）'
+                                    ? t('chat.connectingCanSend')
                                     : !isConnected
-                                      ? '发送消息…（自动连接会话）'
-                                      : '发送消息…'
+                                      ? t('chat.sendAutoConnect')
+                                      : t('chat.send')
                         }
                         initialContent={editingContent ?? undefined}
                         onClearEdit={() => setEditingContent(null)}
