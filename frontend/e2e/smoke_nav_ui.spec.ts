@@ -1,50 +1,68 @@
 /**
- * UI smoke: local login → chat stream → hop pages → return via history → stop → follow-up
+ * UI smoke: local login → chat stream → hop pages → return → stop → follow-up
  */
-const { test, expect } = require('@playwright/test');
+import { test, expect, type Page } from '@playwright/test';
 
 const FE = process.env.FE || 'http://127.0.0.1:3000';
 const API = process.env.API || 'http://127.0.0.1:8090/api';
 
-async function apiLogin() {
+type Msg = { role?: string; content?: string | null };
+type SessionRow = { id: string; title?: string | null };
+
+async function apiLogin(): Promise<{
+  access_token: string;
+  expires_in?: number;
+  user?: unknown;
+}> {
   const r = await fetch(`${API}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email: 'admin@takton.dev', password: 'admin' }),
   });
-  const d = await r.json();
+  const d = (await r.json()) as { access_token?: string; expires_in?: number; user?: unknown };
   if (!d.access_token) throw new Error('login failed ' + JSON.stringify(d));
-  return d;
+  return d as { access_token: string; expires_in?: number; user?: unknown };
 }
 
-async function listSessions(token) {
+async function listSessions(token: string): Promise<SessionRow[]> {
   const r = await fetch(`${API}/sessions/my`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  const d = await r.json();
+  const d = (await r.json()) as SessionRow[] | { items?: SessionRow[]; sessions?: SessionRow[] };
   return Array.isArray(d) ? d : d.items || d.sessions || [];
 }
 
-async function getMessages(token, sid) {
+async function getMessages(token: string, sid: string): Promise<Msg[]> {
   const r = await fetch(`${API}/sessions/${sid}/messages?limit=50`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  return r.json();
+  const d = (await r.json()) as Msg[];
+  return Array.isArray(d) ? d : [];
+}
+
+function assistantChars(msgs: Msg[]): number {
+  return msgs
+    .filter((m) => m.role === 'assistant')
+    .reduce((n, m) => n + String(m.content || '').length, 0);
 }
 
 test.describe('nav + interrupt conversation', () => {
   test.setTimeout(240000);
 
-  test('page hops during generation keep session; stop and follow-up work', async ({ page }) => {
+  test('page hops during generation keep session; stop and follow-up work', async ({
+    page,
+  }: {
+    page: Page;
+  }) => {
     const loginData = await apiLogin();
     const token = loginData.access_token;
     const marker = `SMOKE_NAV_${Date.now()}`;
 
-    const pageErrors = [];
-    page.on('pageerror', (e) => pageErrors.push(String(e)));
+    const pageErrors: string[] = [];
+    page.on('pageerror', (e: Error) => pageErrors.push(String(e)));
 
     await page.addInitScript(
-      ({ tok, user, expiresIn }) => {
+      ({ tok, user, expiresIn }: { tok: string; user: unknown; expiresIn: number }) => {
         try {
           localStorage.setItem(
             'takton-auth',
@@ -59,13 +77,21 @@ test.describe('nav + interrupt conversation', () => {
             })
           );
           document.cookie = `takton-auth=${tok}; path=/; max-age=${expiresIn || 604800}; SameSite=Strict`;
-        } catch (_) {}
+        } catch {
+          /* ignore */
+        }
       },
-      { tok: token, user: loginData.user, expiresIn: loginData.expires_in || 604800 }
+      {
+        tok: token,
+        user: loginData.user,
+        expiresIn: loginData.expires_in || 604800,
+      }
     );
 
     await page.goto(`${FE}/login`, { waitUntil: 'domcontentloaded' });
-    const localBtn = page.getByRole('button', { name: /以本地模式继续|Continue in Local Mode/i });
+    const localBtn = page.getByRole('button', {
+      name: /以本地模式继续|Continue in Local Mode/i,
+    });
     if (await localBtn.isVisible().catch(() => false)) {
       await localBtn.click();
       await page.waitForTimeout(1500);
@@ -77,7 +103,6 @@ test.describe('nav + interrupt conversation', () => {
     await page.goto(`${FE}/`, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(1500);
 
-    // new chat if button exists
     const newChat = page.getByRole('button', { name: /新对话|New Chat|新建/i });
     if (await newChat.count()) {
       await newChat.first().click().catch(() => {});
@@ -92,15 +117,13 @@ test.describe('nav + interrupt conversation', () => {
     await input.fill(longPrompt);
     await page.keyboard.press('Enter');
 
-    // wait until server has at least the user message
-    let sid = null;
+    let sid: string | null = null;
     for (let i = 0; i < 40; i++) {
       await page.waitForTimeout(1000);
       const sessions = await listSessions(token);
       for (const s of sessions) {
         const msgs = await getMessages(token, s.id);
-        const hit = (msgs || []).some((m) => String(m.content || '').includes(marker));
-        if (hit) {
+        if (msgs.some((m) => String(m.content || '').includes(marker))) {
           sid = s.id;
           break;
         }
@@ -108,42 +131,32 @@ test.describe('nav + interrupt conversation', () => {
       if (sid) break;
     }
     expect(sid, 'session with marker should exist after send').toBeTruthy();
+    const sessionId = sid as string;
 
-    // wait a bit for stream to start
     await page.waitForTimeout(5000);
-    let beforeChars = 0;
-    {
-      const msgs = await getMessages(token, sid);
-      beforeChars = (msgs || [])
-        .filter((m) => m.role === 'assistant')
-        .reduce((n, m) => n + String(m.content || '').length, 0);
-    }
+    const beforeChars = assistantChars(await getMessages(token, sessionId));
 
-    // hop pages (unmount chat → disconnect WS)
-    for (const p of ['/skills', '/tools', '/mcp', '/settings', '/knowledge', '/cron', '/workflows', '/tasks']) {
+    for (const p of [
+      '/skills',
+      '/tools',
+      '/mcp',
+      '/settings',
+      '/knowledge',
+      '/cron',
+      '/workflows',
+      '/tasks',
+    ]) {
       await page.goto(`${FE}${p}`, { waitUntil: 'domcontentloaded', timeout: 45000 });
       await page.waitForTimeout(400);
     }
 
-    // while hopped, agent should keep writing
     await page.waitForTimeout(10000);
-    let afterHopChars = 0;
-    {
-      const msgs = await getMessages(token, sid);
-      afterHopChars = (msgs || [])
-        .filter((m) => m.role === 'assistant')
-        .reduce((n, m) => n + String(m.content || '').length, 0);
-    }
+    const msgsMid = await getMessages(token, sessionId);
+    const afterHopChars = assistantChars(msgsMid);
     console.log('assistant chars before/after hop', beforeChars, afterHopChars);
-    expect(
-      afterHopChars >= beforeChars,
-      `agent should not shrink on hop; before=${beforeChars} after=${afterHopChars}`
-    ).toBeTruthy();
-    // ideally grew; if model slow, at least user msg remains
-    const msgsMid = await getMessages(token, sid);
+    expect(afterHopChars).toBeGreaterThanOrEqual(beforeChars);
     expect(msgsMid.length).toBeGreaterThanOrEqual(1);
 
-    // return home and open session by clicking history if possible
     await page.goto(`${FE}/`, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(1500);
     const hist = page.getByText(marker).first();
@@ -165,11 +178,11 @@ test.describe('nav + interrupt conversation', () => {
     await page.keyboard.press('Enter');
 
     let followOk = false;
+    let activeSid = sessionId;
     for (let i = 0; i < 50; i++) {
       await page.waitForTimeout(1000);
-      const msgs = await getMessages(token, sid);
-      // follow-up may create same session messages
-      const asst = (msgs || [])
+      const msgs = await getMessages(token, activeSid);
+      const asst = msgs
         .filter((m) => m.role === 'assistant')
         .map((m) => m.content || '')
         .join('\n');
@@ -177,14 +190,12 @@ test.describe('nav + interrupt conversation', () => {
         followOk = true;
         break;
       }
-      // also check newest sessions if app created another
-      const sessions = await listSessions(token);
-      for (const s of sessions.slice(0, 5)) {
+      for (const s of (await listSessions(token)).slice(0, 5)) {
         const m2 = await getMessages(token, s.id);
-        const joined = (m2 || []).map((m) => m.content || '').join('\n');
+        const joined = m2.map((m) => m.content || '').join('\n');
         if (joined.includes(`${marker}_FOLLOW`) && joined.includes('8')) {
           followOk = true;
-          sid = s.id;
+          activeSid = s.id;
           break;
         }
       }
@@ -192,6 +203,6 @@ test.describe('nav + interrupt conversation', () => {
     }
     expect(followOk, 'follow-up should answer 8').toBeTruthy();
     expect(pageErrors, `pageerrors=${JSON.stringify(pageErrors)}`).toEqual([]);
-    console.log('UI smoke OK session', sid, 'afterHopChars', afterHopChars);
+    console.log('UI smoke OK session', activeSid, 'afterHopChars', afterHopChars);
   });
 });
