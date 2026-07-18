@@ -124,16 +124,33 @@
       "icon": "public/icon.png",
       "syncDesktopName": true,
       "extraResources": [
-        {
-          "from": "../.venv",
-          "to": "backend/.venv",
-          "filter": [
-            "**/*",
-            "!**/__pycache__/**",
-            "!**/*.pyc"
-          ]
-        }
-      ]
+              {
+                "from": "../backend",
+                "to": "backend",
+                "filter": [
+                  "**/*.py",
+                  "pyproject.toml",
+                  "requirements.txt",
+                  "requirements-prod.txt",
+                  "!**/__pycache__/**",
+                  "!**/tests/**",
+                  "!**/*.egg-info/**",
+                  "!**/*.db",
+                  "!**/*.db-*",
+                  "!**/uploads/**",
+                  "!workspace_state.json"
+                ]
+              },
+              {
+                "from": "../.venv",
+                "to": "backend/.venv",
+                "filter": [
+                  "**/*",
+                  "!**/__pycache__/**",
+                  "!**/*.pyc"
+                ]
+              }
+            ]
     },
     "win": {
       "target": [
