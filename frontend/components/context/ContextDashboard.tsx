@@ -345,7 +345,7 @@ export default function ContextDashboard() {
         <div className="space-y-3">
           <div className="grid grid-cols-4 gap-3">
             <StatCard icon="📊" label={t('contextDash.stat.totalTokens')} value={stats.total_tokens.toLocaleString()} sub={`/${stats.context_window.toLocaleString()}`} />
-            <StatCard icon="📌" label={t('contextDash.pinned')} value={stats.pinned_tokens.toLocaleString()} sub={`${stats.item_count} 项`} />
+            <StatCard icon="📌" label={t('contextDash.pinned')} value={stats.pinned_tokens.toLocaleString()} sub={t('contextDash.nItems').replace('{n}', String(stats.item_count))} />
             <StatCard icon="💬" label={t('contextDash.stat.session')} value={stats.session_tokens.toLocaleString()} />
             <StatCard icon="🔍" label={t('contextDash.stat.rag')} value={stats.rag_tokens.toLocaleString()} />
           </div>
