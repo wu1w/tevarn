@@ -226,11 +226,17 @@ PROVIDER_PRESETS: list[dict[str, Any]] = [
         "help_text": "在讯飞星辰 MaaS 控制台创建 API Key",
         "llm": {
             "llm_provider": "openai-compatible",
-            "llm_base_url": "https://maas-api.cn-huabei-1.xf-yun.com/v2",
-            "llm_model": "xop3qwen30b",
+            "llm_base_url": "https://maas-coding-api.cn-huabei-1.xf-yun.com/v2",
+            "llm_model": "xopglm51",
             "llm_api_key": "",
         },
-        "models": [],
+        "models": [
+            "xopglm51", "xopglm52", "xopglm5", "xopglmv47flash",
+            "xopkimik26", "xopkimik25", "xminimaxm25",
+            "xopdeepseekv4flash", "xopdeepseekv32", "xopdeepseekv4pro",
+            "xopqwen35397b", "xopqwen36v35b", "xop3qwencodernext",
+            "xsparkx2", "xsparkx2flash", "xsparkx2agent", "auto",
+        ],
         "embedding": None,
         "supports_multi_key": True,
     },
@@ -432,7 +438,10 @@ class TestLLMBody(BaseModel):
 
 def _models_url(base_url: str) -> str:
     base = (base_url or "").rstrip("/")
-    if base.endswith("/v1") or base.endswith("/v4") or base.endswith("/api"):
+    # 已带 API 版本号后缀（/v1 /v2 /v3 /v4 /api 等）直接拼 /models，
+    # 否则默认补 /v1/models。修复讯飞 /v2 端点被拼成 /v2/v1/models → 301 → 403。
+    import re as _re
+    if _re.search(r"/(v\d+|api)$", base):
         return f"{base}/models"
     return f"{base}/v1/models"
 
@@ -604,7 +613,7 @@ async def fetch_provider_models(
                     return {
                         "ok": False,
                         "models": [],
-                        "message": "连接成功，但供应商未返回任何模型",
+                        "message": "连接成功，但该服务未返回模型列表（部分供应商如讯飞 MaaS 不支持此接口）。请手动填写模型名后直接「保存并测试」。",
                         "source": url,
                     }
                 return {
@@ -2044,7 +2053,8 @@ async def test_llm_connection(
                 "messages": [{"role": "user", "content": "hi"}],
             }
         else:
-            if base_url.endswith("/v1") or base_url.endswith("/v4"):
+            import re as _re
+            if _re.search(r"/(v\d+|api)$", base_url):
                 url = f"{base_url}/chat/completions"
             else:
                 url = f"{base_url}/v1/chat/completions"

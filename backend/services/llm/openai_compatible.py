@@ -66,9 +66,10 @@ class OpenAICompatibleService(LLMService):
         return headers
 
     def _chat_completions_url(self) -> str:
-        """兼容 base_url 已含 /v1 或智谱 /v4 的写法，避免拼出 /v1/v1/..."""
+        """兼容 base_url 已含版本号（/v1 /v2 /v4 /api 等）的写法，避免拼出 /v1/v1/... 或 /v2/v1/..."""
+        import re as _re
         base = self.base_url.rstrip("/")
-        if base.endswith("/v1") or base.endswith("/v4") or base.endswith("/api"):
+        if _re.search(r"/(v\d+|api)$", base):
             return f"{base}/chat/completions"
         return f"{base}/v1/chat/completions"
 
