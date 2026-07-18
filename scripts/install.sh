@@ -1,18 +1,17 @@
 #!/usr/bin/env bash
 # Takton one-click installer (Linux) — desktop AppImage client
-#   curl -fsSL https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.sh | tr -d '\015' | bash
+#   curl -fsSL https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.sh | tr -d '\r' | bash
 #
-# Downloads AppImage from GitHub Releases. Not a browser-only stack.
+# Downloads AppImage from the latest GitHub Release (or TAKTON_RELEASE_TAG).
 
 set -euo pipefail
 
 REPO="${TAKTON_REPO:-wu1w/takton}"
-# strip git url to owner/name
 if [[ "$REPO" =~ github.com[:/]([^/]+)/([^/.]+) ]]; then
   REPO="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
 fi
-TAG="${TAKTON_RELEASE_TAG:-v0.1.2}"
-ASSET="${TAKTON_APPIMAGE_ASSET:-Takton-0.1.2.AppImage}"
+TAG_OVERRIDE="${TAKTON_RELEASE_TAG:-}"
+ASSET_OVERRIDE="${TAKTON_APPIMAGE_ASSET:-}"
 NO_START="${TAKTON_NO_START:-0}"
 INSTALL_DIR="${TAKTON_HOME:-$HOME/.local/share/takton}"
 BIN_DIR="${TAKTON_BIN_DIR:-$HOME/.local/bin}"
@@ -20,22 +19,72 @@ BIN_DIR="${TAKTON_BIN_DIR:-$HOME/.local/bin}"
 info() { printf '[takton] %s\n' "$*" >&2; }
 ok()   { printf '[takton] OK %s\n' "$*" >&2; }
 err()  { printf '[takton] ERROR: %s\n' "$*" >&2; }
-
 bold() { printf '\033[1m%s\033[0m\n' "$*" >&2; }
+
+resolve_latest() {
+  local api json tag name url
+  if [[ -n "$TAG_OVERRIDE" ]]; then
+    api="https://api.github.com/repos/${REPO}/releases/tags/${TAG_OVERRIDE}"
+  else
+    api="https://api.github.com/repos/${REPO}/releases/latest"
+  fi
+  info "Resolving release via $api"
+  json="$(curl -fsSL -H 'Accept: application/vnd.github+json' -H 'User-Agent: takton-install.sh' "$api")"
+  tag="$(printf '%s' "$json" | python3 -c 'import sys,json; print(json.load(sys.stdin)["tag_name"])' 2>/dev/null \
+    || printf '%s' "$json" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+  if [[ -n "$ASSET_OVERRIDE" ]]; then
+    name="$ASSET_OVERRIDE"
+  else
+    name="$(printf '%s' "$json" | python3 -c '
+import sys,json,re
+assets=json.load(sys.stdin).get("assets") or []
+for a in assets:
+    n=a.get("name") or ""
+    if re.match(r"Takton-.*\.AppImage$", n):
+        print(n); break
+' 2>/dev/null || true)"
+    if [[ -z "$name" ]]; then
+      name="$(printf '%s' "$json" | grep -oE 'Takton-[^"[:space:]]+\.AppImage' | head -1 || true)"
+    fi
+  fi
+  if [[ -z "$tag" || -z "$name" ]]; then
+    return 1
+  fi
+  url="https://github.com/${REPO}/releases/download/${tag}/${name}"
+  printf '%s\n%s\n%s\n' "$tag" "$name" "$url"
+}
 
 bold "Takton desktop client — one-click install"
 info "Install dir: $INSTALL_DIR"
-
 mkdir -p "$INSTALL_DIR" "$BIN_DIR"
-APP="$INSTALL_DIR/$ASSET"
 
+TAG="v0.2.0"
+ASSET="Takton-0.2.0.AppImage"
+URL=""
+if resolved="$(resolve_latest)"; then
+  TAG="$(printf '%s\n' "$resolved" | sed -n '1p')"
+  ASSET="$(printf '%s\n' "$resolved" | sed -n '2p')"
+  URL="$(printf '%s\n' "$resolved" | sed -n '3p')"
+  ok "Release ${TAG} → ${ASSET}"
+else
+  info "API resolve failed; falling back to ${TAG}/${ASSET}"
+  URL="https://github.com/${REPO}/releases/download/${TAG}/${ASSET}"
+fi
+
+APP="$INSTALL_DIR/$ASSET"
 URLS=(
-  "https://github.com/${REPO}/releases/download/${TAG}/${ASSET}"
+  "$URL"
   "https://github.com/${REPO}/releases/latest/download/${ASSET}"
+  "https://github.com/${REPO}/releases/download/${TAG}/${ASSET}"
 )
 
 downloaded=0
+# unique urls
+declare -A seen=()
 for url in "${URLS[@]}"; do
+  [[ -z "$url" ]] && continue
+  [[ -n "${seen[$url]+x}" ]] && continue
+  seen[$url]=1
   info "Downloading: $url"
   if command -v curl >/dev/null 2>&1; then
     if curl -fL --progress-bar -o "$APP" "$url"; then
@@ -60,9 +109,8 @@ if [[ "$downloaded" -ne 1 ]] || [[ ! -s "$APP" ]]; then
 fi
 
 chmod +x "$APP"
-ok "AppImage ready: $APP"
+ok "AppImage ready: $APP ($(du -h "$APP" | awk '{print $1}'))"
 
-# wrapper
 WRAPPER="$BIN_DIR/takton"
 cat >"$WRAPPER" <<EOF
 #!/usr/bin/env bash
@@ -71,7 +119,6 @@ EOF
 chmod +x "$WRAPPER"
 ok "Command: $WRAPPER (ensure $BIN_DIR is on PATH)"
 
-# optional desktop entry
 APP_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 mkdir -p "$APP_DIR"
 cat >"$APP_DIR/takton.desktop" <<EOF
@@ -94,4 +141,4 @@ if [[ "$NO_START" != "1" ]]; then
   fi
 fi
 
-ok "Done. Use the Takton desktop app."
+ok "Done. Installed ${TAG}."

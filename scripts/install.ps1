@@ -1,7 +1,7 @@
 # Takton one-click installer (Windows) - installs desktop client (Setup.exe)
 #   iex ((irm https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.ps1) -replace '^﻿','')
 #
-# Downloads Takton-Setup from GitHub Releases and runs NSIS installer.
+# Downloads Takton-Setup from the latest GitHub Release (or TAKTON_RELEASE_TAG) and runs NSIS.
 # Note: file must stay UTF-8 without BOM for Windows PowerShell irm|iex (PS 5.1 safe).
 # Does NOT set up a separate "web-only" server stack.
 
@@ -9,30 +9,82 @@ $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $Repo = if ($env:TAKTON_REPO) { $env:TAKTON_REPO } else { "wu1w/takton" }
-# allow owner/name or full git url
 if ($Repo -match "github\.com[:/](?<o>[^/]+)/(?<n>[^/.]+)") {
   $Repo = "$($Matches.o)/$($Matches.n)"
 }
-$Tag = if ($env:TAKTON_RELEASE_TAG) { $env:TAKTON_RELEASE_TAG } else { "v0.1.2" }
-$AssetName = if ($env:TAKTON_SETUP_ASSET) { $env:TAKTON_SETUP_ASSET } else { "Takton-Setup-0.1.2.exe" }
+$TagOverride = $env:TAKTON_RELEASE_TAG
+$AssetOverride = $env:TAKTON_SETUP_ASSET
 $NoStart = $env:TAKTON_NO_START -eq "1"
 
 function Write-Info([string]$m) { Write-Host "[takton] $m" }
 function Write-Ok([string]$m) { Write-Host "[takton] OK $m" -ForegroundColor Green }
 function Write-Err([string]$m) { Write-Host "[takton] ERROR: $m" -ForegroundColor Red }
 
+function Get-LatestSetup {
+  param([string]$Repository, [string]$Tag, [string]$AssetName)
+  $headers = @{
+    "User-Agent" = "takton-install.ps1"
+    "Accept"     = "application/vnd.github+json"
+  }
+  if ($Tag) {
+    $api = "https://api.github.com/repos/$Repository/releases/tags/$Tag"
+  } else {
+    $api = "https://api.github.com/repos/$Repository/releases/latest"
+  }
+  Write-Info "Resolving release via $api"
+  $rel = Invoke-RestMethod -Uri $api -Headers $headers -UseBasicParsing
+  $tagName = [string]$rel.tag_name
+  $assets = @($rel.assets)
+  if ($AssetName) {
+    $hit = $assets | Where-Object { $_.name -eq $AssetName } | Select-Object -First 1
+  } else {
+    # Prefer current naming; never hardcode an old patch version.
+    $hit = $assets | Where-Object { $_.name -match '^Takton-Setup-.*\.exe$' } | Select-Object -First 1
+    if (-not $hit) {
+      $hit = $assets | Where-Object { $_.name -match '^Takton Setup .*\.exe$' } | Select-Object -First 1
+    }
+  }
+  if (-not $hit) {
+    throw "No Setup.exe asset on release $tagName. Assets: $(($assets | ForEach-Object { $_.name }) -join ', ')"
+  }
+  [pscustomobject]@{
+    Tag      = $tagName
+    Name     = [string]$hit.name
+    Url      = [string]$hit.browser_download_url
+    Size     = [int64]$hit.size
+  }
+}
+
 Write-Host ""
 Write-Host "Takton desktop client - one-click install" -ForegroundColor Cyan
 Write-Host ""
 
+$setupMeta = $null
+try {
+  $setupMeta = Get-LatestSetup -Repository $Repo -Tag $TagOverride -AssetName $AssetOverride
+} catch {
+  Write-Info "API resolve failed ($($_.Exception.Message)); falling back to v0.2.0 asset names"
+  $fallbackTag = if ($TagOverride) { $TagOverride } else { "v0.2.0" }
+  $fallbackAsset = if ($AssetOverride) { $AssetOverride } else { "Takton-Setup-0.2.0.exe" }
+  $setupMeta = [pscustomobject]@{
+    Tag  = $fallbackTag
+    Name = $fallbackAsset
+    Url  = "https://github.com/$Repo/releases/download/$fallbackTag/$fallbackAsset"
+    Size = 0
+  }
+}
+
+Write-Ok "Release $($setupMeta.Tag) → $($setupMeta.Name)"
+
 $work = Join-Path $env:TEMP ("takton-setup-" + [guid]::NewGuid().ToString("n").Substring(0, 8))
 New-Item -ItemType Directory -Force -Path $work | Out-Null
-$setupPath = Join-Path $work $AssetName
+$setupPath = Join-Path $work $setupMeta.Name
 
 $urls = @(
-  "https://github.com/$Repo/releases/download/$Tag/$AssetName",
-  "https://github.com/$Repo/releases/latest/download/$AssetName"
-)
+  $setupMeta.Url
+  "https://github.com/$Repo/releases/latest/download/$($setupMeta.Name)"
+  "https://github.com/$Repo/releases/download/$($setupMeta.Tag)/$($setupMeta.Name)"
+) | Select-Object -Unique
 
 $downloaded = $false
 foreach ($url in $urls) {
@@ -51,14 +103,12 @@ foreach ($url in $urls) {
 
 if (-not $downloaded) {
   Write-Err "Failed to download client installer."
-  Write-Err "Open: https://github.com/$Repo/releases and download $AssetName manually."
+  Write-Err "Open: https://github.com/$Repo/releases and download $($setupMeta.Name) manually."
   exit 1
 }
 
 Write-Info "Running installer (one-click NSIS)..."
-# electron-builder NSIS oneClick: running the exe is enough; /S is silent if supported
 $p = Start-Process -FilePath $setupPath -ArgumentList @("/S") -Wait -PassThru
-# If silent exit non-zero, retry interactive
 if ($null -ne $p.ExitCode -and $p.ExitCode -ne 0) {
   Write-Info "Silent install exit $($p.ExitCode), trying interactive..."
   $p2 = Start-Process -FilePath $setupPath -Wait -PassThru
@@ -68,9 +118,8 @@ if ($null -ne $p.ExitCode -and $p.ExitCode -ne 0) {
   }
 }
 
-Write-Ok "Client installed"
+Write-Ok "Client installed ($($setupMeta.Tag))"
 
-# Common install locations
 $pf86 = ${env:ProgramFiles(x86)}
 $candidates = @(
   (Join-Path $env:LOCALAPPDATA "Programs\Takton\Takton.exe"),
