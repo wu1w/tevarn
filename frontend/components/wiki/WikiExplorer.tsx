@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { WikiEntity, WikiRelation } from '@/types';
+import { useT } from '@/stores/localeStore';
 import {
   getWikiEntities,
   createWikiEntity,
@@ -22,6 +23,7 @@ const TYPE_COLORS: Record<string, string> = {
 };
 
 export default function WikiExplorer() {
+  const t = useT();
   const [entities, setEntities] = useState<WikiEntity[]>([]);
   const [relations, setRelations] = useState<WikiRelation[]>([]);
   const [search, setSearch] = useState('');
@@ -126,7 +128,7 @@ export default function WikiExplorer() {
       resetForm();
       loadData();
     } catch (e: any) {
-      addToast(e?.response?.data?.detail || '创建失败', 'error');
+      addToast(e?.response?.data?.detail || t('channels.createFailed'), 'error');
     }
   };
 
@@ -137,7 +139,7 @@ export default function WikiExplorer() {
       if (selectedEntity?.id === id) setSelectedEntity(null);
       loadData();
     } catch (e) {
-      addToast('删除失败', 'error');
+      addToast(t('channels.deleteFailed'), 'error');
     }
   };
 
@@ -372,7 +374,7 @@ export default function WikiExplorer() {
         {/* Left: graph or list */}
         <div className="flex-1 overflow-hidden">
           {loading ? (
-            <div className="flex h-full items-center justify-center text-sm text-foreground-dim">加载中...</div>
+            <div className="flex h-full items-center justify-center text-sm text-foreground-dim">{t('profile.loading')}</div>
           ) : viewMode === 'graph' ? (
             <div className="h-full rounded-xl border border-border-default bg-card-bg p-0.5 flex items-center justify-center text-sm text-foreground-dim">
               图形视图开发中
@@ -441,16 +443,16 @@ export default function WikiExplorer() {
             <div className="space-y-4">
               <div>
                 <label className="mb-1 block text-xs font-medium text-foreground-dim">名称 *</label>
-                <input value={formName} onChange={e => setFormName(e.target.value)} placeholder="实体名称" className="w-full rounded-lg border border-border-default px-3 py-2 text-sm text-foreground focus:border-brand-purple focus:outline-none" />
+                <input value={formName} onChange={e => setFormName(e.target.value)} placeholder={t('memory.form.namePlaceholder')} className="w-full rounded-lg border border-border-default px-3 py-2 text-sm text-foreground focus:border-brand-purple focus:outline-none" />
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-foreground-dim">类型</label>
+                <label className="mb-1 block text-xs font-medium text-foreground-dim">{t('memory.form.type')}</label>
                 <select value={formType} onChange={e => setFormType(e.target.value)} className="w-full rounded-lg border border-border-default px-3 py-2 text-sm text-foreground focus:border-brand-purple focus:outline-none">
                   {ENTITY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-foreground-dim">描述</label>
+                <label className="mb-1 block text-xs font-medium text-foreground-dim">{t('memory.form.desc')}</label>
                 <textarea value={formDesc} onChange={e => setFormDesc(e.target.value)} placeholder="实体描述" rows={3} className="w-full rounded-lg border border-border-default px-3 py-2 text-sm text-foreground focus:border-brand-purple focus:outline-none resize-none" />
               </div>
               <div>
@@ -459,7 +461,7 @@ export default function WikiExplorer() {
               </div>
               <div className="flex justify-end gap-3 pt-2">
                 <button onClick={() => setShowEntityForm(false)} className="rounded-lg border border-border-default px-4 py-2 text-sm text-foreground hover:bg-gray-50">取消</button>
-                <button onClick={handleCreateEntity} className="rounded-lg bg-brand-purple px-4 py-2 text-sm font-medium text-white hover:bg-brand-purple/90">创建</button>
+                <button onClick={handleCreateEntity} className="rounded-lg bg-brand-purple px-4 py-2 text-sm font-medium text-white hover:bg-brand-purple/90">{t('channels.create')}</button>
               </div>
             </div>
           </div>
@@ -498,7 +500,7 @@ export default function WikiExplorer() {
               </div>
               <div className="flex justify-end gap-3 pt-2">
                 <button onClick={() => setShowRelationForm(false)} className="rounded-lg border border-border-default px-4 py-2 text-sm text-foreground hover:bg-gray-50">取消</button>
-                <button onClick={handleCreateRelation} className="rounded-lg bg-brand-purple px-4 py-2 text-sm font-medium text-white hover:bg-brand-purple/90">创建</button>
+                <button onClick={handleCreateRelation} className="rounded-lg bg-brand-purple px-4 py-2 text-sm font-medium text-white hover:bg-brand-purple/90">{t('channels.create')}</button>
               </div>
             </div>
           </div>

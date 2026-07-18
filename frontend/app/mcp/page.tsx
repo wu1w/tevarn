@@ -8,18 +8,19 @@ import {
 } from '@/lib/api-hooks';
 import { useToastStore } from '@/stores/toastStore';
 import MCPStorePanel, { type MCPPageTab } from '@/components/mcp/MCPStorePanel';
+import { t, useT } from '@/stores/localeStore';
 
 const RISK_OPTIONS = [
-  { value: 'safe', label: '安全', desc: '只读、无本地/远程影响' },
-  { value: 'low', label: '低', desc: '只影响当前工作区' },
-  { value: 'medium', label: '中', desc: '可写文件/调用受限外部服务' },
-  { value: 'high', label: '高', desc: '可执行任意代码或调用敏感 API' },
-  { value: 'dangerous', label: '危险', desc: '可执行系统命令/网络代理' },
+  { value: 'safe', labelKey: 'mcpPage.risk.safe', descKey: 'mcpPage.risk.safeDesc' },
+  { value: 'low', labelKey: 'mcpPage.risk.low', descKey: 'mcpPage.risk.lowDesc' },
+  { value: 'medium', labelKey: 'mcpPage.risk.medium', descKey: 'mcpPage.risk.mediumDesc' },
+  { value: 'high', labelKey: 'mcpPage.risk.high', descKey: 'mcpPage.risk.highDesc' },
+  { value: 'dangerous', labelKey: 'mcpPage.risk.dangerous', descKey: 'mcpPage.risk.dangerousDesc' },
 ];
 
 const TRANSPORT_OPTIONS = [
-  { value: 'stdio' as const, label: 'stdio（本地命令）' },
-  { value: 'sse' as const, label: 'SSE（远程 URL）' },
+  { value: 'stdio' as const, labelKey: 'mcpPage.transport.stdio' },
+  { value: 'sse' as const, labelKey: 'mcpPage.transport.sse' },
 ];
 
 const TAB_ACTIVE = 'bg-brand-purple text-white shadow-sm shadow-brand-purple/15';
@@ -44,6 +45,7 @@ const emptyForm = (): MCPServerFormData => ({
 });
 
 export default function MCPPage() {
+  const t = useT();
   const addToast = useToastStore((s) => s.addToast);
   const createMutation = useCreateMCPServerMutation();
   const updateMutation = useUpdateMCPServerMutation();
@@ -62,30 +64,30 @@ export default function MCPPage() {
     async (e: React.FormEvent) => {
       e.preventDefault();
       if (!form.name.trim()) {
-        addToast('请填写名称', 'error');
+        addToast(t('mcpPage.nameRequired'), 'error');
         return;
       }
       if (form.transport === 'stdio' && !form.command?.trim()) {
-        addToast('stdio 模式下必须填写命令', 'error');
+        addToast(t('mcpPage.stdioCmdRequired'), 'error');
         return;
       }
       if (form.transport === 'sse' && !form.url?.trim()) {
-        addToast('SSE 模式下必须填写 URL', 'error');
+        addToast(t('mcpPage.sseUrlRequired'), 'error');
         return;
       }
       setSubmitting(true);
       try {
         if (editingId) {
           await updateMutation.mutateAsync({ id: editingId, data: form });
-          addToast('MCP Server 已更新', 'success');
+          addToast(t('mcpPage.updated'), 'success');
         } else {
           await createMutation.mutateAsync(form);
-          addToast('MCP Server 已创建', 'success');
+          addToast(t('mcpPage.created'), 'success');
         }
         resetForm();
         setTab('installed');
       } catch (err: unknown) {
-        addToast(err instanceof Error ? err.message : '保存失败', 'error');
+        addToast(err instanceof Error ? err.message : t('channels.saveFailed'), 'error');
       } finally {
         setSubmitting(false);
       }
@@ -97,13 +99,13 @@ export default function MCPPage() {
     setEditingId(null);
     setForm({ ...emptyForm(), ...data });
     setTab('custom');
-    addToast('已填入表单，可修改后保存', 'success');
+    addToast(t('mcpPage.filledForm'), 'success');
   }, [addToast]);
 
   const tabs: { id: MCPPageTab; label: string }[] = [
-    { id: 'store', label: '🛍 商店' },
-    { id: 'installed', label: '已安装' },
-    { id: 'custom', label: '自定义' },
+    { id: 'store', label: t('mcpPage.tabStore') },
+    { id: 'installed', label: t('mcpPage.tabInstalled') },
+    { id: 'custom', label: t('memory.type.custom') },
   ];
 
   return (
@@ -111,9 +113,9 @@ export default function MCPPage() {
       <div className="mx-auto flex max-w-6xl flex-col gap-4">
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="text-lg font-semibold tracking-tight">MCP 管理</h1>
+            <h1 className="text-lg font-semibold tracking-tight">{t('mcpPage.manageTitle')}</h1>
             <p className="mt-0.5 text-xs text-foreground-muted">
-              用与 Skills 商店相同的体验安装与管理 Model Context Protocol 服务器
+              {t('mcpPage.manageSubtitle')}
             </p>
           </div>
           <div className="flex rounded-lg border border-border-subtle bg-elevated-bg/80 p-0.5">
@@ -148,20 +150,20 @@ export default function MCPPage() {
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <h2 className="text-sm font-semibold">
-                  {editingId ? '编辑 MCP Server' : '自定义 MCP Server'}
+                  {editingId ? t('mcpPage.editServer') : t('mcpPage.customServer')}
                 </h2>
                 <p className="text-[11px] text-foreground-muted">
-                  适合高级配置；商店一键安装可覆盖多数场景
+                  {t('mcpPage.customHint')}
                 </p>
               </div>
               <button type="button" className={BTN_SECONDARY} onClick={() => setTab('store')}>
-                ← 回商店
+                {t('mcpPage.backStore')}
               </button>
             </div>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
-                  <label className="mb-1 block text-xs text-foreground-muted">名称</label>
+                  <label className="mb-1 block text-xs text-foreground-muted">{t('channels.fieldName')}</label>
                   <input
                     type="text"
                     value={form.name}
@@ -171,7 +173,7 @@ export default function MCPPage() {
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-foreground-muted">传输方式</label>
+                  <label className="mb-1 block text-xs text-foreground-muted">{t('mcpPage.transport')}</label>
                   <select
                     value={form.transport}
                     onChange={(e) =>
@@ -179,9 +181,9 @@ export default function MCPPage() {
                     }
                     className="w-full rounded-xl border border-border-default bg-input-bg px-3 py-2 text-sm text-foreground"
                   >
-                    {TRANSPORT_OPTIONS.map((t) => (
-                      <option key={t.value} value={t.value}>
-                        {t.label}
+                    {TRANSPORT_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {t(opt.labelKey as never)}
                       </option>
                     ))}
                   </select>
@@ -189,12 +191,12 @@ export default function MCPPage() {
               </div>
 
               <div>
-                <label className="mb-1 block text-xs text-foreground-muted">描述</label>
+                <label className="mb-1 block text-xs text-foreground-muted">{t('memory.form.desc')}</label>
                 <input
                   type="text"
                   value={form.description}
                   onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-                  placeholder="本地文件系统 MCP 服务器"
+                  placeholder={t('mcpPage.namePh')}
                   className="w-full rounded-xl border border-border-default bg-input-bg px-3 py-2 text-sm text-foreground"
                 />
               </div>
@@ -202,7 +204,7 @@ export default function MCPPage() {
               {form.transport === 'stdio' ? (
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
-                    <label className="mb-1 block text-xs text-foreground-muted">命令</label>
+                    <label className="mb-1 block text-xs text-foreground-muted">{t('mcpPage.command')}</label>
                     <input
                       type="text"
                       value={form.command}
@@ -212,7 +214,7 @@ export default function MCPPage() {
                     />
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs text-foreground-muted">参数（空格分隔）</label>
+                    <label className="mb-1 block text-xs text-foreground-muted">{t('mcpPage.args')}</label>
                     <input
                       type="text"
                       value={form.args}
@@ -237,7 +239,7 @@ export default function MCPPage() {
 
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <div>
-                  <label className="mb-1 block text-xs text-foreground-muted">风险等级</label>
+                  <label className="mb-1 block text-xs text-foreground-muted">{t('mcpPage.risk')}</label>
                   <select
                     value={form.risk_level}
                     onChange={(e) => setForm((f) => ({ ...f, risk_level: e.target.value }))}
@@ -245,13 +247,13 @@ export default function MCPPage() {
                   >
                     {RISK_OPTIONS.map((r) => (
                       <option key={r.value} value={r.value}>
-                        {r.label} — {r.desc}
+                        {t(r.labelKey as never)} — {t(r.descKey as never)}
                       </option>
                     ))}
                   </select>
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-foreground-muted">超时（秒）</label>
+                  <label className="mb-1 block text-xs text-foreground-muted">{t('mcpPage.timeout')}</label>
                   <input
                     type="number"
                     min={1}
@@ -269,7 +271,7 @@ export default function MCPPage() {
                       onChange={(e) => setForm((f) => ({ ...f, enabled: e.target.checked }))}
                       className="h-4 w-4 accent-brand-purple"
                     />
-                    启用
+                    {t('mcpStore.enable')}
                   </label>
                 </div>
               </div>
@@ -277,7 +279,7 @@ export default function MCPPage() {
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                   <label className="mb-1 block text-xs text-foreground-muted">
-                    环境变量（每行 KEY=VALUE）
+                    {t('mcpPage.env')}
                   </label>
                   <textarea
                     value={form.env}
@@ -289,7 +291,7 @@ export default function MCPPage() {
                 </div>
                 <div>
                   <label className="mb-1 block text-xs text-foreground-muted">
-                    允许路径白名单（每行一个）
+                    {t('mcpPage.allowPaths')}
                   </label>
                   <textarea
                     value={form.allowed_paths}
@@ -303,11 +305,11 @@ export default function MCPPage() {
 
               <div className="flex gap-2">
                 <button type="submit" disabled={submitting} className={BTN_PRIMARY}>
-                  {submitting ? '保存中…' : editingId ? '更新' : '创建'}
+                  {submitting ? t('memory.saving') : editingId ? t('mcpPage.update') : t('channels.create')}
                 </button>
                 {(editingId || form.name) && (
                   <button type="button" onClick={resetForm} className={BTN_SECONDARY}>
-                    清空
+                    {t('mcpPage.clear')}
                   </button>
                 )}
               </div>

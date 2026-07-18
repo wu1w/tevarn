@@ -30,12 +30,13 @@ import type {
 } from '@/types/subagent';
 import { useToastStore } from '@/stores/toastStore';
 import { useConfirm } from '@/components/desktop/ConfirmDialog';
+import { t, useT } from '@/stores/localeStore';
 
 const TOOLSET_OPTIONS = [
   { value: 'file', label: '文件', icon: '📁' },
   { value: 'terminal', label: '终端', icon: '💻' },
   { value: 'git', label: 'Git', icon: '🔀' },
-  { value: 'web', label: '搜索', icon: '🌐' },
+  { value: 'web', label: t('memory.search'), icon: '🌐' },
   { value: 'browser', label: '浏览器', icon: '🖥️' },
   { value: 'code', label: '代码', icon: '⚡' },
 ];
@@ -173,7 +174,7 @@ function CharacterCard({
                     ? 'text-emerald-400 hover:bg-emerald-500/10'
                     : 'text-foreground-dim hover:bg-card-bg-hover'
                 }`}
-                title={agent.enabled ? '禁用' : '启用'}
+                title={agent.enabled ? t('cron.disabled') : t('channels.enable')}
               >
                 <Power className="h-3.5 w-3.5" />
               </button>
@@ -181,7 +182,7 @@ function CharacterCard({
                 type="button"
                 onClick={() => onEdit(agent)}
                 className="rounded-lg p-1.5 text-foreground-dim hover:bg-card-bg-hover hover:text-foreground"
-                title="编辑"
+                title={t('memory.edit')}
               >
                 <Edit3 className="h-3.5 w-3.5" />
               </button>
@@ -190,7 +191,7 @@ function CharacterCard({
                   type="button"
                   onClick={() => onDelete(agent.id)}
                   className="rounded-lg p-1.5 text-red-400/80 hover:bg-red-500/10"
-                  title="删除"
+                  title={t('memory.delete')}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
@@ -282,7 +283,7 @@ function SubAgentFormDialog({
       onSaved();
       onClose();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : '保存失败');
+      setError(e instanceof Error ? e.message : t('channels.saveFailed'));
     } finally {
       setLoading(false);
     }
@@ -435,7 +436,7 @@ function SubAgentFormDialog({
             disabled={loading}
             className="rounded-xl bg-gradient-to-r from-brand-purple to-brand-cyan px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
           >
-            {loading ? '保存中…' : '保存'}
+            {loading ? t('memory.saving') : '保存'}
           </button>
         </div>
       </div>
@@ -510,6 +511,7 @@ export function ClusterModePanel({
 }
 
 export default function SubAgentPanel() {
+  const t = useT();
   const { confirm, ConfirmDialogComponent } = useConfirm();
   const addToast = useToastStore((s) => s.addToast);
   const [agents, setAgents] = useState<SubAgent[]>([]);
@@ -550,7 +552,7 @@ export default function SubAgentPanel() {
     if (!ok) return;
     try {
       await subAgentApi.delete(id);
-      addToast('已删除', 'success');
+      addToast(t('channels.deleted'), 'success');
       loadData();
     } catch (e) {
       console.error(e);

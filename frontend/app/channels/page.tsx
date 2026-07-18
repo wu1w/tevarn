@@ -14,18 +14,26 @@ import {
 } from '@/lib/api';
 import { useToastStore } from '@/stores/toastStore';
 import { useConfirm } from '@/components/desktop/ConfirmDialog';
+import { useT } from '@/stores/localeStore';
 
 /* ─── 平台配置 ─── */
-const PLATFORM_META: Record<string, { icon: string; color: string; label: string }> = {
+const PLATFORM_META: Record<string, { icon: string; color: string; labelKey?: string; label?: string }> = {
   telegram:  { icon: '✈️', color: 'bg-sky-500',    label: 'Telegram' },
   discord:   { icon: '🎮', color: 'bg-indigo-500',  label: 'Discord' },
-  wecom:     { icon: '💼', color: 'bg-green-600',    label: '企业微信' },
-  qqbot:     { icon: '🐧', color: 'bg-cyan-500',     label: 'QQ 机器人' },
+  wecom:     { icon: '💼', color: 'bg-green-600',    labelKey: 'channels.platform.wecom' },
+  qqbot:     { icon: '🐧', color: 'bg-cyan-500',     labelKey: 'channels.platform.qqbot' },
   slack:     { icon: '💬', color: 'bg-purple-500',   label: 'Slack' },
-  feishu:    { icon: '🐦', color: 'bg-blue-500',     label: '飞书' },
-  dingtalk:  { icon: '🔔', color: 'bg-sky-600',      label: '钉钉' },
+  feishu:    { icon: '🐦', color: 'bg-blue-500',     labelKey: 'channels.platform.feishu' },
+  dingtalk:  { icon: '🔔', color: 'bg-sky-600',      labelKey: 'channels.platform.dingtalk' },
   signal:    { icon: '🔒', color: 'bg-blue-400',     label: 'Signal' },
 };
+
+function platformLabel(platform: string, t: (k: any) => string): string {
+  const meta = PLATFORM_META[platform];
+  if (!meta) return platform;
+  if (meta.labelKey) return t(meta.labelKey as any);
+  return meta.label || platform;
+}
 
 function PlatformBadge({ platform }: { platform: string }) {
   const meta = PLATFORM_META[platform] || { icon: '📡', color: 'bg-foreground-dim', label: platform };
@@ -46,6 +54,7 @@ function AddChannelModal({
   onClose: () => void;
   onCreated: (ch: ChannelItem) => void;
 }) {
+  const t = useT();
   const [selected, setSelected] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [form, setForm] = useState<Record<string, any>>({});
@@ -73,11 +82,11 @@ function AddChannelModal({
         }
       }
       const ch = await createChannel(payload);
-      addToast('通道已创建', 'success');
+      addToast(t('channels.created'), 'success');
       onCreated(ch);
       onClose();
     } catch (e: any) {
-      addToast(e?.response?.data?.detail || '创建失败', 'error');
+      addToast(e?.response?.data?.detail || t('channels.createFailed'), 'error');
     } finally {
       setSaving(false);
     }
@@ -93,7 +102,7 @@ function AddChannelModal({
       <div className="w-full max-w-md rounded-xl border border-border-default bg-card-bg p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
         {!selected ? (
           <>
-            <h2 className="mb-3 text-sm font-semibold text-foreground">添加消息通道</h2>
+            <h2 className="mb-3 text-sm font-semibold text-foreground">{t('channels.addTitle')}</h2>
             <div className="grid grid-cols-2 gap-1.5 max-h-[65vh] overflow-y-auto pr-1">
               {presets.map((p) => {
                 const meta = PLATFORM_META[p.platform] || { icon: '📡', label: p.name };
@@ -118,11 +127,11 @@ function AddChannelModal({
             <div className="flex items-center gap-2">
               <PlatformBadge platform={selected} />
               <span className="text-sm font-medium text-foreground">{preset?.name}</span>
-              <button onClick={() => { setSelected(null); setName(''); setForm({}); }} className="ml-auto text-[10px] text-foreground-dim hover:text-foreground">← 返回</button>
+              <button onClick={() => { setSelected(null); setName(''); setForm({}); }} className="ml-auto text-[10px] text-foreground-dim hover:text-foreground">{t('channels.back')}</button>
             </div>
             <div>
-              <label className="mb-1 block text-[10px] text-foreground-muted">通道名称</label>
-              <input value={name} onChange={(e) => setName(e.target.value)} className="w-full rounded-md border border-border-subtle bg-elevated-bg px-2.5 py-1.5 text-xs text-foreground" placeholder="如：我的 Telegram Bot" />
+              <label className="mb-1 block text-[10px] text-foreground-muted">{t('channels.name')}</label>
+              <input value={name} onChange={(e) => setName(e.target.value)} className="w-full rounded-md border border-border-subtle bg-elevated-bg px-2.5 py-1.5 text-xs text-foreground" placeholder={t('channels.namePlaceholder')} />
             </div>
             {allFields.map((f: ChannelPresetField & { key: string }) => (
               <div key={f.key}>
@@ -150,9 +159,9 @@ function AddChannelModal({
               </div>
             ))}
             <div className="flex justify-end gap-2 pt-1">
-              <button onClick={onClose} className="rounded-md px-3 py-1.5 text-[10px] text-foreground-muted hover:text-foreground">取消</button>
+              <button onClick={onClose} className="rounded-md px-3 py-1.5 text-[10px] text-foreground-muted hover:text-foreground">{t('common.cancel')}</button>
               <button onClick={handleCreate} disabled={saving || !name.trim()} className="rounded-md bg-brand-purple px-3 py-1.5 text-[10px] font-medium text-white hover:bg-brand-purple/80 disabled:opacity-50">
-                {saving ? '…' : '创建'}
+                {saving ? '…' : t('channels.create')}
               </button>
             </div>
           </div>
@@ -174,6 +183,7 @@ function ChannelEditPanel({
   onSaved: (ch: ChannelItem) => void;
   onDeleted: () => void;
 }) {
+  const t = useT();
   const [form, setForm] = useState<Record<string, any>>({});
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -215,10 +225,10 @@ function ChannelEditPanel({
         }
       }
       const ch = await updateChannel(channel.id, payload);
-      addToast('已保存', 'success');
+      addToast(t('channels.saved'), 'success');
       onSaved(ch);
     } catch (e: any) {
-      addToast(e?.response?.data?.detail || '保存失败', 'error');
+      addToast(e?.response?.data?.detail || t('channels.saveFailed'), 'error');
     } finally {
       setSaving(false);
     }
@@ -234,21 +244,21 @@ function ChannelEditPanel({
       else addToast(res.message, 'error');
       onSaved(await getChannels().then((cs) => cs.find((c) => c.id === channel.id) || channel));
     } catch (e: any) {
-      setTestResult({ success: false, message: '测试请求失败', detail: e.message });
-      addToast('测试失败', 'error');
+      setTestResult({ success: false, message: t('channels.testRequestFailed'), detail: e.message });
+      addToast(t('channels.testFailed'), 'error');
     } finally {
       setTesting(false);
     }
   };
 
   const handleDelete = async () => {
-    if (!(await confirm('确认删除此通道？', '删除后无法恢复。'))) return;
+    if (!(await confirm(t('channels.confirmDelete'), t('channels.confirmDeleteDesc')))) return;
     try {
       await deleteChannel(channel.id);
-      addToast('已删除', 'success');
+      addToast(t('channels.deleted'), 'success');
       onDeleted();
     } catch {
-      addToast('删除失败', 'error');
+      addToast(t('channels.deleteFailed'), 'error');
     }
   };
 
@@ -258,6 +268,7 @@ function ChannelEditPanel({
   ], [preset]);
 
   const meta = PLATFORM_META[channel.platform] || { icon: '📡', label: channel.platform };
+  const metaLabel = platformLabel(channel.platform, t);
 
   return (
     <div className="mx-auto max-w-md space-y-4">
@@ -266,15 +277,15 @@ function ChannelEditPanel({
         <PlatformBadge platform={channel.platform} />
         <div className="flex-1 min-w-0">
           <h3 className="text-sm font-semibold text-foreground truncate">{channel.name}</h3>
-          <span className="text-[10px] text-foreground-dim">{meta.label}</span>
+          <span className="text-[10px] text-foreground-dim">{metaLabel}</span>
         </div>
         <div className="flex items-center gap-1.5">
           {channel.connected ? (
-            <><span className="mr-0.5 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" /><span className="text-[10px] text-emerald-400">已连接</span></>
+            <><span className="mr-0.5 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" /><span className="text-[10px] text-emerald-400">{t('channels.connected')}</span></>
           ) : channel.enabled ? (
-            <><span className="h-1.5 w-1.5 rounded-full bg-amber-400" /><span className="text-[10px] text-amber-400">未连接</span></>
+            <><span className="h-1.5 w-1.5 rounded-full bg-amber-400" /><span className="text-[10px] text-amber-400">{t('channels.notConnected')}</span></>
           ) : (
-            <><span className="h-1.5 w-1.5 rounded-full bg-foreground-dim" /><span className="text-[10px] text-foreground-dim">未启用</span></>
+            <><span className="h-1.5 w-1.5 rounded-full bg-foreground-dim" /><span className="text-[10px] text-foreground-dim">{t('channels.notEnabled')}</span></>
           )}
         </div>
       </div>
@@ -289,14 +300,14 @@ function ChannelEditPanel({
       {/* 表单 */}
       <div className="space-y-2.5">
         <div className="flex items-center justify-between">
-          <label className="text-[10px] text-foreground-muted">启用</label>
+          <label className="text-[10px] text-foreground-muted">{t('channels.enable')}</label>
           <label className="relative inline-flex cursor-pointer items-center">
             <input type="checkbox" checked={form.enabled ?? false} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} className="peer sr-only" />
             <div className="h-4 w-7 rounded-full bg-foreground-dim/30 after:absolute after:left-[2px] after:top-[2px] after:h-3 after:w-3 after:rounded-full after:bg-white after:transition-all peer-checked:bg-brand-purple peer-checked:after:translate-x-3" />
           </label>
         </div>
         <div>
-          <label className="mb-0.5 block text-[10px] text-foreground-muted">名称</label>
+          <label className="mb-0.5 block text-[10px] text-foreground-muted">{t('channels.fieldName')}</label>
           <input value={form.name ?? ''} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full rounded-md border border-border-subtle bg-elevated-bg px-2.5 py-1.5 text-xs text-foreground" />
         </div>
         {allFields.map((f: ChannelPresetField & { key: string }) => (
@@ -316,7 +327,7 @@ function ChannelEditPanel({
                 type={f.type === 'password' ? 'password' : 'text'}
                 value={form[f.key] ?? ''}
                 onChange={(e) => setForm({ ...form, [f.key]: e.target.value })}
-                placeholder={f.type === 'password' && form[f.key] === '••••••••' ? '留空保持原值' : (f.help || '')}
+                placeholder={f.type === 'password' && form[f.key] === '••••••••' ? t('channels.keepOriginal') : (f.help || '')}
                 className="w-full rounded-md border border-border-subtle bg-elevated-bg px-2.5 py-1.5 text-xs text-foreground"
               />
             )}
@@ -334,13 +345,13 @@ function ChannelEditPanel({
 
       {/* 底部操作 */}
       <div className="flex items-center justify-between border-t border-border-subtle pt-3">
-        <button onClick={handleDelete} className="text-[10px] text-rose-400/70 hover:text-rose-300">删除</button>
+        <button onClick={handleDelete} className="text-[10px] text-rose-400/70 hover:text-rose-300">{t('common.delete')}</button>
         <div className="flex gap-1.5">
           <button onClick={handleTest} disabled={testing} className="rounded-md border border-border-subtle px-2.5 py-1 text-[10px] text-foreground-muted hover:text-foreground disabled:opacity-50">
-            {testing ? '…' : '测试连接'}
+            {testing ? '…' : t('channels.testConnection')}
           </button>
           <button onClick={handleSave} disabled={saving} className="rounded-md bg-brand-purple px-2.5 py-1 text-[10px] font-medium text-white hover:bg-brand-purple/80 disabled:opacity-50">
-            {saving ? '…' : '保存'}
+            {saving ? '…' : t('common.save')}
           </button>
         </div>
       </div>
@@ -351,6 +362,7 @@ function ChannelEditPanel({
 
 /* ─── 主页面 ─── */
 export default function ChannelsPage() {
+  const t = useT();
   const [presets, setPresets] = useState<ChannelPreset[]>([]);
   const [channels, setChannels] = useState<ChannelItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -364,7 +376,7 @@ export default function ChannelsPage() {
       setPresets(p);
       setChannels(c);
     } catch {
-      addToast('加载失败', 'error');
+      addToast(t('channels.loadFailed'), 'error');
     } finally {
       setLoading(false);
     }
@@ -375,19 +387,19 @@ export default function ChannelsPage() {
   const editingChannel = channels.find((c) => c.id === editing);
   const editingPreset = presets.find((p) => p.platform === editingChannel?.platform);
 
-  if (loading) return <div className="flex h-full items-center justify-center text-xs text-foreground-dim">加载中…</div>;
+  if (loading) return <div className="flex h-full items-center justify-center text-xs text-foreground-dim">{t('channels.loading')}</div>;
 
   return (
     <div className="flex h-full flex-col">
       {/* 顶栏 */}
       <div className="flex items-center justify-between border-b border-border-subtle px-5 py-3">
         <div>
-          <h1 className="text-sm font-semibold text-foreground">消息通道</h1>
-          <p className="text-[10px] text-foreground-dim">连接通信平台，让 Agent 收发消息</p>
+          <h1 className="text-sm font-semibold text-foreground">{t('channels.title')}</h1>
+          <p className="text-[10px] text-foreground-dim">{t('channels.subtitle')}</p>
         </div>
         <button onClick={() => setShowAdd(true)} className="flex items-center gap-1 rounded-md bg-brand-purple px-2.5 py-1.5 text-[10px] font-medium text-white hover:bg-brand-purple/80">
           <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
-          添加
+          {t('channels.add')}
         </button>
       </div>
 
@@ -397,12 +409,13 @@ export default function ChannelsPage() {
           {channels.length === 0 ? (
             <div className="px-5 py-10 text-center">
               <div className="text-xl mb-1.5">📡</div>
-              <div className="text-[10px] text-foreground-dim">尚未配置消息通道</div>
+              <div className="text-[10px] text-foreground-dim">{t('channels.emptyList')}</div>
             </div>
           ) : (
             <div className="p-1.5 space-y-0.5">
               {channels.map((ch) => {
                 const meta = PLATFORM_META[ch.platform] || { icon: '📡', label: ch.platform };
+                const label = platformLabel(ch.platform, t);
                 return (
                   <button
                     key={ch.id}
@@ -422,10 +435,10 @@ export default function ChannelsPage() {
                         )}
                         <span className="text-xs font-medium text-foreground truncate">{ch.name}</span>
                       </div>
-                      <div className="text-[10px] text-foreground-dim">{meta.label}</div>
+                      <div className="text-[10px] text-foreground-dim">{label}</div>
                     </div>
                     {!ch.enabled && (
-                      <span className="text-[9px] text-foreground-dim/60 bg-foreground-dim/10 rounded px-1">停用</span>
+                      <span className="text-[9px] text-foreground-dim/60 bg-foreground-dim/10 rounded px-1">{t('channels.disabled')}</span>
                     )}
                   </button>
                 );
@@ -450,9 +463,9 @@ export default function ChannelsPage() {
                 <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-border-subtle bg-elevated-bg/50 text-2xl">
                   📡
                 </div>
-                <div className="text-sm font-semibold text-foreground">选择通道查看配置</div>
+                <div className="text-sm font-semibold text-foreground">{t('channels.selectTitle')}</div>
                 <p className="mt-1.5 text-xs leading-relaxed text-foreground-muted">
-                  左侧选择已有通道，或点右上角「添加」接入 Telegram / QQ / 企微 等
+                  {t('channels.selectHint')}
                 </p>
               </div>
             </div>

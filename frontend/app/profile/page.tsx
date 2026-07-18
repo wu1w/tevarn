@@ -4,10 +4,12 @@ import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/authStore';
 import { getMe, updateMe, changePassword } from '@/lib/api';
+import { useT } from '@/stores/localeStore';
 
 type TabKey = 'profile' | 'security' | 'account';
 
 export default function ProfilePage() {
+  const t = useT();
   const router = useRouter();
   const { user, isAuthenticated, setUser, logout } = useAuthStore();
   const [activeTab, setActiveTab] = useState<TabKey>('profile');
@@ -42,7 +44,7 @@ export default function ProfilePage() {
   if (!user) {
     return (
       <div className="flex h-screen items-center justify-center">
-        <div className="text-sm text-foreground-dim">加载中...</div>
+        <div className="text-sm text-foreground-dim">{t('profile.loading')}</div>
       </div>
     );
   }
@@ -61,9 +63,9 @@ export default function ProfilePage() {
         avatar_url: avatarUrl || null,
       });
       setUser(updated);
-      setMessage('个人信息已更新');
+      setMessage(t('profile.updated'));
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : '更新失败';
+      const msg = err instanceof Error ? err.message : t('profile.updateFailed');
       setError(msg);
     } finally {
       setLoading(false);
@@ -75,25 +77,25 @@ export default function ProfilePage() {
     setMessage('');
     setError('');
     if (newPassword !== confirmPassword) {
-      setError('两次输入的新密码不一致');
+      setError(t('profile.passwordMismatch'));
       return;
     }
     if (newPassword.length < 8) {
-      setError('新密码至少 8 位');
+      setError(t('profile.passwordTooShort'));
       return;
     }
     setLoading(true);
     try {
       const res = await changePassword(oldPassword, newPassword);
       if (res.ok) {
-        setMessage('密码修改成功，请重新登录');
+        setMessage(t('profile.passwordChanged'));
         setOldPassword('');
         setNewPassword('');
         setConfirmPassword('');
         setTimeout(() => logout(), 1500);
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : '密码修改失败';
+      const msg = err instanceof Error ? err.message : t('profile.passwordChangeFailed');
       setError(msg);
     } finally {
       setLoading(false);
@@ -101,14 +103,14 @@ export default function ProfilePage() {
   }
 
   const tabs: { key: TabKey; label: string }[] = [
-    { key: 'profile', label: '基本信息' },
-    { key: 'security', label: '安全设置' },
-    { key: 'account', label: '账户信息' },
+    { key: 'profile', label: t('profile.tab.profile') },
+    { key: 'security', label: t('profile.tab.security') },
+    { key: 'account', label: t('profile.tab.account') },
   ];
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-8">
-      <h1 className="mb-6 text-xl font-bold text-foreground">个人设置</h1>
+      <h1 className="mb-6 text-xl font-bold text-foreground">{t('profile.title')}</h1>
 
       <div className="flex flex-col gap-6 md:flex-row">
         {/* 左侧头像卡片 */}
@@ -124,7 +126,7 @@ export default function ProfilePage() {
               onClick={logout}
               className="mt-4 w-full rounded-md border border-border-default px-3 py-1.5 text-xs font-medium text-foreground-dim hover:bg-elevated-bg"
             >
-              退出登录
+              {t('profile.logout')}
             </button>
           </div>
         </div>
@@ -133,21 +135,21 @@ export default function ProfilePage() {
         <div className="flex-1">
           {/* 标签页 */}
           <div className="mb-4 flex border-b border-border-default">
-            {tabs.map((t) => (
+            {tabs.map((tab) => (
               <button
-                key={t.key}
+                key={tab.key}
                 onClick={() => {
-                  setActiveTab(t.key);
+                  setActiveTab(tab.key);
                   setMessage('');
                   setError('');
                 }}
                 className={`px-4 py-2 text-sm font-medium transition-colors ${
-                  activeTab === t.key
+                  activeTab === tab.key
                     ? 'border-b-2 border-violet-400 text-violet-400'
                     : 'text-foreground-dim hover:text-foreground-muted'
                 }`}
               >
-                {t.label}
+                {tab.label}
               </button>
             ))}
           </div>
@@ -168,19 +170,19 @@ export default function ProfilePage() {
           {activeTab === 'profile' && (
             <form onSubmit={handleUpdateProfile} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-foreground-muted">显示名称</label>
+                <label className="block text-sm font-medium text-foreground-muted">{t('profile.displayName')}</label>
                 <input
                   type="text"
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
                   maxLength={128}
                   className="mt-1 w-full rounded-md border border-border-default px-3 py-2 text-sm focus:border-violet-500 focus:outline-none"
-                  placeholder="输入显示名称"
+                  placeholder={t('profile.displayNamePlaceholder')}
                 />
-                <p className="mt-1 text-xs text-foreground-muted">其他用户将看到此名称</p>
+                <p className="mt-1 text-xs text-foreground-muted">{t('profile.displayNameHint')}</p>
               </div>
               <div>
-                <label className="block text-sm font-medium text-foreground-muted">头像 URL</label>
+                <label className="block text-sm font-medium text-foreground-muted">{t('profile.avatarUrl')}</label>
                 <input
                   type="text"
                   value={avatarUrl}
@@ -188,7 +190,7 @@ export default function ProfilePage() {
                   className="mt-1 w-full rounded-md border border-border-default px-3 py-2 text-sm focus:border-violet-500 focus:outline-none"
                   placeholder="https://example.com/avatar.png"
                 />
-                <p className="mt-1 text-xs text-foreground-muted">支持任意图片 URL，留空则使用默认头像</p>
+                <p className="mt-1 text-xs text-foreground-muted">{t('profile.avatarHint')}</p>
               </div>
               <div className="pt-2">
                 <button
@@ -196,7 +198,7 @@ export default function ProfilePage() {
                   disabled={loading}
                   className="rounded-md bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-50"
                 >
-                  {loading ? '保存中...' : '保存修改'}
+                  {loading ? t('profile.saving') : t('profile.saveChanges')}
                 </button>
               </div>
             </form>
@@ -206,18 +208,18 @@ export default function ProfilePage() {
           {activeTab === 'security' && (
             <form onSubmit={handleChangePassword} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-foreground-muted">当前密码</label>
+                <label className="block text-sm font-medium text-foreground-muted">{t('profile.currentPassword')}</label>
                 <input
                   type="password"
                   value={oldPassword}
                   onChange={(e) => setOldPassword(e.target.value)}
                   required
                   className="mt-1 w-full rounded-md border border-border-default px-3 py-2 text-sm focus:border-violet-500 focus:outline-none"
-                  placeholder="输入当前密码"
+                  placeholder={t('profile.currentPasswordPlaceholder')}
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-foreground-muted">新密码</label>
+                <label className="block text-sm font-medium text-foreground-muted">{t('profile.newPassword')}</label>
                 <input
                   type="password"
                   value={newPassword}
@@ -225,11 +227,11 @@ export default function ProfilePage() {
                   required
                   minLength={8}
                   className="mt-1 w-full rounded-md border border-border-default px-3 py-2 text-sm focus:border-violet-500 focus:outline-none"
-                  placeholder="至少 8 位字符"
+                  placeholder={t('profile.newPasswordPlaceholder')}
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-foreground-muted">确认新密码</label>
+                <label className="block text-sm font-medium text-foreground-muted">{t('profile.confirmPassword')}</label>
                 <input
                   type="password"
                   value={confirmPassword}
@@ -237,7 +239,7 @@ export default function ProfilePage() {
                   required
                   minLength={8}
                   className="mt-1 w-full rounded-md border border-border-default px-3 py-2 text-sm focus:border-violet-500 focus:outline-none"
-                  placeholder="再次输入新密码"
+                  placeholder={t('profile.confirmPasswordPlaceholder')}
                 />
               </div>
               <div className="pt-2">
@@ -246,7 +248,7 @@ export default function ProfilePage() {
                   disabled={loading}
                   className="rounded-md bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-50"
                 >
-                  {loading ? '修改中...' : '修改密码'}
+                  {loading ? t('profile.changing') : t('profile.changePassword')}
                 </button>
               </div>
             </form>
@@ -257,41 +259,41 @@ export default function ProfilePage() {
             <div className="space-y-4">
               <div className="rounded-md border border-gray-100 bg-elevated-bg p-4">
                 <div className="mb-3 flex items-center justify-between">
-                  <span className="text-sm text-foreground-dim">用户名</span>
+                  <span className="text-sm text-foreground-dim">{t('profile.username')}</span>
                   <span className="text-sm font-medium text-foreground">{user.username}</span>
                 </div>
                 <div className="mb-3 flex items-center justify-between">
-                  <span className="text-sm text-foreground-dim">邮箱</span>
+                  <span className="text-sm text-foreground-dim">{t('profile.email')}</span>
                   <span className="text-sm font-medium text-foreground">{user.email}</span>
                 </div>
                 <div className="mb-3 flex items-center justify-between">
-                  <span className="text-sm text-foreground-dim">账户状态</span>
+                  <span className="text-sm text-foreground-dim">{t('profile.accountStatus')}</span>
                   <span
                     className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
                       user.is_active ? 'bg-success-bg text-success-text' : 'bg-error-bg text-error-text'
                     }`}
                   >
-                    {user.is_active ? '正常' : '已停用'}
+                    {user.is_active ? t('profile.active') : t('profile.inactive')}
                   </span>
                 </div>
                 <div className="mb-3 flex items-center justify-between">
-                  <span className="text-sm text-foreground-dim">注册时间</span>
+                  <span className="text-sm text-foreground-dim">{t('profile.registeredAt')}</span>
                   <span className="text-sm text-foreground-muted">
                     {new Date(user.created_at).toLocaleString()}
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-sm text-foreground-dim">最后登录</span>
+                  <span className="text-sm text-foreground-dim">{t('profile.lastLogin')}</span>
                   <span className="text-sm text-foreground-muted">
-                    {user.last_login_at ? new Date(user.last_login_at).toLocaleString() : '无记录'}
+                    {user.last_login_at ? new Date(user.last_login_at).toLocaleString() : t('profile.noRecord')}
                   </span>
                 </div>
               </div>
 
               <div className="rounded-md border border-gray-100 bg-elevated-bg p-4">
-                <h3 className="text-sm font-medium text-foreground-muted">会话同步</h3>
+                <h3 className="text-sm font-medium text-foreground-muted">{t('profile.sessionSync')}</h3>
                 <p className="mt-1 text-xs text-foreground-dim">
-                  您的会话历史保存在服务端，退出后重新登录可恢复所有数据。
+                  {t('profile.sessionSyncHint')}
                 </p>
               </div>
             </div>

@@ -15,10 +15,12 @@ import {
   heartbeatDevice,
 } from '@/lib/api';
 import { useConfirm } from '@/components/desktop/ConfirmDialog';
+import { useT } from '@/stores/localeStore';
 
 type FsEntry = { name: string; type: string; size?: number | null; mtime?: number };
 
 export default function DevicesPage() {
+  const t = useT();
   const router = useRouter();
   const { confirm, ConfirmDialogComponent } = useConfirm();
   const [devices, setDevices] = useState<Device[]>([]);
@@ -359,7 +361,7 @@ export default function DevicesPage() {
         {/* 列表 */}
         <div className="min-h-0 overflow-y-auto rounded-xl border border-border-subtle bg-card-bg/30">
           {loading ? (
-            <div className="p-6 text-center text-sm text-foreground-dim">加载中…</div>
+            <div className="p-6 text-center text-sm text-foreground-dim">{t('channels.loading')}</div>
           ) : devices.length === 0 ? (
             <div className="p-6 text-center text-sm text-foreground-dim">
               暂无设备。先启动 takton-agent，再点「配对 Agent」。
@@ -501,7 +503,7 @@ export default function DevicesPage() {
                     </button>
                     <span className="font-mono text-foreground-dim">{fsPath || '.'}</span>
                   </div>
-                  {fsLoading && <span className="text-[11px] text-foreground-dim">加载中…</span>}
+                  {fsLoading && <span className="text-[11px] text-foreground-dim">{t('channels.loading')}</span>}
                 </div>
                 {fsError ? (
                   <div className="p-3 text-xs text-error-text">{fsError}</div>

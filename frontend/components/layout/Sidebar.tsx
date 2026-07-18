@@ -227,8 +227,8 @@ export function Sidebar() {
   useEffect(() => {
     if (!isAuthenticated || !sessionsOpen) return;
     if (messageCount > 0 && currentSession?.id) {
-      const t = setTimeout(() => refreshSessions(), 400);
-      return () => clearTimeout(t);
+      const timer = setTimeout(() => refreshSessions(), 400);
+      return () => clearTimeout(timer);
     }
   }, [messageCount, currentSession?.id, isAuthenticated, sessionsOpen, refreshSessions]);
 
@@ -245,7 +245,7 @@ export function Sidebar() {
         refreshSessions();
       } catch (e) {
         console.error(e);
-        addToast('打开会话失败，请重试', 'error');
+        addToast(t('sidebar.openSessionFail'), 'error');
       } finally {
         setSwitchingId(null);
       }
@@ -303,7 +303,7 @@ export function Sidebar() {
         setShowFilePreview(true);
       } catch (e) {
         console.error(e);
-        addToast('打开文件失败', 'error');
+        addToast(t('sidebar.openFileFail'), 'error');
       }
     },
     [loadAgentMd, addToast]
@@ -347,13 +347,13 @@ export function Sidebar() {
           opened = !!res?.ok;
         }
         if (opened) {
-          addToast(`已用系统编辑器打开 ${item.label}`, 'success');
+          addToast(t('sidebar.openedEditor').replace('{name}', item.label), 'success');
         } else {
-          addToast('无法打开本地文件', 'error');
+          addToast(t('sidebar.cantOpenLocal'), 'error');
         }
       } catch (e: any) {
         console.error(e);
-        addToast(`打开失败: ${e?.response?.data?.detail || e?.message || e}`, 'error');
+        addToast(t('sidebar.openFail').replace('{msg}', String(e?.response?.data?.detail || e?.message || e)), 'error');
       }
     },
     [loadAgentMd, addToast, agentMdRoot]
@@ -402,7 +402,7 @@ export function Sidebar() {
         await refreshSessions();
       } catch (e) {
         console.error(e);
-        addToast('创建对话失败', 'error');
+        addToast(t('sidebar.createChatFail'), 'error');
       }
     },
     800
@@ -789,7 +789,7 @@ export function Sidebar() {
                                         ? 'text-foreground-muted hover:bg-white/[0.04] hover:text-foreground'
                                         : 'text-foreground-dim/70 hover:bg-white/[0.03] hover:text-foreground-muted'
                                   }`}
-                                  title={`${item.desc || item.label}\n单击预览 · 双击用系统编辑器打开`}
+                                  title={`${item.desc || item.label}\n${t('sidebar.fileTip')}`}
                                 >
                                   <span
                                     className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${
@@ -805,7 +805,7 @@ export function Sidebar() {
                                         </span>
                                       )}
                                       {item.group === 'daily' && (
-                                        <span className="shrink-0 text-[9px] text-brand-cyan/80">日</span>
+                                        <span className="shrink-0 text-[9px] text-brand-cyan/80">D</span>
                                       )}
                                     </span>
                                     {item.exists && (
@@ -968,14 +968,14 @@ function UserCard({ user, logout }: { user: User; logout: () => void }) {
                 <svg className="h-3 w-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                <span>最后登录: {new Date(user.last_login_at).toLocaleString()}</span>
+                <span>{t('sidebar.lastLogin')}{new Date(user.last_login_at).toLocaleString()}</span>
               </div>
             )}
             <div className="flex items-center gap-1.5 text-[11px] text-foreground-dim">
               <svg className="h-3 w-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
-              <span>注册于: {new Date(user.created_at).toLocaleDateString()}</span>
+              <span>{t('sidebar.registered')}{new Date(user.created_at).toLocaleDateString()}</span>
             </div>
           </div>
           <div className="mt-2 flex gap-2 border-t border-border-subtle pt-2">
@@ -1073,7 +1073,7 @@ function HelpTooltip({ text, href }: { text: string; href?: string }) {
       <span
         ref={triggerRef}
         className="ml-1 inline-flex h-4 w-4 shrink-0 cursor-help items-center justify-center rounded-full bg-foreground-dim/20 text-[9px] font-bold text-foreground-dim transition-colors hover:bg-brand-purple/20 hover:text-brand-purple"
-        title="点击查看说明"
+        title={t('sidebar.helpTip')}
         onMouseEnter={handleEnter}
         onMouseLeave={handleLeave}
       >

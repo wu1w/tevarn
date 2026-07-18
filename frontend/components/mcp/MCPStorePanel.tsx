@@ -27,6 +27,7 @@ import { useToastStore } from '@/stores/toastStore';
 import { useConfirm } from '@/components/desktop/ConfirmDialog';
 import { EmptyState } from '@/components/desktop/EmptyState';
 import { Skeleton } from '@/components/desktop/Skeleton';
+import { useT } from '@/stores/localeStore';
 
 const BTN_PRIMARY =
   'rounded-lg bg-brand-purple px-3 py-1.5 text-xs font-semibold text-white shadow-sm shadow-brand-purple/20 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50';
@@ -39,26 +40,26 @@ const CHIP_ACTIVE =
 const CHIP_IDLE =
   'border-border-subtle bg-elevated-bg text-foreground-muted hover:border-brand-purple/35 hover:text-foreground';
 
-const SOURCE_META: Record<string, { label: string; color: string; tip: string }> = {
-  all: { label: '全部源', color: '', tip: '精选 + 官方 Registry' },
+const SOURCE_META: Record<string, { labelKey: string; color: string; tipKey: string }> = {
+  all: { labelKey: 'mcpStore.allSources', color: '', tipKey: 'mcpStore.allTip' },
   curated: {
-    label: 'Takton 精选',
+    labelKey: 'mcpStore.curated',
     color: 'bg-sky-500/15 text-sky-600 dark:text-sky-400 border-sky-500/25',
-    tip: '常用 MCP；跨 Claude/Hermes/OpenClaw/Codex',
+    tipKey: 'mcpStore.curatedTip',
   },
   official: {
-    label: 'Official Registry',
+    labelKey: 'Official Registry',
     color: 'bg-orange-500/15 text-orange-600 dark:text-orange-400 border-orange-500/25',
-    tip: 'registry.modelcontextprotocol.io 公共池',
+    tipKey: 'mcpStore.officialTip',
   },
 };
 
-const RISK_LABEL: Record<string, string> = {
-  safe: '安全',
-  low: '低',
-  medium: '中',
-  high: '高',
-  dangerous: '危险',
+const RISK_LABEL_KEY: Record<string, string> = {
+  safe: 'mcpStore.risk.safe',
+  low: 'mcpStore.risk.low',
+  medium: 'mcpStore.risk.medium',
+  high: 'mcpStore.risk.high',
+  dangerous: 'mcpStore.risk.dangerous',
 };
 
 function riskClass(risk: string): string {
@@ -120,6 +121,7 @@ const StoreCard = memo(function StoreCard({
   onOpen: (i: UnifiedMCPStoreItem) => void;
   onUninstall?: (i: UnifiedMCPStoreItem) => void;
 }) {
+  const t = useT();
   const meta = SOURCE_META[item.source] || SOURCE_META.curated;
   return (
     <article
@@ -129,7 +131,7 @@ const StoreCard = memo(function StoreCard({
     >
       {installed && (
         <span className="absolute right-3 top-3 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
-          已安装
+          {t('mcpStore.installed')}
         </span>
       )}
       <div className="mb-2 flex items-start gap-2 pr-14">
@@ -155,7 +157,9 @@ const StoreCard = memo(function StoreCard({
       </p>
       <div className="mb-2 flex flex-wrap gap-1">
         <span className={`rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${meta.color}`}>
-          {meta.label}
+          {meta.labelKey.startsWith('mcpStore.') || meta.labelKey.startsWith('store.')
+            ? t(meta.labelKey as never)
+            : meta.labelKey}
         </span>
         <span className="rounded-md bg-elevated-bg px-1.5 py-0.5 text-[10px] text-foreground-muted">
           {item.transport}
@@ -163,7 +167,7 @@ const StoreCard = memo(function StoreCard({
         <span
           className={`rounded-md bg-elevated-bg px-1.5 py-0.5 text-[10px] font-medium ${riskClass(item.risk_level)}`}
         >
-          风险·{RISK_LABEL[item.risk_level] || item.risk_level}
+          {t('mcpStore.riskLabel').replace('{level}', RISK_LABEL_KEY[item.risk_level] ? t(RISK_LABEL_KEY[item.risk_level] as never) : item.risk_level)}
         </span>
         {item.popularity > 0 && (
           <span className="rounded-md bg-elevated-bg px-1.5 py-0.5 text-[10px] text-foreground-muted">
@@ -173,12 +177,12 @@ const StoreCard = memo(function StoreCard({
       </div>
       {item.tags?.length > 0 && (
         <div className="mb-3 flex flex-wrap gap-1">
-          {item.tags.slice(0, 4).map((t) => (
+          {item.tags.slice(0, 4).map((tag) => (
             <span
-              key={t}
+              key={tag}
               className="rounded-md bg-brand-purple/10 px-1.5 py-0.5 text-[10px] text-brand-purple"
             >
-              {t}
+              {tag}
             </span>
           ))}
         </div>
@@ -191,21 +195,21 @@ const StoreCard = memo(function StoreCard({
             onClick={() => onUninstall?.(item)}
             className="flex-1 rounded-lg bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-500/20 disabled:opacity-50"
           >
-            {busy ? '处理中…' : '卸载'}
+            {busy ? t('mcpStore.busy') : t('mcpStore.uninstall')}
           </button>
         ) : (
           <button
             type="button"
             disabled={busy || !item.installable}
-            title={!item.installable ? item.note || '不支持一键安装' : '一键安装到本机'}
+            title={!item.installable ? item.note || t('mcpStore.notInstallable') : t('mcpStore.installLocal')}
             onClick={() => onInstall(item)}
             className={`flex-1 ${BTN_PRIMARY}`}
           >
-            {busy ? '安装中…' : item.installable ? '一键安装' : '不可直装'}
+            {busy ? t('mcpStore.installing') : item.installable ? t('mcpStore.oneClick') : t('mcpStore.noDirect')}
           </button>
         )}
         <button type="button" onClick={() => onOpen(item)} className={BTN_SECONDARY}>
-          详情
+          {t('mcpStore.details')}
         </button>
       </div>
     </article>
@@ -223,6 +227,7 @@ export default function MCPStorePanel({
   onRequestCustom?: () => void;
   onFillCustom?: (form: MCPServerFormData) => void;
 }) {
+  const t = useT();
   const addToast = useToastStore((s) => s.addToast);
   const { confirm, ConfirmDialogComponent } = useConfirm();
 
@@ -245,8 +250,8 @@ export default function MCPStorePanel({
   const [selected, setSelected] = useState<UnifiedMCPStoreItem | null>(null);
 
   useEffect(() => {
-    const t = setTimeout(() => setSearch(searchInput.trim()), 300);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setSearch(searchInput.trim()), 300);
+    return () => clearTimeout(timer);
   }, [searchInput]);
 
   const loadStore = useCallback(async () => {
@@ -263,7 +268,7 @@ export default function MCPStorePanel({
       setTotal(data.total || 0);
       setSources(data.sources || []);
     } catch (e: unknown) {
-      setLoadError(e instanceof Error ? e.message : '加载商店失败');
+      setLoadError(e instanceof Error ? e.message : t('mcpStore.loadFail'));
       setItems([]);
     } finally {
       setLoading(false);
@@ -290,7 +295,7 @@ export default function MCPStorePanel({
         setSources(data.sources || []);
       } catch (e: unknown) {
         if (cancelled) return;
-        setLoadError(e instanceof Error ? e.message : '加载商店失败');
+        setLoadError(e instanceof Error ? e.message : t('mcpStore.loadFail'));
         setItems([]);
       } finally {
         if (!cancelled) setLoading(false);
@@ -312,26 +317,26 @@ export default function MCPStorePanel({
   const handleInstall = useCallback(
     async (item: UnifiedMCPStoreItem) => {
       if (installedNames.has(item.name) || installedNames.has(item.id)) {
-        addToast(`${item.display_name} 已安装`, 'success');
+        addToast(t('mcpStore.installedNamed').replace('{name}', item.display_name), 'success');
         return;
       }
       setBusyId(item.id);
       try {
         const res = await installMCPFromStore(item.source, item.id);
         if (res.success) {
-          addToast(res.message || `已安装 ${item.display_name}`, 'success');
+          addToast(res.message || t('mcpStore.installedOk').replace('{name}', item.display_name), 'success');
           await refetch();
         } else {
-          addToast(res.message || '安装失败', 'error');
+          addToast(res.message || t('mcpStore.installFail'), 'error');
         }
       } catch (e: unknown) {
         // 回退：直接 create
         try {
           await createMutation.mutateAsync(toForm(item));
-          addToast(`已安装 ${item.display_name}`, 'success');
+          addToast(t('mcpStore.installedOk').replace('{name}', item.display_name), 'success');
           await refetch();
         } catch (e2: unknown) {
-          addToast(e2 instanceof Error ? e2.message : e instanceof Error ? e.message : '安装失败', 'error');
+          addToast(e2 instanceof Error ? e2.message : e instanceof Error ? e.message : t('mcpStore.installFail'), 'error');
         }
       } finally {
         setBusyId(null);
@@ -344,18 +349,18 @@ export default function MCPStorePanel({
     async (item: UnifiedMCPStoreItem) => {
       const server = servers.find((s) => s.name === item.name || s.name === item.id);
       if (!server) {
-        addToast('未找到已安装配置', 'error');
+        addToast(t('mcpStore.notFoundInstalled'), 'error');
         return;
       }
-      const ok = await confirm(`确定卸载 ${item.display_name} 吗？`, '卸载 MCP', 'danger');
+      const ok = await confirm(t('mcpStore.confirmUninstall').replace('{name}', item.display_name), t('mcpStore.uninstallTitle'), 'danger');
       if (!ok) return;
       setBusyId(item.id);
       try {
         await deleteMutation.mutateAsync(server.id);
-        addToast(`已卸载 ${item.display_name}`, 'success');
+        addToast(t('mcpStore.uninstalledOk').replace('{name}', item.display_name), 'success');
         await refetch();
       } catch (e: unknown) {
-        addToast(e instanceof Error ? e.message : '卸载失败', 'error');
+        addToast(e instanceof Error ? e.message : t('mcpStore.uninstallFail'), 'error');
       } finally {
         setBusyId(null);
       }
@@ -366,10 +371,10 @@ export default function MCPStorePanel({
   const handleReload = async () => {
     try {
       await reloadMutation.mutateAsync();
-      addToast('MCP 已重载', 'success');
+      addToast(t('mcpStore.reloaded'), 'success');
       await refetch();
     } catch (e: unknown) {
-      addToast(e instanceof Error ? e.message : '重载失败', 'error');
+      addToast(e instanceof Error ? e.message : t('mcpStore.reloadFail'), 'error');
     }
   };
 
@@ -379,28 +384,25 @@ export default function MCPStorePanel({
         <div className="mb-3 rounded-xl border border-border-subtle/70 bg-gradient-to-r from-brand-purple/5 via-transparent to-brand-cyan/5 px-4 py-3">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
-              <div className="text-sm font-semibold text-foreground">跨生态 MCP 商店</div>
+              <div className="text-sm font-semibold text-foreground">{t('mcpStore.title')}</div>
               <p className="mt-0.5 max-w-2xl text-xs leading-relaxed text-foreground-muted">
-                MCP 协议在 Claude Code / Hermes / OpenClaw / Codex / Takton 间互通。聚合精选目录与官方
-                Registry（
-                <code className="text-[10px]">registry.modelcontextprotocol.io</code>
-                ），支持一键安装。
+                {t('mcpStore.subtitle')}
               </p>
             </div>
             <div className="flex gap-3 text-center text-[11px]">
               <div className="rounded-lg bg-elevated-bg/80 px-3 py-1.5">
                 <div className="font-semibold text-foreground">{total || items.length}</div>
-                <div className="text-foreground-muted">可浏览</div>
+                <div className="text-foreground-muted">{t('store.browse')}</div>
               </div>
               <div className="rounded-lg bg-elevated-bg/80 px-3 py-1.5">
                 <div className="font-semibold text-emerald-600 dark:text-emerald-400">{servers.length}</div>
-                <div className="text-foreground-muted">已安装</div>
+                <div className="text-foreground-muted">{t('mcpStore.installed')}</div>
               </div>
               <div className="rounded-lg bg-elevated-bg/80 px-3 py-1.5">
                 <div className="font-semibold text-brand-purple">
                   {statusList.filter((s) => s.connected).length}
                 </div>
-                <div className="text-foreground-muted">已连接</div>
+                <div className="text-foreground-muted">{t('mcpStore.enabled')}</div>
               </div>
             </div>
           </div>
@@ -413,12 +415,12 @@ export default function MCPStorePanel({
                 type="search"
                 value={searchInput}
                 onChange={(e) => setSearchInput(e.target.value)}
-                placeholder="搜索名称、描述、package…"
+                placeholder={t('mcpStore.searchPh')}
                 className="w-full rounded-lg border border-border-subtle bg-elevated-bg py-1.5 pl-3 pr-8 text-sm text-foreground outline-none placeholder:text-foreground-muted/70 focus:border-brand-purple/50 focus:ring-1 focus:ring-brand-purple/20"
               />
             </div>
             <button type="button" onClick={() => void loadStore()} className={BTN_SECONDARY}>
-              {loading ? '加载中…' : '⟳ 刷新目录'}
+              {loading ? t('common.loading') : t('mcpStore.refreshCatalog')}
             </button>
             <button
               type="button"
@@ -426,11 +428,11 @@ export default function MCPStorePanel({
               disabled={reloadMutation.isPending}
               className={BTN_SECONDARY}
             >
-              {reloadMutation.isPending ? '重载中…' : '↻ 重载 MCP'}
+              {reloadMutation.isPending ? t('mcpStore.reloading') : t('mcpStore.reloadMcp')}
             </button>
             {onRequestCustom && (
               <button type="button" onClick={onRequestCustom} className={BTN_PRIMARY}>
-                + 自定义
+                {t('mcpStore.customNew')}
               </button>
             )}
           </div>
@@ -443,9 +445,9 @@ export default function MCPStorePanel({
                 className={`rounded-full border px-3 py-1 text-[11px] font-medium transition-colors ${
                   sourceFilter === s ? CHIP_ACTIVE : CHIP_IDLE
                 }`}
-                title={SOURCE_META[s].tip}
+                title={SOURCE_META[s].tipKey.startsWith('mcpStore.') ? t(SOURCE_META[s].tipKey as never) : SOURCE_META[s].tipKey}
               >
-                {SOURCE_META[s].label}
+                {SOURCE_META[s].labelKey.startsWith('mcpStore.') || SOURCE_META[s].labelKey.startsWith('store.') ? t(SOURCE_META[s].labelKey as never) : SOURCE_META[s].labelKey}
                 {sources.find((x) => x.id === s)?.count
                   ? ` (${sources.find((x) => x.id === s)!.count})`
                   : ''}
@@ -463,7 +465,7 @@ export default function MCPStorePanel({
         </div>
 
         <div className="mb-2 text-[11px] text-foreground-muted">
-          共 {total} 个{search ? ` · “${search}”` : ''}
+          {t('store.browse') /* count */} {total}{search ? ` · "${search}"` : ''}
           {loadError ? ` · ${loadError}` : ''}
         </div>
 
@@ -475,7 +477,7 @@ export default function MCPStorePanel({
               ))}
             </div>
           ) : items.length === 0 ? (
-            <EmptyState title="没有匹配的 MCP" description="换关键词，或切换精选/官方源" />
+            <EmptyState title={t('mcpStore.noMatch')} description={t('mcpStore.noMatchHint')} />
           ) : (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
               {items.map((item) => (
@@ -510,7 +512,11 @@ export default function MCPStorePanel({
                   <div>
                     <h2 className="text-lg font-bold">{selected.display_name}</h2>
                     <p className="text-xs text-foreground-muted">
-                      {(SOURCE_META[selected.source] || SOURCE_META.curated).label} · {selected.category}
+                      {(() => {
+                        const m = SOURCE_META[selected.source] || SOURCE_META.curated;
+                        const lab = m.labelKey.startsWith('mcpStore.') || m.labelKey.startsWith('store.') ? t(m.labelKey as never) : m.labelKey;
+                        return `${lab} · ${selected.category}`;
+                      })()}
                     </p>
                   </div>
                 </div>
@@ -535,11 +541,11 @@ export default function MCPStorePanel({
               )}
               <div className="mb-4 space-y-2 text-xs text-foreground-muted">
                 <div>
-                  传输: <code className="text-foreground">{selected.transport}</code>
+                  Transport: <code className="text-foreground">{selected.transport}</code>
                 </div>
                 {selected.command && (
                   <div>
-                    命令:{' '}
+                    Command:{' '}
                     <code className="break-all text-foreground">
                       {selected.command} {joinArgs(selected.args)}
                     </code>
@@ -552,12 +558,12 @@ export default function MCPStorePanel({
                 )}
                 {selected.env_hint && (
                   <div>
-                    环境变量: <code className="text-foreground">{selected.env_hint}</code>
+                    Env: <code className="text-foreground">{selected.env_hint}</code>
                   </div>
                 )}
                 {selected.note && <div className="text-amber-600 dark:text-amber-400">{selected.note}</div>}
                 <div className={riskClass(selected.risk_level)}>
-                  风险: {RISK_LABEL[selected.risk_level] || selected.risk_level}
+                  {t('mcpStore.riskLabel').replace('{level}', RISK_LABEL_KEY[selected.risk_level] ? t(RISK_LABEL_KEY[selected.risk_level] as never) : selected.risk_level)}
                 </div>
               </div>
               <div className="flex flex-wrap gap-2 border-t border-border-subtle pt-4">
@@ -570,7 +576,7 @@ export default function MCPStorePanel({
                       setSelected(null);
                     }}
                   >
-                    卸载
+                    {t('mcpStore.uninstall')}
                   </button>
                 ) : (
                   <button
@@ -582,7 +588,7 @@ export default function MCPStorePanel({
                       setSelected(null);
                     }}
                   >
-                    一键安装
+                    {t('mcpStore.oneClick')}
                   </button>
                 )}
                 {onFillCustom && (
@@ -594,7 +600,7 @@ export default function MCPStorePanel({
                       setSelected(null);
                     }}
                   >
-                    填入自定义表单
+                    {t('mcpStore.fillForm')}
                   </button>
                 )}
                 {selected.source_url && (
@@ -604,7 +610,7 @@ export default function MCPStorePanel({
                     rel="noopener noreferrer"
                     className={`${BTN_SECONDARY} px-4 py-2 text-sm`}
                   >
-                    源站
+                    Source
                   </a>
                 )}
               </div>
@@ -621,10 +627,10 @@ export default function MCPStorePanel({
       <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs text-foreground-muted">
-            已配置 {servers.length} 个 · 连接中 {statusList.filter((s) => s.connected).length}
+            Configured {servers.length} · connected {statusList.filter((s) => s.connected).length}
           </p>
           <button type="button" onClick={() => void handleReload()} className={BTN_SECONDARY}>
-            {reloadMutation.isPending ? '重载中…' : '↻ 重载全部'}
+            {reloadMutation.isPending ? t('mcpStore.reloading') : t('mcpStore.reloadAll')}
           </button>
         </div>
         {loadingServers ? (
@@ -634,7 +640,7 @@ export default function MCPStorePanel({
             ))}
           </div>
         ) : servers.length === 0 ? (
-          <EmptyState title="还没有安装 MCP" description="去「商店」浏览精选或官方目录并一键安装" />
+          <EmptyState title={t('mcpStore.noneInstalled')} description={t('mcpStore.noneInstalledHint')} />
         ) : (
           <div className="space-y-2">
             {servers.map((server) => {
@@ -651,23 +657,23 @@ export default function MCPStorePanel({
                         {server.transport}
                       </span>
                       <span className={`text-[10px] font-medium ${riskClass(server.risk_level)}`}>
-                        {RISK_LABEL[server.risk_level] || server.risk_level}
+                        {RISK_LABEL_KEY[server.risk_level] || server.risk_level}
                       </span>
                       <span
                         className={`text-[10px] ${server.enabled ? 'text-emerald-600' : 'text-foreground-dim'}`}
                       >
-                        {server.enabled ? '已启用' : '已禁用'}
+                        {server.enabled ? t('mcpStore.enabled') : t('mcpStore.disabled')}
                       </span>
                       {st && (
                         <span
                           className={`text-[10px] ${st.connected ? 'text-emerald-600' : 'text-rose-500'}`}
                         >
-                          {st.connected ? `● 已连接 · ${st.tool_count} tools` : '● 未连接'}
+                          {st.connected ? `● Connected · ${st.tool_count} tools` : t('mcpStore.disconnected')}
                         </span>
                       )}
                     </div>
                     <p className="mt-0.5 truncate text-xs text-foreground-muted">
-                      {server.description || '无描述'}
+                      {server.description || t('store.noDesc')}
                     </p>
                     <code className="mt-1 block truncate text-[10px] text-foreground-dim">
                       {server.transport === 'stdio'
@@ -685,31 +691,31 @@ export default function MCPStorePanel({
                           .then(
                             () =>
                               addToast(
-                                `${server.enabled ? '已禁用' : '已启用'} ${server.name}`,
+                                `${server.enabled ? t('mcpStore.disabled') : t('mcpStore.enabled')} ${server.name}`,
                                 'success'
                               ),
-                            (e) => addToast(e?.message || '失败', 'error')
+                            (e) => addToast(e?.message || t('mcpStore.failed'), 'error')
                           )
                       }
                     >
-                      {server.enabled ? '禁用' : '启用'}
+                      {server.enabled ? t('mcpStore.disable') : t('mcpStore.enable')}
                     </button>
                     <button
                       type="button"
                       className="rounded-lg bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-500/20"
                       onClick={async () => {
-                        const ok = await confirm(`删除 ${server.name}？`, '删除 MCP', 'danger');
+                        const ok = await confirm(`${t('mcpStore.delete')} ${server.name}?`, t('mcpStore.deleteTitle'), 'danger');
                         if (!ok) return;
                         try {
                           await deleteMutation.mutateAsync(server.id);
-                          addToast('已删除', 'success');
+                          addToast(t('mcpStore.deleted'), 'success');
                           await refetch();
                         } catch (e: unknown) {
-                          addToast(e instanceof Error ? e.message : '删除失败', 'error');
+                          addToast(e instanceof Error ? e.message : t('mcpStore.deleteFail'), 'error');
                         }
                       }}
                     >
-                      删除
+                      {t('mcpStore.delete')}
                     </button>
                   </div>
                 </div>

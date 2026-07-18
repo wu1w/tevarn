@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { WikiEntity, WikiRelation } from '@/types';
 import { getWikiGraph, createWikiEntity, updateWikiEntity, deleteWikiEntity, createWikiRelation, deleteWikiRelation, importWiki, previewWikiImport } from '@/lib/api';
 import GraphCanvas from './components/GraphCanvas';
+import { t, useT } from '@/stores/localeStore';
 
 const ENTITY_TYPES = [
   'person', 'organization', 'project', 'tech', 'concept',
@@ -11,8 +12,8 @@ const ENTITY_TYPES = [
 ];
 
 const ENTITY_LABELS: Record<string, string> = {
-  person: '人物', organization: '组织', project: '项目', tech: '技术', concept: '概念',
-  docs: '文档', event: '事件', location: '地点', problem: '问题', solution: '方案',
+  person: t('memory.type.person'), organization: '组织', project: t('memory.type.project'), tech: '技术', concept: '概念',
+  docs: t('contextDash.kind.doc'), event: '事件', location: '地点', problem: '问题', solution: '方案',
 };
 
 const TYPE_ICON_COLORS: Record<string, string> = {
@@ -44,6 +45,7 @@ const RELATION_LABELS: Record<string, string> = {
 };
 
 export default function WikiExplorer() {
+  const t = useT();
   const [entities, setEntities] = useState<WikiEntity[]>([]);
   const [relations, setRelations] = useState<WikiRelation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -191,7 +193,7 @@ export default function WikiExplorer() {
       resetForm();
       loadData();
     } catch (e: any) {
-      addToast(e?.response?.data?.detail || '保存失败', 'error');
+      addToast(e?.response?.data?.detail || t('channels.saveFailed'), 'error');
     }
   };
 
@@ -203,7 +205,7 @@ export default function WikiExplorer() {
       if (focusedId === id) setFocusedId(null);
       loadData();
     } catch (e) {
-      addToast('删除失败', 'error');
+      addToast(t('channels.deleteFailed'), 'error');
     }
   };
 
@@ -301,14 +303,14 @@ export default function WikiExplorer() {
             <button
               onClick={() => openEditEntity(selectedEntity)}
               className="rounded-lg p-1.5 text-foreground-dim hover:bg-gray-100 transition-colors"
-              title="编辑"
+              title={t('memory.edit')}
             >
               📝
             </button>
             <button
               onClick={() => handleDeleteEntity(selectedEntity.id)}
               className="rounded-lg p-1.5 text-foreground-dim hover:bg-red-50 hover:text-red-500 transition-colors"
-              title="删除"
+              title={t('memory.delete')}
             >
               🗑️
             </button>
@@ -424,7 +426,7 @@ export default function WikiExplorer() {
       <div className="flex flex-1 gap-4 overflow-hidden p-5">
         <div className="flex-1 overflow-hidden rounded-xl border border-border-default bg-card-bg">
           {loading ? (
-            <div className="flex h-full items-center justify-center text-sm text-foreground-dim">加载中...</div>
+            <div className="flex h-full items-center justify-center text-sm text-foreground-dim">{t('profile.loading')}</div>
           ) : viewMode === 'graph' ? (
             <GraphCanvas
               entities={visibleEntities}
@@ -481,20 +483,20 @@ export default function WikiExplorer() {
       {showEntityForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowEntityForm(false)}>
           <div className="w-full max-w-md rounded-xl bg-card-bg p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <h3 className="mb-5 text-base font-semibold text-foreground">{editingEntity ? '编辑实体' : '新建实体'}</h3>
+            <h3 className="mb-5 text-base font-semibold text-foreground">{editingEntity ? t('memory.modal.edit') : '新建实体'}</h3>
             <div className="space-y-4">
               <div>
                 <label className="mb-1 block text-xs font-medium text-foreground-dim">名称 *</label>
-                <input value={formName} onChange={(e) => setFormName(e.target.value)} placeholder="实体名称" className="w-full rounded-lg border border-border-default px-3 py-2 text-sm text-foreground focus:border-brand-purple focus:outline-none" />
+                <input value={formName} onChange={(e) => setFormName(e.target.value)} placeholder={t('memory.form.namePlaceholder')} className="w-full rounded-lg border border-border-default px-3 py-2 text-sm text-foreground focus:border-brand-purple focus:outline-none" />
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-foreground-dim">类型</label>
+                <label className="mb-1 block text-xs font-medium text-foreground-dim">{t('memory.form.type')}</label>
                 <select value={formType} onChange={(e) => setFormType(e.target.value)} className="w-full rounded-lg border border-border-default px-3 py-2 text-sm text-foreground focus:border-brand-purple focus:outline-none">
                   {ENTITY_TYPES.map((t) => <option key={t} value={t}>{ENTITY_LABELS[t]}</option>)}
                 </select>
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-foreground-dim">描述</label>
+                <label className="mb-1 block text-xs font-medium text-foreground-dim">{t('memory.form.desc')}</label>
                 <textarea value={formDesc} onChange={(e) => setFormDesc(e.target.value)} placeholder="实体描述" rows={3} className="w-full rounded-lg border border-border-default px-3 py-2 text-sm text-foreground focus:border-brand-purple focus:outline-none resize-none" />
               </div>
               <div>
@@ -541,7 +543,7 @@ export default function WikiExplorer() {
               </div>
               <div className="flex justify-end gap-3 pt-2">
                 <button onClick={() => setShowRelationForm(false)} className="rounded-lg border border-border-default px-4 py-2 text-sm text-foreground hover:bg-gray-50">取消</button>
-                <button onClick={handleCreateRelation} className="rounded-lg bg-brand-purple px-4 py-2 text-sm font-medium text-white hover:bg-brand-purple/90">创建</button>
+                <button onClick={handleCreateRelation} className="rounded-lg bg-brand-purple px-4 py-2 text-sm font-medium text-white hover:bg-brand-purple/90">{t('channels.create')}</button>
               </div>
             </div>
           </div>

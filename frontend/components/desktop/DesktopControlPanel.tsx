@@ -21,12 +21,14 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useDesktopAgent } from '@/hooks/useDesktopAgent';
 import { DesktopPermissionDialog, DesktopPermissionRequest, PermissionLevel } from './PermissionDialog';
+import { useT } from '@/stores/localeStore';
 
 interface DesktopControlPanelProps {
   onTaskComplete?: (result: any) => void;
 }
 
 export function DesktopControlPanel({ onTaskComplete }: DesktopControlPanelProps) {
+  const t = useT();
   const [permissionDialogOpen, setPermissionDialogOpen] = useState(false);
   const [currentPermissionRequest, setCurrentPermissionRequest] = useState<DesktopPermissionRequest | null>(null);
   const [permissionResolver, setPermissionResolver] = useState<((level: PermissionLevel | null) => void) | null>(null);

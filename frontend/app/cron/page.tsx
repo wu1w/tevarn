@@ -12,6 +12,7 @@ import {
 import { useConfirm } from '@/components/desktop/ConfirmDialog';
 import { EmptyState } from '@/components/desktop/EmptyState';
 import { LoadingPage } from '@/components/ui/LoadingSpinner';
+import { t, useT } from '@/stores/localeStore';
 
 type CronForm = {
   name: string;
@@ -28,6 +29,7 @@ const emptyForm = (): CronForm => ({
 });
 
 export default function CronPage() {
+  const t = useT();
   const { confirm, ConfirmDialogComponent } = useConfirm();
   const [jobs, setJobs] = useState<CronJob[]>([]);
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
@@ -90,7 +92,7 @@ export default function CronPage() {
         enabled: form.enabled,
       };
       if (!payload.name || !payload.schedule) {
-        setError('请填写名称和 Cron 表达式');
+        setError(t('cron.nameScheduleRequired'));
         return;
       }
       if (editing) {
@@ -102,14 +104,14 @@ export default function CronPage() {
       load();
     } catch (err) {
       console.error(err);
-      setError(err instanceof Error ? err.message : '保存失败');
+      setError(err instanceof Error ? err.message : t('cron.saveFailed'));
     } finally {
       setSubmitting(false);
     }
   };
 
   const handleDelete = async (id: string) => {
-    const ok = await confirm('确定删除此定时任务？');
+    const ok = await confirm(t('cron.confirmDelete'));
     if (!ok) return;
     try {
       await deleteCronJob(id);
@@ -132,47 +134,47 @@ export default function CronPage() {
     <div className="p-6">
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-foreground">定时任务</h1>
+          <h1 className="text-xl font-bold text-foreground">{t('cron.title')}</h1>
           <p className="mt-1 text-xs text-foreground-dim">
-            按 Cron / every 表达式调度，绑定工作流后自动执行
+            {t('cron.subtitle')}
           </p>
         </div>
         <button
           onClick={openCreate}
           className="rounded-md bg-brand-purple px-4 py-2 text-sm font-medium text-white hover:bg-brand-purple/80"
         >
-          + 新建任务
+          {t('cron.newJob')}
         </button>
       </div>
 
       {showForm && (
         <div className="mb-6 rounded-lg border border-border-default bg-card-bg p-4">
           <h2 className="mb-3 text-sm font-semibold text-foreground-muted">
-            {editing ? '编辑任务' : '新建任务'}
+            {editing ? t('cron.editJob') : t('cron.createJob')}
           </h2>
           <form onSubmit={handleSubmit} className="grid gap-3 sm:grid-cols-2">
             <input
-              placeholder="名称"
+              placeholder={t('cron.namePlaceholder')}
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
               className="rounded-md border border-border-default bg-elevated-bg/40 px-3 py-2 text-sm focus:border-brand-purple focus:outline-none"
               required
             />
             <input
-              placeholder="Cron 表达式，如 0 9 * * * 或 every 1h"
+              placeholder={t('cron.schedulePlaceholder')}
               value={form.schedule}
               onChange={(e) => setForm({ ...form, schedule: e.target.value })}
               className="rounded-md border border-border-default bg-elevated-bg/40 px-3 py-2 text-sm focus:border-brand-purple focus:outline-none"
               required
             />
             <div className="sm:col-span-2">
-              <label className="mb-1 block text-xs text-foreground-dim">绑定工作流（调度时执行）</label>
+              <label className="mb-1 block text-xs text-foreground-dim">{t('cron.bindWorkflow')}</label>
               <select
                 value={form.workflow_id}
                 onChange={(e) => setForm({ ...form, workflow_id: e.target.value })}
                 className="w-full rounded-md border border-border-default bg-elevated-bg/40 px-3 py-2 text-sm focus:border-brand-purple focus:outline-none"
               >
-                <option value="">— 不绑定（仅占位，不会执行业务）—</option>
+                <option value="">{t('cron.noBind')}</option>
                 {workflows.map((w) => (
                   <option key={w.id} value={String(w.id)}>
                     {w.name || String(w.id)}
@@ -181,7 +183,7 @@ export default function CronPage() {
               </select>
               {workflows.length === 0 && (
                 <p className="mt-1 text-[11px] text-warning-text">
-                  暂无工作流。请先到「工作流」页创建，再回来绑定。
+                  {t('cron.noWorkflows')}
                 </p>
               )}
             </div>
@@ -191,7 +193,7 @@ export default function CronPage() {
                 checked={form.enabled}
                 onChange={(e) => setForm({ ...form, enabled: e.target.checked })}
               />
-              启用
+              {t('cron.enable')}
             </label>
             {error && (
               <p className="sm:col-span-2 text-xs text-error-text">{error}</p>
@@ -202,14 +204,14 @@ export default function CronPage() {
                 disabled={submitting}
                 className="rounded-md bg-brand-purple px-4 py-2 text-sm font-medium text-white hover:bg-brand-purple/80 disabled:opacity-50"
               >
-                {submitting ? '保存中...' : '保存'}
+                {submitting ? t('cron.saving') : t('common.save')}
               </button>
               <button
                 type="button"
                 onClick={() => setShowForm(false)}
                 className="rounded-md bg-card-bg-hover px-4 py-2 text-sm font-medium text-foreground-muted hover:bg-elevated-bg"
               >
-                取消
+                {t('common.cancel')}
               </button>
             </div>
           </form>
@@ -217,14 +219,14 @@ export default function CronPage() {
       )}
 
       {loading ? (
-        <LoadingPage text="加载定时任务..." />
+        <LoadingPage text={t('cron.loading')} />
       ) : jobs.length === 0 ? (
         <div className="rounded-xl border border-border-default bg-card-bg">
           <EmptyState
             icon="⏰"
-            title="暂无定时任务"
-            description="设置 Cron 表达式并绑定工作流，自动执行周期性工作"
-            action={{ label: '+ 新建任务', onClick: openCreate }}
+            title={t('cron.emptyTitle')}
+            description={t('cron.emptyDesc')}
+            action={{ label: t('cron.newJob'), onClick: openCreate }}
           />
         </div>
       ) : (
@@ -232,12 +234,12 @@ export default function CronPage() {
           <table className="w-full text-sm">
             <thead className="bg-elevated-bg text-xs uppercase text-foreground-dim">
               <tr>
-                <th className="px-4 py-3 text-left">名称</th>
-                <th className="px-4 py-3 text-left">调度</th>
-                <th className="px-4 py-3 text-left">工作流</th>
-                <th className="px-4 py-3 text-left">状态</th>
-                <th className="px-4 py-3 text-left">上次运行</th>
-                <th className="px-4 py-3 text-left">操作</th>
+                <th className="px-4 py-3 text-left">{t('cron.col.name')}</th>
+                <th className="px-4 py-3 text-left">{t('cron.col.schedule')}</th>
+                <th className="px-4 py-3 text-left">{t('cron.col.workflow')}</th>
+                <th className="px-4 py-3 text-left">{t('cron.col.status')}</th>
+                <th className="px-4 py-3 text-left">{t('cron.col.lastRun')}</th>
+                <th className="px-4 py-3 text-left">{t('cron.col.actions')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border-subtle">
@@ -259,13 +261,13 @@ export default function CronPage() {
                           ? 'bg-success-bg text-success-text'
                           : 'bg-card-bg-hover text-foreground-dim'
                       }`}
-                      title="点击切换启用"
+                      title={t('cron.toggleTitle')}
                     >
-                      {job.enabled ? '启用' : '禁用'}
+                      {job.enabled ? t('cron.enabled') : t('cron.disabled')}
                     </button>
                   </td>
                   <td className="px-4 py-3 text-xs text-foreground-dim">
-                    {job.last_run_at ? new Date(job.last_run_at).toLocaleString() : '从未'}
+                    {job.last_run_at ? new Date(job.last_run_at).toLocaleString() : t('cron.never')}
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex gap-2">
@@ -273,13 +275,13 @@ export default function CronPage() {
                         onClick={() => openEdit(job)}
                         className="rounded-md bg-card-bg-hover px-2 py-1 text-xs text-foreground-dim hover:bg-elevated-bg"
                       >
-                        编辑
+                        {t('common.edit')}
                       </button>
                       <button
                         onClick={() => handleDelete(job.id)}
                         className="rounded-md bg-error-bg px-2 py-1 text-xs text-error-text hover:bg-error-bg"
                       >
-                        删除
+                        {t('common.delete')}
                       </button>
                     </div>
                   </td>

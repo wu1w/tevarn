@@ -2,6 +2,7 @@
 
 import React from 'react';
 import type { GoalState } from '@/types';
+import { useT } from '@/stores/localeStore';
 
 interface GoalPanelProps {
   goal: GoalState | null;
@@ -9,6 +10,7 @@ interface GoalPanelProps {
 }
 
 export function GoalPanel({ goal, onClose }: GoalPanelProps) {
+  const t = useT();
   if (!goal) return null;
 
   const { progress, todos, title, status } = goal;

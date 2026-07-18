@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { useT } from '@/stores/localeStore';
 
 interface ThinkingStep {
   iteration: number;
@@ -43,6 +44,7 @@ interface TransparencyPanelProps {
 }
 
 export function TransparencyPanel({ sessionId, visible, onClose }: TransparencyPanelProps) {
+  const t = useT();
   const [trace, setTrace] = useState<TraceData | null>(null);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'thinking' | 'tools' | 'rag'>('thinking');

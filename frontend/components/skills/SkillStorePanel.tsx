@@ -18,6 +18,7 @@ import { useToastStore } from '@/stores/toastStore';
 import { useConfirm } from '@/components/desktop/ConfirmDialog';
 import { Skeleton } from '@/components/desktop/Skeleton';
 import { EmptyState } from '@/components/desktop/EmptyState';
+import { useT } from '@/stores/localeStore';
 
 type SourceFilter = 'all' | SkillSource;
 type ViewFilter = 'browse' | 'installed' | 'active';
@@ -26,42 +27,42 @@ const PAGE_SIZE = 48;
 
 const SOURCE_META: Record<
   string,
-  { label: string; short: string; color: string; ring: string; tip: string }
+  { label: string; short: string; color: string; ring: string; tipKey: string }
 > = {
   takton: {
     label: 'Takton',
     short: 'Tk',
     color: 'bg-sky-500/15 text-sky-600 dark:text-sky-400 border-sky-500/25',
     ring: 'ring-sky-500/30',
-    tip: 'Takton 原生 Python skill',
+    tipKey: 'store.src.takton',
   },
   clawhub: {
     label: 'ClawHub',
     short: 'OC',
     color: 'bg-violet-500/15 text-violet-600 dark:text-violet-400 border-violet-500/25',
     ring: 'ring-violet-500/30',
-    tip: 'OpenClaw 社区 · 一键转换安装为 SKILL.md',
+    tipKey: 'store.src.clawhub',
   },
   'awesome-claude': {
     label: 'Claude Code',
     short: 'CC',
     color: 'bg-orange-500/15 text-orange-600 dark:text-orange-400 border-orange-500/25',
     ring: 'ring-orange-500/30',
-    tip: 'awesome-claude-skills · SKILL.md',
+    tipKey: 'awesome-claude-skills · SKILL.md',
   },
   'awesome-hermes': {
     label: 'Hermes',
     short: 'Hm',
     color: 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/25',
     ring: 'ring-rose-500/30',
-    tip: 'awesome-hermes-skills · SKILL.md',
+    tipKey: 'awesome-hermes-skills · SKILL.md',
   },
   custom: {
     label: 'Custom',
     short: 'Cu',
     color: 'bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/25',
     ring: 'ring-zinc-500/30',
-    tip: '自定义源',
+    tipKey: 'store.src.custom',
   },
 };
 
@@ -127,6 +128,7 @@ const SkillCard = memo(function SkillCard({
   onInstall: (s: UnifiedSkill) => void;
   onUninstall: (s: UnifiedSkill) => void;
 }) {
+  const t = useT();
   const meta = SOURCE_META[skill.source] || SOURCE_META.custom;
   // Claude/Hermes 有 skill_md_url 可直装；ClawHub 走后端「元数据→SKILL.md」转换安装
   const canInstall =
@@ -146,14 +148,14 @@ const SkillCard = memo(function SkillCard({
     >
       {installed && (
         <span className="absolute right-3 top-3 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
-          已安装
+          {t('store.installed')}
         </span>
       )}
 
       <div className="mb-2 flex items-start gap-2 pr-12">
         <div
           className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border text-[11px] font-bold ${meta.color}`}
-          title={meta.tip}
+          title={meta.tipKey.startsWith('store.') ? t(meta.tipKey as never) : meta.tipKey}
         >
           {meta.short}
         </div>
@@ -173,7 +175,7 @@ const SkillCard = memo(function SkillCard({
       </div>
 
       <p className="mb-3 line-clamp-2 min-h-[2.5rem] flex-1 text-xs leading-relaxed text-foreground-muted">
-        {skill.summary || skill.description || '暂无描述'}
+        {skill.summary || skill.description || t('store.noDesc')}
       </p>
 
       <div className="mb-2 flex flex-wrap items-center gap-1">
@@ -228,16 +230,16 @@ const SkillCard = memo(function SkillCard({
             disabled={busy}
             className="flex-1 rounded-lg bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-500/20 disabled:opacity-50"
           >
-            {busy ? '处理中…' : '卸载'}
+            {busy ? t('store.busy') : t('store.uninstall')}
           </button>
         ) : isTakton ? (
           <button
             type="button"
             disabled
-            title="Takton 原生 skill 请在「社区」Tab 导入"
+            title={t('store.taktonTip')}
             className="flex-1 cursor-not-allowed rounded-lg border border-border-subtle bg-elevated-bg px-3 py-1.5 text-xs font-medium text-foreground-muted opacity-80"
           >
-            请走「社区」导入
+            {t('store.useCommunity')}
           </button>
         ) : canInstall ? (
           <button
@@ -246,12 +248,12 @@ const SkillCard = memo(function SkillCard({
             disabled={busy}
             title={
               isClawhub
-                ? '将 ClawHub 条目转换成本地 SKILL.md 并安装，自动注入对话'
-                : '下载 SKILL.md 到本地并注入对话'
+                ? t('store.clawhubTip')
+                : t('store.downloadTip')
             }
             className={`flex-1 ${BTN_PRIMARY}`}
           >
-            {busy ? '安装中…' : isClawhub ? '一键转换安装' : '一键安装'}
+            {busy ? t('store.installing') : isClawhub ? t('store.convertInstall') : t('store.oneClick')}
           </button>
         ) : (
           <button
@@ -260,11 +262,11 @@ const SkillCard = memo(function SkillCard({
             disabled={busy}
             className={`flex-1 ${BTN_PRIMARY}`}
           >
-            {busy ? '安装中…' : '安装'}
+            {busy ? t('store.installing') : t('store.install')}
           </button>
         )}
         <button type="button" onClick={() => onOpen(skill)} className={BTN_SECONDARY}>
-          详情
+          {t('store.details')}
         </button>
       </div>
     </article>
@@ -272,6 +274,7 @@ const SkillCard = memo(function SkillCard({
 });
 
 export default function SkillStorePanel() {
+  const t = useT();
   const { addToast } = useToastStore();
   const { confirm, ConfirmDialogComponent } = useConfirm();
 
@@ -303,7 +306,7 @@ export default function SkillStorePanel() {
   useEffect(() => {
     getStoreSources()
       .then(setSources)
-      .catch((e) => addToast(`加载源列表失败: ${e?.message || e}`, 'error'));
+      .catch((e) => addToast(t('store.loadSourcesFail').replace('{msg}', String(e?.message || e)), 'error'));
   }, [addToast]);
 
   const loadInstalled = useCallback(async () => {
@@ -365,7 +368,7 @@ export default function SkillStorePanel() {
         setOffset(useOffset + items.length);
       } catch (e: any) {
         if (ac.signal.aborted || e?.name === 'CanceledError' || e?.code === 'ERR_CANCELED') return;
-        addToast(`加载商店失败: ${e?.message || e}`, 'error');
+        addToast(t('store.loadFail').replace('{msg}', String(e?.message || e)), 'error');
         if (!append) {
           setSkills([]);
           setErrors({});
@@ -415,15 +418,15 @@ export default function SkillStorePanel() {
       if (result.success) {
         const tip =
           skill.source === 'clawhub'
-            ? `已转换并安装 ${skill.display_name}，下次对话会注入 system prompt`
-            : `已安装 ${skill.display_name}，下次对话会注入 system prompt`;
+            ? t('store.convertedOk').replace('{name}', skill.display_name)
+          : t('store.installedOk').replace('{name}', skill.display_name);
         addToast(tip, 'success');
         await loadInstalled();
       } else {
-        addToast(`安装失败: ${result.error || '未知错误'}`, 'error');
+        addToast(t('store.installFail').replace('{msg}', String(result.error || t('store.unknownError'))), 'error');
       }
     } catch (e: any) {
-      addToast(`安装失败: ${e?.response?.data?.detail || e?.message || e}`, 'error');
+      addToast(t('store.installFail').replace('{msg}', String(e?.response?.data?.detail || e?.message || e)), 'error');
     } finally {
       setBusy(key, false);
     }
@@ -432,8 +435,8 @@ export default function SkillStorePanel() {
   const handleUninstall = async (skill: UnifiedSkill | { source: string; name: string; display_name?: string }) => {
     const display = 'display_name' in skill && skill.display_name ? skill.display_name : skill.name;
     const ok = await confirm(
-      `确定卸载 ${display} 吗？将删除本地 SKILL.md，并从 system prompt 移除。`,
-      '卸载 Skill',
+      t('store.confirmUninstall').replace('{name}', display),
+      t('store.uninstallTitle'),
       'danger'
     );
     if (!ok) return;
@@ -443,13 +446,13 @@ export default function SkillStorePanel() {
     try {
       const result = await uninstallStoreSkill(skill.source as SkillSource, id);
       if (result.success) {
-        addToast(`已卸载 ${display}`, 'success');
+        addToast(t('store.uninstalledOk').replace('{name}', display), 'success');
         await loadInstalled();
       } else {
-        addToast(`卸载失败: ${result.error || '未知错误'}`, 'error');
+        addToast(t('store.uninstallFail').replace('{msg}', String(result.error || t('store.unknownError'))), 'error');
       }
     } catch (e: any) {
-      addToast(`卸载失败: ${e?.response?.data?.detail || e?.message || e}`, 'error');
+      addToast(t('store.uninstallFail').replace('{msg}', String(e?.response?.data?.detail || e?.message || e)), 'error');
     } finally {
       setBusy(key, false);
     }
@@ -459,10 +462,10 @@ export default function SkillStorePanel() {
     setRefreshing(true);
     try {
       await refreshStoreCache(sourceFilter === 'all' ? undefined : sourceFilter);
-      addToast('缓存已刷新', 'success');
+      addToast(t('store.refreshed'), 'success');
       await Promise.all([load({ append: false, nextOffset: 0 }), loadInstalled()]);
     } catch (e: any) {
-      addToast(`刷新失败: ${e?.message || e}`, 'error');
+      addToast(t('store.refreshFail').replace('{msg}', String(e?.message || e)), 'error');
     } finally {
       setRefreshing(false);
     }
@@ -470,7 +473,7 @@ export default function SkillStorePanel() {
 
   const handleCopyCmd = async (cmd: string) => {
     const ok = await copyText(cmd);
-    addToast(ok ? '已复制安装命令' : '复制失败，请手动选择', ok ? 'success' : 'error');
+    addToast(ok ? t('store.copiedCmd') : t('store.copyFail'), ok ? 'success' : 'error');
   };
 
   const isInstalled = useCallback(
@@ -527,26 +530,25 @@ export default function SkillStorePanel() {
       <div className="mb-3 rounded-xl border border-border-subtle/70 bg-gradient-to-r from-accent/5 via-transparent to-violet-500/5 px-4 py-3">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
-            <div className="text-sm font-semibold text-foreground">跨生态 Skills 商店</div>
+            <div className="text-sm font-semibold text-foreground">{t('store.title')}</div>
             <p className="mt-0.5 max-w-2xl text-xs leading-relaxed text-foreground-muted">
-              聚合 OpenClaw (ClawHub)、Claude Code、Hermes 开源技能。安装 SKILL.md 后会自动注入
-              system prompt（摘要），Agent 可按需读取全文。
+              {t('store.subtitle')}
             </p>
           </div>
           <div className="flex gap-3 text-center text-[11px]">
             <div className="rounded-lg bg-elevated-bg/80 px-3 py-1.5">
               <div className="font-semibold text-foreground">{total || '—'}</div>
-              <div className="text-foreground-muted">可浏览</div>
+              <div className="text-foreground-muted">{t('store.browse')}</div>
             </div>
             <div className="rounded-lg bg-elevated-bg/80 px-3 py-1.5">
               <div className="font-semibold text-emerald-600 dark:text-emerald-400">
                 {installedMeta.length}
               </div>
-              <div className="text-foreground-muted">已安装</div>
+              <div className="text-foreground-muted">{t('store.installed')}</div>
             </div>
             <div className="rounded-lg bg-elevated-bg/80 px-3 py-1.5">
               <div className="font-semibold text-accent">{activeSkills.length}</div>
-              <div className="text-foreground-muted">已注入</div>
+              <div className="text-foreground-muted">{t('store.currentlyInjected')}</div>
             </div>
           </div>
         </div>
@@ -559,9 +561,9 @@ export default function SkillStorePanel() {
           <div className="flex rounded-lg border border-border-subtle bg-elevated-bg/80 p-0.5">
             {(
               [
-                { id: 'browse' as const, label: '浏览' },
-                { id: 'installed' as const, label: `已安装 (${installedMeta.length})` },
-                { id: 'active' as const, label: `已注入 (${activeSkills.length})` },
+                { id: 'browse' as const, label: t('store.browse') },
+                { id: 'installed' as const, label: `${t('store.tab.installed')} (${installedMeta.length})` },
+                { id: 'active' as const, label: `${t('store.currentlyInjected')} (${activeSkills.length})` },
               ] as const
             ).map((v) => (
               <button
@@ -583,7 +585,7 @@ export default function SkillStorePanel() {
               type="search"
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
-              placeholder="搜索名称、描述、作者、topics…"
+              placeholder={t('store.searchPh')}
             className="w-full rounded-lg border border-border-subtle bg-elevated-bg py-1.5 pl-3 pr-8 text-sm text-foreground outline-none transition-colors placeholder:text-foreground-muted/70 focus:border-brand-purple/50 focus:ring-1 focus:ring-brand-purple/20"
             />
             {searchInput && (
@@ -591,7 +593,7 @@ export default function SkillStorePanel() {
                 type="button"
                 onClick={() => setSearchInput('')}
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-foreground-muted hover:text-foreground"
-                aria-label="清空搜索"
+                aria-label={t('store.clearSearch')}
               >
                 ✕
               </button>
@@ -603,9 +605,9 @@ export default function SkillStorePanel() {
             onClick={handleRefresh}
             disabled={refreshing}
             className="rounded-lg border border-border-subtle bg-elevated-bg px-3 py-1.5 text-xs text-foreground-muted transition-colors hover:border-brand-purple/40 hover:text-foreground disabled:opacity-50"
-            title="刷新远端缓存"
+            title={t('store.refresh')}
           >
-            {refreshing ? '刷新中…' : '⟳ 刷新'}
+            {refreshing ? t('common.loading') : t('store.refresh')}
           </button>
         </div>
 
@@ -618,8 +620,8 @@ export default function SkillStorePanel() {
               sourceFilter === 'all' ? CHIP_ACTIVE : CHIP_IDLE
             }`}
           >
-            全部源
-          </button>
+                      {t('store.allSources')}
+                    </button>
           {sources.map((s) => {
             const meta = SOURCE_META[s.id] || SOURCE_META.custom;
             const active = sourceFilter === s.id;
@@ -628,7 +630,7 @@ export default function SkillStorePanel() {
                 key={s.id}
                 type="button"
                 onClick={() => setSourceFilter(s.id)}
-                title={meta.tip}
+                title={meta.tipKey.startsWith('store.') ? t(meta.tipKey as never) : meta.tipKey}
                 className={`rounded-full border px-3 py-1 text-[11px] font-medium transition-colors ${
                   active
                     ? `${meta.color} ring-1 ${meta.ring}`
@@ -647,7 +649,7 @@ export default function SkillStorePanel() {
         <div className="mb-3 rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
           {errorEntries.map(([src, err]) => (
             <div key={src}>
-              源 <b>{src}</b> 暂时不可用：{err}
+              Source <b>{src}</b> unavailable: {err}
             </div>
           ))}
         </div>
@@ -659,11 +661,11 @@ export default function SkillStorePanel() {
           <>
             <div className="mb-2 flex items-center justify-between text-[11px] text-foreground-muted">
               <span>
-                共 {total} 个
-                {search ? ` · 搜索 “${search}”` : ''}
+                Total {total}
+                {search ? ` · "${search}"` : ''}
                 {sourceFilter !== 'all' ? ` · ${sourceFilter}` : ''}
               </span>
-              {loading && <span className="animate-pulse">加载中…</span>}
+              {loading && <span className="animate-pulse">{t('common.loading')}</span>}
             </div>
 
             {loading && skills.length === 0 ? (
@@ -674,8 +676,8 @@ export default function SkillStorePanel() {
               </div>
             ) : filteredBrowse.length === 0 ? (
               <EmptyState
-                title="没有找到 skill"
-                description={search ? '试试换关键词，或切换源' : '该源暂无数据，点刷新重试'}
+                title={t('store.noneFound')}
+                description={search ? t('store.noneFoundHint') : t('store.sourceEmpty')}
               />
             ) : (
               <>
@@ -703,7 +705,7 @@ export default function SkillStorePanel() {
                       onClick={() => load({ append: true, nextOffset: offset })}
                       className="rounded-lg border border-border-subtle bg-elevated-bg px-5 py-2 text-xs font-medium text-foreground-muted transition-colors hover:border-accent/40 hover:text-foreground disabled:opacity-50"
                     >
-                      {loadingMore ? '加载中…' : `加载更多（已显示 ${skills.length}/${total}）`}
+                      {loadingMore ? t('common.loading') : `{t('store.loadMore').replace('{shown}', String(skills.length)).replace('{total}', String(total))}`}
                     </button>
                   </div>
                 )}
@@ -716,8 +718,8 @@ export default function SkillStorePanel() {
           <>
             {installedView.length === 0 ? (
               <EmptyState
-                title="还没有安装 skill"
-                description="在「浏览」里安装 SKILL.md 后会出现在这里，并注入到对话 system prompt"
+                title={t('store.noneInstalled')}
+                description={t('store.noneInstalledHint')}
               />
             ) : (
               <div className="space-y-2">
@@ -756,7 +758,7 @@ export default function SkillStorePanel() {
                         disabled={busyKeys.has(key)}
                         className="rounded-lg bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-500 hover:bg-red-500/20 disabled:opacity-50"
                       >
-                        卸载
+                        {t('store.uninstall')}
                       </button>
                     </div>
                   );
@@ -769,13 +771,12 @@ export default function SkillStorePanel() {
         {viewFilter === 'active' && (
           <>
             <p className="mb-3 text-xs text-foreground-muted">
-              下列 skill 会以「摘要 + 路径」形式注入 Context 层。Agent 需要完整步骤时，应
-              file_read 对应 Path。
-            </p>
+                          These skills inject a summary + path into context. Use file_read on the path for full steps.
+                        </p>
             {activeView.length === 0 ? (
               <EmptyState
-                title="当前没有注入中的 prompt-skill"
-                description="安装 awesome-claude / awesome-hermes 的 SKILL.md 后会出现在这里"
+                title={t('store.noneInstalled')}
+                description={t('store.noneInstalledHint')}
               />
             ) : (
               <div className="space-y-2">
@@ -796,7 +797,7 @@ export default function SkillStorePanel() {
                         </span>
                       </div>
                       <p className="mt-1 text-xs leading-relaxed text-foreground-muted">
-                        {s.description || '(无 description)'}
+                        {s.description || t('store.noDesc')}
                       </p>
                       <code className="mt-2 block truncate rounded-md bg-elevated-bg px-2 py-1 text-[10px] text-foreground-muted">
                         {s.path}
@@ -833,7 +834,7 @@ export default function SkillStorePanel() {
                 type="button"
                 onClick={() => setSelectedSkill(null)}
                 className="rounded-lg px-2 py-1 text-foreground-muted hover:bg-elevated-bg hover:text-foreground"
-                aria-label="关闭"
+                aria-label={t('store.close')}
               >
                 ✕
               </button>
@@ -843,8 +844,8 @@ export default function SkillStorePanel() {
               {selectedSkill.summary && (
                 <div>
                   <div className="text-xs font-semibold uppercase tracking-wide text-foreground-muted">
-                    简介
-                  </div>
+                                      Summary
+                                    </div>
                   <p className="mt-1 text-sm leading-relaxed text-foreground">{selectedSkill.summary}</p>
                 </div>
               )}
@@ -852,8 +853,8 @@ export default function SkillStorePanel() {
                 selectedSkill.description !== selectedSkill.summary && (
                   <div>
                     <div className="text-xs font-semibold uppercase tracking-wide text-foreground-muted">
-                      详细描述
-                    </div>
+                                          Description
+                                        </div>
                     <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-foreground">
                       {selectedSkill.description}
                     </p>
@@ -863,25 +864,25 @@ export default function SkillStorePanel() {
               <div className="grid grid-cols-2 gap-3 text-sm">
                 {selectedSkill.author && (
                   <div>
-                    <div className="text-xs text-foreground-muted">作者</div>
+                    <div className="text-xs text-foreground-muted">Author</div>
                     <div>@{selectedSkill.author}</div>
                   </div>
                 )}
                 {selectedSkill.version && (
                   <div>
-                    <div className="text-xs text-foreground-muted">版本</div>
+                    <div className="text-xs text-foreground-muted">Version</div>
                     <div>{selectedSkill.version}</div>
                   </div>
                 )}
                 {selectedSkill.license && (
                   <div>
-                    <div className="text-xs text-foreground-muted">协议</div>
+                    <div className="text-xs text-foreground-muted">License</div>
                     <div>{selectedSkill.license}</div>
                   </div>
                 )}
                 {selectedSkill.source_repo && (
                   <div>
-                    <div className="text-xs text-foreground-muted">仓库</div>
+                    <div className="text-xs text-foreground-muted">Repo</div>
                     <div className="truncate">{selectedSkill.source_repo}</div>
                   </div>
                 )}
@@ -889,7 +890,7 @@ export default function SkillStorePanel() {
 
               {selectedSkill.compatibility?.length > 0 && (
                 <div>
-                  <div className="text-xs font-semibold text-foreground-muted">兼容</div>
+                  <div className="text-xs font-semibold text-foreground-muted">{t('store.compat')}</div>
                   <div className="mt-1 flex flex-wrap gap-1">
                     {selectedSkill.compatibility.map((c) => (
                       <span
@@ -920,22 +921,22 @@ export default function SkillStorePanel() {
                 <div>
                   <div className="mb-1 flex items-center justify-between">
                     <div className="text-xs font-semibold text-foreground-muted">
-                      原生 CLI（可选，专家用）
+                      Native CLI (optional, advanced)
                     </div>
                     <button
                       type="button"
                       onClick={() => handleCopyCmd(selectedSkill.install_command)}
                       className="text-[11px] text-violet-600 hover:underline dark:text-violet-400"
                     >
-                      复制
-                    </button>
+                                          Copy
+                                        </button>
                   </div>
                   <code className="block rounded-lg bg-elevated-bg p-2 text-xs text-foreground">
                     {selectedSkill.install_command}
                   </code>
                   {selectedSkill.source === 'clawhub' && (
                     <p className="mt-1 text-[11px] text-foreground-muted">
-                      小白用户请点下方「一键转换安装」，无需命令行。
+                      Beginners: use Convert & install below — no CLI needed.
                     </p>
                   )}
                 </div>
@@ -951,7 +952,7 @@ export default function SkillStorePanel() {
                     }}
                     className="flex-1 rounded-lg bg-red-500/10 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-500/20"
                   >
-                    卸载
+                    {t('store.uninstall')}
                   </button>
                 ) : selectedSkill.source === 'takton' ? (
                   <button
@@ -959,7 +960,7 @@ export default function SkillStorePanel() {
                     disabled
                     className="flex-1 cursor-not-allowed rounded-lg border border-border-subtle bg-elevated-bg px-4 py-2 text-sm text-foreground-muted opacity-80"
                   >
-                    请走「社区」Tab 导入
+                    {t('store.useCommunity')}
                   </button>
                 ) : (
                   <button
@@ -970,7 +971,7 @@ export default function SkillStorePanel() {
                     }}
                     className="flex-1 rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-500"
                   >
-                    {selectedSkill.source === 'clawhub' ? '一键转换安装' : '一键安装并注入'}
+                    {selectedSkill.source === 'clawhub' ? t('store.convertInstall') : t('store.installInject')}
                   </button>
                 )}
                 {selectedSkill.source_url && (
@@ -980,7 +981,7 @@ export default function SkillStorePanel() {
                     rel="noopener noreferrer"
                     className="rounded-lg border border-border-subtle bg-elevated-bg px-4 py-2 text-sm text-foreground-muted hover:border-violet-400/40"
                   >
-                    源页 ↗
+                    Source ↗
                   </a>
                 )}
               </div>

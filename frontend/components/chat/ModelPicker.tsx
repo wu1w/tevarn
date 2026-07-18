@@ -16,6 +16,7 @@ import {
   type ModelCatalog,
 } from '@/lib/api';
 import { useToastStore } from '@/stores/toastStore';
+import { useT } from '@/stores/localeStore';
 
 interface ModelPickerProps {
   disabled?: boolean;
@@ -23,6 +24,7 @@ interface ModelPickerProps {
 }
 
 export function ModelPicker({ disabled = false, onChanged }: ModelPickerProps) {
+  const t = useT();
   const addToast = useToastStore((s) => s.addToast);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -66,13 +68,13 @@ export function ModelPicker({ disabled = false, onChanged }: ModelPickerProps) {
         return prefer;
       });
       if (!data.providers?.length) {
-        setLoadError('还没有已保存的供应商。请先在「设置」中配置并保存。');
+        setLoadError(t('modelPicker.noProvidersSaved'));
       }
     } catch (e) {
       console.error(e);
-      const msg = e instanceof Error ? e.message : '加载模型目录失败';
+      const msg = e instanceof Error ? e.message : t('modelPicker.loadFailed');
       setLoadError(msg);
-      addToast('加载模型目录失败：' + msg, 'error');
+      addToast(t('modelPicker.loadFailedToast') + msg, 'error');
     } finally {
       setLoading(false);
     }
@@ -121,8 +123,8 @@ export function ModelPicker({ disabled = false, onChanged }: ModelPickerProps) {
   const labelProvider =
     activeProvider?.name ||
     catalog?.active_provider_id ||
-    (loadError ? '加载失败' : loading ? '加载中…' : '未配置');
-  const labelModel = catalog?.active_model || (loadError ? '点击重试' : '选择模型');
+    (loadError ? t('channels.loadFailed') : loading ? t('channels.loading') : t('modelPicker.notConfigured'));
+  const labelModel = catalog?.active_model || (loadError ? t('modelPicker.retry') : t('modelPicker.selectModel'));
 
   const focusProvider: CatalogProvider | undefined = catalog?.providers.find(
     (p) => p.id === selectedProviderId
@@ -138,12 +140,12 @@ export function ModelPicker({ disabled = false, onChanged }: ModelPickerProps) {
     setBusy(true);
     try {
       const res = await selectCatalogModel(providerId, modelId);
-      addToast(res.message || '已切换模型', 'success');
+      addToast(res.message || t('modelPicker.switched'), 'success');
       await load(true);
       setOpen(false);
       onChanged?.(providerId, modelId, res.provider_name || providerId);
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : '切换失败';
+      const msg = e instanceof Error ? e.message : t('evolution.toggleFailed');
       addToast(msg, 'error');
     } finally {
       setBusy(false);
@@ -163,7 +165,7 @@ export function ModelPicker({ disabled = false, onChanged }: ModelPickerProps) {
       addToast(res.message, 'success');
       await load(true);
     } catch (err: unknown) {
-      addToast(err instanceof Error ? err.message : '操作失败', 'error');
+      addToast(err instanceof Error ? err.message : t('modelPicker.opFailed'), 'error');
     } finally {
       setBusy(false);
     }
@@ -181,7 +183,7 @@ export function ModelPicker({ disabled = false, onChanged }: ModelPickerProps) {
       addToast(res.message, 'success');
       await load(true);
     } catch (err: unknown) {
-      addToast(err instanceof Error ? err.message : '操作失败', 'error');
+      addToast(err instanceof Error ? err.message : t('modelPicker.opFailed'), 'error');
     } finally {
       setBusy(false);
     }
@@ -201,7 +203,7 @@ export function ModelPicker({ disabled = false, onChanged }: ModelPickerProps) {
             ? 'border-brand-purple/35 bg-brand-purple/10 text-foreground hover:border-brand-purple/50'
             : 'border-amber-500/40 bg-amber-500/10 text-foreground-muted hover:border-amber-500/60'
         }`}
-        title="选择供应商与模型"
+        title={t('modelPicker.title')}
       >
         <span className="text-sm leading-none" aria-hidden>
           {activeProvider?.icon || '🤖'}
@@ -215,7 +217,7 @@ export function ModelPicker({ disabled = false, onChanged }: ModelPickerProps) {
         </span>
         {catalog?.providers?.length ? (
           <span className="rounded bg-card-bg/60 px-1 text-[9px] text-foreground-dim">
-            {catalog.providers.length}家
+            {t('modelPicker.providerCount').replace('{n}', String(catalog.providers.length))}
           </span>
         ) : null}
         <svg
@@ -233,12 +235,12 @@ export function ModelPicker({ disabled = false, onChanged }: ModelPickerProps) {
           {/* 左：供应商 */}
           <div className="w-[38%] border-r border-border-subtle bg-card-bg/50">
             <div className="border-b border-border-subtle px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-foreground-dim">
-              供应商
+              {t('modelPicker.providers')}
             </div>
             <div className="max-h-64 overflow-y-auto py-1">
               {allProviders.length === 0 && (
                 <div className="px-3 py-4 text-xs text-foreground-dim">
-                  尚未配置供应商。请先到「设置」添加。
+                  {t('modelPicker.noProvidersHint')}
                 </div>
               )}
               {allProviders.map((p) => {
@@ -264,17 +266,17 @@ export function ModelPicker({ disabled = false, onChanged }: ModelPickerProps) {
                       <span>{p.icon || '🤖'}</span>
                       <span className="truncate font-medium">{p.name}</span>
                       {p.id === catalog?.active_provider_id && (
-                        <span className="ml-auto shrink-0 text-[9px] text-brand-cyan">当前</span>
+                        <span className="ml-auto shrink-0 text-[9px] text-brand-cyan">{t('modelPicker.current')}</span>
                       )}
                     </button>
                     <button
                       type="button"
-                      title={p.enabled ? '在选择器中隐藏此供应商' : '重新显示此供应商'}
+                      title={p.enabled ? t('modelPicker.hideProvider') : t('modelPicker.showProvider')}
                       onClick={(e) => handleToggleProvider(e, p.id, p.enabled)}
                       disabled={busy}
                       className="mr-1 rounded-md px-1.5 py-1 text-[10px] text-foreground-dim hover:bg-card-bg-hover hover:text-foreground"
                     >
-                      {p.enabled ? '隐' : '显'}
+                      {p.enabled ? t('modelPicker.hide') : t('modelPicker.show')}
                     </button>
                   </div>
                 );
@@ -285,7 +287,7 @@ export function ModelPicker({ disabled = false, onChanged }: ModelPickerProps) {
                 href="/settings"
                 className="text-[11px] text-brand-cyan hover:underline"
               >
-                + 在设置中添加供应商
+                {t('modelPicker.addInSettings')}
               </a>
             </div>
           </div>
@@ -294,7 +296,7 @@ export function ModelPicker({ disabled = false, onChanged }: ModelPickerProps) {
           <div className="flex w-[62%] flex-col">
             <div className="flex items-center justify-between border-b border-border-subtle px-3 py-2">
               <span className="text-[10px] font-semibold uppercase tracking-wider text-foreground-dim">
-                模型
+                {t('modelPicker.models')}
                 {focusProvider ? ` · ${focusProvider.name}` : ''}
               </span>
               <button
@@ -303,21 +305,21 @@ export function ModelPicker({ disabled = false, onChanged }: ModelPickerProps) {
                 disabled={loading || busy}
                 className="text-[10px] text-foreground-dim hover:text-brand-cyan disabled:opacity-40"
               >
-                {loading ? '拉取中…' : '刷新'}
+                {loading ? t('modelPicker.fetching') : t('evolution.refresh')}
               </button>
             </div>
             <div className="max-h-64 flex-1 overflow-y-auto py-1">
               {!focusProvider && (
-                <div className="px-3 py-4 text-xs text-foreground-dim">请选择左侧供应商</div>
+                <div className="px-3 py-4 text-xs text-foreground-dim">{t('modelPicker.selectProvider')}</div>
               )}
               {focusProvider && !focusProvider.enabled && (
                 <div className="px-3 py-3 text-xs text-foreground-dim">
-                  此供应商已隐藏。点击左侧「显」可重新显示。
+                  {t('modelPicker.providerHidden')}
                 </div>
               )}
               {focusProvider && focusProvider.enabled && loading && (
                 <div className="px-3 py-4 text-xs text-foreground-dim animate-pulse">
-                  正在从供应商拉取模型列表…
+                  {t('modelPicker.fetchingList')}
                 </div>
               )}
               {focusProvider &&
@@ -325,7 +327,7 @@ export function ModelPicker({ disabled = false, onChanged }: ModelPickerProps) {
                 !loading &&
                 focusProvider.fetch_ok === false && (
                   <div className="px-3 py-3 text-xs text-error-text">
-                    {focusProvider.fetch_message || '无法拉取模型，请检查 API Key 与网络'}
+                    {focusProvider.fetch_message || t('modelPicker.fetchFailed')}
                   </div>
                 )}
               {focusProvider &&
@@ -334,7 +336,7 @@ export function ModelPicker({ disabled = false, onChanged }: ModelPickerProps) {
                 focusProvider.models.length === 0 &&
                 focusProvider.fetch_ok !== false && (
                   <div className="px-3 py-4 text-xs text-foreground-dim">
-                    暂无模型。请确认服务可用，或点「刷新」。
+                    {t('modelPicker.noModels')}
                   </div>
                 )}
               {focusProvider?.enabled &&
@@ -363,15 +365,15 @@ export function ModelPicker({ disabled = false, onChanged }: ModelPickerProps) {
                       >
                         <span className="block truncate font-mono text-[11px]">{m.id}</span>
                         {isActive && (
-                          <span className="text-[9px] text-brand-cyan">使用中</span>
+                          <span className="text-[9px] text-brand-cyan">{t('modelPicker.inUse')}</span>
                         )}
                         {m.disabled && (
-                          <span className="text-[9px] text-foreground-dim">已禁用</span>
+                          <span className="text-[9px] text-foreground-dim">{t('modelPicker.modelDisabled')}</span>
                         )}
                       </button>
                       <button
                         type="button"
-                        title={m.disabled ? '重新启用此模型' : '禁用此模型（不在对话中显示为可选）'}
+                        title={m.disabled ? t('modelPicker.enableModel') : t('modelPicker.disableModel')}
                         disabled={busy}
                         onClick={(e) =>
                           handleToggleModel(e, focusProvider.id, m.id, m.disabled)
@@ -382,7 +384,7 @@ export function ModelPicker({ disabled = false, onChanged }: ModelPickerProps) {
                             : 'text-foreground-dim hover:bg-error-bg hover:text-error-text'
                         }`}
                       >
-                        {m.disabled ? '启用' : '禁用'}
+                        {m.disabled ? t('channels.enable') : t('cron.disabled')}
                       </button>
                     </div>
                   );
@@ -410,11 +412,11 @@ export function ModelPicker({ disabled = false, onChanged }: ModelPickerProps) {
                                 focusProvider.id,
                                 c.id
                               );
-                              addToast(res.message || '已切换 Key', 'success');
+                              addToast(res.message || t('modelPicker.keySwitched'), 'success');
                               await load(true);
                             } catch (err: unknown) {
                               addToast(
-                                err instanceof Error ? err.message : '切换 Key 失败',
+                                err instanceof Error ? err.message : t('modelPicker.keySwitchFailed'),
                                 'error'
                               );
                             } finally {
@@ -438,7 +440,7 @@ export function ModelPicker({ disabled = false, onChanged }: ModelPickerProps) {
               )}
             {enabledProviders.length > 0 && (
               <div className="border-t border-border-subtle px-3 py-1.5 text-[10px] text-foreground-dim">
-                禁用后该模型不会被选中；可随时再启用。同一供应商可配置多个 API Key。
+                {t('modelPicker.footerHint')}
               </div>
             )}
           </div>

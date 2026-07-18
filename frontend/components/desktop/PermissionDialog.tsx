@@ -6,6 +6,7 @@ import { X, Monitor, Shield, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
+import { useT } from '@/stores/localeStore';
 
 export type PermissionLevel = 'ask' | 'allow_once' | 'allow_session' | 'always_allow';
 
@@ -29,6 +30,7 @@ export function DesktopPermissionDialog({
   onAllow,
   onDeny,
 }: DesktopPermissionDialogProps) {
+  const t = useT();
   const [rememberApp, setRememberApp] = useState(false);
 
   if (!request) return null;

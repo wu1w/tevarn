@@ -87,6 +87,7 @@ function SectionTitle({
   hint?: string;
   required?: boolean;
 }) {
+  const t = useT();
   return (
     <div className="mb-3 flex flex-wrap items-center gap-2">
       {step && (
@@ -95,7 +96,7 @@ function SectionTitle({
         </span>
       )}
       <h2 className="text-sm font-semibold text-foreground">{title}</h2>
-      {required && <span className="text-[10px] text-error-text">必配</span>}
+      {required && <span className="text-[10px] text-error-text">{t('common.required')}</span>}
       {hint && <span className="text-[10px] text-foreground-dim">{hint}</span>}
     </div>
   );
@@ -354,10 +355,10 @@ export default function SettingsPage() {
     try {
       const res = await selectCatalogModel(provider.id, modelId);
       if (!res.ok) {
-        addToast(res.message || '切换失败', 'error');
+        addToast(res.message || t('settings.switchFailed'), 'error');
         return;
       }
-      addToast(res.message || `已切换 ${modelId}`, 'success');
+      addToast(res.message || t('settings.switchedTo').replace('{n}', modelId), 'success');
       // 同步表单到该供应商
       const preset = presets.find((x) => x.id === (provider.preset_id || provider.id) || x.id === provider.id);
       if (preset) {
@@ -372,7 +373,7 @@ export default function SettingsPage() {
       await refetch();
       await refreshCatalog(false);
     } catch (e: unknown) {
-      addToast(e instanceof Error ? e.message : '切换模型失败', 'error');
+      addToast(e instanceof Error ? e.message : t('settings.switchModelFailed'), 'error');
     } finally {
       setSelectingModel(null);
     }
@@ -425,7 +426,7 @@ export default function SettingsPage() {
       provider_catalog_id: selected.id,
       provider_catalog_name: selected.name,
       provider_catalog_icon: selected.icon || selected.name?.charAt(0) || 'P',
-      credential_label: '默认 Key',
+      credential_label: t('settings.defaultKeyLabel'),
     };
     if (selected.embedding) Object.assign(items, selected.embedding);
     if (apiKey.trim()) items.llm_api_key = apiKey.trim();
@@ -457,7 +458,7 @@ export default function SettingsPage() {
   const handleFetchModels = useCallback(async () => {
     if (!selected) return;
     if (selected.needs_api_key && !apiKey.trim() && !hasStoredKey) {
-      addToast('请先填写 API 密钥，再拉取模型列表', 'error');
+      addToast(t('settings.needKeyToFetch'), 'error');
       return;
     }
     setFetchingModels(true);
@@ -471,14 +472,14 @@ export default function SettingsPage() {
       });
       if (res.ok && res.models?.length) {
         applyLiveModels(res.models, effectiveModel);
-        addToast(res.message || `已拉取 ${res.models.length} 个模型`, 'success');
+        addToast(res.message || t('settings.fetchedModels').replace('{n}', String(res.models.length)), 'success');
       } else {
         setLiveModels([]);
-        setModelsError(res.message || '未能拉取到模型');
-        addToast(res.message || '未能拉取到模型', 'error');
+        setModelsError(res.message || t('settings.fetchModelsEmpty'));
+        addToast(res.message || t('settings.fetchModelsEmpty'), 'error');
       }
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : '拉取模型失败';
+      const msg = e instanceof Error ? e.message : t('settings.fetchModelsFailed');
       setLiveModels([]);
       setModelsError(msg);
       addToast(msg, 'error');
@@ -490,26 +491,26 @@ export default function SettingsPage() {
   const handleSaveLlm = async () => {
     if (!selected) return;
     if (selected.needs_api_key && !apiKey.trim() && !hasStoredKey) {
-      addToast('请填写 API 密钥', 'error');
+      addToast(t('settings.needApiKey'), 'error');
       return;
     }
     if (!effectiveModel) {
-      addToast('请选择或填写模型名称', 'error');
+      addToast(t('settings.needModel'), 'error');
       return;
     }
     if (selected.custom && !baseUrl.trim()) {
-      addToast('请填写服务地址', 'error');
+      addToast(t('settings.needBaseUrl'), 'error');
       return;
     }
     setSaving(true);
     setTestResult(null);
     try {
       const res = await applySettingsBatch(buildLlmPayload());
-      addToast(res.message || '对话模型已保存', 'success');
+      addToast(res.message || t('settings.llmSaved'), 'success');
       await refetch();
       await refreshCatalog(true);
     } catch (e: unknown) {
-      addToast(e instanceof Error ? e.message : '保存失败', 'error');
+      addToast(e instanceof Error ? e.message : t('settings.saveFailed'), 'error');
     } finally {
       setSaving(false);
     }
@@ -518,7 +519,7 @@ export default function SettingsPage() {
   const handleTestLlm = async () => {
     if (!selected) return;
     if (selected.needs_api_key && !apiKey.trim() && !hasStoredKey) {
-      addToast('请先填写 API 密钥', 'error');
+      addToast(t('settings.needKeyFirst'), 'error');
       return;
     }
     setTesting(true);
@@ -541,7 +542,7 @@ export default function SettingsPage() {
       }
       addToast(res.message, res.ok ? 'success' : 'error');
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : '测试失败';
+      const msg = e instanceof Error ? e.message : t('settings.testFailed');
       setTestResult({ ok: false, message: msg });
       setModelsError(msg);
       addToast(msg, 'error');
@@ -560,10 +561,10 @@ export default function SettingsPage() {
           system_name: systemName.trim() || 'Takton',
           default_llm_model: defaultLlmModel.trim(),
         });
-        addToast(res.message || '生成参数已保存', 'success');
+        addToast(res.message || t('settings.genSaved'), 'success');
         await refetch();
       } catch (e: unknown) {
-        addToast(e instanceof Error ? e.message : '保存失败', 'error');
+        addToast(e instanceof Error ? e.message : t('settings.saveFailed'), 'error');
       } finally {
         setGenSaving(false);
       }
@@ -575,15 +576,15 @@ export default function SettingsPage() {
       try {
         if (!value) {
           const res = await setCatalogFallback('', '');
-          addToast(res.message || '已清除备用模型', 'success');
+          addToast(res.message || t('settings.fallbackCleared'), 'success');
         } else {
           const [pid, modelName] = value.split('|||');
           const res = await setCatalogFallback(pid || '', modelName || '');
-          addToast(res.message || '备用模型已保存', 'success');
+          addToast(res.message || t('settings.fallbackSaved'), 'success');
         }
         await refreshCatalog(false);
       } catch (e: unknown) {
-        addToast(e instanceof Error ? e.message : '保存备用模型失败', 'error');
+        addToast(e instanceof Error ? e.message : t('settings.fallbackSaveFailed'), 'error');
       } finally {
         setFallbackSaving(false);
       }
@@ -596,10 +597,10 @@ export default function SettingsPage() {
       setCompressSaving(true);
       try {
         const res = await applySettingsBatch({ context_compress_model: modelName });
-        addToast(res.message || (modelName ? `压缩模型已设为 ${modelName}` : '压缩模型已恢复主模型'), 'success');
+        addToast(res.message || (modelName ? t('settings.compressSetTo').replace('{n}', modelName) : t('settings.compressReset')), 'success');
         await refetch();
       } catch (e: unknown) {
-        addToast(e instanceof Error ? e.message : '保存压缩模型失败', 'error');
+        addToast(e instanceof Error ? e.message : t('settings.compressSaveFailed'), 'error');
       } finally {
         setCompressSaving(false);
       }
@@ -621,7 +622,7 @@ export default function SettingsPage() {
       if ('reranker_base_url' in items) setRerankUrl(String(items.reranker_base_url || ''));
       if ('reranker_model' in items) setRerankModel(String(items.reranker_model || ''));
     } catch (e: unknown) {
-      addToast(e instanceof Error ? e.message : '保存失败', 'error');
+      addToast(e instanceof Error ? e.message : t('settings.saveFailed'), 'error');
     } finally {
       setRagSaving(false);
     }
@@ -630,7 +631,7 @@ export default function SettingsPage() {
   const handleApplyStack = async () => {
     const p = stackPresets.find((x) => x.id === stackId);
     if (!p) {
-      addToast('请先选择一套一键方案', 'error');
+      addToast(t('settings.selectStackFirst'), 'error');
       return;
     }
     const items = { ...p.items };
@@ -642,7 +643,7 @@ export default function SettingsPage() {
         items.reranker_api_key = stackKey.trim();
       }
     }
-    await applyRagItems(items, '知识检索方案已保存');
+    await applyRagItems(items, t('settings.ragStackSaved'));
   };
 
   const fillFromPreset = (p: RagStackPreset) => {
@@ -676,7 +677,7 @@ export default function SettingsPage() {
 
   const handleSaveEmbed = async () => {
     if (!embedModel.trim() || !embedUrl.trim()) {
-      addToast('请填写 Embedding 地址和模型', 'error');
+      addToast(t('settings.needEmbed'), 'error');
       return;
     }
     const items: Record<string, unknown> = {
@@ -685,12 +686,12 @@ export default function SettingsPage() {
       embedding_model: embedModel.trim(),
     };
     if (embedKey.trim()) items.embedding_api_key = embedKey.trim();
-    await applyRagItems(items, 'Embedding 已保存');
+    await applyRagItems(items, t('settings.embedSaved'));
   };
 
   const handleSaveQdrant = async () => {
     if (!qdrantUrl.trim()) {
-      addToast('请填写 Qdrant 地址', 'error');
+      addToast(t('settings.needQdrantUrl'), 'error');
       return;
     }
     await applyRagItems(
@@ -698,7 +699,7 @@ export default function SettingsPage() {
         qdrant_url: qdrantUrl.trim().replace(/\/+$/, ''),
         qdrant_collection: qdrantCollection.trim() || 'knowledge_base',
       },
-      'Qdrant 已保存'
+      t('settings.qdrantSaved')
     );
   };
 
@@ -709,7 +710,7 @@ export default function SettingsPage() {
       reranker_model: rerankModel.trim(),
     };
     if (rerankKey.trim()) items.reranker_api_key = rerankKey.trim();
-    await applyRagItems(items, 'Reranker 已保存');
+    await applyRagItems(items, t('settings.rerankSaved'));
   };
 
 
@@ -720,7 +721,7 @@ export default function SettingsPage() {
         'sft_usage_log_enabled',
         on ? 'true' : 'false',
         'privacy',
-        '收集使用日志用于本地 SFT 语料'
+        t('settings.sftSettingDesc')
       );
       setSftLogEnabled(on);
       try {
@@ -730,17 +731,17 @@ export default function SettingsPage() {
       } catch {
         /* ignore */
       }
-      addToast(on ? '已开启使用日志收集' : '已关闭使用日志收集', 'success');
+      addToast(on ? t('settings.sftOn') : t('settings.sftOff'), 'success');
       await refetch();
     } catch (e: any) {
-      addToast(e?.response?.data?.detail || e?.message || '保存失败', 'error');
+      addToast(e?.response?.data?.detail || e?.message || t('settings.saveFailed'), 'error');
     } finally {
       setSftSaving(false);
     }
   };
 
   const handleToggleRag = async (on: boolean) => {
-    await applyRagItems({ rag_enabled: on }, on ? '已开启自动 RAG' : '已关闭自动 RAG');
+    await applyRagItems({ rag_enabled: on }, on ? t('settings.ragOn') : t('settings.ragOff'));
   };
 
   const runRagTest = async (kind: 'embed' | 'qdrant' | 'rerank') => {
@@ -770,7 +771,7 @@ export default function SettingsPage() {
       setRagResults((prev) => ({ ...prev, [kind]: r }));
       addToast(r.message, r.ok ? 'success' : 'error');
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : '测试失败';
+      const msg = e instanceof Error ? e.message : t('settings.testFailed');
       setRagResults((prev) => ({ ...prev, [kind]: { ok: false, message: msg } }));
       addToast(msg, 'error');
     } finally {
@@ -788,10 +789,10 @@ export default function SettingsPage() {
       };
       if (imageKey.trim()) items.image_api_key = imageKey.trim();
       const res = await applySettingsBatch(items);
-      addToast(res.message || '图片生成配置已保存', 'success');
+      addToast(res.message || t('settings.imageSaved'), 'success');
       await refetch();
     } catch (e: unknown) {
-      addToast(e instanceof Error ? e.message : '保存失败', 'error');
+      addToast(e instanceof Error ? e.message : t('settings.saveFailed'), 'error');
     } finally {
       setImageSaving(false);
     }
@@ -842,10 +843,10 @@ export default function SettingsPage() {
             {/* 状态总览 — 简洁条 */}
             <section className="rounded-xl border border-border-subtle bg-card-bg/80 px-4 py-3">
               <div className="mb-2 flex items-center justify-between">
-                <span className="text-[11px] font-medium text-foreground-dim">状态</span>
+                <span className="text-[11px] font-medium text-foreground-dim">{t('settings.status')}</span>
                 {catalog?.active_model && (
                   <span className="truncate text-[11px] text-foreground-muted">
-                    当前{' '}
+                    {t('settings.current')}{' '}
                     <span className="font-medium text-foreground">{catalog.active_model}</span>
                   </span>
                 )}
@@ -854,31 +855,31 @@ export default function SettingsPage() {
                 {[
                   {
                     k: 'llm',
-                    label: llmConfigured ? llmModel : '对话未配',
-                    sub: !llmConfigured ? '必配' : hasLlmKey || llmProvider === 'ollama' ? '就绪' : '缺 Key',
+                    label: llmConfigured ? llmModel : t('settings.llmNotConfigured'),
+                    sub: !llmConfigured ? t('common.required') : hasLlmKey || llmProvider === 'ollama' ? t('settings.ready') : t('settings.missingKey'),
                     dot: llmDot,
                   },
                   {
                     k: 'emb',
                     label: embedConfigured ? embeddingModel : 'Embedding',
-                    sub: embedConfigured ? '已配' : '可选',
+                    sub: embedConfigured ? t('settings.configured') : t('settings.optional'),
                     dot: embedDot,
                   },
                   {
                     k: 'qd',
                     label: qdrantConfigured ? 'Qdrant' : 'Qdrant',
-                    sub: qdrantConfigured ? '已配' : '可选',
+                    sub: qdrantConfigured ? t('settings.configured') : t('settings.optional'),
                     dot: (qdrantConfigured ? 'ok' : 'idle') as Dot,
                   },
                   {
                     k: 'rag',
-                    label: embedConfigured && qdrantConfigured ? '向量 RAG' : '本地模式',
+                    label: embedConfigured && qdrantConfigured ? t('settings.vectorRag') : t('settings.localMode'),
                     sub:
                       embedConfigured && qdrantConfigured
                         ? rerankConfigured
-                          ? '含精排'
-                          : '就绪'
-                        : 'memory 优先',
+                          ? t('settings.withRerank')
+                          : t('settings.ready')
+                        : t('settings.memoryFirst'),
                     dot: ragDot,
                   },
                 ].map((item) => (
@@ -899,23 +900,23 @@ export default function SettingsPage() {
             {/* 已配置供应商 + 模型列表（Hermes 风格） */}
             <section>
               <div className="mb-2 flex items-center justify-between gap-2">
-                <SectionTitle title="已配置供应商" hint="点击模型即可切换为当前对话模型" />
+                <SectionTitle title={t('settings.configuredProviders')} hint={t('settings.configuredProvidersHint')} />
                 <button
                   type="button"
                   onClick={() => refreshCatalog(true)}
                   disabled={catalogLoading}
                   className="shrink-0 text-[11px] text-brand-cyan hover:underline disabled:opacity-50"
                 >
-                  {catalogLoading ? '刷新中…' : '刷新列表'}
+                  {catalogLoading ? t('settings.refreshing') : t('nav.refreshList')}
                 </button>
               </div>
               {catalogLoading && !catalog ? (
                 <div className="rounded-xl border border-border-subtle px-4 py-6 text-center text-xs text-foreground-dim">
-                  加载供应商目录…
+                  {t('settings.loadingCatalog')}
                 </div>
               ) : configuredProviders.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-border-subtle px-4 py-5 text-center text-xs text-foreground-dim">
-                  尚未保存任何供应商。在下方选择服务商并保存后，会出现在这里。
+                  {t('settings.noProviders')}
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -938,18 +939,18 @@ export default function SettingsPage() {
                               <span className="text-sm font-medium text-foreground">{p.name}</span>
                               {isActiveProv && (
                                 <span className="rounded bg-brand-purple/15 px-1.5 py-0.5 text-[10px] font-medium text-brand-purple">
-                                  使用中
+                                  {t('settings.inUse')}
                                 </span>
                               )}
                               {p.has_api_key === false && p.llm_provider !== 'ollama' && (
-                                <span className="text-[10px] text-warning-text">无 Key</span>
+                                <span className="text-[10px] text-warning-text">{t('settings.noKey')}</span>
                               )}
                             </div>
                             <div className="truncate font-mono text-[10px] text-foreground-dim">
                               {p.llm_base_url || p.llm_provider}
                             </div>
                           </div>
-                          <span className="text-[10px] text-foreground-dim">{models.length} 模型</span>
+                          <span className="text-[10px] text-foreground-dim">{t('settings.modelCount').replace('{n}', String(models.length))}</span>
                         </div>
                         {models.length > 0 ? (
                           <div className="mt-2 flex flex-wrap gap-1.5">
@@ -968,7 +969,7 @@ export default function SettingsPage() {
                                       ? 'border-brand-purple/40 bg-brand-purple/10 font-medium text-foreground'
                                       : 'border-border-subtle bg-elevated-bg/50 text-foreground-muted hover:border-border-default hover:text-foreground'
                                   }`}
-                                  title="设为当前模型"
+                                  title={t('settings.setAsCurrent')}
                                 >
                                   {busy ? '…' : m.id}
                                 </button>
@@ -977,7 +978,7 @@ export default function SettingsPage() {
                           </div>
                         ) : (
                           <p className="mt-2 text-[11px] text-foreground-dim">
-                            暂无模型列表 — 打开下方表单拉取并保存后显示
+                            {t('settings.noModelList')}
                           </p>
                         )}
                       </div>
@@ -989,7 +990,7 @@ export default function SettingsPage() {
 
             {/* 1. 对话模型 */}
             <section>
-              <SectionTitle step="1" title="对话服务商" required={!llmConfigured} />
+              <SectionTitle step="1" title={t('settings.chatProvider')} required={!llmConfigured} />
               <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-4">
                 {presets.map((p) => {
                   const isActive = selectedId === p.id;
@@ -1016,7 +1017,7 @@ export default function SettingsPage() {
                         <div className="min-w-0">
                           <div className="truncate text-xs font-medium text-foreground">{p.name}</div>
                           <div className="flex items-center gap-1 text-[10px] text-foreground-dim">
-                            {isCurrent && <span className="text-success-text">已用</span>}
+                            {isCurrent && <span className="text-success-text">{t('settings.inUseShort')}</span>}
                             {p.badge && <span className="truncate">{p.badge}</span>}
                           </div>
                         </div>
@@ -1030,25 +1031,25 @@ export default function SettingsPage() {
                 <div className="mt-4 space-y-3 rounded-2xl border border-border-subtle bg-card-bg/60 p-5">
                   <div className="flex flex-wrap items-center gap-2">
                     <MonoMark label={selected.name} />
-                    <h3 className="text-sm font-semibold text-foreground">配置 {selected.name}</h3>
+                    <h3 className="text-sm font-semibold text-foreground">{t('settings.configureProvider').replace('{n}', selected.name)}</h3>
                     {selected.help_text && (
                       <span className="text-[11px] text-foreground-dim">— {selected.help_text}</span>
                     )}
                   </div>
                   <div className="rounded-xl border border-border-subtle bg-elevated-bg/50 px-3.5 py-2.5 text-xs text-foreground-muted">
-                    地址 <code className="text-brand-cyan">{selected.llm.llm_base_url || baseUrl || '—'}</code>
+                    {t('settings.address')} <code className="text-brand-cyan">{selected.llm.llm_base_url || baseUrl || '—'}</code>
                     {' · '}
-                    默认模型 <code className="text-brand-cyan">{selected.llm.llm_model || '—'}</code>
+                    {t('settings.defaultModel')} <code className="text-brand-cyan">{selected.llm.llm_model || '—'}</code>
                   </div>
 
                   {selected.needs_api_key && (
-                    <Field label="API 密钥">
+                    <Field label={t('settings.apiKey')}>
                       <div className="relative">
                         <input
                           type={showKey ? 'text' : 'password'}
                           value={apiKey}
                           onChange={(e) => setApiKey(e.target.value)}
-                          placeholder={hasStoredKey ? '已配置，输入新值可替换' : '粘贴 API Key'}
+                          placeholder={hasStoredKey ? t('settings.keyConfiguredPlaceholder') : t('settings.pasteApiKey')}
                           className={`${inputCls} pr-16`}
                           autoComplete="off"
                         />
@@ -1057,19 +1058,19 @@ export default function SettingsPage() {
                           onClick={() => setShowKey((v) => !v)}
                           className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg px-2 py-1 text-xs text-foreground-dim hover:text-foreground"
                         >
-                          {showKey ? '隐藏' : '显示'}
+                          {showKey ? t('settings.hide') : t('settings.show')}
                         </button>
                       </div>
                       {selected.help_url && (
                         <div className="mt-1.5 text-[11px] text-foreground-dim">
-                          没有 Key？{' '}
+                          {t('settings.noKeyQuestion')}{' '}
                           <a
                             href={selected.help_url}
                             target="_blank"
                             rel="noreferrer"
                             className="text-brand-cyan hover:underline"
                           >
-                            去申请 →
+                            {t('settings.applyKey')}
                           </a>
                         </div>
                       )}
@@ -1077,7 +1078,7 @@ export default function SettingsPage() {
                   )}
 
                   {(selected.custom || selected.id === 'ollama') && (
-                    <Field label="服务地址">
+                    <Field label={t('settings.baseUrl')}>
                       <input
                         type="text"
                         value={baseUrl}
@@ -1088,7 +1089,7 @@ export default function SettingsPage() {
                     </Field>
                   )}
 
-                  <Field label="模型">
+                  <Field label={t('settings.model')}>
                     <div className="mb-1.5 flex justify-end">
                       <button
                         type="button"
@@ -1096,7 +1097,7 @@ export default function SettingsPage() {
                         disabled={fetchingModels}
                         className="text-[11px] text-brand-cyan hover:underline disabled:opacity-50"
                       >
-                        {fetchingModels ? '拉取中…' : '拉取模型列表'}
+                        {fetchingModels ? t('settings.fetching') : t('settings.fetchModels')}
                       </button>
                     </div>
                     {liveModels.length > 0 ? (
@@ -1122,7 +1123,7 @@ export default function SettingsPage() {
                           setCustomModel(e.target.value);
                           setModel(e.target.value);
                         }}
-                        placeholder={selected.llm.llm_model || '模型名称'}
+                        placeholder={selected.llm.llm_model || t('settings.modelName')}
                         className={monoInputCls}
                       />
                     )}
@@ -1142,13 +1143,13 @@ export default function SettingsPage() {
                       {(saving || testing) && (
                         <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
                       )}
-                      保存并测试
+                      {t('settings.saveAndTest')}
                     </button>
                     <button type="button" onClick={handleSaveLlm} disabled={saving} className={btnGhost}>
-                      仅保存
+                      {t('settings.saveOnly')}
                     </button>
                     <button type="button" onClick={handleTestLlm} disabled={testing} className={btnGhost}>
-                      测试连接
+                      {t('settings.testConnection')}
                     </button>
                   </div>
                   {testResult && (
@@ -1169,9 +1170,9 @@ export default function SettingsPage() {
 
             {/* 2. 生成参数 */}
             <section>
-              <SectionTitle step="2" title="生成参数" hint="温度 / 长度 / 系统名" />
+              <SectionTitle step="2" title={t('settings.generation')} hint={t('settings.generationHintShort')} />
               <div className="space-y-4 rounded-2xl border border-border-subtle bg-card-bg/60 p-5">
-                <Field label={`创意度（Temperature）: ${temperature.toFixed(1)}`}>
+                <Field label={t('settings.creativity').replace('{n}', temperature.toFixed(1))}>
                   <input
                     type="range"
                     min={0}
@@ -1182,13 +1183,13 @@ export default function SettingsPage() {
                     className="h-1.5 w-full accent-violet-500"
                   />
                   <div className="mt-1 flex justify-between text-[10px] text-foreground-dim">
-                    <span>严谨 0</span>
-                    <span>平衡 0.7</span>
-                    <span>发散 2</span>
+                    <span>{t('settings.tempStrict')}</span>
+                    <span>{t('settings.tempBalanced')}</span>
+                    <span>{t('settings.tempCreative')}</span>
                   </div>
                 </Field>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <Field label="最大回复长度（max_tokens）">
+                  <Field label={t('settings.maxReplyLength')}>
                     <input
                       type="number"
                       min={256}
@@ -1199,7 +1200,7 @@ export default function SettingsPage() {
                       className={inputCls}
                     />
                   </Field>
-                  <Field label="上下文窗口（context_window）">
+                  <Field label={t('settings.contextWindowLabel')}>
                     <input
                       type="number"
                       min={2048}
@@ -1211,7 +1212,7 @@ export default function SettingsPage() {
                     />
                   </Field>
                                   </div>
-                                  <Field label="系统名称">
+                                  <Field label={t('settings.systemName')}>
                                     <input
                                       type="text"
                                       value={systemName}
@@ -1219,34 +1220,34 @@ export default function SettingsPage() {
                                       className={inputCls}
                                     />
                                   </Field>
-                                  <Field label="新会话默认模型" hint="可选：新建会话使用的模型。留空则用当前服务商配置的模型；修改不影响进行中的会话">
+                                  <Field label={t('settings.defaultSessionModel')} hint={t('settings.defaultSessionModelHint')}>
                                     <input
                                       type="text"
                                       value={defaultLlmModel}
                                       onChange={(e) => setDefaultLlmModel(e.target.value)}
-                                      placeholder="留空 = 跟随当前服务商模型"
+                                      placeholder={t('settings.defaultSessionModelPlaceholder')}
                                       className={inputCls}
                                     />
                                   </Field>
                                   <button type="button" onClick={handleSaveGen} disabled={genSaving} className={btnPrimary}>
-                                    {genSaving ? '保存中…' : '保存生成参数'}
+                                    {genSaving ? t('common.saving') : t('settings.saveGeneration')}
                                   </button>
                                 </div>
                               </section>
 
                               {/* 3. 知识检索 */}
             <section>
-              <SectionTitle step="3" title="知识检索（RAG）" hint="可选 · 让 AI 查你的文档" />
+              <SectionTitle step="3" title={t('settings.knowledgeRag')} hint={t('settings.knowledgeRagHint')} />
 
               {/* 主开关 */}
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border-subtle bg-card-bg/60 px-4 py-3">
                 <div>
-                  <div className="text-sm font-medium text-foreground">会话自动检索</div>
+                  <div className="text-sm font-medium text-foreground">{t('settings.autoRetrieve')}</div>
                   <div className="text-xs text-foreground-muted">
-                    开启后聊天会自动注入知识库结果（需 Embedding + Qdrant）
+                    {t('settings.autoRetrieveHint')}
                   </div>
                   {ragEnabled && !embedConfigured && (
-                    <div className="mt-1 text-xs text-warning-text">⚠ 已开启但 Embedding 未配齐</div>
+                    <div className="mt-1 text-xs text-warning-text">{t('settings.ragWarnEmbed')}</div>
                   )}
                 </div>
                 <button
@@ -1278,7 +1279,7 @@ export default function SettingsPage() {
                       : 'text-foreground-muted hover:text-foreground'
                   }`}
                 >
-                  一键方案
+                  {t('settings.quickStack')}
                 </button>
                 <button
                   type="button"
@@ -1289,14 +1290,14 @@ export default function SettingsPage() {
                       : 'text-foreground-muted hover:text-foreground'
                   }`}
                 >
-                  分层细配
+                  {t('settings.layeredConfig')}
                 </button>
               </div>
 
               {ragMode === 'quick' ? (
                 <div className="space-y-4">
                   <p className="text-xs text-foreground-muted">
-                    适合新手：选一套「Embedding + 向量库 ± 精排」全套，填 Key 后一键保存。
+                    {t('settings.quickStackHint')}
                   </p>
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                     {stackPresets.map((p) => {
@@ -1338,28 +1339,28 @@ export default function SettingsPage() {
                           {stackPresets.find((p) => p.id === stackId)?.help_text}
                         </div>
                       )}
-                      <Field label="API 密钥（云端方案需要；本机可留空）">
+                      <Field label={t('settings.stackKeyLabel')}>
                         <input
                           type="password"
                           value={stackKey}
                           onChange={(e) => setStackKey(e.target.value)}
-                          placeholder="粘贴 Key"
+                          placeholder={t('settings.pasteKey')}
                           className={inputCls}
                           autoComplete="off"
                         />
                       </Field>
                       <div className="flex flex-wrap gap-2">
                         <button type="button" onClick={handleApplyStack} disabled={ragSaving} className={btnPrimary}>
-                          {ragSaving ? '保存中…' : '保存此方案'}
+                          {ragSaving ? t('common.saving') : t('settings.saveStack')}
                         </button>
                         <button type="button" onClick={() => runRagTest('embed')} disabled={!!ragTesting} className={btnGhost}>
-                          {ragTesting === 'embed' ? '测试中…' : '测 Embedding'}
+                          {ragTesting === 'embed' ? t('settings.testing') : t('settings.testEmbed')}
                         </button>
                         <button type="button" onClick={() => runRagTest('qdrant')} disabled={!!ragTesting} className={btnGhost}>
-                          {ragTesting === 'qdrant' ? '测试中…' : '测 Qdrant'}
+                          {ragTesting === 'qdrant' ? t('settings.testing') : t('settings.testQdrant')}
                         </button>
                         <button type="button" onClick={() => runRagTest('rerank')} disabled={!!ragTesting} className={btnGhost}>
-                          {ragTesting === 'rerank' ? '测试中…' : '测 Reranker'}
+                          {ragTesting === 'rerank' ? t('settings.testing') : t('settings.testRerank')}
                         </button>
                       </div>
                     </div>
@@ -1368,14 +1369,14 @@ export default function SettingsPage() {
               ) : (
                 <div className="space-y-6">
                   <p className="text-xs text-foreground-muted">
-                    进阶：分别配置向量化、向量库、精排，互不影响。可先点预设填充，再改字段。
+                    {t('settings.layeredHint')}
                   </p>
 
                   {/* Embedding layer */}
                   <div className="space-y-3 rounded-2xl border border-border-subtle bg-card-bg/60 p-5">
                     <div className="flex items-center gap-2">
-                      <h3 className="text-sm font-semibold text-foreground">Embedding 向量化</h3>
-                      <span className="text-[10px] text-foreground-dim">启用向量 RAG 时需要</span>
+                      <h3 className="text-sm font-semibold text-foreground">{t('settings.embedTitle')}</h3>
+                      <span className="text-[10px] text-foreground-dim">{t('settings.embedNeedHint')}</span>
                     </div>
                     <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
                       {embedPresets.map((p) => (
@@ -1390,7 +1391,7 @@ export default function SettingsPage() {
                       ))}
                     </div>
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      <Field label="服务类型">
+                      <Field label={t('settings.serviceType')}>
                         <select
                           value={embedProvider}
                           onChange={(e) => setEmbedProvider(e.target.value)}
@@ -1401,7 +1402,7 @@ export default function SettingsPage() {
                           <option value="openai">openai</option>
                         </select>
                       </Field>
-                      <Field label="模型名">
+                      <Field label={t('settings.modelNameLabel')}>
                         <input
                           type="text"
                           value={embedModel}
@@ -1411,7 +1412,7 @@ export default function SettingsPage() {
                         />
                       </Field>
                     </div>
-                    <Field label="服务地址">
+                    <Field label={t('settings.baseUrl')}>
                       <input
                         type="text"
                         value={embedUrl}
@@ -1420,22 +1421,22 @@ export default function SettingsPage() {
                         className={monoInputCls}
                       />
                     </Field>
-                    <Field label="API 密钥" hint={hasEmbedKey ? '已配置密钥，留空则不覆盖' : '本机服务通常可不填'}>
+                    <Field label={t('settings.apiKey')} hint={hasEmbedKey ? t('settings.keyConfiguredHint') : t('settings.localNoKeyHint')}>
                       <input
                         type="password"
                         value={embedKey}
                         onChange={(e) => setEmbedKey(e.target.value)}
-                        placeholder={hasEmbedKey ? '已配置，输入新值可替换' : '可选'}
+                        placeholder={hasEmbedKey ? t('settings.keyConfiguredPlaceholder') : t('settings.optional')}
                         className={inputCls}
                         autoComplete="off"
                       />
                     </Field>
                     <div className="flex flex-wrap gap-2">
                       <button type="button" onClick={handleSaveEmbed} disabled={ragSaving} className={btnPrimary}>
-                        保存 Embedding
+                        {t('settings.saveEmbed')}
                       </button>
                       <button type="button" onClick={() => runRagTest('embed')} disabled={!!ragTesting} className={btnGhost}>
-                        {ragTesting === 'embed' ? '测试中…' : '测试'}
+                        {ragTesting === 'embed' ? t('settings.testing') : t('settings.test')}
                       </button>
                     </div>
                   </div>
@@ -1443,8 +1444,8 @@ export default function SettingsPage() {
                   {/* Qdrant layer */}
                   <div className="space-y-3 rounded-2xl border border-border-subtle bg-card-bg/60 p-5">
                     <div className="flex items-center gap-2">
-                      <h3 className="text-sm font-semibold text-foreground">Qdrant 向量库</h3>
-                      <span className="text-[10px] text-foreground-dim">必配（若启用 RAG）</span>
+                      <h3 className="text-sm font-semibold text-foreground">{t('settings.qdrantTitle')}</h3>
+                      <span className="text-[10px] text-foreground-dim">{t('settings.qdrantRequiredHint')}</span>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       {qdrantPresets.map((p) => (
@@ -1467,7 +1468,7 @@ export default function SettingsPage() {
                         className={monoInputCls}
                       />
                     </Field>
-                    <Field label="Collection 名称">
+                    <Field label={t('settings.collectionName')}>
                       <input
                         type="text"
                         value={qdrantCollection}
@@ -1478,10 +1479,10 @@ export default function SettingsPage() {
                     </Field>
                     <div className="flex flex-wrap gap-2">
                       <button type="button" onClick={handleSaveQdrant} disabled={ragSaving} className={btnPrimary}>
-                        保存 Qdrant
+                        {t('settings.saveQdrant')}
                       </button>
                       <button type="button" onClick={() => runRagTest('qdrant')} disabled={!!ragTesting} className={btnGhost}>
-                        {ragTesting === 'qdrant' ? '测试中…' : '测试'}
+                        {ragTesting === 'qdrant' ? t('settings.testing') : t('settings.test')}
                       </button>
                     </div>
                   </div>
@@ -1489,8 +1490,8 @@ export default function SettingsPage() {
                   {/* Reranker layer */}
                   <div className="space-y-3 rounded-2xl border border-border-subtle bg-card-bg/60 p-5">
                     <div className="flex items-center gap-2">
-                      <h3 className="text-sm font-semibold text-foreground">Reranker 精排</h3>
-                      <span className="text-[10px] text-foreground-dim">可选 · 提升检索质量</span>
+                      <h3 className="text-sm font-semibold text-foreground">{t('settings.rerankTitle')}</h3>
+                      <span className="text-[10px] text-foreground-dim">{t('settings.rerankHint')}</span>
                     </div>
                     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                       {rerankPresets.map((p) => (
@@ -1505,18 +1506,18 @@ export default function SettingsPage() {
                       ))}
                     </div>
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      <Field label="服务类型（空=关闭精排）">
+                      <Field label={t('settings.rerankServiceType')}>
                         <select
                           value={rerankProvider}
                           onChange={(e) => setRerankProvider(e.target.value)}
                           className={inputCls}
                         >
-                          <option value="">关闭</option>
+                          <option value="">{t('settings.off')}</option>
                           <option value="openai-compatible">openai-compatible</option>
                           <option value="cohere">cohere</option>
                         </select>
                       </Field>
-                      <Field label="模型名">
+                      <Field label={t('settings.modelNameLabel')}>
                         <input
                           type="text"
                           value={rerankModel}
@@ -1526,7 +1527,7 @@ export default function SettingsPage() {
                         />
                       </Field>
                     </div>
-                    <Field label="服务地址">
+                    <Field label={t('settings.baseUrl')}>
                       <input
                         type="text"
                         value={rerankUrl}
@@ -1535,22 +1536,22 @@ export default function SettingsPage() {
                         className={monoInputCls}
                       />
                     </Field>
-                    <Field label="API 密钥" hint={hasRerankKey ? '已配置密钥，留空则不覆盖' : '本机可留空'}>
+                    <Field label={t('settings.apiKey')} hint={hasRerankKey ? t('settings.keyConfiguredHint') : t('settings.localOptionalHint')}>
                       <input
                         type="password"
                         value={rerankKey}
                         onChange={(e) => setRerankKey(e.target.value)}
-                        placeholder={hasRerankKey ? '已配置，输入新值可替换' : '可选'}
+                        placeholder={hasRerankKey ? t('settings.keyConfiguredPlaceholder') : t('settings.optional')}
                         className={inputCls}
                         autoComplete="off"
                       />
                     </Field>
                     <div className="flex flex-wrap gap-2">
                       <button type="button" onClick={handleSaveRerank} disabled={ragSaving} className={btnPrimary}>
-                        保存 Reranker
+                        {t('settings.saveRerank')}
                       </button>
                       <button type="button" onClick={() => runRagTest('rerank')} disabled={!!ragTesting} className={btnGhost}>
-                        {ragTesting === 'rerank' ? '测试中…' : '测试'}
+                        {ragTesting === 'rerank' ? t('settings.testing') : t('settings.test')}
                       </button>
                     </div>
                   </div>
@@ -1575,7 +1576,7 @@ export default function SettingsPage() {
               )}
 
               <div className="mt-4 rounded-xl border border-border-subtle bg-elevated-bg/40 px-3 py-2.5 text-xs text-foreground-muted">
-                当前：Embedding{' '}
+                {t('settings.ragCurrent')}{' '}
                 <code className="text-brand-cyan">
                   {embeddingProvider || '—'}/{embeddingModel || '—'}
                 </code>
@@ -1584,17 +1585,17 @@ export default function SettingsPage() {
                 {' · '}
                 Reranker{' '}
                 <code className="text-brand-cyan">
-                  {rerankerProvider ? `${rerankerProvider}/${rerankerModel}` : '关闭'}
+                  {rerankerProvider ? `${rerankerProvider}/${rerankerModel}` : t('settings.off')}
                 </code>
               </div>
             </section>
 
             {/* 4. 图片生成（可选） */}
             <section>
-              <SectionTitle step="4" title="图片生成" hint="可选" />
+              <SectionTitle step="4" title={t('settings.image')} hint={t('settings.imageOptional')} />
               <div className="space-y-3 rounded-2xl border border-border-subtle bg-card-bg/60 p-5">
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <Field label="服务类型">
+                  <Field label={t('settings.serviceType')}>
                     <select
                       value={imageProvider}
                       onChange={(e) => setImageProvider(e.target.value)}
@@ -1604,17 +1605,17 @@ export default function SettingsPage() {
                       <option value="openai">openai</option>
                     </select>
                   </Field>
-                  <Field label="模型">
+                  <Field label={t('settings.model')}>
                     <input
                       type="text"
                       value={imageModel}
                       onChange={(e) => setImageModel(e.target.value)}
-                      placeholder="如 flux / dall-e-3"
+                      placeholder={t('settings.imageModelPlaceholder')}
                       className={monoInputCls}
                     />
                   </Field>
                 </div>
-                <Field label="服务地址">
+                <Field label={t('settings.baseUrl')}>
                   <input
                     type="text"
                     value={imageUrl}
@@ -1623,18 +1624,18 @@ export default function SettingsPage() {
                     className={monoInputCls}
                   />
                 </Field>
-                <Field label="API 密钥">
+                <Field label={t('settings.apiKey')}>
                   <input
                     type="password"
                     value={imageKey}
                     onChange={(e) => setImageKey(e.target.value)}
-                    placeholder={mapVal(settings, 'image_api_key') ? '已配置，输入新值可替换' : '可选'}
+                    placeholder={mapVal(settings, 'image_api_key') ? t('settings.keyConfiguredPlaceholder') : t('settings.optional')}
                     className={inputCls}
                     autoComplete="off"
                   />
                 </Field>
                 <button type="button" onClick={handleSaveImage} disabled={imageSaving} className={btnPrimary}>
-                                  {imageSaving ? '保存中…' : '保存图片配置'}
+                                  {imageSaving ? t('common.saving') : t('settings.saveImage')}
                                 </button>
                               </div>
                             </section>
@@ -1642,15 +1643,15 @@ export default function SettingsPage() {
                             
                             {/* 数据与隐私 · SFT 使用日志 */}
                             <section>
-                              <SectionTitle title="数据与隐私" hint="可选 · 默认关闭" />
+                              <SectionTitle title={t('settings.privacy')} hint={t('settings.privacyHint')} />
                               <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border-subtle bg-card-bg/60 px-4 py-3">
                                 <div className="min-w-0 flex-1">
                                   <div className="flex items-center gap-1.5 text-sm font-medium text-foreground">
-                                    <span>收集使用日志（SFT 语料）</span>
+                                    <span>{t('settings.sftCollect')}</span>
                                     <button
                                       type="button"
-                                      title="说明"
-                                      aria-label="功能说明"
+                                      title={t('settings.help')}
+                                      aria-label={t('settings.featureHelp')}
                                       onClick={() => setSftHelpOpen((v) => !v)}
                                       className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-border-subtle text-[11px] font-semibold text-foreground-muted hover:border-brand-cyan/40 hover:text-brand-cyan"
                                     >
@@ -1658,17 +1659,17 @@ export default function SettingsPage() {
                                     </button>
                                   </div>
                                   <div className="mt-1 text-xs text-foreground-muted">
-                                    默认关闭。开启后在本机写入 Markdown / JSONL，便于导出做模型微调。
+                                    {t('settings.sftDescUi')}
                                   </div>
                                   {sftHelpOpen && (
                                     <div className="mt-2 rounded-lg border border-brand-cyan/20 bg-brand-cyan/5 px-3 py-2 text-[11px] leading-relaxed text-foreground-muted">
                                       {sftLogHelp ||
-                                        `此功能开启后，Agent 将会自动收集用户指令和运行轨迹数据，所有数据均将以 SFT 语料的形式存在本地路径 ${sftLogPath || '（打开设置时自动显示）'}`}
+                                        t('settings.sftHelpDefault').replace('{n}', sftLogPath || t('settings.sftPathAuto'))}
                                     </div>
                                   )}
                                   {sftLogPath && (
                                     <div className="mt-1.5 break-all font-mono text-[10px] text-foreground-dim">
-                                      路径：{sftLogPath}
+                                      {t('settings.path')}{sftLogPath}
                                     </div>
                                   )}
                                 </div>
@@ -1695,16 +1696,16 @@ export default function SettingsPage() {
 
                             {/* 备用模型 */}
                             <section>
-                              <SectionTitle title="备用模型" hint="主模型不可用时回退 · 与对话模型同源目录" />
+                              <SectionTitle title={t('settings.fallbackModel')} hint={t('settings.fallbackHint')} />
                               <div className="space-y-2 rounded-2xl border border-border-subtle bg-card-bg/60 p-5">
-                                <Field label="选择备用模型" hint="留空表示不设置；选项来自已配置供应商的模型列表">
+                                <Field label={t('settings.selectFallback')} hint={t('settings.selectFallbackHint')}>
                                   <select
                                     value={fallbackRef}
                                     disabled={fallbackSaving || modelOptions.length === 0}
                                     onChange={(e) => void handleFallbackSelect(e.target.value)}
                                     className={inputCls}
                                   >
-                                    <option value="">不设置备用模型</option>
+                                    <option value="">{t('settings.noFallback')}</option>
                                     {modelOptions.map((o) => (
                                       <option key={`fb-${o.value}`} value={o.value}>
                                         {o.label}
@@ -1714,20 +1715,20 @@ export default function SettingsPage() {
                                 </Field>
                                 {modelOptions.length === 0 && (
                                   <p className="text-[11px] text-foreground-muted">
-                                    暂无可用模型。请先在上方配置供应商并拉取模型列表。
+                                    {t('settings.noAvailableModels')}
                                   </p>
                                 )}
                                 {fallbackSaving && (
-                                  <p className="text-[11px] text-foreground-dim">保存中…</p>
+                                  <p className="text-[11px] text-foreground-dim">{t('common.saving')}</p>
                                 )}
                               </div>
                             </section>
 
                             {/* 上下文压缩模型 */}
                             <section>
-                              <SectionTitle title="上下文压缩模型" hint="可选 · 留空则 L5 压缩使用主对话模型" />
+                              <SectionTitle title={t('settings.compressTitle')} hint={t('settings.compressHint')} />
                               <div className="space-y-2 rounded-2xl border border-border-subtle bg-card-bg/60 p-5">
-                                <Field label="选择压缩模型" hint="可选用更便宜/更快的模型做摘要压缩">
+                                <Field label={t('settings.selectCompress')} hint={t('settings.selectCompressHint')}>
                                   <select
                                     value={
                                       contextCompressModel
@@ -1739,7 +1740,7 @@ export default function SettingsPage() {
                                     onChange={(e) => void handleCompressSelect(e.target.value)}
                                     className={inputCls}
                                   >
-                                    <option value="">使用主模型（默认）</option>
+                                    <option value="">{t('settings.useMainModel')}</option>
                                     {modelOptions.map((o) => (
                                       <option key={`cp-${o.value}`} value={o.value}>
                                         {o.label}
@@ -1748,7 +1749,7 @@ export default function SettingsPage() {
                                   </select>
                                 </Field>
                                 {compressSaving && (
-                                  <p className="text-[11px] text-foreground-dim">保存中…</p>
+                                  <p className="text-[11px] text-foreground-dim">{t('common.saving')}</p>
                                 )}
                               </div>
                             </section>

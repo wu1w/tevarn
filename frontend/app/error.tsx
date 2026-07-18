@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { useT } from '@/stores/localeStore';
 
 /**
  * 全局错误页面 (error.tsx)
@@ -15,6 +16,7 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  const t = useT();
   React.useEffect(() => {
     // 上报错误到监控系统
     console.error('[GlobalError]', error.message, error.digest);

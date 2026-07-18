@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { useT } from '@/stores/localeStore';
 
 interface Entity {
   id: string;
@@ -15,17 +16,18 @@ interface Entity {
   created_at: string;
 }
 
-const TYPE_LABELS: Record<string, { icon: string; label: string }> = {
-  project: { icon: '📦', label: '项目' },
-  person: { icon: '👤', label: '人物' },
-  preference: { icon: '⚙️', label: '偏好' },
-  topic: { icon: '💬', label: '主题' },
-  tool: { icon: '🔧', label: '工具' },
-  device: { icon: '🖥️', label: '设备' },
-  custom: { icon: '📌', label: '自定义' },
+const TYPE_META: Record<string, { icon: string; labelKey: string }> = {
+  project: { icon: '📦', labelKey: 'memory.type.project' },
+  person: { icon: '👤', labelKey: 'memory.type.person' },
+  preference: { icon: '⚙️', labelKey: 'memory.type.preference' },
+  topic: { icon: '💬', labelKey: 'memory.type.topic' },
+  tool: { icon: '🔧', labelKey: 'memory.type.tool' },
+  device: { icon: '🖥️', labelKey: 'memory.type.device' },
+  custom: { icon: '📌', labelKey: 'memory.type.custom' },
 };
 
 export default function MemoryPage() {
+  const t = useT();
   const [entities, setEntities] = useState<Entity[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -79,7 +81,7 @@ export default function MemoryPage() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('确定删除这个实体记忆吗？')) return;
+    if (!confirm(t('memory.confirmDelete'))) return;
     try {
       const token = localStorage.getItem('takton_token');
       await fetch(`/api/entities/${id}`, {
@@ -107,22 +109,22 @@ export default function MemoryPage() {
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-foreground">🧠 长期记忆</h1>
+          <h1 className="text-xl font-bold text-foreground">{t('memory.title')}</h1>
           <p className="mt-1 text-sm text-foreground-dim">
-            跨会话记住的实体 — 项目、人物、偏好等
+            {t('memory.subtitle')}
           </p>
         </div>
         <button
           onClick={() => setShowCreate(true)}
           className="rounded-lg bg-brand-purple px-4 py-2 text-sm text-white hover:bg-brand-purple/80"
         >
-          + 添加实体
+          {t('memory.addEntity')}
         </button>
       </div>
 
       {/* Stats */}
       <div className="mb-4 flex gap-3">
-        {Object.entries(TYPE_LABELS).map(([type, { icon, label }]) => (
+        {Object.entries(TYPE_META).map(([type, { icon, labelKey }]) => (
           <button
             key={type}
             onClick={() => setFilterType(filterType === type ? '' : type)}
@@ -132,7 +134,7 @@ export default function MemoryPage() {
                 : 'border-border-subtle bg-card-bg text-foreground-dim hover:text-foreground'
             }`}
           >
-            {icon} {label} {typeCounts[type] ? `(${typeCounts[type]})` : ''}
+            {icon} {t(labelKey as any)} {typeCounts[type] ? `(${typeCounts[type]})` : ''}
           </button>
         ))}
       </div>
@@ -144,14 +146,14 @@ export default function MemoryPage() {
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-          placeholder="搜索实体记忆…"
+          placeholder={t('memory.searchPlaceholder')}
           className="flex-1 rounded-lg border border-border-subtle bg-card-bg px-3 py-2 text-sm text-foreground placeholder:text-foreground-dim focus:border-brand-purple focus:outline-none"
         />
         <button
           onClick={handleSearch}
           className="rounded-lg border border-border-subtle bg-card-bg px-4 py-2 text-sm text-foreground-muted hover:bg-card-bg-hover"
         >
-          搜索
+          {t('memory.search')}
         </button>
       </div>
 
@@ -160,11 +162,11 @@ export default function MemoryPage() {
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <div className="h-6 w-6 animate-spin rounded-full border-2 border-brand-purple border-t-transparent" />
-            <span className="ml-2 text-sm text-foreground-dim">加载中…</span>
+            <span className="ml-2 text-sm text-foreground-dim">{t('memory.loading')}</span>
           </div>
         ) : filtered.length === 0 ? (
           <div className="py-12 text-center text-sm text-foreground-dim">
-            {searchQuery ? '没有找到匹配的实体记忆' : '暂无实体记忆，对话时会自动提取'}
+            {searchQuery ? t('memory.emptySearch') : t('memory.empty')}
           </div>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -208,7 +210,10 @@ function EntityCard({
   onEdit: () => void;
   onDelete: () => void;
 }) {
-  const { icon, label } = TYPE_LABELS[entity.entity_type] || TYPE_LABELS.custom;
+  const t = useT();
+  const meta = TYPE_META[entity.entity_type] || TYPE_META.custom;
+  const icon = meta.icon;
+  const label = t(meta.labelKey as any);
 
   return (
     <div className="rounded-lg border border-border-subtle bg-card-bg p-4 hover:border-border-default">
@@ -217,14 +222,14 @@ function EntityCard({
           <span className="text-lg">{icon}</span>
           <div>
             <div className="text-sm font-medium text-foreground">{entity.name}</div>
-            <div className="text-[10px] text-foreground-dim">{label} · 提及 {entity.mention_count} 次</div>
+            <div className="text-[10px] text-foreground-dim">{label} · {t('memory.mentionCount').replace('{n}', String(entity.mention_count))}</div>
           </div>
         </div>
         <div className="flex gap-1">
           <button
             onClick={onEdit}
             className="rounded p-1 text-foreground-dim hover:bg-card-bg-hover hover:text-foreground"
-            title="编辑"
+            title={t('memory.edit')}
           >
             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -233,7 +238,7 @@ function EntityCard({
           <button
             onClick={onDelete}
             className="rounded p-1 text-foreground-dim hover:bg-red-500/10 hover:text-red-400"
-            title="删除"
+            title={t('memory.delete')}
           >
             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -255,7 +260,7 @@ function EntityCard({
       )}
       {entity.last_mentioned_at && (
         <div className="mt-2 text-[10px] text-foreground-dim">
-          最后提及: {new Date(entity.last_mentioned_at).toLocaleDateString('zh-CN')}
+          {t('memory.lastMentioned').replace('{date}', new Date(entity.last_mentioned_at).toLocaleDateString())}
         </div>
       )}
     </div>
@@ -271,6 +276,7 @@ function EntityModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const t = useT();
   const isEdit = !!entity;
   const [name, setName] = useState(entity?.name || '');
   const [entityType, setEntityType] = useState(entity?.entity_type || 'custom');
@@ -283,14 +289,14 @@ function EntityModal({
 
   const handleSave = async () => {
     if (!name.trim()) {
-      setError('名称不能为空');
+      setError(t('memory.nameRequired'));
       return;
     }
     let attrs: Record<string, unknown> = {};
     try {
       attrs = JSON.parse(attributes);
     } catch {
-      setError('属性格式错误，请输入有效的 JSON');
+      setError(t('memory.attrsInvalid'));
       return;
     }
 
@@ -317,10 +323,10 @@ function EntityModal({
         onSaved();
       } else {
         const err = await res.json().catch(() => ({}));
-        setError(err.detail || '保存失败');
+        setError(err.detail || t('memory.saveFailed'));
       }
     } catch {
-      setError('网络错误');
+      setError(t('memory.networkError'));
     } finally {
       setSaving(false);
     }
@@ -333,7 +339,7 @@ function EntityModal({
         onClick={(e) => e.stopPropagation()}
       >
         <h3 className="mb-4 text-sm font-semibold text-foreground">
-          {isEdit ? '编辑实体' : '添加实体'}
+          {isEdit ? t('memory.modal.edit') : t('memory.modal.add')}
         </h3>
 
         {error && (
@@ -342,42 +348,42 @@ function EntityModal({
 
         <div className="space-y-3">
           <div>
-            <label className="mb-1 block text-xs text-foreground-dim">名称</label>
+            <label className="mb-1 block text-xs text-foreground-dim">{t('memory.form.name')}</label>
             <input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
               className="w-full rounded-lg border border-border-subtle bg-page-bg px-3 py-2 text-sm text-foreground focus:border-brand-purple focus:outline-none"
-              placeholder="实体名称"
+              placeholder={t('memory.form.namePlaceholder')}
             />
           </div>
 
           <div>
-            <label className="mb-1 block text-xs text-foreground-dim">类型</label>
+            <label className="mb-1 block text-xs text-foreground-dim">{t('memory.form.type')}</label>
             <select
               value={entityType}
               onChange={(e) => setEntityType(e.target.value)}
               className="w-full rounded-lg border border-border-subtle bg-page-bg px-3 py-2 text-sm text-foreground focus:border-brand-purple focus:outline-none"
             >
-              {Object.entries(TYPE_LABELS).map(([k, { icon, label }]) => (
-                <option key={k} value={k}>{icon} {label}</option>
+              {Object.entries(TYPE_META).map(([k, { icon, labelKey }]) => (
+                <option key={k} value={k}>{icon} {t(labelKey as any)}</option>
               ))}
             </select>
           </div>
 
           <div>
-            <label className="mb-1 block text-xs text-foreground-dim">描述</label>
+            <label className="mb-1 block text-xs text-foreground-dim">{t('memory.form.desc')}</label>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={2}
               className="w-full rounded-lg border border-border-subtle bg-page-bg px-3 py-2 text-sm text-foreground focus:border-brand-purple focus:outline-none"
-              placeholder="简短描述"
+              placeholder={t('memory.form.descPlaceholder')}
             />
           </div>
 
           <div>
-            <label className="mb-1 block text-xs text-foreground-dim">属性 (JSON)</label>
+            <label className="mb-1 block text-xs text-foreground-dim">{t('memory.form.attrs')}</label>
             <textarea
               value={attributes}
               onChange={(e) => setAttributes(e.target.value)}
@@ -393,14 +399,14 @@ function EntityModal({
             onClick={onClose}
             className="rounded-lg border border-border-subtle px-4 py-2 text-sm text-foreground-muted hover:bg-card-bg-hover"
           >
-            取消
+            {t('common.cancel')}
           </button>
           <button
             onClick={handleSave}
             disabled={saving}
             className="rounded-lg bg-brand-purple px-4 py-2 text-sm text-white hover:bg-brand-purple/80 disabled:opacity-50"
           >
-            {saving ? '保存中…' : '保存'}
+            {saving ? t('memory.saving') : t('common.save')}
           </button>
         </div>
       </div>

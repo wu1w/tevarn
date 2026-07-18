@@ -5,6 +5,7 @@ import { Message, GoalState } from '@/types';
 import { GoalPanel } from '@/components/chat/GoalPanel';
 import type { ToolCallData } from '@/components/chat/ToolCallPanel';
 import { summarizeToolResult } from '@/lib/chatDisplay';
+import { useT } from '@/stores/localeStore';
 
 export interface SessionOperation {
   id: string;
@@ -219,6 +220,7 @@ export function TaskPanel({
   onJumpToMessage,
   highlightedMessageId,
 }: TaskPanelProps) {
+  const t = useT();
   const operations = useMemo(
     () => buildSessionOperations(messages, liveToolCalls),
     [messages, liveToolCalls]

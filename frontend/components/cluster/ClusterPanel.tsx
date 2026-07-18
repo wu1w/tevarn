@@ -34,6 +34,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
+import { useT } from '@/stores/localeStore';
 
 // 类型定义
 interface SubTask {
@@ -272,6 +273,7 @@ const SwimlaneDiagram = ({ tasks }: { tasks: SubTask[] }) => {
 
 // 主组件
 export function ClusterPanel({ onExecute, onCancel, className }: ClusterPanelProps) {
+  const t = useT();
   const [taskDescription, setTaskDescription] = useState('');
   const [numAgents, setNumAgents] = useState(3);
   const [strategy, setStrategy] = useState('synthesize');

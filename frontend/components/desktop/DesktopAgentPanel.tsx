@@ -23,6 +23,7 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useDesktopAgent } from '@/hooks/useDesktopAgent';
 import { DesktopPermissionDialog, DesktopPermissionRequest, PermissionLevel } from './PermissionDialog';
+import { useT } from '@/stores/localeStore';
 
 interface DesktopAgentPanelProps {
   isOpen: boolean;
@@ -31,6 +32,7 @@ interface DesktopAgentPanelProps {
 }
 
 export function DesktopAgentPanel({ isOpen, onClose, onTaskComplete }: DesktopAgentPanelProps) {
+  const t = useT();
   const [isExpanded, setIsExpanded] = useState(false);
   const [permissionDialogOpen, setPermissionDialogOpen] = useState(false);
   const [currentPermissionRequest, setCurrentPermissionRequest] = useState<DesktopPermissionRequest | null>(null);
@@ -169,7 +171,7 @@ export function DesktopAgentPanel({ isOpen, onClose, onTaskComplete }: DesktopAg
                 <div className="flex h-full items-center justify-center text-muted-foreground">
                   <div className="text-center">
                     <Loader2 className="mx-auto h-6 w-6 animate-spin opacity-50" />
-                    <p className="mt-2 text-xs">加载中...</p>
+                    <p className="mt-2 text-xs">{t('profile.loading')}</p>
                   </div>
                 </div>
               )}

@@ -5,8 +5,10 @@ import { TaskItem } from '@/components/tasks/TaskItem';
 import { useTaskStore } from '@/stores/taskStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { getTasks } from '@/lib/api';
+import { useT } from '@/stores/localeStore';
 
 export default function TasksPage() {
+  const t = useT();
   const { tasks, setTasks } = useTaskStore();
   const { currentSession } = useSessionStore();
   const [loading, setLoading] = useState(true);
