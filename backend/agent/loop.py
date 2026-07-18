@@ -958,6 +958,7 @@ class NexusAgentLoop:
                             if self.user_id is not None:
                                 validated_args["user_id"] = str(self.user_id)
                             validated_args["_session_id"] = str(session_id)
+                            validated_args["_ws_manager"] = self.ws_manager
                             _tool_timeout = float(
                                 getattr(settings, "agent_tool_timeout_seconds", 180) or 0
                             )
@@ -983,6 +984,7 @@ class NexusAgentLoop:
                                 if self.user_id is not None:
                                     validated_args["user_id"] = str(self.user_id)
                                 validated_args["_session_id"] = str(session_id)
+                                validated_args["_ws_manager"] = self.ws_manager
                                 tool_result = await skill.execute(**validated_args)
                                 query = ""
                             else:

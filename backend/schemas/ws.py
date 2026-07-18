@@ -83,3 +83,21 @@ class SyncRequest(WSMessage):
 
     type: Literal["sync"] = "sync"
     last_message_id: Optional[uuid.UUID] = None
+
+
+class ConfirmRequest(WSMessage):
+    """危险操作确认请求（服务端 → 前端弹窗）"""
+
+    type: Literal["confirm_request"] = "confirm_request"
+    confirm_id: str
+    title: str
+    command: str
+    reason: str = ""
+
+
+class ConfirmResponse(WSMessage):
+    """危险操作确认响应（前端 → 服务端）"""
+
+    type: Literal["confirm_response"] = "confirm_response"
+    confirm_id: str
+    approved: bool

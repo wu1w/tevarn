@@ -20,6 +20,7 @@ import type { ToolCallData } from '@/components/chat/ToolCallPanel';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { WorkspaceDock } from '@/components/workspace/WorkspaceDock';
 import { OpenProjectModal } from '@/components/workspace/OpenProjectModal';
+import { DangerConfirmDialog } from '@/components/chat/DangerConfirmDialog';
 import { useToastStore } from '@/stores/toastStore';
 import { useT } from '@/stores/localeStore';
 import { useWsStore } from '@/stores/wsStore';
@@ -194,7 +195,7 @@ export default function HomePage() {
               );
             }
           }
-        }, [appendAgentOutput]);
+        }, [appendAgentOutput, t]);
 
     const handleStatusUpdate = useCallback((msg: StatusUpdateMessage) => {
       if (msg.state === 'thinking' || msg.state === 'tool_executing') {
@@ -226,7 +227,7 @@ export default function HomePage() {
           loadMessages(currentSession.id).catch(console.error);
         }
       }
-    }, [addMessage, currentSession, loadMessages]);
+    }, [addMessage, currentSession, loadMessages, t]);
 
   const handleGoalUpdate = useCallback((msg: GoalUpdateMessage) => {
       if (msg.goal) {
@@ -329,7 +330,7 @@ export default function HomePage() {
         setLiveToolCalls([]);
         setStreamStatusDetail(mode === 'cluster' ? t('chat.clusterWorking') : t('chat.thinking'));
       },
-      [currentSession, addMessage, sendMessage, createAndLoadSession, waitForConnection]
+      [currentSession, addMessage, sendMessage, createAndLoadSession, waitForConnection, t]
     );
 
   // 重新生成
@@ -414,7 +415,7 @@ export default function HomePage() {
         setIsGeneratingImage(false);
       }
     },
-    [currentSession, addMessage]
+    [currentSession, addMessage, t]
   );
 
   const handleStopStreaming = useCallback(() => {
@@ -517,7 +518,7 @@ export default function HomePage() {
         }
       }
     },
-    [currentSession, addMessage]
+    [currentSession, addMessage, t]
   );
 
   const displayMessages = [...messages];
@@ -759,6 +760,7 @@ export default function HomePage() {
                                       </div>
 
                                       <OpenProjectModal />
+                                      <DangerConfirmDialog />
                                     </div>
                                   );
                                 }

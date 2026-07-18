@@ -468,6 +468,14 @@ async def websocket_endpoint(
                     {"type": "status", "state": "idle", "detail": "Generation stopped by user"},
                 )
 
+            elif msg_type == "confirm_response":
+                # 危险操作确认结果：唤醒等待的工具执行协程
+                from backend.services import confirm_manager
+
+                confirm_id = str(data.get("confirm_id", ""))
+                approved = bool(data.get("approved", False))
+                confirm_manager.resolve_confirmation(confirm_id, approved)
+
             elif msg_type == "sync":
                 last_id = data.get("last_message_id")
                 if last_id:

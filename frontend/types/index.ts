@@ -464,7 +464,9 @@ export type WSMessageType =
   | 'notification'
   | 'settings_changed'
   | 'auth_ok'
-  | 'stop';
+  | 'stop'
+  | 'confirm_request'
+  | 'confirm_response';
 
 export interface WSMessage {
   type: WSMessageType;

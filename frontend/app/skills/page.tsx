@@ -16,6 +16,7 @@ import { useConfirm } from '@/components/desktop/ConfirmDialog';
 import { Skeleton } from '@/components/desktop/Skeleton';
 import { EmptyState } from '@/components/desktop/EmptyState';
 import SkillStorePanel from '@/components/skills/SkillStorePanel';
+import { useT } from '@/stores/localeStore';
 
 type TabKey = 'builtin' | 'custom' | 'community' | 'store';
 
@@ -27,15 +28,7 @@ const SKILL_BADGE =
 
 type SkillCategory = 'coding' | 'research' | 'ops' | 'media' | 'integration' | 'other';
 
-const SKILL_CATEGORIES: { id: SkillCategory | 'all'; label: string }[] = [
-  { id: 'all', label: '全部' },
-  { id: 'coding', label: '编码' },
-  { id: 'research', label: '调研' },
-  { id: 'ops', label: '运维' },
-  { id: 'media', label: '媒体' },
-  { id: 'integration', label: '集成' },
-  { id: 'other', label: '其他' },
-];
+const SKILL_CATEGORY_IDS = ['all', 'coding', 'research', 'ops', 'media', 'integration', 'other'] as const;
 
 function skillCategory(skill: { name: string; description: string | null; handler: string }): SkillCategory {
   const t = `${skill.name} ${skill.description || ''}`.toLowerCase();
@@ -49,6 +42,8 @@ function skillCategory(skill: { name: string; description: string | null; handle
 }
 
 export default function SkillsPage() {
+  const t = useT();
+  const catLabel = (id: SkillCategory | 'all') => t(`skills.cat.${id}` as never);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<TabKey>('builtin');
@@ -80,7 +75,7 @@ export default function SkillsPage() {
       setSkills(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error(e);
-      addToast('加载 Skill 列表失败', 'error');
+      addToast(t('skills.toast.loadFailed'), 'error');
     } finally {
       setLoading(false);
     }
@@ -121,7 +116,7 @@ export default function SkillsPage() {
       return order
         .map((id) => ({
           id,
-          label: SKILL_CATEGORIES.find((x) => x.id === id)?.label || id,
+          label: catLabel(id),
           items: map.get(id) || [],
         }))
         .filter((g) => g.items.length > 0);
@@ -160,7 +155,7 @@ export default function SkillsPage() {
 
   const handleSaveCustom = async () => {
     if (!formName.trim()) {
-      addToast('名称不能为空', 'error');
+      addToast(t('skills.toast.nameRequired'), 'error');
       return;
     }
     let schema: Record<string, unknown>;
@@ -169,7 +164,7 @@ export default function SkillsPage() {
       schema = parseJson(formSchema);
       handlerConfig = parseJson(formConfig);
     } catch (e) {
-      addToast('JSON 格式错误', 'error');
+      addToast(t('skills.toast.jsonError'), 'error');
       return;
     }
     const payload = {
@@ -183,40 +178,40 @@ export default function SkillsPage() {
     try {
       if (editingSkill) {
         await updateSkill(editingSkill.id, payload);
-        addToast('Skill 已更新', 'success');
+        addToast(t('skills.toast.updated'), 'success');
       } else {
         await createSkill(payload);
-        addToast('Skill 已创建', 'success');
+        addToast(t('skills.toast.created'), 'success');
       }
       closeModal();
       load();
     } catch (e: any) {
       console.error(e);
-      addToast('保存失败：' + (e?.response?.data?.detail || e?.message || '未知错误'), 'error');
+      addToast(t('skills.toast.saveFailed') + (e?.response?.data?.detail || e?.message || t('skills.toast.unknown')), 'error');
     }
   };
 
   const handleDelete = async (skill: Skill) => {
-    const ok = await confirm(`确定删除自定义 Skill "${skill.name}"？`, '删除 Skill', 'danger');
+    const ok = await confirm(t('skills.confirmDelete').replace('{name}', skill.name), t('skills.confirmDeleteTitle'), 'danger');
     if (!ok) return;
     try {
       await deleteSkill(skill.id);
-      addToast('Skill 已删除', 'success');
+      addToast(t('skills.toast.deleted'), 'success');
       load();
     } catch (e: any) {
       console.error(e);
-      addToast('删除失败：' + (e?.response?.data?.detail || e?.message || '未知错误'), 'error');
+      addToast(t('skills.toast.deleteFailed') + (e?.response?.data?.detail || e?.message || t('skills.toast.unknown')), 'error');
     }
   };
 
   const handleToggle = async (skill: Skill) => {
     try {
       await toggleSkill(skill.id, !skill.enabled);
-      addToast(skill.enabled ? 'Skill 已禁用' : 'Skill 已启用', 'success');
+      addToast(skill.enabled ? t('skills.toast.disabled') : t('skills.toast.enabled'), 'success');
       load();
     } catch (e: any) {
       console.error(e);
-      addToast('切换失败：' + (e?.response?.data?.detail || e?.message || '未知错误'), 'error');
+      addToast(t('skills.toast.toggleFailed') + (e?.response?.data?.detail || e?.message || t('skills.toast.unknown')), 'error');
     }
   };
 
@@ -227,10 +222,10 @@ export default function SkillsPage() {
       const url = communityUrl.trim() || undefined;
       const data = await getCommunitySkills(url);
       setCommunitySkills(data);
-      addToast(`获取到 ${data.length} 个社区 Skill`, 'info');
+      addToast(t('skills.toast.fetched').replace('{count}', String(data.length)), 'info');
     } catch (e: any) {
       console.error(e);
-      addToast('获取社区 Skill 失败：' + (e?.response?.data?.detail || e?.message || '未知错误'), 'error');
+      addToast(t('skills.toast.fetchFailed') + (e?.response?.data?.detail || e?.message || t('skills.toast.unknown')), 'error');
       setCommunitySkills([]);
     } finally {
       setCommunityLoading(false);
@@ -252,12 +247,12 @@ export default function SkillsPage() {
     try {
       const url = communityUrl.trim() || undefined;
       const res = await importCommunitySkills(Array.from(selectedCommunity), url);
-      addToast(`成功导入 ${res.imported} 个 Skill`, 'success');
+      addToast(t('skills.toast.imported').replace('{count}', String(res.imported)), 'success');
       setSelectedCommunity(new Set());
       load();
     } catch (e: any) {
       console.error(e);
-      addToast('导入失败：' + (e?.response?.data?.detail || e?.message || '未知错误'), 'error');
+      addToast(t('skills.toast.importFailed') + (e?.response?.data?.detail || e?.message || t('skills.toast.unknown')), 'error');
     } finally {
       setImporting(false);
     }
@@ -276,14 +271,14 @@ export default function SkillsPage() {
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-medium text-foreground">{skill.name}</span>
               <span className={SKILL_BADGE}>
-                {SKILL_CATEGORIES.find((c) => c.id === skillCategory(skill))?.label || '其他'}
+                {catLabel(skillCategory(skill))}
               </span>
-              {skill.is_builtin && <span className={SKILL_BADGE}>内置</span>}
+              {skill.is_builtin && <span className={SKILL_BADGE}>{t('skills.badge.builtin')}</span>}
               {!skill.is_builtin && <span className={SKILL_BADGE}>{skill.handler}</span>}
-              {skill.enabled && <span className={SKILL_BADGE}>启用</span>}
+              {skill.enabled && <span className={SKILL_BADGE}>{t('skills.badge.enabled')}</span>}
             </div>
             <div className="mt-0.5 text-sm text-foreground-muted">
-              {skill.description || 'No description'}
+              {skill.description || t('skills.noDescription')}
             </div>
           </div>
         <div className="ml-3 flex items-center gap-2">
@@ -305,13 +300,13 @@ export default function SkillsPage() {
                 onClick={() => openEdit(skill)}
                 className="rounded-md border border-border-default px-2 py-1 text-xs text-foreground-muted hover:bg-elevated-bg"
               >
-                编辑
+                {t('common.edit')}
               </button>
               <button
                 onClick={() => handleDelete(skill)}
                 className="rounded-md bg-error-bg px-2 py-1 text-xs text-error-text hover:bg-error-bg"
               >
-                删除
+                {t('common.delete')}
               </button>
             </>
           )}
@@ -322,14 +317,14 @@ export default function SkillsPage() {
   return (
     <div className="p-6">
       {ConfirmDialogComponent}
-      <h1 className="mb-6 text-xl font-bold text-foreground">Skill 管理</h1>
+      <h1 className="mb-6 text-xl font-bold text-foreground">{t('skills.title')}</h1>
 
       <div className="mb-4 flex items-center gap-2 border-b border-border-default">
               {[
-                { key: 'builtin', label: `内置 (${builtinSkills.length})` },
-                { key: 'custom', label: `自定义 (${customSkills.length})` },
-                { key: 'community', label: '社区' },
-                { key: 'store', label: '🛍 商店' },
+                { key: 'builtin', label: `${t('skills.tab.builtin')} (${builtinSkills.length})` },
+                { key: 'custom', label: `${t('skills.tab.custom')} (${customSkills.length})` },
+                { key: 'community', label: t('skills.tab.community') },
+                { key: 'store', label: t('skills.tab.store') },
               ].map((tab) => (
                 <button
                   key={tab.key}
@@ -347,23 +342,23 @@ export default function SkillsPage() {
 
             {activeTab !== 'community' && activeTab !== 'store' && (
               <div className="mb-4 flex flex-wrap gap-1.5">
-                {SKILL_CATEGORIES.map((c) => {
+                {SKILL_CATEGORY_IDS.map((id) => {
                   const pool = activeTab === 'builtin' ? builtinSkills : customSkills;
                   const count =
-                    c.id === 'all' ? pool.length : pool.filter((s) => skillCategory(s) === c.id).length;
-                  const active = categoryFilter === c.id;
+                    id === 'all' ? pool.length : pool.filter((s) => skillCategory(s) === id).length;
+                  const active = categoryFilter === id;
                   return (
                     <button
-                      key={c.id}
+                      key={id}
                       type="button"
-                      onClick={() => setCategoryFilter(c.id)}
+                      onClick={() => setCategoryFilter(id)}
                       className={`rounded-full border px-3 py-1 text-xs transition-colors ${
                         active
                           ? 'border-brand-purple/40 bg-brand-purple/10 text-foreground'
                           : 'border-border-subtle bg-card-bg text-foreground-muted hover:border-border-default'
                       }`}
                     >
-                      {c.label}
+                      {catLabel(id)}
                       <span className="ml-1 tabular-nums text-foreground-dim">{count}</span>
                     </button>
                   );
@@ -394,7 +389,7 @@ export default function SkillsPage() {
                       </div>
                     ))}
                     {filterByCat(builtinSkills).length === 0 && (
-                      <EmptyState title="暂无内置 Skill" description="系统内置 Skill 将在初始化时自动创建，或切换分类查看" />
+                      <EmptyState title={t('skills.emptyBuiltin.title')} description={t('skills.emptyBuiltin.desc')} />
                     )}
                   </div>
                 )}
@@ -406,7 +401,7 @@ export default function SkillsPage() {
                         onClick={openCreate}
                         className="rounded-md bg-violet-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-700"
                       >
-                        + 新建自定义 Skill
+                        {t('skills.create')}
                       </button>
                     </div>
                     <div className="space-y-4">
@@ -423,7 +418,7 @@ export default function SkillsPage() {
                         </div>
                       ))}
                       {filterByCat(customSkills).length === 0 && (
-                        <EmptyState title="暂无自定义 Skill" description="点击上方按钮创建，或切换分类" />
+                        <EmptyState title={t('skills.emptyCustom.title')} description={t('skills.emptyCustom.desc')} />
                       )}
                     </div>
                   </>
@@ -436,7 +431,7 @@ export default function SkillsPage() {
                   type="text"
                   value={communityUrl}
                   onChange={(e) => setCommunityUrl(e.target.value)}
-                  placeholder={`默认：${DEFAULT_COMMUNITY_URL}`}
+                  placeholder={`${t('skills.community.placeholderPrefix')}${DEFAULT_COMMUNITY_URL}`}
                   className="flex-1 rounded-md border border-border-default px-3 py-2 text-sm focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500"
                 />
                 <button
@@ -444,7 +439,7 @@ export default function SkillsPage() {
                   disabled={communityLoading}
                   className="rounded-md border border-border-default bg-card-bg px-3 py-2 text-sm text-foreground-muted hover:bg-elevated-bg disabled:opacity-50"
                 >
-                  {communityLoading ? '获取中...' : '获取列表'}
+                  {communityLoading ? t('skills.community.fetching') : t('skills.community.fetch')}
                 </button>
               </div>
 
@@ -464,7 +459,7 @@ export default function SkillsPage() {
                         />
                         <div className="min-w-0 flex-1">
                           <div className="font-medium text-foreground">{s.name}</div>
-                          <div className="text-sm text-foreground-dim">{s.description || 'No description'}</div>
+                          <div className="text-sm text-foreground-dim">{s.description || t('skills.noDescription')}</div>
                           <div className="mt-1 text-[10px] text-foreground-muted">handler: {s.handler}</div>
                         </div>
                       </label>
@@ -475,14 +470,14 @@ export default function SkillsPage() {
                     disabled={importing || selectedCommunity.size === 0}
                     className="rounded-md bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-50"
                   >
-                    {importing ? '导入中...' : `导入所选 (${selectedCommunity.size})`}
+                    {importing ? t('skills.community.importing') : t('skills.community.import').replace('{count}', String(selectedCommunity.size))}
                   </button>
                 </>
               ) : (
                 !communityLoading && (
                   <EmptyState
-                    title="获取社区 Skill"
-                    description="输入社区 Skill 仓库 URL 并点击获取列表"
+                    title={t('skills.community.empty.title')}
+                    description={t('skills.community.empty.desc')}
                     icon="🌐"
                   />
                 )
@@ -502,25 +497,25 @@ export default function SkillsPage() {
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="mb-4 text-base font-semibold text-foreground">
-              {editingSkill ? '编辑自定义 Skill' : '新建自定义 Skill'}
+              {editingSkill ? t('skills.modal.editTitle') : t('skills.modal.createTitle')}
             </h3>
             <div className="space-y-3">
               <div>
-                <label className="mb-1 block text-xs font-medium text-foreground-muted">名称</label>
+                <label className="mb-1 block text-xs font-medium text-foreground-muted">{t('skills.form.name')}</label>
                 <input
                   value={formName}
                   onChange={(e) => setFormName(e.target.value)}
                   disabled={!!editingSkill}
-                  placeholder="如：get_weather"
+                  placeholder={t('skills.form.namePlaceholder')}
                   className="w-full rounded-md border border-border-default px-3 py-2 text-sm focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500 disabled:bg-card-bg-hover"
                 />
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-foreground-muted">描述</label>
+                <label className="mb-1 block text-xs font-medium text-foreground-muted">{t('skills.form.desc')}</label>
                 <input
                   value={formDescription}
                   onChange={(e) => setFormDescription(e.target.value)}
-                  placeholder="一句话说明用途"
+                  placeholder={t('skills.form.descPlaceholder')}
                   className="w-full rounded-md border border-border-default px-3 py-2 text-sm focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500"
                 />
               </div>
@@ -532,8 +527,8 @@ export default function SkillsPage() {
                     onChange={(e) => setFormHandler(e.target.value as 'http' | 'python')}
                     className="w-full rounded-md border border-border-default bg-card-bg px-3 py-2 text-sm focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500"
                   >
-                    <option value="http">HTTP 请求</option>
-                    <option value="python">Python 脚本</option>
+                    <option value="http">{t('skills.form.handlerHttp')}</option>
+                    <option value="python">{t('skills.form.handlerPython')}</option>
                   </select>
                 </div>
                 <div className="flex items-center gap-2">
@@ -544,12 +539,12 @@ export default function SkillsPage() {
                     onChange={(e) => setFormEnabled(e.target.checked)}
                     className="h-4 w-4 accent-violet-600"
                   />
-                  <label htmlFor="skillEnabled" className="text-sm text-foreground-muted">默认启用</label>
+                  <label htmlFor="skillEnabled" className="text-sm text-foreground-muted">{t('skills.form.defaultEnabled')}</label>
                 </div>
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-foreground-muted">
-                  JSON Schema（供 LLM 识别参数）
+                  {t('skills.form.schemaLabel')}
                 </label>
                 <textarea
                   value={formSchema}
@@ -575,13 +570,13 @@ export default function SkillsPage() {
                 onClick={closeModal}
                 className="rounded-md border border-border-default px-4 py-2 text-sm text-foreground-muted hover:bg-elevated-bg"
               >
-                取消
+                {t('common.cancel')}
               </button>
               <button
                 onClick={handleSaveCustom}
                 className="rounded-md bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700"
               >
-                保存
+                {t('common.save')}
               </button>
             </div>
           </div>

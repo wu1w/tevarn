@@ -325,6 +325,22 @@ export function useWebSocket(options: UseWebSocketOptions) {
           optionsRef.current.onError?.(
             (msg as unknown as { detail: string }).detail || 'Unknown error'
           );
+        } else if (msg.type === 'confirm_request') {
+          // 危险操作确认请求 → 写入 store，触发前端弹窗
+          const m = msg as unknown as {
+            confirm_id: string;
+            title: string;
+            command: string;
+            reason?: string;
+          };
+          import('@/stores/confirmStore').then((mod) => {
+            mod.useConfirmStore.getState().showConfirm({
+              confirmId: m.confirm_id,
+              title: m.title || '危险操作确认',
+              command: m.command || '',
+              reason: m.reason || '',
+            });
+          });
         }
       } catch (err) {
         console.error('WebSocket message parse error:', err);
@@ -332,6 +348,17 @@ export function useWebSocket(options: UseWebSocketOptions) {
     };
 
     wsRef.current = ws;
+
+    // 注册危险操作确认的发送函数：弹窗组件经 store 调用
+    import('@/stores/confirmStore').then((mod) => {
+      mod.useConfirmStore.getState().registerSender((confirmId, approved) => {
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(
+            JSON.stringify({ type: 'confirm_response', confirm_id: confirmId, approved })
+          );
+        }
+      });
+    });
   }, []);
 
   const disconnect = useCallback(() => {

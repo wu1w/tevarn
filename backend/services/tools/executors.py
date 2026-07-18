@@ -47,8 +47,33 @@ _SAFE_COMMANDS: set[str] = {
     "mkdir", "touch", "cp", "mv", "rm", "rmdir",
 }
 
-# 完全禁止的子串（包括换行、反引号等）
-_DANGEROUS_CHARS = [";", "&&", "||", "|", "`", "$()", ">>", "<(", ">/dev/null", "\n", "\r", "&", "$(", "${"]
+# 危险命令模式：命中则需前端弹窗确认后才执行。
+# 设计：默认放开（python/pip/npm/git 等开发命令直接跑），仅真正危险的拦截确认。
+_DANGEROUS_PATTERNS = [
+    # 递归/强制删除
+    (r"\brm\s+(-[a-zA-Z]*[rf][a-zA-Z]*\s+)?.+", "递归/强制删除文件"),
+    (r"\bdel\s+/[fsq]", "强制删除文件 (Windows)"),
+    (r"\brmdir\s+/s", "递归删除目录 (Windows)"),
+    (r"Remove-Item\s+.*-Recurse", "递归删除 (PowerShell)"),
+    # 系统级
+    (r"\bsudo\b", "提权执行"),
+    (r"\bshutdown\b|\breboot\b|\bpoweroff\b", "关机/重启"),
+    (r"\bmkfs\b|\bfdisk\b|\bdd\s+if=", "磁盘操作"),
+    (r"\bformat\s+[a-zA-Z]:", "格式化磁盘 (Windows)"),
+    # 注册表 / 服务
+    (r"\breg\s+(delete|add)\b", "修改注册表"),
+    (r"\bsc\s+(delete|stop|config)\b", "修改系统服务"),
+    (r"\bnet\s+(stop|user|localgroup)\b", "网络/账户管理"),
+    (r"\btaskkill\s+/f", "强制结束进程"),
+    # 远程脚本执行
+    (r"(curl|wget)[^|]*\|\s*(sh|bash|zsh|python)", "远程脚本管道执行"),
+    # 写系统目录
+    (r"[>]\s*/etc/|[>]\s*/usr/|[>]\s*C:\\\\Windows", "写入系统目录"),
+    (r"\bchmod\s+(-R\s+)?777\b", "放开文件权限 777"),
+]
+
+# 完全禁止的子串（保留：换行/反引号/命令注入类，与管道放开不冲突）
+_FORBIDDEN_SUBSTR = ["`", "\n", "\r"]
 
 
 async def execute_browser(config: dict[str, Any], arguments: dict[str, Any]) -> str:
@@ -85,67 +110,64 @@ async def execute_browser(config: dict[str, Any], arguments: dict[str, Any]) -> 
         return f"[Error] {e}"
 
 
+import re
+
+
+def _match_dangerous(command: str) -> str | None:
+    """检测命令是否命中危险模式，返回危险原因（None=安全）。"""
+    for pattern, reason in _DANGEROUS_PATTERNS:
+        if re.search(pattern, command, re.IGNORECASE):
+            return reason
+    return None
+
+
 async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> str:
     """
-    命令行工具：执行 shell 命令（安全模式）
+    命令行工具：执行 shell 命令。
 
-    修复说明（v2）：
-    1. 使用 shlex.split 将命令解析为参数列表
-    2. 只允许单个命令（禁止管道、逻辑运算符、命令分隔符）
-    3. 命令名必须在白名单中
-    4. 使用 create_subprocess_exec 而非 shell，避免 shell 注入
+    安全模型（v3，按用户要求放开）：
+    1. 默认放开：python/pip/npm/node/git 等开发命令、管道、重定向、&& 均可执行。
+    2. 仅真正危险的操作（递归删除/系统级/注册表/远程脚本等）触发前端弹窗确认。
+    3. 确认通过才执行；超时（30s）无响应默认拒绝，防 agent 卡死。
+    4. 换行/反引号仍禁止（防命令注入）。
     """
     command = arguments.get("command", "").strip()
     if not command:
         return "[Error] command is required"
 
-    safe_mode = config.get("safe_mode", True)
-    if safe_mode:
-        # 检查是否包含危险字符
-        if any(d in command for d in _DANGEROUS_CHARS):
+    # 换行/反引号禁止（命令注入防护，与管道放开不冲突）
+    if any(d in command for d in _FORBIDDEN_SUBSTR):
+        return (
+            f"[Security Blocked] Newlines/backticks are not allowed in: {command}"
+        )
+
+    # 危险命令检测 → 前端弹窗确认
+    danger_reason = _match_dangerous(command)
+    if danger_reason:
+        from backend.services import confirm_manager
+
+        ws_manager = arguments.get("_ws_manager")
+        session_id = arguments.get("_session_id")
+        approved = await confirm_manager.request_confirmation(
+            ws_manager,
+            session_id,
+            title="危险操作确认",
+            command=command,
+            reason=danger_reason,
+        )
+        if not approved:
             return (
-                f"[Security Blocked] Dangerous characters detected in: {command}. "
-                f"Pipes, logic operators, and command separators are not allowed."
+                f"[Denied] Dangerous command was rejected by user "
+                f"({danger_reason}): {command}"
             )
-
-        # 使用 shlex.split 解析命令
-        try:
-            args = shlex.split(command)
-        except ValueError as e:
-            return f"[Security Blocked] Invalid command syntax: {e}"
-
-        if not args:
-            return "[Error] Empty command"
-
-        # 只允许单个命令（禁止管道等），shlex.split 后 args 列表代表单个命令
-        cmd_name = os.path.basename(args[0])
-
-        if cmd_name not in _SAFE_COMMANDS:
-            return (
-                f"[Security Blocked] Command '{cmd_name}' is not in the safe whitelist. "
-                f"Allowed: {', '.join(sorted(_SAFE_COMMANDS))}"
-            )
-
-        # 禁止路径中包含 .. 以防止目录遍历
-        for arg in args:
-            if ".." in arg:
-                return (
-                    f"[Security Blocked] Path traversal detected in argument: {arg}"
-                )
-    else:
-        # safe_mode = False 时仍需解析，但不做白名单限制
-        try:
-            args = shlex.split(command)
-        except ValueError as e:
-            return f"[Error] Invalid command syntax: {e}"
 
     timeout = arguments.get("timeout", config.get("timeout", 30))
     working_dir = config.get("working_dir")
 
     try:
-        # 使用 exec 而非 shell，直接传递参数列表，彻底避免 shell 注入
-        proc = await asyncio.create_subprocess_exec(
-            *args,
+        # 用 shell 执行以支持管道/重定向/&&（危险命令已在上方确认）
+        proc = await asyncio.create_subprocess_shell(
+            command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=working_dir if working_dir and os.path.isdir(working_dir) else None,
@@ -159,7 +181,6 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
             return f"[Exit {proc.returncode}]\nstdout:\n{out}\n\nstderr:\n{err}"
         return out or "[No output]"
     except asyncio.TimeoutError:
-        # 强制终止超时进程
         try:
             proc.kill()
             await proc.wait()
@@ -167,7 +188,7 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
             pass
         return f"[Timeout] Command exceeded {timeout}s and was terminated"
     except FileNotFoundError:
-        return f"[Error] Command not found: {args[0] if args else command}"
+        return f"[Error] Command not found: {command.split()[0] if command else ''}"
     except Exception as e:
         return f"[Error] {e}"
 
@@ -281,11 +302,31 @@ async def execute_python(config: dict[str, Any], arguments: dict[str, Any]) -> s
 
     timeout = arguments.get("timeout", config.get("timeout", 30))
 
-    # 安全：禁止 import 某些模块
-    banned_imports = ["os.system", "subprocess", "socket", "urllib.request.urlopen"]
-    for banned in banned_imports:
-        if banned in code:
-            return f"[Security Blocked] Usage of '{banned}' is not allowed"
+    # 安全模型 v3：放开 subprocess/os.system（agent 装依赖需要），
+    # 仅真正危险的系统级代码触发前端确认。
+    danger_reason = None
+    danger_code_patterns = [
+        (r"os\.system\([^)]*(rm\s+-[rf]|del\s+/[fsq]|format|mkfs|shutdown|reboot)", "危险系统命令"),
+        (r"shutil\.rmtree\s*\(\s*['\"][/A-Za-z]:", "递归删除根目录"),
+        (r"subprocess[^)]*(rm\s+-rf|del\s+/f|format|mkfs|shutdown)", "危险子进程命令"),
+    ]
+    for pattern, reason in danger_code_patterns:
+        if re.search(pattern, code):
+            danger_reason = reason
+            break
+
+    if danger_reason:
+        from backend.services import confirm_manager
+
+        approved = await confirm_manager.request_confirmation(
+            arguments.get("_ws_manager"),
+            arguments.get("_session_id"),
+            title="危险操作确认",
+            command=code[:300],
+            reason=danger_reason,
+        )
+        if not approved:
+            return f"[Denied] Dangerous python code was rejected by user ({danger_reason})"
 
     # Prefer current interpreter (Windows rarely has python3 on PATH)
     py = sys.executable or "python3"

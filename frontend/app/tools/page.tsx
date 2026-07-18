@@ -12,20 +12,21 @@ import {
 } from '@/lib/api';
 import { useToastStore } from '@/stores/toastStore';
 import { useConfirm } from '@/components/desktop/ConfirmDialog';
+import { useT } from '@/stores/localeStore';
 
-const TYPE_LABELS: Record<string, string> = {
-  browser: '浏览器',
-  command: '命令行',
-  file_read: '文件读取',
-  file_write: '文件写入',
-  http: 'HTTP 请求',
-  python: 'Python',
-  search: '网络搜索',
-  edit: '文件编辑',
-  glob: '文件匹配',
-  grep: '文本搜索',
-  sqlite_query: 'SQLite',
-};
+const TYPE_KEYS = [
+  'browser',
+  'command',
+  'file_read',
+  'file_write',
+  'http',
+  'python',
+  'search',
+  'edit',
+  'glob',
+  'grep',
+  'sqlite_query',
+] as const;
 
 /** 类型标签统一弱化：不再彩虹配色 */
 const TYPE_BADGE =
@@ -34,14 +35,7 @@ const TYPE_BADGE =
 /** 功能分类（列表分组 + 筛选） */
 type ToolCategory = 'file' | 'exec' | 'network' | 'data' | 'other';
 
-const TOOL_CATEGORIES: { id: ToolCategory | 'all'; label: string }[] = [
-  { id: 'all', label: '全部' },
-  { id: 'file', label: '文件' },
-  { id: 'exec', label: '执行' },
-  { id: 'network', label: '网络' },
-  { id: 'data', label: '数据' },
-  { id: 'other', label: '其他' },
-];
+const TOOL_CATEGORY_IDS = ['all', 'file', 'exec', 'network', 'data', 'other'] as const;
 
 const TYPE_TO_CATEGORY: Record<string, ToolCategory> = {
   file_read: 'file',
@@ -71,6 +65,10 @@ function toolCategory(tool: { type: string; name: string }): ToolCategory {
 export default function ToolsPage() {
   const { addToast } = useToastStore();
   const { confirm, ConfirmDialogComponent } = useConfirm();
+  const t = useT();
+  const typeLabel = (type: string) =>
+    (TYPE_KEYS as readonly string[]).includes(type) ? t(`tools.type.${type}` as never) : type;
+  const catLabel = (id: ToolCategory | 'all') => t(`tools.cat.${id}` as never);
   const [tools, setTools] = useState<Tool[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -109,7 +107,7 @@ export default function ToolsPage() {
       !q ||
       t.name.toLowerCase().includes(q) ||
       (t.description || '').toLowerCase().includes(q) ||
-      (TYPE_LABELS[t.type] || t.type).includes(search);
+      typeLabel(t.type).includes(search);
     const cat = toolCategory(t);
     const matchCat = categoryFilter === 'all' || cat === categoryFilter;
     return matchQ && matchCat;
@@ -129,7 +127,7 @@ export default function ToolsPage() {
     return order
       .map((id) => ({
         id,
-        label: TOOL_CATEGORIES.find((x) => x.id === id)?.label || id,
+        label: catLabel(id),
         items: map.get(id) || [],
       }))
       .filter((g) => g.items.length > 0);
@@ -142,19 +140,19 @@ export default function ToolsPage() {
         prev.map((t) => (t.id === tool.id ? { ...t, enabled: !t.enabled } : t))
       );
     } catch (e) {
-      addToast('切换失败', 'error');
+      addToast(t('tools.toggleFailed'), 'error');
       console.error(e);
     }
   }
 
   async function handleDelete(tool: Tool) {
-    const ok = await confirm(`确定删除工具 "${tool.name}"？`);
+    const ok = await confirm(t('tools.confirmDelete').replace('{name}', tool.name));
     if (!ok) return;
     try {
       await deleteTool(tool.id);
       setTools((prev) => prev.filter((t) => t.id !== tool.id));
     } catch (e) {
-      addToast('删除失败', 'error');
+      addToast(t('tools.deleteFailed'), 'error');
       console.error(e);
     }
   }
@@ -176,7 +174,7 @@ export default function ToolsPage() {
       setNewConfig('{}');
       await loadTools();
     } catch (e) {
-      addToast('创建失败：' + (e as Error).message, 'error');
+      addToast(t('tools.createFailed') + (e as Error).message, 'error');
     }
   }
 
@@ -194,7 +192,7 @@ export default function ToolsPage() {
       setNewConfig('{}');
       await loadTools();
     } catch (e) {
-      addToast('更新失败：' + (e as Error).message, 'error');
+      addToast(t('tools.updateFailed') + (e as Error).message, 'error');
     }
   }
 
@@ -227,14 +225,14 @@ export default function ToolsPage() {
         <div>
           <h1 className="text-2xl font-bold text-foreground">Tools</h1>
           <p className="mt-1 text-sm text-foreground-dim">
-            管理 Agent 可调用的工具。内置工具由系统提供，自定义工具可配置外部 HTTP API。
+            {t('tools.subtitle')}
           </p>
         </div>
         <button
           onClick={() => setShowCreate(true)}
           className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700"
         >
-          + 新建工具
+          {t('tools.newTool')}
         </button>
       </div>
 
@@ -242,30 +240,30 @@ export default function ToolsPage() {
       <div className="mb-4 space-y-3">
         <input
           type="text"
-          placeholder="搜索工具..."
+          placeholder={t('tools.searchPlaceholder')}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="w-full rounded-lg border border-border-default bg-input-bg px-4 py-2 text-sm text-foreground focus:border-violet-500 focus:outline-none"
         />
         <div className="flex flex-wrap gap-1.5">
-          {TOOL_CATEGORIES.map((c) => {
-            const active = categoryFilter === c.id;
+          {TOOL_CATEGORY_IDS.map((id) => {
+            const active = categoryFilter === id;
             const count =
-              c.id === 'all'
+              id === 'all'
                 ? tools.length
-                : tools.filter((x) => toolCategory(x) === c.id).length;
+                : tools.filter((x) => toolCategory(x) === id).length;
             return (
               <button
-                key={c.id}
+                key={id}
                 type="button"
-                onClick={() => setCategoryFilter(c.id)}
+                onClick={() => setCategoryFilter(id)}
                 className={`rounded-full border px-3 py-1 text-xs transition-colors ${
                   active
                     ? 'border-brand-purple/40 bg-brand-purple/10 text-foreground'
                     : 'border-border-subtle bg-card-bg text-foreground-muted hover:border-border-default hover:text-foreground'
                 }`}
               >
-                {c.label}
+                {catLabel(id)}
                 <span className="ml-1 tabular-nums text-foreground-dim">{count}</span>
               </button>
             );
@@ -274,19 +272,19 @@ export default function ToolsPage() {
       </div>
 
       {loading ? (
-        <div className="py-12 text-center text-sm text-foreground-muted">加载中...</div>
+        <div className="py-12 text-center text-sm text-foreground-muted">{t('common.loading')}</div>
       ) : (
         <div className="space-y-8">
           <section>
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-foreground-muted">
-              内置工具
+              {t('tools.builtin')}
               <span className="ml-2 font-normal normal-case text-foreground-dim">
                 {builtinTools.length}
               </span>
             </h2>
             {builtinTools.length === 0 ? (
               <div className="rounded-lg border border-border-default bg-card-bg px-4 py-8 text-center text-sm text-foreground-muted">
-                无匹配的内置工具
+                {t('tools.noMatchBuiltin')}
               </div>
             ) : (
               <div className="space-y-4">
@@ -317,7 +315,7 @@ export default function ToolsPage() {
 
           <section>
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-foreground-muted">
-              自定义工具
+              {t('tools.custom')}
               <span className="ml-2 font-normal normal-case text-foreground-dim">
                 {customTools.length}
               </span>
@@ -325,7 +323,7 @@ export default function ToolsPage() {
             <div className="divide-y divide-border-subtle rounded-lg border border-border-default bg-card-bg">
               {customTools.length === 0 && (
                 <div className="px-4 py-8 text-center text-sm text-foreground-muted">
-                  暂无自定义工具
+                  {t('tools.noCustom')}
                 </div>
               )}
               {customTools.map((tool) => (
@@ -345,10 +343,10 @@ export default function ToolsPage() {
 
       {/* 新建弹窗 */}
       {showCreate && (
-        <Modal onClose={() => setShowCreate(false)} title="新建工具">
+        <Modal onClose={() => setShowCreate(false)} title={t('tools.modal.create')}>
           <form onSubmit={handleCreate} className="space-y-4">
             <div>
-              <label className="block text-xs font-medium text-foreground-muted">名称</label>
+              <label className="block text-xs font-medium text-foreground-muted">{t('tools.form.name')}</label>
               <input
                 required
                 value={newName}
@@ -358,30 +356,30 @@ export default function ToolsPage() {
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-foreground-muted">描述</label>
+              <label className="block text-xs font-medium text-foreground-muted">{t('tools.form.desc')}</label>
               <input
                 required
                 value={newDesc}
                 onChange={(e) => setNewDesc(e.target.value)}
                 className="mt-1 w-full rounded-md border border-border-default px-3 py-2 text-sm focus:border-violet-500 focus:outline-none"
-                placeholder="此工具用于..."
+                placeholder={t('tools.form.descPlaceholder')}
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-foreground-muted">类型</label>
+              <label className="block text-xs font-medium text-foreground-muted">{t('tools.form.type')}</label>
               <select
                 value={newType}
                 onChange={(e) => setNewType(e.target.value as 'http')}
                 className="mt-1 w-full rounded-md border border-border-default px-3 py-2 text-sm focus:border-violet-500 focus:outline-none"
               >
-                <option value="http">HTTP 请求</option>
+                <option value="http">{t('tools.type.http')}</option>
               </select>
               <p className="mt-1 text-xs text-foreground-muted">
-                当前仅支持 HTTP 类型自定义工具。如需其他类型，请联系管理员。
+                {t('tools.form.httpOnly')}
               </p>
             </div>
             <div>
-              <label className="block text-xs font-medium text-foreground-muted">配置 (JSON)</label>
+              <label className="block text-xs font-medium text-foreground-muted">{t('tools.form.config')}</label>
               <ConfigExample />
               <textarea
                 value={newConfig}
@@ -397,13 +395,13 @@ export default function ToolsPage() {
                 onClick={() => setShowCreate(false)}
                 className="rounded-md border border-border-default px-4 py-2 text-sm text-foreground-dim hover:bg-elevated-bg"
               >
-                取消
+                {t('common.cancel')}
               </button>
               <button
                 type="submit"
                 className="rounded-md bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700"
               >
-                创建
+                {t('tools.create')}
               </button>
             </div>
           </form>
@@ -412,10 +410,10 @@ export default function ToolsPage() {
 
       {/* 编辑弹窗 */}
       {editingTool && (
-        <Modal onClose={() => setEditingTool(null)} title={`编辑: ${editingTool.name}`}>
+        <Modal onClose={() => setEditingTool(null)} title={t('tools.modal.edit').replace('{name}', editingTool.name)}>
           <form onSubmit={handleUpdate} className="space-y-4">
             <div>
-              <label className="block text-xs font-medium text-foreground-muted">描述</label>
+              <label className="block text-xs font-medium text-foreground-muted">{t('tools.form.desc')}</label>
               <input
                 required
                 value={newDesc}
@@ -424,7 +422,7 @@ export default function ToolsPage() {
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-foreground-muted">配置 (JSON)</label>
+              <label className="block text-xs font-medium text-foreground-muted">{t('tools.form.config')}</label>
               <textarea
                 value={newConfig}
                 onChange={(e) => setNewConfig(e.target.value)}
@@ -438,13 +436,13 @@ export default function ToolsPage() {
                 onClick={() => setEditingTool(null)}
                 className="rounded-md border border-border-default px-4 py-2 text-sm text-foreground-dim hover:bg-elevated-bg"
               >
-                取消
+                {t('common.cancel')}
               </button>
               <button
                 type="submit"
                 className="rounded-md bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700"
               >
-                保存
+                {t('common.save')}
               </button>
             </div>
           </form>
@@ -453,10 +451,10 @@ export default function ToolsPage() {
 
       {/* 执行弹窗 */}
       {executingTool && (
-        <Modal onClose={() => setExecutingTool(null)} title={`执行: ${executingTool.name}`}>
+        <Modal onClose={() => setExecutingTool(null)} title={t('tools.modal.execute').replace('{name}', executingTool.name)}>
           <div className="space-y-4">
             <div>
-              <label className="block text-xs font-medium text-foreground-muted">参数 (JSON)</label>
+              <label className="block text-xs font-medium text-foreground-muted">{t('tools.form.args')}</label>
               <textarea
                 value={execArgs}
                 onChange={(e) => setExecArgs(e.target.value)}
@@ -469,11 +467,11 @@ export default function ToolsPage() {
               onClick={handleExecute}
               className="w-full rounded-md bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700"
             >
-              执行
+              {t('tools.execute')}
             </button>
             {execResult && (
               <div className="rounded-md border border-border-default bg-elevated-bg p-3">
-                <div className="mb-1 text-xs font-medium text-foreground-dim">结果</div>
+                <div className="mb-1 text-xs font-medium text-foreground-dim">{t('tools.form.result')}</div>
                 <pre className="max-h-64 overflow-auto whitespace-pre-wrap font-mono text-xs text-foreground-muted">
                   {execResult}
                 </pre>
@@ -501,6 +499,10 @@ export default function ToolsPage() {
           onExecute: () => void;
           onDelete: () => void;
         }) {
+  const t = useT();
+  const typeLabel = (type: string) =>
+    (TYPE_KEYS as readonly string[]).includes(type) ? t(`tools.type.${type}` as never) : type;
+  const catLabel = (id: ToolCategory | 'all') => t(`tools.cat.${id}` as never);
   return (
     <div className="flex items-center gap-4 px-4 py-3">
       <div className="flex-1">
@@ -509,13 +511,13 @@ export default function ToolsPage() {
           <span
             className={TYPE_BADGE}
           >
-            {TYPE_LABELS[tool.type] || tool.type}
+            {typeLabel(tool.type)}
           </span>
           <span className={TYPE_BADGE}>
-            {TOOL_CATEGORIES.find((c) => c.id === toolCategory(tool))?.label || '其他'}
+            {catLabel(toolCategory(tool))}
           </span>
           {tool.is_builtin && (
-            <span className={TYPE_BADGE}>内置</span>
+            <span className={TYPE_BADGE}>{t('tools.badge.builtin')}</span>
           )}
         </div>
         <p className="mt-0.5 text-xs text-foreground-dim">{tool.description}</p>
@@ -526,7 +528,7 @@ export default function ToolsPage() {
         <button
           onClick={onExecute}
           className="rounded p-1.5 text-foreground-muted hover:bg-card-bg-hover hover:text-foreground-dim"
-          title="执行"
+          title={t('tools.execute')}
         >
           <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
@@ -538,7 +540,7 @@ export default function ToolsPage() {
         <button
           onClick={onEdit}
           className="rounded p-1.5 text-foreground-muted hover:bg-card-bg-hover hover:text-foreground-dim"
-          title="编辑"
+          title={t('common.edit')}
         >
           <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -567,7 +569,7 @@ export default function ToolsPage() {
           <button
             onClick={onDelete}
             className="rounded p-1.5 text-foreground-muted hover:bg-error-bg hover:text-error-text"
-            title="删除"
+            title={t('common.delete')}
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -581,9 +583,10 @@ export default function ToolsPage() {
 
 function ConfigExample() {
   const [open, setOpen] = useState(false);
+  const t = useT();
   const examples = [
     {
-      title: 'GET 请求（固定 URL）',
+      title: t('tools.cfg.ex1'),
       code: `{
   "method": "GET",
   "url": "https://api.example.com/v1/status",
@@ -593,7 +596,7 @@ function ConfigExample() {
 }`,
     },
     {
-      title: 'POST 请求（固定 URL + 动态 body）',
+      title: t('tools.cfg.ex2'),
       code: `{
   "method": "POST",
   "url": "https://api.example.com/v1/translate",
@@ -604,7 +607,7 @@ function ConfigExample() {
 }`,
     },
     {
-      title: '动态 URL（由 Agent 传入）',
+      title: t('tools.cfg.ex3'),
       code: `{
   "method": "GET",
   "headers": {
@@ -621,7 +624,7 @@ function ConfigExample() {
         onClick={() => setOpen((v) => !v)}
         className="text-xs text-violet-400 hover:text-violet-300"
       >
-        {open ? '隐藏配置范例' : '查看配置范例'}
+        {open ? t('tools.cfg.hide') : t('tools.cfg.show')}
       </button>
       {open && (
         <div className="mt-2 max-h-60 space-y-3 overflow-y-auto rounded-md border border-gray-100 bg-elevated-bg p-3">
@@ -634,18 +637,18 @@ function ConfigExample() {
             </div>
           ))}
           <div className="text-[11px] text-foreground-dim">
-            <p className="font-medium">配置字段说明：</p>
+            <p className="font-medium">{t('tools.cfg.fieldsTitle')}</p>
             <ul className="mt-1 list-inside list-disc space-y-0.5">
-              <li><code>method</code>：HTTP 方法（GET/POST/PUT/DELETE/PATCH）</li>
-              <li><code>url</code>：固定请求地址（不传则由 Agent 在执行参数中提供）</li>
-              <li><code>headers</code>：固定请求头（会与执行时的 headers 合并）</li>
-              <li><code>timeout</code>：超时秒数（默认 30）</li>
+              <li><code>method</code>: {t('tools.cfg.method')}</li>
+              <li><code>url</code>: {t('tools.cfg.url')}</li>
+              <li><code>headers</code>: {t('tools.cfg.headers')}</li>
+              <li><code>timeout</code>: {t('tools.cfg.timeout')}</li>
             </ul>
-            <p className="mt-1.5 font-medium">执行参数说明：</p>
+            <p className="mt-1.5 font-medium">{t('tools.cfg.argsTitle')}</p>
             <ul className="mt-1 list-inside list-disc space-y-0.5">
-              <li><code>url</code>：请求地址（覆盖配置中的 url）</li>
-              <li><code>headers</code>：额外请求头（与配置合并）</li>
-              <li><code>body</code>：请求体（仅 POST/PUT/PATCH）</li>
+              <li><code>url</code>: {t('tools.cfg.argUrl')}</li>
+              <li><code>headers</code>: {t('tools.cfg.argHeaders')}</li>
+              <li><code>body</code>: {t('tools.cfg.argBody')}</li>
             </ul>
           </div>
         </div>
