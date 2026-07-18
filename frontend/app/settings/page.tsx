@@ -1034,6 +1034,55 @@ export default function SettingsPage() {
                 })}
               </div>
 
+              {/* 新会话默认模型 — 紧挨服务商选择，避免埋在生成参数底部 */}
+              <div className="mt-4 rounded-2xl border border-brand-purple/35 bg-brand-purple/[0.07] p-4">
+                <div className="mb-1 text-sm font-semibold text-foreground">
+                  {t('settings.defaultSessionModel')}
+                </div>
+                <p className="mb-3 text-xs leading-relaxed text-foreground-muted">
+                  {t('settings.defaultSessionModelHint')}
+                </p>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <select
+                    value={
+                      modelOptions.find((o) => o.model === defaultLlmModel)?.value || ''
+                    }
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (!v) {
+                        setDefaultLlmModel('');
+                        return;
+                      }
+                      const opt = modelOptions.find((o) => o.value === v);
+                      setDefaultLlmModel(opt?.model || '');
+                    }}
+                    className={`${inputCls} sm:max-w-xs`}
+                  >
+                    <option value="">{t('settings.defaultSessionModelPlaceholder')}</option>
+                    {modelOptions.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    value={defaultLlmModel}
+                    onChange={(e) => setDefaultLlmModel(e.target.value)}
+                    placeholder={t('settings.defaultSessionModelPlaceholder')}
+                    className={`${inputCls} sm:max-w-[14rem]`}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSaveGen}
+                    disabled={genSaving}
+                    className={btnPrimary}
+                  >
+                    {genSaving ? t('common.saving') : t('settings.saveGeneration')}
+                  </button>
+                </div>
+              </div>
+
               {selected && (
                 <div className="mt-4 space-y-3 rounded-2xl border border-border-subtle bg-card-bg/60 p-5">
                   <div className="flex flex-wrap items-center gap-2">

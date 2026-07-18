@@ -89,26 +89,80 @@ class OpenAICompatibleService(LLMService):
 
     @classmethod
     def _sanitize_messages_for_api(cls, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Normalize message list for strict OpenAI-compatible gateways."""
+        """Normalize message list for strict OpenAI-compatible gateways.
+
+        Critical: function.arguments MUST remain valid JSON after any truncation
+        (iFlytek MaaS returns 400 otherwise).
+        """
         out: list[dict[str, Any]] = []
         pending_tool_ids: set[str] = set()
 
-        def _trim(s: str, limit: int) -> str:
+        def _trim_text(s: str, limit: int) -> str:
             if len(s) <= limit:
                 return s
-            return s[:limit] + (chr(10) + "...[truncated %d chars]" % (len(s) - limit))
+            return s[:limit] + f"\n...[truncated {len(s) - limit} chars]"
 
-        for raw in messages:
-            if not isinstance(raw, dict):
+        def _safe_tool_arguments(args: Any) -> str:
+            """Return a JSON string always parseable, length-capped."""
+            raw: str
+            parsed: Any = None
+            if isinstance(args, str):
+                raw = args
+                try:
+                    parsed = json.loads(args) if args.strip() else {}
+                except Exception:
+                    parsed = None
+            elif args is None:
+                return "{}"
+            else:
+                try:
+                    raw = json.dumps(args, ensure_ascii=False)
+                    parsed = args
+                except Exception:
+                    raw = json.dumps({"value": str(args)}, ensure_ascii=False)
+                    parsed = {"value": str(args)}
+
+            if len(raw) <= cls._MAX_TOOL_ARG_CHARS and parsed is not None:
+                # re-dump to guarantee compact valid JSON
+                try:
+                    return json.dumps(parsed, ensure_ascii=False)
+                except Exception:
+                    return raw if len(raw) <= cls._MAX_TOOL_ARG_CHARS else json.dumps(
+                        {"_truncated": True, "preview": raw[:800]}, ensure_ascii=False
+                    )
+
+            # Too long or invalid JSON string → structured stub (still valid JSON)
+            preview = raw[:800] if isinstance(raw, str) else str(raw)[:800]
+            stub: dict[str, Any] = {
+                "_truncated": True,
+                "original_chars": len(raw) if isinstance(raw, str) else 0,
+                "preview": preview,
+            }
+            # Keep top-level keys from object if possible (names only)
+            if isinstance(parsed, dict):
+                keys = list(parsed.keys())[:20]
+                stub["keys"] = keys
+                # preserve small scalar fields
+                small = {}
+                for k, v in parsed.items():
+                    if isinstance(v, (int, float, bool)) or (isinstance(v, str) and len(v) <= 200):
+                        small[k] = v
+                    if len(small) >= 8:
+                        break
+                if small:
+                    stub["fields"] = small
+            return json.dumps(stub, ensure_ascii=False)
+
+        for raw_msg in messages:
+            if not isinstance(raw_msg, dict):
                 continue
-            m = dict(raw)
+            m = dict(raw_msg)
             role = m.get("role")
 
             if role == "assistant":
                 tcs = m.get("tool_calls")
                 content = m.get("content")
                 if tcs:
-                    # empty string + tool_calls → 400 on strict APIs
                     if content is None or (isinstance(content, str) and not content.strip()):
                         m["content"] = None
                     new_tcs: list[dict[str, Any]] = []
@@ -118,15 +172,10 @@ class OpenAICompatibleService(LLMService):
                                 continue
                             tc2 = dict(tc)
                             fn = dict(tc2.get("function") or {})
-                            args = fn.get("arguments")
-                            if isinstance(args, str) and len(args) > cls._MAX_TOOL_ARG_CHARS:
-                                fn["arguments"] = _trim(args, cls._MAX_TOOL_ARG_CHARS)
-                            elif args is not None and not isinstance(args, str):
-                                try:
-                                    s = json.dumps(args, ensure_ascii=False)
-                                except Exception:
-                                    s = str(args)
-                                fn["arguments"] = _trim(s, cls._MAX_TOOL_ARG_CHARS)
+                            fn["arguments"] = _safe_tool_arguments(fn.get("arguments"))
+                            # name required
+                            if not (fn.get("name") or "").strip():
+                                fn["name"] = fn.get("name") or "unknown_tool"
                             tc2["function"] = fn
                             if not tc2.get("type"):
                                 tc2["type"] = "function"
@@ -149,7 +198,7 @@ class OpenAICompatibleService(LLMService):
                 elif not isinstance(content, str):
                     m["content"] = str(content)
                 if len(m["content"]) > cls._MAX_TOOL_RESULT_CHARS:
-                    m["content"] = _trim(m["content"], cls._MAX_TOOL_RESULT_CHARS)
+                    m["content"] = _trim_text(m["content"], cls._MAX_TOOL_RESULT_CHARS)
                 tid = m.get("tool_call_id")
                 if tid:
                     pending_tool_ids.discard(str(tid))
