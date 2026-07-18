@@ -1845,6 +1845,7 @@ async def apply_settings_batch(
         "llm_model": "llm",
         "llm_base_url": "llm",
         "llm_api_key": "llm",
+        "default_llm_model": "llm",
         "max_tokens": "llm",
         "context_window": "llm",
         "temperature": "llm",

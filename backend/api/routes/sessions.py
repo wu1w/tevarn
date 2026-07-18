@@ -39,8 +39,27 @@ async def create_session(
     current_user: Annotated[UserRead, Depends(get_current_user)],
     repo: Annotated[SessionRepository, Depends(get_session_repo)],
 ):
-    """创建新会话（自动关联当前用户）"""
+    """创建新会话（自动关联当前用户）
+
+    快照当前 LLM 配置到 session.config.llm：会话锁定创建时的
+    provider/model/base_url/api_key，之后全局配置变更不影响本会话
+    （学 hermes：provider 配置与默认模型、与已发生会话解耦）。
+    """
+    from backend.core.config import settings as app_settings
+
     config = data.config.model_dump() if data.config else {}
+    # 仅当未显式指定 llm 快照时才写入（避免覆盖前端显式传入）
+    if "llm" not in config:
+        cfg = app_settings.get_llm_config()
+        # 「新会话默认模型」独立选项：若设置则覆盖当前 provider 配置的模型
+        # （学 hermes model.default：provider 配置与新会话默认模型解耦）
+        default_model = (getattr(app_settings, "default_llm_model", "") or "").strip()
+        config["llm"] = {
+            "provider": app_settings.llm_provider,
+            "model": default_model or (getattr(cfg, "model", "") or ""),
+            "base_url": getattr(cfg, "base_url", "") or "",
+            "api_key": getattr(cfg, "api_key", None),
+        }
     session = await repo.create(
         {"user_id": current_user.id, "config": config}
     )

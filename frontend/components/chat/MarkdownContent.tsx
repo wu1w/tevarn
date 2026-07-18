@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { parseMessageContent } from '@/lib/parseMessageContent';
 import { ThinkingBlock } from './ThinkingBlock';
+import { FileDownloadLink, isWorkspaceFileLink } from './FileDownloadLink';
 
 function safeUrlTransform(url: string): string {
   if (/^javascript:/i.test(url)) return '';
@@ -50,20 +51,25 @@ export function MarkdownContent({
             components={{
               code: CodeRenderer as any,
               pre: ({ children }) => <>{children}</>,
-              a: ({ href, children }) => (
-                <a
-                  href={href}
-                  target="_blank"
-                  rel="noreferrer"
-                  className={
-                    isUser
-                      ? 'font-medium text-brand-purple underline decoration-brand-purple/35 hover:text-brand-cyan'
-                      : 'text-brand-cyan underline decoration-brand-cyan/30 hover:text-brand-purple hover:decoration-brand-purple'
-                  }
-                >
-                  {children}
-                </a>
-              ),
+              a: ({ href, children }) =>
+                isWorkspaceFileLink(href) ? (
+                  <FileDownloadLink href={href!} isUser={isUser}>
+                    {children}
+                  </FileDownloadLink>
+                ) : (
+                  <a
+                    href={href}
+                    target="_blank"
+                    rel="noreferrer"
+                    className={
+                      isUser
+                        ? 'font-medium text-brand-purple underline decoration-brand-purple/35 hover:text-brand-cyan'
+                        : 'text-brand-cyan underline decoration-brand-cyan/30 hover:text-brand-purple hover:decoration-brand-purple'
+                    }
+                  >
+                    {children}
+                  </a>
+                ),
               table: ({ children }) => (
                 <div className="my-3 overflow-x-auto rounded-xl border border-border-subtle">
                   <table className="w-full border-collapse text-left text-xs">{children}</table>

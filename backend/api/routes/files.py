@@ -161,6 +161,32 @@ async def read_file(
         raise HTTPException(status_code=500, detail=f"Failed to read file: {e}")
 
 
+@router.get("/download")
+async def download_file(
+    path: str = Query(..., description="File path relative to mode root"),
+    mode: str = Query("sandbox", description="sandbox | local"),
+    current_user: Annotated[UserRead, Depends(get_current_user)] = None,
+):
+    """下载文件（AI 生成的文件在对话栏可一键下载）。
+
+    限制在沙箱内，带 Content-Disposition: attachment 触发浏览器下载。
+    """
+    from fastapi.responses import FileResponse
+
+    target, base = _resolve_path(mode, path)
+    _check_access(target, base)
+
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return FileResponse(
+        path=str(target),
+        filename=target.name,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{target.name}"'},
+    )
+
+
 @router.get("/info")
 async def get_file_info(
     current_user: Annotated[UserRead, Depends(get_current_user)] = None,

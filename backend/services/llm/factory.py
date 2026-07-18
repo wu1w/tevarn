@@ -57,3 +57,39 @@ class LLMServiceFactory:
     def reset(cls) -> None:
         """重置单例（主要用于测试）"""
         cls._instance = None
+
+    @classmethod
+    def get_service_for_snapshot(cls, snapshot: dict | None) -> LLMService:
+        """按会话快照创建 LLM 服务（不走全局单例）。
+
+        用于会话锁定创建时的模型/provider：进行中/历史会话的 LLM call
+        使用其创建时快照的配置，不受全局配置变更影响。
+        snapshot 缺字段或为 None 时 fallback 到全局单例。
+        """
+        if not snapshot or not snapshot.get("provider"):
+            return cls.get_service()
+        provider = snapshot["provider"]
+        # 构造最小 config 对象（对齐各 Service 读取的字段）
+        from types import SimpleNamespace
+
+        base_cfg = settings.get_llm_config()
+        config = SimpleNamespace(
+            base_url=(snapshot.get("base_url") or getattr(base_cfg, "base_url", "") or "").rstrip("/"),
+            model=snapshot.get("model") or getattr(base_cfg, "model", "") or "",
+            api_key=snapshot.get("api_key") if snapshot.get("api_key") is not None else getattr(base_cfg, "api_key", None),
+            max_tokens=getattr(base_cfg, "max_tokens", 4096),
+            temperature=getattr(base_cfg, "temperature", 0.7),
+        )
+        if provider == "ollama":
+            return OllamaService(config)
+        elif provider == "vllm":
+            return VLLMService(config)
+        elif provider == "openai":
+            return OpenAIService(config)
+        elif provider == "anthropic":
+            return AnthropicService(config)
+        elif provider == "openai-compatible":
+            return OpenAICompatibleService(config)
+        else:
+            logger.warning("Unknown snapshot provider %r, fallback to global", provider)
+            return cls.get_service()

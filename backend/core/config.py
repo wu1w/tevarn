@@ -73,6 +73,9 @@ class Settings(BaseSettings):
     llm_base_url: str = ""
     llm_model: str = ""
     llm_api_key: Optional[str] = None
+    # 新会话默认模型（学 hermes model.default）：独立选项，创建会话时快照用，
+    # 与 provider 连接配置解耦；留空则用当前 provider 配置的 llm_model
+    default_llm_model: str = ""
     default_max_tokens: int = 12288  # 生成上限默认 12K
     llm_temperature: float = 0.7
     # 当前模型上下文窗口（选模型时写入；用于截断/摘要/auto-optimize）

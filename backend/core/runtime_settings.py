@@ -24,6 +24,7 @@ _KEY_MAP: dict[str, str] = {
     "llm_model": "llm_model",
     "llm_base_url": "llm_base_url",
     "llm_api_key": "llm_api_key",
+    "default_llm_model": "default_llm_model",
     "max_tokens": "default_max_tokens",
     "temperature": "llm_temperature",
     "context_window": "context_window",

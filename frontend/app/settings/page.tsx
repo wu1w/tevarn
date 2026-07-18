@@ -164,6 +164,7 @@ export default function SettingsPage() {
   const [contextWindow, setContextWindow] = useState(128000);
   const [contextCompressModel, setContextCompressModel] = useState('');
   const [systemName, setSystemName] = useState('Takton');
+  const [defaultLlmModel, setDefaultLlmModel] = useState(''); // 新会话默认模型
   const [genSaving, setGenSaving] = useState(false);
   const [fallbackRef, setFallbackRef] = useState(''); // providerId|||model
   const [fallbackSaving, setFallbackSaving] = useState(false);
@@ -242,6 +243,7 @@ export default function SettingsPage() {
     setContextWindow(numVal(settings, 'context_window', 128000));
     setContextCompressModel(mapVal(settings, 'context_compress_model', ''));
     setSystemName(mapVal(settings, 'system_name', 'Takton'));
+    setDefaultLlmModel(mapVal(settings, 'default_llm_model', ''));
     setSftLogEnabled(boolVal(settings, 'sft_usage_log_enabled'));
 
     setEmbedProvider(mapVal(settings, 'embedding_provider', 'openai-compatible') || 'openai-compatible');
@@ -556,6 +558,7 @@ export default function SettingsPage() {
           max_tokens: maxTokens,
           context_window: contextWindow,
           system_name: systemName.trim() || 'Takton',
+          default_llm_model: defaultLlmModel.trim(),
         });
         addToast(res.message || '生成参数已保存', 'success');
         await refetch();
@@ -1213,6 +1216,15 @@ export default function SettingsPage() {
                                       type="text"
                                       value={systemName}
                                       onChange={(e) => setSystemName(e.target.value)}
+                                      className={inputCls}
+                                    />
+                                  </Field>
+                                  <Field label="新会话默认模型" hint="可选：新建会话使用的模型。留空则用当前服务商配置的模型；修改不影响进行中的会话">
+                                    <input
+                                      type="text"
+                                      value={defaultLlmModel}
+                                      onChange={(e) => setDefaultLlmModel(e.target.value)}
+                                      placeholder="留空 = 跟随当前服务商模型"
                                       className={inputCls}
                                     />
                                   </Field>

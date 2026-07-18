@@ -571,8 +571,9 @@ class NexusAgentLoop:
             except Exception as e:
                 logger.warning("cluster roster inject failed: %s", e)
 
-        # 6. 获取 LLM 服务
-        llm_service = LLMServiceFactory.get_service()
+        # 6. 获取 LLM 服务（优先用会话创建时的 LLM 快照 → 配置变更不影响本会话）
+        llm_snapshot = (config or {}).get("llm") if isinstance(config, dict) else None
+        llm_service = LLMServiceFactory.get_service_for_snapshot(llm_snapshot)
 
         # 6.5 上下文引擎 pipeline（L1/L3/L5）
         try:
