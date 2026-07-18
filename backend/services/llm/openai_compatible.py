@@ -82,6 +82,104 @@ class OpenAICompatibleService(LLMService):
                 normalized.append({"type": "function", "function": t})
         return normalized
 
+    # 部分兼容网关（讯飞 MaaS 等）拒绝：assistant 空字符串 content + tool_calls
+    # 以及超大历史 tool arguments。统一在出站前消毒。
+    _MAX_TOOL_ARG_CHARS = 6000
+    _MAX_TOOL_RESULT_CHARS = 12000
+
+    @classmethod
+    def _sanitize_messages_for_api(cls, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Normalize message list for strict OpenAI-compatible gateways."""
+        out: list[dict[str, Any]] = []
+        pending_tool_ids: set[str] = set()
+
+        def _trim(s: str, limit: int) -> str:
+            if len(s) <= limit:
+                return s
+            return s[:limit] + (chr(10) + "...[truncated %d chars]" % (len(s) - limit))
+
+        for raw in messages:
+            if not isinstance(raw, dict):
+                continue
+            m = dict(raw)
+            role = m.get("role")
+
+            if role == "assistant":
+                tcs = m.get("tool_calls")
+                content = m.get("content")
+                if tcs:
+                    # empty string + tool_calls → 400 on strict APIs
+                    if content is None or (isinstance(content, str) and not content.strip()):
+                        m["content"] = None
+                    new_tcs: list[dict[str, Any]] = []
+                    if isinstance(tcs, list):
+                        for tc in tcs:
+                            if not isinstance(tc, dict):
+                                continue
+                            tc2 = dict(tc)
+                            fn = dict(tc2.get("function") or {})
+                            args = fn.get("arguments")
+                            if isinstance(args, str) and len(args) > cls._MAX_TOOL_ARG_CHARS:
+                                fn["arguments"] = _trim(args, cls._MAX_TOOL_ARG_CHARS)
+                            elif args is not None and not isinstance(args, str):
+                                try:
+                                    s = json.dumps(args, ensure_ascii=False)
+                                except Exception:
+                                    s = str(args)
+                                fn["arguments"] = _trim(s, cls._MAX_TOOL_ARG_CHARS)
+                            tc2["function"] = fn
+                            if not tc2.get("type"):
+                                tc2["type"] = "function"
+                            tid = tc2.get("id")
+                            if tid:
+                                pending_tool_ids.add(str(tid))
+                            new_tcs.append(tc2)
+                    m["tool_calls"] = new_tcs
+                else:
+                    if content is None:
+                        m["content"] = ""
+                    m.pop("tool_calls", None)
+                out.append(m)
+                continue
+
+            if role == "tool":
+                content = m.get("content")
+                if content is None:
+                    m["content"] = ""
+                elif not isinstance(content, str):
+                    m["content"] = str(content)
+                if len(m["content"]) > cls._MAX_TOOL_RESULT_CHARS:
+                    m["content"] = _trim(m["content"], cls._MAX_TOOL_RESULT_CHARS)
+                tid = m.get("tool_call_id")
+                if tid:
+                    pending_tool_ids.discard(str(tid))
+                elif pending_tool_ids:
+                    m["tool_call_id"] = next(iter(pending_tool_ids))
+                    pending_tool_ids.discard(m["tool_call_id"])
+                out.append(m)
+                continue
+
+            if role in ("user", "system"):
+                if m.get("content") is None:
+                    m["content"] = ""
+                out.append(m)
+                continue
+
+            out.append(m)
+
+        if pending_tool_ids:
+            for tid in list(pending_tool_ids):
+                out.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tid,
+                        "content": "[tool result missing — interrupted]",
+                    }
+                )
+                pending_tool_ids.discard(tid)
+
+        return out
+
     async def chat(
         self,
         messages: list[dict[str, Any]],
@@ -90,9 +188,10 @@ class OpenAICompatibleService(LLMService):
     ) -> AsyncIterator[LLMChunk]:
         """调用 OpenAI 兼容 /v1/chat/completions，支持流式和非流式"""
         url = self._chat_completions_url()
+        safe_messages = self._sanitize_messages_for_api(messages)
         payload = {
             "model": self.model,
-            "messages": messages,
+            "messages": safe_messages,
             "stream": stream,
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,

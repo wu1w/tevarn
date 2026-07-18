@@ -374,12 +374,18 @@ class NexusAgentLoop:
         for h in history:
             if h.role not in ("user", "assistant", "tool"):
                 continue
-            item: dict[str, Any] = {"role": h.role, "content": h.content or ""}
-            if h.role == "assistant" and getattr(h, "tool_calls", None):
-                item["tool_calls"] = h.tool_calls
+            raw_content = h.content if h.content is not None else ""
+            tcs = getattr(h, "tool_calls", None)
+            # 严格 API：assistant 带 tool_calls 时 content 不能是 ""（须 null）
+            if h.role == "assistant" and tcs and not (raw_content or "").strip():
+                item: dict[str, Any] = {"role": "assistant", "content": None, "tool_calls": tcs}
+            else:
+                item = {"role": h.role, "content": raw_content or ""}
+                if h.role == "assistant" and tcs:
+                    item["tool_calls"] = tcs
             # tool_call_id 可能存在 JSON tool_calls 旁路或 content 元数据中
             if h.role == "tool":
-                tc_meta = getattr(h, "tool_calls", None)
+                tc_meta = tcs
                 if isinstance(tc_meta, dict) and tc_meta.get("tool_call_id"):
                     item["tool_call_id"] = tc_meta["tool_call_id"]
                 elif isinstance(tc_meta, list) and tc_meta:
