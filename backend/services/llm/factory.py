@@ -73,12 +73,16 @@ class LLMServiceFactory:
         from types import SimpleNamespace
 
         base_cfg = settings.get_llm_config()
+        def _pick(name, default):
+            v = snapshot.get(name)
+            return default if v is None else v
+
         config = SimpleNamespace(
             base_url=(snapshot.get("base_url") or getattr(base_cfg, "base_url", "") or "").rstrip("/"),
             model=snapshot.get("model") or getattr(base_cfg, "model", "") or "",
             api_key=snapshot.get("api_key") if snapshot.get("api_key") is not None else getattr(base_cfg, "api_key", None),
-            max_tokens=getattr(base_cfg, "max_tokens", 4096),
-            temperature=getattr(base_cfg, "temperature", 0.7),
+            max_tokens=int(_pick("max_tokens", getattr(base_cfg, "max_tokens", 4096)) or 4096),
+            temperature=float(_pick("temperature", getattr(base_cfg, "temperature", 0.7)) or 0.7),
         )
         if provider == "ollama":
             return OllamaService(config)

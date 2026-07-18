@@ -59,6 +59,10 @@ async def create_session(
             "model": default_model or (getattr(cfg, "model", "") or ""),
             "base_url": getattr(cfg, "base_url", "") or "",
             "api_key": getattr(cfg, "api_key", None),
+            # 绑定该模型当前生成参数，会话内不被全局切换影响
+            "temperature": getattr(cfg, "temperature", None),
+            "max_tokens": getattr(cfg, "max_tokens", None),
+            "context_window": getattr(app_settings, "context_window", None),
         }
     session = await repo.create(
         {"user_id": current_user.id, "config": config}

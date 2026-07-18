@@ -1152,6 +1152,11 @@ const zh = {
   'chat.stopGenerating': '停止生成',
   'chat.stopHint': '生成中，点击停止可打断',
   'settings.defaultSessionModelShort': '新会话默认模型（可与当前激活模型不同）',
+  'settings.generationPerModelHint': '每个模型独立保存温度/长度/窗口；切换模型自动载入',
+  'settings.genBoundToModel': '当前绑定模型',
+  'settings.genSwitchHint': '在对话页或上方切换模型即可切换配置',
+  'settings.noActiveModel': '未选择模型',
+  'settings.saveGenerationForModel': '保存到该模型',
 };
 
 const en: Record<keyof typeof zh, string> = {
@@ -2284,6 +2289,11 @@ const en: Record<keyof typeof zh, string> = {
   'chat.stopGenerating': 'Stop',
   'chat.stopHint': 'Generating — click to stop',
   'settings.defaultSessionModelShort': 'Default model for new chats (can differ from active)',
+  'settings.generationPerModelHint': 'Temperature / length / window saved per model; switch model to load its profile',
+  'settings.genBoundToModel': 'Bound to model',
+  'settings.genSwitchHint': 'Switch model in chat or above to change profile',
+  'settings.noActiveModel': 'No model selected',
+  'settings.saveGenerationForModel': 'Save for this model',
 };
 
 const dictionaries: Record<Locale, Record<string, string>> = { zh, en };

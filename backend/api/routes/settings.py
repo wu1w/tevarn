@@ -1531,18 +1531,20 @@ async def select_active_model(
     await model_catalog_mod.save_catalog(repo, catalog)
     model_catalog_mod.apply_active_to_runtime(catalog)
 
-    from backend.core.model_limits import limits_for_model
+    from backend.core import model_gen_params as gen_params_mod
 
-    lim = limits_for_model(data.model)
+    # Prefer user-saved per-model gen params; seed from limits on first use
+    slot = await gen_params_mod.get_params(
+        repo, data.provider_id, data.model, create_if_missing=True
+    )
+    await gen_params_mod.apply_params_to_global_settings(repo, slot)
 
-    # 同步 llm_* 设置 + 上下文窗口
+    # 同步 llm_* 连接设置
     await repo.upsert("llm_provider", provider["llm_provider"], "llm")
     await repo.upsert("llm_base_url", provider["llm_base_url"], "llm")
     await repo.upsert("llm_model", data.model, "llm")
     if provider.get("llm_api_key"):
         await repo.upsert("llm_api_key", provider["llm_api_key"], "llm")
-    await repo.upsert("context_window", lim["context_window"], "llm")
-    await repo.upsert("max_tokens", lim["max_tokens"], "llm")
 
     await log_action(
         AuditAction.SETTINGS_UPDATE,
@@ -1552,24 +1554,37 @@ async def select_active_model(
         resource_id=f"{data.provider_id}/{data.model}",
         details={
             "action": "select",
-            "context_window": lim["context_window"],
-            "max_tokens": lim["max_tokens"],
+            "context_window": slot["context_window"],
+            "max_tokens": slot["max_tokens"],
+            "temperature": slot["temperature"],
         },
     )
     _notify_settings_changed(
         current_user.id,
-        ["active_provider_id", "active_model", "llm_provider", "llm_model", "llm_base_url"],
+        [
+            "active_provider_id",
+            "active_model",
+            "llm_provider",
+            "llm_model",
+            "llm_base_url",
+            "temperature",
+            "max_tokens",
+            "context_window",
+            gen_params_mod.SETTING_KEY,
+        ],
     )
     return {
         "ok": True,
         "active_provider_id": data.provider_id,
         "active_model": data.model,
         "provider_name": provider.get("name") or data.provider_id,
-        "context_window": lim["context_window"],
-        "max_tokens": lim["max_tokens"],
+        "context_window": slot["context_window"],
+        "max_tokens": slot["max_tokens"],
+        "temperature": slot["temperature"],
+        "gen_params": slot,
         "message": (
             f"已切换到 {provider.get('name')} / {data.model}"
-            f"（上下文 {lim['context_window']//1000}K · 生成上限 {lim['max_tokens']}）"
+            f"（温度 {slot['temperature']} · 上下文 {slot['context_window']//1000}K · 生成上限 {slot['max_tokens']}）"
         ),
     }
 
@@ -1849,6 +1864,7 @@ async def apply_settings_batch(
         "max_tokens": "llm",
         "context_window": "llm",
         "temperature": "llm",
+        "llm_model_gen_params": "llm",
         "embedding_provider": "embedding",
         "embedding_model": "embedding",
         "embedding_base_url": "embedding",
@@ -1904,6 +1920,31 @@ async def apply_settings_batch(
         )},
         reset=True,
     )
+
+
+    # 生成参数绑定到当前激活模型（温度/max_tokens/context_window）
+    gen_keys = {"temperature", "max_tokens", "context_window"}
+    if gen_keys & set(saved_keys):
+        try:
+            from backend.core import model_gen_params as gen_params_mod
+            from backend.core import model_catalog as model_catalog_mod
+
+            cat = await model_catalog_mod.load_catalog(repo)
+            pid = str(cat.get("active_provider_id") or "").strip()
+            mid = str(cat.get("active_model") or data.items.get("llm_model") or "").strip()
+            if mid:
+                payload = {}
+                if "temperature" in saved_keys:
+                    payload["temperature"] = data.items.get("temperature")
+                if "max_tokens" in saved_keys:
+                    payload["max_tokens"] = data.items.get("max_tokens")
+                if "context_window" in saved_keys:
+                    payload["context_window"] = data.items.get("context_window")
+                await gen_params_mod.upsert_params(repo, pid, mid, payload)
+                saved_keys.append(gen_params_mod.SETTING_KEY)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("bind gen params to model failed: %s", e)
 
     # 同步登记到多供应商目录（对话页下拉可选）
     try:

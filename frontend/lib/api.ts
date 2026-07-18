@@ -1091,7 +1091,17 @@ export async function getModelCatalog(fetchModels = true): Promise<ModelCatalog>
 export async function selectCatalogModel(
   providerId: string,
   model: string
-): Promise<{ ok: boolean; message: string; active_provider_id: string; active_model: string; provider_name?: string }> {
+): Promise<{
+  ok: boolean;
+  message: string;
+  active_provider_id: string;
+  active_model: string;
+  provider_name?: string;
+  temperature?: number;
+  max_tokens?: number;
+  context_window?: number;
+  gen_params?: { temperature: number; max_tokens: number; context_window: number };
+}> {
   const res = await api.post('/settings/model-catalog/select', {
     provider_id: providerId,
     model,

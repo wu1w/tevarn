@@ -234,14 +234,37 @@ export default function SettingsPage() {
       };
     }, [refreshCatalog]);
 
+
+  const applyGenParamsFromStore = React.useCallback(() => {
+    if (!settings.length) return;
+    const pid = (catalog?.active_provider_id || '').trim();
+    const mid = (catalog?.active_model || mapVal(settings, 'llm_model', '')).trim();
+    // per-model map
+    let map: Record<string, { temperature?: number; max_tokens?: number; context_window?: number }> = {};
+    try {
+      const raw = mapVal(settings, 'llm_model_gen_params', '');
+      if (raw) map = typeof raw === 'string' ? JSON.parse(raw) : (raw as any);
+    } catch { /* ignore */ }
+    const key = pid && mid ? `${pid}|||${mid}` : mid;
+    const slot = (key && map[key]) || (mid && map[mid]) || null;
+    if (slot) {
+      if (slot.temperature != null) setTemperature(Number(slot.temperature));
+      if (slot.max_tokens != null) setMaxTokens(Number(slot.max_tokens));
+      if (slot.context_window != null) setContextWindow(Number(slot.context_window));
+    } else {
+      // fallback flat globals (legacy)
+      setTemperature(numVal(settings, 'temperature', 0.7));
+      setMaxTokens(numVal(settings, 'max_tokens', 12288));
+      setContextWindow(numVal(settings, 'context_window', 128000));
+    }
+  }, [settings, catalog?.active_provider_id, catalog?.active_model]);
+
   const formInited = React.useRef(false);
   useEffect(() => {
     if (!settings.length || formInited.current) return;
     formInited.current = true;
 
-    setTemperature(numVal(settings, 'temperature', 0.7));
-    setMaxTokens(numVal(settings, 'max_tokens', 12288));
-    setContextWindow(numVal(settings, 'context_window', 128000));
+    applyGenParamsFromStore();
     setContextCompressModel(mapVal(settings, 'context_compress_model', ''));
     setSystemName(mapVal(settings, 'system_name', 'Takton'));
     setDefaultLlmModel(mapVal(settings, 'default_llm_model', ''));
@@ -260,6 +283,13 @@ export default function SettingsPage() {
     setImageUrl(mapVal(settings, 'image_base_url'));
     setImageModel(mapVal(settings, 'image_model'));
   }, [settings]);
+  // 切换模型时加载该模型绑定的生成参数
+  useEffect(() => {
+    if (!formInited.current || !settings.length) return;
+    applyGenParamsFromStore();
+  }, [catalog?.active_provider_id, catalog?.active_model, applyGenParamsFromStore, settings.length]);
+
+
 
   useEffect(() => {
     if (!settings.length || !presets.length) return;
@@ -561,7 +591,11 @@ export default function SettingsPage() {
           system_name: systemName.trim() || 'Takton',
           default_llm_model: defaultLlmModel.trim(),
         });
-        addToast(res.message || t('settings.genSaved'), 'success');
+        addToast(
+          (res.message || t('settings.genSaved')) +
+            (catalog?.active_model ? ` · ${catalog.active_model}` : ''),
+          'success',
+        );
         await refetch();
       } catch (e: unknown) {
         addToast(e instanceof Error ? e.message : t('settings.saveFailed'), 'error');
@@ -1078,7 +1112,7 @@ export default function SettingsPage() {
                     disabled={genSaving}
                     className={btnPrimary}
                   >
-                    {genSaving ? t('common.saving') : t('settings.saveGeneration')}
+                    {genSaving ? t('common.saving') : t('settings.saveGenerationForModel')}
                   </button>
                 </div>
               </div>
@@ -1224,10 +1258,30 @@ export default function SettingsPage() {
               )}
             </section>
 
-            {/* 2. 生成参数 */}
+            {/* 2. 生成参数 — 绑定当前激活模型 */}
             <section>
-              <SectionTitle step="2" title={t('settings.generation')} hint={t('settings.generationHintShort')} />
+              <SectionTitle
+                step="2"
+                title={t('settings.generation')}
+                hint={t('settings.generationPerModelHint')}
+              />
               <div className="space-y-4 rounded-2xl border border-border-subtle bg-card-bg/60 p-5">
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-brand-purple/25 bg-brand-purple/[0.06] px-3 py-2.5">
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-medium text-foreground-dim">
+                      {t('settings.genBoundToModel')}
+                    </div>
+                    <div className="truncate text-sm font-semibold text-foreground">
+                      {catalog?.active_model || mapVal(settings, 'llm_model', '') || t('settings.noActiveModel')}
+                      {catalog?.active_provider_id ? (
+                        <span className="ml-2 text-xs font-normal text-foreground-muted">
+                          ({catalog.active_provider_id})
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="text-[10px] text-foreground-dim">{t('settings.genSwitchHint')}</div>
+                </div>
                 <Field label={t('settings.creativity').replace('{n}', temperature.toFixed(1))}>
                   <input
                     type="range"
@@ -1286,7 +1340,7 @@ export default function SettingsPage() {
                                     />
                                   </Field>
                                   <button type="button" onClick={handleSaveGen} disabled={genSaving} className={btnPrimary}>
-                                    {genSaving ? t('common.saving') : t('settings.saveGeneration')}
+                                    {genSaving ? t('common.saving') : t('settings.saveGenerationForModel')}
                                   </button>
                                 </div>
                               </section>
