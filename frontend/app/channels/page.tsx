@@ -16,7 +16,6 @@ import { useToastStore } from '@/stores/toastStore';
 import { useConfirm } from '@/components/desktop/ConfirmDialog';
 import { useT } from '@/stores/localeStore';
 
-export const dynamic = 'force-dynamic';
 
 /* ─── 平台配置 ─── */
 const PLATFORM_META: Record<string, { icon: string; color: string; labelKey?: string; label?: string }> = {

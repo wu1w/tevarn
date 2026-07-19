@@ -6,7 +6,6 @@ import { useAuthStore } from '@/stores/authStore';
 import { getMe, updateMe, changePassword } from '@/lib/api';
 import { useT } from '@/stores/localeStore';
 
-export const dynamic = 'force-dynamic';
 
 type TabKey = 'profile' | 'security' | 'account';
 

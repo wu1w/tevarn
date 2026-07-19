@@ -17,7 +17,6 @@ import {
 import { useConfirm } from '@/components/desktop/ConfirmDialog';
 import { useT } from '@/stores/localeStore';
 
-export const dynamic = 'force-dynamic';
 
 type FsEntry = { name: string; type: string; size?: number | null; mtime?: number };
 

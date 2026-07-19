@@ -18,7 +18,6 @@ import { EmptyState } from '@/components/desktop/EmptyState';
 import SkillStorePanel from '@/components/skills/SkillStorePanel';
 import { useT } from '@/stores/localeStore';
 
-export const dynamic = 'force-dynamic';
 
 type TabKey = 'builtin' | 'custom' | 'community' | 'store';
 

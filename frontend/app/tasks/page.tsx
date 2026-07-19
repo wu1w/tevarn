@@ -7,7 +7,6 @@ import { useSessionStore } from '@/stores/sessionStore';
 import { getTasks } from '@/lib/api';
 import { useT } from '@/stores/localeStore';
 
-export const dynamic = 'force-dynamic';
 
 export default function TasksPage() {
   const t = useT();

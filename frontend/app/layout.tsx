@@ -4,7 +4,6 @@ import { AppShell } from "@/components/layout/AppShell";
 import { QueryProvider } from "@/components/QueryProvider";
 import Toasts from "@/components/Toasts";
 import { ThemeProvider } from "@/components/ThemeProvider";
-import { useT } from '@/stores/localeStore';
 
 /**
  * 不依赖 Google Fonts 在线拉取（离线/代理构建会失败）。
@@ -26,7 +25,6 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const t = useT();
   return (
     <html
       lang="zh-CN"

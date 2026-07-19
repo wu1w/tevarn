@@ -6,7 +6,6 @@ import { getWikiGraph, createWikiEntity, updateWikiEntity, deleteWikiEntity, cre
 import GraphCanvas from './components/GraphCanvas';
 import { t, useT } from '@/stores/localeStore';
 
-export const dynamic = 'force-dynamic';
 
 const ENTITY_TYPES = [
   'person', 'organization', 'project', 'tech', 'concept',

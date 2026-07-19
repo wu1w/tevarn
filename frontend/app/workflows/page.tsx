@@ -19,7 +19,6 @@ import { useToastStore } from '@/stores/toastStore';
 import { useConfirm } from '@/components/desktop/ConfirmDialog';
 import { useT } from '@/stores/localeStore';
 
-export const dynamic = 'force-dynamic';
 
 /* ─────────── 图标 ─────────── */
 function PlayIcon({ className }: { className?: string }) {

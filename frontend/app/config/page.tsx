@@ -9,7 +9,6 @@ import { Skill } from '@/types';
 import { getSkills } from '@/lib/api';
 import { useT } from '@/stores/localeStore';
 
-export const dynamic = 'force-dynamic';
 
 type TabKey = 'sys_prompt' | 'tools';
 

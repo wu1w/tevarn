@@ -17,7 +17,6 @@ import { Skeleton } from '@/components/desktop/Skeleton';
 import { EmptyState } from '@/components/desktop/EmptyState';
 import { useT } from '@/stores/localeStore';
 
-export const dynamic = 'force-dynamic';
 
 const BADGE =
   'rounded border border-border-subtle bg-elevated-bg/80 px-1.5 py-0.5 text-[10px] font-medium text-foreground-muted';

@@ -25,7 +25,6 @@ import { useToastStore } from '@/stores/toastStore';
 import { useT } from '@/stores/localeStore';
 import { useWsStore } from '@/stores/wsStore';
 
-export const dynamic = 'force-dynamic';
 
 export default function HomePage() {
   const router = useRouter();
