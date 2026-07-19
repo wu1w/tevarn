@@ -2,6 +2,7 @@
 
 import React, { useState, useCallback } from 'react';
 import { FileTreeItem } from '@/types';
+import { useT } from '@/stores/localeStore';
 
 interface FileTreeProps {
   items: FileTreeItem[];
@@ -11,6 +12,7 @@ interface FileTreeProps {
 }
 
 export function FileTree({ items, onSelectFile, selectedPath, level = 0 }: FileTreeProps) {
+  const t = useT();
   return (
     <div className="select-none">
       {items.length === 0 && level === 0 && (

@@ -421,26 +421,50 @@ export function Sidebar() {
       {/* 快捷操作条 */}
       <div className="flex items-center gap-1.5 px-3 pt-3 pb-2">
         <button
-          type="button"
-          onClick={handleCreateSession}
-          className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border-subtle bg-white/[0.03] px-3 py-2 text-[12px] font-medium text-foreground-muted transition-all hover:border-brand-purple/30 hover:bg-brand-purple/10 hover:text-foreground"
-        >
-          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-          </svg>
-          {t('nav.newChat')}
-        </button>
-        <button
-                  onClick={toggle}
-                  title={
-                    theme === 'system'
-                      ? t('nav.themeSystem')
-                      : theme === 'light'
-                        ? t('nav.themeLight')
-                        : t('nav.themeDark')
-                  }
-                  className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-border-subtle bg-white/[0.03] text-foreground-muted transition-all hover:border-border-default hover:text-foreground"
+                  type="button"
+                  onClick={handleCreateSession}
+                  className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border-subtle bg-white/[0.03] px-3 py-2 text-[12px] font-medium text-foreground-muted transition-all hover:border-brand-purple/30 hover:bg-brand-purple/10 hover:text-foreground"
                 >
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                  </svg>
+                  {t('nav.newChat')}
+                </button>
+                <button
+                  type="button"
+                  title={t('nav.taktonCode' as never)}
+                  onClick={async () => {
+                    try {
+                      const api = (window as unknown as { electronAPI?: { openTaktonCode?: (o?: { path?: string }) => Promise<{ ok: boolean; error?: string }> } }).electronAPI;
+                      if (api?.openTaktonCode) {
+                        const r = await api.openTaktonCode({});
+                        if (!r?.ok) addToast(r?.error || t('nav.taktonCodeFail' as never), 'error');
+                      } else {
+                        // browser/dev: open docs tip
+                        addToast(t('nav.taktonCodeCliHint' as never), 'info');
+                      }
+                    } catch (e) {
+                      console.error(e);
+                      addToast(t('nav.taktonCodeFail' as never), 'error');
+                    }
+                  }}
+                  className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-border-subtle bg-white/[0.03] text-foreground-muted transition-all hover:border-brand-cyan/40 hover:text-brand-cyan"
+                >
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" />
+                  </svg>
+                </button>
+                <button
+                          onClick={toggle}
+                          title={
+                            theme === 'system'
+                              ? t('nav.themeSystem')
+                              : theme === 'light'
+                                ? t('nav.themeLight')
+                                : t('nav.themeDark')
+                          }
+                          className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-border-subtle bg-white/[0.03] text-foreground-muted transition-all hover:border-border-default hover:text-foreground"
+                        >
                   {theme === 'system' ? (
                               /* 跟随系统 */
                               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>

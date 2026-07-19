@@ -15,11 +15,11 @@ export function GoalPanel({ goal, onClose }: GoalPanelProps) {
 
   const { progress, todos, title, status } = goal;
   const statusLabel: Record<string, string> = {
-    idle: '待命',
-    active: '进行中',
-    completed: '已完成',
-    blocked: '受阻',
-    cancelled: '已取消',
+    idle: t('chat._e65'),
+    active: t('chat._e66'),
+    completed: t('tasks._e10'),
+    blocked: t('chat._e67'),
+    cancelled: t('chat._e68'),
   };
   const statusColor: Record<string, string> = {
     active: 'text-brand-cyan border-brand-cyan/30 bg-brand-cyan/10',
@@ -68,7 +68,7 @@ export function GoalPanel({ goal, onClose }: GoalPanelProps) {
             type="button"
             onClick={onClose}
             className="rounded-lg p-1 text-foreground-dim hover:bg-card-bg-hover hover:text-foreground"
-            title="收起"
+            title={t('chat._e24')}
           >
             ×
           </button>

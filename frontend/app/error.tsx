@@ -47,7 +47,7 @@ export default function GlobalError({
         </svg>
       </div>
 
-      <h1 className="text-2xl font-bold text-foreground">页面出错了</h1>
+      <h1 className="text-2xl font-bold text-foreground">{t('error._e1')}</h1>
       <p className="max-w-md text-center text-foreground-dim">
         这个页面遇到了一个意外错误。你可以尝试重新加载，或者返回首页。
       </p>

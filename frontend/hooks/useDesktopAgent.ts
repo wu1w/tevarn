@@ -32,7 +32,7 @@ export function useDesktopAgent(options: UseDesktopAgentOptions = {}) {
   const [isStreaming, setIsStreaming] = useState(false);
   const [screenFrame, setScreenFrame] = useState<string | null>(null);
 
-  // 执行桌面操作
+  // Execute桌面action
   const executeOperation = useCallback(async (
     operation: DesktopOperation,
     permission: PermissionLevel = 'ask'
@@ -68,7 +68,7 @@ export function useDesktopAgent(options: UseDesktopAgentOptions = {}) {
           // 使用新权限重试
           return executeOperation(operation, level);
         } else {
-          throw new Error('用户拒绝了权限请求');
+          throw new Error('User denied permission');
         }
       }
 
@@ -77,7 +77,7 @@ export function useDesktopAgent(options: UseDesktopAgentOptions = {}) {
       return result;
 
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : '操作失败';
+      const errorMessage = err instanceof Error ? err.message : 'Operation failed';
       setError(errorMessage);
       const result: DesktopOperationResult = {
         success: false,
@@ -92,7 +92,7 @@ export function useDesktopAgent(options: UseDesktopAgentOptions = {}) {
     }
   }, [options]);
 
-  // 执行自然语言任务
+  // Execute自然语言任务
   const executeTask = useCallback(async (
     task: string,
     permission: PermissionLevel = 'ask'
@@ -112,7 +112,7 @@ export function useDesktopAgent(options: UseDesktopAgentOptions = {}) {
       return result;
 
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : '任务执行失败';
+      const errorMessage = err instanceof Error ? err.message : 'Task execution failed';
       setError(errorMessage);
       return {
         success: false,
@@ -189,14 +189,14 @@ export function useDesktopAgent(options: UseDesktopAgentOptions = {}) {
 // 辅助函数
 function getOperationLabel(type: string): string {
   const labels: Record<string, string> = {
-    screenshot: '截取屏幕',
-    click: '点击操作',
-    type: '输入文本',
-    open_app: '打开应用',
-    scroll: '滚动页面',
-    drag: '拖拽操作',
-    read_file: '读取文件',
-    write_file: '写入文件',
+    screenshot: 'Screenshot',
+    click: 'Click',
+    type: 'Type text',
+    open_app: 'Open app',
+    scroll: 'Scroll',
+    drag: 'Drag',
+    read_file: 'Read file',
+    write_file: 'Write file',
   };
   return labels[type] || type;
 }
@@ -206,24 +206,24 @@ function getOperationDescription(operation: DesktopOperation): string {
   
   switch (type) {
     case 'screenshot':
-      return '截取当前屏幕内容，用于分析界面元素';
+      return 'Capture current screen for UI analysis';
     case 'click':
       return params.element_id 
-        ? `点击界面元素: ${params.element_id}`
-        : `点击坐标 (${params.x}, ${params.y})`;
+        ? `Click UI element: ${params.element_id}`
+        : `Click at (${params.x}, ${params.y})`;
     case 'type':
-      return `输入文本: "${params.text?.slice(0, 50)}${params.text?.length > 50 ? '...' : ''}"`;
+      return `Type: "${params.text?.slice(0, 50)}${params.text?.length > 50 ? '...' : ''}"`;
     case 'open_app':
-      return `打开应用程序: ${params.app_name}`;
+      return `Open app: ${params.app_name}`;
     case 'scroll':
-      return `向${params.direction === 'up' ? '上' : '下'}滚动 ${params.amount || 3} 行`;
+      return `Scroll ${params.direction === 'up' ? 'up' : 'down'}scroll ${params.amount || 3}  rows`;
     case 'drag':
-      return `从 (${params.from_x}, ${params.from_y}) 拖拽到 (${params.to_x}, ${params.to_y})`;
+      return `From (${params.from_x}, ${params.from_y}) drag to (${params.to_x}, ${params.to_y})`;
     case 'read_file':
-      return `读取文件: ${params.path}`;
+      return `Read: ${params.path}`;
     case 'write_file':
-      return `写入文件: ${params.path}`;
+      return `Write: ${params.path}`;
     default:
-      return `执行 ${type} 操作`;
+      return `Execute ${type} action`;
   }
 }

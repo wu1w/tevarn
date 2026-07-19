@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import { useT } from '@/stores/localeStore';
 
 /** 判断链接是否指向 workspace 内 AI 生成的文件 */
 export function isWorkspaceFileLink(href: string | undefined): boolean {
@@ -53,6 +54,7 @@ interface Props {
 
 /** AI 生成文件的下载链接：点击 fetch 后端下载端点，blob 触发浏览器保存 */
 export function FileDownloadLink({ href, isUser, children }: Props) {
+  const t = useT();
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState(false);
 
@@ -90,7 +92,7 @@ export function FileDownloadLink({ href, isUser, children }: Props) {
     <a
       href={href}
       onClick={handleClick}
-      title={error ? '下载失败，点击重试' : '点击下载文件'}
+      title={error ? t('chat._e63') : t('chat._e64')}
       className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[0.92em] font-medium no-underline transition-colors ${
         error
           ? 'border-error-text/40 text-error-text'

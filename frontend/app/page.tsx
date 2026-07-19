@@ -25,6 +25,8 @@ import { useToastStore } from '@/stores/toastStore';
 import { useT } from '@/stores/localeStore';
 import { useWsStore } from '@/stores/wsStore';
 
+export const dynamic = 'force-dynamic';
+
 export default function HomePage() {
   const router = useRouter();
   const { currentSession, messages, addMessage, updateMessage, createAndLoadSession, loadMessages, switchSession } = useSession();
@@ -279,7 +281,7 @@ export default function HomePage() {
           try {
             session = await createAndLoadSession();
           } catch (e) {
-            console.error('创建会话失败:', e);
+            console.error(t('page._e1'), e);
             addToast(t('chat.createSessionFailed'), 'error');
             return;
           } finally {

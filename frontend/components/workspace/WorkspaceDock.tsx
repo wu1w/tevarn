@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { FileTree } from '@/components/filetree/FileTree';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import type { FileTreeItem } from '@/types';
+import { useT } from '@/stores/localeStore';
 
 /** 将 workspace tree 转为 FileTree 组件结构 */
 function toFileTreeItems(
@@ -27,6 +28,7 @@ type WorkspaceTreeNode = {
 };
 
 export function WorkspaceDock() {
+  const t = useT();
   const {
     uiMode,
     dockOpen,
@@ -100,13 +102,13 @@ export function WorkspaceDock() {
       {/* 顶栏 */}
       <div className="flex items-center gap-2 border-b border-border-subtle px-3 py-2">
         <span className="min-w-0 flex-1 truncate text-xs font-semibold text-foreground">
-          {name || root || '未选择项目'}
+          {name || root || t('workspace._e163')}
         </span>
         <button
           type="button"
           onClick={() => setForceProjectOpen(true)}
           className="rounded-md border border-border-subtle px-2 py-0.5 text-[10px] text-foreground-muted hover:bg-card-bg-hover"
-          title="切换项目文件夹"
+          title={t('workspace._e32')}
         >
           切换
         </button>
@@ -114,7 +116,7 @@ export function WorkspaceDock() {
           type="button"
           onClick={() => refreshTree()}
           className="rounded-md px-1.5 py-0.5 text-[10px] text-foreground-dim hover:text-foreground"
-          title="刷新目录"
+          title={t('workspace._e33')}
         >
           ↻
         </button>
@@ -122,7 +124,7 @@ export function WorkspaceDock() {
           type="button"
           onClick={() => setDockOpen(false)}
           className="rounded-md px-1.5 py-0.5 text-[10px] text-foreground-dim hover:text-foreground"
-          title="折叠侧栏"
+          title={t('workspace._e34')}
         >
           ⟩
         </button>
@@ -192,7 +194,7 @@ export function WorkspaceDock() {
             type="button"
             onClick={addShellTab}
             className="rounded-md px-2 py-1 text-[11px] text-foreground-dim hover:bg-card-bg-hover"
-            title="新建终端"
+            title={t('workspace._e35')}
           >
             +
           </button>
@@ -237,7 +239,7 @@ export function WorkspaceDock() {
               value={cmd}
               onChange={(e) => setCmd(e.target.value)}
               disabled={!root || active.status === 'running'}
-              placeholder={root ? '在项目目录执行命令…' : '请先绑定项目'}
+              placeholder={root ? t('workspace._e164') : t('workspace._e165')}
               className="min-w-0 flex-1 bg-transparent font-mono text-[11px] text-zinc-200 outline-none placeholder:text-zinc-600"
               spellCheck={false}
               autoComplete="off"

@@ -3,7 +3,7 @@
  * 支持：
  * - <thinking>...</thinking> / <think>...</think>
  * - ```thinking ... ```
- * - 【思考】...【/思考】
+ * - [Thinking]...[/Thinking]
  */
 
 export interface ParsedMessageContent {
@@ -16,7 +16,7 @@ export interface ParsedMessageContent {
 const PAIR_TAGS: Array<[RegExp, RegExp]> = [
   [/<thinking\b[^>]*>/i, /<\/thinking>/i],
   [/<think\b[^>]*>/i, /<\/think>/i],
-  [/【思考】/, /【\/思考】/],
+  [/[Thinking]/, /【\/思考】/],
 ];
 
 export function parseMessageContent(raw: string | null | undefined): ParsedMessageContent {

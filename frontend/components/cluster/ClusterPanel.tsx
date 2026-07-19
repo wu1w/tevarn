@@ -361,7 +361,7 @@ export function ClusterPanel({ onExecute, onCancel, className }: ClusterPanelPro
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Network className="w-5 h-5" />
-            <CardTitle>集群模式</CardTitle>
+            <CardTitle>{t('chat.tool.cluster')}</CardTitle>
           </div>
           <Badge variant="outline">
             <Users className="w-3 h-3 mr-1" />
@@ -376,10 +376,10 @@ export function ClusterPanel({ onExecute, onCancel, className }: ClusterPanelPro
       <CardContent className="space-y-4">
         {/* 任务输入 */}
         <div className="space-y-2">
-          <Label htmlFor="task-description">任务描述</Label>
+          <Label htmlFor="task-description">{t('cluster._e30')}</Label>
           <Textarea
             id="task-description"
-            placeholder="描述要执行的复杂任务，系统将自动分解为子任务..."
+            placeholder={t('cluster._e31')}
             value={taskDescription}
             onChange={(e) => setTaskDescription(e.target.value)}
             rows={3}
@@ -389,7 +389,7 @@ export function ClusterPanel({ onExecute, onCancel, className }: ClusterPanelPro
         {/* 配置 */}
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-2">
-            <Label htmlFor="num-agents">代理数量</Label>
+            <Label htmlFor="num-agents">{t('cluster._e32')}</Label>
             <Input
               id="num-agents"
               type="number"
@@ -401,18 +401,18 @@ export function ClusterPanel({ onExecute, onCancel, className }: ClusterPanelPro
           </div>
           
           <div className="space-y-2">
-            <Label htmlFor="strategy">聚合策略</Label>
+            <Label htmlFor="strategy">{t('cluster._e33')}</Label>
             <Select value={strategy} onValueChange={setStrategy}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="synthesize">LLM 综合</SelectItem>
-                <SelectItem value="vote">投票</SelectItem>
-                <SelectItem value="merge">合并</SelectItem>
-                <SelectItem value="chain">链式</SelectItem>
-                <SelectItem value="weighted">加权投票</SelectItem>
-                <SelectItem value="best">最佳结果</SelectItem>
+                <SelectItem value="vote">{t('cluster._e34')}</SelectItem>
+                <SelectItem value="merge">{t('cluster._e35')}</SelectItem>
+                <SelectItem value="chain">{t('cluster._e36')}</SelectItem>
+                <SelectItem value="weighted">{t('cluster._e37')}</SelectItem>
+                <SelectItem value="best">{t('cluster._e38')}</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -478,7 +478,7 @@ export function ClusterPanel({ onExecute, onCancel, className }: ClusterPanelPro
                   size="sm"
                   onClick={() => setViewMode(viewMode === 'list' ? 'swimlane' : 'list')}
                 >
-                  {viewMode === 'list' ? '泳道图' : '列表'}
+                  {viewMode === 'list' ? t('cluster._e83') : t('cluster._e84')}
                 </Button>
               </div>
             </div>
@@ -486,7 +486,7 @@ export function ClusterPanel({ onExecute, onCancel, className }: ClusterPanelPro
             {/* 进度条 */}
             <div className="space-y-1">
               <div className="flex justify-between text-sm">
-                <span>总体进度</span>
+                <span>{t('cluster._e39')}</span>
                 <span>{currentTask.progress}%</span>
               </div>
               <Progress value={currentTask.progress} className="h-2" />
@@ -515,7 +515,7 @@ export function ClusterPanel({ onExecute, onCancel, className }: ClusterPanelPro
             {/* 聚合结果 */}
             {currentTask.status === 'completed' && currentTask.aggregated_result && (
               <div className="space-y-2">
-                <Label>聚合结果</Label>
+                <Label>{t('cluster._e40')}</Label>
                 <pre className="text-sm bg-muted p-3 rounded-lg overflow-auto max-h-48">
                   {JSON.stringify(currentTask.aggregated_result, null, 2)}
                 </pre>

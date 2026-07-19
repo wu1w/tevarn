@@ -58,7 +58,7 @@ export function DesktopPermissionDialog({
                       <Monitor className="h-5 w-5 text-primary" />
                     </div>
                     <div>
-                      <CardTitle className="text-lg">桌面控制请求</CardTitle>
+                      <CardTitle className="text-lg">{t('desktop._e67')}</CardTitle>
                       <CardDescription className="text-sm">
                         Takton 想要控制您的电脑
                       </CardDescription>
@@ -101,8 +101,8 @@ export function DesktopPermissionDialog({
                     className="w-full justify-start"
                     onClick={() => handleAllow('allow_once')}
                   >
-                    <span className="flex-1 text-left">允许一次</span>
-                    <span className="text-xs text-muted-foreground">仅本次</span>
+                    <span className="flex-1 text-left">{t('desktop._e68')}</span>
+                    <span className="text-xs text-muted-foreground">{t('desktop._e69')}</span>
                   </Button>
 
                   <Button
@@ -110,8 +110,8 @@ export function DesktopPermissionDialog({
                     className="w-full justify-start"
                     onClick={() => handleAllow('allow_session')}
                   >
-                    <span className="flex-1 text-left">本会话允许</span>
-                    <span className="text-xs text-muted-foreground">重启后失效</span>
+                    <span className="flex-1 text-left">{t('desktop._e70')}</span>
+                    <span className="text-xs text-muted-foreground">{t('desktop._e71')}</span>
                   </Button>
 
                   <Button
@@ -119,8 +119,8 @@ export function DesktopPermissionDialog({
                     className="w-full justify-start"
                     onClick={() => handleAllow('always_allow')}
                   >
-                    <span className="flex-1 text-left">始终允许</span>
-                    <span className="text-xs opacity-70">不再询问</span>
+                    <span className="flex-1 text-left">{t('desktop._e72')}</span>
+                    <span className="text-xs opacity-70">{t('desktop._e73')}</span>
                   </Button>
                 </div>
 

@@ -56,7 +56,7 @@ export function buildSessionOperations(
         id: `user-${m.id}`,
         messageId: m.id,
         kind: 'user',
-        title: '用户消息',
+        title: 'tasks._e134',
         summary: truncate(text),
         status: 'info',
         time,
@@ -103,7 +103,7 @@ export function buildSessionOperations(
             id: `asst-${m.id}`,
             messageId: m.id,
             kind: 'assistant',
-            title: 'AI 回复',
+            title: 'tasks._e135',
             summary: truncate(body),
             status: 'info',
             time,
@@ -143,7 +143,7 @@ export function buildSessionOperations(
       messageId: 'streaming',
       kind: 'tool_call',
       title: `调用 ${tc.name}`,
-      summary: '执行中…',
+      summary: 'chat._e76',
       status: 'running',
       time: new Date().toISOString(),
       toolName: tc.name,
@@ -160,25 +160,25 @@ function statusStyle(status: SessionOperation['status']) {
       return {
         badge: 'text-amber-400 dark:text-amber-300 border-amber-500/30 bg-amber-500/10',
         dot: 'bg-amber-400 animate-pulse',
-        label: '进行中',
+        label: 'chat._e66',
       };
     case 'completed':
       return {
         badge: 'text-emerald-700 dark:text-emerald-300 border-emerald-500/30 bg-emerald-500/10',
         dot: 'bg-emerald-400',
-        label: '完成',
+        label: 'chat.completed',
       };
     case 'failed':
       return {
         badge: 'text-red-600 dark:text-red-300 border-red-500/30 bg-red-500/10',
         dot: 'bg-red-400',
-        label: '失败',
+        label: 'mcpStore.failed',
       };
     default:
       return {
         badge: 'text-foreground-muted border-border-subtle bg-card-bg-hover',
         dot: 'bg-foreground-dim',
-        label: '记录',
+        label: 'tasks._e136',
       };
   }
 }
@@ -236,7 +236,7 @@ export function TaskPanel({
     <div className="fixed inset-y-0 right-0 z-50 flex w-[min(100%,24rem)] flex-col border-l border-border-subtle bg-card-bg/95 shadow-2xl shadow-black/50 backdrop-blur-xl">
       <div className="flex flex-shrink-0 items-center justify-between border-b border-border-subtle px-5 py-3.5">
         <div>
-          <h2 className="text-base font-semibold text-foreground">任务看板</h2>
+          <h2 className="text-base font-semibold text-foreground">{t('chat.taskBoard')}</h2>
           <p className="mt-0.5 text-[11px] text-foreground-dim">
             点击操作可跳转到会话位置 · 便于审计
           </p>
@@ -245,7 +245,7 @@ export function TaskPanel({
           type="button"
           onClick={onClose}
           className="rounded-lg p-1.5 text-foreground-dim transition-colors hover:bg-card-bg-hover hover:text-foreground-muted"
-          aria-label="关闭"
+          aria-label={t('store.close')}
         >
           <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -259,7 +259,7 @@ export function TaskPanel({
             <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-foreground-dim">
               Goal 目标{' '}
               <span className="text-brand-cyan">
-                ({goal?.status === 'active' ? '进行中' : goal?.status || ''})
+                ({goal?.status === 'active' ? t('chat._e66') : goal?.status || ''})
               </span>
             </h3>
             <GoalPanel goal={goal} onClose={onClearGoal} />
@@ -304,7 +304,7 @@ export function TaskPanel({
                           ? 'border-brand-cyan/50 bg-brand-cyan/10 ring-1 ring-brand-cyan/30'
                           : 'border-border-subtle bg-card-bg/80 hover:border-border-default hover:bg-card-bg-hover'
                       }`}
-                      title="跳转到会话中的对应位置"
+                      title={t('tasks._e87')}
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0 flex-1">

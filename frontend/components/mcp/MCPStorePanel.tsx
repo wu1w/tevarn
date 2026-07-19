@@ -503,7 +503,7 @@ export default function MCPStorePanel({
             aria-modal="true"
           >
             <div
-              className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border-subtle bg-background p-6 shadow-2xl"
+              className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border-subtle bg-elevated-bg p-6 shadow-2xl"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="mb-4 flex items-start justify-between gap-3">

@@ -3,6 +3,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { apiClient } from '@/lib/api';
+import { t } from '@/stores/localeStore';
 
 export type UiMode = 'simple' | 'pro';
 
@@ -71,7 +72,7 @@ const agentTab = (): TerminalTab => ({
     {
       id: lid(),
       type: 'sys',
-      text: 'Agent 终端输出会出现在这里（command / bash 等工具）。',
+      text: t('workspaceStore._e11'),
       ts: Date.now(),
     },
   ],
@@ -120,7 +121,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           dockOpen: true,
         });
         await get().refreshTree();
-        get().appendAgentOutput(`已绑定项目：${data.root}`, 'sys');
+        get().appendAgentOutput(`Bound project：${data.root}`, 'sys');
       },
 
       unbind: async () => {
@@ -194,7 +195,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         const tab = get().tabs.find((t) => t.id === id);
         if (!tab || tab.kind === 'agent') return;
         if (!get().root) {
-          get().appendToTab(id, { type: 'err', text: '请先选择项目文件夹' });
+          get().appendToTab(id, { type: 'err', text: t('workspaceStore._e12') });
           return;
         }
         get().appendToTab(id, { type: 'in', text: `$ ${command}` });
@@ -207,7 +208,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           if (data.stderr) get().appendToTab(id, { type: 'err', text: data.stderr.replace(/\n$/, '') });
           get().appendToTab(id, {
             type: 'sys',
-            text: `exit ${data.exit_code}${data.dangerous ? '  ⚠ 命令被标记为高风险' : ''}`,
+            text: `exit ${data.exit_code}${data.dangerous ? '  ⚠ Command flagged as high-risk' : ''}`,
           });
         } catch (e: unknown) {
           const msg =

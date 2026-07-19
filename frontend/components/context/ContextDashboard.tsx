@@ -149,7 +149,7 @@ function ContextCreateModal({
       let kind = 'memory';
       if (lower.includes(t('contextDash.scope.system')) || lower.includes(t('contextDash.kind.instruction'))) { scope = 'system'; kind = 'instruction'; }
       else if (lower.includes(t('memory.type.project')) || lower.includes(t('contextDash.kind.doc'))) { scope = 'project'; kind = 'doc'; }
-      else if (lower.includes('知识') || lower.includes('rag')) { scope = 'knowledge'; kind = 'rag'; }
+      else if (lower.includes(t('context._e85')) || lower.includes('rag')) { scope = 'knowledge'; kind = 'rag'; }
       else if (lower.includes(t('memory.type.tool')) || lower.includes('function')) { scope = 'session'; kind = 'tool-def'; }
       else if (lower.includes(t('evolution.source.user')) || lower.includes(t('memory.type.preference'))) { scope = 'user'; kind = 'memory'; }
 

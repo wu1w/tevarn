@@ -6,14 +6,16 @@ import { getWikiGraph, createWikiEntity, updateWikiEntity, deleteWikiEntity, cre
 import GraphCanvas from './components/GraphCanvas';
 import { t, useT } from '@/stores/localeStore';
 
+export const dynamic = 'force-dynamic';
+
 const ENTITY_TYPES = [
   'person', 'organization', 'project', 'tech', 'concept',
   'docs', 'event', 'location', 'problem', 'solution',
 ];
 
 const ENTITY_LABELS: Record<string, string> = {
-  person: t('memory.type.person'), organization: '组织', project: t('memory.type.project'), tech: '技术', concept: '概念',
-  docs: t('contextDash.kind.doc'), event: '事件', location: '地点', problem: '问题', solution: '方案',
+  person: t('memory.type.person'), organization: t('wiki._e12'), project: t('memory.type.project'), tech: t('wiki._e13'), concept: t('wiki._e14'),
+  docs: t('contextDash.kind.doc'), event: t('wiki._e15'), location: t('wiki._e16'), problem: t('wiki._e17'), solution: t('wiki._e18'),
 };
 
 const TYPE_ICON_COLORS: Record<string, string> = {
@@ -40,8 +42,8 @@ const RELATION_TYPES = [
 ];
 
 const RELATION_LABELS: Record<string, string> = {
-  depends_on: '依赖', part_of: '属于', uses: '使用', solves: '解决', related_to: '相关',
-  alternative_to: '替代', belongs_to: '归属', participates_in: '参与', authored_by: '作者', presents: '介绍',
+  depends_on: t('wiki._e19'), part_of: t('wiki._e20'), uses: t('wiki._e21'), solves: t('wiki._e22'), related_to: t('wiki._e23'),
+  alternative_to: t('wiki._e24'), belongs_to: t('wiki._e25'), participates_in: t('wiki._e26'), authored_by: t('wiki._e27'), presents: t('wiki._e28'),
 };
 
 export default function WikiExplorer() {
@@ -84,7 +86,7 @@ export default function WikiExplorer() {
       setEntities(data.entities || []);
       setRelations(data.relations || []);
     } catch (e) {
-      addToast('加载 Wiki 数据失败', 'error');
+      addToast(t('wiki._e29'), 'error');
     } finally {
       setLoading(false);
     }
@@ -179,7 +181,7 @@ export default function WikiExplorer() {
           description: formDesc.trim(),
           aliases: formAliases.split(',').map((s) => s.trim()).filter(Boolean),
         });
-        addToast('实体已更新', 'success');
+        addToast(t('wiki._e30'), 'success');
       } else {
         await createWikiEntity({
           name: formName.trim(),
@@ -187,7 +189,7 @@ export default function WikiExplorer() {
           description: formDesc.trim(),
           aliases: formAliases.split(',').map((s) => s.trim()).filter(Boolean),
         });
-        addToast('实体创建成功', 'success');
+        addToast(t('wiki._e31'), 'success');
       }
       setShowEntityForm(false);
       resetForm();
@@ -200,7 +202,7 @@ export default function WikiExplorer() {
   const handleDeleteEntity = async (id: string) => {
     try {
       await deleteWikiEntity(id);
-      addToast('实体已删除', 'success');
+      addToast(t('wiki._e32'), 'success');
       if (selectedId === id) setSelectedId(null);
       if (focusedId === id) setFocusedId(null);
       loadData();
@@ -213,30 +215,30 @@ export default function WikiExplorer() {
     if (!relSource || !relTarget) return;
     try {
       await createWikiRelation({ source_id: relSource, target_id: relTarget, relation_type: relType, weight: relWeight });
-      addToast('关系创建成功', 'success');
+      addToast(t('wiki._e33'), 'success');
       setShowRelationForm(false);
       setRelSource('');
       setRelTarget('');
       setRelWeight(1);
       loadData();
     } catch (e: any) {
-      addToast(e?.response?.data?.detail || '创建关系失败', 'error');
+      addToast(e?.response?.data?.detail || t('wiki._e34'), 'error');
     }
   };
 
   const handleDeleteRelation = async (id: string) => {
     try {
       await deleteWikiRelation(id);
-      addToast('关系已删除', 'success');
+      addToast(t('wiki._e35'), 'success');
       loadData();
     } catch (e) {
-      addToast('删除关系失败', 'error');
+      addToast(t('wiki._e36'), 'error');
     }
   };
 
   const handlePreview = async () => {
     if (!importContent.trim()) {
-      addToast('请输入导入内容', 'error');
+      addToast(t('wiki._e37'), 'error');
       return;
     }
     try {
@@ -244,7 +246,7 @@ export default function WikiExplorer() {
       const p = await previewWikiImport({ source: importSource, content: importContent });
       setPreview(p);
     } catch (e: any) {
-      addToast(e?.response?.data?.detail || '预览失败', 'error');
+      addToast(e?.response?.data?.detail || t('wiki._e38'), 'error');
     } finally {
       setImporting(false);
     }
@@ -252,7 +254,7 @@ export default function WikiExplorer() {
 
   const handleImport = async () => {
     if (!importContent.trim()) {
-      addToast('请输入导入内容', 'error');
+      addToast(t('wiki._e37'), 'error');
       return;
     }
     setImporting(true);
@@ -264,7 +266,7 @@ export default function WikiExplorer() {
       setPreview(null);
       loadData();
     } catch (e: any) {
-      addToast(e?.response?.data?.detail || '导入失败', 'error');
+      addToast(e?.response?.data?.detail || t('wiki._e39'), 'error');
     } finally {
       setImporting(false);
     }
@@ -280,10 +282,10 @@ export default function WikiExplorer() {
   const handleCanvasCreateRelation = async (sourceId: string, targetId: string) => {
     try {
       await createWikiRelation({ source_id: sourceId, target_id: targetId, relation_type: 'related_to', weight: 1 });
-      addToast('关系创建成功', 'success');
+      addToast(t('wiki._e33'), 'success');
       loadData();
     } catch (e: any) {
-      addToast(e?.response?.data?.detail || '创建关系失败', 'error');
+      addToast(e?.response?.data?.detail || t('wiki._e34'), 'error');
     }
   };
 
@@ -366,7 +368,7 @@ export default function WikiExplorer() {
           </div>
         )}
         {outgoing.length === 0 && incoming.length === 0 && (
-          <p className="text-xs text-foreground-dim italic">暂无关联关系</p>
+          <p className="text-xs text-foreground-dim italic">{t('wiki._e9')}</p>
         )}
       </div>
     );
@@ -390,7 +392,7 @@ export default function WikiExplorer() {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="搜索实体名称、描述..."
+            placeholder={t('wiki._e10')}
             className="w-full rounded-lg border border-border-default bg-card-bg py-2 pl-9 pr-3 text-sm text-foreground placeholder:text-foreground-dim/50 focus:border-brand-purple focus:outline-none focus:ring-1 focus:ring-brand-purple/30"
           />
         </div>
@@ -412,8 +414,8 @@ export default function WikiExplorer() {
         </div>
 
         <div className="flex rounded-lg border border-border-default overflow-hidden">
-          <button onClick={() => setViewMode('graph')} className={`px-3 py-1.5 text-xs font-medium transition-colors ${viewMode === 'graph' ? 'bg-brand-purple text-white' : 'text-foreground-dim hover:bg-gray-50'}`}>图谱</button>
-          <button onClick={() => setViewMode('list')} className={`px-3 py-1.5 text-xs font-medium transition-colors ${viewMode === 'list' ? 'bg-brand-purple text-white' : 'text-foreground-dim hover:bg-gray-50'}`}>列表</button>
+          <button onClick={() => setViewMode('graph')} className={`px-3 py-1.5 text-xs font-medium transition-colors ${viewMode === 'graph' ? 'bg-brand-purple text-white' : 'text-foreground-dim hover:bg-gray-50'}`}>{t('wiki._e11')}</button>
+          <button onClick={() => setViewMode('list')} className={`px-3 py-1.5 text-xs font-medium transition-colors ${viewMode === 'list' ? 'bg-brand-purple text-white' : 'text-foreground-dim hover:bg-gray-50'}`}>{t('wiki._e12')}</button>
         </div>
 
         <div className="flex gap-2">
@@ -473,7 +475,7 @@ export default function WikiExplorer() {
                 <svg className="mx-auto mb-3 h-10 w-10 text-foreground-dim/40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
                 </svg>
-                <p className="text-sm text-foreground-dim">点击图谱或列表中的实体<br />查看详情和关联关系</p>
+                <p className="text-sm text-foreground-dim">点击图谱或列表中的实体<br />{t('wiki._e13')}</p>
               </div>
             </div>
           )}
@@ -483,10 +485,10 @@ export default function WikiExplorer() {
       {showEntityForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowEntityForm(false)}>
           <div className="w-full max-w-md rounded-xl bg-card-bg p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <h3 className="mb-5 text-base font-semibold text-foreground">{editingEntity ? t('memory.modal.edit') : '新建实体'}</h3>
+            <h3 className="mb-5 text-base font-semibold text-foreground">{editingEntity ? t('memory.modal.edit') : t('wiki._e40')}</h3>
             <div className="space-y-4">
               <div>
-                <label className="mb-1 block text-xs font-medium text-foreground-dim">名称 *</label>
+                <label className="mb-1 block text-xs font-medium text-foreground-dim">{t('wiki._e14')}</label>
                 <input value={formName} onChange={(e) => setFormName(e.target.value)} placeholder={t('memory.form.namePlaceholder')} className="w-full rounded-lg border border-border-default px-3 py-2 text-sm text-foreground focus:border-brand-purple focus:outline-none" />
               </div>
               <div>
@@ -497,15 +499,15 @@ export default function WikiExplorer() {
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-foreground-dim">{t('memory.form.desc')}</label>
-                <textarea value={formDesc} onChange={(e) => setFormDesc(e.target.value)} placeholder="实体描述" rows={3} className="w-full rounded-lg border border-border-default px-3 py-2 text-sm text-foreground focus:border-brand-purple focus:outline-none resize-none" />
+                <textarea value={formDesc} onChange={(e) => setFormDesc(e.target.value)} placeholder={t('wiki._e15')} rows={3} className="w-full rounded-lg border border-border-default px-3 py-2 text-sm text-foreground focus:border-brand-purple focus:outline-none resize-none" />
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-foreground-dim">别名（逗号分隔）</label>
-                <input value={formAliases} onChange={(e) => setFormAliases(e.target.value)} placeholder="别名1, 别名2" className="w-full rounded-lg border border-border-default px-3 py-2 text-sm text-foreground focus:border-brand-purple focus:outline-none" />
+                <input value={formAliases} onChange={(e) => setFormAliases(e.target.value)} placeholder={t('wiki._e16')} className="w-full rounded-lg border border-border-default px-3 py-2 text-sm text-foreground focus:border-brand-purple focus:outline-none" />
               </div>
               <div className="flex justify-end gap-3 pt-2">
-                <button onClick={() => setShowEntityForm(false)} className="rounded-lg border border-border-default px-4 py-2 text-sm text-foreground hover:bg-gray-50">取消</button>
-                <button onClick={handleSaveEntity} className="rounded-lg bg-brand-purple px-4 py-2 text-sm font-medium text-white hover:bg-brand-purple/90">保存</button>
+                <button onClick={() => setShowEntityForm(false)} className="rounded-lg border border-border-default px-4 py-2 text-sm text-foreground hover:bg-gray-50">{t('contextDash.cancel')}</button>
+                <button onClick={handleSaveEntity} className="rounded-lg bg-brand-purple px-4 py-2 text-sm font-medium text-white hover:bg-brand-purple/90">{t('kb.save')}</button>
               </div>
             </div>
           </div>
@@ -515,34 +517,34 @@ export default function WikiExplorer() {
       {showRelationForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowRelationForm(false)}>
           <div className="w-full max-w-md rounded-xl bg-card-bg p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <h3 className="mb-5 text-base font-semibold text-foreground">新建关系</h3>
+            <h3 className="mb-5 text-base font-semibold text-foreground">{t('wiki._e17')}</h3>
             <div className="space-y-4">
               <div>
-                <label className="mb-1 block text-xs font-medium text-foreground-dim">源实体 *</label>
+                <label className="mb-1 block text-xs font-medium text-foreground-dim">{t('wiki._e18')}</label>
                 <select value={relSource} onChange={(e) => setRelSource(e.target.value)} className="w-full rounded-lg border border-border-default px-3 py-2 text-sm text-foreground focus:border-brand-purple focus:outline-none">
-                  <option value="">选择实体...</option>
+                  <option value="">{t('wiki._e19')}</option>
                   {entities.map((e) => <option key={e.id} value={e.id}>{e.name} ({ENTITY_LABELS[e.entity_type] || e.entity_type})</option>)}
                 </select>
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-foreground-dim">目标实体 *</label>
+                <label className="mb-1 block text-xs font-medium text-foreground-dim">{t('wiki._e20')}</label>
                 <select value={relTarget} onChange={(e) => setRelTarget(e.target.value)} className="w-full rounded-lg border border-border-default px-3 py-2 text-sm text-foreground focus:border-brand-purple focus:outline-none">
-                  <option value="">选择实体...</option>
+                  <option value="">{t('wiki._e19')}</option>
                   {entities.filter((e) => e.id !== relSource).map((e) => <option key={e.id} value={e.id}>{e.name} ({ENTITY_LABELS[e.entity_type] || e.entity_type})</option>)}
                 </select>
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-foreground-dim">关系类型</label>
+                <label className="mb-1 block text-xs font-medium text-foreground-dim">{t('wiki._e21')}</label>
                 <select value={relType} onChange={(e) => setRelType(e.target.value)} className="w-full rounded-lg border border-border-default px-3 py-2 text-sm text-foreground focus:border-brand-purple focus:outline-none">
                   {RELATION_TYPES.map((t) => <option key={t} value={t}>{RELATION_LABELS[t] || t}</option>)}
                 </select>
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-foreground-dim">权重</label>
+                <label className="mb-1 block text-xs font-medium text-foreground-dim">{t('wiki._e22')}</label>
                 <input type="number" value={relWeight} min={0} max={1} step={0.1} onChange={(e) => setRelWeight(Number(e.target.value))} className="w-full rounded-lg border border-border-default px-3 py-2 text-sm text-foreground focus:border-brand-purple focus:outline-none" />
               </div>
               <div className="flex justify-end gap-3 pt-2">
-                <button onClick={() => setShowRelationForm(false)} className="rounded-lg border border-border-default px-4 py-2 text-sm text-foreground hover:bg-gray-50">取消</button>
+                <button onClick={() => setShowRelationForm(false)} className="rounded-lg border border-border-default px-4 py-2 text-sm text-foreground hover:bg-gray-50">{t('contextDash.cancel')}</button>
                 <button onClick={handleCreateRelation} className="rounded-lg bg-brand-purple px-4 py-2 text-sm font-medium text-white hover:bg-brand-purple/90">{t('channels.create')}</button>
               </div>
             </div>
@@ -564,26 +566,26 @@ export default function WikiExplorer() {
                       importSource === s ? 'bg-brand-purple text-white border-brand-purple' : 'border-border-default text-foreground-dim hover:bg-gray-50'
                     }`}
                   >
-                    {s === 'text' ? '文本' : s === 'json' ? 'JSON' : '当前会话上下文'}
+                    {s === 'text' ? t('wiki._e41') : s === 'json' ? 'JSON' : t('wiki._e42')}
                   </button>
                 ))}
               </div>
               <textarea
                 value={importContent}
                 onChange={(e) => setImportContent(e.target.value)}
-                placeholder={importSource === 'context' ? '选择「当前会话上下文」后，导入将读取当前会话的上下文条目' : '粘贴文本或 JSON，LLM 会自动抽取实体和关系...'}
+                placeholder={importSource === 'context' ? t('wiki._e43') : t('wiki._e44')}
                 rows={6}
                 disabled={importSource === 'context'}
                 className="w-full rounded-lg border border-border-default px-3 py-2 text-sm text-foreground focus:border-brand-purple focus:outline-none resize-none disabled:bg-gray-50"
               />
               <div className="flex gap-2">
-                <button onClick={handlePreview} disabled={importing} className="rounded-lg border border-border-default px-4 py-2 text-sm text-foreground hover:bg-gray-50 disabled:opacity-50">{importing ? '预览中...' : '🔍 预览'}</button>
-                <button onClick={handleImport} disabled={importing} className="rounded-lg bg-brand-purple px-4 py-2 text-sm font-medium text-white hover:bg-brand-purple/90 disabled:opacity-50">{importing ? '导入中...' : '确认导入'}</button>
+                <button onClick={handlePreview} disabled={importing} className="rounded-lg border border-border-default px-4 py-2 text-sm text-foreground hover:bg-gray-50 disabled:opacity-50">{importing ? t('wiki._e45') : t('wiki._e46')}</button>
+                <button onClick={handleImport} disabled={importing} className="rounded-lg bg-brand-purple px-4 py-2 text-sm font-medium text-white hover:bg-brand-purple/90 disabled:opacity-50">{importing ? t('skills.community.importing') : t('wiki._e47')}</button>
               </div>
 
               {preview && (
                 <div className="rounded-lg border border-border-default bg-elevated-bg/40 p-4">
-                  <div className="text-sm font-semibold text-foreground mb-2">预览结果</div>
+                  <div className="text-sm font-semibold text-foreground mb-2">{t('wiki._e23')}</div>
                   <div className="text-xs text-foreground-dim mb-2">实体 {preview.entities.length} 个，关系 {preview.relations.length} 个</div>
                   <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto">
                     {preview.entities.map((e, i) => (

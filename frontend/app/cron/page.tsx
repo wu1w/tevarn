@@ -14,6 +14,8 @@ import { EmptyState } from '@/components/desktop/EmptyState';
 import { LoadingPage } from '@/components/ui/LoadingSpinner';
 import { t, useT } from '@/stores/localeStore';
 
+export const dynamic = 'force-dynamic';
+
 type CronForm = {
   name: string;
   schedule: string;

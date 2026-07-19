@@ -8,6 +8,7 @@ from . import (
     agent_profiles,
     audit,
     auth,
+    bridge,
     channels,
     chat,
     cluster,
@@ -55,6 +56,7 @@ def register_routes(app, prefix: str = "") -> None:
     """
     p = prefix  # 简写
     app.include_router(auth.router, prefix=p)
+    app.include_router(bridge.router, prefix=p)
     app.include_router(channels.router, prefix=p)
     app.include_router(chat.router, prefix=p)
     app.include_router(sessions.router, prefix=p)
@@ -94,6 +96,7 @@ def register_routes(app, prefix: str = "") -> None:
 
     # 健康检查路由：单独注册，不使用 router 自带的 prefix（避免 /api/health/health 双重前缀）
     from .health import _health_router
+
     app.include_router(_health_router, prefix=p)
 
 

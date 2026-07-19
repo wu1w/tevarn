@@ -6,6 +6,7 @@ import remarkGfm from 'remark-gfm';
 import { parseMessageContent } from '@/lib/parseMessageContent';
 import { ThinkingBlock } from './ThinkingBlock';
 import { FileDownloadLink, isWorkspaceFileLink } from './FileDownloadLink';
+import { useT } from '@/stores/localeStore';
 
 function safeUrlTransform(url: string): string {
   if (/^javascript:/i.test(url)) return '';
@@ -27,6 +28,7 @@ export function MarkdownContent({
   isUser = false,
   streaming = false,
 }: MarkdownContentProps) {
+  const t = useT();
   const { thinking, body, thinkingOpen } = useMemo(
     () => parseMessageContent(content),
     [content]
@@ -106,7 +108,7 @@ export function MarkdownContent({
         </div>
       ) : !thinking ? (
         <span className="italic text-foreground-dim">
-          {streaming ? '思考中…' : ''}
+          {streaming ? t('chat.thinking') : ''}
         </span>
       ) : null}
     </div>
@@ -143,6 +145,7 @@ function CodeRenderer(props: {
 }
 
 function FencedCodeBlock({ language, code }: { language: string; code: string }) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
   const preRef = useRef<HTMLPreElement>(null);
 
@@ -166,7 +169,7 @@ function FencedCodeBlock({ language, code }: { language: string; code: string })
           onClick={handleCopy}
           className="rounded-md px-2 py-0.5 text-[10px] text-zinc-400 transition hover:bg-white/10 hover:text-white"
         >
-          {copied ? '已复制 ✓' : '复制'}
+          {copied ? t('chat._e69') : t('chat._e70')}
         </button>
       </div>
       <div className="overflow-x-auto">
@@ -212,6 +215,7 @@ function getMermaid() {
 }
 
 function MermaidBlock({ code, streaming = false }: { code: string; streaming?: boolean }) {
+  const t = useT();
   const uid = useId().replace(/:/g, '');
   const [mode, setMode] = useState<'diagram' | 'source'>(streaming ? 'source' : 'diagram');
   const [cache, setCache] = useState<{ code: string; svg: string } | null>(null);
@@ -247,7 +251,7 @@ function MermaidBlock({ code, streaming = false }: { code: string; streaming?: b
             message:
               parseErr instanceof Error
                 ? parseErr.message.replace(/^Error:\s*/i, '').slice(0, 200)
-                : 'Mermaid 语法错误',
+                : t('chat._e71'),
           });
           setMode('source');
           return;
@@ -270,7 +274,7 @@ function MermaidBlock({ code, streaming = false }: { code: string; streaming?: b
         if (cancelled || seq !== renderSeq.current) return;
         setErr({
           code,
-          message: e instanceof Error ? e.message.slice(0, 200) : 'Mermaid 渲染失败',
+          message: e instanceof Error ? e.message.slice(0, 200) : t('chat._e72'),
         });
         setMode('source');
       }

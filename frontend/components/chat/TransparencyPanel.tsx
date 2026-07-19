@@ -99,9 +99,9 @@ export function TransparencyPanel({ sessionId, visible, onClose }: TransparencyP
       {/* Tabs */}
       <div className="flex border-b border-border-subtle">
         {[
-          { key: 'thinking' as const, label: '💭 思考', count: trace?.thinking_steps?.length || 0 },
-          { key: 'tools' as const, label: '🔧 工具', count: trace?.tool_calls_trace?.length || 0 },
-          { key: 'rag' as const, label: '📚 溯源', count: trace?.rag_sources?.length || 0 },
+          { key: 'thinking' as const, label: t('chat._e79'), count: trace?.thinking_steps?.length || 0 },
+          { key: 'tools' as const, label: t('chat._e80'), count: trace?.tool_calls_trace?.length || 0 },
+          { key: 'rag' as const, label: t('chat._e81'), count: trace?.rag_sources?.length || 0 },
         ].map((tab) => (
           <button
             key={tab.key}
@@ -133,7 +133,7 @@ export function TransparencyPanel({ sessionId, visible, onClose }: TransparencyP
             {/* Summary */}
             <div className="mb-3 rounded-lg bg-card-bg-hover p-2.5 text-[11px] text-foreground-dim">
               <div className="flex items-center gap-1.5">
-                {statusIcon(trace.status)} {trace.user_input_summary || '未记录输入'}
+                {statusIcon(trace.status)} {trace.user_input_summary || t('chat._e82')}
               </div>
               <div className="mt-1 flex gap-3">
                 <span>迭代 {trace.total_iterations}</span>
@@ -146,7 +146,7 @@ export function TransparencyPanel({ sessionId, visible, onClose }: TransparencyP
             {activeTab === 'thinking' && (
               <div className="space-y-2">
                 {trace.thinking_steps.length === 0 ? (
-                  <p className="py-4 text-center text-xs text-foreground-dim">本轮无思考记录</p>
+                  <p className="py-4 text-center text-xs text-foreground-dim">{t('chat._e6')}</p>
                 ) : (
                   trace.thinking_steps.map((step, i) => (
                     <ThinkingStepCard key={i} step={step} index={i} />
@@ -159,7 +159,7 @@ export function TransparencyPanel({ sessionId, visible, onClose }: TransparencyP
             {activeTab === 'tools' && (
               <div className="space-y-2">
                 {trace.tool_calls_trace.length === 0 ? (
-                  <p className="py-4 text-center text-xs text-foreground-dim">本轮无工具调用</p>
+                  <p className="py-4 text-center text-xs text-foreground-dim">{t('chat._e7')}</p>
                 ) : (
                   trace.tool_calls_trace.map((tc, i) => (
                     <ToolCallTraceCard key={i} tc={tc} index={i} />
@@ -172,7 +172,7 @@ export function TransparencyPanel({ sessionId, visible, onClose }: TransparencyP
             {activeTab === 'rag' && (
               <div className="space-y-2">
                 {trace.rag_sources.length === 0 ? (
-                  <p className="py-4 text-center text-xs text-foreground-dim">本轮无 RAG 溯源</p>
+                  <p className="py-4 text-center text-xs text-foreground-dim">{t('chat._e8')}</p>
                 ) : (
                   trace.rag_sources.map((src, i) => (
                     <RagSourceCard key={i} source={src} index={i} />
@@ -188,6 +188,7 @@ export function TransparencyPanel({ sessionId, visible, onClose }: TransparencyP
 }
 
 function ThinkingStepCard({ step, index }: { step: ThinkingStep; index: number }) {
+  const t = useT();
   const [open, setOpen] = useState(index === 0);
   const preview = (step.content || step.visible_content || '').replace(/\s+/g, ' ').slice(0, 100);
 
@@ -214,7 +215,7 @@ function ThinkingStepCard({ step, index }: { step: ThinkingStep; index: number }
         <div className="border-t border-violet-500/10 px-3 py-2">
           {step.content && (
             <div className="mb-2">
-              <div className="mb-1 text-[10px] font-medium uppercase text-violet-400/70">推理</div>
+              <div className="mb-1 text-[10px] font-medium uppercase text-violet-400/70">{t('chat._e9')}</div>
               <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed text-foreground-muted">
                 {step.content}
               </pre>
@@ -222,7 +223,7 @@ function ThinkingStepCard({ step, index }: { step: ThinkingStep; index: number }
           )}
           {step.visible_content && (
             <div>
-              <div className="mb-1 text-[10px] font-medium uppercase text-foreground-dim">输出</div>
+              <div className="mb-1 text-[10px] font-medium uppercase text-foreground-dim">{t('wf.result.output')}</div>
               <pre className="max-h-32 overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed text-foreground-muted">
                 {step.visible_content}
               </pre>
@@ -240,6 +241,7 @@ function ThinkingStepCard({ step, index }: { step: ThinkingStep; index: number }
 }
 
 function ToolCallTraceCard({ tc, index }: { tc: ToolCallTrace; index: number }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const statusColor = tc.status === 'completed' ? 'text-emerald-400' : 'text-red-400';
 
@@ -264,7 +266,7 @@ function ToolCallTraceCard({ tc, index }: { tc: ToolCallTrace; index: number }) 
         <div className="border-t border-border-subtle px-3 py-2">
           {Object.keys(tc.arguments).length > 0 && (
             <div className="mb-2">
-              <div className="mb-1 text-[10px] font-medium uppercase text-foreground-dim">参数</div>
+              <div className="mb-1 text-[10px] font-medium uppercase text-foreground-dim">{t('chat._e10')}</div>
               <pre className="max-h-32 overflow-y-auto rounded bg-black/20 p-2 text-[11px] text-foreground-muted">
                 {JSON.stringify(tc.arguments, null, 2)}
               </pre>
@@ -272,7 +274,7 @@ function ToolCallTraceCard({ tc, index }: { tc: ToolCallTrace; index: number }) 
           )}
           {tc.result_summary && (
             <div>
-              <div className="mb-1 text-[10px] font-medium uppercase text-foreground-dim">结果</div>
+              <div className="mb-1 text-[10px] font-medium uppercase text-foreground-dim">{t('tools.form.result')}</div>
               <pre className="max-h-32 overflow-y-auto whitespace-pre-wrap text-[11px] text-foreground-muted">
                 {tc.result_summary}
               </pre>
@@ -285,6 +287,7 @@ function ToolCallTraceCard({ tc, index }: { tc: ToolCallTrace; index: number }) 
 }
 
 function RagSourceCard({ source, index }: { source: RagSource; index: number }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const scoreColor = source.score >= 0.8 ? 'text-emerald-400' : source.score >= 0.5 ? 'text-amber-400' : 'text-red-400';
 

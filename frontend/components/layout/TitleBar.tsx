@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { ConnectionIndicator, ConnectionState } from '@/components/desktop/ConnectionIndicator';
 import { AppLogo } from '@/components/brand/AppLogo';
+import { useT } from '@/stores/localeStore';
 
 interface TitleBarProps {
   wsState?: ConnectionState;
@@ -21,6 +22,7 @@ export function TitleBar({
   onReconnect,
   title = 'Takton',
 }: TitleBarProps) {
+  const t = useT();
   const [isElectron, setIsElectron] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
   const [platform, setPlatform] = useState<string>('win32');
@@ -68,12 +70,12 @@ export function TitleBar({
 
         {isElectron && platform === 'win32' && (
           <div className="flex h-full items-stretch">
-            <WindowBtn onClick={handleMinimize} label="最小化" title="最小化">
+            <WindowBtn onClick={handleMinimize} label={t('layout._e19')} title={t('layout._e19')}>
               <svg width="10" height="1" viewBox="0 0 10 1" className="fill-current">
                 <rect width="10" height="1" />
               </svg>
             </WindowBtn>
-            <WindowBtn onClick={handleMaximize} label="最大化" title={isMaximized ? '还原' : '最大化'}>
+            <WindowBtn onClick={handleMaximize} label={t('layout._e20')} title={isMaximized ? t('layout._e112') : t('layout._e113')}>
               {isMaximized ? (
                 <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className="stroke-current" strokeWidth="1">
                   <rect x="2" y="0" width="8" height="8" />
@@ -85,7 +87,7 @@ export function TitleBar({
                 </svg>
               )}
             </WindowBtn>
-            <WindowBtn onClick={handleClose} label="关闭" title="关闭" danger>
+            <WindowBtn onClick={handleClose} label={t('store.close')} title={t('store.close')} danger>
               <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className="stroke-current" strokeWidth="1.2">
                 <path d="M1 1l8 8M9 1L1 9" />
               </svg>

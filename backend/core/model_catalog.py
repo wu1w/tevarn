@@ -287,7 +287,17 @@ def _guess_provider_identity(provider_type: str, base: str) -> tuple[str, str]:
         return "OpenAI", "openai"
     if provider_type == "anthropic":
         return "Claude", "anthropic"
-    return provider_type or "custom", provider_type if provider_type != "openai-compatible" else "custom"
+    # Fallback: use base URL host as a more meaningful id instead of generic "custom"
+    if base:
+        from urllib.parse import urlparse
+        try:
+            host = urlparse(base if "://" in base else f"https://{base}").hostname or ""
+            slug = host.replace(".", "-").replace(":", "-").strip("-")
+            if slug:
+                return provider_type or slug, slug
+        except Exception:
+            pass
+    return provider_type or "custom", provider_type if provider_type not in ("openai-compatible", "openai_compatible") else "custom"
 
 
 def upsert_provider(

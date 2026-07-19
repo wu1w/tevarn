@@ -127,7 +127,7 @@ export function DesktopAgentPanel({ isOpen, onClose, onTaskComplete }: DesktopAg
                   <Monitor className="h-4 w-4 text-primary" />
                 </div>
                 <div>
-                  <CardTitle className="text-base">桌面助手</CardTitle>
+                  <CardTitle className="text-base">{t('desktop._e58')}</CardTitle>
                 </div>
                 <Badge variant={isStreaming ? "default" : "secondary"} className="text-xs">
                   {isStreaming ? "实时" : "就绪"}
@@ -196,19 +196,19 @@ export function DesktopAgentPanel({ isOpen, onClose, onTaskComplete }: DesktopAg
             <div className="grid grid-cols-3 gap-2">
               <QuickActionButton
                 icon={Camera}
-                label="截图"
+                label={t('desktop._e59')}
                 onClick={() => executeOperation({ type: 'screenshot', params: {} })}
                 disabled={isExecuting}
               />
               <QuickActionButton
                 icon={AppWindow}
-                label="记事本"
+                label={t('desktop._e60')}
                 onClick={() => executeOperation({ type: 'open_app', params: { app_name: 'notepad.exe' } })}
                 disabled={isExecuting}
               />
               <QuickActionButton
                 icon={MousePointer}
-                label="点击"
+                label={t('desktop._e61')}
                 onClick={() => executeOperation({ type: 'click', params: { x: 960, y: 540 } })}
                 disabled={isExecuting}
               />
@@ -294,7 +294,7 @@ function getOperationDescription(operation: { type: string; params: Record<strin
   
   switch (type) {
     case 'screenshot':
-      return '截取屏幕';
+      return 'desktop._e99';
     case 'click':
       return params.element_id 
         ? `点击元素`
@@ -304,7 +304,7 @@ function getOperationDescription(operation: { type: string; params: Record<strin
     case 'open_app':
       return `打开: ${params.app_name}`;
     case 'scroll':
-      return `向${params.direction === 'up' ? '上' : '下'}滚动`;
+      return `向${params.direction === 'up' ? 'desktop._e100' : 'desktop._e101'}滚动`;
     default:
       return type;
   }

@@ -10,15 +10,17 @@ import { StartupOverlay } from '@/components/desktop/StartupOverlay';
 import { ErrorBoundary } from '@/components/desktop/ErrorBoundary';
 import { ConnectionState } from '@/components/desktop/ConnectionIndicator';
 import { AppLogo } from '@/components/brand/AppLogo';
+import { useT } from '@/stores/localeStore';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
+  const t = useT();
   const { isAuthenticated, hasHydrated } = useAuthStore();
   const pathname = usePathname();
   const router = useRouter();
   const isLoginPage = pathname === '/login' || pathname === '/login/';
 
   const [backendReady, setBackendReady] = useState(false);
-  const [startupStage, setStartupStage] = useState('正在初始化...');
+  const [startupStage, setStartupStage] = useState(t('layout._e108'));
   const isWsConnected = useWsStore((s) => s.isConnected);
   const isWsConnecting = useWsStore((s) => s.isConnecting);
   // 无会话时 WS 本来就不连：后端健康 = 就绪，不是「断开」
@@ -71,7 +73,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     };
 
     if (!window.electronAPI) {
-      setStartupStage('检查后端…');
+      setStartupStage(t('layout._e109'));
       checkHealth().then((ok) => {
         if (!ok) {
           const interval = setInterval(async () => {
@@ -85,11 +87,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    setStartupStage('正在启动后端服务...');
+    setStartupStage(t('desktop._e107'));
 
     checkHealth().then((ready) => {
       if (!ready) {
-        setStartupStage('等待后端响应...');
+        setStartupStage(t('layout._e110'));
         const interval = setInterval(async () => {
           const ok = await checkHealth();
           if (ok) {
@@ -112,7 +114,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <div className="flex h-screen items-center justify-center bg-page-bg app-ambient">
         <div className="flex flex-col items-center gap-4">
           <BrandMark pulse />
-          <div className="text-sm text-foreground-dim">加载中...</div>
+          <div className="text-sm text-foreground-dim">{t('contextDash.loading')}</div>
         </div>
       </div>
     );
@@ -123,7 +125,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <div className="flex h-screen items-center justify-center bg-page-bg app-ambient">
         <div className="flex flex-col items-center gap-4">
           <BrandMark pulse />
-          <div className="text-sm text-foreground-dim">请登录后使用...</div>
+          <div className="text-sm text-foreground-dim">{t('layout._e16')}</div>
         </div>
       </div>
     );

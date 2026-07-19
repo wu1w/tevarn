@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { useT } from '@/stores/localeStore';
 
 interface LoadingSpinnerProps {
   size?: 'sm' | 'md' | 'lg';
@@ -9,6 +10,7 @@ interface LoadingSpinnerProps {
 }
 
 export function LoadingSpinner({ size = 'md', text, className = '' }: LoadingSpinnerProps) {
+  const t = useT();
   const sizeClasses = {
     sm: 'h-4 w-4',
     md: 'h-8 w-8',
@@ -25,7 +27,7 @@ export function LoadingSpinner({ size = 'md', text, className = '' }: LoadingSpi
   );
 }
 
-export function LoadingPage({ text = '加载中...' }: { text?: string }) {
+export function LoadingPage({ text = 'contextDash.loading' }: { text?: string }) {
   return (
     <div className="flex h-64 items-center justify-center">
       <LoadingSpinner size="lg" text={text} />

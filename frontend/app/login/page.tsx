@@ -15,6 +15,8 @@ import { autoLogin, login, register } from '@/lib/api';
 import { AppLogo } from '@/components/brand/AppLogo';
 import { LanguageSwitcher } from '@/components/ui/LanguageSwitcher';
 
+export const dynamic = 'force-dynamic';
+
 export default function LoginPage() {
   const router = useRouter();
   const { login: storeLogin, isAuthenticated, hasHydrated } = useAuthStore();

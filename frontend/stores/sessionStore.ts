@@ -145,7 +145,7 @@ export const useSessionStore = create<SessionState>()(
       getSessionTitle: (sessionId) => {
         const t = get().sessionTitles[sessionId];
         if (t && t.trim()) return t;
-        return '未命名会话';
+        return 'Untitled session';
       },
 
       // 星标

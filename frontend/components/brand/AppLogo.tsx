@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { useT } from '@/stores/localeStore';
 
 type LogoSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 
@@ -32,6 +33,7 @@ export function AppLogo({
   className = '',
   alt = 'Takton',
 }: AppLogoProps) {
+  const t = useT();
   const s = SIZE_MAP[size];
 
   return (

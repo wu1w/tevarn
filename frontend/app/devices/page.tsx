@@ -17,6 +17,8 @@ import {
 import { useConfirm } from '@/components/desktop/ConfirmDialog';
 import { useT } from '@/stores/localeStore';
 
+export const dynamic = 'force-dynamic';
+
 type FsEntry = { name: string; type: string; size?: number | null; mtime?: number };
 
 export default function DevicesPage() {
@@ -94,7 +96,7 @@ export default function DevicesPage() {
       const msg =
         (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
         (e as Error)?.message ||
-        '加载目录失败';
+        t('devices._e3');
       setFsError(String(msg));
       setEntries([]);
     } finally {
@@ -135,7 +137,7 @@ export default function DevicesPage() {
       const msg =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
         (err as Error)?.message ||
-        '配对失败';
+        t('devices._e4');
       setPairError(String(msg));
     } finally {
       setPairing(false);
@@ -236,7 +238,7 @@ export default function DevicesPage() {
   };
 
   const handleDelete = async (id: string) => {
-    const ok = await confirm('确定删除此设备？');
+    const ok = await confirm(t('devices._e5'));
     if (!ok) return;
     try {
       await deleteDevice(id);
@@ -254,7 +256,7 @@ export default function DevicesPage() {
     <div className="flex h-full min-h-0 flex-col p-6">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold text-foreground">设备管理</h1>
+          <h1 className="text-xl font-bold text-foreground">{t('devices._e2')}</h1>
           <p className="mt-0.5 text-xs text-foreground-dim">
             L1 远程 agent：配对 · 延迟 · 目录 · 命令（@设备名 也可在对话中调用）
           </p>
@@ -266,7 +268,7 @@ export default function DevicesPage() {
             disabled={discovering}
             className="rounded-xl border border-border-default bg-card-bg px-3 py-2 text-sm text-foreground-muted hover:border-brand-cyan/30 hover:text-brand-cyan disabled:opacity-50"
           >
-            {discovering ? '扫描中…' : '扫描局域网'}
+            {discovering ? t('devices._e6') : t('devices._e7')}
           </button>
           <button
             type="button"
@@ -283,7 +285,7 @@ export default function DevicesPage() {
 
       {showPair && (
         <div className="mb-4 rounded-xl border border-border-subtle bg-card-bg/60 p-4">
-          <h2 className="mb-3 text-sm font-semibold text-foreground">配对 takton-agent</h2>
+          <h2 className="mb-3 text-sm font-semibold text-foreground">{t('devices._e3')}</h2>
           {discovered.length > 0 && (
             <div className="mb-3 space-y-1">
               <div className="text-xs text-foreground-dim">发现的服务（点击填入）</div>
@@ -308,7 +310,7 @@ export default function DevicesPage() {
           )}
           <form onSubmit={handlePair} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <input
-              placeholder="名称（对话里 @名称）"
+              placeholder={t('devices._e4')}
               value={pairForm.name}
               onChange={(e) => setPairForm({ ...pairForm, name: e.target.value })}
               className="rounded-xl border border-border-default bg-input-bg px-3 py-2 text-sm text-foreground"
@@ -342,7 +344,7 @@ export default function DevicesPage() {
                 disabled={pairing}
                 className="flex-1 rounded-xl bg-brand-purple/90 px-3 py-2 text-sm text-white disabled:opacity-50"
               >
-                {pairing ? '连接中…' : '配对'}
+                {pairing ? t('chat.connecting') : t('devices._e8')}
               </button>
               <button
                 type="button"
@@ -406,7 +408,7 @@ export default function DevicesPage() {
         {/* 详情 */}
         <div className="min-h-0 overflow-y-auto rounded-xl border border-border-subtle bg-card-bg/20 p-4">
           {!selected ? (
-            <div className="py-16 text-center text-sm text-foreground-dim">选择左侧设备</div>
+            <div className="py-16 text-center text-sm text-foreground-dim">{t('devices._e5')}</div>
           ) : (
             <div className="space-y-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -543,7 +545,7 @@ export default function DevicesPage() {
 
               {/* Exec */}
               <div className="rounded-xl border border-border-subtle bg-card-bg/40 p-3">
-                <div className="mb-2 text-xs font-medium text-foreground-muted">远程命令</div>
+                <div className="mb-2 text-xs font-medium text-foreground-muted">{t('devices._e6')}</div>
                 <div className="flex gap-2">
                   <input
                     value={execCmd}
@@ -558,7 +560,7 @@ export default function DevicesPage() {
                     disabled={executing}
                     className="rounded-lg bg-brand-purple/80 px-3 py-2 text-xs text-white disabled:opacity-50"
                   >
-                    {executing ? '…' : '运行'}
+                    {executing ? '…' : t('wf.run')}
                   </button>
                 </div>
                 {execOut && (

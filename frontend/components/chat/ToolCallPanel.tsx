@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useMemo, useState } from 'react';
+import { useT } from '@/stores/localeStore';
 import {
   formatToolResultForDisplay,
   summarizeToolResult,
@@ -22,6 +23,7 @@ interface ToolCallPanelProps {
 }
 
 export function ToolCallPanel({ toolCalls, pending = false }: ToolCallPanelProps) {
+  const t = useT();
   if (!toolCalls?.length) return null;
   return (
     <div className="space-y-1.5">
@@ -49,7 +51,7 @@ function ToolCallCard({
 
   const summary = useMemo(() => {
     if (hasResult) return summarizeToolResult(toolCall.result, toolCall.name);
-    if (status === 'running') return '执行中…';
+    if (status === 'running') return 'chat._e76';
     if (hasArgs) {
       const keys = Object.keys(toolCall.arguments);
       return keys.slice(0, 3).join(', ') + (keys.length > 3 ? '…' : '');
@@ -198,7 +200,7 @@ function ToolCallCard({
 
           {!hasArgs && !hasResult && (
             <p className="text-[11px] text-foreground-dim">
-              {status === 'running' ? '等待执行结果…' : '无参数'}
+              {status === 'running' ? 'chat._e77' : 'chat._e78'}
             </p>
           )}
         </div>

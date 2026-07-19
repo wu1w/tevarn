@@ -19,6 +19,8 @@ import { useToastStore } from '@/stores/toastStore';
 import { useConfirm } from '@/components/desktop/ConfirmDialog';
 import { useT } from '@/stores/localeStore';
 
+export const dynamic = 'force-dynamic';
+
 /* ─────────── 图标 ─────────── */
 function PlayIcon({ className }: { className?: string }) {
   return (
@@ -73,55 +75,55 @@ const DEFAULT_DAG_EXAMPLE = {
     {
       id: 'input_1',
       type: 'input',
-      label: '用户输入',
+      label: 'workflows._e51',
       position: { x: 40, y: 220 },
       config: { input_type: 'text', default_value: '' },
     },
     {
       id: 'llm_1',
       type: 'llm',
-      label: '意图识别',
+      label: 'workflows._e52',
       position: { x: 260, y: 220 },
       config: {
         model: 'default',
         temperature: 0.3,
         max_tokens: 512,
         system_prompt:
-          '你是一个意图分类器。分析用户输入，判断意图类型：question(提问)、complaint(投诉)、chat(闲聊)。只输出一个分类标签。',
+          'workflows._e53',
       },
     },
     {
       id: 'cond_1',
       type: 'condition',
-      label: '是否提问',
+      label: 'workflows._e54',
       position: { x: 500, y: 220 },
       config: { condition: "'question' in str(input).lower()" },
     },
     {
       id: 'rag_1',
       type: 'rag',
-      label: '知识检索',
+      label: 'workflows._e55',
       position: { x: 740, y: 100 },
       config: { top_k: 5, threshold: 0.7, rerank: true },
     },
     {
       id: 'agent_1',
       type: 'agent',
-      label: 'Agent处理',
+      label: 'workflows._e56',
       position: { x: 740, y: 340 },
       config: { agent_profile: 'default', max_steps: 10, enable_tools: true },
     },
     {
       id: 'merge_1',
       type: 'merge',
-      label: '合并结果',
+      label: 'workflows._e57',
       position: { x: 980, y: 220 },
       config: { mode: 'list' },
     },
     {
       id: 'output_1',
       type: 'output',
-      label: '最终回复',
+      label: 'workflows._e58',
       position: { x: 1220, y: 220 },
       config: { output_name: 'response' },
     },
@@ -187,14 +189,14 @@ const DEFAULT_DAG_BASIC = {
     {
       id: 'input_1',
       type: 'input',
-      label: '输入',
+      label: 'workflows._e59',
       position: { x: 80, y: 220 },
       config: { input_type: 'text', default_value: 'World' },
     },
     {
       id: 'python_1',
       type: 'python',
-      label: '处理',
+      label: 'workflows._e60',
       position: { x: 320, y: 220 },
       config: {
         code: 'greeting = "Hello, " + str(input_data)\nresult = greeting + "!"\nprint(result)',
@@ -203,7 +205,7 @@ const DEFAULT_DAG_BASIC = {
     {
       id: 'output_1',
       type: 'output',
-      label: '输出',
+      label: 'wf.result.output',
       position: { x: 560, y: 220 },
       config: { output_name: 'greeting' },
     },
@@ -325,7 +327,7 @@ export default function WorkflowsPage() {
     try {
       const wf = await createWorkflow({
         name,
-        description: '一个完整的智能客服工作流示例，包含意图识别、条件分支、知识检索和Agent处理',
+        description: t('workflows._e61'),
         dag: DEFAULT_DAG_EXAMPLE,
         trigger: 'manual',
       });
@@ -345,7 +347,7 @@ export default function WorkflowsPage() {
     try {
       const wf = await createWorkflow({
         name,
-        description: '一个简单的 input → python → output 可运行示例',
+        description: t('workflows._e62'),
         dag: DEFAULT_DAG_BASIC,
         trigger: 'manual',
       });

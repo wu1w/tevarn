@@ -62,7 +62,7 @@ export function StartupOverlay({ backendReady, stage }: StartupOverlayProps) {
 
           {/* 阶段描述 */}
           <p className="text-xs text-foreground-dim">
-            {backendReady ? '✓ 后端就绪' : stage || '正在启动后端服务...'}
+            {backendReady ? t('desktop._e106') : stage || t('desktop._e107')}
           </p>
 
           {/* 跳动的点 */}

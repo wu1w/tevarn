@@ -10,6 +10,8 @@ import { useToastStore } from '@/stores/toastStore';
 import MCPStorePanel, { type MCPPageTab } from '@/components/mcp/MCPStorePanel';
 import { t, useT } from '@/stores/localeStore';
 
+export const dynamic = 'force-dynamic';
+
 const RISK_OPTIONS = [
   { value: 'safe', labelKey: 'mcpPage.risk.safe', descKey: 'mcpPage.risk.safeDesc' },
   { value: 'low', labelKey: 'mcpPage.risk.low', descKey: 'mcpPage.risk.lowDesc' },

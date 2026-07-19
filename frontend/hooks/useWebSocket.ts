@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useWsStore } from '@/stores/wsStore';
+import { t } from '@/stores/localeStore';
 import type {
   WSMessage,
   StreamDeltaMessage,
@@ -172,7 +173,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
     }
 
     if (reconnectAttempts.current >= MAX_RECONNECT_ATTEMPTS) {
-      optionsRef.current.onError?.('WebSocket 重连次数已达上限，请刷新页面或点击重连');
+      optionsRef.current.onError?.('WebSocket reconnect limit reached — refresh or click reconnect');
       return;
     }
 
@@ -207,7 +208,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
     } catch {
       connectingRef.current = false;
       setIsConnecting(false);
-      optionsRef.current.onError?.('无效的 WebSocket 地址');
+      optionsRef.current.onError?.('Invalid WebSocket address');
       return;
     }
 
@@ -217,7 +218,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
     } catch (e) {
       connectingRef.current = false;
       setIsConnecting(false);
-      optionsRef.current.onError?.(`WebSocket 创建失败: ${e}`);
+      optionsRef.current.onError?.(`WebSocket creation failed: ${e}`);
       return;
     }
 
@@ -278,7 +279,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
     ws.onerror = () => {
       connectingRef.current = false;
       setIsConnecting(false);
-      optionsRef.current.onError?.('WebSocket 连接错误');
+      optionsRef.current.onError?.('WebSocket connection error');
     };
 
     ws.onmessage = (event: MessageEvent) => {
@@ -305,7 +306,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
                 id: notif.id || crypto.randomUUID(),
                 user_id: notif.user_id || '',
                 type: notif.notification_type || 'info',
-                title: notif.title || '通知',
+                title: notif.title || t('nav.notifications'),
                 content: notif.message || notif.content || '',
                 is_read: false,
                 read_at: null,
@@ -336,7 +337,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
           import('@/stores/confirmStore').then((mod) => {
             mod.useConfirmStore.getState().showConfirm({
               confirmId: m.confirm_id,
-              title: m.title || '危险操作确认',
+              title: m.title || t('useWebSocket._e2'),
               command: m.command || '',
               reason: m.reason || '',
             });

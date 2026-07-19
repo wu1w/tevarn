@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import { useT } from '@/stores/localeStore';
 
 interface ThinkingBlockProps {
   content: string;
@@ -14,6 +15,7 @@ export function ThinkingBlock({
   streaming = false,
   defaultOpen = false,
 }: ThinkingBlockProps) {
+  const t = useT();
   const [open, setOpen] = useState(defaultOpen || streaming);
 
   // 流式开始时自动展开，结束后保持用户选择
@@ -46,7 +48,7 @@ export function ThinkingBlock({
           )}
         </span>
         <span className="chat-tool-chip text-violet-300/90">
-          {streaming ? '思考中…' : '思考过程'}
+          {streaming ? t('chat.thinking') : t('chat._e75')}
         </span>
         {!open && (
           <span className="min-w-0 flex-1 truncate text-[11px] text-foreground-dim">

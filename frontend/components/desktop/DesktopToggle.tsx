@@ -10,12 +10,14 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { DesktopAgentPanel } from './DesktopAgentPanel';
+import { useT } from '@/stores/localeStore';
 
 interface DesktopToggleProps {
   onTaskComplete?: (result: any) => void;
 }
 
 export function DesktopToggle({ onTaskComplete }: DesktopToggleProps) {
+  const t = useT();
   const [isOpen, setIsOpen] = useState(false);
 
   return (

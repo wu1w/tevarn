@@ -3,6 +3,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useT } from '@/stores/localeStore';
 
+export const dynamic = 'force-dynamic';
+
 interface Entity {
   id: string;
   name: string;

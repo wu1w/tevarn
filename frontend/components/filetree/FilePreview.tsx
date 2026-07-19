@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { FileContent } from '@/types';
 import { readFile } from '@/lib/api';
+import { useT } from '@/stores/localeStore';
 
 interface FilePreviewProps {
   path: string;
@@ -10,6 +11,7 @@ interface FilePreviewProps {
 }
 
 export function FilePreview({ path, onClose }: FilePreviewProps) {
+  const t = useT();
   const [file, setFile] = useState<FileContent | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -20,7 +22,7 @@ export function FilePreview({ path, onClose }: FilePreviewProps) {
     readFile(path)
       .then(setFile)
       .catch((err) => {
-        setError(err?.response?.data?.detail || err.message || '加载失败');
+        setError(err?.response?.data?.detail || err.message || t('modelPicker.loadError'));
       })
       .finally(() => setLoading(false));
   }, [path]);
@@ -60,7 +62,7 @@ export function FilePreview({ path, onClose }: FilePreviewProps) {
           <div className="flex items-center justify-center h-full">
             <div className="flex flex-col items-center gap-2">
               <div className="h-5 w-5 animate-spin rounded-full border-2 border-violet-500/30 border-t-violet-500" />
-              <span className="text-xs text-foreground-dim">加载中...</span>
+              <span className="text-xs text-foreground-dim">{t('contextDash.loading')}</span>
             </div>
           </div>
         ) : error ? (

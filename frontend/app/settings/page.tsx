@@ -26,6 +26,8 @@ import { useToastStore } from '@/stores/toastStore';
 import { useT } from '@/stores/localeStore';
 import { LanguageCard } from '@/components/ui/LanguageSwitcher';
 
+export const dynamic = 'force-dynamic';
+
 function mapVal(settings: Setting[], key: string, fallback = ''): string {
   const s = settings.find((x) => x.key === key);
   if (s == null || s.value == null) return fallback;

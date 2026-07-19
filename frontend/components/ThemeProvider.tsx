@@ -2,8 +2,10 @@
 
 import { useEffect } from 'react';
 import { useThemeStore } from '@/stores/themeStore';
+import { useT } from '@/stores/localeStore';
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
+  const t = useT();
   const theme = useThemeStore((s) => s.theme);
   const applyResolved = useThemeStore((s) => s.applyResolved);
 

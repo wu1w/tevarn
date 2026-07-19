@@ -41,6 +41,7 @@ import type {
   WorkflowExecuteResult,
 } from '@/types';
 import { useToastStore } from '@/stores/toastStore';
+import { t } from '@/stores/localeStore';
 
 /**
  * 解析 API baseURL：
@@ -150,26 +151,26 @@ function formatApiError(error: {
   const ct = error.response?.headers?.['content-type'] || '';
   const rawBody = data as unknown;
   if (typeof rawBody === 'string' && rawBody.includes('<!DOCTYPE')) {
-    return 'API 地址错误：收到了网页而不是接口数据。请重启应用。';
+    return t('api._e3');
   }
   if (ct.includes('text/html')) {
-    return 'API 地址错误：收到了 HTML 页面。请重启应用。';
+    return t('api._e4');
   }
 
   if (!error.response) {
-    if (error.code === 'ECONNABORTED') return '请求超时，请稍后重试';
-    return `无法连接后端 (${base}${path})。请确认应用已完全启动，或重启 Takton。`;
+    if (error.code === 'ECONNABORTED') return t('api._e5');
+    return `Cannot connect to backend (${base}${path})。Ensure the app has started, or restart Takton.`;
   }
 
-  if (status === 404) return '接口不存在 (404)';
-  if (status === 403) return '没有权限访问该接口';
-  if (status === 429) return '请求过于频繁，请稍后再试';
-  if (status === 502) return '后端暂时不可用 (502)，请稍后重试';
+  if (status === 404) return 'API not found (404)';
+  if (status === 403) return t('api._e6');
+  if (status === 429) return t('api._e7');
+  if (status === 502) return 'Backend temporarily unavailable (502)，Please try again later';
   if (status && status >= 500) {
-    return `服务器错误 (${status})${path ? `：${path}` : ''}`;
+    return `Server error (${status})${path ? `：${path}` : ''}`;
   }
 
-  return error.message || '请求失败，请稍后重试';
+  return error.message || t('api._e8');
 }
 
 // 响应拦截器：处理认证过期 + 全局错误提示
@@ -178,8 +179,8 @@ api.interceptors.response.use(
     // 防御：200 但 body 是 HTML
     const ct = String(response.headers?.['content-type'] || '');
     if (ct.includes('text/html') || (typeof response.data === 'string' && response.data.includes('<!DOCTYPE'))) {
-      const err = new Error('API 返回了 HTML 页面而非 JSON');
-      useToastStore.getState().addToast('API 地址配置异常，请重启应用', 'error');
+      const err = new Error('API returned HTML instead of JSON');
+      useToastStore.getState().addToast('API address misconfigured — restart Takton', 'error');
       return Promise.reject(err);
     }
     return response;
@@ -1524,6 +1525,7 @@ export async function createMCPServer(data: MCPServerFormData): Promise<MCPServe
     ...data,
     args: data.args ? data.args.split(/\s+/).filter(Boolean) : undefined,
     env: data.env ? parseKeyValueText(data.env) : undefined,
+    allowed_paths: data.allowed_paths ? data.allowed_paths.split(/\n/).map((s) => s.trim()).filter(Boolean) : undefined,
     timeout: data.timeout ?? 30,
   };
   const res = await api.post('/mcp', payload);
@@ -1535,6 +1537,7 @@ export async function updateMCPServer(serverId: string, data: MCPServerFormData)
     ...data,
     args: data.args ? data.args.split(/\s+/).filter(Boolean) : undefined,
     env: data.env ? parseKeyValueText(data.env) : undefined,
+    allowed_paths: data.allowed_paths ? data.allowed_paths.split(/\n/).map((s) => s.trim()).filter(Boolean) : undefined,
     timeout: data.timeout ?? 30,
   };
   const res = await api.put(`/mcp/${serverId}`, payload);

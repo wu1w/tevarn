@@ -105,9 +105,9 @@ export function DesktopControlPanel({ onTaskComplete }: DesktopControlPanelProps
   };
 
   const quickActions = [
-    { icon: Camera, label: '截图', type: 'screenshot' as const, params: {} },
-    { icon: AppWindow, label: '打开记事本', type: 'open_app' as const, params: { app_name: 'notepad.exe' } },
-    { icon: MousePointer, label: '点击屏幕中心', type: 'click' as const, params: { x: 960, y: 540 } },
+    { icon: Camera, label: t('desktop._e102'), type: 'screenshot' as const, params: {} },
+    { icon: AppWindow, label: t('desktop._e103'), type: 'open_app' as const, params: { app_name: 'notepad.exe' } },
+    { icon: MousePointer, label: t('desktop._e104'), type: 'click' as const, params: { x: 960, y: 540 } },
   ];
 
   return (
@@ -120,8 +120,8 @@ export function DesktopControlPanel({ onTaskComplete }: DesktopControlPanelProps
                 <Monitor className="h-5 w-5 text-primary" />
               </div>
               <div>
-                <CardTitle>桌面控制</CardTitle>
-                <CardDescription>让 Takton 帮您操作电脑</CardDescription>
+                <CardTitle>{t('desktop._e62')}</CardTitle>
+                <CardDescription>{t('desktop._e63')}</CardDescription>
               </div>
             </div>
             <Badge variant={isStreaming ? "default" : "secondary"}>
@@ -143,7 +143,7 @@ export function DesktopControlPanel({ onTaskComplete }: DesktopControlPanelProps
               <div className="flex h-full items-center justify-center text-muted-foreground">
                 <div className="text-center">
                   <Monitor className="mx-auto h-12 w-12 opacity-50" />
-                  <p className="mt-2 text-sm">点击"开始预览"查看屏幕</p>
+                  <p className="mt-2 text-sm">{t('desktop._e64')}</p>
                 </div>
               </div>
             )}
@@ -170,7 +170,7 @@ export function DesktopControlPanel({ onTaskComplete }: DesktopControlPanelProps
               type="text"
               value={taskInput}
               onChange={(e) => setTaskInput(e.target.value)}
-              placeholder="输入任务，如：打开记事本写一首诗..."
+              placeholder={t('desktop._e65')}
               className="flex-1 rounded-md border bg-background px-3 py-2 text-sm"
               onKeyDown={(e) => e.key === 'Enter' && handleExecuteTask()}
             />
@@ -205,7 +205,7 @@ export function DesktopControlPanel({ onTaskComplete }: DesktopControlPanelProps
           {/* 操作历史 */}
           {operationHistory.length > 0 && (
             <div className="space-y-2">
-              <h4 className="text-sm font-medium">操作历史</h4>
+              <h4 className="text-sm font-medium">{t('desktop._e66')}</h4>
               <ScrollArea className="h-[200px] rounded-md border">
                 <div className="space-y-2 p-2">
                   <AnimatePresence>
@@ -271,7 +271,7 @@ function getOperationDescription(operation: { type: string; params: Record<strin
   
   switch (type) {
     case 'screenshot':
-      return '截取屏幕';
+      return 'desktop._e99';
     case 'click':
       return params.element_id 
         ? `点击元素: ${params.element_id}`
@@ -281,9 +281,9 @@ function getOperationDescription(operation: { type: string; params: Record<strin
     case 'open_app':
       return `打开应用: ${params.app_name}`;
     case 'scroll':
-      return `向${params.direction === 'up' ? '上' : '下'}滚动`;
+      return `向${params.direction === 'up' ? 'desktop._e100' : 'desktop._e101'}滚动`;
     case 'drag':
-      return '拖拽操作';
+      return 'desktop._e105';
     default:
       return type;
   }

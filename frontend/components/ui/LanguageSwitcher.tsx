@@ -4,7 +4,7 @@ import React from 'react';
 import { useLocaleStore, useT, type Locale } from '@/stores/localeStore';
 
 const languages: { value: Locale; label: string; flag: string }[] = [
-  { value: 'zh', label: '中文', flag: '🇨🇳' },
+  { value: 'zh', label: 'ui._e137', flag: '🇨🇳' },
   { value: 'en', label: 'English', flag: '🇺🇸' },
 ];
 
@@ -54,8 +54,8 @@ export function LanguageSwitcher({ compact = false }: { compact?: boolean }) {
  * 语言切换卡片 — 更大的展示区域，适合设置页
  */
 export function LanguageCard() {
-  const { locale, setLocale } = useLocaleStore();
   const t = useT();
+  const { locale, setLocale } = useLocaleStore();
 
   return (
     <div className="rounded-xl border border-border-default bg-card-bg p-4">

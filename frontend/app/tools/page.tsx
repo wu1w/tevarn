@@ -14,6 +14,8 @@ import { useToastStore } from '@/stores/toastStore';
 import { useConfirm } from '@/components/desktop/ConfirmDialog';
 import { useT } from '@/stores/localeStore';
 
+export const dynamic = 'force-dynamic';
+
 const TYPE_KEYS = [
   'browser',
   'command',

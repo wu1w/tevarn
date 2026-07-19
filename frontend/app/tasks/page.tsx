@@ -7,6 +7,8 @@ import { useSessionStore } from '@/stores/sessionStore';
 import { getTasks } from '@/lib/api';
 import { useT } from '@/stores/localeStore';
 
+export const dynamic = 'force-dynamic';
+
 export default function TasksPage() {
   const t = useT();
   const { tasks, setTasks } = useTaskStore();
@@ -46,7 +48,7 @@ export default function TasksPage() {
   return (
     <div className="p-6">
       <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-xl font-bold text-foreground">任务看板</h1>
+        <h1 className="text-xl font-bold text-foreground">{t('chat.taskBoard')}</h1>
         {currentSession && (
           <span className="text-xs text-foreground-dim font-mono">Session: {currentSession.id.slice(0, 8)}</span>
         )}
@@ -65,10 +67,10 @@ export default function TasksPage() {
           </>
         ) : (
           ([
-            { label: '活跃任务', value: activeTasks.length, color: 'cyan' as const },
-            { label: '已完成', value: completedTasks.filter(t => t.status === 'completed').length, color: 'emerald' as const },
-            { label: '失败', value: completedTasks.filter(t => t.status === 'failed').length, color: 'red' as const },
-            { label: '总任务', value: tasks.length, color: 'gray' as const },
+            { label: t('tasks._e9'), value: activeTasks.length, color: 'cyan' as const },
+            { label: t('tasks._e10'), value: completedTasks.filter(t => t.status === 'completed').length, color: 'emerald' as const },
+            { label: t('mcpStore.failed'), value: completedTasks.filter(t => t.status === 'failed').length, color: 'red' as const },
+            { label: t('tasks._e11'), value: tasks.length, color: 'gray' as const },
           ] as const).map((stat) => {
             const colorClasses: Record<string, { card: string; value: string; label: string }> = {
               cyan: { card: 'border-cyan-500/20 bg-cyan-500/[0.04]', value: 'text-brand-cyan', label: 'text-cyan-500/60' },
@@ -90,14 +92,14 @@ export default function TasksPage() {
       {loading ? (
         <div className="grid grid-cols-2 gap-6">
           <div>
-            <h2 className="mb-4 text-base font-semibold text-foreground">活跃任务</h2>
+            <h2 className="mb-4 text-base font-semibold text-foreground">{t('tasks._e7')}</h2>
             <div className="space-y-3">
               <SkeletonCard />
               <SkeletonCard />
             </div>
           </div>
           <div>
-            <h2 className="mb-4 text-base font-semibold text-foreground">已完成 / 失败</h2>
+            <h2 className="mb-4 text-base font-semibold text-foreground">{t('tasks._e8')}</h2>
             <div className="space-y-3">
               <SkeletonCard />
             </div>
@@ -107,7 +109,7 @@ export default function TasksPage() {
         <div className="grid grid-cols-2 gap-6">
           {/* 活跃任务 */}
           <div>
-            <h2 className="mb-4 text-base font-semibold text-foreground">活跃任务</h2>
+            <h2 className="mb-4 text-base font-semibold text-foreground">{t('tasks._e7')}</h2>
             <div className="space-y-3">
               {activeTasks.map((task) => (
                 <TaskItem key={task.id} task={task} />
@@ -122,7 +124,7 @@ export default function TasksPage() {
 
           {/* 已完成任务 */}
           <div>
-            <h2 className="mb-4 text-base font-semibold text-foreground">已完成 / 失败</h2>
+            <h2 className="mb-4 text-base font-semibold text-foreground">{t('tasks._e8')}</h2>
             <div className="space-y-3">
               {completedTasks.map((task) => (
                 <TaskItem key={task.id} task={task} />
