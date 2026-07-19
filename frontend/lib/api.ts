@@ -1072,6 +1072,8 @@ export interface CatalogProvider {
   credentials?: CatalogCredential[];
   active_credential_id?: string;
   credential_count?: number;
+  /** 该供应商上次选用的模型（目录缓存） */
+  active_model?: string;
 }
 
 export interface ModelCatalog {
@@ -1148,6 +1150,38 @@ export async function setCatalogProviderEnabled(
     provider_id: providerId,
     enabled,
   });
+  return res.data;
+}
+
+/** 删除已配置供应商（对标 Hermes disconnect） */
+export async function deleteCatalogProvider(
+  providerId: string
+): Promise<{
+  ok: boolean;
+  message: string;
+  catalog?: ModelCatalog;
+  active_provider_id?: string;
+  active_model?: string;
+}> {
+  const res = await api.post('/settings/model-catalog/delete-provider', {
+    provider_id: providerId,
+  });
+  return res.data;
+}
+
+/** 登记/更新供应商到目录（设置页 Save & Activate 主路径） */
+export async function registerCatalogProvider(payload: {
+  id: string;
+  name: string;
+  icon?: string;
+  preset_id?: string | null;
+  llm_provider: string;
+  llm_base_url: string;
+  llm_api_key?: string | null;
+  llm_model?: string | null;
+  set_active?: boolean;
+}): Promise<{ ok: boolean; message: string; catalog?: ModelCatalog }> {
+  const res = await api.post('/settings/model-catalog/register', payload);
   return res.data;
 }
 

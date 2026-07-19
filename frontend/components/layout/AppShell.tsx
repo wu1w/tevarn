@@ -110,15 +110,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, []);
 
   if (!hasHydrated) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-page-bg app-ambient">
-        <div className="flex flex-col items-center gap-4">
-          <BrandMark pulse />
-          <div className="text-sm text-foreground-dim">{t('contextDash.loading')}</div>
+      return (
+        <div className="flex h-screen items-center justify-center bg-page-bg app-ambient">
+          <div className="flex flex-col items-center gap-4">
+            <BrandMark pulse />
+            {/* suppressHydrationWarning：auth hydrate 前避免 locale 首帧不一致 */}
+            <div className="text-sm text-foreground-dim" suppressHydrationWarning>
+              {t('contextDash.loading')}
+            </div>
+          </div>
         </div>
-      </div>
-    );
-  }
+      );
+    }
 
   if (!isAuthenticated && !isLoginPage) {
     return (

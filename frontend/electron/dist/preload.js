@@ -44,6 +44,8 @@ electron_1.contextBridge.exposeInMainWorld('electronAPI', {
     getDroppedFiles: (filePaths) => electron_1.ipcRenderer.invoke('get-dropped-files', filePaths),
     /** 系统文件夹选择器（专业模式绑定项目） */
     selectDirectory: () => electron_1.ipcRenderer.invoke('select-directory'),
+    /** 打开 Takton Code CLI（外部终端，后端通过 bridge 互通） */
+    openTaktonCode: (opts) => electron_1.ipcRenderer.invoke('open-takton-code', opts),
     installUpdate: () => electron_1.ipcRenderer.invoke('install-update'),
     /** 用系统默认应用打开本地文件（编辑 agent md 等） */
     openPath: (filePath) => electron_1.ipcRenderer.invoke('open-path', filePath),

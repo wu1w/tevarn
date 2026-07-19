@@ -520,6 +520,228 @@ def add_or_update_credential(
     return normalize_catalog(cat)
 
 
+def delete_provider(catalog: dict[str, Any], provider_id: str) -> dict[str, Any]:
+    """从目录中移除供应商（Hermes disconnect 对标）。"""
+    cat = normalize_catalog(catalog)
+    pid = (provider_id or "").strip()
+    if not pid:
+        raise ValueError("provider_id 不能为空")
+    before = len(cat["providers"])
+    cat["providers"] = [p for p in cat["providers"] if p.get("id") != pid]
+    if len(cat["providers"]) == before:
+        raise ValueError("供应商不存在")
+    if cat.get("active_provider_id") == pid:
+        nxt = next((p for p in cat["providers"] if p.get("enabled")), None)
+        if nxt:
+            cat["active_provider_id"] = nxt["id"]
+            cat["active_model"] = str(nxt.get("active_model") or "").strip()
+            if not cat["active_model"]:
+                models = provider_models_for_display(nxt)
+                cat["active_model"] = models[0] if models else ""
+        else:
+            cat["active_provider_id"] = ""
+            cat["active_model"] = ""
+    if cat.get("fallback_provider_id") == pid:
+        cat["fallback_provider_id"] = ""
+        cat["fallback_model"] = ""
+    return normalize_catalog(cat)
+
+
+def parse_model_ref(ref: str) -> tuple[str, str]:
+    """解析 default_llm_model / UI 选型。支持 `provider_id|||model` 或裸 model。"""
+    raw = (ref or "").strip()
+    if not raw:
+        return "", ""
+    if "|||" in raw:
+        left, right = raw.split("|||", 1)
+        return left.strip(), right.strip()
+    return "", raw
+
+
+def prune_orphan_providers(catalog: dict[str, Any]) -> dict[str, Any]:
+    """清掉无中生有的空壳供应商（典型：id=custom 且 base_url 为空）。"""
+    cat = normalize_catalog(catalog)
+    cleaned: list[dict[str, Any]] = []
+    removed_ids: list[str] = []
+    for p in cat["providers"]:
+        pid = str(p.get("id") or "")
+        base = str(p.get("llm_base_url") or "").strip()
+        llm_p = str(p.get("llm_provider") or "")
+        # ollama 允许空/本地；其余必须有 base_url
+        if pid == "custom" and not base:
+            removed_ids.append(pid)
+            continue
+        if llm_p not in ("ollama",) and not base and pid in ("custom", "openai-compatible"):
+            removed_ids.append(pid)
+            continue
+        cleaned.append(p)
+    cat["providers"] = cleaned
+    if cat.get("active_provider_id") in removed_ids or (
+        cat.get("active_provider_id") and not any(
+            p.get("id") == cat.get("active_provider_id") for p in cleaned
+        )
+    ):
+        nxt = next((p for p in cleaned if p.get("enabled")), None)
+        if nxt:
+            cat["active_provider_id"] = nxt["id"]
+            models = provider_models_for_display(nxt)
+            cat["active_model"] = str(nxt.get("active_model") or (models[0] if models else "") or "")
+        else:
+            cat["active_provider_id"] = ""
+            cat["active_model"] = ""
+    return normalize_catalog(cat)
+
+
+def match_provider_id_by_base_url(catalog: dict[str, Any], base_url: str) -> str:
+    """用 base_url 反查已配置供应商 id，避免 openai-compatible → 误建成 custom。"""
+    cat = normalize_catalog(catalog)
+    want = (base_url or "").rstrip("/").lower()
+    if not want:
+        return ""
+    for p in cat["providers"]:
+        got = str(p.get("llm_base_url") or "").rstrip("/").lower()
+        if got and got == want:
+            return str(p.get("id") or "")
+    # 子串启发（opencode / openrouter 等）
+    if "opencode.ai/zen/go" in want:
+        hit = next((p for p in cat["providers"] if p.get("id") == "opencode-go"), None)
+        if hit:
+            return "opencode-go"
+    if "opencode.ai/zen" in want:
+        hit = next((p for p in cat["providers"] if p.get("id") == "opencode-zen"), None)
+        if hit:
+            return "opencode-zen"
+    if "openrouter.ai" in want:
+        hit = next((p for p in cat["providers"] if p.get("id") == "openrouter"), None)
+        if hit:
+            return "openrouter"
+    return ""
+
+
+def find_provider_for_model(
+    catalog: dict[str, Any],
+    model: str,
+    *,
+    prefer_provider_id: str = "",
+) -> dict[str, Any] | None:
+    """在目录中定位拥有该 model 的供应商。prefer 优先，其次精确 id 匹配。"""
+    cat = normalize_catalog(catalog)
+    mid = (model or "").strip()
+    if not mid:
+        return None
+    prefer = (prefer_provider_id or "").strip()
+    if prefer:
+        p = next((x for x in cat["providers"] if x.get("id") == prefer and x.get("enabled")), None)
+        if p is not None:
+            models = provider_models_for_display(p)
+            if mid in models or mid == str(p.get("active_model") or ""):
+                return p
+            # prefer 指定了 provider 也允许强制用（用户显式 provider|||model）
+            if prefer:
+                return p
+
+    # 1) cached/display models 精确命中
+    hits: list[dict[str, Any]] = []
+    for p in cat["providers"]:
+        if not p.get("enabled", True):
+            continue
+        models = provider_models_for_display(p)
+        if mid in models or mid == str(p.get("active_model") or ""):
+            hits.append(p)
+    if not hits:
+        return None
+    if len(hits) == 1:
+        return hits[0]
+    # 多命中：openrouter 风格 id（含 /）优先 openrouter；否则优先 active
+    if "/" in mid:
+        for p in hits:
+            if p.get("id") == "openrouter" or "openrouter" in str(p.get("llm_base_url") or ""):
+                return p
+    active = str(cat.get("active_provider_id") or "")
+    for p in hits:
+        if p.get("id") == active:
+            return p
+    return hits[0]
+
+
+def build_llm_snapshot(
+    provider: dict[str, Any],
+    model: str,
+    *,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    context_window: int | None = None,
+) -> dict[str, Any]:
+    """会话/调用用的完整 LLM 快照（含 provider_id，禁止只带裸 model）。"""
+    mid = (model or "").strip() or str(provider.get("active_model") or "").strip()
+    return {
+        "provider": str(provider.get("llm_provider") or "openai-compatible"),
+        "provider_id": str(provider.get("id") or ""),
+        "model": mid,
+        "base_url": str(provider.get("llm_base_url") or "").rstrip("/"),
+        "api_key": _active_api_key(provider) or None,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "context_window": context_window,
+    }
+
+
+def resolve_new_session_llm_snapshot(
+    catalog: dict[str, Any],
+    *,
+    default_llm_model: str = "",
+    fallback_provider: str = "",
+    fallback_model: str = "",
+    fallback_base_url: str = "",
+    fallback_api_key: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    context_window: int | None = None,
+) -> dict[str, Any]:
+    """新会话 LLM 快照：默认模型必须解析到真实供应商，禁止 custom 空壳。
+
+    优先级：
+    1) default_llm_model = `provider_id|||model` 或裸 model（在 catalog 中反查）
+    2) catalog.active_provider_id + active_model
+    3) 全局 fallback 字段（settings.llm_*）
+    """
+    cat = prune_orphan_providers(catalog)
+    pref_pid, mid = parse_model_ref(default_llm_model)
+    provider = None
+    if pref_pid:
+        provider = next((p for p in cat["providers"] if p.get("id") == pref_pid), None)
+    if provider is None and mid:
+        provider = find_provider_for_model(cat, mid, prefer_provider_id=pref_pid)
+    if provider is None:
+        active_pid = str(cat.get("active_provider_id") or "").strip()
+        if active_pid:
+            provider = next((p for p in cat["providers"] if p.get("id") == active_pid), None)
+            if not mid:
+                mid = str(cat.get("active_model") or "").strip()
+    if provider is not None:
+        snap = build_llm_snapshot(
+            provider,
+            mid or str(provider.get("active_model") or cat.get("active_model") or ""),
+            temperature=temperature,
+            max_tokens=max_tokens,
+            context_window=context_window,
+        )
+        if snap.get("base_url") or snap.get("provider") == "ollama":
+            return snap
+
+    # 最后兜底：全局 settings（仍带上 base_url，避免 custom 空壳）
+    return {
+        "provider": fallback_provider or "openai-compatible",
+        "provider_id": match_provider_id_by_base_url(cat, fallback_base_url) or "",
+        "model": mid or fallback_model or "",
+        "base_url": (fallback_base_url or "").rstrip("/"),
+        "api_key": fallback_api_key,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "context_window": context_window,
+    }
+
+
 def delete_credential(catalog: dict[str, Any], provider_id: str, credential_id: str) -> dict[str, Any]:
     cat = normalize_catalog(catalog)
     p = next((x for x in cat["providers"] if x["id"] == provider_id), None)

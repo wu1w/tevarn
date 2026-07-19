@@ -1358,6 +1358,13 @@ async def get_model_catalog(
     成功拉取会写回 cached_models。fetch_models=false 时用缓存回显，避免回访变 0。
     """
     catalog = await model_catalog_mod.load_catalog(repo)
+    cleaned = model_catalog_mod.prune_orphan_providers(catalog)
+    if cleaned != catalog:
+        catalog = cleaned
+        try:
+            await model_catalog_mod.save_catalog(repo, catalog)
+        except Exception:
+            pass
     # OAuth token 临近过期时刷新
     try:
         catalog = await model_catalog_mod.ensure_oauth_token_fresh(catalog)
@@ -1459,7 +1466,12 @@ async def register_provider_in_catalog(
     repo: Annotated[SettingRepository, Depends(get_setting_repo)],
 ):
     """设置页保存供应商后登记到多供应商目录。"""
+    if not (data.llm_base_url or "").strip() and data.llm_provider != "ollama":
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=400, detail="llm_base_url 不能为空")
     catalog = await model_catalog_mod.load_catalog(repo)
+    catalog = model_catalog_mod.prune_orphan_providers(catalog)
     catalog = model_catalog_mod.upsert_provider(
         catalog,
         provider_id=data.id,
@@ -1757,6 +1769,59 @@ async def upsert_provider_credential(
     }
 
 
+
+@router.post("/model-catalog/delete-provider")
+async def delete_catalog_provider(
+    data: dict,
+    request: Request,
+    current_user: Annotated[UserRead, Depends(require_admin)],
+    repo: Annotated[SettingRepository, Depends(get_setting_repo)],
+):
+    """删除已配置供应商（Hermes disconnect）。body: {provider_id}"""
+    from fastapi import HTTPException
+
+    pid = str((data or {}).get("provider_id") or "").strip()
+    if not pid:
+        raise HTTPException(status_code=400, detail="provider_id 不能为空")
+    catalog = await model_catalog_mod.load_catalog(repo)
+    try:
+        catalog = model_catalog_mod.delete_provider(catalog, pid)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    await model_catalog_mod.save_catalog(repo, catalog)
+    if catalog.get("active_provider_id"):
+        model_catalog_mod.apply_active_to_runtime(catalog)
+        active = next(
+            (p for p in catalog["providers"] if p["id"] == catalog["active_provider_id"]),
+            None,
+        )
+        if active:
+            await repo.upsert(
+                "llm_provider", active.get("llm_provider") or "openai-compatible", "llm"
+            )
+            await repo.upsert("llm_base_url", active.get("llm_base_url") or "", "llm")
+            await repo.upsert("llm_model", catalog.get("active_model") or "", "llm")
+            key = active.get("llm_api_key") or ""
+            if key and "..." not in key:
+                await repo.upsert("llm_api_key", key, "llm")
+    await log_action(
+        AuditAction.SETTINGS_UPDATE,
+        request=request,
+        user_id=current_user.id,
+        resource_type="model_catalog",
+        resource_id=pid,
+        details={"action": "delete_provider"},
+    )
+    _notify_settings_changed(current_user.id, ["active_provider_id", "active_model", "llm_model"])
+    return {
+        "ok": True,
+        "message": f"已删除供应商 {pid}",
+        "catalog": model_catalog_mod.mask_catalog_for_client(catalog),
+        "active_provider_id": catalog.get("active_provider_id") or "",
+        "active_model": catalog.get("active_model") or "",
+    }
+
+
 @router.post("/model-catalog/select-credential")
 async def select_provider_credential(
     data: SelectCredentialBody,
@@ -1948,6 +2013,8 @@ async def apply_settings_batch(
 
     # 同步登记到多供应商目录（对话页下拉可选）
     try:
+        from backend.core import model_catalog as model_catalog_mod
+
         items = data.items
         if any(k.startswith("llm_") for k in items):
             provider_type = str(items.get("llm_provider") or "")
@@ -1956,21 +2023,25 @@ async def apply_settings_batch(
             api_key = items.get("llm_api_key")
             if isinstance(api_key, str) and ("..." in api_key or api_key == "***"):
                 api_key = None
-            # 推断目录 id / 名称
             pid = str(items.get("provider_catalog_id") or "")
             pname = str(items.get("provider_catalog_name") or "")
             picon = str(items.get("provider_catalog_icon") or "🤖")
+            base_l = base_url.lower()
             if not pid:
-                if "deepseek" in base_url:
+                if "deepseek" in base_l:
                     pid, pname = "deepseek", pname or "DeepSeek"
-                elif "dashscope" in base_url or "aliyun" in base_url:
+                elif "dashscope" in base_l or "aliyun" in base_l:
                     pid, pname = "qwen", pname or "通义千问"
-                elif "moonshot" in base_url:
+                elif "moonshot" in base_l:
                     pid, pname = "moonshot", pname or "Kimi"
-                elif "bigmodel" in base_url:
+                elif "bigmodel" in base_l:
                     pid, pname = "zhipu", pname or "智谱 GLM"
-                elif "openrouter" in base_url:
+                elif "openrouter" in base_l:
                     pid, pname = "openrouter", pname or "OpenRouter"
+                elif "opencode.ai/zen/go" in base_l:
+                    pid, pname = "opencode-go", pname or "OpenCode Go"
+                elif "opencode.ai/zen" in base_l:
+                    pid, pname = "opencode-zen", pname or "OpenCode Zen"
                 elif provider_type == "ollama":
                     pid, pname = "ollama", pname or "本地运行"
                 elif provider_type == "openai":
@@ -1978,9 +2049,31 @@ async def apply_settings_batch(
                 elif provider_type == "anthropic":
                     pid, pname = "anthropic", pname or "Claude"
                 else:
-                    pid = provider_type or "custom"
+                    pid = (
+                        provider_type
+                        if provider_type and provider_type != "openai-compatible"
+                        else ""
+                    )
                     pname = pname or pid
+
             catalog = await model_catalog_mod.load_catalog(repo)
+            catalog = model_catalog_mod.prune_orphan_providers(catalog)
+
+            if (not pid or pid == "custom") and base_url:
+                matched = model_catalog_mod.match_provider_id_by_base_url(catalog, base_url)
+                if matched:
+                    pid = matched
+                    hit = next(
+                        (x for x in catalog["providers"] if x.get("id") == matched), None
+                    )
+                    if hit:
+                        pname = pname or str(hit.get("name") or matched)
+            if not pid:
+                pid = "custom" if base_url else ""
+
+            if (not base_url and provider_type != "ollama") or not pid:
+                raise RuntimeError("skip catalog upsert: missing base_url/provider_id")
+
             add_new = str(items.get("add_as_new_credential") or "").lower() in {
                 "1",
                 "true",
@@ -2001,10 +2094,12 @@ async def apply_settings_batch(
                 credential_label=cred_label,
                 add_as_new_credential=add_new,
             )
+            catalog = model_catalog_mod.prune_orphan_providers(catalog)
             await model_catalog_mod.save_catalog(repo, catalog)
     except Exception as e:
         # 目录登记失败不影响主配置
         import logging
+
         logging.getLogger(__name__).warning("model catalog upsert skipped: %s", e)
 
     await log_action(

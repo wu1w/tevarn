@@ -137,20 +137,26 @@ export function ModelPicker({ disabled = false, onChanged }: ModelPickerProps) {
   };
 
   const handleSelectModel = async (providerId: string, modelId: string) => {
-    setBusy(true);
-    try {
-      const res = await selectCatalogModel(providerId, modelId);
-      addToast(res.message || t('modelPicker.switched'), 'success');
-      await load(true);
-      setOpen(false);
-      onChanged?.(providerId, modelId, res.provider_name || providerId);
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : t('evolution.toggleFailed');
-      addToast(msg, 'error');
-    } finally {
-      setBusy(false);
-    }
-  };
+      setBusy(true);
+      try {
+        const res = await selectCatalogModel(providerId, modelId);
+        addToast(res.message || t('modelPicker.switched'), 'success');
+        await load(true);
+        setOpen(false);
+        onChanged?.(providerId, modelId, res.provider_name || providerId);
+        // 通知设置页 / 子代理模型池同步（Hermes onMainModelChanged）
+        window.dispatchEvent(
+          new CustomEvent('takton:settings-changed', {
+            detail: ['active_provider_id', 'active_model', 'llm_model', 'llm_provider'],
+          })
+        );
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : t('evolution.toggleFailed');
+        addToast(msg, 'error');
+      } finally {
+        setBusy(false);
+      }
+    };
 
   const handleToggleModel = async (
     e: React.MouseEvent,

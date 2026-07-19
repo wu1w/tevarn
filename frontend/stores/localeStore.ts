@@ -16,7 +16,12 @@ export const useLocaleStore = create<LocaleStore>()(
       setLocale: (l) => set({ locale: l }),
       toggle: () => set({ locale: get().locale === 'zh' ? 'en' : 'zh' }),
     }),
-    { name: 'takton-locale' }
+    {
+      name: 'takton-locale',
+      // SSR/首屏与 localStorage 语言不一致会 hydration mismatch（加载中... vs Loading...）
+      // 等客户端 rehydrate 后再应用用户语言（见 ThemeProvider）
+      skipHydration: true,
+    }
   )
 );
 
@@ -31,7 +36,9 @@ const zh = {
   'common.delete': '删除',
   'common.edit': '编辑',
   'common.loading': '加载中...',
-  'common.success': '成功',
+    'common.copy': '复制',
+    'common.copied': '已复制',
+    'common.success': '成功',
   'common.error': '错误',
   'common.back': '返回',
   'common.search': '搜索',
@@ -1890,7 +1897,9 @@ const en: Record<keyof typeof zh, string> = {
   'common.delete': 'Delete',
   'common.edit': 'Edit',
   'common.loading': 'Loading...',
-  'common.success': 'Success',
+    'common.copy': 'Copy',
+    'common.copied': 'Copied',
+    'common.success': 'Success',
   'common.error': 'Error',
   'common.back': 'Back',
   'common.search': 'Search',

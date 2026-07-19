@@ -4,7 +4,7 @@ import React from 'react';
 import { useLocaleStore, useT, type Locale } from '@/stores/localeStore';
 
 const languages: { value: Locale; label: string; flag: string }[] = [
-  { value: 'zh', label: 'ui._e137', flag: '🇨🇳' },
+  { value: 'zh', label: '中文', flag: '🇨🇳' },
   { value: 'en', label: 'English', flag: '🇺🇸' },
 ];
 

@@ -17,8 +17,8 @@ from backend.schemas.session import (
 )
 from backend.schemas.user import UserRead
 
-from ..dependencies import get_current_user, get_session_repo, assert_session_owner
-from backend.repositories import SessionRepository
+from ..dependencies import get_current_user, get_session_repo, get_setting_repo, assert_session_owner
+from backend.repositories import SessionRepository, SettingRepository
 
 router = APIRouter(prefix="/sessions", tags=["Sessions"])
 
@@ -38,35 +38,59 @@ async def create_session(
     data: SessionCreate,
     current_user: Annotated[UserRead, Depends(get_current_user)],
     repo: Annotated[SessionRepository, Depends(get_session_repo)],
+    setting_repo: Annotated[SettingRepository, Depends(get_setting_repo)],
 ):
     """创建新会话（自动关联当前用户）
 
-    快照当前 LLM 配置到 session.config.llm：会话锁定创建时的
-    provider/model/base_url/api_key，之后全局配置变更不影响本会话
-    （学 hermes：provider 配置与默认模型、与已发生会话解耦）。
+    快照完整 LLM 配置到 session.config.llm（provider_id + base_url + key + model）。
+    「新会话默认模型」从 catalog 反查真实供应商，禁止只改 model 名沿用错误 base_url，
+    也禁止冒出空壳 custom。
     """
     from backend.core.config import settings as app_settings
+    from backend.core import model_catalog as model_catalog_mod
+    from backend.core import model_gen_params as gen_params_mod
 
     config = data.config.model_dump() if data.config else {}
-    # 仅当未显式指定 llm 快照时才写入（避免覆盖前端显式传入）
     if "llm" not in config:
         cfg = app_settings.get_llm_config()
-        # 「新会话默认模型」独立选项：若设置则覆盖当前 provider 配置的模型
-        # （学 hermes model.default：provider 配置与新会话默认模型解耦）
         default_model = (getattr(app_settings, "default_llm_model", "") or "").strip()
-        config["llm"] = {
-            "provider": app_settings.llm_provider,
-            "model": default_model or (getattr(cfg, "model", "") or ""),
-            "base_url": getattr(cfg, "base_url", "") or "",
-            "api_key": getattr(cfg, "api_key", None),
-            # 绑定该模型当前生成参数，会话内不被全局切换影响
-            "temperature": getattr(cfg, "temperature", None),
-            "max_tokens": getattr(cfg, "max_tokens", None),
-            "context_window": getattr(app_settings, "context_window", None),
-        }
-    session = await repo.create(
-        {"user_id": current_user.id, "config": config}
-    )
+        catalog = await model_catalog_mod.load_catalog(setting_repo)
+        cleaned = model_catalog_mod.prune_orphan_providers(catalog)
+        if cleaned != catalog:
+            try:
+                await model_catalog_mod.save_catalog(setting_repo, cleaned)
+            except Exception:
+                pass
+        catalog = cleaned
+
+        snap = model_catalog_mod.resolve_new_session_llm_snapshot(
+            catalog,
+            default_llm_model=default_model,
+            fallback_provider=app_settings.llm_provider,
+            fallback_model=getattr(cfg, "model", "") or "",
+            fallback_base_url=getattr(cfg, "base_url", "") or "",
+            fallback_api_key=getattr(cfg, "api_key", None),
+            temperature=getattr(cfg, "temperature", None),
+            max_tokens=getattr(cfg, "max_tokens", None),
+            context_window=getattr(app_settings, "context_window", None),
+        )
+        try:
+            params = await gen_params_mod.get_params(
+                setting_repo,
+                str(snap.get("provider_id") or ""),
+                str(snap.get("model") or ""),
+            )
+            if params:
+                if params.get("temperature") is not None:
+                    snap["temperature"] = params["temperature"]
+                if params.get("max_tokens") is not None:
+                    snap["max_tokens"] = params["max_tokens"]
+                if params.get("context_window") is not None:
+                    snap["context_window"] = params["context_window"]
+        except Exception:
+            pass
+        config["llm"] = snap
+    session = await repo.create({"user_id": current_user.id, "config": config})
     return session
 
 

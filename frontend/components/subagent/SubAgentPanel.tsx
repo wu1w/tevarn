@@ -535,8 +535,23 @@ export default function SubAgentPanel() {
   }, [addToast]);
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+      loadData();
+      const onSettings = (e: Event) => {
+        const detail = (e as CustomEvent).detail || [];
+        if (
+          !detail.length ||
+          detail.some((k: string) =>
+            ['active_provider_id', 'active_model', 'llm_provider', 'llm_model', 'llm_base_url', 'llm_model_catalog'].includes(
+              k
+            )
+          )
+        ) {
+          void loadData();
+        }
+      };
+      window.addEventListener('takton:settings-changed', onSettings);
+      return () => window.removeEventListener('takton:settings-changed', onSettings);
+    }, [loadData]);
 
   const handleToggle = async (id: string, enabled: boolean) => {
     try {

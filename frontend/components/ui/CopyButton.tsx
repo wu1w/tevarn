@@ -30,7 +30,7 @@ export function CopyButton({ text, size = 'md', className = '' }: CopyButtonProp
       type="button"
       onClick={handleCopy}
       className={`rounded-md border border-border-subtle bg-card-bg text-foreground-muted transition-colors hover:bg-card-bg-hover hover:text-foreground ${sizeClasses} ${className}`}
-      title={t('ui._e24')}
+      title={copied ? t('common.copied') : t('common.copy')}
     >
       {copied ? (
         <svg className="h-full w-full" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
