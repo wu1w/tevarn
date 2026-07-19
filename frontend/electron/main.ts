@@ -18,7 +18,6 @@ import * as crypto from 'crypto';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as http from 'http';
-import { t } from '@/stores/localeStore';
 // 可选依赖：打包遗漏时不应导致主进程直接崩溃
 type UpdateInfo = { version: string; releaseDate?: string; releaseNotes?: string | null };
 type AutoUpdaterLike = {
@@ -770,11 +769,11 @@ function createTray(): void {
     },
     { type: 'separator' },
     {
-      label: t('main._e1'),
-      click: () => {
-        isQuitting = true;
-        app.quit();
-      },
+      label: 'Quit',
+            click: () => {
+              isQuitting = true;
+              app.quit();
+            },
     },
   ]);
 
