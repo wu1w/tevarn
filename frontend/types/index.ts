@@ -466,7 +466,8 @@ export type WSMessageType =
   | 'auth_ok'
   | 'stop'
   | 'confirm_request'
-  | 'confirm_response';
+  | 'confirm_response'
+  | 'screenshot';
 
 export interface WSMessage {
   type: WSMessageType;
@@ -503,6 +504,13 @@ export interface ToolEventMessage extends WSMessage {
 export interface MemoryUpdatedMessage extends WSMessage {
   type: 'memory_updated';
   diff: string;
+}
+
+export interface ScreenshotMessage extends WSMessage {
+  type: 'screenshot';
+  image_base64: string;
+  tool_name?: string;
+  timestamp?: string;
 }
 
 export interface TaskUpdateMessage extends WSMessage {

@@ -149,9 +149,13 @@ export function summarizeToolResult(
 
 export function isErrorContent(content: string | null | undefined): boolean {
   if (!content) return false;
+  const s = content.trim();
   return (
-    /^\[Error\]/i.test(content.trim()) ||
-    /^Error:/i.test(content.trim()) ||
+    /^\[Error\]/i.test(s) ||
+    /^\[LLM Error/i.test(s) ||
+    /^Error:/i.test(s) ||
+    /^LLM Error/i.test(s) ||
+    (/\b401\b/.test(s) && /unauthor/i.test(s)) ||
     content.includes(t('chatDisplay._e10')) ||
     content.includes('LLM service failed')
   );

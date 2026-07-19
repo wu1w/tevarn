@@ -441,12 +441,14 @@ class NexusAgentLoop:
         mode_extra: list[str] = []
         if mode == "search":
             mode_extra.append("web_search")
+            mode_extra.append("search")
         if mode == "ppt":
             mode_extra.append("generate_ppt")
         if mode == "report":
             mode_extra.append("generate_report")
         if mode == "goal":
             mode_extra.append("manage_goal")
+            mode_extra.append("autopilot")
         if mode_extra and enabled_skills is not None:
             enabled_skills = list(set(enabled_skills + mode_extra))
 
@@ -456,7 +458,34 @@ class NexusAgentLoop:
             f"(skills={'ALL' if enabled_skills is None else enabled_skills})"
         )
 
-        # Goal 模式：更高轮次 + 初始化 goal 状态
+        # P0–P2：能力与偏好注入（不依赖模型「记得有搜索」）
+        try:
+            cap_lines = [
+                "Takton capability brief (use tools, do not claim missing if listed):",
+                "- Long tasks: autopilot (start→next→reflect→complete) + manage_goal",
+                "- Search: web_search / search (real network; never say search unavailable without calling)",
+                "- Browser: browser action=navigate|snapshot|click|type (Playwright when installed)",
+                "- Desktop: desktop_observe / uia_snapshot / desktop_* ",
+                "- Remote: list_devices_tool / remote_exec / device_onboard",
+                "- Memory: memory_pref get/set; session_search for history",
+                "- GitHub: github action=status|pr_create|ci (needs gh auth)",
+                "- Charts: render_chart; PPT: generate_ppt; vision: vision_analyze",
+                "- Office/Media: doc_read/doc_write, image_generate, calendar, tts, capability_status",
+            ]
+            # user prefs
+            try:
+                from backend.tools.builtins.capability_tools import _load_prefs
+
+                uid = str(self.user_id) if self.user_id else "local"
+                prefs = (_load_prefs(uid).get("users") or {}).get(uid) or {}
+                if prefs:
+                    cap_lines.append("User preferences (honor these): " + json.dumps(prefs, ensure_ascii=False))
+            except Exception:
+                pass
+            messages.append({"role": "system", "content": "\n".join(cap_lines)})
+        except Exception as e:
+            logger.debug("capability inject skipped: %s", e)
+
         # Goal 模式：更高轮次 + 初始化 goal 状态
         goal_mode = mode == "goal"
         if goal_mode:
@@ -474,8 +503,9 @@ class NexusAgentLoop:
                     {
                         "role": "system",
                         "content": (
-                            "Goal runtime status (keep updated via manage_goal):\n"
+                            "Goal runtime status (keep updated via manage_goal + autopilot):\n"
                             + g0.summary_for_llm()
+                            + "\nFor multi-step work: autopilot action=start goal=... then next/reflect/complete."
                         ),
                     }
                 )
@@ -963,6 +993,7 @@ class NexusAgentLoop:
                             validated_args = self._validate_tool_args(tool.parameters, tc.arguments)
                             if self.user_id is not None:
                                 validated_args["user_id"] = str(self.user_id)
+                                validated_args["_user_id"] = str(self.user_id)
                             validated_args["_session_id"] = str(session_id)
                             validated_args["_ws_manager"] = self.ws_manager
                             _tool_timeout = float(
@@ -989,6 +1020,7 @@ class NexusAgentLoop:
                                 validated_args = self._validate_tool_args(skill.parameters, tc.arguments)
                                 if self.user_id is not None:
                                     validated_args["user_id"] = str(self.user_id)
+                                    validated_args["_user_id"] = str(self.user_id)
                                 validated_args["_session_id"] = str(session_id)
                                 validated_args["_ws_manager"] = self.ws_manager
                                 tool_result = await skill.execute(**validated_args)
@@ -1002,12 +1034,9 @@ class NexusAgentLoop:
                                     validated_args = self._validate_tool_args(dynamic.parameters, tc.arguments)
                                     if self.user_id is not None:
                                         validated_args["user_id"] = str(self.user_id)
+                                        validated_args["_user_id"] = str(self.user_id)
                                     validated_args["_session_id"] = str(session_id)
-                                    tool_result = await dynamic.execute(**validated_args)
-                                    query = ""
-                                else:
-                                    # 尝试从 ToolRegistry 执行
-                                    tool_repo = AsyncToolRepository()
+                                    validated_args["_ws_manager"] = self.ws_manager
                                     db_tool = await tool_repo.get_tool_by_name(tc.name)
                                     if db_tool is not None and db_tool.enabled:
                                         tool_result = await ToolRegistry.execute_tool(db_tool, tc.arguments)
@@ -1046,6 +1075,8 @@ class NexusAgentLoop:
                             status="completed",
                             result=tool_result,
                         )
+                        # 截图工具结果 → 推送 WS screenshot 事件
+                        await self._maybe_push_screenshot(session_id, tc.name, tool_result)
                         # TEE: 记录工具轨迹 / 使用次数
                         try:
                             from backend.evolution.manager import get_evolution_manager
@@ -1574,17 +1605,23 @@ class NexusAgentLoop:
                 logger.warning(f"Auto optimize failed: {e}")
 
     def _validate_tool_args(self, schema: dict | None, arguments: dict) -> dict:
-        """使用JSON Schema校验tool call参数"""
+        """使用 JSON Schema 校验 tool call 参数。
+
+        始终返回新 dict，避免在原始 tc.arguments 上注入 _ws_manager 等
+        导致 WS ToolEvent.model_dump 无法序列化 ConnectionManager。
+        """
+        base = dict(arguments) if isinstance(arguments, dict) else {}
         if not schema:
-            return arguments
+            return base
         try:
             from jsonschema import validate, ValidationError
-            validate(instance=arguments, schema=schema)
+
+            validate(instance=base, schema=schema)
         except ImportError:
             pass  # jsonschema未安装时跳过校验
         except ValidationError as e:
             raise ValueError(f"Invalid tool arguments: {e.message}")
-        return arguments
+        return base
 
     async def _load_tools(
         self,
@@ -1687,40 +1724,37 @@ class NexusAgentLoop:
             except Exception as e:
                 logger.warning(f"Failed to load tool-def CtxItems: {e}")
 
-        # v0.2: Desktop 工具自动注入（无感操作）
-        # 当用户输入包含桌面操作关键词时，自动注入 desktop 工具
+                # v0.2+: Desktop 工具常驻（P2：不靠关键词；load_all_tools 已注册，这里兜底）
         try:
-            if user_input and _is_desktop_task(user_input):
-                from backend.services.desktop.tools import (
-                    DesktopScreenshotTool,
-                    DesktopClickTool,
-                    DesktopTypeTool,
-                    DesktopOpenAppTool,
-                    DesktopScrollTool,
-                    DesktopReadFileTool,
-                    DesktopWriteFileTool,
-                )
-                desktop_tools = [
-                    DesktopScreenshotTool(),
-                    DesktopClickTool(),
-                    DesktopTypeTool(),
-                    DesktopOpenAppTool(),
-                    DesktopScrollTool(),
-                    DesktopReadFileTool(),
-                    DesktopWriteFileTool(),
-                ]
-                # 检查是否已存在
-                existing_names = {
-                    (t.get("function") or {}).get("name")
-                    for t in tools
-                    if (t.get("function") or {}).get("name")
-                }
-                for dt in desktop_tools:
-                    if dt.name not in existing_names:
-                        tools.append(dt.to_json_schema())
-                        logger.info(f"Auto-injected desktop tool: {dt.name}")
+            from backend.services.desktop.tools import (
+                DesktopScreenshotTool,
+                DesktopClickTool,
+                DesktopTypeTool,
+                DesktopOpenAppTool,
+                DesktopScrollTool,
+                DesktopReadFileTool,
+                DesktopWriteFileTool,
+            )
+            desktop_tools = [
+                DesktopScreenshotTool(),
+                DesktopClickTool(),
+                DesktopTypeTool(),
+                DesktopOpenAppTool(),
+                DesktopScrollTool(),
+                DesktopReadFileTool(),
+                DesktopWriteFileTool(),
+            ]
+            existing_names = {
+                (t.get("function") or {}).get("name")
+                for t in tools
+                if (t.get("function") or {}).get("name")
+            }
+            for dt in desktop_tools:
+                if dt.name not in existing_names:
+                    tools.append(dt.to_json_schema())
+                    logger.info(f"Ensured desktop tool: {dt.name}")
         except Exception as e:
-            logger.warning(f"Failed to auto-inject desktop tools: {e}")
+            logger.warning(f"Failed to ensure desktop tools: {e}")
 
         return tools
 
@@ -2072,8 +2106,14 @@ class NexusAgentLoop:
 
             # 结果截断，避免 WS 帧过大
             res = result
+            if not isinstance(res, str) and res is not None:
+                res = str(res)
             if isinstance(res, str) and len(res) > 8000:
                 res = res[:8000] + "\n…[truncated]"
+
+            # 只推送可 JSON 化的参数；剥离 _ws_manager 等私有注入
+            safe_args = self._jsonable_tool_args(arguments)
+
             await self.ws_manager.broadcast(
                 session_id,
                 ToolEvent(
@@ -2081,13 +2121,87 @@ class NexusAgentLoop:
                     phase=phase,  # type: ignore[arg-type]
                     tool_call_id=tool_call_id,
                     name=name,
-                    arguments=arguments or {},
+                    arguments=safe_args,
                     status=status,  # type: ignore[arg-type]
                     result=res,
                 ).model_dump(mode="json"),
             )
         except Exception as e:
             logger.warning(f"Failed to push tool_event: {e}")
+
+    async def _maybe_push_screenshot(
+        self,
+        session_id: uuid.UUID,
+        tool_name: str,
+        tool_result: str,
+    ) -> None:
+        """从截图类工具结果中提取 base64 图像，推送 WS screenshot 事件。"""
+        if not self.ws_manager:
+            return
+        try:
+            import base64
+            import json as _json
+            import re
+
+            b64: str | None = None
+            raw = str(tool_result)
+
+            # 1) data:image/...;base64,... 直出
+            m = re.search(r"data:image/[^;]+;base64,([A-Za-z0-9+/=\s]+)", raw)
+            if m:
+                b64 = m.group(1).replace("\n", "")
+            else:
+                # 2) JSON 里有 image/data.image 字段
+                try:
+                    data = _json.loads(raw)
+                    img = data.get("image") or (data.get("data") or {}).get("image")
+                    if isinstance(img, str) and len(img) > 100:
+                        b64 = img
+                except Exception:
+                    pass
+                # 3) 长 base64 串（>500 chars，大概率是截图）
+                if not b64:
+                    m2 = re.search(r"([A-Za-z0-9+/=]{500,})", raw)
+                    if m2:
+                        b64 = m2.group(1)
+
+            if not b64:
+                return
+
+            from backend.schemas.ws import ScreenshotEvent
+
+            await self.ws_manager.broadcast(
+                session_id,
+                ScreenshotEvent(
+                    session_id=session_id,
+                    image_base64=b64,
+                    tool_name=tool_name,
+                    timestamp=__import__("datetime").datetime.now(
+                        __import__("datetime").timezone.utc
+                    ).isoformat(),
+                ).model_dump(mode="json"),
+            )
+        except Exception as e:
+            logger.debug(f"Screenshot push skipped: {e}")
+
+    @staticmethod
+    def _jsonable_tool_args(arguments: dict[str, Any] | None) -> dict[str, Any]:
+        """过滤不可 JSON 序列化 / 内部注入字段，供 WS 与落库。"""
+        if not isinstance(arguments, dict):
+            return {}
+        out: dict[str, Any] = {}
+        skip_keys = {"ws_manager", "connection_manager"}
+        for k, v in arguments.items():
+            ks = str(k)
+            if ks.startswith("_") or ks in skip_keys:
+                continue
+            if "ConnectionManager" in type(v).__name__:
+                continue
+            try:
+                out[ks] = json.loads(json.dumps(v, default=str, ensure_ascii=False))
+            except Exception:
+                out[ks] = str(v)[:500]
+        return out
 
     async def _push_task_update(
         self,

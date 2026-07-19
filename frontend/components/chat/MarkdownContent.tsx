@@ -29,91 +29,106 @@ export function MarkdownContent({
   streaming = false,
 }: MarkdownContentProps) {
   const t = useT();
+  // 错误正文不做 thinking 拆分，避免误伤
+  const isErr =
+    /^\[(?:LLM )?Error/i.test((content || '').trim()) ||
+    /^Error:/i.test((content || '').trim());
   const { thinking, body, thinkingOpen } = useMemo(
-    () => parseMessageContent(content),
-    [content]
+    () => (isErr ? { thinking: null, body: content || '', thinkingOpen: false } : parseMessageContent(content)),
+    [content, isErr]
   );
 
   const displayBody = body || (!thinking ? content : '');
 
-  return (
-    <div className={isUser ? 'text-foreground' : ''}>
-      {thinking && (
-        <ThinkingBlock
-          content={thinking}
-          streaming={streaming && thinkingOpen}
-          defaultOpen={streaming && thinkingOpen}
-        />
-      )}
-      {displayBody ? (
-        <div className={`chat-md max-w-none ${isUser ? 'text-foreground' : ''}`}>
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            urlTransform={safeUrlTransform}
-            components={{
-              code: CodeRenderer as any,
-              pre: ({ children }) => <>{children}</>,
-              a: ({ href, children }) =>
-                isWorkspaceFileLink(href) ? (
-                  <FileDownloadLink href={href!} isUser={isUser}>
-                    {children}
-                  </FileDownloadLink>
-                ) : (
-                  <a
-                    href={href}
-                    target="_blank"
-                    rel="noreferrer"
-                    className={
-                      isUser
-                        ? 'font-medium text-brand-purple underline decoration-brand-purple/35 hover:text-brand-cyan'
-                        : 'text-brand-cyan underline decoration-brand-cyan/30 hover:text-brand-purple hover:decoration-brand-purple'
-                    }
-                  >
-                    {children}
-                  </a>
-                ),
-              table: ({ children }) => (
-                <div className="my-3 overflow-x-auto rounded-xl border border-border-subtle">
-                  <table className="w-full border-collapse text-left text-xs">{children}</table>
-                </div>
-              ),
-              thead: ({ children }) => (
-                <thead className="bg-elevated-bg/80 text-foreground-muted">{children}</thead>
-              ),
-              th: ({ children }) => (
-                <th className="border-b border-border-subtle px-3 py-2 font-semibold">{children}</th>
-              ),
-              td: ({ children }) => (
-                <td className="border-b border-border-subtle/60 px-3 py-1.5 text-foreground-muted">
-                  {children}
-                </td>
-              ),
-              img: ({ src, alt }) => (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={src || ''}
-                  alt={alt || ''}
-                  className="my-2 max-h-80 max-w-full rounded-xl border border-border-subtle object-contain"
-                />
-              ),
-              blockquote: ({ children }) => (
-                <blockquote className="my-2 border-l-2 border-brand-purple/40 bg-brand-purple/5 py-1 pl-3 text-foreground-muted">
-                  {children}
-                </blockquote>
-              ),
-            }}
-          >
-            {displayBody}
-          </ReactMarkdown>
+  // 错误：纯文本完整展示，可换行
+  if (isErr) {
+      return (
+        <div className={isUser ? 'text-foreground' : ''}>
+          <pre className="chat-md m-0 whitespace-pre-wrap break-words font-sans text-[0.9375rem] leading-[1.72]">
+            {content}
+          </pre>
         </div>
-      ) : !thinking ? (
-        <span className="italic text-foreground-dim">
-          {streaming ? t('chat.thinking') : ''}
-        </span>
-      ) : null}
-    </div>
-  );
-}
+      );
+    }
+
+    return (
+      <div className={isUser ? 'text-foreground' : ''}>
+        {thinking && (
+          <ThinkingBlock
+            content={thinking}
+            streaming={streaming && thinkingOpen}
+            defaultOpen={streaming && thinkingOpen}
+          />
+        )}
+        {displayBody ? (
+          <div className={`chat-md max-w-none ${isUser ? 'text-foreground' : ''}`}>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              urlTransform={safeUrlTransform}
+              components={{
+                code: CodeRenderer as any,
+                pre: ({ children }) => <>{children}</>,
+                a: ({ href, children }) =>
+                  isWorkspaceFileLink(href) ? (
+                    <FileDownloadLink href={href!} isUser={isUser}>
+                      {children}
+                    </FileDownloadLink>
+                  ) : (
+                    <a
+                      href={href}
+                      target="_blank"
+                      rel="noreferrer"
+                      className={
+                        isUser
+                          ? 'font-medium text-brand-purple underline decoration-brand-purple/35 hover:text-brand-cyan'
+                          : 'text-brand-cyan underline decoration-brand-cyan/30 hover:text-brand-purple hover:decoration-brand-purple'
+                      }
+                    >
+                      {children}
+                    </a>
+                  ),
+                table: ({ children }) => (
+                  <div className="my-3 overflow-x-auto rounded-xl border border-border-subtle">
+                    <table className="w-full border-collapse text-left text-xs">{children}</table>
+                  </div>
+                ),
+                thead: ({ children }) => (
+                  <thead className="bg-elevated-bg/80 text-foreground-muted">{children}</thead>
+                ),
+                th: ({ children }) => (
+                  <th className="border-b border-border-subtle px-3 py-2 font-semibold">{children}</th>
+                ),
+                td: ({ children }) => (
+                  <td className="border-b border-border-subtle/60 px-3 py-1.5 text-foreground-muted">
+                    {children}
+                  </td>
+                ),
+                img: ({ src, alt }) => (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={src || ''}
+                    alt={alt || ''}
+                    className="my-2 max-h-80 max-w-full rounded-xl border border-border-subtle object-contain"
+                  />
+                ),
+                blockquote: ({ children }) => (
+                  <blockquote className="my-2 border-l-2 border-brand-purple/40 bg-brand-purple/5 py-1 pl-3 text-foreground-muted">
+                    {children}
+                  </blockquote>
+                ),
+              }}
+            >
+              {displayBody}
+            </ReactMarkdown>
+          </div>
+        ) : !thinking ? (
+          <span className="italic text-foreground-dim">
+            {streaming ? t('chat.thinking') : ''}
+          </span>
+        ) : null}
+      </div>
+    );
+  }
 
 /* ───── Code / Mermaid ───── */
 

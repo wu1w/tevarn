@@ -10,6 +10,7 @@ import {
   MemoryUpdatedMessage,
   GoalUpdateMessage,
   ToolEventMessage,
+  ScreenshotMessage,
 } from '@/types';
 
 export function isStreamDelta(msg: WSMessage): msg is StreamDeltaMessage {
@@ -34,6 +35,10 @@ export function isGoalUpdate(msg: WSMessage): msg is GoalUpdateMessage {
 
 export function isToolEvent(msg: WSMessage): msg is ToolEventMessage {
   return msg.type === 'tool_event';
+}
+
+export function isScreenshot(msg: WSMessage): msg is ScreenshotMessage {
+  return msg.type === 'screenshot';
 }
 
 export function createUserInputMessage(

@@ -58,8 +58,8 @@ bold "Takton desktop client — one-click install"
 info "Install dir: $INSTALL_DIR"
 mkdir -p "$INSTALL_DIR" "$BIN_DIR"
 
-TAG="v0.2.0"
-ASSET="Takton-0.2.0.AppImage"
+TAG="v0.2.1"
+ASSET="Takton-0.2.1.AppImage"
 URL=""
 if resolved="$(resolve_latest)"; then
   TAG="$(printf '%s\n' "$resolved" | sed -n '1p')"

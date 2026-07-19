@@ -189,14 +189,24 @@ const StoreCard = memo(function StoreCard({
       )}
       <div className="mt-auto flex gap-2">
         {installed ? (
-          <button
-            type="button"
-            disabled={busy || !onUninstall}
-            onClick={() => onUninstall?.(item)}
-            className="flex-1 rounded-lg bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-500/20 disabled:opacity-50"
-          >
-            {busy ? t('mcpStore.busy') : t('mcpStore.uninstall')}
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={() => onOpen(item)}
+              title={t('mcpStore.configureTitle')}
+              className={`flex-1 ${BTN_PRIMARY}`}
+            >
+              {t('mcpStore.configure')}
+            </button>
+            <button
+              type="button"
+              disabled={busy || !onUninstall}
+              onClick={() => onUninstall?.(item)}
+              className="rounded-lg bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-500/20 disabled:opacity-50"
+            >
+              {busy ? t('mcpStore.busy') : t('mcpStore.uninstall')}
+            </button>
+          </>
         ) : (
           <button
             type="button"
@@ -225,7 +235,7 @@ export default function MCPStorePanel({
 }: {
   activeTab: MCPPageTab;
   onRequestCustom?: () => void;
-  onFillCustom?: (form: MCPServerFormData) => void;
+  onFillCustom?: (form: MCPServerFormData, existingId?: string | null) => void;
 }) {
   const t = useT();
   const addToast = useToastStore((s) => s.addToast);
@@ -264,8 +274,16 @@ export default function MCPStorePanel({
         limit: 80,
         offset: 0,
       });
-      setItems(data.items || []);
-      setTotal(data.total || 0);
+      // 去重：同一 source+id 只保留第一条，避免 React key 冲突
+      const seen = new Set<string>();
+      const deduped = (data.items || []).filter((it) => {
+        const k = `${it.source}/${it.id}`;
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
+      setItems(deduped);
+      setTotal(deduped.length);
       setSources(data.sources || []);
     } catch (e: unknown) {
       setLoadError(e instanceof Error ? e.message : t('mcpStore.loadFail'));
@@ -317,7 +335,7 @@ export default function MCPStorePanel({
   const handleInstall = useCallback(
     async (item: UnifiedMCPStoreItem) => {
       if (installedNames.has(item.name) || installedNames.has(item.id)) {
-        addToast(t('mcpStore.installedNamed').replace('{name}', item.display_name), 'success');
+        addToast(t('mcpStore.installedNamed').replace('{name}', item.display_name), 'info');
         return;
       }
       setBusyId(item.id);
@@ -596,7 +614,10 @@ export default function MCPStorePanel({
                     type="button"
                     className={`${BTN_SECONDARY} px-4 py-2 text-sm`}
                     onClick={() => {
-                      onFillCustom(toForm(selected));
+                      const existing = servers.find(
+                        (s) => s.name === selected.name || s.name === selected.id,
+                      );
+                      onFillCustom(toForm(selected), existing?.id ?? null);
                       setSelected(null);
                     }}
                   >

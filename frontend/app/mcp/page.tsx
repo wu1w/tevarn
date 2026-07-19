@@ -96,11 +96,11 @@ export default function MCPPage() {
     [form, editingId, addToast, updateMutation, createMutation, resetForm]
   );
 
-  const fillFromStore = useCallback((data: MCPServerFormData) => {
-    setEditingId(null);
+  const fillFromStore = useCallback((data: MCPServerFormData, existingId?: string | null) => {
+    setEditingId(existingId ?? null);
     setForm({ ...emptyForm(), ...data });
     setTab('custom');
-    addToast(t('mcpPage.filledForm'), 'success');
+    addToast(existingId ? t('mcpPage.editingExisting') : t('mcpPage.filledForm'), 'info');
   }, [addToast]);
 
   const tabs: { id: MCPPageTab; label: string }[] = [

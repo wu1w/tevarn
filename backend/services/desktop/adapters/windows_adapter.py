@@ -91,66 +91,62 @@ class WindowsAdapter:
         """点击元素或坐标"""
         try:
             if self._use_fallback:
-                return DesktopOperationResult(
-                    success=False,
-                    message="降级模式不支持点击操作",
-                )
-            
+                if x is None or y is None:
+                    return DesktopOperationResult(
+                        success=False,
+                        message="降级模式需要 x/y 坐标点击（无 UIA element_id）",
+                    )
+                return await self._fallback_click(int(x), int(y))
+
             if element_id:
-                # 使用 UIA 元素 ID 精准点击
                 result = await self._mcp_client.call_tool("click", {"element_id": element_id})
             elif x is not None and y is not None:
-                # 坐标点击
                 result = await self._mcp_client.call_tool("click", {"x": x, "y": y})
             else:
                 return DesktopOperationResult(
                     success=False,
                     message="缺少 element_id 或坐标参数",
                 )
-            
+
             return DesktopOperationResult(
                 success=True,
                 message="点击成功",
-                data=self._parse_mcp_result(result)
+                data=self._parse_mcp_result(result),
             )
-            
+
         except Exception as e:
             logger.error(f"Click failed: {e}")
             return DesktopOperationResult(
                 success=False,
                 message=f"点击失败: {e}",
-                error=str(e)
+                error=str(e),
             )
-    
+
     async def type(self, element_id: str | None = None, text: str = "", **kwargs) -> DesktopOperationResult:
         """输入文本"""
         try:
             if self._use_fallback:
-                return DesktopOperationResult(
-                    success=False,
-                    message="降级模式不支持输入操作",
-                )
-            
+                return await self._fallback_type(str(text or ""))
+
             if element_id:
-                result = await self._mcp_client.call_tool("type", {
-                    "element_id": element_id,
-                    "text": text
-                })
+                result = await self._mcp_client.call_tool(
+                    "type", {"element_id": element_id, "text": text}
+                )
             else:
                 result = await self._mcp_client.call_tool("type_text", {"text": text})
-            
+
             return DesktopOperationResult(
                 success=True,
                 message="输入成功",
-                data=self._parse_mcp_result(result)
+                data=self._parse_mcp_result(result),
             )
-            
+
         except Exception as e:
             logger.error(f"Type failed: {e}")
             return DesktopOperationResult(
                 success=False,
                 message=f"输入失败: {e}",
-                error=str(e)
+                error=str(e),
             )
     
     async def open_app(self, app_name: str, **kwargs) -> DesktopOperationResult:
@@ -183,30 +179,24 @@ class WindowsAdapter:
         """滚动"""
         try:
             if self._use_fallback:
-                return DesktopOperationResult(
-                    success=False,
-                    message="降级模式不支持滚动操作",
-                )
-            
-            result = await self._mcp_client.call_tool("scroll", {
-                "direction": direction,
-                "amount": amount
-            })
-            
+                return await self._fallback_scroll(direction, int(amount or 3))
+
+            result = await self._mcp_client.call_tool(
+                "scroll", {"direction": direction, "amount": amount}
+            )
             return DesktopOperationResult(
                 success=True,
                 message="滚动成功",
-                data=self._parse_mcp_result(result)
+                data=self._parse_mcp_result(result),
             )
-            
         except Exception as e:
             logger.error(f"Scroll failed: {e}")
             return DesktopOperationResult(
                 success=False,
                 message=f"滚动失败: {e}",
-                error=str(e)
+                error=str(e),
             )
-    
+
     async def drag(self, from_x: int, from_y: int, to_x: int, to_y: int, **kwargs) -> DesktopOperationResult:
         """拖拽"""
         try:

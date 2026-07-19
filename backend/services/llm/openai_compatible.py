@@ -318,12 +318,22 @@ class OpenAICompatibleService(LLMService):
                     detail = detail[:800] + "…"
                 hint = ""
                 url = str(getattr(getattr(e, "request_info", None), "url", "") or "")
-                if getattr(e, "status", None) == 400 and "kimi.com/coding" in url:
+                status = getattr(e, "status", "error")
+                if status == 400 and "kimi.com/coding" in url:
                     hint = (
                         " Kimi Code model 须为 kimi-for-coding / kimi-for-coding-highspeed"
                         f"（当前 model={self.model!r}）。"
                     )
-                status = getattr(e, "status", "error")
+                elif status in (401, 403):
+                    hint = (
+                        " 鉴权失败：请到「设置 → 模型」检查 API Key / OAuth 是否有效、"
+                        f"供应商 base_url 是否匹配（当前 model={self.model!r}）。"
+                    )
+                elif status == 400:
+                    hint = (
+                        " 请求被拒：常见原因是 model 名错误、上下文过长、或工具 schema 不兼容。"
+                        f"（当前 model={self.model!r}）"
+                    )
                 yield LLMChunk(
                     message_id=message_id,
                     delta=f"[LLM Error {status}] {detail}{hint}",
@@ -473,10 +483,21 @@ class OpenAICompatibleService(LLMService):
             if len(detail) > 800:
                 detail = detail[:800] + "…"
             hint = ""
-            if e.status == 400 and "kimi.com/coding" in str(e.request_info.url):
+            url = str(getattr(getattr(e, "request_info", None), "url", "") or "")
+            if e.status == 400 and "kimi.com/coding" in url:
                 hint = (
                     " Kimi Code model 须为 kimi-for-coding / kimi-for-coding-highspeed"
                     f"（当前 model={self.model!r}）。"
+                )
+            elif e.status in (401, 403):
+                hint = (
+                    " 鉴权失败：请到「设置 → 模型」检查 API Key / OAuth 是否有效、"
+                    f"供应商 base_url 是否匹配（当前 model={self.model!r}）。"
+                )
+            elif e.status == 400:
+                hint = (
+                    " 请求被拒：常见原因是 model 名错误、上下文过长、或工具 schema 不兼容。"
+                    f"（当前 model={self.model!r}）"
                 )
             yield LLMChunk(
                 message_id=message_id,

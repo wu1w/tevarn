@@ -22,6 +22,10 @@ frontend/release/
 frontend/.asar-stage/
 frontend/e2e/screenshots/
 frontend/e2e/test-results/
+frontend/test-results/
+*.tsbuildinfo
+frontend/next-env.d.ts
+_run_dev_backend.py
 frontend/playwright-report/
 **/win-unpacked/
 **/*.asar

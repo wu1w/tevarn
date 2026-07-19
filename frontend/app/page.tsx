@@ -3,6 +3,8 @@
 import React, { useState, useCallback, useRef } from 'react';
 import { ChatWindow } from '@/components/chat/ChatWindow';
 import { MessageInput, Attachment, ChatMode } from '@/components/chat/MessageInput';
+import { ScreenshotPanel } from '@/components/chat/ScreenshotPanel';
+import { ActivityPanel } from '@/components/chat/ActivityPanel';
 import { TaskPanel } from '@/components/tasks/TaskPanel';
 import { TransparencyPanel } from '@/components/chat/TransparencyPanel';
 import { GlobalSearch } from '@/components/search/GlobalSearch';
@@ -12,7 +14,8 @@ import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { useTaskStore } from '@/stores/taskStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useSessionStore } from '@/stores/sessionStore';
-import { Message, StatusUpdateMessage, StreamDeltaMessage, GoalUpdateMessage, GoalState, ToolEventMessage } from '@/types';
+import { Message, StatusUpdateMessage, StreamDeltaMessage, GoalUpdateMessage, GoalState, ToolEventMessage, ScreenshotMessage } from '@/types';
+import { useScreenshotStore } from '@/stores/screenshotStore';
 import { generateImage, uploadFile } from '@/lib/api';
 import { generateUUID } from '@/lib/uuid';
 import { useRouter } from 'next/navigation';
@@ -29,39 +32,47 @@ import { useWsStore } from '@/stores/wsStore';
 export default function HomePage() {
   const router = useRouter();
   const { currentSession, messages, addMessage, updateMessage, createAndLoadSession, loadMessages, switchSession } = useSession();
-  const { tasks } = useTaskStore();
-    const { token } = useAuthStore();
-    const { starredSessionIds, toggleStarredSession } = useSessionStore();
+    const { tasks } = useTaskStore();
+    const token = useAuthStore((s) => s.token);
+    const starredSessionIds = useSessionStore((s) => s.starredSessionIds);
+    const toggleStarredSession = useSessionStore((s) => s.toggleStarredSession);
     const {
-        uiMode,
-        setUiMode,
-        dockOpen,
-        setDockOpen,
-        toggleDock,
-        root: workspaceRoot,
-        name: workspaceName,
-        setForceProjectOpen,
-        appendAgentOutput,
-        unreadTerminal,
-        bindRoot,
-      } = useWorkspaceStore();
+      uiMode,
+      setUiMode,
+      dockOpen,
+      setDockOpen,
+      toggleDock,
+      root: workspaceRoot,
+      name: workspaceName,
+      setForceProjectOpen,
+      appendAgentOutput,
+      unreadTerminal,
+      bindRoot,
+    } = useWorkspaceStore();
 
-      // 恢复持久化的项目根到后端
-      React.useEffect(() => {
-        if (workspaceRoot) {
-          bindRoot(workspaceRoot).catch(() => null);
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-      }, []);
+        // 恢复持久化的项目根到后端
+        React.useEffect(() => {
+          if (workspaceRoot) {
+            bindRoot(workspaceRoot).catch(() => null);
+          }
+          // eslint-disable-next-line react-hooks/exhaustive-deps
+        }, []);
 
-    const [isTaskPanelOpen, setIsTaskPanelOpen] = useState(false);
-    const [isTransparencyOpen, setIsTransparencyOpen] = useState(false);
-    const [highlightMessageId, setHighlightMessageId] = useState<string | null>(null);
-    const [isStreaming, setIsStreaming] = useState(false);
-    const [streamingContent, setStreamingContent] = useState('');
-    const [liveToolCalls, setLiveToolCalls] = useState<ToolCallData[]>([]);
-    const [streamStatusDetail, setStreamStatusDetail] = useState<string | null>(null);
-    const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+        const [isTaskPanelOpen, setIsTaskPanelOpen] = useState(false);
+        const [isTransparencyOpen, setIsTransparencyOpen] = useState(false);
+        const [highlightMessageId, setHighlightMessageId] = useState<string | null>(null);
+        const [isStreaming, setIsStreaming] = useState(false);
+        const [streamingContent, setStreamingContent] = useState('');
+        // 流式正文 ref：idle/stop 时落地，避免在 setState updater 内同步写 sessionStore
+        const streamingContentRef = React.useRef('');
+        React.useEffect(() => {
+          streamingContentRef.current = streamingContent;
+        }, [streamingContent]);
+        const [liveToolCalls, setLiveToolCalls] = useState<ToolCallData[]>([]);
+                const [streamStatusDetail, setStreamStatusDetail] = useState<string | null>(null);
+        const { addShot } = useScreenshotStore();
+
+            const [isGeneratingImage, setIsGeneratingImage] = useState(false);
     const [searchOpen, setSearchOpen] = useState(false);
     const [activeGoal, setActiveGoal] = useState<GoalState | null>(null);
     const [isDragging, setIsDragging] = useState(false);
@@ -89,9 +100,10 @@ export default function HomePage() {
       (async () => {
         if (cancelled) return;
         setIsStreaming(false);
-        setStreamingContent('');
-        setLiveToolCalls([]);
-        setStreamStatusDetail(null);
+                setStreamingContent('');
+                streamingContentRef.current = '';
+                setLiveToolCalls([]);
+                setStreamStatusDetail(null);
         setEditingContent(null);
         setActiveGoal(null);
         if (!sid) return;
@@ -125,8 +137,21 @@ export default function HomePage() {
 
   const handleStreamDelta = useCallback((msg: StreamDeltaMessage) => {
       setIsStreaming(true);
-      setStreamingContent((prev) => prev + msg.content);
+      setStreamingContent((prev) => {
+        const next = prev + msg.content;
+        streamingContentRef.current = next;
+        return next;
+      });
     }, []);
+
+    const handleScreenshot = useCallback((msg: ScreenshotMessage) => {
+      addShot({
+        image_base64: msg.image_base64,
+        tool_name: msg.tool_name || 'screenshot',
+        timestamp: msg.timestamp || new Date().toISOString(),
+        session_id: msg.session_id,
+      });
+    }, [addShot]);
 
     const handleToolEvent = useCallback((msg: ToolEventMessage) => {
           setIsStreaming(true);
@@ -206,29 +231,34 @@ export default function HomePage() {
         setIsStreaming(false);
         setStreamStatusDetail(msg.detail || t('chat.error'));
       } else if (msg.state === 'idle') {
-        setIsStreaming(false);
-        setStreamStatusDetail(null);
-        // 把残留流式文本先落地，再拉全量（含 tool 消息）
-        setStreamingContent((prev) => {
-          if (prev) {
-            addMessage({
-              id: generateUUID(),
-              session_id: currentSession?.id || '',
-              role: 'assistant',
-              content: prev,
-              tool_calls: null,
-              token_count: null,
-              created_at: new Date().toISOString(),
-            });
-          }
-          return '';
-        });
-        setLiveToolCalls([]);
-        if (currentSession?.id) {
-          loadMessages(currentSession.id).catch(console.error);
-        }
-      }
-    }, [addMessage, currentSession, loadMessages, t]);
+              setIsStreaming(false);
+              setStreamStatusDetail(null);
+              // 禁止在 setStreamingContent updater 内 addMessage（会触发 Sidebar 渲染期更新）
+              const leftover = streamingContentRef.current;
+              streamingContentRef.current = '';
+              setStreamingContent('');
+              setLiveToolCalls([]);
+              const sid = currentSession?.id || '';
+              if (leftover || sid) {
+                setTimeout(() => {
+                  if (leftover) {
+                    addMessage({
+                      id: generateUUID(),
+                      session_id: sid,
+                      role: 'assistant',
+                      content: leftover,
+                      tool_calls: null,
+                      token_count: null,
+                      created_at: new Date().toISOString(),
+                    });
+                  }
+                  if (sid) {
+                    loadMessages(sid).catch(console.error);
+                  }
+                }, 0);
+              }
+            }
+          }, [addMessage, currentSession, loadMessages, t]);
 
   const handleGoalUpdate = useCallback((msg: GoalUpdateMessage) => {
       if (msg.goal) {
@@ -246,6 +276,7 @@ export default function HomePage() {
         onStreamDelta: handleStreamDelta,
         onStatusUpdate: handleStatusUpdate,
         onToolEvent: handleToolEvent,
+        onScreenshot: handleScreenshot,
         onGoalUpdate: handleGoalUpdate,
         onError: (err) => console.error('WebSocket error:', err),
         onSettingsChanged: (keys) => {
@@ -420,21 +451,27 @@ export default function HomePage() {
   );
 
   const handleStopStreaming = useCallback(() => {
-    sendStop();
-    setIsStreaming(false);
-    if (streamingContent) {
-      addMessage({
-        id: generateUUID(),
-        session_id: currentSession?.id || '',
-        role: 'assistant',
-        content: streamingContent,
-        tool_calls: null,
-        token_count: null,
-        created_at: new Date().toISOString(),
-      });
+      sendStop();
+      setIsStreaming(false);
+      const leftover = streamingContentRef.current || streamingContent;
+      streamingContentRef.current = '';
       setStreamingContent('');
-    }
-  }, [sendStop, streamingContent, addMessage, currentSession]);
+      if (leftover) {
+        // 下一 tick 写 store，避免与本组件 setState 同栈交叉更新 Sidebar
+        const sid = currentSession?.id || '';
+        setTimeout(() => {
+          addMessage({
+            id: generateUUID(),
+            session_id: sid,
+            role: 'assistant',
+            content: leftover,
+            tool_calls: null,
+            token_count: null,
+            created_at: new Date().toISOString(),
+          });
+        }, 0);
+      }
+    }, [sendStop, streamingContent, addMessage, currentSession]);
 
   const handleTagClick = useCallback(
     (tagKey: string) => {
@@ -698,6 +735,11 @@ export default function HomePage() {
                           <span>{t('chat.channelIdle')}</span>
                         </div>
                       )}
+                      <ActivityPanel
+                        liveToolCalls={liveToolCalls}
+                        streamStatusDetail={streamStatusDetail}
+                        isStreaming={isStreaming}
+                      />
                       <MessageInput
                                               key={editingContent ?? 'default'}
                                               onSend={handleSend}
@@ -726,6 +768,9 @@ export default function HomePage() {
                     </main>
 
                     <WorkspaceDock />
+
+                    {/* 实时截图面板：desktop/browser 截图流 */}
+                    <ScreenshotPanel />
 
                     {/* 任务面板抽屉：Goal + 已进行操作（可跳转会话） */}
                                         <TaskPanel

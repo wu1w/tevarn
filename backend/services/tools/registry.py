@@ -236,27 +236,50 @@ class ToolRegistry:
         """获取内置工具的种子数据"""
         return [
             {
-                "name": "browser",
-                "description": (
-                    "打开一个公开网页并读取内容。用户说「帮我打开这个链接看看」时使用。返回页面文字/HTML，适合总结网页。"
-                ),
-                "type": "browser",
-                "config": {"timeout": 30},
-                "enabled": True,
-                "is_builtin": True,
-            },
-            {
-                "name": "command",
-                "description": (
-                    "在本地环境中执行 shell 命令。"
-                    "可用于查看文件列表、读取文件内容、检查系统状态、运行构建命令等。"
-                    "仅支持安全命令白名单内的操作。"
-                ),
-                "type": "command",
-                "config": {"timeout": 30, "safe_mode": True},
-                "enabled": True,
-                "is_builtin": True,
-            },
+                            "name": "command",
+                            "description": (
+                                "在本机执行 shell 命令（支持管道/&&/python/pip/npm/git）。"
+                                "可选 cwd、timeout、background；后台用 process 轮询。"
+                            ),
+                            "type": "command",
+                            "config": {"timeout": 120, "safe_mode": False},
+                            "enabled": True,
+                            "is_builtin": True,
+                        },
+                        {
+                            "name": "process",
+                            "description": "管理 command 后台进程：list / poll / kill",
+                            "type": "process",
+                            "config": {},
+                            "enabled": True,
+                            "is_builtin": True,
+                        },
+                        {
+                            "name": "list_devices_tool",
+                            "description": "列出本机 local 与已配对远程设备",
+                            "type": "list_devices",
+                            "config": {},
+                            "enabled": True,
+                            "is_builtin": True,
+                        },
+                        {
+                            "name": "remote_exec",
+                            "description": "在远程设备或 local 上 exec/list/read",
+                            "type": "remote_exec",
+                            "config": {},
+                            "enabled": True,
+                            "is_builtin": True,
+                        },
+                        {
+                            "name": "browser",
+                            "description": (
+                                "浏览器：fetch HTML，或 Playwright navigate/snapshot/click/type（未装则降级 fetch）"
+                            ),
+                            "type": "browser",
+                            "config": {"timeout": 30},
+                            "enabled": True,
+                            "is_builtin": True,
+                        },
             {
                 "name": "file_read",
                 "description": (

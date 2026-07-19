@@ -18,6 +18,7 @@ import {
   listRemoteModels,
   registerCatalogProvider,
   selectCatalogModel,
+  upsertCatalogCredential,
   type CatalogProvider,
   type ModelCatalog,
   type ProviderPreset,
@@ -67,6 +68,7 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
   const [loading, setLoading] = useState(true);
   const [applying, setApplying] = useState(false);
   const [activating, setActivating] = useState(false);
+  const [updatingCreds, setUpdatingCreds] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   // Hermes: draft selection (provider + model) vs applied main
@@ -255,6 +257,35 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
     }
     setApplying(true);
     try {
+      // Apply 时可顺带写入新 Key（若输入框有内容）
+      if (apiKey.trim()) {
+        const cr = await upsertCatalogCredential({
+          provider_id: selectedProviderId,
+          label: '默认 Key',
+          api_key: apiKey.trim(),
+          set_active: true,
+        });
+        if (!cr.ok) {
+          addToast(cr.message || t('settings.saveFailed'), 'error');
+          return;
+        }
+        if (cr.catalog) setCatalog(cr.catalog);
+        setApiKey('');
+      }
+      // Base URL 变更也写入 register
+      const url = (baseUrl || selectedCatalog.llm_base_url || '').trim();
+      if (url && url !== (selectedCatalog.llm_base_url || '').replace(/\/$/, '')) {
+        await registerCatalogProvider({
+          id: selectedProviderId,
+          name: selectedCatalog.name,
+          icon: selectedCatalog.icon,
+          preset_id: selectedCatalog.preset_id || selectedProviderId,
+          llm_provider: selectedCatalog.llm_provider,
+          llm_base_url: url,
+          llm_model: selectedModel,
+          set_active: true,
+        });
+      }
       const res = await selectCatalogModel(selectedProviderId, selectedModel);
       if (!res.ok) {
         addToast(res.message || t('settings.switchFailed'), 'error');
@@ -266,11 +297,72 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
       addToast(res.message || t('settings.switchedTo').replace('{n}', selectedModel), 'success');
       await onSettingsRefetch();
       await refreshCatalog(true);
-      notifySettingsChanged(['active_provider_id', 'active_model', 'llm_model', 'llm_provider']);
+      notifySettingsChanged(['active_provider_id', 'active_model', 'llm_model', 'llm_provider', 'llm_api_key']);
     } catch (e: unknown) {
       addToast(e instanceof Error ? e.message : t('settings.switchModelFailed'), 'error');
     } finally {
       setApplying(false);
+    }
+  };
+
+  /** 已配置供应商：单独重设 API Key / Base URL */
+  const updateCredentials = async () => {
+    if (!selectedProviderId || !selectedCatalog) {
+      addToast('Select a configured provider first', 'error');
+      return;
+    }
+    const key = apiKey.trim();
+    const url = (baseUrl || selectedCatalog.llm_base_url || '').trim();
+    if (!key && url === (selectedCatalog.llm_base_url || '').replace(/\/$/, '')) {
+      addToast(t('settings.needApiKey') || 'Paste a new API Key (or change Base URL)', 'error');
+      return;
+    }
+    setUpdatingCreds(true);
+    try {
+      if (url) {
+        const reg = await registerCatalogProvider({
+          id: selectedProviderId,
+          name: selectedCatalog.name,
+          icon: selectedCatalog.icon,
+          preset_id: selectedCatalog.preset_id || selectedProviderId,
+          llm_provider: selectedCatalog.llm_provider,
+          llm_base_url: url,
+          llm_api_key: key || undefined,
+          llm_model: selectedModel || selectedCatalog.active_model || undefined,
+          set_active: catalog?.active_provider_id === selectedProviderId,
+        });
+        if (!reg.ok) {
+          addToast(reg.message || t('settings.saveFailed'), 'error');
+          return;
+        }
+        if (reg.catalog) setCatalog(reg.catalog);
+      }
+      if (key) {
+        const cr = await upsertCatalogCredential({
+          provider_id: selectedProviderId,
+          label: '默认 Key',
+          api_key: key,
+          set_active: true,
+        });
+        if (!cr.ok) {
+          addToast(cr.message || t('settings.saveFailed'), 'error');
+          return;
+        }
+        if (cr.catalog) setCatalog(cr.catalog);
+        // 若当前 active 就是该供应商，同步 runtime key
+        if (catalog?.active_provider_id === selectedProviderId || !catalog?.active_provider_id) {
+          await applySettingsBatch({ llm_api_key: key, llm_base_url: url || undefined });
+        }
+      }
+      setApiKey('');
+      addToast(t('settings.llmSaved') || 'Credentials updated', 'success');
+      await onSettingsRefetch();
+      await refreshCatalog(true);
+      notifySettingsChanged(['llm_api_key', 'llm_base_url']);
+    } catch (e: unknown) {
+      addToast(e instanceof Error ? e.message : t('settings.saveFailed'), 'error');
+    } finally {
+      setUpdatingCreds(false);
     }
   };
 
@@ -575,6 +667,62 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
             </>
           )}
         </div>
+
+        {/* 已配置供应商：始终可改 Base URL / 重设 API Key */}
+        {selectedCatalog && selectedCatalog.llm_provider !== 'ollama' && (
+          <div className="mt-3 space-y-2 rounded-xl border border-border-subtle/80 bg-elevated-bg/40 p-3">
+            <div className="text-[11px] font-medium text-foreground-muted">
+              更新 API Key / Base URL
+              {selectedCatalog.has_api_key ? (
+                <span className="ml-2 font-normal text-foreground-dim">
+                  （已保存 Key，粘贴新 Key 即可覆盖）
+                </span>
+              ) : (
+                <span className="ml-2 font-normal text-warning-text">
+                  （{t('settings.noKey')}）
+                </span>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                className={`${inputCls} min-w-[12rem] flex-1 font-mono text-xs`}
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                placeholder="https://api.example.com/v1"
+              />
+              <div className="relative min-w-[12rem] flex-1">
+                <input
+                  type={showKey ? 'text' : 'password'}
+                  className={`${inputCls} pr-14`}
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder={
+                    selectedCatalog.has_api_key
+                      ? '粘贴新 API Key 以覆盖'
+                      : t('settings.pasteApiKey')
+                  }
+                  autoComplete="off"
+                />
+                <button
+                  type="button"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-foreground-dim"
+                  onClick={() => setShowKey((v) => !v)}
+                >
+                  {showKey ? t('settings.hide') : t('settings.show')}
+                </button>
+              </div>
+              <button
+                type="button"
+                className={btnPrimary}
+                disabled={updatingCreds || (!apiKey.trim() && !baseUrl.trim())}
+                onClick={() => void updateCredentials()}
+              >
+                {updatingCreds ? t('common.saving') : '更新密钥'}
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="text-[11px] text-foreground-dim">
           {t('settings.current')}: <span className="font-medium text-foreground">{activeLabel}</span>
           {defaultLlmModel ? (

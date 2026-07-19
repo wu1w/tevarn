@@ -416,11 +416,11 @@ class MCPStoreService:
         if want_official:
             official = await self._fetch_official(limit=100, search=search)
 
-        # 合并：精选优先，官方去重（按 package_id / name）
+        # 合并：精选优先，官方去重（按 source+id 唯一，避免 React key 冲突）
         seen: set[str] = set()
         merged: list[UnifiedMCP] = []
         for m in curated + official:
-            key = (m.package_id or m.id).lower()
+            key = f"{m.source}/{m.id}".lower()
             if key in seen:
                 continue
             seen.add(key)

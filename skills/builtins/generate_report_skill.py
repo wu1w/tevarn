@@ -1,18 +1,20 @@
 """
 报告生成 Skill
-根据用户提供的主题和要求，生成结构化报告（Markdown/HTML格式）
+根据用户提供的主题和要求，生成结构化报告（优先 Word .docx，并保留 .md）
 """
 
 import logging
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from backend.skills.base import BaseSkill
 
 logger = logging.getLogger(__name__)
 
-REPORT_OUTPUT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "uploads", "reports"))
+REPORT_OUTPUT_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "uploads", "reports")
+)
 
 SYSTEM_PROMPT = """你是一位专业的报告撰写专家。你的任务是根据用户提供的主题和要求，生成一份结构清晰、内容详实的专业报告。
 
@@ -37,25 +39,27 @@ class GenerateReportSkill(BaseSkill):
     """生成专业报告"""
 
     name = "generate_report"
-    description = "根据主题生成专业报告（支持市场分析、技术报告、调研报告等）。需要主题、报告类型等参数。"
+    description = (
+        "根据主题生成专业报告（市场分析/技术/调研等）。"
+        "输出优先 Word(.docx)，并保留 Markdown 副本。"
+    )
     parameters = {
         "type": "object",
         "properties": {
-            "topic": {
-                "type": "string",
-                "description": "报告主题",
-            },
+            "topic": {"type": "string", "description": "报告主题"},
             "report_type": {
                 "type": "string",
-                "description": "报告类型：market_analysis(市场分析)、technical(技术报告)、research(调研报告)、business(商业计划书)、summary(总结报告)",
-                "enum": ["market_analysis", "technical", "research", "business", "summary"],
+                "description": "报告类型",
+                "enum": [
+                    "market_analysis",
+                    "technical",
+                    "research",
+                    "business",
+                    "summary",
+                ],
                 "default": "summary",
             },
-            "language": {
-                "type": "string",
-                "description": "报告语言",
-                "default": "zh",
-            },
+            "language": {"type": "string", "description": "报告语言", "default": "zh"},
             "sections": {
                 "type": "string",
                 "description": "可选的章节要求，用逗号分隔",
@@ -71,12 +75,11 @@ class GenerateReportSkill(BaseSkill):
         report_type: str = "summary",
         language: str = "zh",
         sections: str = "",
+        **kwargs,
     ) -> str:
-        """生成报告文件"""
         try:
             from backend.services.llm import LLMServiceFactory
 
-            # 报告类型映射
             type_names = {
                 "market_analysis": "市场分析报告",
                 "technical": "技术报告",
@@ -86,8 +89,10 @@ class GenerateReportSkill(BaseSkill):
             }
             type_name = type_names.get(report_type, "专业报告")
 
-            # 构建提示词
-            prompt = f"请生成一份{type_name}。\n\n主题：{topic}\n语言：{'中文' if language == 'zh' else 'English'}\n"
+            prompt = (
+                f"请生成一份{type_name}。\n\n主题：{topic}\n"
+                f"语言：{'中文' if language == 'zh' else 'English'}\n"
+            )
             if sections:
                 prompt += f"必须包含的章节：{sections}\n"
             prompt += f"\n请严格按照以下要求撰写报告：\n{SYSTEM_PROMPT}\n"
@@ -95,7 +100,9 @@ class GenerateReportSkill(BaseSkill):
 
             llm_service = LLMServiceFactory.get_service()
             response = ""
-            async for chunk in llm_service.chat([{"role": "user", "content": prompt}], stream=False):
+            async for chunk in llm_service.chat(
+                [{"role": "user", "content": prompt}], stream=False
+            ):
                 response += chunk.delta or ""
                 if chunk.finish_reason:
                     break
@@ -103,25 +110,27 @@ class GenerateReportSkill(BaseSkill):
             if not response.strip():
                 return "[Error] 报告生成失败：LLM 未返回任何内容"
 
-            # 清理响应，提取markdown内容
             report_md = self._extract_markdown(response)
             if not report_md.strip():
                 return "[Error] 报告生成失败：解析后的报告内容为空"
 
-            # 生成报告文件
             file_path = self._save_report_file(report_md, topic, report_type)
             file_name = os.path.basename(file_path)
-
-            # 生成摘要
             summary = self._extract_summary(report_md)
+            fmt = (
+                "Word .docx"
+                if str(file_path).endswith(".docx")
+                else "Markdown .md（安装 python-docx 可出 Word）"
+            )
 
             return (
                 f"[Success] 报告生成完成！\n"
                 f"类型：{type_name}\n"
                 f"主题：{topic}\n"
                 f"摘要：{summary}\n"
-                f"下载链接：/uploads/reports/{file_name}\n"
-                f"文件路径：{file_path}"
+                f"文件路径：{file_path}\n"
+                f"格式：{fmt}\n"
+                f"下载：/uploads/reports/{file_name}"
             )
 
         except Exception as e:
@@ -129,37 +138,68 @@ class GenerateReportSkill(BaseSkill):
             return f"[Error] 报告生成失败: {e}"
 
     def _extract_markdown(self, text: str) -> str:
-        """从LLM响应中提取markdown内容"""
         import re
-        # 尝试找 ```markdown 代码块
+
         code_block = re.search(r"```(?:markdown)?\s*(.*?)\s*```", text, re.DOTALL)
         if code_block:
             return code_block.group(1).strip()
         return text.strip()
 
     def _save_report_file(self, report_md: str, topic: str, report_type: str) -> str:
-        """保存报告文件"""
-        # 添加报告头信息
-        header = f"""# {topic}
-
-> **报告类型**：{report_type}  
-> **生成时间**：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  
-> **生成工具**：Takton Agent
-
----
-
-"""
+        """保存报告：优先 .docx，并保留 .md 副本。"""
+        ts = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+        header = (
+            f"# {topic}\n\n"
+            f"> **报告类型**：{report_type}  \n"
+            f"> **生成时间**：{ts}  \n"
+            f"> **生成工具**：Takton Agent\n\n"
+            f"---\n\n"
+        )
         full_content = header + report_md
 
         os.makedirs(REPORT_OUTPUT_DIR, exist_ok=True)
-        file_name = f"{uuid.uuid4().hex}.md"
-        file_path = os.path.join(REPORT_OUTPUT_DIR, file_name)
-        with open(file_path, "w", encoding="utf-8") as f:
+        stem = uuid.uuid4().hex
+        md_path = os.path.join(REPORT_OUTPUT_DIR, f"{stem}.md")
+        with open(md_path, "w", encoding="utf-8") as f:
             f.write(full_content)
-        return file_path
+
+        docx_path = os.path.join(REPORT_OUTPUT_DIR, f"{stem}.docx")
+        try:
+            from docx import Document
+            from docx.shared import Pt
+
+            doc = Document()
+            doc.add_heading(topic or "报告", level=0)
+            doc.add_paragraph(
+                f"报告类型：{report_type}  |  生成时间："
+                f"{datetime.now(timezone.utc).astimezone().strftime('%Y-%m-%d %H:%M')}"
+            )
+            for line in report_md.splitlines():
+                s = line.strip()
+                if not s:
+                    doc.add_paragraph("")
+                    continue
+                if s.startswith("### "):
+                    doc.add_heading(s[4:], level=3)
+                elif s.startswith("## "):
+                    doc.add_heading(s[3:], level=2)
+                elif s.startswith("# "):
+                    doc.add_heading(s[2:], level=1)
+                elif s.startswith(("- ", "* ")):
+                    p = doc.add_paragraph(s[2:], style="List Bullet")
+                    for run in p.runs:
+                        run.font.size = Pt(11)
+                else:
+                    p = doc.add_paragraph(s)
+                    for run in p.runs:
+                        run.font.size = Pt(11)
+            doc.save(docx_path)
+            return docx_path
+        except Exception as e:
+            logger.warning("docx export failed, keep md: %s", e)
+            return md_path
 
     def _extract_summary(self, report_md: str, max_length: int = 200) -> str:
-        """提取报告摘要"""
         lines = report_md.split("\n")
         for line in lines:
             stripped = line.strip()

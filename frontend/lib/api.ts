@@ -1562,8 +1562,22 @@ export async function createMCPServer(data: MCPServerFormData): Promise<MCPServe
     allowed_paths: data.allowed_paths ? data.allowed_paths.split(/\n/).map((s) => s.trim()).filter(Boolean) : undefined,
     timeout: data.timeout ?? 30,
   };
-  const res = await api.post('/mcp', payload);
-  return res.data;
+  try {
+    const res = await api.post('/mcp', payload);
+    return res.data;
+  } catch (e: unknown) {
+    // 同名已存在 → upsert 语义：就地更新（env/command/args 等）并热重连
+    const err = e as { response?: { status?: number; data?: { detail?: unknown } } };
+    const detail = err.response?.data?.detail as
+      | { error?: string; server_id?: string }
+      | string
+      | undefined;
+    if (err.response?.status === 409 && typeof detail === 'object' && detail?.error === 'mcp_server_exists') {
+      const res = await api.post('/mcp?upsert=true', payload);
+      return res.data;
+    }
+    throw e;
+  }
 }
 
 export async function updateMCPServer(serverId: string, data: MCPServerFormData): Promise<MCPServer> {

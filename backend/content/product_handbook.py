@@ -407,6 +407,47 @@ HTTP 回调：外部事件进 Takton，或结果推到外部。
 每步卡住就问：「第 N 步怎么做」
 """,
     },
+    "charts_media": {
+        "title": "图表渲染 · 文生图 · PPT/报告",
+        "body": """# 图表渲染 · 文生图 · 文档输出
+
+## 对话可以说
+- 「用表格列出系统状态」
+- 「画一个 mermaid 流程图」
+- 「生成一张产品封面图」
+- 「做一份 PPT / 写一份正式报告」
+- 「capability_status 看看媒体通道」
+
+## 工具速查
+| 工具 | 作用 | 依赖 |
+|------|------|------|
+| render_chart action=table_md | CSV → Markdown 表（中文完整） | 无 |
+| render_chart action=mermaid | 保存 .mmd，可选 PNG | `npm i -g @mermaid-js/mermaid-cli`（mmdc） |
+| image_generate | 文生图 | 环境变量 **FAL_KEY** 或 **OPENAI_API_KEY** |
+| generate_ppt | 幻灯片 **.pptx** | `pip install python-pptx` |
+| generate_report | 正式报告 **.docx**（兼 .md） | `pip install python-docx` |
+| tts | 语音 | `pip install edge-tts` |
+| doc_read / doc_write | 读 PDF/DOCX/XLSX、写文档 | pymupdf / python-docx / openpyxl |
+
+## 文生图配置（必读）
+未配置 Key 时只会生成**占位图**，并提示你配置：
+1. 在系统环境或 Takton `.env` 写入 `FAL_KEY=...`（或 `FAL_API_KEY`）
+2. 或写入 `OPENAI_API_KEY=...` 使用 DALL·E
+3. **重启后端**后再调 image_generate
+
+## Mermaid PNG
+仅有 .mmd、没有 PNG：本机缺少 mmdc。
+```
+npm i -g @mermaid-js/mermaid-cli
+mmdc -V
+```
+然后重试 render_chart。
+
+## PPT / 报告预期
+- generate_ppt → 真实 **.pptx**（无 python-pptx 才降级 md，并会提示安装）
+- generate_report → 优先 **.docx**，同时保留 md 副本
+""",
+    },
 }
 
 
@@ -487,11 +528,25 @@ TOPIC_ALIASES: dict[str, str] = {
     "安全": "security",
     "security": "security",
     "速查": "dialog_cheatsheet",
-    "cheatsheet": "dialog_cheatsheet",
-    "清单": "checklist",
-    "checklist": "checklist",
-    "开箱": "checklist",
-}
+        "cheatsheet": "dialog_cheatsheet",
+        "清单": "checklist",
+        "checklist": "checklist",
+        "开箱": "checklist",
+        "图表": "charts_media",
+        "图表渲染": "charts_media",
+        "render": "charts_media",
+        "render_chart": "charts_media",
+        "mermaid": "charts_media",
+        "文生图": "charts_media",
+        "image_generate": "charts_media",
+        "图片生成": "charts_media",
+        "ppt": "charts_media",
+        "PPT": "charts_media",
+        "报告": "charts_media",
+        "docx": "charts_media",
+        "tts": "charts_media",
+        "语音": "charts_media",
+    }
 
 
 def resolve_topic(topic: str | None) -> str:

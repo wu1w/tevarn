@@ -101,3 +101,12 @@ class ConfirmResponse(WSMessage):
     type: Literal["confirm_response"] = "confirm_response"
     confirm_id: str
     approved: bool
+
+
+class ScreenshotEvent(WSMessage):
+    """实时截图推送（desktop_screenshot / browser screenshot / computer_use capture）"""
+
+    type: Literal["screenshot"] = "screenshot"
+    image_base64: str  # data:image/png;base64,... 或纯 base64
+    tool_name: str = ""  # 触发截图的工具名
+    timestamp: str = ""  # ISO 8601

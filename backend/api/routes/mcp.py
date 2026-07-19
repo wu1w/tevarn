@@ -7,7 +7,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.api.dependencies import get_current_user, require_admin
 from backend.repositories.mcp_server_repo import AsyncMCPServerRepository
@@ -46,13 +46,36 @@ async def create_mcp_server(
     data: MCPServerCreate,
     current_user: Annotated[UserRead, Depends(require_admin)],
     repo: Annotated[AsyncMCPServerRepository, Depends(get_mcp_server_repo)],
+    upsert: bool = Query(False, description="同名时更新已有配置（env/command/args 等）并热重连"),
 ):
-    """创建 MCP Server（仅管理员）"""
+    """创建 MCP Server（仅管理员）。upsert=true 时同名执行更新而非 409。"""
     existing = await repo.get_by_name(data.name)
     if existing:
-        raise HTTPException(status_code=409, detail=f"MCP server '{data.name}' already exists")
+        if not upsert:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "mcp_server_exists",
+                    "message": f"MCP server '{data.name}' already exists",
+                    "server_id": str(getattr(existing, "id", "") or existing.get("id", "")),
+                    "hint": "retry with ?upsert=true to update config (env/command/args) in place",
+                },
+            )
+        upd = MCPServerUpdate(**data.model_dump(exclude={"name"}))
+        updated = await repo.update(existing.id, upd)
+        await _hot_reload()
+        return MCPServerConfig.model_validate(updated)
     server = await repo.create(data)
     return MCPServerConfig.model_validate(server)
+
+
+async def _hot_reload() -> None:
+    """配置变更后热重连 MCP 会话，让新 env/args 立即生效。"""
+    try:
+        await load_mcp_tools()
+    except Exception:
+        pass
+
 
 
 @router.put("/{server_id}", response_model=MCPServerConfig)
@@ -62,10 +85,11 @@ async def update_mcp_server(
     current_user: Annotated[UserRead, Depends(require_admin)],
     repo: Annotated[AsyncMCPServerRepository, Depends(get_mcp_server_repo)],
 ):
-    """更新 MCP Server（仅管理员）"""
+    """更新 MCP Server（仅管理员），成功后热重连。"""
     updated = await repo.update(server_id, data)
     if updated is None:
         raise HTTPException(status_code=404, detail="MCP server not found")
+    await _hot_reload()
     return MCPServerConfig.model_validate(updated)
 
 

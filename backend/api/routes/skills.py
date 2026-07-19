@@ -4,12 +4,15 @@ Skill 路由
 """
 
 import json
+import logging
 import uuid
 from typing import Annotated, Any
 
 import aiohttp
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.exc import IntegrityError
+
+logger = logging.getLogger(__name__)
 
 from backend.core.config import settings
 from backend.core.net_safety import UnsafeURLError, validate_public_url
@@ -196,7 +199,9 @@ async def _fetch_community_skills(url: str | None) -> list[dict[str, Any]]:
             async with session.get(target_url, timeout=30) as resp:
                 data = await resp.json()
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to fetch community skills: {e}") from e
+        # 上游不可达/404/非 JSON 时降级为空列表，不向上抛 502
+        logger.warning(f"Community skills fetch failed (degrading to empty): {e}")
+        return []
 
     if not isinstance(data, list):
         raise HTTPException(status_code=400, detail="Expected a JSON array of skills")

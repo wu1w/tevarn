@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "takton"
-version = "0.2.0"
+version = "0.2.1"
 description = "Takton - 个人专属 AI Agent 终端（前后端一体）"
 readme = "README.md"
 requires-python = ">=3.10"
