@@ -62,6 +62,8 @@ test_extract/
 
 # Large local only
 tray-icon.png
+# 豁免：frontend/tray-icon.png 是应用托盘图标（与 public/icon.png 同源），需入 repo 供打包
+!frontend/tray-icon.png
 *.exe
 *.msi
 *.AppImage
