@@ -25,13 +25,17 @@ class OpenAICompatibleService(LLMService):
 
     def __init__(self, config=None):
         self.config = config or settings.get_llm_config()
-        self.base_url = self.config.base_url.rstrip("/")
+        base = (self.config.base_url or "").strip().strip("\"'")
+        self.base_url = base.rstrip("/")
         self.model = self._normalize_model_id(
             getattr(self.config, "model", "") or "",
             self.base_url,
         )
-        self.max_tokens = self.config.max_tokens
-        self.temperature = getattr(self.config, "temperature", 0.7)
+        from .param_sanitize import sanitize_max_tokens, sanitize_temperature
+        self.max_tokens = sanitize_max_tokens(
+            getattr(self.config, "max_tokens", None), model=self.model
+        )
+        self.temperature = sanitize_temperature(getattr(self.config, "temperature", 0.7))
         self.api_key = getattr(self.config, "api_key", None)
 
     @staticmethod
@@ -65,9 +69,10 @@ class OpenAICompatibleService(LLMService):
         return headers
 
     def _chat_completions_url(self) -> str:
-        """兼容 base_url 已含 /v1 或智谱 /v4 的写法，避免拼出 /v1/v1/..."""
+        """兼容 base_url 已含版本号（/v1 /v2 /v4 /api 等）的写法，避免拼出 /v1/v1/... 或 /v2/v1/..."""
+        import re as _re
         base = self.base_url.rstrip("/")
-        if base.endswith("/v1") or base.endswith("/v4") or base.endswith("/api"):
+        if _re.search(r"/(v\d+|api)$", base):
             return f"{base}/chat/completions"
         return f"{base}/v1/chat/completions"
 
@@ -80,6 +85,201 @@ class OpenAICompatibleService(LLMService):
                 normalized.append({"type": "function", "function": t})
         return normalized
 
+    # 部分兼容网关（讯飞 MaaS 等）拒绝：assistant 空字符串 content + tool_calls
+    # 以及超大历史 tool arguments。统一在出站前消毒。
+    _MAX_TOOL_ARG_CHARS = 6000
+    _MAX_TOOL_RESULT_CHARS = 12000
+
+    @classmethod
+    def _sanitize_messages_for_api(cls, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Normalize message list for strict OpenAI-compatible gateways.
+
+        Critical: function.arguments MUST remain valid JSON after any truncation
+        (iFlytek MaaS returns 400 otherwise).
+        """
+        out: list[dict[str, Any]] = []
+        pending_tool_ids: set[str] = set()
+
+        # 预扫描：收集本序列中所有 assistant.tool_calls 声明的 tool_call_id。
+        # 用于识别"孤儿 tool 消息"——引用了不存在 tool_calls 的 tool 消息。
+        # 这类孤儿多由历史压缩（L3/L5）剥掉 assistant.tool_calls 但残留 tool 消息造成，
+        # 会被严格 OpenAI 兼容网关（如 Kimi）以 400 拒绝，必须在发送前剔除。
+        declared_tool_ids: set[str] = set()
+        for m in messages:
+            if isinstance(m, dict) and m.get("role") == "assistant":
+                tcs = m.get("tool_calls")
+                if isinstance(tcs, list):
+                    for tc in tcs:
+                        if isinstance(tc, dict) and tc.get("id"):
+                            declared_tool_ids.add(str(tc["id"]))
+
+        def _trim_text(s: str, limit: int) -> str:
+            if len(s) <= limit:
+                return s
+            return s[:limit] + f"\n...[truncated {len(s) - limit} chars]"
+
+        def _safe_tool_arguments(args: Any) -> str:
+            """Return a JSON string always parseable, length-capped."""
+            raw: str
+            parsed: Any = None
+            if isinstance(args, str):
+                raw = args
+                try:
+                    parsed = json.loads(args) if args.strip() else {}
+                except Exception:
+                    parsed = None
+            elif args is None:
+                return "{}"
+            else:
+                try:
+                    raw = json.dumps(args, ensure_ascii=False)
+                    parsed = args
+                except Exception:
+                    raw = json.dumps({"value": str(args)}, ensure_ascii=False)
+                    parsed = {"value": str(args)}
+
+            if len(raw) <= cls._MAX_TOOL_ARG_CHARS and parsed is not None:
+                # re-dump to guarantee compact valid JSON
+                try:
+                    return json.dumps(parsed, ensure_ascii=False)
+                except Exception:
+                    return raw if len(raw) <= cls._MAX_TOOL_ARG_CHARS else json.dumps(
+                        {"_truncated": True, "preview": raw[:800]}, ensure_ascii=False
+                    )
+
+            # Too long or invalid JSON string → structured stub (still valid JSON)
+            preview = raw[:800] if isinstance(raw, str) else str(raw)[:800]
+            stub: dict[str, Any] = {
+                "_truncated": True,
+                "original_chars": len(raw) if isinstance(raw, str) else 0,
+                "preview": preview,
+            }
+            # Keep top-level keys from object if possible (names only)
+            if isinstance(parsed, dict):
+                keys = list(parsed.keys())[:20]
+                stub["keys"] = keys
+                # preserve small scalar fields
+                small = {}
+                for k, v in parsed.items():
+                    if isinstance(v, (int, float, bool)) or (isinstance(v, str) and len(v) <= 200):
+                        small[k] = v
+                    if len(small) >= 8:
+                        break
+                if small:
+                    stub["fields"] = small
+            return json.dumps(stub, ensure_ascii=False)
+
+        for raw_msg in messages:
+            if not isinstance(raw_msg, dict):
+                continue
+            m = dict(raw_msg)
+            role = m.get("role")
+
+            if role == "assistant":
+                tcs = m.get("tool_calls")
+                content = m.get("content")
+                if tcs:
+                    if content is None or (isinstance(content, str) and not content.strip()):
+                        m["content"] = None
+                    new_tcs: list[dict[str, Any]] = []
+                    if isinstance(tcs, list):
+                        for tc in tcs:
+                            if not isinstance(tc, dict):
+                                continue
+                            tc2 = dict(tc)
+                            fn = dict(tc2.get("function") or {})
+                            fn["arguments"] = _safe_tool_arguments(fn.get("arguments"))
+                            # name required
+                            if not (fn.get("name") or "").strip():
+                                fn["name"] = fn.get("name") or "unknown_tool"
+                            tc2["function"] = fn
+                            if not tc2.get("type"):
+                                tc2["type"] = "function"
+                            tid = tc2.get("id")
+                            if tid:
+                                pending_tool_ids.add(str(tid))
+                            new_tcs.append(tc2)
+                    m["tool_calls"] = new_tcs
+                else:
+                    if content is None:
+                        m["content"] = ""
+                    m.pop("tool_calls", None)
+                out.append(m)
+                continue
+
+            if role == "tool":
+                tid = m.get("tool_call_id")
+                # 孤儿 tool 消息：其 tool_call_id 在本序列中没有任何 assistant.tool_calls 声明。
+                # 直接丢弃，避免严格网关 400（历史压缩剥掉 tool_calls 后常见）。
+                # 注意：declared_tool_ids 为空集时，说明序列里没有任何 tool_calls，
+                # 此时所有带 id 的 tool 消息都是孤儿，同样必须丢弃。
+                if tid and str(tid) not in declared_tool_ids:
+                    logger.warning(
+                        "dropping orphan tool message (tool_call_id=%s has no matching tool_calls)",
+                        tid,
+                    )
+                    continue
+                content = m.get("content")
+                if content is None:
+                    m["content"] = ""
+                elif not isinstance(content, str):
+                    m["content"] = str(content)
+                if len(m["content"]) > cls._MAX_TOOL_RESULT_CHARS:
+                    m["content"] = _trim_text(m["content"], cls._MAX_TOOL_RESULT_CHARS)
+                if tid:
+                    pending_tool_ids.discard(str(tid))
+                elif pending_tool_ids:
+                    m["tool_call_id"] = next(iter(pending_tool_ids))
+                    pending_tool_ids.discard(m["tool_call_id"])
+                out.append(m)
+                continue
+
+            if role in ("user", "system"):
+                if m.get("content") is None:
+                    m["content"] = ""
+                out.append(m)
+                continue
+
+            out.append(m)
+
+        # 双向净化（对齐 hermes _sanitize_tool_pairs）：assistant.tool_calls 必须有
+        # 对应 tool_result，反之亦然。发到 API 的消息是完整历史，任何 tool_calls 都
+        # 应当已完结、有匹配 tool_result；缺结果的孤儿 tool_calls 只可能来自压缩
+        # （L3/L5 丢了 tool_result）或异常中断，必须剥掉，否则严格网关 400。
+        # 剥掉优先于插 stub：stub 可能被下游按 id 不匹配的规则再次丢掉，重新暴露孤儿。
+        # pending_tool_ids 扫描结束后仍非空 = 这些 tool_calls 到结尾都无对应 tool_result。
+        if pending_tool_ids:
+            stripped = 0
+            for m in out:
+                if m.get("role") != "assistant":
+                    continue
+                tcs = m.get("tool_calls")
+                if not tcs:
+                    continue
+                kept = [
+                    tc
+                    for tc in tcs
+                    if not (isinstance(tc, dict) and tc.get("id") and str(tc["id"]) in pending_tool_ids)
+                ]
+                if len(kept) != len(tcs):
+                    stripped += len(tcs) - len(kept)
+                    if kept:
+                        m["tool_calls"] = kept
+                    else:
+                        m.pop("tool_calls", None)
+                        # 剥光后避免空 assistant turn 被网关拒绝
+                        content = m.get("content")
+                        if not content or (isinstance(content, str) and not content.strip()):
+                            m["content"] = "(tool call removed)"
+            if stripped:
+                logger.warning(
+                    "stripped %d orphaned tool_call(s) with no matching tool result",
+                    stripped,
+                )
+            pending_tool_ids.clear()
+
+        return out
+
     async def chat(
         self,
         messages: list[dict[str, Any]],
@@ -88,9 +288,10 @@ class OpenAICompatibleService(LLMService):
     ) -> AsyncIterator[LLMChunk]:
         """调用 OpenAI 兼容 /v1/chat/completions，支持流式和非流式"""
         url = self._chat_completions_url()
+        safe_messages = self._sanitize_messages_for_api(messages)
         payload = {
             "model": self.model,
-            "messages": messages,
+            "messages": safe_messages,
             "stream": stream,
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
@@ -168,19 +369,29 @@ class OpenAICompatibleService(LLMService):
                     detail = detail[:800] + "…"
                 hint = ""
                 url = str(getattr(getattr(e, "request_info", None), "url", "") or "")
-                if getattr(e, "status", None) == 400 and "kimi.com/coding" in url:
+                status = getattr(e, "status", "error")
+                if status == 400 and "kimi.com/coding" in url:
                     hint = (
                         " Kimi Code model 须为 kimi-for-coding / kimi-for-coding-highspeed"
                         f"（当前 model={self.model!r}）。"
                     )
-                status = getattr(e, "status", "error")
+                elif status in (401, 403):
+                    hint = (
+                        " 鉴权失败：请到「设置 → 模型」检查 API Key / OAuth 是否有效、"
+                        f"供应商 base_url 是否匹配（当前 model={self.model!r}）。"
+                    )
+                elif status == 400:
+                    hint = (
+                        " 请求被拒：常见原因是 model 名错误、上下文过长、或工具 schema 不兼容。"
+                        f"（当前 model={self.model!r}）"
+                    )
                 yield LLMChunk(
                     message_id=message_id,
                     delta=f"[LLM Error {status}] {detail}{hint}",
                     finish_reason="error",
                 )
             except Exception as e:
-                logger.error(f"OpenAI-compatible chat error: {e}")
+                logger.error(f"OpenAI-compatible stream error: {e}")
                 yield LLMChunk(message_id=message_id, delta=f"[LLM Error] {e}", finish_reason="error")
             return
 
@@ -323,10 +534,21 @@ class OpenAICompatibleService(LLMService):
             if len(detail) > 800:
                 detail = detail[:800] + "…"
             hint = ""
-            if e.status == 400 and "kimi.com/coding" in str(e.request_info.url):
+            url = str(getattr(getattr(e, "request_info", None), "url", "") or "")
+            if e.status == 400 and "kimi.com/coding" in url:
                 hint = (
                     " Kimi Code model 须为 kimi-for-coding / kimi-for-coding-highspeed"
                     f"（当前 model={self.model!r}）。"
+                )
+            elif e.status in (401, 403):
+                hint = (
+                    " 鉴权失败：请到「设置 → 模型」检查 API Key / OAuth 是否有效、"
+                    f"供应商 base_url 是否匹配（当前 model={self.model!r}）。"
+                )
+            elif e.status == 400:
+                hint = (
+                    " 请求被拒：常见原因是 model 名错误、上下文过长、或工具 schema 不兼容。"
+                    f"（当前 model={self.model!r}）"
                 )
             yield LLMChunk(
                 message_id=message_id,
