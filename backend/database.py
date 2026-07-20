@@ -5,6 +5,7 @@ SQLAlchemy async engine and session factory
 
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
+import re
 
 from sqlalchemy import event, text
 from sqlalchemy.exc import OperationalError, ProgrammingError
@@ -16,6 +17,29 @@ from backend.models.base import Base
 
 # 导入所有模型以注册到 Base.metadata（必须在 create_all 之前）
 import backend.models  # noqa: F401
+
+# 迁移标识符白名单，避免 f-string 拼接出危险标识
+_SQL_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# col_def 来自代码常量；允许常见类型声明与 DEFAULT 字面量（含 '{}' / "..."）
+_SQL_COL_DEF = re.compile(r"^[A-Za-z0-9_(),.\s'\"{}\-]+$")
+
+
+def _assert_sql_ident(name: str, kind: str = "identifier") -> str:
+    if not name or not _SQL_IDENT.match(name):
+        raise ValueError(f"Invalid SQL {kind}: {name!r}")
+    return name
+
+
+def _assert_col_def(col_def: str) -> str:
+    if (
+        not col_def
+        or not _SQL_COL_DEF.match(col_def)
+        or ";" in col_def
+        or "--" in col_def
+        or "/*" in col_def
+    ):
+        raise ValueError(f"Invalid column definition: {col_def!r}")
+    return col_def
 
 _is_sqlite = str(settings.db_url).startswith("sqlite")
 
@@ -90,16 +114,26 @@ async def _migrate_skill_columns(conn) -> None:
     for col_name, col_def in columns:
         try:
             async with conn.begin_nested():
-                await conn.execute(text(f"ALTER TABLE skills ADD COLUMN {col_name} {col_def}"))
+                await conn.execute(
+                    text(
+                        f"ALTER TABLE skills ADD COLUMN "
+                        f"{_assert_sql_ident(col_name, 'column')} {_assert_col_def(col_def)}"
+                    )
+                )
         except (OperationalError, ProgrammingError):
             pass
 
 
 async def _add_column_if_missing(conn, table: str, column: str, col_def: str) -> None:
-    """兼容迁移：若列不存在则添加"""
+    """兼容迁移：若列不存在则添加（表/列名经白名单校验）"""
+    table_s = _assert_sql_ident(table, "table")
+    column_s = _assert_sql_ident(column, "column")
+    col_def_s = _assert_col_def(col_def)
     try:
         async with conn.begin_nested():
-            await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_def}"))
+            await conn.execute(
+                text(f"ALTER TABLE {table_s} ADD COLUMN {column_s} {col_def_s}")
+            )
     except (OperationalError, ProgrammingError):
         pass
 

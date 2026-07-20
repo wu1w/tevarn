@@ -208,6 +208,8 @@ async def index_document(
         text=content,
         user_id=doc.user_id or current_user.id,
         source=doc.source or "",
+        skip_wiki=(doc.source == "builtin-seed"),
+        replace_chunks=True,
     )
     if not result.get("ok"):
         raise HTTPException(status_code=502, detail=result.get("message") or "索引失败")
@@ -406,7 +408,7 @@ async def rebuild_index(
         raise HTTPException(status_code=404, detail=f"Collection '{col}' 不存在")
 
     # 2. Rename 旧 collection 为备份
-    backup_name = f"{col}_backup_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    backup_name = f"{col}_backup_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
             # Qdrant 不支持 rename，用 alias 方式：先创建别名指向旧 collection
@@ -479,6 +481,8 @@ async def _bg_rebuild_index(collection: str, user_id: str) -> None:
                 text=content,
                 user_id=doc.user_id,
                 source=doc.source or "",
+                skip_wiki=(doc.source == "builtin-seed"),
+                replace_chunks=True,
             )
             if result.get("ok"):
                 success += 1
@@ -491,4 +495,4 @@ async def _bg_rebuild_index(collection: str, user_id: str) -> None:
 
 
 # 需要的额外 import
-from datetime import datetime  # noqa: E402 — used by rebuild_index
+from datetime import datetime, timezone  # noqa: E402 — used by rebuild_index

@@ -199,8 +199,10 @@ async def smoke_create_session(
 
 
 @router.get("/rag-status")
-async def smoke_rag_status():
-    """查看当前 RAG 状态"""
+async def smoke_rag_status(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """查看当前 RAG 状态（需登录）"""
     try:
         from backend.services.rag.capability import get_rag_status
         st = get_rag_status()
@@ -214,8 +216,10 @@ async def smoke_rag_status():
 
 
 @router.get("/compress-status")
-async def smoke_compress_status():
-    """查看上下文压缩引擎状态"""
+async def smoke_compress_status(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """查看上下文压缩引擎状态（需登录）"""
     try:
         from backend.agent.context_engine import get_context_engine
         from backend.core.config import settings as s

@@ -3,6 +3,7 @@ Settings 路由
 运行时配置管理 API —— 对标 Hermes/OpenClaw 的「选服务商 → 填 Key → 能聊天」路径
 """
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Annotated, Any, Optional
@@ -20,6 +21,8 @@ from backend.schemas.setting import SettingRead, SettingUpdate
 from backend.schemas.user import UserRead
 
 from ..dependencies import get_current_user, get_setting_repo, require_admin
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/settings", tags=["Settings"])
 
@@ -1148,13 +1151,44 @@ async def list_remote_models(
     """
     从供应商服务器实时拉取模型列表。
     需有效 API Key（云服务）或可访问的本地端点（Ollama 等）。
+    成功时按 base_url 匹配目录中的供应商并写回 cached_models。
     """
     from backend.core.config import settings
 
     provider = data.llm_provider or settings.llm_provider
     base_url = (data.llm_base_url or settings.llm_base_url or "").rstrip("/")
     api_key = await _resolve_api_key(repo, data.llm_api_key)
-    return await fetch_provider_models(provider, base_url, api_key)
+    result = await fetch_provider_models(provider, base_url, api_key)
+
+    # 写回缓存：匹配同 base_url / 同 provider 类型的已登记供应商
+    models = [str(m).strip() for m in (result.get("models") or []) if str(m).strip()]
+    if result.get("ok") and models:
+        try:
+            catalog = await model_catalog_mod.load_catalog(repo)
+            base_l = base_url.lower().rstrip("/")
+            matched = None
+            for p in catalog.get("providers") or []:
+                pb = str(p.get("llm_base_url") or "").rstrip("/").lower()
+                if base_l and pb == base_l:
+                    matched = p
+                    break
+            if matched is None:
+                for p in catalog.get("providers") or []:
+                    if str(p.get("llm_provider") or "").lower() == str(provider or "").lower():
+                        matched = p
+                        break
+            if matched is not None:
+                catalog = model_catalog_mod.set_provider_cached_models(
+                    catalog,
+                    str(matched.get("id") or ""),
+                    models,
+                    active_model=str(data.llm_model or matched.get("active_model") or "") or None,
+                )
+                await model_catalog_mod.save_catalog(repo, catalog)
+        except Exception as e:
+            logger.warning("list-models cache write failed: %s", e)
+
+    return result
 
 
 # ---- 模型目录（Hermes Desktop 风格：多供应商 + 禁用模型 + 对话页切换）----
@@ -1311,7 +1345,8 @@ async def get_model_catalog(
 ):
     """
     返回已配置供应商目录。
-    fetch_models=true 时为每个启用的供应商实时拉取模型列表，并标注 disabled。
+    fetch_models=true 时为每个启用的供应商实时拉取模型列表，并标注 disabled；
+    成功拉取会写回 cached_models。fetch_models=false 时用缓存回显，避免回访变 0。
     """
     catalog = await model_catalog_mod.load_catalog(repo)
     # OAuth token 临近过期时刷新
@@ -1320,6 +1355,11 @@ async def get_model_catalog(
         await model_catalog_mod.save_catalog(repo, catalog)
     except Exception:
         pass
+
+    active_pid = str(catalog.get("active_provider_id") or "")
+    active_model = str(catalog.get("active_model") or "")
+    catalog_dirty = False
+
     public = model_catalog_mod.mask_catalog_for_client(catalog)
 
     providers_out: list[dict[str, Any]] = []
@@ -1328,35 +1368,70 @@ async def get_model_catalog(
         entry["models"] = []
         entry["fetch_ok"] = None
         entry["fetch_message"] = ""
+        disabled_set = set(p.get("disabled_models") or [])
+        raw = next(
+            (x for x in catalog["providers"] if x["id"] == p["id"]),
+            None,
+        )
+
         if fetch_models and p.get("enabled", True):
-            # 用未脱敏的 key 拉取
-            raw = next(
-                (x for x in catalog["providers"] if x["id"] == p["id"]),
-                None,
-            )
             api_key = (raw or {}).get("llm_api_key") or ""
             listed = await fetch_provider_models(
                 p.get("llm_provider") or "openai-compatible",
                 p.get("llm_base_url") or "",
                 api_key,
             )
-            disabled_set = set(p.get("disabled_models") or [])
-            models = []
-            for mid in listed.get("models") or []:
-                models.append(
-                    {
-                        "id": mid,
-                        "disabled": mid in disabled_set,
-                    }
-                )
-            entry["models"] = models
+            live_ids = [str(mid).strip() for mid in (listed.get("models") or []) if str(mid).strip()]
             entry["fetch_ok"] = bool(listed.get("ok"))
             entry["fetch_message"] = listed.get("message") or ""
+
+            if listed.get("ok") and live_ids and raw is not None:
+                catalog = model_catalog_mod.set_provider_cached_models(
+                    catalog,
+                    str(p.get("id") or ""),
+                    live_ids,
+                    active_model=(raw.get("active_model") or None),
+                )
+                catalog_dirty = True
+                raw = next(
+                    (x for x in catalog["providers"] if x["id"] == p["id"]),
+                    raw,
+                )
+
+            # 拉取失败时回退缓存，避免界面闪 0
+            model_ids = live_ids if (listed.get("ok") and live_ids) else (
+                model_catalog_mod.provider_models_for_display(
+                    raw or p,
+                    global_active_provider_id=active_pid,
+                    global_active_model=active_model,
+                )
+            )
+            entry["models"] = [
+                {"id": mid, "disabled": mid in disabled_set} for mid in model_ids
+            ]
         else:
-            # 即使不拉取，也把已禁用的模型列出来方便管理
+            model_ids = model_catalog_mod.provider_models_for_display(
+                raw or p,
+                global_active_provider_id=active_pid,
+                global_active_model=active_model,
+            )
+            # 确保 disabled 里有但缓存没有的也显示（方便管理）
             for mid in p.get("disabled_models") or []:
-                entry["models"].append({"id": mid, "disabled": True})
+                m = str(mid).strip()
+                if m and m not in model_ids:
+                    model_ids.append(m)
+            entry["models"] = [
+                {"id": mid, "disabled": mid in disabled_set} for mid in model_ids
+            ]
+            entry["fetch_ok"] = None
+            entry["fetch_message"] = "cached" if model_ids else ""
         providers_out.append(entry)
+
+    if catalog_dirty:
+        try:
+            await model_catalog_mod.save_catalog(repo, catalog)
+        except Exception as e:
+            logger.warning("persist model cache failed: %s", e)
 
     return {
             "active_provider_id": public.get("active_provider_id") or "",

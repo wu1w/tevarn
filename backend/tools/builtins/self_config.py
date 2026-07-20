@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from backend.core.config import settings
 from backend.tools.base import BaseTool, ToolSource, ToolRiskLevel
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -38,6 +41,29 @@ FIELD_SENSITIVITY: dict[str, Literal["low", "medium", "high"]] = {
     "llm_provider": "medium",
     "embedding_provider": "medium",
     "reranker_provider": "medium",
+}
+
+# 配置键 → 分类（与 settings 路由保持一致）
+_SETTING_CATEGORY: dict[str, str] = {
+    "llm_provider": "llm",
+    "llm_model": "llm",
+    "llm_base_url": "llm",
+    "llm_api_key": "llm",
+    "max_tokens": "llm",
+    "context_window": "llm",
+    "temperature": "llm",
+    "embedding_provider": "embedding",
+    "embedding_model": "embedding",
+    "embedding_base_url": "embedding",
+    "embedding_api_key": "embedding",
+    "reranker_provider": "reranker",
+    "reranker_model": "reranker",
+    "reranker_base_url": "reranker",
+    "reranker_api_key": "reranker",
+    "rag_enabled": "rag",
+    "qdrant_url": "rag",
+    "qdrant_collection": "rag",
+    "system_name": "general",
 }
 
 
@@ -94,7 +120,8 @@ class GetSystemStatus(BaseTool):
                 result = await db.execute(text("SELECT COUNT(*) FROM cron_jobs WHERE enabled = 1"))
                 row = result.scalar()
                 status["active_cron_jobs"] = row or 0
-        except Exception:
+        except Exception as e:
+            logger.warning("get_system_status: cron_jobs count failed: %s", e)
             status["active_cron_jobs"] = "—"
 
         return ToolResult(
@@ -134,37 +161,44 @@ class UpdateConfig(BaseTool):
                 message=f"⚠️ 修改 `{key}` 是高风险操作（涉及 API 凭证或服务地址）。请确认是否继续？"
             )
 
-        # 执行更新
+        # 执行更新：走 SettingRepository（含加密）+ 立即应用到运行时单例
+        # 注意：不要 import 不存在的 update_setting（会 ImportError 导致写入永远失败）
         try:
-            from backend.api.routes.settings import update_setting
-            from backend.database import get_db_context
-            from sqlalchemy import text
+            from backend.repositories.setting_repo import AsyncSettingRepository
+            from backend.core.runtime_settings import apply_setting_value, reset_factories_for_keys
 
-            async with get_db_context() as db:
-                # 查找或创建 setting
-                result = await db.execute(
-                    text("SELECT * FROM settings WHERE key = :key"),
-                    {"key": key}
-                )
-                row = result.mappings().first()
-                if row:
-                    await db.execute(
-                        text("UPDATE settings SET value = :value WHERE key = :key"),
-                        {"key": key, "value": value}
+            # 避免把脱敏占位写回
+            if key.endswith("_api_key") and isinstance(value, str):
+                if not value or "..." in value or value == "***":
+                    return ToolResult(
+                        success=False,
+                        data={"key": key},
+                        message="❌ API Key 不能为空或为脱敏占位（sk-xx...yy）",
                     )
-                else:
-                    await db.execute(
-                        text("INSERT INTO settings (key, value, category, description) VALUES (:key, :value, 'general', '')"),
-                        {"key": key, "value": value}
-                    )
-                await db.commit()
 
+            cat = _SETTING_CATEGORY.get(key, "general")
+            repo = AsyncSettingRepository()
+            setting = await repo.upsert(key=key, value=value, category=cat)
+            plain = setting.value  # repo.upsert 已返回明文
+            applied = apply_setting_value(key, plain)
+            if applied:
+                reset_factories_for_keys([key])
+            display = value if not key.endswith("_api_key") else ("*" * min(8, len(value)) + "…")
             return ToolResult(
                 success=True,
-                data={"key": key, "value": value, "sensitivity": sensitivity},
-                message=f"✅ `{key}` 已更新为 `{value[:50]}{'...' if len(value) > 50 else ''}`"
+                data={
+                    "key": key,
+                    "value": display,
+                    "sensitivity": sensitivity,
+                    "runtime_applied": applied,
+                },
+                message=(
+                    f"✅ `{key}` 已更新为 `{display[:50]}{'...' if len(display) > 50 else ''}`"
+                    + ("" if applied else "（已落库；该键无对应运行时字段，重启后仍生效于 DB）")
+                ),
             )
         except Exception as e:
+            logger.exception("UpdateConfig failed for key=%s", key)
             return ToolResult(success=False, data={}, message=f"❌ 更新失败: {e}")
 
 
@@ -227,17 +261,18 @@ class ManageKnowledge(BaseTool):
     def __init__(self):
         super().__init__(
             name="manage_knowledge",
-            description="管理知识库文档。action: upload(上传), list(列出), search(搜索), delete(删除)",
+            description="管理知识库文档。action: upload(上传文本), upload_file(从工作区文件上传), list(列出), search(搜索), delete(删除)",
             parameters={
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["upload", "list", "search", "delete"], "description": "操作类型"},
+                    "action": {"type": "string", "enum": ["upload", "upload_file", "list", "search", "delete"], "description": "操作类型"},
                     "content": {"type": "string", "description": "upload 时: 文档内容"},
-                    "title": {"type": "string", "description": "upload 时: 文档标题"},
+                    "title": {"type": "string", "description": "upload/upload_file 时: 文档标题"},
+                    "file_path": {"type": "string", "description": "upload_file 时: 工作区文件路径"},
                     "doc_id": {"type": "string", "description": "delete 时: 文档 ID"},
                     "query": {"type": "string", "description": "search 时: 搜索关键词"},
                     "top_k": {"type": "integer", "description": "search 时: 返回结果数量，默认 5"},
-                    "collection": {"type": "string", "description": "search 时: 指定 Collection，默认使用配置值"},
+                    "collection": {"type": "string", "description": "search/upload_file 时: 指定 Collection，默认使用配置值"},
                 },
                 "required": ["action"],
             },
@@ -256,11 +291,66 @@ class ManageKnowledge(BaseTool):
                 return ToolResult(success=False, data={}, message="upload 需要提供 content 和 title")
             try:
                 svc = QdrantService()
-                from backend.services.rag.qdrant_impl import Document
-                doc = await svc.add_document(Document(title=title, content=content))
-                return ToolResult(success=True, data={"doc_id": doc.id}, message=f"✅ 文档 `{title}` 已上传并索引")
+                # Document 真实形状是检索结果；upload 走 kwargs 兼容
+                doc = await svc.add_document(title=title, content=content)
+                return ToolResult(success=True, data={"doc_id": getattr(doc, "id", None)}, message=f"✅ 文档 `{title}` 已上传并索引")
             except Exception as e:
                 return ToolResult(success=False, data={}, message=f"❌ 上传失败: {e}")
+
+        elif action == "upload_file":
+            file_path = (kwargs.get("file_path") or "").strip()
+            if not file_path:
+                return ToolResult(success=False, data={}, message="upload_file 需要提供 file_path")
+            try:
+                from pathlib import Path
+
+                from backend.repositories.knowledge_repo import AsyncDocumentRepository
+                from backend.services.knowledge.indexer import index_document_text
+
+                p = Path(file_path)
+                if not p.is_file():
+                    return ToolResult(success=False, data={}, message=f"文件不存在: {file_path}")
+                raw_bytes = p.read_bytes()
+                if not raw_bytes:
+                    return ToolResult(success=False, data={}, message=f"文件为空: {file_path}")
+                doc_content = raw_bytes.decode("utf-8", errors="replace")
+                title = (kwargs.get("title") or "").strip() or p.stem
+                collection = (kwargs.get("collection") or "").strip()
+
+                # 与上传路由同一管线：建 Document 记录 → index_document_text 同步索引
+                doc_repo = AsyncDocumentRepository()
+                doc = await doc_repo.create({
+                    "title": title,
+                    "user_id": None,
+                    "status": "pending",
+                    "source": str(p),
+                    "meta": {
+                        "source": p.name,
+                        "content": doc_content,
+                        "size": len(raw_bytes),
+                        "collection": collection,
+                    },
+                })
+                result = await index_document_text(
+                    document_id=doc.id,
+                    title=title,
+                    text=doc_content,
+                    user_id=None,
+                    source=str(p),
+                )
+                if result.get("ok"):
+                    return ToolResult(
+                        success=True,
+                        data={"doc_id": str(doc.id), "title": title, "size": len(raw_bytes)},
+                        message=f"✅ 文件 `{p.name}` 已作为文档 `{title}` 上传并索引",
+                    )
+                return ToolResult(
+                    success=True,
+                    data={"doc_id": str(doc.id), "title": title, "indexed": False, "detail": result.get("message")},
+                    message=f"⚠️ 文档 `{title}` 已创建，但向量索引未完成: {result.get('message', '未知原因')}（向量栈就绪后可重新索引）",
+                )
+            except Exception as e:
+                return ToolResult(success=False, data={}, message=f"❌ 文件上传失败: {e}")
 
         elif action == "list":
             try:
@@ -306,21 +396,40 @@ class ManageKnowledge(BaseTool):
 
 
 class ManageCron(BaseTool):
-    """定时任务管理工具（合并 create/list/update/delete）"""
+    """定时任务管理工具 — 对齐 cron_jobs(workflow_id) 与调度器"""
 
     def __init__(self):
         super().__init__(
             name="manage_cron",
-            description="管理定时任务。action: create(创建), list(列出), update(更新), delete(删除), toggle(启用/禁用)",
+            description=(
+                "管理定时任务（绑定工作流按 schedule 执行）。"
+                "action: create/list/update/delete/toggle。"
+                "create 需要 name + schedule，建议提供 workflow_id（工作流 UUID）；"
+                "也可用 workflow_name 按名称匹配。"
+            ),
             parameters={
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["create", "list", "update", "delete", "toggle"], "description": "操作类型"},
+                    "action": {
+                        "type": "string",
+                        "enum": ["create", "list", "update", "delete", "toggle"],
+                        "description": "操作类型",
+                    },
                     "job_id": {"type": "string", "description": "update/delete/toggle 时: 任务 ID"},
-                    "name": {"type": "string", "description": "create 时: 任务名称"},
-                    "schedule": {"type": "string", "description": "create/update 时: Cron 表达式或描述，如 '0 9 * * *' 或 '每天9点'"},
-                    "command": {"type": "string", "description": "create/update 时: 执行命令或描述"},
-                    "enabled": {"type": "boolean", "description": "create/update 时: 是否启用"},
+                    "name": {"type": "string", "description": "create/update: 任务名称"},
+                    "schedule": {
+                        "type": "string",
+                        "description": "create/update: Cron 表达式，如 '0 9 * * *' 或 'every 1h'",
+                    },
+                    "workflow_id": {
+                        "type": "string",
+                        "description": "create/update: 绑定的工作流 UUID",
+                    },
+                    "workflow_name": {
+                        "type": "string",
+                        "description": "create/update: 按名称查找工作流（workflow_id 优先）",
+                    },
+                    "enabled": {"type": "boolean", "description": "create/update: 是否启用"},
                 },
                 "required": ["action"],
             },
@@ -328,100 +437,206 @@ class ManageCron(BaseTool):
             risk_level=ToolRiskLevel.MEDIUM,
         )
 
+    async def _resolve_workflow_id(self, kwargs: dict[str, Any]) -> Any | None:
+        import uuid as uuid_mod
+
+        from backend.repositories.workflow_repo import AsyncWorkflowRepository
+
+        raw = (kwargs.get("workflow_id") or "").strip()
+        if raw:
+            try:
+                return uuid_mod.UUID(raw)
+            except ValueError:
+                raise ValueError(f"workflow_id 不是合法 UUID: {raw}")
+
+        name = (kwargs.get("workflow_name") or kwargs.get("command") or "").strip()
+        # command 兼容旧参数：若看起来像 UUID 当 id，否则当 workflow 名
+        if not name:
+            return None
+        try:
+            return uuid_mod.UUID(name)
+        except ValueError:
+            pass
+
+        repo = AsyncWorkflowRepository()
+        # list_by_status("") → 全部
+        try:
+            wfs = await repo.list_by_status("")
+        except Exception:
+            wfs = []
+        name_l = name.lower()
+        for w in wfs or []:
+            if str(getattr(w, "name", "") or "").lower() == name_l:
+                return w.id
+        for w in wfs or []:
+            if name_l in str(getattr(w, "name", "") or "").lower():
+                return w.id
+        raise ValueError(f"找不到工作流: {name}")
+
+    def _job_to_dict(self, job: Any) -> dict[str, Any]:
+        return {
+            "id": str(job.id),
+            "name": job.name,
+            "schedule": job.schedule,
+            "workflow_id": str(job.workflow_id) if job.workflow_id else None,
+            "enabled": bool(job.enabled),
+            "last_status": getattr(job, "last_status", None),
+            "last_error": getattr(job, "last_error", None),
+            "last_run_at": job.last_run_at.isoformat() if getattr(job, "last_run_at", None) else None,
+            "next_run_at": job.next_run_at.isoformat() if getattr(job, "next_run_at", None) else None,
+        }
+
+    def _notify_scheduler(self, job: Any | None, *, deleted_id: str | None = None) -> None:
+        try:
+            from backend.services.cron_scheduler import scheduler
+
+            if deleted_id:
+                scheduler._unschedule_job(str(deleted_id))
+            elif job is not None:
+                scheduler.reschedule(job)
+        except Exception as e:
+            logger.warning("cron scheduler notify failed: %s", e)
+
     async def execute(self, action: str, **kwargs: Any) -> ToolResult:
-        from backend.database import get_db_context
-        from sqlalchemy import text
+        import uuid as uuid_mod
+
+        from backend.repositories.cron_repo import AsyncCronJobRepository
+        from backend.services.cron_scheduler import compute_next_run
+
+        repo = AsyncCronJobRepository()
 
         if action == "create":
-            name = kwargs.get("name", "")
-            schedule = kwargs.get("schedule", "")
-            command = kwargs.get("command", "")
-            if not all([name, schedule, command]):
-                return ToolResult(success=False, data={}, message="create 需要提供 name, schedule, command")
+            name = (kwargs.get("name") or "").strip()
+            schedule = (kwargs.get("schedule") or "").strip()
+            if not name or not schedule:
+                return ToolResult(
+                    success=False,
+                    data={},
+                    message="create 需要提供 name, schedule；建议再提供 workflow_id 或 workflow_name",
+                )
             try:
-                async with get_db_context() as db:
-                    result = await db.execute(
-                        text("INSERT INTO cron_jobs (name, schedule, command, enabled) VALUES (:name, :schedule, :command, :enabled)"),
-                        {"name": name, "schedule": schedule, "command": command, "enabled": kwargs.get("enabled", True)}
-                    )
-                    await db.commit()
-                    job_id = result.lastrowid
-                return ToolResult(success=True, data={"job_id": job_id}, message=f"✅ 定时任务 `{name}` 已创建")
+                workflow_id = await self._resolve_workflow_id(kwargs)
+            except ValueError as e:
+                return ToolResult(success=False, data={}, message=f"❌ {e}")
+
+            enabled = bool(kwargs.get("enabled", True))
+            next_run = compute_next_run(schedule) if enabled else None
+            try:
+                job = await repo.create(
+                    {
+                        "name": name,
+                        "schedule": schedule,
+                        "workflow_id": workflow_id,
+                        "enabled": enabled,
+                        "last_status": "pending",
+                        "next_run_at": next_run,
+                    }
+                )
+                self._notify_scheduler(job)
+                return ToolResult(
+                    success=True,
+                    data=self._job_to_dict(job),
+                    message=f"✅ 定时任务 `{name}` 已创建"
+                    + ("" if workflow_id else "（未绑定工作流，启用后也不会执行业务）"),
+                )
             except Exception as e:
                 return ToolResult(success=False, data={}, message=f"❌ 创建失败: {e}")
 
         elif action == "list":
             try:
-                async with get_db_context() as db:
-                    result = await db.execute(text("SELECT * FROM cron_jobs ORDER BY created_at DESC"))
-                    rows = result.mappings().all()
-                    jobs = [dict(r) for r in rows]
+                jobs = await repo.list_all()
+                data = [self._job_to_dict(j) for j in jobs]
                 return ToolResult(
                     success=True,
-                    data={"jobs": jobs, "count": len(jobs)},
-                    message=f"共 {len(jobs)} 个定时任务"
+                    data={"jobs": data, "count": len(data)},
+                    message=f"共 {len(data)} 个定时任务",
                 )
             except Exception as e:
                 return ToolResult(success=False, data={}, message=f"❌ 列出失败: {e}")
 
         elif action == "update":
-            job_id = kwargs.get("job_id", "")
+            job_id = (kwargs.get("job_id") or "").strip()
             if not job_id:
                 return ToolResult(success=False, data={}, message="update 需要提供 job_id")
             try:
-                updates = []
-                params: dict[str, Any] = {"job_id": job_id}
-                if "schedule" in kwargs:
-                    updates.append("schedule = :schedule")
-                    params["schedule"] = kwargs["schedule"]
-                if "command" in kwargs:
-                    updates.append("command = :command")
-                    params["command"] = kwargs["command"]
-                if "enabled" in kwargs:
-                    updates.append("enabled = :enabled")
-                    params["enabled"] = kwargs["enabled"]
-                if "name" in kwargs:
-                    updates.append("name = :name")
-                    params["name"] = kwargs["name"]
-                if not updates:
-                    return ToolResult(success=False, data={}, message="update 至少需要提供一项更新")
-                async with get_db_context() as db:
-                    await db.execute(
-                        text(f"UPDATE cron_jobs SET {', '.join(updates)} WHERE id = :job_id"),
-                        params
-                    )
-                    await db.commit()
-                return ToolResult(success=True, data={"job_id": job_id}, message=f"✅ 任务 `{job_id}` 已更新")
+                jid = uuid_mod.UUID(job_id)
+            except ValueError:
+                return ToolResult(success=False, data={}, message="job_id 不是合法 UUID")
+
+            patch: dict[str, Any] = {}
+            if "name" in kwargs and kwargs["name"] is not None:
+                patch["name"] = str(kwargs["name"]).strip()
+            if "schedule" in kwargs and kwargs["schedule"] is not None:
+                patch["schedule"] = str(kwargs["schedule"]).strip()
+            if "enabled" in kwargs and kwargs["enabled"] is not None:
+                patch["enabled"] = bool(kwargs["enabled"])
+            if any(k in kwargs for k in ("workflow_id", "workflow_name", "command")):
+                try:
+                    patch["workflow_id"] = await self._resolve_workflow_id(kwargs)
+                except ValueError as e:
+                    return ToolResult(success=False, data={}, message=f"❌ {e}")
+            if not patch:
+                return ToolResult(success=False, data={}, message="update 至少需要提供一项更新")
+
+            if "schedule" in patch or patch.get("enabled") is True:
+                sched = patch.get("schedule")
+                if sched is None:
+                    existing = await repo.get_by_id(jid)
+                    sched = existing.schedule if existing else None
+                if sched and patch.get("enabled", True):
+                    patch["next_run_at"] = compute_next_run(sched)
+
+            try:
+                job = await repo.update(jid, patch)
+                if job is None:
+                    return ToolResult(success=False, data={}, message="任务不存在")
+                self._notify_scheduler(job)
+                return ToolResult(
+                    success=True,
+                    data=self._job_to_dict(job),
+                    message=f"✅ 任务 `{job_id}` 已更新",
+                )
             except Exception as e:
                 return ToolResult(success=False, data={}, message=f"❌ 更新失败: {e}")
 
         elif action == "delete":
-            job_id = kwargs.get("job_id", "")
+            job_id = (kwargs.get("job_id") or "").strip()
             if not job_id:
                 return ToolResult(success=False, data={}, message="delete 需要提供 job_id")
             try:
-                async with get_db_context() as db:
-                    await db.execute(text("DELETE FROM cron_jobs WHERE id = :job_id"), {"job_id": job_id})
-                    await db.commit()
+                jid = uuid_mod.UUID(job_id)
+                ok = await repo.delete(jid)
+                if not ok:
+                    return ToolResult(success=False, data={}, message="任务不存在")
+                self._notify_scheduler(None, deleted_id=job_id)
                 return ToolResult(success=True, data={"job_id": job_id}, message=f"✅ 任务 `{job_id}` 已删除")
+            except ValueError:
+                return ToolResult(success=False, data={}, message="job_id 不是合法 UUID")
             except Exception as e:
                 return ToolResult(success=False, data={}, message=f"❌ 删除失败: {e}")
 
         elif action == "toggle":
-            job_id = kwargs.get("job_id", "")
+            job_id = (kwargs.get("job_id") or "").strip()
             if not job_id:
                 return ToolResult(success=False, data={}, message="toggle 需要提供 job_id")
             try:
-                async with get_db_context() as db:
-                    result = await db.execute(
-                        text("UPDATE cron_jobs SET enabled = NOT enabled WHERE id = :job_id RETURNING enabled"),
-                        {"job_id": job_id}
-                    )
-                    row = result.mappings().first()
-                    await db.commit()
-                    enabled = row["enabled"] if row else None
-                return ToolResult(success=True, data={"job_id": job_id, "enabled": enabled}, message=f"✅ 任务 `{job_id}` 已{'启用' if enabled else '禁用'}"
+                jid = uuid_mod.UUID(job_id)
+                job = await repo.get_by_id(jid)
+                if job is None:
+                    return ToolResult(success=False, data={}, message="任务不存在")
+                new_enabled = not bool(job.enabled)
+                patch: dict[str, Any] = {"enabled": new_enabled}
+                if new_enabled:
+                    patch["next_run_at"] = compute_next_run(job.schedule)
+                job = await repo.update(jid, patch)
+                self._notify_scheduler(job)
+                return ToolResult(
+                    success=True,
+                    data=self._job_to_dict(job) if job else {"job_id": job_id, "enabled": new_enabled},
+                    message=f"✅ 任务 `{job_id}` 已{'启用' if new_enabled else '禁用'}",
                 )
+            except ValueError:
+                return ToolResult(success=False, data={}, message="job_id 不是合法 UUID")
             except Exception as e:
                 return ToolResult(success=False, data={}, message=f"❌ 切换失败: {e}")
 

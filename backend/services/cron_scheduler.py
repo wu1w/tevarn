@@ -280,6 +280,24 @@ class CronScheduler:
             except Exception as update_err:
                 logger.error("Failed to update cron job status: %s", update_err)
 
+            # P1 TEE: cron outcome → evolution assets
+            try:
+                from backend.evolution.config import get_evolution_config
+                from backend.evolution.manager import get_evolution_manager
+
+                if get_evolution_config().enabled and get_evolution_config().from_cron:
+                    await get_evolution_manager().run_from_task_outcome(
+                        task_name=f"cron:{job_name}",
+                        success=(run_status == "success"),
+                        detail=(output_text or run_error or "")[:2000],
+                        failure_codes=[] if run_status == "success" else ["cron_failed"],
+                        session_id=f"cron:{job_id}",
+                        source="cron",
+                        criteria_summary=f"schedule={getattr(job, 'schedule', '')}",
+                    )
+            except Exception as evo_err:
+                logger.warning("cron evolution hook skipped: %s", evo_err)
+
     async def stop(self) -> None:
         self._running = False
         for job_id, task in list(self._tasks.items()):

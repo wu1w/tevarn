@@ -107,7 +107,7 @@ class HumanFormatter(logging.Formatter):
     }
 
     def format(self, record: logging.LogRecord) -> str:
-        ts = datetime.now().strftime("%H:%M:%S")
+        ts = datetime.now(timezone.utc).astimezone().strftime("%H:%M:%S")
         color = self._COLORS.get(record.levelname, self._RESET)
         msg = record.getMessage()
         req_id = getattr(record, "request_id", "")

@@ -56,6 +56,31 @@ def _layout_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+async def _resolve_default_user_id():
+    """解析库中真实存在的默认用户 ID，避免硬编码 UUID 与 DB 不一致导致 FK 失败。"""
+    import uuid as _uuid
+
+    try:
+        from backend.api.dependencies import get_user_repo
+
+        user_repo = await get_user_repo()
+        user = None
+        if hasattr(user_repo, "get_by_email"):
+            user = await user_repo.get_by_email("admin@takton.dev")
+        if user is None and hasattr(user_repo, "list_all"):
+            try:
+                users = await user_repo.list_all()
+                user = users[0] if users else None
+            except Exception:
+                user = None
+        if user is not None and getattr(user, "id", None):
+            uid = user.id
+            return uid if isinstance(uid, _uuid.UUID) else _uuid.UUID(str(uid))
+    except Exception:
+        pass
+    return None
+
+
 def _wire_linear(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     edges: list[dict[str, Any]] = []
     for i in range(len(nodes) - 1):
@@ -676,13 +701,15 @@ class SaveWorkflow(BaseTool):
             "trigger": trigger or "manual",
             "status": "draft",
         }
-        # 尽量绑定默认用户
-        try:
-            import uuid as _uuid
-
-            data["user_id"] = _uuid.UUID("314016d7-a9d5-4719-8371-7ec9301fba0b")
-        except Exception:
-            pass
+        # 绑定库中真实存在的默认用户；解析不到则不落库，避免 FK 失败
+        user_id = await _resolve_default_user_id()
+        if user_id is None:
+            return {
+                "success": False,
+                "data": {},
+                "message": "❌ 未找到可用用户，工作流未保存（请确认已初始化默认用户）",
+            }
+        data["user_id"] = user_id
         wf = await repo.create(data)
         return {
             "success": True,

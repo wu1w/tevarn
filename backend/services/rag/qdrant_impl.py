@@ -88,10 +88,19 @@ class QdrantRAGService(RAGService):
                 "must": [{"key": "user_id", "match": {"value": user_id}}]
             }
 
+        # collection 不存在时自动创建（避免 wiki_pages 等新 collection 404 刷屏）
+        await self._ensure_collection(collection)
+
         async with aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=30)
         ) as session:
             async with session.post(url, json=payload) as resp:
+                if resp.status == 404:
+                    logger.warning(
+                        "Collection %s not found on Qdrant (auto-create may have failed), returning empty",
+                        collection,
+                    )
+                    return []
                 resp.raise_for_status()
                 data = await resp.json()
                 results = []
@@ -106,6 +115,44 @@ class QdrantRAGService(RAGService):
                         )
                     )
                 return results
+
+    async def _ensure_collection(self, collection: str) -> None:
+        """确保 Qdrant collection 存在；不存在则自动创建（幂等，带进程内缓存）。"""
+        if collection in self._ensured_collections:
+            return
+        try:
+            import aiohttp
+
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as session:
+                # 检查是否存在
+                async with session.get(
+                    f"{self.qdrant_url}/collections/{collection}"
+                ) as resp:
+                    if resp.status == 200:
+                        self._ensured_collections.add(collection)
+                        return
+                # 不存在则创建（默认 1024 维 cosine，与主流 embedding 兼容）
+                dim = getattr(settings, "embedding_dimensions", 1024) or 1024
+                payload = {
+                    "vectors": {"size": dim, "distance": "Cosine"},
+                    "optimizers_config": {"default_segment_number": 2},
+                }
+                async with session.put(
+                    f"{self.qdrant_url}/collections/{collection}", json=payload
+                ) as resp:
+                    if resp.status in (200, 201):
+                        logger.info("Auto-created Qdrant collection: %s (dim=%d)", collection, dim)
+                        self._ensured_collections.add(collection)
+                    else:
+                        body = await resp.text()
+                        logger.warning(
+                            "Failed to auto-create collection %s: %s %s",
+                            collection, resp.status, body[:200],
+                        )
+        except Exception as e:
+            logger.debug("ensure_collection %s skipped: %s", collection, e)
 
     async def _vector_only_search(
         self,
@@ -128,10 +175,19 @@ class QdrantRAGService(RAGService):
                 "must": [{"key": "user_id", "match": {"value": user_id}}]
             }
 
+        # N1: 404 自愈 — 先确保 collection 存在
+        await self._ensure_collection(collection)
+
         async with aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=30)
         ) as session:
             async with session.post(url, json=payload) as resp:
+                if resp.status == 404:
+                    logger.warning(
+                        "Collection %s not found on Qdrant (auto-create attempted), returning empty",
+                        collection,
+                    )
+                    return []
                 resp.raise_for_status()
                 data = await resp.json()
                 results = []
@@ -420,3 +476,109 @@ class QdrantRAGService(RAGService):
     def get_diagnostics(self) -> RAGDiagnostics | None:
         """获取最近一次检索的诊断信息"""
         return self._diagnostics
+
+
+
+class QdrantService:
+    """兼容 self_config 旧工具接口（get_system_status / manage_knowledge）。"""
+
+    def __init__(self) -> None:
+        self.qdrant_url = getattr(settings, "qdrant_url", "") or ""
+        self._rag = QdrantRAGService()
+
+    async def get_collections(self) -> dict[str, Any]:
+        import aiohttp
+
+        url = f"{self.qdrant_url.rstrip('/')}/collections"
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+            async with session.get(url) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+        cols: list[str] = []
+        for c in (data.get("result") or {}).get("collections") or []:
+            if isinstance(c, dict) and c.get("name"):
+                cols.append(str(c["name"]))
+            elif isinstance(c, str):
+                cols.append(c)
+        return {"collections": cols}
+
+    async def add_document(self, doc: Any = None, **kwargs: Any) -> Any:
+        """写入知识库并索引。接受 Document 实例或 title/content kwargs。"""
+        title = kwargs.get("title")
+        content = kwargs.get("content") or kwargs.get("text") or ""
+        if doc is not None:
+            title = title or getattr(doc, "title", None) or (getattr(doc, "payload", None) or {}).get("title")
+            content = content or getattr(doc, "content", None) or getattr(doc, "text", None) or ""
+        title = title or "untitled"
+        from backend.repositories.knowledge_repo import AsyncDocumentRepository
+        from backend.services.knowledge.indexer import index_document_text
+
+        repo = AsyncDocumentRepository()
+        row = await repo.create(
+            {
+                "title": str(title),
+                "source": "tool-upload",
+                "status": "ready",
+                "meta": {"content": content, "origin": "QdrantService.add_document"},
+            }
+        )
+        await index_document_text(
+            document_id=row.id,
+            title=str(title),
+            text=str(content or ""),
+            user_id=getattr(row, "user_id", None),
+            source="tool-upload",
+            skip_wiki=True,
+            replace_chunks=True,
+        )
+
+        class _Doc:
+            pass
+
+        out = _Doc()
+        out.id = str(row.id)
+        out.title = str(title)
+        out.content = content
+        return out
+
+    async def list_documents(self) -> list[dict[str, Any]]:
+        from backend.repositories.knowledge_repo import AsyncDocumentRepository
+
+        repo = AsyncDocumentRepository()
+        rows = await repo.list_all()
+        out: list[dict[str, Any]] = []
+        for r in rows or []:
+            out.append(
+                {
+                    "id": str(getattr(r, "id", "")),
+                    "title": getattr(r, "title", "") or "",
+                    "status": getattr(r, "status", "") or "",
+                    "source": getattr(r, "source", "") or "",
+                }
+            )
+        return out
+
+    async def delete_document(self, doc_id: str) -> None:
+        import uuid as _uuid
+
+        from backend.repositories.knowledge_repo import AsyncDocumentRepository
+
+        repo = AsyncDocumentRepository()
+        await repo.delete(_uuid.UUID(str(doc_id)))
+
+    async def search(
+        self,
+        query: str,
+        top_k: int = 5,
+        collection: str | None = None,
+        **kwargs: Any,
+    ) -> list[Any]:
+        # 走完整知识库检索（含 embed）；失败返回空列表而非抛导入级错误
+        try:
+            ctx = await self._rag.search_knowledge_base(query=query, top_k=top_k)
+            if not ctx:
+                return []
+            return [{"text": ctx, "score": 1.0}]
+        except Exception as e:
+            logger.warning("QdrantService.search failed: %s", e)
+            return []

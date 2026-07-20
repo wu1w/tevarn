@@ -6,7 +6,7 @@
 import logging
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from backend.skills.base import BaseSkill
 
@@ -145,7 +145,7 @@ class GenerateReportSkill(BaseSkill):
         header = f"""# {topic}
 
 > **报告类型**：{report_type}  
-> **生成时间**：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  
+> **生成时间**：{datetime.now(timezone.utc).astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}  
 > **生成工具**：Takton Agent
 
 ---

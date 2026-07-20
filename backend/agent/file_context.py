@@ -216,3 +216,75 @@ def load_workspace_memory_bundle(
         "以下为磁盘记忆，按需可信；细节文件未展开时可用文件工具读取。\n"
     )
     return header + "\n\n".join(sections), meta
+
+
+# ── 持久人设 / 规范（Hermes 风格）────────────────────────────────
+
+_PERSONA_FILES: tuple[tuple[str, tuple[str, ...], int, int], ...] = (
+    # key, filenames, max_lines, max_bytes
+    ("identity", ("IDENTITY.md", "identity.md"), 400, 48 * 1024),
+    ("soul", ("SOUL.md", "soul.md"), 300, 32 * 1024),
+    ("claude", ("CLAUDE.md", "claude.md"), 300, 32 * 1024),
+    ("agents", ("AGENTS.md", "agents.md"), 300, 32 * 1024),
+)
+
+
+def _find_named_md(names: tuple[str, ...], extra_roots: list[str | Path] | None = None) -> Path | None:
+    for root in _candidate_roots(extra_roots):
+        for name in names:
+            p = root / name
+            if p.is_file():
+                return p
+            for sub in ("config", ".takton", "docs", "persona", "profile"):
+                p2 = root / sub / name
+                if p2.is_file():
+                    return p2
+    return None
+
+
+def load_workspace_persona_bundle(
+    extra_roots: list[str | Path] | None = None,
+) -> tuple[str | None, str | None, dict[str, str | None]]:
+    """从 workspace 加载持久人设文件。
+
+    Returns:
+        (identity_text, context_files_markdown, meta_paths)
+
+    - IDENTITY.md → identity（覆盖默认助手身份）
+    - SOUL.md / CLAUDE.md / AGENTS.md → 拼入 context 层（决策/输出/子代理规范）
+    """
+    meta: dict[str, str | None] = {
+        "identity": None,
+        "soul": None,
+        "claude": None,
+        "agents": None,
+    }
+    identity_text: str | None = None
+    context_sections: list[str] = []
+
+    for key, names, max_lines, max_bytes in _PERSONA_FILES:
+        path = _find_named_md(names, extra_roots)
+        if path is None:
+            continue
+        body = _read(path, max_lines, max_bytes)
+        if not body:
+            continue
+        meta[key] = str(path)
+        if key == "identity":
+            identity_text = body
+        else:
+            label = path.name
+            context_sections.append(f"### {label}\n{body}")
+
+    if not identity_text and not context_sections:
+        return None, None, meta
+
+    context_block: str | None = None
+    if context_sections:
+        context_block = (
+            "## WORKSPACE PERSONA（磁盘持久规范 · 每次会话自动加载）\n"
+            "以下文件来自 workspace，与 IDENTITY 一起构成长期行为约束；"
+            "优先级高于闲聊习惯，低于用户本轮明确指令。\n\n"
+            + "\n\n".join(context_sections)
+        )
+    return identity_text, context_block, meta

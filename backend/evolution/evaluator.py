@@ -116,7 +116,15 @@ async def _eval_one(
             return False, str(e), "test_failed", 0.0
 
     if ctype in {"http_ok", "health"}:
-        url = c.get("url") or "http://127.0.0.1:8090/api/health"
+        import os
+
+        default_port = (
+            os.getenv("TAKTON_PORT")
+            or os.getenv("PORT")
+            or os.getenv("BACKEND_PORT")
+            or "8000"
+        )
+        url = c.get("url") or f"http://127.0.0.1:{default_port}/api/health"
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 r = await client.get(url)

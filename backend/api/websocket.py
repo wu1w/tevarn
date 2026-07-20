@@ -254,6 +254,9 @@ async def websocket_endpoint(
         await _accept_once()
         try:
             raw_auth = await asyncio.wait_for(websocket.receive_text(), timeout=5.0)
+            if not raw_auth or not raw_auth.strip():
+                await websocket.close(code=4001, reason="Empty auth message")
+                return
             auth_data = json.loads(raw_auth)
             if auth_data.get("type") == "auth":
                 token_from_message = auth_data.get("token", "")
@@ -370,6 +373,8 @@ async def websocket_endpoint(
     try:
         while True:
             raw = await websocket.receive_text()
+            if not raw or not raw.strip():
+                continue
             try:
                 data = json.loads(raw)
             except json.JSONDecodeError:

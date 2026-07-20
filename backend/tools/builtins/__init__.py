@@ -3,6 +3,20 @@
 from __future__ import annotations
 
 from backend.tools.builtins.core_tools import BUILTIN_TOOL_CLASSES
+from backend.tools.builtins.manage_tools import (
+    ListTasks,
+    ManageChannel,
+    ManageEvolution,
+    ManageGit,
+    ManageMcp,
+    ManagePackage,
+    ManageProfile,
+    ManageSkill,
+    ManageSubAgent,
+    ManageWebhook,
+    QueryAuditLog,
+    QueryEvolution,
+)
 from backend.tools.builtins.self_config import (
     GetSystemStatus,
     ListAvailableModels,
@@ -29,6 +43,18 @@ SELF_CONFIG_TOOLS = [
     ListAvailableModels,
     ManageKnowledge,
     ManageCron,
+    ManageSubAgent,
+    ManageSkill,
+    ManageMcp,
+    ManageChannel,
+    ManageWebhook,
+    QueryAuditLog,
+    ListTasks,
+    ManageProfile,
+    ManagePackage,
+    QueryEvolution,
+    ManageGit,
+    ManageEvolution,
 ] or _CORE_SELF
 
 __all__ = [
@@ -39,6 +65,18 @@ __all__ = [
     "ListAvailableModels",
     "ManageKnowledge",
     "ManageCron",
+    "ManageSubAgent",
+    "ManageSkill",
+    "ManageMcp",
+    "ManageChannel",
+    "ManageWebhook",
+    "QueryAuditLog",
+    "ListTasks",
+    "ManageProfile",
+    "ManagePackage",
+    "QueryEvolution",
+    "ManageGit",
+    "ManageEvolution",
     "GenerateWorkflow",
     "UpdateDag",
     "ValidateDag",

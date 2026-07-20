@@ -12,7 +12,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+import time
 import uuid
+from collections import OrderedDict
 from typing import Any, Optional
 
 from backend.services.slash_commands import resolve_command, build_help_text, CommandDef
@@ -141,11 +144,18 @@ class ChannelGateway:
         # Goal 存储：chat_key → goal_text
         self._goals: dict[str, dict[str, Any]] = {}
 
-        # 默认用户 ID（单机模式）
-        self._default_uid = uuid.UUID("314016d7-a9d5-4719-8371-7ec9301fba0b")
+        # 默认用户 ID（单机模式）：不硬编码，运行时从 DB 解析（见 _resolve_default_user_id）
+        self._default_uid: uuid.UUID | None = None
 
         # Agent stop 标记：session_id → True
         self._stop_flags: dict[uuid.UUID, bool] = {}
+
+        # 消息去重：platform:chat_id:msg_id → monotonic 时间
+        # 缓解网络抖动/平台重推导致的重复处理
+        self._seen_msgs: OrderedDict[str, float] = OrderedDict()
+        self._seen_ttl_s = 300.0
+        self._seen_max = 2000
+        self._seen_lock = asyncio.Lock()
 
     # ─── 生命周期 ──────────────────────────────────────────
 
@@ -318,6 +328,8 @@ class ChannelGateway:
 
         # 确保默认用户存在（硬编码 UUID 在换库后可能对不上）
         uid = await self._resolve_default_user_id()
+        if uid is None:
+            raise RuntimeError("默认用户未初始化，无法创建会话（请确认 users 表已有用户）")
 
         platform = chat_key.split(":", 1)[0] if ":" in chat_key else "unknown"
         session = await session_repo.create({
@@ -339,6 +351,8 @@ class ChannelGateway:
         from backend.api.dependencies import get_session_repo
         session_repo = await get_session_repo()
         uid = await self._resolve_default_user_id()
+        if uid is None:
+            raise RuntimeError("默认用户未初始化，无法创建会话（请确认 users 表已有用户）")
 
         session = await session_repo.create({
             "user_id": uid,
@@ -352,8 +366,8 @@ class ChannelGateway:
         logger.info("New session %s for chat_key %s", session.id.hex[:8], chat_key)
         return session.id
 
-    async def _resolve_default_user_id(self) -> uuid.UUID:
-        """解析桌面/单用户模式下的真实用户 ID，避免硬编码与 DB 不一致。"""
+    async def _resolve_default_user_id(self) -> uuid.UUID | None:
+        """解析桌面/单用户模式下的真实用户 ID；解析不到返回 None（不硬编码回退）。"""
         if getattr(self, "_resolved_uid", None):
             return self._resolved_uid  # type: ignore[return-value]
 
@@ -375,10 +389,10 @@ class ChannelGateway:
                 self._default_uid = self._resolved_uid
                 return self._resolved_uid
         except Exception as e:
-            logger.warning("Resolve default user failed, using hardcoded uid: %s", e)
+            logger.warning("Resolve default user failed: %s", e)
 
-        self._resolved_uid = self._default_uid
-        return self._default_uid
+        # 不缓存失败结果，下次重试；调用方需处理 None
+        return None
 
     # ─── /命令处理 ─────────────────────────────────────────
 
@@ -586,8 +600,8 @@ class ChannelGateway:
                 if raw_tools is None or raw_tools == [] or raw_tools == ["*"]:
                     return None  # 全部
                 return set(raw_tools)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("_get_session_tools failed for %s: %s", chat_key, e)
         return None
 
     async def _toggle_session_tool(self, chat_key: str, tool_name: str, enable: bool) -> str:
@@ -682,8 +696,8 @@ class ChannelGateway:
                 message_repo = await get_message_repo()
                 messages = await message_repo.list_by_session(sid, limit=1000)
                 lines.append(f"📝 消息数: {len(messages)}")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("status: list messages failed: %s", e)
         else:
             lines.append("💬 会话: 未创建")
 
@@ -707,6 +721,28 @@ class ChannelGateway:
         return "⚠️ 当前没有活跃会话"
 
     # ─── 消息处理 ──────────────────────────────────────────
+
+    async def _is_duplicate_message(
+        self, platform: str, chat_id: str, msg_id: str
+    ) -> bool:
+        """基于 platform+chat+message_id 的短时去重。无 msg_id 时不拦截。"""
+        if not msg_id:
+            return False
+        key = f"{platform}:{chat_id}:{msg_id}"
+        now = time.monotonic()
+        async with self._seen_lock:
+            # 过期清理
+            while self._seen_msgs:
+                oldest_key, oldest_ts = next(iter(self._seen_msgs.items()))
+                if now - oldest_ts <= self._seen_ttl_s:
+                    break
+                self._seen_msgs.popitem(last=False)
+            if key in self._seen_msgs:
+                return True
+            self._seen_msgs[key] = now
+            while len(self._seen_msgs) > self._seen_max:
+                self._seen_msgs.popitem(last=False)
+        return False
 
     async def _on_channel_message(self, event_type: str, data: dict):
         """通用消息回调 — 支持 QQ/Telegram/Discord/Slack/飞书/钉钉/Signal。"""
@@ -775,10 +811,17 @@ class ChannelGateway:
         if not content.strip():
             return
 
+        # 平台重推 / 网络抖动去重
+        if await self._is_duplicate_message(platform, str(chat_id), str(reply_to_id or "")):
+            logger.info(
+                "%s duplicate message dropped: chat=%s msg_id=%s",
+                platform, str(chat_id)[:16], str(reply_to_id)[:32],
+            )
+            return
+
         # 去掉 @bot 标记
         user_msg = content
         if event_type in ("AT_MESSAGE_CREATE", "GROUP_AT_MESSAGE_CREATE") and platform == "qqbot":
-            import re
             user_msg = re.sub(r'<@!\d+>', '', content).strip()
 
         if not user_msg:
@@ -800,7 +843,8 @@ class ChannelGateway:
             try:
                 from backend.services.remote.dispatch import try_handle_at_device
 
-                card = await try_handle_at_device(self._default_uid, user_msg)
+                device_uid = await self._resolve_default_user_id()
+                card = await try_handle_at_device(device_uid, user_msg) if device_uid else None
                 if card is not None:
                     await self._reply(platform, chat_id, card, event_type, data, reply_to_id)
                     return
@@ -851,7 +895,7 @@ class ChannelGateway:
                 context_flow_repo=context_flow_repo,
                 ws_manager=None,
                 notification_repo=notification_repo,
-                user_id=self._default_uid,
+                user_id=(session.user_id if session else None) or self._default_uid,
                 progress_sink=progress,
             )
             agent.max_iterations = int(getattr(app_settings, "agent_max_iterations", 25) or 25)

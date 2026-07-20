@@ -1,20 +1,25 @@
-"""EvolutionManager — orchestrates seed tasks, evaluate, improve, auto-apply."""
+"""EvolutionManager v0.1.1 — HAEE-style orchestrator (P1–P4)."""
 
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from backend.evolution import store
-from backend.evolution.config import get_evolution_config, set_evolution_config
+from backend.evolution.config import ENGINE_VERSION, get_evolution_config, set_evolution_config
 from backend.evolution.evaluator import evaluate_criteria
 from backend.evolution.gates import run_gates
-from backend.evolution.improver import classify_failures, propose_skill_from_failure
+from backend.evolution.improver import (
+    classify_failures,
+    propose_from_task_outcome,
+    propose_skill_from_failure,
+    propose_tool_draft,
+)
 
 logger = logging.getLogger(__name__)
 
 _SEEDED = False
-
 
 SEED_TASKS: list[dict[str, Any]] = [
     {
@@ -22,22 +27,7 @@ SEED_TASKS: list[dict[str, Any]] = [
         "domain": "ops",
         "description": "本机 API 健康检查",
         "criteria": [
-            {
-                "type": "http_ok",
-                "url": "http://127.0.0.1:8090/api/health",
-                "contains": "ok",
-            }
-        ],
-    },
-    {
-        "name": "static-frontend",
-        "domain": "ops",
-        "description": "前端静态资源存在",
-        "criteria": [
-            {
-                "type": "file_exists",
-                "path": "backend/static/index.html",
-            }
+            {"type": "http_ok", "url": "http://127.0.0.1:8000/api/health", "contains": "ok"},
         ],
     },
     {
@@ -57,36 +47,7 @@ SEED_TASKS: list[dict[str, Any]] = [
         "name": "skills-registry",
         "domain": "dev",
         "description": "技能注册表文件存在",
-        "criteria": [
-            {"type": "file_exists", "path": "backend/skills/registry.py"},
-        ],
-    },
-    {
-        "name": "remote-device-optional",
-        "domain": "remote",
-        "description": "若已配对设备 remote-pc 则执行 hostname（未配对则跳过）",
-        "criteria": [
-            {
-                "type": "remote_exec",
-                "device": "remote-pc",
-                "command": "hostname",
-                "optional": True,
-                "skip_if_missing": True,
-            }
-        ],
-    },
-    {
-        "name": "llm-judge-sample",
-        "domain": "quality",
-        "description": "用 LLM 评审一段固定样例是否像完整中文答复（可关 llm_judge）",
-        "criteria": [
-            {
-                "type": "llm_judge",
-                "rubric": "内容应是通顺的中文，包含明确结论，不是空话或纯错误栈。",
-                "subject": "今日上海多云，气温约 18–24°C，东南风，空气良好。出门建议薄外套。",
-                "optional": True,
-            }
-        ],
+        "criteria": [{"type": "file_exists", "path": "backend/skills/registry.py"}],
     },
 ]
 
@@ -108,7 +69,6 @@ class EvolutionManager:
                 criteria=t["criteria"],
                 source="seed",
             )
-            # register seed as visible asset (not deletable)
             store.create_asset(
                 kind="task",
                 name=t["name"],
@@ -117,7 +77,7 @@ class EvolutionManager:
                 status="active",
                 content="",
                 gen=0,
-                meta={"domain": t.get("domain")},
+                meta={"domain": t.get("domain"), "engine": ENGINE_VERSION},
             )
         _SEEDED = True
 
@@ -127,10 +87,19 @@ class EvolutionManager:
         st = store.stats()
         st["recent_runs"] = store.recent_runs(10)
         st["tasks"] = len(store.list_tasks())
+        st["engine_version"] = ENGINE_VERSION
+        st["clusters"] = store.list_clusters(20)
         st["config"] = {
             "enabled": cfg.enabled,
             "mode": cfg.mode,
             "auto_apply_skills": cfg.auto_apply_skills,
+            "auto_apply_tools": cfg.auto_apply_tools,
+            "from_tasks": cfg.from_tasks,
+            "from_cron": cfg.from_cron,
+            "auto_observe": cfg.auto_observe,
+            "auto_create_tools": cfg.auto_create_tools,
+            "curator_enabled": cfg.curator_enabled,
+            "observe_nudge_level": cfg.observe_nudge_level,
             "llm_judge": cfg.llm_judge,
             "max_iterations": cfg.max_iterations,
         }
@@ -166,10 +135,10 @@ class EvolutionManager:
                 "ok": ok,
             }
         )
-        # usage count for known evolution skills
         if ok and name:
             try:
                 store.bump_use(name, kind="skill")
+                store.bump_use(name, kind="tool")
             except Exception:
                 pass
 
@@ -193,15 +162,43 @@ class EvolutionManager:
         except Exception as e:
             logger.warning("trajectory append failed: %s", e)
 
+        # P4 observe
+        observe_info = None
+        try:
+            from backend.evolution.observer import record_observation
+
+            observe_info = record_observation(
+                session_id,
+                tools=tools,
+                final_content=final_content or "",
+                user_input=user_input or "",
+            )
+        except Exception as e:
+            logger.warning("observe failed: %s", e)
+
         failures = classify_failures(
             tool_trace=tools, final_content=final_content or "", eval_failures=[]
         )
 
-        # on_failure mode: only act when failures detected
-        if cfg.mode == "on_failure" and not failures:
-            return {"skipped": True, "reason": "no_failure"}
+        # auto-observe may return a proposal to materialize
+        if observe_info and observe_info.get("proposal") and cfg.observe_nudge_level != "approve":
+            prop = observe_info["proposal"]
+            assets = await self._materialize_proposals(
+                [prop],
+                session_id=session_id,
+                score=0.85,
+                baseline=0.5,
+                force_skill=True,
+            )
+            return {
+                "observe": observe_info,
+                "assets": assets,
+                "source": "auto_observe",
+            }
 
-        # optional light task: smoke only when always
+        if cfg.mode == "on_failure" and not failures:
+            return {"skipped": True, "reason": "no_failure", "observe": observe_info}
+
         task_result = None
         if cfg.mode == "always":
             task = store.get_task("smoke-health")
@@ -223,75 +220,102 @@ class EvolutionManager:
                     failures.extend(task_result["failure_codes"])
 
         if not failures and cfg.mode == "on_failure":
-            return {"skipped": True, "reason": "no_failure"}
+            return {"skipped": True, "reason": "no_failure", "observe": observe_info}
 
-        proposal = propose_skill_from_failure(
-            user_input=user_input or "",
-            failure_codes=failures,
-            tool_trace=tools,
-            final_content=final_content or "",
-        )
+        proposals: list[dict[str, Any]] = [
+            propose_skill_from_failure(
+                user_input=user_input or "",
+                failure_codes=failures,
+                tool_trace=tools,
+                final_content=final_content or "",
+                source_label="turn",
+            )
+        ]
+        if cfg.auto_create_tools:
+            proposals.append(
+                propose_tool_draft(
+                    user_input=user_input or "",
+                    failure_codes=failures,
+                    tool_trace=tools,
+                )
+            )
 
         score = 1.0 if not failures else max(0.0, 1.0 - 0.15 * len(failures))
-        gate = run_gates(
-            name=proposal["name"],
-            content=proposal["content"],
-            summary=proposal["summary"],
-            score=score,
-            baseline_score=0.5,
+        assets = await self._materialize_proposals(
+            proposals, session_id=session_id, score=score, baseline=0.5
         )
-
-        status = "draft"
-        applied = False
-        if gate["ok"] and cfg.auto_apply_skills:
-            status = "active"
-            applied = True
-        elif gate["ok"] and not cfg.auto_apply_skills:
-            status = "draft"
-        else:
-            status = "draft"
-
-        asset = store.create_asset(
-            kind="skill",
-            name=proposal["name"],
-            summary=proposal["summary"],
-            source="auto",
-            status=status,
-            content=proposal["content"],
-            session_id=session_id,
-            last_score=score,
-            meta={
-                "failure_codes": failures,
-                "gates": gate["gates"],
-                "auto_applied": applied,
-            },
-        )
-
-        if applied:
-            await self._apply_skill_to_db(proposal, asset_id=asset.get("id"))
 
         store.add_run(
             session_id=session_id,
             task_id=None,
             score=score,
-            status="improved" if applied else "drafted",
+            status="improved" if any(a.get("applied") for a in assets) else "drafted",
             failure_codes=failures,
-            detail={"asset_id": asset["id"], "gates": gate},
-        )
-
-        logger.info(
-            "evolution turn: asset=%s status=%s applied=%s failures=%s",
-            asset["id"],
-            status,
-            applied,
-            failures,
+            detail={"assets": [a.get("id") for a in assets if a.get("id")]},
         )
         return {
-            "asset": asset,
-            "applied": applied,
+            "assets": assets,
             "failures": failures,
-            "gate": gate,
+            "observe": observe_info,
+            "engine": ENGINE_VERSION,
         }
+
+    async def run_from_task_outcome(
+        self,
+        *,
+        task_name: str,
+        success: bool,
+        detail: str = "",
+        failure_codes: list[str] | None = None,
+        tool_trace: list[dict[str, Any]] | None = None,
+        session_id: str | None = None,
+        source: str = "task",
+        criteria_summary: str = "",
+    ) -> dict[str, Any] | None:
+        """P1: cron / external task finished → evolution assets."""
+        cfg = get_evolution_config()
+        if not cfg.enabled:
+            return None
+        if source == "cron" and not cfg.from_cron:
+            return None
+        if source == "task" and not cfg.from_tasks:
+            return None
+
+        self.ensure_seeded()
+        codes = list(failure_codes or ([] if success else ["task_failed"]))
+        skill = propose_from_task_outcome(
+            task_name=task_name,
+            success=success,
+            detail=detail,
+            failure_codes=codes,
+            tool_trace=tool_trace,
+            criteria_summary=criteria_summary,
+        )
+        proposals = [skill]
+        if cfg.auto_create_tools and not success:
+            proposals.append(
+                propose_tool_draft(
+                    user_input=f"cron/task {task_name}",
+                    failure_codes=codes,
+                    tool_trace=tool_trace,
+                )
+            )
+        score = 1.0 if success else 0.85  # 失败也过 G3 门槛，仍以 draft/active 策略控制 apply
+        assets = await self._materialize_proposals(
+            proposals,
+            session_id=session_id or f"{source}:{task_name}",
+            score=score,
+            baseline=0.5,
+        )
+        store.add_run(
+            session_id=session_id,
+            task_id=None,
+            score=score,
+            status="pass" if success else "fail",
+            failure_codes=codes,
+            detail={"source": source, "task_name": task_name, "assets": [a.get("id") for a in assets]},
+        )
+        return {"ok": True, "assets": assets, "source": source, "task_name": task_name}
 
     async def run_task(
         self,
@@ -299,7 +323,9 @@ class EvolutionManager:
         session_id: str | None = None,
         *,
         context: dict[str, Any] | None = None,
+        improve: bool = True,
     ) -> dict[str, Any]:
+        """Evaluate a registered task; optionally propose skill on fail (full cycle)."""
         self.ensure_seeded()
         task = store.get_task(name)
         if not task:
@@ -314,57 +340,149 @@ class EvolutionManager:
             failure_codes=result["failure_codes"],
             detail=result,
         )
-        return {"ok": True, "task": name, **result}
+        out: dict[str, Any] = {"ok": True, "task": name, **result}
+        if improve and result["score"] < 0.8:
+            evolved = await self.run_from_task_outcome(
+                task_name=name,
+                success=False,
+                detail=str(result)[:1500],
+                failure_codes=result.get("failure_codes") or ["eval_fail"],
+                session_id=session_id,
+                source="task",
+                criteria_summary=task.get("description") or "",
+            )
+            out["evolution"] = evolved
+        return out
 
-    async def _apply_skill_to_db(self, proposal: dict[str, Any], asset_id: str | None = None) -> None:
-        """Write playbook into ToolRegistry (+ best-effort skills table)."""
-        try:
-            from backend.evolution.runtime_tools import register_evolved_tool
+    async def run_curator(self, dry_run: bool = False) -> dict[str, Any]:
+        from backend.evolution.curator import run_curator
 
-            register_evolved_tool(
+        return run_curator(dry_run=dry_run)
+
+    async def _materialize_proposals(
+        self,
+        proposals: list[dict[str, Any]],
+        *,
+        session_id: str,
+        score: float,
+        baseline: float,
+        force_skill: bool = False,
+    ) -> list[dict[str, Any]]:
+        cfg = get_evolution_config()
+        out: list[dict[str, Any]] = []
+        for proposal in proposals:
+            kind = proposal.get("kind") or "skill"
+            if kind == "tool" and not cfg.auto_create_tools and not force_skill:
+                continue
+
+            # P2 dedupe: patch similar instead of new spam
+            similar = store.find_similar_asset(
+                kind=kind,
                 name=proposal["name"],
-                description=proposal.get("summary") or proposal["name"],
-                body=proposal.get("content") or "",
+                summary=proposal.get("summary") or "",
+                threshold=cfg.dedupe_similarity,
+            )
+            if similar and similar.get("gen", 0) >= cfg.max_skill_gen:
+                out.append({"skipped": True, "reason": "max_gen", "name": proposal["name"]})
+                continue
+            if similar and float(similar.get("_similarity") or 0) >= 0.9:
+                # reuse name to bump gen
+                proposal["name"] = similar["name"]
+
+            gate = run_gates(
+                name=proposal["name"],
+                content=proposal.get("content") or "",
+                summary=proposal.get("summary") or "",
+                score=score,
+                baseline_score=baseline,
+                kind=kind,
+            )
+
+            applied = False
+            status = "draft"
+            if gate["ok"]:
+                if kind == "skill" and cfg.auto_apply_skills:
+                    status = "active"
+                    applied = True
+                elif kind == "tool" and cfg.auto_apply_tools:
+                    status = "active"
+                    applied = True
+                else:
+                    status = "draft"
+
+            asset = store.create_asset(
+                kind=kind,
+                name=proposal["name"],
+                summary=proposal.get("summary") or "",
+                source="auto",
+                status=status,
+                content=proposal.get("content") or "",
+                session_id=session_id,
+                last_score=score,
+                meta={
+                    **(proposal.get("meta") or {}),
+                    "gates": gate["gates"],
+                    "auto_applied": applied,
+                    "engine": ENGINE_VERSION,
+                    "deduped_from": similar["id"] if similar else None,
+                },
+            )
+
+            # Always mirror to Skills list; enabled only when applied
+            try:
+                from backend.evolution.skill_sync import upsert_skill_from_asset
+
+                await upsert_skill_from_asset(
+                    name=proposal["name"],
+                    summary=proposal.get("summary") or proposal["name"],
+                    content=proposal.get("content") or "",
+                    asset_id=asset.get("id"),
+                    kind=kind,
+                    enabled=bool(applied),
+                )
+            except Exception as e:
+                logger.warning("skill mirror failed: %s", e)
+
+            if applied and kind == "skill":
+                if cfg.write_skill_files:
+                    self._write_skill_file(proposal)
+            # applied tool already handled by upsert enabled=True
+
+            out.append({**asset, "applied": applied, "gate": gate})
+            logger.info(
+                "evolution asset kind=%s name=%s status=%s applied=%s",
+                kind,
+                proposal["name"],
+                status,
+                applied,
+            )
+        return out
+
+    def _write_skill_file(self, proposal: dict[str, Any]) -> None:
+        try:
+            cfg = get_evolution_config()
+            d = cfg.resolve_skills_dir()
+            path = d / f"{proposal['name']}.md"
+            path.write_text(proposal.get("content") or "", encoding="utf-8")
+        except Exception as e:
+            logger.warning("write skill file failed: %s", e)
+
+    async def _apply_skill_to_db(
+        self, proposal: dict[str, Any], asset_id: str | None = None
+    ) -> None:
+        try:
+            from backend.evolution.skill_sync import upsert_skill_from_asset
+
+            await upsert_skill_from_asset(
+                name=proposal["name"],
+                summary=proposal.get("summary") or proposal["name"],
+                content=proposal.get("content") or "",
                 asset_id=asset_id,
+                kind=proposal.get("kind") or "skill",
                 enabled=True,
             )
         except Exception as e:
-            logger.warning("register evolution tool failed: %s", e)
-
-        try:
-            from backend.repositories.skill_repo import AsyncSkillRepository
-
-            repo = AsyncSkillRepository()
-            existing = await repo.get_skill_by_name(proposal["name"])
-            payload = {
-                "name": proposal["name"],
-                "description": (proposal.get("summary") or "")[:500],
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "用户问题或上下文",
-                        }
-                    },
-                },
-                "enabled": True,
-                "is_builtin": False,
-                "handler": "python",
-                "handler_config": {
-                    "evolution": True,
-                    "body": (proposal.get("content") or "")[:8000],
-                    "kind": "evolved_playbook",
-                },
-            }
-            if existing:
-                await repo.update(existing.id, payload)
-            else:
-                await repo.create(payload)
-        except Exception as e:
-            logger.warning(
-                "auto-apply skill to DB failed (tool still registered if possible): %s", e
-            )
+            logger.warning("auto-apply skill sync failed: %s", e)
 
 
 def _safe_args(args: dict[str, Any]) -> dict[str, Any]:
@@ -373,8 +491,7 @@ def _safe_args(args: dict[str, Any]) -> dict[str, Any]:
         if k in {"token", "api_key", "password", "authorization"}:
             out[k] = "***"
         else:
-            s = str(v)
-            out[k] = s[:200]
+            out[k] = str(v)[:200]
     return out
 
 

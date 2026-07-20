@@ -40,6 +40,21 @@ from .context import ContextManager
 
 logger = logging.getLogger(__name__)
 
+
+def _sanitize_tool_error(tool_name: str, exc: Exception) -> str:
+    """工具错误脱敏：生产模式不回传 SQL/堆栈，调试模式带详情。"""
+    import os
+
+    if os.environ.get("TAKTON_DEBUG", "").lower() in ("1", "true", "yes"):
+        return f"[Error] Failed to execute {tool_name}: {exc}"
+    # 提取异常类型名，不带内部细节
+    exc_type = type(exc).__name__
+    return (
+        f"[Error] 工具 {tool_name} 执行失败（{exc_type}）。"
+        f"请检查服务端日志获取详情，或设 TAKTON_DEBUG=1 查看完整错误。"
+    )
+
+
 # 安全修复：按 session_id 的并发锁，防止同一 session 的 agent loop 竞态执行
 _session_locks: dict[uuid.UUID, asyncio.Lock] = {}
 _SESSION_LOCK_MAX = 1024  # 防止内存泄漏：最多保留的锁数量
@@ -255,16 +270,17 @@ class NexusAgentLoop:
                 if card is not None:
                     try:
                         await self._persist_user_input(session_id, user_input, attachments)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning("persist user input (@device) failed: %s", e)
                     try:
                         await self._persist_final_response(session_id, card)
-                    except Exception:
+                    except Exception as e:
+                        logger.warning("persist final response (@device) failed: %s", e)
                         # fallback plain save
                         try:
                             await self.message_repo.save_message(session_id, "assistant", card)
-                        except Exception:
-                            pass
+                        except Exception as e2:
+                            logger.error("fallback save assistant message failed: %s", e2)
                     await self._push_status(session_id, "idle", "remote device command done")
                     return card
             except Exception as e:
@@ -680,6 +696,15 @@ class NexusAgentLoop:
 
                     # 结束标记
                     if chunk.finish_reason:
+                        if chunk.finish_reason == "error" and not (accumulated_content or "").strip():
+                            if chunk.delta:
+                                accumulated_content = chunk.delta
+                            else:
+                                accumulated_content = (
+                                    "[LLM Error] 模型返回失败且无正文。"
+                                    "若使用 Kimi Plan/Kimi Code，请将模型设为 "
+                                    "kimi-for-coding 或 kimi-for-coding-highspeed（不要用 k3）。"
+                                )
                         break
 
                 if self._should_stop:
@@ -937,8 +962,12 @@ class NexusAgentLoop:
                         # manage_goal 结果推送到前端 Goal 面板
                         if tc.name == "manage_goal":
                             await self._push_goal_update(session_id)
-                            await save_goal_to_db(session_id)
+                            try:
+                                from backend.agent.goal_state import save_goal_to_db as _save_goal
 
+                                await _save_goal(session_id)
+                            except Exception as e:
+                                logger.debug("save_goal_to_db skipped: %s", e)
                     except asyncio.TimeoutError:
                         _to = float(getattr(settings, "agent_tool_timeout_seconds", 180) or 180)
                         tool_result = f"[Error] Tool '{tc.name}' timed out after {_to:.0f}s"
@@ -958,7 +987,7 @@ class NexusAgentLoop:
 
                     except Exception as e:
                         logger.error(f"Tool execution error: {e}")
-                        tool_result = f"[Error] Failed to execute {tc.name}: {e}"
+                        tool_result = _sanitize_tool_error(tc.name, e)
                         try:
                             _sft_tools.append(
                                 {
@@ -1687,7 +1716,7 @@ class NexusAgentLoop:
                 "session_id": session_id,
                 "scope": "session",
                 "kind": "message",
-                "key": f"user_{int(datetime.now().timestamp() * 1000)}",
+                "key": f"user_{int(datetime.now(timezone.utc).timestamp() * 1000)}",
                 "value": enriched_input,
                 "tokens": max(8, round(len(enriched_input) / 3.4)),
                 "pinned": False,
@@ -1757,7 +1786,7 @@ class NexusAgentLoop:
                     "session_id": session_id,
                     "scope": "knowledge",
                     "kind": "rag",
-                    "key": f"rag_query_{int(datetime.now().timestamp())}",
+                    "key": f"rag_query_{int(datetime.now(timezone.utc).timestamp())}",
                     "value": f"Query: {query}\n\n{tool_result}",
                     "tokens": max(8, round(len(tool_result) / 3.4)),
                     "pinned": False,
@@ -1784,33 +1813,41 @@ class NexusAgentLoop:
         self, session_id: uuid.UUID, final_content: str
     ) -> None:
         """原子化保存最终回复：Message + CtxItem + Session 状态 + 通知"""
+        text = (final_content or "").strip()
+        if not text:
+            text = (
+                "（本轮未生成可见正文：可能只调用了工具且后续未总结。"
+                "请再发一条消息，或点「请继续」。若持续空白，可检查设备/RAG 相关工具是否报错。）"
+            )
         async with get_db_context() as db:
             msg_repo = AsyncMessageRepository(db)
             ctx_repo = AsyncCtxItemRepository(db)
             session_repo = AsyncSessionRepository(db)
 
-            # 估算 token 数
-            token_estimate = max(8, round(len(final_content) / 3.4))
-            await msg_repo.save_message(session_id, "assistant", final_content, token_count=token_estimate)
+            token_estimate = max(8, round(len(text) / 3.4))
+            await msg_repo.save_message(session_id, "assistant", text, token_count=token_estimate)
             if self.ctx_item_repo is not None:
                 await ctx_repo.create({
                     "session_id": session_id,
                     "scope": "session",
                     "kind": "message",
-                    "key": f"assistant_{int(datetime.now().timestamp() * 1000)}",
-                    "value": final_content,
-                    "tokens": max(8, round(len(final_content) / 3.4)),
+                    "key": f"assistant_{int(datetime.now(timezone.utc).timestamp() * 1000)}",
+                    "value": text,
+                    "tokens": token_estimate,
                     "pinned": False,
                     "ttl": "session",
                     "origin": f"agent:{self.agent_name}",
                 })
-            await session_repo.update_status(session_id, "idle")
+            await session_repo.update(
+                session_id,
+                {"status": "idle", "updated_at": datetime.now(timezone.utc)},
+            )
             if self.notification_repo is not None and self.user_id is not None:
                 await AsyncNotificationRepository(db).create({
                     "user_id": self.user_id,
                     "type": "message",
                     "title": "New assistant message",
-                    "content": final_content[:200],
+                    "content": text[:200],
                     "data": {"session_id": str(session_id)},
                     "source_id": str(session_id),
                 })

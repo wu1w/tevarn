@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -84,6 +85,11 @@ async def _seed_default_user() -> None:
     if default:
         logger.info(f"Default user already exists: {default.id}")
         return
+    # 竞态防护：同时检查 username 唯一性（email 和 username 都有 UNIQUE 约束）
+    existing_uname = await repo.get_by_username("admin")
+    if existing_uname:
+        logger.info(f"Default user 'admin' already taken by {existing_uname.id}, skipping seed")
+        return
     from backend.core.security import get_password_hash
     import os
     default_pw = (
@@ -102,7 +108,11 @@ async def _seed_default_user() -> None:
         logger.info(f"Default user created: {user.id}")
     except Exception as e:
         # 并发创建冲突时忽略，由请求侧重试读取
-        logger.warning(f"Default user seeding skipped (will be resolved on first request): {e}")
+        from sqlalchemy.exc import IntegrityError
+        if isinstance(e, IntegrityError) and "UNIQUE" in str(e):
+            logger.info(f"Default user seed race resolved: {e.orig}")
+        else:
+            logger.warning(f"Default user seeding skipped (will be resolved on first request): {e}")
 
 
 async def _seed_settings() -> None:
@@ -192,7 +202,10 @@ async def _seed_skills() -> None:
 
 
 async def _seed_beginner_knowledge() -> None:
-    """为默认用户写入小白知识库 + 产品配置手册（幂等：按 title 跳过已存在）。"""
+    """为默认用户写入小白知识库 + 产品配置手册（幂等：按 title 创建；已存在则刷新 meta.content）。
+
+    结束后在后台为 seed 文档建向量索引（skip_wiki，避免卡住）。
+    """
     from backend.repositories.user_repo import AsyncUserRepository
     from backend.repositories.knowledge_repo import AsyncDocumentRepository
     from backend.services.knowledge.beginner_seed import BEGINNER_KB_DOCS
@@ -205,25 +218,107 @@ async def _seed_beginner_knowledge() -> None:
         logger.warning("Beginner KB seed skipped: no user")
         return
     existing = await docs.list_by_user(user.id) or []
-    titles = {getattr(d, "title", None) for d in existing}
+    by_title = {getattr(d, "title", None): d for d in existing}
     items = list(BEGINNER_KB_DOCS) + handbook_as_kb_docs()
+    created = 0
+    updated = 0
+    to_index: list[tuple[Any, str, str]] = []  # (doc, title, content)
     for item in items:
-        if item["title"] in titles:
+        title = item["title"]
+        content = item["content"]
+        meta = {
+            "content": content,
+            "seed": True,
+            "audience": "beginner" if not title.startswith("[手册]") else "product",
+            "seed_version": "0.1.1",
+        }
+        if title in by_title and by_title[title] is not None:
+            doc = by_title[title]
+            old_meta = getattr(doc, "meta", None) or {}
+            if old_meta.get("seed") or getattr(doc, "source", "") == "builtin-seed":
+                new_meta = dict(old_meta)
+                new_meta.update(meta)
+                try:
+                    await docs.update(
+                        doc.id,
+                        {
+                            "meta": new_meta,
+                            "source": "builtin-seed",
+                            "status": getattr(doc, "status", None) or "ready",
+                        },
+                    )
+                    updated += 1
+                    logger.info("Knowledge seed refreshed: %s", title)
+                    # re-index if not indexed or content refreshed
+                    st = getattr(doc, "status", "") or ""
+                    if st != "indexed" or (old_meta.get("content") or "") != content:
+                        to_index.append((doc, title, content))
+                except Exception as e:
+                    logger.warning("Knowledge seed refresh failed %s: %s", title, e)
             continue
-        await docs.create(
+        doc = await docs.create(
             {
                 "user_id": user.id,
-                "title": item["title"],
+                "title": title,
                 "status": "ready",
                 "source": "builtin-seed",
-                "meta": {
-                    "content": item["content"],
-                    "seed": True,
-                    "audience": "beginner" if not item["title"].startswith("[手册]") else "product",
-                },
+                "meta": meta,
             }
         )
-        logger.info(f"Knowledge seeded: {item['title']}")
+        created += 1
+        logger.info("Knowledge seeded: %s", title)
+        to_index.append((doc, title, content))
+    logger.info(
+        "Knowledge seed done: created=%s updated=%s total_items=%s to_index=%s",
+        created,
+        updated,
+        len(items),
+        len(to_index),
+    )
+
+    if to_index:
+        # 刷新 list 拿最新 id（create 返回对象）
+        try:
+            _spawn_bg(_index_seed_documents(user.id, to_index), "seed_kb_index")
+        except Exception as e:
+            logger.warning("Schedule seed KB index failed: %s", e)
+
+
+async def _index_seed_documents(user_id: Any, items: list) -> None:
+    """Background: index builtin-seed docs with skip_wiki for speed/reliability."""
+    from backend.services.knowledge.indexer import index_document_text
+
+    ok_n = 0
+    fail_n = 0
+    for doc, title, content in items:
+        try:
+            doc_id = getattr(doc, "id", None)
+            if doc_id is None:
+                fail_n += 1
+                continue
+            result = await index_document_text(
+                document_id=doc_id,
+                title=title,
+                text=content or "",
+                user_id=user_id,
+                source="builtin-seed",
+                skip_wiki=True,
+                replace_chunks=True,
+            )
+            if result.get("ok"):
+                ok_n += 1
+                logger.info("Seed indexed: %s chunks=%s", title, result.get("chunks"))
+            else:
+                fail_n += 1
+                logger.warning(
+                    "Seed index failed: %s → %s",
+                    title,
+                    result.get("message") or result.get("error"),
+                )
+        except Exception as e:
+            fail_n += 1
+            logger.warning("Seed index exception %s: %s", title, e)
+    logger.info("Seed KB index finished: ok=%s fail=%s", ok_n, fail_n)
 
 
 @asynccontextmanager

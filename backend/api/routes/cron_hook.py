@@ -209,8 +209,8 @@ async def trigger_hook(
             agent = await agent_repo.get_by_id(obj.target_id)
             if not agent:
                 raise Exception(f"SubAgent {obj.target_id} not found")
-            # TODO: 实际调用子代理执行
-            logger.info(f"Hook triggered sub-agent: {agent.name}")
+            # TODO(cron-hook): 接入 SubAgent 实际执行路径（当前仅记录触发日志）
+            logger.info("Hook triggered sub-agent: %s (execution not yet wired)", agent.name)
 
     except Exception as e:
         status = "failed"

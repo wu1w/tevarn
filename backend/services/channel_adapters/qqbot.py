@@ -18,6 +18,7 @@ import time
 from typing import Any, Optional
 
 from .base import BaseChannelAdapter
+import aiohttp
 
 logger = logging.getLogger(__name__)
 
@@ -141,11 +142,6 @@ class QQBotAdapter(BaseChannelAdapter):
     async def connect(self) -> None:
         """建立 WebSocket 连接并开始监听"""
         try:
-            import aiohttp
-        except ImportError:
-            raise RuntimeError("aiohttp 未安装")
-
-        try:
             token = await self.ensure_token()
             gateway_url = await self.get_gateway_url()
 
@@ -189,7 +185,10 @@ class QQBotAdapter(BaseChannelAdapter):
 
         except Exception as e:
             logger.error("QQ Bot 连接失败: %s", e)
-            await self._cleanup()
+            try:
+                await self._cleanup()
+            except Exception:
+                pass  # cleanup 失败不二次抛
             raise
 
     async def _heartbeat_loop(self, interval: float):
@@ -210,7 +209,6 @@ class QQBotAdapter(BaseChannelAdapter):
     async def _listen_loop(self):
         """消息监听循环"""
         try:
-            import aiohttp
             async for msg in self._ws:
                 if msg.type == aiohttp.WSMsgType.TEXT:
                     data = msg.json()
