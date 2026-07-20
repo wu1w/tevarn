@@ -1093,7 +1093,8 @@ export async function getModelCatalog(fetchModels = true): Promise<ModelCatalog>
 
 export async function selectCatalogModel(
   providerId: string,
-  model: string
+  model: string,
+  sessionId?: string
 ): Promise<{
   ok: boolean;
   message: string;
@@ -1108,6 +1109,7 @@ export async function selectCatalogModel(
   const res = await api.post('/settings/model-catalog/select', {
     provider_id: providerId,
     model,
+    ...(sessionId ? { session_id: sessionId } : {}),
   });
   return res.data;
 }

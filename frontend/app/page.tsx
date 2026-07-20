@@ -746,6 +746,7 @@ export default function HomePage() {
                                               onGenerateImage={handleGenerateImage}
                                               disabled={isStreaming || isGeneratingImage || creatingSession}
                                               isStreaming={isStreaming}
+                                              sessionId={currentSession?.id}
                                               onStopStreaming={handleStopStreaming}
                                               placeholder={
                                                 creatingSession

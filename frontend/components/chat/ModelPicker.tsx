@@ -21,9 +21,11 @@ import { useT } from '@/stores/localeStore';
 interface ModelPickerProps {
   disabled?: boolean;
   onChanged?: (providerId: string, model: string, providerName: string) => void;
+  /** 当前会话 id：传入时切换会同步更新该会话的 LLM 快照，使切换立即生效 */
+  sessionId?: string;
 }
 
-export function ModelPicker({ disabled = false, onChanged }: ModelPickerProps) {
+export function ModelPicker({ disabled = false, onChanged, sessionId }: ModelPickerProps) {
   const t = useT();
   const addToast = useToastStore((s) => s.addToast);
   const [open, setOpen] = useState(false);
@@ -139,7 +141,7 @@ export function ModelPicker({ disabled = false, onChanged }: ModelPickerProps) {
   const handleSelectModel = async (providerId: string, modelId: string) => {
       setBusy(true);
       try {
-        const res = await selectCatalogModel(providerId, modelId);
+        const res = await selectCatalogModel(providerId, modelId, sessionId);
         addToast(res.message || t('modelPicker.switched'), 'success');
         await load(true);
         setOpen(false);

@@ -20,7 +20,7 @@ from backend.repositories import SettingRepository
 from backend.schemas.setting import SettingRead, SettingUpdate
 from backend.schemas.user import UserRead
 
-from ..dependencies import get_current_user, get_setting_repo, require_admin
+from ..dependencies import get_current_user, get_setting_repo, get_session_repo, require_admin
 
 logger = logging.getLogger(__name__)
 
@@ -1206,6 +1206,8 @@ async def list_remote_models(
 class SelectModelBody(BaseModel):
     provider_id: str
     model: str
+    # 可选：传入当前会话 id 时，同步重建该会话的 LLM 快照，使切换立即生效
+    session_id: Optional[str] = None
 
 
 class SetFallbackModelBody(BaseModel):
@@ -1521,6 +1523,7 @@ async def select_active_model(
     request: Request,
     current_user: Annotated[UserRead, Depends(get_current_user)],
     repo: Annotated[SettingRepository, Depends(get_setting_repo)],
+    session_repo=Depends(get_session_repo),
 ):
     """对话页切换当前供应商 + 模型，立即生效。"""
     catalog = await model_catalog_mod.load_catalog(repo)
@@ -1571,6 +1574,35 @@ async def select_active_model(
             "temperature": slot["temperature"],
         },
     )
+    # 可选：同步更新当前会话的 LLM 快照，使对话框内切换立即生效
+    # （session 创建时快照被锁定，不改则本会话仍走旧 provider，导致"切不过去"）
+    if data.session_id:
+        try:
+            import uuid as _uuid
+
+            sid = _uuid.UUID(str(data.session_id))
+            new_snap = model_catalog_mod.build_llm_snapshot(
+                provider,
+                data.model,
+                temperature=slot.get("temperature"),
+                max_tokens=slot.get("max_tokens"),
+                context_window=slot.get("context_window"),
+            )
+            cfg = await session_repo.get_config(sid)
+            cfg = dict(cfg) if isinstance(cfg, dict) else {}
+            cfg["llm"] = new_snap
+            await session_repo.update_config(sid, cfg)
+            logger.info(
+                "session %s llm snapshot updated on provider switch -> %s/%s",
+                sid,
+                data.provider_id,
+                data.model,
+            )
+        except (ValueError, AttributeError) as e:
+            logger.warning("invalid session_id on model select: %s", e)
+        except Exception as e:  # noqa: BLE001
+            # 快照更新失败不影响切换本身
+            logger.warning("update session llm snapshot failed: %s", e)
     _notify_settings_changed(
         current_user.id,
         [

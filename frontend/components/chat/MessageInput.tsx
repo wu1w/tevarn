@@ -28,6 +28,8 @@ interface MessageInputProps {
   onClearEdit?: () => void;
   showModelPicker?: boolean;
   onModelChanged?: (providerId: string, model: string, providerName: string) => void;
+  /** 当前会话 id：切换 provider 时同步更新该会话快照 */
+  sessionId?: string;
   /** 回答生成中：显示停止按钮，允许打断 */
   isStreaming?: boolean;
   onStopStreaming?: () => void;
@@ -60,6 +62,7 @@ export function MessageInput({
   onClearEdit,
   showModelPicker = true,
   onModelChanged,
+  sessionId,
   isStreaming = false,
   onStopStreaming,
 }: MessageInputProps) {
@@ -388,7 +391,7 @@ export function MessageInput({
 
       <div className="mb-3 flex flex-wrap items-center gap-1.5" data-no-composer-focus>
         {showModelPicker && (
-          <ModelPicker disabled={inputLocked} onChanged={onModelChanged} />
+          <ModelPicker disabled={inputLocked} onChanged={onModelChanged} sessionId={sessionId} />
         )}
         <span className="mx-0.5 hidden h-4 w-px bg-border-subtle sm:inline-block" aria-hidden />
         {/* 工具分组：附件 | 模式 | 生成 */}
