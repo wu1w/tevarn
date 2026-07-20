@@ -39,11 +39,12 @@ def find_python() -> str:
     """查找可用的 Python 解释器"""
     candidates = ["python3", "python"]
     if platform.system() == "Windows":
-        candidates = [
-            "C:/Users/developer/AppData/Local/Programs/Python/Python314/python.exe",
-            "C:/Users/developer/AppData/Local/Programs/Python/Python312/python.exe",
-            "python",
-        ]
+        import shutil
+        for ver in ("3.14", "3.13", "3.12", "3.11"):
+            p = shutil.which(f"python{ver}") or shutil.which(f"python{ver.replace('.', '')}")
+            if p:
+                candidates.insert(0, p)
+                break
     for cmd in candidates:
         try:
             result = subprocess.run(

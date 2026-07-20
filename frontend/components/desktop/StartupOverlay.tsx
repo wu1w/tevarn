@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { AppLogo } from '@/components/brand/AppLogo';
+import { useT } from '@/stores/localeStore';
 
 interface StartupOverlayProps {
   /** 后端是否已就绪 */
@@ -17,6 +18,7 @@ interface StartupOverlayProps {
  * 后端就绪后自动淡出消失。
  */
 export function StartupOverlay({ backendReady, stage }: StartupOverlayProps) {
+  const t = useT();
   const [visible, setVisible] = useState(true);
   const [fading, setFading] = useState(false);
 
@@ -60,7 +62,7 @@ export function StartupOverlay({ backendReady, stage }: StartupOverlayProps) {
 
           {/* 阶段描述 */}
           <p className="text-xs text-foreground-dim">
-            {backendReady ? '✓ 后端就绪' : stage || '正在启动后端服务...'}
+            {backendReady ? t('desktop._e106') : stage || t('desktop._e107')}
           </p>
 
           {/* 跳动的点 */}

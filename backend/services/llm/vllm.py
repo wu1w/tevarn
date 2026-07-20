@@ -26,8 +26,11 @@ class VLLMService(LLMService):
         self.config = config or settings.get_llm_config()
         self.base_url = self.config.base_url.rstrip("/")
         self.model = self.config.model
-        self.max_tokens = self.config.max_tokens
-        self.temperature = getattr(self.config, "temperature", 0.7)
+        from .param_sanitize import sanitize_max_tokens, sanitize_temperature
+        self.max_tokens = sanitize_max_tokens(
+            getattr(self.config, "max_tokens", None), model=self.model
+        )
+        self.temperature = sanitize_temperature(getattr(self.config, "temperature", 0.7))
         self.api_key = getattr(self.config, "api_key", None)
 
     def _get_headers(self) -> dict[str, str]:

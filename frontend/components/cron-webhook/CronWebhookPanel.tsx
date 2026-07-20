@@ -41,6 +41,7 @@ import type {
   CronJobWithHooks,
 } from '@/types/zero-code';
 import type { CronJob } from '@/types';
+import { t, useT } from '@/stores/localeStore';
 
 // ────────────────── 子组件：Webhook 表单对话框 ──────────────────
 
@@ -81,7 +82,7 @@ function WebhookFormDialog({
 
   const handleSubmit = async () => {
     if (!form.name || !form.url) {
-      setError('名称和 URL 不能为空');
+      setError(t('cron-webhook._e90'));
       return;
     }
     setLoading(true);
@@ -96,7 +97,7 @@ function WebhookFormDialog({
       onSaved();
       onClose();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : '保存失败');
+      setError(e instanceof Error ? e.message : t('channels.saveFailed'));
     } finally {
       setLoading(false);
     }
@@ -105,7 +106,7 @@ function WebhookFormDialog({
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
       <div className="bg-white dark:bg-gray-900 rounded-lg p-6 w-full max-w-lg shadow-xl max-h-[90vh] overflow-auto">
-        <h3 className="text-lg font-semibold mb-4">{isEdit ? '编辑 Webhook' : '新建 Webhook'}</h3>
+        <h3 className="text-lg font-semibold mb-4">{isEdit ? t('cron-webhook._e91') : t('cron-webhook._e92')}</h3>
         {error && (
           <div className="flex items-center gap-2 text-red-600 text-sm mb-3">
             <AlertCircle className="w-4 h-4" /> {error}
@@ -113,12 +114,12 @@ function WebhookFormDialog({
         )}
         <div className="space-y-4">
           <div>
-            <label className="block text-xs font-medium mb-1">名称</label>
+            <label className="block text-xs font-medium mb-1">{t('channels.fieldName')}</label>
             <input
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
               className="w-full border rounded px-3 py-1.5 text-sm dark:bg-gray-800"
-              placeholder="例: GitHub Push 通知"
+              placeholder={t('cron-webhook._e41')}
             />
           </div>
           <div>
@@ -131,23 +132,23 @@ function WebhookFormDialog({
             />
           </div>
           <div>
-            <label className="block text-xs font-medium mb-1">密钥 (Secret)</label>
+            <label className="block text-xs font-medium mb-1">{t('cron-webhook._e42')}</label>
             <input
               value={form.secret}
               onChange={(e) => setForm({ ...form, secret: e.target.value })}
               className="w-full border rounded px-3 py-1.5 text-sm dark:bg-gray-800"
               type="password"
-              placeholder="用于签名验证"
+              placeholder={t('cron-webhook._e43')}
             />
           </div>
           <div>
-            <label className="block text-xs font-medium mb-1">订阅事件</label>
+            <label className="block text-xs font-medium mb-1">{t('cron-webhook._e44')}</label>
             <div className="flex gap-2 mb-2">
               <input
                 value={newEvent}
                 onChange={(e) => setNewEvent(e.target.value)}
                 className="flex-1 border rounded px-3 py-1.5 text-sm dark:bg-gray-800"
-                placeholder="事件名称"
+                placeholder={t('cron-webhook._e45')}
                 onKeyDown={(e) => e.key === 'Enter' && addEvent()}
               />
               <button onClick={addEvent} className="px-3 py-1.5 text-sm bg-gray-100 dark:bg-gray-800 rounded">
@@ -175,9 +176,9 @@ function WebhookFormDialog({
           </div>
         </div>
         <div className="flex justify-end gap-2 mt-4">
-          <button onClick={onClose} className="px-4 py-1.5 text-sm border rounded hover:bg-gray-50 dark:hover:bg-gray-800">取消</button>
+          <button onClick={onClose} className="px-4 py-1.5 text-sm border rounded hover:bg-gray-50 dark:hover:bg-gray-800">{t('contextDash.cancel')}</button>
           <button onClick={handleSubmit} disabled={loading} className="px-4 py-1.5 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50">
-            {loading ? '保存中...' : '保存'}
+            {loading ? t('profile.saving') : t('kb.save')}
           </button>
         </div>
       </div>
@@ -214,7 +215,7 @@ function HookFormDialog({
 
   const handleSubmit = async () => {
     if (!form.name || !form.target_id) {
-      setError('名称和目标 ID 不能为空');
+      setError(t('cron-webhook._e93'));
       return;
     }
     setLoading(true);
@@ -229,7 +230,7 @@ function HookFormDialog({
       onSaved();
       onClose();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : '保存失败');
+      setError(e instanceof Error ? e.message : t('channels.saveFailed'));
     } finally {
       setLoading(false);
     }
@@ -238,7 +239,7 @@ function HookFormDialog({
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
       <div className="bg-white dark:bg-gray-900 rounded-lg p-6 w-full max-w-md shadow-xl">
-        <h3 className="text-lg font-semibold mb-4">{isEdit ? '编辑 Hook' : '新建 Hook'}</h3>
+        <h3 className="text-lg font-semibold mb-4">{isEdit ? t('cron-webhook._e94') : t('cron-webhook._e95')}</h3>
         {error && (
           <div className="flex items-center gap-2 text-red-600 text-sm mb-3">
             <AlertCircle className="w-4 h-4" /> {error}
@@ -246,38 +247,38 @@ function HookFormDialog({
         )}
         <div className="space-y-3">
           <div>
-            <label className="block text-xs font-medium mb-1">名称</label>
+            <label className="block text-xs font-medium mb-1">{t('channels.fieldName')}</label>
             <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full border rounded px-3 py-1.5 text-sm dark:bg-gray-800" />
           </div>
           <div>
-            <label className="block text-xs font-medium mb-1">触发事件</label>
+            <label className="block text-xs font-medium mb-1">{t('cron-webhook._e46')}</label>
             <select value={form.event} onChange={(e) => setForm({ ...form, event: e.target.value as CronHookCreate['event'] })} className="w-full border rounded px-3 py-1.5 text-sm dark:bg-gray-800">
-              <option value="on_success">成功时</option>
-              <option value="on_failure">失败时</option>
-              <option value="on_run">每次运行</option>
+              <option value="on_success">{t('cron-webhook._e47')}</option>
+              <option value="on_failure">{t('cron-webhook._e48')}</option>
+              <option value="on_run">{t('cron-webhook._e49')}</option>
             </select>
           </div>
           <div>
-            <label className="block text-xs font-medium mb-1">目标类型</label>
+            <label className="block text-xs font-medium mb-1">{t('cron-webhook._e50')}</label>
             <select value={form.target_type} onChange={(e) => setForm({ ...form, target_type: e.target.value as CronHookCreate['target_type'] })} className="w-full border rounded px-3 py-1.5 text-sm dark:bg-gray-800">
-              <option value="workflow">工作流</option>
+              <option value="workflow">{t('cron.col.workflow')}</option>
               <option value="webhook">Webhook</option>
-              <option value="agent">子代理</option>
+              <option value="agent">{t('nav.profiles')}</option>
             </select>
           </div>
           <div>
-            <label className="block text-xs font-medium mb-1">目标 ID</label>
+            <label className="block text-xs font-medium mb-1">{t('cron-webhook._e51')}</label>
             <input value={form.target_id} onChange={(e) => setForm({ ...form, target_id: e.target.value })} className="w-full border rounded px-3 py-1.5 text-sm dark:bg-gray-800 font-mono" />
           </div>
           <div>
-            <label className="block text-xs font-medium mb-1">条件表达式 (可选)</label>
+            <label className="block text-xs font-medium mb-1">{t('cron-webhook._e52')}</label>
             <input value={form.condition || ''} onChange={(e) => setForm({ ...form, condition: e.target.value || null })} className="w-full border rounded px-3 py-1.5 text-sm dark:bg-gray-800" placeholder="例: result.status == 'ok'" />
           </div>
         </div>
         <div className="flex justify-end gap-2 mt-4">
-          <button onClick={onClose} className="px-4 py-1.5 text-sm border rounded hover:bg-gray-50 dark:hover:bg-gray-800">取消</button>
+          <button onClick={onClose} className="px-4 py-1.5 text-sm border rounded hover:bg-gray-50 dark:hover:bg-gray-800">{t('contextDash.cancel')}</button>
           <button onClick={handleSubmit} disabled={loading} className="px-4 py-1.5 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50">
-            {loading ? '保存中...' : '保存'}
+            {loading ? t('profile.saving') : t('kb.save')}
           </button>
         </div>
       </div>
@@ -288,6 +289,7 @@ function HookFormDialog({
 // ────────────────── 主组件 ──────────────────
 
 export default function CronWebhookPanel() {
+  const t = useT();
   const [webhooks, setWebhooks] = useState<Webhook[]>([]);
   const [cronJobs, setCronJobs] = useState<CronJob[]>([]);
   const [hooksMap, setHooksMap] = useState<Record<string, CronHook[]>>({});
@@ -350,7 +352,7 @@ export default function CronWebhookPanel() {
   };
 
   const handleDeleteWebhook = async (id: string) => {
-    if (!confirm('确定删除此 Webhook？')) return;
+    if (!confirm(t('cron-webhook._e96'))) return;
     try {
       await webhookApi.delete(id);
       loadData();
@@ -372,7 +374,7 @@ export default function CronWebhookPanel() {
   );
 
   const handleDeleteHook = async (id: string) => {
-    if (!confirm('确定删除此 Hook？')) return;
+    if (!confirm(t('cron-webhook._e97'))) return;
     try {
       await cronHookApi.delete(id);
       loadData();
@@ -432,16 +434,16 @@ export default function CronWebhookPanel() {
                       <span className="text-xs text-gray-400 font-mono truncate max-w-[200px]">{wh.url}</span>
                     </div>
                     <div className="flex items-center gap-1">
-                      <button onClick={() => loadDeliveryLogs(wh.id)} className="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded" title="查看日志">
+                      <button onClick={() => loadDeliveryLogs(wh.id)} className="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded" title={t('cron-webhook._e53')}>
                         <Search className="w-3.5 h-3.5" />
                       </button>
-                      <button onClick={() => handleTestWebhook(wh.id)} className="p-1.5 hover:bg-blue-100 dark:hover:bg-blue-900/30 rounded" title="测试">
+                      <button onClick={() => handleTestWebhook(wh.id)} className="p-1.5 hover:bg-blue-100 dark:hover:bg-blue-900/30 rounded" title={t('settings.test')}>
                         <ExternalLink className="w-3.5 h-3.5 text-blue-500" />
                       </button>
-                      <button onClick={() => setWebhookDialog(wh)} className="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded" title="编辑">
+                      <button onClick={() => setWebhookDialog(wh)} className="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded" title={t('memory.edit')}>
                         <Edit3 className="w-3.5 h-3.5" />
                       </button>
-                      <button onClick={() => handleDeleteWebhook(wh.id)} className="p-1.5 hover:bg-red-100 dark:hover:bg-red-900/30 rounded" title="删除">
+                      <button onClick={() => handleDeleteWebhook(wh.id)} className="p-1.5 hover:bg-red-100 dark:hover:bg-red-900/30 rounded" title={t('memory.delete')}>
                         <Trash2 className="w-3.5 h-3.5 text-red-500" />
                       </button>
                     </div>
@@ -449,7 +451,7 @@ export default function CronWebhookPanel() {
                   <div className="flex items-center gap-3 text-xs text-gray-400">
                     <span>触发: {wh.trigger_count} 次</span>
                     {wh.last_status && <span className={wh.last_status === 'success' ? 'text-green-500' : 'text-red-500'}>最近: {wh.last_status}</span>}
-                    <span>事件: {wh.events.join(', ') || '全部'}</span>
+                    <span>事件: {wh.events.join(', ') || t('contextDash.all')}</span>
                   </div>
                 </div>
               ))}
@@ -460,11 +462,11 @@ export default function CronWebhookPanel() {
           {logsWebhookId && (
             <div className="border rounded-lg p-3 bg-gray-50 dark:bg-gray-800/50">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-medium text-gray-500">投递日志</span>
+                <span className="text-xs font-medium text-gray-500">{t('cron-webhook._e54')}</span>
                 <button onClick={() => setLogsWebhookId(null)} className="text-xs text-gray-400 hover:text-gray-600"><X className="w-3 h-3" /></button>
               </div>
               {deliveryLogs.length === 0 ? (
-                <div className="text-xs text-gray-400 text-center py-2">暂无日志</div>
+                <div className="text-xs text-gray-400 text-center py-2">{t('cron-webhook._e55')}</div>
               ) : (
                 <div className="space-y-1 max-h-40 overflow-auto">
                   {deliveryLogs.map((log) => (
@@ -499,7 +501,7 @@ export default function CronWebhookPanel() {
                       <span className={`text-xs px-1.5 py-0.5 rounded ${
                         cj.last_status === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
                       }`}>
-                        {cj.last_status === 'success' ? '成功' : cj.last_status === 'failed' ? '失败' : cj.last_status}
+                        {cj.last_status === 'success' ? t('common.success') : cj.last_status === 'failed' ? t('mcpStore.failed') : cj.last_status}
                       </span>
                     )}
                   </div>
@@ -521,26 +523,26 @@ export default function CronWebhookPanel() {
                 )}
 
                 {(hooksMap[cj.id] || []).length === 0 ? (
-                  <div className="text-xs text-gray-400 py-2">暂无 Hook 联动</div>
+                  <div className="text-xs text-gray-400 py-2">{t('cron-webhook._e56')}</div>
                 ) : (
                   <div className="space-y-1">
                     {(hooksMap[cj.id] || []).map((hook) => (
                       <div key={hook.id} className="flex items-center justify-between px-2 py-1.5 rounded bg-gray-50 dark:bg-gray-800 text-xs">
                         <div className="flex items-center gap-2">
                           <span className={`px-1.5 py-0.5 rounded ${hook.event === 'on_success' ? 'bg-green-100 text-green-700' : hook.event === 'on_failure' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>
-                            {hook.event === 'on_success' ? '成功' : hook.event === 'on_failure' ? '失败' : '运行'}
+                            {hook.event === 'on_success' ? t('common.success') : hook.event === 'on_failure' ? t('mcpStore.failed') : t('wf.run')}
                           </span>
                           <span className="font-medium">{hook.name}</span>
                           <span className="text-gray-400">→ {hook.target_type}: {hook.target_id.slice(0, 8)}...</span>
                         </div>
                         <div className="flex items-center gap-1">
-                          <button onClick={() => handleTriggerHook(hook.id)} className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded" title="手动触发">
+                          <button onClick={() => handleTriggerHook(hook.id)} className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded" title={t('cron-webhook._e57')}>
                             <Power className="w-3 h-3" />
                           </button>
-                          <button onClick={() => setHookDialog({ cronJobId: cj.id, hook })} className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded" title="编辑">
+                          <button onClick={() => setHookDialog({ cronJobId: cj.id, hook })} className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded" title={t('memory.edit')}>
                             <Edit3 className="w-3 h-3" />
                           </button>
-                          <button onClick={() => handleDeleteHook(hook.id)} className="p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded" title="删除">
+                          <button onClick={() => handleDeleteHook(hook.id)} className="p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded" title={t('memory.delete')}>
                             <Trash2 className="w-3 h-3 text-red-500" />
                           </button>
                         </div>

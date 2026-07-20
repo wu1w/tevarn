@@ -8,16 +8,17 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any, Optional
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
 
 class MCPServerConfig(BaseModel):
-    """MCP Server 配置（与 client.MCPServerConfig 对齐）"""
+    """MCP Server 配置（与 client 对齐）"""
 
     id: uuid.UUID
     name: str = Field(..., min_length=1, max_length=64)
+    description: Optional[str] = None
     transport: str = Field(..., pattern=r"^(stdio|sse)$")
     command: Optional[str] = None
     args: list[str] = Field(default_factory=list)
@@ -27,8 +28,9 @@ class MCPServerConfig(BaseModel):
     timeout: float = 30.0
     risk_level: str = Field(default="medium")
     allowed_paths: Optional[list[str]] = None
-    created_at: datetime
-    updated_at: datetime
+    # ORM 表暂无时间戳列；可选以免 ResponseValidationError
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
 
@@ -37,6 +39,7 @@ class MCPServerCreate(BaseModel):
     """创建 MCP Server"""
 
     name: str = Field(..., min_length=1, max_length=64)
+    description: Optional[str] = None
     transport: str = Field(..., pattern=r"^(stdio|sse)$")
     command: Optional[str] = None
     args: list[str] = Field(default_factory=list)
@@ -52,6 +55,7 @@ class MCPServerUpdate(BaseModel):
     """更新 MCP Server"""
 
     name: Optional[str] = Field(None, min_length=1, max_length=64)
+    description: Optional[str] = None
     transport: Optional[str] = Field(None, pattern=r"^(stdio|sse)$")
     command: Optional[str] = None
     args: Optional[list[str]] = None

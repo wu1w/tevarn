@@ -17,8 +17,8 @@ from backend.schemas.session import (
 )
 from backend.schemas.user import UserRead
 
-from ..dependencies import get_current_user, get_session_repo
-from backend.repositories import SessionRepository
+from ..dependencies import get_current_user, get_session_repo, get_setting_repo, assert_session_owner
+from backend.repositories import SessionRepository, SettingRepository
 
 router = APIRouter(prefix="/sessions", tags=["Sessions"])
 
@@ -38,12 +38,59 @@ async def create_session(
     data: SessionCreate,
     current_user: Annotated[UserRead, Depends(get_current_user)],
     repo: Annotated[SessionRepository, Depends(get_session_repo)],
+    setting_repo: Annotated[SettingRepository, Depends(get_setting_repo)],
 ):
-    """创建新会话（自动关联当前用户）"""
+    """创建新会话（自动关联当前用户）
+
+    快照完整 LLM 配置到 session.config.llm（provider_id + base_url + key + model）。
+    「新会话默认模型」从 catalog 反查真实供应商，禁止只改 model 名沿用错误 base_url，
+    也禁止冒出空壳 custom。
+    """
+    from backend.core.config import settings as app_settings
+    from backend.core import model_catalog as model_catalog_mod
+    from backend.core import model_gen_params as gen_params_mod
+
     config = data.config.model_dump() if data.config else {}
-    session = await repo.create(
-        {"user_id": current_user.id, "config": config}
-    )
+    if "llm" not in config:
+        cfg = app_settings.get_llm_config()
+        default_model = (getattr(app_settings, "default_llm_model", "") or "").strip()
+        catalog = await model_catalog_mod.load_catalog(setting_repo)
+        cleaned = model_catalog_mod.prune_orphan_providers(catalog)
+        if cleaned != catalog:
+            try:
+                await model_catalog_mod.save_catalog(setting_repo, cleaned)
+            except Exception:
+                pass
+        catalog = cleaned
+
+        snap = model_catalog_mod.resolve_new_session_llm_snapshot(
+            catalog,
+            default_llm_model=default_model,
+            fallback_provider=app_settings.llm_provider,
+            fallback_model=getattr(cfg, "model", "") or "",
+            fallback_base_url=getattr(cfg, "base_url", "") or "",
+            fallback_api_key=getattr(cfg, "api_key", None),
+            temperature=getattr(cfg, "temperature", None),
+            max_tokens=getattr(cfg, "max_tokens", None),
+            context_window=getattr(app_settings, "context_window", None),
+        )
+        try:
+            params = await gen_params_mod.get_params(
+                setting_repo,
+                str(snap.get("provider_id") or ""),
+                str(snap.get("model") or ""),
+            )
+            if params:
+                if params.get("temperature") is not None:
+                    snap["temperature"] = params["temperature"]
+                if params.get("max_tokens") is not None:
+                    snap["max_tokens"] = params["max_tokens"]
+                if params.get("context_window") is not None:
+                    snap["context_window"] = params["context_window"]
+        except Exception:
+            pass
+        config["llm"] = snap
+    session = await repo.create({"user_id": current_user.id, "config": config})
     return session
 
 
@@ -57,9 +104,7 @@ async def get_session(
         session = await uow.sessions.get_by_id(session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
-        # 用户隔离检查
-        if getattr(session, "user_id", None) and session.user_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Access denied")
+        assert_session_owner(getattr(session, "user_id", None), current_user)
         return session
 
 
@@ -74,8 +119,7 @@ async def update_session_config(
         session = await uow.sessions.get_by_id(session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
-        if getattr(session, "user_id", None) and session.user_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Access denied")
+        assert_session_owner(getattr(session, "user_id", None), current_user)
         return await uow.sessions.update_config(
             session_id, data.config.model_dump()
         )
@@ -91,8 +135,7 @@ async def delete_session(
         session = await uow.sessions.get_by_id(session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
-        if getattr(session, "user_id", None) and session.user_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Access denied")
+        assert_session_owner(getattr(session, "user_id", None), current_user)
         success = await uow.sessions.delete(session_id)
         if not success:
             raise HTTPException(status_code=404, detail="Session not found")
@@ -109,8 +152,7 @@ async def get_session_checkpoint(
         session = await uow.sessions.get_by_id(session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
-        if getattr(session, "user_id", None) and session.user_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Access denied")
+        assert_session_owner(getattr(session, "user_id", None), current_user)
     from backend.agent.checkpoint import load_checkpoint
     from backend.agent.goal_state import get_goal, load_goal_from_db
     from backend.agent.resume import build_resume_prompt
@@ -137,8 +179,7 @@ async def resume_session(
         session = await uow.sessions.get_by_id(session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
-        if getattr(session, "user_id", None) and session.user_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Access denied")
+        assert_session_owner(getattr(session, "user_id", None), current_user)
 
     from backend.agent.resume import build_resume_prompt, resume_session_agent
 

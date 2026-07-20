@@ -5,14 +5,18 @@ import { Document } from '@/types';
 import { getDocuments, createDocument, updateDocument, deleteDocument, indexDocument, uploadFile, uploadBatch, ragTest, getQdrantStatus, checkDimension, rebuildIndex, type RAGTestResult, type QdrantStatus, type DimensionCheckResult } from '@/lib/api';
 import { useConfirm } from '@/components/desktop/ConfirmDialog';
 import { useToastStore } from '@/stores/toastStore';
+import { useT } from '@/stores/localeStore';
 
 /* ─── 状态标签映射 ─── */
-const STATUS_MAP: Record<string, { label: string; icon: string; color: string }> = {
-  pending: { label: '待索引', icon: '⏸', color: 'bg-amber-500/10 text-amber-500' },
-  indexing: { label: '索引中', icon: '⏳', color: 'bg-brand-cyan/15 text-brand-cyan' },
-  indexed: { label: '已索引', icon: '✅', color: 'bg-success-bg text-success-text' },
-  error: { label: '索引失败', icon: '❌', color: 'bg-error-bg text-error-text' },
-};
+function useStatusMap(): Record<string, { label: string; icon: string; color: string }> {
+  const t = useT();
+  return useMemo(() => ({
+    pending: { label: t('kb.status.pending'), icon: '⏸', color: 'bg-amber-500/10 text-amber-500' },
+    indexing: { label: t('kb.status.indexing'), icon: '⏳', color: 'bg-brand-cyan/15 text-brand-cyan' },
+    indexed: { label: t('kb.status.indexed'), icon: '✅', color: 'bg-success-bg text-success-text' },
+    error: { label: t('kb.status.error'), icon: '❌', color: 'bg-error-bg text-error-text' },
+  }), [t]);
+}
 
 /* ─── 文档去重：同标题合并展示 ─── */
 function normalizeDocTitle(title: string): string {
@@ -80,6 +84,8 @@ function DocCard({
   onToggleExpand?: () => void;
   duplicates?: Document[];
 }) {
+  const t = useT();
+  const STATUS_MAP = useStatusMap();
   const status = STATUS_MAP[doc.status] || STATUS_MAP.pending;
   const chunks = (doc as Document & { chunks_count?: number }).chunks_count ?? doc.chunk_count ?? 0;
   const contentPreview = doc.content || (typeof doc.meta?.content === 'string' ? doc.meta.content : '');
@@ -96,9 +102,9 @@ function DocCard({
                 type="button"
                 onClick={onToggleExpand}
                 className="shrink-0 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-400 hover:bg-amber-500/20"
-                title="展开/收起重复副本"
+                title={t('kb.duplicateToggleTitle')}
               >
-                ×{duplicateCount + 1} 重复 {expanded ? '▴' : '▾'}
+                ×{duplicateCount + 1} {t('kb.duplicates')} {expanded ? '▴' : '▾'}
               </button>
             )}
           </div>
@@ -112,7 +118,7 @@ function DocCard({
       </div>
 
       <div className="mt-2 flex items-center gap-3 text-[10px] text-foreground-muted ml-7">
-        <span>📦 {chunks} 分块</span>
+        <span>📦 {chunks} {t('kb.chunks')}</span>
         <span>·</span>
         <span>📅 {new Date(doc.created_at).toLocaleDateString()}</span>
         <span className="font-mono text-foreground-dim/70">#{doc.id.slice(0, 6)}</span>
@@ -120,23 +126,23 @@ function DocCard({
 
       <div className="mt-3 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity ml-7">
         <button onClick={() => onEdit(doc)} className="rounded-md bg-card-bg-hover px-2 py-1 text-xs text-foreground-dim hover:bg-elevated-bg">
-          编辑
+          {t('kb.edit')}
         </button>
         <button
           onClick={() => onIndex(doc)}
           disabled={indexingId === doc.id}
           className="rounded-md bg-brand-cyan/15 px-2 py-1 text-xs text-brand-cyan hover:bg-brand-cyan/25 disabled:opacity-50"
         >
-          {indexingId === doc.id ? '⏳ 索引中…' : '🔍 向量索引'}
+          {indexingId === doc.id ? `⏳ ${t('kb.indexing')}` : `🔍 ${t('kb.vectorIndex')}`}
         </button>
         <button onClick={() => onDelete(doc.id)} className="rounded-md bg-error-bg px-2 py-1 text-xs text-error-text hover:bg-error-bg">
-          删除
+          {t('kb.delete')}
         </button>
       </div>
 
       {expanded && duplicates.length > 0 && (
         <div className="mt-3 ml-7 space-y-2 border-t border-border-subtle pt-3">
-          <div className="text-[10px] font-medium text-foreground-dim">重复副本（已隐藏主条目外的 {duplicates.length} 条）</div>
+          <div className="text-[10px] font-medium text-foreground-dim">{t('kb.duplicateHeader').replace('{n}', String(duplicates.length))}</div>
           {duplicates.map((dup) => {
             const st = STATUS_MAP[dup.status] || STATUS_MAP.pending;
             return (
@@ -156,14 +162,14 @@ function DocCard({
                     onClick={() => onEdit(dup)}
                     className="rounded px-2 py-0.5 text-[10px] text-foreground-dim hover:bg-card-bg"
                   >
-                    编辑
+                    {t('kb.edit')}
                   </button>
                   <button
                     type="button"
                     onClick={() => onDelete(dup.id)}
                     className="rounded px-2 py-0.5 text-[10px] text-error-text hover:bg-error-bg"
                   >
-                    删除
+                    {t('kb.delete')}
                   </button>
                 </div>
               </div>
@@ -177,6 +183,7 @@ function DocCard({
 
 /* ─── 拖动上传区 ─── */
 function UploadZone({ onUploaded }: { onUploaded: () => void }) {
+  const t = useT();
   const addToast = useToastStore((s) => s.addToast);
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -188,7 +195,7 @@ function UploadZone({ onUploaded }: { onUploaded: () => void }) {
       return ['txt', 'md', 'json', 'csv', 'pdf', 'docx', 'html'].includes(ext || '');
     });
     if (fileArray.length === 0) {
-      addToast('支持 txt/md/json/csv/pdf/docx/html 格式', 'info');
+      addToast(t('kb.uploadHint'), 'info');
       return;
     }
 
@@ -219,9 +226,9 @@ function UploadZone({ onUploaded }: { onUploaded: () => void }) {
       }
     }
     setUploading(false);
-    addToast(`✅ 成功上传 ${success}/${fileArray.length} 个文件`, 'success');
+    addToast(t('kb.uploadSuccess').replace('{success}', String(success)).replace('{total}', String(fileArray.length)), 'success');
     onUploaded();
-  }, [addToast, onUploaded]);
+  }, [addToast, onUploaded, t]);
 
   return (
     <div
@@ -244,18 +251,18 @@ function UploadZone({ onUploaded }: { onUploaded: () => void }) {
       {uploading ? (
         <div className="text-foreground-dim">
           <span className="text-2xl">⏳</span>
-          <p className="mt-2 text-sm">上传中...</p>
+          <p className="mt-2 text-sm">{t('kb.uploading')}</p>
         </div>
       ) : dragging ? (
         <div className="text-brand-purple">
           <span className="text-3xl">📥</span>
-          <p className="mt-2 text-sm font-medium">释放以上传文件</p>
+          <p className="mt-2 text-sm font-medium">{t('kb.dropToUpload')}</p>
         </div>
       ) : (
         <div className="text-foreground-dim">
           <span className="text-3xl">📤</span>
-          <p className="mt-2 text-sm">拖拽文件到此处上传</p>
-          <p className="mt-1 text-[10px] text-foreground-muted">支持 TXT / MD / JSON / CSV / PDF / DOCX / HTML</p>
+          <p className="mt-2 text-sm">{t('kb.dragHere')}</p>
+          <p className="mt-1 text-[10px] text-foreground-muted">{t('kb.supportedFormats')}</p>
         </div>
       )}
     </div>
@@ -264,6 +271,7 @@ function UploadZone({ onUploaded }: { onUploaded: () => void }) {
 
 /* ─── 检索测试面板（完整 RAG 链路） ─── */
 function SearchTestPanel() {
+  const t = useT();
   const addToast = useToastStore((s) => s.addToast);
   const [query, setQuery] = useState('');
   const [topK, setTopK] = useState(5);
@@ -273,10 +281,10 @@ function SearchTestPanel() {
   const [searching, setSearching] = useState(false);
 
   const COLLECTIONS = [
-    { id: 'knowledge', label: '📚 知识库', desc: 'knowledge_base' },
-    { id: 'wiki', label: '📖 Wiki', desc: 'wiki_pages' },
-    { id: 'session', label: '💬 会话记录', desc: 'session_history' },
-    { id: 'feishu', label: '🐦 飞书对话', desc: 'feishu_messages' },
+    { id: 'knowledge', label: t('kb.col.knowledge'), desc: 'knowledge_base' },
+    { id: 'wiki', label: t('kb.col.wiki'), desc: 'wiki_pages' },
+    { id: 'session', label: t('kb.col.session'), desc: 'session_history' },
+    { id: 'feishu', label: t('kb.col.feishu'), desc: 'feishu_messages' },
   ];
 
   const toggleCollection = (id: string) => {
@@ -298,7 +306,7 @@ function SearchTestPanel() {
       });
       setResult(r);
     } catch (err) {
-      addToast(err instanceof Error ? err.message : '检索失败', 'error');
+      addToast(err instanceof Error ? err.message : t('kb.searchFailed'), 'error');
     } finally {
       setSearching(false);
     }
@@ -308,7 +316,7 @@ function SearchTestPanel() {
 
   return (
     <div className="rounded-lg border border-border-default bg-card-bg p-4 space-y-4">
-      <h3 className="text-sm font-semibold text-foreground">🔍 RAG 检索测试</h3>
+      <h3 className="text-sm font-semibold text-foreground">{t('kb.ragTitle')}</h3>
 
       {/* 查询输入 */}
       <div className="flex gap-2">
@@ -317,7 +325,7 @@ function SearchTestPanel() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-          placeholder="输入测试查询..."
+          placeholder={t('kb.queryPlaceholder')}
           className="flex-1 rounded-md border border-border-default px-3 py-2 text-sm focus:border-brand-purple focus:outline-none focus:ring-1 focus:ring-brand-purple"
         />
         <button
@@ -325,7 +333,7 @@ function SearchTestPanel() {
           disabled={searching}
           className="rounded-md bg-brand-purple px-4 py-2 text-sm font-medium text-white hover:bg-brand-purple/80 disabled:opacity-50"
         >
-          {searching ? '搜索中...' : '检索'}
+          {searching ? t('kb.searching') : t('kb.search')}
         </button>
       </div>
 
@@ -333,7 +341,7 @@ function SearchTestPanel() {
       <div className="flex flex-wrap gap-3 items-center">
         {/* 检索模式 */}
         <div className="flex items-center gap-1.5">
-          <span className="text-[10px] text-foreground-muted">模式:</span>
+          <span className="text-[10px] text-foreground-muted">{t('kb.mode')}</span>
           {(['hybrid', 'vector', 'keyword'] as const).map((m) => (
             <button
               key={m}
@@ -344,14 +352,14 @@ function SearchTestPanel() {
                   : 'bg-elevated-bg text-foreground-muted hover:text-foreground'
               }`}
             >
-              {m === 'hybrid' ? '混合' : m === 'vector' ? '向量' : '关键词'}
+              {m === 'hybrid' ? t('kb.mode.hybrid') : m === 'vector' ? t('kb.mode.vector') : t('kb.mode.keyword')}
             </button>
           ))}
         </div>
 
         {/* Top K */}
         <div className="flex items-center gap-1.5">
-          <span className="text-[10px] text-foreground-muted">Top K:</span>
+          <span className="text-[10px] text-foreground-muted">{t('kb.topK')}</span>
           <input
             type="number"
             min={1}
@@ -364,7 +372,7 @@ function SearchTestPanel() {
 
         {/* Collection 选择 */}
         <div className="flex items-center gap-1.5">
-          <span className="text-[10px] text-foreground-muted">知识库:</span>
+          <span className="text-[10px] text-foreground-muted">{t('kb.collections')}</span>
           {COLLECTIONS.map((c) => (
             <button
               key={c.id}
@@ -385,38 +393,38 @@ function SearchTestPanel() {
       {/* 诊断信息 */}
       {diag && (
         <div className="rounded-md border border-border-subtle bg-elevated-bg/40 p-2.5">
-          <div className="text-[10px] font-semibold text-foreground mb-1.5">📊 检索诊断</div>
+          <div className="text-[10px] font-semibold text-foreground mb-1.5">{t('kb.diagnostics')}</div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px]">
             <div>
-              <span className="text-foreground-muted">总耗时</span>
+              <span className="text-foreground-muted">{t('kb.diag.totalTime')}</span>
               <div className="font-mono text-foreground">{diag.total_time_ms.toFixed(0)}ms</div>
             </div>
             <div>
-              <span className="text-foreground-muted">Embed</span>
+              <span className="text-foreground-muted">{t('kb.diag.embed')}</span>
               <div className="font-mono text-foreground">{diag.embed_time_ms.toFixed(0)}ms</div>
             </div>
             <div>
-              <span className="text-foreground-muted">检索</span>
+              <span className="text-foreground-muted">{t('kb.diag.search')}</span>
               <div className="font-mono text-foreground">{diag.search_time_ms.toFixed(0)}ms</div>
             </div>
             <div>
-              <span className="text-foreground-muted">精排</span>
+              <span className="text-foreground-muted">{t('kb.diag.rerank')}</span>
               <div className="font-mono text-foreground">{diag.rerank_time_ms.toFixed(0)}ms</div>
             </div>
             <div>
-              <span className="text-foreground-muted">融合结果</span>
-              <div className="font-mono text-foreground">{diag.fused_count} 条</div>
+              <span className="text-foreground-muted">{t('kb.diag.fusedResults')}</span>
+              <div className="font-mono text-foreground">{diag.fused_count} {t('kb.diag.count')}</div>
             </div>
             <div>
-              <span className="text-foreground-muted">精排结果</span>
-              <div className="font-mono text-foreground">{diag.reranked_count} 条</div>
+              <span className="text-foreground-muted">{t('kb.diag.rerankedResults')}</span>
+              <div className="font-mono text-foreground">{diag.reranked_count} {t('kb.diag.count')}</div>
             </div>
             <div>
-              <span className="text-foreground-muted">检索模式</span>
+              <span className="text-foreground-muted">{t('kb.diag.searchMode')}</span>
               <div className="font-mono text-foreground">{diag.search_mode}</div>
             </div>
             <div>
-              <span className="text-foreground-muted">检索源</span>
+              <span className="text-foreground-muted">{t('kb.diag.sources')}</span>
               <div className="font-mono text-foreground">{diag.collections_searched.join(', ') || '—'}</div>
             </div>
           </div>
@@ -432,10 +440,10 @@ function SearchTestPanel() {
       {result && (
         <div className="space-y-2">
           <div className="text-[10px] font-semibold text-foreground">
-            📄 检索结果（{result.context_length} 字符）
+            {t('kb.resultsTitle').replace('{n}', String(result.context_length))}
           </div>
           <div className="rounded-md bg-elevated-bg p-2.5 text-xs text-foreground-dim max-h-64 overflow-y-auto whitespace-pre-wrap font-mono">
-            {result.context || '（无结果）'}
+            {result.context || t('kb.noResult')}
           </div>
         </div>
       )}
@@ -455,6 +463,7 @@ function DocEditModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const t = useT();
   const addToast = useToastStore((s) => s.addToast);
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
@@ -486,11 +495,11 @@ function DocEditModal({
       } else {
         await createDocument({ title, content, status: 'pending', meta: { content } } as Partial<Document>);
       }
-      addToast(editing ? '✅ 文档已更新' : '✅ 文档已创建', 'success');
+      addToast(editing ? t('kb.docUpdated') : t('kb.docCreated'), 'success');
       onClose();
       setTimeout(onSaved, 500);
     } catch (err) {
-      addToast(err instanceof Error ? err.message : '保存失败', 'error');
+      addToast(err instanceof Error ? err.message : t('kb.saveFailed'), 'error');
     } finally {
       setSubmitting(false);
     }
@@ -500,13 +509,13 @@ function DocEditModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
       <div className="w-full max-w-lg rounded-lg bg-card-bg p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <h3 className="mb-4 text-base font-semibold text-foreground">
-          {editing ? '📝 编辑文档' : '📝 新建文档'}
+          {editing ? `📝 ${t('kb.editDoc')}` : `📝 ${t('kb.newDoc')}`}
         </h3>
         <form onSubmit={handleSubmit} className="space-y-3">
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="文档标题"
+            placeholder={t('kb.docTitle')}
             className="w-full rounded-md border border-border-default px-3 py-2 text-sm focus:border-brand-purple focus:outline-none focus:ring-1 focus:ring-brand-purple"
             required
           />
@@ -514,16 +523,16 @@ function DocEditModal({
             value={content}
             onChange={(e) => setContent(e.target.value)}
             rows={8}
-            placeholder="文档内容..."
+            placeholder={t('kb.docContent')}
             className="w-full rounded-md border border-border-default px-3 py-2 text-sm focus:border-brand-purple focus:outline-none focus:ring-1 focus:ring-brand-purple"
             required
           />
           <div className="flex justify-end gap-2">
             <button type="button" onClick={onClose} className="rounded-md border border-border-default px-4 py-2 text-sm text-foreground-muted hover:bg-elevated-bg">
-              取消
+              {t('kb.cancel')}
             </button>
             <button type="submit" disabled={submitting} className="rounded-md bg-brand-purple px-4 py-2 text-sm font-medium text-white hover:bg-brand-purple/80 disabled:opacity-50">
-              {submitting ? '保存中...' : '保存'}
+              {submitting ? t('kb.saving') : t('kb.save')}
             </button>
           </div>
         </form>
@@ -534,6 +543,7 @@ function DocEditModal({
 
 /* ─── 主组件 ─── */
 export default function KnowledgeCenter() {
+  const t = useT();
   const { confirm, ConfirmDialogComponent } = useConfirm();
   const addToast = useToastStore((s) => s.addToast);
   const [docs, setDocs] = useState<Document[]>([]);
@@ -577,17 +587,17 @@ export default function KnowledgeCenter() {
     try {
       const content = (typeof doc.meta?.content === 'string' ? doc.meta.content : '') || doc.content || '';
       const r = await indexDocument(doc.id, content || undefined);
-      addToast(r.message || '索引完成', 'success');
+      addToast(r.message || t('kb.indexDone'), 'success');
       load();
     } catch (err) {
-      addToast(err instanceof Error ? err.message : '索引失败', 'error');
+      addToast(err instanceof Error ? err.message : t('kb.indexFailed'), 'error');
     } finally {
       setIndexingId(null);
     }
   };
 
   const handleDelete = async (id: string) => {
-    const ok = await confirm('确定删除此文档？');
+    const ok = await confirm(t('kb.confirmDeleteDoc'));
     if (!ok) return;
     try {
       await deleteDocument(id);
@@ -599,12 +609,12 @@ export default function KnowledgeCenter() {
 
   const handleCleanDuplicates = async () => {
     if (duplicateTotal === 0) {
-      addToast('没有检测到重复文档', 'info');
+      addToast(t('kb.noDuplicates'), 'info');
       return;
     }
     const ok = await confirm(
-      `将删除 ${duplicateTotal} 条重复副本，每组同标题保留评分最高的一条（优先已索引/内容更完整）。确定？`,
-      '清理重复文档',
+      t('kb.confirmCleanDupes').replace('{n}', String(duplicateTotal)),
+      t('kb.cleanDupesTitle'),
       'danger'
     );
     if (!ok) return;
@@ -617,10 +627,10 @@ export default function KnowledgeCenter() {
           removed++;
         }
       }
-      addToast(`已清理 ${removed} 条重复文档`, 'success');
+      addToast(t('kb.cleanedDupes').replace('{n}', String(removed)), 'success');
       load();
     } catch (err) {
-      addToast(err instanceof Error ? err.message : '清理失败', 'error');
+      addToast(err instanceof Error ? err.message : t('kb.cleanFailed'), 'error');
     } finally {
       setCleaningDupes(false);
     }
@@ -631,27 +641,27 @@ export default function KnowledgeCenter() {
       {/* 标题栏 */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-foreground">📚 知识库</h1>
-          <p className="text-xs text-foreground-dim mt-1">管理文档，自动向量索引，支持 RAG 检索</p>
+          <h1 className="text-xl font-bold text-foreground">📚 {t('kb.title')}</h1>
+          <p className="text-xs text-foreground-dim mt-1">{t('kb.subtitle')}</p>
         </div>
         <div className="flex gap-2">
           <button
             onClick={() => setShowQdrantPanel(!showQdrantPanel)}
             className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${showQdrantPanel ? 'bg-brand-cyan text-white' : 'border border-border-default text-foreground-muted hover:bg-elevated-bg'}`}
           >
-            🗄️ Qdrant 状态
+            🗄️ {t('kb.qdrantStatus')}
           </button>
           <button
             onClick={() => setShowSearchTest(!showSearchTest)}
             className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${showSearchTest ? 'bg-brand-purple text-white' : 'border border-border-default text-foreground-muted hover:bg-elevated-bg'}`}
           >
-            🔍 检索测试
+            🔍 {t('kb.searchTest')}
           </button>
           <button
             onClick={() => { setEditing(null); setShowEdit(true); }}
             className="rounded-md bg-brand-purple px-4 py-2 text-sm font-medium text-white hover:bg-brand-purple/80"
           >
-            + 新建文档
+            + {t('kb.newDoc')}
           </button>
         </div>
       </div>
@@ -666,7 +676,7 @@ export default function KnowledgeCenter() {
       {showQdrantPanel && (
         <div className="rounded-lg border border-border-default bg-card-bg p-4 space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-foreground">🗄️ Qdrant 状态仪表盘</h3>
+            <h3 className="text-sm font-semibold text-foreground">{t('kb.qdrantDashboard')}</h3>
             <div className="flex gap-2">
               <button
                 onClick={async () => {
@@ -674,12 +684,12 @@ export default function KnowledgeCenter() {
                     const s = await getQdrantStatus();
                     setQdrantStatus(s);
                   } catch (err) {
-                    addToast('获取 Qdrant 状态失败', 'error');
+                    addToast(t('kb.qdrantStatusFailed'), 'error');
                   }
                 }}
                 className="rounded-md bg-brand-cyan/15 px-3 py-1 text-xs text-brand-cyan hover:bg-brand-cyan/25"
               >
-                🔄 刷新状态
+                {t('kb.refreshStatus')}
               </button>
               <button
                 onClick={async () => {
@@ -687,28 +697,28 @@ export default function KnowledgeCenter() {
                     const d = await checkDimension();
                     setDimCheck(d);
                     if (!d.match) {
-                      addToast(`⚠️ 维度不匹配: Embedding=${d.embedding_dimension}, Qdrant=${d.qdrant_dimension}`, 'error');
+                      addToast(t('kb.dimMismatch').replace('{ed}', String(d.embedding_dimension)).replace('{qd}', String(d.qdrant_dimension)), 'error');
                     } else {
-                      addToast('✅ 维度匹配', 'success');
+                      addToast(t('kb.dimMatch'), 'success');
                     }
                   } catch (err) {
-                    addToast('维度检查失败', 'error');
+                    addToast(t('kb.dimCheckFailed'), 'error');
                   }
                 }}
                 className="rounded-md bg-amber-500/15 px-3 py-1 text-xs text-amber-500 hover:bg-amber-500/25"
               >
-                📏 维度检查
+                {t('kb.dimensionCheck')}
               </button>
               <button
                 onClick={async () => {
-                  const ok = await confirm('⚠️ 重建索引将删除旧索引并重新索引所有文档，确定？');
+                  const ok = await confirm(t('kb.confirmRebuild'));
                   if (!ok) return;
                   setRebuilding(true);
                   try {
                     const r = await rebuildIndex();
                     addToast(r.message, 'success');
                   } catch (err) {
-                    addToast(err instanceof Error ? err.message : '重建失败', 'error');
+                    addToast(err instanceof Error ? err.message : t('kb.rebuildFailed'), 'error');
                   } finally {
                     setRebuilding(false);
                   }
@@ -716,7 +726,7 @@ export default function KnowledgeCenter() {
                 disabled={rebuilding}
                 className="rounded-md bg-error-bg px-3 py-1 text-xs text-error-text hover:bg-error-bg disabled:opacity-50"
               >
-                {rebuilding ? '⏳ 重建中…' : '🔨 重建索引'}
+                {rebuilding ? t('kb.rebuilding') : t('kb.rebuildIndex')}
               </button>
             </div>
           </div>
@@ -726,9 +736,9 @@ export default function KnowledgeCenter() {
             <div className="space-y-3">
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div className="rounded-md border border-border-subtle bg-elevated-bg/40 p-2.5">
-                  <div className="text-[10px] text-foreground-muted">连接状态</div>
+                  <div className="text-[10px] text-foreground-muted">{t('kb.connStatus')}</div>
                   <div className={`text-sm font-bold ${qdrantStatus.connected ? 'text-success-text' : 'text-error-text'}`}>
-                    {qdrantStatus.connected ? '✅ 已连接' : '❌ 断开'}
+                    {qdrantStatus.connected ? t('kb.connected') : t('kb.disconnected')}
                   </div>
                 </div>
                 <div className="rounded-md border border-border-subtle bg-elevated-bg/40 p-2.5">
@@ -736,11 +746,11 @@ export default function KnowledgeCenter() {
                   <div className="text-xs font-mono text-foreground truncate">{qdrantStatus.qdrant_url}</div>
                 </div>
                 <div className="rounded-md border border-border-subtle bg-elevated-bg/40 p-2.5">
-                  <div className="text-[10px] text-foreground-muted">Collection 总数</div>
+                  <div className="text-[10px] text-foreground-muted">{t('kb.collectionTotal')}</div>
                   <div className="text-sm font-bold text-foreground">{qdrantStatus.collections.length}</div>
                 </div>
                 <div className="rounded-md border border-border-subtle bg-elevated-bg/40 p-2.5">
-                  <div className="text-[10px] text-foreground-muted">默认 Collection</div>
+                  <div className="text-[10px] text-foreground-muted">{t('kb.defaultCollection')}</div>
                   <div className="text-xs font-mono text-foreground">
                     {qdrantStatus.default_collection?.name || '—'}
                   </div>
@@ -750,22 +760,22 @@ export default function KnowledgeCenter() {
               {/* 默认 Collection 详情 */}
               {qdrantStatus.default_collection && (
                 <div className="rounded-md border border-border-subtle bg-elevated-bg/40 p-2.5">
-                  <div className="text-[10px] font-semibold text-foreground mb-1.5">📦 默认 Collection 详情</div>
+                  <div className="text-[10px] font-semibold text-foreground mb-1.5">{t('kb.defaultColDetail')}</div>
                   <div className="grid grid-cols-4 gap-2 text-[10px]">
                     <div>
-                      <span className="text-foreground-muted">向量维度</span>
+                      <span className="text-foreground-muted">{t('kb.vectorDim')}</span>
                       <div className="font-mono text-foreground">{qdrantStatus.default_collection.vector_size ?? '—'}</div>
                     </div>
                     <div>
-                      <span className="text-foreground-muted">距离函数</span>
+                      <span className="text-foreground-muted">{t('kb.distanceFunc')}</span>
                       <div className="font-mono text-foreground">{qdrantStatus.default_collection.distance ?? '—'}</div>
                     </div>
                     <div>
-                      <span className="text-foreground-muted">文档数</span>
+                      <span className="text-foreground-muted">{t('kb.docCount')}</span>
                       <div className="font-mono text-foreground">{qdrantStatus.default_collection.points_count}</div>
                     </div>
                     <div>
-                      <span className="text-foreground-muted">状态</span>
+                      <span className="text-foreground-muted">{t('kb.status')}</span>
                       <div className="font-mono text-foreground">{qdrantStatus.default_collection.status}</div>
                     </div>
                   </div>
@@ -775,7 +785,7 @@ export default function KnowledgeCenter() {
               {/* 多 Collection 列表 */}
               {qdrantStatus.multi_collections && qdrantStatus.multi_collections.length > 0 && (
                 <div className="rounded-md border border-border-subtle bg-elevated-bg/40 p-2.5">
-                  <div className="text-[10px] font-semibold text-foreground mb-1.5">📂 多 Collection 路由</div>
+                  <div className="text-[10px] font-semibold text-foreground mb-1.5">{t('kb.multiColRoute')}</div>
                   <div className="space-y-1">
                     {qdrantStatus.multi_collections.map((c) => (
                       <div key={c.logical_name} className="flex items-center gap-2 text-[10px]">
@@ -813,21 +823,21 @@ export default function KnowledgeCenter() {
                 : 'border-amber-400/25 bg-amber-500/10 text-amber-400'
             }`}>
               <div className="font-semibold mb-1">
-                {dimCheck.match ? '✅ 维度匹配' : '⚠️ 维度不匹配'}
+                {dimCheck.match ? t('kb.dimMatch') : t('kb.dimNotMatch')}
               </div>
               <div className="font-mono">
-                Embedding: {dimCheck.embedding_dimension ?? '未知'} 维 · Qdrant: {dimCheck.qdrant_dimension ?? '未知'} 维 · 模型: {dimCheck.embedding_model ?? '未知'}
+                Embedding: {dimCheck.embedding_dimension ?? t('kb.unknown')} · Qdrant: {dimCheck.qdrant_dimension ?? t('kb.unknown')} · {dimCheck.embedding_model ?? t('kb.unknown')}
               </div>
               <div className="mt-1">{dimCheck.message}</div>
               {dimCheck.action && (
-                <div className="mt-1 text-[10px] opacity-80">建议操作: {dimCheck.action}</div>
+                <div className="mt-1 text-[10px] opacity-80">{t('kb.suggestedAction')} {dimCheck.action}</div>
               )}
             </div>
           )}
 
           {!qdrantStatus && (
             <div className="text-xs text-foreground-muted text-center py-4">
-              点击 "🔄 刷新状态" 获取 Qdrant 连接信息
+              {t('kb.clickRefreshHint')}
             </div>
           )}
         </div>
@@ -840,7 +850,7 @@ export default function KnowledgeCenter() {
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="🔍 搜索文档..."
+            placeholder={t('kb.searchPlaceholder')}
             className="w-full rounded-md border border-border-default pl-8 pr-3 py-1.5 text-sm focus:border-brand-purple focus:outline-none focus:ring-1 focus:ring-brand-purple"
           />
           <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-foreground-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -848,12 +858,12 @@ export default function KnowledgeCenter() {
           </svg>
         </div>
         <div className="text-xs text-foreground-dim">
-          显示 {docGroups.length} 组
+          {t('kb.showingGroups').replace('{n}', String(docGroups.length))}
           {docs.length !== docGroups.length && (
-            <span className="text-foreground-muted"> / 共 {docs.length} 条</span>
+            <span className="text-foreground-muted">{t('kb.totalDocs').replace('{n}', String(docs.length))}</span>
           )}
           {duplicateTotal > 0 && (
-            <span className="ml-1 text-amber-400">· {duplicateTotal} 条重复已折叠</span>
+            <span className="ml-1 text-amber-400">{t('kb.dupesCollapsed').replace('{n}', String(duplicateTotal))}</span>
           )}
         </div>
         {duplicateTotal > 0 && (
@@ -863,17 +873,17 @@ export default function KnowledgeCenter() {
             onClick={() => void handleCleanDuplicates()}
             className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-400 hover:bg-amber-500/20 disabled:opacity-50"
           >
-            {cleaningDupes ? '清理中…' : `清理重复 (${duplicateTotal})`}
+            {cleaningDupes ? t('kb.cleaning') : t('kb.cleanDupes').replace('{n}', String(duplicateTotal))}
           </button>
         )}
       </div>
 
       {/* 文档列表 */}
       {loading ? (
-        <div className="py-12 text-center text-foreground-muted">加载中...</div>
+        <div className="py-12 text-center text-foreground-muted">{t('kb.loading')}</div>
       ) : docGroups.length === 0 ? (
         <div className="rounded-lg border border-border-default bg-card-bg py-12 text-center text-foreground-muted">
-          {docs.length === 0 ? '暂无文档，拖拽文件或点击"新建文档"创建' : '无匹配结果'}
+          {docs.length === 0 ? t('kb.emptyDocs') : t('kb.noMatch')}
         </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2">

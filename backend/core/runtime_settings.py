@@ -24,6 +24,7 @@ _KEY_MAP: dict[str, str] = {
     "llm_model": "llm_model",
     "llm_base_url": "llm_base_url",
     "llm_api_key": "llm_api_key",
+    "default_llm_model": "default_llm_model",
     "max_tokens": "default_max_tokens",
     "temperature": "llm_temperature",
     "context_window": "context_window",
@@ -35,6 +36,10 @@ _KEY_MAP: dict[str, str] = {
     "context_enable_l3": "context_enable_l3",
     "context_enable_l5": "context_enable_l5",
     "context_compress_model": "context_compress_model",
+    "prompt_skill_mode": "prompt_skill_mode",
+    "prompt_skill_max_full": "prompt_skill_max_full",
+    "prompt_skill_full_max_chars": "prompt_skill_full_max_chars",
+    "prompt_skill_match_threshold": "prompt_skill_match_threshold",
     "embedding_provider": "embedding_provider",
     "embedding_model": "embedding_model",
     "embedding_base_url": "embedding_base_url",
@@ -87,11 +92,52 @@ _IMAGE_KEYS = {
 }
 
 
+def _unwrap_json_scalar(value: Any) -> Any:
+    """解开误写入 DB 的二次 JSON 编码（如 '"http://..."' / 'true' / '123'）。
+
+    历史脚本/部分客户端会 json.dumps 后再 upsert，导致字符串值带引号、
+    LLM base_url 变成 "http://..." 或更糟的双重引号。最多解 3 层。
+    """
+    if not isinstance(value, str):
+        return value
+    out: Any = value
+    for _ in range(3):
+        if not isinstance(out, str):
+            break
+        s = out.strip()
+        if not s:
+            break
+        # JSON string / number / bool / null
+        if not (
+            (s.startswith('"') and s.endswith('"'))
+            or (s.startswith("'") and s.endswith("'"))
+            or s in {"true", "false", "null"}
+            or (s[:1] in "-0123456789" and s.replace(".", "", 1).replace("-", "", 1).isdigit())
+        ):
+            break
+        try:
+            import json
+
+            parsed = json.loads(s)
+        except Exception:
+            # 单引号伪 JSON：手工剥一层
+            if len(s) >= 2 and s[0] == s[-1] and s[0] in {'"', "'"}:
+                out = s[1:-1]
+                continue
+            break
+        # 只解标量；对象/数组留给调用方
+        if isinstance(parsed, (dict, list)):
+            break
+        out = parsed
+    return out
+
+
 def _coerce(attr: str, value: Any) -> Any:
     """按当前字段类型做简单转换。"""
     current = getattr(settings, attr, None)
     if value is None:
         return value
+    value = _unwrap_json_scalar(value)
     if isinstance(current, bool):
         if isinstance(value, bool):
             return value
@@ -108,6 +154,12 @@ def _coerce(attr: str, value: Any) -> Any:
             return float(value)
         except (TypeError, ValueError):
             return current
+    # 字符串字段：再 strip 一次，去掉残余空白/引号
+    if isinstance(value, str) and isinstance(current, str):
+        s = value.strip()
+        if len(s) >= 2 and s[0] == s[-1] and s[0] in {'"', "'"}:
+            s = s[1:-1].strip()
+        return s
     return value
 
 

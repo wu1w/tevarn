@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { Skill } from '@/types';
+import { useT } from '@/stores/localeStore';
 
 interface SkillsPanelProps {
   skills: Skill[];
@@ -10,6 +11,7 @@ interface SkillsPanelProps {
 }
 
 export function SkillsPanel({ skills = [], enabledSkills, onToggle }: SkillsPanelProps) {
+  const t = useT();
   const enabled = enabledSkills ?? [];
   return (
     <div className="space-y-4">

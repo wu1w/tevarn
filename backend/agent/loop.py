@@ -357,12 +357,18 @@ class NexusAgentLoop:
         for h in history:
             if h.role not in ("user", "assistant", "tool"):
                 continue
-            item: dict[str, Any] = {"role": h.role, "content": h.content or ""}
-            if h.role == "assistant" and getattr(h, "tool_calls", None):
-                item["tool_calls"] = h.tool_calls
+            raw_content = h.content if h.content is not None else ""
+            tcs = getattr(h, "tool_calls", None)
+            # 严格 API：assistant 带 tool_calls 时 content 不能是 ""（须 null）
+            if h.role == "assistant" and tcs and not (raw_content or "").strip():
+                item: dict[str, Any] = {"role": "assistant", "content": None, "tool_calls": tcs}
+            else:
+                item = {"role": h.role, "content": raw_content or ""}
+                if h.role == "assistant" and tcs:
+                    item["tool_calls"] = tcs
             # tool_call_id 可能存在 JSON tool_calls 旁路或 content 元数据中
             if h.role == "tool":
-                tc_meta = getattr(h, "tool_calls", None)
+                tc_meta = tcs
                 if isinstance(tc_meta, dict) and tc_meta.get("tool_call_id"):
                     item["tool_call_id"] = tc_meta["tool_call_id"]
                 elif isinstance(tc_meta, list) and tc_meta:
@@ -418,22 +424,51 @@ class NexusAgentLoop:
         mode_extra: list[str] = []
         if mode == "search":
             mode_extra.append("web_search")
+            mode_extra.append("search")
         if mode == "ppt":
             mode_extra.append("generate_ppt")
         if mode == "report":
             mode_extra.append("generate_report")
         if mode == "goal":
             mode_extra.append("manage_goal")
+            mode_extra.append("autopilot")
         if mode_extra and enabled_skills is not None:
             enabled_skills = list(set(enabled_skills + mode_extra))
 
-        tools = await self._load_tools(session_id, enabled_skills, enabled_tools_filter)
+        tools = await self._load_tools(session_id, enabled_skills, enabled_tools_filter, user_input=user_input)
         logger.info(
             f"Loaded {len(tools)} tools for session {session_id} "
             f"(skills={'ALL' if enabled_skills is None else enabled_skills})"
         )
 
-        # Goal 模式：更高轮次 + 初始化 goal 状态
+        # P0–P2：能力与偏好注入（不依赖模型「记得有搜索」）
+        try:
+            cap_lines = [
+                "Takton capability brief (use tools, do not claim missing if listed):",
+                "- Long tasks: autopilot (start→next→reflect→complete) + manage_goal",
+                "- Search: web_search / search (real network; never say search unavailable without calling)",
+                "- Browser: browser action=navigate|snapshot|click|type (Playwright when installed)",
+                "- Desktop: desktop_observe / uia_snapshot / desktop_* ",
+                "- Remote: list_devices_tool / remote_exec / device_onboard",
+                "- Memory: memory_pref get/set; session_search for history",
+                "- GitHub: github action=status|pr_create|ci (needs gh auth)",
+                "- Charts: render_chart; PPT: generate_ppt; vision: vision_analyze",
+                "- Office/Media: doc_read/doc_write, image_generate, calendar, tts, capability_status",
+            ]
+            # user prefs
+            try:
+                from backend.tools.builtins.capability_tools import _load_prefs
+
+                uid = str(self.user_id) if self.user_id else "local"
+                prefs = (_load_prefs(uid).get("users") or {}).get(uid) or {}
+                if prefs:
+                    cap_lines.append("User preferences (honor these): " + json.dumps(prefs, ensure_ascii=False))
+            except Exception:
+                pass
+            messages.append({"role": "system", "content": "\n".join(cap_lines)})
+        except Exception as e:
+            logger.debug("capability inject skipped: %s", e)
+
         # Goal 模式：更高轮次 + 初始化 goal 状态
         goal_mode = mode == "goal"
         if goal_mode:
@@ -451,15 +486,38 @@ class NexusAgentLoop:
                     {
                         "role": "system",
                         "content": (
-                            "Goal runtime status (keep updated via manage_goal):\n"
+                            "Goal runtime status (keep updated via manage_goal + autopilot):\n"
                             + g0.summary_for_llm()
+                            + "\nFor multi-step work: autopilot action=start goal=... then next/reflect/complete."
                         ),
                     }
                 )
 
         # 集群模式：注入所选子代理人物设定（协调者视角）
         cluster_mode = mode == "cluster" or bool(sub_agent_ids)
-        if cluster_mode and sub_agent_ids:
+        sub_agents_info: list[dict] = []  # 存储子代理信息用于并行执行
+        
+        # v0.2: 自动集群模式 - 主Agent自动分析任务复杂度，决定是否需要子代理
+        auto_cluster = False
+        if not cluster_mode and mode == "default":
+            # 自动分析任务复杂度
+            complexity_score = await self._analyze_task_complexity(user_input)
+            if complexity_score >= 0.7:  # 高复杂度任务自动启用集群
+                auto_cluster = True
+                cluster_mode = True
+                logger.info(
+                    "Auto-cluster mode ACTIVATED: complexity=%.2f, task='%s'",
+                    complexity_score, user_input[:50]
+                )
+                # 自动创建子代理（复用主会话LLM配置）
+                sub_agents_info = await self._auto_create_sub_agents(user_input, complexity_score)
+                if not sub_agents_info:
+                    # 无法创建子代理，回退到单Agent模式
+                    auto_cluster = False
+                    cluster_mode = False
+                    logger.info("Auto-cluster: no sub-agents created, fallback to single agent")
+        
+        if cluster_mode and (sub_agent_ids or auto_cluster):
             try:
                 from backend.repositories.sub_agent_repo import AsyncSubAgentRepository
 
@@ -475,6 +533,17 @@ class NexusAgentLoop:
                     prompt = (agent_row.system_prompt or "").strip()
                     if len(prompt) > 1200:
                         prompt = prompt[:1200] + "…"
+                    
+                    # 存储子代理信息
+                    sub_agents_info.append({
+                        "id": str(aid),
+                        "name": agent_row.name,
+                        "icon": agent_row.icon or "🤖",
+                        "description": agent_row.description or "",
+                        "model_ref": agent_row.model_ref,
+                        "system_prompt": prompt,
+                    })
+                    
                     roster_lines.append(
                         f"### {agent_row.icon or '🤖'} {agent_row.name}\n"
                         f"- 任务名称: {agent_row.name}\n"
@@ -482,6 +551,25 @@ class NexusAgentLoop:
                         f"- 模型: {agent_row.model_ref}\n"
                         f"- 系统提示词:\n{prompt or '（未配置）'}"
                     )
+                
+                # v0.2: 真·并行集群执行
+                if len(sub_agents_info) >= 2:
+                    logger.info(
+                        "Cluster mode: executing %s sub-agents in PARALLEL",
+                        len(sub_agents_info),
+                    )
+                    
+                    # 使用集群执行器并行执行
+                    cluster_result = await self._execute_cluster_parallel(
+                        user_input=user_input,
+                        sub_agents=sub_agents_info,
+                        session_id=session_id,
+                    )
+                    
+                    if cluster_result:
+                        return cluster_result
+                
+                # 兼容模式：单 LLM 协调者
                 if roster_lines:
                     messages.append(
                         {
@@ -502,8 +590,9 @@ class NexusAgentLoop:
             except Exception as e:
                 logger.warning("cluster roster inject failed: %s", e)
 
-        # 6. 获取 LLM 服务
-        llm_service = LLMServiceFactory.get_service()
+        # 6. 获取 LLM 服务（优先用会话创建时的 LLM 快照 → 配置变更不影响本会话）
+        llm_snapshot = (config or {}).get("llm") if isinstance(config, dict) else None
+        llm_service = LLMServiceFactory.get_service_for_snapshot(llm_snapshot)
 
         # 6.5 上下文引擎 pipeline（L1/L3/L5）
         try:
@@ -543,12 +632,41 @@ class NexusAgentLoop:
             messages, enriched_input, top_k=3, strengthen=strengthen_rag
         )
         messages = await self._inject_wiki_context(messages, enriched_input)
+        # 实体记忆召回
+        try:
+            from backend.services.entity_service import get_entity_service
+            es = get_entity_service()
+            recalled = await es.recall(user_input, user_id=self.user_id, limit=3)
+            if recalled:
+                ctx = es.format_recall_context(recalled)
+                if ctx:
+                    self._append_to_system(messages, ctx)
+        except Exception as e:
+            logger.debug("entity recall skipped: %s", e)
 
         # 8. Agent Loop
         final_content = ""
         _sft_tools: list = []  # SFT usage log buffer
         accumulated_content = ""
         goal_nudge_count = 0
+
+        # 透明化轨迹收集
+        _trace_thinking_steps: list[dict] = []
+        _trace_tool_calls: list[dict] = []
+        _trace_rag_sources: list[dict] = []
+        _trace_start_time = __import__("time").monotonic()
+
+        # 实体提取（异步后台，不阻塞主流程）
+        try:
+            from backend.services.entity_service import get_entity_service
+            _es = get_entity_service()
+            _extracted = await _es.extract_from_text(
+                user_input, user_id=self.user_id, session_id=session_id
+            )
+            if _extracted:
+                await _es.save_entities(_extracted, user_id=self.user_id, session_id=session_id)
+        except Exception as e:
+            logger.debug("entity extraction skipped: %s", e)
 
         # 分段预算：单段 max_iterations，可自动续多段（Goal / 长任务）
         _auto_cont = bool(getattr(settings, "agent_auto_continue", True))
@@ -763,6 +881,12 @@ class NexusAgentLoop:
             _think = (accumulated_reasoning or accumulated_content or "").strip()
             if _think:
                 await self._emit_progress("thinking", _think[:1200])
+                _trace_thinking_steps.append({
+                    "iteration": iteration + 1,
+                    "content": (accumulated_reasoning or "")[:800],
+                    "visible_content": (accumulated_content or "")[:400],
+                    "has_tool_calls": bool(tool_calls),
+                })
 
             # 判断是否有 tool calls
             if tool_calls:
@@ -852,7 +976,9 @@ class NexusAgentLoop:
                             validated_args = self._validate_tool_args(tool.parameters, tc.arguments)
                             if self.user_id is not None:
                                 validated_args["user_id"] = str(self.user_id)
+                                validated_args["_user_id"] = str(self.user_id)
                             validated_args["_session_id"] = str(session_id)
+                            validated_args["_ws_manager"] = self.ws_manager
                             _tool_timeout = float(
                                 getattr(settings, "agent_tool_timeout_seconds", 180) or 0
                             )
@@ -877,7 +1003,9 @@ class NexusAgentLoop:
                                 validated_args = self._validate_tool_args(skill.parameters, tc.arguments)
                                 if self.user_id is not None:
                                     validated_args["user_id"] = str(self.user_id)
+                                    validated_args["_user_id"] = str(self.user_id)
                                 validated_args["_session_id"] = str(session_id)
+                                validated_args["_ws_manager"] = self.ws_manager
                                 tool_result = await skill.execute(**validated_args)
                                 query = ""
                             else:
@@ -889,12 +1017,9 @@ class NexusAgentLoop:
                                     validated_args = self._validate_tool_args(dynamic.parameters, tc.arguments)
                                     if self.user_id is not None:
                                         validated_args["user_id"] = str(self.user_id)
+                                        validated_args["_user_id"] = str(self.user_id)
                                     validated_args["_session_id"] = str(session_id)
-                                    tool_result = await dynamic.execute(**validated_args)
-                                    query = ""
-                                else:
-                                    # 尝试从 ToolRegistry 执行
-                                    tool_repo = AsyncToolRepository()
+                                    validated_args["_ws_manager"] = self.ws_manager
                                     db_tool = await tool_repo.get_tool_by_name(tc.name)
                                     if db_tool is not None and db_tool.enabled:
                                         tool_result = await ToolRegistry.execute_tool(db_tool, tc.arguments)
@@ -933,6 +1058,8 @@ class NexusAgentLoop:
                             status="completed",
                             result=tool_result,
                         )
+                        # 截图工具结果 → 推送 WS screenshot 事件
+                        await self._maybe_push_screenshot(session_id, tc.name, tool_result)
                         # TEE: 记录工具轨迹 / 使用次数
                         try:
                             from backend.evolution.manager import get_evolution_manager
@@ -956,6 +1083,16 @@ class NexusAgentLoop:
                                     "ok": True,
                                 }
                             )
+                        except Exception:
+                            pass
+                        try:
+                            _trace_tool_calls.append({
+                                "name": tc.name,
+                                "arguments": {k: str(v)[:200] for k, v in (args_dict if isinstance(args_dict, dict) else {}).items()},
+                                "result_summary": str(tool_result)[:300],
+                                "status": "completed",
+                                "iteration": iteration + 1,
+                            })
                         except Exception:
                             pass
 
@@ -1283,6 +1420,34 @@ class NexusAgentLoop:
             except Exception as status_err:
                 logger.error(f"Failed to update session status: {status_err}")
 
+        # 8.5 透明化轨迹持久化
+        try:
+            from backend.repositories.trace_repo import TraceRepository
+            from backend.database import get_db_context
+
+            _trace_duration = (__import__("time").monotonic() - _trace_start_time) * 1000
+            _iter_count = 0
+            try:
+                _iter_count = _global_iter + 1
+            except Exception:
+                pass
+            async with get_db_context() as db:
+                trace_repo = TraceRepository(db)
+                await trace_repo.create({
+                    "session_id": session_id,
+                    "user_id": self.user_id,
+                    "thinking_steps": _trace_thinking_steps,
+                    "tool_calls_trace": _trace_tool_calls,
+                    "rag_sources": _trace_rag_sources,
+                    "total_iterations": _iter_count,
+                    "total_tool_calls": len(_trace_tool_calls),
+                    "duration_ms": _trace_duration,
+                    "user_input_summary": (user_input or "")[:200],
+                    "status": "completed",
+                })
+        except Exception as e:
+            logger.debug("trace save skipped: %s", e)
+
         # 9. 推送状态为 idle（无论成功或失败都恢复状态）
         await self._push_status(session_id, "idle", "Ready")
 
@@ -1423,23 +1588,30 @@ class NexusAgentLoop:
                 logger.warning(f"Auto optimize failed: {e}")
 
     def _validate_tool_args(self, schema: dict | None, arguments: dict) -> dict:
-        """使用JSON Schema校验tool call参数"""
+        """使用 JSON Schema 校验 tool call 参数。
+
+        始终返回新 dict，避免在原始 tc.arguments 上注入 _ws_manager 等
+        导致 WS ToolEvent.model_dump 无法序列化 ConnectionManager。
+        """
+        base = dict(arguments) if isinstance(arguments, dict) else {}
         if not schema:
-            return arguments
+            return base
         try:
             from jsonschema import validate, ValidationError
-            validate(instance=arguments, schema=schema)
+
+            validate(instance=base, schema=schema)
         except ImportError:
             pass  # jsonschema未安装时跳过校验
         except ValidationError as e:
             raise ValueError(f"Invalid tool arguments: {e.message}")
-        return arguments
+        return base
 
     async def _load_tools(
         self,
         session_id: uuid.UUID,
         enabled_skills: list[str] | None,
         enabled_tools_filter: list[str] | None = None,
+        user_input: str | None = None,
     ) -> list[dict[str, Any]]:
         """
         v3.0: 从统一 ToolRegistry 加载工具 schema。
@@ -1535,6 +1707,38 @@ class NexusAgentLoop:
             except Exception as e:
                 logger.warning(f"Failed to load tool-def CtxItems: {e}")
 
+                # v0.2+: Desktop 工具常驻（P2：不靠关键词；load_all_tools 已注册，这里兜底）
+        try:
+            from backend.services.desktop.tools import (
+                DesktopScreenshotTool,
+                DesktopClickTool,
+                DesktopTypeTool,
+                DesktopOpenAppTool,
+                DesktopScrollTool,
+                DesktopReadFileTool,
+                DesktopWriteFileTool,
+            )
+            desktop_tools = [
+                DesktopScreenshotTool(),
+                DesktopClickTool(),
+                DesktopTypeTool(),
+                DesktopOpenAppTool(),
+                DesktopScrollTool(),
+                DesktopReadFileTool(),
+                DesktopWriteFileTool(),
+            ]
+            existing_names = {
+                (t.get("function") or {}).get("name")
+                for t in tools
+                if (t.get("function") or {}).get("name")
+            }
+            for dt in desktop_tools:
+                if dt.name not in existing_names:
+                    tools.append(dt.to_json_schema())
+                    logger.info(f"Ensured desktop tool: {dt.name}")
+        except Exception as e:
+            logger.warning(f"Failed to ensure desktop tools: {e}")
+
         return tools
 
     async def _record_flow(
@@ -1564,6 +1768,261 @@ class NexusAgentLoop:
                 )
             except Exception as e:
                 logger.warning(f"Failed to record context flow: {e}")
+
+    # ─────────── Auto Cluster Analysis ───────────
+
+    async def _analyze_task_complexity(self, user_input: str) -> float:
+        """
+        自动分析任务复杂度，返回 0.0-1.0 的分数
+        
+        高复杂度指标：
+        - 多步骤/多领域任务
+        - 需要代码 + 分析 + 文档等多种能力
+        - 涉及比较、评估、设计等复杂认知
+        """
+        input_lower = user_input.lower()
+        score = 0.0
+        
+        # 长度指标（长任务通常更复杂）
+        if len(user_input) > 200:
+            score += 0.2
+        elif len(user_input) > 100:
+            score += 0.1
+        
+        # 多步骤关键词
+        multi_step_keywords = [
+            "分析", "比较", "对比", "评估", "设计", "架构", "规划",
+            "实现", "开发", "创建", "构建", "优化", "改进",
+            "研究", "调查", "探索", "深入", "详细",
+            "多个", "几个", "一系列", "批量", "综合",
+            "和", "与", "以及", "并且", "同时", "然后", "接着",
+        ]
+        keyword_count = sum(1 for kw in multi_step_keywords if kw in input_lower)
+        score += min(keyword_count * 0.15, 0.4)
+        
+        # 技术复杂度关键词
+        tech_keywords = [
+            "代码", "编程", "算法", "数据库", "api", "系统",
+            "python", "javascript", "java", "c++", "sql",
+            "前端", "后端", "全栈", "部署", "测试", "调试",
+            "机器学习", "ai", "模型", "训练", "推理",
+            "网络", "安全", "加密", "协议", "服务器",
+        ]
+        tech_count = sum(1 for kw in tech_keywords if kw in input_lower)
+        score += min(tech_count * 0.1, 0.3)
+        
+        # 输出要求关键词
+        output_keywords = [
+            "报告", "文档", "方案", "计划", "教程", "指南",
+            "总结", "分析结果", "建议", "推荐", "最佳实践",
+        ]
+        output_count = sum(1 for kw in output_keywords if kw in input_lower)
+        score += min(output_count * 0.1, 0.2)
+        
+        # 问句数量（多个问题通常更复杂）
+        question_marks = input_lower.count("?") + input_lower.count("？")
+        if question_marks >= 3:
+            score += 0.2
+        elif question_marks >= 2:
+            score += 0.1
+        
+        # 限制在 0-1 范围
+        return min(max(score, 0.0), 1.0)
+
+    async def _auto_create_sub_agents(self, user_input: str, complexity: float) -> list[dict]:
+        """
+        根据任务内容自动创建子代理配置（复用主会话LLM）
+        
+        返回子代理信息列表，每个包含:
+        - id, name, icon, description, model_ref, system_prompt
+        """
+        input_lower = user_input.lower()
+        sub_agents = []
+        
+        # 根据任务内容推断需要的专业角色
+        roles = []
+        
+        # 代码/编程相关
+        if any(kw in input_lower for kw in ["代码", "编程", "python", "javascript", "java", "c++", "sql", "算法", "调试", "开发", "实现", "bug", "错误", "修复"]):
+            roles.append({
+                "name": "coder",
+                "icon": "💻",
+                "description": "专业的编程和代码分析助手",
+                "system_prompt": "你是一个专业的编程助手，擅长代码编写、调试和架构设计。请提供具体、可运行的代码示例，并解释关键设计决策。",
+            })
+        
+        # 分析/研究相关
+        if any(kw in input_lower for kw in ["分析", "研究", "调查", "比较", "对比", "评估", "数据", "统计", "趋势"]):
+            roles.append({
+                "name": "analyst",
+                "icon": "📊",
+                "description": "数据分析和研究专家",
+                "system_prompt": "你是一个数据分析专家，擅长逻辑推理、数据解读和趋势分析。请提供结构化的分析框架和清晰的结论。",
+            })
+        
+        # 文档/写作相关
+        if any(kw in input_lower for kw in ["报告", "文档", "总结", "写作", "文案", "教程", "指南", "说明"]):
+            roles.append({
+                "name": "writer",
+                "icon": "📝",
+                "description": "技术文档和写作专家",
+                "system_prompt": "你是一个技术写作专家，擅长将复杂概念转化为清晰易懂的文档。请注重结构、可读性和实用性。",
+            })
+        
+        # 设计/架构相关
+        if any(kw in input_lower for kw in ["设计", "架构", "规划", "方案", "系统", "框架", "模式"]):
+            roles.append({
+                "name": "architect",
+                "icon": "🏗️",
+                "description": "系统架构和设计专家",
+                "system_prompt": "你是一个系统架构师，擅长高层设计、技术选型和架构决策。请考虑可扩展性、可维护性和最佳实践。",
+            })
+        
+        # 通用/默认角色（如果没有匹配到专业角色）
+        if not roles:
+            roles.append({
+                "name": "researcher",
+                "icon": "🔍",
+                "description": "综合研究和信息整合助手",
+                "system_prompt": "你是一个研究助手，擅长信息收集、整理和综合。请提供全面、准确的信息，并标注关键发现。",
+            })
+            roles.append({
+                "name": "critic",
+                "icon": "🎯",
+                "description": "质量评估和优化建议专家",
+                "system_prompt": "你是一个质量评估专家，擅长发现潜在问题、提出改进建议和优化方案。请保持批判性思维，注重细节。",
+            })
+        
+        # 根据复杂度决定子代理数量（最多3个）
+        num_agents = min(len(roles), 2 + int(complexity * 2), 3)
+        selected_roles = roles[:num_agents]
+        
+        # 构建子代理配置（复用主会话LLM，不单独配置模型）
+        for i, role in enumerate(selected_roles):
+            sub_agents.append({
+                "id": f"auto-{role['name']}-{i}",
+                "name": role["name"],
+                "icon": role["icon"],
+                "description": role["description"],
+                "model_ref": "default",  # 复用主会话LLM配置
+                "system_prompt": role["system_prompt"],
+            })
+        
+        logger.info(
+            "Auto-created %d sub-agents for task: %s",
+            len(sub_agents),
+            [a["name"] for a in sub_agents]
+        )
+        
+        return sub_agents
+
+    # ─────────── Cluster Parallel Execution ───────────
+
+    async def _execute_cluster_parallel(
+        self,
+        user_input: str,
+        sub_agents: list[dict],
+        session_id: uuid.UUID,
+    ) -> str | None:
+        """
+        真·并行集群执行
+        
+        使用 asyncio.gather 同时调用多个子代理，然后聚合结果
+        """
+        if len(sub_agents) < 2:
+            return None
+        
+        logger.info(f"Starting parallel cluster execution with {len(sub_agents)} agents")
+        
+        # 推送进度：开始集群执行
+        await self._emit_progress("cluster_start", f"启动 {len(sub_agents)} 个子代理并行执行...")
+        
+        try:
+            from backend.agent.cluster_executor import get_cluster_executor
+            from backend.agent.cluster_aggregator import SubTaskResult, AggregationStrategy
+            
+            # 构建子任务
+            sub_tasks = []
+            for i, agent in enumerate(sub_agents):
+                sub_tasks.append({
+                    "id": f"agent-{i}",
+                    "name": agent["name"],
+                    "description": agent["description"],
+                    "prompt": f"""你是 {agent['name']}，{agent['description']}
+
+用户请求：{user_input}
+
+请根据你的专长给出回答。保持简洁，突出你的专业视角。
+
+系统提示词：{agent['system_prompt']}""",
+                    "agent_config": {
+                        "agent_id": agent["id"],
+                        "model_ref": agent["model_ref"],
+                        "icon": agent["icon"],
+                    },
+                    "depends_on": [],
+                    "metadata": {"original_index": i},
+                })
+            
+            # 获取执行器
+            executor = get_cluster_executor()
+            
+            # 定义进度回调（同步包装，兼容 executor 的调用方式）
+            def progress_callback(task_id: str, progress: int, message: str):
+                # 创建任务异步执行，避免阻塞 executor
+                asyncio.create_task(self._emit_progress("cluster_progress", f"{message} ({progress}%)"))
+            
+            # 并行执行
+            result = await executor.execute(
+                task_description=user_input,
+                sub_tasks=sub_tasks,
+                aggregation_strategy=AggregationStrategy.SYNTHESIZE,
+                progress_callback=progress_callback,
+            )
+            
+            # 构建聚合结果
+            if result.status.value == "completed":
+                # 格式化各代理回复
+                agent_responses = []
+                for st in result.sub_tasks:
+                    if st.status.value == "completed" and st.result:
+                        agent_name = st.name
+                        agent_icon = next((a["icon"] for a in sub_agents if a["name"] == agent_name), "🤖")
+                        response_text = st.result.get("result", "") if isinstance(st.result, dict) else str(st.result)
+                        agent_responses.append(f"{agent_icon} **{agent_name}**：{response_text}")
+                
+                # 添加聚合结果
+                aggregated = result.aggregated_result
+                if isinstance(aggregated, dict) and "synthesized" in aggregated:
+                    final_text = f"""【集群协作结果】
+
+{chr(10).join(agent_responses)}
+
+---
+
+**综合结论**：
+{aggregated['synthesized']}"""
+                else:
+                    final_text = f"""【集群协作结果】
+
+{chr(10).join(agent_responses)}"""
+                
+                # 推送完成事件
+                await self._emit_progress("cluster_complete", "集群执行完成")
+                
+                # 保存结果
+                await self._persist_final_response(session_id, final_text)
+                
+                return final_text
+            else:
+                error_msg = f"集群执行失败: {result.error or '未知错误'}"
+                await self._emit_progress("cluster_error", error_msg)
+                return f"[集群模式] {error_msg}"
+                
+        except Exception as e:
+            logger.error(f"Cluster parallel execution failed: {e}")
+            await self._emit_progress("cluster_error", f"集群执行异常: {e}")
+            return None  # 降级到单 LLM 模式
 
     # ─────────── WebSocket push helpers ───────────
 
@@ -1630,8 +2089,14 @@ class NexusAgentLoop:
 
             # 结果截断，避免 WS 帧过大
             res = result
+            if not isinstance(res, str) and res is not None:
+                res = str(res)
             if isinstance(res, str) and len(res) > 8000:
                 res = res[:8000] + "\n…[truncated]"
+
+            # 只推送可 JSON 化的参数；剥离 _ws_manager 等私有注入
+            safe_args = self._jsonable_tool_args(arguments)
+
             await self.ws_manager.broadcast(
                 session_id,
                 ToolEvent(
@@ -1639,13 +2104,87 @@ class NexusAgentLoop:
                     phase=phase,  # type: ignore[arg-type]
                     tool_call_id=tool_call_id,
                     name=name,
-                    arguments=arguments or {},
+                    arguments=safe_args,
                     status=status,  # type: ignore[arg-type]
                     result=res,
                 ).model_dump(mode="json"),
             )
         except Exception as e:
             logger.warning(f"Failed to push tool_event: {e}")
+
+    async def _maybe_push_screenshot(
+        self,
+        session_id: uuid.UUID,
+        tool_name: str,
+        tool_result: str,
+    ) -> None:
+        """从截图类工具结果中提取 base64 图像，推送 WS screenshot 事件。"""
+        if not self.ws_manager:
+            return
+        try:
+            import base64
+            import json as _json
+            import re
+
+            b64: str | None = None
+            raw = str(tool_result)
+
+            # 1) data:image/...;base64,... 直出
+            m = re.search(r"data:image/[^;]+;base64,([A-Za-z0-9+/=\s]+)", raw)
+            if m:
+                b64 = m.group(1).replace("\n", "")
+            else:
+                # 2) JSON 里有 image/data.image 字段
+                try:
+                    data = _json.loads(raw)
+                    img = data.get("image") or (data.get("data") or {}).get("image")
+                    if isinstance(img, str) and len(img) > 100:
+                        b64 = img
+                except Exception:
+                    pass
+                # 3) 长 base64 串（>500 chars，大概率是截图）
+                if not b64:
+                    m2 = re.search(r"([A-Za-z0-9+/=]{500,})", raw)
+                    if m2:
+                        b64 = m2.group(1)
+
+            if not b64:
+                return
+
+            from backend.schemas.ws import ScreenshotEvent
+
+            await self.ws_manager.broadcast(
+                session_id,
+                ScreenshotEvent(
+                    session_id=session_id,
+                    image_base64=b64,
+                    tool_name=tool_name,
+                    timestamp=__import__("datetime").datetime.now(
+                        __import__("datetime").timezone.utc
+                    ).isoformat(),
+                ).model_dump(mode="json"),
+            )
+        except Exception as e:
+            logger.debug(f"Screenshot push skipped: {e}")
+
+    @staticmethod
+    def _jsonable_tool_args(arguments: dict[str, Any] | None) -> dict[str, Any]:
+        """过滤不可 JSON 序列化 / 内部注入字段，供 WS 与落库。"""
+        if not isinstance(arguments, dict):
+            return {}
+        out: dict[str, Any] = {}
+        skip_keys = {"ws_manager", "connection_manager"}
+        for k, v in arguments.items():
+            ks = str(k)
+            if ks.startswith("_") or ks in skip_keys:
+                continue
+            if "ConnectionManager" in type(v).__name__:
+                continue
+            try:
+                out[ks] = json.loads(json.dumps(v, default=str, ensure_ascii=False))
+            except Exception:
+                out[ks] = str(v)[:500]
+        return out
 
     async def _push_task_update(
         self,

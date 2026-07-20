@@ -8,6 +8,7 @@ from .cron import CronJob
 from .cron_execution_log import CronExecutionLog
 from .cron_hook import CronHook, CronHookExecutionLog
 from .device import Device
+from .desktop_permission import DesktopPermission
 from .knowledge import Chunk, Document
 from .mcp_server import MCPServer
 from .message import Message
@@ -18,6 +19,8 @@ from .skill import Skill
 from .sub_agent import SubAgent
 from .task import Task
 from .tool import Tool
+from .trace import SessionTrace
+from .entity import Entity
 from .user import User
 from .webhook import Webhook, WebhookDeliveryLog
 from .wiki import WikiEntity, WikiRelation
@@ -56,4 +59,7 @@ __all__ = [
     "CronHook",
     "CronHookExecutionLog",
     "SubAgent",
+    "DesktopPermission",
+    "SessionTrace",
+    "Entity",
 ]

@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { useT } from '@/stores/localeStore';
 
 interface SkeletonProps {
   /** 宽度，可为百分比或像素值 */
@@ -29,10 +30,11 @@ export function Skeleton({
   count = 1,
   gap = '8px',
 }: SkeletonProps) {
+  const t = useT();
   const items = Array.from({ length: count }, (_, i) => i);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap }} role="status" aria-label="加载中">
+    <div style={{ display: 'flex', flexDirection: 'column', gap }} role="status" aria-label={t('desktop._e15')}>
       {items.map((i) => (
         <div
           key={i}
@@ -44,7 +46,7 @@ export function Skeleton({
           }}
         />
       ))}
-      <span className="sr-only">加载中...</span>
+      <span className="sr-only">{t('contextDash.loading')}</span>
     </div>
   );
 }

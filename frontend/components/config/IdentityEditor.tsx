@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { useT } from '@/stores/localeStore';
 
 interface IdentityEditorProps {
   value: string;
@@ -8,6 +9,7 @@ interface IdentityEditorProps {
 }
 
 export function IdentityEditor({ value, onChange }: IdentityEditorProps) {
+  const t = useT();
   return (
     <div className="space-y-4">
       <div>
@@ -21,7 +23,7 @@ export function IdentityEditor({ value, onChange }: IdentityEditorProps) {
         onChange={(e) => onChange(e.target.value)}
         rows={8}
         className="w-full rounded-lg border border-border-default bg-input-bg px-4 py-3 font-mono text-sm text-foreground focus:border-brand-purple focus:outline-none focus:ring-1 focus:ring-brand-purple"
-        placeholder="例如：You are a helpful coding assistant with expertise in Rust and Python..."
+        placeholder={t('config._e11')}
       />
     </div>
   );

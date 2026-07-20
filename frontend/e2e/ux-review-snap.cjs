@@ -1,7 +1,7 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
-const OUT = path.join('E:/项目/taktonl-0.1.0/frontend/e2e/screenshots/ux-review');
+const OUT = path.join(__dirname, 'screenshots', 'ux-review');
 fs.mkdirSync(OUT, { recursive: true });
 (async () => {
   const b = await chromium.launch({ headless: true });

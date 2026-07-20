@@ -1,257 +1,251 @@
-# Takton
+<div align="center">
 
-个人多机 Agent 工作台（对话调度本机 / 远程设备 · FastAPI + Next.js · 可选 Electron 桌面）。
+<br/>
 
-仓库：https://github.com/wu1w/takton
+<img src="https://img.shields.io/badge/Takton-Agent%20Terminal-7C3AED?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0xMiAyQzYuNDggMiAyIDYuNDggMiAxMnM0LjQ4IDEwIDEwIDEwIDEwLTQuNDggMTAtMTBTMTcuNTIgMiAxMiAyem0wIDE4Yy00LjQyIDAtOC0zLjU4LTgtOHMzLjU4LTggOC04IDggMy41OCA4IDgtMy41OCA4LTggOHoiLz48L3N2Zz4=" alt="Takton" />
 
-> **平台支持：** Windows、Linux 为主要支持目标。**macOS 因无 Mac 测试机，脚本仅实验性提供，不保证可用。**
+# ⚡ Takton
 
----
+### Your Personal AI Agent Terminal · 你的专属 AI Agent 终端
 
-## 选哪种安装方式？
+**Local-first · Multi-Agent · Skill Auto-Generation · Workflow Orchestration**
 
-| 你是谁 | 推荐方式 | 你要做什么 |
-|--------|----------|------------|
-| 完全小白（Windows） | **① 安装包 Setup.exe** | 双击 → 下一步 → 打开 |
-| 会打开 PowerShell | **② Windows 一行命令** | 复制粘贴一行 |
-| Linux | **③ 一行 shell** | 复制粘贴一行 |
-| macOS | **③ 一行 shell（实验）** | 复制粘贴一行；**未在真机验证，不保证可用** |
-| 开发者 / 改代码 | **④ 源码开发安装** | venv + pip |
-| 公司内网、不能上网装依赖 | **⑤ 离线 wheel 包** | 见文末 |
+**本地优先 · 多 Agent 协作 · 技能自动生成 · 工作流编排**
 
-> **不要**把别人电脑上的 `.venv` 文件夹直接拷过来用（路径写死，必挂）。  
-> 一键脚本会在**你自己的电脑**上自动生成等价环境，体验接近「自带 venv」。
+<br/>
 
----
+[![Version](https://img.shields.io/badge/version-0.2.1-7C3AED?style=flat-square)](https://github.com/wu1w/takton/releases)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-06B6D4?style=flat-square)](https://github.com/wu1w/takton/releases)
+[![License](https://img.shields.io/badge/license-MIT-22C55E?style=flat-square)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/wu1w/takton?style=flat-square&logo=github)](https://github.com/wu1w/takton/stargazers)
+[![Next.js](https://img.shields.io/badge/Next.js%2016-black?style=flat-square&logo=next.js)](https://nextjs.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com/)
 
-## ① Windows 安装包（最傻瓜）
+<br/>
 
-1. 打开 [Releases](https://github.com/wu1w/takton/releases)（若已发布）
-2. 下载 **`Takton Setup x.y.z.exe`**
-3. 双击安装，一路「下一步」
-4. 从桌面打开 **Takton**
+[English](#-features) · [中文](#-核心功能)
 
-- 安装包内嵌 Python 与生产依赖（打包时由 `prepare-win-python` 灌入）
-- 一般**不需要**再装系统 Python / Node
-- 首次启动若缺包，会装到用户目录下的可写路径
-
-> 若 Releases 里还没有安装包：用下面的 **②**，或让维护者执行 `cd frontend && npm run dist:win` 打出安装包。
+</div>
 
 ---
 
-## ② Windows 一行命令（源码自动装环境）
+## 🎯 Why Takton? · 为什么选择 Takton？
 
-### 你需要事先有的
+> **Takton is not another chat wrapper.** It's a full-featured agent workstation that runs entirely on your machine — your data never leaves your disk. One agent handles simple questions; a cluster of sub-agents tackles complex research. Skills are not just installed — they're **auto-generated** when the agent encounters a new task type.
+>
+> **Takton 不是又一个聊天套壳。** 它是一个全功能 Agent 工作站，完全运行在你的本机——数据永远不离开你的磁盘。简单问题单 Agent 搞定；复杂调研自动拆分给子代理集群。技能不只是安装——遇到新任务类型时 Agent 会**自动编写新技能**。
 
-- 能上网  
-- [Git for Windows](https://git-scm.com/download/win)（安装后**重新打开** PowerShell）  
-- **Python 可选**：没有，或只有 3.14，脚本会尝试用 **uv 自动下载便携 Python 3.12**
+<table>
+<tr>
+<td width="50%">
 
-### 安装
+### 🧠 Smart Agent Orchestration
+Simple questions → single agent. Complex tasks → auto-spawn sub-agent clusters. No manual configuration needed.
 
-1. 按 `Win + X`，打开 **Windows PowerShell** 或 **终端**
-2. **整行复制**粘贴回车：
+### 🔧 Skill Auto-Generation
+Agent writes its own tools when it hits a new task type. 17 builtin skills + infinite extensibility.
 
+### 🖥️ OS-Level Operations
+File read/write, terminal commands, browser control, SQLite queries — all sandboxed with permission checks.
+
+</td>
+<td width="50%">
+
+### 🧠 智能 Agent 编排
+简单问题 → 单 Agent。复杂任务 → 自动拆分子代理集群。无需手动配置。
+
+### 🔧 技能自动生成
+Agent 遇到新任务类型时自动编写新工具。17 个内置技能 + 无限扩展。
+
+### 🖥️ 操作系统级能力
+文件读写、终端命令、浏览器控制、SQLite 查询——全部沙箱化 + 权限校验。
+
+</td>
+</tr>
+</table>
+
+---
+
+## 📸 Screenshots · 界面预览
+
+<div align="center">
+
+### 💬 Agent Chat · 智能对话
+<img src="docs/screenshots/feature_home_chat.png" alt="Agent Chat" width="800"/>
+
+*Multi-session chat with context compression, goal tracking, and tool call visualization*
+*多会话管理，支持上下文压缩、目标追踪、工具调用可视化*
+
+### 🔧 Tools & Skills · 工具与技能
+<img src="docs/screenshots/feature_tools.png" alt="Tools" width="48%"/> <img src="docs/screenshots/feature_skills.png" alt="Skills" width="48%"/>
+
+*63 unified tools (builtin + MCP + custom) with risk-level classification and one-click toggle*
+*63 个统一工具（内置 + MCP + 自定义），风险等级分类，一键启停*
+
+### ⚡ Workflows & Cron · 工作流与定时任务
+<img src="docs/screenshots/feature_workflows.png" alt="Workflows" width="48%"/> <img src="docs/screenshots/feature_cron.png" alt="Cron" width="48%"/>
+
+*Visual workflow editor with trigger conditions · Cron scheduler with natural language expressions*
+*可视化工作流编辑器，支持触发条件 · Cron 调度器，支持自然语言表达式*
+
+### 📚 Knowledge Base · 知识库
+<img src="docs/screenshots/feature_knowledge.png" alt="Knowledge" width="800"/>
+
+*RAG-powered document management with drag-and-drop upload, vector indexing, and hybrid search*
+*RAG 驱动的文档管理，支持拖拽上传、向量索引、混合检索*
+
+### 🌐 Bilingual UI · 中英双语
+<img src="docs/screenshots/feature_login_zh.png" alt="Login ZH" width="48%"/> <img src="docs/screenshots/feature_login_en.png" alt="Login EN" width="48%"/>
+
+*One-click language switch · Full i18n support*
+*一键切换中英文 · 完整国际化支持*
+
+</div>
+
+---
+
+## ✨ Features · 核心功能
+
+| Feature | Description | 说明 |
+|---------|-------------|------|
+| **💬 Multi-Session Chat** | Context compression, goal tracking, breakpoint resume | 多会话管理，上下文压缩，目标追踪，断点续传 |
+| **🤖 Sub-Agent Clusters** | Auto-spawn Coder/Researcher/Writer agents for complex tasks | 复杂任务自动拆分给 Coder/Researcher/Writer 子代理 |
+| **🔧 Skill System** | 17 builtin skills + auto-generation + community store | 17 个内置技能 + 自动生成 + 社区商店 |
+| **⚡ Workflow Engine** | Visual editor, trigger conditions, parallel execution | 可视化工作流编辑器，触发条件，并行执行 |
+| **📚 RAG Knowledge Base** | Qdrant vector DB, hybrid search (BM25 + vector) | Qdrant 向量数据库，混合检索（BM25 + 向量） |
+| **🔌 MCP Protocol** | Cross-platform tool interop (Claude/Hermes/OpenClaw/Codex) | MCP 协议跨平台工具互通 |
+| **⏰ Cron Scheduler** | Natural language cron, workflow binding, webhook triggers | 自然语言定时任务，工作流绑定，Webhook 触发 |
+| **🧠 Memory System** | Short-term + long-term memory, Wiki knowledge graph | 短期+长期记忆，Wiki 知识图谱 |
+| **🌐 Bilingual UI** | One-click Chinese/English switch, persistent preference | 一键切换中英文，偏好持久化 |
+| **🔒 Local-First** | All data stays on your machine, no cloud dependency | 数据全部本地存储，零云端依赖 |
+
+---
+
+## 🚀 Quick Start · 快速开始
+
+### Desktop App (Recommended) · 桌面客户端（推荐）
+
+**Windows**
 ```powershell
-irm https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.ps1 | iex
+# One-liner install · 一行安装
+iex ((irm https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.ps1) -replace '^\uFEFF','')
 ```
 
-### 脚本会自动做
-
-1. 选择合适的 Python（3.10–3.13；否则 uv 装 3.12）  
-2. 从 GitHub 克隆代码到 `%USERPROFILE%\.takton\src`  
-3. 创建独立环境 `%USERPROFILE%\.takton\venv`  
-4. 安装 `backend/requirements-prod.txt` + Takton  
-5. 自检能否 `import`  
-6. 写入本地密钥 `%USERPROFILE%\.takton\.env`  
-7. 默认启动并尝试打开浏览器  
-
-### 装好后怎么用
-
-```text
-浏览器打开:  http://127.0.0.1:8090
-以后启动:    %USERPROFILE%\.takton\bin\takton.cmd start
-只安装不启动（可选）:
-  $env:TAKTON_NO_START = "1"
-  irm https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.ps1 | iex
-```
-
-### 可选环境变量
-
-| 变量 | 含义 | 默认 |
-|------|------|------|
-| `TAKTON_HOME` | 安装目录 | `%USERPROFILE%\.takton` |
-| `TAKTON_PORT` | 端口 | `8090` |
-| `TAKTON_NO_START` | `1` = 只装不启动 | `0` |
-| `TAKTON_SOURCE` | 用本地已有源码目录 | （空则 git clone） |
-| `TAKTON_REPO` / `TAKTON_REF` | 仓库与分支 | `wu1w/takton` · `main` |
-
----
-
-## ③ Linux / macOS 一行命令
-
-> ⚠️ **macOS 说明：** 当前维护环境没有 Mac 真机，安装脚本与运行路径**未做完整测试**，仅按通用 Unix 逻辑编写，**不保证能装上或稳定使用**。欢迎反馈 Issue；正式使用请优先 Windows / Linux。
-
-### 你需要事先有的
-
-- `curl`、`git`  
-- 能访问 GitHub  
-- Python 3.10–3.13 **或** 允许脚本用 uv 下载便携 3.12  
-
-Debian/Ubuntu 若完全没有工具，可先：
-
+**Linux**
 ```bash
-sudo apt update
-sudo apt install -y curl git
-# 可选（有系统 Python 时更快）:
-# sudo apt install -y python3.12 python3.12-venv
+# One-liner install · 一行安装
+curl -fsSL https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.sh | tr -d '\015' | bash
 ```
 
-### 安装
+**Manual Download · 手动下载**
 
-```bash
-# 推荐：过滤 CRLF，避免 bash 报「pipefail 无效选项」
-curl -fsSL https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.sh | tr -d '' | bash
-```
+| Platform | Package | 下载 |
+|----------|---------|------|
+| Windows | Setup.exe | [Takton-Setup-0.2.1.exe](https://github.com/wu1w/takton/releases/download/v0.2.1/Takton-Setup-0.2.1.exe) |
+| Linux | AppImage | [Takton-0.2.2.AppImage](https://github.com/wu1w/takton/releases/download/v0.2.2/Takton-0.2.2.AppImage) |
+| Linux | deb | [takton_0.2.2_amd64.deb](https://github.com/wu1w/takton/releases/download/v0.2.2/takton_0.2.2_amd64.deb) |
 
-若 `raw.githubusercontent.com` 的 `main` 缓存仍是旧文件，可钉死提交：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/wu1w/takton/dda6eaf/scripts/install.sh | tr -d '' | bash
-```
-
-### 装好后
-
-```bash
-# 浏览器
-# http://127.0.0.1:8090
-
-takton start          # 若已写入 PATH
-# 或
-~/.takton/bin/takton start
-
-# 只安装不启动
-TAKTON_NO_START=1 curl -fsSL https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.sh | tr -d '' | bash
-```
-
-### 可选环境变量
-
-与 Windows 相同含义：`TAKTON_HOME`（默认 `~/.takton`）、`TAKTON_PORT`、`TAKTON_NO_START`、`TAKTON_SOURCE`、`TAKTON_REPO`、`TAKTON_REF`。
-
----
-
-## ④ 开发者：源码手动安装
-
-适合改代码、跑测试、打安装包。
+### From Source · 源码运行
 
 ```bash
 git clone https://github.com/wu1w/takton.git
 cd takton
 
-# 建议 Python 3.11 或 3.12（避开 3.14）
-python -m venv .venv
-# Windows:
-#   .venv\Scripts\activate
-# Linux/mac:
-source .venv/bin/activate
+# One-click start · 一键启动
+python start.py
 
-pip install -U pip
-pip install -r backend/requirements-prod.txt
-pip install -e .
+# Or separately · 或分别启动：
+# Backend · 后端
+pip install -r backend/requirements.txt
+python backend/main.py
 
-# 启动（API + 内置静态前端）
-takton start --port 8090
-# 浏览器 http://127.0.0.1:8090
+# Frontend · 前端
+cd frontend && npm install && npm run dev
 ```
 
-### 前端热更新开发
-
-```bash
-# 终端 1：后端
-takton start --dev --port 8090
-
-# 终端 2：前端
-cd frontend
-npm install
-npm run dev
-```
-
-### 打 Windows 桌面安装包
-
-```powershell
-cd frontend
-npm install
-npm run dist:win
-# 产物: frontend/release/Takton Setup 0.1.0.exe
-```
-
-打包时会执行 `prepare:win-python`，把生产依赖灌进内嵌 Python，用户安装后尽量免配环境。
+Open http://localhost:3000 · 访问 http://localhost:3000
 
 ---
 
-## ⑤ 内网 / 离线依赖（可选）
+## 🛠️ Tech Stack · 技术栈
 
-在有网机器下载 wheel：
+<div align="center">
 
-```bash
-pip download -r backend/requirements-prod.txt -d offline-wheels
+| Layer | Technology | 技术 |
+|-------|-----------|------|
+| **Frontend** | Next.js 16 · React 19 · Tailwind CSS 4 · Electron | Next.js 16 · React 19 · Tailwind CSS 4 · Electron |
+| **Backend** | FastAPI · SQLAlchemy 2.0 · SQLite/PostgreSQL | FastAPI · SQLAlchemy 2.0 · SQLite/PostgreSQL |
+| **AI/LLM** | OpenAI-compatible API · MCP Protocol · RAG | OpenAI 兼容 API · MCP 协议 · RAG |
+| **Vector DB** | Qdrant (optional) | Qdrant（可选） |
+| **i18n** | Zustand persist · Custom translation engine | Zustand persist · 自研翻译引擎 |
+| **Deploy** | Electron Builder · Docker (optional) | Electron Builder · Docker（可选） |
+
+</div>
+
+---
+
+## 🏗️ Architecture · 架构
+
+```
+┌─────────────────────────────────────────────────────┐
+│                   Electron Shell                     │
+│  ┌─────────────────────────────────────────────────┐ │
+│  │              Next.js 16 Frontend                 │ │
+│  │  ┌─────────┐ ┌─────────┐ ┌──────────────────┐  │ │
+│  │  │  Chat   │ │  Tools  │ │  Workflow Editor │  │ │
+│  │  └────┬────┘ └────┬────┘ └────────┬─────────┘  │ │
+│  │       └────────────┴────────────────┘           │ │
+│  │                    │ WebSocket                   │ │
+│  └────────────────────┼─────────────────────────────┘ │
+│                       │                               │
+│  ┌────────────────────┼─────────────────────────────┐ │
+│  │              FastAPI Backend                     │ │
+│  │  ┌─────────┐ ┌─────────┐ ┌──────────────────┐  │ │
+│  │  │ Agent   │ │ Tool    │ │  Cron Scheduler  │  │ │
+│  │  │ Loop    │ │ Registry│ │                  │  │ │
+│  │  └────┬────┘ └────┬────┘ └────────┬─────────┘  │ │
+│  │       └────────────┴────────────────┘           │ │
+│  │                    │                             │ │
+│  │  ┌─────────────────┼─────────────────────────┐  │ │
+│  │  │    SQLite / PostgreSQL + Qdrant           │  │ │
+│  │  └───────────────────────────────────────────┘  │ │
+│  └─────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────┘
 ```
 
-拷到内网后：
+---
 
-```bash
-pip install --no-index --find-links=offline-wheels -r backend/requirements-prod.txt
-pip install --no-index --find-links=offline-wheels -e .
-```
+## 📖 Documentation · 文档
 
-说明见 [docs/PACKAGING-VENV.md](./docs/PACKAGING-VENV.md)。
+- [Technical Manual · 技术手册](docs/TECHNICAL_MANUAL.md) — Architecture, API, Database design
+- [AGENTS.md](AGENTS.md) — AI coding assistant configuration guide
 
 ---
 
-## 装好后怎么确认成功
+## 🤝 Contributing · 贡献
 
-1. 浏览器打开 `http://127.0.0.1:8090`（或你设的端口）能看到界面  
-2. 健康检查：
+We welcome Issues and Pull Requests! 
 
-```bash
-curl http://127.0.0.1:8090/api/health
-# 期望: {"status":"ok","service":"takton-backend"}
-```
+欢迎提交 Issue 和 Pull Request！
 
-3. 默认单用户本地模式，一般无需注册；密钥在  
-   - Windows: `%USERPROFILE%\.takton\.env`  
-   - Linux/mac: `~/.takton/.env`  
+If Takton helps you, please give us a ⭐ — it means the world to us!
 
-**请勿**把 `.env`、API Key、真实内网地址提交到 Git。
+如果 Takton 对你有帮助，请给我们一个 ⭐ — 这对我们意义重大！
 
 ---
 
-## 常见问题
+## 📄 License · 许可证
 
-| 现象 | 处理 |
-|------|------|
-| 只有 Python 3.14，安装失败 | 用一键脚本（会拉 3.12），或再装 3.11/3.12 |
-| `git` 不是内部或外部命令 | 安装 Git for Windows 后**重开**终端 |
-| 克隆很慢 / 超时 | 检查代理或 GitHub 访问；可设 `TAKTON_SOURCE` 指向已下载的源码目录 |
-| 端口被占用 | `$env:TAKTON_PORT=18090` 或 `TAKTON_PORT=18090` 再装/再启动 |
-| 想重装 | 删掉 `~/.takton`（Win: `%USERPROFILE%\.takton`）后重新跑安装命令 |
-| macOS 装不上 / 跑不起来 | **预期内可能失败**：我们没有 Mac 测试机，不保证可用；请用 Windows/Linux 或自助排查后提 Issue |
-| 为什么不直接发 venv？ | 不能跨机使用；详见 [docs/PACKAGING-VENV.md](./docs/PACKAGING-VENV.md) |
+MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-## 文档索引
+<div align="center">
 
-| 文档 | 内容 |
-|------|------|
-| [PACKAGING.md](./PACKAGING.md) | 打包与分发 |
-| [docs/PACKAGING-VENV.md](./docs/PACKAGING-VENV.md) | 为何不提交 venv、如何一键生成环境 |
-| [docs/DIALOG-CONFIG-SYSTEM.md](./docs/DIALOG-CONFIG-SYSTEM.md) | 对话配置 Takton |
-| [docs/PRD-REMOTE-ARCHITECTURE.md](./docs/PRD-REMOTE-ARCHITECTURE.md) | 多机远程架构 |
+**Takton** — Let AI be your dedicated work partner 🎯
 
----
+**Takton** — 让 AI 成为你的专属工作伙伴 🎯
 
-## 许可证与说明
+[⭐ Star us on GitHub](https://github.com/wu1w/takton) · [🐛 Report Bug](https://github.com/wu1w/takton/issues) · [💡 Request Feature](https://github.com/wu1w/takton/issues)
 
-- 默认本地单用户使用；生产公网部署请自行加固鉴权与密钥。  
-- 公开仓库内的知识库种子为**通用教程**，不含私人主机名 / 内网地址。  
+</div>

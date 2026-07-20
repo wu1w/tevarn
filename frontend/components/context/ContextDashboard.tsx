@@ -14,23 +14,24 @@ import {
 import { useSessionStore } from '@/stores/sessionStore';
 import { useConfirm } from '@/components/desktop/ConfirmDialog';
 import { useToastStore } from '@/stores/toastStore';
+import { t, useT } from '@/stores/localeStore';
 
 /* ─── 中文标签映射 ─── */
 const SCOPE_LABELS: Record<string, { label: string; icon: string }> = {
-  system: { label: '系统', icon: '⚙️' },
-  user: { label: '用户', icon: '👤' },
-  project: { label: '项目', icon: '📁' },
-  session: { label: '会话', icon: '💬' },
-  knowledge: { label: '知识库', icon: '📚' },
+  system: { label: t('contextDash.scope.system'), icon: '⚙️' },
+  user: { label: t('evolution.source.user'), icon: '👤' },
+  project: { label: t('memory.type.project'), icon: '📁' },
+  session: { label: t('contextDash.scope.session'), icon: '💬' },
+  knowledge: { label: t('contextDash.scope.knowledge'), icon: '📚' },
 };
 
 const KIND_LABELS: Record<string, { label: string; icon: string }> = {
-  instruction: { label: '指令', icon: '📋' },
-  memory: { label: '记忆', icon: '🧠' },
-  doc: { label: '文档', icon: '📄' },
-  message: { label: '消息', icon: '💬' },
-  rag: { label: '检索结果', icon: '🔍' },
-  'tool-def': { label: '工具定义', icon: '🔧' },
+  instruction: { label: t('contextDash.kind.instruction'), icon: '📋' },
+  memory: { label: t('contextDash.kind.memory'), icon: '🧠' },
+  doc: { label: t('contextDash.kind.doc'), icon: '📄' },
+  message: { label: t('contextDash.kind.message'), icon: '💬' },
+  rag: { label: t('contextDash.kind.rag'), icon: '🔍' },
+  'tool-def': { label: t('contextDash.kind.toolDef'), icon: '🔧' },
 };
 
 /* ─── Token 预算条 ─── */
@@ -90,7 +91,7 @@ function ContextItemCard({
           <span className="rounded bg-card-bg-hover px-1.5 py-0.5 text-[10px] text-foreground-dim">
             {scope.icon} {scope.label}
           </span>
-          {item.pinned && <span className="text-[10px] text-amber-500">📌 已固定</span>}
+          {item.pinned && <span className="text-[10px] text-amber-500">{t('contextDash.filterPinned')}</span>}
         </div>
         <div className="mt-0.5 text-xs text-foreground-dim leading-relaxed line-clamp-2">{valuePreview}</div>
         <div className="mt-1 flex items-center gap-2 text-[10px] text-foreground-muted">
@@ -103,14 +104,14 @@ function ContextItemCard({
         <button
           onClick={() => onPin(item.id, item.pinned)}
           className={`rounded px-1.5 py-1 text-xs ${item.pinned ? 'bg-amber-500/10 text-amber-500' : 'bg-card-bg-hover text-foreground-dim hover:bg-elevated-bg'}`}
-          title={item.pinned ? '取消固定' : '固定'}
+          title={item.pinned ? t('contextDash.unpin') : t('contextDash.pin')}
         >
           {item.pinned ? '📌' : '📍'}
         </button>
         <button
           onClick={() => onDelete(item.id)}
           className="rounded bg-error-bg px-1.5 py-1 text-xs text-error-text hover:bg-error-bg"
-          title="删除"
+          title={t('memory.delete')}
         >
           🗑️
         </button>
@@ -137,7 +138,7 @@ function ContextCreateModal({
 
   const handleSubmit = async () => {
     if (!desc.trim() || !content.trim()) {
-      addToast('请填写描述和内容', 'info');
+      addToast(t('contextDash.fillRequired'), 'info');
       return;
     }
     setSubmitting(true);
@@ -146,11 +147,11 @@ function ContextCreateModal({
       const lower = desc.toLowerCase();
       let scope = 'session';
       let kind = 'memory';
-      if (lower.includes('系统') || lower.includes('指令')) { scope = 'system'; kind = 'instruction'; }
-      else if (lower.includes('项目') || lower.includes('文档')) { scope = 'project'; kind = 'doc'; }
-      else if (lower.includes('知识') || lower.includes('rag')) { scope = 'knowledge'; kind = 'rag'; }
-      else if (lower.includes('工具') || lower.includes('function')) { scope = 'session'; kind = 'tool-def'; }
-      else if (lower.includes('用户') || lower.includes('偏好')) { scope = 'user'; kind = 'memory'; }
+      if (lower.includes(t('contextDash.scope.system')) || lower.includes(t('contextDash.kind.instruction'))) { scope = 'system'; kind = 'instruction'; }
+      else if (lower.includes(t('memory.type.project')) || lower.includes(t('contextDash.kind.doc'))) { scope = 'project'; kind = 'doc'; }
+      else if (lower.includes(t('context._e85')) || lower.includes('rag')) { scope = 'knowledge'; kind = 'rag'; }
+      else if (lower.includes(t('memory.type.tool')) || lower.includes('function')) { scope = 'session'; kind = 'tool-def'; }
+      else if (lower.includes(t('evolution.source.user')) || lower.includes(t('memory.type.preference'))) { scope = 'user'; kind = 'memory'; }
 
       await createCtxItem({
         session_id: currentSession?.id,
@@ -160,13 +161,13 @@ function ContextCreateModal({
         value: content.trim(),
         tokens: Math.ceil(content.length / 2), // 粗略估算
       });
-      addToast('✅ 上下文项已创建', 'success');
+      addToast(t('contextDash.created'), 'success');
       setDesc('');
       setContent('');
       onClose();
       onCreated();
     } catch (err) {
-      addToast(err instanceof Error ? err.message : '创建失败', 'error');
+      addToast(err instanceof Error ? err.message : t('channels.createFailed'), 'error');
     } finally {
       setSubmitting(false);
     }
@@ -176,41 +177,41 @@ function ContextCreateModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
       <div className="w-full max-w-lg rounded-lg bg-card-bg p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <h3 className="mb-4 text-base font-semibold text-foreground">📝 添加上下文</h3>
+        <h3 className="mb-4 text-base font-semibold text-foreground">{t('contextDash.addTitle')}</h3>
         <div className="space-y-3">
           <div>
-            <label className="mb-1 block text-xs font-medium text-foreground-muted">描述（用于识别）</label>
+            <label className="mb-1 block text-xs font-medium text-foreground-muted">{t('contextDash.descLabel')}</label>
             <input
               value={desc}
               onChange={(e) => setDesc(e.target.value)}
               className="w-full rounded-md border border-border-default px-3 py-2 text-sm focus:border-brand-purple focus:outline-none focus:ring-1 focus:ring-brand-purple"
-              placeholder="如：系统指令、项目文档、用户偏好..."
+              placeholder={t('contextDash.descPlaceholder')}
             />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-foreground-muted">内容</label>
+            <label className="mb-1 block text-xs font-medium text-foreground-muted">{t('contextDash.contentLabel')}</label>
             <textarea
               value={content}
               onChange={(e) => setContent(e.target.value)}
               rows={5}
               className="w-full rounded-md border border-border-default px-3 py-2 text-sm focus:border-brand-purple focus:outline-none focus:ring-1 focus:ring-brand-purple"
-              placeholder="输入上下文内容..."
+              placeholder={t('contextDash.contentPlaceholder')}
             />
           </div>
           <div className="text-[10px] text-foreground-muted">
-            💡 系统会根据描述自动识别类型（系统指令/项目文档/用户偏好等）
+            {t('contextDash.autoDetectHint')}
           </div>
         </div>
         <div className="mt-5 flex justify-end gap-2">
           <button onClick={onClose} className="rounded-md border border-border-default px-4 py-2 text-sm text-foreground-muted hover:bg-elevated-bg">
-            取消
+            {t('contextDash.cancel')}
           </button>
           <button
             onClick={handleSubmit}
             disabled={submitting}
             className="rounded-md bg-brand-purple px-4 py-2 text-sm font-medium text-white hover:bg-brand-purple/80 disabled:opacity-50"
           >
-            {submitting ? '创建中...' : '创建'}
+            {submitting ? t('contextDash.creating') : t('channels.create')}
           </button>
         </div>
       </div>
@@ -220,6 +221,7 @@ function ContextCreateModal({
 
 /* ─── 主组件 ─── */
 export default function ContextDashboard() {
+  const t = useT();
   const { confirm, ConfirmDialogComponent } = useConfirm();
   const addToast = useToastStore((s) => s.addToast);
   const { currentSession } = useSessionStore();
@@ -269,7 +271,7 @@ export default function ContextDashboard() {
   };
 
   const handleDelete = async (id: string) => {
-    const ok = await confirm('确定删除此项？');
+    const ok = await confirm(t('contextDash.confirmDelete'));
     if (!ok) return;
     try {
       await deleteCtxItem(id);
@@ -285,10 +287,10 @@ export default function ContextDashboard() {
     try {
       const result = await optimizeContext(currentSession.id);
       setOptimizeResult(result);
-      addToast(`🧹 优化完成：释放 ${result.saved_tokens} tokens`, 'success');
+      addToast(t('contextDash.optDone').replace('{n}', String(result.saved_tokens)), 'success');
       load();
     } catch (err) {
-      addToast('优化失败', 'error');
+      addToast(t('contextDash.optimizeFailed'), 'error');
     } finally {
       setOptimizing(false);
     }
@@ -298,7 +300,7 @@ export default function ContextDashboard() {
     return (
       <div className="p-6">
         <div className="rounded-lg border border-border-default bg-card-bg py-12 text-center text-foreground-muted">
-          💬 请先选择一个会话
+          {t('contextDash.pickSession')}
         </div>
       </div>
     );
@@ -309,8 +311,8 @@ export default function ContextDashboard() {
       {/* 标题栏 */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-foreground">📊 上下文仪表盘</h1>
-          <p className="text-xs text-foreground-dim mt-1">管理 Agent 的上下文信息，优化 Token 使用</p>
+          <h1 className="text-xl font-bold text-foreground">{t('contextDash.title')}</h1>
+          <p className="text-xs text-foreground-dim mt-1">{t('contextDash.subtitle')}</p>
         </div>
         <div className="flex gap-2">
           <button
@@ -318,13 +320,13 @@ export default function ContextDashboard() {
             disabled={optimizing}
             className="rounded-md bg-success-text px-4 py-2 text-sm font-medium text-white hover:bg-success-text/80 disabled:opacity-50"
           >
-            {optimizing ? '⏳ 优化中...' : '🧹 一键清理'}
+            {optimizing ? t('contextDash.optimizing') : t('contextDash.optimize')}
           </button>
           <button
             onClick={() => setShowCreate(true)}
             className="rounded-md bg-brand-purple px-4 py-2 text-sm font-medium text-white hover:bg-brand-purple/80"
           >
-            + 添加
+            {t('contextDash.add')}
           </button>
         </div>
       </div>
@@ -333,7 +335,7 @@ export default function ContextDashboard() {
       {optimizeResult && (
         <div className="rounded-lg border border-success-text/20 bg-success-bg p-3 text-sm text-success-text flex items-center gap-2">
           <span>✅</span>
-          <span>释放 {optimizeResult.saved_tokens} tokens，裁剪 {optimizeResult.pruned_count} 项，摘要 {optimizeResult.summarized_count} 项</span>
+          <span>{t('contextDash.optSummary').replace('{saved}', String(optimizeResult.saved_tokens)).replace('{pruned}', String(optimizeResult.pruned_count)).replace('{summarized}', String(optimizeResult.summarized_count))}</span>
           <button onClick={() => setOptimizeResult(null)} className="ml-auto text-success-text/60 hover:text-success-text">✕</button>
         </div>
       )}
@@ -342,10 +344,10 @@ export default function ContextDashboard() {
       {stats && (
         <div className="space-y-3">
           <div className="grid grid-cols-4 gap-3">
-            <StatCard icon="📊" label="总 Tokens" value={stats.total_tokens.toLocaleString()} sub={`/${stats.context_window.toLocaleString()}`} />
-            <StatCard icon="📌" label="已固定" value={stats.pinned_tokens.toLocaleString()} sub={`${stats.item_count} 项`} />
-            <StatCard icon="💬" label="会话占用" value={stats.session_tokens.toLocaleString()} />
-            <StatCard icon="🔍" label="RAG 占用" value={stats.rag_tokens.toLocaleString()} />
+            <StatCard icon="📊" label={t('contextDash.stat.totalTokens')} value={stats.total_tokens.toLocaleString()} sub={`/${stats.context_window.toLocaleString()}`} />
+            <StatCard icon="📌" label={t('contextDash.pinned')} value={stats.pinned_tokens.toLocaleString()} sub={t('contextDash.nItems').replace('{n}', String(stats.item_count))} />
+            <StatCard icon="💬" label={t('contextDash.stat.session')} value={stats.session_tokens.toLocaleString()} />
+            <StatCard icon="🔍" label={t('contextDash.stat.rag')} value={stats.rag_tokens.toLocaleString()} />
           </div>
           <TokenBudgetBar used={stats.total_tokens} total={stats.context_window} />
         </div>
@@ -358,7 +360,7 @@ export default function ContextDashboard() {
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="🔍 搜索上下文..."
+            placeholder={t('contextDash.searchPlaceholder')}
             className="w-full rounded-md border border-border-default pl-8 pr-3 py-1.5 text-sm focus:border-brand-purple focus:outline-none focus:ring-1 focus:ring-brand-purple"
           />
           <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-foreground-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -370,7 +372,7 @@ export default function ContextDashboard() {
             onClick={() => setFilterScope(null)}
             className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${!filterScope ? 'bg-brand-purple text-white' : 'bg-card-bg-hover text-foreground-dim hover:bg-elevated-bg'}`}
           >
-            全部
+            {t('contextDash.all')}
           </button>
           {Object.entries(SCOPE_LABELS).map(([key, val]) => (
             <button
@@ -386,20 +388,20 @@ export default function ContextDashboard() {
           onClick={() => setFilterPinned(!filterPinned)}
           className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${filterPinned ? 'bg-amber-500 text-white' : 'bg-card-bg-hover text-foreground-dim hover:bg-elevated-bg'}`}
         >
-          📌 已固定
+          {t('contextDash.pinnedItems')}
         </button>
       </div>
 
       {/* 上下文项列表 */}
       <div>
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-foreground-dim">
-          上下文项 ({filteredItems.length}/{items.length})
+          {t('contextDash.items').replace('{filtered}', String(filteredItems.length)).replace('{total}', String(items.length))}
         </h2>
         {loading ? (
-          <div className="py-8 text-center text-foreground-muted">加载中...</div>
+          <div className="py-8 text-center text-foreground-muted">{t('profile.loading')}</div>
         ) : filteredItems.length === 0 ? (
           <div className="rounded-lg border border-border-default bg-card-bg py-8 text-center text-foreground-muted">
-            {items.length === 0 ? '暂无上下文项，点击右上角"添加"创建' : '无匹配结果'}
+            {items.length === 0 ? t('contextDash.empty') : t('contextDash.noMatch')}
           </div>
         ) : (
           <div className="space-y-2">
@@ -413,10 +415,10 @@ export default function ContextDashboard() {
       {/* 上下文流 */}
       <div>
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-foreground-dim">
-          📋 访问记录 ({flows.length})
+          {t('contextDash.accessLog').replace('{n}', String(flows.length))}
         </h2>
         {flows.length === 0 ? (
-          <div className="rounded-lg border border-border-default bg-card-bg py-8 text-center text-foreground-muted">暂无访问记录</div>
+          <div className="rounded-lg border border-border-default bg-card-bg py-8 text-center text-foreground-muted">{t('contextDash.noFlows')}</div>
         ) : (
           <div className="space-y-1.5">
             {flows.map((flow) => (
@@ -427,7 +429,7 @@ export default function ContextDashboard() {
                   <span className="rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] text-violet-400">
                     {SCOPE_LABELS[flow.scope]?.icon} {SCOPE_LABELS[flow.scope]?.label || flow.scope}
                   </span>
-                  <span className="text-xs text-foreground-dim">{flow.keys?.length || 0} 项</span>
+                  <span className="text-xs text-foreground-dim">{t('contextDash.nItems').replace('{n}', String(flow.keys?.length || 0))}</span>
                 </div>
                 <div className="text-xs text-foreground-dim">{flow.tokens} tok</div>
               </div>

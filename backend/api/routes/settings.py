@@ -20,7 +20,9 @@ from backend.repositories import SettingRepository
 from backend.schemas.setting import SettingRead, SettingUpdate
 from backend.schemas.user import UserRead
 
-from ..dependencies import get_current_user, get_setting_repo, require_admin
+from ..dependencies import get_current_user, get_setting_repo, get_session_repo, require_admin
+
+logger = logging.getLogger(__name__)
 
 logger = logging.getLogger(__name__)
 
@@ -226,11 +228,17 @@ PROVIDER_PRESETS: list[dict[str, Any]] = [
         "help_text": "在讯飞星辰 MaaS 控制台创建 API Key",
         "llm": {
             "llm_provider": "openai-compatible",
-            "llm_base_url": "https://maas-api.cn-huabei-1.xf-yun.com/v2",
-            "llm_model": "xop3qwen30b",
+            "llm_base_url": "https://maas-coding-api.cn-huabei-1.xf-yun.com/v2",
+            "llm_model": "xopglm51",
             "llm_api_key": "",
         },
-        "models": [],
+        "models": [
+            "xopglm51", "xopglm52", "xopglm5", "xopglmv47flash",
+            "xopkimik26", "xopkimik25", "xminimaxm25",
+            "xopdeepseekv4flash", "xopdeepseekv32", "xopdeepseekv4pro",
+            "xopqwen35397b", "xopqwen36v35b", "xop3qwencodernext",
+            "xsparkx2", "xsparkx2flash", "xsparkx2agent", "auto",
+        ],
         "embedding": None,
         "supports_multi_key": True,
     },
@@ -432,7 +440,10 @@ class TestLLMBody(BaseModel):
 
 def _models_url(base_url: str) -> str:
     base = (base_url or "").rstrip("/")
-    if base.endswith("/v1") or base.endswith("/v4") or base.endswith("/api"):
+    # 已带 API 版本号后缀（/v1 /v2 /v3 /v4 /api 等）直接拼 /models，
+    # 否则默认补 /v1/models。修复讯飞 /v2 端点被拼成 /v2/v1/models → 301 → 403。
+    import re as _re
+    if _re.search(r"/(v\d+|api)$", base):
         return f"{base}/models"
     return f"{base}/v1/models"
 
@@ -604,7 +615,7 @@ async def fetch_provider_models(
                     return {
                         "ok": False,
                         "models": [],
-                        "message": "连接成功，但供应商未返回任何模型",
+                        "message": "连接成功，但该服务未返回模型列表（部分供应商如讯飞 MaaS 不支持此接口）。请手动填写模型名后直接「保存并测试」。",
                         "source": url,
                     }
                 return {
@@ -1197,6 +1208,8 @@ async def list_remote_models(
 class SelectModelBody(BaseModel):
     provider_id: str
     model: str
+    # 可选：传入当前会话 id 时，同步重建该会话的 LLM 快照，使切换立即生效
+    session_id: Optional[str] = None
 
 
 class SetFallbackModelBody(BaseModel):
@@ -1349,6 +1362,13 @@ async def get_model_catalog(
     成功拉取会写回 cached_models。fetch_models=false 时用缓存回显，避免回访变 0。
     """
     catalog = await model_catalog_mod.load_catalog(repo)
+    cleaned = model_catalog_mod.prune_orphan_providers(catalog)
+    if cleaned != catalog:
+        catalog = cleaned
+        try:
+            await model_catalog_mod.save_catalog(repo, catalog)
+        except Exception:
+            pass
     # OAuth token 临近过期时刷新
     try:
         catalog = await model_catalog_mod.ensure_oauth_token_fresh(catalog)
@@ -1450,7 +1470,12 @@ async def register_provider_in_catalog(
     repo: Annotated[SettingRepository, Depends(get_setting_repo)],
 ):
     """设置页保存供应商后登记到多供应商目录。"""
+    if not (data.llm_base_url or "").strip() and data.llm_provider != "ollama":
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=400, detail="llm_base_url 不能为空")
     catalog = await model_catalog_mod.load_catalog(repo)
+    catalog = model_catalog_mod.prune_orphan_providers(catalog)
     catalog = model_catalog_mod.upsert_provider(
         catalog,
         provider_id=data.id,
@@ -1500,6 +1525,7 @@ async def select_active_model(
     request: Request,
     current_user: Annotated[UserRead, Depends(get_current_user)],
     repo: Annotated[SettingRepository, Depends(get_setting_repo)],
+    session_repo=Depends(get_session_repo),
 ):
     """对话页切换当前供应商 + 模型，立即生效。"""
     catalog = await model_catalog_mod.load_catalog(repo)
@@ -1522,18 +1548,20 @@ async def select_active_model(
     await model_catalog_mod.save_catalog(repo, catalog)
     model_catalog_mod.apply_active_to_runtime(catalog)
 
-    from backend.core.model_limits import limits_for_model
+    from backend.core import model_gen_params as gen_params_mod
 
-    lim = limits_for_model(data.model)
+    # Prefer user-saved per-model gen params; seed from limits on first use
+    slot = await gen_params_mod.get_params(
+        repo, data.provider_id, data.model, create_if_missing=True
+    )
+    await gen_params_mod.apply_params_to_global_settings(repo, slot)
 
-    # 同步 llm_* 设置 + 上下文窗口
+    # 同步 llm_* 连接设置
     await repo.upsert("llm_provider", provider["llm_provider"], "llm")
     await repo.upsert("llm_base_url", provider["llm_base_url"], "llm")
     await repo.upsert("llm_model", data.model, "llm")
     if provider.get("llm_api_key"):
         await repo.upsert("llm_api_key", provider["llm_api_key"], "llm")
-    await repo.upsert("context_window", lim["context_window"], "llm")
-    await repo.upsert("max_tokens", lim["max_tokens"], "llm")
 
     await log_action(
         AuditAction.SETTINGS_UPDATE,
@@ -1543,24 +1571,66 @@ async def select_active_model(
         resource_id=f"{data.provider_id}/{data.model}",
         details={
             "action": "select",
-            "context_window": lim["context_window"],
-            "max_tokens": lim["max_tokens"],
+            "context_window": slot["context_window"],
+            "max_tokens": slot["max_tokens"],
+            "temperature": slot["temperature"],
         },
     )
+    # 可选：同步更新当前会话的 LLM 快照，使对话框内切换立即生效
+    # （session 创建时快照被锁定，不改则本会话仍走旧 provider，导致"切不过去"）
+    if data.session_id:
+        try:
+            import uuid as _uuid
+
+            sid = _uuid.UUID(str(data.session_id))
+            new_snap = model_catalog_mod.build_llm_snapshot(
+                provider,
+                data.model,
+                temperature=slot.get("temperature"),
+                max_tokens=slot.get("max_tokens"),
+                context_window=slot.get("context_window"),
+            )
+            cfg = await session_repo.get_config(sid)
+            cfg = dict(cfg) if isinstance(cfg, dict) else {}
+            cfg["llm"] = new_snap
+            await session_repo.update_config(sid, cfg)
+            logger.info(
+                "session %s llm snapshot updated on provider switch -> %s/%s",
+                sid,
+                data.provider_id,
+                data.model,
+            )
+        except (ValueError, AttributeError) as e:
+            logger.warning("invalid session_id on model select: %s", e)
+        except Exception as e:  # noqa: BLE001
+            # 快照更新失败不影响切换本身
+            logger.warning("update session llm snapshot failed: %s", e)
     _notify_settings_changed(
         current_user.id,
-        ["active_provider_id", "active_model", "llm_provider", "llm_model", "llm_base_url"],
+        [
+            "active_provider_id",
+            "active_model",
+            "llm_provider",
+            "llm_model",
+            "llm_base_url",
+            "temperature",
+            "max_tokens",
+            "context_window",
+            gen_params_mod.SETTING_KEY,
+        ],
     )
     return {
         "ok": True,
         "active_provider_id": data.provider_id,
         "active_model": data.model,
         "provider_name": provider.get("name") or data.provider_id,
-        "context_window": lim["context_window"],
-        "max_tokens": lim["max_tokens"],
+        "context_window": slot["context_window"],
+        "max_tokens": slot["max_tokens"],
+        "temperature": slot["temperature"],
+        "gen_params": slot,
         "message": (
             f"已切换到 {provider.get('name')} / {data.model}"
-            f"（上下文 {lim['context_window']//1000}K · 生成上限 {lim['max_tokens']}）"
+            f"（温度 {slot['temperature']} · 上下文 {slot['context_window']//1000}K · 生成上限 {slot['max_tokens']}）"
         ),
     }
 
@@ -1733,6 +1803,59 @@ async def upsert_provider_credential(
     }
 
 
+
+@router.post("/model-catalog/delete-provider")
+async def delete_catalog_provider(
+    data: dict,
+    request: Request,
+    current_user: Annotated[UserRead, Depends(require_admin)],
+    repo: Annotated[SettingRepository, Depends(get_setting_repo)],
+):
+    """删除已配置供应商（Hermes disconnect）。body: {provider_id}"""
+    from fastapi import HTTPException
+
+    pid = str((data or {}).get("provider_id") or "").strip()
+    if not pid:
+        raise HTTPException(status_code=400, detail="provider_id 不能为空")
+    catalog = await model_catalog_mod.load_catalog(repo)
+    try:
+        catalog = model_catalog_mod.delete_provider(catalog, pid)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    await model_catalog_mod.save_catalog(repo, catalog)
+    if catalog.get("active_provider_id"):
+        model_catalog_mod.apply_active_to_runtime(catalog)
+        active = next(
+            (p for p in catalog["providers"] if p["id"] == catalog["active_provider_id"]),
+            None,
+        )
+        if active:
+            await repo.upsert(
+                "llm_provider", active.get("llm_provider") or "openai-compatible", "llm"
+            )
+            await repo.upsert("llm_base_url", active.get("llm_base_url") or "", "llm")
+            await repo.upsert("llm_model", catalog.get("active_model") or "", "llm")
+            key = active.get("llm_api_key") or ""
+            if key and "..." not in key:
+                await repo.upsert("llm_api_key", key, "llm")
+    await log_action(
+        AuditAction.SETTINGS_UPDATE,
+        request=request,
+        user_id=current_user.id,
+        resource_type="model_catalog",
+        resource_id=pid,
+        details={"action": "delete_provider"},
+    )
+    _notify_settings_changed(current_user.id, ["active_provider_id", "active_model", "llm_model"])
+    return {
+        "ok": True,
+        "message": f"已删除供应商 {pid}",
+        "catalog": model_catalog_mod.mask_catalog_for_client(catalog),
+        "active_provider_id": catalog.get("active_provider_id") or "",
+        "active_model": catalog.get("active_model") or "",
+    }
+
+
 @router.post("/model-catalog/select-credential")
 async def select_provider_credential(
     data: SelectCredentialBody,
@@ -1836,9 +1959,11 @@ async def apply_settings_batch(
         "llm_model": "llm",
         "llm_base_url": "llm",
         "llm_api_key": "llm",
+        "default_llm_model": "llm",
         "max_tokens": "llm",
         "context_window": "llm",
         "temperature": "llm",
+        "llm_model_gen_params": "llm",
         "embedding_provider": "embedding",
         "embedding_model": "embedding",
         "embedding_base_url": "embedding",
@@ -1895,8 +2020,35 @@ async def apply_settings_batch(
         reset=True,
     )
 
+
+    # 生成参数绑定到当前激活模型（温度/max_tokens/context_window）
+    gen_keys = {"temperature", "max_tokens", "context_window"}
+    if gen_keys & set(saved_keys):
+        try:
+            from backend.core import model_gen_params as gen_params_mod
+            from backend.core import model_catalog as model_catalog_mod
+
+            cat = await model_catalog_mod.load_catalog(repo)
+            pid = str(cat.get("active_provider_id") or "").strip()
+            mid = str(cat.get("active_model") or data.items.get("llm_model") or "").strip()
+            if mid:
+                payload = {}
+                if "temperature" in saved_keys:
+                    payload["temperature"] = data.items.get("temperature")
+                if "max_tokens" in saved_keys:
+                    payload["max_tokens"] = data.items.get("max_tokens")
+                if "context_window" in saved_keys:
+                    payload["context_window"] = data.items.get("context_window")
+                await gen_params_mod.upsert_params(repo, pid, mid, payload)
+                saved_keys.append(gen_params_mod.SETTING_KEY)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("bind gen params to model failed: %s", e)
+
     # 同步登记到多供应商目录（对话页下拉可选）
     try:
+        from backend.core import model_catalog as model_catalog_mod
+
         items = data.items
         if any(k.startswith("llm_") for k in items):
             provider_type = str(items.get("llm_provider") or "")
@@ -1905,21 +2057,25 @@ async def apply_settings_batch(
             api_key = items.get("llm_api_key")
             if isinstance(api_key, str) and ("..." in api_key or api_key == "***"):
                 api_key = None
-            # 推断目录 id / 名称
             pid = str(items.get("provider_catalog_id") or "")
             pname = str(items.get("provider_catalog_name") or "")
             picon = str(items.get("provider_catalog_icon") or "🤖")
+            base_l = base_url.lower()
             if not pid:
-                if "deepseek" in base_url:
+                if "deepseek" in base_l:
                     pid, pname = "deepseek", pname or "DeepSeek"
-                elif "dashscope" in base_url or "aliyun" in base_url:
+                elif "dashscope" in base_l or "aliyun" in base_l:
                     pid, pname = "qwen", pname or "通义千问"
-                elif "moonshot" in base_url:
+                elif "moonshot" in base_l:
                     pid, pname = "moonshot", pname or "Kimi"
-                elif "bigmodel" in base_url:
+                elif "bigmodel" in base_l:
                     pid, pname = "zhipu", pname or "智谱 GLM"
-                elif "openrouter" in base_url:
+                elif "openrouter" in base_l:
                     pid, pname = "openrouter", pname or "OpenRouter"
+                elif "opencode.ai/zen/go" in base_l:
+                    pid, pname = "opencode-go", pname or "OpenCode Go"
+                elif "opencode.ai/zen" in base_l:
+                    pid, pname = "opencode-zen", pname or "OpenCode Zen"
                 elif provider_type == "ollama":
                     pid, pname = "ollama", pname or "本地运行"
                 elif provider_type == "openai":
@@ -1927,9 +2083,31 @@ async def apply_settings_batch(
                 elif provider_type == "anthropic":
                     pid, pname = "anthropic", pname or "Claude"
                 else:
-                    pid = provider_type or "custom"
+                    pid = (
+                        provider_type
+                        if provider_type and provider_type != "openai-compatible"
+                        else ""
+                    )
                     pname = pname or pid
+
             catalog = await model_catalog_mod.load_catalog(repo)
+            catalog = model_catalog_mod.prune_orphan_providers(catalog)
+
+            if (not pid or pid == "custom") and base_url:
+                matched = model_catalog_mod.match_provider_id_by_base_url(catalog, base_url)
+                if matched:
+                    pid = matched
+                    hit = next(
+                        (x for x in catalog["providers"] if x.get("id") == matched), None
+                    )
+                    if hit:
+                        pname = pname or str(hit.get("name") or matched)
+            if not pid:
+                pid = "custom" if base_url else ""
+
+            if (not base_url and provider_type != "ollama") or not pid:
+                raise RuntimeError("skip catalog upsert: missing base_url/provider_id")
+
             add_new = str(items.get("add_as_new_credential") or "").lower() in {
                 "1",
                 "true",
@@ -1950,10 +2128,12 @@ async def apply_settings_batch(
                 credential_label=cred_label,
                 add_as_new_credential=add_new,
             )
+            catalog = model_catalog_mod.prune_orphan_providers(catalog)
             await model_catalog_mod.save_catalog(repo, catalog)
     except Exception as e:
         # 目录登记失败不影响主配置
         import logging
+
         logging.getLogger(__name__).warning("model catalog upsert skipped: %s", e)
 
     await log_action(
@@ -2044,7 +2224,8 @@ async def test_llm_connection(
                 "messages": [{"role": "user", "content": "hi"}],
             }
         else:
-            if base_url.endswith("/v1") or base_url.endswith("/v4"):
+            import re as _re
+            if _re.search(r"/(v\d+|api)$", base_url):
                 url = f"{base_url}/chat/completions"
             else:
                 url = f"{base_url}/v1/chat/completions"

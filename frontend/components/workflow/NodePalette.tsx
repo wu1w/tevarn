@@ -4,15 +4,16 @@ import React, { useEffect, useState } from 'react';
 import { WorkflowNodeType } from '@/types';
 import { subAgentApi } from '@/lib/subagent-api';
 import type { SubAgent } from '@/types/subagent';
+import { useT } from '@/stores/localeStore';
 
 const CATEGORY_LABELS: Record<string, string> = {
-  input: '输入输出',
-  output: '输入输出',
-  ai: 'AI 能力',
-  utility: '工具',
-  logic: '逻辑控制',
-  custom: '自定义',
-  subagent: '子代理',
+  input: 'workflow._e143',
+  output: 'workflow._e143',
+  ai: 'workflow._e144',
+  utility: 'memory.type.tool',
+  logic: 'workflow._e145',
+  custom: 'memory.type.custom',
+  subagent: 'nav.profiles',
 };
 
 const CATEGORY_ORDER = ['subagent', 'input', 'ai', 'utility', 'logic', 'custom'];
@@ -33,6 +34,7 @@ interface NodePaletteProps {
 }
 
 export default function NodePalette({ nodeTypes, subAgents: subAgentsProp }: NodePaletteProps) {
+  const t = useT();
   const [subAgents, setSubAgents] = useState<SubAgent[]>(subAgentsProp || []);
 
   useEffect(() => {
@@ -69,25 +71,25 @@ export default function NodePalette({ nodeTypes, subAgents: subAgentsProp }: Nod
       nodeTypes.find((n) => n.type === 'sub_agent') ||
       ({
         type: 'sub_agent',
-        label: '子代理',
+        label: t('nav.profiles'),
         category: 'ai',
-        description: '调用已配置子代理',
+        description: t('workflow._e146'),
         icon: 'users',
         color: '#a855f7',
         inputs: [
-          { name: 'task', label: '任务描述', type: 'string', required: true },
-          { name: 'context', label: '上下文', type: 'string', required: false },
+          { name: 'task', label: t('workflow._e147'), type: 'string', required: true },
+          { name: 'context', label: t('nav.context'), type: 'string', required: false },
         ],
         outputs: [
-          { name: 'result', label: '结果', type: 'string' },
-          { name: 'agent_name', label: '子代理名', type: 'string' },
-          { name: 'model_ref', label: '模型引用', type: 'string' },
+          { name: 'result', label: t('tools.form.result'), type: 'string' },
+          { name: 'agent_name', label: t('workflow._e148'), type: 'string' },
+          { name: 'model_ref', label: t('workflow._e149'), type: 'string' },
         ],
         config_schema: [
-          { key: 'sub_agent_id', label: '子代理 ID', type: 'text', default: '', required: true },
-          { key: 'sub_agent_name', label: '子代理名称', type: 'text', default: '' },
-          { key: 'max_steps', label: '最大步数', type: 'number', default: 5 },
-          { key: 'append_system_prompt', label: '追加系统提示', type: 'textarea', default: '' },
+          { key: 'sub_agent_id', label: t('workflow._e150'), type: 'text', default: '', required: true },
+          { key: 'sub_agent_name', label: t('workflow._e151'), type: 'text', default: '' },
+          { key: 'max_steps', label: t('workflow._e152'), type: 'number', default: 5 },
+          { key: 'append_system_prompt', label: t('workflow._e153'), type: 'textarea', default: '' },
         ],
       } as WorkflowNodeType),
     [nodeTypes]
@@ -122,7 +124,7 @@ export default function NodePalette({ nodeTypes, subAgents: subAgentsProp }: Nod
   return (
     <div className="flex h-full w-64 flex-col border-r border-border-default bg-card-bg">
       <div className="border-b border-gray-100 px-4 py-3">
-        <h2 className="text-sm font-semibold text-foreground">组件库</h2>
+        <h2 className="text-sm font-semibold text-foreground">{t('workflow._e26')}</h2>
         <p className="mt-0.5 text-[10px] text-foreground-muted">拖拽组件到画布 · 子代理来自画像</p>
       </div>
       <div className="flex-1 overflow-y-auto p-3">
@@ -133,7 +135,7 @@ export default function NodePalette({ nodeTypes, subAgents: subAgentsProp }: Nod
           </h3>
           {subAgents.length === 0 ? (
             <div className="rounded-md border border-dashed border-border-default px-3 py-2 text-[10px] text-foreground-muted">
-              暂无子代理。请到 <span className="font-medium text-foreground">画像 /profiles</span> 创建后再拖到画布。
+              暂无子代理。请到 <span className="font-medium text-foreground">{t('workflow._e27')}</span> 创建后再拖到画布。
             </div>
           ) : (
             <div className="space-y-1.5">
@@ -151,7 +153,7 @@ export default function NodePalette({ nodeTypes, subAgents: subAgentsProp }: Nod
                   <div className="min-w-0">
                     <div className="truncate text-xs font-medium text-foreground">{agent.name}</div>
                     <div className="truncate text-[10px] text-foreground-muted">
-                      {agent.model_ref || agent.description || '子代理'}
+                      {agent.model_ref || agent.description || t('nav.profiles')}
                     </div>
                   </div>
                 </div>

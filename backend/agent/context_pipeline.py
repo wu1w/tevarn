@@ -225,12 +225,19 @@ class PipelineContextEngine(ContextEngine):
         # Keep non-tool structure lightly: drop pure tool rows in mid, keep user/assistant
         kept_mid: list[dict[str, Any]] = []
         dropped_tools = 0
+        # 记录被剥掉 tool_calls 的 tool_call_id：它们的 tool 结果消息若落在
+        # head/tail 保护区，会变成孤儿（assistant.tool_calls 已丢失），必须一并剔除，
+        # 否则严格 OpenAI 兼容网关（如 Kimi）会以 400 拒绝。
+        stripped_tc_ids: set[str] = set()
         for m in mid:
             if m.get("role") == "tool":
                 dropped_tools += 1
                 continue
             # strip heavy tool_calls from mid assistants (keep text)
             if m.get("role") == "assistant" and m.get("tool_calls"):
+                for tc in m["tool_calls"]:
+                    if isinstance(tc, dict) and tc.get("id"):
+                        stripped_tc_ids.add(str(tc["id"]))
                 content = m.get("content") or f"[tool calls omitted x{len(m['tool_calls'])}]"
                 kept_mid.append({"role": "assistant", "content": content})
             else:
@@ -238,6 +245,23 @@ class PipelineContextEngine(ContextEngine):
 
         if dropped_tools < 3:
             return messages, 0
+
+        # 从保护区中剔除已成为孤儿的 tool 消息（其 tool_call_id 已被剥掉）
+        def _drop_orphan_tools(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            if not stripped_tc_ids:
+                return rows
+            return [
+                r
+                for r in rows
+                if not (
+                    r.get("role") == "tool"
+                    and r.get("tool_call_id")
+                    and str(r["tool_call_id"]) in stripped_tc_ids
+                )
+            ]
+
+        head = _drop_orphan_tools(head)
+        tail = _drop_orphan_tools(tail)
 
         note = {
             "role": "system",
@@ -328,7 +352,26 @@ class PipelineContextEngine(ContextEngine):
             "content": body,
             "_compressed_summary": True,
         }
+        # 压缩后 tail 中可能残留"孤儿 tool 消息"：其 tool_call_id 对应的
+        # assistant.tool_calls 落在被压缩的 head 区段，已随摘要消失。
+        # 统一收集新序列中仍存在的 tool_call_id，剔除不匹配的 tool 消息，
+        # 避免严格 OpenAI 兼容网关（如 Kimi）以 400 拒绝。
         new_messages = stable_systems + [summary_msg] + tail
+        live_tc_ids: set[str] = set()
+        for m in new_messages:
+            if m.get("role") == "assistant":
+                for tc in m.get("tool_calls") or []:
+                    if isinstance(tc, dict) and tc.get("id"):
+                        live_tc_ids.add(str(tc["id"]))
+        new_messages = [
+            m
+            for m in new_messages
+            if not (
+                m.get("role") == "tool"
+                and m.get("tool_call_id")
+                and str(m["tool_call_id"]) not in live_tc_ids
+            )
+        ]
         return new_messages, {
             "applied": True,
             "dropped_messages": len(head),

@@ -3,12 +3,14 @@
 import React, { useEffect, useState } from 'react';
 import { GitStatus as GitStatusData, GitBranch, GitDiff } from '@/types';
 import { getGitStatus, getGitBranches, getGitDiff } from '@/lib/api';
+import { useT } from '@/stores/localeStore';
 
 interface GitStatusProps {
   onSelectFile?: (path: string) => void;
 }
 
 export function GitStatusWidget({ onSelectFile }: GitStatusProps) {
+  const t = useT();
   const [status, setStatus] = useState<GitStatusData | null>(null);
   const [branches, setBranches] = useState<GitBranch[]>([]);
   const [loading, setLoading] = useState(true);
@@ -155,11 +157,11 @@ export function GitStatusWidget({ onSelectFile }: GitStatusProps) {
               {diffContent.unstaged ? (
                 <pre className="rounded-lg bg-black/5 border border-border-subtle p-2 text-[10px] text-foreground-dim overflow-x-auto max-h-48 font-mono leading-relaxed">
                   {diffContent.unstaged.length > 1500
-                    ? diffContent.unstaged.slice(0, 1500) + '\n... (已截断)'
+                    ? diffContent.unstaged.slice(0, 1500) + t('layout._e111')
                     : diffContent.unstaged}
                 </pre>
               ) : (
-                <span className="text-[10px] text-foreground-dim">无待提交变更</span>
+                <span className="text-[10px] text-foreground-dim">{t('layout._e17')}</span>
               )}
             </div>
           )}
@@ -167,7 +169,7 @@ export function GitStatusWidget({ onSelectFile }: GitStatusProps) {
           {/* Branches list */}
           {branches.length > 0 && (
             <div>
-              <div className="text-[10px] font-medium text-foreground-muted mb-1">分支</div>
+              <div className="text-[10px] font-medium text-foreground-muted mb-1">{t('layout._e18')}</div>
               {branches.slice(0, 5).map((b) => (
                 <div
                   key={b.name}

@@ -1,6 +1,7 @@
 'use client';
 
 import { useToastStore, ToastType } from '@/stores/toastStore';
+import { useT } from '@/stores/localeStore';
 
 const typeStyles: Record<ToastType, string> = {
   error: 'border-error-text/30 bg-error-bg text-error-text',
@@ -27,6 +28,7 @@ const typeIcons: Record<ToastType, React.ReactNode> = {
 };
 
 export default function Toasts() {
+  const t = useT();
   const { toasts, removeToast } = useToastStore();
 
   if (toasts.length === 0) return null;
@@ -44,7 +46,7 @@ export default function Toasts() {
           <button
             onClick={() => removeToast(toast.id)}
             className="ml-2 text-lg leading-none opacity-60 hover:opacity-100 transition-opacity text-foreground-dim hover:text-foreground"
-            aria-label="关闭"
+            aria-label={t('store.close')}
           >
             ×
           </button>

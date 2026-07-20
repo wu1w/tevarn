@@ -22,6 +22,10 @@ frontend/release/
 frontend/.asar-stage/
 frontend/e2e/screenshots/
 frontend/e2e/test-results/
+frontend/test-results/
+*.tsbuildinfo
+frontend/next-env.d.ts
+_run_dev_backend.py
 frontend/playwright-report/
 **/win-unpacked/
 **/*.asar
@@ -50,6 +54,9 @@ test_extract/
 **/secrets.json
 **/*token*
 !**/tokenizer*
+# token_meter.py 是核心源码（非密钥），上面 *token* 会误伤，必须豁免
+!**/token_meter.py
+!**/test_token_meter_robust.py
 *.pem
 *.key
 
@@ -58,3 +65,5 @@ tray-icon.png
 *.exe
 *.msi
 *.AppImage
+frontend/dist/
+logs/

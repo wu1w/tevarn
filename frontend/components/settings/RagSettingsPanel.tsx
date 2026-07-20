@@ -11,6 +11,7 @@ import {
 } from '@/lib/api';
 import { Setting } from '@/types';
 import { useToastStore } from '@/stores/toastStore';
+import { useT } from '@/stores/localeStore';
 
 function mapVal(settings: Setting[], key: string, fallback = ''): string {
   const s = settings.find((x) => x.key === key);
@@ -24,6 +25,7 @@ interface Props {
 }
 
 export function RagSettingsPanel({ settings, onSaved }: Props) {
+  const t = useT();
   const addToast = useToastStore((s) => s.addToast);
   const [presets, setPresets] = useState<RagStackPreset[]>([]);
   const [selectedId, setSelectedId] = useState('');
@@ -60,7 +62,7 @@ export function RagSettingsPanel({ settings, onSaved }: Props) {
 
   const handleApply = useCallback(async () => {
     if (!selected) {
-      addToast('请先选择一种知识检索配置方案', 'error');
+      addToast(t('settings._e114'), 'error');
       return;
     }
     setSaving(true);
@@ -78,10 +80,10 @@ export function RagSettingsPanel({ settings, onSaved }: Props) {
         items.embedding_base_url = baseUrlOverride.trim();
       }
       const res = await applySettingsBatch(items);
-      addToast(res.message || '知识检索配置已保存', 'success');
+      addToast(res.message || t('settings._e115'), 'success');
       onSaved?.();
     } catch (e: unknown) {
-      addToast(e instanceof Error ? e.message : '保存失败', 'error');
+      addToast(e instanceof Error ? e.message : t('cron.saveFailed'), 'error');
     } finally {
       setSaving(false);
     }
@@ -97,7 +99,7 @@ export function RagSettingsPanel({ settings, onSaved }: Props) {
       setResults((prev) => ({ ...prev, [kind]: r }));
       addToast(r.message, r.ok ? 'success' : 'error');
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : '测试失败';
+      const msg = e instanceof Error ? e.message : t('channels.testFailed');
       setResults((prev) => ({ ...prev, [kind]: { ok: false, message: msg } }));
       addToast(msg, 'error');
     } finally {
@@ -123,7 +125,7 @@ export function RagSettingsPanel({ settings, onSaved }: Props) {
         <div>
           当前：
           <span className={statusLine.enabled ? 'text-success-text' : 'text-amber-400'}>
-            {statusLine.enabled ? ' RAG 开启' : ' RAG 关闭'}
+            {statusLine.enabled ? t('settings._e116') : t('settings._e117')}
           </span>
           <span className="mx-1.5 text-foreground-dim">·</span>
           Embedding <span className="font-mono text-brand-cyan">{statusLine.embProvider}/{statusLine.emb}</span>
@@ -180,7 +182,7 @@ export function RagSettingsPanel({ settings, onSaved }: Props) {
                 type="password"
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
-                placeholder="粘贴 API Key（如需）"
+                placeholder={t('settings._e21')}
                 className="w-full rounded-xl border border-border-default bg-input-bg px-3 py-2 text-sm"
                 autoComplete="off"
               />
@@ -188,7 +190,7 @@ export function RagSettingsPanel({ settings, onSaved }: Props) {
           )}
           {(selected.id === 'openai-compatible-embed' || selected.id.includes('openai')) && (
             <div>
-              <label className="mb-1 block text-xs text-foreground-muted">服务地址 / 模型名</label>
+              <label className="mb-1 block text-xs text-foreground-muted">{t('settings._e22')}</label>
               <input
                 type="text"
                 value={baseUrlOverride}
@@ -205,7 +207,7 @@ export function RagSettingsPanel({ settings, onSaved }: Props) {
               disabled={saving}
               className="rounded-xl bg-gradient-to-r from-brand-purple to-brand-cyan px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
             >
-              {saving ? '保存中…' : '保存此方案'}
+              {saving ? t('memory.saving') : t('settings.saveStack')}
             </button>
             <button
               type="button"
@@ -213,7 +215,7 @@ export function RagSettingsPanel({ settings, onSaved }: Props) {
               disabled={!!testing}
               className="rounded-xl border border-border-default bg-card-bg px-3 py-2 text-sm text-foreground-muted hover:text-foreground disabled:opacity-50"
             >
-              {testing === 'embed' ? '测试中…' : '测 Embedding'}
+              {testing === 'embed' ? t('settings.testing') : t('settings.testEmbed')}
             </button>
             <button
               type="button"
@@ -221,7 +223,7 @@ export function RagSettingsPanel({ settings, onSaved }: Props) {
               disabled={!!testing}
               className="rounded-xl border border-border-default bg-card-bg px-3 py-2 text-sm text-foreground-muted hover:text-foreground disabled:opacity-50"
             >
-              {testing === 'qdrant' ? '测试中…' : '测 Qdrant'}
+              {testing === 'qdrant' ? t('settings.testing') : t('settings.testQdrant')}
             </button>
             <button
               type="button"
@@ -229,7 +231,7 @@ export function RagSettingsPanel({ settings, onSaved }: Props) {
               disabled={!!testing}
               className="rounded-xl border border-border-default bg-card-bg px-3 py-2 text-sm text-foreground-muted hover:text-foreground disabled:opacity-50"
             >
-              {testing === 'rerank' ? '测试中…' : '测 Reranker'}
+              {testing === 'rerank' ? t('settings.testing') : t('settings.testRerank')}
             </button>
           </div>
           {Object.entries(results).map(([k, v]) => (

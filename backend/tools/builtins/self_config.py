@@ -18,6 +18,21 @@ class ToolResult:
     data: dict[str, Any]
     message: str
 
+    def __str__(self) -> str:
+        # Agent loop 非 str 结果会 str()；优先给人读的 message
+        if self.message:
+            return self.message
+        import json
+
+        try:
+            return json.dumps(
+                {"success": self.success, "data": self.data},
+                ensure_ascii=False,
+                default=str,
+            )
+        except Exception:
+            return f"success={self.success}"
+
 
 # ── 字段敏感度分级 ──
 FIELD_SENSITIVITY: dict[str, Literal["low", "medium", "high"]] = {
@@ -221,38 +236,124 @@ class ListAvailableModels(BaseTool):
         )
 
     async def execute(self, provider: str = "", **kwargs: Any) -> ToolResult:
-        from backend.services.llm import LLMServiceFactory
-        from backend.core.config import settings
+            from backend.core.config import settings
 
-        target_provider = provider or getattr(settings, "llm_provider", "")
-        base_url = getattr(settings, "llm_base_url", "")
-        api_key = getattr(settings, "llm_api_key", "")
+            target_provider = (provider or getattr(settings, "llm_provider", "") or "").strip()
+            base_url = (getattr(settings, "llm_base_url", "") or "").rstrip("/")
+            api_key = getattr(settings, "llm_api_key", "") or ""
 
-        if not target_provider:
-            return ToolResult(success=False, data={}, message="未配置 LLM 服务商，请先设置 llm_provider")
+            # 优先从 model_catalog 取 active 供应商的 base/key
+            catalog_models: list[str] = []
+            try:
+                from backend.core import model_catalog as mc
+                from backend.repositories.setting_repo import AsyncSettingRepository
 
-        try:
-            from backend.lib.api import list_remote_models
-            res = await list_remote_models(
-                llm_provider=target_provider,
-                llm_base_url=base_url,
-                llm_api_key=api_key or None,
-            )
-            if res.get("ok") and res.get("models"):
-                models = res["models"]
-                return ToolResult(
-                    success=True,
-                    data={"provider": target_provider, "models": models, "count": len(models)},
-                    message=f"{target_provider} 可用模型 ({len(models)} 个): {', '.join(models[:10])}{'...' if len(models) > 10 else ''}"
-                )
-            else:
+                repo = AsyncSettingRepository()
+                cat = await mc.load_catalog(repo)
+                pid = str(cat.get("active_provider_id") or "")
+                p = None
+                if provider:
+                    p = next(
+                        (x for x in (cat.get("providers") or []) if x.get("id") == provider or x.get("llm_provider") == provider),
+                        None,
+                    )
+                if p is None and pid:
+                    p = next((x for x in (cat.get("providers") or []) if x.get("id") == pid), None)
+                if p is None and (cat.get("providers") or []):
+                    p = (cat.get("providers") or [])[0]
+                if p:
+                    target_provider = str(p.get("llm_provider") or target_provider or "openai-compatible")
+                    base_url = str(p.get("llm_base_url") or base_url).rstrip("/")
+                    api_key = mc._active_api_key(p) or api_key  # noqa: SLF001
+                    catalog_models = [
+                        str(m).strip()
+                        for m in (p.get("cached_models") or [])
+                        if str(m).strip()
+                    ]
+                    # also models list objects
+                    for m in p.get("models") or []:
+                        if isinstance(m, dict) and m.get("id"):
+                            mid = str(m["id"]).strip()
+                            if mid and mid not in catalog_models:
+                                catalog_models.append(mid)
+            except Exception as e:
+                logger.debug("catalog resolve for list models: %s", e)
+
+            if not target_provider and not base_url:
                 return ToolResult(
                     success=False,
-                    data={"provider": target_provider, "raw_response": res},
-                    message=f"未能获取模型列表: {res.get('message', '未知错误')}"
+                    data={},
+                    message="未配置 LLM 服务商，请先在设置中配置 provider / base_url",
                 )
-        except Exception as e:
-            return ToolResult(success=False, data={}, message=f"获取模型列表失败: {e}")
+
+            try:
+                from backend.api.routes.settings import fetch_provider_models
+
+                res = await fetch_provider_models(
+                    target_provider or "openai-compatible",
+                    base_url,
+                    str(api_key or ""),
+                )
+                if res.get("ok") and res.get("models"):
+                    models = [str(m) for m in res["models"] if m]
+                    return ToolResult(
+                        success=True,
+                        data={
+                            "provider": target_provider,
+                            "base_url": base_url,
+                            "models": models,
+                            "count": len(models),
+                            "source": res.get("source") or "remote",
+                        },
+                        message=(
+                            f"{target_provider} 可用模型 ({len(models)} 个): "
+                            f"{', '.join(models[:10])}{'...' if len(models) > 10 else ''}"
+                        ),
+                    )
+
+                # 远程失败 → 回退 catalog 缓存
+                if catalog_models:
+                    return ToolResult(
+                        success=True,
+                        data={
+                            "provider": target_provider,
+                            "base_url": base_url,
+                            "models": catalog_models,
+                            "count": len(catalog_models),
+                            "source": "catalog_cache",
+                            "remote_error": res.get("message"),
+                        },
+                        message=(
+                            f"远程拉取失败（{res.get('message') or 'unknown'}），"
+                            f"使用本地缓存 {len(catalog_models)} 个模型: "
+                            f"{', '.join(catalog_models[:10])}"
+                            f"{'...' if len(catalog_models) > 10 else ''}"
+                        ),
+                    )
+
+                return ToolResult(
+                    success=False,
+                    data={"provider": target_provider, "base_url": base_url, "raw": res},
+                    message=f"未能获取模型列表: {res.get('message', '未知错误')}",
+                )
+            except Exception as e:
+                logger.exception("list_available_models failed")
+                if catalog_models:
+                    return ToolResult(
+                        success=True,
+                        data={
+                            "provider": target_provider,
+                            "models": catalog_models,
+                            "count": len(catalog_models),
+                            "source": "catalog_cache",
+                            "error": str(e),
+                        },
+                        message=(
+                            f"远程异常（{e}），使用缓存模型: "
+                            f"{', '.join(catalog_models[:10])}"
+                        ),
+                    )
+                return ToolResult(success=False, data={}, message=f"获取模型列表失败: {e}")
 
 
 class ManageKnowledge(BaseTool):

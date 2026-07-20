@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import { useT } from '@/stores/localeStore';
 
 export type ConnectionState =
   | 'connected'
@@ -20,36 +21,36 @@ interface ConnectionIndicatorProps {
 
 const stateConfig: Record<
   ConnectionState,
-  { color: string; bg: string; label: string; pulse: boolean }
+  { color: string; bg: string; labelKey: string; pulse: boolean }
 > = {
   connected: {
     color: 'text-emerald-400',
     bg: 'bg-emerald-400',
-    label: '会话已连接',
+    labelKey: 'conn.connected',
     pulse: false,
   },
   ready: {
     color: 'text-emerald-400/80',
     bg: 'bg-emerald-400/70',
-    label: '服务就绪',
+    labelKey: 'conn.ready',
     pulse: false,
   },
   connecting: {
     color: 'text-amber-400',
     bg: 'bg-amber-400',
-    label: '连接中',
+    labelKey: 'conn.connecting',
     pulse: true,
   },
   disconnected: {
     color: 'text-rose-400',
     bg: 'bg-rose-400',
-    label: '服务异常',
+    labelKey: 'conn.disconnected',
     pulse: false,
   },
   reconnecting: {
     color: 'text-orange-400',
     bg: 'bg-orange-400',
-    label: '重连中',
+    labelKey: 'conn.reconnecting',
     pulse: true,
   },
 };
@@ -66,7 +67,9 @@ export function ConnectionIndicator({
   compact = false,
 }: ConnectionIndicatorProps) {
   const [showBanner, setShowBanner] = useState(false);
+  const t = useT();
   const config = stateConfig[state] || stateConfig.ready;
+  const label = t(config.labelKey as never);
 
   useEffect(() => {
     // 仅真正故障/重连时弹出
@@ -88,8 +91,8 @@ export function ConnectionIndicator({
           </span>
           <span className="text-xs font-medium text-foreground">
             {state === 'disconnected'
-              ? '后端服务暂不可用'
-              : `正在重连… (${retryCount}/${maxRetries})`}
+              ? t('conn.backendDown')
+              : `${t('conn.retrying')} (${retryCount}/${maxRetries})`}
           </span>
           {state === 'disconnected' && onReconnect && (
             <button
@@ -97,7 +100,7 @@ export function ConnectionIndicator({
               onClick={onReconnect}
               className="rounded-full bg-white/10 px-2.5 py-0.5 text-[11px] font-semibold text-foreground hover:bg-white/15 transition-colors"
             >
-              重试
+              {t('conn.retry')}
             </button>
           )}
         </div>
@@ -109,7 +112,7 @@ export function ConnectionIndicator({
     return (
       <div
         className="flex items-center gap-1.5 rounded-full border border-border-subtle bg-white/[0.03] px-2.5 py-1"
-        title={config.label}
+        title={label}
       >
         <span className="relative flex h-1.5 w-1.5">
           {config.pulse && (
@@ -117,13 +120,13 @@ export function ConnectionIndicator({
           )}
           <span className={`relative inline-flex h-1.5 w-1.5 rounded-full ${config.bg}`} />
         </span>
-        <span className={`text-[10px] font-medium ${config.color}`}>{config.label}</span>
+        <span className={`text-[10px] font-medium ${config.color}`}>{label}</span>
       </div>
     );
   }
 
   return (
-    <div className="flex items-center gap-1.5 text-xs" title={config.label}>
+    <div className="flex items-center gap-1.5 text-xs" title={label}>
       <span className="relative flex h-2 w-2">
         {config.pulse && (
           <span
@@ -132,7 +135,7 @@ export function ConnectionIndicator({
         )}
         <span className={`relative inline-flex h-2 w-2 rounded-full ${config.bg}`} />
       </span>
-      <span className={`${config.color} hidden sm:inline`}>{config.label}</span>
+      <span className={`${config.color} hidden sm:inline`}>{label}</span>
     </div>
   );
 }

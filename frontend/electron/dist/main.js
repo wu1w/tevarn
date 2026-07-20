@@ -542,7 +542,7 @@ function startFrontend() {
                     console.error(`[Takton] API proxy error: ${err.message}`);
                     res.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8' });
                     res.end(JSON.stringify({
-                        detail: `后端不可用 (${err.message})。请确认后端已在端口 ${backendPort} 启动。`,
+                        detail: `Backend unavailable (${err.message})。Ensure backend is running on port ${backendPort} `,
                     }));
                 });
                 req.pipe(proxyReq);
@@ -707,7 +707,7 @@ function createTray() {
     tray.setToolTip('Takton - Agent Terminal');
     const contextMenu = electron_1.Menu.buildFromTemplate([
         {
-            label: '显示 Takton',
+            label: 'Show Takton',
             click: () => {
                 if (mainWindow) {
                     mainWindow.show();
@@ -716,14 +716,14 @@ function createTray() {
             },
         },
         {
-            label: '隐藏 Takton',
+            label: 'Hide Takton',
             click: () => {
                 mainWindow?.hide();
             },
         },
         { type: 'separator' },
         {
-            label: '退出',
+            label: 'Quit',
             click: () => {
                 isQuitting = true;
                 electron_1.app.quit();
@@ -784,8 +784,8 @@ function setupAutoUpdater() {
         }
         if (electron_1.Notification.isSupported()) {
             new electron_1.Notification({
-                title: 'Takton 更新可用',
-                body: `版本 ${info.version} 已可用，正在下载...`,
+                title: 'Takton update available',
+                body: `Version ${info.version} available, downloading...`,
             }).show();
         }
         autoUpdater.downloadUpdate().catch((err) => {
@@ -806,8 +806,8 @@ function setupAutoUpdater() {
         console.log(`[Takton] Update downloaded: ${info.version}`);
         if (electron_1.Notification.isSupported()) {
             new electron_1.Notification({
-                title: 'Takton 更新已下载',
-                body: `版本 ${info.version} 已下载，重启应用以安装更新。`,
+                title: 'Takton update downloaded',
+                body: `Version ${info.version} Downloaded. Restart to install.`,
             }).show();
         }
         if (mainWindow) {
@@ -872,10 +872,10 @@ function createWindow() {
       .c{max-width:420px;padding:24px;border:1px solid rgba(255,255,255,.1);border-radius:16px;background:#12141c}
       h1{font-size:16px;margin:0 0 8px}p{font-size:13px;color:#a1a1aa;line-height:1.5}
       code{font-size:12px;color:#22d3ee}button{margin-top:14px;padding:8px 14px;border-radius:10px;border:0;background:linear-gradient(90deg,#8b5cf6,#22d3ee);color:#fff;cursor:pointer}</style></head>
-      <body><div class="c"><h1>前端未能加载</h1>
-      <p>静态服务或页面加载失败（${code}: ${desc}）。</p>
-      <p>请确认端口 <code>${FRONTEND_PORT}</code> 未被占用，然后点击重试。</p>
-      <button onclick="location.href='${frontendUrl}'">重新加载</button></div></body></html>`;
+      <body><div class="c"><h1>Frontend failed to load</h1>
+      <p>Static serving or page load failed（${code}: ${desc}）。</p>
+      <p>Ensure port <code>${FRONTEND_PORT}</code> is not in use, then click retry.</p>
+      <button onclick="location.href='${frontendUrl}'">Reload</button></div></body></html>`;
         mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
         if (!mainWindow.isVisible())
             mainWindow.show();
@@ -946,6 +946,22 @@ electron_1.ipcMain.handle('open-external', async (_event, url) => {
         await electron_1.shell.openExternal(url);
     }
 });
+/** 用系统默认应用打开本地文件路径；成功返回空串，失败返回错误信息（与 shell.openPath 一致） */
+electron_1.ipcMain.handle('open-path', async (_event, filePath) => {
+    if (typeof filePath !== 'string' || !filePath.trim()) {
+        return 'invalid path';
+    }
+    // 仅允许绝对路径，避免被注入相对恶意路径
+    if (!path.isAbsolute(filePath)) {
+        return 'path must be absolute';
+    }
+    try {
+        return await electron_1.shell.openPath(filePath);
+    }
+    catch (e) {
+        return e instanceof Error ? e.message : String(e);
+    }
+});
 // preload 同步注入用（避免渲染进程模块加载竞态）
 electron_1.ipcMain.on('get-backend-url-sync', (event) => {
     event.returnValue = getApiBase();
@@ -979,7 +995,7 @@ electron_1.ipcMain.handle('get-dropped-files', (_event, filePaths) => filePaths)
 electron_1.ipcMain.handle('select-directory', async () => {
     const opts = {
         properties: ['openDirectory', 'createDirectory'],
-        title: '选择项目文件夹',
+        title: 'Select project folder',
     };
     const result = mainWindow
         ? await electron_1.dialog.showOpenDialog(mainWindow, opts)
@@ -987,6 +1003,90 @@ electron_1.ipcMain.handle('select-directory', async () => {
     if (result.canceled || !result.filePaths?.[0])
         return null;
     return result.filePaths[0];
+});
+/**
+ * Launch Takton Code CLI in an external terminal.
+ * Desktop is entry-only; Code is a separate process sharing backend via /api/bridge/v1.
+ */
+electron_1.ipcMain.handle('open-takton-code', async (_event, opts) => {
+    try {
+        const projectPath = (opts?.path && String(opts.path).trim()) ||
+            process.env.TAKTON_CODE_DEFAULT_PATH ||
+            electron_1.app.getPath('home');
+        const mode = (opts?.mode || 'build').replace(/[^a-z]/gi, '') || 'build';
+        const bridgeUrl = getApiBase(); // e.g. http://127.0.0.1:8000/api
+        const env = {
+            ...process.env,
+            TAKTON_CODE_BRIDGE_URL: bridgeUrl,
+            TAKTON_CODE_BRIDGE_ENABLED: 'true',
+        };
+        // Prefer `takton-code` / `tkc` on PATH; fall back to python -m
+        const candidates = [
+            {
+                cmd: 'takton-code',
+                args: ['--path', projectPath, '--mode', mode, '--bridge'],
+                shell: true,
+            },
+            {
+                cmd: 'tkc',
+                args: ['--path', projectPath, '--mode', mode, '--bridge'],
+                shell: true,
+            },
+            {
+                cmd: process.platform === 'win32' ? 'python' : 'python3',
+                args: ['-m', 'takton_code', '--path', projectPath, '--mode', mode, '--bridge'],
+                shell: true,
+            },
+        ];
+        const launchWin = (commandLine) => {
+            // Open new Windows Terminal / cmd window
+            (0, child_process_1.spawn)('cmd.exe', ['/c', 'start', 'Takton Code', 'cmd.exe', '/k', commandLine], {
+                env,
+                detached: true,
+                stdio: 'ignore',
+                windowsHide: false,
+            }).unref();
+        };
+        const launchUnix = (bin, args) => {
+            const term = process.env.TERMINAL || process.env.TERM_PROGRAM || 'x-terminal-emulator';
+            const full = `${bin} ${args.map((a) => `"${a}"`).join(' ')}`;
+            (0, child_process_1.spawn)(term, ['-e', 'bash', '-lc', full], {
+                env,
+                detached: true,
+                stdio: 'ignore',
+            }).unref();
+        };
+        if (process.platform === 'win32') {
+            // try wt.exe first
+            const argStr = `--path "${projectPath}" --mode ${mode} --bridge`;
+            const tries = [
+                `takton-code ${argStr}`,
+                `tkc ${argStr}`,
+                `python -m takton_code ${argStr}`,
+            ];
+            // Prefer Windows Terminal if present
+            try {
+                (0, child_process_1.spawn)('wt.exe', [
+                    'new-tab',
+                    '--title',
+                    'Takton Code',
+                    'cmd',
+                    '/k',
+                    `set TAKTON_CODE_BRIDGE_ENABLED=true&& set TAKTON_CODE_BRIDGE_URL=${bridgeUrl}&& ${tries[0]}`,
+                ], { env, detached: true, stdio: 'ignore' }).unref();
+            }
+            catch {
+                launchWin(`set TAKTON_CODE_BRIDGE_ENABLED=true&& set TAKTON_CODE_BRIDGE_URL=${bridgeUrl}&& ${tries[0]} || ${tries[2]}`);
+            }
+        }
+        else {
+            launchUnix(candidates[0].cmd, candidates[0].args);
+        }
+        return { ok: true };
+    }
+    catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
 });
 electron_1.ipcMain.handle('install-update', () => {
     isQuitting = true;

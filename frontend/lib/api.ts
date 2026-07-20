@@ -35,10 +35,13 @@ import type {
   WikiEntity,
   WikiRelation,
   Workflow,
+  WorkflowNode,
+  WorkflowEdge,
   WorkflowNodeType,
   WorkflowExecuteResult,
 } from '@/types';
 import { useToastStore } from '@/stores/toastStore';
+import { t } from '@/stores/localeStore';
 
 /**
  * 解析 API baseURL：
@@ -148,26 +151,26 @@ function formatApiError(error: {
   const ct = error.response?.headers?.['content-type'] || '';
   const rawBody = data as unknown;
   if (typeof rawBody === 'string' && rawBody.includes('<!DOCTYPE')) {
-    return 'API 地址错误：收到了网页而不是接口数据。请重启应用。';
+    return t('api._e3');
   }
   if (ct.includes('text/html')) {
-    return 'API 地址错误：收到了 HTML 页面。请重启应用。';
+    return t('api._e4');
   }
 
   if (!error.response) {
-    if (error.code === 'ECONNABORTED') return '请求超时，请稍后重试';
-    return `无法连接后端 (${base}${path})。请确认应用已完全启动，或重启 Takton。`;
+    if (error.code === 'ECONNABORTED') return t('api._e5');
+    return `Cannot connect to backend (${base}${path})。Ensure the app has started, or restart Takton.`;
   }
 
-  if (status === 404) return '接口不存在 (404)';
-  if (status === 403) return '没有权限访问该接口';
-  if (status === 429) return '请求过于频繁，请稍后再试';
-  if (status === 502) return '后端暂时不可用 (502)，请稍后重试';
+  if (status === 404) return 'API not found (404)';
+  if (status === 403) return t('api._e6');
+  if (status === 429) return t('api._e7');
+  if (status === 502) return 'Backend temporarily unavailable (502)，Please try again later';
   if (status && status >= 500) {
-    return `服务器错误 (${status})${path ? `：${path}` : ''}`;
+    return `Server error (${status})${path ? `：${path}` : ''}`;
   }
 
-  return error.message || '请求失败，请稍后重试';
+  return error.message || t('api._e8');
 }
 
 // 响应拦截器：处理认证过期 + 全局错误提示
@@ -176,8 +179,8 @@ api.interceptors.response.use(
     // 防御：200 但 body 是 HTML
     const ct = String(response.headers?.['content-type'] || '');
     if (ct.includes('text/html') || (typeof response.data === 'string' && response.data.includes('<!DOCTYPE'))) {
-      const err = new Error('API 返回了 HTML 页面而非 JSON');
-      useToastStore.getState().addToast('API 地址配置异常，请重启应用', 'error');
+      const err = new Error('API returned HTML instead of JSON');
+      useToastStore.getState().addToast('API address misconfigured — restart Takton', 'error');
       return Promise.reject(err);
     }
     return response;
@@ -280,10 +283,21 @@ export async function deleteSession(sessionId: string): Promise<{ deleted: boole
 
 // ====== Message APIs ======
 
-export async function getMessages(sessionId: string, limit = 100, offset = 0): Promise<Message[]> {
+export async function getMessages(sessionId: string, limit = 200, offset = 0): Promise<Message[]> {
   const res = await api.get(`/sessions/${sessionId}/messages`, {
     params: { limit, offset },
   });
+  return res.data;
+}
+
+/** Goal / checkpoint 状态（切回会话时恢复任务看板） */
+export async function getSessionCheckpoint(sessionId: string): Promise<{
+  checkpoint: unknown;
+  goal: import('@/types').GoalState | null;
+  can_resume: boolean;
+  resume_preview?: string | null;
+}> {
+  const res = await api.get(`/sessions/${sessionId}/checkpoint`);
   return res.data;
 }
 
@@ -337,6 +351,125 @@ export async function getCommunitySkills(url?: string): Promise<Skill[]> {
 
 export async function importCommunitySkills(selected: string[], url?: string): Promise<{ imported: number }> {
   const res = await api.post('/skills/community/import', { selected, url });
+  return res.data;
+}
+
+// ====== Skill Store APIs (multi-source) ======
+
+export type SkillSource = 'takton' | 'clawhub' | 'awesome-claude' | 'awesome-hermes' | 'custom';
+
+export interface SkillStats {
+  stars: number;
+  downloads: number;
+  installs: number;
+  forks: number;
+  versions: number;
+}
+
+export interface UnifiedSkill {
+  id: string;
+  name: string;
+  display_name: string;
+  summary: string;
+  description: string;
+  source: SkillSource;
+  source_url: string;
+  source_repo: string;
+  skill_md_url: string;
+  topics: string[];
+  tags: string[];
+  license: string | null;
+  author: string;
+  version: string;
+  stats: SkillStats;
+  install_command: string;
+  compatibility: string[];
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface SkillStoreSource {
+  id: SkillSource;
+  display_name: string;
+}
+
+export interface SkillStoreResponse {
+  items: UnifiedSkill[];
+  total: number;
+  sources: SkillSource[];
+  errors: Record<string, string>;
+}
+
+export interface InstalledSkill {
+  source: string;
+  name: string;
+  path: string;
+  size: number;
+}
+
+export interface ActivePromptSkill {
+  source: string;
+  name: string;
+  display_name: string;
+  description: string;
+  path: string;
+  size: number;
+}
+
+export interface InstallResult {
+  success: boolean;
+  skill_id: string;
+  source: string;
+  path?: string;
+  error?: string;
+}
+
+export async function getStoreSources(): Promise<SkillStoreSource[]> {
+  const res = await api.get('/skills/store/sources');
+  return res.data;
+}
+
+export async function listStoreSkills(params: {
+  source?: SkillSource;
+  search?: string;
+  topic?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<SkillStoreResponse> {
+  const res = await api.get('/skills/store/list', { params });
+  return res.data;
+}
+
+export async function getStoreSkillDetail(source: SkillSource, skillId: string): Promise<UnifiedSkill> {
+  const res = await api.get(`/skills/store/skill/${source}/${skillId}`);
+  return res.data;
+}
+
+export async function installStoreSkill(source: SkillSource, skillId: string): Promise<InstallResult> {
+  const res = await api.post('/skills/store/install', { source, skill_id: skillId });
+  return res.data;
+}
+
+export async function uninstallStoreSkill(source: SkillSource, skillId: string): Promise<InstallResult> {
+  const res = await api.post('/skills/store/uninstall', { source, skill_id: skillId });
+  return res.data;
+}
+
+export async function listInstalledStoreSkills(): Promise<InstalledSkill[]> {
+  const res = await api.get('/skills/store/installed');
+  return res.data;
+}
+
+/** 已激活并会注入 system prompt 的 prompt-skills */
+export async function listActivePromptSkills(): Promise<ActivePromptSkill[]> {
+  const res = await api.get('/skills/store/active');
+  return res.data;
+}
+
+export async function refreshStoreCache(source?: SkillSource): Promise<{ refreshed: string }> {
+  const res = await api.post('/skills/store/refresh', null, {
+    params: source ? { source } : {},
+  });
   return res.data;
 }
 
@@ -728,6 +861,8 @@ export interface AgentMdItem {
   key: string;
   label: string;
   path: string;
+  /** 服务端解析出的绝对路径（随 file_browser_root 变化，非死路径） */
+  abs_path?: string;
   exists: boolean;
   size: number;
   desc: string;
@@ -743,6 +878,14 @@ export async function ensureAgentMdFile(
   path: string
 ): Promise<{ path: string; created: boolean; exists: boolean; size: number }> {
   const res = await api.post('/files/agent-md/ensure', null, { params: { path } });
+  return res.data;
+}
+
+/** 用本机默认编辑器打开沙箱内 agent md（相对路径） */
+export async function openAgentMdFile(
+  path: string
+): Promise<{ ok: boolean; path: string; abs_path: string }> {
+  const res = await api.post('/files/agent-md/open', null, { params: { path } });
   return res.data;
 }
 
@@ -929,6 +1072,8 @@ export interface CatalogProvider {
   credentials?: CatalogCredential[];
   active_credential_id?: string;
   credential_count?: number;
+  /** 该供应商上次选用的模型（目录缓存） */
+  active_model?: string;
 }
 
 export interface ModelCatalog {
@@ -948,11 +1093,23 @@ export async function getModelCatalog(fetchModels = true): Promise<ModelCatalog>
 
 export async function selectCatalogModel(
   providerId: string,
-  model: string
-): Promise<{ ok: boolean; message: string; active_provider_id: string; active_model: string; provider_name?: string }> {
+  model: string,
+  sessionId?: string
+): Promise<{
+  ok: boolean;
+  message: string;
+  active_provider_id: string;
+  active_model: string;
+  provider_name?: string;
+  temperature?: number;
+  max_tokens?: number;
+  context_window?: number;
+  gen_params?: { temperature: number; max_tokens: number; context_window: number };
+}> {
   const res = await api.post('/settings/model-catalog/select', {
     provider_id: providerId,
     model,
+    ...(sessionId ? { session_id: sessionId } : {}),
   });
   return res.data;
 }
@@ -995,6 +1152,38 @@ export async function setCatalogProviderEnabled(
     provider_id: providerId,
     enabled,
   });
+  return res.data;
+}
+
+/** 删除已配置供应商（对标 Hermes disconnect） */
+export async function deleteCatalogProvider(
+  providerId: string
+): Promise<{
+  ok: boolean;
+  message: string;
+  catalog?: ModelCatalog;
+  active_provider_id?: string;
+  active_model?: string;
+}> {
+  const res = await api.post('/settings/model-catalog/delete-provider', {
+    provider_id: providerId,
+  });
+  return res.data;
+}
+
+/** 登记/更新供应商到目录（设置页 Save & Activate 主路径） */
+export async function registerCatalogProvider(payload: {
+  id: string;
+  name: string;
+  icon?: string;
+  preset_id?: string | null;
+  llm_provider: string;
+  llm_base_url: string;
+  llm_api_key?: string | null;
+  llm_model?: string | null;
+  set_active?: boolean;
+}): Promise<{ ok: boolean; message: string; catalog?: ModelCatalog }> {
+  const res = await api.post('/settings/model-catalog/register', payload);
   return res.data;
 }
 
@@ -1372,10 +1561,25 @@ export async function createMCPServer(data: MCPServerFormData): Promise<MCPServe
     ...data,
     args: data.args ? data.args.split(/\s+/).filter(Boolean) : undefined,
     env: data.env ? parseKeyValueText(data.env) : undefined,
+    allowed_paths: data.allowed_paths ? data.allowed_paths.split(/\n/).map((s) => s.trim()).filter(Boolean) : undefined,
     timeout: data.timeout ?? 30,
   };
-  const res = await api.post('/mcp', payload);
-  return res.data;
+  try {
+    const res = await api.post('/mcp', payload);
+    return res.data;
+  } catch (e: unknown) {
+    // 同名已存在 → upsert 语义：就地更新（env/command/args 等）并热重连
+    const err = e as { response?: { status?: number; data?: { detail?: unknown } } };
+    const detail = err.response?.data?.detail as
+      | { error?: string; server_id?: string }
+      | string
+      | undefined;
+    if (err.response?.status === 409 && typeof detail === 'object' && detail?.error === 'mcp_server_exists') {
+      const res = await api.post('/mcp?upsert=true', payload);
+      return res.data;
+    }
+    throw e;
+  }
 }
 
 export async function updateMCPServer(serverId: string, data: MCPServerFormData): Promise<MCPServer> {
@@ -1383,6 +1587,7 @@ export async function updateMCPServer(serverId: string, data: MCPServerFormData)
     ...data,
     args: data.args ? data.args.split(/\s+/).filter(Boolean) : undefined,
     env: data.env ? parseKeyValueText(data.env) : undefined,
+    allowed_paths: data.allowed_paths ? data.allowed_paths.split(/\n/).map((s) => s.trim()).filter(Boolean) : undefined,
     timeout: data.timeout ?? 30,
   };
   const res = await api.put(`/mcp/${serverId}`, payload);
@@ -1401,6 +1606,79 @@ export async function deleteMCPServer(serverId: string): Promise<{ deleted: bool
 
 export async function reloadMCPServers(): Promise<{ status: string }> {
   const res = await api.post('/mcp/reload');
+  return res.data;
+}
+
+// ====== MCP Store（跨生态目录）======
+
+export type MCPStoreSourceId = 'curated' | 'official' | 'custom' | 'all';
+
+export interface UnifiedMCPStoreItem {
+  id: string;
+  name: string;
+  display_name: string;
+  summary: string;
+  description: string;
+  source: string;
+  source_url: string;
+  icon: string;
+  category: string;
+  tags: string[];
+  transport: 'stdio' | 'sse';
+  command: string;
+  args: string[];
+  url: string;
+  env_hint: string;
+  risk_level: string;
+  version: string;
+  registry_type: string;
+  package_id: string;
+  popularity: number;
+  compatibility: string[];
+  installable: boolean;
+  note: string;
+}
+
+export interface MCPStoreSourceInfo {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  error: string | null;
+  count: number;
+}
+
+export async function listMCPStoreSources(): Promise<MCPStoreSourceInfo[]> {
+  const res = await api.get('/mcp/store/sources');
+  return res.data;
+}
+
+export async function listMCPStore(params?: {
+  source?: string;
+  search?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<{
+  items: UnifiedMCPStoreItem[];
+  total: number;
+  sources: MCPStoreSourceInfo[];
+  query: string;
+}> {
+  const res = await api.get('/mcp/store/list', { params });
+  return res.data;
+}
+
+export async function installMCPFromStore(
+  source: string,
+  id: string
+): Promise<{
+  success: boolean;
+  server_id?: string | null;
+  server_name?: string | null;
+  message: string;
+  need_env: string[];
+}> {
+  const res = await api.post('/mcp/store/install', { source, id });
   return res.data;
 }
 

@@ -13,41 +13,44 @@ import { useActionLock } from '@/hooks/useActionLock';
 import { useSessionStore } from '@/stores/sessionStore';
 import { FilePreview } from '@/components/filetree/FilePreview';
 import { GitStatusWidget } from '@/components/layout/GitStatus';
-import { getAgentMdFiles, ensureAgentMdFile, type AgentMdItem } from '@/lib/api';
+import { getAgentMdFiles, ensureAgentMdFile, openAgentMdFile, type AgentMdItem } from '@/lib/api';
 import { useToastStore } from '@/stores/toastStore';
+import { useT } from '@/stores/localeStore';
 
 interface NavItem {
-  label: string;
+  /** 翻译 key（如 'nav.tasks'），渲染时用 t() 翻译 */
+  labelKey: string;
   href: string;
   icon: React.ReactNode;
   badge?: string;
-  /** 侧边栏 ? 提示文案 */
-  help?: string;
-  /** 点击 ? 后跳转的链接 */
-  helpHref?: string;
 }
 
 interface NavGroup {
-  title: string;
+  /** 固定 id（不随语言变），用作折叠状态的 key */
+  id: string;
+  /** 翻译 key（如 'nav.workspace'） */
+  titleKey: string;
   items: NavItem[];
 }
 
-const HELP_TEXTS: Record<string, { text: string; href?: string }> = {
-  '/tasks': { text: '创建和管理自动化任务，支持定时执行和手动触发。', href: '/tasks' },
-  '/devices': { text: '查看和管理已连接的设备与传感器。', href: '/devices' },
-  '/workflows': { text: '可视化编排多步骤工作流，拖拽节点构建自动化流程。', href: '/workflows' },
-  '/config': { text: '配置 Agent 的心智模型、系统提示词和行为偏好。', href: '/config' },
-  '/tools': { text: '管理和配置 Agent 可用的工具集，包括 MCP 和内置工具。', href: '/tools' },
-  '/skills': { text: '管理内置/自定义技能（可开关、导入社区技能）。', href: '/skills' },
-    '/evolution': { text: '查看 Agent 自主归纳的资产、使用次数，清理无用项。', href: '/evolution' },
-    '/mcp': { text: '配置 Model Context Protocol 服务器连接。', href: '/mcp' },
-  '/profiles': { text: '配置子代理人物卡片：任务名、模型、system prompt；主对话可集群协作。', href: '/profiles' },
-  '/context': { text: '查看和管理当前会话的上下文记忆。', href: '/context' },
-  '/cron': { text: '设置定时任务，按 Cron 表达式自动执行。', href: '/cron' },
-  '/knowledge': { text: '上传文档让 AI 阅读并记住，支持检索和问答。', href: '/knowledge' },
-  '/wiki': { text: '可视化浏览和管理知识图谱。', href: '/wiki' },
-  '/channels': { text: '配置消息通道 Bot，连接 Telegram、Discord、企业微信、QQ 等通信平台。', href: '/channels' },
-  '/settings': { text: '配置 AI 服务商、API Key、模型参数等。', href: '/settings' },
+/** 帮助提示的翻译 key（渲染时用 t() 翻译） */
+const HELP_KEYS: Record<string, string> = {
+  '/tasks': 'help.tasks',
+  '/devices': 'help.devices',
+  '/workflows': 'help.workflows',
+  '/config': 'help.config',
+  '/tools': 'help.tools',
+  '/skills': 'help.skills',
+  '/evolution': 'help.evolution',
+  '/mcp': 'help.mcp',
+  '/profiles': 'help.profiles',
+  '/context': 'help.context',
+  '/memory': 'help.memory',
+  '/cron': 'help.cron',
+  '/knowledge': 'help.knowledge',
+  '/wiki': 'help.wiki',
+  '/channels': 'help.channels',
+  '/settings': 'help.settings',
 };
 
 const ic = (d: string) => (
@@ -58,40 +61,45 @@ const ic = (d: string) => (
 
 const navGroups: NavGroup[] = [
   {
-    title: '工作区',
+    id: 'workspace',
+    titleKey: 'nav.workspace',
     items: [
       // 对话入口已移除：用左上角「新对话」/ 历史会话进入
-      { label: '任务', href: '/tasks', icon: ic('M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4') },
-      { label: '设备', href: '/devices', icon: ic('M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z') },
-      { label: '工作流', href: '/workflows', icon: ic('M13 10V3L4 14h7v7l9-11h-7z') },
+      { labelKey: 'nav.tasks', href: '/tasks', icon: ic('M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4') },
+      { labelKey: 'nav.devices', href: '/devices', icon: ic('M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z') },
+      { labelKey: 'nav.workflows', href: '/workflows', icon: ic('M13 10V3L4 14h7v7l9-11h-7z') },
     ],
   },
   {
-    title: 'Agent',
+    id: 'agent',
+    titleKey: 'nav.agent',
     items: [
-      { label: '心智配置', href: '/config', icon: ic('M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z') },
-      { label: '工具', href: '/tools', icon: ic('M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z') },
+      { labelKey: 'nav.config', href: '/config', icon: ic('M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z') },
+      { labelKey: 'nav.tools', href: '/tools', icon: ic('M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z') },
             // 技能与工具并列：能力扩展路径 工具 → 技能 → MCP
-                  { label: '技能', href: '/skills', icon: ic('M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z') },
-                        { label: '自主进化', href: '/evolution', icon: ic('M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15') },
-                        { label: 'MCP', href: '/mcp', icon: ic('M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4') },
-      { label: '子代理', href: '/profiles', icon: ic('M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z') },
-      { label: '上下文', href: '/context', icon: ic('M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10') },
-      { label: '定时任务', href: '/cron', icon: ic('M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z') },
+                  { labelKey: 'nav.skills', href: '/skills', icon: ic('M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z') },
+                        { labelKey: 'nav.evolution', href: '/evolution', icon: ic('M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15') },
+                        { labelKey: 'nav.mcp', href: '/mcp', icon: ic('M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4') },
+      { labelKey: 'nav.profiles', href: '/profiles', icon: ic('M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z') },
+      { labelKey: 'nav.context', href: '/context', icon: ic('M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10') },
+      { labelKey: 'nav.cron', href: '/cron', icon: ic('M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z') },
     ],
   },
   {
-    title: '记忆',
+    id: 'memory',
+    titleKey: 'nav.memoryGroup',
     items: [
-      { label: '知识库', href: '/knowledge', icon: ic('M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253') },
-      { label: 'Wiki 图谱', href: '/wiki', icon: ic('M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1') },
+      { labelKey: 'nav.knowledge', href: '/knowledge', icon: ic('M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253') },
+      { labelKey: 'nav.memory', href: '/memory', icon: ic('M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z') },
+      { labelKey: 'nav.wiki', href: '/wiki', icon: ic('M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1') },
     ],
   },
   {
-    title: '系统',
+    id: 'system',
+    titleKey: 'nav.system',
     items: [
-      { label: '消息通道', href: '/channels', icon: ic('M8.288 15.038a5.25 5.25 0 017.424 0M5.106 11.856c3.807-3.808 9.98-3.808 13.788 0M1.924 8.674c5.565-5.565 14.587-5.565 20.152 0M12.53 18.22l-.53.53-.53-.53a.75.75 0 011.06 0z') },
-      { label: '设置', href: '/settings', icon: ic('M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z') },
+      { labelKey: 'nav.channels', href: '/channels', icon: ic('M8.288 15.038a5.25 5.25 0 017.424 0M5.106 11.856c3.807-3.808 9.98-3.808 13.788 0M1.924 8.674c5.565-5.565 14.587-5.565 20.152 0M12.53 18.22l-.53.53-.53-.53a.75.75 0 011.06 0z') },
+      { labelKey: 'nav.settings', href: '/settings', icon: ic('M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z') },
     ],
   },
 ];
@@ -100,6 +108,7 @@ export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const addToast = useToastStore((s) => s.addToast);
+  const t = useT();
   const { user, logout, isAuthenticated } = useAuthStore();
   const { notifications, unreadCount, setNotifications, markAsRead, markAllAsRead, setUnreadCount } = useNotificationStore();
   const {
@@ -128,12 +137,12 @@ export function Sidebar() {
   const [editValue, setEditValue] = useState('');
   // Agent MD 记忆文件（侧栏）— 默认折叠
   const [filesOpen, setFilesOpen] = useState(false);
-    // 侧栏分组：工作区常开；Agent/记忆/系统默认折叠，减认知噪音
+    // 侧栏分组：工作区常开；Agent/记忆/系统默认折叠，减认知噪音（key 用固定 id，不随语言变）
     const [openNavGroups, setOpenNavGroups] = useState<Record<string, boolean>>({
-      工作区: true,
-      Agent: false,
-      记忆: false,
-      系统: false,
+      workspace: true,
+      agent: false,
+      memory: false,
+      system: false,
     });
     const [agentMdItems, setAgentMdItems] = useState<AgentMdItem[]>([]);
   const [agentMdRoot, setAgentMdRoot] = useState('');
@@ -218,8 +227,8 @@ export function Sidebar() {
   useEffect(() => {
     if (!isAuthenticated || !sessionsOpen) return;
     if (messageCount > 0 && currentSession?.id) {
-      const t = setTimeout(() => refreshSessions(), 400);
-      return () => clearTimeout(t);
+      const timer = setTimeout(() => refreshSessions(), 400);
+      return () => clearTimeout(timer);
     }
   }, [messageCount, currentSession?.id, isAuthenticated, sessionsOpen, refreshSessions]);
 
@@ -236,7 +245,7 @@ export function Sidebar() {
         refreshSessions();
       } catch (e) {
         console.error(e);
-        addToast('打开会话失败，请重试', 'error');
+        addToast(t('sidebar.openSessionFail'), 'error');
       } finally {
         setSwitchingId(null);
       }
@@ -294,10 +303,60 @@ export function Sidebar() {
         setShowFilePreview(true);
       } catch (e) {
         console.error(e);
-        addToast('打开文件失败', 'error');
+        addToast(t('sidebar.openFileFail'), 'error');
       }
     },
     [loadAgentMd, addToast]
+  );
+
+  /** 双击：用本机默认编辑器打开（路径由后端按 file_browser_root 解析，无死路径） */
+  const handleOpenAgentMdLocal = useCallback(
+    async (item: AgentMdItem) => {
+      try {
+        let rel = item.path;
+        if (!item.exists) {
+          const ens = await ensureAgentMdFile(item.path);
+          rel = ens.path || item.path;
+          await loadAgentMd();
+        }
+
+        // 优先 Electron shell.openPath（桌面端）；否则走后端本机打开
+        const electronAPI = (window as unknown as {
+          electronAPI?: { openPath?: (p: string) => Promise<string> };
+        }).electronAPI;
+
+        let opened = false;
+        if (electronAPI?.openPath) {
+          // abs_path 来自 API 动态 root，fallback 用 root + rel 拼接
+          const abs =
+            item.abs_path ||
+            (agentMdRoot
+              ? (() => {
+                  const root = agentMdRoot.replace(/[\\/]+$/, '');
+                  const sep = root.includes('\\') ? '\\' : '/';
+                  return `${root}${sep}${rel.replace(/[\\/]/g, sep)}`;
+                })()
+              : '');
+          if (abs) {
+            const err = await electronAPI.openPath(abs);
+            if (!err) opened = true;
+          }
+        }
+        if (!opened) {
+          const res = await openAgentMdFile(rel);
+          opened = !!res?.ok;
+        }
+        if (opened) {
+          addToast(t('sidebar.openedEditor').replace('{name}', item.label), 'success');
+        } else {
+          addToast(t('sidebar.cantOpenLocal'), 'error');
+        }
+      } catch (e: any) {
+        console.error(e);
+        addToast(t('sidebar.openFail').replace('{msg}', String(e?.response?.data?.detail || e?.message || e)), 'error');
+      }
+    },
+    [loadAgentMd, addToast, agentMdRoot]
   );
 
   const handleSelectFile = useCallback((path: string) => {
@@ -318,7 +377,7 @@ export function Sidebar() {
     ? sortedSessions.filter((s) => {
         const title =
           sessionTitles[s.id] ||
-          `会话 · ${new Date(s.created_at).toLocaleDateString()}`;
+          `${t('nav.sessionPrefix')} · ${new Date(s.created_at).toLocaleDateString()}`;
         return title.toLowerCase().includes(sessionSearch.toLowerCase());
       })
     : sortedSessions;
@@ -343,7 +402,7 @@ export function Sidebar() {
         await refreshSessions();
       } catch (e) {
         console.error(e);
-        addToast('创建对话失败', 'error');
+        addToast(t('sidebar.createChatFail'), 'error');
       }
     },
     800
@@ -362,26 +421,50 @@ export function Sidebar() {
       {/* 快捷操作条 */}
       <div className="flex items-center gap-1.5 px-3 pt-3 pb-2">
         <button
-          type="button"
-          onClick={handleCreateSession}
-          className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border-subtle bg-white/[0.03] px-3 py-2 text-[12px] font-medium text-foreground-muted transition-all hover:border-brand-purple/30 hover:bg-brand-purple/10 hover:text-foreground"
-        >
-          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-          </svg>
-          新对话
-        </button>
-        <button
-                  onClick={toggle}
-                  title={
-                    theme === 'system'
-                      ? '主题：跟随系统（点击切换浅色）'
-                      : theme === 'light'
-                        ? '主题：浅色（点击切换深色）'
-                        : '主题：深色（点击切换跟随系统）'
-                  }
-                  className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-border-subtle bg-white/[0.03] text-foreground-muted transition-all hover:border-border-default hover:text-foreground"
+                  type="button"
+                  onClick={handleCreateSession}
+                  className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border-subtle bg-white/[0.03] px-3 py-2 text-[12px] font-medium text-foreground-muted transition-all hover:border-brand-purple/30 hover:bg-brand-purple/10 hover:text-foreground"
                 >
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                  </svg>
+                  {t('nav.newChat')}
+                </button>
+                <button
+                  type="button"
+                  title={t('nav.taktonCode' as never)}
+                  onClick={async () => {
+                    try {
+                      const api = (window as unknown as { electronAPI?: { openTaktonCode?: (o?: { path?: string }) => Promise<{ ok: boolean; error?: string }> } }).electronAPI;
+                      if (api?.openTaktonCode) {
+                        const r = await api.openTaktonCode({});
+                        if (!r?.ok) addToast(r?.error || t('nav.taktonCodeFail' as never), 'error');
+                      } else {
+                        // browser/dev: open docs tip
+                        addToast(t('nav.taktonCodeCliHint' as never), 'info');
+                      }
+                    } catch (e) {
+                      console.error(e);
+                      addToast(t('nav.taktonCodeFail' as never), 'error');
+                    }
+                  }}
+                  className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-border-subtle bg-white/[0.03] text-foreground-muted transition-all hover:border-brand-cyan/40 hover:text-brand-cyan"
+                >
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" />
+                  </svg>
+                </button>
+                <button
+                          onClick={toggle}
+                          title={
+                            theme === 'system'
+                              ? t('nav.themeSystem')
+                              : theme === 'light'
+                                ? t('nav.themeLight')
+                                : t('nav.themeDark')
+                          }
+                          className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-border-subtle bg-white/[0.03] text-foreground-muted transition-all hover:border-border-default hover:text-foreground"
+                        >
                   {theme === 'system' ? (
                               /* 跟随系统 */
                               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -423,7 +506,7 @@ export function Sidebar() {
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
             </svg>
-            通知
+            {t('nav.notifications')}
           </span>
           {unreadCount > 0 && (
             <span className="flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-gradient-to-r from-brand-purple to-brand-cyan px-1.5 text-[10px] font-bold text-white shadow-lg shadow-violet-500/20">
@@ -435,7 +518,7 @@ export function Sidebar() {
         {notifOpen && (
           <div className="absolute left-4 right-4 top-11 z-50 max-h-80 overflow-y-auto rounded-xl border border-border-default bg-card-bg shadow-xl">
             <div className="flex items-center justify-between border-b border-border-subtle px-3 py-2.5">
-              <span className="text-xs font-semibold text-foreground-muted">通知</span>
+              <span className="text-xs font-semibold text-foreground-muted">{t('nav.notifications')}</span>
               {unreadCount > 0 && (
                 <button
                   onClick={async () => {
@@ -444,12 +527,12 @@ export function Sidebar() {
                   }}
                   className="text-[10px] text-brand-cyan hover:text-brand-purple transition-colors"
                 >
-                  全部已读
+                  {t('nav.markAllRead')}
                 </button>
               )}
             </div>
             {notifications.length === 0 ? (
-              <div className="px-3 py-6 text-center text-xs text-foreground-dim">暂无通知</div>
+              <div className="px-3 py-6 text-center text-xs text-foreground-dim">{t('nav.noNotifications')}</div>
             ) : (
               notifications.slice(0, 20).map((n) => (
                 <div
@@ -488,7 +571,7 @@ export function Sidebar() {
               className="flex cursor-pointer items-center gap-1.5"
             >
               <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground-dim/80">
-                历史会话
+                {t('nav.history')}
               </span>
               <svg className={`h-3 w-3 text-foreground-dim transition-transform ${sessionsOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -502,9 +585,9 @@ export function Sidebar() {
                   refreshSessions();
                 }}
                 className="text-[10px] text-foreground-dim hover:text-brand-cyan"
-                title="刷新列表"
+                title={t('nav.refreshList')}
               >
-                {sessionsLoading ? '…' : '刷新'}
+                {sessionsLoading ? '…' : t('nav.refresh')}
               </button>
             )}
           </div>
@@ -519,17 +602,17 @@ export function Sidebar() {
                   type="text"
                   value={sessionSearch}
                   onChange={(e) => setSessionSearch(e.target.value)}
-                  placeholder="搜索会话..."
+                  placeholder={t('nav.searchSessions')}
                   className="w-full rounded-xl border border-border-subtle bg-white/[0.03] py-1.5 pl-7 pr-2 text-[11px] text-foreground placeholder:text-foreground-dim transition-all focus:border-brand-purple/40 focus:outline-none"
                 />
               </div>
 
               <div className="mt-1 max-h-[280px] space-y-0.5 overflow-y-auto scrollbar-thin">
                 {sessionsLoading && filteredSessions.length === 0 ? (
-                  <div className="px-3 py-3 text-xs text-foreground-dim animate-pulse">加载会话…</div>
+                  <div className="px-3 py-3 text-xs text-foreground-dim animate-pulse">{t('nav.loadingSessions2')}</div>
                 ) : filteredSessions.length === 0 ? (
                   <div className="px-3 py-2 text-xs text-foreground-dim">
-                    {sessionSearch ? '无匹配会话' : '暂无历史会话，发一条消息开始'}
+                    {sessionSearch ? t('nav.noMatchSessions') : t('nav.emptyHistory')}
                   </div>
                 ) : (
                   filteredSessions.slice(0, 50).map((session) => {
@@ -539,7 +622,7 @@ export function Sidebar() {
                     const displayTitle =
                       sessionTitles[session.id] ||
                       (session as { title?: string }).title ||
-                      `会话 · ${new Date(session.created_at).toLocaleDateString()}`;
+                      `${t('nav.sessionPrefix')} · ${new Date(session.created_at).toLocaleDateString()}`;
 
                     return (
                       <div
@@ -561,7 +644,7 @@ export function Sidebar() {
                               ? 'text-amber-400 hover:text-amber-300'
                               : 'text-foreground-dim opacity-0 group-hover/session:opacity-100 hover:text-amber-400'
                           }`}
-                          title={isStarred ? '取消星标' : '星标会话'}
+                          title={isStarred ? t('nav.unstarSession') : t('nav.starSession')}
                         >
                           <svg className="h-3 w-3" fill={isStarred ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
@@ -578,7 +661,7 @@ export function Sidebar() {
                               ? 'font-medium text-foreground'
                               : 'text-foreground-dim group-hover/session:text-foreground'
                           }`}
-                          title="点击返回此会话"
+                          title={t('nav.backToSession')}
                         >
                           <span
                             className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${
@@ -609,7 +692,7 @@ export function Sidebar() {
                                 handleStartRename(session.id);
                               }}
                             >
-                              {isSwitching ? '打开中…' : displayTitle}
+                              {isSwitching ? t('nav.switching') : displayTitle}
                             </span>
                           )}
                           <span className="text-[10px] text-foreground-dim flex-shrink-0">
@@ -621,7 +704,7 @@ export function Sidebar() {
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            if (!confirm('确定删除该会话？')) return;
+                            if (!confirm(t('nav.confirmDeleteSession'))) return;
                             deleteSession(session.id)
                               .then(() => {
                                 setMySessions((prev) => prev.filter((s) => s.id !== session.id));
@@ -633,7 +716,7 @@ export function Sidebar() {
                               .catch(console.error);
                           }}
                           className="mr-1 rounded p-0.5 text-foreground-dim opacity-0 group-hover/session:opacity-100 hover:bg-error-bg hover:text-error-text transition-all flex-shrink-0"
-                          title="删除会话"
+                          title={t('nav.deleteSession')}
                         >
                           <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -662,7 +745,7 @@ export function Sidebar() {
                 <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
                 </svg>
-                <span className="font-medium">Agent 记忆</span>
+                <span className="font-medium">{t('nav.agentMemory')}</span>
               </span>
               <span className="flex items-center gap-1.5">
                 {filesOpen && (
@@ -681,7 +764,7 @@ export function Sidebar() {
                     }}
                     className="text-[10px] text-foreground-dim hover:text-brand-cyan"
                   >
-                    刷新
+                    {t('nav.refresh')}
                   </span>
                 )}
                 <svg className={`h-3 w-3 text-foreground-dim transition-transform ${filesOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -703,9 +786,9 @@ export function Sidebar() {
                         )}
                         <div className="max-h-[240px] space-y-0.5 overflow-y-auto scrollbar-thin">
                           {agentMdLoading ? (
-                            <div className="px-3 py-3 text-[11px] text-foreground-dim animate-pulse">加载记忆文件…</div>
+                            <div className="px-3 py-3 text-[11px] text-foreground-dim animate-pulse">{t('nav.loadingMemory')}</div>
                           ) : agentMdItems.length === 0 ? (
-                            <div className="px-3 py-2 text-[11px] text-foreground-dim">暂无记忆文件</div>
+                            <div className="px-3 py-2 text-[11px] text-foreground-dim">{t('nav.noMemoryFiles')}</div>
                           ) : (
                             agentMdItems
                               // 未创建文件弱化：默认只突出已存在；未创建折叠到末尾且更淡
@@ -718,6 +801,11 @@ export function Sidebar() {
                                   key={item.key}
                                   type="button"
                                   onClick={() => handleOpenAgentMd(item)}
+                                  onDoubleClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    void handleOpenAgentMdLocal(item);
+                                  }}
                                   className={`flex w-full items-start gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors ${
                                     active
                                       ? 'bg-white/[0.06] text-foreground'
@@ -725,7 +813,7 @@ export function Sidebar() {
                                         ? 'text-foreground-muted hover:bg-white/[0.04] hover:text-foreground'
                                         : 'text-foreground-dim/70 hover:bg-white/[0.03] hover:text-foreground-muted'
                                   }`}
-                                  title={item.desc}
+                                  title={`${item.desc || item.label}\n${t('sidebar.fileTip')}`}
                                 >
                                   <span
                                     className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${
@@ -737,11 +825,11 @@ export function Sidebar() {
                                       <span className="truncate text-[12px] font-medium">{item.label}</span>
                                       {!item.exists && (
                                         <span className="shrink-0 rounded bg-white/[0.04] px-1 py-px text-[9px] text-foreground-dim/80">
-                                          待创建
+                                          {t('nav.toBeCreated')}
                                         </span>
                                       )}
                                       {item.group === 'daily' && (
-                                        <span className="shrink-0 text-[9px] text-brand-cyan/80">日</span>
+                                        <span className="shrink-0 text-[9px] text-brand-cyan/80">D</span>
                                       )}
                                     </span>
                                     {item.exists && (
@@ -766,7 +854,7 @@ export function Sidebar() {
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto px-2 py-2 scrollbar-thin">
         {navGroups.map((group) => {
-                  const isOpen = openNavGroups[group.title] ?? true;
+                  const isOpen = openNavGroups[group.id] ?? true;
                   const activeInGroup = group.items.some(
                     (item) =>
                       pathname === item.href ||
@@ -775,18 +863,18 @@ export function Sidebar() {
                   );
                   const expanded = isOpen || activeInGroup;
                   return (
-                  <div key={group.title} className="mb-2">
+                  <div key={group.id} className="mb-2">
                     <button
                       type="button"
                       onClick={() =>
                         setOpenNavGroups((prev) => ({
                           ...prev,
-                          [group.title]: !expanded,
+                          [group.id]: !expanded,
                         }))
                       }
                       className="flex w-full items-center justify-between px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground-dim/80 hover:text-foreground-muted"
                     >
-                      <span>{group.title}</span>
+                      <span>{t(group.titleKey as never)}</span>
                       <span className="text-[9px] opacity-60">{expanded ? '−' : '+'}</span>
                     </button>
                     {expanded && (
@@ -805,12 +893,12 @@ export function Sidebar() {
                                   ? 'bg-white/[0.06] font-medium text-foreground shadow-sm ring-1 ring-inset ring-white/[0.06]'
                                   : 'text-foreground-muted hover:bg-white/[0.04] hover:text-foreground'
                               }`}
-                              title={HELP_TEXTS[item.href]?.text}
+                              title={HELP_KEYS[item.href] ? t(HELP_KEYS[item.href] as never) : undefined}
                             >
                               <span className={isActive ? 'text-brand-cyan' : 'text-foreground-dim group-hover:text-foreground-muted'}>
                                 {item.icon}
                               </span>
-                              <span className="flex-1 truncate">{item.label}</span>
+                              <span className="flex-1 truncate">{t(item.labelKey as never)}</span>
                               {isActive && (
                                 <span className="h-1 w-1 rounded-full bg-brand-cyan shadow-[0_0_6px_rgba(6,182,212,0.8)]" />
                               )}
@@ -854,7 +942,7 @@ export function Sidebar() {
             href="/login"
             className="block rounded-xl bg-gradient-to-r from-brand-purple to-brand-cyan px-3 py-2.5 text-center text-xs font-semibold text-white shadow-lg shadow-violet-500/20 transition-opacity hover:opacity-90"
           >
-            登录 / 注册
+            {t('nav.loginRegister')}
           </Link>
         )}
       </div>
@@ -863,6 +951,7 @@ export function Sidebar() {
 }
 
 function UserCard({ user, logout }: { user: User; logout: () => void }) {
+  const t = useT();
   const [showCard, setShowCard] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -903,14 +992,14 @@ function UserCard({ user, logout }: { user: User; logout: () => void }) {
                 <svg className="h-3 w-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                <span>最后登录: {new Date(user.last_login_at).toLocaleString()}</span>
+                <span>{t('sidebar.lastLogin')}{new Date(user.last_login_at).toLocaleString()}</span>
               </div>
             )}
             <div className="flex items-center gap-1.5 text-[11px] text-foreground-dim">
               <svg className="h-3 w-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
-              <span>注册于: {new Date(user.created_at).toLocaleDateString()}</span>
+              <span>{t('sidebar.registered')}{new Date(user.created_at).toLocaleDateString()}</span>
             </div>
           </div>
           <div className="mt-2 flex gap-2 border-t border-border-subtle pt-2">
@@ -918,13 +1007,13 @@ function UserCard({ user, logout }: { user: User; logout: () => void }) {
               href="/profile"
               className="flex-1 rounded-lg bg-brand-purple/10 px-2 py-1.5 text-center text-[11px] font-medium text-brand-purple hover:bg-brand-purple/20 transition-colors border border-brand-purple/20"
             >
-              个人设置
+              {t('nav.profileSettings')}
             </Link>
             <button
               onClick={logout}
               className="flex-1 rounded-lg bg-page-bg px-2 py-1.5 text-center text-[11px] font-medium text-foreground-muted hover:bg-error-bg hover:text-error-text transition-colors border border-border-subtle"
             >
-              退出登录
+              {t('nav.logout')}
             </button>
           </div>
         </div>
@@ -951,6 +1040,7 @@ function UserCard({ user, logout }: { user: User; logout: () => void }) {
  * 提示出现在触发按钮右侧（sidebar 外），宽度受控，不超出屏幕。
  */
 function HelpTooltip({ text, href }: { text: string; href?: string }) {
+  const t = useT();
   const [show, setShow] = useState(false);
   const [pos, setPos] = useState({ left: 0, top: 0 });
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -999,7 +1089,7 @@ function HelpTooltip({ text, href }: { text: string; href?: string }) {
               }}
               className="mt-2 inline-flex items-center gap-1 rounded-lg bg-brand-purple/10 px-2 py-1 text-[10px] font-medium text-brand-purple hover:bg-brand-purple/20 transition-colors border border-brand-purple/20 pointer-events-auto"
             >
-              前往 →
+              {t('nav.go')}
             </button>
           )}
         </div>
@@ -1007,7 +1097,7 @@ function HelpTooltip({ text, href }: { text: string; href?: string }) {
       <span
         ref={triggerRef}
         className="ml-1 inline-flex h-4 w-4 shrink-0 cursor-help items-center justify-center rounded-full bg-foreground-dim/20 text-[9px] font-bold text-foreground-dim transition-colors hover:bg-brand-purple/20 hover:text-brand-purple"
-        title="点击查看说明"
+        title={t('sidebar.helpTip')}
         onMouseEnter={handleEnter}
         onMouseLeave={handleLeave}
       >

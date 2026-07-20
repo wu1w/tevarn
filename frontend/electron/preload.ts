@@ -49,9 +49,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('get-dropped-files', filePaths),
 
   /** 系统文件夹选择器（专业模式绑定项目） */
-  selectDirectory: (): Promise<string | null> => ipcRenderer.invoke('select-directory'),
+    selectDirectory: (): Promise<string | null> => ipcRenderer.invoke('select-directory'),
 
-  installUpdate: (): Promise<void> => ipcRenderer.invoke('install-update'),
+    /** 打开 Takton Code CLI（外部终端，后端通过 bridge 互通） */
+    openTaktonCode: (opts?: { path?: string; mode?: string }): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('open-takton-code', opts),
+
+    installUpdate: (): Promise<void> => ipcRenderer.invoke('install-update'),
+
+  /** 用系统默认应用打开本地文件（编辑 agent md 等） */
+  openPath: (filePath: string): Promise<string> => ipcRenderer.invoke('open-path', filePath),
 
   /** 在系统浏览器中打开外链（OAuth 等） */
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke('open-external', url),

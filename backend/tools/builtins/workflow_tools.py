@@ -549,6 +549,7 @@ class ValidateDag(BaseTool):
         type_set = {t.type for t in get_all_node_type_definitions()}
 
         ids = set()
+        types_hint = ", ".join(sorted(type_set))
         for n in nodes or []:
             nid = n.get("id")
             if not nid:
@@ -559,7 +560,9 @@ class ValidateDag(BaseTool):
             ids.add(nid)
             ntype = n.get("type")
             if ntype not in type_set:
-                errors.append(f"未知节点类型: {ntype} ({nid})")
+                errors.append(
+                    f"未知节点类型: {ntype} ({nid})。合法类型: [{types_hint}]"
+                )
             if ntype == "sub_agent":
                 cfg = n.get("config") or {}
                 if not cfg.get("sub_agent_id"):
@@ -602,6 +605,15 @@ class ValidateDag(BaseTool):
             warnings.append("缺少 output 节点")
 
         is_valid = len(errors) == 0
+        msg = (
+            "✅ DAG 验证通过"
+            if is_valid
+            else f"❌ DAG 验证失败 ({len(errors)} 个错误, {len(warnings)} 个警告)"
+        )
+        if not is_valid:
+            msg += "\n合法节点类型: [" + types_hint + "]"
+            if errors:
+                msg += "\n- " + "\n- ".join(errors[:12])
         return {
             "success": is_valid,
             "data": {
@@ -610,13 +622,11 @@ class ValidateDag(BaseTool):
                 "warnings": warnings,
                 "node_count": len(nodes or []),
                 "edge_count": len(edges or []),
+                "available_node_types": sorted(type_set),
             },
-            "message": (
-                "✅ DAG 验证通过"
-                if is_valid
-                else f"❌ DAG 验证失败 ({len(errors)} 个错误, {len(warnings)} 个警告)"
-            ),
+            "message": msg,
         }
+
 
 
 class SaveWorkflow(BaseTool):

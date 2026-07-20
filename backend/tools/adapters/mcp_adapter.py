@@ -60,7 +60,16 @@ class MCPToolAdapter(BaseTool):
         remote_name = self.name
         if remote_name.startswith("mcp_"):
             remote_name = remote_name[4:]
-        return await client.call_tool(remote_name, kwargs)
+        # Agent loop 会注入 _session_id / _ws_manager / user_id；
+        # MCP JSON-RPC 无法序列化 ConnectionManager 等对象，必须剥离。
+        clean = {
+            k: v
+            for k, v in kwargs.items()
+            if not str(k).startswith("_")
+            and str(k) not in ("ws_manager", "connection_manager", "user_id")
+            and "ConnectionManager" not in type(v).__name__
+        }
+        return await client.call_tool(remote_name, clean)
 
 
 async def register_mcp_server_tools(

@@ -11,8 +11,10 @@ import {
   type TaktonPackageItem,
 } from '@/lib/api';
 import { useToastStore } from '@/stores/toastStore';
+import { useT } from '@/stores/localeStore';
 
 function LayerCard({ layer }: { layer: SystemLayer }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const pctColor =
     layer.tokens_est > 2000 ? 'text-amber-500' : layer.tokens_est > 0 ? 'text-brand-cyan' : 'text-foreground-muted';
@@ -27,9 +29,9 @@ function LayerCard({ layer }: { layer: SystemLayer }) {
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-foreground">{layer.label}</span>
             {layer.mutable ? (
-              <span className="rounded bg-brand-purple/10 px-1.5 py-0.5 text-[10px] text-brand-purple">可配置</span>
+              <span className="rounded bg-brand-purple/10 px-1.5 py-0.5 text-[10px] text-brand-purple">{t('context._e13')}</span>
             ) : (
-              <span className="rounded bg-elevated-bg px-1.5 py-0.5 text-[10px] text-foreground-muted">固定</span>
+              <span className="rounded bg-elevated-bg px-1.5 py-0.5 text-[10px] text-foreground-muted">{t('contextDash.pin')}</span>
             )}
           </div>
           <div className="truncate text-[10px] text-foreground-dim">{layer.source}</div>
@@ -54,7 +56,7 @@ function LayerCard({ layer }: { layer: SystemLayer }) {
             </div>
           )}
           <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-elevated-bg/60 p-2 font-mono text-[11px] text-foreground-dim">
-            {layer.content?.trim() ? layer.content : '（空）'}
+            {layer.content?.trim() ? layer.content : t('context._e86')}
           </pre>
         </div>
       )}
@@ -63,6 +65,7 @@ function LayerCard({ layer }: { layer: SystemLayer }) {
 }
 
 export default function SystemLayersPanel({ sessionId }: { sessionId?: string | null }) {
+  const t = useT();
   const addToast = useToastStore((s) => s.addToast);
   const [report, setReport] = useState<SystemLayersReport | null>(null);
   const [packages, setPackages] = useState<TaktonPackageItem[]>([]);
@@ -80,7 +83,7 @@ export default function SystemLayersPanel({ sessionId }: { sessionId?: string | 
       setPackages(Array.isArray(pkgRes?.packages) ? pkgRes.packages : []);
     } catch (e) {
       console.error(e);
-      addToast('加载 System 分层 / 包列表失败', 'error');
+      addToast(t('context._e87'), 'error');
     } finally {
       setLoading(false);
     }
@@ -92,7 +95,7 @@ export default function SystemLayersPanel({ sessionId }: { sessionId?: string | 
 
   const togglePkg = async (pkg: TaktonPackageItem) => {
     if (!sessionId) {
-      addToast('请先选择会话再挂载包', 'info');
+      addToast(t('context._e88'), 'info');
       return;
     }
     setBusyName(pkg.name);
@@ -106,7 +109,7 @@ export default function SystemLayersPanel({ sessionId }: { sessionId?: string | 
       }
       await load();
     } catch (e) {
-      addToast(e instanceof Error ? e.message : '操作失败', 'error');
+      addToast(e instanceof Error ? e.message : t('modelPicker.opFailed'), 'error');
     } finally {
       setBusyName(null);
     }
@@ -130,7 +133,7 @@ export default function SystemLayersPanel({ sessionId }: { sessionId?: string | 
             disabled={loading}
             className="shrink-0 rounded-md border border-border-default px-2.5 py-1 text-[11px] text-foreground-muted hover:bg-elevated-bg disabled:opacity-50"
           >
-            {loading ? '刷新中…' : '刷新'}
+            {loading ? t('settings.refreshing') : t('modelPicker.refresh')}
           </button>
         </div>
         {totals && (
@@ -144,7 +147,7 @@ export default function SystemLayersPanel({ sessionId }: { sessionId?: string | 
             <LayerCard key={layer.id} layer={layer} />
           ))}
           {!report && !loading && (
-            <div className="py-6 text-center text-xs text-foreground-muted">暂无分层数据</div>
+            <div className="py-6 text-center text-xs text-foreground-muted">{t('context._e14')}</div>
           )}
         </div>
         {report?.legend && (
@@ -199,7 +202,7 @@ export default function SystemLayersPanel({ sessionId }: { sessionId?: string | 
                     : 'bg-brand-purple text-white hover:opacity-90'
                 }`}
               >
-                {busyName === pkg.name ? '…' : pkg.attached ? '卸载' : '挂载'}
+                {busyName === pkg.name ? '…' : pkg.attached ? t('mcpStore.uninstall') : t('context._e89')}
               </button>
             </div>
           ))}

@@ -12,7 +12,7 @@ from backend.core.unit_of_work import UnitOfWork
 from backend.schemas.message import MessageRead
 from backend.schemas.user import UserRead
 
-from ..dependencies import get_current_user
+from ..dependencies import get_current_user, assert_session_owner
 from backend.repositories import MessageRepository
 
 router = APIRouter(prefix="/sessions", tags=["Messages"])
@@ -31,8 +31,7 @@ async def get_messages(
         session = await uow.sessions.get_by_id(session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
-        if getattr(session, "user_id", None) and session.user_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Access denied")
+        assert_session_owner(getattr(session, "user_id", None), current_user)
         if q:
             return await uow.messages.search_messages(
                 session_id, q, limit=limit, offset=offset

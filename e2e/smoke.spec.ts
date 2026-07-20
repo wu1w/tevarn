@@ -1,7 +1,9 @@
+import * as path from 'path';
 import { test, expect, Page, BrowserContext } from '@playwright/test';
 
 const BASE_URL = process.env.SMOKE_BASE_URL || 'http://localhost:3002';
 const API_URL = process.env.SMOKE_API_URL || 'http://localhost:8090';
+const SCREENSHOT_DIR = process.env.SCREENSHOT_DIR || path.join(__dirname, 'screenshots');
 
 let sharedToken: string | null = null;
 let sharedUser: unknown | null = null;
@@ -45,12 +47,12 @@ async function loginViaApi(page: Page) {
 async function capturePage(page: Page, name: string) {
   await page.waitForLoadState('networkidle');
   await page.screenshot({
-    path: `/home/developer/taktonl-0.1.0/frontend/e2e/screenshots/${name}-initial.png`,
+    path: `${SCREENSHOT_DIR}/${name}-initial.png`,
     fullPage: true,
   });
   await page.evaluate(() => window.scrollBy(0, 300));
   await page.screenshot({
-    path: `/home/developer/taktonl-0.1.0/frontend/e2e/screenshots/${name}-scrolled.png`,
+    path: `${SCREENSHOT_DIR}/${name}-scrolled.png`,
     fullPage: true,
   });
 }
@@ -66,7 +68,7 @@ async function clickInteractiveElements(page: Page, name: string) {
     }
   }
   await page.screenshot({
-    path: `/home/developer/taktonl-0.1.0/frontend/e2e/screenshots/${name}-after-click.png`,
+    path: `${SCREENSHOT_DIR}/${name}-after-click.png`,
     fullPage: true,
   });
 }
@@ -96,7 +98,7 @@ test.describe('Takton smoke E2E', () => {
           await newChatBtn.click().catch(() => {});
           await page.waitForTimeout(500);
           await page.screenshot({
-            path: `/home/developer/taktonl-0.1.0/frontend/e2e/screenshots/home-after-new-session.png`,
+            path: `${SCREENSHOT_DIR}/home-after-new-session.png`,
             fullPage: true,
           });
         }
@@ -108,7 +110,7 @@ test.describe('Takton smoke E2E', () => {
     await page.goto(`${BASE_URL}/login`);
     await page.waitForLoadState('networkidle');
     await page.screenshot({
-      path: `/home/developer/taktonl-0.1.0/frontend/e2e/screenshots/login-initial.png`,
+      path: `${SCREENSHOT_DIR}/login-initial.png`,
       fullPage: true,
     });
   });

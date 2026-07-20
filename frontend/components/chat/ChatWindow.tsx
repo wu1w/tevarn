@@ -5,6 +5,7 @@ import { Message } from '@/types';
 import { MessageBubble } from './MessageBubble';
 import { AppLogo } from '@/components/brand/AppLogo';
 import { getDevices } from '@/lib/api';
+import { useT } from '@/stores/localeStore';
 
 interface ChatWindowProps {
   messages: Message[];
@@ -17,24 +18,9 @@ interface ChatWindowProps {
   onExampleSelect?: (text: string) => void;
 }
 
-const TAGS = [
-  { key: 'goal', label: 'Goal 模式' },
-  { key: 'cluster', label: '集群模式' },
-  { key: 'code', label: '编码' },
-  { key: 'research', label: '调研' },
-  { key: 'writing', label: '写作' },
-  { key: 'debug', label: '调试' },
-  { key: 'data', label: '数据分析' },
-  { key: 'devops', label: '运维' },
-  { key: 'other', label: '其他' },
-];
+const TAG_KEYS = ['goal', 'cluster', 'code', 'research', 'writing', 'debug', 'data', 'devops', 'other'] as const;
 
-const EXAMPLES = [
-  { text: '按开箱清单一步步带我配置 Takton', tag: '对话配置' },
-  { text: '当前系统状态和模型是什么？', tag: '状态' },
-  { text: '@remote-pc hostname && df -h', tag: '远程设备' },
-  { text: '北京明天天气怎么样？', tag: '日常' },
-];
+const EXAMPLE_KEYS = [1, 2, 3, 4] as const;
 
 export function ChatWindow({
   messages,
@@ -46,6 +32,7 @@ export function ChatWindow({
   onExampleSelect,
 }: ChatWindowProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const t = useT();
   const [onlineDevices, setOnlineDevices] = useState<
     Array<{ id: string; name: string; latency?: number }>
   >([]);
@@ -105,19 +92,19 @@ export function ChatWindow({
           <AppLogo className="mb-5 h-14 w-14 text-foreground-dim/30" />
           <h2 className="mb-1 text-xl font-semibold text-foreground">Takton</h2>
           <p className="mb-6 max-w-md text-sm text-foreground-dim">
-            个人多机 Agent 工作台 — 对话调度本机与远程设备
+            {t('chat.tagline')}
           </p>
 
           <div className="mb-6 grid w-full max-w-lg gap-2 sm:grid-cols-1">
-            {EXAMPLES.map((ex) => (
+            {EXAMPLE_KEYS.map((n) => (
                           <button
-                            key={ex.text}
+                            key={n}
                             type="button"
-                            onClick={() => onExampleSelect?.(ex.text)}
+                            onClick={() => onExampleSelect?.(t(`chat.ex.${n}` as never))}
                             className="rounded-xl border border-border-subtle bg-card-bg/80 px-3 py-2.5 text-left transition-colors hover:border-brand-purple/40 hover:bg-card-bg-hover"
                           >
-                            <div className="text-[13px] text-foreground">{ex.text}</div>
-                            <div className="mt-0.5 text-[11px] text-foreground-dim">{ex.tag}</div>
+                            <div className="text-[13px] text-foreground">{t(`chat.ex.${n}` as never)}</div>
+                            <div className="mt-0.5 text-[11px] text-foreground-dim">{t(`chat.ex.${n}.tag` as never)}</div>
                           </button>
                         ))}
           </div>
@@ -125,7 +112,7 @@ export function ChatWindow({
           {onlineDevices.length > 0 && (
             <div className="mb-6 w-full max-w-lg">
               <div className="mb-2 text-left text-[11px] font-medium uppercase tracking-wide text-foreground-dim">
-                在线设备
+                {t('chat.onlineDevices')}
               </div>
               <div className="flex flex-wrap gap-2">
                 {onlineDevices.map((d) => (
@@ -146,14 +133,14 @@ export function ChatWindow({
           )}
 
           <div className="flex flex-wrap justify-center gap-2">
-            {TAGS.map((tag) => (
+            {TAG_KEYS.map((key) => (
               <button
-                key={tag.key}
+                key={key}
                 type="button"
-                onClick={() => onTagClick?.(tag.key)}
+                onClick={() => onTagClick?.(key)}
                 className="rounded-full border border-foreground-dim/20 px-3 py-1 text-[11px] text-foreground-dim transition-colors hover:border-brand-cyan/50 hover:text-brand-cyan"
               >
-                {tag.label}
+                {t(`chat.tag.${key}` as never)}
               </button>
             ))}
           </div>

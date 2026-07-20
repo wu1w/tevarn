@@ -2,6 +2,7 @@
  * Chat 展示层工具：消息配对、工具结果美化、错误识别
  */
 import type { Message, ToolCall } from '@/types';
+import { t } from '@/stores/localeStore';
 
 export interface DisplayToolCall extends ToolCall {
   result?: string;
@@ -103,14 +104,14 @@ export function formatToolResultForDisplay(
   maxLen = 8000
 ): { text: string; isJson: boolean; truncated: boolean } {
   if (content == null || content === '') {
-    return { text: '(空结果)', isJson: false, truncated: false };
+    return { text: '(empty)', isJson: false, truncated: false };
   }
   const parsed = tryParseJson(content);
   if (parsed !== null) {
     const pretty = JSON.stringify(parsed, null, 2);
     if (pretty.length > maxLen) {
       return {
-        text: pretty.slice(0, maxLen) + '\n… (已截断)',
+        text: pretty.slice(0, maxLen) + '\n… (truncated)',
         isJson: true,
         truncated: true,
       };
@@ -119,7 +120,7 @@ export function formatToolResultForDisplay(
   }
   if (content.length > maxLen) {
     return {
-      text: content.slice(0, maxLen) + '\n… (已截断)',
+      text: content.slice(0, maxLen) + '\n… (truncated)',
       isJson: false,
       truncated: true,
     };
@@ -132,14 +133,14 @@ export function summarizeToolResult(
   content: string | null | undefined,
   toolName?: string | null
 ): string {
-  if (!content) return toolName ? `${toolName} 完成` : '工具执行完成';
+  if (!content) return toolName ? `${toolName} done` : t('chatDisplay._e9');
   const parsed = tryParseJson(content);
   if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
     const o = parsed as Record<string, unknown>;
     if (typeof o.message === 'string' && o.message.trim()) return o.message.trim();
-    if (typeof o.error === 'string' && o.error.trim()) return `错误: ${o.error}`;
-    if (o.ok === true && toolName) return `${toolName} 成功`;
-    if (o.ok === false && toolName) return `${toolName} 失败`;
+    if (typeof o.error === 'string' && o.error.trim()) return `Error: ${o.error}`;
+    if (o.ok === true && toolName) return `${toolName} OK`;
+    if (o.ok === false && toolName) return `${toolName} failed`;
     if (typeof o.status === 'string') return String(o.status);
   }
   const oneLine = content.replace(/\s+/g, ' ').trim();
@@ -148,10 +149,14 @@ export function summarizeToolResult(
 
 export function isErrorContent(content: string | null | undefined): boolean {
   if (!content) return false;
+  const s = content.trim();
   return (
-    /^\[Error\]/i.test(content.trim()) ||
-    /^Error:/i.test(content.trim()) ||
-    content.includes('LLM 服务失败') ||
+    /^\[Error\]/i.test(s) ||
+    /^\[LLM Error/i.test(s) ||
+    /^Error:/i.test(s) ||
+    /^LLM Error/i.test(s) ||
+    (/\b401\b/.test(s) && /unauthor/i.test(s)) ||
+    content.includes(t('chatDisplay._e10')) ||
     content.includes('LLM service failed')
   );
 }

@@ -7,6 +7,8 @@ import { useConfigStore } from '@/stores/configStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { Skill } from '@/types';
 import { getSkills } from '@/lib/api';
+import { useT } from '@/stores/localeStore';
+
 
 type TabKey = 'sys_prompt' | 'tools';
 
@@ -16,6 +18,7 @@ const tabs: { key: TabKey; label: string }[] = [
 ];
 
 export default function ConfigPage() {
+  const t = useT();
   const [activeTab, setActiveTab] = useState<TabKey>('sys_prompt');
   const [skills, setSkills] = useState<Skill[]>([]);
   const configStore = useConfigStore();
@@ -59,17 +62,17 @@ export default function ConfigPage() {
   return (
     <div className="p-6">
       <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-xl font-bold text-foreground">心智配置</h1>
+        <h1 className="text-xl font-bold text-foreground">{t('nav.config')}</h1>
         <div className="flex items-center gap-3">
           {configStore.saved && (
-            <span className="text-sm text-success-text">已保存</span>
+            <span className="text-sm text-success-text">{t('channels.saved')}</span>
           )}
           <button
             onClick={handleSave}
             disabled={configStore.isSaving}
             className="rounded-md bg-brand-purple px-4 py-2 text-sm font-medium text-white hover:bg-brand-purple disabled:opacity-50"
           >
-            {configStore.isSaving ? '保存中...' : '保存配置'}
+            {configStore.isSaving ? t('cron.saving') : t('config._e2')}
           </button>
         </div>
       </div>

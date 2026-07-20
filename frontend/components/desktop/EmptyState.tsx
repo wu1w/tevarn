@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { t, useT } from '@/stores/localeStore';
 
 interface EmptyStateProps {
   /** 图标（emoji 或自定义元素） */
@@ -37,6 +38,7 @@ export function EmptyState({
   className = '',
   compact = false,
 }: EmptyStateProps) {
+  const t = useT();
   return (
     <div
       className={`flex flex-col items-center justify-center px-4 text-center ${
@@ -85,33 +87,33 @@ export function EmptyState({
 /** 预设场景（onClick 需由调用方覆盖时请直接用 EmptyState） */
 export const EmptyStates = {
   noSessions: (
-    <EmptyState icon="💬" title="暂无会话" description="点击「新对话」开始与 Agent 交流" />
+    <EmptyState icon="💬" title={t('empty.noSessions.title')} description={t('empty.noSessions.desc')} />
   ),
   noMessages: (
-    <EmptyState icon="✨" title="开始对话" description="在下方输入框中输入消息，Agent 将为你服务" />
+    <EmptyState icon="✨" title={t('empty.noMessages.title')} description={t('empty.noMessages.desc')} />
   ),
   noSkills: (
-    <EmptyState icon="🛠️" title="暂无技能" description="添加技能以扩展 Agent 的能力范围" />
+    <EmptyState icon="🛠️" title={t('empty.noSkills.title')} description={t('empty.noSkills.desc')} />
   ),
   noTools: (
-    <EmptyState icon="🔧" title="暂无工具" description="注册工具让 Agent 可以执行具体操作" />
+    <EmptyState icon="🔧" title={t('empty.noTools.title')} description={t('empty.noTools.desc')} />
   ),
   noKnowledge: (
-    <EmptyState icon="📚" title="暂无知识库" description="上传文档构建知识库，让 Agent 拥有专业知识" />
+    <EmptyState icon="📚" title={t('empty.noKnowledge.title')} description={t('empty.noKnowledge.desc')} />
   ),
   noWorkflows: (
-    <EmptyState icon="🔄" title="暂无工作流" description="创建工作流以自动化复杂任务" />
+    <EmptyState icon="🔄" title={t('empty.noWorkflows.title')} description={t('empty.noWorkflows.desc')} />
   ),
   noCron: (
-    <EmptyState icon="⏰" title="暂无定时任务" description="设置定时任务让 Agent 自动执行周期性工作" />
+    <EmptyState icon="⏰" title={t('cron.emptyTitle')} description={t('empty.noCron.desc')} />
   ),
   noChannels: (
-    <EmptyState icon="📡" title="选择通道" description="从左侧选择已配置通道，或添加 Telegram / QQ / 企微 等" />
+    <EmptyState icon="📡" title={t('empty.noChannels.title')} description={t('empty.noChannels.desc')} />
   ),
   noSearchResults: (
-    <EmptyState icon="🔍" title="未找到结果" description="尝试调整搜索关键词或筛选条件" compact />
+    <EmptyState icon="🔍" title={t('empty.noSearch.title')} description={t('empty.noSearch.desc')} compact />
   ),
   disconnected: (
-    <EmptyState icon="🔌" title="连接已断开" description="与后端的连接已断开，请检查网络或后端服务状态" />
+    <EmptyState icon="🔌" title={t('empty.disconnected.title')} description={t('empty.disconnected.desc')} />
   ),
 };

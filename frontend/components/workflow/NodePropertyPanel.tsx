@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { WorkflowNode, WorkflowNodeType } from '@/types';
+import { useT } from '@/stores/localeStore';
 
 interface NodePropertyPanelProps {
   node: WorkflowNode | null;
@@ -10,6 +11,7 @@ interface NodePropertyPanelProps {
 }
 
 export default function NodePropertyPanel({ node, nodeType, onChange }: NodePropertyPanelProps) {
+  const t = useT();
   if (!node || !nodeType) {
     return (
       <div className="flex h-full w-72 flex-col border-l border-border-default bg-card-bg">
@@ -20,8 +22,8 @@ export default function NodePropertyPanel({ node, nodeType, onChange }: NodeProp
               <path d="M9 3v18" />
             </svg>
           </div>
-          <p className="text-xs font-medium text-foreground-dim">选择一个节点</p>
-          <p className="mt-0.5 text-[10px] text-foreground-muted">点击画布中的节点查看和编辑属性</p>
+          <p className="text-xs font-medium text-foreground-dim">{t('workflow._e28')}</p>
+          <p className="mt-0.5 text-[10px] text-foreground-muted">{t('workflow._e29')}</p>
         </div>
       </div>
     );
@@ -49,7 +51,7 @@ export default function NodePropertyPanel({ node, nodeType, onChange }: NodeProp
         <div className="space-y-4">
           {/* 节点名称 */}
           <div>
-            <label className="mb-1 block text-[10px] font-medium text-foreground-dim">节点名称</label>
+            <label className="mb-1 block text-[10px] font-medium text-foreground-dim">{t('workflow._e30')}</label>
             <input
               type="text"
               value={node.label}
@@ -145,7 +147,7 @@ export default function NodePropertyPanel({ node, nodeType, onChange }: NodeProp
                     onChange={(e) => handleFieldChange(field.key, e.target.checked)}
                     className="h-4 w-4 rounded border-gray-300 text-brand-purple"
                   />
-                  <span className="text-xs text-foreground-dim">启用</span>
+                  <span className="text-xs text-foreground-dim">{t('modelPicker.enable')}</span>
                 </label>
               )}
 

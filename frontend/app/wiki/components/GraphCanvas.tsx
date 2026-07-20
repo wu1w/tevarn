@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { WikiEntity, WikiRelation } from '@/types';
 import { getWikiGraph, getWikiEntities, createWikiEntity, updateWikiEntity, deleteWikiEntity, createWikiRelation, deleteWikiRelation, importWiki, previewWikiImport } from '@/lib/api';
+import { useT } from '@/stores/localeStore';
 
 const TYPE_COLORS: Record<string, string> = {
   person: '#22c55e',
@@ -18,16 +19,16 @@ const TYPE_COLORS: Record<string, string> = {
 };
 
 const TYPE_LABELS: Record<string, string> = {
-  person: '人物',
-  organization: '组织',
-  project: '项目',
-  tech: '技术',
-  concept: '概念',
-  docs: '文档',
-  event: '事件',
-  location: '地点',
-  problem: '问题',
-  solution: '方案',
+  person: 'memory.type.person',
+  organization: 'wiki._e12',
+  project: 'contextDash.scope.project',
+  tech: 'wiki._e13',
+  concept: 'wiki._e14',
+  docs: 'contextDash.kind.doc',
+  event: 'wiki._e15',
+  location: 'wiki._e16',
+  problem: 'wiki._e17',
+  solution: 'wiki._e18',
 };
 
 const RELATION_TYPES = [
@@ -76,6 +77,7 @@ export default function GraphCanvas({
   onDeleteRelation,
   onDeleteEntity,
 }: Props) {
+  const t = useT();
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const nodesRef = useRef<GraphNode[]>([]);
@@ -546,12 +548,17 @@ export default function GraphCanvas({
     const delta = e.deltaY > 0 ? 0.9 : 1.1;
     const oldZoom = zoomRef.current;
     const newZoom = Math.max(0.3, Math.min(3, oldZoom * delta));
-    const pos = toWorld(e.clientX, e.clientY);
-    panRef.current.x = e.clientX - pos.x * newZoom;
-    panRef.current.y = e.clientY - pos.y * newZoom;
+    // Zoom toward cursor: keep the world point under the cursor fixed
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const worldX = (e.clientX - rect.left - panRef.current.x) / oldZoom;
+    const worldY = (e.clientY - rect.top - panRef.current.y) / oldZoom;
+    panRef.current.x = e.clientX - rect.left - worldX * newZoom;
+    panRef.current.y = e.clientY - rect.top - worldY * newZoom;
     zoomRef.current = newZoom;
     scheduleDraw();
-  }, [toWorld, scheduleDraw]);
+  }, [scheduleDraw]);
 
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
     const pos = toWorld(e.clientX, e.clientY);
@@ -589,9 +596,9 @@ export default function GraphCanvas({
       />
       <div className="absolute top-3 left-3 z-10 flex flex-wrap items-center gap-1.5 rounded-xl border border-border-default bg-card-bg/90 p-1.5 shadow-sm backdrop-blur">
         {([
-          ['compact', '紧凑'],
-          ['normal', '标准'],
-          ['sparse', '宽松'],
+          ['compact', t('wiki._e48')],
+          ['normal', t('wiki._e49')],
+          ['sparse', t('wiki._e50')],
         ] as const).map(([k, label]) => (
           <button
             key={k}
@@ -626,7 +633,7 @@ export default function GraphCanvas({
               ? 'bg-brand-cyan/20 text-brand-cyan'
               : 'text-foreground-muted hover:bg-elevated-bg hover:text-foreground'
           }`}
-          title="显示全部关系标签（默认仅选中/聚焦时显示）"
+          title={t('wiki._e1')}
         >
           边标签
         </button>
@@ -637,13 +644,13 @@ export default function GraphCanvas({
             startSimulation();
           }}
           className="rounded-lg px-2.5 py-1 text-[11px] font-medium text-foreground-muted hover:bg-elevated-bg hover:text-foreground"
-          title="重新排布"
+          title={t('wiki._e2')}
         >
           重排
         </button>
       </div>
       <div className="pointer-events-none absolute bottom-3 left-3 rounded-lg border border-border-default bg-card-bg/90 px-3 py-2 shadow-sm backdrop-blur">
-        <div className="mb-1 text-[10px] font-semibold text-foreground-dim">图例</div>
+        <div className="mb-1 text-[10px] font-semibold text-foreground-dim">{t('wiki._e3')}</div>
         <div className="grid grid-cols-2 gap-x-3 gap-y-1">
           {Object.entries(TYPE_COLORS).map(([type, color]) => (
             <div key={type} className="flex items-center gap-1.5">
@@ -657,7 +664,7 @@ export default function GraphCanvas({
         <div>滚轮缩放 · 拖拽节点</div>
         <div>Shift+拖拽 平移 · 双击聚焦</div>
         <div>Ctrl/⌘ 点击 新建关系到目标</div>
-        <div>右键节点 删除</div>
+        <div>{t('wiki._e4')}</div>
       </div>
       {relationStartRef.current && (
         <div className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 rounded-full bg-brand-purple px-3 py-1 text-xs text-white shadow">

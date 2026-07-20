@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { useT } from '@/stores/localeStore';
 
 /** 统一描边风格：细线、圆角端点 — 比 emoji 更干净 */
 const base = {
@@ -31,6 +32,7 @@ function Icon({
 }
 
 export function IconPaperclip({ className }: { className?: string }) {
+  const t = useT();
   return (
     <Icon className={className}>
       <path d="M21.44 11.05l-8.49 8.49a5.5 5.5 0 01-7.78-7.78l8.49-8.49a3.5 3.5 0 014.95 4.95l-8.5 8.49a1.5 1.5 0 01-2.12-2.12l7.78-7.78" />

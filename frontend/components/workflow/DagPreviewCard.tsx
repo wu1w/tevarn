@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { useT } from '@/stores/localeStore';
 
 interface DagNode {
   id: string;
@@ -35,6 +36,7 @@ export default function DagPreviewCard({
   onSave,
   className = "",
 }: DagPreviewProps) {
+  const t = useT();
   const [expanded, setExpanded] = useState(false);
 
   // 节点类型 → 颜色映射
@@ -193,7 +195,7 @@ export default function DagPreviewCard({
             {/* 边连接示意 */}
             {edges.length > 0 && (
               <div className="mt-3 pt-2 border-t border-border-default/50">
-                <p className="text-[10px] text-text-tertiary mb-1.5">连接</p>
+                <p className="text-[10px] text-text-tertiary mb-1.5">{t('workflow._e25')}</p>
                 <div className="flex flex-wrap gap-1.5">
                   {edges.slice(0, 8).map((edge) => (
                     <span

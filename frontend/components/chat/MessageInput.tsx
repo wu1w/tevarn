@@ -6,6 +6,7 @@ import { ModelPicker } from './ModelPicker';
 import { CHAT_TOOL_ICONS, IconSend } from '@/components/icons/ChatIcons';
 import { ClusterModePanel } from '@/components/subagent/SubAgentPanel';
 import { subAgentApi } from '@/lib/subagent-api';
+import { useT } from '@/stores/localeStore';
 import type { SubAgent } from '@/types/subagent';
 import type { Device } from '@/types';
 
@@ -27,17 +28,22 @@ interface MessageInputProps {
   onClearEdit?: () => void;
   showModelPicker?: boolean;
   onModelChanged?: (providerId: string, model: string, providerName: string) => void;
+  /** 当前会话 id：切换 provider 时同步更新该会话快照 */
+  sessionId?: string;
+  /** 回答生成中：显示停止按钮，允许打断 */
+  isStreaming?: boolean;
+  onStopStreaming?: () => void;
 }
 
 const TOOLS = [
-  { key: 'attachment', label: '附件', toggle: false, group: 'utility' },
-  { key: 'goal', label: 'Goal 模式', toggle: true, group: 'think' },
-  { key: 'cluster', label: '集群模式', toggle: true, group: 'think' },
-  { key: 'deepthink', label: '深度思考', toggle: true, group: 'think' },
-  { key: 'search', label: '联网搜索', toggle: true, group: 'think' },
-  { key: 'image', label: '图片生成', toggle: true, group: 'action' },
-  { key: 'ppt', label: '制作PPT', toggle: true, group: 'action' },
-  { key: 'report', label: '生成报告', toggle: true, group: 'action' },
+  { key: 'attachment', toggle: false, group: 'utility' },
+  { key: 'goal', toggle: true, group: 'think' },
+  { key: 'cluster', toggle: true, group: 'think' },
+  { key: 'deepthink', toggle: true, group: 'think' },
+  { key: 'search', toggle: true, group: 'think' },
+  { key: 'image', toggle: true, group: 'action' },
+  { key: 'ppt', toggle: true, group: 'action' },
+  { key: 'report', toggle: true, group: 'action' },
 ] as const;
 
 /**
@@ -51,12 +57,16 @@ export function MessageInput({
   onSend,
   onGenerateImage,
   disabled = false,
-  placeholder = '发送消息...',
+  placeholder,
   initialContent,
   onClearEdit,
   showModelPicker = true,
   onModelChanged,
+  sessionId,
+  isStreaming = false,
+  onStopStreaming,
 }: MessageInputProps) {
+  const t = useT();
   const [content, setContent] = useState(initialContent || '');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -64,16 +74,38 @@ export function MessageInput({
   const [uploading, setUploading] = useState(false);
   const [subAgents, setSubAgents] = useState<SubAgent[]>([]);
   const [selectedSubAgentIds, setSelectedSubAgentIds] = useState<string[]>([]);
-    const [devices, setDevices] = useState<Device[]>([]);
-    const [mentionOpen, setMentionOpen] = useState(false);
-    const [mentionFilter, setMentionFilter] = useState('');
-    const [mentionIndex, setMentionIndex] = useState(0);
-    const fileInputRef = useRef<HTMLInputElement>(null);
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionFilter, setMentionFilter] = useState('');
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const sendingRef = useRef(false);
   const isEditing = !!initialContent;
   const inputLocked = disabled || uploading;
   const clusterOn = activeModes.has('cluster');
+
+  // P2 修复：自动保存草稿到 localStorage
+  useEffect(() => {
+    if (isEditing) return; // 编辑模式不自动保存
+    const timer = setTimeout(() => {
+      if (content.trim()) {
+        localStorage.setItem('takton-chat-draft', content);
+      } else {
+        localStorage.removeItem('takton-chat-draft');
+      }
+    }, 500); // 500ms 防抖
+    return () => clearTimeout(timer);
+  }, [content, isEditing]);
+
+  // P2 修复：组件挂载时恢复草稿
+  useEffect(() => {
+    if (isEditing) return;
+    const draft = localStorage.getItem('takton-chat-draft');
+    if (draft && !content) {
+      setContent(draft);
+    }
+  }, []); // 仅在挂载时执行
 
   useEffect(() => {
       if (!clusterOn) return;
@@ -171,6 +203,8 @@ export function MessageInput({
       onGenerateImage(trimmed);
       setContent('');
       setAttachments([]);
+      // P2 修复：发送后清除草稿
+      localStorage.removeItem('takton-chat-draft');
       setActiveModes((prev) => {
         const next = new Set(prev);
         next.delete('image');
@@ -198,6 +232,8 @@ export function MessageInput({
     onSend(trimmed, attachments, mode, subIds);
     setContent('');
     setAttachments([]);
+    // P2 修复：发送后清除草稿
+    localStorage.removeItem('takton-chat-draft');
     setActiveModes((prev) => {
       const next = new Set(prev);
       next.delete('ppt');
@@ -319,7 +355,7 @@ export function MessageInput({
     >
       {uploadError && (
         <div className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
-          ⚠ 上传失败：{uploadError}
+          {t('chat.uploadFailed')}{uploadError}
         </div>
       )}
       {attachments.length > 0 && (
@@ -355,7 +391,7 @@ export function MessageInput({
 
       <div className="mb-3 flex flex-wrap items-center gap-1.5" data-no-composer-focus>
         {showModelPicker && (
-          <ModelPicker disabled={inputLocked} onChanged={onModelChanged} />
+          <ModelPicker disabled={inputLocked} onChanged={onModelChanged} sessionId={sessionId} />
         )}
         <span className="mx-0.5 hidden h-4 w-px bg-border-subtle sm:inline-block" aria-hidden />
         {/* 工具分组：附件 | 模式 | 生成 */}
@@ -378,17 +414,17 @@ export function MessageInput({
                       ? 'border border-brand-purple/25 bg-brand-purple/12 text-brand-cyan shadow-sm'
                       : 'border border-transparent text-foreground-muted hover:bg-card-bg-hover hover:text-foreground'
                   } disabled:opacity-40`}
-                  title={tool.label}
+                  title={t(`chat.tool.${tool.key}` as never)}
                 >
                   {ToolIcon ? <ToolIcon className="h-3.5 w-3.5" /> : null}
-                  <span className="hidden text-[11px] font-medium lg:inline">{tool.label}</span>
+                  <span className="hidden text-[11px] font-medium lg:inline">{t(`chat.tool.${tool.key}` as never)}</span>
                 </button>
               );
             })}
           </React.Fragment>
         ))}
         {uploading && (
-          <span className="animate-pulse text-xs text-foreground-dim">上传中...</span>
+          <span className="animate-pulse text-xs text-foreground-dim">{t('chat.uploading')}</span>
         )}
       </div>
 
@@ -396,13 +432,13 @@ export function MessageInput({
         <label className="relative min-w-0 flex-1 cursor-text">
           {isEditing && (
             <div className="absolute -top-6 left-0 right-0 flex items-center justify-between">
-              <span className="text-[10px] font-medium text-brand-cyan">编辑消息中</span>
+              <span className="text-[10px] font-medium text-brand-cyan">{t('chat.editingMsg')}</span>
               <button
                 type="button"
                 onClick={onClearEdit}
                 className="text-[10px] text-foreground-dim transition-colors hover:text-foreground-muted"
               >
-                取消编辑
+                {t('chat.cancelEdit')}
               </button>
             </div>
           )}
@@ -431,10 +467,10 @@ export function MessageInput({
                       }}
                       placeholder={
                         isEditing
-                          ? '编辑消息...'
+                          ? t('chat.editPlaceholder')
                           : clusterOn
-                            ? '向集群发送任务…（发送时自动带上所选子代理）'
-                            : placeholder
+                            ? t('chat.clusterPlaceholder')
+                            : (placeholder ?? t('chat.send'))
                       }
                       readOnly={inputLocked}
                       rows={2}
@@ -483,14 +519,22 @@ export function MessageInput({
                     )}
                   </label>
         <button
-          type="button"
-          onClick={handleSend}
-          disabled={!canSend}
-          className="inline-flex flex-shrink-0 items-center gap-2 rounded-2xl bg-gradient-to-r from-brand-purple to-brand-cyan px-5 py-3 text-[0.8125rem] font-semibold tracking-tight text-white shadow-lg shadow-brand-purple/15 transition-all hover:opacity-90 disabled:opacity-30"
-        >
-          <span>发送</span>
-          <IconSend className="h-4 w-4 opacity-95" />
-        </button>
+                  type="button"
+                  onClick={isStreaming ? () => onStopStreaming?.() : handleSend}
+                  disabled={isStreaming ? !onStopStreaming : !canSend}
+                  aria-label={isStreaming ? t('chat.stopGenerating') : t('chat.sendBtn')}
+                  className={`inline-flex flex-shrink-0 items-center gap-2 rounded-2xl px-5 py-3 text-[0.8125rem] font-semibold tracking-tight text-white shadow-lg transition-all hover:opacity-90 disabled:opacity-30 ${
+                    isStreaming
+                      ? 'bg-gradient-to-r from-rose-500 to-orange-500 shadow-rose-500/20'
+                      : 'bg-gradient-to-r from-brand-purple to-brand-cyan shadow-brand-purple/15'
+                  }`}
+                >
+                  <span>{isStreaming ? t('chat.stopGenerating') : t('chat.sendBtn')}</span>
+                  {!isStreaming && <IconSend className="h-4 w-4 opacity-95" />}
+                  {isStreaming && (
+                    <span className="inline-block h-3.5 w-3.5 rounded-sm bg-white/95" aria-hidden />
+                  )}
+                </button>
       </div>
 
       <input

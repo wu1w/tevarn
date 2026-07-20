@@ -2,12 +2,14 @@
 
 import React from 'react';
 import { Task } from '@/types';
+import { useT } from '@/stores/localeStore';
 
 interface TaskItemProps {
   task: Task;
 }
 
 export function TaskItem({ task }: TaskItemProps) {
+  const t = useT();
   const statusConfig: Record<string, { bg: string; text: string; dot: string; bar: string }> = {
     pending: {
       bg: 'bg-card-bg-hover',
@@ -61,7 +63,7 @@ export function TaskItem({ task }: TaskItemProps) {
       {/* 进度条 */}
       <div className="mt-3">
         <div className="flex items-center justify-between text-[11px] text-foreground-dim">
-          <span>进度</span>
+          <span>{t('tasks._e23')}</span>
           <span className="text-foreground-muted">{task.progress}%</span>
         </div>
         <div className="mt-1.5 h-1.5 w-full rounded-full bg-card-bg-hover overflow-hidden">

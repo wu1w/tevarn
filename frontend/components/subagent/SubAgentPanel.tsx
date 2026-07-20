@@ -30,14 +30,15 @@ import type {
 } from '@/types/subagent';
 import { useToastStore } from '@/stores/toastStore';
 import { useConfirm } from '@/components/desktop/ConfirmDialog';
+import { t, useT } from '@/stores/localeStore';
 
 const TOOLSET_OPTIONS = [
-  { value: 'file', label: '文件', icon: '📁' },
-  { value: 'terminal', label: '终端', icon: '💻' },
+  { value: 'file', label: t('tools.cat.file'), icon: '📁' },
+  { value: 'terminal', label: t('subagent._e118'), icon: '💻' },
   { value: 'git', label: 'Git', icon: '🔀' },
-  { value: 'web', label: '搜索', icon: '🌐' },
-  { value: 'browser', label: '浏览器', icon: '🖥️' },
-  { value: 'code', label: '代码', icon: '⚡' },
+  { value: 'web', label: t('memory.search'), icon: '🌐' },
+  { value: 'browser', label: t('tools.type.browser'), icon: '🖥️' },
+  { value: 'code', label: t('subagent._e119'), icon: '⚡' },
 ];
 
 const AVATAR_PRESETS = ['🤖', '👩‍💻', '🧑‍🔬', '🕵️', '📝', '🛠️', '🎨', '📊', '🔒', '🚀'];
@@ -59,10 +60,10 @@ function ModelSelector({
     for (const item of inventory) {
       const group =
         item.status === 'active' || item.status === 'default'
-          ? '推荐'
+          ? t('subagent._e120')
           : item.status === 'fallback'
-            ? '备用'
-            : '可用模型';
+            ? t('subagent._e121')
+            : t('subagent._e122');
       (g[group] ||= []).push(item);
     }
     return g;
@@ -161,7 +162,7 @@ function CharacterCard({
             <div className="min-w-0">
               <h3 className="truncate text-sm font-semibold text-foreground">{agent.name}</h3>
               <p className="mt-0.5 line-clamp-2 text-xs text-foreground-dim">
-                {agent.description || '未填写职责'}
+                {agent.description || t('subagent._e123')}
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-0.5 opacity-80 group-hover:opacity-100">
@@ -173,7 +174,7 @@ function CharacterCard({
                     ? 'text-emerald-400 hover:bg-emerald-500/10'
                     : 'text-foreground-dim hover:bg-card-bg-hover'
                 }`}
-                title={agent.enabled ? '禁用' : '启用'}
+                title={agent.enabled ? t('cron.disabled') : t('channels.enable')}
               >
                 <Power className="h-3.5 w-3.5" />
               </button>
@@ -181,7 +182,7 @@ function CharacterCard({
                 type="button"
                 onClick={() => onEdit(agent)}
                 className="rounded-lg p-1.5 text-foreground-dim hover:bg-card-bg-hover hover:text-foreground"
-                title="编辑"
+                title={t('memory.edit')}
               >
                 <Edit3 className="h-3.5 w-3.5" />
               </button>
@@ -190,7 +191,7 @@ function CharacterCard({
                   type="button"
                   onClick={() => onDelete(agent.id)}
                   className="rounded-lg p-1.5 text-red-400/80 hover:bg-red-500/10"
-                  title="删除"
+                  title={t('memory.delete')}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
@@ -199,7 +200,7 @@ function CharacterCard({
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-1.5">
             <span className="rounded-md border border-brand-purple/20 bg-brand-purple/10 px-2 py-0.5 font-mono text-[10px] text-brand-cyan">
-              {modelShort || '未选模型'}
+              {modelShort || t('subagent._e124')}
             </span>
             {agent.is_builtin && (
               <span className="rounded-md border border-border-subtle bg-card-bg-hover px-2 py-0.5 text-[10px] text-foreground-dim">
@@ -220,7 +221,7 @@ function CharacterCard({
               {agent.system_prompt}
             </p>
           ) : (
-            <p className="mt-3 text-[11px] italic text-foreground-dim">尚未配置 system prompt</p>
+            <p className="mt-3 text-[11px] italic text-foreground-dim">{t('subagent._e74')}</p>
           )}
         </div>
       </div>
@@ -265,7 +266,7 @@ function SubAgentFormDialog({
 
   const handleSubmit = async () => {
     if (!form.name?.trim() || !form.model_ref) {
-      setError('任务名称和模型不能为空');
+      setError(t('subagent._e125'));
       return;
     }
     setLoading(true);
@@ -274,15 +275,15 @@ function SubAgentFormDialog({
       if (isEdit && initial) {
         const updateData: SubAgentUpdate = { ...form };
         await subAgentApi.update(initial.id, updateData);
-        addToast('子代理已更新', 'success');
+        addToast(t('subagent._e126'), 'success');
       } else {
         await subAgentApi.create(form);
-        addToast('子代理已创建', 'success');
+        addToast(t('subagent._e127'), 'success');
       }
       onSaved();
       onClose();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : '保存失败');
+      setError(e instanceof Error ? e.message : t('channels.saveFailed'));
     } finally {
       setLoading(false);
     }
@@ -293,7 +294,7 @@ function SubAgentFormDialog({
       <div className="max-h-[90vh] w-full max-w-lg overflow-auto rounded-2xl border border-border-subtle bg-card-bg p-5 shadow-2xl">
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-base font-semibold text-foreground">
-            {isEdit ? '编辑子代理' : '新建子代理'}
+            {isEdit ? t('subagent._e128') : t('subagent._e129')}
           </h3>
           <button type="button" onClick={onClose} className="rounded-lg p-1 text-foreground-dim hover:bg-card-bg-hover">
             <X className="h-4 w-4" />
@@ -306,7 +307,7 @@ function SubAgentFormDialog({
         )}
         <div className="space-y-4">
           <div>
-            <label className="mb-1.5 block text-xs font-medium text-foreground-muted">形象</label>
+            <label className="mb-1.5 block text-xs font-medium text-foreground-muted">{t('subagent._e75')}</label>
             <div className="flex flex-wrap gap-1.5">
               {AVATAR_PRESETS.map((ic) => (
                 <button
@@ -327,7 +328,7 @@ function SubAgentFormDialog({
                 onChange={(e) => setForm({ ...form, icon: e.target.value.slice(0, 8) })}
                 className="h-9 w-16 rounded-xl border border-border-default bg-input-bg px-2 text-center text-sm"
                 maxLength={8}
-                title="自定义 emoji"
+                title={t('subagent._e76')}
               />
             </div>
           </div>
@@ -339,16 +340,16 @@ function SubAgentFormDialog({
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
               className="w-full rounded-xl border border-border-default bg-input-bg px-3.5 py-2.5 text-sm text-foreground placeholder:text-foreground-dim focus:border-brand-purple/40 focus:outline-none"
-              placeholder="例：代码审查员 / 调研专员"
+              placeholder={t('subagent._e77')}
             />
           </div>
           <div>
-            <label className="mb-1.5 block text-xs font-medium text-foreground-muted">职责简述</label>
+            <label className="mb-1.5 block text-xs font-medium text-foreground-muted">{t('subagent._e78')}</label>
             <input
               value={form.description || ''}
               onChange={(e) => setForm({ ...form, description: e.target.value })}
               className="w-full rounded-xl border border-border-default bg-input-bg px-3.5 py-2.5 text-sm text-foreground placeholder:text-foreground-dim focus:border-brand-purple/40 focus:outline-none"
-              placeholder="一句话说明这个子代理负责什么"
+              placeholder={t('subagent._e79')}
             />
           </div>
           <div>
@@ -368,11 +369,11 @@ function SubAgentFormDialog({
               value={form.system_prompt || ''}
               onChange={(e) => setForm({ ...form, system_prompt: e.target.value })}
               className="min-h-[120px] w-full resize-y rounded-xl border border-border-default bg-input-bg px-3.5 py-2.5 text-sm text-foreground placeholder:text-foreground-dim focus:border-brand-purple/40 focus:outline-none"
-              placeholder="定义角色、边界、输出格式…"
+              placeholder={t('subagent._e80')}
             />
           </div>
           <div>
-            <label className="mb-1.5 block text-xs font-medium text-foreground-muted">工具集</label>
+            <label className="mb-1.5 block text-xs font-medium text-foreground-muted">{t('subagent._e81')}</label>
             <div className="flex flex-wrap gap-2">
               {TOOLSET_OPTIONS.map((tool) => {
                 const on = (form.enabled_toolsets || []).includes(tool.value);
@@ -395,7 +396,7 @@ function SubAgentFormDialog({
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1.5 block text-xs font-medium text-foreground-muted">最大工具轮次</label>
+              <label className="mb-1.5 block text-xs font-medium text-foreground-muted">{t('subagent._e82')}</label>
               <input
                 type="number"
                 min={1}
@@ -435,7 +436,7 @@ function SubAgentFormDialog({
             disabled={loading}
             className="rounded-xl bg-gradient-to-r from-brand-purple to-brand-cyan px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
           >
-            {loading ? '保存中…' : '保存'}
+            {loading ? t('memory.saving') : t('kb.save')}
           </button>
         </div>
       </div>
@@ -465,7 +466,7 @@ export function ClusterModePanel({
     >
       <div className="mb-2 flex items-center gap-2">
         <Users className="h-3.5 w-3.5 text-brand-cyan" />
-        <span className="text-xs font-medium text-foreground">集群成员</span>
+        <span className="text-xs font-medium text-foreground">{t('subagent._e83')}</span>
         <span className="text-[10px] text-foreground-dim">
           已选 {selectedIds.length}/{enabledAgents.length}
         </span>
@@ -510,6 +511,7 @@ export function ClusterModePanel({
 }
 
 export default function SubAgentPanel() {
+  const t = useT();
   const { confirm, ConfirmDialogComponent } = useConfirm();
   const addToast = useToastStore((s) => s.addToast);
   const [agents, setAgents] = useState<SubAgent[]>([]);
@@ -526,15 +528,30 @@ export default function SubAgentPanel() {
       setInventory(invResp.data?.inventory || []);
     } catch (e) {
       console.error('Failed to load SubAgent data:', e);
-      addToast('加载子代理失败', 'error');
+      addToast(t('subagent._e130'), 'error');
     } finally {
       setLoading(false);
     }
   }, [addToast]);
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+      loadData();
+      const onSettings = (e: Event) => {
+        const detail = (e as CustomEvent).detail || [];
+        if (
+          !detail.length ||
+          detail.some((k: string) =>
+            ['active_provider_id', 'active_model', 'llm_provider', 'llm_model', 'llm_base_url', 'llm_model_catalog'].includes(
+              k
+            )
+          )
+        ) {
+          void loadData();
+        }
+      };
+      window.addEventListener('takton:settings-changed', onSettings);
+      return () => window.removeEventListener('takton:settings-changed', onSettings);
+    }, [loadData]);
 
   const handleToggle = async (id: string, enabled: boolean) => {
     try {
@@ -546,11 +563,11 @@ export default function SubAgentPanel() {
   };
 
   const handleDelete = async (id: string) => {
-    const ok = await confirm('确定删除此子代理？');
+    const ok = await confirm(t('subagent._e131'));
     if (!ok) return;
     try {
       await subAgentApi.delete(id);
-      addToast('已删除', 'success');
+      addToast(t('channels.deleted'), 'success');
       loadData();
     } catch (e) {
       console.error(e);
@@ -582,7 +599,7 @@ export default function SubAgentPanel() {
         <div>
           <div className="flex items-center gap-2">
             <Bot className="h-5 w-5 text-brand-cyan" />
-            <h2 className="text-lg font-semibold text-foreground">子代理</h2>
+            <h2 className="text-lg font-semibold text-foreground">{t('nav.profiles')}</h2>
             <span className="text-xs text-foreground-dim">{agents.length} 个</span>
           </div>
           <p className="mt-1 text-xs text-foreground-dim">
@@ -596,7 +613,7 @@ export default function SubAgentPanel() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="w-44 rounded-xl border border-border-default bg-input-bg py-1.5 pl-8 pr-3 text-sm text-foreground"
-              placeholder="搜索…"
+              placeholder={t('subagent._e84')}
             />
           </div>
           <button
@@ -633,7 +650,7 @@ export default function SubAgentPanel() {
 
       {builtin.length > 0 && (
         <section>
-          <h3 className="mb-2 text-xs font-medium text-foreground-dim">内置模板</h3>
+          <h3 className="mb-2 text-xs font-medium text-foreground-dim">{t('subagent._e85')}</h3>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
             {builtin.map((agent) => (
               <CharacterCard
@@ -649,7 +666,7 @@ export default function SubAgentPanel() {
       )}
 
       <section>
-        <h3 className="mb-2 text-xs font-medium text-foreground-dim">自定义子代理</h3>
+        <h3 className="mb-2 text-xs font-medium text-foreground-dim">{t('subagent._e86')}</h3>
         {custom.length > 0 ? (
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
             {custom.map((agent) => (
@@ -664,7 +681,7 @@ export default function SubAgentPanel() {
           </div>
         ) : (
           <div className="rounded-2xl border border-dashed border-border-subtle py-12 text-center text-sm text-foreground-dim">
-            {search ? '未找到匹配的子代理' : '还没有自定义子代理，点「新建」创建人物卡片'}
+            {search ? t('subagent._e132') : t('subagent._e133')}
           </div>
         )}
       </section>

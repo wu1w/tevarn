@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { useT } from '@/stores/localeStore';
 
 interface SysPromptEditorProps {
   value: string;
@@ -8,6 +9,7 @@ interface SysPromptEditorProps {
 }
 
 export function SysPromptEditor({ value, onChange }: SysPromptEditorProps) {
+  const t = useT();
   return (
     <div className="space-y-4">
       <div>
@@ -21,7 +23,7 @@ export function SysPromptEditor({ value, onChange }: SysPromptEditorProps) {
         onChange={(e) => onChange(e.target.value)}
         rows={8}
         className="w-full rounded-lg border border-border-default bg-input-bg px-4 py-3 font-mono text-sm focus:border-brand-purple focus:outline-none focus:ring-1 focus:ring-brand-purple"
-        placeholder="例如：Always respond in Chinese. Use markdown for code blocks..."
+        placeholder={t('config._e12')}
       />
     </div>
   );

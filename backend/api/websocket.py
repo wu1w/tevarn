@@ -77,24 +77,38 @@ class ConnectionManager:
             lambda t, sid=session_id: self._tasks.get(sid, set()).discard(t)
         )
 
-    def _cancel_session_tasks(self, session_id: uuid.UUID) -> None:
-        """取消指定 session 的所有后台任务"""
+    def _cancel_session_tasks(
+        self, session_id: uuid.UUID, *, cancel_agent: bool = False
+    ) -> None:
+        """取消 session 附属后台任务。
+
+        默认 **不** 取消 agent 主任务：用户跳转 /skills 等页面会卸载聊天组件并断开 WS，
+        若一并 cancel agent，会导致「对话中跳页后推理中断」。显式 stop / 新 user_input 叠跑
+        时通过 cancel_agent=True 或 cancel_agent() 终止。
+        """
+        agent_task = self._agent_tasks.get(session_id)
         tasks = self._tasks.pop(session_id, set())
         for task in tasks:
+            # agent 主任务也可能被误登记进 _tasks；断线时跳过
+            if agent_task is not None and task is agent_task and not cancel_agent:
+                if session_id not in self._tasks:
+                    self._tasks[session_id] = set()
+                self._tasks[session_id].add(task)
+                continue
             if not task.done():
                 task.cancel()
-        # 同步取消 agent 主任务
-        agent_task = self._agent_tasks.pop(session_id, None)
-        if agent_task is not None and not agent_task.done():
-            agent_task.cancel()
+        if cancel_agent:
+            agent = self._agent_tasks.pop(session_id, None)
+            if agent is not None and not agent.done():
+                agent.cancel()
 
     def track_agent_task(self, session_id: uuid.UUID, task: asyncio.Task) -> None:
-        """登记当前 agent 主任务，便于 stop/断线取消。"""
+        """登记当前 agent 主任务，便于显式 stop；断线不自动取消。"""
         old = self._agent_tasks.get(session_id)
         if old is not None and not old.done() and old is not task:
             old.cancel()
         self._agent_tasks[session_id] = task
-        self._track_task(session_id, task)
+        # 不把 agent 放进 _tasks：disconnect 只清附属任务，保留推理
 
         def _cleanup(t: asyncio.Task, sid: uuid.UUID = session_id) -> None:
             cur = self._agent_tasks.get(sid)
@@ -126,9 +140,12 @@ class ConnectionManager:
         websocket: WebSocket,
         user_id: uuid.UUID | None = None,
     ) -> None:
-        """建立连接，如果该 session 已有连接则先关闭旧连接"""
-        # 先取消旧连接的所有任务
-        self._cancel_session_tasks(session_id)
+        """建立连接，如果该 session 已有连接则先关闭旧连接。
+
+        重连时不取消 agent：跳页导致的短暂断线后，回到会话应能继续收流/同步历史。
+        """
+        # 仅清理附属任务，保留 agent 主任务
+        self._cancel_session_tasks(session_id, cancel_agent=False)
 
         if session_id in self._connections:
             old_ws = self._connections[session_id]
@@ -140,8 +157,9 @@ class ConnectionManager:
 
         self._connections[session_id] = websocket
 
-        # 初始化任务集合
-        self._tasks[session_id] = set()
+        # 保留已有 _tasks；没有则初始化
+        if session_id not in self._tasks:
+            self._tasks[session_id] = set()
 
         # 关联用户
         if user_id:
@@ -151,13 +169,12 @@ class ConnectionManager:
 
         logger.info(
             f"WebSocket connected: session={session_id}, user={user_id}, "
-            f"total={len(self._connections)}"
+            f"total={len(self._connections)} agent_running={self.has_running_agent(session_id)}"
         )
 
     def disconnect(self, session_id: uuid.UUID, user_id: uuid.UUID | None = None) -> None:
-        """断开连接并清理后台任务"""
-        # 取消所有后台任务
-        self._cancel_session_tasks(session_id)
+        """断开连接。默认不取消 agent 主任务（支持跳页后后台继续推理）。"""
+        self._cancel_session_tasks(session_id, cancel_agent=False)
 
         self._connections.pop(session_id, None)
 
@@ -166,7 +183,10 @@ class ConnectionManager:
             if not self._user_sessions[user_id]:
                 del self._user_sessions[user_id]
 
-        logger.info(f"WebSocket disconnected: session={session_id}, total={len(self._connections)}")
+        logger.info(
+            f"WebSocket disconnected: session={session_id}, "
+            f"total={len(self._connections)} agent_running={self.has_running_agent(session_id)}"
+        )
 
     async def broadcast(
         self, session_id: uuid.UUID, message: dict[str, Any]
@@ -271,7 +291,77 @@ async def websocket_endpoint(
             return
 
     effective_token = token_from_query or token_from_message or ""
-    if not effective_token:
+
+    user_id: uuid.UUID | None = None
+
+    if effective_token:
+        payload = decode_access_token(effective_token)
+        if not payload or "sub" not in payload:
+            await _accept_once()
+            try:
+                await websocket.send_json(
+                    {"type": "error", "detail": "Invalid or expired token"}
+                )
+            except Exception:
+                pass
+            await self._safe_close(websocket, code=1008, reason="Invalid or expired token")
+            return
+
+        try:
+            user_id = uuid.UUID(payload["sub"])
+        except ValueError:
+            await _accept_once()
+            try:
+                await websocket.send_json(
+                    {"type": "error", "detail": "Invalid token"}
+                )
+            except Exception:
+                pass
+            await self._safe_close(websocket, code=1008, reason="Invalid token")
+            return
+
+        # 单用户模式下：如果 token 里的 user_id 在数据库中不存在，
+        # 可能是前端缓存了旧 token，回退到默认用户（admin@takton.dev）。
+        if settings.single_user_mode:
+            from backend.repositories.user_repo import AsyncUserRepository
+            user_repo_check = AsyncUserRepository()
+            existing = await user_repo_check.get_by_id(user_id)
+            if not existing:
+                default_user = await user_repo_check.get_by_email("admin@takton.dev")
+                if default_user:
+                    user_id = default_user.id
+                    logger.info(
+                        f"Single-user fallback: token sub not found, using default user {user_id}"
+                    )
+    elif settings.single_user_mode:
+        # 单用户免认证直连：本机无 token 时回落默认 admin
+        from backend.repositories.user_repo import AsyncUserRepository
+        user_repo_check = AsyncUserRepository()
+        default_user = await user_repo_check.get_by_email("admin@takton.dev")
+        if default_user:
+            user_id = default_user.id
+        else:
+            from backend.core.security import get_password_hash
+            user_id = uuid.uuid4()
+            try:
+                await user_repo_check.create(
+                    {
+                        "id": user_id,
+                        "email": "admin@takton.dev",
+                        "username": "admin",
+                        "hashed_password": get_password_hash(
+                            (settings.default_admin_password or "").strip() or "admin"
+                        ),
+                        "is_superuser": True,
+                        "is_active": True,
+                    }
+                )
+            except Exception:
+                default_user = await user_repo_check.get_by_email("admin@takton.dev")
+                if default_user:
+                    user_id = default_user.id
+        logger.info(f"Single-user WS: no token, using default user {user_id}")
+    else:
         await _accept_once()
         try:
             await websocket.send_json(
@@ -281,45 +371,6 @@ async def websocket_endpoint(
             pass
         await self._safe_close(websocket, code=1008, reason="Authentication required")
         return
-
-    payload = decode_access_token(effective_token)
-    if not payload or "sub" not in payload:
-        await _accept_once()
-        try:
-            await websocket.send_json(
-                {"type": "error", "detail": "Invalid or expired token"}
-            )
-        except Exception:
-            pass
-        await self._safe_close(websocket, code=1008, reason="Invalid or expired token")
-        return
-
-    try:
-        user_id = uuid.UUID(payload["sub"])
-    except ValueError:
-        await _accept_once()
-        try:
-            await websocket.send_json(
-                {"type": "error", "detail": "Invalid token"}
-            )
-        except Exception:
-            pass
-        await self._safe_close(websocket, code=1008, reason="Invalid token")
-        return
-
-    # 单用户模式下：如果 token 里的 user_id 在数据库中不存在，
-    # 可能是前端缓存了旧 token，回退到默认用户（admin@takton.dev）。
-    if settings.single_user_mode:
-        from backend.repositories.user_repo import AsyncUserRepository
-        user_repo_check = AsyncUserRepository()
-        existing = await user_repo_check.get_by_id(user_id)
-        if not existing:
-            default_user = await user_repo_check.get_by_email("admin@takton.dev")
-            if default_user:
-                user_id = default_user.id
-                logger.info(
-                    f"Single-user fallback: token sub not found, using default user {user_id}"
-                )
 
     # query-token 路径此前尚未 accept
     await _accept_once()
@@ -339,8 +390,12 @@ async def websocket_endpoint(
                     await self._safe_close(websocket, code=1008, reason="Session expired")
                     return
 
-                # 会话用户隔离检查
-                if session.user_id != user_id:
+                # 会话用户隔离检查（单用户模式本机不卡）
+                if (
+                    not settings.single_user_mode
+                    and session.user_id is not None
+                    and session.user_id != user_id
+                ):
                     await websocket.send_json(
                         {"type": "error", "detail": "Session access denied"}
                     )
@@ -432,6 +487,14 @@ async def websocket_endpoint(
                     session_id,
                     {"type": "status", "state": "idle", "detail": "Generation stopped by user"},
                 )
+
+            elif msg_type == "confirm_response":
+                # 危险操作确认结果：唤醒等待的工具执行协程
+                from backend.services import confirm_manager
+
+                confirm_id = str(data.get("confirm_id", ""))
+                approved = bool(data.get("approved", False))
+                confirm_manager.resolve_confirmation(confirm_id, approved)
 
             elif msg_type == "sync":
                 last_id = data.get("last_message_id")

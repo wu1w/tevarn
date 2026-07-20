@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useT } from '@/stores/localeStore';
 
 interface CopyButtonProps {
   text: string;
@@ -7,6 +8,7 @@ interface CopyButtonProps {
 }
 
 export function CopyButton({ text, size = 'md', className = '' }: CopyButtonProps) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
@@ -28,7 +30,7 @@ export function CopyButton({ text, size = 'md', className = '' }: CopyButtonProp
       type="button"
       onClick={handleCopy}
       className={`rounded-md border border-border-subtle bg-card-bg text-foreground-muted transition-colors hover:bg-card-bg-hover hover:text-foreground ${sizeClasses} ${className}`}
-      title="复制"
+      title={copied ? t('common.copied') : t('common.copy')}
     >
       {copied ? (
         <svg className="h-full w-full" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>

@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useWsStore } from '@/stores/wsStore';
+import { t } from '@/stores/localeStore';
 import type {
   WSMessage,
   StreamDeltaMessage,
@@ -16,6 +17,7 @@ import type {
   NotificationMessage,
   GoalUpdateMessage,
   ToolEventMessage,
+  ScreenshotMessage,
   Notification,
 } from '@/types';
 import {
@@ -25,6 +27,7 @@ import {
   isMemoryUpdated,
   isGoalUpdate,
   isToolEvent,
+  isScreenshot,
   createUserInputMessage,
   createPingMessage,
   createSyncMessage,
@@ -36,19 +39,15 @@ function resolveWsBaseUrl(): string {
   if (typeof window !== 'undefined') {
     const { hostname, port, protocol } = window.location;
     const isLocalHost = hostname === '127.0.0.1' || hostname === 'localhost';
-
-    // 桌面端 / 本地静态服：优先同源 WS（主进程会把 /api 反代到真实后端端口）
-    // 这样不会死连默认 8000，也不会因为后端换到 8001 而一直「正在连接」
-    if (isLocalHost && (port === '3000' || port === '3001' || port === '')) {
-      const wsProto = protocol === 'https:' ? 'wss:' : 'ws:';
-      const host = port ? `${hostname}:${port}` : hostname;
-      return `${wsProto}//${host}/api`;
-    }
+    const hasElectron = Boolean(
+      (window as unknown as { electronAPI?: unknown }).electronAPI
+    );
 
     const injected = (window as unknown as { __TAKTON_WS_URL__?: string }).__TAKTON_WS_URL__;
     if (injected) return injected.replace(/\/$/, '');
 
-    if ((window as unknown as { electronAPI?: unknown }).electronAPI) {
+    // Electron 桌面：主进程反代 /api → 真实后端，走同源 WS
+    if (hasElectron) {
       try {
         const api = (window as unknown as {
           electronAPI?: { getWsUrlSync?: () => string; getBackendUrlSync?: () => string };
@@ -60,8 +59,14 @@ function resolveWsBaseUrl(): string {
       } catch {
         /* ignore */
       }
-      // 桌面回退仍走同源（由主进程反代），不要写死 8000
-      return 'ws://127.0.0.1:3000/api';
+      const wsProto = protocol === 'https:' ? 'wss:' : 'ws:';
+      const host = port ? `${hostname}:${port}` : hostname;
+      return `${wsProto}//${host}/api`;
+    }
+
+    // 浏览器 + next dev（:3000/:3001）：Next rewrites 不支持 WS upgrade，必须直连后端 8090
+    if (isLocalHost && (port === '3000' || port === '3001')) {
+      return 'ws://127.0.0.1:8090/api';
     }
   }
   if (process.env.NEXT_PUBLIC_WS_URL) {
@@ -70,8 +75,10 @@ function resolveWsBaseUrl(): string {
   if (typeof window !== 'undefined') {
     const hostname = window.location.hostname;
     if (hostname === 'localhost' || hostname === '127.0.0.1') {
-      // 开发默认：与页面同源优先，其次 8000
       const port = window.location.port;
+      if (port === '3000' || port === '3001') {
+        return 'ws://127.0.0.1:8090/api';
+      }
       if (port && port !== '8000') {
         const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         return `${wsProto}//${hostname}:${port}/api`;
@@ -96,6 +103,7 @@ interface UseWebSocketOptions {
   onMemoryUpdated?: (msg: MemoryUpdatedMessage) => void;
   onGoalUpdate?: (msg: GoalUpdateMessage) => void;
   onToolEvent?: (msg: ToolEventMessage) => void;
+  onScreenshot?: (msg: ScreenshotMessage) => void;
   onNotification?: (msg: NotificationMessage) => void;
   onSettingsChanged?: (keys: string[]) => void;
   onError?: (error: string) => void;
@@ -113,6 +121,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
     onMemoryUpdated,
     onGoalUpdate,
     onToolEvent,
+    onScreenshot,
     onNotification,
     onSettingsChanged,
     onError,
@@ -168,7 +177,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
     }
 
     if (reconnectAttempts.current >= MAX_RECONNECT_ATTEMPTS) {
-      optionsRef.current.onError?.('WebSocket 重连次数已达上限，请刷新页面或点击重连');
+      optionsRef.current.onError?.('WebSocket reconnect limit reached — refresh or click reconnect');
       return;
     }
 
@@ -203,7 +212,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
     } catch {
       connectingRef.current = false;
       setIsConnecting(false);
-      optionsRef.current.onError?.('无效的 WebSocket 地址');
+      optionsRef.current.onError?.('Invalid WebSocket address');
       return;
     }
 
@@ -213,7 +222,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
     } catch (e) {
       connectingRef.current = false;
       setIsConnecting(false);
-      optionsRef.current.onError?.(`WebSocket 创建失败: ${e}`);
+      optionsRef.current.onError?.(`WebSocket creation failed: ${e}`);
       return;
     }
 
@@ -274,7 +283,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
     ws.onerror = () => {
       connectingRef.current = false;
       setIsConnecting(false);
-      optionsRef.current.onError?.('WebSocket 连接错误');
+      optionsRef.current.onError?.('WebSocket connection error');
     };
 
     ws.onmessage = (event: MessageEvent) => {
@@ -289,6 +298,8 @@ export function useWebSocket(options: UseWebSocketOptions) {
           optionsRef.current.onTaskUpdate?.(msg);
         } else if (isToolEvent(msg)) {
           optionsRef.current.onToolEvent?.(msg);
+        } else if (isScreenshot(msg)) {
+          optionsRef.current.onScreenshot?.(msg);
         } else if (isMemoryUpdated(msg)) {
           optionsRef.current.onMemoryUpdated?.(msg);
         } else if (isGoalUpdate(msg)) {
@@ -301,7 +312,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
                 id: notif.id || crypto.randomUUID(),
                 user_id: notif.user_id || '',
                 type: notif.notification_type || 'info',
-                title: notif.title || '通知',
+                title: notif.title || t('nav.notifications'),
                 content: notif.message || notif.content || '',
                 is_read: false,
                 read_at: null,
@@ -321,6 +332,22 @@ export function useWebSocket(options: UseWebSocketOptions) {
           optionsRef.current.onError?.(
             (msg as unknown as { detail: string }).detail || 'Unknown error'
           );
+        } else if (msg.type === 'confirm_request') {
+          // 危险操作确认请求 → 写入 store，触发前端弹窗
+          const m = msg as unknown as {
+            confirm_id: string;
+            title: string;
+            command: string;
+            reason?: string;
+          };
+          import('@/stores/confirmStore').then((mod) => {
+            mod.useConfirmStore.getState().showConfirm({
+              confirmId: m.confirm_id,
+              title: m.title || t('useWebSocket._e2'),
+              command: m.command || '',
+              reason: m.reason || '',
+            });
+          });
         }
       } catch (err) {
         console.error('WebSocket message parse error:', err);
@@ -328,6 +355,17 @@ export function useWebSocket(options: UseWebSocketOptions) {
     };
 
     wsRef.current = ws;
+
+    // 注册危险操作确认的发送函数：弹窗组件经 store 调用
+    import('@/stores/confirmStore').then((mod) => {
+      mod.useConfirmStore.getState().registerSender((confirmId, approved) => {
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(
+            JSON.stringify({ type: 'confirm_response', confirm_id: confirmId, approved })
+          );
+        }
+      });
+    });
   }, []);
 
   const disconnect = useCallback(() => {
@@ -444,13 +482,18 @@ export function useWebSocket(options: UseWebSocketOptions) {
 
   // sessionId 变化时连接 / 断开
   useEffect(() => {
-    if (!sessionId) {
-      disconnect();
-      return;
-    }
-    reconnectAttempts.current = 0;
-    connect(sessionId);
+    // 连接/断开均推迟到当前渲染周期之后（setTimeout 0），
+    // 避免 effect 同步路径 setState 触发跨组件级联更新告警。
+    const timer = setTimeout(() => {
+      if (!sessionId) {
+        disconnect();
+        return;
+      }
+      reconnectAttempts.current = 0;
+      connect(sessionId);
+    }, 0);
     return () => {
+      clearTimeout(timer);
       // 仅在 session 真正卸载时不断开过早——由下一次 effect 处理
     };
   }, [sessionId, connect, disconnect]);

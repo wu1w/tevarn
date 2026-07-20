@@ -22,7 +22,6 @@ logger = logging.getLogger(__name__)
 
 async def load_builtin_tools() -> None:
     """加载内置 Skill 到统一工具注册表"""
-    # 确保内置 skill 模块已导入并注册到 SkillRegistry
     from backend.skills import builtins
 
     _ = builtins
@@ -87,6 +86,7 @@ async def load_all_tools(include_db: bool = False) -> None:
     # v3.1: 加载 Agent 自配置工具
     try:
         from backend.tools.builtins import SELF_CONFIG_TOOLS
+
         for cls in SELF_CONFIG_TOOLS:
             ToolRegistry.register(cls())
         logger.info(f"Loaded {len(SELF_CONFIG_TOOLS)} self-config tools")
@@ -100,6 +100,7 @@ async def load_all_tools(include_db: bool = False) -> None:
             ValidateDag,
             SaveWorkflow,
         )
+
         workflow_tool_classes = [GenerateWorkflow, UpdateDag, ValidateDag, SaveWorkflow]
         for cls in workflow_tool_classes:
             ToolRegistry.register(cls())
@@ -108,4 +109,44 @@ async def load_all_tools(include_db: bool = False) -> None:
         logger.warning(f"Failed to load workflow tools: {e}")
     if include_db:
         await load_db_tools()
+
+    # v0.2: 加载 Desktop 工具
+    try:
+        from backend.services.desktop.tools import register_desktop_tools
+
+        n = register_desktop_tools(ToolRegistry)
+        logger.info(f"Loaded {n} desktop tools")
+    except Exception as e:
+        logger.warning(f"Failed to load desktop tools: {e}")
+
+    # agent-ops: shell_session / device_onboard / clarify / session_search / apply_patch / ...
+    try:
+        from backend.tools.builtins.agent_ops_tools import AGENT_OPS_TOOL_CLASSES
+
+        for cls in AGENT_OPS_TOOL_CLASSES:
+            ToolRegistry.register(cls())
+        logger.info(f"Loaded {len(AGENT_OPS_TOOL_CLASSES)} agent-ops tools")
+    except Exception as e:
+        logger.warning(f"Failed to load agent-ops tools: {e}")
+
+    # capability pack: autopilot / memory_pref / github / desktop_observe / ...
+    try:
+        from backend.tools.builtins.capability_tools import CAPABILITY_TOOL_CLASSES
+
+        for cls in CAPABILITY_TOOL_CLASSES:
+            ToolRegistry.register(cls())
+        logger.info(f"Loaded {len(CAPABILITY_TOOL_CLASSES)} capability tools")
+    except Exception as e:
+        logger.warning(f"Failed to load capability tools: {e}")
+
+    # Wave A: doc_read/write, image_generate, calendar, tts, capability_status
+    try:
+        from backend.tools.builtins.wave_a_tools import WAVE_A_TOOL_CLASSES
+
+        for cls in WAVE_A_TOOL_CLASSES:
+            ToolRegistry.register(cls())
+        logger.info(f"Loaded {len(WAVE_A_TOOL_CLASSES)} wave-A tools")
+    except Exception as e:
+        logger.warning(f"Failed to load wave-A tools: {e}")
+
     logger.info(f"Unified ToolRegistry loaded: {len(ToolRegistry.get_all())} tools")

@@ -17,6 +17,8 @@ import WorkflowCanvas from '@/components/workflow/WorkflowCanvas';
 import NodePropertyPanel from '@/components/workflow/NodePropertyPanel';
 import { useToastStore } from '@/stores/toastStore';
 import { useConfirm } from '@/components/desktop/ConfirmDialog';
+import { useT } from '@/stores/localeStore';
+
 
 /* ─────────── 图标 ─────────── */
 function PlayIcon({ className }: { className?: string }) {
@@ -72,55 +74,55 @@ const DEFAULT_DAG_EXAMPLE = {
     {
       id: 'input_1',
       type: 'input',
-      label: '用户输入',
+      label: 'workflows._e51',
       position: { x: 40, y: 220 },
       config: { input_type: 'text', default_value: '' },
     },
     {
       id: 'llm_1',
       type: 'llm',
-      label: '意图识别',
+      label: 'workflows._e52',
       position: { x: 260, y: 220 },
       config: {
         model: 'default',
         temperature: 0.3,
         max_tokens: 512,
         system_prompt:
-          '你是一个意图分类器。分析用户输入，判断意图类型：question(提问)、complaint(投诉)、chat(闲聊)。只输出一个分类标签。',
+          'workflows._e53',
       },
     },
     {
       id: 'cond_1',
       type: 'condition',
-      label: '是否提问',
+      label: 'workflows._e54',
       position: { x: 500, y: 220 },
       config: { condition: "'question' in str(input).lower()" },
     },
     {
       id: 'rag_1',
       type: 'rag',
-      label: '知识检索',
+      label: 'workflows._e55',
       position: { x: 740, y: 100 },
       config: { top_k: 5, threshold: 0.7, rerank: true },
     },
     {
       id: 'agent_1',
       type: 'agent',
-      label: 'Agent处理',
+      label: 'workflows._e56',
       position: { x: 740, y: 340 },
       config: { agent_profile: 'default', max_steps: 10, enable_tools: true },
     },
     {
       id: 'merge_1',
       type: 'merge',
-      label: '合并结果',
+      label: 'workflows._e57',
       position: { x: 980, y: 220 },
       config: { mode: 'list' },
     },
     {
       id: 'output_1',
       type: 'output',
-      label: '最终回复',
+      label: 'workflows._e58',
       position: { x: 1220, y: 220 },
       config: { output_name: 'response' },
     },
@@ -186,14 +188,14 @@ const DEFAULT_DAG_BASIC = {
     {
       id: 'input_1',
       type: 'input',
-      label: '输入',
+      label: 'workflows._e59',
       position: { x: 80, y: 220 },
       config: { input_type: 'text', default_value: 'World' },
     },
     {
       id: 'python_1',
       type: 'python',
-      label: '处理',
+      label: 'workflows._e60',
       position: { x: 320, y: 220 },
       config: {
         code: 'greeting = "Hello, " + str(input_data)\nresult = greeting + "!"\nprint(result)',
@@ -202,7 +204,7 @@ const DEFAULT_DAG_BASIC = {
     {
       id: 'output_1',
       type: 'output',
-      label: '输出',
+      label: 'wf.result.output',
       position: { x: 560, y: 220 },
       config: { output_name: 'greeting' },
     },
@@ -229,6 +231,7 @@ const DEFAULT_DAG_BASIC = {
 export default function WorkflowsPage() {
   const { addToast } = useToastStore();
   const { confirm, ConfirmDialogComponent } = useConfirm();
+  const t = useT();
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [nodeTypes, setNodeTypes] = useState<WorkflowNodeType[]>([]);
   const [loading, setLoading] = useState(true);
@@ -298,7 +301,7 @@ export default function WorkflowsPage() {
 
   /* ── 新建 ── */
   const handleCreate = async () => {
-    const name = prompt('工作流名称:', '新建工作流');
+    const name = prompt(t('wf.prompt.name'), t('wf.prompt.defaultName'));
     if (!name) return;
     try {
       const wf = await createWorkflow({
@@ -312,18 +315,18 @@ export default function WorkflowsPage() {
       setShowDropdown(false);
     } catch (err) {
       console.error(err);
-      addToast('创建失败', 'error');
+      addToast(t('wf.createFailed'), 'error');
     }
   };
 
   /* ── 加载示例 ── */
   const handleLoadExample = async () => {
-    const name = prompt('工作流名称:', '智能客服示例');
+    const name = prompt(t('wf.prompt.name'), t('wf.prompt.exampleName'));
     if (!name) return;
     try {
       const wf = await createWorkflow({
         name,
-        description: '一个完整的智能客服工作流示例，包含意图识别、条件分支、知识检索和Agent处理',
+        description: t('workflows._e61'),
         dag: DEFAULT_DAG_EXAMPLE,
         trigger: 'manual',
       });
@@ -332,18 +335,18 @@ export default function WorkflowsPage() {
       setShowDropdown(false);
     } catch (err) {
       console.error(err);
-      addToast('创建失败', 'error');
+      addToast(t('wf.createFailed'), 'error');
     }
   };
 
   /* ── 加载基础可运行示例 ── */
   const handleLoadBasicExample = async () => {
-    const name = prompt('工作流名称:', '基础示例工作流');
+    const name = prompt(t('wf.prompt.name'), t('wf.prompt.basicName'));
     if (!name) return;
     try {
       const wf = await createWorkflow({
         name,
-        description: '一个简单的 input → python → output 可运行示例',
+        description: t('workflows._e62'),
         dag: DEFAULT_DAG_BASIC,
         trigger: 'manual',
       });
@@ -352,7 +355,7 @@ export default function WorkflowsPage() {
       setShowDropdown(false);
     } catch (err) {
       console.error(err);
-      addToast('创建失败', 'error');
+      addToast(t('wf.createFailed'), 'error');
     }
   };
 
@@ -368,7 +371,7 @@ export default function WorkflowsPage() {
       await load();
     } catch (err) {
       console.error(err);
-      addToast('保存失败', 'error');
+      addToast(t('wf.saveFailed'), 'error');
     } finally {
       setSaving(false);
     }
@@ -377,7 +380,7 @@ export default function WorkflowsPage() {
   /* ── 删除 ── */
   const handleDelete = async () => {
     if (!selected) return;
-    const ok = await confirm('确定删除此工作流？'); if (!ok) return;
+    const ok = await confirm(t('wf.confirmDelete')); if (!ok) return;
     try {
       await deleteWorkflow(selected.id);
       setSelectedId(null);
@@ -391,11 +394,11 @@ export default function WorkflowsPage() {
   const handleRun = async () => {
     if (!selected) return;
     if (hasChanges) {
-      addToast('请先保存当前工作流再运行', 'info');
+      addToast(t('wf.toast.saveFirst'), 'info');
       return;
     }
     if (nodes.length === 0) {
-      addToast('当前工作流为空，请从左侧拖拽添加节点', 'info');
+      addToast(t('wf.toast.empty'), 'info');
       return;
     }
     setRunning(true);
@@ -403,13 +406,13 @@ export default function WorkflowsPage() {
     try {
       const result = await executeWorkflow(selected.id, {});
       if (result.success) {
-        setLastResult(`✅ 执行成功 (${result.execution_time_ms}ms)\n输出: ${JSON.stringify(result.outputs, null, 2)}`);
+        setLastResult(`${t('wf.result.success')} (${result.execution_time_ms}ms)\n${t('wf.result.output')}: ${JSON.stringify(result.outputs, null, 2)}`);
       } else {
-        setLastResult(`❌ 执行失败\n${result.logs.map((l) => `[${l.level}] ${l.message}`).join('\n')}`);
+        setLastResult(`${t('wf.result.fail')}\n${result.logs.map((l) => `[${l.level}] ${l.message}`).join('\n')}`);
       }
     } catch (err: any) {
       const detail = err?.response?.data?.detail || err?.message || String(err);
-      setLastResult(`❌ 执行异常: ${detail}`);
+      setLastResult(`${t('wf.result.error')}: ${detail}`);
     } finally {
       setRunning(false);
     }
@@ -419,7 +422,7 @@ export default function WorkflowsPage() {
   const handleNlGenerate = async (save = true) => {
     const description = nlPrompt.trim();
     if (!description) {
-      addToast('请先描述想要的工作流', 'info');
+      addToast(t('wf.toast.describe'), 'info');
       return;
     }
     setNlGenerating(true);
@@ -462,12 +465,12 @@ export default function WorkflowsPage() {
       }
       const matched = (res.matched_sub_agents || []).join(', ');
       addToast(
-        matched ? `已生成工作流（子代理: ${matched}）` : res.message || '已生成工作流',
+        matched ? t('wf.genSuccessWithAgents').replace('{agents}', matched) : res.message || t('wf.genSuccess'),
         'success'
       );
     } catch (err: any) {
       console.error(err);
-      addToast(err?.response?.data?.detail || err?.message || '生成失败', 'error');
+      addToast(err?.response?.data?.detail || err?.message || t('wf.genFailed'), 'error');
     } finally {
       setNlGenerating(false);
     }
@@ -506,15 +509,14 @@ export default function WorkflowsPage() {
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
         <div className="max-h-[80vh] w-full max-w-2xl overflow-auto rounded-xl bg-card-bg p-6 shadow-xl">
           <div className="mb-4 flex items-center justify-between">
-            <h3 className="text-base font-semibold text-foreground">DAG JSON 格式说明</h3>
+            <h3 className="text-base font-semibold text-foreground">{t('wf.help.title')}</h3>
             <button onClick={() => setShowHelp(false)} className="text-foreground-muted hover:text-foreground-dim">
               ✕
             </button>
           </div>
           <div className="space-y-4 text-sm text-foreground-dim">
             <p>
-              DAG（有向无环图）由 <code className="rounded bg-card-bg-hover px-1 text-xs">nodes</code>（节点）和{' '}
-              <code className="rounded bg-card-bg-hover px-1 text-xs">edges</code>（边）组成：
+              {t('wf.help.intro')}
             </p>
             <div className="rounded-lg border border-border-default bg-elevated-bg p-4">
               <pre className="overflow-auto text-[11px] leading-relaxed text-foreground-muted">
@@ -522,74 +524,74 @@ export default function WorkflowsPage() {
               </pre>
             </div>
             <div>
-              <h4 className="mb-1 font-medium text-foreground">节点 (Node) 字段</h4>
+              <h4 className="mb-1 font-medium text-foreground">{t('wf.help.nodeFields')}</h4>
               <ul className="ml-4 list-disc space-y-0.5 text-xs text-foreground-dim">
                 <li>
-                  <strong>id</strong> - 唯一标识符
+                  <strong>id</strong> - {t('wf.help.f.id')}
                 </li>
                 <li>
-                  <strong>type</strong> - 节点类型: input/output/llm/agent/rag/python/http/condition/loop/merge/custom
+                  <strong>type</strong> - {t('wf.help.f.type')}
                 </li>
                 <li>
-                  <strong>label</strong> - 显示名称
+                  <strong>label</strong> - {t('wf.help.f.label')}
                 </li>
                 <li>
-                  <strong>position</strong> - 画布坐标 {'{x, y}'}
+                  <strong>position</strong> - {t('wf.help.f.position')} {'{x, y}'}
                 </li>
                 <li>
-                  <strong>config</strong> - 节点配置参数（各类型不同）
+                  <strong>config</strong> - {t('wf.help.f.config')}
                 </li>
               </ul>
             </div>
             <div>
-              <h4 className="mb-1 font-medium text-foreground">边 (Edge) 字段</h4>
+              <h4 className="mb-1 font-medium text-foreground">{t('wf.help.edgeFields')}</h4>
               <ul className="ml-4 list-disc space-y-0.5 text-xs text-foreground-dim">
                 <li>
-                  <strong>id</strong> - 唯一标识符
+                  <strong>id</strong> - {t('wf.help.f.id')}
                 </li>
                 <li>
-                  <strong>from</strong> / <strong>to</strong> - 源/目标节点ID
+                  <strong>from</strong> / <strong>to</strong> - {t('wf.help.f.fromTo')}
                 </li>
                 <li>
-                  <strong>fromPort</strong> / <strong>toPort</strong> - 源/目标端口名
+                  <strong>fromPort</strong> / <strong>toPort</strong> - {t('wf.help.f.ports')}
                 </li>
                 <li>
-                  <strong>condition</strong> - 条件表达式（可选，用于条件分支）
+                  <strong>condition</strong> - {t('wf.help.f.condition')}
                 </li>
               </ul>
             </div>
             <div>
-              <h4 className="mb-1 font-medium text-foreground">节点类型说明</h4>
+              <h4 className="mb-1 font-medium text-foreground">{t('wf.help.nodeTypes')}</h4>
               <div className="grid grid-cols-2 gap-2 text-xs text-foreground-dim">
                 <div className="rounded border border-gray-100 p-2">
-                  <strong className="text-foreground-muted">input/output</strong> - 数据输入输出
+                  <strong className="text-foreground-muted">input/output</strong> - {t('wf.help.t.io')}
                 </div>
                 <div className="rounded border border-gray-100 p-2">
-                  <strong className="text-foreground-muted">llm</strong> - 大语言模型推理
+                  <strong className="text-foreground-muted">llm</strong> - {t('wf.help.t.llm')}
                 </div>
                 <div className="rounded border border-gray-100 p-2">
-                  <strong className="text-foreground-muted">agent</strong> - 智能体执行
+                  <strong className="text-foreground-muted">agent</strong> - {t('wf.help.t.agent')}
                 </div>
                 <div className="rounded border border-gray-100 p-2">
-                  <strong className="text-foreground-muted">rag</strong> - 检索增强生成
+                  <strong className="text-foreground-muted">rag</strong> - {t('wf.help.t.rag')}
                 </div>
                 <div className="rounded border border-gray-100 p-2">
-                  <strong className="text-foreground-muted">python</strong> - Python代码执行
+                  <strong className="text-foreground-muted">python</strong> - {t('wf.help.t.python')}
                 </div>
                 <div className="rounded border border-gray-100 p-2">
-                  <strong className="text-foreground-muted">http</strong> - HTTP请求
+                  <strong className="text-foreground-muted">http</strong> - {t('wf.help.t.http')}
                 </div>
                 <div className="rounded border border-gray-100 p-2">
-                  <strong className="text-foreground-muted">condition</strong> - 条件分支
+                  <strong className="text-foreground-muted">condition</strong> - {t('wf.help.t.condition')}
                 </div>
                 <div className="rounded border border-gray-100 p-2">
-                  <strong className="text-foreground-muted">loop</strong> - 循环处理
+                  <strong className="text-foreground-muted">loop</strong> - {t('wf.help.t.loop')}
                 </div>
                 <div className="rounded border border-gray-100 p-2">
-                  <strong className="text-foreground-muted">merge</strong> - 数据合并
+                  <strong className="text-foreground-muted">merge</strong> - {t('wf.help.t.merge')}
                 </div>
                 <div className="rounded border border-gray-100 p-2">
-                  <strong className="text-foreground-muted">custom</strong> - 自定义功能
+                  <strong className="text-foreground-muted">custom</strong> - {t('wf.help.t.custom')}
                 </div>
               </div>
             </div>
@@ -610,16 +612,16 @@ export default function WorkflowsPage() {
               className="flex w-56 items-center justify-between rounded-md border border-border-default bg-card-bg px-3 py-1.5 text-left text-sm hover:border-border-default"
             >
               <span className={selected ? 'text-foreground' : 'text-foreground-muted'}>
-                {selected ? selected.name : '选择工作流...'}
+                {selected ? selected.name : t('wf.selectWorkflow')}
               </span>
               <ChevronDownIcon className="h-3.5 w-3.5 text-foreground-muted" />
             </button>
             {showDropdown && (
               <div className="absolute left-0 top-full z-20 mt-1 w-72 rounded-lg border border-border-default bg-card-bg py-1 shadow-lg">
                 {loading ? (
-                  <div className="px-3 py-2 text-xs text-foreground-muted">加载中...</div>
+                  <div className="px-3 py-2 text-xs text-foreground-muted">{t('common.loading')}</div>
                 ) : workflows.length === 0 ? (
-                  <div className="px-3 py-2 text-xs text-foreground-muted">暂无工作流</div>
+                  <div className="px-3 py-2 text-xs text-foreground-muted">{t('wf.noWorkflows')}</div>
                 ) : (
                   workflows.map((wf) => (
                     <button
@@ -643,7 +645,7 @@ export default function WorkflowsPage() {
                             : 'bg-card-bg-hover text-foreground-dim'
                         }`}
                       >
-                        {wf.status === 'active' ? '运行中' : wf.status === 'paused' ? '暂停' : '草稿'}
+                        {wf.status === 'active' ? t('wf.status.active') : wf.status === 'paused' ? t('wf.status.paused') : t('wf.status.draft')}
                       </span>
                     </button>
                   ))
@@ -654,21 +656,21 @@ export default function WorkflowsPage() {
                   className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-foreground-muted hover:bg-elevated-bg"
                 >
                   <PlusIcon className="h-3.5 w-3.5" />
-                  新建空白工作流
+                  {t('wf.newBlank')}
                 </button>
                 <button
                   onClick={handleLoadBasicExample}
                   className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-foreground-muted hover:bg-elevated-bg"
                 >
                   <PlayIcon className="h-3.5 w-3.5" />
-                  加载基础示例（可运行）
+                  {t('wf.loadBasic')}
                 </button>
                 <button
                   onClick={handleLoadExample}
                   className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-foreground-muted hover:bg-elevated-bg"
                 >
                   <PlayIcon className="h-3.5 w-3.5" />
-                  加载完整示例工作流
+                  {t('wf.loadExample')}
                 </button>
               </div>
             )}
@@ -676,7 +678,7 @@ export default function WorkflowsPage() {
 
           {hasChanges && (
             <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-500">
-              未保存
+              {t('wf.unsaved')}
             </span>
           )}
         </div>
@@ -686,7 +688,7 @@ export default function WorkflowsPage() {
             onClick={() => setShowHelp(true)}
             className="rounded-md px-2.5 py-1.5 text-xs font-medium text-foreground-dim hover:bg-card-bg-hover"
           >
-            DAG格式
+            {t('wf.dagFormat')}
           </button>
           {selected && (
             <>
@@ -696,23 +698,23 @@ export default function WorkflowsPage() {
                 className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
               >
                 <SaveIcon className="h-3.5 w-3.5" />
-                {saving ? '保存中...' : '保存'}
+                {saving ? t('common.saving') : t('common.save')}
               </button>
               <button
                 onClick={handleRun}
                 disabled={running || hasChanges || nodes.length === 0}
-                title={hasChanges ? '请先保存' : nodes.length === 0 ? '工作流为空' : '运行工作流'}
+                title={hasChanges ? t('wf.runTitle.saveFirst') : nodes.length === 0 ? t('wf.runTitle.empty') : t('wf.runTitle.run')}
                 className="inline-flex items-center gap-1 rounded-md bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
               >
                 <PlayIcon className="h-3.5 w-3.5" />
-                {running ? '运行中...' : '运行'}
+                {running ? t('wf.running') : t('wf.run')}
               </button>
               <button
                 onClick={handleDelete}
                 className="inline-flex items-center gap-1 rounded-md bg-error-bg px-3 py-1.5 text-xs font-medium text-error-text hover:bg-error-bg"
               >
                 <TrashIcon className="h-3.5 w-3.5" />
-                删除
+                {t('common.delete')}
               </button>
             </>
           )}
@@ -730,7 +732,7 @@ export default function WorkflowsPage() {
               void handleNlGenerate(true);
             }
           }}
-          placeholder="用自然语言描述工作流，例如：输入代码后用审查员子代理审查并总结输出"
+          placeholder={t('wf.nlPlaceholder')}
           className="min-w-0 flex-1 rounded-md border border-border-default bg-elevated-bg px-3 py-1.5 text-xs text-foreground placeholder:text-foreground-muted focus:border-brand-purple focus:outline-none"
         />
         <button
@@ -738,7 +740,7 @@ export default function WorkflowsPage() {
           disabled={nlGenerating || !nlPrompt.trim()}
           className="inline-flex items-center gap-1 rounded-md bg-brand-purple px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
         >
-          {nlGenerating ? '生成中…' : 'AI 生成并打开'}
+          {nlGenerating ? t('wf.nlGenerating') : t('wf.nlGenerate')}
         </button>
       </div>
 
@@ -788,9 +790,9 @@ export default function WorkflowsPage() {
                 <path d="M3 9h18M9 21V9" />
               </svg>
             </div>
-            <p className="text-sm font-semibold text-foreground">选择或创建一个工作流</p>
+            <p className="text-sm font-semibold text-foreground">{t('wf.empty.title')}</p>
             <p className="mt-1.5 max-w-sm text-center text-xs leading-relaxed text-foreground-muted">
-              可从顶部下拉选择已有 DAG，用自然语言生成，或直接新建空白流程
+              {t('wf.empty.desc')}
             </p>
             <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
               <button
@@ -798,14 +800,14 @@ export default function WorkflowsPage() {
                 onClick={() => void handleCreate()}
                 className="rounded-xl bg-gradient-to-r from-brand-purple to-brand-cyan px-4 py-2 text-sm font-medium text-white shadow-lg shadow-violet-500/15 hover:opacity-90"
               >
-                + 新建工作流
+                {t('wf.empty.create')}
               </button>
               <button
                 type="button"
                 onClick={() => void handleLoadExample()}
                 className="rounded-xl border border-border-default px-4 py-2 text-sm font-medium text-foreground-muted hover:bg-elevated-bg hover:text-foreground"
               >
-                加载示例
+                {t('wf.empty.loadExample')}
               </button>
             </div>
           </div>

@@ -97,7 +97,8 @@ export const useSessionStore = create<SessionState>()(
       loadMessages: async (sessionId) => {
         set({ isLoading: true, error: null });
         try {
-          const messages = await api.getMessages(sessionId);
+          // 默认拉最近 200 条（后端 offset=0 时为尾部窗口）
+          const messages = await api.getMessages(sessionId, 200, 0);
           const st = get();
           // 加载历史后补标题：取首条用户消息
           if (!st.sessionTitles[sessionId] && Array.isArray(messages)) {
@@ -144,7 +145,7 @@ export const useSessionStore = create<SessionState>()(
       getSessionTitle: (sessionId) => {
         const t = get().sessionTitles[sessionId];
         if (t && t.trim()) return t;
-        return '未命名会话';
+        return 'Untitled session';
       },
 
       // 星标

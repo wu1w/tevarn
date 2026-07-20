@@ -487,11 +487,25 @@ TOPIC_ALIASES: dict[str, str] = {
     "安全": "security",
     "security": "security",
     "速查": "dialog_cheatsheet",
-    "cheatsheet": "dialog_cheatsheet",
-    "清单": "checklist",
-    "checklist": "checklist",
-    "开箱": "checklist",
-}
+        "cheatsheet": "dialog_cheatsheet",
+        "清单": "checklist",
+        "checklist": "checklist",
+        "开箱": "checklist",
+        "图表": "charts_media",
+        "图表渲染": "charts_media",
+        "render": "charts_media",
+        "render_chart": "charts_media",
+        "mermaid": "charts_media",
+        "文生图": "charts_media",
+        "image_generate": "charts_media",
+        "图片生成": "charts_media",
+        "ppt": "charts_media",
+        "PPT": "charts_media",
+        "报告": "charts_media",
+        "docx": "charts_media",
+        "tts": "charts_media",
+        "语音": "charts_media",
+    }
 
 
 def resolve_topic(topic: str | None) -> str:

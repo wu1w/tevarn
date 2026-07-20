@@ -1,6 +1,5 @@
 """
-Calendar Read Skill - 读取日历事件
-当前为桩实现，后续可接入 Google Calendar / Outlook / CalDAV
+Calendar Read Skill - 读取本地 ICS/JSON 日历（与 calendar 工具共享存储）
 """
 
 from datetime import datetime, timezone
@@ -13,8 +12,8 @@ class CalendarReadSkill(BaseSkill):
 
     name = "calendar_read"
     description = (
-        "当用户询问日程安排、会议时间或需要规划时，"
-        "调用此工具读取日历事件。"
+        "读取日程安排、会议时间。与 calendar 工具共用 ~/.takton/calendar。"
+        "写操作请用 calendar action=create|update|delete。"
     )
     parameters = {
         "type": "object",
@@ -25,8 +24,8 @@ class CalendarReadSkill(BaseSkill):
             },
             "days": {
                 "type": "integer",
-                "description": "查询天数（默认 1）",
-                "default": 1,
+                "description": "查询天数（默认 7）",
+                "default": 7,
             },
         },
         "required": [],

@@ -107,9 +107,23 @@ class MCPClient:
         if self._session is None or not self._initialized:
             raise RuntimeError(f"MCP server '{self.name}' not connected")
 
-        result: CallToolResult = await self._session.call_tool(
-            tool_name, arguments
-        )
+        # 防御：剥除不可 JSON 的内部注入字段（_ws_manager / ConnectionManager）
+        import json as _json
+
+        safe_args: dict[str, Any] = {}
+        if isinstance(arguments, dict):
+            for k, v in arguments.items():
+                ks = str(k)
+                if ks.startswith("_") or ks in ("ws_manager", "connection_manager", "user_id"):
+                    continue
+                if "ConnectionManager" in type(v).__name__:
+                    continue
+                try:
+                    safe_args[ks] = _json.loads(_json.dumps(v, default=str))
+                except Exception:
+                    safe_args[ks] = str(v)
+
+        result: CallToolResult = await self._session.call_tool(tool_name, safe_args)
 
         # 将结果统一转为字符串
         parts: list[str] = []
@@ -117,9 +131,8 @@ class MCPClient:
             if isinstance(content, TextContent):
                 parts.append(content.text)
             else:
-                # ImageContent / other content fallback
                 parts.append(str(content))
-        return "\n".join(parts)
+        return chr(10).join(parts)
 
     async def close(self) -> None:
         """关闭连接并清理资源"""

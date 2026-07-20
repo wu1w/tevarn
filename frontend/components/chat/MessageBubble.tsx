@@ -6,6 +6,7 @@ import { Message } from '@/types';
 import { MarkdownContent } from './MarkdownContent';
 import { ToolCallPanel, ToolCallData } from './ToolCallPanel';
 import { IconMore } from '@/components/icons/ChatIcons';
+import { useT } from '@/stores/localeStore';
 import {
   DisplayToolCall,
   extractToolMeta,
@@ -62,6 +63,7 @@ export function MessageBubble({
   onEdit,
   streaming = false,
 }: MessageBubbleProps) {
+  const t = useT();
   const isUser = message.role === 'user';
   const isAssistant = message.role === 'assistant';
   const isTool = message.role === 'tool';
@@ -147,7 +149,7 @@ export function MessageBubble({
             className={`absolute -top-2 ${
               isUser ? '-left-10' : '-right-10'
             } z-10 rounded-full border border-border-subtle bg-card-bg p-1.5 opacity-0 shadow-sm transition-opacity hover:bg-card-bg-hover group-hover:opacity-100`}
-            title="更多操作"
+            title={t('chat._e5')}
           >
             <IconMore className="h-3.5 w-3.5 text-foreground-muted" />
           </button>
@@ -203,13 +205,13 @@ export function MessageBubble({
           {isErr && (
             <div className="mb-2 flex items-center gap-1.5 text-red-300/90">
               <span className="text-xs">⚠</span>
-              <span className="chat-tool-chip text-red-300/90">错误</span>
+              <span className="chat-tool-chip text-red-300/90">{t('common.error')}</span>
               <button
                 type="button"
                 onClick={() => setShowErrorDetail((v) => !v)}
                 className="ml-2 text-xs text-red-300/70 underline-offset-2 hover:text-red-300 hover:underline"
               >
-                {showErrorDetail ? '收起' : '展开'}
+                {showErrorDetail ? t('chat._e73') : t('chat._e74')}
               </button>
             </div>
           )}

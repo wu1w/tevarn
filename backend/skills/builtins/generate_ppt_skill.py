@@ -107,18 +107,25 @@ class GeneratePPTSkill(BaseSkill):
             if not ppt_data:
                 return f"[Error] 无法解析PPT结构。LLM响应：{response[:500]}"
 
-            # 生成PPT文件
+            # generate ppt file
             file_path = self._generate_ppt_file(ppt_data)
             file_name = os.path.basename(file_path)
-
-            return (
-                f"[Success] PPT生成完成！\n"
-                f"标题：{ppt_data.get('title', topic)}\n"
-                f"页数：{len(ppt_data.get('slides', []))}页\n"
-                f"下载链接：/uploads/ppt/{file_name}\n"
-                f"文件路径：{file_path}"
-            )
-
+            is_pptx = str(file_path).lower().endswith(".pptx")
+            fmt = "PowerPoint .pptx" if is_pptx else "Markdown fallback"
+            warn = ""
+            if not is_pptx:
+                warn = chr(10) + 'WARN: not pptx. pip install python-pptx && restart backend'
+            parts = [
+                "[Success] PPT generated!",
+                f"title={ppt_data.get('title', topic)}",
+                f"slides={len(ppt_data.get('slides', []))}",
+                f"format={fmt}",
+                f"path={file_path}",
+                f"download=/uploads/ppt/{file_name}",
+            ]
+            if warn:
+                parts.append(warn.strip())
+            return chr(10).join(parts)
         except Exception as e:
             logger.error(f"PPT generation failed: {e}")
             return f"[Error] PPT生成失败: {e}"
@@ -220,12 +227,17 @@ class GeneratePPTSkill(BaseSkill):
         return file_path
 
     def _generate_markdown_fallback(self, ppt_data: dict[str, Any]) -> str:
-        """没有python-pptx时的fallback：生成markdown"""
+        """没有 python-pptx 时的 fallback：生成 markdown，并明确提示安装依赖。"""
         title = ppt_data.get("title", "Untitled")
         subtitle = ppt_data.get("subtitle", "")
         slides = ppt_data.get("slides", [])
 
-        lines = [f"# {title}", f"\n> {subtitle}\n"]
+        lines = [
+            f"# {title}",
+            f"\n> {subtitle}\n",
+            "\n> ⚠️ 本机未安装 python-pptx，已降级为 Markdown 大纲。\n"
+            "> 安装：`pip install python-pptx` 后重试 generate_ppt 可得到 .pptx\n",
+        ]
         for slide in slides:
             lines.append(f"\n## {slide.get('title', '')}")
             for item in slide.get("content", []):

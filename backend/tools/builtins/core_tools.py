@@ -19,7 +19,10 @@ from backend.services.tools.executors import (
     execute_glob,
     execute_grep,
     execute_http,
+    execute_list_devices,
+    execute_process,
     execute_python,
+    execute_remote_exec,
     execute_search,
     execute_sqlite_query,
 )
@@ -172,21 +175,39 @@ class CommandTool(_BuiltinToolBase):
     def __init__(self):
         super().__init__(
             name="command",
-            description="执行安全白名单内的 shell 命令",
+            description=(
+                "在本机执行 shell 命令（支持管道/&&/python/pip/npm/git）。"
+                "可选 cwd 工作目录、timeout（秒，默认120）、background=true 后台运行。"
+                "后台任务用 process 工具 poll/kill。"
+            ),
             parameters={
                 "type": "object",
                 "properties": {
                     "command": {"type": "string", "description": "shell 命令"},
+                    "cwd": {
+                        "type": "string",
+                        "description": "工作目录（绝对路径或可解析路径）",
+                    },
                     "timeout": {
                         "type": "integer",
-                        "description": "超时秒数",
-                        "default": 30,
+                        "description": "超时秒数（前台，默认120，最大600）",
+                        "default": 120,
+                    },
+                    "background": {
+                        "type": "boolean",
+                        "description": "true=后台执行并返回 process_id",
+                        "default": False,
+                    },
+                    "max_output": {
+                        "type": "integer",
+                        "description": "stdout 最大字符数",
+                        "default": 50000,
                     },
                 },
                 "required": ["command"],
             },
-            risk_level=ToolRiskLevel.DANGEROUS,
-            requires_confirmation=True,
+            risk_level=ToolRiskLevel.HIGH,
+            requires_confirmation=False,
         )
 
 
@@ -196,15 +217,102 @@ class BrowserTool(_BuiltinToolBase):
     def __init__(self):
         super().__init__(
             name="browser",
-            description="获取网页内容",
+            description=(
+                "浏览器工具。action=fetch 拉 HTML；navigate/snapshot/click/type/press/screenshot "
+                "需 Playwright（未安装则 navigate 降级为 fetch）。"
+            ),
             parameters={
                 "type": "object",
                 "properties": {
-                    "url": {"type": "string", "description": "网页 URL"}
+                    "action": {
+                        "type": "string",
+                        "description": "fetch|navigate|snapshot|click|type|press|screenshot|close",
+                        "default": "fetch",
+                    },
+                    "url": {"type": "string", "description": "网页 URL"},
+                    "selector": {"type": "string", "description": "CSS 选择器（click/type）"},
+                    "text": {"type": "string", "description": "输入文本（type）"},
+                    "key": {"type": "string", "description": "按键（press，如 Enter）"},
+                    "session": {
+                        "type": "string",
+                        "description": "浏览器会话名（默认 default）",
+                        "default": "default",
+                    },
+                    "timeout": {"type": "integer", "default": 30},
                 },
-                "required": ["url"],
+                "required": [],
             },
             risk_level=ToolRiskLevel.LOW,
+        )
+
+
+class ProcessTool(_BuiltinToolBase):
+    _executor = execute_process
+
+    def __init__(self):
+        super().__init__(
+            name="process",
+            description="管理 command background 后台进程：list / poll / kill",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "poll", "kill"],
+                        "default": "list",
+                    },
+                    "process_id": {"type": "string", "description": "后台进程 id"},
+                },
+                "required": [],
+            },
+            risk_level=ToolRiskLevel.MEDIUM,
+        )
+
+
+class ListDevicesTool(_BuiltinToolBase):
+    _executor = execute_list_devices
+
+    def __init__(self):
+        super().__init__(
+            name="list_devices_tool",
+            description=(
+                "列出本机 local 与已配对远程设备（takton-agent）。"
+                "操作远程前先调用；也可用 chat @设备名 命令。"
+            ),
+            parameters={"type": "object", "properties": {}, "required": []},
+            risk_level=ToolRiskLevel.SAFE,
+        )
+
+
+class RemoteExecTool(_BuiltinToolBase):
+    _executor = execute_remote_exec
+
+    def __init__(self):
+        super().__init__(
+            name="remote_exec",
+            description=(
+                "在远程设备或本机 local 上执行命令/列目录/读文件。"
+                "action=exec|list|read；device=设备名或 local。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "device": {
+                        "type": "string",
+                        "description": "设备名，local=本机",
+                    },
+                    "action": {
+                        "type": "string",
+                        "enum": ["exec", "list", "read"],
+                        "default": "exec",
+                    },
+                    "command": {"type": "string", "description": "shell 命令（exec）"},
+                    "path": {"type": "string", "description": "路径（list/read）"},
+                    "timeout": {"type": "integer", "default": 45},
+                },
+                "required": ["device"],
+            },
+            risk_level=ToolRiskLevel.HIGH,
         )
 
 
@@ -309,6 +417,9 @@ BUILTIN_TOOL_CLASSES = [
     GrepTool,
     CommandTool,
     BrowserTool,
+    ProcessTool,
+    ListDevicesTool,
+    RemoteExecTool,
     HttpTool,
     PythonTool,
     SearchTool,

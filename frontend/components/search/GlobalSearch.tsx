@@ -4,6 +4,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useSessionStore } from '@/stores/sessionStore';
 import { getMySessions } from '@/lib/api';
 import { Session } from '@/types';
+import { useT } from '@/stores/localeStore';
 
 interface GlobalSearchProps {
   open: boolean;
@@ -12,6 +13,7 @@ interface GlobalSearchProps {
 }
 
 export function GlobalSearch({ open, onClose, onSelectSession }: GlobalSearchProps) {
+  const t = useT();
   const [query, setQuery] = useState('');
   const [sessions, setSessions] = useState<Session[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -83,7 +85,7 @@ export function GlobalSearch({ open, onClose, onSelectSession }: GlobalSearchPro
               setSelectedIndex(0);
             }}
             onKeyDown={handleKeyDown}
-            placeholder="搜索会话..."
+            placeholder={t('nav.searchSessions')}
             className="flex-1 bg-transparent text-sm text-foreground placeholder:text-foreground-dim outline-none"
           />
           <kbd className="hidden sm:inline-flex rounded-md border border-border-subtle bg-page-bg px-1.5 py-0.5 text-[10px] text-foreground-dim font-mono">
@@ -94,7 +96,7 @@ export function GlobalSearch({ open, onClose, onSelectSession }: GlobalSearchPro
         <div className="max-h-80 overflow-y-auto p-2">
           {filtered.length === 0 ? (
             <div className="py-8 text-center text-sm text-foreground-dim">
-              {query ? '无匹配结果' : '暂无会话'}
+              {query ? t('contextDash.noMatch') : t('empty.noSessions.title')}
             </div>
           ) : (
             filtered.slice(0, 20).map((session, index) => {
