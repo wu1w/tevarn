@@ -14,7 +14,7 @@
 
 <br/>
 
-[![Version](https://img.shields.io/badge/version-0.2.1-7C3AED?style=flat-square)](https://github.com/wu1w/takton/releases)
+[![Version](https://img.shields.io/badge/version-0.2.2-7C3AED?style=flat-square)](https://github.com/wu1w/takton/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-06B6D4?style=flat-square)](https://github.com/wu1w/takton/releases)
 [![License](https://img.shields.io/badge/license-MIT-22C55E?style=flat-square)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/wu1w/takton?style=flat-square&logo=github)](https://github.com/wu1w/takton/stargazers)
@@ -141,7 +141,7 @@ curl -fsSL https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.sh
 
 | Platform | Package | 下载 |
 |----------|---------|------|
-| Windows | Setup.exe | [Takton-Setup-0.2.1.exe](https://github.com/wu1w/takton/releases/download/v0.2.1/Takton-Setup-0.2.1.exe) |
+| Windows | Setup.exe | [Takton-Setup-0.2.2.exe](https://github.com/wu1w/takton/releases/download/v0.2.2/Takton-Setup-0.2.2.exe) |
 | Linux | AppImage | [Takton-0.2.2.AppImage](https://github.com/wu1w/takton/releases/download/v0.2.2/Takton-0.2.2.AppImage) |
 | Linux | deb | [takton_0.2.2_amd64.deb](https://github.com/wu1w/takton/releases/download/v0.2.2/takton_0.2.2_amd64.deb) |
 
