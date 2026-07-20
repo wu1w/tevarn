@@ -14,6 +14,7 @@ from .interface import LLMService
 from .ollama import OllamaService
 from .openai_cloud import OpenAIService
 from .openai_compatible import OpenAICompatibleService
+from .param_sanitize import sanitize_max_tokens, sanitize_temperature
 from .vllm import VLLMService
 
 logger = logging.getLogger(__name__)
@@ -109,8 +110,14 @@ class LLMServiceFactory:
             base_url=base_url,
             model=model,
             api_key=api_key,
-            max_tokens=int(_pick("max_tokens", getattr(base_cfg, "max_tokens", 4096)) or 4096),
-            temperature=float(_pick("temperature", getattr(base_cfg, "temperature", 0.7)) or 0.7),
+            max_tokens=sanitize_max_tokens(
+                _pick("max_tokens", getattr(base_cfg, "max_tokens", 4096)),
+                model=model,
+                context_window=snapshot.get("context_window"),
+            ),
+            temperature=sanitize_temperature(
+                _pick("temperature", getattr(base_cfg, "temperature", 0.7))
+            ),
         )
         if provider == "ollama":
             return OllamaService(config)
