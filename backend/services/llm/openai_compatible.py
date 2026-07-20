@@ -100,6 +100,19 @@ class OpenAICompatibleService(LLMService):
         out: list[dict[str, Any]] = []
         pending_tool_ids: set[str] = set()
 
+        # 预扫描：收集本序列中所有 assistant.tool_calls 声明的 tool_call_id。
+        # 用于识别"孤儿 tool 消息"——引用了不存在 tool_calls 的 tool 消息。
+        # 这类孤儿多由历史压缩（L3/L5）剥掉 assistant.tool_calls 但残留 tool 消息造成，
+        # 会被严格 OpenAI 兼容网关（如 Kimi）以 400 拒绝，必须在发送前剔除。
+        declared_tool_ids: set[str] = set()
+        for m in messages:
+            if isinstance(m, dict) and m.get("role") == "assistant":
+                tcs = m.get("tool_calls")
+                if isinstance(tcs, list):
+                    for tc in tcs:
+                        if isinstance(tc, dict) and tc.get("id"):
+                            declared_tool_ids.add(str(tc["id"]))
+
         def _trim_text(s: str, limit: int) -> str:
             if len(s) <= limit:
                 return s
@@ -195,6 +208,17 @@ class OpenAICompatibleService(LLMService):
                 continue
 
             if role == "tool":
+                tid = m.get("tool_call_id")
+                # 孤儿 tool 消息：其 tool_call_id 在本序列中没有任何 assistant.tool_calls 声明。
+                # 直接丢弃，避免严格网关 400（历史压缩剥掉 tool_calls 后常见）。
+                # 注意：declared_tool_ids 为空集时，说明序列里没有任何 tool_calls，
+                # 此时所有带 id 的 tool 消息都是孤儿，同样必须丢弃。
+                if tid and str(tid) not in declared_tool_ids:
+                    logger.warning(
+                        "dropping orphan tool message (tool_call_id=%s has no matching tool_calls)",
+                        tid,
+                    )
+                    continue
                 content = m.get("content")
                 if content is None:
                     m["content"] = ""
@@ -202,7 +226,6 @@ class OpenAICompatibleService(LLMService):
                     m["content"] = str(content)
                 if len(m["content"]) > cls._MAX_TOOL_RESULT_CHARS:
                     m["content"] = _trim_text(m["content"], cls._MAX_TOOL_RESULT_CHARS)
-                tid = m.get("tool_call_id")
                 if tid:
                     pending_tool_ids.discard(str(tid))
                 elif pending_tool_ids:
@@ -219,16 +242,41 @@ class OpenAICompatibleService(LLMService):
 
             out.append(m)
 
+        # 双向净化（对齐 hermes _sanitize_tool_pairs）：assistant.tool_calls 必须有
+        # 对应 tool_result，反之亦然。发到 API 的消息是完整历史，任何 tool_calls 都
+        # 应当已完结、有匹配 tool_result；缺结果的孤儿 tool_calls 只可能来自压缩
+        # （L3/L5 丢了 tool_result）或异常中断，必须剥掉，否则严格网关 400。
+        # 剥掉优先于插 stub：stub 可能被下游按 id 不匹配的规则再次丢掉，重新暴露孤儿。
+        # pending_tool_ids 扫描结束后仍非空 = 这些 tool_calls 到结尾都无对应 tool_result。
         if pending_tool_ids:
-            for tid in list(pending_tool_ids):
-                out.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tid,
-                        "content": "[tool result missing — interrupted]",
-                    }
+            stripped = 0
+            for m in out:
+                if m.get("role") != "assistant":
+                    continue
+                tcs = m.get("tool_calls")
+                if not tcs:
+                    continue
+                kept = [
+                    tc
+                    for tc in tcs
+                    if not (isinstance(tc, dict) and tc.get("id") and str(tc["id"]) in pending_tool_ids)
+                ]
+                if len(kept) != len(tcs):
+                    stripped += len(tcs) - len(kept)
+                    if kept:
+                        m["tool_calls"] = kept
+                    else:
+                        m.pop("tool_calls", None)
+                        # 剥光后避免空 assistant turn 被网关拒绝
+                        content = m.get("content")
+                        if not content or (isinstance(content, str) and not content.strip()):
+                            m["content"] = "(tool call removed)"
+            if stripped:
+                logger.warning(
+                    "stripped %d orphaned tool_call(s) with no matching tool result",
+                    stripped,
                 )
-                pending_tool_ids.discard(tid)
+            pending_tool_ids.clear()
 
         return out
 
