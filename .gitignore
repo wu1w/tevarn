@@ -54,6 +54,9 @@ test_extract/
 **/secrets.json
 **/*token*
 !**/tokenizer*
+# token_meter.py 是核心源码（非密钥），上面 *token* 会误伤，必须豁免
+!**/token_meter.py
+!**/test_token_meter_robust.py
 *.pem
 *.key
 
