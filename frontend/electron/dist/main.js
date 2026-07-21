@@ -1057,13 +1057,18 @@ electron_1.ipcMain.handle('open-takton-code', async (_event, opts) => {
             }).unref();
         };
         if (process.platform === 'win32') {
-            // try wt.exe first
+            // Prefer bundled embedded Python (takton_code installed into its site-packages)
+            const bundledPython = isDev
+                ? null
+                : path.join(process.resourcesPath, 'python', 'python.exe');
+            const hasBundled = bundledPython ? fs.existsSync(bundledPython) : false;
             const argStr = `--path "${projectPath}" --mode ${mode} --bridge`;
-            const tries = [
-                `takton-code ${argStr}`,
-                `tkc ${argStr}`,
-                `python -m takton_code ${argStr}`,
-            ];
+            const primary = hasBundled
+                ? `"${bundledPython}" -m takton_code ${argStr}`
+                : `takton-code ${argStr}`;
+            const fallbacks = hasBundled
+                ? `takton-code ${argStr} || tkc ${argStr} || python -m takton_code ${argStr}`
+                : `tkc ${argStr} || python -m takton_code ${argStr}`;
             // Prefer Windows Terminal if present
             try {
                 (0, child_process_1.spawn)('wt.exe', [
@@ -1072,11 +1077,11 @@ electron_1.ipcMain.handle('open-takton-code', async (_event, opts) => {
                     'Takton Code',
                     'cmd',
                     '/k',
-                    `set TAKTON_CODE_BRIDGE_ENABLED=true&& set TAKTON_CODE_BRIDGE_URL=${bridgeUrl}&& ${tries[0]}`,
+                    `set TAKTON_CODE_BRIDGE_ENABLED=true&& set TAKTON_CODE_BRIDGE_URL=${bridgeUrl}&& ${primary}`,
                 ], { env, detached: true, stdio: 'ignore' }).unref();
             }
             catch {
-                launchWin(`set TAKTON_CODE_BRIDGE_ENABLED=true&& set TAKTON_CODE_BRIDGE_URL=${bridgeUrl}&& ${tries[0]} || ${tries[2]}`);
+                launchWin(`set TAKTON_CODE_BRIDGE_ENABLED=true&& set TAKTON_CODE_BRIDGE_URL=${bridgeUrl}&& ${primary} || ${fallbacks}`);
             }
         }
         else {
