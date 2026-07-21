@@ -67,6 +67,10 @@ class Settings(BaseSettings):
     # Security
     jwt_secret: str = "takton-dev-secret-key-2026"
     api_key: str = "takton-dev-api-key-2026"
+    # Takton Code ↔ Desktop bridge 可选独立 Bearer token。
+    # 留空 → 回落 get_current_user（single_user_mode 下 loopback 免 token）。
+    # 设置后 → /bridge/v1/* 强制校验该 token（共享机/非 loopback 加固）。
+    bridge_token: Optional[str] = None
 
     # LLM — 默认空，引导用户在设置页选择服务商
     llm_provider: Literal["ollama", "vllm", "openai", "anthropic", "openai-compatible"] = "openai-compatible"

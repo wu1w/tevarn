@@ -13,6 +13,7 @@ TokenMeter usage feedback.
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from typing import Any
 
@@ -52,6 +53,13 @@ class PipelineContextEngine(ContextEngine):
         self.enable_l1 = bool(_cfg("context_enable_l1", True))
         self.enable_l3 = bool(_cfg("context_enable_l3", True))
         self.enable_l5 = bool(_cfg("context_enable_l5", True))
+        # Thrashing guard：180s 内 L5(hard compact) 触发 >= max_events 次 → 熔断，
+        # 冷却期内只跑 L1/L3 micro，禁止再砍对话，防止压缩风暴把上下文打到不可用。
+        self.thrash_max_events = int(_cfg("context_thrash_max_events", 3) or 3)
+        self.thrash_window_sec = float(_cfg("context_thrash_window_sec", 180) or 180)
+        self.thrash_cooldown_sec = float(_cfg("context_thrash_cooldown_sec", 300) or 300)
+        self._l5_events: list[float] = []  # L5 触发时间戳（滑动窗口）
+        self._thrash_until: float = 0.0    # 熔断截止 monotonic 时间
         self.meter = TokenMeter(
             context_window=self.context_length,
             threshold_percent=self.threshold_percent,
@@ -84,6 +92,28 @@ class PipelineContextEngine(ContextEngine):
     def should_compress_preflight(self, messages: list[dict[str, Any]]) -> bool:
         est = self.meter.estimate_messages(messages)
         return self.meter.should_compress(est)
+
+    # ── thrashing guard ─────────────────────────────────────────────
+
+    def _thrash_active(self) -> bool:
+        """是否处于熔断冷却期（只 micro，禁 L5）。"""
+        return time.monotonic() < self._thrash_until
+
+    def _record_l5_and_maybe_trip(self) -> None:
+        """记录一次 L5 触发；滑动窗口内超限则进入熔断冷却。"""
+        now = time.monotonic()
+        self._l5_events = [t for t in self._l5_events if now - t <= self.thrash_window_sec]
+        self._l5_events.append(now)
+        if len(self._l5_events) >= self.thrash_max_events:
+            self._thrash_until = now + self.thrash_cooldown_sec
+            # 触发熔断后清空窗口，避免冷却刚结束就立刻再次熔断
+            self._l5_events = []
+            logger.warning(
+                "Context thrashing detected: L5 x%d in %.0fs — entering cooldown %.0fs (micro-only)",
+                self.thrash_max_events,
+                self.thrash_window_sec,
+                self.thrash_cooldown_sec,
+            )
 
     def get_status(self) -> dict[str, Any]:
         base = super().get_status()
@@ -131,11 +161,21 @@ class PipelineContextEngine(ContextEngine):
                 layers.append(f"L3:{n}")
 
         mid_tokens = self.meter.estimate_messages(out)
+        thrashing = self._thrash_active()
         need_l5 = self.enable_l5 and (
             mid_tokens >= self.meter.threshold_tokens or self.should_compress(mid_tokens)
         )
+        if thrashing and need_l5:
+            # 熔断冷却期：禁止 L5 砍对话，只保留 L1/L3 micro，等冷却或手动干预
+            logger.warning(
+                "L5 suppressed by thrashing guard (cooldown %.0fs remaining)",
+                self._thrash_until - time.monotonic(),
+            )
+            meta["thrash_suppressed_l5"] = True
+            need_l5 = False
 
         if need_l5 and len(out) >= 4:
+            self._record_l5_and_maybe_trip()
             out, l5_meta = await self._l5_auto_compact(
                 out, focus_topic=focus_topic, session_id=session_id
             )

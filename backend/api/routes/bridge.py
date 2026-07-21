@@ -11,14 +11,47 @@ import logging
 import uuid
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
 
-from backend.api.dependencies import get_current_user
+from backend.api.dependencies import _user_repo, get_current_user
 from backend.core.config import settings
 from backend.schemas.user import UserRead
 
 logger = logging.getLogger(__name__)
+
+
+async def bridge_auth(
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> UserRead:
+    """Bridge 鉴权（本地单用户优先，可选 Bearer 加固）。
+
+    - settings.bridge_token 未设置（默认）→ 委托 get_current_user，
+      single_user_mode 下 loopback 免 token，Code 直连即可。
+    - settings.bridge_token 已设置 → 校验 Authorization: Bearer <bridge_token>
+      （恒定时间比较防时序侧信道）；通过后回落到 single_user 默认用户身份。
+      bridge token 不是 JWT，因此通过后必须绕过 get_current_user 的 JWT 解码，
+      否则它会把 bridge token 当 access token 判 401。
+    """
+    token = (settings.bridge_token or "").strip()
+    if not token:
+        # 无 bridge token：沿用标准用户认证（single_user 免 token 回落）
+        return await get_current_user(authorization, _user_repo)
+
+    import hmac
+
+    provided = ""
+    if authorization and authorization.startswith("Bearer "):
+        provided = authorization[7:].strip()
+    if not (provided and hmac.compare_digest(provided, token)):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid bridge token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    # token 校验通过：以本地默认用户身份执行（bridge 是本地可信通道）
+    return await get_current_user(None, _user_repo)
+
 
 router = APIRouter(prefix="/bridge/v1", tags=["bridge"])
 
@@ -77,7 +110,7 @@ def _tool_call_to_dict(tc: Any) -> dict[str, Any]:
 
 @router.get("/health")
 async def bridge_health(
-    current_user: UserRead = Depends(get_current_user),
+    current_user: UserRead = Depends(bridge_auth),
 ) -> dict[str, Any]:
     return {
         "ok": True,
@@ -93,7 +126,7 @@ async def bridge_health(
 
 @router.get("/models")
 async def bridge_list_models(
-    current_user: UserRead = Depends(get_current_user),
+    current_user: UserRead = Depends(bridge_auth),
 ) -> dict[str, Any]:
     """List models from catalog + active provider model."""
     models: list[dict[str, Any]] = []
@@ -162,7 +195,7 @@ async def bridge_list_models(
 @router.post("/chat/completions")
 async def bridge_chat(
     body: ChatRequestIn,
-    current_user: UserRead = Depends(get_current_user),
+    current_user: UserRead = Depends(bridge_auth),
 ) -> dict[str, Any]:
     """OpenAI-shaped chat completions using Desktop LLM stack."""
     from backend.services.llm.factory import LLMServiceFactory
@@ -260,7 +293,7 @@ async def bridge_chat(
 
 @router.get("/skills")
 async def bridge_list_skills(
-    current_user: UserRead = Depends(get_current_user),
+    current_user: UserRead = Depends(bridge_auth),
 ) -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     try:
@@ -343,7 +376,7 @@ async def bridge_list_skills(
 
 @router.get("/tools")
 async def bridge_list_tools(
-    current_user: UserRead = Depends(get_current_user),
+    current_user: UserRead = Depends(bridge_auth),
 ) -> dict[str, Any]:
     tools: list[dict[str, Any]] = []
     try:
@@ -385,7 +418,7 @@ async def bridge_list_tools(
 @router.post("/tools/invoke")
 async def bridge_invoke_tool(
     body: ToolInvokeIn,
-    current_user: UserRead = Depends(get_current_user),
+    current_user: UserRead = Depends(bridge_auth),
 ) -> dict[str, Any]:
     name = (body.name or "").strip()
     if not name:
@@ -455,7 +488,7 @@ async def bridge_invoke_tool(
 
 @router.get("/mcp")
 async def bridge_list_mcp(
-    current_user: UserRead = Depends(get_current_user),
+    current_user: UserRead = Depends(bridge_auth),
 ) -> dict[str, Any]:
     servers: list[dict[str, Any]] = []
     try:
@@ -505,7 +538,7 @@ async def bridge_list_mcp(
 @router.post("/rag/search")
 async def bridge_rag_search(
     body: RAGQueryIn,
-    current_user: UserRead = Depends(get_current_user),
+    current_user: UserRead = Depends(bridge_auth),
 ) -> dict[str, Any]:
     hits: list[dict[str, Any]] = []
     try:
@@ -563,7 +596,7 @@ async def bridge_rag_search(
 
 @router.get("/settings")
 async def bridge_settings(
-    current_user: UserRead = Depends(get_current_user),
+    current_user: UserRead = Depends(bridge_auth),
 ) -> dict[str, Any]:
     return {
         "llm_provider": getattr(settings, "llm_provider", None),
