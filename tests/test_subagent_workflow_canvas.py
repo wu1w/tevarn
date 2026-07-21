@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import ast
+import sys
 from pathlib import Path
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -63,11 +66,19 @@ def test_workflows_page_nl_bar():
     src = _read("frontend/app/workflows/page.tsx")
     assert "generateWorkflowFromNl" in src
     assert "handleNlGenerate" in src
-    assert "AI 生成" in src
+    assert "wf.nlGenerate" in src
 
 
 def test_unpack_backend_synced():
-    base = ROOT / "frontend/release/win-unpacked/resources/backend"
+    if sys.platform.startswith("win"):
+        unpacked = "win-unpacked"
+    elif sys.platform == "darwin":
+        unpacked = "mac"
+    else:
+        unpacked = "linux-unpacked"
+    base = ROOT / "frontend/release" / unpacked / "resources/backend"
+    if not base.exists():
+        pytest.skip(f"desktop build not present at {base}")
     assert (base / "schemas/workflow_node.py").exists()
     text = (base / "schemas/workflow_node.py").read_text(encoding="utf-8")
     assert "sub_agent" in text

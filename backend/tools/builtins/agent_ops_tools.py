@@ -331,12 +331,19 @@ class DelegateTaskTool(BaseTool):
             from backend.services.llm.factory import LLMServiceFactory
 
             svc = LLMServiceFactory.get_service()
-            # chat_complete if exists
+            # chat_complete if exists；provider 签名不含 temperature，需 TypeError 兜底
             if hasattr(svc, "chat_complete"):
-                text = await svc.chat_complete(
-                    [{"role": "user", "content": prompt}],
-                    temperature=0.3,
-                )
+                try:
+                    resp = await svc.chat_complete(
+                        [{"role": "user", "content": prompt}],
+                        temperature=0.3,
+                    )
+                except TypeError:
+                    resp = await svc.chat_complete(
+                        [{"role": "user", "content": prompt}]
+                    )
+                # chat_complete 返回 LLMResponse 对象，需取 .content 文本
+                text = getattr(resp, "content", None) or str(resp)
             else:
                 chunks = []
                 async for ch in svc.chat([{"role": "user", "content": prompt}]):

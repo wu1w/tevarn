@@ -71,7 +71,12 @@ class DesktopAgentService:
         self._platform_adapter = None
         self._initialized = False
         self._session_permissions: dict[str, PermissionLevel] = {}
-    
+
+    @property
+    def platform(self) -> str:
+        """当前运行平台（windows / darwin / linux）"""
+        return _CURRENT_PLATFORM
+
     async def initialize(self) -> None:
         """初始化平台适配器"""
         if self._initialized:

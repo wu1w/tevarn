@@ -21,7 +21,7 @@ class DesktopTaskPlanner:
     async def _get_llm_service(self):
         """获取 LLM 服务"""
         if self._llm_service is None:
-            self._llm_service = LLMServiceFactory.create()
+            self._llm_service = LLMServiceFactory.get_service()
         return self._llm_service
     
     async def plan_task(
@@ -45,12 +45,16 @@ class DesktopTaskPlanner:
         prompt = self._build_planning_prompt(task, screenshot_context)
         
         try:
-            # 调用 LLM
-            response = await llm.chat(
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,  # 低温度确保输出稳定
-            )
-            
+            # 调用 LLM（chat_complete 非流式；provider 签名不含 temperature，需 TypeError 兜底）
+            try:
+                resp = await llm.chat_complete(
+                    [{"role": "user", "content": prompt}],
+                    temperature=0.3,  # type: ignore[call-arg] 低温度确保输出稳定
+                )
+            except TypeError:
+                resp = await llm.chat_complete([{"role": "user", "content": prompt}])
+            response = getattr(resp, "content", None) or str(resp)
+
             # 解析 JSON 响应
             operations = self._parse_planning_response(response)
             
@@ -177,13 +181,16 @@ class DesktopTaskPlanner:
         
         try:
             # 如果有视觉模型，可以传入图片
-            # 目前只使用文本描述
-            response = await llm.chat(
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.5,
-            )
-            
-            return response
+            # 目前只使用文本描述；chat_complete 非流式，TypeError 兜底 temperature
+            try:
+                resp = await llm.chat_complete(
+                    [{"role": "user", "content": prompt}],
+                    temperature=0.5,  # type: ignore[call-arg]
+                )
+            except TypeError:
+                resp = await llm.chat_complete([{"role": "user", "content": prompt}])
+
+            return getattr(resp, "content", None) or str(resp)
             
         except Exception as e:
             logger.error(f"Screen analysis failed: {e}")

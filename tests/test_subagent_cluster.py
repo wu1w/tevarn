@@ -98,10 +98,10 @@ async def test_build_inventory_from_catalog_shape():
 
 def test_frontend_cluster_wiring_markers():
     checks = {
-        "frontend/components/chat/MessageInput.tsx": ["集群模式", "cluster", "subAgentIds"],
+        "frontend/components/chat/MessageInput.tsx": ["ClusterModePanel", "cluster", "subAgentIds"],
         "frontend/lib/ws.ts": ["sub_agent_ids"],
         "frontend/app/page.tsx": ["subAgentIds", "cluster"],
-        "frontend/components/layout/Sidebar.tsx": ["子代理"],
+        "frontend/components/layout/Sidebar.tsx": ["/profiles"],
         "frontend/app/profiles/page.tsx": ["SubAgentPanel"],
         "frontend/components/subagent/SubAgentPanel.tsx": ["任务名称", "ClusterModePanel"],
     }
