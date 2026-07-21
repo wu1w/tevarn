@@ -2009,14 +2009,21 @@ class NexusAgentLoop:
                 
                 # 推送完成事件
                 await self._emit_progress("cluster_complete", "集群执行完成")
-                
+
                 # 保存结果
                 await self._persist_final_response(session_id, final_text)
-                
+
+                # 关键：cluster 路径在 run() 第 570 行提前 return，会跳过尾部统一的
+                # idle 推送；若不在这里补推，前端气泡会一直停在「思考中」，
+                # 直到用户手动停止才触发 idle 落盘。必须在 return 前显式恢复 idle。
+                await self._push_status(session_id, "idle", "Ready")
+
                 return final_text
             else:
                 error_msg = f"集群执行失败: {result.error or '未知错误'}"
                 await self._emit_progress("cluster_error", error_msg)
+                # 失败路径同样会提前 return（见 run() 第 570 行），需补推状态避免前端卡「思考中」
+                await self._push_status(session_id, "error", error_msg)
                 return f"[集群模式] {error_msg}"
                 
         except Exception as e:
