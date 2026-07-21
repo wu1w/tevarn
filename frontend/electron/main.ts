@@ -1114,22 +1114,30 @@ ipcMain.handle(
 
       const launchWin = (commandLine: string) => {
         // Open new Windows Terminal / cmd window
-        spawn('cmd.exe', ['/c', 'start', 'Takton Code', 'cmd.exe', '/k', commandLine], {
+        const p = spawn('cmd.exe', ['/c', 'start', 'Takton Code', 'cmd.exe', '/k', commandLine], {
           env,
           detached: true,
           stdio: 'ignore',
           windowsHide: false,
-        }).unref();
+        });
+        p.on('error', () => {
+          /* ignore spawn failure */
+        });
+        p.unref();
       };
 
       const launchUnix = (bin: string, args: string[]) => {
         const term = process.env.TERMINAL || process.env.TERM_PROGRAM || 'x-terminal-emulator';
         const full = `${bin} ${args.map((a) => `"${a}"`).join(' ')}`;
-        spawn(term, ['-e', 'bash', '-lc', full], {
+        const p = spawn(term, ['-e', 'bash', '-lc', full], {
           env,
           detached: true,
           stdio: 'ignore',
-        }).unref();
+        });
+        p.on('error', () => {
+          /* ignore spawn failure */
+        });
+        p.unref();
       };
 
       if (process.platform === 'win32') {
@@ -1145,9 +1153,10 @@ ipcMain.handle(
         const fallbacks = hasBundled
           ? `takton-code ${argStr} || tkc ${argStr} || python -m takton_code ${argStr}`
           : `tkc ${argStr} || python -m takton_code ${argStr}`;
-        // Prefer Windows Terminal if present
+        // Prefer Windows Terminal if present; fall back to cmd start on spawn error
+        const fallbackCmd = `set TAKTON_CODE_BRIDGE_ENABLED=true&& set TAKTON_CODE_BRIDGE_URL=${bridgeUrl}&& ${primary} || ${fallbacks}`;
         try {
-          spawn(
+          const wt = spawn(
             'wt.exe',
             [
               'new-tab',
@@ -1158,11 +1167,18 @@ ipcMain.handle(
               `set TAKTON_CODE_BRIDGE_ENABLED=true&& set TAKTON_CODE_BRIDGE_URL=${bridgeUrl}&& ${primary}`,
             ],
             { env, detached: true, stdio: 'ignore' },
-          ).unref();
-        } catch {
-          launchWin(
-            `set TAKTON_CODE_BRIDGE_ENABLED=true&& set TAKTON_CODE_BRIDGE_URL=${bridgeUrl}&& ${primary} || ${fallbacks}`,
           );
+          // wt.exe missing -> async 'error' event; must listen or it crashes main process
+          wt.on('error', () => {
+            try {
+              launchWin(fallbackCmd);
+            } catch {
+              /* ignore */
+            }
+          });
+          wt.unref();
+        } catch {
+          launchWin(fallbackCmd);
         }
       } else {
         launchUnix(candidates[0].cmd, candidates[0].args);

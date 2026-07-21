@@ -1040,21 +1040,29 @@ electron_1.ipcMain.handle('open-takton-code', async (_event, opts) => {
         ];
         const launchWin = (commandLine) => {
             // Open new Windows Terminal / cmd window
-            (0, child_process_1.spawn)('cmd.exe', ['/c', 'start', 'Takton Code', 'cmd.exe', '/k', commandLine], {
+            const p = (0, child_process_1.spawn)('cmd.exe', ['/c', 'start', 'Takton Code', 'cmd.exe', '/k', commandLine], {
                 env,
                 detached: true,
                 stdio: 'ignore',
                 windowsHide: false,
-            }).unref();
+            });
+            p.on('error', () => {
+                /* ignore spawn failure */
+            });
+            p.unref();
         };
         const launchUnix = (bin, args) => {
             const term = process.env.TERMINAL || process.env.TERM_PROGRAM || 'x-terminal-emulator';
             const full = `${bin} ${args.map((a) => `"${a}"`).join(' ')}`;
-            (0, child_process_1.spawn)(term, ['-e', 'bash', '-lc', full], {
+            const p = (0, child_process_1.spawn)(term, ['-e', 'bash', '-lc', full], {
                 env,
                 detached: true,
                 stdio: 'ignore',
-            }).unref();
+            });
+            p.on('error', () => {
+                /* ignore spawn failure */
+            });
+            p.unref();
         };
         if (process.platform === 'win32') {
             // Prefer bundled embedded Python (takton_code installed into its site-packages)
@@ -1069,19 +1077,30 @@ electron_1.ipcMain.handle('open-takton-code', async (_event, opts) => {
             const fallbacks = hasBundled
                 ? `takton-code ${argStr} || tkc ${argStr} || python -m takton_code ${argStr}`
                 : `tkc ${argStr} || python -m takton_code ${argStr}`;
-            // Prefer Windows Terminal if present
+            // Prefer Windows Terminal if present; fall back to cmd start on spawn error
+            const fallbackCmd = `set TAKTON_CODE_BRIDGE_ENABLED=true&& set TAKTON_CODE_BRIDGE_URL=${bridgeUrl}&& ${primary} || ${fallbacks}`;
             try {
-                (0, child_process_1.spawn)('wt.exe', [
+                const wt = (0, child_process_1.spawn)('wt.exe', [
                     'new-tab',
                     '--title',
                     'Takton Code',
                     'cmd',
                     '/k',
                     `set TAKTON_CODE_BRIDGE_ENABLED=true&& set TAKTON_CODE_BRIDGE_URL=${bridgeUrl}&& ${primary}`,
-                ], { env, detached: true, stdio: 'ignore' }).unref();
+                ], { env, detached: true, stdio: 'ignore' });
+                // wt.exe missing -> async 'error' event; must listen or it crashes main process
+                wt.on('error', () => {
+                    try {
+                        launchWin(fallbackCmd);
+                    }
+                    catch {
+                        /* ignore */
+                    }
+                });
+                wt.unref();
             }
             catch {
-                launchWin(`set TAKTON_CODE_BRIDGE_ENABLED=true&& set TAKTON_CODE_BRIDGE_URL=${bridgeUrl}&& ${primary} || ${fallbacks}`);
+                launchWin(fallbackCmd);
             }
         }
         else {
