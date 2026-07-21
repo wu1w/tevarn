@@ -51,6 +51,7 @@ const child_process_1 = require("child_process");
 const crypto = __importStar(require("crypto"));
 const path = __importStar(require("path"));
 const fs = __importStar(require("fs"));
+const os = __importStar(require("os"));
 const http = __importStar(require("http"));
 let autoUpdater = null;
 try {
@@ -1038,19 +1039,6 @@ electron_1.ipcMain.handle('open-takton-code', async (_event, opts) => {
                 shell: true,
             },
         ];
-        const launchWin = (commandLine) => {
-            // Open new Windows Terminal / cmd window
-            const p = (0, child_process_1.spawn)('cmd.exe', ['/c', 'start', 'Takton Code', 'cmd.exe', '/k', commandLine], {
-                env,
-                detached: true,
-                stdio: 'ignore',
-                windowsHide: false,
-            });
-            p.on('error', () => {
-                /* ignore spawn failure */
-            });
-            p.unref();
-        };
         const launchUnix = (bin, args) => {
             const term = process.env.TERMINAL || process.env.TERM_PROGRAM || 'x-terminal-emulator';
             const full = `${bin} ${args.map((a) => `"${a}"`).join(' ')}`;
@@ -1077,21 +1065,38 @@ electron_1.ipcMain.handle('open-takton-code', async (_event, opts) => {
             const fallbacks = hasBundled
                 ? `takton-code ${argStr} || tkc ${argStr} || python -m takton_code ${argStr}`
                 : `tkc ${argStr} || python -m takton_code ${argStr}`;
-            // Prefer Windows Terminal if present; fall back to cmd start on spawn error
-            const fallbackCmd = `set TAKTON_CODE_BRIDGE_ENABLED=true&& set TAKTON_CODE_BRIDGE_URL=${bridgeUrl}&& ${primary} || ${fallbacks}`;
+            // Write the launch command to a temp .bat so we never pass a quoted path
+            // through multiple layers of `cmd /c start ... cmd /k` parsing (which was
+            // mangling `--path "C:\..."` into a relative path resolved against the
+            // install dir). The bat runs inside projectPath via `cd /d`.
+            const batPath = path.join(os.tmpdir(), `takton-code-launch-${Date.now()}.bat`);
+            const batLines = [
+                '@echo off',
+                `cd /d "${projectPath}"`,
+                'set TAKTON_CODE_BRIDGE_ENABLED=true',
+                `set TAKTON_CODE_BRIDGE_URL=${bridgeUrl}`,
+                `${primary} || ${fallbacks}`,
+            ];
             try {
-                const wt = (0, child_process_1.spawn)('wt.exe', [
-                    'new-tab',
-                    '--title',
-                    'Takton Code',
-                    'cmd',
-                    '/k',
-                    `set TAKTON_CODE_BRIDGE_ENABLED=true&& set TAKTON_CODE_BRIDGE_URL=${bridgeUrl}&& ${primary}`,
-                ], { env, detached: true, stdio: 'ignore' });
+                fs.writeFileSync(batPath, batLines.join('\r\n'), 'utf8');
+            }
+            catch (writeErr) {
+                return { ok: false, error: `无法写入启动脚本: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}` };
+            }
+            // Prefer Windows Terminal if present; fall back to cmd start on spawn error
+            const launchViaCmdStart = () => {
+                const p = (0, child_process_1.spawn)('cmd.exe', ['/c', 'start', '""', '/D', projectPath, 'cmd.exe', '/k', `"${batPath}"`], { env, detached: true, stdio: 'ignore', windowsHide: false });
+                p.on('error', () => {
+                    /* ignore spawn failure */
+                });
+                p.unref();
+            };
+            try {
+                const wt = (0, child_process_1.spawn)('wt.exe', ['new-tab', '--title', 'Takton Code', '-d', projectPath, 'cmd', '/k', batPath], { env, detached: true, stdio: 'ignore' });
                 // wt.exe missing -> async 'error' event; must listen or it crashes main process
                 wt.on('error', () => {
                     try {
-                        launchWin(fallbackCmd);
+                        launchViaCmdStart();
                     }
                     catch {
                         /* ignore */
@@ -1100,7 +1105,7 @@ electron_1.ipcMain.handle('open-takton-code', async (_event, opts) => {
                 wt.unref();
             }
             catch {
-                launchWin(fallbackCmd);
+                launchViaCmdStart();
             }
         }
         else {
