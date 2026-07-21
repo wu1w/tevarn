@@ -53,6 +53,8 @@ class QdrantRAGService(RAGService):
         self.reranker_service = reranker_service or RerankerServiceFactory.get_service()
         self.qdrant_url = settings.qdrant_url
         self._diagnostics: RAGDiagnostics | None = None
+        # _ensure_collection 的存在性缓存；必须在 __init__ 初始化，否则首次检索即 AttributeError
+        self._ensured_collections: set[str] = set()
 
     async def embed(self, query: str) -> list[float]:
         """文本向量化（委托给 Embedding 服务）"""

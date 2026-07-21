@@ -1,6 +1,6 @@
 {
   "name": "takton",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": true,
   "description": "Takton - 个人专属 Agent 终端",
   "author": "developer <developer@takton.dev>",
@@ -103,6 +103,13 @@
       {
         "from": "tray-icon.png",
         "to": "tray-icon.png"
+      },
+      {
+        "from": "../vendor/takton-code",
+        "to": "takton-code",
+        "filter": [
+          "takton-code"
+        ]
       }
     ],
     "linux": {

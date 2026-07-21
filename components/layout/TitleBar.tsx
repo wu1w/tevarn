@@ -39,6 +39,22 @@ export function TitleBar({
   };
   const handleClose = () => window.electronAPI?.closeWindow();
 
+  const [codeHint, setCodeHint] = useState<string>('');
+  const handleOpenCode = async () => {
+    const api = window.electronAPI;
+    if (!api?.openTaktonCode) return;
+    try {
+      const res = await api.openTaktonCode();
+      if (!res?.ok) {
+        setCodeHint(res?.error || '打开 Takton Code 失败');
+        setTimeout(() => setCodeHint(''), 4000);
+      }
+    } catch {
+      setCodeHint('打开 Takton Code 失败');
+      setTimeout(() => setCodeHint(''), 4000);
+    }
+  };
+
   // 浏览器 dev 模式也显示精简顶栏，保持风格一致
   return (
     <header className="titlebar relative z-50 flex h-11 flex-shrink-0 items-center select-none border-b border-border-subtle/80 bg-chrome/90 backdrop-blur-xl">
@@ -65,6 +81,30 @@ export function TitleBar({
             compact
           />
         </div>
+
+        {isElectron && (
+          <div className="relative flex h-full items-center">
+            <button
+              type="button"
+              aria-label="打开 Takton Code"
+              title="打开 Takton Code（终端编码 Agent，桥接当前后端）"
+              onClick={handleOpenCode}
+              className="flex h-7 w-7 items-center justify-center rounded-md text-foreground-muted transition-colors hover:bg-white/8 hover:text-foreground"
+            >
+              {/* 终端 / 代码图标 */}
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="stroke-current" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="1" y="2" width="14" height="12" rx="2" />
+                <path d="M4.5 6.5 7 9l-2.5 2.5" />
+                <path d="M8.5 11.5h3.5" />
+              </svg>
+            </button>
+            {codeHint && (
+              <span className="absolute right-full top-1/2 mr-2 -translate-y-1/2 whitespace-nowrap rounded-md border border-border-subtle bg-chrome px-2 py-1 text-[11px] text-red-400 shadow-lg">
+                {codeHint}
+              </span>
+            )}
+          </div>
+        )}
 
         {isElectron && platform === 'win32' && (
           <div className="flex h-full items-stretch">

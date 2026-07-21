@@ -68,4 +68,6 @@ tray-icon.png
 *.msi
 *.AppImage
 frontend/dist/
+electron/dist/
+embedding_metadata.json
 logs/

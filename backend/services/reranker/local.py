@@ -68,7 +68,103 @@ class LocalRerankerService(RerankerService):
                 return results[:top_n]
         except Exception as e:
             logger.warning("Local rerank error: %s", e)
+            # Qwen3-Reranker 走 llama.cpp 原生 /v1/rerank 会因 BGE 模板不兼容返回坏分数
+            # （见 developer 部署笔记）。此处回退到 /v1/chat/completions + logprobs yes/no softmax。
+            qwen = await self._qwen3_chat_rerank(query, documents, top_n)
+            if qwen:
+                return qwen
             return await self._embedding_similarity_rerank(query, documents, top_n)
+
+    async def _qwen3_chat_rerank(
+        self,
+        query: str,
+        documents: list[str],
+        top_n: int,
+    ) -> list[RerankedResult] | None:
+        """Qwen3-Reranker 专用精排：chat/completions + logprobs yes/no softmax。
+
+        仅对 qwen 系 reranker 生效；非 qwen 或服务不支持时返回 None 让上层降级。
+        对齐 developer 的 rerank_qwen3.py：system 判相关性、enable_thinking=False、
+        max_tokens=1 + top_logprobs=50，取 yes/no token 概率做 softmax 归一化。
+        """
+        if "qwen" not in (self.model or "").lower():
+            return None
+        import math
+
+        base = self.base_url.rstrip("/")
+        chat_url = base if base.endswith("/chat/completions") else f"{base}/chat/completions"
+        system_prompt = (
+            "Judge whether the Document is relevant to the Query. "
+            "Answer with 'yes' or 'no'."
+        )
+        max_doc_chars = 1500
+
+        async def _score_one(session: aiohttp.ClientSession, doc: str) -> float:
+            body = {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Query: {query}\nDocument: {doc}"},
+                ],
+                "max_tokens": 1,
+                "logprobs": True,
+                "top_logprobs": 50,
+                "temperature": 0.0,
+                "chat_template_kwargs": {"enable_thinking": False},
+            }
+            async with session.post(chat_url, json=body, headers=self._get_headers()) as resp:
+                if resp.status >= 400:
+                    raise RuntimeError(f"chat rerank HTTP {resp.status}")
+                data = await resp.json()
+            choices = data.get("choices") or []
+            if not choices:
+                return 0.0
+            lp_content = (choices[0].get("logprobs") or {}).get("content") or []
+            if not lp_content:
+                return 0.0
+            yes_lp = no_lp = None
+            for t in lp_content[0].get("top_logprobs") or []:
+                raw = t.get("bytes") or []
+                try:
+                    s = bytes(raw).decode("utf-8", errors="replace").strip().lower()
+                except Exception:
+                    s = str(t.get("token", "")).strip().lower()
+                if s == "yes":
+                    yes_lp = t.get("logprob")
+                elif s == "no":
+                    no_lp = t.get("logprob")
+            if yes_lp is None:
+                return 0.0
+            if no_lp is None:
+                return 1.0
+            p_y, p_n = math.exp(yes_lp), math.exp(no_lp)
+            return p_y / (p_y + p_n)
+
+        try:
+            import asyncio
+
+            truncated = [d[:max_doc_chars] for d in documents]
+            # 复用单 session + 信号量限并发：llama-server 对突发多路新连接会断连
+            sem = asyncio.Semaphore(2)
+
+            async def _guarded(session: aiohttp.ClientSession, doc: str) -> float:
+                async with sem:
+                    return await _score_one(session, doc)
+
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=60)
+            ) as session:
+                scores = await asyncio.gather(*[_guarded(session, d) for d in truncated])
+            results = [
+                RerankedResult(text=documents[i], score=float(scores[i]), original_index=i)
+                for i in range(len(documents))
+            ]
+            results.sort(key=lambda x: x.score, reverse=True)
+            logger.info("Qwen3 chat rerank ok: %d docs scored via %s", len(results), chat_url)
+            return results[:top_n]
+        except Exception as e:
+            logger.warning("Qwen3 chat rerank failed, fallback to embedding: %s", e)
+            return None
 
     async def _embedding_similarity_rerank(
         self,

@@ -42,6 +42,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   maximizeWindow: (): Promise<void> => ipcRenderer.invoke('maximize-window'),
   closeWindow: (): Promise<void> => ipcRenderer.invoke('close-window'),
 
+  /** 一键打开 Takton Code（系统终端 TUI，桥接当前 backend） */
+  openTaktonCode: (): Promise<{ ok: boolean; error?: string; bridge?: string }> =>
+    ipcRenderer.invoke('open-takton-code'),
+
   showNotification: (title: string, body: string): Promise<void> =>
     ipcRenderer.invoke('show-notification', { title, body }),
 

@@ -26,6 +26,9 @@ export interface ElectronAPI {
   maximizeWindow: () => Promise<void>;
   closeWindow: () => Promise<void>;
 
+  /** 一键打开 Takton Code（系统终端 TUI，桥接当前 backend） */
+  openTaktonCode?: () => Promise<{ ok: boolean; error?: string; bridge?: string }>;
+
   // 桌面原生通知
   showNotification: (title: string, body: string) => Promise<void>;
 

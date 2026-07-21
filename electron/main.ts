@@ -999,6 +999,99 @@ ipcMain.handle('maximize-window', () => {
 });
 ipcMain.handle('close-window', () => mainWindow?.close());
 
+// ---- Takton Code 集成 ----
+// 在系统终端里拉起 takton-code（TUI，textual 无法内嵌渲染进程），
+// 通过 TAKTON_CODE_BRIDGE_URL 桥接到当前 backend，复用 LLM/skills/tools/MCP/RAG。
+
+/** 探测 takton-code 可执行入口：PATH → bundle venv → 打包 resources。返回 null 表示未安装。 */
+function resolveTaktonCodeCmd(): string | null {
+  const candidates: string[] = [];
+  if (platform === 'win32') {
+    candidates.push('takton-code.exe', 'tkc.exe');
+  } else {
+    candidates.push('takton-code', 'tkc');
+  }
+  // 1) 已在 PATH
+  for (const c of candidates) {
+    try {
+      execSync(platform === 'win32' ? `where ${c}` : `command -v ${c}`, { stdio: 'pipe' });
+      return c;
+    } catch {
+      /* not in PATH, try next */
+    }
+  }
+  // 2) 开发环境：monorepo 内的 bundle venv
+  const bundleBin = platform === 'win32'
+    ? path.join(__dirname, '..', 'takton-code-bundle', 'takton-code-0.1.0-bundle-20260721', '.venv', 'Scripts', 'takton-code.exe')
+    : path.join(__dirname, '..', 'takton-code-bundle', 'takton-code-0.1.0-bundle-20260721', '.venv', 'bin', 'takton-code');
+  if (fs.existsSync(bundleBin)) return bundleBin;
+  // 3) 打包：resources/takton-code/
+  if (!isDev) {
+    const packedBin = platform === 'win32'
+      ? path.join(process.resourcesPath, 'takton-code', 'takton-code.exe')
+      : path.join(process.resourcesPath, 'takton-code', 'takton-code');
+    if (fs.existsSync(packedBin)) return packedBin;
+  }
+  return null;
+}
+
+/** 按平台在系统终端中启动命令（新窗口，不阻塞主进程）。 */
+function spawnInTerminal(cmd: string, env: NodeJS.ProcessEnv): boolean {
+  try {
+    if (platform === 'win32') {
+      // cmd /c start 开新控制台窗口
+      spawn('cmd.exe', ['/c', 'start', 'cmd.exe', '/k', cmd], { env, detached: true, stdio: 'ignore' }).unref();
+      return true;
+    }
+    if (platform === 'darwin') {
+      // Terminal.app via osascript
+      const script = `tell application "Terminal" to do script "${cmd.replace(/"/g, '\\"')}"`;
+      spawn('osascript', ['-e', script], { env, detached: true, stdio: 'ignore' }).unref();
+      return true;
+    }
+    // linux：探测常见终端模拟器
+    const terms: [string, string[]][] = [
+      ['x-terminal-emulator', ['-e', cmd]],
+      ['gnome-terminal', ['--', 'bash', '-c', `${cmd}; exec bash`]],
+      ['konsole', ['-e', cmd]],
+      ['xfce4-terminal', ['-e', cmd]],
+      ['xterm', ['-e', cmd]],
+    ];
+    for (const [term, args] of terms) {
+      try {
+        execSync(`command -v ${term}`, { stdio: 'pipe' });
+        spawn(term, args, { env, detached: true, stdio: 'ignore' }).unref();
+        return true;
+      } catch {
+        /* try next terminal */
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+ipcMain.handle('open-takton-code', async () => {
+  const codeCmd = resolveTaktonCodeCmd();
+  if (!codeCmd) {
+    return { ok: false, error: 'takton-code 未安装（PATH / bundle venv / resources 均未找到）' };
+  }
+  const bridgeUrl = getApiBase();
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    TAKTON_CODE_BRIDGE_ENABLED: 'true',
+    TAKTON_CODE_BRIDGE_URL: bridgeUrl,
+  };
+  // 引号包裹路径防空格；--bridge 强制走 Desktop bridge
+  const quoted = platform === 'win32' ? `"${codeCmd}"` : `'${codeCmd}'`;
+  const ok = spawnInTerminal(`${quoted} --bridge`, env);
+  if (!ok) {
+    return { ok: false, error: '未找到可用的系统终端模拟器' };
+  }
+  return { ok: true, bridge: bridgeUrl };
+});
+
 ipcMain.handle('show-notification', (_event, { title, body }: { title: string; body: string }) => {
   if (Notification.isSupported()) {
     const notification = new Notification({ title, body });
