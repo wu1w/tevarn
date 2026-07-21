@@ -1083,9 +1083,18 @@ electron_1.ipcMain.handle('open-takton-code', async (_event, opts) => {
             catch (writeErr) {
                 return { ok: false, error: `无法写入启动脚本: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}` };
             }
-            // Prefer Windows Terminal if present; fall back to cmd start on spawn error
+            // Prefer Windows Terminal if present; fall back to cmd start on spawn error.
+            // Use shell:true + a hand-built command string so cmd.exe (not Node's arg
+            // escaping) parses the quotes around batPath. Node's non-shell spawn escapes
+            // quotes as \" which leaked into the command line and broke `start`.
             const launchViaCmdStart = () => {
-                const p = (0, child_process_1.spawn)('cmd.exe', ['/c', 'start', '""', '/D', projectPath, 'cmd.exe', '/k', `"${batPath}"`], { env, detached: true, stdio: 'ignore', windowsHide: false });
+                const p = (0, child_process_1.spawn)(`start "Takton Code" cmd /k "${batPath}"`, {
+                    env,
+                    detached: true,
+                    stdio: 'ignore',
+                    windowsHide: false,
+                    shell: true,
+                });
                 p.on('error', () => {
                     /* ignore spawn failure */
                 });
