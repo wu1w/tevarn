@@ -64,9 +64,9 @@ try {
   $setupMeta = Get-LatestSetup -Repository $Repo -Tag $TagOverride -AssetName $AssetOverride
 } catch {
   Write-Info "API resolve failed ($($_.Exception.Message)); falling back to v0.2.5 asset names"
-    $fallbackTag = if ($TagOverride) { $TagOverride } else { "v0.2.5" }
-    $fallbackAsset = if ($AssetOverride) { $AssetOverride } else { "Takton-Setup-0.2.5.exe" }
-    $setupMeta = [pscustomobject]@{
+  $fallbackTag = if ($TagOverride) { $TagOverride } else { "v0.2.5" }
+  $fallbackAsset = if ($AssetOverride) { $AssetOverride } else { "Takton-Setup-0.2.5.exe" }
+  $setupMeta = [pscustomobject]@{
     Tag  = $fallbackTag
     Name = $fallbackAsset
     Url  = "https://github.com/$Repo/releases/download/$fallbackTag/$fallbackAsset"
