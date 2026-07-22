@@ -252,14 +252,16 @@ export default function EvolutionPage() {
             <ul className="divide-y divide-border-subtle">
               {assets.map((a) => (
                 <li key={a.id}>
-                  <button
-                    type="button"
-                    onClick={() => setSelected(a)}
-                    className={`flex w-full items-start justify-between gap-3 px-4 py-3 text-left hover:bg-card-bg-hover ${
+                  <div
+                    className={`flex w-full items-start justify-between gap-3 px-4 py-3 hover:bg-card-bg-hover ${
                       selected?.id === a.id ? 'bg-brand-purple/10' : ''
                     }`}
                   >
-                    <div className="min-w-0">
+                    <button
+                      type="button"
+                      onClick={() => setSelected(a)}
+                      className="min-w-0 flex-1 text-left"
+                    >
                       <div className="flex flex-wrap items-center gap-1.5">
                         <span className="truncate text-sm font-medium text-foreground">
                           {a.name}
@@ -271,12 +273,30 @@ export default function EvolutionPage() {
                       <p className="mt-1 line-clamp-2 text-[11px] text-foreground-dim">
                         {a.summary || t('evolution.noSummary')}
                       </p>
+                    </button>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <div className="text-right">
+                        <div className="font-mono text-sm text-brand-cyan">{a.use_count}</div>
+                        <div className="text-[10px] text-foreground-dim">{t('evolution.useCountLabel')}</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSelected(a)}
+                        className="rounded-lg border border-border-subtle px-2.5 py-1 text-[11px] text-foreground-muted hover:bg-card-bg-hover"
+                      >
+                        {t('evolution.view')}
+                      </button>
+                      {a.source !== 'seed' && (
+                        <button
+                          type="button"
+                          onClick={() => void onDelete(a)}
+                          className="rounded-lg border border-error-text/30 px-2.5 py-1 text-[11px] text-error-text hover:bg-error-text/10"
+                        >
+                          {t('common.delete')}
+                        </button>
+                      )}
                     </div>
-                    <div className="shrink-0 text-right">
-                      <div className="font-mono text-sm text-brand-cyan">{a.use_count}</div>
-                      <div className="text-[10px] text-foreground-dim">{t('evolution.useCountLabel')}</div>
-                    </div>
-                  </button>
+                  </div>
                 </li>
               ))}
             </ul>

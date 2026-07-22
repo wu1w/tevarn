@@ -642,6 +642,13 @@ npx playwright test
 
 ### C. 更新日志
 
+- **v0.2.5** (2026-07-22)
+  - 自主进化开关跨重启持久化：`EvolutionConfig` 运行时开关字段（enabled/mode/auto_apply_*/from_*/curator 等 9 项）写入 `evolution_config.json`（与 evolution.db 同目录），启动时 env 默认值 + 持久化覆盖，重启不丢（`backend/evolution/config.py`）
+  - 自主进化页资产列表项直接加「查看/删除」小按钮：原先删除藏在右侧详情面板（需先选中），现每项行内可操作，复用 onDelete（确认弹窗 + seed 保护 + toast + 自动刷新），整行 button 改 div 修掉嵌套 button 无效 HTML（`frontend/app/evolution/page.tsx`）
+  - bridge 打通 evolution：`/bridge/v1/evolution/{status,assets,from_task}` 三端点（GET 读状态/资产 + POST 回流），复用 bridge_auth，转发 get_evolution_manager，契约收敛在 /bridge/v1/* 下（`backend/api/routes/bridge.py`）
+  - takton-code 源码并入主仓 `takton-code/`：bridge client 新增 evolution_status/evolution_assets/report_outcome 三方法（NullBridge no-op + TaktonBridge HTTP 实现），protocol 注册 EvolutionAssetInfo/EvolutionOutcomeRequest schema + 3 条 BRIDGE_ROUTES。Code 学到的 task outcome 可经 `report_outcome` 回流 Desktop evolution P1 管线生成 skill 资产（端到端实测 FULL CHAIN E2E PASS）
+  - 版本号统一：package.json / frontend/package.json / backend/main.py / bridge.py / README 全量对齐 0.2.5
+
 - **v0.2.4** (2026-07-21)
   - RAG 全家桶接入 dev-machine：Qdrant 向量库（127.0.0.1:6333）+ embedding-model（:8086）+ reranker-model（:8087），配置经 settings 持久化至 DB，重启保留
   - 修复 RAG 检索全链路卡死的真 bug：`QdrantRAGService.__init__` 未初始化 `self._ensured_collections`，`_ensure_collection` 首次检索即 AttributeError（`backend/services/rag/qdrant_impl.py`）

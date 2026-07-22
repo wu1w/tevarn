@@ -40,6 +40,9 @@ export interface ElectronAPI {
 
   /** 在系统浏览器打开外链（OAuth 设备码登录等） */
   openExternal?: (url: string) => Promise<void>;
+
+  /** 在系统终端拉起 Takton Code TUI（注入 bridge 环境变量） */
+  openTaktonCode?: (opts?: { path?: string; mode?: string }) => Promise<{ ok: boolean; error?: string }>;
 }
 
 declare global {

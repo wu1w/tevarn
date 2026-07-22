@@ -37,6 +37,20 @@ class OpenAICompatibleService(LLMService):
         )
         self.temperature = sanitize_temperature(getattr(self.config, "temperature", 0.7))
         self.api_key = getattr(self.config, "api_key", None)
+        # Kimi Code 仅接受 temperature=1：会话快照/ephemeral snapshot 可能带 0.7
+        # 等其它值，经 get_service_for_snapshot 锁进实例后直接 400。在此强制钳制，
+        # 覆盖主路径与 bridge 等所有调用入口（与 _normalize_model_id 同一判定）。
+        if self._is_kimi_coding() and self.temperature != 1.0:
+            logger.warning(
+                "Kimi Code only accepts temperature=1; overriding %r -> 1.0",
+                self.temperature,
+            )
+            self.temperature = 1.0
+
+    def _is_kimi_coding(self) -> bool:
+        """与 _normalize_model_id 同一 Kimi Code 判定。"""
+        b = (self.base_url or "").lower()
+        return "kimi.com/coding" in b or "api.kimi.com/coding" in b
 
     @staticmethod
     def _normalize_model_id(model: str, base_url: str) -> str:

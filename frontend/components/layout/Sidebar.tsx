@@ -17,6 +17,12 @@ import { getAgentMdFiles, ensureAgentMdFile, openAgentMdFile, type AgentMdItem }
 import { useToastStore } from '@/stores/toastStore';
 import { useT } from '@/stores/localeStore';
 
+/** 会话「最近活跃」宽限期：消息落库会刷新 updated_at，
+ *  处于窗口内的会话可能正在流式生成、消息未完全落地，跳过自动删除。 */
+const ACTIVE_GRACE_MS = 60_000;
+/** 疑似空白会话删除前的二次确认延迟，给在途流式消息落地留时间。 */
+const DELETE_RECHECK_MS = 5_000;
+
 interface NavItem {
   /** 翻译 key（如 'nav.tasks'），渲染时用 t() 翻译 */
   labelKey: string;
@@ -174,6 +180,22 @@ export function Sidebar() {
 
       const flags = await Promise.all(
         list.map(async (s) => {
+          // 运行保护：会话最近有活动（消息落库会刷新 updated_at），
+          // 可能正在流式生成，消息尚未完全落地，绝不能误删。
+          const updatedAt = s.updated_at ? new Date(s.updated_at).getTime() : 0;
+          const isRecentlyActive =
+            Number.isFinite(updatedAt) &&
+            Date.now() - updatedAt < ACTIVE_GRACE_MS;
+          // 是否有真实对话内容（拉足够多条覆盖流式落地窗口）
+          const hasRealContent = async (): Promise<boolean> => {
+            const msgs = await getMessages(s.id, 50, 0);
+            return (msgs || []).some(
+              (m) =>
+                (m.role === 'user' || m.role === 'assistant') &&
+                Boolean((m.content || '').trim())
+            );
+          };
+
           // 当前正在聊的空白会话：不进历史列表（仍可在对话页使用）
           if (s.id === currentId) {
             const local = useSessionStore.getState();
@@ -181,28 +203,28 @@ export function Sidebar() {
               return { session: s, keep: true };
             }
             try {
-              const msgs = await getMessages(s.id, 3, 0);
-              const has = (msgs || []).some(
-                (m) =>
-                  (m.role === 'user' || m.role === 'assistant') &&
-                  Boolean((m.content || '').trim())
-              );
-              return { session: s, keep: has };
+              return { session: s, keep: await hasRealContent() };
             } catch {
               return { session: s, keep: false };
             }
           }
+
+          // 最近活跃的会话：可能是运行中流式未落地，保留不删
+          if (isRecentlyActive) {
+            return { session: s, keep: true };
+          }
+
           try {
-            const msgs = await getMessages(s.id, 3, 0);
-            const has = (msgs || []).some(
-              (m) =>
-                (m.role === 'user' || m.role === 'assistant') &&
-                Boolean((m.content || '').trim())
-            );
-            if (!has) {
-              deleteSession(s.id).catch(() => {});
+            if (await hasRealContent()) {
+              return { session: s, keep: true };
             }
-            return { session: s, keep: has };
+            // 疑似空白：延迟二次确认，给在途流式消息落地留时间，仍空白才删
+            await new Promise((r) => setTimeout(r, DELETE_RECHECK_MS));
+            if (await hasRealContent()) {
+              return { session: s, keep: true };
+            }
+            deleteSession(s.id).catch(() => {});
+            return { session: s, keep: false };
           } catch {
             return { session: s, keep: true };
           }

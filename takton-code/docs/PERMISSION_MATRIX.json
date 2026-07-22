@@ -1,0 +1,362 @@
+[
+  {
+    "profile": "cautious",
+    "mode": "plan",
+    "effective_mode": "plan",
+    "file_write": "deny",
+    "run_shell": "deny",
+    "file_read": "allow",
+    "note": "plan-like denies writes"
+  },
+  {
+    "profile": "cautious",
+    "mode": "build",
+    "effective_mode": "build",
+    "file_write": "allow",
+    "run_shell": "ask",
+    "file_read": "allow",
+    "note": "ok"
+  },
+  {
+    "profile": "cautious",
+    "mode": "ask",
+    "effective_mode": "ask",
+    "file_write": "deny",
+    "run_shell": "deny",
+    "file_read": "allow",
+    "note": "plan-like denies writes"
+  },
+  {
+    "profile": "cautious",
+    "mode": "explore",
+    "effective_mode": "explore",
+    "file_write": "deny",
+    "run_shell": "deny",
+    "file_read": "allow",
+    "note": "plan-like denies writes"
+  },
+  {
+    "profile": "cautious",
+    "mode": "always",
+    "effective_mode": "build",
+    "file_write": "allow",
+    "run_shell": "allow",
+    "file_read": "allow",
+    "note": "ok"
+  },
+  {
+    "profile": "free",
+    "mode": "plan",
+    "effective_mode": "plan",
+    "file_write": "deny",
+    "run_shell": "deny",
+    "file_read": "allow",
+    "note": "plan-like denies writes"
+  },
+  {
+    "profile": "free",
+    "mode": "build",
+    "effective_mode": "build",
+    "file_write": "allow",
+    "run_shell": "allow",
+    "file_read": "allow",
+    "note": "ok"
+  },
+  {
+    "profile": "free",
+    "mode": "ask",
+    "effective_mode": "ask",
+    "file_write": "deny",
+    "run_shell": "deny",
+    "file_read": "allow",
+    "note": "plan-like denies writes"
+  },
+  {
+    "profile": "free",
+    "mode": "explore",
+    "effective_mode": "explore",
+    "file_write": "deny",
+    "run_shell": "deny",
+    "file_read": "allow",
+    "note": "plan-like denies writes"
+  },
+  {
+    "profile": "free",
+    "mode": "always",
+    "effective_mode": "build",
+    "file_write": "allow",
+    "run_shell": "allow",
+    "file_read": "allow",
+    "note": "ok"
+  },
+  {
+    "profile": "acceptEdits",
+    "mode": "plan",
+    "effective_mode": "plan",
+    "file_write": "deny",
+    "run_shell": "deny",
+    "file_read": "allow",
+    "note": "plan-like denies writes"
+  },
+  {
+    "profile": "acceptEdits",
+    "mode": "build",
+    "effective_mode": "build",
+    "file_write": "allow",
+    "run_shell": "ask",
+    "file_read": "allow",
+    "note": "ok"
+  },
+  {
+    "profile": "acceptEdits",
+    "mode": "ask",
+    "effective_mode": "ask",
+    "file_write": "deny",
+    "run_shell": "deny",
+    "file_read": "allow",
+    "note": "plan-like denies writes"
+  },
+  {
+    "profile": "acceptEdits",
+    "mode": "explore",
+    "effective_mode": "explore",
+    "file_write": "deny",
+    "run_shell": "deny",
+    "file_read": "allow",
+    "note": "plan-like denies writes"
+  },
+  {
+    "profile": "acceptEdits",
+    "mode": "always",
+    "effective_mode": "build",
+    "file_write": "allow",
+    "run_shell": "allow",
+    "file_read": "allow",
+    "note": "ok"
+  },
+  {
+    "profile": "always",
+    "mode": "plan",
+    "effective_mode": "plan",
+    "file_write": "deny",
+    "run_shell": "deny",
+    "file_read": "allow",
+    "note": "plan-like denies writes"
+  },
+  {
+    "profile": "always",
+    "mode": "build",
+    "effective_mode": "build",
+    "file_write": "allow",
+    "run_shell": "allow",
+    "file_read": "allow",
+    "note": "ok"
+  },
+  {
+    "profile": "always",
+    "mode": "ask",
+    "effective_mode": "ask",
+    "file_write": "deny",
+    "run_shell": "deny",
+    "file_read": "allow",
+    "note": "plan-like denies writes"
+  },
+  {
+    "profile": "always",
+    "mode": "explore",
+    "effective_mode": "explore",
+    "file_write": "deny",
+    "run_shell": "deny",
+    "file_read": "allow",
+    "note": "plan-like denies writes"
+  },
+  {
+    "profile": "always",
+    "mode": "always",
+    "effective_mode": "build",
+    "file_write": "allow",
+    "run_shell": "allow",
+    "file_read": "allow",
+    "note": "ok"
+  },
+  {
+    "profile": "bypass",
+    "mode": "plan",
+    "effective_mode": "plan",
+    "file_write": "deny",
+    "run_shell": "deny",
+    "file_read": "allow",
+    "note": "plan-like denies writes"
+  },
+  {
+    "profile": "bypass",
+    "mode": "build",
+    "effective_mode": "build",
+    "file_write": "allow",
+    "run_shell": "allow",
+    "file_read": "allow",
+    "note": "ok"
+  },
+  {
+    "profile": "bypass",
+    "mode": "ask",
+    "effective_mode": "ask",
+    "file_write": "deny",
+    "run_shell": "deny",
+    "file_read": "allow",
+    "note": "plan-like denies writes"
+  },
+  {
+    "profile": "bypass",
+    "mode": "explore",
+    "effective_mode": "explore",
+    "file_write": "deny",
+    "run_shell": "deny",
+    "file_read": "allow",
+    "note": "plan-like denies writes"
+  },
+  {
+    "profile": "bypass",
+    "mode": "always",
+    "effective_mode": "build",
+    "file_write": "allow",
+    "run_shell": "allow",
+    "file_read": "allow",
+    "note": "ok"
+  },
+  {
+    "profile": "dontAsk",
+    "mode": "plan",
+    "effective_mode": "plan",
+    "file_write": "deny",
+    "run_shell": "deny",
+    "file_read": "allow",
+    "note": "plan-like denies writes"
+  },
+  {
+    "profile": "dontAsk",
+    "mode": "build",
+    "effective_mode": "build",
+    "file_write": "allow",
+    "run_shell": "deny",
+    "file_read": "allow",
+    "note": "ok"
+  },
+  {
+    "profile": "dontAsk",
+    "mode": "ask",
+    "effective_mode": "ask",
+    "file_write": "deny",
+    "run_shell": "deny",
+    "file_read": "allow",
+    "note": "plan-like denies writes"
+  },
+  {
+    "profile": "dontAsk",
+    "mode": "explore",
+    "effective_mode": "explore",
+    "file_write": "deny",
+    "run_shell": "deny",
+    "file_read": "allow",
+    "note": "plan-like denies writes"
+  },
+  {
+    "profile": "dontAsk",
+    "mode": "always",
+    "effective_mode": "build",
+    "file_write": "allow",
+    "run_shell": "allow",
+    "file_read": "allow",
+    "note": "ok"
+  },
+  {
+    "profile": "plan",
+    "mode": "plan",
+    "effective_mode": "plan",
+    "file_write": "deny",
+    "run_shell": "deny",
+    "file_read": "allow",
+    "note": "plan-like denies writes"
+  },
+  {
+    "profile": "plan",
+    "mode": "build",
+    "effective_mode": "build",
+    "file_write": "deny",
+    "run_shell": "deny",
+    "file_read": "allow",
+    "note": "ok"
+  },
+  {
+    "profile": "plan",
+    "mode": "ask",
+    "effective_mode": "ask",
+    "file_write": "deny",
+    "run_shell": "deny",
+    "file_read": "allow",
+    "note": "plan-like denies writes"
+  },
+  {
+    "profile": "plan",
+    "mode": "explore",
+    "effective_mode": "explore",
+    "file_write": "deny",
+    "run_shell": "deny",
+    "file_read": "allow",
+    "note": "plan-like denies writes"
+  },
+  {
+    "profile": "plan",
+    "mode": "always",
+    "effective_mode": "build",
+    "file_write": "allow",
+    "run_shell": "allow",
+    "file_read": "allow",
+    "note": "ok"
+  },
+  {
+    "profile": "auto",
+    "mode": "plan",
+    "effective_mode": "plan",
+    "file_write": "deny",
+    "run_shell": "deny",
+    "file_read": "allow",
+    "note": "plan-like denies writes"
+  },
+  {
+    "profile": "auto",
+    "mode": "build",
+    "effective_mode": "build",
+    "file_write": "allow",
+    "run_shell": "allow",
+    "file_read": "allow",
+    "note": "ok"
+  },
+  {
+    "profile": "auto",
+    "mode": "ask",
+    "effective_mode": "ask",
+    "file_write": "deny",
+    "run_shell": "deny",
+    "file_read": "allow",
+    "note": "plan-like denies writes"
+  },
+  {
+    "profile": "auto",
+    "mode": "explore",
+    "effective_mode": "explore",
+    "file_write": "deny",
+    "run_shell": "deny",
+    "file_read": "allow",
+    "note": "plan-like denies writes"
+  },
+  {
+    "profile": "auto",
+    "mode": "always",
+    "effective_mode": "build",
+    "file_write": "allow",
+    "run_shell": "allow",
+    "file_read": "allow",
+    "note": "ok"
+  }
+]

@@ -14,7 +14,7 @@
 
 <br/>
 
-[![Version](https://img.shields.io/badge/version-0.2.4-7C3AED?style=flat-square)](https://github.com/wu1w/takton/releases)
+[![Version](https://img.shields.io/badge/version-0.2.5-7C3AED?style=flat-square)](https://github.com/wu1w/takton/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-06B6D4?style=flat-square)](https://github.com/wu1w/takton/releases)
 [![License](https://img.shields.io/badge/license-MIT-22C55E?style=flat-square)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/wu1w/takton?style=flat-square&logo=github)](https://github.com/wu1w/takton/stargazers)

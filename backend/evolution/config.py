@@ -163,11 +163,64 @@ def _norm(p) -> Path:
 
 _config: EvolutionConfig | None = None
 
+# 需跨重启保留的运行时开关字段（其余字段仍以 env / 默认为准）。
+_PERSIST_KEYS = (
+    "enabled",
+    "mode",
+    "auto_apply_skills",
+    "auto_apply_tools",
+    "from_cron",
+    "from_tasks",
+    "auto_observe",
+    "auto_create_tools",
+    "curator_enabled",
+)
+
+
+def _config_file() -> Path:
+    """与 evolution.db 同目录的持久化配置文件。"""
+    try:
+        base = get_evolution_config().resolve_db_path().parent
+    except Exception:
+        base = Path.cwd() / "data"
+    base.mkdir(parents=True, exist_ok=True)
+    return base / "evolution_config.json"
+
+
+def _load_persisted() -> dict:
+    import json
+
+    try:
+        f = _config_file()
+        if f.exists():
+            data = json.loads(f.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        pass
+    return {}
+
+
+def _save_persisted(cfg: EvolutionConfig) -> None:
+    import json
+
+    try:
+        payload = {k: getattr(cfg, k) for k in _PERSIST_KEYS if hasattr(cfg, k)}
+        _config_file().write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except Exception:
+        pass
+
 
 def get_evolution_config() -> EvolutionConfig:
     global _config
     if _config is None:
-        _config = EvolutionConfig.from_env()
+        cfg = EvolutionConfig.from_env()
+        # 持久化的运行时开关优先于 env 默认（用户手点的状态要跨重启保留）。
+        for k, v in _load_persisted().items():
+            if k in _PERSIST_KEYS and hasattr(cfg, k) and v is not None:
+                setattr(cfg, k, v)
+        _config = cfg
     return _config
 
 
@@ -178,4 +231,5 @@ def set_evolution_config(**kwargs) -> EvolutionConfig:
         if hasattr(cfg, k) and v is not None:
             setattr(cfg, k, v)
     _config = cfg
+    _save_persisted(cfg)
     return cfg

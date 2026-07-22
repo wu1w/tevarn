@@ -115,7 +115,7 @@ async def bridge_health(
     return {
         "ok": True,
         "enabled": True,
-        "version": getattr(settings, "version", None) or "0.2.4",
+        "version": getattr(settings, "version", None) or "0.2.5",
         "product": "takton",
         "user": str(current_user.id),
         "capabilities": ["models", "skills", "tools", "mcp", "rag", "sessions", "settings"],
@@ -607,3 +607,57 @@ async def bridge_settings(
         "single_user_mode": getattr(settings, "single_user_mode", None),
         "user_id": str(current_user.id),
     }
+
+
+# ---------------------------------------------------------------------------
+# Evolution bridge — let Takton Code read engine state and feed outcomes back.
+# 与主路由 /evolution/* 同一 manager，契约收敛在 /bridge/v1/* 下，Code 侧
+# 只需一套前缀与凭证。
+# ---------------------------------------------------------------------------
+
+
+class BridgeTaskOutcomeBody(BaseModel):
+    task_name: str
+    success: bool = True
+    detail: str = ""
+    failure_codes: list[str] = Field(default_factory=list)
+    source: str = "takton-code"
+
+
+@router.get("/evolution/status")
+async def bridge_evolution_status(
+    current_user: UserRead = Depends(bridge_auth),
+) -> dict[str, Any]:
+    from backend.evolution.manager import get_evolution_manager
+
+    return get_evolution_manager().status()
+
+
+@router.get("/evolution/assets")
+async def bridge_evolution_assets(
+    current_user: UserRead = Depends(bridge_auth),
+) -> dict[str, Any]:
+    from backend.evolution import store
+    from backend.evolution.manager import get_evolution_manager
+
+    get_evolution_manager().ensure_seeded()
+    items = store.list_assets(limit=200)
+    return {"assets": items, "data": items}
+
+
+@router.post("/evolution/from_task")
+async def bridge_evolution_from_task(
+    body: BridgeTaskOutcomeBody,
+    current_user: UserRead = Depends(bridge_auth),
+) -> dict[str, Any]:
+    """P1 回流：Code 侧把 task outcome / 学到的模式喂回 evolution 管线。"""
+    from backend.evolution.manager import get_evolution_manager
+
+    res = await get_evolution_manager().run_from_task_outcome(
+        task_name=body.task_name,
+        success=body.success,
+        detail=body.detail,
+        failure_codes=body.failure_codes,
+        source=body.source or "takton-code",
+    )
+    return res or {"ok": False, "reason": "evolution_disabled"}
