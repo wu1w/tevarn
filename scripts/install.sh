@@ -58,8 +58,10 @@ bold "Takton desktop client — one-click install"
 info "Install dir: $INSTALL_DIR"
 mkdir -p "$INSTALL_DIR" "$BIN_DIR"
 
-TAG="v0.2.3"
-ASSET="Takton-0.2.3.AppImage"
+# Fallback only when GitHub API is unreachable. Prefer last known good Linux assets
+# (v0.2.5 currently ships Windows first; AppImage/deb catch up on LOCAL rebuild).
+TAG="v0.2.4"
+ASSET="Takton-0.2.4.AppImage"
 URL=""
 if resolved="$(resolve_latest)"; then
   TAG="$(printf '%s\n' "$resolved" | sed -n '1p')"
