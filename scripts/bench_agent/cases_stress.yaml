@@ -1,0 +1,131 @@
+# High-intensity robustness cases — multi-tool + large context
+version: 1
+cases:
+  - id: stress_multi_tool_chain
+    title: 多工具链 grep→read→command
+    user: |
+      完成下列步骤（必须用工具，禁止编造）：
+      1) grep 在 backend/agent 下搜索 class IterationBudget
+      2) file_read 打开对应文件，确认类名
+      3) command 执行: wc -l backend/agent/iteration_budget.py
+      最终用中文给出：文件路径、类名、行数（来自 wc）。
+    expect:
+      tools_any: [grep, file_read, command]
+      final_contains_any: ["IterationBudget"]
+      final_min_chars: 15
+    tags: [stress, multi]
+
+  - id: stress_big_file_extract
+    title: 大文件头尾标记提取
+    user: |
+      file_read 读取 workspace/stress/big_context.md（文件很大）。
+      找出 MARKER_HEAD 与 MARKER_TAIL 与 SECRET_VALUE 的值。
+      最终回复必须包含这三个值。若截断，用 grep 搜索 SECRET_VALUE。
+    expect:
+      tools_any: [file_read, grep]
+      final_contains_any: ["TAKTON_STRESS_OK", "stress_answer_42"]
+      final_min_chars: 20
+    tags: [stress, large]
+
+  - id: stress_many_glob_grep
+    title: 多文件 glob+grep
+    user: |
+      1) glob workspace/stress/f_*.txt
+      2) grep 在 workspace/stress 搜索 key=findme_3
+      3) 告诉我有多少个匹配文件/行，并举一个路径。
+    expect:
+      tools_any: [glob, grep]
+      final_contains_any: ["findme_3", "f_"]
+      final_min_chars: 10
+    tags: [stress, multi]
+
+  - id: stress_huge_user_prompt
+    title: 巨大用户输入 + 小任务
+    user: |
+      下面是一段很长的无关噪声，请忽略噪声，只回答最后的问题。
+      ---BEGIN NOISE---
+      {{NOISE}}
+      ---END NOISE---
+      问题：用 command 执行 echo STRESS_HUGE_PROMPT_OK ，并在最终回复原样给出该字符串。
+    expect:
+      tools_any: [command]
+      final_contains_any: ["STRESS_HUGE_PROMPT_OK"]
+    tags: [stress, large_prompt]
+
+  - id: stress_error_recovery
+    title: 失败后恢复
+    user: |
+      1) file_read 一个不存在的路径 workspace/stress/no_such_file_zzz.md
+      2) 失败后改读 workspace/stress/big_context.md 的 SECRET_VALUE（可用 grep）
+      最终必须给出 SECRET_VALUE 的值。
+    expect:
+      tools_any: [file_read, grep]
+      final_contains_any: ["stress_answer_42"]
+    tags: [stress, recovery]
+
+  - id: stress_pack_then_work
+    title: 扩包后继续干活
+    user: |
+      1) use_tool_pack action=list
+      2) 不要启用 desktop。用 file_read 读 backend/agent/pack_catalog.py
+      3) 最终列出 L4_PRIMARY_PACKS 里的三个名字。
+    expect:
+      tools_any: [use_tool_pack, file_read]
+      final_contains_any: ["devices", "desktop", "evolution"]
+    tags: [stress, pack]
+
+  - id: stress_thrash_resist
+    title: 避免同参空转
+    user: |
+      用 grep 在 backend/agent/turn_retry.py 搜索 RetryKind 一次即可。
+      不要对同一 pattern 重复调用超过 2 次。
+      最终用一句话说明 RetryKind 是枚举/类以及用途。
+    expect:
+      tools_any: [grep, file_read]
+      final_min_chars: 15
+      max_same_tool_calls: 3
+    tags: [stress, thrash]
+
+  - id: stress_parallelish_reads
+    title: 连续读多个核心文件
+    user: |
+      依次 file_read：
+      - backend/agent/iteration_budget.py
+      - backend/agent/turn_retry.py
+      - backend/agent/tool_result_contract.py
+      最终用表格或列表对比：三个文件各自的主类/主函数名（各一个）。
+    expect:
+      tools_any: [file_read]
+      final_contains_any: ["IterationBudget", "TurnRetryState", "normalize_tool_result"]
+      min_tool_calls: 2
+    tags: [stress, multi]
+
+  - id: stress_command_pipeline
+    title: shell 管道
+    user: |
+      用 command 执行：
+      ls backend/agent/*.py | wc -l
+      并再执行：
+      test -f backend/agent/loop.py && echo LOOP_EXISTS
+      最终同时给出：py 文件数量（数字）和 LOOP_EXISTS。
+    expect:
+      tools_any: [command]
+      final_contains_any: ["LOOP_EXISTS"]
+      final_min_chars: 5
+    tags: [stress, shell]
+
+  - id: stress_long_horizon
+    title: 长程 5 步
+    user: |
+      按顺序完成（每步都要用工具）：
+      A. glob backend/agent/tool_*.py
+      B. grep backend/agent 搜索 def load_workspace_contract
+      C. file_read 该定义所在文件的前 40 行等价内容（或整文件）
+      D. command: echo LONG_HORIZON_STEP_D
+      E. 最终总结 A 找到几个文件、B/C 的模块用途、D 的输出。
+    expect:
+      tools_any: [glob, grep, file_read, command]
+      final_contains_any: ["LONG_HORIZON_STEP_D", "workspace_contract"]
+      min_tool_calls: 3
+      final_min_chars: 30
+    tags: [stress, long]

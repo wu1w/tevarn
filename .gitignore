@@ -87,3 +87,6 @@ logs/
 # agent file checkpoints
 .takton/checkpoints/
 
+
+workspace/stress/
+

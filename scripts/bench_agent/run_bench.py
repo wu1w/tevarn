@@ -27,6 +27,24 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+def ensure_stress_fixtures() -> None:
+    """Idempotent stress workspace under workspace/stress/."""
+    root = ROOT / "workspace" / "stress"
+    root.mkdir(parents=True, exist_ok=True)
+    big = root / "big_context.md"
+    if not big.exists() or big.stat().st_size < 50_000:
+        lines = ["# STRESS FIXTURE\n", "MARKER_HEAD=TAKTON_STRESS_OK\n"]
+        for i in range(2000):
+            lines.append(f"line_{i:04d} noise={'x'*(40+(i%20))} token=stress_{i%97}\n")
+        lines.append("MARKER_TAIL=TAKTON_STRESS_END\n")
+        lines.append("SECRET_VALUE=stress_answer_42\n")
+        big.write_text("".join(lines), encoding="utf-8")
+    for i in range(30):
+        fp = root / f"f_{i:02d}.txt"
+        if not fp.exists():
+            fp.write_text(f"file={i}\nkey=findme_{i%5}\n", encoding="utf-8")
+
+
 
 @dataclass
 class ModelCfg:
@@ -164,6 +182,20 @@ def eval_case(case: dict, tools_used: list[str], final: str) -> tuple[bool, list
         ok = False
         reasons.append("empty final and no tools")
 
+    min_tc = int(exp.get("min_tool_calls") or 0)
+    if min_tc and len(tools_used) < min_tc:
+        ok = False
+        reasons.append(f"tool_calls {len(tools_used)} < min {min_tc}")
+
+    max_same = exp.get("max_same_tool_calls")
+    if max_same is not None:
+        from collections import Counter
+        c = Counter(tools_used)
+        worst = max(c.values()) if c else 0
+        if worst > int(max_same):
+            ok = False
+            reasons.append(f"same_tool_calls {worst} > max {max_same} ({c})")
+
     return ok, reasons
 
 
@@ -182,6 +214,10 @@ async def run_one(
         "Use tools for file/shell facts. After tools, answer concisely in Chinese."
     )
     user = (case.get("user") or "").strip()
+    if "{{NOISE}}" in user:
+        # ~28k chars noise for context pressure
+        chunk = ("LOREM_STRESS_" + ("N" * 80) + "\n") * 350
+        user = user.replace("{{NOISE}}", chunk)
     messages: list[dict] = [
         {"role": "system", "content": sys_msg},
         {"role": "user", "content": user},
@@ -267,6 +303,7 @@ async def main_async(args: argparse.Namespace) -> int:
 
     models = load_models(args.models.split(","))
     await load_all_tools()
+    ensure_stress_fixtures()
     mgr = ToolPermissionManager()
     print("workspace_root", mgr.workspace_root)
 
