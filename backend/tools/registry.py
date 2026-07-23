@@ -150,10 +150,18 @@ class ToolRegistry:
         result = await tool.execute(**exec_args)
 
         try:
+            import json as _json
             from backend.agent.tool_hooks import run_after_tool_call
             from backend.agent.tool_result_contract import normalize_tool_result
 
-            text = normalize_tool_result(result, tool_name=name)
+            if isinstance(result, dict):
+                # drop huge unused image field if empty path present
+                data = result.get("data")
+                if isinstance(data, dict) and data.get("path") and not data.get("image"):
+                    pass
+                text = _json.dumps(result, ensure_ascii=False, default=str)
+            else:
+                text = normalize_tool_result(result, tool_name=name)
             text = await run_after_tool_call(name, exec_args, text)
             return text
         except Exception as e:

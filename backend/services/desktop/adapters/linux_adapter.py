@@ -4,6 +4,7 @@ Linux 平台桌面适配器
 """
 
 import asyncio
+import base64
 import logging
 import shutil
 import subprocess
@@ -259,40 +260,111 @@ class LinuxAdapter:
                 }
                 break
     
+
+    def _finalize_screenshot(self, raw: bytes, tool: str, tmp_path: str) -> DesktopOperationResult:
+        """Persist screenshot and return path (avoid megabyte base64 in tool loop)."""
+        out_dir = os.environ.get("TAKTON_DESKTOP_SHOT_DIR") or os.path.join(
+            tempfile.gettempdir(), "takton_desktop_shots"
+        )
+        os.makedirs(out_dir, exist_ok=True)
+        import time
+        out_path = os.path.join(out_dir, f"shot_{int(time.time()*1000)}_{tool}.jpg")
+        with open(out_path, "wb") as f:
+            f.write(raw)
+        # tiny base64 head for debug only (optional empty)
+        return DesktopOperationResult(
+            success=True,
+            message=f"截图成功 ({len(raw)} bytes)",
+            data={
+                "path": out_path,
+                "bytes": len(raw),
+                "tool": tool,
+                "image": "",  # full image on disk; path is canonical
+            },
+        )
+
     async def _screenshot_scrot(self) -> DesktopOperationResult:
         """使用 scrot 截图"""
-        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
-            tmp_path = tmp.name
-        
+        fd, tmp_path = tempfile.mkstemp(suffix=".jpg")
+        os.close(fd)
+        # scrot 不会覆盖已存在的空文件，必须先删掉占位
         try:
-            subprocess.run(["scrot", "-z", "-q", "70", tmp_path], check=True)
-            
-            with open(tmp_path, 'rb') as f:
-                img_base64 = base64.b64encode(f.read()).decode('utf-8')
-            
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        try:
+            env = os.environ.copy()
+            # 确保子进程带上 DISPLAY
+            proc = subprocess.run(
+                ["scrot", "-q", "70", tmp_path],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            if proc.returncode != 0:
+                return DesktopOperationResult(
+                    success=False,
+                    message=f"scrot 失败: {proc.stderr or proc.stdout or proc.returncode}",
+                    error=proc.stderr,
+                )
+            with open(tmp_path, "rb") as f:
+                raw = f.read()
+            if len(raw) < 100:
+                return DesktopOperationResult(
+                    success=False,
+                    message=f"scrot 输出过小 ({len(raw)} bytes)，检查 DISPLAY={env.get('DISPLAY')}",
+                )
+            img_base64 = base64.b64encode(raw).decode("utf-8")
             return DesktopOperationResult(
                 success=True,
                 message="截图成功",
-                data={"image": img_base64, "tool": "scrot"}
+                data={
+                    "image": img_base64,
+                    "tool": "scrot",
+                    "bytes": len(raw),
+                    "path": tmp_path,
+                },
             )
         finally:
-            os.unlink(tmp_path)
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
     
     async def _screenshot_import(self) -> DesktopOperationResult:
         """使用 imagemagick import 截图"""
-        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
-            tmp_path = tmp.name
-        
+        fd, tmp_path = tempfile.mkstemp(suffix=".jpg")
+        os.close(fd)
         try:
-            subprocess.run(["import", "-window", "root", "-quality", "70", tmp_path], check=True)
-            
-            with open(tmp_path, 'rb') as f:
-                img_base64 = base64.b64encode(f.read()).decode('utf-8')
-            
-            return DesktopOperationResult(
-                success=True,
-                message="截图成功",
-                data={"image": img_base64, "tool": "import"}
-            )
-        finally:
             os.unlink(tmp_path)
+        except OSError:
+            pass
+        try:
+            env = os.environ.copy()
+            proc = subprocess.run(
+                ["import", "-window", "root", "-quality", "70", tmp_path],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            if proc.returncode != 0:
+                return DesktopOperationResult(
+                    success=False,
+                    message=f"import 失败: {proc.stderr or proc.returncode}",
+                    error=proc.stderr,
+                )
+            with open(tmp_path, "rb") as f:
+                raw = f.read()
+            if len(raw) < 100:
+                return DesktopOperationResult(
+                    success=False,
+                    message=f"import 输出过小 ({len(raw)} bytes)",
+                )
+            return self._finalize_screenshot(raw, "import", tmp_path)
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
