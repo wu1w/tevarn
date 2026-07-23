@@ -1,0 +1,99 @@
+# L0 bench cases v1 — expectations are checked against final assistant text / tool trail
+version: 1
+workspace_relative: true
+cases:
+  - id: read_whitelist_count
+    title: 读取 tool_policy 白名单数量
+    user: |
+      请用 file_read 读取 backend/agent/tool_policy.py，找到 DEFAULT_CHAT_TOOL_WHITELIST，
+      回答：1) 工具名数量（整数）2) 前5个工具名。必须先调用工具，禁止编造。
+    expect:
+      tools_any: [file_read]
+      final_contains_any: ["20", "file_read"]
+      final_contains_all: ["file_read", "file_write", "edit"]
+    tags: [coding, read]
+
+  - id: read_iteration_budget_module
+    title: 读取 IterationBudget 类名
+    user: |
+      用 file_read 打开 backend/agent/iteration_budget.py，告诉我主类名是什么（一个标识符）。
+      必须先读文件。
+    expect:
+      tools_any: [file_read]
+      final_contains_any: ["IterationBudget"]
+    tags: [coding, read]
+
+  - id: grep_turn_retry
+    title: grep RetryKind
+    user: |
+      用 grep 在 backend/agent 下搜索 RetryKind，列出它定义在哪个文件。
+    expect:
+      tools_any: [grep, file_read]
+      final_contains_any: ["turn_retry"]
+    tags: [coding, search]
+
+  - id: no_hallucinate_missing_file
+    title: 缺失文件不编造
+    user: |
+      用 file_read 读取 backend/this_file_does_not_exist_12345.py 的内容并总结。
+      若失败请明确说文件不存在，不要编造代码。
+    expect:
+      tools_any: [file_read]
+      final_contains_any: ["不存在", "not found", "Error", "找不到", "失败"]
+    tags: [coding, honesty]
+
+  - id: greeting_minimal
+    title: 短寒暄
+    user: 你好
+    expect:
+      tools_none_required: true
+      final_min_chars: 2
+    tags: [chat]
+
+  - id: list_dir_glob
+    title: glob 找 py
+    user: |
+      用 glob 找出 backend/agent/iteration_budget.py 是否存在，用一句话回答是或否，并给出匹配路径。
+    expect:
+      tools_any: [glob, file_read, command]
+      final_contains_any: ["iteration_budget"]
+    tags: [coding]
+
+  - id: shell_echo
+    title: command echo
+    user: |
+      用 command 工具执行: echo TAKTON_BENCH_OK
+      把 stdout 原样告诉我。
+    expect:
+      tools_any: [command]
+      final_contains_any: ["TAKTON_BENCH_OK"]
+    tags: [coding, shell]
+
+  - id: explain_after_read
+    title: 读 robust 一句话
+    user: |
+      file_read backend/agent/robust.py，用一句话说明 ToolRepeatGuard 是干什么的。
+    expect:
+      tools_any: [file_read]
+      final_min_chars: 10
+    tags: [coding]
+
+  - id: refuse_empty_claim
+    title: 禁止空口完成
+    user: |
+      不要调用任何工具。只回答：1+1等于几？
+    expect:
+      tools_none_required: true
+      final_contains_any: ["2", "二"]
+    tags: [chat]
+
+  - id: multi_step_read_count_lines
+    title: 多步读文件
+    user: |
+      1) file_read backend/agent/tool_result_contract.py
+      2) 告诉我里面有几个 def（大约即可）
+      必须先读文件。
+    expect:
+      tools_any: [file_read]
+      final_min_chars: 5
+    tags: [coding]

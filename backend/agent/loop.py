@@ -41,6 +41,9 @@ from backend.agent.robust import (
     tool_call_signature,
     ToolRepeatGuard,
 )
+from backend.agent.iteration_budget import IterationBudget
+from backend.agent.turn_retry import RetryKind, TurnRetryState
+from backend.agent.tool_result_contract import normalize_tool_result
 
 from .context import ContextManager
 
@@ -810,9 +813,34 @@ class NexusAgentLoop:
             max_repeat=int(getattr(settings, "agent_tool_repeat_max", 3) or 3)
         )
         _force_final_no_tools = False
+        _iter_budget = IterationBudget(_total_iters)
+        _turn_retry = TurnRetryState()
+        _budget_grace_call = False
+        _loop_exit_reason = ""
 
-        for _global_iter in range(_total_iters):
-            iteration = _global_iter % _seg_size
+        for _global_iter in range(_total_iters + 1):  # +1 允许 grace 终答
+            # 迭代预算：耗尽后最多 1 次 grace（强制无工具终答）
+            if _global_iter >= _total_iters:
+                if _budget_grace_call or _force_final_no_tools:
+                    break
+                _budget_grace_call = True
+                _force_final_no_tools = True
+                _loop_exit_reason = "budget_grace"
+                await self._push_status(
+                    session_id,
+                    "thinking",
+                    f"迭代预算已用尽 ({_iter_budget.used}/{_iter_budget.max_total})，生成最终回复…",
+                )
+                logger.info(
+                    "Iteration budget grace session=%s used=%s",
+                    session_id,
+                    _iter_budget.snapshot(),
+                )
+            elif not _iter_budget.consume():
+                _loop_exit_reason = "budget_exhausted"
+                break
+
+            iteration = _global_iter % _seg_size if _seg_size else _global_iter
             # 段边界（非首段）：checkpoint + 注入续跑提示
             if _global_iter > 0 and iteration == 0:
                 _segment += 1
@@ -1157,17 +1185,11 @@ class NexusAgentLoop:
                                         tool_result = f"[Error] Tool '{tc.name}' not found or disabled"
                                         query = ""
 
-                        # skill/tool 可能返回 None，先规范成 str
-                        if tool_result is None:
-                            tool_result = ""
-                        elif not isinstance(tool_result, str):
-                            tool_result = str(tool_result)
-                        MAX_TOOL_RESULT_LENGTH = getattr(settings, "max_tool_result_length", 12_000)
-                        if len(tool_result) > MAX_TOOL_RESULT_LENGTH:
-                            tool_result = (
-                                tool_result[:MAX_TOOL_RESULT_LENGTH]
-                                + f"\n\n[截断: 结果超过 {MAX_TOOL_RESULT_LENGTH} 字符]"
-                            )
+                        # 工具结果契约：统一 str / 截断 / 空结果
+                        _max_tr = int(getattr(settings, "max_tool_result_length", 12_000) or 12_000)
+                        tool_result = normalize_tool_result(
+                            tool_result, max_chars=_max_tr, tool_name=getattr(tc, "name", "") or ""
+                        )
 
                         await self._persist_tool_completion(
                             session_id, task_id, tc.name, tool_result, query
@@ -1378,10 +1400,14 @@ class NexusAgentLoop:
                         for tc in tool_calls
                     ]
                     if _tool_repeat_guard.observe(_sigs):
+                        _turn_retry.note_and_decide(
+                            RetryKind.THRASH, detail=",".join(_sigs)[:180]
+                        )
                         logger.warning(
-                            "Tool thrash detected for session %s sigs=%s",
+                            "Tool thrash detected for session %s sigs=%s retry=%s",
                             session_id,
                             _sigs,
+                            _turn_retry.snapshot(),
                         )
                         await self._push_status(
                             session_id,
@@ -1521,35 +1547,53 @@ class NexusAgentLoop:
                         )
                         continue
 
-                # 空正文：有限次重试（避免「装死」式空白结束）
-                if (
-                    is_empty_assistant_content(accumulated_content)
-                    and _empty_reply_retries < _empty_reply_max
-                    and not self._should_stop
-                ):
-                    _empty_reply_retries += 1
-                    await self._push_status(
-                        session_id,
-                        "thinking",
-                        f"模型空回复，重试 {_empty_reply_retries}/{_empty_reply_max}…",
+                # 空正文：TurnRetryState 分类重试 / 耗尽则 force_final
+                if is_empty_assistant_content(accumulated_content) and not self._should_stop:
+                    action = _turn_retry.note_and_decide(
+                        RetryKind.EMPTY_CONTENT, detail="empty assistant content"
                     )
-                    messages.append(
-                        {
-                            "role": "system",
-                            "content": (
-                                "你上一轮没有输出任何可见正文。"
-                                "请直接用自然语言回答用户问题；"
-                                "不要输出空内容，也不要只调用工具而不解释。"
-                            ),
-                        }
+                    _empty_reply_retries = int(
+                        _turn_retry.counts.get(RetryKind.EMPTY_CONTENT.value, 0)
                     )
-                    logger.info(
-                        "Empty assistant reply retry %s/%s session=%s",
-                        _empty_reply_retries,
-                        _empty_reply_max,
-                        session_id,
-                    )
-                    continue
+                    if action == "retry" and _empty_reply_retries <= _empty_reply_max:
+                        await self._push_status(
+                            session_id,
+                            "thinking",
+                            f"模型空回复，重试 {_empty_reply_retries}/{_empty_reply_max}…",
+                        )
+                        messages.append(
+                            {
+                                "role": "system",
+                                "content": (
+                                    "你上一轮没有输出任何可见正文。"
+                                    "请直接用自然语言回答用户问题；"
+                                    "不要输出空内容，也不要只调用工具而不解释。"
+                                ),
+                            }
+                        )
+                        logger.info(
+                            "Empty assistant reply retry %s session=%s action=%s",
+                            _empty_reply_retries,
+                            session_id,
+                            action,
+                        )
+                        continue
+                    if action == "force_final":
+                        _force_final_no_tools = True
+                        await self._push_status(
+                            session_id,
+                            "thinking",
+                            "空回复重试耗尽，强制生成最终文字…",
+                        )
+                        messages.append(
+                            {
+                                "role": "system",
+                                "content": (
+                                    "请立刻用简洁中文给出最终回答，不要再调用工具。"
+                                ),
+                            }
+                        )
+                        continue
 
                 # 得到最终回复
                 final_content = accumulated_content
