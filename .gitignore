@@ -87,12 +87,8 @@ logs/
 # agent file checkpoints
 .takton/checkpoints/
 
-
-workspace/stress/
-
-
-docs/bench/desktop_e2e/screenshot.jpg
-/tmp/takton_desktop_shots/
-
-docs/bench/desktop_e2e_real/screenshot.jpg
+# Local bench / E2E (not published)
+docs/bench/
 scripts/bench_agent/
+workspace/stress/
+/tmp/takton_desktop_shots/
