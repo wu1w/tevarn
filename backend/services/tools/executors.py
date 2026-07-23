@@ -15,28 +15,38 @@ import subprocess
 import sys
 import urllib.parse
 from html import unescape
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
 def _resolve_workspace_path(base_path: str, filepath: str) -> tuple[str, str]:
-    """解析 workspace 内的安全路径，去掉 filepath 中重复的 workspace 前缀。
-    
+    """解析 workspace 内的安全路径。
+
+    - 绝对路径：规范化后直接返回（由调用方做边界检查）
+    - 相对路径：拼到 base_path；去掉重复的 workspace 前缀
+
     Returns:
         (full_path, base_abs) 元组
     """
-    _fp = filepath.replace("\\", "/").lstrip("/")
-    # 用 basename 匹配前缀，兼容绝对路径 base_path（如 E:\项目\takton\workspace）
-    _basename = os.path.basename(base_path.rstrip("/\\").replace("\\", "/"))
-    _bp_rel = base_path.replace("\\", "/").rstrip("/").lstrip("./")
-    # 同时检查 basename 和相对路径两种前缀
-    for prefix in {_basename, _bp_rel}:
-        if prefix and _fp.startswith(prefix + "/"):
-            _fp = _fp[len(prefix) + 1:]
-            break
-    full_path = os.path.abspath(os.path.join(base_path, _fp))
     base_abs = os.path.abspath(base_path)
+    raw = (filepath or "").strip()
+    if not raw:
+        return base_abs, base_abs
+
+    # 绝对路径（POSIX / Windows 盘符）
+    if os.path.isabs(raw) or (len(raw) >= 3 and raw[1] == ":" and raw[2] in "\\/"):
+        return os.path.abspath(raw), base_abs
+
+    fp = raw.replace("\\", "/").lstrip("/")
+    basename = os.path.basename(base_abs.rstrip("/\\"))
+    bp_rel = base_path.replace("\\", "/").rstrip("/").lstrip("./")
+    for prefix in {basename, bp_rel}:
+        if prefix and fp.startswith(prefix + "/"):
+            fp = fp[len(prefix) + 1 :]
+            break
+    full_path = os.path.abspath(os.path.join(base_abs, fp))
     return full_path, base_abs
 
 
@@ -547,8 +557,11 @@ async def execute_file_read(config: dict[str, Any], arguments: dict[str, Any]) -
     full_path, base_abs = _resolve_workspace_path(base_path, filepath)
 
     # 路径安全检查：防止目录遍历
-    if not full_path.startswith(base_abs):
-        return f"[Security Blocked] Path '{filepath}' is outside the allowed directory"
+    try:
+        Path(full_path).resolve().relative_to(Path(base_abs).resolve())
+    except Exception:
+        if not (full_path == base_abs or full_path.startswith(base_abs + os.sep)):
+            return f"[Security Blocked] Path '{filepath}' is outside the allowed directory"
 
     if not os.path.exists(full_path):
         return f"[Error] File not found: {filepath}"
@@ -578,8 +591,11 @@ async def execute_file_write(config: dict[str, Any], arguments: dict[str, Any]) 
     full_path, base_abs = _resolve_workspace_path(base_path, filepath)
 
     # 路径安全检查
-    if not full_path.startswith(base_abs):
-        return f"[Security Blocked] Path '{filepath}' is outside the allowed directory"
+    try:
+        Path(full_path).resolve().relative_to(Path(base_abs).resolve())
+    except Exception:
+        if not (full_path == base_abs or full_path.startswith(base_abs + os.sep)):
+            return f"[Security Blocked] Path '{filepath}' is outside the allowed directory"
 
     # 确保目录存在
     os.makedirs(os.path.dirname(full_path), exist_ok=True)

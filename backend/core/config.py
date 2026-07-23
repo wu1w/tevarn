@@ -200,9 +200,10 @@ class Settings(BaseSettings):
     log_level: str = "info"
     # 设置加密 salt（用于 settings 字段加密的确定性密钥派生）
     settings_encryption_salt: str = ""
-    # 文件浏览器根目录（桌面模式由 Electron 注入 userData/workspace）
-    # 默认使用相对路径 workspace，跨平台可写
-    file_browser_root: str = "workspace"
+    # 文件浏览器 / Agent 工具工作区根目录
+    # 默认 "." = 项目根（编码助手可读 backend/ 等）；桌面模式由 Electron 注入 userData/workspace
+    # 相对路径相对项目根解析；也可用环境变量 TAKTON_FILE_BROWSER_ROOT 覆盖
+    file_browser_root: str = "."
     # 上传目录（桌面模式由 Electron 注入 userData/uploads）
     uploads_dir: str = ""
     # 单用户模式默认管理员密码（仅首次创建用户时使用；桌面由 Electron 注入）
