@@ -413,65 +413,79 @@ class NexusAgentLoop:
         await self._check_auto_optimize(session_id, config, total_tokens)
 
         # 5. 加载 Skills/Tools（合并后的统一 Tool 体系）
-        # 关键：session config 默认 skills=[] 会被 SkillRegistry 当成「全部禁用」
-        # 约定：缺省 / 空列表 / 含 "*"  → 启用全部内置 skill；显式名单才过滤
+        # 默认 core 白名单（~18）；tools=["*"] 或 agent_tool_profile=full 才全量
+        from backend.agent.tool_policy import (
+            compact_capability_brief,
+            resolve_enabled_tool_names,
+        )
+
         raw_skills = config.get("skills", None)
         raw_tools = config.get("tools", None)
+        tool_profile = str(
+            config.get("tool_profile")
+            or getattr(settings, "agent_tool_profile", "core")
+            or "core"
+        ).strip().lower()
+
+        # 旧 skills 过滤仍保留语义：None/[]/["*"] → 不按 skill 名硬过滤
         if raw_skills is None or raw_skills == [] or raw_skills == ["*"]:
-            enabled_skills = None  # 全部 skill
+            enabled_skills = None
         else:
             enabled_skills = list(raw_skills)
-        if raw_tools is None or raw_tools == [] or raw_tools == ["*"]:
-            enabled_tools_filter: list[str] | None = None
-        else:
-            enabled_tools_filter = list(raw_tools)
 
-        # 模式附加 skill（在「全部」或名单上叠加）
         mode_extra: list[str] = []
         if mode == "search":
-            mode_extra.append("web_search")
-            mode_extra.append("search")
+            mode_extra.extend(["web_search", "search", "fetch_webpage"])
         if mode == "ppt":
             mode_extra.append("generate_ppt")
         if mode == "report":
-            mode_extra.append("generate_report")
+            mode_extra.extend(["generate_report", "render_chart"])
         if mode == "goal":
-            mode_extra.append("manage_goal")
-            mode_extra.append("autopilot")
-        if mode_extra and enabled_skills is not None:
-            enabled_skills = list(set(enabled_skills + mode_extra))
+            mode_extra.extend(["manage_goal", "autopilot"])
+        if mode == "cluster":
+            mode_extra.extend(["manage_sub_agent", "delegate_task", "agent_call"])
 
-        tools = await self._load_tools(session_id, enabled_skills, enabled_tools_filter, user_input=user_input)
+        enabled_tools_filter = resolve_enabled_tool_names(
+            mode=mode or "default",
+            raw_tools=raw_tools,
+            raw_skills=raw_skills,
+            profile=tool_profile,
+            extra=mode_extra,
+        )
+        if mode_extra and enabled_skills is not None:
+            enabled_skills = list(set(list(enabled_skills) + mode_extra))
+
+        tools = await self._load_tools(
+            session_id, enabled_skills, enabled_tools_filter, user_input=user_input
+        )
         logger.info(
             f"Loaded {len(tools)} tools for session {session_id} "
-            f"(skills={'ALL' if enabled_skills is None else enabled_skills})"
+            f"(profile={tool_profile}, filter="
+            f"{'ALL' if enabled_tools_filter is None else len(enabled_tools_filter)})"
         )
 
-        # P0–P2：能力与偏好注入（不依赖模型「记得有搜索」）
+        # 短纪律 brief（不再每轮塞平台能力广告）
         try:
-            cap_lines = [
-                "Takton capability brief (use tools, do not claim missing if listed):",
-                "- Long tasks: autopilot (start→next→reflect→complete) + manage_goal",
-                "- Search: web_search / search (real network; never say search unavailable without calling)",
-                "- Browser: browser action=navigate|snapshot|click|type (Playwright when installed)",
-                "- Desktop: desktop_observe / uia_snapshot / desktop_* ",
-                "- Remote: list_devices_tool / remote_exec / device_onboard",
-                "- Memory: memory_pref get/set; session_search for history",
-                "- GitHub: github action=status|pr_create|ci (needs gh auth)",
-                "- Charts: render_chart; PPT: generate_ppt; vision: vision_analyze",
-                "- Office/Media: doc_read/doc_write, image_generate, calendar, tts, capability_status",
+            tool_name_list = [
+                (t.get("function") or {}).get("name")
+                for t in tools
+                if (t.get("function") or {}).get("name")
             ]
-            # user prefs
+            brief = compact_capability_brief(
+                None if enabled_tools_filter is None else tool_name_list
+            )
             try:
                 from backend.tools.builtins.capability_tools import _load_prefs
 
                 uid = str(self.user_id) if self.user_id else "local"
                 prefs = (_load_prefs(uid).get("users") or {}).get(uid) or {}
                 if prefs:
-                    cap_lines.append("User preferences (honor these): " + json.dumps(prefs, ensure_ascii=False))
+                    brief += "\nUser preferences (honor these): " + json.dumps(
+                        prefs, ensure_ascii=False
+                    )
             except Exception:
                 pass
-            messages.append({"role": "system", "content": "\n".join(cap_lines)})
+            messages.append({"role": "system", "content": brief})
         except Exception as e:
             logger.debug("capability inject skipped: %s", e)
 
@@ -503,25 +517,29 @@ class NexusAgentLoop:
         cluster_mode = mode == "cluster" or bool(sub_agent_ids)
         sub_agents_info: list[dict] = []  # 存储子代理信息用于并行执行
         
-        # v0.2: 自动集群模式 - 主Agent自动分析任务复杂度，决定是否需要子代理
+        # 自动集群：默认关闭（agent_auto_cluster=false）；仅显式 cluster 模式或配置打开
         auto_cluster = False
-        if not cluster_mode and mode == "default":
-            # 自动分析任务复杂度
+        auto_cluster_enabled = bool(getattr(settings, "agent_auto_cluster", False))
+        if (
+            auto_cluster_enabled
+            and not cluster_mode
+            and mode == "default"
+        ):
             complexity_score = await self._analyze_task_complexity(user_input)
-            if complexity_score >= 0.7:  # 高复杂度任务自动启用集群
+            if complexity_score >= 0.7:
                 auto_cluster = True
                 cluster_mode = True
                 logger.info(
                     "Auto-cluster mode ACTIVATED: complexity=%.2f, task='%s'",
                     complexity_score, user_input[:50]
                 )
-                # 自动创建子代理（复用主会话LLM配置）
                 sub_agents_info = await self._auto_create_sub_agents(user_input, complexity_score)
                 if not sub_agents_info:
-                    # 无法创建子代理，回退到单Agent模式
                     auto_cluster = False
                     cluster_mode = False
                     logger.info("Auto-cluster: no sub-agents created, fallback to single agent")
+        elif not cluster_mode and mode == "default":
+            logger.debug("Auto-cluster skipped (agent_auto_cluster=false)")
         
         if cluster_mode and (sub_agent_ids or auto_cluster):
             try:
@@ -1783,35 +1801,39 @@ class NexusAgentLoop:
             except Exception as e:
                 logger.warning(f"Failed to load tool-def CtxItems: {e}")
 
-                # v0.2+: Desktop 工具常驻（P2：不靠关键词；load_all_tools 已注册，这里兜底）
+        # Desktop 工具：仅当全量模式或过滤名单显式包含时兜底注入（默认 core 不塞）
         try:
-            from backend.services.desktop.tools import (
-                DesktopScreenshotTool,
-                DesktopClickTool,
-                DesktopTypeTool,
-                DesktopOpenAppTool,
-                DesktopScrollTool,
-                DesktopReadFileTool,
-                DesktopWriteFileTool,
-            )
-            desktop_tools = [
-                DesktopScreenshotTool(),
-                DesktopClickTool(),
-                DesktopTypeTool(),
-                DesktopOpenAppTool(),
-                DesktopScrollTool(),
-                DesktopReadFileTool(),
-                DesktopWriteFileTool(),
-            ]
-            existing_names = {
-                (t.get("function") or {}).get("name")
-                for t in tools
-                if (t.get("function") or {}).get("name")
-            }
-            for dt in desktop_tools:
-                if dt.name not in existing_names:
-                    tools.append(dt.to_json_schema())
-                    logger.info(f"Ensured desktop tool: {dt.name}")
+            filter_set = set(enabled_tools_filter) if enabled_tools_filter is not None else None
+            if filter_set is None or any(n.startswith("desktop_") for n in filter_set):
+                from backend.services.desktop.tools import (
+                    DesktopScreenshotTool,
+                    DesktopClickTool,
+                    DesktopTypeTool,
+                    DesktopOpenAppTool,
+                    DesktopScrollTool,
+                    DesktopReadFileTool,
+                    DesktopWriteFileTool,
+                )
+                desktop_tools = [
+                    DesktopScreenshotTool(),
+                    DesktopClickTool(),
+                    DesktopTypeTool(),
+                    DesktopOpenAppTool(),
+                    DesktopScrollTool(),
+                    DesktopReadFileTool(),
+                    DesktopWriteFileTool(),
+                ]
+                existing_names = {
+                    (t.get("function") or {}).get("name")
+                    for t in tools
+                    if (t.get("function") or {}).get("name")
+                }
+                for dt in desktop_tools:
+                    if filter_set is not None and dt.name not in filter_set:
+                        continue
+                    if dt.name not in existing_names:
+                        tools.append(dt.to_json_schema())
+                        logger.info(f"Ensured desktop tool: {dt.name}")
         except Exception as e:
             logger.warning(f"Failed to ensure desktop tools: {e}")
 

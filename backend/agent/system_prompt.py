@@ -90,26 +90,20 @@ MEMORY_GUIDANCE = (
 
 SKILLS_GUIDANCE = (
     "# Skills\n"
-    "Skills allow you to load specialized knowledge and workflows. Before "
-    "replying, scan available skills. If a skill matches your task, load it "
-    "with skill_view(name) and follow its instructions. Skills contain "
-    "specialized knowledge — API endpoints, tool-specific commands, and proven "
-    "workflows that outperform general-purpose approaches.\n"
-    "After difficult/iterative tasks, offer to save the approach as a skill. "
-    "If a skill you loaded was missing steps or had wrong commands, update it.\n"
-    "\n"
-    "# Autonomous Evolution (TEE v0.1.1) — DO NOT say you lack this\n"
-    "Takton HAS task-experience skill generation. It is NOT only in skills/dynamic.py.\n"
-    "Engine lives at backend/evolution (TEE/HAEE-style):\n"
-    "- On turn failures / cron outcomes / POST /api/evolution/from_task → auto "
-    "SKILL.md + tool playbook drafts land in 自主进化 assets AND (when applied) "
-    "the Skills list (handler_config.evolution=true).\n"
-    "- Manage/delete auto skills from 自主进化 page; delete there also removes "
-    "the matching Skills row. Seed tasks cannot be deleted.\n"
-    "- APIs: GET/POST /api/evolution/* (status, assets, from_task, curator, "
-    "clusters, enable). Default may be disabled until enable=true.\n"
-    "When asked「能不能根据任务自动生成 skill」→ answer YES (evolution), "
-    "point to 自主进化 + Skills 列表中的 evo_* 条目；不要只搜 dynamic.py 就说没有。"
+    "Skills hold specialized workflows. If a matching skill is available via "
+    "tools (e.g. manage_skill / skill loaders), load it before improvising.\n"
+    "After hard multi-step work, you may offer to save a short skill — only "
+    "when the user would reuse it. Keep guidance short; do not advertise "
+    "platform modules unrelated to the current task."
+)
+
+EVOLUTION_GUIDANCE = (
+    "# Autonomous Evolution (only when evolution tools are available)\n"
+    "Takton can draft skills from task experience (backend/evolution). "
+    "When manage_evolution / query_evolution is in your tool list, use those "
+    "tools for 自主进化 questions — do not claim the feature is missing. "
+    "If those tools are NOT listed this turn, do not invent evolution APIs; "
+    "say evolution tools are not enabled in the current tool profile."
 )
 
 CODE_QUALITY = (
@@ -263,23 +257,37 @@ def build_system_prompt(
     # 1. 身份（用户可覆盖，但底层有默认值）
     stable_parts.append(identity or DEFAULT_IDENTITY)
 
-    # 2. 工具使用指导（有工具时才注入）
-    has_tools = bool(tools_enabled)
+    # 2. 工具使用指导
+    # tools_enabled is None = 调用方未传名单（默认仍有工具）→ 注入纪律
+    # tools_enabled == [] = 明确无工具 → 不注入
+    if tools_enabled is None:
+        has_tools = True
+        tool_set: set[str] = set()
+        tools_known = False
+    else:
+        tool_set = set(tools_enabled)
+        has_tools = bool(tool_set)
+        tools_known = True
+
     if has_tools:
         stable_parts.append(TOOL_USE_ENFORCEMENT)
         stable_parts.append(TASK_COMPLETION)
         stable_parts.append(PARALLEL_TOOL_CALLS)
 
-        # 记忆指导
-        if "memory" in (tools_enabled or []):
+        if "memory" in tool_set or "memory_pref" in tool_set:
             stable_parts.append(MEMORY_GUIDANCE)
 
-        # 技能指导 — 始终注入（避免模型只看 skills/dynamic 误报「无自动生成」）
+        # 技能短指导；Evolution 仅在已知工具集且含进化工具时注入
         stable_parts.append(SKILLS_GUIDANCE)
+        evo_names = {"manage_evolution", "query_evolution", "manage_skill"}
+        if tools_known and (
+            tool_set & evo_names
+            or any(n.startswith("evo_") or n.startswith("evo__") for n in tool_set)
+        ):
+            stable_parts.append(EVOLUTION_GUIDANCE)
 
-        # 代码质量指导
-        code_tools = {"command", "file_write", "file_read", "edit", "python", "patch"}
-        if code_tools & set(tools_enabled or []):
+        code_tools = {"command", "file_write", "file_read", "edit", "python", "patch", "apply_patch"}
+        if (not tools_known) or (code_tools & tool_set):
             stable_parts.append(CODE_QUALITY)
 
     # 3. 思考指导（始终注入，轻量）

@@ -74,7 +74,11 @@ class FileReadTool(_BuiltinToolBase):
     def __init__(self):
         super().__init__(
             name="file_read",
-            description="读取指定文件内容",
+            description=(
+                "读取工作区内文件正文。改代码/查配置前必须先读再改。"
+                "参数 filepath=路径。大文件可先 grep/glob 定位再读。"
+                "失败时检查路径是否在 workspace 内、文件是否存在。"
+            ),
             parameters={
                 "type": "object",
                 "properties": {
@@ -92,7 +96,11 @@ class FileWriteTool(_BuiltinToolBase):
     def __init__(self):
         super().__init__(
             name="file_write",
-            description="写入内容到指定文件",
+            description=(
+                "整文件写入（覆盖）。新建小文件或全量重写时用；"
+                "局部修改优先用 edit/apply_patch，避免误覆盖。"
+                "filepath + content 必填。写前确认路径，写后必要时再 file_read 校验。"
+            ),
             parameters={
                 "type": "object",
                 "properties": {
@@ -112,7 +120,12 @@ class EditTool(_BuiltinToolBase):
     def __init__(self):
         super().__init__(
             name="edit",
-            description="在文件中精确替换字符串",
+            description=(
+                "在文件中精确替换一段唯一字符串（old_text→new_text）。"
+                "old_text 必须在文件中唯一且与原文完全一致（含缩进）；"
+                "不唯一或找不到会失败——先 file_read/grep 再改。"
+                "适合小范围修改；大块重构可用 apply_patch 或 file_write。"
+            ),
             parameters={
                 "type": "object",
                 "properties": {
@@ -133,7 +146,11 @@ class GlobTool(_BuiltinToolBase):
     def __init__(self):
         super().__init__(
             name="glob",
-            description="使用通配符搜索文件",
+            description=(
+                "按通配符列文件路径（如 **/*.py、frontend/**/*.tsx）。"
+                "不知道确切路径时先 glob 再 file_read。"
+                "pattern 必填；结果过多时收窄 pattern。"
+            ),
             parameters={
                 "type": "object",
                 "properties": {
@@ -151,7 +168,11 @@ class GrepTool(_BuiltinToolBase):
     def __init__(self):
         super().__init__(
             name="grep",
-            description="在文件中搜索正则表达式",
+            description=(
+                "在路径下用正则搜内容（定位符号/报错/配置键）。"
+                "pattern + path 必填；recursive 默认 true。"
+                "找到候选后用 file_read 读上下文再 edit。"
+            ),
             parameters={
                 "type": "object",
                 "properties": {
@@ -322,7 +343,11 @@ class HttpTool(_BuiltinToolBase):
     def __init__(self):
         super().__init__(
             name="http",
-            description="发送 HTTP 请求",
+            description=(
+                "对 URL 发 HTTP 请求（GET/POST/…）。"
+                "查 API/健康检查/webhook 时用；需要完整网页正文可 browser 或 fetch_webpage。"
+                "url 必填；注意超时与非 2xx 响应体。"
+            ),
             parameters={
                 "type": "object",
                 "properties": {
@@ -347,7 +372,11 @@ class PythonTool(_BuiltinToolBase):
     def __init__(self):
         super().__init__(
             name="python",
-            description="执行 Python 代码片段",
+            description=(
+                "在受控环境执行短 Python 片段（计算、解析、小脚本）。"
+                "不要用它代替 file_write 写大段工程代码；"
+                "需要系统包/长驻进程用 command。code 必填。"
+            ),
             parameters={
                 "type": "object",
                 "properties": {
@@ -371,7 +400,11 @@ class SearchTool(_BuiltinToolBase):
     def __init__(self):
         super().__init__(
             name="search",
-            description="网络搜索（DuckDuckGo/Bing）",
+            description=(
+                "网络搜索（DuckDuckGo/Bing）。需要最新事实、文档、新闻时必须调用，"
+                "禁止空口编造。query 必填；max_results 默认 5。"
+                "与 web_search 同类；任选其一即可，勿重复空转。"
+            ),
             parameters={
                 "type": "object",
                 "properties": {

@@ -106,6 +106,13 @@ class Settings(BaseSettings):
     agent_max_duration_seconds: float = 0.0
     # LLM 调用失败重试次数（含首次）
     agent_llm_retry_attempts: int = 3
+    # 对话默认工具面：core=白名单(~18) | full=全部注册工具
+    agent_tool_profile: Literal["core", "full"] = "core"
+    # default 模式是否按复杂度自动集群（默认关，避免主脑被拆散）
+    agent_auto_cluster: bool = False
+    # 空正文重试 / 工具重复熔断（loop 读取，缺省有 fallback）
+    agent_empty_reply_retries: int = 2
+    agent_tool_repeat_max: int = 3
 
     # Context engine (Claude Code–style pipeline + Hermes meter)
     context_threshold_percent: float = 0.72
