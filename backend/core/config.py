@@ -107,7 +107,7 @@ class Settings(BaseSettings):
     # LLM 调用失败重试次数（含首次）
     agent_llm_retry_attempts: int = 3
     # 对话默认工具面：core=白名单(~18) | full=全部注册工具
-    agent_tool_profile: Literal["core", "full"] = "core"
+    agent_tool_profile: Literal["core", "dynamic", "full"] = "dynamic"
     # default 模式是否按复杂度自动集群（默认关，避免主脑被拆散）
     agent_auto_cluster: bool = False
     # 空正文重试 / 工具重复熔断（loop 读取，缺省有 fallback）

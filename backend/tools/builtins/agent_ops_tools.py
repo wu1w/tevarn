@@ -661,7 +661,86 @@ class VisionAnalyzeTool(BaseTool):
             return f"[Error] vision_analyze: {e}"
 
 
+
+
+class UseToolPackTool(BaseTool):
+    """动态启用工具包（场景扩展）。实际扩容由 AgentLoop 在执行后合并 schema。"""
+
+    def __init__(self) -> None:
+        super().__init__(
+            name="use_tool_pack",
+            description=(
+                "动态启用额外工具包。当当前工具列表缺少桌面/管理/进化/办公等能力时调用。"
+                "action=list 查看可用 pack；action=enable 并传入 packs 数组以加载。"
+                "常用 pack: desktop, manage, evolution, office, devices, github, data, goal, cluster, web, coding。"
+                "packs=['full'] 启用全部工具（慎用，降低智力密度）。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "enable"],
+                        "default": "list",
+                        "description": "list=列出 pack；enable=启用 packs",
+                    },
+                    "packs": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "要启用的 pack 名，如 [\"desktop\",\"manage\"]",
+                    },
+                    "pack": {
+                        "type": "string",
+                        "description": "单个 pack（兼容）；优先用 packs",
+                    },
+                },
+                "required": [],
+            },
+            source=ToolSource.BUILTIN,
+            risk_level=ToolRiskLevel.LOW,
+        )
+
+    async def execute(self, **kwargs: Any) -> Any:
+        import json
+        from backend.agent.tool_policy import TOOL_PACKS, list_pack_catalog, tools_for_packs
+
+        action = (kwargs.get("action") or "list").strip().lower()
+        packs = kwargs.get("packs") or []
+        if isinstance(packs, str):
+            packs = [packs]
+        one = kwargs.get("pack")
+        if one:
+            packs = list(packs) + [one]
+        packs = [str(p).strip().lower() for p in packs if str(p).strip()]
+
+        if action == "list" or not packs:
+            cat = list_pack_catalog()
+            lines = ["Available tool packs (use action=enable):"]
+            for name, tools in cat.items():
+                lines.append(f"- {name}: {', '.join(tools[:8])}{'...' if len(tools)>8 else ''}")
+            return "\n".join(lines)
+
+        if any(p in {"full", "*", "all"} for p in packs):
+            return json.dumps(
+                {"ok": True, "enabled_packs": ["full"], "tools": "ALL", "note": "full tools next iteration"},
+                ensure_ascii=False,
+            )
+        unknown = [p for p in packs if p not in TOOL_PACKS and p != "core"]
+        tools = tools_for_packs(packs)
+        return json.dumps(
+            {
+                "ok": True,
+                "enabled_packs": packs,
+                "new_tools_hint": tools,
+                "unknown_packs": unknown,
+                "note": "AgentLoop will merge these tools into the next LLM round",
+            },
+            ensure_ascii=False,
+        )
+
+
 AGENT_OPS_TOOL_CLASSES = [
+    UseToolPackTool,
     ShellSessionTool,
     DeviceOnboardTool,
     PlaywrightDoctorTool,

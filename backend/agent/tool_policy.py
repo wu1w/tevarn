@@ -1,16 +1,17 @@
-"""对话默认工具策略：收敛每轮暴露给 LLM 的工具面，提高指令密度。
+"""对话工具/注入策略：静态 core、场景动态 dynamic、全量 full。
 
-约定：
-- profile=core（默认）：仅核心白名单 + 模式附加
-- profile=full 或 tools 含 \"*\"/\"all\"：全部已注册工具
-- session config 显式 tools 名单：以名单为准（可再叠加 mode extra）
+dynamic 模式（默认推荐）：
+1. 用户输入 + ChatMode → 启发式场景判定（零额外 LLM）
+2. 按场景挂载 tool pack（coding/web/desktop/manage/…）
+3. 始终保留 meta：use_tool_pack（模型可中途扩容）
+4. injection_tier 控制 RAG/Wiki/实体等注水强度
 """
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Iterable
 
-# 对话 default 核心面（约 18 个）：读写改搜 shell / 轻量网络 / 设备基础
-# 管理类、进化、桌面全家桶、办公多媒体默认不进 schema
+# ── 核心白名单（任何 non-full 模式的底座）────────────────────────
 DEFAULT_CHAT_TOOL_WHITELIST: tuple[str, ...] = (
     "file_read",
     "file_write",
@@ -31,9 +32,86 @@ DEFAULT_CHAT_TOOL_WHITELIST: tuple[str, ...] = (
     "remote_exec",
     "session_search",
     "clarify",
+    "use_tool_pack",  # meta：动态扩容
 )
 
-# 按 ChatMode 附加（仅在对应模式出现）
+# ── 可热插拔能力包 ─────────────────────────────────────────────
+TOOL_PACKS: dict[str, tuple[str, ...]] = {
+    "core": DEFAULT_CHAT_TOOL_WHITELIST,
+    "coding": (
+        "file_read",
+        "file_write",
+        "edit",
+        "grep",
+        "glob",
+        "apply_patch",
+        "command",
+        "process",
+        "python",
+        "shell_session",
+    ),
+    "web": (
+        "web_search",
+        "search",
+        "browser",
+        "http",
+        "fetch_webpage",
+    ),
+    "desktop": (
+        "desktop_observe",
+        "desktop_screenshot",
+        "desktop_click",
+        "desktop_type",
+        "desktop_scroll",
+        "desktop_open_app",
+        "desktop_read_file",
+        "desktop_write_file",
+        "uia_snapshot",
+        "vision_analyze",
+    ),
+    "devices": (
+        "list_devices_tool",
+        "remote_exec",
+        "device_onboard",
+        "shell_session",
+    ),
+    "manage": (
+        "manage_cron",
+        "manage_channel",
+        "manage_mcp",
+        "manage_webhook",
+        "manage_git",
+        "manage_package",
+        "manage_profile",
+        "manage_knowledge",
+        "configure_takton",
+        "update_config",
+        "get_system_status",
+        "list_available_models",
+        "capability_status",
+    ),
+    "evolution": (
+        "manage_evolution",
+        "query_evolution",
+        "manage_skill",
+    ),
+    "office": (
+        "generate_ppt",
+        "generate_report",
+        "doc_read",
+        "doc_write",
+        "render_chart",
+        "image_generate",
+        "tts",
+        "calendar",
+        "calendar_read",
+    ),
+    "goal": ("manage_goal", "autopilot"),
+    "cluster": ("manage_sub_agent", "delegate_task", "agent_call"),
+    "data": ("sqlite_query", "http"),
+    "github": ("github", "manage_git"),
+}
+
 MODE_TOOL_EXTRAS: dict[str, tuple[str, ...]] = {
     "search": ("web_search", "search", "fetch_webpage"),
     "ppt": ("generate_ppt", "doc_read", "doc_write"),
@@ -44,24 +122,165 @@ MODE_TOOL_EXTRAS: dict[str, tuple[str, ...]] = {
     "default": (),
 }
 
-# 出现这些工具名时才注入 Evolution 长文 system 指导
+# mode → 默认 pack
+MODE_DEFAULT_PACKS: dict[str, tuple[str, ...]] = {
+    "search": ("web",),
+    "ppt": ("office",),
+    "report": ("office",),
+    "goal": ("goal", "coding"),
+    "cluster": ("cluster",),
+    "deepthink": ("coding",),
+    "default": (),
+}
+
 EVOLUTION_TOOL_NAMES: frozenset[str] = frozenset(
-    {
-        "manage_evolution",
-        "query_evolution",
-        "manage_skill",
-    }
+    {"manage_evolution", "query_evolution", "manage_skill"}
+)
+
+# 场景关键词（中英）→ pack
+_PACK_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "desktop": (
+        "桌面",
+        "点击",
+        "鼠标",
+        "截图",
+        "窗口",
+        "uia",
+        "gui",
+        "desktop",
+        "screenshot",
+        "click",
+        "键鼠",
+        "自动化点击",
+    ),
+    "manage": (
+        "cron",
+        "定时",
+        "webhook",
+        "mcp",
+        "配置 takton",
+        "configure",
+        "频道",
+        "channel",
+        "系统状态",
+        "改配置",
+        "settings",
+        "模型列表",
+    ),
+    "evolution": (
+        "进化",
+        "evolution",
+        "自动生成 skill",
+        "evo_",
+        "自主进化",
+        "curator",
+    ),
+    "office": (
+        "ppt",
+        "幻灯片",
+        "报告",
+        "docx",
+        "表格图",
+        "tts",
+        "语音",
+        "日历",
+        "calendar",
+        "生成图片",
+        "image",
+    ),
+    "devices": (
+        "远程",
+        "设备",
+        "takton-agent",
+        "remote",
+        "onboard",
+        "ssh",
+    ),
+    "github": ("github", "pr ", " pull request", "ci ", "gh "),
+    "data": ("sqlite", "sql 查询", "数据库查询"),
+    "web": (
+        "搜索",
+        "搜一下",
+        "最新",
+        "联网",
+        "http://",
+        "https://",
+        "网页",
+        "browse",
+        "search the",
+    ),
+    "coding": (
+        "代码",
+        "bug",
+        "修复",
+        "refactor",
+        "函数",
+        "文件",
+        "实现",
+        "pytest",
+        "编译",
+        "报错",
+        "stack",
+        "traceback",
+        ".py",
+        ".ts",
+        "git ",
+        "commit",
+    ),
+    "goal": ("长期任务", "拆解目标", "autopilot", "里程碑"),
+    "cluster": ("多代理", "子代理", "并行分工", "cluster"),
+}
+
+_KNOWLEDGE_HINTS = (
+    "是什么",
+    "什么是",
+    "为什么",
+    "知识库",
+    "wiki",
+    "文档里",
+    "根据资料",
+    "召回",
+    "explain",
+    "what is",
+    "how does",
+)
+
+_MINIMAL_HINTS = (
+    "你好",
+    "嗨",
+    "在吗",
+    "hello",
+    "hi ",
+    "thanks",
+    "谢谢",
+    "好的",
+    "ok",
+    "嗯",
 )
 
 
+@dataclass
+class ScenePlan:
+    """单轮场景计划。"""
+
+    packs: list[str] = field(default_factory=list)
+    injection_tier: str = "standard"  # minimal | standard | rich
+    reasons: list[str] = field(default_factory=list)
+    profile: str = "dynamic"
+
+    def summary(self) -> str:
+        return (
+            f"packs={self.packs or ['core']} tier={self.injection_tier} "
+            f"({', '.join(self.reasons[:4]) or 'default'})"
+        )
+
+
 def _norm_list(raw: object | None) -> list[str] | None:
-    """None → None；list → 去空白字符串列表。"""
     if raw is None:
         return None
     if not isinstance(raw, (list, tuple, set)):
         return None
-    out = [str(x).strip() for x in raw if str(x).strip()]
-    return out
+    return [str(x).strip() for x in raw if str(x).strip()]
 
 
 def wants_full_tools(
@@ -69,7 +288,6 @@ def wants_full_tools(
     *,
     profile: str = "core",
 ) -> bool:
-    """是否暴露全部工具。"""
     if (profile or "core").strip().lower() == "full":
         return True
     names = _norm_list(raw_tools)
@@ -79,22 +297,127 @@ def wants_full_tools(
     return "*" in lowered or "all" in lowered or "full" in lowered
 
 
+def list_pack_catalog() -> dict[str, list[str]]:
+    """供 use_tool_pack action=list。"""
+    return {k: list(v) for k, v in TOOL_PACKS.items() if k != "core"}
+
+
+def tools_for_packs(packs: Iterable[str]) -> list[str]:
+    """合并 pack → 去重工具名（core 顺序优先）。"""
+    base: set[str] = set(DEFAULT_CHAT_TOOL_WHITELIST)
+    for p in packs:
+        key = (p or "").strip().lower()
+        if key in {"*", "all", "full"}:
+            return []  # 信号：调用方应视作 full
+        if key == "core":
+            continue
+        if key in TOOL_PACKS:
+            base.update(TOOL_PACKS[key])
+    return _order_tools(base)
+
+
+def _order_tools(names: set[str]) -> list[str]:
+    preferred = list(DEFAULT_CHAT_TOOL_WHITELIST)
+    # pack 内相对顺序
+    pack_order: list[str] = []
+    for pack_tools in TOOL_PACKS.values():
+        for t in pack_tools:
+            if t not in pack_order:
+                pack_order.append(t)
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for n in preferred + pack_order + sorted(names):
+        if n in names and n not in seen:
+            ordered.append(n)
+            seen.add(n)
+    return ordered
+
+
+def infer_scene(
+    user_input: str,
+    *,
+    mode: str = "default",
+    profile: str = "dynamic",
+) -> ScenePlan:
+    """启发式场景判定（无额外 LLM 调用）。"""
+    text = (user_input or "").strip()
+    low = text.lower()
+    mode_key = (mode or "default").strip().lower()
+    prof = (profile or "dynamic").strip().lower()
+
+    packs: list[str] = []
+    reasons: list[str] = []
+
+    # ChatMode 强制 pack
+    for p in MODE_DEFAULT_PACKS.get(mode_key, ()):
+        if p not in packs:
+            packs.append(p)
+            reasons.append(f"mode:{mode_key}")
+
+    if prof in {"core", "full"}:
+        # core/full 不做关键词扩包（full 在 resolve 层短路）
+        tier = "standard" if prof == "core" else "rich"
+        if prof == "full":
+            return ScenePlan(packs=["*"], injection_tier="rich", reasons=["profile:full"], profile=prof)
+        return ScenePlan(packs=packs, injection_tier=tier, reasons=reasons or ["profile:core"], profile=prof)
+
+    # dynamic：关键词
+    for pack, kws in _PACK_KEYWORDS.items():
+        for kw in kws:
+            if kw.lower() in low or kw in text:
+                if pack not in packs:
+                    packs.append(pack)
+                    reasons.append(f"kw:{kw[:16]}")
+                break
+
+    # 注入档位
+    tier = "standard"
+    if not text or len(text) < 8 or any(h in low or h in text for h in _MINIMAL_HINTS):
+        if not packs:
+            tier = "minimal"
+            reasons.append("short/greeting")
+    if any(h in low or h in text for h in _KNOWLEDGE_HINTS) or len(text) > 400:
+        tier = "rich"
+        reasons.append("knowledge_or_long")
+    if "coding" in packs or mode_key in {"goal", "cluster"}:
+        if tier == "minimal":
+            tier = "standard"
+    if mode_key in {"ppt", "report", "search"}:
+        tier = "standard" if tier == "minimal" else tier
+
+    # 编码任务默认带 coding pack（已有读写工具，pack 补 shell_session）
+    if any(x in low for x in ("fix", "bug", "实现", "refactor", ".py", "traceback")):
+        if "coding" not in packs:
+            packs.append("coding")
+            reasons.append("coding_signal")
+
+    return ScenePlan(packs=packs, injection_tier=tier, reasons=reasons or ["dynamic:default"], profile=prof)
+
+
 def resolve_enabled_tool_names(
     *,
     mode: str = "default",
     raw_tools: object | None = None,
     raw_skills: object | None = None,
-    profile: str = "core",
+    profile: str = "dynamic",
     extra: Iterable[str] | None = None,
-) -> list[str] | None:
-    """解析本轮应暴露的工具名。
+    user_input: str = "",
+    extra_packs: Iterable[str] | None = None,
+    scene: ScenePlan | None = None,
+) -> tuple[list[str] | None, ScenePlan]:
+    """解析本轮工具名 + 场景计划。
 
     Returns:
-        None = 不过滤（全量）
-        list[str] = 白名单过滤
+        (None, plan) = 全量不过滤
+        (list, plan) = 白名单
     """
-    if wants_full_tools(raw_tools, profile=profile):
-        return None
+    prof = (profile or "dynamic").strip().lower()
+    plan = scene or infer_scene(user_input, mode=mode, profile=prof)
+
+    if wants_full_tools(raw_tools, profile=prof) or "*" in plan.packs or "full" in plan.packs:
+        plan.profile = "full"
+        plan.injection_tier = "rich"
+        return None, plan
 
     names = _norm_list(raw_tools)
     skills = _norm_list(raw_skills)
@@ -102,12 +425,17 @@ def resolve_enabled_tool_names(
     # 显式 tools 名单（非 *）
     if names is not None and len(names) > 0:
         base = set(names)
+        plan.reasons = list(plan.reasons) + ["explicit_tools"]
     else:
-        # 缺省 / 空列表 → core 白名单
-        # 注意：旧约定 skills=[] 表示 ALL；tools 同理。现改为 core。
-        base = set(DEFAULT_CHAT_TOOL_WHITELIST)
-        # 显式 skills 名单时并入（兼容旧 session）
-        if skills is not None and len(skills) > 0 and skills != ["*"]:
+        packs = list(plan.packs)
+        if extra_packs:
+            for p in extra_packs:
+                if p and p not in packs:
+                    packs.append(str(p).strip().lower())
+        # 空 packs → 仅 core
+        merged = tools_for_packs(packs)
+        base = set(merged)
+        if skills is not None and len(skills) > 0:
             if not (len(skills) == 1 and skills[0].lower() in {"*", "all"}):
                 base.update(skills)
 
@@ -115,24 +443,78 @@ def resolve_enabled_tool_names(
     base.update(MODE_TOOL_EXTRAS.get(mode_key, ()))
     if extra:
         base.update(str(x).strip() for x in extra if str(x).strip())
+    # meta 始终在
+    base.add("use_tool_pack")
 
-    # 稳定顺序：白名单顺序优先，其余按名字
-    preferred = list(DEFAULT_CHAT_TOOL_WHITELIST)
-    ordered: list[str] = []
-    seen: set[str] = set()
-    for n in preferred + sorted(base):
-        if n in base and n not in seen:
-            ordered.append(n)
-            seen.add(n)
-    return ordered
+    ordered = _order_tools(base)
+    plan.packs = list(dict.fromkeys(plan.packs))
+    return ordered, plan
 
 
-def compact_capability_brief(tool_names: list[str] | None) -> str:
-    """短 brief：只强调纪律，不广告全平台。"""
+def merge_tools_with_packs(
+    current: list[str] | None,
+    packs: Iterable[str],
+) -> list[str] | None:
+    """中途扩容：None(全量) 保持 None；否则并入 pack。"""
+    pack_list = [str(p).strip().lower() for p in packs if str(p).strip()]
+    if any(p in {"*", "all", "full"} for p in pack_list):
+        return None
+    added = tools_for_packs(pack_list)
+    if current is None:
+        return None
+    return _order_tools(set(current) | set(added))
+
+
+def compact_capability_brief(
+    tool_names: list[str] | None,
+    *,
+    scene: ScenePlan | None = None,
+) -> str:
+    """短 brief + 可选场景说明。"""
     n = len(tool_names) if tool_names is not None else "all"
-    return (
+    lines = [
         "Tool discipline: use the provided tools for facts, files, shell, and live data. "
         f"Available tool count this turn: {n}. "
-        "Do not claim a capability is missing without trying the matching tool first. "
-        "Prefer tools over speculation; finish the user task."
-    )
+        "Do not claim a capability is missing without trying the matching tool first.",
+    ]
+    if scene and scene.profile != "full":
+        lines.append(
+            f"Scene: {scene.summary()}. "
+            "If you need desktop/manage/evolution/office tools not listed, "
+            "call use_tool_pack(action='enable', packs=[...]) first "
+            "(action='list' to see packs)."
+        )
+    lines.append("Prefer tools over speculation; finish the user task.")
+    return "\n".join(lines)
+
+
+def injection_knobs(tier: str) -> dict[str, object]:
+    """注入档位 → loop 开关。"""
+    t = (tier or "standard").strip().lower()
+    if t == "minimal":
+        return {
+            "rag": False,
+            "wiki": False,
+            "entity": False,
+            "rag_top_k": 0,
+            "wiki_limit": 0,
+            "entity_limit": 0,
+        }
+    if t == "rich":
+        return {
+            "rag": True,
+            "wiki": True,
+            "entity": True,
+            "rag_top_k": 5,
+            "wiki_limit": 8,
+            "entity_limit": 5,
+        }
+    return {
+        "rag": True,
+        "wiki": True,
+        "entity": True,
+        "rag_top_k": 3,
+        "wiki_limit": 4,
+        "entity_limit": 3,
+    }
+

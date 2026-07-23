@@ -212,7 +212,11 @@ class NexusAgentLoop:
         return messages
 
     async def _inject_wiki_context(
-        self, messages: list[dict[str, Any]], user_input: str
+        self,
+        messages: list[dict[str, Any]],
+        user_input: str,
+        *,
+        limit: int = 6,
     ) -> list[dict[str, Any]]:
         """把 Wiki 图谱中匹配的实体摘要拼进 system。"""
         q = (user_input or "").strip()
@@ -225,14 +229,15 @@ class NexusAgentLoop:
             ents = await repo.search(q) or []
             if not ents:
                 return messages
+            lim = max(1, min(int(limit or 6), 12))
             lines = ["# Wiki 图谱相关实体"]
-            for e in ents[:6]:
+            for e in ents[:lim]:
                 lines.append(
                     f"- **{e.name}** ({getattr(e, 'entity_type', 'concept')})"
                     + (f"：{e.description}" if e.description else "")
                 )
             self._append_to_system(messages, "\n".join(lines))
-            logger.info("Injected %s wiki entities for query", min(6, len(ents)))
+            logger.info("Injected %s wiki entities for query", min(lim, len(ents)))
         except Exception as e:
             logger.debug("Wiki inject skipped: %s", e)
         return messages
@@ -412,10 +417,11 @@ class NexusAgentLoop:
         # P0-3: Auto Optimize 自动触发
         await self._check_auto_optimize(session_id, config, total_tokens)
 
-        # 5. 加载 Skills/Tools（合并后的统一 Tool 体系）
-        # 默认 core 白名单（~18）；tools=["*"] 或 agent_tool_profile=full 才全量
+        # 5. 加载 Skills/Tools — dynamic 场景路由 / core 白名单 / full 全量
         from backend.agent.tool_policy import (
             compact_capability_brief,
+            injection_knobs,
+            merge_tools_with_packs,
             resolve_enabled_tool_names,
         )
 
@@ -423,11 +429,10 @@ class NexusAgentLoop:
         raw_tools = config.get("tools", None)
         tool_profile = str(
             config.get("tool_profile")
-            or getattr(settings, "agent_tool_profile", "core")
-            or "core"
+            or getattr(settings, "agent_tool_profile", "dynamic")
+            or "dynamic"
         ).strip().lower()
 
-        # 旧 skills 过滤仍保留语义：None/[]/["*"] → 不按 skill 名硬过滤
         if raw_skills is None or raw_skills == [] or raw_skills == ["*"]:
             enabled_skills = None
         else:
@@ -445,13 +450,15 @@ class NexusAgentLoop:
         if mode == "cluster":
             mode_extra.extend(["manage_sub_agent", "delegate_task", "agent_call"])
 
-        enabled_tools_filter = resolve_enabled_tool_names(
+        enabled_tools_filter, scene_plan = resolve_enabled_tool_names(
             mode=mode or "default",
             raw_tools=raw_tools,
             raw_skills=raw_skills,
             profile=tool_profile,
             extra=mode_extra,
+            user_input=enriched_input or user_input or "",
         )
+        inject_opts = injection_knobs(scene_plan.injection_tier)
         if mode_extra and enabled_skills is not None:
             enabled_skills = list(set(list(enabled_skills) + mode_extra))
 
@@ -459,12 +466,23 @@ class NexusAgentLoop:
             session_id, enabled_skills, enabled_tools_filter, user_input=user_input
         )
         logger.info(
-            f"Loaded {len(tools)} tools for session {session_id} "
-            f"(profile={tool_profile}, filter="
-            f"{'ALL' if enabled_tools_filter is None else len(enabled_tools_filter)})"
+            "Loaded %s tools session=%s profile=%s scene=%s filter=%s",
+            len(tools),
+            session_id,
+            tool_profile,
+            scene_plan.summary(),
+            "ALL" if enabled_tools_filter is None else len(enabled_tools_filter),
         )
+        try:
+            await self._push_status(
+                session_id,
+                "thinking",
+                f"场景 {scene_plan.summary()} · 工具 {len(tools)}",
+            )
+        except Exception:
+            pass
 
-        # 短纪律 brief（不再每轮塞平台能力广告）
+        # 短纪律 brief + 场景/扩包提示
         try:
             tool_name_list = [
                 (t.get("function") or {}).get("name")
@@ -472,7 +490,8 @@ class NexusAgentLoop:
                 if (t.get("function") or {}).get("name")
             ]
             brief = compact_capability_brief(
-                None if enabled_tools_filter is None else tool_name_list
+                None if enabled_tools_filter is None else tool_name_list,
+                scene=scene_plan,
             )
             try:
                 from backend.tools.builtins.capability_tools import _load_prefs
@@ -648,25 +667,44 @@ class NexusAgentLoop:
             logger.warning(f"Context compress skipped: {e}")
             compress_meta = {}
 
-        # 7. RAG + Wiki 注入（上下文紧张时加强 RAG top_k）
+        # 7. RAG + Wiki + 实体：按场景 injection_tier 动态控制
         strengthen_rag = bool(compress_meta.get("compressed")) or (
             total_tokens > int(getattr(settings, "context_window", 128_000) or 128_000) * 0.55
         )
-        messages = await self._inject_rag_context(
-            messages, enriched_input, top_k=3, strengthen=strengthen_rag
-        )
-        messages = await self._inject_wiki_context(messages, enriched_input)
-        # 实体记忆召回
-        try:
-            from backend.services.entity_service import get_entity_service
-            es = get_entity_service()
-            recalled = await es.recall(user_input, user_id=self.user_id, limit=3)
-            if recalled:
-                ctx = es.format_recall_context(recalled)
-                if ctx:
-                    self._append_to_system(messages, ctx)
-        except Exception as e:
-            logger.debug("entity recall skipped: %s", e)
+        if inject_opts.get("rag"):
+            messages = await self._inject_rag_context(
+                messages,
+                enriched_input,
+                top_k=int(inject_opts.get("rag_top_k") or 3),
+                strengthen=strengthen_rag and scene_plan.injection_tier == "rich",
+            )
+        else:
+            logger.debug("RAG skipped tier=%s", scene_plan.injection_tier)
+        if inject_opts.get("wiki"):
+            messages = await self._inject_wiki_context(
+                messages,
+                enriched_input,
+                limit=int(inject_opts.get("wiki_limit") or 4),
+            )
+        else:
+            logger.debug("Wiki skipped tier=%s", scene_plan.injection_tier)
+        if inject_opts.get("entity"):
+            try:
+                from backend.services.entity_service import get_entity_service
+                es = get_entity_service()
+                recalled = await es.recall(
+                    user_input,
+                    user_id=self.user_id,
+                    limit=int(inject_opts.get("entity_limit") or 3),
+                )
+                if recalled:
+                    ctx = es.format_recall_context(recalled)
+                    if ctx:
+                        self._append_to_system(messages, ctx)
+            except Exception as e:
+                logger.debug("entity recall skipped: %s", e)
+        else:
+            logger.debug("entity skipped tier=%s", scene_plan.injection_tier)
 
         # 8. Agent Loop
         final_content = ""
@@ -1215,6 +1253,60 @@ class NexusAgentLoop:
                     f"Tool round {iteration + 1} done ({len(tool_calls)} calls), continuing agent loop"
                 )
                 _last_tool_round_count = len(tool_calls)
+
+                # dynamic：use_tool_pack enable → 合并工具 schema 供后续轮次
+                try:
+                    expanded_any = False
+                    for tc in tool_calls:
+                        if getattr(tc, "name", None) != "use_tool_pack":
+                            continue
+                        raw_args = getattr(tc, "arguments", None) or {}
+                        if isinstance(raw_args, str):
+                            try:
+                                raw_args = json.loads(raw_args)
+                            except Exception:
+                                raw_args = {}
+                        if not isinstance(raw_args, dict):
+                            continue
+                        action = (raw_args.get("action") or "list").strip().lower()
+                        packs = raw_args.get("packs") or []
+                        if isinstance(packs, str):
+                            packs = [packs]
+                        if raw_args.get("pack"):
+                            packs = list(packs) + [raw_args.get("pack")]
+                        packs = [str(x).strip().lower() for x in packs if str(x).strip()]
+                        if action == "list" or not packs:
+                            continue
+                        new_filter = merge_tools_with_packs(enabled_tools_filter, packs)
+                        if new_filter is None and enabled_tools_filter is not None:
+                            enabled_tools_filter = None
+                            expanded_any = True
+                        elif new_filter is not None and new_filter != enabled_tools_filter:
+                            enabled_tools_filter = new_filter
+                            expanded_any = True
+                        if packs:
+                            for pk in packs:
+                                if pk not in scene_plan.packs:
+                                    scene_plan.packs.append(pk)
+                    if expanded_any:
+                        tools = await self._load_tools(
+                            session_id,
+                            enabled_skills,
+                            enabled_tools_filter,
+                            user_input=user_input,
+                        )
+                        await self._push_status(
+                            session_id,
+                            "thinking",
+                            f"已扩展工具包 → {len(tools)} tools ({scene_plan.summary()})",
+                        )
+                        logger.info(
+                            "use_tool_pack expanded tools=%s filter=%s",
+                            len(tools),
+                            "ALL" if enabled_tools_filter is None else len(enabled_tools_filter),
+                        )
+                except Exception as e:
+                    logger.debug("use_tool_pack expand skipped: %s", e)
                 _tool_rounds += 1
                 # 重复工具签名熔断（同名同参连续空转）
                 try:
