@@ -642,6 +642,10 @@ npx playwright test
 
 ### C. 更新日志
 
+- **v0.2.6** (2026-07-23)
+  - 主脑 L0–L4：coding profile、工具预算/重试、workspace 契约、hooks、sidecar packs
+  - 桌面 Linux 截图链路修复；真显示/Xvfb E2E；高强度 bench 双模型
+  - takton-code TUI lazy import；版本号对齐 0.2.6
 - **v0.2.5** (2026-07-22)
   - 自主进化开关跨重启持久化：`EvolutionConfig` 运行时开关字段（enabled/mode/auto_apply_*/from_*/curator 等 9 项）写入 `evolution_config.json`（与 evolution.db 同目录），启动时 env 默认值 + 持久化覆盖，重启不丢（`backend/evolution/config.py`）
   - 自主进化页资产列表项直接加「查看/删除」小按钮：原先删除藏在右侧详情面板（需先选中），现每项行内可操作，复用 onDelete（确认弹窗 + seed 保护 + toast + 自动刷新），整行 button 改 div 修掉嵌套 button 无效 HTML（`frontend/app/evolution/page.tsx`）

@@ -59,8 +59,8 @@ info "Install dir: $INSTALL_DIR"
 mkdir -p "$INSTALL_DIR" "$BIN_DIR"
 
 # Fallback only when GitHub API is unreachable.
-TAG="v0.2.5"
-ASSET="Takton-0.2.5.AppImage"
+TAG="v0.2.6"
+ASSET="Takton-0.2.6.AppImage"
 URL=""
 if resolved="$(resolve_latest)"; then
   TAG="$(printf '%s\n' "$resolved" | sed -n '1p')"

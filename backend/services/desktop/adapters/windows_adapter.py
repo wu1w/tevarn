@@ -320,7 +320,7 @@ class WindowsAdapter:
         try:
             import json
             return json.loads(result)
-        except:
+        except Exception:
             # 如果不是 JSON，返回原始字符串
             return {"raw": result}
     

@@ -14,7 +14,7 @@
 
 <br/>
 
-[![Version](https://img.shields.io/badge/version-0.2.5-7C3AED?style=flat-square)](https://github.com/wu1w/takton/releases)
+[![Version](https://img.shields.io/badge/version-0.2.6-7C3AED?style=flat-square)](https://github.com/wu1w/takton/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-06B6D4?style=flat-square)](https://github.com/wu1w/takton/releases)
 [![License](https://img.shields.io/badge/license-MIT-22C55E?style=flat-square)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/wu1w/takton?style=flat-square&logo=github)](https://github.com/wu1w/takton/stargazers)
@@ -141,10 +141,10 @@ curl -fsSL https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.sh
 
 | Platform | Package | 下载 |
 |----------|---------|------|
-| Windows | Setup.exe | [Takton-Setup-0.2.5.exe](https://github.com/wu1w/takton/releases/download/v0.2.5/Takton-Setup-0.2.5.exe) |
-| Windows | Portable.zip | [Takton-0.2.5-win-x64-portable.zip](https://github.com/wu1w/takton/releases/download/v0.2.5/Takton-0.2.5-win-x64-portable.zip) |
-| Linux | AppImage | [Takton-0.2.5.AppImage](https://github.com/wu1w/takton/releases/download/v0.2.5/Takton-0.2.5.AppImage) |
-| Linux | deb | [takton_0.2.5_amd64.deb](https://github.com/wu1w/takton/releases/download/v0.2.5/takton_0.2.5_amd64.deb) |
+| Windows | Setup.exe | [Takton-Setup-0.2.6.exe](https://github.com/wu1w/takton/releases/download/v0.2.6/Takton-Setup-0.2.6.exe) |
+| Windows | Portable.zip | [Takton-0.2.6-win-x64-portable.zip](https://github.com/wu1w/takton/releases/download/v0.2.6/Takton-0.2.6-win-x64-portable.zip) |
+| Linux | AppImage | [Takton-0.2.6.AppImage](https://github.com/wu1w/takton/releases/download/v0.2.6/Takton-0.2.6.AppImage) |
+| Linux | deb | [takton_0.2.6_amd64.deb](https://github.com/wu1w/takton/releases/download/v0.2.6/takton_0.2.6_amd64.deb) |
 
 > 一键脚本会自动解析 [最新 Release](https://github.com/wu1w/takton/releases/latest) 资产；上表为固定直链备份。
 

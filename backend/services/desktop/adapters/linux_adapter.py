@@ -4,7 +4,6 @@ Linux 平台桌面适配器
 """
 
 import asyncio
-import base64
 import logging
 import shutil
 import subprocess
@@ -315,17 +314,7 @@ class LinuxAdapter:
                     success=False,
                     message=f"scrot 输出过小 ({len(raw)} bytes)，检查 DISPLAY={env.get('DISPLAY')}",
                 )
-            img_base64 = base64.b64encode(raw).decode("utf-8")
-            return DesktopOperationResult(
-                success=True,
-                message="截图成功",
-                data={
-                    "image": img_base64,
-                    "tool": "scrot",
-                    "bytes": len(raw),
-                    "path": tmp_path,
-                },
-            )
+            return self._finalize_screenshot(raw, "scrot", tmp_path)
         finally:
             try:
                 os.unlink(tmp_path)
