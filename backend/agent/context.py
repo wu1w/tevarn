@@ -55,6 +55,12 @@ class ContextManager:
         platform: str | None = None,
         tools_enabled: list[str] | None = None,
         model: str | None = None,
+        *,
+        scene_packs: list[str] | None = None,
+        prompt_skill_mode: str | None = None,
+        prompt_skill_match_threshold: float | None = None,
+        prompt_skill_max_full: int | None = None,
+        inject_prompt_skills: bool = True,
     ) -> tuple[list[dict[str, Any]], list[tuple[str, str]], int]:
         """
         组装完整的 messages 列表。
@@ -182,9 +188,19 @@ class ContextManager:
             loader = get_prompt_skill_loader()
             installed_skills = loader.list_installed()
             logger.info("prompt-skills: found %d installed", len(installed_skills))
+            # summary：场景有 pack 时仍可给短目录；无 pack 寒暄档由 inject_prompt_skills=False 关掉
+            include_summary = bool(inject_prompt_skills)
+            if prompt_skill_mode == "summary" and not (scene_packs or []):
+                include_summary = True
             prompt_skills_block, plan = loader.build_injection_block(
                 user_input or "",
                 skills=installed_skills,
+                mode=prompt_skill_mode,
+                match_threshold=prompt_skill_match_threshold,
+                max_full=prompt_skill_max_full,
+                scene_packs=scene_packs,
+                include_summary=include_summary,
+                enabled=bool(inject_prompt_skills),
             )
             self.last_prompt_skill_plan = {
                 "mode": plan.mode,
@@ -192,6 +208,7 @@ class ContextManager:
                 "full_skills": plan.full_skills,
                 "scores": plan.scores,
                 "block_chars": plan.block_chars,
+                "scene_packs": list(scene_packs or []),
             }
             if prompt_skills_block:
                 logger.info(

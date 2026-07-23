@@ -488,8 +488,24 @@ def compact_capability_brief(
     return "\n".join(lines)
 
 
+# pack → skill 标签/关键词加权（与 prompt-skill 对齐）
+SCENE_SKILL_HINTS: dict[str, tuple[str, ...]] = {
+    "coding": ("code", "python", "git", "debug", "refactor", "编程", "代码", "test", "lint"),
+    "web": ("search", "browser", "web", "http", "crawl", "搜索", "网页"),
+    "desktop": ("desktop", "gui", "uia", "click", "screenshot", "桌面", "键鼠"),
+    "manage": ("cron", "config", "ops", "channel", "mcp", "webhook", "运维", "配置"),
+    "evolution": ("evolution", "skill", "进化", "curator", "tee"),
+    "office": ("ppt", "docx", "report", "office", "chart", "tts", "日历", "幻灯"),
+    "devices": ("device", "remote", "ssh", "agent", "设备", "远程"),
+    "github": ("github", "pr", "ci", "gh"),
+    "goal": ("goal", "plan", "autopilot", "目标", "里程碑"),
+    "cluster": ("cluster", "delegate", "subagent", "多代理", "子代理"),
+    "data": ("sql", "sqlite", "database", "数据"),
+}
+
+
 def injection_knobs(tier: str) -> dict[str, object]:
-    """注入档位 → loop 开关。"""
+    """注入档位 → loop / prompt-skill / RAG 开关与阈值。"""
     t = (tier or "standard").strip().lower()
     if t == "minimal":
         return {
@@ -499,6 +515,12 @@ def injection_knobs(tier: str) -> dict[str, object]:
             "rag_top_k": 0,
             "wiki_limit": 0,
             "entity_limit": 0,
+            "rag_min_score": 0.85,
+            "prompt_skills": False,
+            "skill_mode": "summary",
+            "skill_threshold": 9.0,
+            "skill_max_full": 0,
+            "wiki_min_score": 0.35,
         }
     if t == "rich":
         return {
@@ -508,7 +530,14 @@ def injection_knobs(tier: str) -> dict[str, object]:
             "rag_top_k": 5,
             "wiki_limit": 8,
             "entity_limit": 5,
+            "rag_min_score": 0.42,
+            "prompt_skills": True,
+            "skill_mode": "auto",
+            "skill_threshold": 0.75,
+            "skill_max_full": 2,
+            "wiki_min_score": 0.12,
         }
+    # standard：宁缺毋滥
     return {
         "rag": True,
         "wiki": True,
@@ -516,5 +545,11 @@ def injection_knobs(tier: str) -> dict[str, object]:
         "rag_top_k": 3,
         "wiki_limit": 4,
         "entity_limit": 3,
+        "rag_min_score": 0.58,
+        "prompt_skills": True,
+        "skill_mode": "auto",
+        "skill_threshold": 0.95,
+        "skill_max_full": 1,
+        "wiki_min_score": 0.2,
     }
 

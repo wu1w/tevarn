@@ -179,7 +179,13 @@ class PromptSkillLoader:
                 return skill
         return None
 
-    def score_relevance(self, skill: PromptSkill, user_input: str) -> SkillMatch:
+    def score_relevance(
+        self,
+        skill: PromptSkill,
+        user_input: str,
+        *,
+        scene_packs: list[str] | None = None,
+    ) -> SkillMatch:
         """计算 skill 与当前用户输入的相关度 (0~1+ 粗分)。"""
         q = (user_input or "").strip()
         if not q:
@@ -251,6 +257,38 @@ class PromptSkillLoader:
                 score += 0.55 if len(nl) < 4 else 0.9
                 reasons.append(f"substr:{nl[:24]}")
 
+        # 4) 场景 pack 对齐加权（dynamic tool packs → skill tags/name）
+        if scene_packs:
+            try:
+                from backend.agent.tool_policy import SCENE_SKILL_HINTS
+            except Exception:
+                SCENE_SKILL_HINTS = {}
+            hay = " ".join(
+                [
+                    skill.name,
+                    skill.display_name,
+                    skill.description or "",
+                    " ".join(skill.tags or []),
+                    (skill.body or "")[:800],
+                ]
+            ).lower()
+            for pack in scene_packs:
+                pk = (pack or "").strip().lower()
+                if not pk or pk in {"*", "full", "all", "core"}:
+                    continue
+                hints = SCENE_SKILL_HINTS.get(pk, (pk,))
+                hit = False
+                for h in hints:
+                    hl = h.lower()
+                    if hl and hl in hay:
+                        score += 0.85
+                        reasons.append(f"scene:{pk}:{hl[:16]}")
+                        hit = True
+                        break
+                if not hit and pk in hay:
+                    score += 0.5
+                    reasons.append(f"scene:{pk}")
+
         # 归一到大约 0~1 便于阈值；保留 >1 表示强命中
         return SkillMatch(skill=skill, score=score, reasons=reasons[:8])
 
@@ -262,6 +300,7 @@ class PromptSkillLoader:
         mode: PromptSkillMode = "auto",
         max_full: int = 2,
         threshold: float = 0.85,
+        scene_packs: list[str] | None = None,
     ) -> list[SkillMatch]:
         """决定哪些 skill 注入全文。"""
         if not skills or max_full <= 0:
@@ -275,8 +314,10 @@ class PromptSkillLoader:
             ordered = sorted(skills, key=lambda s: s.size)
             return [SkillMatch(skill=s, score=99.0, reasons=["mode:full"]) for s in ordered[:max_full]]
 
-        # auto：打分排序
-        matches = [self.score_relevance(s, user_input) for s in skills]
+        # auto：打分排序（含场景 pack 加权）
+        matches = [
+            self.score_relevance(s, user_input, scene_packs=scene_packs) for s in skills
+        ]
         matches.sort(key=lambda m: m.score, reverse=True)
 
         selected: list[SkillMatch] = []
@@ -351,9 +392,15 @@ class PromptSkillLoader:
         full_max_chars: int | None = None,
         match_threshold: float | None = None,
         skills: list[PromptSkill] | None = None,
+        scene_packs: list[str] | None = None,
+        include_summary: bool = True,
+        enabled: bool = True,
     ) -> tuple[str, InjectionPlan]:
         """构建最终注入块 + 计划元数据。"""
         from backend.core.config import settings
+
+        if not enabled:
+            return "", InjectionPlan(mode="off", summary_skills=[], full_skills=[], scores={})
 
         mode_s = (mode or getattr(settings, "prompt_skill_mode", "auto") or "auto").lower()
         if mode_s not in ("summary", "auto", "full"):
@@ -385,18 +432,37 @@ class PromptSkillLoader:
             mode=mode_s,  # type: ignore[arg-type]
             max_full=max_full_n,
             threshold=threshold,
+            scene_packs=scene_packs,
         )
         full_ids = {f"{m.skill.source}/{m.skill.name}" for m in selected}
         scores = {f"{m.skill.source}/{m.skill.name}": round(m.score, 3) for m in selected}
         # 也记录未入选的 top 分数便于日志
         if mode_s == "auto":
             all_scores = {
-                f"{s.source}/{s.name}": round(self.score_relevance(s, user_input).score, 3)
+                f"{s.source}/{s.name}": round(
+                    self.score_relevance(s, user_input, scene_packs=scene_packs).score, 3
+                )
                 for s in skills
             }
             scores = {**all_scores, **scores}
 
-        summary = self.build_summary_block(skills, full_ids=full_ids)
+        # standard/rich：无全文命中时仍可要短目录；minimal 由 enabled=False 跳过
+        summary = self.build_summary_block(skills, full_ids=full_ids) if include_summary else ""
+        # 场景下若 skill 很多，目录只保留 top 相关（按分数）
+        if include_summary and scene_packs and mode_s == "auto" and len(skills) > 8:
+            ranked = sorted(
+                (
+                    (self.score_relevance(s, user_input, scene_packs=scene_packs).score, s)
+                    for s in skills
+                ),
+                key=lambda x: -x[0],
+            )
+            keep = [s for sc, s in ranked if sc >= max(0.25, threshold * 0.35)][:12]
+            # 始终保留已选全文
+            keep_ids = {f"{s.source}/{s.name}" for s in keep} | full_ids
+            keep_skills = [s for s in skills if f"{s.source}/{s.name}" in keep_ids]
+            if keep_skills:
+                summary = self.build_summary_block(keep_skills, full_ids=full_ids)
         parts = [summary] if summary else []
 
         for m in selected:

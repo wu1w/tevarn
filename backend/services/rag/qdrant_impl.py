@@ -382,6 +382,7 @@ class QdrantRAGService(RAGService):
         collections: list[str] | None = None,
         user_id: str | None = None,
         search_mode: str | None = None,
+        min_score: float | None = None,
         **kwargs: Any,
     ) -> str:
         """
@@ -458,9 +459,25 @@ class QdrantRAGService(RAGService):
 
             # 4. 上下文组装（使用 ContextAssembler）
             try:
-                from backend.services.rag.context_assembler import ContextAssembler
-                assembler = ContextAssembler()
+                from backend.services.rag.context_assembler import ContextAssembler, RetrievalContract
+                from backend.core.config import settings as _settings
+                base_min = float(getattr(_settings, "rag_min_score", 0.5) or 0.5)
+                eff_min = float(min_score) if min_score is not None else base_min
+                # kwargs 也可传
+                if min_score is None and kwargs.get("min_score") is not None:
+                    eff_min = float(kwargs["min_score"])
+                contract = RetrievalContract(
+                    min_score=eff_min,
+                    max_tokens=int(getattr(_settings, "rag_max_context_tokens", 4000) or 4000),
+                )
+                assembler = ContextAssembler(contract)
                 context = assembler.assemble(reranked, doc_payloads[:len(reranked)])
+                if not context:
+                    logger.info(
+                        "RAG inject empty after min_score=%.3f (had %s reranked)",
+                        eff_min,
+                        len(reranked),
+                    )
             except ImportError:
                 # fallback：旧格式
                 context = self._format_context(reranked)

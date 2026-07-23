@@ -180,6 +180,7 @@ class NexusAgentLoop:
         *,
         top_k: int = 3,
         strengthen: bool = False,
+        min_score: float | None = None,
     ) -> list[dict[str, Any]]:
         """向量 RAG 自动注入：仅 Embedding+Qdrant 就绪时生效（默认本地模式跳过）。"""
         from backend.services.rag.capability import get_rag_status
@@ -199,6 +200,7 @@ class NexusAgentLoop:
                 user_input,
                 top_k=k,
                 user_id=str(self.user_id) if self.user_id else None,
+                min_score=min_score,
             )
             # Null 实现会返回“不可用”文案 — 不应注入
             if context and context.strip() and "知识库检索不可用" not in context:
@@ -217,8 +219,9 @@ class NexusAgentLoop:
         user_input: str,
         *,
         limit: int = 6,
+        min_score: float = 0.2,
     ) -> list[dict[str, Any]]:
-        """把 Wiki 图谱中匹配的实体摘要拼进 system。"""
+        """把 Wiki 图谱中匹配的实体摘要拼进 system（简单相关度门槛）。"""
         q = (user_input or "").strip()
         if len(q) < 2:
             return messages
@@ -230,14 +233,50 @@ class NexusAgentLoop:
             if not ents:
                 return messages
             lim = max(1, min(int(limit or 6), 12))
+            q_low = q.lower()
+            q_tokens = {t for t in q_low.replace("/", " ").replace("-", " ").split() if len(t) >= 2}
+
+            def _score(ent: object) -> float:
+                name = str(getattr(ent, "name", "") or "")
+                desc = str(getattr(ent, "description", "") or "")
+                hay = f"{name} {desc}".lower()
+                if not hay.strip():
+                    return 0.0
+                sc = 0.0
+                if name and name.lower() in q_low:
+                    sc += 0.7
+                if q_low and name.lower() and name.lower() in q_low:
+                    sc += 0.2
+                # token overlap
+                n_toks = {t for t in hay.replace(",", " ").split() if len(t) >= 2}
+                if q_tokens and n_toks:
+                    inter = q_tokens & n_toks
+                    sc += 0.5 * (len(inter) / max(1, len(q_tokens)))
+                # CJK bigram soft
+                for i in range(max(0, len(q) - 1)):
+                    bg = q[i : i + 2]
+                    if bg.strip() and bg in hay:
+                        sc += 0.08
+                return sc
+
+            ranked = sorted((( _score(e), e) for e in ents), key=lambda x: -x[0])
+            kept = [(s, e) for s, e in ranked if s >= float(min_score)][:lim]
+            if not kept:
+                logger.info(
+                    "Wiki inject skipped: all below min_score=%.2f (candidates=%s)",
+                    min_score,
+                    len(ents),
+                )
+                return messages
             lines = ["# Wiki 图谱相关实体"]
-            for e in ents[:lim]:
+            for s, e in kept:
                 lines.append(
                     f"- **{e.name}** ({getattr(e, 'entity_type', 'concept')})"
                     + (f"：{e.description}" if e.description else "")
+                    + f" (rel={s:.2f})"
                 )
             self._append_to_system(messages, "\n".join(lines))
-            logger.info("Injected %s wiki entities for query", min(lim, len(ents)))
+            logger.info("Injected %s wiki entities for query", len(kept))
         except Exception as e:
             logger.debug("Wiki inject skipped: %s", e)
         return messages
@@ -401,13 +440,36 @@ class NexusAgentLoop:
         else:
             history_for_build = history_dicts
 
-        # 4. 组装 messages（CtxItem 优先，fallback 到四维度配置）
+        # 4. 场景预判（先于 system/skill 组装，保证 prompt-skill 与工具面一致）
+        from backend.agent.tool_policy import (
+            infer_scene,
+            injection_knobs,
+        )
+
+        _early_profile = str(
+            (config or {}).get("tool_profile")
+            or getattr(settings, "agent_tool_profile", "dynamic")
+            or "dynamic"
+        ).strip().lower()
+        scene_plan = infer_scene(
+            enriched_input or user_input or "",
+            mode=mode or "default",
+            profile=_early_profile,
+        )
+        inject_opts = injection_knobs(scene_plan.injection_tier)
+
+        # 5. 组装 messages（CtxItem 优先；skill 按场景+档位注入）
         messages, accessed_items, total_tokens = await self.context_manager.build_messages(
             session_id=session_id,
             user_input=enriched_input,
             history=history_for_build,
             fallback_config=config,
             mode=mode,
+            scene_packs=list(scene_plan.packs),
+            prompt_skill_mode=str(inject_opts.get("skill_mode") or "auto"),
+            prompt_skill_match_threshold=float(inject_opts.get("skill_threshold") or 0.95),
+            prompt_skill_max_full=int(inject_opts.get("skill_max_full") or 0),
+            inject_prompt_skills=bool(inject_opts.get("prompt_skills", True)),
         )
 
         # 记录初始上下文访问流
@@ -417,21 +479,16 @@ class NexusAgentLoop:
         # P0-3: Auto Optimize 自动触发
         await self._check_auto_optimize(session_id, config, total_tokens)
 
-        # 5. 加载 Skills/Tools — dynamic 场景路由 / core 白名单 / full 全量
+        # 6. 加载 Skills/Tools — 复用预判 scene_plan，避免二次漂移
         from backend.agent.tool_policy import (
             compact_capability_brief,
-            injection_knobs,
             merge_tools_with_packs,
             resolve_enabled_tool_names,
         )
 
         raw_skills = config.get("skills", None)
         raw_tools = config.get("tools", None)
-        tool_profile = str(
-            config.get("tool_profile")
-            or getattr(settings, "agent_tool_profile", "dynamic")
-            or "dynamic"
-        ).strip().lower()
+        tool_profile = _early_profile
 
         if raw_skills is None or raw_skills == [] or raw_skills == ["*"]:
             enabled_skills = None
@@ -457,6 +514,7 @@ class NexusAgentLoop:
             profile=tool_profile,
             extra=mode_extra,
             user_input=enriched_input or user_input or "",
+            scene=scene_plan,
         )
         inject_opts = injection_knobs(scene_plan.injection_tier)
         if mode_extra and enabled_skills is not None:
@@ -677,6 +735,7 @@ class NexusAgentLoop:
                 enriched_input,
                 top_k=int(inject_opts.get("rag_top_k") or 3),
                 strengthen=strengthen_rag and scene_plan.injection_tier == "rich",
+                min_score=float(inject_opts.get("rag_min_score") or 0.58),
             )
         else:
             logger.debug("RAG skipped tier=%s", scene_plan.injection_tier)
@@ -685,6 +744,7 @@ class NexusAgentLoop:
                 messages,
                 enriched_input,
                 limit=int(inject_opts.get("wiki_limit") or 4),
+                min_score=float(inject_opts.get("wiki_min_score") or 0.2),
             )
         else:
             logger.debug("Wiki skipped tier=%s", scene_plan.injection_tier)
