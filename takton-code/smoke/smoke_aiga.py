@@ -31,7 +31,7 @@ from takton_code.llm.provider import OpenAICompatibleProvider, build_llm_provide
 from takton_code.project.binder import bind_project, init_project_files
 from takton_code.session.store import SessionStore
 
-AIGA_BASE = os.environ.get("TAKTON_CODE_BASE_URL", "http://192.168.5.32:8088/v1")
+AIGA_BASE = os.environ.get("TAKTON_CODE_BASE_URL", "http://127.0.0.1:8088/v1")
 AIGA_MODEL = os.environ.get(
     "TAKTON_CODE_MODEL", "local-model.gguf"
 )

@@ -69,5 +69,17 @@ tray-icon.png
 *.AppImage
 frontend/dist/
 electron/dist/
+# Electron 编译产物（由 npm run build:electron 生成，勿提交）
+electron/*.js
+electron/*.js.map
+frontend/electron/*.js
+frontend/electron/*.js.map
+frontend/electron/dist/
+# takton-code onefile 可执行文件（PyInstaller 产物，打包前放入，勿提交）
+vendor/takton-code/takton-code
+vendor/takton-code/takton-code.exe
+# 本地/内部产物
+PLAN-*.md
+data/sft_corpus/
 embedding_metadata.json
 logs/

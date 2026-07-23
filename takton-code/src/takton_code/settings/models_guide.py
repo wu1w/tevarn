@@ -46,7 +46,7 @@ PRESETS: dict[str, ModelPreset] = {
     "local": ModelPreset(
         id="local",
         name="LOCAL llama.cpp (局域网)",
-        base_url="http://192.168.5.32:8088/v1",
+        base_url="http://127.0.0.1:8088/v1",
         model="local-model.gguf",
         context_window=262144,
         max_tokens=4096,

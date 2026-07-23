@@ -13,7 +13,7 @@ Usage:
   PYTHONPATH=src python smoke/stress_aiga_load.py
 
 Env overrides:
-  TAKTON_CODE_BASE_URL  default http://192.168.5.32:8088/v1
+  TAKTON_CODE_BASE_URL  default http://127.0.0.1:8088/v1
   TAKTON_CODE_MODEL
   TAKTON_CODE_CONTEXT_WINDOW   default 12000 (small → easier auto-compress)
   TAKTON_CODE_COMPRESS_THRESHOLD default 0.18
@@ -45,7 +45,7 @@ from takton_code.project.binder import bind_project, init_project_files
 from takton_code.session.export_fmt import write_export
 from takton_code.session.store import SessionStore
 
-AIGA_BASE = os.environ.get("TAKTON_CODE_BASE_URL", "http://192.168.5.32:8088/v1")
+AIGA_BASE = os.environ.get("TAKTON_CODE_BASE_URL", "http://127.0.0.1:8088/v1")
 AIGA_MODEL = os.environ.get("TAKTON_CODE_MODEL", "local-model.gguf")
 # Small window + low threshold → multiple auto compresses during real turns
 CTX = int(os.environ.get("TAKTON_CODE_CONTEXT_WINDOW", "12000"))

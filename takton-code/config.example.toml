@@ -1,7 +1,7 @@
 # Example config — copy to ~/.takton-code/config.toml
 
 [llm]
-base_url = "http://192.168.5.32:8088/v1"
+base_url = "http://127.0.0.1:8088/v1"
 api_key = "no-key"
 model = "local-model.gguf"
 temperature = 0.2

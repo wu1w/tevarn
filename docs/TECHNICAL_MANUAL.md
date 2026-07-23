@@ -654,7 +654,7 @@ npx playwright test
   - 修复 RAG 检索全链路卡死的真 bug：`QdrantRAGService.__init__` 未初始化 `self._ensured_collections`，`_ensure_collection` 首次检索即 AttributeError（`backend/services/rag/qdrant_impl.py`）
   - Qwen3-Reranker 精排：llama.cpp 原生 `/v1/rerank` 因 BGE prompt 模板与 Qwen3 ChatML 不兼容返回坏分数（relevance_score 1e-24、排序反转）。新增 `_qwen3_chat_rerank`：走 `/v1/chat/completions` + `enable_thinking=False` + `max_tokens=1` + `top_logprobs=50`，取 yes/no token logprob 做 softmax 归一化得相关性分数（`backend/services/reranker/local.py`）。单 session 复用 + 信号量限 2 路并发，规避 llama-server 突发多连接断连
   - 顶栏「打开 Takton Code」按钮：TitleBar 新增终端图标按钮，经 `open-takton-code` IPC 在系统终端拉起 takton-code TUI，注入 `TAKTON_CODE_BRIDGE_URL` 桥接当前 backend（复用 LLM/skills/tools/MCP/RAG）
-  - takton-code 内嵌打包：PyInstaller `--onefile` 打单文件可执行（vendor/takton-code/takton-code，21MB），electron-builder extraResources 内嵌至 resources/takton-code/，顶栏按钮三级探测（PATH → 开发 bundle venv → 打包 resources）
+  - takton-code 内嵌打包：PyInstaller `--onefile` 产物放到 vendor/takton-code/（不进 git，见该目录 README）；打包时可拷入 extraResources。顶栏按钮三级探测：PATH → 开发 bundle venv → 打包 resources
   - 版本号统一：package.json / frontend/package.json / backend/main.py / bridge.py / README 全量对齐 0.2.4
 
 - **v0.1.2** (2026-07-17)

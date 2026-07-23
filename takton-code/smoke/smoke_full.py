@@ -37,7 +37,7 @@ from takton_code.plan.gate import PlanGate, should_auto_plan
 from takton_code.project.binder import bind_project, init_project_files
 from takton_code.session.store import SessionStore
 
-AIGA_BASE = os.environ.get("TAKTON_CODE_BASE_URL", "http://192.168.5.32:8088/v1")
+AIGA_BASE = os.environ.get("TAKTON_CODE_BASE_URL", "http://127.0.0.1:8088/v1")
 AIGA_MODEL = os.environ.get("TAKTON_CODE_MODEL", "local-model.gguf")
 SMOKE_CTX = int(os.environ.get("TAKTON_CODE_CONTEXT_WINDOW", "8000"))
 SMOKE_THRESH = float(os.environ.get("TAKTON_CODE_COMPRESS_THRESHOLD", "0.25"))

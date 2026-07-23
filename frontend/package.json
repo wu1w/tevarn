@@ -103,13 +103,6 @@
       {
         "from": "tray-icon.png",
         "to": "tray-icon.png"
-      },
-      {
-        "from": "../vendor/takton-code",
-        "to": "takton-code",
-        "filter": [
-          "takton-code"
-        ]
       }
     ],
     "linux": {

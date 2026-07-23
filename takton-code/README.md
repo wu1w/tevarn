@@ -202,7 +202,7 @@ Competitor audit: `docs/COMPETITOR_LOCAL_AUDIT.md`
 
 ```bash
 # LOCAL llama.cpp + optional live bridge
-export TAKTON_CODE_BASE_URL=http://192.168.5.32:8088/v1
+export TAKTON_CODE_BASE_URL=http://127.0.0.1:8088/v1
 export TAKTON_CODE_MODEL=local-model.gguf
 python smoke/smoke_full.py
 ```

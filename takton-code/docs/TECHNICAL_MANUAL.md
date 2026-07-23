@@ -296,7 +296,7 @@ Plan 文档解析、批准状态机；与 mode=plan 写保护配合。
 
 ```toml
 [llm]
-base_url = "http://192.168.5.32:8088/v1"
+base_url = "http://127.0.0.1:8088/v1"
 api_key = "no-key"
 model = "local-model.gguf"
 context_window = 65536
