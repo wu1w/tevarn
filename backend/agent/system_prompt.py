@@ -10,8 +10,10 @@ Takton 系统提示词组装
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from typing import Any, Optional
+
+from backend.core.timezone import local_now as tta_local_now
+from backend.core.timezone import utc_now as tta_utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -312,9 +314,13 @@ def build_system_prompt(
     if memory_block and memory_block.strip():
         volatile_parts.append(memory_block.strip())
 
-    # 时间戳 + 会话信息
-    now = datetime.now(timezone.utc)
-    ts_line = f"Conversation started: {now.strftime('%A, %B %d, %Y')}"
+    # 时间戳 + 会话信息（给 LLM 准确的双时区时间，避免回答「现在几点」时瞎猜）
+    now_utc = tta_utc_now()
+    now_local = tta_local_now()
+    ts_line = (
+        f"Current time: {now_local.strftime('%A, %B %d, %Y %H:%M:%S')} "
+        f"({now_local.strftime('%Z')}) / {now_utc.strftime('%H:%M:%S')} UTC"
+    )
     if session_id:
         ts_line += f"\nSession: {session_id[:8]}"
     if model:

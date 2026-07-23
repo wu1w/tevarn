@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .config import settings
+from .timezone import local_now, utc_now
 
 # 敏感字段列表（日志输出时自动脱敏）
 SENSITIVE_FIELDS = {"password", "secret", "token", "api_key", "authorization", "cookie", "session_id"}
@@ -53,8 +54,10 @@ class JSONFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         try:
+            now_utc = utc_now()
             log_entry: dict[str, Any] = {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": now_utc.isoformat(),
+                "local_time": now_utc.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z"),
                 "level": record.levelname,
                 "logger": record.name,
                 "message": record.getMessage(),
@@ -85,7 +88,7 @@ class JSONFormatter(logging.Formatter):
             # 绝不能让 formatter 抛错导致异常日志彻底丢失
             return json.dumps(
                 {
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "timestamp": utc_now().isoformat(),
                     "level": "ERROR",
                     "logger": "logging",
                     "message": f"Log formatting failed: {fmt_err}; original={getattr(record, 'msg', '')!s}",
@@ -107,7 +110,8 @@ class HumanFormatter(logging.Formatter):
     }
 
     def format(self, record: logging.LogRecord) -> str:
-        ts = datetime.now(timezone.utc).astimezone().strftime("%H:%M:%S")
+        # 带日期+时区缩写（如 07-23 08:24:53 CST），避免排错时无法和系统时间对齐
+        ts = local_now().strftime("%m-%d %H:%M:%S %Z")
         color = self._COLORS.get(record.levelname, self._RESET)
         msg = record.getMessage()
         req_id = getattr(record, "request_id", "")

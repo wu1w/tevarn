@@ -1,13 +1,16 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import DateTime, String, Uuid
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from backend.core.timezone import utc_now as _utc_now
+
 
 def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    """ORM 字段默认值入口，统一走 backend.core.timezone（禁止裸 datetime.now）。"""
+    return _utc_now()
 
 
 class Base(DeclarativeBase):
