@@ -13,6 +13,7 @@ Optional agent loop with LLM:
 from __future__ import annotations
 
 import argparse
+import re
 import asyncio
 import json
 import os
@@ -52,10 +53,16 @@ class E2EReport:
 
 def ensure_display(display: str) -> str:
     os.environ["DISPLAY"] = display
-    # probe
+    # optional MIT-MAGIC-COOKIE for real seat (gdm/user)
+    xauth = os.environ.get("XAUTHORITY") or os.environ.get("TAKTON_XAUTHORITY")
+    if xauth and Path(xauth).is_file():
+        os.environ["XAUTHORITY"] = xauth
+    env = {**os.environ, "DISPLAY": display}
+    if os.environ.get("XAUTHORITY"):
+        env["XAUTHORITY"] = os.environ["XAUTHORITY"]
     r = subprocess.run(
         ["xdpyinfo"],
-        env={**os.environ, "DISPLAY": display},
+        env=env,
         capture_output=True,
         text=True,
     )
@@ -167,10 +174,22 @@ async def step_open_app(report: E2EReport) -> None:
     await asyncio.sleep(0.5)
 
 
+def _screen_center() -> tuple[int, int]:
+    try:
+        env = {**os.environ}
+        r = subprocess.run(["xdpyinfo"], env=env, capture_output=True, text=True)
+        m = re.search(r"dimensions:\s+(\d+)x(\d+)", r.stdout or "")
+        if m:
+            return int(m.group(1)) // 2, int(m.group(2)) // 2
+    except Exception:
+        pass
+    return 640, 360
+
+
 async def step_click_center(report: E2EReport) -> None:
     t0 = time.time()
-    # 1280x720 virtual screen → click center
-    res = await run_tool("desktop_click", x=640, y=360)
+    cx, cy = _screen_center()
+    res = await run_tool("desktop_click", x=cx, y=cy)
     ms = (time.time() - t0) * 1000
     ok = bool(parse_tool_result(res).get("success"))
     report.add(StepResult("desktop_click", ok, str(res)[:200], ms))
