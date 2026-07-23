@@ -32,8 +32,6 @@ DEFAULT_CHAT_TOOL_WHITELIST: tuple[str, ...] = (
     "http",
     "current_time",
     "doc_read",
-    "list_devices_tool",
-    "remote_exec",
     "session_search",
     "clarify",
     "use_tool_pack",  # meta：动态扩容

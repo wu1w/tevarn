@@ -69,3 +69,7 @@ set -a; source /opt/hermes-workspace/.secrets/bench_llm.env; set +a
 - 默认 80 工具 schema
 - 无 bench 堆平台功能
 - 把 gateway 全通道抄进默认环
+
+## L4 Sidecar packs
+
+见 `docs/L4_CAPABILITY_PACKS.md`（devices / desktop / evolution）。

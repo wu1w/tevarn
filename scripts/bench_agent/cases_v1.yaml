@@ -97,3 +97,43 @@ cases:
       tools_any: [file_read]
       final_min_chars: 5
     tags: [coding]
+
+
+  - id: pack_devices_via_tool_pack
+    title: 扩包 devices 可发现
+    user: |
+      调用 use_tool_pack action=list，在最终文字中确认 devices 包存在，
+      并提到 list_devices_tool 或 remote_exec。必须有最终文字回复。
+    expect:
+      tools_any: [use_tool_pack]
+      final_contains_any: ["devices", "list_devices", "remote_exec"]
+    tags: [pack, devices]
+
+  - id: pack_desktop_list_tools
+    title: 扩包 desktop 并说明工具
+    user: |
+      调用 use_tool_pack action=list，在最终回复中列出 desktop 包相关工具名
+      （至少提到 desktop_click 或 desktop_screenshot 之一）。
+    expect:
+      tools_any: [use_tool_pack]
+      final_contains_any: ["desktop"]
+    tags: [pack, desktop]
+
+  - id: pack_evolution_status
+    title: 扩包 evolution 可发现
+    user: |
+      调用 use_tool_pack action=list，在最终文字回复中确认存在 evolution 包，
+      并提到 manage_evolution 或 query_evolution 之一。必须有最终文字，不要只调工具。
+    expect:
+      tools_any: [use_tool_pack]
+      final_contains_any: ["evolution", "manage_evolution", "query_evolution"]
+    tags: [pack, evolution]
+
+  - id: coding_no_desktop_without_pack
+    title: 默认 coding 不谈桌面工具幻觉
+    user: |
+      不要调用工具。只回答：当前默认工具面是否应包含 desktop_click？答是或否，并一句理由。
+    expect:
+      tools_none_required: true
+      final_contains_any: ["否", "不", "no", "No", "不应", "没有"]
+    tags: [coding, pack]

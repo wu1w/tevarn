@@ -19,7 +19,11 @@ class DesktopScreenshotTool(BaseTool):
     def __init__(self):
         super().__init__(
             name="desktop_screenshot",
-            description="截取当前屏幕，获取界面元素信息",
+            description=(
+                "截取当前屏幕。用于桌面 GUI 操作前的感知。"
+                "成功后结合 uia_snapshot/desktop_observe 定位再 click/type；"
+                "不要在未截图/快照时盲点坐标。"
+            ),
             parameters={
                 "type": "object",
                 "properties": {},
@@ -49,7 +53,11 @@ class DesktopClickTool(BaseTool):
     def __init__(self):
         super().__init__(
             name="desktop_click",
-            description="点击屏幕上的元素或坐标",
+            description=(
+                "点击桌面元素或坐标。优先 element_id（来自 uia_snapshot）；"
+                "否则传 x,y 像素坐标。点击前应先 screenshot/observe。"
+                "失败时检查权限与前台窗口是否正确。"
+            ),
             parameters={
                 "type": "object",
                 "properties": {
@@ -99,7 +107,10 @@ class DesktopTypeTool(BaseTool):
     def __init__(self):
         super().__init__(
             name="desktop_type",
-            description="在指定元素或当前焦点位置输入文本",
+            description=(
+                "向桌面控件或当前焦点输入文本。text 必填；"
+                "有 element_id 时先聚焦该控件。用于填表/搜索框，勿用于长文文件写入（用 file_write）。"
+            ),
             parameters={
                 "type": "object",
                 "properties": {
@@ -144,7 +155,10 @@ class DesktopOpenAppTool(BaseTool):
     def __init__(self):
         super().__init__(
             name="desktop_open_app",
-            description="打开指定的应用程序",
+            description=(
+                "启动应用程序。app_name 如 notepad.exe、chrome、code。"
+                "打开后用 screenshot/uia_snapshot 确认窗口再操作。"
+            ),
             parameters={
                 "type": "object",
                 "properties": {
@@ -184,7 +198,10 @@ class DesktopScrollTool(BaseTool):
     def __init__(self):
         super().__init__(
             name="desktop_scroll",
-            description="滚动屏幕内容",
+            description=(
+                "滚动当前焦点区域。direction=up|down，amount 默认 3。"
+                "列表找不到目标时滚动再 snapshot，避免重复盲点。"
+            ),
             parameters={
                 "type": "object",
                 "properties": {
