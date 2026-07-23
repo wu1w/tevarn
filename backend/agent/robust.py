@@ -96,3 +96,91 @@ async def async_retry(
             await asyncio.sleep(delay)
     assert last is not None
     raise last
+
+def is_empty_assistant_content(text: str | None) -> bool:
+    """无可见正文（空白 / 仅不可见字符）。"""
+    return not (text or "").strip()
+
+
+def tool_call_signature(name: str, arguments: object | None) -> str:
+    """稳定签名：同名 + 同参视为重复调用。"""
+    import hashlib
+    import json
+
+    try:
+        if isinstance(arguments, str):
+            raw = arguments
+        else:
+            raw = json.dumps(arguments or {}, ensure_ascii=False, sort_keys=True, default=str)
+    except Exception:
+        raw = str(arguments)
+    h = hashlib.sha1(raw.encode("utf-8", errors="replace")).hexdigest()[:12]
+    return f"{name}|{h}"
+
+
+def classify_tool_result_error(result: str | None) -> str | None:
+    """粗分工具结果：transient / fatal / None(非错误)。"""
+    t = (result or "").strip()
+    if not t:
+        return None
+    low = t.lower()
+    if not (
+        t.startswith("[Error]")
+        or t.startswith("[error]")
+        or "timed out" in low
+        or "timeout" in low
+        or "失败" in t[:80]
+    ):
+        return None
+    if any(
+        k in low
+        for k in (
+            "timeout",
+            "timed out",
+            "429",
+            "502",
+            "503",
+            "504",
+            "rate limit",
+            "temporarily",
+            "connection reset",
+            "try again",
+        )
+    ):
+        return "transient"
+    return "fatal"
+
+
+class ToolRepeatGuard:
+    """连续相同工具签名熔断，防止空转。"""
+
+    def __init__(self, max_repeat: int = 3) -> None:
+        self.max_repeat = max(2, int(max_repeat or 3))
+        self._last_sig: str | None = None
+        self._streak: int = 0
+        self.tripped: bool = False
+
+    def observe(self, signatures: list[str]) -> bool:
+        """观察本轮签名列表。返回 True 表示刚触发熔断。"""
+        if self.tripped:
+            return False
+        tripped_now = False
+        for sig in signatures:
+            if not sig:
+                continue
+            if sig == self._last_sig:
+                self._streak += 1
+            else:
+                self._last_sig = sig
+                self._streak = 1
+            if self._streak >= self.max_repeat:
+                self.tripped = True
+                tripped_now = True
+                break
+        return tripped_now
+
+    def reset(self) -> None:
+        self._last_sig = None
+        self._streak = 0
+        self.tripped = False
+

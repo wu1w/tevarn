@@ -34,7 +34,13 @@ from backend.services.tools import ToolRegistry
 from backend.skills import SkillRegistry
 from backend.skills.dynamic import DynamicSkill
 from backend.core.config import settings
-from backend.agent.robust import is_continue_phrase, is_transient_llm_error
+from backend.agent.robust import (
+    is_continue_phrase,
+    is_empty_assistant_content,
+    is_transient_llm_error,
+    tool_call_signature,
+    ToolRepeatGuard,
+)
 
 from .context import ContextManager
 
@@ -682,6 +688,12 @@ class NexusAgentLoop:
         _multi_source_pending = False
         _suppress_content_stream = False
         _segment = 0
+        _empty_reply_retries = 0
+        _empty_reply_max = int(getattr(settings, "agent_empty_reply_retries", 2) or 2)
+        _tool_repeat_guard = ToolRepeatGuard(
+            max_repeat=int(getattr(settings, "agent_tool_repeat_max", 3) or 3)
+        )
+        _force_final_no_tools = False
 
         for _global_iter in range(_total_iters):
             iteration = _global_iter % _seg_size
@@ -785,8 +797,9 @@ class NexusAgentLoop:
                     f"Sending {len(messages)} messages to LLM "
                     f"(total chars: {sum(_msg_chars(m) for m in messages)})"
                 )
+                _iter_tools = None if _force_final_no_tools else (tools if tools else None)
                 async for chunk in llm_service.chat(
-                    messages, tools=tools if tools else None, stream=True
+                    messages, tools=_iter_tools, stream=True
                 ):
                     # 思考中可打断
                     if self._should_stop:
@@ -1185,6 +1198,39 @@ class NexusAgentLoop:
                 )
                 _last_tool_round_count = len(tool_calls)
                 _tool_rounds += 1
+                # 重复工具签名熔断（同名同参连续空转）
+                try:
+                    _sigs = [
+                        tool_call_signature(
+                            getattr(tc, "name", "") or "",
+                            getattr(tc, "arguments", None),
+                        )
+                        for tc in tool_calls
+                    ]
+                    if _tool_repeat_guard.observe(_sigs):
+                        logger.warning(
+                            "Tool thrash detected for session %s sigs=%s",
+                            session_id,
+                            _sigs,
+                        )
+                        await self._push_status(
+                            session_id,
+                            "thinking",
+                            "检测到重复工具调用，已熔断并改为直接作答…",
+                        )
+                        messages.append(
+                            {
+                                "role": "system",
+                                "content": (
+                                    "【工具空转熔断】你连续多次调用了相同工具（参数几乎相同）。"
+                                    "禁止再调用任何工具。请仅根据已有工具结果，用自然语言直接给出最终答复。"
+                                ),
+                            }
+                        )
+                        _force_final_no_tools = True
+                        _suppress_content_stream = False
+                except Exception as _thrash_e:
+                    logger.debug("tool thrash guard skipped: %s", _thrash_e)
                 # 多工具并行时：强制下一轮「聚合」而非并列甩多个答案
                 if _last_tool_round_count >= 2:
                                     _multi_source_pending = True
@@ -1304,6 +1350,36 @@ class NexusAgentLoop:
                             f"Goal nudge #{goal_nudge_count} for session {session_id}"
                         )
                         continue
+
+                # 空正文：有限次重试（避免「装死」式空白结束）
+                if (
+                    is_empty_assistant_content(accumulated_content)
+                    and _empty_reply_retries < _empty_reply_max
+                    and not self._should_stop
+                ):
+                    _empty_reply_retries += 1
+                    await self._push_status(
+                        session_id,
+                        "thinking",
+                        f"模型空回复，重试 {_empty_reply_retries}/{_empty_reply_max}…",
+                    )
+                    messages.append(
+                        {
+                            "role": "system",
+                            "content": (
+                                "你上一轮没有输出任何可见正文。"
+                                "请直接用自然语言回答用户问题；"
+                                "不要输出空内容，也不要只调用工具而不解释。"
+                            ),
+                        }
+                    )
+                    logger.info(
+                        "Empty assistant reply retry %s/%s session=%s",
+                        _empty_reply_retries,
+                        _empty_reply_max,
+                        session_id,
+                    )
+                    continue
 
                 # 得到最终回复
                 final_content = accumulated_content

@@ -223,13 +223,33 @@ export default function HomePage() {
           }
         }, [appendAgentOutput, t]);
 
+    const lastWsToastAtRef = React.useRef(0);
+    const toastWsError = useCallback(
+      (err: string, opts?: { force?: boolean }) => {
+        const msg = (err || '').trim() || t('chat.wsError');
+        console.error('WebSocket error:', msg);
+        const now = Date.now();
+        const soft = /connection error|not connected|reconnect/i.test(msg)
+          && !/limit reached|Invalid|creation failed|Unknown/i.test(msg);
+        if (!opts?.force && soft && now - lastWsToastAtRef.current < 4000) {
+          return;
+        }
+        lastWsToastAtRef.current = now;
+        addToast(msg, 'error');
+        setIsStreaming(false);
+      },
+      [addToast, t]
+    );
+
     const handleStatusUpdate = useCallback((msg: StatusUpdateMessage) => {
-      if (msg.state === 'thinking' || msg.state === 'tool_executing') {
+      if (msg.state === 'thinking' || msg.state === 'tool_executing' || msg.state === 'optimizing') {
         setIsStreaming(true);
         if (msg.detail) setStreamStatusDetail(msg.detail);
       } else if (msg.state === 'error') {
         setIsStreaming(false);
-        setStreamStatusDetail(msg.detail || t('chat.error'));
+        const detail = msg.detail || t('chat.error');
+        setStreamStatusDetail(detail);
+        addToast(detail, 'error');
       } else if (msg.state === 'idle') {
               setIsStreaming(false);
               setStreamStatusDetail(null);
@@ -258,7 +278,7 @@ export default function HomePage() {
                 }, 0);
               }
             }
-          }, [addMessage, currentSession, loadMessages, t]);
+          }, [addMessage, addToast, currentSession, loadMessages, t]);
 
   const handleGoalUpdate = useCallback((msg: GoalUpdateMessage) => {
       if (msg.goal) {
@@ -278,7 +298,7 @@ export default function HomePage() {
         onToolEvent: handleToolEvent,
         onScreenshot: handleScreenshot,
         onGoalUpdate: handleGoalUpdate,
-        onError: (err) => console.error('WebSocket error:', err),
+        onError: (err) => toastWsError(err),
         onSettingsChanged: (keys) => {
           // 通知全局模型目录刷新（被设置页同步、多标签页切换等场景复用）
           if (typeof window !== 'undefined') {
@@ -290,7 +310,7 @@ export default function HomePage() {
   // 使用 useSession hook 中的 switchSession 用于全局搜索
   const { switchSession: switchSession_ } = useSession();
 
-  // 发送消息（自动创建 session → 等 WS 就绪 → 发送）
+  // 发送消息（乐观 UI：先出用户气泡 + streaming，session/WS 后台并行）
   // 发送成功后会话将出现在「历史会话」中
   const handleSend = useCallback(
       async (
@@ -302,6 +322,11 @@ export default function HomePage() {
         // D10 专业模式：强制项目文件夹
         if (useWorkspaceStore.getState().uiMode === 'pro' && !useWorkspaceStore.getState().root) {
           useWorkspaceStore.getState().setForceProjectOpen(true);
+          return;
+        }
+
+        if (mode === 'cluster' && (!subAgentIds || subAgentIds.length === 0)) {
+          addToast(t('chat.clusterNeedAgent'), 'error');
           return;
         }
 
@@ -323,25 +348,13 @@ export default function HomePage() {
           }
         }
 
-        // 等待该 session 的 WebSocket 就绪（新建会话后需要一点时间建连）
-        const ready = await waitForConnection(session.id, 15000);
-        if (!ready) {
-          addToast(t('chat.channelNotConnected'), 'error');
-          setIsStreaming(false);
-          return;
-        }
-
-        if (mode === 'cluster' && (!subAgentIds || subAgentIds.length === 0)) {
-          addToast(t('chat.clusterNeedAgent'), 'error');
-          return;
-        }
-
         let displayContent = content;
-                if (attachments.length > 0) {
-                  const attNames = attachments.map((a) => `[${a.filename}]`).join(' ');
-                  displayContent = `${attNames}\n${content}`;
-                }
+        if (attachments.length > 0) {
+          const attNames = attachments.map((a) => `[${a.filename}]`).join(' ');
+          displayContent = `${attNames}\n${content}`;
+        }
 
+        // 乐观：先落用户消息 + 思考态，再等 WS（避免「卡死感」）
         const userMsg: Message = {
           id: generateUUID(),
           session_id: session.id,
@@ -352,17 +365,29 @@ export default function HomePage() {
           created_at: new Date().toISOString(),
         };
         addMessage(userMsg);
-        const sent = sendMessage(content, attachments, mode, subAgentIds);
-        if (!sent) {
-          addToast(t('chat.sendFailedDisconnected'), 'error');
-          return;
-        }
         setIsStreaming(true);
         setStreamingContent('');
         setLiveToolCalls([]);
+        setStreamStatusDetail(t('chat.connectingSend'));
+
+        const ready = await waitForConnection(session.id, 15000);
+        if (!ready) {
+          addToast(t('chat.channelNotConnected'), 'error');
+          setIsStreaming(false);
+          setStreamStatusDetail(null);
+          return;
+        }
+
         setStreamStatusDetail(mode === 'cluster' ? t('chat.clusterWorking') : t('chat.thinking'));
+        const sent = sendMessage(content, attachments, mode, subAgentIds);
+        if (!sent) {
+          addToast(t('chat.sendFailedDisconnected'), 'error');
+          setIsStreaming(false);
+          setStreamStatusDetail(null);
+          return;
+        }
       },
-      [currentSession, addMessage, sendMessage, createAndLoadSession, waitForConnection, t]
+      [currentSession, addMessage, addToast, sendMessage, createAndLoadSession, waitForConnection, t]
     );
 
   // 重新生成
@@ -372,17 +397,28 @@ export default function HomePage() {
       const msgs = useSessionStore.getState().messages;
       const lastUserMsg = [...msgs].reverse().find((m) => m.role === 'user');
       if (!lastUserMsg?.content) return;
+      setIsStreaming(true);
+      setStreamingContent('');
+      setLiveToolCalls([]);
+      setStreamStatusDetail(t('chat.connectingSend'));
       const ready = await waitForConnection(currentSession.id, 15000);
       if (!ready) {
         addToast(t('chat.channelNotConnected2'), 'error');
+        setIsStreaming(false);
+        setStreamStatusDetail(null);
         return;
       }
+      setStreamStatusDetail(t('chat.thinking'));
       if (sendMessage(lastUserMsg.content, [], 'default')) {
         setIsStreaming(true);
         setStreamingContent('');
+      } else {
+        addToast(t('chat.sendFailedDisconnected'), 'error');
+        setIsStreaming(false);
+        setStreamStatusDetail(null);
       }
     },
-    [currentSession, sendMessage, waitForConnection]
+    [currentSession, sendMessage, waitForConnection, addToast, t]
   );
 
   // 编辑并重新发送
