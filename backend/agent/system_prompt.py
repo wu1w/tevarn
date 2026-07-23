@@ -90,11 +90,13 @@ MEMORY_GUIDANCE = (
 
 SKILLS_GUIDANCE = (
     "# Skills\n"
-    "Skills hold specialized workflows. If a matching skill is available via "
-    "tools (e.g. manage_skill / skill loaders), load it before improvising.\n"
-    "After hard multi-step work, you may offer to save a short skill — only "
-    "when the user would reuse it. Keep guidance short; do not advertise "
-    "platform modules unrelated to the current task."
+    "Skills hold specialized workflows. When a skill index or installed skill "
+    "matches the current task, you MUST load/follow it before inventing a "
+    "workflow. Do not claim a skill procedure from memory if a skill body is "
+    "available — read it first.\n"
+    "After hard multi-step work, you may offer to save a short skill only when "
+    "the user would reuse it. Keep guidance short; do not advertise unrelated "
+    "platform modules."
 )
 
 EVOLUTION_GUIDANCE = (

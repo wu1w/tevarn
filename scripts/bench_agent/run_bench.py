@@ -271,7 +271,7 @@ async def main_async(args: argparse.Namespace) -> int:
     print("workspace_root", mgr.workspace_root)
 
     names, plan = resolve_enabled_tool_names(
-        profile="dynamic",
+        profile="coding",
         user_input="read backend file coding",
     )
     tools_schema = ToolRegistry.get_tools_schema(names)

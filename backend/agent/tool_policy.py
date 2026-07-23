@@ -1,10 +1,14 @@
-"""对话工具/注入策略：静态 core、场景动态 dynamic、全量 full。
+"""对话工具/注入策略。
 
-dynamic 模式（默认推荐）：
-1. 用户输入 + ChatMode → 启发式场景判定（零额外 LLM）
-2. 按场景挂载 tool pack（coding/web/desktop/manage/…）
-3. 始终保留 meta：use_tool_pack（模型可中途扩容）
-4. injection_tier 控制 RAG/Wiki/实体等注水强度
+产品 profile（agent_tool_profile）：
+- coding（默认）：编码主脑，高密度
+- assistant：coding + 会话/澄清
+- ops：assistant + manage/devices
+- dynamic：coding 底座 + 场景关键词加包
+- core：固定白名单，不加场景包
+- full：全部工具
+
+始终保留 meta：use_tool_pack；injection_tier 控制 RAG/Wiki/实体。
 """
 from __future__ import annotations
 
@@ -110,6 +114,39 @@ TOOL_PACKS: dict[str, tuple[str, ...]] = {
     "cluster": ("manage_sub_agent", "delegate_task", "agent_call"),
     "data": ("sqlite_query", "http"),
     "github": ("github", "manage_git"),
+}
+
+# 产品 profile → 默认 pack 集合（scene 关键词仅在 dynamic 扩包）
+PROFILE_BASE_PACKS: dict[str, tuple[str, ...]] = {
+    "coding": ("coding", "web"),
+    "assistant": ("coding", "web"),
+    "ops": ("coding", "web", "manage", "devices"),
+    "dynamic": (),  # 由场景推断
+    "core": (),
+    "full": ("*",),
+}
+
+# assistant 额外单工具（不在 pack 内）
+PROFILE_EXTRA_TOOLS: dict[str, tuple[str, ...]] = {
+    "coding": ("current_time", "clarify", "use_tool_pack"),
+    "assistant": (
+        "current_time",
+        "clarify",
+        "session_search",
+        "doc_read",
+        "use_tool_pack",
+    ),
+    "ops": (
+        "current_time",
+        "clarify",
+        "session_search",
+        "doc_read",
+        "use_tool_pack",
+        "get_system_status",
+        "capability_status",
+    ),
+    "dynamic": ("use_tool_pack",),
+    "core": ("use_tool_pack",),
 }
 
 MODE_TOOL_EXTRAS: dict[str, tuple[str, ...]] = {
@@ -354,14 +391,29 @@ def infer_scene(
             packs.append(p)
             reasons.append(f"mode:{mode_key}")
 
-    if prof in {"core", "full"}:
-        # core/full 不做关键词扩包（full 在 resolve 层短路）
-        tier = "standard" if prof == "core" else "rich"
-        if prof == "full":
-            return ScenePlan(packs=["*"], injection_tier="rich", reasons=["profile:full"], profile=prof)
-        return ScenePlan(packs=packs, injection_tier=tier, reasons=reasons or ["profile:core"], profile=prof)
+    if prof == "full":
+        return ScenePlan(packs=["*"], injection_tier="rich", reasons=["profile:full"], profile=prof)
 
-    # dynamic：关键词
+    if prof in {"core", "coding", "assistant", "ops"}:
+        # 固定 profile：可叠 ChatMode packs，不做关键词扩包
+        base = list(PROFILE_BASE_PACKS.get(prof, ()))
+        for p in base:
+            if p not in packs and p != "*":
+                packs.append(p)
+        tier = "standard"
+        if not text or len(text) < 8 or any(h in low or h in text for h in _MINIMAL_HINTS):
+            if prof in {"coding", "core", "assistant"} and not packs:
+                tier = "minimal"
+        if any(h in low or h in text for h in _KNOWLEDGE_HINTS) or len(text) > 400:
+            tier = "rich"
+        return ScenePlan(
+            packs=packs,
+            injection_tier=tier,
+            reasons=reasons or [f"profile:{prof}"],
+            profile=prof,
+        )
+
+    # dynamic：关键词扩包
     for pack, kws in _PACK_KEYWORDS.items():
         for kw in kws:
             if kw.lower() in low or kw in text:
@@ -428,13 +480,17 @@ def resolve_enabled_tool_names(
         plan.reasons = list(plan.reasons) + ["explicit_tools"]
     else:
         packs = list(plan.packs)
+        for p in PROFILE_BASE_PACKS.get(prof, ()):
+            if p and p not in packs and p != "*":
+                packs.append(p)
         if extra_packs:
             for p in extra_packs:
                 if p and p not in packs:
                     packs.append(str(p).strip().lower())
-        # 空 packs → 仅 core
+        # 空 packs → 仅 core 白名单
         merged = tools_for_packs(packs)
         base = set(merged)
+        base.update(PROFILE_EXTRA_TOOLS.get(prof, ()))
         if skills is not None and len(skills) > 0:
             if not (len(skills) == 1 and skills[0].lower() in {"*", "all"}):
                 base.update(skills)
@@ -479,11 +535,15 @@ def compact_capability_brief(
     ]
     if scene and scene.profile != "full":
         lines.append(
-            f"Scene: {scene.summary()}. "
+            f"Profile/scene: {scene.summary()}. "
             "If you need desktop/manage/evolution/office tools not listed, "
             "call use_tool_pack(action='enable', packs=[...]) first "
             "(action='list' to see packs)."
         )
+    lines.append(
+        "Skill discipline: if an installed skill index matches the task, "
+        "you MUST follow/load that skill guidance before improvising workflows."
+    )
     lines.append("Prefer tools over speculation; finish the user task.")
     return "\n".join(lines)
 

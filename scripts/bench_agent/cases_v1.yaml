@@ -63,7 +63,7 @@ cases:
     title: command echo
     user: |
       用 command 工具执行: echo TAKTON_BENCH_OK
-      把 stdout 原样告诉我。
+      然后在最终回复里必须包含字符串 TAKTON_BENCH_OK（从 stdout 抄过来）。
     expect:
       tools_any: [command]
       final_contains_any: ["TAKTON_BENCH_OK"]

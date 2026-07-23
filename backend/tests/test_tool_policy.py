@@ -132,3 +132,30 @@ def test_no_tools_skips_enforcement():
 
     parts = build_system_prompt(tools_enabled=[])
     assert TOOL_USE_ENFORCEMENT[:20] not in parts["stable"]
+
+
+def test_profile_coding_no_manage():
+    names, plan = resolve_enabled_tool_names(
+        mode="default", profile="coding", user_input="配置 cron 和桌面点击"
+    )
+    assert names is not None
+    assert "manage_cron" not in names
+    assert "desktop_click" not in names
+    assert "file_read" in names
+    assert "use_tool_pack" in names
+    assert plan.profile == "coding"
+
+
+def test_profile_ops_has_manage():
+    names, plan = resolve_enabled_tool_names(
+        mode="default", profile="ops", user_input="hello"
+    )
+    assert names is not None
+    assert "manage_cron" in names
+    assert "file_read" in names
+
+
+def test_profile_assistant_has_session_search():
+    names, _ = resolve_enabled_tool_names(profile="assistant", user_input="x")
+    assert names is not None
+    assert "session_search" in names

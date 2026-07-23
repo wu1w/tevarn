@@ -451,8 +451,8 @@ class NexusAgentLoop:
 
         _early_profile = str(
             (config or {}).get("tool_profile")
-            or getattr(settings, "agent_tool_profile", "dynamic")
-            or "dynamic"
+            or getattr(settings, "agent_tool_profile", "coding")
+            or "coding"
         ).strip().lower()
         scene_plan = infer_scene(
             enriched_input or user_input or "",
@@ -992,21 +992,35 @@ class NexusAgentLoop:
 
             except Exception as e:
                 logger.error(f"LLM chat error in iteration {iteration + 1}: {e}")
+                from backend.agent.turn_retry import classify_llm_error
+
+                _kind = classify_llm_error(e)
+                _action = _turn_retry.note_and_decide(_kind, detail=str(e)[:160])
                 _attempts = int(getattr(settings, "agent_llm_retry_attempts", 3) or 1)
                 _retried = getattr(self, "_llm_fail_streak", 0) + 1
                 self._llm_fail_streak = _retried
-                if (
+                _can = (
                     _retried < _attempts
-                    and is_transient_llm_error(e)
+                    and _action == "retry"
+                    and (
+                        is_transient_llm_error(e)
+                        or _kind
+                        in (
+                            RetryKind.RATE_LIMIT,
+                            RetryKind.TOOL_TRANSIENT,
+                            RetryKind.TOOL_TIMEOUT,
+                        )
+                    )
                     and not self._should_stop
-                ):
+                )
+                if _can:
                     import asyncio as _aio
 
                     delay = min(8.0, 0.8 * (2 ** (_retried - 1)))
                     await self._push_status(
                         session_id,
                         "thinking",
-                        f"LLM 瞬断，{_retried}/{_attempts} 次重试…",
+                        f"LLM {_kind.value}，{_retried}/{_attempts} 次重试…",
                     )
                     await _aio.sleep(delay)
                     continue
@@ -1047,6 +1061,40 @@ class NexusAgentLoop:
 
             # 判断是否有 tool calls
             if tool_calls:
+                _raw_tcs = list(tool_calls)
+                tool_calls = [
+                    tc
+                    for tc in _raw_tcs
+                    if (getattr(tc, "name", None) or "").strip()
+                ]
+                if not tool_calls and _raw_tcs:
+                    _act = _turn_retry.note_and_decide(
+                        RetryKind.EMPTY_TOOL_NAME, detail="empty tool name"
+                    )
+                    await self._push_status(
+                        session_id,
+                        "thinking",
+                        "模型返回空工具名，已拒绝并重试…",
+                    )
+                    messages.append(
+                        {
+                            "role": "system",
+                            "content": (
+                                "上一轮 tool call 的 name 为空，已被拒绝。"
+                                "请使用已提供的合法工具名重新调用，或直接文字作答。"
+                            ),
+                        }
+                    )
+                    if _act == "force_final":
+                        _force_final_no_tools = True
+                    if _act in ("retry", "force_final"):
+                        continue
+                    final_content = (
+                        accumulated_content
+                        or "[Error] 模型返回了无效的空工具调用"
+                    )
+                    break
+
                 # 将 assistant 的回复（含 tool calls）追加到 messages
                 # content 用 None 兼容部分严格 API（空字符串 + tool_calls 会被拒）
                 assistant_msg: dict[str, Any] = {
@@ -1565,10 +1613,14 @@ class NexusAgentLoop:
                             {
                                 "role": "system",
                                 "content": (
-                                    "你上一轮没有输出任何可见正文。"
-                                    "请直接用自然语言回答用户问题；"
-                                    "不要输出空内容，也不要只调用工具而不解释。"
-                                ),
+                                "你上一轮没有输出任何可见正文。请直接用自然语言回答用户。"
+                                + (
+                                    "你刚才已调用过工具：必须根据工具结果给出最终中文答复"
+                                    "（例如复述 command 的 stdout 关键行），禁止只返回空白。"
+                                    if _last_tool_round_count > 0
+                                    else "若需要文件/命令事实，先调用工具再回答；不要只输出空白。"
+                                )
+                            ),
                             }
                         )
                         logger.info(
