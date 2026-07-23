@@ -109,7 +109,7 @@ class ToolRegistry:
 
     @classmethod
     async def execute(cls, name: str, arguments: dict[str, Any]) -> Any:
-        """执行指定工具"""
+        """执行指定工具（含 before/after hooks）。"""
         tool = cls._tools.get(name)
         if tool is None:
             return f"[Error] Tool '{name}' not found"
@@ -117,12 +117,45 @@ class ToolRegistry:
         if not tool.enabled:
             return f"[Error] Tool '{name}' is disabled"
 
-        # 权限检查
+        args = dict(arguments or {})
+
+        # L3 hooks
+        try:
+            from backend.agent.tool_hooks import (
+                ensure_builtin_hooks_registered,
+                run_after_tool_call,
+                run_before_tool_call,
+            )
+
+            ensure_builtin_hooks_registered()
+            before = await run_before_tool_call(name, args)
+            if before.block:
+                return f"[Hook Blocked] {before.reason or 'blocked'}"
+            if before.arguments is not None:
+                args = dict(before.arguments)
+        except Exception as e:
+            logger.warning("before_tool_call failed: %s", e)
+
+        # 权限检查（hook 可改参后）
         from backend.tools.permissions import ToolPermissionManager
 
         manager = ToolPermissionManager()
-        allowed, reason = manager.check_tool_permission(tool, arguments)
+        allowed, reason = manager.check_tool_permission(tool, args)
         if not allowed:
             return f"[Security Blocked] {reason}"
 
-        return await tool.execute(**arguments)
+        # 内部 meta 不传给工具实现
+        exec_args = {k: v for k, v in args.items() if not str(k).startswith("_checkpoint")}
+
+        result = await tool.execute(**exec_args)
+
+        try:
+            from backend.agent.tool_hooks import run_after_tool_call
+            from backend.agent.tool_result_contract import normalize_tool_result
+
+            text = normalize_tool_result(result, tool_name=name)
+            text = await run_after_tool_call(name, exec_args, text)
+            return text
+        except Exception as e:
+            logger.warning("after_tool_call failed: %s", e)
+            return result

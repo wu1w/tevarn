@@ -83,3 +83,7 @@ PLAN-*.md
 data/sft_corpus/
 embedding_metadata.json
 logs/
+
+# agent file checkpoints
+.takton/checkpoints/
+

@@ -132,6 +132,25 @@ class ContextManager:
         except Exception as e:
             logger.warning("workspace persona load failed: %s", e)
 
+        # L3：契约文件（含 missing 标记）— OpenClaw 风格
+        try:
+            from backend.agent.workspace_contract import load_workspace_contract
+
+            contract_block, contract_meta = load_workspace_contract()
+            self.last_workspace_contract = contract_meta
+            if contract_block:
+                if context_files and context_files.strip():
+                    context_files = contract_block + "\n\n" + context_files.strip()
+                else:
+                    context_files = contract_block
+                logger.info(
+                    "workspace contract injected keys=%s",
+                    list((contract_meta.get("files") or {}).keys()),
+                )
+        except Exception as e:
+            self.last_workspace_contract = None
+            logger.warning("workspace contract load failed: %s", e)
+
         # 文件驱动记忆
         if not memory_block:
             try:

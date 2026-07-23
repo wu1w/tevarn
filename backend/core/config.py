@@ -113,6 +113,8 @@ class Settings(BaseSettings):
     # 空正文重试 / 工具重复熔断（loop 读取，缺省有 fallback）
     agent_empty_reply_retries: int = 2
     agent_tool_repeat_max: int = 3
+    # 写文件工具前自动快照到 .takton/checkpoints/
+    agent_file_checkpoint: bool = True
 
     # Context engine (Claude Code–style pipeline + Hermes meter)
     context_threshold_percent: float = 0.72
