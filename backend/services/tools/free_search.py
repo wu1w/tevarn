@@ -76,7 +76,7 @@ async def search_ddgs(query: str, max_results: int = 5) -> tuple[list[dict[str, 
     errors: list[str] = []
     for b in backends:
         try:
-            rows = await asyncio.wait_for(asyncio.to_thread(_run, b), timeout=18)
+            rows = await asyncio.wait_for(asyncio.to_thread(_run, b), timeout=8)
             if rows:
                 return rows[:max_results], f"ddgs/{b}"
         except Exception as e:
@@ -290,7 +290,7 @@ async def search_wikipedia(query: str, max_results: int = 5) -> tuple[list[dict[
 
 
 async def free_web_search(query: str, max_results: int = 5) -> str:
-    """主入口：返回可读文本；失败时带引擎诊断。"""
+    """免 Key 瀑布（短超时）。有 Key 时请走 web_search_unified。"""
     q = (query or "").strip()
     if not q:
         return "[Error] query is required"

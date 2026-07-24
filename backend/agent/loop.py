@@ -929,7 +929,7 @@ class NexusAgentLoop:
 
             # 更新状态：thinking
             await self._push_status(
-                session_id, "thinking", f"Thinking (round {iteration + 1})..."
+                session_id, "thinking", f"思考中 · 第 {iteration + 1} 轮"
             )
 
             # 调用 LLM（流式）
@@ -1191,10 +1191,15 @@ class NexusAgentLoop:
                         arguments=args_dict,
                         status="running",
                     )
+                    try:
+                        from backend.agent.tool_status import format_tool_status
+                        _st = format_tool_status(tc.name, args_dict if isinstance(args_dict, dict) else {})
+                    except Exception:
+                        _st = f"Executing {tc.name}..."
                     await self._push_status(
                         session_id,
                         "tool_executing",
-                        f"Executing {tc.name}...",
+                        _st,
                     )
 
                     # 创建 Task（用于进度追踪）

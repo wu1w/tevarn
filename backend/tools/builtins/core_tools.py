@@ -402,7 +402,7 @@ class SearchTool(_BuiltinToolBase):
         super().__init__(
             name="search",
             description=(
-                "网络搜索（DuckDuckGo/Bing）。需要最新事实、文档、新闻时必须调用，"
+                "网络搜索（优先 Tavily，否则 DDG/Bing）。需要最新事实、文档、新闻时必须调用，"
                 "禁止空口编造。query 必填；max_results 默认 5。"
                 "与 web_search 同类；任选其一即可，勿重复空转。"
             ),

@@ -115,6 +115,8 @@ class Settings(BaseSettings):
     agent_tool_repeat_max: int = 3
     # 写文件工具前自动快照到 .takton/checkpoints/
     agent_file_checkpoint: bool = True
+    # 搜索：有 Key 时 web_search/search 优先 Tavily
+    tavily_api_key: str = ""
 
     # Context engine (Claude Code–style pipeline + Hermes meter)
     context_threshold_percent: float = 0.72

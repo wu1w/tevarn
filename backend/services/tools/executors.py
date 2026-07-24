@@ -810,8 +810,8 @@ async def _search_bing(
 
 async def execute_search(config: dict[str, Any], arguments: dict[str, Any]) -> str:
     """
-    网络搜索工具：免 API Key 瀑布（ddgs / DDG / Bing / Wikipedia）。
-    可选 config.engine: auto|ddgs|duckduckgo|bing|wikipedia
+    网络搜索：Tavily(有 Key) 优先，否则免 Key 瀑布。
+    可选 config.engine: auto|tavily|ddgs|duckduckgo|bing|wikipedia
     """
     query = (arguments.get("query") or "").strip()
     if not query:
@@ -819,6 +819,17 @@ async def execute_search(config: dict[str, Any], arguments: dict[str, Any]) -> s
 
     max_results = int(arguments.get("max_results", config.get("max_results", 5)) or 5)
     engine = str(config.get("engine") or arguments.get("engine") or "auto").lower()
+
+    if engine in ("auto", "tavily"):
+        try:
+            from backend.services.tools.web_search_unified import web_search_unified, tavily_search
+            if engine == "tavily":
+                tv = await tavily_search(query, max_results, timeout=8.0)
+                return tv or "[Error] Tavily failed or TAVILY_API_KEY missing"
+            return await web_search_unified(query, max_results)
+        except Exception as e:
+            if engine == "tavily":
+                return f"[Error] tavily: {e}"
 
     try:
         from backend.services.tools.free_search import (
