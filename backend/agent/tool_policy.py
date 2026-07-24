@@ -543,6 +543,7 @@ def compact_capability_brief(
         "you MUST follow/load that skill guidance before improvising workflows."
     )
     lines.append("Default cwd for shell is the workspace/project root; pass cwd= for task dirs. ""Prefer file_write/edit for multi-line files over cat/heredoc shells.")
+    lines.append("Minimize tool rounds: batch independent file_read/grep in one turn.")
     lines.append("Prefer tools over speculation; finish the user task.")
     return "\n".join(lines)
 

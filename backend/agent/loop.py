@@ -804,6 +804,7 @@ class NexusAgentLoop:
         _l1_every = int(getattr(settings, "agent_midloop_l1_every", 3) or 3)
         _tool_rounds = 0
         _last_tool_round_count = 0
+        _timid_read_streak = 0
         _multi_source_pending = False
         _suppress_content_stream = False
         _segment = 0
@@ -1411,6 +1412,36 @@ class NexusAgentLoop:
                     f"Tool round {iteration + 1} done ({len(tool_calls)} calls), continuing agent loop"
                 )
                 _last_tool_round_count = len(tool_calls)
+
+                # 果断化：单轮仅 1 个只读工具 → 提示下轮并行/开改
+                try:
+                    from backend.agent.decisive import (
+                        batch_read_nudge_text,
+                        is_timid_read_round,
+                        tool_names_from_calls,
+                    )
+
+                    _tnames = tool_names_from_calls(tool_calls)
+                    if is_timid_read_round(_tnames) and not _force_final_no_tools:
+                        _timid_read_streak += 1
+                        messages.append(
+                            {
+                                "role": "system",
+                                "content": batch_read_nudge_text(
+                                    consecutive_timid=_timid_read_streak
+                                ),
+                            }
+                        )
+                        logger.info(
+                            "timid read nudge streak=%s names=%s session=%s",
+                            _timid_read_streak,
+                            _tnames,
+                            session_id,
+                        )
+                    else:
+                        _timid_read_streak = 0
+                except Exception as _dec_e:
+                    logger.debug("decisive nudge skipped: %s", _dec_e)
 
                 # dynamic：use_tool_pack enable → 合并工具 schema 供后续轮次
                 try:

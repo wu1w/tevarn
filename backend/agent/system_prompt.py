@@ -69,6 +69,9 @@ PARALLEL_TOOL_CALLS = (
     "commands should be batched into the same assistant turn — the runtime "
     "executes independent calls concurrently, and batching avoids resending "
     "the whole conversation on every extra round-trip.\n"
+    "HARD RULE: if you already know you need file A and file B, call "
+    "file_read on both in the SAME turn. Never spend a whole turn on a "
+    "single file_read when more related files are obviously required.\n"
     "Only serialize calls when a later call genuinely depends on an earlier "
     "call's result (e.g. you must read a file before you can patch it). When "
     "in doubt and the calls are independent, batch them."
@@ -119,7 +122,9 @@ CODE_QUALITY = (
     "read it first.\n"
     "ALWAYS prefer editing an existing file to creating a new one. Don't create "
     "helpers, utilities, or abstractions for one-time operations. The right "
-    "amount of complexity is the minimum needed for the current task."
+    "amount of complexity is the minimum needed for the current task.\n"
+    "Efficiency: batch reads; after enough context, edit and run tests promptly. "
+    "Do not take a full turn per single exploratory read."
 )
 
 PROFESSIONAL_OBJECTIVITY = (
@@ -291,6 +296,11 @@ def build_system_prompt(
         code_tools = {"command", "file_write", "file_read", "edit", "python", "patch", "apply_patch"}
         if (not tools_known) or (code_tools & tool_set):
             stable_parts.append(CODE_QUALITY)
+            try:
+                from backend.agent.decisive import decisive_coding_guidance
+                stable_parts.append(decisive_coding_guidance())
+            except Exception:
+                pass
 
     # 3. 思考指导（始终注入，轻量）
     stable_parts.append(THINKING_GUIDANCE)
