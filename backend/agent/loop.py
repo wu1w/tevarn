@@ -298,6 +298,7 @@ class NexusAgentLoop:
         # 安全修复：获取 session 级锁，防止同一 session 的并发竞态
         lock = _get_session_lock(session_id)
         async with lock:
+            _ws_reset = lambda: None  # noqa: E731
             return await self._run_locked(
                 session_id, user_input, attachments, mode, sub_agent_ids or []
             )
@@ -397,6 +398,15 @@ class NexusAgentLoop:
             raise ValueError(f"Session {session_id} not found")
 
         config = await self.session_repo.get_config(session_id)
+
+        # 本轮 workspace 覆盖（session.config.workspace_root|file_browser_root|cwd + allowed_roots）
+        _ws_reset = lambda: None  # noqa: E731
+        try:
+            from backend.tools.permissions import bind_run_workspace_from_config
+
+            _ws_reset = bind_run_workspace_from_config(config if isinstance(config, dict) else {})
+        except Exception as _ws_e:
+            logger.debug("workspace bind skipped: %s", _ws_e)
 
         # 3. 加载历史消息（保留 tool_calls / tool_call_id，避免多轮工具链断裂）
         # 动态 limit：按 context_window 估算最大消息数，避免只加载 100 条导致压缩无法触发
@@ -1422,7 +1432,7 @@ class NexusAgentLoop:
                     )
 
                     _tnames = tool_names_from_calls(tool_calls)
-                    if is_timid_read_round(_tnames) and not _force_final_no_tools:
+                    if is_timid_read_round(_tnames, tool_calls) and not _force_final_no_tools:
                         _timid_read_streak += 1
                         messages.append(
                             {
@@ -1853,6 +1863,10 @@ class NexusAgentLoop:
         await self._push_status(session_id, "idle", "Ready")
 
         logger.info(f"Agent loop completed for session {session_id}")
+        try:
+            _ws_reset()
+        except Exception:
+            pass
         return final_content
 
     # ─────────── P0 helpers ───────────

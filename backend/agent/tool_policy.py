@@ -542,7 +542,7 @@ def compact_capability_brief(
         "Skill discipline: if an installed skill index matches the task, "
         "you MUST follow/load that skill guidance before improvising workflows."
     )
-    lines.append("Default cwd for shell is the workspace/project root; pass cwd= for task dirs. ""Prefer file_write/edit for multi-line files over cat/heredoc shells.")
+    lines.append("Default cwd/workspace_root comes from session config (workspace_root|file_browser_root|cwd) or TAKTON_FILE_BROWSER_ROOT/TAKTON_TASK_ROOT. Pass command.cwd for subdirs. ""Prefer file_write/edit for multi-line files over cat/heredoc shells.")
     lines.append("Minimize tool rounds: batch independent file_read/grep in one turn.")
     lines.append("Prefer tools over speculation; finish the user task.")
     return "\n".join(lines)

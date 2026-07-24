@@ -8,21 +8,76 @@
 
 工作区根解析（优先级从高到低）：
 1. 构造参数 workspace_root
-2. 环境变量 TAKTON_FILE_BROWSER_ROOT
-3. settings.file_browser_root（相对路径相对「项目根」解析）
-4. workspace 服务用户绑定 get_root(\"default\")
-5. 自动探测项目根（含 backend/ 的目录）或 cwd
+2. 本轮 run 上下文（session config: workspace_root / file_browser_root / cwd）
+3. 环境变量 TAKTON_FILE_BROWSER_ROOT
+4. settings.file_browser_root（相对路径相对「项目根」解析）
+5. workspace 服务用户绑定 get_root("default")
+6. 自动探测项目根（含 backend/ 的目录）或 cwd
 """
 from __future__ import annotations
 
 import logging
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from backend.tools.base import BaseTool, ToolRiskLevel
 
 logger = logging.getLogger(__name__)
+
+# 本轮 Agent run 覆盖（session 可配 workspace_root / cwd）
+_run_workspace_root: ContextVar[str | None] = ContextVar("takton_run_workspace_root", default=None)
+_run_extra_roots: ContextVar[tuple[str, ...] | None] = ContextVar(
+    "takton_run_extra_roots", default=None
+)
+
+
+def get_run_workspace_root() -> str | None:
+    return _run_workspace_root.get()
+
+
+def get_run_extra_roots() -> list[str]:
+    extra = _run_extra_roots.get()
+    return list(extra) if extra else []
+
+
+@contextmanager
+def run_workspace_context(
+    root: str | None = None,
+    extra_roots: list[str] | None = None,
+) -> Iterator[None]:
+    """在 Agent.run 期间覆盖默认 workspace 与额外允许根。"""
+    tokens: list = []
+    if root:
+        r = Path(root).expanduser()
+        if not r.is_absolute():
+            r = Path(detect_project_root()) / r
+        r = r.resolve()
+        r.mkdir(parents=True, exist_ok=True)
+        tokens.append((_run_workspace_root, _run_workspace_root.set(str(r))))
+        logger.info("run_workspace_context root=%s", r)
+    if extra_roots is not None:
+        cleaned: list[str] = []
+        for e in extra_roots:
+            if not e:
+                continue
+            ep = Path(str(e)).expanduser()
+            if not ep.is_absolute():
+                ep = Path(detect_project_root()) / ep
+            try:
+                ep = ep.resolve()
+            except OSError:
+                continue
+            cleaned.append(str(ep))
+        tokens.append((_run_extra_roots, _run_extra_roots.set(tuple(cleaned))))
+        logger.info("run_workspace_context extra_roots=%s", cleaned)
+    try:
+        yield
+    finally:
+        for var, tok in reversed(tokens):
+            var.reset(tok)
 
 
 def detect_project_root(start: str | None = None) -> str:
@@ -52,6 +107,10 @@ def resolve_agent_workspace_root(explicit: str | None = None) -> str:
         root = root.resolve()
         root.mkdir(parents=True, exist_ok=True)
         return str(root)
+
+    run_root = _run_workspace_root.get()
+    if run_root:
+        return str(Path(run_root).resolve())
 
     env = (os.environ.get("TAKTON_FILE_BROWSER_ROOT") or "").strip()
     if env:
@@ -95,6 +154,58 @@ def resolve_agent_workspace_root(explicit: str | None = None) -> str:
     return str(root)
 
 
+
+def bind_run_workspace_from_config(config: dict[str, Any] | None) -> Any:
+    """从 session config 绑定本轮 workspace；返回 reset 回调。"""
+    cfg = config if isinstance(config, dict) else {}
+    root = (
+        cfg.get("workspace_root")
+        or cfg.get("file_browser_root")
+        or cfg.get("cwd")
+        or cfg.get("work_dir")
+        or (os.environ.get("TAKTON_TASK_ROOT") or "").strip()
+        or None
+    )
+    extra = cfg.get("allowed_roots") or cfg.get("extra_workspace_roots") or []
+    if isinstance(extra, str):
+        extra = [extra]
+    # 若只设了 TASK_ROOT 且 env 已有 FILE_BROWSER_ROOT 不同，把 task 作为 root
+    tokens: list = []
+    if root:
+        r = Path(str(root)).expanduser()
+        if not r.is_absolute():
+            r = Path(detect_project_root()) / r
+        r = r.resolve()
+        r.mkdir(parents=True, exist_ok=True)
+        tokens.append((_run_workspace_root, _run_workspace_root.set(str(r))))
+        logger.info("session workspace_root override=%s", r)
+    if extra:
+        cleaned: list[str] = []
+        for e in extra:
+            if not e:
+                continue
+            ep = Path(str(e)).expanduser()
+            if not ep.is_absolute():
+                ep = Path(detect_project_root()) / ep
+            try:
+                cleaned.append(str(ep.resolve()))
+            except OSError:
+                continue
+        if cleaned:
+            tokens.append((_run_extra_roots, _run_extra_roots.set(tuple(cleaned))))
+            logger.info("session extra_roots=%s", cleaned)
+
+    def _reset() -> None:
+        for var, tok in reversed(tokens):
+            try:
+                var.reset(tok)
+            except Exception:
+                pass
+
+    return _reset
+
+
+
 class ToolPermissionManager:
     """工具权限管理器"""
 
@@ -113,7 +224,19 @@ class ToolPermissionManager:
         检查路径是否允许访问。
         如果 allowed_paths 为 None，默认只允许 workspace_root。
         """
-        paths = allowed_paths if allowed_paths else [self.workspace_root]
+        if allowed_paths is not None:
+            paths = list(allowed_paths)
+        else:
+            paths = [self.workspace_root, *get_run_extra_roots()]
+        # de-dupe
+        seen: set[str] = set()
+        uniq: list[str] = []
+        for x in paths:
+            k = str(x)
+            if k not in seen:
+                seen.add(k)
+                uniq.append(k)
+        paths = uniq
         target = self._resolve_path(path)
         try:
             target_p = Path(target).resolve()
