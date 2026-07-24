@@ -816,6 +816,8 @@ class NexusAgentLoop:
         _last_tool_round_count = 0
         _timid_read_streak = 0
         _timid_write_streak = 0
+        _completion_followups = 0
+        _tools_used_run: list[str] = []
         self._reactive_compact_used = False
         _multi_source_pending = False
         _suppress_content_stream = False
@@ -1447,6 +1449,11 @@ class NexusAgentLoop:
                     f"Tool round {iteration + 1} done ({len(tool_calls)} calls), continuing agent loop"
                 )
                 _last_tool_round_count = len(tool_calls)
+                try:
+                    from backend.agent.decisive import tool_names_from_calls as _tnfc
+                    _tools_used_run.extend(_tnfc(tool_calls))
+                except Exception:
+                    pass
 
                 # 果断化：单轮仅 1 个只读工具 → 提示下轮并行/开改
                 try:
@@ -1761,6 +1768,39 @@ class NexusAgentLoop:
                             }
                         )
                         continue
+
+                # needsFollowUp：声称完成但未做必要写入/验证 → 强制再来一轮
+                if not _force_final_no_tools and not self._should_stop:
+                    try:
+                        from backend.agent.completion_gate import evaluate_completion
+
+                        _ver = evaluate_completion(
+                            user_input or enriched_input or "",
+                            _tools_used_run,
+                            accumulated_content or "",
+                            max_followups_done=_completion_followups,
+                        )
+                        if not _ver.ok and _ver.nudge:
+                            _completion_followups += 1
+                            await self._push_status(
+                                session_id,
+                                "thinking",
+                                f"完成校验未过（{_ver.reason}），继续…",
+                            )
+                            messages.append(
+                                {"role": "system", "content": _ver.nudge}
+                            )
+                            # allow tools again
+                            _force_final_no_tools = False
+                            logger.info(
+                                "completion gate followup=%s reason=%s session=%s",
+                                _completion_followups,
+                                _ver.reason,
+                                session_id,
+                            )
+                            continue
+                    except Exception as _cg_e:
+                        logger.debug("completion gate skipped: %s", _cg_e)
 
                 # 得到最终回复
                 final_content = accumulated_content
