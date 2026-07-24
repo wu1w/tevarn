@@ -3,8 +3,10 @@ from __future__ import annotations
 
 from backend.agent.decisive import (
     batch_read_nudge_text,
+    batch_write_nudge_text,
     decisive_coding_guidance,
     is_timid_read_round,
+    is_timid_write_round,
     tool_names_from_calls,
 )
 from backend.agent.system_prompt import PARALLEL_TOOL_CALLS, build_system_prompt
@@ -39,3 +41,10 @@ def test_system_prompt_includes_decisive_for_code_tools():
     stable = parts["stable"]
     assert "Decisive batching" in stable or "batch" in stable.lower()
     assert "SAME turn" in PARALLEL_TOOL_CALLS
+
+
+def test_timid_write_and_nudge():
+    assert is_timid_write_round(["file_write"]) is True
+    assert is_timid_write_round(["file_write", "file_write"]) is False
+    n = batch_write_nudge_text(consecutive_timid=2)
+    assert "file_write" in n

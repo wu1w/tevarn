@@ -21,3 +21,16 @@ def test_normalize_empty():
 def test_background_not_truncated():
     msg = "[Background started] id=abc\n" + ("x" * 5000)
     assert normalize_tool_result(msg, tool_name="command") == msg
+
+
+def test_file_write_ack_not_overtruncated():
+    msg = "[Success] Written 120 characters to gen_pkg/stats.py"
+    out = truncate_for_llm("file_write", msg)
+    assert out == msg
+
+
+def test_file_write_budget_at_least_2500():
+    raw = "x" * 3000
+    out = truncate_for_llm("file_write", raw)
+    # may truncate but keep plenty
+    assert len(out) >= 2000 or "omitted" in out

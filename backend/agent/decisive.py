@@ -50,6 +50,9 @@ def is_timid_shell_command(command: str) -> bool:
     return classify_command(command) == "read"
 
 
+_WRITEISH = frozenset({"file_write", "edit", "apply_patch"})
+
+
 def is_timid_read_round(tool_names: list[str], tool_calls: Iterable[Any] | None = None) -> bool:
     """True if this round only did a single read-ish tool (classic hesitation)."""
     if len(tool_names) != 1:
@@ -64,6 +67,11 @@ def is_timid_read_round(tool_names: list[str], tool_calls: Iterable[Any] | None 
         cmd = str(_tool_args(calls[0]).get("command") or "")
         return is_timid_shell_command(cmd)
     return False
+
+
+def is_timid_write_round(tool_names: list[str]) -> bool:
+    """单轮只写一个文件——建包场景应并行多 file_write。"""
+    return len(tool_names) == 1 and tool_names[0] in _WRITEISH
 
 
 def batch_read_nudge_text(*, consecutive_timid: int = 1) -> str:
@@ -87,6 +95,18 @@ def batch_read_nudge_text(*, consecutive_timid: int = 1) -> str:
     return base
 
 
+def batch_write_nudge_text(*, consecutive_timid: int = 1) -> str:
+    """建包/多文件场景：单次 file_write 后催并行写。"""
+    base = (
+        "【建包批次写】你上一轮只 file_write/edit 了一个文件。"
+        "若仍在搭建包/多文件骨架：请在本轮一次发出多个 file_write（__init__.py、模块、tests、pyproject 等），"
+        "写齐后再 command 跑一次 pytest。不要一文件一轮。"
+    )
+    if consecutive_timid >= 2:
+        base += " 已连续单文件写入：下一轮必须并行多个 file_write 或直接跑测收官。"
+    return base
+
+
 def decisive_coding_guidance() -> str:
     """Extra stable-layer text for coding profiles."""
     return (
@@ -96,8 +116,9 @@ def decisive_coding_guidance() -> str:
         "- Bugfix: reproduce (command) + locate (grep) + read suspects in as few rounds as possible, "
         "then edit and re-run tests — do not take a full turn per single read.\n"
         "- Prefer one decisive edit over many tiny exploratory reads.\n"
-        "- When creating a package: emit multiple file_write calls in ONE turn when possible, "
-        "then run pytest once.\n"
+        "- When creating a package / scaffolding: HARD RULE — emit ALL planned file_write "
+        "calls in ONE assistant turn (__init__.py, modules, tests, configs), then ONE pytest. "
+        "Never write a single source file per turn when the file list is already known.\n"
         "- When fixing a bug and the path is known: read + run tests can be same-turn if independent "
         "of each other after the fix; after read, next turn should edit.\n"
         "- Do not end a turn after a single successful file_read if more related files are clearly needed.\n"
@@ -108,7 +129,9 @@ def decisive_coding_guidance() -> str:
 __all__ = [
     "tool_names_from_calls",
     "is_timid_read_round",
+    "is_timid_write_round",
     "is_timid_shell_command",
     "batch_read_nudge_text",
+    "batch_write_nudge_text",
     "decisive_coding_guidance",
 ]

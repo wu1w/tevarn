@@ -815,6 +815,7 @@ class NexusAgentLoop:
         _tool_rounds = 0
         _last_tool_round_count = 0
         _timid_read_streak = 0
+        _timid_write_streak = 0
         self._reactive_compact_used = False
         _multi_source_pending = False
         _suppress_content_stream = False
@@ -1451,13 +1452,16 @@ class NexusAgentLoop:
                 try:
                     from backend.agent.decisive import (
                         batch_read_nudge_text,
+                        batch_write_nudge_text,
                         is_timid_read_round,
+                        is_timid_write_round,
                         tool_names_from_calls,
                     )
 
                     _tnames = tool_names_from_calls(tool_calls)
                     if is_timid_read_round(_tnames, tool_calls) and not _force_final_no_tools:
                         _timid_read_streak += 1
+                        _timid_write_streak = 0
                         messages.append(
                             {
                                 "role": "system",
@@ -1472,8 +1476,26 @@ class NexusAgentLoop:
                             _tnames,
                             session_id,
                         )
+                    elif is_timid_write_round(_tnames) and not _force_final_no_tools:
+                        _timid_write_streak += 1
+                        _timid_read_streak = 0
+                        messages.append(
+                            {
+                                "role": "system",
+                                "content": batch_write_nudge_text(
+                                    consecutive_timid=_timid_write_streak
+                                ),
+                            }
+                        )
+                        logger.info(
+                            "timid write nudge streak=%s names=%s session=%s",
+                            _timid_write_streak,
+                            _tnames,
+                            session_id,
+                        )
                     else:
                         _timid_read_streak = 0
+                        _timid_write_streak = 0
                 except Exception as _dec_e:
                     logger.debug("decisive nudge skipped: %s", _dec_e)
 
