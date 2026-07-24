@@ -76,3 +76,51 @@ async def compress_history_if_needed(
         engine.threshold_percent = old
         if hasattr(engine, "meter"):
             engine.meter.threshold_percent = old
+
+
+def is_prompt_too_long_error(err: BaseException | str) -> bool:
+    s = str(err).lower()
+    return any(
+        x in s
+        for x in (
+            "413",
+            "prompt_too_long",
+            "context_length",
+            "maximum context",
+            "too many tokens",
+            "token limit",
+            "context window",
+            "request too large",
+        )
+    )
+
+
+async def reactive_compact_if_needed(
+    messages: list[dict[str, Any]],
+    *,
+    session_id: uuid.UUID | None = None,
+    force: bool = True,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """413 / prompt_too_long 应急压缩：强制 pipeline + 更狠的 tool 截断。"""
+    logger.warning("reactiveCompact: forcing emergency compression session=%s", session_id)
+    # First pass: hard-trim tool role contents in-place copy
+    out: list[dict[str, Any]] = []
+    for m in messages:
+        mm = dict(m)
+        if mm.get("role") == "tool":
+            c = mm.get("content")
+            if isinstance(c, str) and len(c) > 800:
+                mm["content"] = (
+                    c[:500]
+                    + f"\n...[reactiveCompact omitted {len(c)-700} chars]...\n"
+                    + c[-200:]
+                )
+        out.append(mm)
+    # Second: full pipeline at low threshold
+    compacted, meta = await compress_history_if_needed(
+        out, session_id=session_id, threshold=0.45
+    )
+    meta = dict(meta or {})
+    meta["reactive"] = True
+    meta["force"] = force
+    return compacted, meta

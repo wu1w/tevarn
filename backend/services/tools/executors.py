@@ -84,6 +84,8 @@ _DANGEROUS_PATTERNS = [
 
 # 硬禁止：空字节。换行已放开（支持 cat <<EOF heredoc）；反引号放开（与 Hermes 对齐）。
 # 危险操作仍走 _DANGEROUS_PATTERNS + 前端确认。
+AGENT_COMMAND_AUTO_BG_SECONDS = 15
+
 _FORBIDDEN_SUBSTR = ["\x00"]
 
 
@@ -508,11 +510,28 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
         return f"[Error] cwd does not exist: {cwd}"
 
     background = bool(arguments.get("background") or arguments.get("bg"))
+    # 长命令自动后台：pytest/pip install/sleep 等不阻塞 agent loop
+    _auto_bg = bool(arguments.get("auto_bg", True))
+    _long_hint = re.search(
+        r"(pytest|py\.test|pip3?\s+install|npm\s+install|pnpm\s+install|"
+        r"yarn\s+add|cargo\s+build|make\s+-j|sleep\s+[5-9]|sleep\s+\d{2,})",
+        command,
+        re.I,
+    )
+    if (
+        not background
+        and _auto_bg
+        and _long_hint
+        and timeout >= int(AGENT_COMMAND_AUTO_BG_SECONDS)
+    ):
+        background = True
+        logger = __import__("logging").getLogger(__name__)
+        logger.info("auto-background long command: %s", command[:120])
+
     if background:
         from backend.services.tools.process_registry import start_background, format_process
 
         item = await start_background(command, cwd=cwd)
-        # give a short moment for quick commands
         await asyncio.sleep(0.15)
         return (
             f"[Background started] id={item.id}\n"

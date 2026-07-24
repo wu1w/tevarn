@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any, Iterable
+
+from backend.agent.command_classifier import classify_command
 
 # tools that only gather info — batching them is almost always better
 _READISH = frozenset(
@@ -18,12 +19,6 @@ _READISH = frozenset(
         "http",
         "browser",
     }
-)
-
-# shell one-shots that are effectively "read"
-_TIMID_SHELL = re.compile(
-    r"^\s*(cat|head|tail|less|more|wc|ls|stat|file|nl|od|hexdump|bat|sed\s+-n)\b",
-    re.I,
 )
 
 
@@ -51,20 +46,8 @@ def _tool_args(tc: Any) -> dict[str, Any]:
 
 
 def is_timid_shell_command(command: str) -> bool:
-    """True if command is a single read-only shell peek (cat/ls/head/...)."""
-    c = (command or "").strip()
-    if not c:
-        return False
-    # multi-step write/build is not timid
-    if any(x in c for x in ("\n", "&&", ";", "|", ">", ">>", "npm", "pip", "pytest", "python -m")):
-        # allow simple pipelines of read-only: cat f | head
-        if ">" in c or ">>" in c:
-            return False
-        if "pytest" in c or "pip " in c or "npm " in c:
-            return False
-        if "&&" in c or ";" in c or "\n" in c:
-            return False
-    return bool(_TIMID_SHELL.match(c.split("|")[0].strip()))
+    """True if command is read-only peek (cat/ls/head/git status/...)."""
+    return classify_command(command) == "read"
 
 
 def is_timid_read_round(tool_names: list[str], tool_calls: Iterable[Any] | None = None) -> bool:
@@ -86,7 +69,7 @@ def is_timid_read_round(tool_names: list[str], tool_calls: Iterable[Any] | None 
 def batch_read_nudge_text(*, consecutive_timid: int = 1) -> str:
     """System nudge after a timid single-read round."""
     base = (
-        "【果断批次】你上一轮只做了 1 次信息收集（单文件读或 cat/ls/head）。"
+        "【果断批次】你上一轮只做了 1 次信息收集（单文件读或只读 shell）。"
         "若任务仍未完成：请在本轮一次发出多个 tool_calls——"
         "并行 file_read/grep/glob 相关文件，或信息已够时直接 edit/file_write/command 验证。"
         "禁止再「每轮只窥一眼再停」。"
@@ -95,6 +78,11 @@ def batch_read_nudge_text(*, consecutive_timid: int = 1) -> str:
         base += (
             " 已连续多轮单点试探：下一轮必须并行读取，"
             "或开始修改/跑测；读完可编辑内容后请立刻 edit，不要再重复 file_read 同一文件。"
+        )
+    if consecutive_timid >= 3:
+        base += (
+            " CRITICAL: 你已连续 3+ 轮只调 1 个工具。"
+            "请立即并行多个 tool_calls；若信息足够，直接 edit/file_write，停止继续只读。"
         )
     return base
 
@@ -106,13 +94,14 @@ def decisive_coding_guidance() -> str:
         "Minimize tool rounds. Default stance: batch independent work in ONE assistant turn.\n"
         "- Need several files? Emit multiple file_read/grep/glob tool_calls together.\n"
         "- Bugfix: reproduce (command) + locate (grep) + read suspects in as few rounds as possible, "
-        "then edit and re-run tests in the next rounds — do not take a full turn per single read.\n"
+        "then edit and re-run tests — do not take a full turn per single read.\n"
         "- Prefer one decisive edit over many tiny exploratory reads.\n"
-        "- When creating a package: write multiple files via repeated file_write in one turn when possible, "
+        "- When creating a package: emit multiple file_write calls in ONE turn when possible, "
         "then run pytest once.\n"
+        "- When fixing a bug and the path is known: read + run tests can be same-turn if independent "
+        "of each other after the fix; after read, next turn should edit.\n"
         "- Do not end a turn after a single successful file_read if more related files are clearly needed.\n"
-        "- After you have read enough to edit, call edit/file_write in the next turn — "
-        "do not keep file_read-only loops."
+        "- After you have read enough to edit, call edit/file_write next — no more file_read-only loops."
     )
 
 

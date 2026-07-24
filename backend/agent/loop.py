@@ -815,6 +815,7 @@ class NexusAgentLoop:
         _tool_rounds = 0
         _last_tool_round_count = 0
         _timid_read_streak = 0
+        self._reactive_compact_used = False
         _multi_source_pending = False
         _suppress_content_stream = False
         _segment = 0
@@ -1003,6 +1004,24 @@ class NexusAgentLoop:
 
             except Exception as e:
                 logger.error(f"LLM chat error in iteration {iteration + 1}: {e}")
+                # 413 / context overflow → reactiveCompact then retry once
+                try:
+                    from backend.agent.context_compress import (
+                        is_prompt_too_long_error,
+                        reactive_compact_if_needed,
+                    )
+                    if is_prompt_too_long_error(e) and not getattr(self, "_reactive_compact_used", False):
+                        self._reactive_compact_used = True
+                        messages, _rmeta = await reactive_compact_if_needed(
+                            messages, session_id=session_id, force=True
+                        )
+                        await self._push_status(
+                            session_id, "optimizing", "上下文过长，已应急压缩并重试…"
+                        )
+                        continue
+                except Exception as _rc_e:
+                    logger.warning("reactiveCompact failed: %s", _rc_e)
+
                 from backend.agent.turn_retry import classify_llm_error
 
                 _kind = classify_llm_error(e)
@@ -1246,9 +1265,14 @@ class NexusAgentLoop:
 
                         # 工具结果契约：统一 str / 截断 / 空结果
                         _max_tr = int(getattr(settings, "max_tool_result_length", 12_000) or 12_000)
+                        _tname = getattr(tc, "name", "") or ""
                         tool_result = normalize_tool_result(
-                            tool_result, max_chars=_max_tr, tool_name=getattr(tc, "name", "") or ""
+                            tool_result, tool_name=_tname
                         )
+                        # 全局硬顶（settings）仍生效
+                        if _max_tr and len(tool_result) > int(_max_tr):
+                            from backend.agent.tool_result_contract import truncate_for_llm
+                            tool_result = truncate_for_llm(_tname, tool_result, budget=int(_max_tr))
                         # shell 安全拦截 / 127：记入重试分类，并提示改用 file_write 或修 cwd
                         try:
                             from backend.agent.turn_retry import classify_tool_result, RetryKind as _RK
