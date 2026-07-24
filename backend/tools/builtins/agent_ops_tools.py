@@ -61,7 +61,11 @@ class ShellSessionTool(BaseTool):
 
         action = str(kwargs.get("action") or "run").lower()
         sid = _sid(kwargs)
-        default_cwd = os.getcwd()
+        try:
+            from backend.tools.permissions import resolve_agent_workspace_root
+            default_cwd = resolve_agent_workspace_root()
+        except Exception:
+            default_cwd = os.getcwd()
         cwd = _SHELL_CWD.get(sid, default_cwd)
 
         if action == "pwd":

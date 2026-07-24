@@ -4,6 +4,7 @@ Classifies failures and decides whether to continue / force final / stop.
 """
 from __future__ import annotations
 
+
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -118,12 +119,20 @@ def classify_tool_result(result: str | None) -> RetryKind | None:
     if not t:
         return None
     low = t.lower()
+    if t.startswith("[Security Blocked]") or t.startswith("[Denied]"):
+        return RetryKind.TOOL_TRANSIENT  # 提示换 file_write；同签名重复由 thrash guard 管
+    if t.startswith("[Exit 127]") or "command not found" in low or "[exit 127]" in low:
+        return RetryKind.TOOL_TRANSIENT
     if t.startswith("[Error]") or t.startswith("[error]"):
         if "timeout" in low or "timed out" in low:
             return RetryKind.TOOL_TIMEOUT
         if any(x in low for x in ("429", "rate limit", "503", "502", "temporarily")):
             return RetryKind.TOOL_TRANSIENT
+        if "cwd does not exist" in low or "no such file" in low:
+            return RetryKind.TOOL_TRANSIENT
         return None  # fatal tool error — not auto-retry whole turn
+    if "[Exit 127]" in t or "[exit 127]" in t:
+        return RetryKind.TOOL_TRANSIENT
     if "truncated" in low and "tool" in low:
         return RetryKind.TRUNCATED_TOOL
     return None

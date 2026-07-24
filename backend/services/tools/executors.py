@@ -82,8 +82,9 @@ _DANGEROUS_PATTERNS = [
     (r"\bchmod\s+(-R\s+)?777\b", "放开文件权限 777"),
 ]
 
-# 完全禁止的子串（保留：换行/反引号/命令注入类，与管道放开不冲突）
-_FORBIDDEN_SUBSTR = ["`", "\n", "\r"]
+# 硬禁止：空字节。换行已放开（支持 cat <<EOF heredoc）；反引号放开（与 Hermes 对齐）。
+# 危险操作仍走 _DANGEROUS_PATTERNS + 前端确认。
+_FORBIDDEN_SUBSTR = ["\x00"]
 
 
 async def execute_browser(config: dict[str, Any], arguments: dict[str, Any]) -> str:
@@ -454,17 +455,18 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
     """
     命令行工具：执行 shell 命令（P0 增强：cwd / 更长超时 / 输出截断 / 后台）。
 
-    安全模型（v3）：
-    1. 默认放开：python/pip/npm/node/git 等开发命令、管道、重定向、&& 均可执行。
+    安全模型（v3.1）：
+    1. 默认放开：python/pip/npm/node/git、管道、重定向、&&、多行 heredoc。
     2. 仅真正危险的操作触发前端弹窗确认。
-    3. 换行/反引号仍禁止（防命令注入）。
+    3. 多行写文件仍推荐 file_write/edit；command 支持 heredoc 但不鼓励用 shell 拼大文件。
+    4. 默认 cwd = workspace root（可用参数 cwd 覆盖）。
     """
     command = arguments.get("command", "").strip()
     if not command:
         return "[Error] command is required"
 
-    if any(d in command for d in _FORBIDDEN_SUBSTR):
-        return f"[Security Blocked] Newlines/backticks are not allowed in: {command}"
+    if "\x00" in command:
+        return "[Security Blocked] NUL bytes are not allowed in command"
 
     danger_reason = _match_dangerous(command)
     if danger_reason:
@@ -495,10 +497,15 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
         or config.get("working_dir")
         or config.get("base_path")
     )
-    if cwd:
-        cwd = os.path.abspath(str(cwd))
-        if not os.path.isdir(cwd):
-            return f"[Error] cwd does not exist: {cwd}"
+    if not cwd:
+        try:
+            from backend.tools.permissions import resolve_agent_workspace_root
+            cwd = resolve_agent_workspace_root()
+        except Exception:
+            cwd = os.getcwd()
+    cwd = os.path.abspath(str(cwd))
+    if not os.path.isdir(cwd):
+        return f"[Error] cwd does not exist: {cwd}"
 
     background = bool(arguments.get("background") or arguments.get("bg"))
     if background:

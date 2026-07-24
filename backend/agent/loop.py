@@ -1238,6 +1238,34 @@ class NexusAgentLoop:
                         tool_result = normalize_tool_result(
                             tool_result, max_chars=_max_tr, tool_name=getattr(tc, "name", "") or ""
                         )
+                        # shell 安全拦截 / 127：记入重试分类，并提示改用 file_write 或修 cwd
+                        try:
+                            from backend.agent.turn_retry import classify_tool_result, RetryKind as _RK
+                            _ck = classify_tool_result(str(tool_result))
+                            if _ck is not None:
+                                _act = _turn_retry.note_and_decide(
+                                    _ck, detail=f"{getattr(tc,'name', '')}:{(str(tool_result))[:80]}"
+                                )
+                                if str(tool_result).startswith("[Security Blocked]"):
+                                    messages.append({
+                                        "role": "system",
+                                        "content": (
+                                            "上一命令被安全策略拦截。请改用 file_write/edit/apply_patch 写文件；"
+                                            "或使用单行 shell（避免无必要复杂注入）。不要重复同一被拦命令。"
+                                        ),
+                                    })
+                                elif _ck == _RK.TOOL_TRANSIENT and "127" in str(tool_result):
+                                    messages.append({
+                                        "role": "system",
+                                        "content": (
+                                            "命令 Exit 127（未找到）。请检查 cwd 是否在任务工作区、"
+                                            "是否需 python -m / 完整路径；不要在错误目录重复同一命令。"
+                                        ),
+                                    })
+                                if _act == "force_final":
+                                    _force_final_no_tools = True
+                        except Exception:
+                            pass
 
                         await self._persist_tool_completion(
                             session_id, task_id, tc.name, tool_result, query

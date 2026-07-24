@@ -542,6 +542,7 @@ def compact_capability_brief(
         "Skill discipline: if an installed skill index matches the task, "
         "you MUST follow/load that skill guidance before improvising workflows."
     )
+    lines.append("Default cwd for shell is the workspace/project root; pass cwd= for task dirs. ""Prefer file_write/edit for multi-line files over cat/heredoc shells.")
     lines.append("Prefer tools over speculation; finish the user task.")
     return "\n".join(lines)
 

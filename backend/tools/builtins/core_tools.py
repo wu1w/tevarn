@@ -197,9 +197,10 @@ class CommandTool(_BuiltinToolBase):
         super().__init__(
             name="command",
             description=(
-                "在本机执行 shell 命令（支持管道/&&/python/pip/npm/git）。"
-                "可选 cwd 工作目录、timeout（秒，默认120）、background=true 后台运行。"
-                "后台任务用 process 工具 poll/kill。"
+                "在本机执行 shell 命令（支持管道/&&/python/pip/npm/git、多行 heredoc）。"
+                "默认 cwd=workspace 根；可用 cwd 覆盖到任务目录。"
+                "写大段文件请用 file_write/edit，不要用 cat 拼巨型脚本。"
+                "timeout 默认120；background=true 后台跑，用 process poll/kill。"
             ),
             parameters={
                 "type": "object",
