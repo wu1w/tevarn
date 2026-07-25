@@ -78,7 +78,7 @@ def test_cluster_success_pushes_idle():
     with patch.dict(sys.modules, _fake_modules(OkResult())):
         out = asyncio.run(loop._execute_cluster_parallel("审查代码", _SUB_AGENTS, uuid.uuid4()))
 
-    assert out and "集群协作结果" in out
+    assert out and "多角色草稿汇总" in out
     assert loop._persist_final_response.called
     states = [s for s, _ in calls]
     assert "idle" in states, f"成功路径必须推 idle, 实际={states}"

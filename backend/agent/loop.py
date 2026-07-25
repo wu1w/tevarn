@@ -2509,7 +2509,7 @@ class NexusAgentLoop(AgentLoopBase):
         logger.info(f"Starting parallel cluster execution with {len(sub_agents)} agents")
         
         # 推送进度：开始集群执行
-        await self._emit_progress("cluster_start", f"启动 {len(sub_agents)} 个子代理并行执行...")
+        await self._emit_progress("cluster_start", f"启动 {len(sub_agents)} 个角色并行生成草稿...")
         
         try:
             from backend.agent.cluster_executor import get_cluster_executor
@@ -2522,16 +2522,14 @@ class NexusAgentLoop(AgentLoopBase):
                     "id": f"agent-{i}",
                     "name": agent["name"],
                     "description": agent["description"],
-                    "prompt": f"""你是 {agent['name']}，{agent['description']}
+                    "prompt": f"""用户请求：{user_input}
 
-用户请求：{user_input}
-
-请根据你的专长给出回答。保持简洁，突出你的专业视角。
-
-系统提示词：{agent['system_prompt']}""",
+请根据你的专长给出回答。保持简洁，突出你的专业视角。""",
                     "agent_config": {
                         "agent_id": agent["id"],
+                        "name": agent["name"],
                         "model_ref": agent["model_ref"],
+                        "system_prompt": agent["system_prompt"],
                         "icon": agent["icon"],
                     },
                     "depends_on": [],
@@ -2568,7 +2566,7 @@ class NexusAgentLoop(AgentLoopBase):
                 # 添加聚合结果
                 aggregated = result.aggregated_result
                 if isinstance(aggregated, dict) and "synthesized" in aggregated:
-                    final_text = f"""【集群协作结果】
+                    final_text = f"""【多角色草稿汇总】
 
 {chr(10).join(agent_responses)}
 
@@ -2577,12 +2575,12 @@ class NexusAgentLoop(AgentLoopBase):
 **综合结论**：
 {aggregated['synthesized']}"""
                 else:
-                    final_text = f"""【集群协作结果】
+                    final_text = f"""【多角色草稿汇总】
 
 {chr(10).join(agent_responses)}"""
                 
                 # 推送完成事件
-                await self._emit_progress("cluster_complete", "集群执行完成")
+                await self._emit_progress("cluster_complete", "多角色草稿汇总完成")
 
                 # 保存结果
                 await self._persist_final_response(session_id, final_text)
@@ -2594,11 +2592,11 @@ class NexusAgentLoop(AgentLoopBase):
 
                 return final_text
             else:
-                error_msg = f"集群执行失败: {result.error or '未知错误'}"
+                error_msg = f"多角色草稿执行失败: {result.error or '未知错误'}"
                 await self._emit_progress("cluster_error", error_msg)
                 # 失败路径同样会提前 return（见 run() 第 570 行），需补推状态避免前端卡「思考中」
                 await self._push_status(session_id, "error", error_msg)
-                return f"[集群模式] {error_msg}"
+                return f"[多角色草稿] {error_msg}"
                 
         except Exception as e:
             logger.error(f"Cluster parallel execution failed: {e}")

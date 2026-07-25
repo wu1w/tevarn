@@ -309,11 +309,33 @@ class ClusterExecutor:
                 logger.error(f"Task {task.id} failed: {e}")
     
     async def _get_or_create_agent(self, task: SubTask) -> Any:
-        """获取或创建子代理 - 简化版，直接返回标记"""
-        agent_id = task.agent_config.get("agent_id", "default")
-        
-        # 简化：不创建完整 Agent，直接返回标记，执行时直接使用 LLM
-        return {"agent_id": agent_id, "simplified": True}
+        """获取子代理配置 - 透传 persona（model_ref / system_prompt / name）"""
+        cfg = dict(task.agent_config or {})
+        cfg.setdefault("agent_id", "default")
+        return cfg
+    
+    def _resolve_llm(self, agent: Any) -> Any:
+        """按 agent_config.model_ref（provider_id/model）解析专属 LLM 服务。
+
+        解析失败或缺失时降级到全局默认服务，保证 cluster 可用。
+        """
+        from backend.services.llm import LLMServiceFactory
+
+        model_ref = str((agent or {}).get("model_ref") or "").strip()
+        if model_ref and "/" in model_ref:
+            provider_id, model = model_ref.split("/", 1)
+            try:
+                return LLMServiceFactory.get_service_for_snapshot({
+                    "provider": provider_id,
+                    "provider_id": provider_id,
+                    "model": model,
+                })
+            except Exception as e:
+                logger.warning(
+                    "resolve model_ref %s failed, fallback to default LLM: %s",
+                    model_ref, e,
+                )
+        return LLMServiceFactory.get_service()
     
     async def _run_agent_task(self, agent: Any, task: SubTask) -> Any:
         """运行代理任务"""
@@ -324,15 +346,16 @@ class ClusterExecutor:
         )
     
     async def _execute_agent_prompt(self, agent: Any, prompt: str, metadata: dict) -> Any:
-        """执行代理提示 - 真实调用 LLM（简化版，不依赖完整 Agent）"""
+        """执行子代理提示 - 真实调用 LLM（按 persona 解析模型与系统提示词）"""
+        llm = self._resolve_llm(agent)
+        system_prompt = (
+            str((agent or {}).get("system_prompt") or "").strip()
+            or "你是一个专业的 AI 助手，请认真完成分配给你的子任务。"
+        )
         try:
-            from backend.services.llm import LLMServiceFactory
-            
-            llm = LLMServiceFactory.get_service()
-            
             # 调用 LLM 生成回复（使用非流式接口）
             response = await llm.chat_complete([
-                {"role": "system", "content": "你是一个专业的 AI 助手，请认真完成分配给你的子任务。"},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}
             ])
             

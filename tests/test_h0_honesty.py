@@ -119,3 +119,130 @@ async def test_llm_failure_marks_task_failed_not_completed():
         and result.sub_tasks[0].result.get("status") != "simulated"
     )
     assert "模拟结果" not in str(result.to_dict())
+
+# ─────────── H0.4 返工：cluster 真正跑通（persona + 专属模型） ───────────
+
+
+def _fake_llm(content: str) -> AsyncMock:
+    """构造最小 LLM mock：chat_complete 返回带 content 的响应"""
+    from types import SimpleNamespace
+
+    return AsyncMock(
+        chat_complete=AsyncMock(return_value=SimpleNamespace(content=content))
+    )
+
+
+@pytest.mark.asyncio
+async def test_persona_system_prompt_goes_to_system_message():
+    """persona 的 system_prompt 必须进 system 消息，不再被通用提示词顶替"""
+    executor = ClusterExecutor()
+    llm = _fake_llm("ok")
+    with patch("backend.services.llm.LLMServiceFactory") as factory:
+        factory.get_service.return_value = llm
+        await executor._execute_agent_prompt(
+            {"agent_id": "a1", "system_prompt": "你是资深安全审计员"},
+            "审查这段代码",
+            {},
+        )
+    messages = llm.chat_complete.await_args.args[0]
+    assert messages[0]["role"] == "system"
+    assert "资深安全审计员" in messages[0]["content"]
+    assert messages[1] == {"role": "user", "content": "审查这段代码"}
+
+
+@pytest.mark.asyncio
+async def test_model_ref_resolves_to_snapshot_service():
+    """model_ref=provider/model 必须走 get_service_for_snapshot，不用全局默认"""
+    executor = ClusterExecutor()
+    persona_llm = _fake_llm("persona answer")
+    with patch("backend.services.llm.LLMServiceFactory") as factory:
+        factory.get_service_for_snapshot.return_value = persona_llm
+        result = await executor._execute_agent_prompt(
+            {"agent_id": "a1", "model_ref": "prov-x/model-y"},
+            "p",
+            {},
+        )
+    factory.get_service_for_snapshot.assert_called_once()
+    snapshot = factory.get_service_for_snapshot.call_args.args[0]
+    assert snapshot["provider_id"] == "prov-x"
+    assert snapshot["model"] == "model-y"
+    factory.get_service.assert_not_called()
+    assert result["result"] == "persona answer"
+
+
+@pytest.mark.asyncio
+async def test_model_ref_resolve_failure_falls_back_to_default():
+    """model_ref 解析失败时降级全局默认服务，保证可用"""
+    executor = ClusterExecutor()
+    default_llm = _fake_llm("default answer")
+    with patch("backend.services.llm.LLMServiceFactory") as factory:
+        factory.get_service_for_snapshot.side_effect = KeyError("no such provider")
+        factory.get_service.return_value = default_llm
+        result = await executor._execute_agent_prompt(
+            {"agent_id": "a1", "model_ref": "bad/ref"},
+            "p",
+            {},
+        )
+    factory.get_service.assert_called_once()
+    assert result["result"] == "default answer"
+
+
+@pytest.mark.asyncio
+async def test_no_model_ref_uses_default_service():
+    executor = ClusterExecutor()
+    default_llm = _fake_llm("default answer")
+    with patch("backend.services.llm.LLMServiceFactory") as factory:
+        factory.get_service.return_value = default_llm
+        result = await executor._execute_agent_prompt({"agent_id": "a1"}, "p", {})
+    factory.get_service_for_snapshot.assert_not_called()
+    assert result["result"] == "default answer"
+
+
+@pytest.mark.asyncio
+async def test_cluster_happy_path_parallel_personas_and_synthesize():
+    """全链路：2 个 persona 并行真实出稿（各自模型）→ 主 LLM 汇总"""
+    from backend.agent.cluster_executor import AggregationStrategy, TaskStatus
+
+    coder_llm = _fake_llm("coder 视角答案")
+    writer_llm = _fake_llm("writer 视角答案")
+    synth_llm = _fake_llm("综合后的最终答案")
+
+    def _snapshot_router(snapshot: dict):
+        return {
+            "prov-a": coder_llm,
+            "prov-b": writer_llm,
+        }[snapshot["provider_id"]]
+
+    executor = ClusterExecutor(timeout_seconds=5)
+    with patch("backend.services.llm.LLMServiceFactory") as factory:
+        factory.get_service_for_snapshot.side_effect = _snapshot_router
+        factory.get_service.return_value = synth_llm
+        result = await executor.execute(
+            task_description="评审这个设计",
+            sub_tasks=[
+                {
+                    "name": "Coder",
+                    "prompt": "p1",
+                    "agent_config": {"model_ref": "prov-a/m1", "system_prompt": "你是 Coder"},
+                },
+                {
+                    "name": "Writer",
+                    "prompt": "p2",
+                    "agent_config": {"model_ref": "prov-b/m2", "system_prompt": "你是 Writer"},
+                },
+            ],
+            aggregation_strategy=AggregationStrategy.SYNTHESIZE,
+        )
+
+    assert result.status == TaskStatus.COMPLETED
+    by_name = {st.name: st for st in result.sub_tasks}
+    assert by_name["Coder"].status == TaskStatus.COMPLETED
+    assert by_name["Coder"].result["result"] == "coder 视角答案"
+    assert by_name["Writer"].result["result"] == "writer 视角答案"
+    # 两个 persona 的 system_prompt 各自生效
+    coder_msgs = coder_llm.chat_complete.await_args.args[0]
+    writer_msgs = writer_llm.chat_complete.await_args.args[0]
+    assert "Coder" in coder_msgs[0]["content"]
+    assert "Writer" in writer_msgs[0]["content"]
+    # 汇总走主 LLM，结果带 synthesized
+    assert result.aggregated_result["synthesized"] == "综合后的最终答案"
