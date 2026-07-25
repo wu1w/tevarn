@@ -2,7 +2,10 @@
 
 import React, { useState, useCallback, useRef } from 'react';
 import { ChatWindow } from '@/components/chat/ChatWindow';
-import { MessageInput, Attachment, ChatMode } from '@/components/chat/MessageInput';
+import { MessageInput, Attachment, ChatMode, type MessageInputHandle } from '@/components/chat/MessageInput';
+import { FilePreviewHost } from '@/components/chat/FilePreviewHost';
+import { SessionArtifactsBar } from '@/components/chat/SessionArtifactsBar';
+import type { ChatArtifact } from '@/lib/artifacts';
 import { ScreenshotPanel } from '@/components/chat/ScreenshotPanel';
 import { ActivityPanel } from '@/components/chat/ActivityPanel';
 import { TaskPanel } from '@/components/tasks/TaskPanel';
@@ -16,7 +19,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { Message, StatusUpdateMessage, StreamDeltaMessage, GoalUpdateMessage, GoalState, ToolEventMessage, ScreenshotMessage } from '@/types';
 import { useScreenshotStore } from '@/stores/screenshotStore';
-import { generateImage, uploadFile } from '@/lib/api';
+import { generateImage } from '@/lib/api';
 import { generateUUID } from '@/lib/uuid';
 import { useRouter } from 'next/navigation';
 import type { ToolCallData } from '@/components/chat/ToolCallPanel';
@@ -76,6 +79,29 @@ export default function HomePage() {
     const [searchOpen, setSearchOpen] = useState(false);
     const [activeGoal, setActiveGoal] = useState<GoalState | null>(null);
     const [isDragging, setIsDragging] = useState(false);
+    const composerRef = useRef<MessageInputHandle | null>(null);
+    const [previewArtifact, setPreviewArtifact] = useState<ChatArtifact | null>(null);
+
+    // 开发冒烟：允许 Playwright 注入消息 / 打开预览
+    React.useEffect(() => {
+      if (process.env.NODE_ENV === 'production') return;
+      const w = window as unknown as {
+        __taktonSmoke?: {
+          setPreview: (a: ChatArtifact | null) => void;
+          addMessage: typeof addMessage;
+          setMessages: (msgs: Message[]) => void;
+        };
+      };
+      w.__taktonSmoke = {
+        setPreview: setPreviewArtifact,
+        addMessage,
+        setMessages: useSessionStore.getState().setMessages,
+      };
+      return () => {
+        delete w.__taktonSmoke;
+      };
+    }, [addMessage]);
+
     const [editingContent, setEditingContent] = useState<string | null>(null);
   // 设备页「用此设备对话」带入的草稿
   React.useEffect(() => {
@@ -571,28 +597,15 @@ export default function HomePage() {
       setIsDragging(false);
 
       const files = e.dataTransfer.files;
-      if (!files || files.length === 0 || !currentSession) return;
-
-      // Upload each file and create attachment message
-      for (const file of Array.from(files)) {
-        try {
-          const result = await uploadFile(file);
-          const content = `[${t('chat.attachment')}: ${result.filename}](${result.url})`;
-          addMessage({
-            id: generateUUID(),
-            session_id: currentSession.id,
-            role: 'user',
-            content,
-            tool_calls: null,
-            token_count: null,
-            created_at: new Date().toISOString(),
-          });
-        } catch (err) {
-          console.error('Upload failed:', err);
-        }
+      if (!files || files.length === 0) return;
+      // 挂到 composer pending 附件，不造假消息、不自动发送
+      if (composerRef.current?.ingestFiles) {
+        await composerRef.current.ingestFiles(files);
+      } else {
+        addToast(t('chat.uploadFailed') + 'composer unavailable', 'error');
       }
     },
-    [currentSession, addMessage, t]
+    [addToast, t]
   );
 
   const displayMessages = [...messages];
@@ -645,7 +658,7 @@ export default function HomePage() {
             <svg className="mx-auto h-12 w-12 text-brand-purple/60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
             </svg>
-            <p className="mt-3 text-sm font-medium text-foreground-muted">{t('chat.dropToUpload')}</p>
+            <p className="mt-3 text-sm font-medium text-foreground-muted">{t('chat.dropToAttach')}</p>
           </div>
         </div>
       )}
@@ -756,7 +769,7 @@ export default function HomePage() {
                   <div className="relative flex min-h-0 flex-1 overflow-hidden">
                     <main className="chat-main-column">
                       <div className="chat-messages-pane">
-                        <ChatWindow
+                                                <ChatWindow
                           messages={displayMessages}
                           isStreaming={isStreaming}
                           onStopStreaming={handleStopStreaming}
@@ -764,6 +777,7 @@ export default function HomePage() {
                           onRegenerate={handleRegenerate}
                           onEdit={handleEdit}
                           onExampleSelect={(text) => setEditingContent(text)}
+                          onPreviewArtifact={setPreviewArtifact}
                         />
                       </div>
                       {!isConnected && !isConnecting && !!currentSession && (
@@ -771,12 +785,17 @@ export default function HomePage() {
                           <span>{t('chat.channelIdle')}</span>
                         </div>
                       )}
+                      <SessionArtifactsBar
+                        messages={displayMessages}
+                        onPreview={setPreviewArtifact}
+                      />
                       <ActivityPanel
                         liveToolCalls={liveToolCalls}
                         streamStatusDetail={streamStatusDetail}
                         isStreaming={isStreaming}
                       />
                       <MessageInput
+                                              ref={composerRef}
                                               key={editingContent ?? 'default'}
                                               onSend={handleSend}
                                               onGenerateImage={handleGenerateImage}
@@ -804,6 +823,12 @@ export default function HomePage() {
                                             />
                     </main>
 
+                    {previewArtifact && (
+                      <FilePreviewHost
+                        artifact={previewArtifact}
+                        onClose={() => setPreviewArtifact(null)}
+                      />
+                    )}
                     <WorkspaceDock />
 
                     {/* 实时截图面板：desktop/browser 截图流 */}

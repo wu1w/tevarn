@@ -1,6 +1,6 @@
 {
   "name": "takton",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "private": true,
   "description": "Takton - 个人专属 Agent 终端",
   "author": "developer <developer@takton.dev>",
@@ -35,7 +35,10 @@
     "clsx": "^2.1.1",
     "electron-updater": "^6.8.9",
     "framer-motion": "^12.42.2",
-    "tailwind-merge": "^3.6.0"
+    "tailwind-merge": "^3.6.0",
+    "jszip": "^3.10.1",
+    "mammoth": "^1.12.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
@@ -124,33 +127,33 @@
       "icon": "public/icon.png",
       "syncDesktopName": true,
       "extraResources": [
-              {
-                "from": "../backend",
-                "to": "backend",
-                "filter": [
-                  "**/*.py",
-                  "pyproject.toml",
-                  "requirements.txt",
-                  "requirements-prod.txt",
-                  "!**/__pycache__/**",
-                  "!**/tests/**",
-                  "!**/*.egg-info/**",
-                  "!**/*.db",
-                  "!**/*.db-*",
-                  "!**/uploads/**",
-                  "!workspace_state.json"
-                ]
-              },
-              {
-                "from": "../.venv",
-                "to": "backend/.venv",
-                "filter": [
-                  "**/*",
-                  "!**/__pycache__/**",
-                  "!**/*.pyc"
-                ]
-              }
-            ]
+        {
+          "from": "../backend",
+          "to": "backend",
+          "filter": [
+            "**/*.py",
+            "pyproject.toml",
+            "requirements.txt",
+            "requirements-prod.txt",
+            "!**/__pycache__/**",
+            "!**/tests/**",
+            "!**/*.egg-info/**",
+            "!**/*.db",
+            "!**/*.db-*",
+            "!**/uploads/**",
+            "!workspace_state.json"
+          ]
+        },
+        {
+          "from": "../.venv",
+          "to": "backend/.venv",
+          "filter": [
+            "**/*",
+            "!**/__pycache__/**",
+            "!**/*.pyc"
+          ]
+        }
+      ]
     },
     "win": {
       "target": [

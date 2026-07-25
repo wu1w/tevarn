@@ -14,6 +14,8 @@ import {
   isErrorContent,
   summarizeToolResult,
 } from '@/lib/chatDisplay';
+import { extractArtifacts, type ChatArtifact } from '@/lib/artifacts';
+import { ArtifactCard } from './ArtifactCard';
 
 function formatMessageTime(dateStr: string): string {
   // 后端存储的是 UTC ISO 字符串或 DATETIME 文本；强制按 UTC 解析后转本地时区
@@ -55,6 +57,7 @@ interface MessageBubbleProps {
   onRegenerate?: (message: Message) => void;
   onEdit?: (message: Message) => void;
   streaming?: boolean;
+  onPreviewArtifact?: (art: ChatArtifact) => void;
 }
 
 export function MessageBubble({
@@ -62,6 +65,7 @@ export function MessageBubble({
   onRegenerate,
   onEdit,
   streaming = false,
+  onPreviewArtifact,
 }: MessageBubbleProps) {
   const t = useT();
   const isUser = message.role === 'user';
@@ -104,6 +108,15 @@ export function MessageBubble({
   const hasContent = contentStr.trim().length > 0;
   const isErr = isAssistant && isErrorContent(contentStr);
   const [showErrorDetail, setShowErrorDetail] = useState(false);
+
+  const artifacts = useMemo(() => {
+    if (!isAssistant || isErr) return [] as ChatArtifact[];
+    // 流式中若已有 tool 结果/正文路径，仍可出卡（不必等 idle）
+    return extractArtifacts({
+      content: contentStr,
+      tool_calls: message.tool_calls,
+    });
+  }, [isAssistant, isErr, contentStr, message.tool_calls]);
 
   // tool 角色：独立紧凑卡片（未配对时的兜底）
   if (isTool) {
@@ -272,6 +285,10 @@ export function MessageBubble({
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-violet-400" />
               思考中…
             </span>
+          )}
+
+          {artifacts.length > 0 && (
+            <ArtifactCard artifacts={artifacts} onPreview={onPreviewArtifact} />
           )}
         </div>
       </div>

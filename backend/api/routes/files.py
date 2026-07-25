@@ -187,6 +187,75 @@ async def download_file(
     )
 
 
+@router.get("/resolve")
+async def resolve_file_path(
+    path: str = Query(..., description="File path relative to mode root"),
+    mode: str = Query("sandbox", description="sandbox | local"),
+    current_user: Annotated[UserRead, Depends(get_current_user)] = None,
+):
+    """解析工作区相对路径 → 绝对路径（Electron openPath / 本机打开用）。"""
+    import sys
+
+    rel = (path or "").strip().lstrip("/").replace("\\", "/")
+    if rel.startswith("workspace/"):
+        rel = rel[len("workspace/") :]
+    target, base = _resolve_path(mode, rel)
+    _check_access(target, base)
+    exists = target.exists() and target.is_file()
+    size = 0
+    if exists:
+        try:
+            size = target.stat().st_size
+        except OSError:
+            size = 0
+    return {
+        "path": rel,
+        "name": target.name,
+        "abs_path": str(target.resolve()) if exists or target.parent.exists() else str(target),
+        "exists": exists,
+        "size": size,
+    }
+
+
+@router.post("/open")
+async def open_workspace_file(
+    path: str = Query(..., description="File path relative to mode root"),
+    mode: str = Query("sandbox", description="sandbox | local"),
+    current_user: Annotated[UserRead, Depends(get_current_user)] = None,
+):
+    """用本机默认应用打开工作区文件（Web 后端同机；Electron 优先用 openPath）。"""
+    import subprocess
+    import sys
+
+    rel = (path or "").strip().lstrip("/").replace("\\", "/")
+    if rel.startswith("workspace/"):
+        rel = rel[len("workspace/") :]
+    target, base = _resolve_path(mode, rel)
+    _check_access(target, base)
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    abs_path = str(target.resolve())
+    try:
+        if os.name == "nt":
+            os.startfile(abs_path)  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.Popen(
+                ["open", abs_path],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        else:
+            subprocess.Popen(
+                ["xdg-open", abs_path],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+    except Exception as e:
+        logger.warning("open workspace file failed path=%s err=%s", abs_path, e)
+        raise HTTPException(status_code=500, detail=f"Failed to open file: {e}") from e
+    return {"ok": True, "abs_path": abs_path, "path": rel}
+
+
 @router.get("/info")
 async def get_file_info(
     current_user: Annotated[UserRead, Depends(get_current_user)] = None,

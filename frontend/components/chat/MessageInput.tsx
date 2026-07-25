@@ -1,12 +1,21 @@
 'use client';
 
-import React, { useState, useRef, KeyboardEvent, useCallback, useEffect } from 'react';
+import React, {
+  useState,
+  useRef,
+  KeyboardEvent,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  forwardRef,
+} from 'react';
 import { uploadFile, UploadResult, getDevices } from '@/lib/api';
 import { ModelPicker } from './ModelPicker';
 import { CHAT_TOOL_ICONS, IconSend } from '@/components/icons/ChatIcons';
 import { ClusterModePanel } from '@/components/subagent/SubAgentPanel';
 import { subAgentApi } from '@/lib/subagent-api';
 import { useT } from '@/stores/localeStore';
+import { useToastStore } from '@/stores/toastStore';
 import type { SubAgent } from '@/types/subagent';
 import type { Device } from '@/types';
 
@@ -15,9 +24,15 @@ export interface Attachment {
   url: string;
   type: string;
   text_content?: string;
+  /** 本地预览用（blob:），不发送给后端 */
+  previewUrl?: string;
 }
 
 export type ChatMode = 'default' | 'deepthink' | 'search' | 'ppt' | 'report' | 'goal' | 'cluster';
+
+export interface MessageInputHandle {
+  ingestFiles: (files: FileList | File[] | null | undefined) => Promise<void>;
+}
 
 interface MessageInputProps {
   onSend: (content: string, attachments: Attachment[], mode: ChatMode, subAgentIds?: string[]) => void;
@@ -28,9 +43,7 @@ interface MessageInputProps {
   onClearEdit?: () => void;
   showModelPicker?: boolean;
   onModelChanged?: (providerId: string, model: string, providerName: string) => void;
-  /** 当前会话 id：切换 provider 时同步更新该会话快照 */
   sessionId?: string;
-  /** 回答生成中：显示停止按钮，允许打断 */
   isStreaming?: boolean;
   onStopStreaming?: () => void;
 }
@@ -46,32 +59,39 @@ const TOOLS = [
   { key: 'report', toggle: true, group: 'action' },
 ] as const;
 
+function isImageType(type: string, filename: string): boolean {
+  if (type.startsWith('image/')) return true;
+  return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(filename);
+}
+
 /**
- * 聊天输入区 — 布局/焦点契约（防回归，见 tests + skill）
- * 1. 根节点 class `chat-composer`（globals: no-drag + pointer-events + z-30）
- * 2. textarea 必须 `block w-full`，禁止只靠 flex-1
- * 3. 点击 composer 空白区必须 focus textarea
- * 4. page 结构：上 flex-1 消息区 + 下 shrink-0 composer
+ * 聊天输入区 — 布局/焦点契约（防回归）
+ * paste 图片 / drop 文件 → 统一 ingestFiles → attachments（不自动发送）
  */
-export function MessageInput({
-  onSend,
-  onGenerateImage,
-  disabled = false,
-  placeholder,
-  initialContent,
-  onClearEdit,
-  showModelPicker = true,
-  onModelChanged,
-  sessionId,
-  isStreaming = false,
-  onStopStreaming,
-}: MessageInputProps) {
+export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(function MessageInput(
+  {
+    onSend,
+    onGenerateImage,
+    disabled = false,
+    placeholder,
+    initialContent,
+    onClearEdit,
+    showModelPicker = true,
+    onModelChanged,
+    sessionId,
+    isStreaming = false,
+    onStopStreaming,
+  },
+  ref
+) {
   const t = useT();
+  const addToast = useToastStore((s) => s.addToast);
   const [content, setContent] = useState(initialContent || '');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [activeModes, setActiveModes] = useState<Set<string>>(new Set());
   const [uploading, setUploading] = useState(false);
+  const [composerDragging, setComposerDragging] = useState(false);
   const [subAgents, setSubAgents] = useState<SubAgent[]>([]);
   const [selectedSubAgentIds, setSelectedSubAgentIds] = useState<string[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
@@ -85,77 +105,81 @@ export function MessageInput({
   const inputLocked = disabled || uploading;
   const clusterOn = activeModes.has('cluster');
 
-  // P2 修复：自动保存草稿到 localStorage
   useEffect(() => {
-    if (isEditing) return; // 编辑模式不自动保存
+    if (isEditing) return;
     const timer = setTimeout(() => {
       if (content.trim()) {
         localStorage.setItem('takton-chat-draft', content);
       } else {
         localStorage.removeItem('takton-chat-draft');
       }
-    }, 500); // 500ms 防抖
+    }, 500);
     return () => clearTimeout(timer);
   }, [content, isEditing]);
 
-  // P2 修复：组件挂载时恢复草稿
   useEffect(() => {
     if (isEditing) return;
     const draft = localStorage.getItem('takton-chat-draft');
     if (draft && !content) {
       setContent(draft);
     }
-  }, []); // 仅在挂载时执行
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
-      if (!clusterOn) return;
-      let cancelled = false;
-      subAgentApi
-        .list()
-        .then((res) => {
-          if (cancelled) return;
-          const list = Array.isArray(res.data) ? res.data : [];
-          setSubAgents(list);
-          // 默认选中全部已启用
-          setSelectedSubAgentIds((prev) => {
-            if (prev.length > 0) return prev.filter((id) => list.some((a) => a.id === id && a.enabled));
-            return list.filter((a) => a.enabled).map((a) => a.id);
-          });
-        })
-        .catch((e) => console.error('load subagents for cluster', e));
-      return () => {
-        cancelled = true;
-      };
-    }, [clusterOn]);
-
-    useEffect(() => {
-      let cancelled = false;
-      getDevices()
-        .then((list) => {
-          if (!cancelled) setDevices(Array.isArray(list) ? list : []);
-        })
-        .catch(() => null);
-      return () => {
-        cancelled = true;
-      };
-    }, []);
-
-    const mentionCandidates = devices.filter((d) => {
-      if (!mentionFilter) return true;
-      return d.name.toLowerCase().includes(mentionFilter.toLowerCase());
-    });
-
-    const applyMention = (name: string) => {
-      const m = content.match(/@([\w.\-\u4e00-\u9fff]*)$/);
-      if (!m) {
-        setContent((c) => c + `@${name} `);
-      } else {
-        setContent((c) => c.slice(0, c.length - m[0].length) + `@${name} `);
-      }
-      setMentionOpen(false);
-      setMentionFilter('');
-      window.setTimeout(() => { try { textareaRef.current?.focus({preventScroll:true}); } catch { textareaRef.current?.focus(); } }, 0);
+    if (!clusterOn) return;
+    let cancelled = false;
+    subAgentApi
+      .list()
+      .then((res) => {
+        if (cancelled) return;
+        const list = Array.isArray(res.data) ? res.data : [];
+        setSubAgents(list);
+        setSelectedSubAgentIds((prev) => {
+          if (prev.length > 0) return prev.filter((id) => list.some((a) => a.id === id && a.enabled));
+          return list.filter((a) => a.enabled).map((a) => a.id);
+        });
+      })
+      .catch((e) => console.error('load subagents for cluster', e));
+    return () => {
+      cancelled = true;
     };
+  }, [clusterOn]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getDevices()
+      .then((list) => {
+        if (!cancelled) setDevices(Array.isArray(list) ? list : []);
+      })
+      .catch(() => null);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const mentionCandidates = devices.filter((d) => {
+    if (!mentionFilter) return true;
+    return d.name.toLowerCase().includes(mentionFilter.toLowerCase());
+  });
+
+  const applyMention = (name: string) => {
+    const m = content.match(/@([\w.\-\u4e00-\u9fff]*)$/);
+    if (!m) {
+      setContent((c) => c + `@${name} `);
+    } else {
+      setContent((c) => c.slice(0, c.length - m[0].length) + `@${name} `);
+    }
+    setMentionOpen(false);
+    setMentionFilter('');
+    window.setTimeout(() => {
+      try {
+        textareaRef.current?.focus({ preventScroll: true });
+      } catch {
+        textareaRef.current?.focus();
+      }
+    }, 0);
+  };
 
   const focusComposer = useCallback(() => {
     const el = textareaRef.current;
@@ -169,8 +193,8 @@ export function MessageInput({
 
   useEffect(() => {
     if (inputLocked || uploading) return;
-    const t = window.setTimeout(() => focusComposer(), 30);
-    return () => window.clearTimeout(t);
+    const tmr = window.setTimeout(() => focusComposer(), 30);
+    return () => window.clearTimeout(tmr);
   }, [inputLocked, uploading, isEditing, initialContent, focusComposer]);
 
   useEffect(() => {
@@ -188,6 +212,56 @@ export function MessageInput({
     return () => window.removeEventListener('focus', onWinFocus);
   }, [focusComposer]);
 
+  const ingestFiles = useCallback(
+    async (files: FileList | File[] | null | undefined) => {
+      if (!files) return;
+      const list = Array.from(files as ArrayLike<File>).filter(Boolean);
+      if (list.length === 0) return;
+      if (disabled) {
+        addToast(t('chat.aiReplying'), 'error');
+        return;
+      }
+      setUploading(true);
+      setUploadError(null);
+      const results: Attachment[] = [];
+      const errors: string[] = [];
+      for (const file of list) {
+        try {
+          const result: UploadResult = await uploadFile(file);
+          const previewUrl = isImageType(file.type || result.type, result.filename)
+            ? URL.createObjectURL(file)
+            : undefined;
+          results.push({
+            filename: result.filename,
+            url: result.url,
+            type: result.type || file.type,
+            text_content: result.text_content,
+            previewUrl,
+          });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          errors.push(`${file.name}: ${msg}`);
+          console.error('Upload failed:', err);
+        }
+      }
+      if (results.length > 0) {
+        setAttachments((prev) => [...prev, ...results]);
+        addToast(t('chat.uploadOkAttached').replace('{n}', String(results.length)), 'success');
+      }
+      if (errors.length > 0) {
+        const joined = errors.slice(0, 3).join('; ');
+        setUploadError(joined);
+        addToast(joined, 'error');
+      }
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      window.setTimeout(() => focusComposer(), 0);
+    },
+    [addToast, disabled, focusComposer, t]
+  );
+
+  useImperativeHandle(ref, () => ({ ingestFiles }), [ingestFiles]);
+
   const handleSend = () => {
     const trimmed = content.trim();
     if (!trimmed && attachments.length === 0) return;
@@ -202,8 +276,8 @@ export function MessageInput({
       }
       onGenerateImage(trimmed);
       setContent('');
+      attachments.forEach((a) => a.previewUrl && URL.revokeObjectURL(a.previewUrl));
       setAttachments([]);
-      // P2 修复：发送后清除草稿
       localStorage.removeItem('takton-chat-draft');
       setActiveModes((prev) => {
         const next = new Set(prev);
@@ -229,10 +303,16 @@ export function MessageInput({
                 : 'default';
 
     const subIds = mode === 'cluster' ? selectedSubAgentIds : undefined;
-    onSend(trimmed, attachments, mode, subIds);
+    const payload = attachments.map(({ filename, url, type, text_content }) => ({
+      filename,
+      url,
+      type,
+      text_content,
+    }));
+    onSend(trimmed, payload, mode, subIds);
     setContent('');
+    attachments.forEach((a) => a.previewUrl && URL.revokeObjectURL(a.previewUrl));
     setAttachments([]);
-    // P2 修复：发送后清除草稿
     localStorage.removeItem('takton-chat-draft');
     setActiveModes((prev) => {
       const next = new Set(prev);
@@ -245,62 +325,61 @@ export function MessageInput({
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-      if (mentionOpen && mentionCandidates.length > 0) {
-        if (e.key === 'ArrowDown') {
-          e.preventDefault();
-          setMentionIndex((i) => (i + 1) % mentionCandidates.length);
-          return;
-        }
-        if (e.key === 'ArrowUp') {
-          e.preventDefault();
-          setMentionIndex((i) => (i - 1 + mentionCandidates.length) % mentionCandidates.length);
-          return;
-        }
-        if (e.key === 'Enter' || e.key === 'Tab') {
-          e.preventDefault();
-          applyMention(mentionCandidates[mentionIndex]?.name || mentionCandidates[0].name);
-          return;
-        }
-        if (e.key === 'Escape') {
-          e.preventDefault();
-          setMentionOpen(false);
-          return;
-        }
-      }
-      if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+    if (mentionOpen && mentionCandidates.length > 0) {
+      if (e.key === 'ArrowDown') {
         e.preventDefault();
-        handleSend();
+        setMentionIndex((i) => (i + 1) % mentionCandidates.length);
+        return;
       }
-    };
-
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-    setUploading(true);
-    try {
-      const results: Attachment[] = [];
-      for (const file of Array.from(files)) {
-        const result: UploadResult = await uploadFile(file);
-        results.push({
-          filename: result.filename,
-          url: result.url,
-          type: result.type || file.type,
-          text_content: result.text_content,
-        });
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setMentionIndex((i) => (i - 1 + mentionCandidates.length) % mentionCandidates.length);
+        return;
       }
-      setAttachments((prev) => [...prev, ...results]);
-    } catch (err) {
-      console.error('Upload failed:', err);
-      setUploadError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      window.setTimeout(() => focusComposer(), 0);
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        applyMention(mentionCandidates[mentionIndex]?.name || mentionCandidates[0].name);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setMentionOpen(false);
+        return;
+      }
+    }
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      handleSend();
     }
   };
 
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items || items.length === 0) return;
+    const files: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (it.kind === 'file') {
+        const f = it.getAsFile();
+        if (f) files.push(f);
+      }
+    }
+    if (files.length === 0) return;
+    e.preventDefault();
+    void ingestFiles(files);
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    await ingestFiles(e.target.files);
+  };
+
   const removeAttachment = (index: number) => {
-    setAttachments((prev) => prev.filter((_, i) => i !== index));
+    setAttachments((prev) => {
+      const next = [...prev];
+      const [removed] = next.splice(index, 1);
+      if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
+      return next;
+    });
   };
 
   const toggleMode = (key: string) => {
@@ -313,7 +392,6 @@ export function MessageInput({
           next.delete('report');
           next.delete('image');
         }
-        // 集群与 Goal 可并存；与 action 类互斥不强求
         next.add(key);
       }
       return next;
@@ -337,44 +415,99 @@ export function MessageInput({
   const canSend = (!!content.trim() || attachments.length > 0) && !disabled && !uploading;
 
   const handleComposerPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    const t = e.target as HTMLElement | null;
-    if (!t) return;
-    if (t.closest('button, a, select, input:not([type="file"]), [data-no-composer-focus]')) {
+    const target = e.target as HTMLElement | null;
+    if (!target) return;
+    if (target.closest('button, a, select, input:not([type="file"]), [data-no-composer-focus]')) {
       return;
     }
-    if (t.tagName === 'TEXTAREA' || t.closest('textarea')) return;
+    if (target.tagName === 'TEXTAREA' || target.closest('textarea')) return;
     e.preventDefault();
     focusComposer();
   };
 
+  const onDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer?.types?.includes('Files')) setComposerDragging(true);
+  };
+  const onDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    setComposerDragging(false);
+  };
+  const onDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  };
+  const onDropLocal = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setComposerDragging(false);
+    void ingestFiles(e.dataTransfer?.files);
+  };
+
   return (
     <div
-      className="chat-composer relative z-30 flex-shrink-0 border-t border-border-subtle bg-card-bg p-4"
+      className={`chat-composer relative z-30 flex-shrink-0 border-t border-border-subtle bg-card-bg p-4 ${
+        composerDragging ? 'ring-2 ring-inset ring-brand-purple/40' : ''
+      }`}
       data-testid="chat-composer"
       onPointerDown={handleComposerPointerDown}
+      onDragEnter={onDragEnter}
+      onDragLeave={onDragLeave}
+      onDragOver={onDragOver}
+      onDrop={onDropLocal}
     >
+      {composerDragging && (
+        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-brand-purple/5 backdrop-blur-[1px]">
+          <p className="rounded-full border border-brand-purple/30 bg-card-bg px-4 py-2 text-xs font-medium text-brand-purple">
+            {t('chat.dropToAttach')}
+          </p>
+        </div>
+      )}
       {uploadError && (
         <div className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
-          {t('chat.uploadFailed')}{uploadError}
+          {t('chat.uploadFailed')}
+          {uploadError}
         </div>
       )}
       {attachments.length > 0 && (
         <div className="mb-3 flex flex-wrap gap-2">
-          {attachments.map((att, idx) => (
-            <span
-              key={idx}
-              className="inline-flex items-center gap-1.5 rounded-full border border-brand-purple/20 bg-brand-purple/10 px-3 py-1 text-xs text-brand-purple"
-            >
-              <span className="max-w-[120px] truncate">{att.filename}</span>
-              <button
-                type="button"
-                onClick={() => removeAttachment(idx)}
-                className="ml-0.5 text-brand-purple/60 transition-colors hover:text-brand-purple"
+          {attachments.map((att, idx) => {
+            const img = isImageType(att.type || '', att.filename);
+            const src =
+              att.previewUrl ||
+              (att.url
+                ? att.url.startsWith('http') || att.url.startsWith('/')
+                  ? att.url
+                  : `/${att.url}`
+                : '');
+            return (
+              <span
+                key={`${att.url}-${idx}`}
+                className="inline-flex max-w-[200px] items-center gap-1.5 rounded-xl border border-brand-purple/20 bg-brand-purple/10 py-1 pl-1 pr-2 text-xs text-brand-purple"
               >
-                ×
-              </button>
-            </span>
-          ))}
+                {img && src ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={src} alt="" className="h-8 w-8 flex-shrink-0 rounded-lg object-cover" />
+                ) : (
+                  <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-brand-purple/15 text-[10px]">
+                    FILE
+                  </span>
+                )}
+                <span className="max-w-[120px] truncate">{att.filename}</span>
+                <button
+                  type="button"
+                  onClick={() => removeAttachment(idx)}
+                  className="ml-0.5 text-brand-purple/60 transition-colors hover:text-brand-purple"
+                >
+                  ×
+                </button>
+              </span>
+            );
+          })}
         </div>
       )}
 
@@ -394,13 +527,12 @@ export function MessageInput({
           <ModelPicker disabled={inputLocked} onChanged={onModelChanged} sessionId={sessionId} />
         )}
         <span className="mx-0.5 hidden h-4 w-px bg-border-subtle sm:inline-block" aria-hidden />
-        {/* 工具分组：附件 | 模式 | 生成 */}
         {(['utility', 'think', 'action'] as const).map((group, gi) => (
           <React.Fragment key={group}>
             {gi > 0 && (
               <span className="mx-0.5 hidden h-4 w-px bg-border-subtle/80 sm:inline-block" aria-hidden />
             )}
-            {TOOLS.filter((t) => t.group === group).map((tool) => {
+            {TOOLS.filter((tool) => tool.group === group).map((tool) => {
               const isActive = activeModes.has(tool.key);
               const ToolIcon = CHAT_TOOL_ICONS[tool.key];
               return (
@@ -417,7 +549,9 @@ export function MessageInput({
                   title={t(`chat.tool.${tool.key}` as never)}
                 >
                   {ToolIcon ? <ToolIcon className="h-3.5 w-3.5" /> : null}
-                  <span className="hidden text-[11px] font-medium lg:inline">{t(`chat.tool.${tool.key}` as never)}</span>
+                  <span className="hidden text-[11px] font-medium lg:inline">
+                    {t(`chat.tool.${tool.key}` as never)}
+                  </span>
                 </button>
               );
             })}
@@ -443,98 +577,101 @@ export function MessageInput({
             </div>
           )}
           <textarea
-                      ref={textareaRef}
-                      value={content}
-                      onChange={(e) => {
-                        if (inputLocked) return;
-                        const v = e.target.value;
-                        setContent(v);
-                        const m = v.match(/@([\w.\-\u4e00-\u9fff]*)$/);
-                        if (m && devices.length > 0) {
-                          setMentionOpen(true);
-                          setMentionFilter(m[1] || '');
-                          setMentionIndex(0);
-                        } else {
-                          setMentionOpen(false);
-                        }
+            ref={textareaRef}
+            value={content}
+            onChange={(e) => {
+              if (inputLocked) return;
+              const v = e.target.value;
+              setContent(v);
+              const m = v.match(/@([\w.\-\u4e00-\u9fff]*)$/);
+              if (m && devices.length > 0) {
+                setMentionOpen(true);
+                setMentionFilter(m[1] || '');
+                setMentionIndex(0);
+              } else {
+                setMentionOpen(false);
+              }
+            }}
+            onKeyDown={(e) => {
+              if (inputLocked) {
+                e.preventDefault();
+                return;
+              }
+              handleKeyDown(e);
+            }}
+            onPaste={handlePaste}
+            placeholder={
+              isEditing
+                ? t('chat.editPlaceholder')
+                : clusterOn
+                  ? t('chat.clusterPlaceholder')
+                  : placeholder ?? t('chat.send')
+            }
+            readOnly={inputLocked}
+            rows={2}
+            data-testid="chat-composer-textarea"
+            className="chat-surface chat-composer-textarea block w-full max-w-full resize-none rounded-2xl border border-border-subtle bg-input-bg px-4 py-3 text-foreground placeholder:text-input-placeholder focus:border-brand-purple/40 focus:outline-none focus:ring-1 focus:ring-brand-purple/20 transition-all"
+            style={{
+              minHeight: '52px',
+              maxHeight: '200px',
+              width: '100%',
+              pointerEvents: 'auto',
+              WebkitUserSelect: 'text',
+              userSelect: 'text',
+            }}
+          />
+          {mentionOpen && mentionCandidates.length > 0 && (
+            <ul
+              className="absolute bottom-full left-0 z-40 mb-1 max-h-40 w-64 overflow-auto rounded-xl border border-border-default bg-elevated-bg py-1 shadow-xl"
+              data-no-composer-focus
+            >
+              {mentionCandidates.map((d, i) => {
+                const ms = (d.config as { last_latency_ms?: number })?.last_latency_ms;
+                return (
+                  <li key={d.id}>
+                    <button
+                      type="button"
+                      onMouseDown={(ev) => {
+                        ev.preventDefault();
+                        applyMention(d.name);
                       }}
-                      onKeyDown={(e) => {
-                        if (inputLocked) {
-                          e.preventDefault();
-                          return;
-                        }
-                        handleKeyDown(e);
-                      }}
-                      placeholder={
-                        isEditing
-                          ? t('chat.editPlaceholder')
-                          : clusterOn
-                            ? t('chat.clusterPlaceholder')
-                            : (placeholder ?? t('chat.send'))
-                      }
-                      readOnly={inputLocked}
-                      rows={2}
-                      data-testid="chat-composer-textarea"
-                      className="chat-surface chat-composer-textarea block w-full max-w-full resize-none rounded-2xl border border-border-subtle bg-input-bg px-4 py-3 text-foreground placeholder:text-input-placeholder focus:border-brand-purple/40 focus:outline-none focus:ring-1 focus:ring-brand-purple/20 transition-all"
-                      style={{
-                        minHeight: '52px',
-                        maxHeight: '200px',
-                        width: '100%',
-                        pointerEvents: 'auto',
-                        WebkitUserSelect: 'text',
-                        userSelect: 'text',
-                      }}
-                    />
-                    {mentionOpen && mentionCandidates.length > 0 && (
-                      <ul
-                        className="absolute bottom-full left-0 z-40 mb-1 max-h-40 w-64 overflow-auto rounded-xl border border-border-default bg-elevated-bg py-1 shadow-xl"
-                        data-no-composer-focus
-                      >
-                        {mentionCandidates.map((d, i) => {
-                          const ms = (d.config as { last_latency_ms?: number })?.last_latency_ms;
-                          return (
-                            <li key={d.id}>
-                              <button
-                                type="button"
-                                onMouseDown={(ev) => {
-                                  ev.preventDefault();
-                                  applyMention(d.name);
-                                }}
-                                className={`flex w-full items-center justify-between px-3 py-1.5 text-left text-xs ${
-                                  i === mentionIndex ? 'bg-brand-purple/20 text-foreground' : 'text-foreground-muted hover:bg-card-bg-hover'
-                                }`}
-                              >
-                                <span>
-                                  @{d.name}
-                                  <span className="ml-1 text-[10px] text-foreground-dim">{d.status}</span>
-                                </span>
-                                {typeof ms === 'number' && (
-                                  <span className="font-mono text-[10px] text-brand-cyan">{ms}ms</span>
-                                )}
-                              </button>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    )}
-                  </label>
+                      className={`flex w-full items-center justify-between px-3 py-1.5 text-left text-xs ${
+                        i === mentionIndex
+                          ? 'bg-brand-purple/20 text-foreground'
+                          : 'text-foreground-muted hover:bg-card-bg-hover'
+                      }`}
+                    >
+                      <span>
+                        @{d.name}
+                        <span className="ml-1 text-[10px] text-foreground-dim">{d.status}</span>
+                      </span>
+                      {typeof ms === 'number' && (
+                        <span className="font-mono text-[10px] text-brand-cyan">{ms}ms</span>
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </label>
         <button
-                  type="button"
-                  onClick={isStreaming ? () => onStopStreaming?.() : handleSend}
-                  disabled={isStreaming ? !onStopStreaming : !canSend}
-                  aria-label={isStreaming ? t('chat.stopGenerating') : t('chat.sendBtn')}
-                  className={`inline-flex flex-shrink-0 items-center gap-2 rounded-2xl px-5 py-3 text-[0.8125rem] font-semibold tracking-tight text-white shadow-lg transition-all hover:opacity-90 disabled:opacity-30 ${
-                    isStreaming
-                      ? 'bg-gradient-to-r from-rose-500 to-orange-500 shadow-rose-500/20'
-                      : 'bg-gradient-to-r from-brand-purple to-brand-cyan shadow-brand-purple/15'
-                  }`}
-                >
-                  <span>{isStreaming ? t('chat.stopGenerating') : t('chat.sendBtn')}</span>
-                  {!isStreaming && <IconSend className="h-4 w-4 opacity-95" />}
-                  {isStreaming && (
-                    <span className="inline-block h-3.5 w-3.5 rounded-sm bg-white/95" aria-hidden />
-                  )}
-                </button>
+          type="button"
+          onClick={isStreaming ? () => onStopStreaming?.() : handleSend}
+          disabled={isStreaming ? !onStopStreaming : !canSend}
+          aria-label={isStreaming ? t('chat.stopGenerating') : t('chat.sendBtn')}
+          className={`inline-flex flex-shrink-0 items-center gap-2 rounded-2xl px-5 py-3 text-[0.8125rem] font-semibold tracking-tight text-white shadow-lg transition-all hover:opacity-90 disabled:opacity-30 ${
+            isStreaming
+              ? 'bg-gradient-to-r from-rose-500 to-orange-500 shadow-rose-500/20'
+              : 'bg-gradient-to-r from-brand-purple to-brand-cyan shadow-brand-purple/15'
+          }`}
+        >
+          <span>{isStreaming ? t('chat.stopGenerating') : t('chat.sendBtn')}</span>
+          {!isStreaming && <IconSend className="h-4 w-4 opacity-95" />}
+          {isStreaming && (
+            <span className="inline-block h-3.5 w-3.5 rounded-sm bg-white/95" aria-hidden />
+          )}
+        </button>
       </div>
 
       <input
@@ -546,4 +683,4 @@ export function MessageInput({
       />
     </div>
   );
-}
+});

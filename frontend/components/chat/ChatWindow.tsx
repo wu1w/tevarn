@@ -6,6 +6,7 @@ import { MessageBubble } from './MessageBubble';
 import { AppLogo } from '@/components/brand/AppLogo';
 import { getDevices } from '@/lib/api';
 import { useT } from '@/stores/localeStore';
+import type { ChatArtifact } from '@/lib/artifacts';
 
 interface ChatWindowProps {
   messages: Message[];
@@ -16,6 +17,7 @@ interface ChatWindowProps {
   onEdit?: (message: Message) => void;
   /** 点击示例/设备快捷句 → 填入并可选直接发送由父级处理 */
   onExampleSelect?: (text: string) => void;
+  onPreviewArtifact?: (art: ChatArtifact) => void;
 }
 
 const TAG_KEYS = ['goal', 'cluster', 'code', 'research', 'writing', 'debug', 'data', 'devops', 'other'] as const;
@@ -30,6 +32,7 @@ export function ChatWindow({
   onRegenerate,
   onEdit,
   onExampleSelect,
+  onPreviewArtifact,
 }: ChatWindowProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const t = useT();
@@ -148,14 +151,15 @@ export function ChatWindow({
       ) : (
         <div className="mx-auto flex w-full max-w-[min(100%,80rem)] flex-col gap-4 px-1 sm:px-2">
           {displayMessages.map((msg) => (
-            <MessageBubble
-              key={msg.id}
-              message={msg}
-              streaming={isStreaming}
-              onRegenerate={onRegenerate}
-              onEdit={onEdit}
-            />
-          ))}
+                      <MessageBubble
+                        key={msg.id}
+                        message={msg}
+                        streaming={isStreaming && msg.id === 'streaming'}
+                        onRegenerate={onRegenerate}
+                        onEdit={onEdit}
+                        onPreviewArtifact={onPreviewArtifact}
+                      />
+                    ))}
         </div>
       )}
       <div ref={bottomRef} />
