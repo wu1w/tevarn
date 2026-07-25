@@ -155,10 +155,10 @@ const SwimlaneNode = ({ task, x, y, status }: {
   status: SubTask['status'];
 }) => {
   const colors = {
-    pending: 'bg-gray-200 border-gray-400',
+    pending: 'bg-[var(--card-bg-hover)] border-gray-400',
     running: 'bg-blue-100 border-blue-500',
-    completed: 'bg-green-100 border-green-500',
-    failed: 'bg-red-100 border-red-500',
+    completed: 'bg-emerald-500/10 border-green-500',
+    failed: 'bg-red-500/10 border-red-500',
   };
   
   return (

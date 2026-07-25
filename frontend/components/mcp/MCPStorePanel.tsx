@@ -126,8 +126,7 @@ const StoreCard = memo(function StoreCard({
   return (
     <article
       className={`group relative flex flex-col rounded-xl border border-border-subtle/80 bg-gradient-to-b from-elevated-bg/80 to-elevated-bg/40 p-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-brand-purple/35 hover:shadow-md ${
-        installed ? 'ring-1 ring-brand-purple/30' : ''
-      }`}
+        installed ? 'ring-1 ring-brand-purple/30' : ''}`}
     >
       {installed && (
         <span className="absolute right-3 top-3 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
@@ -136,14 +135,12 @@ const StoreCard = memo(function StoreCard({
       )}
       <div className="mb-2 flex items-start gap-2 pr-14">
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border-subtle bg-elevated-bg text-lg">
-          {item.icon || '🔌'}
+          {item.icon || ''}
         </div>
         <div className="min-w-0 flex-1">
           <button
-            type="button"
-            onClick={() => onOpen(item)}
-            className="block w-full truncate text-left text-sm font-semibold text-foreground hover:text-brand-purple"
-          >
+            type="button"onClick={() => onOpen(item)}
+            className="block w-full truncate text-left text-sm font-semibold text-foreground hover:text-brand-purple">
             {item.display_name}
           </button>
           <div className="mt-0.5 truncate text-[10px] text-foreground-muted">
@@ -180,8 +177,7 @@ const StoreCard = memo(function StoreCard({
           {item.tags.slice(0, 4).map((tag) => (
             <span
               key={tag}
-              className="rounded-md bg-brand-purple/10 px-1.5 py-0.5 text-[10px] text-brand-purple"
-            >
+              className="rounded-md bg-brand-purple/10 px-1.5 py-0.5 text-[10px] text-brand-purple">
               {tag}
             </span>
           ))}
@@ -191,26 +187,22 @@ const StoreCard = memo(function StoreCard({
         {installed ? (
           <>
             <button
-              type="button"
-              onClick={() => onOpen(item)}
+              type="button"onClick={() => onOpen(item)}
               title={t('mcpStore.configureTitle')}
               className={`flex-1 ${BTN_PRIMARY}`}
             >
               {t('mcpStore.configure')}
             </button>
             <button
-              type="button"
-              disabled={busy || !onUninstall}
+              type="button"disabled={busy || !onUninstall}
               onClick={() => onUninstall?.(item)}
-              className="rounded-lg bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-500/20 disabled:opacity-50"
-            >
+              className="rounded-lg bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-500/20 disabled:opacity-50">
               {busy ? t('mcpStore.busy') : t('mcpStore.uninstall')}
             </button>
           </>
         ) : (
           <button
-            type="button"
-            disabled={busy || !item.installable}
+            type="button"disabled={busy || !item.installable}
             title={!item.installable ? item.note || t('mcpStore.notInstallable') : t('mcpStore.installLocal')}
             onClick={() => onInstall(item)}
             className={`flex-1 ${BTN_PRIMARY}`}
@@ -430,19 +422,16 @@ export default function MCPStorePanel({
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative min-w-[200px] flex-1">
               <input
-                type="search"
-                value={searchInput}
+                type="search"value={searchInput}
                 onChange={(e) => setSearchInput(e.target.value)}
                 placeholder={t('mcpStore.searchPh')}
-                className="w-full rounded-lg border border-border-subtle bg-elevated-bg py-1.5 pl-3 pr-8 text-sm text-foreground outline-none placeholder:text-foreground-muted/70 focus:border-brand-purple/50 focus:ring-1 focus:ring-brand-purple/20"
-              />
+                className="w-full rounded-lg border border-border-subtle bg-elevated-bg py-1.5 pl-3 pr-8 text-sm text-foreground outline-none placeholder:text-foreground-muted/70 focus:border-brand-purple/50 focus:ring-1 focus:ring-brand-purple/20"/>
             </div>
             <button type="button" onClick={() => void loadStore()} className={BTN_SECONDARY}>
               {loading ? t('common.loading') : t('mcpStore.refreshCatalog')}
             </button>
             <button
-              type="button"
-              onClick={() => void handleReload()}
+              type="button"onClick={() => void handleReload()}
               disabled={reloadMutation.isPending}
               className={BTN_SECONDARY}
             >
@@ -458,8 +447,7 @@ export default function MCPStorePanel({
             {(['all', 'curated', 'official'] as const).map((s) => (
               <button
                 key={s}
-                type="button"
-                onClick={() => setSourceFilter(s)}
+                type="button"onClick={() => setSourceFilter(s)}
                 className={`rounded-full border px-3 py-1 text-[11px] font-medium transition-colors ${
                   sourceFilter === s ? CHIP_ACTIVE : CHIP_IDLE
                 }`}
@@ -467,8 +455,7 @@ export default function MCPStorePanel({
               >
                 {SOURCE_META[s].labelKey.startsWith('mcpStore.') || SOURCE_META[s].labelKey.startsWith('store.') ? t(SOURCE_META[s].labelKey as never) : SOURCE_META[s].labelKey}
                 {sources.find((x) => x.id === s)?.count
-                  ? ` (${sources.find((x) => x.id === s)!.count})`
-                  : ''}
+                  ? ` (${sources.find((x) => x.id === s)!.count})`: ''}
               </button>
             ))}
           </div>
@@ -515,14 +502,10 @@ export default function MCPStorePanel({
 
         {selected && (
           <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-[2px]"
-            onClick={() => setSelected(null)}
-            role="dialog"
-            aria-modal="true"
-          >
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-[2px]"onClick={() => setSelected(null)}
+            role="dialog"aria-modal="true">
             <div
-              className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border-subtle bg-elevated-bg p-6 shadow-2xl"
-              onClick={(e) => e.stopPropagation()}
+              className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border-subtle bg-elevated-bg p-6 shadow-2xl"onClick={(e) => e.stopPropagation()}
             >
               <div className="mb-4 flex items-start justify-between gap-3">
                 <div className="flex items-center gap-3">
@@ -539,7 +522,7 @@ export default function MCPStorePanel({
                   </div>
                 </div>
                 <button type="button" onClick={() => setSelected(null)} className="text-foreground-muted">
-                  ✕
+                  
                 </button>
               </div>
               <p className="mb-3 text-sm leading-relaxed text-foreground">
@@ -550,8 +533,7 @@ export default function MCPStorePanel({
                   {selected.compatibility.map((c) => (
                     <span
                       key={c}
-                      className="rounded-md bg-brand-purple/10 px-2 py-0.5 text-[10px] text-brand-purple"
-                    >
+                      className="rounded-md bg-brand-purple/10 px-2 py-0.5 text-[10px] text-brand-purple">
                       {c}
                     </span>
                   ))}
@@ -587,9 +569,7 @@ export default function MCPStorePanel({
               <div className="flex flex-wrap gap-2 border-t border-border-subtle pt-4">
                 {installedNames.has(selected.name) ? (
                   <button
-                    type="button"
-                    className="flex-1 rounded-lg bg-red-500/10 px-4 py-2 text-sm font-medium text-red-600"
-                    onClick={() => {
+                    type="button"className="flex-1 rounded-lg bg-red-500/10 px-4 py-2 text-sm font-medium text-red-600"onClick={() => {
                       void handleUninstall(selected);
                       setSelected(null);
                     }}
@@ -598,8 +578,7 @@ export default function MCPStorePanel({
                   </button>
                 ) : (
                   <button
-                    type="button"
-                    className={`flex-1 ${BTN_PRIMARY_LG}`}
+                    type="button"className={`flex-1 ${BTN_PRIMARY_LG}`}
                     disabled={!selected.installable}
                     onClick={() => {
                       void handleInstall(selected);
@@ -611,8 +590,7 @@ export default function MCPStorePanel({
                 )}
                 {onFillCustom && (
                   <button
-                    type="button"
-                    className={`${BTN_SECONDARY} px-4 py-2 text-sm`}
+                    type="button"className={`${BTN_SECONDARY} px-4 py-2 text-sm`}
                     onClick={() => {
                       const existing = servers.find(
                         (s) => s.name === selected.name || s.name === selected.id,
@@ -627,9 +605,7 @@ export default function MCPStorePanel({
                 {selected.source_url && (
                   <a
                     href={selected.source_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={`${BTN_SECONDARY} px-4 py-2 text-sm`}
+                    target="_blank"rel="noopener noreferrer"className={`${BTN_SECONDARY} px-4 py-2 text-sm`}
                   >
                     Source
                   </a>
@@ -669,8 +645,7 @@ export default function MCPStorePanel({
               return (
                 <div
                   key={server.id}
-                  className="flex flex-wrap items-center gap-3 rounded-xl border border-border-subtle bg-elevated-bg/50 p-3"
-                >
+                  className="flex flex-wrap items-center gap-3 rounded-xl border border-border-subtle bg-elevated-bg/50 p-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm font-semibold text-foreground">{server.name}</span>
@@ -697,15 +672,12 @@ export default function MCPStorePanel({
                       {server.description || t('store.noDesc')}
                     </p>
                     <code className="mt-1 block truncate text-[10px] text-foreground-dim">
-                      {server.transport === 'stdio'
-                        ? `${server.command || ''} ${joinArgs(server.args)}`
-                        : server.url || ''}
+                      {server.transport === 'stdio'? `${server.command || ''} ${joinArgs(server.args)}`: server.url || ''}
                     </code>
                   </div>
                   <div className="flex gap-1">
                     <button
-                      type="button"
-                      className={BTN_SECONDARY}
+                      type="button"className={BTN_SECONDARY}
                       onClick={() =>
                         toggleMutation
                           .mutateAsync({ id: server.id, enabled: !server.enabled })
@@ -713,8 +685,7 @@ export default function MCPStorePanel({
                             () =>
                               addToast(
                                 `${server.enabled ? t('mcpStore.disabled') : t('mcpStore.enabled')} ${server.name}`,
-                                'success'
-                              ),
+                                'success'),
                             (e) => addToast(e?.message || t('mcpStore.failed'), 'error')
                           )
                       }
@@ -722,9 +693,7 @@ export default function MCPStorePanel({
                       {server.enabled ? t('mcpStore.disable') : t('mcpStore.enable')}
                     </button>
                     <button
-                      type="button"
-                      className="rounded-lg bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-500/20"
-                      onClick={async () => {
+                      type="button"className="rounded-lg bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-500/20"onClick={async () => {
                         const ok = await confirm(`${t('mcpStore.delete')} ${server.name}?`, t('mcpStore.deleteTitle'), 'danger');
                         if (!ok) return;
                         try {

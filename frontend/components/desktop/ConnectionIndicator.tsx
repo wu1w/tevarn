@@ -111,7 +111,7 @@ export function ConnectionIndicator({
   if (compact) {
     return (
       <div
-        className="flex items-center gap-1.5 rounded-full border border-border-subtle bg-white/[0.03] px-2.5 py-1"
+        className="flex items-center gap-1.5 rounded-full border border-border-subtle bg-[var(--card-bg-hover)] px-2.5 py-1"
         title={label}
       >
         <span className="relative flex h-1.5 w-1.5">

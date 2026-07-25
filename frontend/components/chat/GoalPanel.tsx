@@ -32,7 +32,7 @@ export function GoalPanel({ goal, onClose }: GoalPanelProps) {
   return (
     <div className="mb-3 overflow-hidden rounded-2xl border border-brand-purple/30 bg-card-bg/95 shadow-md backdrop-blur-md">
       <div className="flex items-start gap-2 bg-gradient-to-br from-brand-purple/15 to-brand-cyan/10 px-3.5 py-2.5">
-        <span className="text-base leading-none">🎯</span>
+        <span className="text-base leading-none"></span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="truncate text-sm font-semibold text-foreground">
@@ -56,8 +56,7 @@ export function GoalPanel({ goal, onClose }: GoalPanelProps) {
               </div>
               <div className="h-1.5 overflow-hidden rounded-full bg-black/25">
                 <div
-                  className="h-full rounded-full bg-gradient-to-r from-brand-purple to-brand-cyan transition-all duration-500"
-                  style={{ width: `${Math.min(100, progress.percent)}%` }}
+                  className="h-full rounded-full bg-gradient-to-r from-brand-purple to-brand-cyan transition-all duration-500"style={{ width: `${Math.min(100, progress.percent)}%` }}
                 />
               </div>
             </div>
@@ -65,10 +64,8 @@ export function GoalPanel({ goal, onClose }: GoalPanelProps) {
         </div>
         {onClose && (
           <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg p-1 text-foreground-dim hover:bg-card-bg-hover hover:text-foreground"
-            title={t('chat._e24')}
+            type="button"onClick={onClose}
+            className="rounded-lg p-1 text-foreground-dim hover:bg-card-bg-hover hover:text-foreground"title={t('chat._e24')}
           >
             ×
           </button>
@@ -80,17 +77,11 @@ export function GoalPanel({ goal, onClose }: GoalPanelProps) {
           {todos.map((t) => (
             <li
               key={t.id}
-              className="flex items-start gap-2 rounded-lg px-1.5 py-1 text-xs text-foreground-muted"
-            >
+              className="flex items-start gap-2 rounded-lg px-1.5 py-1 text-xs text-foreground-muted">
               <TodoIcon status={t.status} />
               <span
                 className={
-                  t.status === 'done'
-                    ? 'text-foreground-dim line-through'
-                    : t.status === 'in_progress'
-                      ? 'text-foreground font-medium'
-                      : ''
-                }
+                  t.status === 'done'? 'text-foreground-dim line-through': t.status === 'in_progress'? 'text-foreground font-medium': ''}
               >
                 {t.content}
                 {t.note ? (
@@ -109,7 +100,7 @@ function TodoIcon({ status }: { status: string }) {
   if (status === 'done') {
     return (
       <span className="mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full bg-success-bg text-[9px] text-success-text">
-        ✓
+        
       </span>
     );
   }

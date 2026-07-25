@@ -73,7 +73,7 @@ export function OpenProjectModal() {
           <button
             type="button"
             onClick={pickFolder}
-            className="shrink-0 rounded-xl border border-border-subtle bg-card-bg px-3 py-2 text-xs font-medium text-foreground-muted hover:bg-card-bg-hover"
+            className="shrink-0 tk-card px-3 py-2 text-xs font-medium text-foreground-muted hover:bg-card-bg-hover"
           >
             浏览…
           </button>

@@ -104,7 +104,7 @@ export function ChatWindow({
                             key={n}
                             type="button"
                             onClick={() => onExampleSelect?.(t(`chat.ex.${n}` as never))}
-                            className="rounded-xl border border-border-subtle bg-card-bg/80 px-3 py-2.5 text-left transition-colors hover:border-brand-purple/40 hover:bg-card-bg-hover"
+                            className="tk-card/80 px-3 py-2.5 text-left transition-colors hover:border-brand-purple/40 hover:bg-card-bg-hover"
                           >
                             <div className="text-[13px] text-foreground">{t(`chat.ex.${n}` as never)}</div>
                             <div className="mt-0.5 text-[11px] text-foreground-dim">{t(`chat.ex.${n}.tag` as never)}</div>

@@ -13,8 +13,8 @@ function useStatusMap(): Record<string, { label: string; icon: string; color: st
   return useMemo(() => ({
     pending: { label: t('kb.status.pending'), icon: '⏸', color: 'bg-amber-500/10 text-amber-500' },
     indexing: { label: t('kb.status.indexing'), icon: '⏳', color: 'bg-brand-cyan/15 text-brand-cyan' },
-    indexed: { label: t('kb.status.indexed'), icon: '✅', color: 'bg-success-bg text-success-text' },
-    error: { label: t('kb.status.error'), icon: '❌', color: 'bg-error-bg text-error-text' },
+    indexed: { label: t('kb.status.indexed'), icon: '', color: 'bg-success-bg text-success-text' },
+    error: { label: t('kb.status.error'), icon: '', color: 'bg-error-bg text-error-text' },
   }), [t]);
 }
 
@@ -95,14 +95,12 @@ function DocCard({
       <div className="flex items-start justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="text-base">📄</span>
+            <span className="text-base"></span>
             <span className="font-medium text-foreground truncate">{doc.title}</span>
             {duplicateCount > 0 && (
               <button
-                type="button"
-                onClick={onToggleExpand}
-                className="shrink-0 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-400 hover:bg-amber-500/20"
-                title={t('kb.duplicateToggleTitle')}
+                type="button"onClick={onToggleExpand}
+                className="shrink-0 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-400 hover:bg-amber-500/20"title={t('kb.duplicateToggleTitle')}
               >
                 ×{duplicateCount + 1} {t('kb.duplicates')} {expanded ? '▴' : '▾'}
               </button>
@@ -118,9 +116,9 @@ function DocCard({
       </div>
 
       <div className="mt-2 flex items-center gap-3 text-[10px] text-foreground-muted ml-7">
-        <span>📦 {chunks} {t('kb.chunks')}</span>
+        <span> {chunks} {t('kb.chunks')}</span>
         <span>·</span>
-        <span>📅 {new Date(doc.created_at).toLocaleDateString()}</span>
+        <span> {new Date(doc.created_at).toLocaleDateString()}</span>
         <span className="font-mono text-foreground-dim/70">#{doc.id.slice(0, 6)}</span>
       </div>
 
@@ -131,9 +129,8 @@ function DocCard({
         <button
           onClick={() => onIndex(doc)}
           disabled={indexingId === doc.id}
-          className="rounded-md bg-brand-cyan/15 px-2 py-1 text-xs text-brand-cyan hover:bg-brand-cyan/25 disabled:opacity-50"
-        >
-          {indexingId === doc.id ? `⏳ ${t('kb.indexing')}` : `🔍 ${t('kb.vectorIndex')}`}
+          className="rounded-md bg-brand-cyan/15 px-2 py-1 text-xs text-brand-cyan hover:bg-brand-cyan/25 disabled:opacity-50">
+          {indexingId === doc.id ? `⏳ ${t('kb.indexing')}` : ` ${t('kb.vectorIndex')}`}
         </button>
         <button onClick={() => onDelete(doc.id)} className="rounded-md bg-error-bg px-2 py-1 text-xs text-error-text hover:bg-error-bg">
           {t('kb.delete')}
@@ -148,8 +145,7 @@ function DocCard({
             return (
               <div
                 key={dup.id}
-                className="flex items-center justify-between rounded-lg border border-border-subtle bg-elevated-bg/40 px-3 py-2"
-              >
+                className="flex items-center justify-between rounded-lg border border-border-subtle bg-elevated-bg/40 px-3 py-2">
                 <div className="min-w-0">
                   <div className="truncate text-xs text-foreground-muted">{dup.title}</div>
                   <div className="mt-0.5 text-[10px] text-foreground-dim">
@@ -158,17 +154,13 @@ function DocCard({
                 </div>
                 <div className="flex shrink-0 gap-1">
                   <button
-                    type="button"
-                    onClick={() => onEdit(dup)}
-                    className="rounded px-2 py-0.5 text-[10px] text-foreground-dim hover:bg-card-bg"
-                  >
+                    type="button"onClick={() => onEdit(dup)}
+                    className="rounded px-2 py-0.5 text-[10px] text-foreground-dim hover:bg-card-bg">
                     {t('kb.edit')}
                   </button>
                   <button
-                    type="button"
-                    onClick={() => onDelete(dup.id)}
-                    className="rounded px-2 py-0.5 text-[10px] text-error-text hover:bg-error-bg"
-                  >
+                    type="button"onClick={() => onDelete(dup.id)}
+                    className="rounded px-2 py-0.5 text-[10px] text-error-text hover:bg-error-bg">
                     {t('kb.delete')}
                   </button>
                 </div>
@@ -233,8 +225,7 @@ function UploadZone({ onUploaded }: { onUploaded: () => void }) {
   return (
     <div
       className={`relative rounded-lg border-2 border-dashed p-8 text-center transition-colors cursor-pointer ${
-        dragging ? 'border-brand-purple bg-brand-purple/5' : 'border-border-default hover:border-brand-purple/50 hover:bg-elevated-bg/50'
-      }`}
+        dragging ? 'border-brand-purple bg-brand-purple/5' : 'border-border-default hover:border-brand-purple/50 hover:bg-elevated-bg/50'}`}
       onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
       onDragLeave={() => setDragging(false)}
       onDrop={(e) => { e.preventDefault(); setDragging(false); handleFiles(e.dataTransfer.files); }}
@@ -242,11 +233,8 @@ function UploadZone({ onUploaded }: { onUploaded: () => void }) {
     >
       <input
         ref={inputRef}
-        type="file"
-        multiple
-        accept=".txt,.md,.json,.csv,.pdf,.docx,.html"
-        className="hidden"
-        onChange={(e) => e.target.files && handleFiles(e.target.files)}
+        type="file"multiple
+        accept=".txt,.md,.json,.csv,.pdf,.docx,.html"className="hidden"onChange={(e) => e.target.files && handleFiles(e.target.files)}
       />
       {uploading ? (
         <div className="text-foreground-dim">
@@ -255,12 +243,12 @@ function UploadZone({ onUploaded }: { onUploaded: () => void }) {
         </div>
       ) : dragging ? (
         <div className="text-brand-purple">
-          <span className="text-3xl">📥</span>
+          <span className="text-3xl"></span>
           <p className="mt-2 text-sm font-medium">{t('kb.dropToUpload')}</p>
         </div>
       ) : (
         <div className="text-foreground-dim">
-          <span className="text-3xl">📤</span>
+          <span className="text-3xl"></span>
           <p className="mt-2 text-sm">{t('kb.dragHere')}</p>
           <p className="mt-1 text-[10px] text-foreground-muted">{t('kb.supportedFormats')}</p>
         </div>
@@ -321,18 +309,15 @@ function SearchTestPanel() {
       {/* 查询输入 */}
       <div className="flex gap-2">
         <input
-          type="text"
-          value={query}
+          type="text"value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
           placeholder={t('kb.queryPlaceholder')}
-          className="flex-1 rounded-md border border-border-default px-3 py-2 text-sm focus:border-brand-purple focus:outline-none focus:ring-1 focus:ring-brand-purple"
-        />
+          className="flex-1 rounded-md border border-border-default px-3 py-2 text-sm focus:border-brand-purple focus:outline-none focus:ring-1 focus:ring-brand-purple"/>
         <button
           onClick={handleSearch}
           disabled={searching}
-          className="rounded-md bg-brand-purple px-4 py-2 text-sm font-medium text-white hover:bg-brand-purple/80 disabled:opacity-50"
-        >
+          className="rounded-md bg-brand-purple px-4 py-2 text-sm font-medium text-white hover:bg-brand-purple/80 disabled:opacity-50">
           {searching ? t('kb.searching') : t('kb.search')}
         </button>
       </div>
@@ -348,9 +333,7 @@ function SearchTestPanel() {
               onClick={() => setSearchMode(m)}
               className={`rounded-md px-2 py-0.5 text-[10px] font-medium transition-colors ${
                 searchMode === m
-                  ? 'bg-brand-cyan/15 text-brand-cyan'
-                  : 'bg-elevated-bg text-foreground-muted hover:text-foreground'
-              }`}
+                  ? 'bg-brand-cyan/15 text-brand-cyan': 'bg-elevated-bg text-foreground-muted hover:text-foreground'}`}
             >
               {m === 'hybrid' ? t('kb.mode.hybrid') : m === 'vector' ? t('kb.mode.vector') : t('kb.mode.keyword')}
             </button>
@@ -361,13 +344,11 @@ function SearchTestPanel() {
         <div className="flex items-center gap-1.5">
           <span className="text-[10px] text-foreground-muted">{t('kb.topK')}</span>
           <input
-            type="number"
-            min={1}
+            type="number"min={1}
             max={20}
             value={topK}
             onChange={(e) => setTopK(Number(e.target.value))}
-            className="w-12 rounded-md border border-border-default px-1.5 py-0.5 text-[10px] text-center"
-          />
+            className="w-12 rounded-md border border-border-default px-1.5 py-0.5 text-[10px] text-center"/>
         </div>
 
         {/* Collection 选择 */}
@@ -379,9 +360,7 @@ function SearchTestPanel() {
               onClick={() => toggleCollection(c.id)}
               className={`rounded-md px-1.5 py-0.5 text-[10px] transition-colors ${
                 selectedCollections.includes(c.id)
-                  ? 'bg-brand-purple/15 text-brand-purple'
-                  : 'bg-elevated-bg text-foreground-muted hover:text-foreground'
-              }`}
+                  ? 'bg-brand-purple/15 text-brand-purple': 'bg-elevated-bg text-foreground-muted hover:text-foreground'}`}
               title={c.desc}
             >
               {c.label}
@@ -430,7 +409,7 @@ function SearchTestPanel() {
           </div>
           {diag.errors.length > 0 && (
             <div className="mt-1.5 text-[10px] text-error-text">
-              ⚠️ {diag.errors.join('; ')}
+               {diag.errors.join('; ')}
             </div>
           )}
         </div>
@@ -509,23 +488,21 @@ function DocEditModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
       <div className="w-full max-w-lg rounded-lg bg-card-bg p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <h3 className="mb-4 text-base font-semibold text-foreground">
-          {editing ? `📝 ${t('kb.editDoc')}` : `📝 ${t('kb.newDoc')}`}
+          {editing ? ` ${t('kb.editDoc')}` : ` ${t('kb.newDoc')}`}
         </h3>
         <form onSubmit={handleSubmit} className="space-y-3">
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder={t('kb.docTitle')}
-            className="w-full rounded-md border border-border-default px-3 py-2 text-sm focus:border-brand-purple focus:outline-none focus:ring-1 focus:ring-brand-purple"
-            required
+            className="w-full rounded-md border border-border-default px-3 py-2 text-sm focus:border-brand-purple focus:outline-none focus:ring-1 focus:ring-brand-purple"required
           />
           <textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
             rows={8}
             placeholder={t('kb.docContent')}
-            className="w-full rounded-md border border-border-default px-3 py-2 text-sm focus:border-brand-purple focus:outline-none focus:ring-1 focus:ring-brand-purple"
-            required
+            className="w-full rounded-md border border-border-default px-3 py-2 text-sm focus:border-brand-purple focus:outline-none focus:ring-1 focus:ring-brand-purple"required
           />
           <div className="flex justify-end gap-2">
             <button type="button" onClick={onClose} className="rounded-md border border-border-default px-4 py-2 text-sm text-foreground-muted hover:bg-elevated-bg">
@@ -615,8 +592,7 @@ export default function KnowledgeCenter() {
     const ok = await confirm(
       t('kb.confirmCleanDupes').replace('{n}', String(duplicateTotal)),
       t('kb.cleanDupesTitle'),
-      'danger'
-    );
+      'danger');
     if (!ok) return;
     setCleaningDupes(true);
     let removed = 0;
@@ -641,7 +617,7 @@ export default function KnowledgeCenter() {
       {/* 标题栏 */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-foreground">📚 {t('kb.title')}</h1>
+          <h1 className="text-xl font-bold text-foreground"> {t('kb.title')}</h1>
           <p className="text-xs text-foreground-dim mt-1">{t('kb.subtitle')}</p>
         </div>
         <div className="flex gap-2">
@@ -649,18 +625,17 @@ export default function KnowledgeCenter() {
             onClick={() => setShowQdrantPanel(!showQdrantPanel)}
             className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${showQdrantPanel ? 'bg-brand-cyan text-white' : 'border border-border-default text-foreground-muted hover:bg-elevated-bg'}`}
           >
-            🗄️ {t('kb.qdrantStatus')}
+             {t('kb.qdrantStatus')}
           </button>
           <button
             onClick={() => setShowSearchTest(!showSearchTest)}
             className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${showSearchTest ? 'bg-brand-purple text-white' : 'border border-border-default text-foreground-muted hover:bg-elevated-bg'}`}
           >
-            🔍 {t('kb.searchTest')}
+             {t('kb.searchTest')}
           </button>
           <button
             onClick={() => { setEditing(null); setShowEdit(true); }}
-            className="rounded-md bg-brand-purple px-4 py-2 text-sm font-medium text-white hover:bg-brand-purple/80"
-          >
+            className="rounded-md bg-brand-purple px-4 py-2 text-sm font-medium text-white hover:bg-brand-purple/80">
             + {t('kb.newDoc')}
           </button>
         </div>
@@ -687,8 +662,7 @@ export default function KnowledgeCenter() {
                     addToast(t('kb.qdrantStatusFailed'), 'error');
                   }
                 }}
-                className="rounded-md bg-brand-cyan/15 px-3 py-1 text-xs text-brand-cyan hover:bg-brand-cyan/25"
-              >
+                className="rounded-md bg-brand-cyan/15 px-3 py-1 text-xs text-brand-cyan hover:bg-brand-cyan/25">
                 {t('kb.refreshStatus')}
               </button>
               <button
@@ -705,8 +679,7 @@ export default function KnowledgeCenter() {
                     addToast(t('kb.dimCheckFailed'), 'error');
                   }
                 }}
-                className="rounded-md bg-amber-500/15 px-3 py-1 text-xs text-amber-500 hover:bg-amber-500/25"
-              >
+                className="rounded-md bg-amber-500/15 px-3 py-1 text-xs text-amber-500 hover:bg-amber-500/25">
                 {t('kb.dimensionCheck')}
               </button>
               <button
@@ -724,8 +697,7 @@ export default function KnowledgeCenter() {
                   }
                 }}
                 disabled={rebuilding}
-                className="rounded-md bg-error-bg px-3 py-1 text-xs text-error-text hover:bg-error-bg disabled:opacity-50"
-              >
+                className="rounded-md bg-error-bg px-3 py-1 text-xs text-error-text hover:bg-error-bg disabled:opacity-50">
                 {rebuilding ? t('kb.rebuilding') : t('kb.rebuildIndex')}
               </button>
             </div>
@@ -809,7 +781,7 @@ export default function KnowledgeCenter() {
 
               {qdrantStatus.error && (
                 <div className="rounded-md border border-error-text/25 bg-error-bg p-2.5 text-xs text-error-text">
-                  ⚠️ {qdrantStatus.error}
+                   {qdrantStatus.error}
                 </div>
               )}
             </div>
@@ -819,9 +791,7 @@ export default function KnowledgeCenter() {
           {dimCheck && (
             <div className={`rounded-md border p-2.5 text-xs ${
               dimCheck.match
-                ? 'border-success-text/25 bg-success-bg text-success-text'
-                : 'border-amber-400/25 bg-amber-500/10 text-amber-400'
-            }`}>
+                ? 'border-success-text/25 bg-success-bg text-success-text': 'border-amber-400/25 bg-amber-500/10 text-amber-400'}`}>
               <div className="font-semibold mb-1">
                 {dimCheck.match ? t('kb.dimMatch') : t('kb.dimNotMatch')}
               </div>
@@ -847,12 +817,10 @@ export default function KnowledgeCenter() {
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative max-w-sm flex-1 min-w-[200px]">
           <input
-            type="text"
-            value={search}
+            type="text"value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={t('kb.searchPlaceholder')}
-            className="w-full rounded-md border border-border-default pl-8 pr-3 py-1.5 text-sm focus:border-brand-purple focus:outline-none focus:ring-1 focus:ring-brand-purple"
-          />
+            className="w-full rounded-md border border-border-default pl-8 pr-3 py-1.5 text-sm focus:border-brand-purple focus:outline-none focus:ring-1 focus:ring-brand-purple"/>
           <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-foreground-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
@@ -868,11 +836,9 @@ export default function KnowledgeCenter() {
         </div>
         {duplicateTotal > 0 && (
           <button
-            type="button"
-            disabled={cleaningDupes}
+            type="button"disabled={cleaningDupes}
             onClick={() => void handleCleanDuplicates()}
-            className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-400 hover:bg-amber-500/20 disabled:opacity-50"
-          >
+            className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-400 hover:bg-amber-500/20 disabled:opacity-50">
             {cleaningDupes ? t('kb.cleaning') : t('kb.cleanDupes').replace('{n}', String(duplicateTotal))}
           </button>
         )}

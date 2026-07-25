@@ -264,9 +264,7 @@ export default function SkillsPage() {
           key={skill.id}
           className={`flex items-start justify-between rounded-xl border px-4 py-3 transition-colors ${
             skill.enabled
-              ? 'border-border-default bg-card-bg'
-              : 'border-border-subtle bg-card-bg/60 opacity-90'
-          }`}
+              ? 'border-border-default bg-card-bg': 'border-border-subtle bg-card-bg/60 opacity-90'}`}
         >
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
@@ -286,27 +284,23 @@ export default function SkillsPage() {
           <button
             onClick={() => handleToggle(skill)}
             className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-              skill.enabled ? 'bg-brand-purple' : 'bg-elevated-bg'
-            }`}
+              skill.enabled ? 'bg-brand-purple' : 'bg-elevated-bg'}`}
           >
             <span
               className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                skill.enabled ? 'translate-x-6' : 'translate-x-1'
-              }`}
+                skill.enabled ? 'translate-x-6' : 'translate-x-1'}`}
             />
           </button>
           {allowEdit && (
             <>
               <button
                 onClick={() => openEdit(skill)}
-                className="rounded-md border border-border-default px-2 py-1 text-xs text-foreground-muted hover:bg-elevated-bg"
-              >
+                className="rounded-md border border-border-default px-2 py-1 text-xs text-foreground-muted hover:bg-elevated-bg">
                 {t('common.edit')}
               </button>
               <button
                 onClick={() => handleDelete(skill)}
-                className="rounded-md bg-error-bg px-2 py-1 text-xs text-error-text hover:bg-error-bg"
-              >
+                className="rounded-md bg-error-bg px-2 py-1 text-xs text-error-text hover:bg-error-bg">
                 {t('common.delete')}
               </button>
             </>
@@ -332,9 +326,7 @@ export default function SkillsPage() {
                   onClick={() => setActiveTab(tab.key as TabKey)}
                   className={`px-3 py-2 text-sm font-medium ${
                     activeTab === tab.key
-                      ? 'border-b-2 border-violet-400 text-violet-400'
-                      : 'text-foreground-dim hover:text-foreground-muted'
-                  }`}
+                      ? 'border-b-2 border-violet-400 text-violet-400': 'text-foreground-dim hover:text-foreground-muted'}`}
                 >
                   {tab.label}
                 </button>
@@ -351,13 +343,10 @@ export default function SkillsPage() {
                   return (
                     <button
                       key={id}
-                      type="button"
-                      onClick={() => setCategoryFilter(id)}
+                      type="button"onClick={() => setCategoryFilter(id)}
                       className={`rounded-full border px-3 py-1 text-xs transition-colors ${
                         active
-                          ? 'border-brand-purple/40 bg-brand-purple/10 text-foreground'
-                          : 'border-border-subtle bg-card-bg text-foreground-muted hover:border-border-default'
-                      }`}
+                          ? 'border-brand-purple/40 bg-brand-purple/10 text-foreground': 'border-border-subtle bg-card-bg text-foreground-muted hover:border-border-default'}`}
                     >
                       {catLabel(id)}
                       <span className="ml-1 tabular-nums text-foreground-dim">{count}</span>
@@ -400,8 +389,7 @@ export default function SkillsPage() {
                     <div className="mb-4">
                       <button
                         onClick={openCreate}
-                        className="rounded-md bg-violet-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-700"
-                      >
+                        className="rounded-md bg-violet-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-700">
                         {t('skills.create')}
                       </button>
                     </div>
@@ -429,17 +417,14 @@ export default function SkillsPage() {
             <div className="space-y-4">
               <div className="flex items-center gap-2">
                 <input
-                  type="text"
-                  value={communityUrl}
+                  type="text"value={communityUrl}
                   onChange={(e) => setCommunityUrl(e.target.value)}
                   placeholder={`${t('skills.community.placeholderPrefix')}${DEFAULT_COMMUNITY_URL}`}
-                  className="flex-1 rounded-md border border-border-default px-3 py-2 text-sm focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500"
-                />
+                  className="flex-1 rounded-md border border-border-default px-3 py-2 text-sm focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500"/>
                 <button
                   onClick={handleFetchCommunity}
                   disabled={communityLoading}
-                  className="rounded-md border border-border-default bg-card-bg px-3 py-2 text-sm text-foreground-muted hover:bg-elevated-bg disabled:opacity-50"
-                >
+                  className="rounded-md border border-border-default bg-card-bg px-3 py-2 text-sm text-foreground-muted hover:bg-elevated-bg disabled:opacity-50">
                   {communityLoading ? t('skills.community.fetching') : t('skills.community.fetch')}
                 </button>
               </div>
@@ -450,14 +435,11 @@ export default function SkillsPage() {
                     {communitySkills.map((s) => (
                       <label
                         key={s.name}
-                        className="flex cursor-pointer items-start gap-3 rounded-lg border border-border-default bg-card-bg px-4 py-3 hover:bg-elevated-bg"
-                      >
+                        className="flex cursor-pointer items-start gap-3 rounded-lg border border-border-default bg-card-bg px-4 py-3 hover:bg-elevated-bg">
                         <input
-                          type="checkbox"
-                          checked={selectedCommunity.has(s.name)}
+                          type="checkbox"checked={selectedCommunity.has(s.name)}
                           onChange={() => toggleSelection(s.name)}
-                          className="mt-1 h-4 w-4 accent-violet-600"
-                        />
+                          className="mt-1 h-4 w-4 accent-violet-600"/>
                         <div className="min-w-0 flex-1">
                           <div className="font-medium text-foreground">{s.name}</div>
                           <div className="text-sm text-foreground-dim">{s.description || t('skills.noDescription')}</div>
@@ -469,8 +451,7 @@ export default function SkillsPage() {
                   <button
                     onClick={handleImportCommunity}
                     disabled={importing || selectedCommunity.size === 0}
-                    className="rounded-md bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-50"
-                  >
+                    className="rounded-md bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-50">
                     {importing ? t('skills.community.importing') : t('skills.community.import').replace('{count}', String(selectedCommunity.size))}
                   </button>
                 </>
@@ -479,8 +460,7 @@ export default function SkillsPage() {
                   <EmptyState
                     title={t('skills.community.empty.title')}
                     description={t('skills.community.empty.desc')}
-                    icon="🌐"
-                  />
+                    icon=""/>
                 )
               )}
             </div>
@@ -494,8 +474,7 @@ export default function SkillsPage() {
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={closeModal}>
           <div
-            className="w-full max-w-2xl max-h-[80vh] overflow-y-auto rounded-lg bg-card-bg p-5 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-2xl max-h-[80vh] overflow-y-auto rounded-lg bg-card-bg p-5 shadow-xl"onClick={(e) => e.stopPropagation()}
           >
             <h3 className="mb-4 text-base font-semibold text-foreground">
               {editingSkill ? t('skills.modal.editTitle') : t('skills.modal.createTitle')}
@@ -508,8 +487,7 @@ export default function SkillsPage() {
                   onChange={(e) => setFormName(e.target.value)}
                   disabled={!!editingSkill}
                   placeholder={t('skills.form.namePlaceholder')}
-                  className="w-full rounded-md border border-border-default px-3 py-2 text-sm focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500 disabled:bg-card-bg-hover"
-                />
+                  className="w-full rounded-md border border-border-default px-3 py-2 text-sm focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500 disabled:bg-card-bg-hover"/>
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-foreground-muted">{t('skills.form.desc')}</label>
@@ -517,8 +495,7 @@ export default function SkillsPage() {
                   value={formDescription}
                   onChange={(e) => setFormDescription(e.target.value)}
                   placeholder={t('skills.form.descPlaceholder')}
-                  className="w-full rounded-md border border-border-default px-3 py-2 text-sm focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500"
-                />
+                  className="w-full rounded-md border border-border-default px-3 py-2 text-sm focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500"/>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -526,20 +503,16 @@ export default function SkillsPage() {
                   <select
                     value={formHandler}
                     onChange={(e) => setFormHandler(e.target.value as 'http' | 'python')}
-                    className="w-full rounded-md border border-border-default bg-card-bg px-3 py-2 text-sm focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500"
-                  >
+                    className="w-full rounded-md border border-border-default bg-card-bg px-3 py-2 text-sm focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500">
                     <option value="http">{t('skills.form.handlerHttp')}</option>
                     <option value="python">{t('skills.form.handlerPython')}</option>
                   </select>
                 </div>
                 <div className="flex items-center gap-2">
                   <input
-                    id="skillEnabled"
-                    type="checkbox"
-                    checked={formEnabled}
+                    id="skillEnabled"type="checkbox"checked={formEnabled}
                     onChange={(e) => setFormEnabled(e.target.checked)}
-                    className="h-4 w-4 accent-violet-600"
-                  />
+                    className="h-4 w-4 accent-violet-600"/>
                   <label htmlFor="skillEnabled" className="text-sm text-foreground-muted">{t('skills.form.defaultEnabled')}</label>
                 </div>
               </div>
@@ -551,8 +524,7 @@ export default function SkillsPage() {
                   value={formSchema}
                   onChange={(e) => setFormSchema(e.target.value)}
                   rows={5}
-                  className="w-full rounded-md border border-border-default px-3 py-2 font-mono text-xs focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500"
-                />
+                  className="w-full rounded-md border border-border-default px-3 py-2 font-mono text-xs focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500"/>
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-foreground-muted">
@@ -562,21 +534,18 @@ export default function SkillsPage() {
                   value={formConfig}
                   onChange={(e) => setFormConfig(e.target.value)}
                   rows={8}
-                  className="w-full rounded-md border border-border-default px-3 py-2 font-mono text-xs focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500"
-                />
+                  className="w-full rounded-md border border-border-default px-3 py-2 font-mono text-xs focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500"/>
               </div>
             </div>
             <div className="mt-5 flex justify-end gap-2">
               <button
                 onClick={closeModal}
-                className="rounded-md border border-border-default px-4 py-2 text-sm text-foreground-muted hover:bg-elevated-bg"
-              >
+                className="rounded-md border border-border-default px-4 py-2 text-sm text-foreground-muted hover:bg-elevated-bg">
                 {t('common.cancel')}
               </button>
               <button
                 onClick={handleSaveCustom}
-                className="rounded-md bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700"
-              >
+                className="rounded-md bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700">
                 {t('common.save')}
               </button>
             </div>

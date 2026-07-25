@@ -22,16 +22,12 @@ function ScreenshotCard({ shot }: { shot: ScreenshotEntry }) {
   return (
     <>
       <button
-        type="button"
-        onClick={() => setExpanded(true)}
-        className="group relative w-full overflow-hidden rounded-lg border border-border-subtle bg-card-bg transition-colors hover:border-brand-purple/40"
-      >
+        type="button"onClick={() => setExpanded(true)}
+        className="group relative w-full overflow-hidden rounded-lg border border-border-subtle bg-card-bg transition-colors hover:border-brand-purple/40">
         <img
           src={src}
           alt={`Screenshot from ${shot.tool_name}`}
-          className="h-32 w-full object-cover object-top"
-          loading="lazy"
-        />
+          className="h-32 w-full object-cover object-top"loading="lazy"/>
         <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/70 to-transparent px-2 py-1">
           <span className="text-[10px] font-medium text-white/90">{shot.tool_name}</span>
           <span className="text-[10px] text-white/60">{formatTime(shot.timestamp)}</span>
@@ -40,20 +36,16 @@ function ScreenshotCard({ shot }: { shot: ScreenshotEntry }) {
 
       {expanded && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
-          onClick={() => setExpanded(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"onClick={() => setExpanded(false)}
         >
           <img
             src={src}
             alt={`Screenshot from ${shot.tool_name}`}
-            className="max-h-[90vh] max-w-[90vw] rounded-lg object-contain"
-          />
+            className="max-h-[90vh] max-w-[90vw] rounded-lg object-contain"/>
           <button
-            type="button"
-            onClick={() => setExpanded(false)}
-            className="absolute right-4 top-4 rounded-full bg-white/10 px-3 py-1 text-sm text-white hover:bg-white/20"
-          >
-            ✕
+            type="button"onClick={() => setExpanded(false)}
+            className="absolute right-4 top-4 rounded-full bg-white/10 px-3 py-1 text-sm text-white hover:bg-white/20">
+            
           </button>
         </div>
       )}
@@ -83,19 +75,15 @@ export function ScreenshotPanel() {
         <div className="flex gap-1">
           {shots.length > 0 && (
             <button
-              type="button"
-              onClick={clear}
-              className="rounded px-1.5 py-0.5 text-[10px] text-foreground-dim hover:bg-card-bg-hover hover:text-foreground"
-            >
+              type="button"onClick={clear}
+              className="rounded px-1.5 py-0.5 text-[10px] text-foreground-dim hover:bg-card-bg-hover hover:text-foreground">
               {t('screenshot.clear')}
             </button>
           )}
           <button
-            type="button"
-            onClick={() => setPanelOpen(false)}
-            className="rounded px-1.5 py-0.5 text-[10px] text-foreground-dim hover:bg-card-bg-hover hover:text-foreground"
-          >
-            ✕
+            type="button"onClick={() => setPanelOpen(false)}
+            className="rounded px-1.5 py-0.5 text-[10px] text-foreground-dim hover:bg-card-bg-hover hover:text-foreground">
+            
           </button>
         </div>
       </div>

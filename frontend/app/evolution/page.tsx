@@ -117,7 +117,7 @@ export default function EvolutionPage() {
   const top = useMemo(() => stats?.top_used || [], [stats]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col p-6">
+    <div className="tk-page flex h-full min-h-0 flex-col p-6">
       {ConfirmDialogComponent}
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -166,7 +166,7 @@ export default function EvolutionPage() {
         ].map((c) => (
           <div
             key={c.label}
-            className="rounded-xl border border-border-subtle bg-card-bg/50 px-4 py-3"
+            className="tk-card/50 px-4 py-3"
           >
             <div className="text-[11px] text-foreground-dim">{c.label}</div>
             <div className="mt-1 text-2xl font-semibold text-foreground">{c.value}</div>
@@ -175,7 +175,7 @@ export default function EvolutionPage() {
       </div>
 
       {top.length > 0 && (
-        <div className="mb-4 rounded-xl border border-border-subtle bg-card-bg/30 px-4 py-3">
+        <div className="mb-4 tk-card/30 px-4 py-3">
           <div className="mb-2 text-xs font-medium text-foreground-muted">{t('evolution.topUsed')}</div>
           <div className="flex flex-wrap gap-2">
             {top.map((t: any) => (
@@ -303,7 +303,7 @@ export default function EvolutionPage() {
           )}
         </div>
 
-        <div className="min-h-0 overflow-y-auto rounded-xl border border-border-subtle bg-card-bg/20 p-4">
+        <div className="min-h-0 overflow-y-auto tk-card/20 p-4">
           {!selected ? (
             <div className="py-16 text-center text-sm text-foreground-dim">{t('evolution.selectHint')}</div>
           ) : (

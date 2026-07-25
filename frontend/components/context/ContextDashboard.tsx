@@ -18,20 +18,20 @@ import { t, useT } from '@/stores/localeStore';
 
 /* ─── 中文标签映射 ─── */
 const SCOPE_LABELS: Record<string, { label: string; icon: string }> = {
-  system: { label: t('contextDash.scope.system'), icon: '⚙️' },
-  user: { label: t('evolution.source.user'), icon: '👤' },
-  project: { label: t('memory.type.project'), icon: '📁' },
-  session: { label: t('contextDash.scope.session'), icon: '💬' },
-  knowledge: { label: t('contextDash.scope.knowledge'), icon: '📚' },
+  system: { label: t('contextDash.scope.system'), icon: '' },
+  user: { label: t('evolution.source.user'), icon: '' },
+  project: { label: t('memory.type.project'), icon: '' },
+  session: { label: t('contextDash.scope.session'), icon: '' },
+  knowledge: { label: t('contextDash.scope.knowledge'), icon: '' },
 };
 
 const KIND_LABELS: Record<string, { label: string; icon: string }> = {
-  instruction: { label: t('contextDash.kind.instruction'), icon: '📋' },
-  memory: { label: t('contextDash.kind.memory'), icon: '🧠' },
-  doc: { label: t('contextDash.kind.doc'), icon: '📄' },
-  message: { label: t('contextDash.kind.message'), icon: '💬' },
-  rag: { label: t('contextDash.kind.rag'), icon: '🔍' },
-  'tool-def': { label: t('contextDash.kind.toolDef'), icon: '🔧' },
+  instruction: { label: t('contextDash.kind.instruction'), icon: '' },
+  memory: { label: t('contextDash.kind.memory'), icon: '' },
+  doc: { label: t('contextDash.kind.doc'), icon: '' },
+  message: { label: t('contextDash.kind.message'), icon: '' },
+  rag: { label: t('contextDash.kind.rag'), icon: '' },
+  'tool-def': { label: t('contextDash.kind.toolDef'), icon: '' },
 };
 
 /* ─── Token 预算条 ─── */
@@ -78,8 +78,8 @@ function ContextItemCard({
   onPin: (id: string, pinned: boolean) => void;
   onDelete: (id: string) => void;
 }) {
-  const scope = SCOPE_LABELS[item.scope] || { label: item.scope, icon: '📦' };
-  const kind = KIND_LABELS[item.kind] || { label: item.kind, icon: '📄' };
+  const scope = SCOPE_LABELS[item.scope] || { label: item.scope, icon: '' };
+  const kind = KIND_LABELS[item.kind] || { label: item.kind, icon: '' };
   const valuePreview = item.value.length > 80 ? item.value.slice(0, 80) + '…' : item.value;
 
   return (
@@ -106,14 +106,13 @@ function ContextItemCard({
           className={`rounded px-1.5 py-1 text-xs ${item.pinned ? 'bg-amber-500/10 text-amber-500' : 'bg-card-bg-hover text-foreground-dim hover:bg-elevated-bg'}`}
           title={item.pinned ? t('contextDash.unpin') : t('contextDash.pin')}
         >
-          {item.pinned ? '📌' : '📍'}
+          {item.pinned ? '' : ''}
         </button>
         <button
           onClick={() => onDelete(item.id)}
-          className="rounded bg-error-bg px-1.5 py-1 text-xs text-error-text hover:bg-error-bg"
-          title={t('memory.delete')}
+          className="rounded bg-error-bg px-1.5 py-1 text-xs text-error-text hover:bg-error-bg"title={t('memory.delete')}
         >
-          🗑️
+          
         </button>
       </div>
     </div>
@@ -184,8 +183,7 @@ function ContextCreateModal({
             <input
               value={desc}
               onChange={(e) => setDesc(e.target.value)}
-              className="w-full rounded-md border border-border-default px-3 py-2 text-sm focus:border-brand-purple focus:outline-none focus:ring-1 focus:ring-brand-purple"
-              placeholder={t('contextDash.descPlaceholder')}
+              className="w-full rounded-md border border-border-default px-3 py-2 text-sm focus:border-brand-purple focus:outline-none focus:ring-1 focus:ring-brand-purple"placeholder={t('contextDash.descPlaceholder')}
             />
           </div>
           <div>
@@ -194,8 +192,7 @@ function ContextCreateModal({
               value={content}
               onChange={(e) => setContent(e.target.value)}
               rows={5}
-              className="w-full rounded-md border border-border-default px-3 py-2 text-sm focus:border-brand-purple focus:outline-none focus:ring-1 focus:ring-brand-purple"
-              placeholder={t('contextDash.contentPlaceholder')}
+              className="w-full rounded-md border border-border-default px-3 py-2 text-sm focus:border-brand-purple focus:outline-none focus:ring-1 focus:ring-brand-purple"placeholder={t('contextDash.contentPlaceholder')}
             />
           </div>
           <div className="text-[10px] text-foreground-muted">
@@ -209,8 +206,7 @@ function ContextCreateModal({
           <button
             onClick={handleSubmit}
             disabled={submitting}
-            className="rounded-md bg-brand-purple px-4 py-2 text-sm font-medium text-white hover:bg-brand-purple/80 disabled:opacity-50"
-          >
+            className="rounded-md bg-brand-purple px-4 py-2 text-sm font-medium text-white hover:bg-brand-purple/80 disabled:opacity-50">
             {submitting ? t('contextDash.creating') : t('channels.create')}
           </button>
         </div>
@@ -318,14 +314,12 @@ export default function ContextDashboard() {
           <button
             onClick={handleOptimize}
             disabled={optimizing}
-            className="rounded-md bg-success-text px-4 py-2 text-sm font-medium text-white hover:bg-success-text/80 disabled:opacity-50"
-          >
+            className="rounded-md bg-success-text px-4 py-2 text-sm font-medium text-white hover:bg-success-text/80 disabled:opacity-50">
             {optimizing ? t('contextDash.optimizing') : t('contextDash.optimize')}
           </button>
           <button
             onClick={() => setShowCreate(true)}
-            className="rounded-md bg-brand-purple px-4 py-2 text-sm font-medium text-white hover:bg-brand-purple/80"
-          >
+            className="rounded-md bg-brand-purple px-4 py-2 text-sm font-medium text-white hover:bg-brand-purple/80">
             {t('contextDash.add')}
           </button>
         </div>
@@ -334,9 +328,9 @@ export default function ContextDashboard() {
       {/* 优化结果提示 */}
       {optimizeResult && (
         <div className="rounded-lg border border-success-text/20 bg-success-bg p-3 text-sm text-success-text flex items-center gap-2">
-          <span>✅</span>
+          <span></span>
           <span>{t('contextDash.optSummary').replace('{saved}', String(optimizeResult.saved_tokens)).replace('{pruned}', String(optimizeResult.pruned_count)).replace('{summarized}', String(optimizeResult.summarized_count))}</span>
-          <button onClick={() => setOptimizeResult(null)} className="ml-auto text-success-text/60 hover:text-success-text">✕</button>
+          <button onClick={() => setOptimizeResult(null)} className="ml-auto text-success-text/60 hover:text-success-text"></button>
         </div>
       )}
 
@@ -344,10 +338,10 @@ export default function ContextDashboard() {
       {stats && (
         <div className="space-y-3">
           <div className="grid grid-cols-4 gap-3">
-            <StatCard icon="📊" label={t('contextDash.stat.totalTokens')} value={stats.total_tokens.toLocaleString()} sub={`/${stats.context_window.toLocaleString()}`} />
-            <StatCard icon="📌" label={t('contextDash.pinned')} value={stats.pinned_tokens.toLocaleString()} sub={t('contextDash.nItems').replace('{n}', String(stats.item_count))} />
-            <StatCard icon="💬" label={t('contextDash.stat.session')} value={stats.session_tokens.toLocaleString()} />
-            <StatCard icon="🔍" label={t('contextDash.stat.rag')} value={stats.rag_tokens.toLocaleString()} />
+            <StatCard icon="" label={t('contextDash.stat.totalTokens')} value={stats.total_tokens.toLocaleString()} sub={`/${stats.context_window.toLocaleString()}`} />
+            <StatCard icon="" label={t('contextDash.pinned')} value={stats.pinned_tokens.toLocaleString()} sub={t('contextDash.nItems').replace('{n}', String(stats.item_count))} />
+            <StatCard icon="" label={t('contextDash.stat.session')} value={stats.session_tokens.toLocaleString()} />
+            <StatCard icon="" label={t('contextDash.stat.rag')} value={stats.rag_tokens.toLocaleString()} />
           </div>
           <TokenBudgetBar used={stats.total_tokens} total={stats.context_window} />
         </div>
@@ -357,12 +351,10 @@ export default function ContextDashboard() {
       <div className="flex items-center gap-3">
         <div className="relative flex-1 max-w-xs">
           <input
-            type="text"
-            value={search}
+            type="text"value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={t('contextDash.searchPlaceholder')}
-            className="w-full rounded-md border border-border-default pl-8 pr-3 py-1.5 text-sm focus:border-brand-purple focus:outline-none focus:ring-1 focus:ring-brand-purple"
-          />
+            className="w-full rounded-md border border-border-default pl-8 pr-3 py-1.5 text-sm focus:border-brand-purple focus:outline-none focus:ring-1 focus:ring-brand-purple"/>
           <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-foreground-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>

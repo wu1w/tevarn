@@ -12,8 +12,8 @@ interface ActivityPanelProps {
 
 const STATUS_ICON: Record<string, string> = {
   running: '⏳',
-  completed: '✅',
-  failed: '❌',
+  completed: '',
+  failed: '',
 };
 
 const STATUS_COLOR: Record<string, string> = {
@@ -54,8 +54,7 @@ export function ActivityPanel({ liveToolCalls, streamStatusDetail, isStreaming }
         {items.map((item) => (
           <div
             key={item.id}
-            className="flex items-center gap-1.5 rounded-lg border border-border-subtle bg-card-bg px-2.5 py-1"
-          >
+            className="flex items-center gap-1.5 rounded-lg border border-border-subtle bg-card-bg px-2.5 py-1">
             <span className="text-xs">{STATUS_ICON[item.status] || '⏳'}</span>
             <span className={`text-xs font-medium ${STATUS_COLOR[item.status] || 'text-foreground-muted'}`}>
               {item.name}

@@ -75,21 +75,20 @@ export function TransparencyPanel({ sessionId, visible, onClose }: TransparencyP
   if (!visible) return null;
 
   const statusIcon = (s: string) => {
-    if (s === 'completed') return '✅';
-    if (s === 'failed') return '❌';
-    if (s === 'running') return '🔄';
-    return '⏹️';
+    if (s === 'completed') return '';
+    if (s === 'failed') return '';
+    if (s === 'running') return '';
+    return '⏹';
   };
 
   return (
     <div className="fixed inset-y-0 right-0 z-40 flex w-96 flex-col border-l border-border-subtle bg-card-bg shadow-xl">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border-subtle px-4 py-3">
-        <h3 className="text-sm font-semibold text-foreground">🔍 透明化 Agent</h3>
+        <h3 className="text-sm font-semibold text-foreground"> 透明化 Agent</h3>
         <button
           onClick={onClose}
-          className="rounded-lg p-1 text-foreground-dim hover:bg-card-bg-hover hover:text-foreground"
-        >
+          className="rounded-lg p-1 text-foreground-dim hover:bg-card-bg-hover hover:text-foreground">
           <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
           </svg>
@@ -108,9 +107,7 @@ export function TransparencyPanel({ sessionId, visible, onClose }: TransparencyP
             onClick={() => setActiveTab(tab.key)}
             className={`flex-1 px-3 py-2 text-xs transition-colors ${
               activeTab === tab.key
-                ? 'border-b-2 border-brand-purple text-foreground'
-                : 'text-foreground-dim hover:text-foreground'
-            }`}
+                ? 'border-b-2 border-brand-purple text-foreground': 'text-foreground-dim hover:text-foreground'}`}
           >
             {tab.label} {tab.count > 0 && <span className="ml-1 text-[10px] text-foreground-dim">({tab.count})</span>}
           </button>
@@ -196,8 +193,7 @@ function ThinkingStepCard({ step, index }: { step: ThinkingStep; index: number }
     <div className="overflow-hidden rounded-lg border border-violet-500/15 bg-violet-500/[0.04]">
       <button
         onClick={() => setOpen(!open)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-violet-500/[0.08]"
-      >
+        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-violet-500/[0.08]">
         <span className="flex h-5 w-5 items-center justify-center rounded bg-violet-500/20 text-[10px] text-violet-300">
           {step.iteration}
         </span>
@@ -206,8 +202,7 @@ function ThinkingStepCard({ step, index }: { step: ThinkingStep; index: number }
         </span>
         <svg
           className={`h-3 w-3 shrink-0 text-violet-400/60 transition-transform ${open ? 'rotate-180' : ''}`}
-          fill="none" viewBox="0 0 24 24" stroke="currentColor"
-        >
+          fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
       </button>
@@ -231,7 +226,7 @@ function ThinkingStepCard({ step, index }: { step: ThinkingStep; index: number }
           )}
           {step.has_tool_calls && (
             <div className="mt-1.5 flex items-center gap-1 text-[10px] text-amber-400">
-              🔧 本轮包含工具调用
+               本轮包含工具调用
             </div>
           )}
         </div>
@@ -249,16 +244,14 @@ function ToolCallTraceCard({ tc, index }: { tc: ToolCallTrace; index: number }) 
     <div className="overflow-hidden rounded-lg border border-border-subtle bg-card-bg-hover/50">
       <button
         onClick={() => setOpen(!open)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-card-bg-hover"
-      >
-        <span className="text-sm">🔧</span>
+        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-card-bg-hover">
+        <span className="text-sm"></span>
         <span className="flex-1 truncate text-xs font-medium text-foreground">{tc.name}</span>
         <span className={`text-[10px] ${statusColor}`}>{tc.status}</span>
         <span className="text-[10px] text-foreground-dim">#{tc.iteration}</span>
         <svg
           className={`h-3 w-3 shrink-0 text-foreground-dim transition-transform ${open ? 'rotate-180' : ''}`}
-          fill="none" viewBox="0 0 24 24" stroke="currentColor"
-        >
+          fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
       </button>
@@ -295,15 +288,13 @@ function RagSourceCard({ source, index }: { source: RagSource; index: number }) 
     <div className="overflow-hidden rounded-lg border border-border-subtle bg-card-bg-hover/50">
       <button
         onClick={() => setOpen(!open)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-card-bg-hover"
-      >
-        <span className="text-sm">📄</span>
+        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-card-bg-hover">
+        <span className="text-sm"></span>
         <span className="flex-1 truncate text-xs font-medium text-foreground">{source.title}</span>
         <span className={`text-[10px] font-mono ${scoreColor}`}>{(source.score * 100).toFixed(0)}%</span>
         <svg
           className={`h-3 w-3 shrink-0 text-foreground-dim transition-transform ${open ? 'rotate-180' : ''}`}
-          fill="none" viewBox="0 0 24 24" stroke="currentColor"
-        >
+          fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
       </button>

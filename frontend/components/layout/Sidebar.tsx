@@ -446,7 +446,7 @@ export function Sidebar() {
         <button
                   type="button"
                   onClick={handleCreateSession}
-                  className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border-subtle bg-white/[0.03] px-3 py-2 text-[12px] font-medium text-foreground-muted transition-all hover:border-brand-purple/30 hover:bg-brand-purple/10 hover:text-foreground"
+                  className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border-subtle bg-[var(--card-bg-hover)] px-3 py-2 text-[12px] font-medium text-foreground-muted transition-all hover:border-brand-purple/30 hover:bg-brand-purple/10 hover:text-foreground"
                 >
                   <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
@@ -471,7 +471,7 @@ export function Sidebar() {
                       addToast(t('nav.taktonCodeFail' as never), 'error');
                     }
                   }}
-                  className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-border-subtle bg-white/[0.03] text-foreground-muted transition-all hover:border-brand-cyan/40 hover:text-brand-cyan"
+                  className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-border-subtle bg-[var(--card-bg-hover)] text-foreground-muted transition-all hover:border-brand-cyan/40 hover:text-brand-cyan"
                 >
                   <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" />
@@ -486,7 +486,7 @@ export function Sidebar() {
                                 ? t('nav.themeLight')
                                 : t('nav.themeDark')
                           }
-                          className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-border-subtle bg-white/[0.03] text-foreground-muted transition-all hover:border-border-default hover:text-foreground"
+                          className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-border-subtle bg-[var(--card-bg-hover)] text-foreground-muted transition-all hover:border-border-default hover:text-foreground"
                         >
                   {theme === 'system' ? (
                               /* 跟随系统 */
@@ -523,7 +523,7 @@ export function Sidebar() {
       <div ref={notifRef} className="relative px-3 pb-1">
         <button
           onClick={() => setNotifOpen((v) => !v)}
-          className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-[13px] text-foreground-muted transition-colors hover:bg-white/[0.04] hover:text-foreground"
+          className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-[13px] text-foreground-muted transition-colors hover:bg-[var(--card-bg-hover)] hover:text-foreground"
         >
           <span className="flex items-center gap-2.5">
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -626,7 +626,7 @@ export function Sidebar() {
                   value={sessionSearch}
                   onChange={(e) => setSessionSearch(e.target.value)}
                   placeholder={t('nav.searchSessions')}
-                  className="w-full rounded-xl border border-border-subtle bg-white/[0.03] py-1.5 pl-7 pr-2 text-[11px] text-foreground placeholder:text-foreground-dim transition-all focus:border-brand-purple/40 focus:outline-none"
+                  className="w-full rounded-xl border border-border-subtle bg-[var(--card-bg-hover)] py-1.5 pl-7 pr-2 text-[11px] text-foreground placeholder:text-foreground-dim transition-all focus:border-brand-purple/40 focus:outline-none"
                 />
               </div>
 
@@ -762,7 +762,7 @@ export function Sidebar() {
             <button
               type="button"
               onClick={() => setFilesOpen((v) => !v)}
-              className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-[12px] text-foreground-muted hover:bg-white/[0.04] hover:text-foreground transition-colors"
+              className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-[12px] text-foreground-muted hover:bg-[var(--card-bg-hover)] hover:text-foreground transition-colors"
             >
               <span className="flex items-center gap-2">
                 <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -831,10 +831,10 @@ export function Sidebar() {
                                   }}
                                   className={`flex w-full items-start gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors ${
                                     active
-                                      ? 'bg-white/[0.06] text-foreground'
+                                      ? 'bg-[color-mix(in_srgb,var(--brand-purple)_8%,transparent)] text-foreground'
                                       : item.exists
-                                        ? 'text-foreground-muted hover:bg-white/[0.04] hover:text-foreground'
-                                        : 'text-foreground-dim/70 hover:bg-white/[0.03] hover:text-foreground-muted'
+                                        ? 'text-foreground-muted hover:bg-[var(--card-bg-hover)] hover:text-foreground'
+                                        : 'text-foreground-dim/70 hover:bg-[var(--card-bg-hover)] hover:text-foreground-muted'
                                   }`}
                                   title={`${item.desc || item.label}\n${t('sidebar.fileTip')}`}
                                 >
@@ -847,7 +847,7 @@ export function Sidebar() {
                                     <span className="flex items-center gap-1.5">
                                       <span className="truncate text-[12px] font-medium">{item.label}</span>
                                       {!item.exists && (
-                                        <span className="shrink-0 rounded bg-white/[0.04] px-1 py-px text-[9px] text-foreground-dim/80">
+                                        <span className="shrink-0 rounded bg-[var(--card-bg-hover)] px-1 py-px text-[9px] text-foreground-dim/80">
                                           {t('nav.toBeCreated')}
                                         </span>
                                       )}
@@ -993,7 +993,7 @@ function UserCard({ user, logout }: { user: User; logout: () => void }) {
   return (
     <div className="relative" onMouseEnter={handleEnter} onMouseLeave={handleLeave}>
       {showCard && (
-        <div className="absolute bottom-full left-0 right-0 mb-2 rounded-2xl border border-border-default bg-elevated-bg/95 p-3 shadow-2xl shadow-black/40 backdrop-blur-xl">
+        <div className="absolute bottom-full left-0 right-0 mb-2 tk-card-solid rounded-2xl/95 p-3 shadow-2xl shadow-black/40 backdrop-blur-xl">
           <div className="flex items-start gap-3">
             <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand-purple/30 to-brand-cyan/20 text-sm font-bold text-brand-cyan ring-1 ring-white/10">
               {avatarText}
@@ -1044,7 +1044,7 @@ function UserCard({ user, logout }: { user: User; logout: () => void }) {
 
       <Link
         href="/profile"
-        className="flex items-center gap-2.5 rounded-xl px-2 py-2 transition-colors hover:bg-white/[0.04]"
+        className="flex items-center gap-2.5 rounded-xl px-2 py-2 transition-colors hover:bg-[var(--card-bg-hover)]"
       >
         <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-brand-purple/30 to-brand-cyan/20 text-xs font-bold text-brand-cyan ring-1 ring-white/10">
           {avatarText}
@@ -1098,7 +1098,7 @@ function HelpTooltip({ text, href }: { text: string; href?: string }) {
     <>
       {show && (
         <div
-          className="fixed z-[100] w-56 rounded-xl border border-border-default bg-elevated-bg/95 p-2.5 shadow-2xl shadow-black/40 backdrop-blur-xl"
+          className="fixed z-[100] w-56 tk-card-solid/95 p-2.5 shadow-2xl shadow-black/40 backdrop-blur-xl"
           style={{ left: pos.left, top: pos.top, transform: 'translateY(-50%)', pointerEvents: 'none' }}
         >
           <p className="text-[11px] leading-relaxed text-foreground-muted">{text}</p>

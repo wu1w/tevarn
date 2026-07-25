@@ -48,14 +48,14 @@ const TYPE_ICON_COLORS: Record<string, string> = {
 
 /** 各实体类型的 emoji 图标（列表行内标识用） */
 const TYPE_EMOJI: Record<string, string> = {
-  person: '👤', organization: '🏢', project: '📁', tech: '⚙️', concept: '💡',
-  docs: '📄', event: '📅', location: '📍', problem: '⚠️', solution: '✅',
+  person: '', organization: '', project: '', tech: '', concept: '',
+  docs: '', event: '', location: '', problem: '', solution: '',
 };
 
 const TYPE_COLORS: Record<string, string> = {
-  person: 'bg-green-100 text-green-800 border-green-200',
-  organization: 'bg-red-100 text-red-800 border-red-200',
-  project: 'bg-orange-100 text-orange-800 border-orange-200',
+  person: 'bg-emerald-500/10 text-green-800 border-green-200',
+  organization: 'bg-red-500/10 text-red-800 border-red-200',
+  project: 'bg-orange-500/10 text-orange-800 border-orange-200',
   tech: 'bg-cyan-100 text-cyan-800 border-cyan-200',
   concept: 'bg-blue-100 text-blue-800 border-blue-200',
   docs: 'bg-purple-100 text-purple-800 border-purple-200',
@@ -291,8 +291,7 @@ export default function WikiExplorer() {
           .replace('{c}', String(result.entities_created))
           .replace('{u}', String(result.entities_updated))
           .replace('{r}', String(result.relations_created)),
-        'success'
-      );
+        'success');
       setShowImportDialog(false);
       setImportContent('');
       setPreview(null);
@@ -319,24 +318,22 @@ export default function WikiExplorer() {
         <div className="flex items-start justify-between mb-4">
           <div>
             <h3 className="text-lg font-semibold text-foreground">{selectedEntity.name}</h3>
-            <span className={`mt-1 inline-block rounded-full border px-2.5 py-0.5 text-xs font-medium ${TYPE_COLORS[selectedEntity.entity_type] || 'bg-gray-100 text-gray-800'}`}>
+            <span className={`mt-1 inline-block rounded-full border px-2.5 py-0.5 text-xs font-medium ${TYPE_COLORS[selectedEntity.entity_type] || 'bg-[var(--input-bg)] text-foreground'}`}>
               {typeLabel(selectedEntity.entity_type)}
             </span>
           </div>
           <div className="flex gap-1">
             <button
               onClick={() => openEditEntity(selectedEntity)}
-              className="rounded-lg p-1.5 text-foreground-dim hover:bg-gray-100 transition-colors"
-              title={t('wiki.detail.editEntity')}
+              className="rounded-lg p-1.5 text-foreground-dim hover:bg-[var(--input-bg)] transition-colors"title={t('wiki.detail.editEntity')}
             >
-              📝
+              
             </button>
             <button
               onClick={() => handleDeleteEntity(selectedEntity.id)}
-              className="rounded-lg p-1.5 text-foreground-dim hover:bg-red-50 hover:text-red-500 transition-colors"
-              title={t('wiki.detail.deleteEntity')}
+              className="rounded-lg p-1.5 text-foreground-dim hover:bg-red-50 hover:text-red-500 transition-colors"title={t('wiki.detail.deleteEntity')}
             >
-              🗑️
+              
             </button>
           </div>
         </div>
@@ -348,7 +345,7 @@ export default function WikiExplorer() {
             <span className="text-xs font-medium text-foreground-dim">{t('wiki.detail.aliases')}：</span>
             <div className="mt-1 flex flex-wrap gap-1">
               {selectedEntity.aliases.map((a: string, i: number) => (
-                <span key={i} className="rounded-md bg-gray-100 px-2 py-0.5 text-xs text-foreground-dim">{a}</span>
+                <span key={i} className="rounded-md bg-[var(--input-bg)] px-2 py-0.5 text-xs text-foreground-dim">{a}</span>
               ))}
             </div>
           </div>
@@ -364,7 +361,7 @@ export default function WikiExplorer() {
                     <span className="rounded bg-brand-purple/10 px-1.5 py-0.5 text-brand-purple font-medium">{relLabel(r.relation_type)}</span>
                     <span className="text-foreground">→</span>
                     <span className="font-medium text-foreground">{target?.name || r.target_id.slice(0, 8)}</span>
-                    <button onClick={() => handleDeleteRelation(r.id)} className="ml-auto text-foreground-dim hover:text-red-500">✕</button>
+                    <button onClick={() => handleDeleteRelation(r.id)} className="ml-auto text-foreground-dim hover:text-red-500"></button>
                   </div>
                 );
               })}
@@ -382,7 +379,7 @@ export default function WikiExplorer() {
                     <span className="font-medium text-foreground">{source?.name || r.source_id.slice(0, 8)}</span>
                     <span className="text-foreground">→</span>
                     <span className="rounded bg-brand-purple/10 px-1.5 py-0.5 text-brand-purple font-medium">{relLabel(r.relation_type)}</span>
-                    <button onClick={() => handleDeleteRelation(r.id)} className="ml-auto text-foreground-dim hover:text-red-500">✕</button>
+                    <button onClick={() => handleDeleteRelation(r.id)} className="ml-auto text-foreground-dim hover:text-red-500"></button>
                   </div>
                 );
               })}
@@ -400,8 +397,7 @@ export default function WikiExplorer() {
     <div className="flex h-full flex-col">
       {toast && (
         <div className={`fixed right-4 top-4 z-50 rounded-lg px-4 py-2.5 text-sm font-medium shadow-lg ${
-          toast.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'
-        }`}>
+          toast.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
           {toast.msg}
         </div>
       )}
@@ -416,8 +412,7 @@ export default function WikiExplorer() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={t('wiki.toolbar.searchPlaceholder')}
-            className="w-full rounded-lg border border-border-default bg-card-bg py-2 pl-9 pr-3 text-sm text-foreground placeholder:text-foreground-dim/50 focus:border-brand-purple focus:outline-none focus:ring-1 focus:ring-brand-purple/30"
-          />
+            className="w-full rounded-lg border border-border-default bg-card-bg py-2 pl-9 pr-3 text-sm text-foreground placeholder:text-foreground-dim/50 focus:border-brand-purple focus:outline-none focus:ring-1 focus:ring-brand-purple/30"/>
         </div>
 
         <div className="flex flex-wrap gap-1.5">
@@ -427,9 +422,7 @@ export default function WikiExplorer() {
               onClick={() => toggleTypeFilter(type)}
               className={`rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
                 filterTypes.has(type)
-                  ? TYPE_COLORS[type] + ' ring-1 ring-offset-1'
-                  : 'border-border-default text-foreground-dim hover:border-border-focus hover:text-foreground'
-              }`}
+                  ? TYPE_COLORS[type] + ' ring-1 ring-offset-1': 'border-border-default text-foreground-dim hover:border-border-focus hover:text-foreground'}`}
             >
               {typeLabel(type)}
             </button>
@@ -439,7 +432,7 @@ export default function WikiExplorer() {
         <div className="flex gap-2">
           <button onClick={openCreateEntity} className="rounded-lg bg-brand-purple px-3.5 py-1.5 text-xs font-medium text-white hover:bg-brand-purple/90 transition-colors">+ {t('wiki.toolbar.newEntity')}</button>
           <button onClick={() => setShowRelationForm(true)} className="rounded-lg border border-border-default px-3.5 py-1.5 text-xs font-medium text-foreground hover:bg-gray-50 transition-colors">+ {t('wiki.toolbar.newRelation')}</button>
-          <button onClick={() => { setImportContent(''); setPreview(null); setShowImportDialog(true); }} className="rounded-lg border border-border-default px-3.5 py-1.5 text-xs font-medium text-foreground hover:bg-gray-50 transition-colors">📥 {t('wiki.toolbar.import')}</button>
+          <button onClick={() => { setImportContent(''); setPreview(null); setShowImportDialog(true); }} className="rounded-lg border border-border-default px-3.5 py-1.5 text-xs font-medium text-foreground hover:bg-gray-50 transition-colors"> {t('wiki.toolbar.import')}</button>
         </div>
       </div>
 
@@ -463,7 +456,7 @@ export default function WikiExplorer() {
                   {groupedEntities.map((group) => (
                     <div key={group.type}>
                       <div className="flex items-center gap-2 bg-elevated-bg/40 px-4 py-2 border-b border-border-subtle">
-                        <span>{TYPE_EMOJI[group.type] || '🏷️'}</span>
+                        <span>{TYPE_EMOJI[group.type] || ''}</span>
                         <span className="text-xs font-semibold text-foreground">{typeLabel(group.type)}</span>
                         <span className="text-[10px] text-foreground-dim">{group.items.length}</span>
                       </div>
@@ -471,8 +464,7 @@ export default function WikiExplorer() {
                         {group.items.map((e) => (
                           <div
                             key={e.id}
-                            role="button"
-                            tabIndex={0}
+                            role="button"tabIndex={0}
                             onClick={() => setSelectedId(e.id)}
                             onKeyDown={(ev) => { if (ev.key === 'Enter' || ev.key === ' ') setSelectedId(e.id); }}
                             className={`group flex w-full cursor-pointer items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-gray-50 ${selectedId === e.id ? 'bg-brand-purple/5' : ''}`}
@@ -481,7 +473,7 @@ export default function WikiExplorer() {
                               <div className="flex items-center gap-2">
                                 <span className="text-sm font-medium text-foreground truncate">{e.name}</span>
                                 {(degreeMap.get(e.id) || 0) > 0 && (
-                                  <span className="shrink-0 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] text-foreground-dim">
+                                  <span className="shrink-0 rounded-full bg-[var(--input-bg)] px-1.5 py-0.5 text-[10px] text-foreground-dim">
                                     {degreeMap.get(e.id)} {t('wiki.detail.relationCount')}
                                   </span>
                                 )}
@@ -497,17 +489,15 @@ export default function WikiExplorer() {
                             <div className="flex shrink-0 gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                               <button
                                 onClick={(ev) => { ev.stopPropagation(); openEditEntity(e); }}
-                                className="rounded-lg p-1.5 text-foreground-dim hover:bg-gray-200 transition-colors"
-                                title={t('wiki.detail.editEntity')}
+                                className="rounded-lg p-1.5 text-foreground-dim hover:bg-[var(--card-bg-hover)] transition-colors"title={t('wiki.detail.editEntity')}
                               >
-                                📝
+                                
                               </button>
                               <button
                                 onClick={(ev) => { ev.stopPropagation(); handleDeleteEntity(e.id); }}
-                                className="rounded-lg p-1.5 text-foreground-dim hover:bg-red-50 hover:text-red-500 transition-colors"
-                                title={t('wiki.detail.deleteEntity')}
+                                className="rounded-lg p-1.5 text-foreground-dim hover:bg-red-50 hover:text-red-500 transition-colors"title={t('wiki.detail.deleteEntity')}
                               >
-                                🗑️
+                                
                               </button>
                             </div>
                           </div>
@@ -612,7 +602,7 @@ export default function WikiExplorer() {
       {showImportDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowImportDialog(false)}>
           <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl bg-card-bg p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <h3 className="mb-5 text-base font-semibold text-foreground">📥 {t('wiki.import.title')}</h3>
+            <h3 className="mb-5 text-base font-semibold text-foreground"> {t('wiki.import.title')}</h3>
             <div className="space-y-4">
               <div className="flex gap-2">
                 {(['text', 'json', 'context'] as const).map((s) => (
@@ -620,8 +610,7 @@ export default function WikiExplorer() {
                     key={s}
                     onClick={() => setImportSource(s)}
                     className={`rounded-lg border px-3 py-1.5 text-xs font-medium ${
-                      importSource === s ? 'bg-brand-purple text-white border-brand-purple' : 'border-border-default text-foreground-dim hover:bg-gray-50'
-                    }`}
+                      importSource === s ? 'bg-brand-purple text-white border-brand-purple' : 'border-border-default text-foreground-dim hover:bg-gray-50'}`}
                   >
                     {s === 'text' ? t('wiki.import.sourceText') : s === 'json' ? 'JSON' : t('wiki.import.sourceContext')}
                   </button>
@@ -631,18 +620,15 @@ export default function WikiExplorer() {
                 value={importContent}
                 onChange={(e) => setImportContent(e.target.value)}
                 placeholder={
-                  importSource === 'context'
-                    ? t('wiki.import.contextHint')
-                    : importSource === 'json'
-                    ? t('wiki.import.placeholderJson')
+                  importSource === 'context'? t('wiki.import.contextHint')
+                    : importSource === 'json'? t('wiki.import.placeholderJson')
                     : t('wiki.import.placeholderText')
                 }
                 rows={6}
                 disabled={importSource === 'context'}
-                className="w-full rounded-lg border border-border-default px-3 py-2 text-sm text-foreground focus:border-brand-purple focus:outline-none resize-none disabled:bg-gray-50"
-              />
+                className="w-full rounded-lg border border-border-default px-3 py-2 text-sm text-foreground focus:border-brand-purple focus:outline-none resize-none disabled:bg-gray-50"/>
               <div className="flex gap-2">
-                <button onClick={handlePreview} disabled={importing} className="rounded-lg border border-border-default px-4 py-2 text-sm text-foreground hover:bg-gray-50 disabled:opacity-50">{importing ? t('wiki.import.previewing') : '🔍 ' + t('wiki.import.preview')}</button>
+                <button onClick={handlePreview} disabled={importing} className="rounded-lg border border-border-default px-4 py-2 text-sm text-foreground hover:bg-gray-50 disabled:opacity-50">{importing ? t('wiki.import.previewing') : ' ' + t('wiki.import.preview')}</button>
                 <button onClick={handleImport} disabled={importing} className="rounded-lg bg-brand-purple px-4 py-2 text-sm font-medium text-white hover:bg-brand-purple/90 disabled:opacity-50">{importing ? t('wiki.import.importing') : t('wiki.import.confirm')}</button>
               </div>
 

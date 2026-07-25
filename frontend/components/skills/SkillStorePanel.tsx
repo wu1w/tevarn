@@ -143,8 +143,7 @@ const SkillCard = memo(function SkillCard({
   return (
     <article
       className={`group relative flex flex-col rounded-xl border border-border-subtle/80 bg-gradient-to-b from-elevated-bg/80 to-elevated-bg/40 p-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-accent/35 hover:shadow-md ${
-        installed ? `ring-1 ${meta.ring}` : ''
-      }`}
+        installed ? `ring-1 ${meta.ring}` : ''}`}
     >
       {installed && (
         <span className="absolute right-3 top-3 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
@@ -161,10 +160,8 @@ const SkillCard = memo(function SkillCard({
         </div>
         <div className="min-w-0 flex-1">
           <button
-            type="button"
-            onClick={() => onOpen(skill)}
-            className="block w-full truncate text-left text-sm font-semibold text-foreground transition-colors hover:text-accent"
-            title={skill.display_name}
+            type="button"onClick={() => onOpen(skill)}
+            className="block w-full truncate text-left text-sm font-semibold text-foreground transition-colors hover:text-accent"title={skill.display_name}
           >
             {skill.display_name}
           </button>
@@ -194,7 +191,7 @@ const SkillCard = memo(function SkillCard({
         ) : null}
         {skill.stats?.stars > 0 ? (
           <span className="rounded-md bg-elevated-bg px-1.5 py-0.5 text-[10px] text-foreground-muted">
-            ★ {formatCount(skill.stats.stars)}
+             {formatCount(skill.stats.stars)}
           </span>
         ) : null}
         {skill.author ? (
@@ -209,8 +206,7 @@ const SkillCard = memo(function SkillCard({
           {skill.compatibility?.slice(0, 3).map((c) => (
             <span
               key={`c-${c}`}
-              className="rounded-md bg-blue-500/10 px-1.5 py-0.5 text-[10px] text-blue-600 dark:text-blue-400"
-            >
+              className="rounded-md bg-blue-500/10 px-1.5 py-0.5 text-[10px] text-blue-600 dark:text-blue-400">
               {c}
             </span>
           ))}
@@ -225,26 +221,21 @@ const SkillCard = memo(function SkillCard({
       <div className="mt-auto flex gap-2">
         {installed ? (
           <button
-            type="button"
-            onClick={() => onUninstall(skill)}
+            type="button"onClick={() => onUninstall(skill)}
             disabled={busy}
-            className="flex-1 rounded-lg bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-500/20 disabled:opacity-50"
-          >
+            className="flex-1 rounded-lg bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-500/20 disabled:opacity-50">
             {busy ? t('store.busy') : t('store.uninstall')}
           </button>
         ) : isTakton ? (
           <button
-            type="button"
-            disabled
+            type="button"disabled
             title={t('store.taktonTip')}
-            className="flex-1 cursor-not-allowed rounded-lg border border-border-subtle bg-elevated-bg px-3 py-1.5 text-xs font-medium text-foreground-muted opacity-80"
-          >
+            className="flex-1 cursor-not-allowed rounded-lg border border-border-subtle bg-elevated-bg px-3 py-1.5 text-xs font-medium text-foreground-muted opacity-80">
             {t('store.useCommunity')}
           </button>
         ) : canInstall ? (
           <button
-            type="button"
-            onClick={() => onInstall(skill)}
+            type="button"onClick={() => onInstall(skill)}
             disabled={busy}
             title={
               isClawhub
@@ -257,8 +248,7 @@ const SkillCard = memo(function SkillCard({
           </button>
         ) : (
           <button
-            type="button"
-            onClick={() => onInstall(skill)}
+            type="button"onClick={() => onInstall(skill)}
             disabled={busy}
             className={`flex-1 ${BTN_PRIMARY}`}
           >
@@ -417,8 +407,7 @@ export default function SkillStorePanel() {
       const result = await installStoreSkill(skill.source, skill.id);
       if (result.success) {
         const tip =
-          skill.source === 'clawhub'
-            ? t('store.convertedOk').replace('{name}', skill.display_name)
+          skill.source === 'clawhub'? t('store.convertedOk').replace('{name}', skill.display_name)
           : t('store.installedOk').replace('{name}', skill.display_name);
         addToast(tip, 'success');
         await loadInstalled();
@@ -437,8 +426,7 @@ export default function SkillStorePanel() {
     const ok = await confirm(
       t('store.confirmUninstall').replace('{name}', display),
       t('store.uninstallTitle'),
-      'danger'
-    );
+      'danger');
     if (!ok) return;
     const id = 'id' in skill ? (skill as UnifiedSkill).id : skill.name;
     const key = `${skill.source}/${id}`;
@@ -568,8 +556,7 @@ export default function SkillStorePanel() {
             ).map((v) => (
               <button
                 key={v.id}
-                type="button"
-                onClick={() => setViewFilter(v.id)}
+                type="button"onClick={() => setViewFilter(v.id)}
                 className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
                   viewFilter === v.id ? TAB_ACTIVE : TAB_IDLE
                 }`}
@@ -582,30 +569,24 @@ export default function SkillStorePanel() {
           <div className="relative min-w-[200px] flex-1">
             <input
               ref={searchBoxRef}
-              type="search"
-              value={searchInput}
+              type="search"value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
               placeholder={t('store.searchPh')}
-            className="w-full rounded-lg border border-border-subtle bg-elevated-bg py-1.5 pl-3 pr-8 text-sm text-foreground outline-none transition-colors placeholder:text-foreground-muted/70 focus:border-brand-purple/50 focus:ring-1 focus:ring-brand-purple/20"
-            />
+            className="w-full rounded-lg border border-border-subtle bg-elevated-bg py-1.5 pl-3 pr-8 text-sm text-foreground outline-none transition-colors placeholder:text-foreground-muted/70 focus:border-brand-purple/50 focus:ring-1 focus:ring-brand-purple/20"/>
             {searchInput && (
               <button
-                type="button"
-                onClick={() => setSearchInput('')}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-foreground-muted hover:text-foreground"
-                aria-label={t('store.clearSearch')}
+                type="button"onClick={() => setSearchInput('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-foreground-muted hover:text-foreground"aria-label={t('store.clearSearch')}
               >
-                ✕
+                
               </button>
             )}
           </div>
 
           <button
-            type="button"
-            onClick={handleRefresh}
+            type="button"onClick={handleRefresh}
             disabled={refreshing}
-            className="rounded-lg border border-border-subtle bg-elevated-bg px-3 py-1.5 text-xs text-foreground-muted transition-colors hover:border-brand-purple/40 hover:text-foreground disabled:opacity-50"
-            title={t('store.refresh')}
+            className="rounded-lg border border-border-subtle bg-elevated-bg px-3 py-1.5 text-xs text-foreground-muted transition-colors hover:border-brand-purple/40 hover:text-foreground disabled:opacity-50"title={t('store.refresh')}
           >
             {refreshing ? t('common.loading') : t('store.refresh')}
           </button>
@@ -614,8 +595,7 @@ export default function SkillStorePanel() {
         {/* 源筛选 chips — 选中态用柔和描边，避免死黑块 */}
         <div className="flex flex-wrap gap-1.5">
           <button
-            type="button"
-            onClick={() => setSourceFilter('all')}
+            type="button"onClick={() => setSourceFilter('all')}
             className={`rounded-full border px-3 py-1 text-[11px] font-medium transition-colors ${
               sourceFilter === 'all' ? CHIP_ACTIVE : CHIP_IDLE
             }`}
@@ -628,13 +608,11 @@ export default function SkillStorePanel() {
             return (
               <button
                 key={s.id}
-                type="button"
-                onClick={() => setSourceFilter(s.id)}
+                type="button"onClick={() => setSourceFilter(s.id)}
                 title={meta.tipKey.startsWith('store.') ? t(meta.tipKey as never) : meta.tipKey}
                 className={`rounded-full border px-3 py-1 text-[11px] font-medium transition-colors ${
                   active
-                    ? `${meta.color} ring-1 ${meta.ring}`
-                    : CHIP_IDLE
+                    ? `${meta.color} ring-1 ${meta.ring}`: CHIP_IDLE
                 }`}
               >
                 {s.display_name || meta.label}
@@ -700,11 +678,9 @@ export default function SkillStorePanel() {
                 {hasMore && (
                   <div className="mt-4 flex justify-center">
                     <button
-                      type="button"
-                      disabled={loadingMore}
+                      type="button"disabled={loadingMore}
                       onClick={() => load({ append: true, nextOffset: offset })}
-                      className="rounded-lg border border-border-subtle bg-elevated-bg px-5 py-2 text-xs font-medium text-foreground-muted transition-colors hover:border-accent/40 hover:text-foreground disabled:opacity-50"
-                    >
+                      className="rounded-lg border border-border-subtle bg-elevated-bg px-5 py-2 text-xs font-medium text-foreground-muted transition-colors hover:border-accent/40 hover:text-foreground disabled:opacity-50">
                       {loadingMore ? t('common.loading') : `{t('store.loadMore').replace('{shown}', String(skills.length)).replace('{total}', String(total))}`}
                     </button>
                   </div>
@@ -731,8 +707,7 @@ export default function SkillStorePanel() {
                   return (
                     <div
                       key={key}
-                      className="flex flex-wrap items-center gap-3 rounded-xl border border-border-subtle bg-elevated-bg/50 p-3"
-                    >
+                      className="flex flex-wrap items-center gap-3 rounded-xl border border-border-subtle bg-elevated-bg/50 p-3">
                       <span className={`rounded-md border px-2 py-0.5 text-[10px] font-medium ${meta.color}`}>
                         {meta.label}
                       </span>
@@ -747,8 +722,7 @@ export default function SkillStorePanel() {
                         ) : null}
                       </div>
                       <button
-                        type="button"
-                        onClick={() =>
+                        type="button"onClick={() =>
                           handleUninstall({
                             source: s.source,
                             name: s.name,
@@ -756,8 +730,7 @@ export default function SkillStorePanel() {
                           })
                         }
                         disabled={busyKeys.has(key)}
-                        className="rounded-lg bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-500 hover:bg-red-500/20 disabled:opacity-50"
-                      >
+                        className="rounded-lg bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-500 hover:bg-red-500/20 disabled:opacity-50">
                         {t('store.uninstall')}
                       </button>
                     </div>
@@ -785,8 +758,7 @@ export default function SkillStorePanel() {
                   return (
                     <div
                       key={`${s.source}/${s.name}`}
-                      className="rounded-xl border border-accent/20 bg-accent/5 p-3"
-                    >
+                      className="rounded-xl border border-accent/20 bg-accent/5 p-3">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className={`rounded-md border px-2 py-0.5 text-[10px] font-medium ${meta.color}`}>
                           {meta.label}
@@ -814,14 +786,10 @@ export default function SkillStorePanel() {
       {/* 详情 Modal */}
       {selectedSkill && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-[2px]"
-          onClick={() => setSelectedSkill(null)}
-          role="dialog"
-          aria-modal="true"
-        >
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-[2px]"onClick={() => setSelectedSkill(null)}
+          role="dialog"aria-modal="true">
           <div
-            className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-border-subtle bg-background p-6 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
+            className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-border-subtle bg-background p-6 shadow-2xl"onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-4 flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -831,12 +799,10 @@ export default function SkillStorePanel() {
                 </p>
               </div>
               <button
-                type="button"
-                onClick={() => setSelectedSkill(null)}
-                className="rounded-lg px-2 py-1 text-foreground-muted hover:bg-elevated-bg hover:text-foreground"
-                aria-label={t('store.close')}
+                type="button"onClick={() => setSelectedSkill(null)}
+                className="rounded-lg px-2 py-1 text-foreground-muted hover:bg-elevated-bg hover:text-foreground"aria-label={t('store.close')}
               >
-                ✕
+                
               </button>
             </div>
 
@@ -895,8 +861,7 @@ export default function SkillStorePanel() {
                     {selectedSkill.compatibility.map((c) => (
                       <span
                         key={c}
-                        className="rounded-md bg-blue-500/10 px-2 py-0.5 text-xs text-blue-600 dark:text-blue-400"
-                      >
+                        className="rounded-md bg-blue-500/10 px-2 py-0.5 text-xs text-blue-600 dark:text-blue-400">
                         {c}
                       </span>
                     ))}
@@ -924,10 +889,8 @@ export default function SkillStorePanel() {
                       Native CLI (optional, advanced)
                     </div>
                     <button
-                      type="button"
-                      onClick={() => handleCopyCmd(selectedSkill.install_command)}
-                      className="text-[11px] text-violet-600 hover:underline dark:text-violet-400"
-                    >
+                      type="button"onClick={() => handleCopyCmd(selectedSkill.install_command)}
+                      className="text-[11px] text-violet-600 hover:underline dark:text-violet-400">
                                           Copy
                                         </button>
                   </div>
@@ -945,42 +908,33 @@ export default function SkillStorePanel() {
               <div className="flex flex-wrap gap-2 border-t border-border-subtle pt-4">
                 {isInstalled(selectedSkill) ? (
                   <button
-                    type="button"
-                    onClick={() => {
+                    type="button"onClick={() => {
                       handleUninstall(selectedSkill);
                       setSelectedSkill(null);
                     }}
-                    className="flex-1 rounded-lg bg-red-500/10 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-500/20"
-                  >
+                    className="flex-1 rounded-lg bg-red-500/10 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-500/20">
                     {t('store.uninstall')}
                   </button>
                 ) : selectedSkill.source === 'takton' ? (
                   <button
-                    type="button"
-                    disabled
-                    className="flex-1 cursor-not-allowed rounded-lg border border-border-subtle bg-elevated-bg px-4 py-2 text-sm text-foreground-muted opacity-80"
-                  >
+                    type="button"disabled
+                    className="flex-1 cursor-not-allowed rounded-lg border border-border-subtle bg-elevated-bg px-4 py-2 text-sm text-foreground-muted opacity-80">
                     {t('store.useCommunity')}
                   </button>
                 ) : (
                   <button
-                    type="button"
-                    onClick={() => {
+                    type="button"onClick={() => {
                       handleInstall(selectedSkill);
                       setSelectedSkill(null);
                     }}
-                    className="flex-1 rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-500"
-                  >
+                    className="flex-1 rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-500">
                     {selectedSkill.source === 'clawhub' ? t('store.convertInstall') : t('store.installInject')}
                   </button>
                 )}
                 {selectedSkill.source_url && (
                   <a
                     href={selectedSkill.source_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="rounded-lg border border-border-subtle bg-elevated-bg px-4 py-2 text-sm text-foreground-muted hover:border-violet-400/40"
-                  >
+                    target="_blank"rel="noopener noreferrer"className="rounded-lg border border-border-subtle bg-elevated-bg px-4 py-2 text-sm text-foreground-muted hover:border-violet-400/40">
                     Source ↗
                   </a>
                 )}

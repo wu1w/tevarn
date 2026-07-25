@@ -175,7 +175,7 @@ function FencedCodeBlock({ language, code }: { language: string; code: string })
 
   return (
     <div className="group/code relative my-3 overflow-hidden rounded-xl border border-border-subtle bg-[#0d1117] shadow-inner">
-      <div className="flex items-center justify-between border-b border-white/5 bg-white/[0.03] px-3 py-1.5">
+      <div className="flex items-center justify-between border-b border-white/5 bg-[var(--card-bg-hover)] px-3 py-1.5">
         <span className="font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-zinc-400">
           {language}
         </span>
@@ -192,7 +192,7 @@ function FencedCodeBlock({ language, code }: { language: string; code: string })
           <code className="block font-mono text-zinc-200">
             {showLines
               ? lines.map((line, i) => (
-                  <div key={i} className="flex hover:bg-white/[0.03]">
+                  <div key={i} className="flex hover:bg-[var(--card-bg-hover)]">
                     <span className="w-10 shrink-0 select-none pr-3 text-right text-[10px] leading-relaxed text-zinc-600">
                       {i + 1}
                     </span>
@@ -315,7 +315,7 @@ function MermaidBlock({ code, streaming = false }: { code: string; streaming?: b
   }
 
   return (
-    <div className="my-3 overflow-hidden rounded-xl border border-border-subtle bg-card-bg/80">
+    <div className="my-3 overflow-hidden tk-card/80">
       <div className="flex items-center justify-between border-b border-border-subtle px-3 py-1.5">
         <span className="text-[10px] font-medium uppercase tracking-wider text-brand-cyan">
           Mermaid 图表

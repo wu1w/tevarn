@@ -18,13 +18,13 @@ interface Entity {
 }
 
 const TYPE_META: Record<string, { icon: string; labelKey: string }> = {
-  project: { icon: '📦', labelKey: 'memory.type.project' },
-  person: { icon: '👤', labelKey: 'memory.type.person' },
-  preference: { icon: '⚙️', labelKey: 'memory.type.preference' },
-  topic: { icon: '💬', labelKey: 'memory.type.topic' },
-  tool: { icon: '🔧', labelKey: 'memory.type.tool' },
-  device: { icon: '🖥️', labelKey: 'memory.type.device' },
-  custom: { icon: '📌', labelKey: 'memory.type.custom' },
+  project: { icon: '', labelKey: 'memory.type.project' },
+  person: { icon: '', labelKey: 'memory.type.person' },
+  preference: { icon: '', labelKey: 'memory.type.preference' },
+  topic: { icon: '', labelKey: 'memory.type.topic' },
+  tool: { icon: '', labelKey: 'memory.type.tool' },
+  device: { icon: '', labelKey: 'memory.type.device' },
+  custom: { icon: '', labelKey: 'memory.type.custom' },
 };
 
 export default function MemoryPage() {
@@ -117,8 +117,7 @@ export default function MemoryPage() {
         </div>
         <button
           onClick={() => setShowCreate(true)}
-          className="rounded-lg bg-brand-purple px-4 py-2 text-sm text-white hover:bg-brand-purple/80"
-        >
+          className="rounded-lg bg-brand-purple px-4 py-2 text-sm text-white hover:bg-brand-purple/80">
           {t('memory.addEntity')}
         </button>
       </div>
@@ -131,9 +130,7 @@ export default function MemoryPage() {
             onClick={() => setFilterType(filterType === type ? '' : type)}
             className={`rounded-lg border px-3 py-2 text-xs transition-colors ${
               filterType === type
-                ? 'border-brand-purple bg-brand-purple/10 text-foreground'
-                : 'border-border-subtle bg-card-bg text-foreground-dim hover:text-foreground'
-            }`}
+                ? 'border-brand-purple bg-brand-purple/10 text-foreground': 'border-border-subtle bg-card-bg text-foreground-dim hover:text-foreground'}`}
           >
             {icon} {t(labelKey as any)} {typeCounts[type] ? `(${typeCounts[type]})` : ''}
           </button>
@@ -143,17 +140,14 @@ export default function MemoryPage() {
       {/* Search */}
       <div className="mb-4 flex gap-2">
         <input
-          type="text"
-          value={searchQuery}
+          type="text"value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
           placeholder={t('memory.searchPlaceholder')}
-          className="flex-1 rounded-lg border border-border-subtle bg-card-bg px-3 py-2 text-sm text-foreground placeholder:text-foreground-dim focus:border-brand-purple focus:outline-none"
-        />
+          className="flex-1 rounded-lg border border-border-subtle bg-card-bg px-3 py-2 text-sm text-foreground placeholder:text-foreground-dim focus:border-brand-purple focus:outline-none"/>
         <button
           onClick={handleSearch}
-          className="rounded-lg border border-border-subtle bg-card-bg px-4 py-2 text-sm text-foreground-muted hover:bg-card-bg-hover"
-        >
+          className="rounded-lg border border-border-subtle bg-card-bg px-4 py-2 text-sm text-foreground-muted hover:bg-card-bg-hover">
           {t('memory.search')}
         </button>
       </div>
@@ -229,8 +223,7 @@ function EntityCard({
         <div className="flex gap-1">
           <button
             onClick={onEdit}
-            className="rounded p-1 text-foreground-dim hover:bg-card-bg-hover hover:text-foreground"
-            title={t('memory.edit')}
+            className="rounded p-1 text-foreground-dim hover:bg-card-bg-hover hover:text-foreground"title={t('memory.edit')}
           >
             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -238,8 +231,7 @@ function EntityCard({
           </button>
           <button
             onClick={onDelete}
-            className="rounded p-1 text-foreground-dim hover:bg-red-500/10 hover:text-red-400"
-            title={t('memory.delete')}
+            className="rounded p-1 text-foreground-dim hover:bg-red-500/10 hover:text-red-400"title={t('memory.delete')}
           >
             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -283,8 +275,7 @@ function EntityModal({
   const [entityType, setEntityType] = useState(entity?.entity_type || 'custom');
   const [description, setDescription] = useState(entity?.description || '');
   const [attributes, setAttributes] = useState(
-    entity ? JSON.stringify(entity.attributes, null, 2) : '{}'
-  );
+    entity ? JSON.stringify(entity.attributes, null, 2) : '{}');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -336,8 +327,7 @@ function EntityModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
       <div
-        className="w-full max-w-md rounded-xl border border-border-subtle bg-card-bg p-6"
-        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-md tk-card p-6"onClick={(e) => e.stopPropagation()}
       >
         <h3 className="mb-4 text-sm font-semibold text-foreground">
           {isEdit ? t('memory.modal.edit') : t('memory.modal.add')}
@@ -351,11 +341,9 @@ function EntityModal({
           <div>
             <label className="mb-1 block text-xs text-foreground-dim">{t('memory.form.name')}</label>
             <input
-              type="text"
-              value={name}
+              type="text"value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full rounded-lg border border-border-subtle bg-page-bg px-3 py-2 text-sm text-foreground focus:border-brand-purple focus:outline-none"
-              placeholder={t('memory.form.namePlaceholder')}
+              className="w-full rounded-lg border border-border-subtle bg-page-bg px-3 py-2 text-sm text-foreground focus:border-brand-purple focus:outline-none"placeholder={t('memory.form.namePlaceholder')}
             />
           </div>
 
@@ -364,8 +352,7 @@ function EntityModal({
             <select
               value={entityType}
               onChange={(e) => setEntityType(e.target.value)}
-              className="w-full rounded-lg border border-border-subtle bg-page-bg px-3 py-2 text-sm text-foreground focus:border-brand-purple focus:outline-none"
-            >
+              className="w-full rounded-lg border border-border-subtle bg-page-bg px-3 py-2 text-sm text-foreground focus:border-brand-purple focus:outline-none">
               {Object.entries(TYPE_META).map(([k, { icon, labelKey }]) => (
                 <option key={k} value={k}>{icon} {t(labelKey as any)}</option>
               ))}
@@ -378,8 +365,7 @@ function EntityModal({
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={2}
-              className="w-full rounded-lg border border-border-subtle bg-page-bg px-3 py-2 text-sm text-foreground focus:border-brand-purple focus:outline-none"
-              placeholder={t('memory.form.descPlaceholder')}
+              className="w-full rounded-lg border border-border-subtle bg-page-bg px-3 py-2 text-sm text-foreground focus:border-brand-purple focus:outline-none"placeholder={t('memory.form.descPlaceholder')}
             />
           </div>
 
@@ -389,24 +375,20 @@ function EntityModal({
               value={attributes}
               onChange={(e) => setAttributes(e.target.value)}
               rows={3}
-              className="w-full rounded-lg border border-border-subtle bg-page-bg px-3 py-2 font-mono text-xs text-foreground focus:border-brand-purple focus:outline-none"
-              placeholder='{"key": "value"}'
-            />
+              className="w-full rounded-lg border border-border-subtle bg-page-bg px-3 py-2 font-mono text-xs text-foreground focus:border-brand-purple focus:outline-none"placeholder='{"key": "value"}'/>
           </div>
         </div>
 
         <div className="mt-5 flex justify-end gap-2">
           <button
             onClick={onClose}
-            className="rounded-lg border border-border-subtle px-4 py-2 text-sm text-foreground-muted hover:bg-card-bg-hover"
-          >
+            className="rounded-lg border border-border-subtle px-4 py-2 text-sm text-foreground-muted hover:bg-card-bg-hover">
             {t('common.cancel')}
           </button>
           <button
             onClick={handleSave}
             disabled={saving}
-            className="rounded-lg bg-brand-purple px-4 py-2 text-sm text-white hover:bg-brand-purple/80 disabled:opacity-50"
-          >
+            className="rounded-lg bg-brand-purple px-4 py-2 text-sm text-white hover:bg-brand-purple/80 disabled:opacity-50">
             {saving ? t('memory.saving') : t('common.save')}
           </button>
         </div>

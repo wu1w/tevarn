@@ -108,10 +108,10 @@ export function RagSettingsPanel({ settings, onSaved }: Props) {
   };
 
   return (
-    <section className="rounded-2xl border border-border-subtle bg-card-bg/60 p-5">
+    <section className="tk-card rounded-2xl/60 p-5">
       <div className="mb-3 flex items-center gap-2">
         <span className="flex h-6 w-6 items-center justify-center rounded-full bg-brand-cyan/15 text-xs font-semibold text-brand-cyan">
-          📚
+          
         </span>
         <div>
           <h2 className="text-sm font-semibold text-foreground">知识检索（Embedding · Qdrant · Reranker）</h2>
@@ -141,16 +141,13 @@ export function RagSettingsPanel({ settings, onSaved }: Props) {
           return (
             <button
               key={p.id}
-              type="button"
-              onClick={() => setSelectedId(p.id)}
+              type="button"onClick={() => setSelectedId(p.id)}
               className={`rounded-2xl border p-3 text-left transition-all ${
                 active
-                  ? 'border-brand-cyan/50 bg-brand-cyan/8 ring-1 ring-brand-cyan/25'
-                  : 'border-border-subtle bg-card-bg/70 hover:border-border-default'
-              }`}
+                  ? 'border-brand-cyan/50 bg-brand-cyan/8 ring-1 ring-brand-cyan/25': 'border-border-subtle bg-card-bg/70 hover:border-border-default'}`}
             >
               <div className="flex items-start gap-2">
-                <span className="text-lg">{p.icon || '📦'}</span>
+                <span className="text-lg">{p.icon || ''}</span>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
                     <span className="text-sm font-semibold text-foreground">{p.name}</span>
@@ -172,65 +169,51 @@ export function RagSettingsPanel({ settings, onSaved }: Props) {
         <div className="space-y-3">
           {selected.help_text && (
             <div className="rounded-xl border border-border-subtle bg-elevated-bg/40 px-3 py-2 text-xs text-foreground-muted">
-              💡 {selected.help_text}
+               {selected.help_text}
             </div>
           )}
           {(selected.id.includes('openai') || selected.id.includes('cohere') || selected.id.includes('compatible')) && (
             <div>
               <label className="mb-1 block text-xs text-foreground-muted">API 密钥</label>
               <input
-                type="password"
-                value={apiKey}
+                type="password"value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
                 placeholder={t('settings._e21')}
-                className="w-full rounded-xl border border-border-default bg-input-bg px-3 py-2 text-sm"
-                autoComplete="off"
-              />
+                className="w-full rounded-xl border border-border-default bg-input-bg px-3 py-2 text-sm"autoComplete="off"/>
             </div>
           )}
           {(selected.id === 'openai-compatible-embed' || selected.id.includes('openai')) && (
             <div>
               <label className="mb-1 block text-xs text-foreground-muted">{t('settings._e22')}</label>
               <input
-                type="text"
-                value={baseUrlOverride}
+                type="text"value={baseUrlOverride}
                 onChange={(e) => setBaseUrlOverride(e.target.value)}
-                placeholder="http://127.0.0.1:8080 / text-embedding-v3"
-                className="w-full rounded-xl border border-border-default bg-input-bg px-3 py-2 text-sm font-mono"
-              />
+                placeholder="http://127.0.0.1:8080 / text-embedding-v3"className="w-full rounded-xl border border-border-default bg-input-bg px-3 py-2 text-sm font-mono"/>
             </div>
           )}
           <div className="flex flex-wrap gap-2">
             <button
-              type="button"
-              onClick={handleApply}
+              type="button"onClick={handleApply}
               disabled={saving}
-              className="rounded-xl bg-gradient-to-r from-brand-purple to-brand-cyan px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-            >
+              className="rounded-xl bg-gradient-to-r from-brand-purple to-brand-cyan px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
               {saving ? t('memory.saving') : t('settings.saveStack')}
             </button>
             <button
-              type="button"
-              onClick={() => runTest('embed')}
+              type="button"onClick={() => runTest('embed')}
               disabled={!!testing}
-              className="rounded-xl border border-border-default bg-card-bg px-3 py-2 text-sm text-foreground-muted hover:text-foreground disabled:opacity-50"
-            >
+              className="rounded-xl border border-border-default bg-card-bg px-3 py-2 text-sm text-foreground-muted hover:text-foreground disabled:opacity-50">
               {testing === 'embed' ? t('settings.testing') : t('settings.testEmbed')}
             </button>
             <button
-              type="button"
-              onClick={() => runTest('qdrant')}
+              type="button"onClick={() => runTest('qdrant')}
               disabled={!!testing}
-              className="rounded-xl border border-border-default bg-card-bg px-3 py-2 text-sm text-foreground-muted hover:text-foreground disabled:opacity-50"
-            >
+              className="rounded-xl border border-border-default bg-card-bg px-3 py-2 text-sm text-foreground-muted hover:text-foreground disabled:opacity-50">
               {testing === 'qdrant' ? t('settings.testing') : t('settings.testQdrant')}
             </button>
             <button
-              type="button"
-              onClick={() => runTest('rerank')}
+              type="button"onClick={() => runTest('rerank')}
               disabled={!!testing}
-              className="rounded-xl border border-border-default bg-card-bg px-3 py-2 text-sm text-foreground-muted hover:text-foreground disabled:opacity-50"
-            >
+              className="rounded-xl border border-border-default bg-card-bg px-3 py-2 text-sm text-foreground-muted hover:text-foreground disabled:opacity-50">
               {testing === 'rerank' ? t('settings.testing') : t('settings.testRerank')}
             </button>
           </div>
@@ -239,11 +222,9 @@ export function RagSettingsPanel({ settings, onSaved }: Props) {
               key={k}
               className={`rounded-lg border px-3 py-2 text-xs ${
                 v.ok
-                  ? 'border-success-text/25 bg-success-bg text-success-text'
-                  : 'border-error-text/25 bg-error-bg text-error-text'
-              }`}
+                  ? 'border-success-text/25 bg-success-bg text-success-text': 'border-error-text/25 bg-error-bg text-error-text'}`}
             >
-              {k}: {v.ok ? '✓' : '✗'} {v.message}
+              {k}: {v.ok ? '' : ''} {v.message}
             </div>
           ))}
         </div>

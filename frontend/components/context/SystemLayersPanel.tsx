@@ -21,10 +21,8 @@ function LayerCard({ layer }: { layer: SystemLayer }) {
   return (
     <div className="rounded-lg border border-border-default bg-card-bg">
       <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left hover:bg-elevated-bg/50"
-      >
+        type="button"onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left hover:bg-elevated-bg/50">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-foreground">{layer.label}</span>
@@ -48,8 +46,7 @@ function LayerCard({ layer }: { layer: SystemLayer }) {
               {layer.items.slice(0, 12).map((it, i) => (
                 <span
                   key={i}
-                  className="rounded-md border border-border-subtle bg-elevated-bg px-1.5 py-0.5 text-[10px] text-foreground-muted"
-                >
+                  className="rounded-md border border-border-subtle bg-elevated-bg px-1.5 py-0.5 text-[10px] text-foreground-muted">
                   {String((it as any).name || (it as any).key || (it as any).kind || JSON.stringify(it).slice(0, 40))}
                 </span>
               ))}
@@ -128,11 +125,9 @@ export default function SystemLayersPanel({ sessionId }: { sessionId?: string | 
             </p>
           </div>
           <button
-            type="button"
-            onClick={() => void load()}
+            type="button"onClick={() => void load()}
             disabled={loading}
-            className="shrink-0 rounded-md border border-border-default px-2.5 py-1 text-[11px] text-foreground-muted hover:bg-elevated-bg disabled:opacity-50"
-          >
+            className="shrink-0 rounded-md border border-border-default px-2.5 py-1 text-[11px] text-foreground-muted hover:bg-elevated-bg disabled:opacity-50">
             {loading ? t('settings.refreshing') : t('modelPicker.refresh')}
           </button>
         </div>
@@ -179,11 +174,9 @@ export default function SystemLayersPanel({ sessionId }: { sessionId?: string | 
               key={pkg.name}
               className={`flex items-center gap-2 rounded-lg border px-3 py-2 ${
                 pkg.attached
-                  ? 'border-brand-purple/30 bg-brand-purple/[0.04]'
-                  : 'border-border-subtle bg-elevated-bg/30'
-              }`}
+                  ? 'border-brand-purple/30 bg-brand-purple/[0.04]': 'border-border-subtle bg-elevated-bg/30'}`}
             >
-              <span className="text-base">{pkg.icon || '📦'}</span>
+              <span className="text-base">{pkg.icon || ''}</span>
               <div className="min-w-0 flex-1">
                 <div className="truncate text-xs font-medium text-foreground">{pkg.name}</div>
                 <div className="truncate text-[10px] text-foreground-muted">
@@ -193,14 +186,11 @@ export default function SystemLayersPanel({ sessionId }: { sessionId?: string | 
                 </div>
               </div>
               <button
-                type="button"
-                disabled={!sessionId || busyName === pkg.name}
+                type="button"disabled={!sessionId || busyName === pkg.name}
                 onClick={() => void togglePkg(pkg)}
                 className={`shrink-0 rounded-md px-2.5 py-1 text-[11px] font-medium disabled:opacity-50 ${
                   pkg.attached
-                    ? 'bg-elevated-bg text-foreground-muted hover:bg-card-bg-hover'
-                    : 'bg-brand-purple text-white hover:opacity-90'
-                }`}
+                    ? 'bg-elevated-bg text-foreground-muted hover:bg-card-bg-hover': 'bg-brand-purple text-white hover:opacity-90'}`}
               >
                 {busyName === pkg.name ? '…' : pkg.attached ? t('mcpStore.uninstall') : t('context._e89')}
               </button>

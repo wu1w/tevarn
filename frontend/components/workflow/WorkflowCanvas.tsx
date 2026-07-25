@@ -135,7 +135,7 @@ export default function WorkflowCanvas({
         if (isNewPayload && parsed.kind === 'sub_agent' && parsed.subAgent) {
           const sa = parsed.subAgent;
           newNode.type = 'sub_agent';
-          newNode.label = `${sa.icon || '🤖'} ${sa.name}`;
+          newNode.label = `${sa.icon || ''} ${sa.name}`;
           (newNode.config as Record<string, unknown>).sub_agent_id = sa.id;
           (newNode.config as Record<string, unknown>).sub_agent_name = sa.name;
           (newNode.config as Record<string, unknown>).max_steps = sa.max_iterations ?? 5;
@@ -340,14 +340,12 @@ export default function WorkflowCanvas({
   /* ── 渲染 ── */
   return (
     <div
-      className="relative flex-1 overflow-hidden bg-elevated-bg"
-      onDrop={handleDrop}
+      className="relative flex-1 overflow-hidden bg-elevated-bg"onDrop={handleDrop}
       onDragOver={handleDragOver}
     >
       {/* 网格背景 */}
       <div
-        className="pointer-events-none absolute inset-0 opacity-30"
-        style={{
+        className="pointer-events-none absolute inset-0 opacity-30"style={{
           backgroundImage:
             'linear-gradient(#cbd5e1 1px, transparent 1px), linear-gradient(90deg, #cbd5e1 1px, transparent 1px)',
           backgroundSize: `${20 * zoom}px ${20 * zoom}px`,
@@ -359,21 +357,18 @@ export default function WorkflowCanvas({
       <div className="absolute right-3 top-3 z-10 flex items-center gap-1 rounded-lg border border-border-default bg-card-bg p-1 shadow-sm">
         <button
           onClick={() => setZoom((z) => Math.min(z * 1.2, 3))}
-          className="rounded px-2 py-1 text-xs text-foreground-dim hover:bg-card-bg-hover"
-        >
+          className="rounded px-2 py-1 text-xs text-foreground-dim hover:bg-card-bg-hover">
           +
         </button>
         <span className="w-12 text-center text-[10px] text-foreground-muted">{Math.round(zoom * 100)}%</span>
         <button
           onClick={() => setZoom((z) => Math.max(z * 0.8, 0.3))}
-          className="rounded px-2 py-1 text-xs text-foreground-dim hover:bg-card-bg-hover"
-        >
+          className="rounded px-2 py-1 text-xs text-foreground-dim hover:bg-card-bg-hover">
           −
         </button>
         <button
           onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}
-          className="rounded px-2 py-1 text-xs text-foreground-dim hover:bg-card-bg-hover"
-        >
+          className="rounded px-2 py-1 text-xs text-foreground-dim hover:bg-card-bg-hover">
           重置
         </button>
       </div>
@@ -385,8 +380,7 @@ export default function WorkflowCanvas({
 
       <svg
         ref={svgRef}
-        className="h-full w-full cursor-default"
-        onMouseDown={handleMouseDown}
+        className="h-full w-full cursor-default"onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
@@ -407,26 +401,21 @@ export default function WorkflowCanvas({
               fromNode,
               fromPortIdx >= 0 ? fromPortIdx : 0,
               fromNt.outputs.length || 1,
-              'right'
-            );
+              'right');
             const p2 = getPortPosition(
               toNode,
               toPortIdx >= 0 ? toPortIdx : 0,
               toNt.inputs.length || 1,
-              'left'
-            );
+              'left');
             return (
               <g key={edge.id}>
                 <path
                   d={edgePath(p1.x, p1.y, p2.x, p2.y)}
-                  fill="none"
-                  stroke="#94a3b8"
-                  strokeWidth={2}
+                  fill="none"stroke="#94a3b8"strokeWidth={2}
                 />
                 <polygon
                   points={`${p2.x},${p2.y} ${p2.x - 6},${p2.y - 4} ${p2.x - 6},${p2.y + 4}`}
-                  fill="#94a3b8"
-                />
+                  fill="#94a3b8"/>
               </g>
             );
           })}
@@ -435,11 +424,8 @@ export default function WorkflowCanvas({
           {connecting && (
             <path
               d={edgePath(connecting.x, connecting.y, mousePos.x, mousePos.y)}
-              fill="none"
-              stroke="#3b82f6"
-              strokeWidth={2}
-              strokeDasharray="5,5"
-            />
+              fill="none"stroke="#3b82f6"strokeWidth={2}
+              strokeDasharray="5,5"/>
           )}
 
           {/* 节点 */}
@@ -461,11 +447,9 @@ export default function WorkflowCanvas({
                   width={NODE_WIDTH}
                   height={NODE_HEIGHT}
                   rx={8}
-                  fill="white"
-                  stroke={isSelected ? '#3b82f6' : '#e2e8f0'}
+                  fill="white"stroke={isSelected ? '#3b82f6' : '#e2e8f0'}
                   strokeWidth={isSelected ? 2 : 1}
-                  filter="drop-shadow(0 1px 2px rgb(0 0 0 / 0.1))"
-                />
+                  filter="drop-shadow(0 1px 2px rgb(0 0 0 / 0.1))"/>
                 {/* 顶部色条 */}
                 <rect
                   x={0}
@@ -474,29 +458,22 @@ export default function WorkflowCanvas({
                   height={4}
                   rx={4}
                   fill={nt?.color || '#94a3b8'}
-                  clipPath="inset(0 0 0 0 round 8px 8px 0 0)"
-                />
+                  clipPath="inset(0 0 0 0 round 8px 8px 0 0)"/>
                 {/* 节点标签 */}
                 <text
                   x={NODE_WIDTH / 2}
                   y={NODE_HEIGHT / 2 + 2}
-                  textAnchor="middle"
-                  dominantBaseline="middle"
-                  fontSize={12}
+                  textAnchor="middle"dominantBaseline="middle"fontSize={12}
                   fontWeight={600}
-                  fill="#334155"
-                >
+                  fill="#334155">
                   {node.label}
                 </text>
                 {/* 类型小字 */}
                 <text
                   x={NODE_WIDTH / 2}
                   y={NODE_HEIGHT / 2 + 18}
-                  textAnchor="middle"
-                  dominantBaseline="middle"
-                  fontSize={9}
-                  fill="#94a3b8"
-                >
+                  textAnchor="middle"dominantBaseline="middle"fontSize={9}
+                  fill="#94a3b8">
                   {nt?.type || node.type}
                 </text>
 
@@ -509,9 +486,7 @@ export default function WorkflowCanvas({
                         cx={0}
                         cy={py}
                         r={PORT_RADIUS}
-                        fill="#e2e8f0"
-                        stroke="#94a3b8"
-                        strokeWidth={1}
+                        fill="#e2e8f0"stroke="#94a3b8"strokeWidth={1}
                         style={{ cursor: readOnly ? 'default' : 'crosshair' }}
                         onMouseDown={(e) => handlePortMouseDown(e, node.id, port.name, 'left')}
                         onMouseUp={(e) => handlePortMouseUp(e, node.id, port.name, 'left')}
@@ -530,8 +505,7 @@ export default function WorkflowCanvas({
                         cy={py}
                         r={PORT_RADIUS}
                         fill={nt.color || '#e2e8f0'}
-                        stroke="#94a3b8"
-                        strokeWidth={1}
+                        stroke="#94a3b8"strokeWidth={1}
                         style={{ cursor: readOnly ? 'default' : 'crosshair' }}
                         onMouseDown={(e) => handlePortMouseDown(e, node.id, port.name, 'right')}
                         onMouseUp={(e) => handlePortMouseUp(e, node.id, port.name, 'right')}

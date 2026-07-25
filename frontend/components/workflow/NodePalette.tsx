@@ -144,11 +144,10 @@ export default function NodePalette({ nodeTypes, subAgents: subAgentsProp }: Nod
                   key={agent.id}
                   draggable
                   onDragStart={(e) => handleDragStartSubAgent(e, agent)}
-                  className="group flex cursor-grab items-center gap-2.5 rounded-md border border-violet-200/60 bg-violet-50/40 px-3 py-2 transition-all hover:border-violet-300 hover:bg-violet-50 hover:shadow-sm active:cursor-grabbing dark:border-violet-500/30 dark:bg-violet-500/10"
-                  title={agent.description || agent.model_ref}
+                  className="group flex cursor-grab items-center gap-2.5 rounded-md border border-violet-200/60 bg-violet-500/10/40 px-3 py-2 transition-all hover:border-violet-300 hover:bg-violet-500/10 hover:shadow-sm active:cursor-grabbing dark:border-violet-500/30 dark:bg-violet-500/10"title={agent.description || agent.model_ref}
                 >
                   <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md bg-violet-500/15 text-sm">
-                    {agent.icon || '🤖'}
+                    {agent.icon || ''}
                   </div>
                   <div className="min-w-0">
                     <div className="truncate text-xs font-medium text-foreground">{agent.name}</div>
@@ -173,15 +172,12 @@ export default function NodePalette({ nodeTypes, subAgents: subAgentsProp }: Nod
                   key={nt.type}
                   draggable
                   onDragStart={(e) => handleDragStartNode(e, nt)}
-                  className="group flex cursor-grab items-center gap-2.5 rounded-md border border-gray-100 bg-elevated-bg px-3 py-2 transition-all hover:border-border-default hover:bg-card-bg hover:shadow-sm active:cursor-grabbing"
-                >
+                  className="group flex cursor-grab items-center gap-2.5 rounded-md border border-gray-100 bg-elevated-bg px-3 py-2 transition-all hover:border-border-default hover:bg-card-bg hover:shadow-sm active:cursor-grabbing">
                   <div
-                    className="h-6 w-6 flex-shrink-0 rounded-md"
-                    style={{ backgroundColor: nt.color + '20' }}
+                    className="h-6 w-6 flex-shrink-0 rounded-md"style={{ backgroundColor: nt.color + '20' }}
                   >
                     <div
-                      className="mx-auto mt-1.5 h-3 w-3 rounded-sm"
-                      style={{ backgroundColor: nt.color }}
+                      className="mx-auto mt-1.5 h-3 w-3 rounded-sm"style={{ backgroundColor: nt.color }}
                     />
                   </div>
                   <div className="min-w-0">

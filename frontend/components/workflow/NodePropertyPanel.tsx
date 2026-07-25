@@ -145,7 +145,7 @@ export default function NodePropertyPanel({ node, nodeType, onChange }: NodeProp
                     type="checkbox"
                     checked={Boolean(config[field.key] ?? field.default ?? false)}
                     onChange={(e) => handleFieldChange(field.key, e.target.checked)}
-                    className="h-4 w-4 rounded border-gray-300 text-brand-purple"
+                    className="h-4 w-4 rounded border-border-default text-brand-purple"
                   />
                   <span className="text-xs text-foreground-dim">{t('modelPicker.enable')}</span>
                 </label>

@@ -466,8 +466,7 @@ export default function WorkflowsPage() {
       const matched = (res.matched_sub_agents || []).join(', ');
       addToast(
         matched ? t('wf.genSuccessWithAgents').replace('{agents}', matched) : res.message || t('wf.genSuccess'),
-        'success'
-      );
+        'success');
     } catch (err: any) {
       console.error(err);
       addToast(err?.response?.data?.detail || err?.message || t('wf.genFailed'), 'error');
@@ -511,7 +510,7 @@ export default function WorkflowsPage() {
           <div className="mb-4 flex items-center justify-between">
             <h3 className="text-base font-semibold text-foreground">{t('wf.help.title')}</h3>
             <button onClick={() => setShowHelp(false)} className="text-foreground-muted hover:text-foreground-dim">
-              ✕
+              
             </button>
           </div>
           <div className="space-y-4 text-sm text-foreground-dim">
@@ -609,8 +608,7 @@ export default function WorkflowsPage() {
           <div className="relative">
             <button
               onClick={() => setShowDropdown(!showDropdown)}
-              className="flex w-56 items-center justify-between rounded-md border border-border-default bg-card-bg px-3 py-1.5 text-left text-sm hover:border-border-default"
-            >
+              className="flex w-56 items-center justify-between rounded-md border border-border-default bg-card-bg px-3 py-1.5 text-left text-sm hover:border-border-default">
               <span className={selected ? 'text-foreground' : 'text-foreground-muted'}>
                 {selected ? selected.name : t('wf.selectWorkflow')}
               </span>
@@ -631,19 +629,13 @@ export default function WorkflowsPage() {
                         setShowDropdown(false);
                       }}
                       className={`flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-elevated-bg ${
-                        selectedId === wf.id ? 'bg-brand-purple/10 text-brand-purple' : 'text-foreground-muted'
-                      }`}
+                        selectedId === wf.id ? 'bg-brand-purple/10 text-brand-purple' : 'text-foreground-muted'}`}
                     >
                       {selectedId === wf.id && <CheckIcon className="h-3 w-3" />}
                       <span className="flex-1 truncate">{wf.name}</span>
                       <span
                         className={`rounded px-1.5 py-0.5 text-[10px] ${
-                          wf.status === 'active'
-                            ? 'bg-success-bg text-success-text'
-                            : wf.status === 'paused'
-                            ? 'bg-amber-500/10 text-amber-500'
-                            : 'bg-card-bg-hover text-foreground-dim'
-                        }`}
+                          wf.status === 'active'? 'bg-success-bg text-success-text': wf.status === 'paused'? 'bg-amber-500/10 text-amber-500': 'bg-card-bg-hover text-foreground-dim'}`}
                       >
                         {wf.status === 'active' ? t('wf.status.active') : wf.status === 'paused' ? t('wf.status.paused') : t('wf.status.draft')}
                       </span>
@@ -653,22 +645,19 @@ export default function WorkflowsPage() {
                 <div className="my-1 border-t border-gray-100" />
                 <button
                   onClick={handleCreate}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-foreground-muted hover:bg-elevated-bg"
-                >
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-foreground-muted hover:bg-elevated-bg">
                   <PlusIcon className="h-3.5 w-3.5" />
                   {t('wf.newBlank')}
                 </button>
                 <button
                   onClick={handleLoadBasicExample}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-foreground-muted hover:bg-elevated-bg"
-                >
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-foreground-muted hover:bg-elevated-bg">
                   <PlayIcon className="h-3.5 w-3.5" />
                   {t('wf.loadBasic')}
                 </button>
                 <button
                   onClick={handleLoadExample}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-foreground-muted hover:bg-elevated-bg"
-                >
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-foreground-muted hover:bg-elevated-bg">
                   <PlayIcon className="h-3.5 w-3.5" />
                   {t('wf.loadExample')}
                 </button>
@@ -686,8 +675,7 @@ export default function WorkflowsPage() {
         <div className="flex items-center gap-1.5">
           <button
             onClick={() => setShowHelp(true)}
-            className="rounded-md px-2.5 py-1.5 text-xs font-medium text-foreground-dim hover:bg-card-bg-hover"
-          >
+            className="rounded-md px-2.5 py-1.5 text-xs font-medium text-foreground-dim hover:bg-card-bg-hover">
             {t('wf.dagFormat')}
           </button>
           {selected && (
@@ -695,8 +683,7 @@ export default function WorkflowsPage() {
               <button
                 onClick={handleSave}
                 disabled={saving || !hasChanges}
-                className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-              >
+                className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50">
                 <SaveIcon className="h-3.5 w-3.5" />
                 {saving ? t('common.saving') : t('common.save')}
               </button>
@@ -704,15 +691,13 @@ export default function WorkflowsPage() {
                 onClick={handleRun}
                 disabled={running || hasChanges || nodes.length === 0}
                 title={hasChanges ? t('wf.runTitle.saveFirst') : nodes.length === 0 ? t('wf.runTitle.empty') : t('wf.runTitle.run')}
-                className="inline-flex items-center gap-1 rounded-md bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
-              >
+                className="inline-flex items-center gap-1 rounded-md bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50">
                 <PlayIcon className="h-3.5 w-3.5" />
                 {running ? t('wf.running') : t('wf.run')}
               </button>
               <button
                 onClick={handleDelete}
-                className="inline-flex items-center gap-1 rounded-md bg-error-bg px-3 py-1.5 text-xs font-medium text-error-text hover:bg-error-bg"
-              >
+                className="inline-flex items-center gap-1 rounded-md bg-error-bg px-3 py-1.5 text-xs font-medium text-error-text hover:bg-error-bg">
                 <TrashIcon className="h-3.5 w-3.5" />
                 {t('common.delete')}
               </button>
@@ -733,13 +718,11 @@ export default function WorkflowsPage() {
             }
           }}
           placeholder={t('wf.nlPlaceholder')}
-          className="min-w-0 flex-1 rounded-md border border-border-default bg-elevated-bg px-3 py-1.5 text-xs text-foreground placeholder:text-foreground-muted focus:border-brand-purple focus:outline-none"
-        />
+          className="min-w-0 flex-1 rounded-md border border-border-default bg-elevated-bg px-3 py-1.5 text-xs text-foreground placeholder:text-foreground-muted focus:border-brand-purple focus:outline-none"/>
         <button
           onClick={() => void handleNlGenerate(true)}
           disabled={nlGenerating || !nlPrompt.trim()}
-          className="inline-flex items-center gap-1 rounded-md bg-brand-purple px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
-        >
+          className="inline-flex items-center gap-1 rounded-md bg-brand-purple px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50">
           {nlGenerating ? t('wf.nlGenerating') : t('wf.nlGenerate')}
         </button>
       </div>
@@ -753,9 +736,8 @@ export default function WorkflowsPage() {
             </pre>
             <button
               onClick={() => setLastResult(null)}
-              className="flex-shrink-0 text-xs text-foreground-muted hover:text-foreground-dim"
-            >
-              ✕
+              className="flex-shrink-0 text-xs text-foreground-muted hover:text-foreground-dim">
+              
             </button>
           </div>
         </div>
@@ -796,17 +778,13 @@ export default function WorkflowsPage() {
             </p>
             <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
               <button
-                type="button"
-                onClick={() => void handleCreate()}
-                className="rounded-xl bg-gradient-to-r from-brand-purple to-brand-cyan px-4 py-2 text-sm font-medium text-white shadow-lg shadow-violet-500/15 hover:opacity-90"
-              >
+                type="button"onClick={() => void handleCreate()}
+                className="rounded-xl bg-gradient-to-r from-brand-purple to-brand-cyan px-4 py-2 text-sm font-medium text-white shadow-lg shadow-violet-500/15 hover:opacity-90">
                 {t('wf.empty.create')}
               </button>
               <button
-                type="button"
-                onClick={() => void handleLoadExample()}
-                className="rounded-xl border border-border-default px-4 py-2 text-sm font-medium text-foreground-muted hover:bg-elevated-bg hover:text-foreground"
-              >
+                type="button"onClick={() => void handleLoadExample()}
+                className="rounded-xl border border-border-default px-4 py-2 text-sm font-medium text-foreground-muted hover:bg-elevated-bg hover:text-foreground">
                 {t('wf.empty.loadExample')}
               </button>
             </div>

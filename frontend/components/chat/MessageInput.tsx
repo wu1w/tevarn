@@ -698,7 +698,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
           />
           {mentionOpen && mentionCandidates.length > 0 && (
             <ul
-              className="absolute bottom-full left-0 z-40 mb-1 max-h-40 w-64 overflow-auto rounded-xl border border-border-default bg-elevated-bg py-1 shadow-xl"
+              className="absolute bottom-full left-0 z-40 mb-1 max-h-40 w-64 overflow-auto tk-card-solid py-1 shadow-xl"
               data-no-composer-focus
             >
               {mentionCandidates.map((d, i) => {

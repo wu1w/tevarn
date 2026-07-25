@@ -193,9 +193,7 @@ export default function DevicesPage() {
     try {
       const f = await remoteReadFile(selected.id, path);
       const content =
-        f.encoding === 'base64'
-          ? `[binary base64 ${f.content.slice(0, 80)}…]`
-          : f.content;
+        f.encoding === 'base64'? `[binary base64 ${f.content.slice(0, 80)}…]`: f.content;
       setPreview({ path, content: content.slice(0, 8000) });
     } catch (e) {
       console.error(e);
@@ -209,8 +207,7 @@ export default function DevicesPage() {
     try {
       const r = await remoteExecDevice(selected.id, execCmd.trim());
       setExecOut(
-        `$ ${r.command}\nexit=${r.exit_code}\n${r.stdout || ''}${r.stderr ? `\n[stderr]\n${r.stderr}` : ''}`
-      );
+        `$ ${r.command}\nexit=${r.exit_code}\n${r.stdout || ''}${r.stderr ? `\n[stderr]\n${r.stderr}` : ''}`);
     } catch (e: unknown) {
       const msg =
         (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
@@ -252,7 +249,7 @@ export default function DevicesPage() {
     s === 'online' ? 'text-success-text' : s === 'busy' ? 'text-amber-400' : 'text-foreground-dim';
 
   return (
-    <div className="flex h-full min-h-0 flex-col p-6">
+    <div className="tk-page flex h-full min-h-0 flex-col p-6">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-foreground">{t('devices._e2')}</h1>
@@ -262,28 +259,24 @@ export default function DevicesPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           <button
-            type="button"
-            onClick={() => void handleDiscover()}
+            type="button"onClick={() => void handleDiscover()}
             disabled={discovering}
-            className="rounded-xl border border-border-default bg-card-bg px-3 py-2 text-sm text-foreground-muted hover:border-brand-cyan/30 hover:text-brand-cyan disabled:opacity-50"
-          >
+            className="rounded-xl border border-border-default bg-card-bg px-3 py-2 text-sm text-foreground-muted hover:border-brand-cyan/30 hover:text-brand-cyan disabled:opacity-50">
             {discovering ? t('devices._e6') : t('devices._e7')}
           </button>
           <button
-            type="button"
-            onClick={() => {
+            type="button"onClick={() => {
               setShowPair((v) => !v);
               setPairError(null);
             }}
-            className="rounded-xl bg-gradient-to-r from-brand-purple to-brand-cyan px-4 py-2 text-sm font-medium text-white shadow-lg shadow-violet-500/20"
-          >
+            className="rounded-xl bg-gradient-to-r from-brand-purple to-brand-cyan px-4 py-2 text-sm font-medium text-white shadow-lg shadow-violet-500/20">
             + 配对 Agent
           </button>
         </div>
       </div>
 
       {showPair && (
-        <div className="mb-4 rounded-xl border border-border-subtle bg-card-bg/60 p-4">
+        <div className="mb-4 tk-card/60 p-4">
           <h2 className="mb-3 text-sm font-semibold text-foreground">{t('devices._e3')}</h2>
           {discovered.length > 0 && (
             <div className="mb-3 space-y-1">
@@ -291,8 +284,7 @@ export default function DevicesPage() {
               {discovered.map((a, i) => (
                 <button
                   key={`${a.host}:${a.port}:${i}`}
-                  type="button"
-                  onClick={() =>
+                  type="button"onClick={() =>
                     setPairForm((f) => ({
                       ...f,
                       name: a.name || f.name || 'agent',
@@ -300,8 +292,7 @@ export default function DevicesPage() {
                       port: a.port,
                     }))
                   }
-                  className="block w-full rounded-lg border border-border-subtle bg-input-bg px-3 py-2 text-left text-xs text-foreground hover:border-brand-purple/40"
-                >
+                  className="block w-full rounded-lg border border-border-subtle bg-input-bg px-3 py-2 text-left text-xs text-foreground hover:border-brand-purple/40">
                   {a.name} · {a.host}:{a.port}
                 </button>
               ))}
@@ -312,44 +303,32 @@ export default function DevicesPage() {
               placeholder={t('devices._e4')}
               value={pairForm.name}
               onChange={(e) => setPairForm({ ...pairForm, name: e.target.value })}
-              className="rounded-xl border border-border-default bg-input-bg px-3 py-2 text-sm text-foreground"
-              required
+              className="rounded-xl border border-border-default bg-input-bg px-3 py-2 text-sm text-foreground"required
             />
             <input
-              placeholder="Host"
-              value={pairForm.host}
+              placeholder="Host"value={pairForm.host}
               onChange={(e) => setPairForm({ ...pairForm, host: e.target.value })}
-              className="rounded-xl border border-border-default bg-input-bg px-3 py-2 text-sm text-foreground"
-              required
+              className="rounded-xl border border-border-default bg-input-bg px-3 py-2 text-sm text-foreground"required
             />
             <input
-              type="number"
-              placeholder="Port"
-              value={pairForm.port}
+              type="number"placeholder="Port"value={pairForm.port}
               onChange={(e) => setPairForm({ ...pairForm, port: Number(e.target.value) })}
-              className="rounded-xl border border-border-default bg-input-bg px-3 py-2 text-sm text-foreground"
-              required
+              className="rounded-xl border border-border-default bg-input-bg px-3 py-2 text-sm text-foreground"required
             />
             <input
-              placeholder="Token"
-              value={pairForm.token}
+              placeholder="Token"value={pairForm.token}
               onChange={(e) => setPairForm({ ...pairForm, token: e.target.value })}
-              className="rounded-xl border border-border-default bg-input-bg px-3 py-2 text-sm text-foreground"
-              required
+              className="rounded-xl border border-border-default bg-input-bg px-3 py-2 text-sm text-foreground"required
             />
             <div className="flex gap-2">
               <button
-                type="submit"
-                disabled={pairing}
-                className="flex-1 rounded-xl bg-brand-purple/90 px-3 py-2 text-sm text-white disabled:opacity-50"
-              >
+                type="submit"disabled={pairing}
+                className="flex-1 rounded-xl bg-brand-purple/90 px-3 py-2 text-sm text-white disabled:opacity-50">
                 {pairing ? t('chat.connecting') : t('devices._e8')}
               </button>
               <button
-                type="button"
-                onClick={() => setShowPair(false)}
-                className="rounded-xl border border-border-default px-3 py-2 text-sm text-foreground-muted"
-              >
+                type="button"onClick={() => setShowPair(false)}
+                className="rounded-xl border border-border-default px-3 py-2 text-sm text-foreground-muted">
                 取消
               </button>
             </div>
@@ -360,7 +339,7 @@ export default function DevicesPage() {
 
       <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[320px_1fr]">
         {/* 列表 */}
-        <div className="min-h-0 overflow-y-auto rounded-xl border border-border-subtle bg-card-bg/30">
+        <div className="min-h-0 overflow-y-auto tk-card/30">
           {loading ? (
             <div className="p-6 text-center text-sm text-foreground-dim">{t('channels.loading')}</div>
           ) : devices.length === 0 ? (
@@ -375,13 +354,10 @@ export default function DevicesPage() {
                 return (
                   <li key={d.id}>
                     <button
-                      type="button"
-                      onClick={() => setSelectedId(d.id)}
+                      type="button"onClick={() => setSelectedId(d.id)}
                       className={`flex w-full items-start justify-between gap-2 px-4 py-3 text-left transition-colors ${
                         selectedId === d.id
-                          ? 'bg-brand-purple/10 border-l-2 border-brand-purple'
-                          : 'hover:bg-card-bg-hover border-l-2 border-transparent'
-                      }`}
+                          ? 'bg-brand-purple/10 border-l-2 border-brand-purple': 'hover:bg-card-bg-hover border-l-2 border-transparent'}`}
                     >
                       <div className="min-w-0">
                         <div className="truncate text-sm font-medium text-foreground">{d.name}</div>
@@ -405,7 +381,7 @@ export default function DevicesPage() {
         </div>
 
         {/* 详情 */}
-        <div className="min-h-0 overflow-y-auto rounded-xl border border-border-subtle bg-card-bg/20 p-4">
+        <div className="min-h-0 overflow-y-auto tk-card/20 p-4">
           {!selected ? (
             <div className="py-16 text-center text-sm text-foreground-dim">{t('devices._e5')}</div>
           ) : (
@@ -434,8 +410,7 @@ export default function DevicesPage() {
                       {selected.capabilities.map((c) => (
                         <span
                           key={c}
-                          className="rounded-md border border-border-subtle bg-input-bg px-1.5 py-0.5 text-[10px] text-foreground-muted"
-                        >
+                          className="rounded-md border border-border-subtle bg-input-bg px-1.5 py-0.5 text-[10px] text-foreground-muted">
                           {c}
                         </span>
                       ))}
@@ -444,61 +419,48 @@ export default function DevicesPage() {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button
-                    type="button"
-                    onClick={() => {
+                    type="button"onClick={() => {
                       try {
                         sessionStorage.setItem(
                           'takton-compose-draft',
-                          `@${selected.name} `
-                        );
+                          `@${selected.name} `);
                       } catch { /* ignore */ }
                       router.push('/');
                     }}
-                    className="rounded-lg bg-brand-purple/80 px-2.5 py-1 text-xs font-medium text-white hover:bg-brand-purple"
-                  >
+                    className="rounded-lg bg-brand-purple/80 px-2.5 py-1 text-xs font-medium text-white hover:bg-brand-purple">
                     用此设备对话
                   </button>
                   <button
-                    type="button"
-                    onClick={() => void handlePing()}
+                    type="button"onClick={() => void handlePing()}
                     disabled={pinging}
-                    className="rounded-lg border border-border-subtle bg-card-bg-hover px-2.5 py-1 text-xs text-foreground-muted hover:text-brand-cyan"
-                  >
+                    className="rounded-lg border border-border-subtle bg-card-bg-hover px-2.5 py-1 text-xs text-foreground-muted hover:text-brand-cyan">
                     {pinging ? 'Ping…' : 'Ping'}
                   </button>
                   <button
-                    type="button"
-                    onClick={() => void handleHeartbeat()}
-                    className="rounded-lg border border-border-subtle bg-card-bg-hover px-2.5 py-1 text-xs text-foreground-muted"
-                  >
+                    type="button"onClick={() => void handleHeartbeat()}
+                    className="rounded-lg border border-border-subtle bg-card-bg-hover px-2.5 py-1 text-xs text-foreground-muted">
                     心跳
                   </button>
                   <button
-                    type="button"
-                    onClick={() => void loadFs(selected.id, fsPath || '.')}
-                    className="rounded-lg border border-border-subtle bg-card-bg-hover px-2.5 py-1 text-xs text-foreground-muted"
-                  >
+                    type="button"onClick={() => void loadFs(selected.id, fsPath || '.')}
+                    className="rounded-lg border border-border-subtle bg-card-bg-hover px-2.5 py-1 text-xs text-foreground-muted">
                     刷新目录
                   </button>
                   <button
-                    type="button"
-                    onClick={() => void handleDelete(selected.id)}
-                    className="rounded-lg border border-error-text/20 bg-error-bg px-2.5 py-1 text-xs text-error-text"
-                  >
+                    type="button"onClick={() => void handleDelete(selected.id)}
+                    className="rounded-lg border border-error-text/20 bg-error-bg px-2.5 py-1 text-xs text-error-text">
                     删除
                   </button>
                 </div>
               </div>
 
               {/* 文件树 */}
-              <div className="rounded-xl border border-border-subtle bg-card-bg/40">
+              <div className="tk-card/40">
                 <div className="flex items-center justify-between border-b border-border-subtle px-3 py-2">
                   <div className="flex items-center gap-2 text-xs text-foreground-muted">
                     <button
-                      type="button"
-                      onClick={goUp}
-                      className="rounded px-1.5 py-0.5 hover:bg-card-bg-hover"
-                      disabled={fsPath === '.' || !fsPath}
+                      type="button"onClick={goUp}
+                      className="rounded px-1.5 py-0.5 hover:bg-card-bg-hover"disabled={fsPath === '.' || !fsPath}
                     >
                       ↑ 上级
                     </button>
@@ -516,13 +478,11 @@ export default function DevicesPage() {
                     {entries.map((ent) => (
                       <li key={ent.name}>
                         <button
-                          type="button"
-                          onClick={() =>
+                          type="button"onClick={() =>
                             ent.type === 'dir' ? openDir(ent.name) : void openFile(ent.name)
                           }
-                          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-card-bg-hover"
-                        >
-                          <span className="w-4">{ent.type === 'dir' ? '📁' : '📄'}</span>
+                          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-card-bg-hover">
+                          <span className="w-4">{ent.type === 'dir' ? '' : ''}</span>
                           <span className="flex-1 truncate text-foreground">{ent.name}</span>
                           {ent.type === 'file' && ent.size != null && (
                             <span className="font-mono text-[10px] text-foreground-dim">{ent.size}B</span>
@@ -543,22 +503,18 @@ export default function DevicesPage() {
               </div>
 
               {/* Exec */}
-              <div className="rounded-xl border border-border-subtle bg-card-bg/40 p-3">
+              <div className="tk-card/40 p-3">
                 <div className="mb-2 text-xs font-medium text-foreground-muted">{t('devices._e6')}</div>
                 <div className="flex gap-2">
                   <input
                     value={execCmd}
                     onChange={(e) => setExecCmd(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && void handleExec()}
-                    className="min-w-0 flex-1 rounded-lg border border-border-default bg-input-bg px-3 py-2 font-mono text-xs text-foreground"
-                    placeholder="echo hello"
-                  />
+                    className="min-w-0 flex-1 rounded-lg border border-border-default bg-input-bg px-3 py-2 font-mono text-xs text-foreground"placeholder="echo hello"/>
                   <button
-                    type="button"
-                    onClick={() => void handleExec()}
+                    type="button"onClick={() => void handleExec()}
                     disabled={executing}
-                    className="rounded-lg bg-brand-purple/80 px-3 py-2 text-xs text-white disabled:opacity-50"
-                  >
+                    className="rounded-lg bg-brand-purple/80 px-3 py-2 text-xs text-white disabled:opacity-50">
                     {executing ? '…' : t('wf.run')}
                   </button>
                 </div>

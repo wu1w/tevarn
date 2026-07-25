@@ -70,11 +70,7 @@ export function buildSessionOperations(
         for (const tc of tcs) {
           const name = tc.name || 'tool';
           const status =
-            tc.status === 'failed'
-              ? 'failed'
-              : tc.status === 'running'
-                ? 'running'
-                : 'completed';
+            tc.status === 'failed'? 'failed': tc.status === 'running'? 'running': 'completed';
           const argsPreview =
             tc.arguments && Object.keys(tc.arguments).length
               ? truncate(JSON.stringify(tc.arguments), 60)
@@ -186,12 +182,12 @@ function statusStyle(status: SessionOperation['status']) {
 function kindIcon(kind: SessionOperation['kind']) {
   switch (kind) {
     case 'user':
-      return '👤';
+      return '';
     case 'assistant':
-      return '✨';
+      return '';
     case 'tool':
     case 'tool_call':
-      return '🔧';
+      return '';
     default:
       return '•';
   }
@@ -242,10 +238,8 @@ export function TaskPanel({
           </p>
         </div>
         <button
-          type="button"
-          onClick={onClose}
-          className="rounded-lg p-1.5 text-foreground-dim transition-colors hover:bg-card-bg-hover hover:text-foreground-muted"
-          aria-label={t('store.close')}
+          type="button"onClick={onClose}
+          className="rounded-lg p-1.5 text-foreground-dim transition-colors hover:bg-card-bg-hover hover:text-foreground-muted"aria-label={t('store.close')}
         >
           <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -297,13 +291,10 @@ export function TaskPanel({
                       className={`absolute -left-[1.3rem] top-3 h-2.5 w-2.5 rounded-full border-2 border-card-bg ${st.dot}`}
                     />
                     <button
-                      type="button"
-                      onClick={() => onJumpToMessage?.(op.messageId)}
+                      type="button"onClick={() => onJumpToMessage?.(op.messageId)}
                       className={`w-full rounded-xl border px-3 py-2.5 text-left transition-all ${
                         active
-                          ? 'border-brand-cyan/50 bg-brand-cyan/10 ring-1 ring-brand-cyan/30'
-                          : 'border-border-subtle bg-card-bg/80 hover:border-border-default hover:bg-card-bg-hover'
-                      }`}
+                          ? 'border-brand-cyan/50 bg-brand-cyan/10 ring-1 ring-brand-cyan/30': 'border-border-subtle bg-card-bg/80 hover:border-border-default hover:bg-card-bg-hover'}`}
                       title={t('tasks._e87')}
                     >
                       <div className="flex items-start justify-between gap-2">

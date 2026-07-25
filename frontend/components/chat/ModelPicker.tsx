@@ -203,18 +203,15 @@ export function ModelPicker({ disabled = false, onChanged, sessionId }: ModelPic
   return (
     <div ref={rootRef} className="relative">
       <button
-        type="button"
-        onClick={handleOpen}
+        type="button"onClick={handleOpen}
         disabled={disabled}
         className={`inline-flex max-w-full items-center gap-1.5 rounded-xl border px-3 py-2 text-xs transition disabled:opacity-40 ${
           catalog?.active_model
-            ? 'border-brand-purple/35 bg-brand-purple/10 text-foreground hover:border-brand-purple/50'
-            : 'border-amber-500/40 bg-amber-500/10 text-foreground-muted hover:border-amber-500/60'
-        }`}
+            ? 'border-brand-purple/35 bg-brand-purple/10 text-foreground hover:border-brand-purple/50': 'border-amber-500/40 bg-amber-500/10 text-foreground-muted hover:border-amber-500/60'}`}
         title={t('modelPicker.title')}
       >
         <span className="text-sm leading-none" aria-hidden>
-          {activeProvider?.icon || '🤖'}
+          {activeProvider?.icon || ''}
         </span>
         <span className="truncate font-medium text-foreground">
           {labelProvider}
@@ -230,16 +227,13 @@ export function ModelPicker({ disabled = false, onChanged, sessionId }: ModelPic
         ) : null}
         <svg
           className={`h-3.5 w-3.5 shrink-0 text-foreground-dim transition ${open ? 'rotate-180' : ''}`}
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
+          fill="none"viewBox="0 0 24 24"stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
       </button>
 
       {open && (
-        <div className="absolute bottom-full left-0 z-50 mb-2 flex w-[min(92vw,440px)] overflow-hidden rounded-2xl border border-border-default bg-elevated-bg shadow-2xl shadow-black/40">
+        <div className="absolute bottom-full left-0 z-50 mb-2 flex w-[min(92vw,440px)] overflow-hidden tk-card-solid rounded-2xl shadow-2xl shadow-black/40">
           {/* 左：供应商 */}
           <div className="w-[38%] border-r border-border-subtle bg-card-bg/50">
             <div className="border-b border-border-subtle px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-foreground-dim">
@@ -257,33 +251,26 @@ export function ModelPicker({ disabled = false, onChanged, sessionId }: ModelPic
                   <div
                     key={p.id}
                     className={`group flex items-center gap-1 px-1.5 py-0.5 ${
-                      active ? 'bg-brand-purple/10' : ''
-                    }`}
+                      active ? 'bg-brand-purple/10' : ''}`}
                   >
                     <button
-                      type="button"
-                      onClick={() => setSelectedProviderId(p.id)}
+                      type="button"onClick={() => setSelectedProviderId(p.id)}
                       className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-2 text-left text-xs transition ${
                         active
-                          ? 'text-foreground'
-                          : p.enabled
-                            ? 'text-foreground-muted hover:bg-card-bg-hover'
-                            : 'text-foreground-dim opacity-50'
-                      }`}
+                          ? 'text-foreground': p.enabled
+                            ? 'text-foreground-muted hover:bg-card-bg-hover': 'text-foreground-dim opacity-50'}`}
                     >
-                      <span>{p.icon || '🤖'}</span>
+                      <span>{p.icon || ''}</span>
                       <span className="truncate font-medium">{p.name}</span>
                       {p.id === catalog?.active_provider_id && (
                         <span className="ml-auto shrink-0 text-[9px] text-brand-cyan">{t('modelPicker.current')}</span>
                       )}
                     </button>
                     <button
-                      type="button"
-                      title={p.enabled ? t('modelPicker.hideProvider') : t('modelPicker.showProvider')}
+                      type="button"title={p.enabled ? t('modelPicker.hideProvider') : t('modelPicker.showProvider')}
                       onClick={(e) => handleToggleProvider(e, p.id, p.enabled)}
                       disabled={busy}
-                      className="mr-1 rounded-md px-1.5 py-1 text-[10px] text-foreground-dim hover:bg-card-bg-hover hover:text-foreground"
-                    >
+                      className="mr-1 rounded-md px-1.5 py-1 text-[10px] text-foreground-dim hover:bg-card-bg-hover hover:text-foreground">
                       {p.enabled ? t('modelPicker.hide') : t('modelPicker.show')}
                     </button>
                   </div>
@@ -292,9 +279,7 @@ export function ModelPicker({ disabled = false, onChanged, sessionId }: ModelPic
             </div>
             <div className="border-t border-border-subtle px-3 py-2">
               <a
-                href="/settings"
-                className="text-[11px] text-brand-cyan hover:underline"
-              >
+                href="/settings"className="text-[11px] text-brand-cyan hover:underline">
                 {t('modelPicker.addInSettings')}
               </a>
             </div>
@@ -308,11 +293,9 @@ export function ModelPicker({ disabled = false, onChanged, sessionId }: ModelPic
                 {focusProvider ? ` · ${focusProvider.name}` : ''}
               </span>
               <button
-                type="button"
-                onClick={() => load(true)}
+                type="button"onClick={() => load(true)}
                 disabled={loading || busy}
-                className="text-[10px] text-foreground-dim hover:text-brand-cyan disabled:opacity-40"
-              >
+                className="text-[10px] text-foreground-dim hover:text-brand-cyan disabled:opacity-40">
                 {loading ? t('modelPicker.fetching') : t('evolution.refresh')}
               </button>
             </div>
@@ -356,20 +339,15 @@ export function ModelPicker({ disabled = false, onChanged, sessionId }: ModelPic
                     <div
                       key={m.id}
                       className={`flex items-center gap-1 px-1.5 py-0.5 ${
-                        isActive ? 'bg-brand-purple/10' : ''
-                      } ${m.disabled ? 'opacity-45' : ''}`}
+                        isActive ? 'bg-brand-purple/10' : ''} ${m.disabled ? 'opacity-45' : ''}`}
                     >
                       <button
-                        type="button"
-                        disabled={busy || m.disabled}
+                        type="button"disabled={busy || m.disabled}
                         onClick={() => handleSelectModel(focusProvider.id, m.id)}
                         className={`min-w-0 flex-1 rounded-lg px-2.5 py-2 text-left text-xs transition ${
                           m.disabled
-                            ? 'cursor-not-allowed text-foreground-dim line-through'
-                            : isActive
-                              ? 'font-medium text-foreground'
-                              : 'text-foreground-muted hover:bg-card-bg-hover hover:text-foreground'
-                        }`}
+                            ? 'cursor-not-allowed text-foreground-dim line-through': isActive
+                              ? 'font-medium text-foreground': 'text-foreground-muted hover:bg-card-bg-hover hover:text-foreground'}`}
                       >
                         <span className="block truncate font-mono text-[11px]">{m.id}</span>
                         {isActive && (
@@ -380,17 +358,14 @@ export function ModelPicker({ disabled = false, onChanged, sessionId }: ModelPic
                         )}
                       </button>
                       <button
-                        type="button"
-                        title={m.disabled ? t('modelPicker.enableModel') : t('modelPicker.disableModel')}
+                        type="button"title={m.disabled ? t('modelPicker.enableModel') : t('modelPicker.disableModel')}
                         disabled={busy}
                         onClick={(e) =>
                           handleToggleModel(e, focusProvider.id, m.id, m.disabled)
                         }
                         className={`mr-1.5 shrink-0 rounded-md px-2 py-1 text-[10px] transition ${
                           m.disabled
-                            ? 'bg-success-bg text-success-text hover:opacity-90'
-                            : 'text-foreground-dim hover:bg-error-bg hover:text-error-text'
-                        }`}
+                            ? 'bg-success-bg text-success-text hover:opacity-90': 'text-foreground-dim hover:bg-error-bg hover:text-error-text'}`}
                       >
                         {m.disabled ? t('channels.enable') : t('cron.disabled')}
                       </button>
@@ -411,8 +386,7 @@ export function ModelPicker({ disabled = false, onChanged, sessionId }: ModelPic
                       return (
                         <button
                           key={c.id}
-                          type="button"
-                          disabled={busy || !c.has_api_key}
+                          type="button"disabled={busy || !c.has_api_key}
                           onClick={async () => {
                             setBusy(true);
                             try {
@@ -425,21 +399,18 @@ export function ModelPicker({ disabled = false, onChanged, sessionId }: ModelPic
                             } catch (err: unknown) {
                               addToast(
                                 err instanceof Error ? err.message : t('modelPicker.keySwitchFailed'),
-                                'error'
-                              );
+                                'error');
                             } finally {
                               setBusy(false);
                             }
                           }}
                           className={`rounded-lg border px-2 py-1 text-[10px] transition ${
                             active
-                              ? 'border-brand-cyan/40 bg-brand-cyan/10 text-brand-cyan'
-                              : 'border-border-subtle text-foreground-dim hover:border-border-default hover:text-foreground'
-                          }`}
+                              ? 'border-brand-cyan/40 bg-brand-cyan/10 text-brand-cyan': 'border-border-subtle text-foreground-dim hover:border-border-default hover:text-foreground'}`}
                           title={c.api_key_masked || c.label}
                         >
                           {c.label}
-                          {active ? ' ✓' : ''}
+                          {active ? ' ' : ''}
                         </button>
                       );
                     })}

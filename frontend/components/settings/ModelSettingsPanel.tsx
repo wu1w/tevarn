@@ -52,7 +52,7 @@ const inputCls =
 const btnPrimary =
   'inline-flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-brand-purple to-brand-cyan px-3.5 py-2 text-sm font-medium text-white disabled:opacity-50';
 const btnGhost =
-  'inline-flex items-center justify-center gap-1.5 rounded-xl border border-border-subtle bg-card-bg px-3.5 py-2 text-sm text-foreground-muted hover:text-foreground disabled:opacity-50';
+  'inline-flex items-center justify-center gap-1.5 tk-card px-3.5 py-2 text-sm text-foreground-muted hover:text-foreground disabled:opacity-50';
 
 export interface ModelSettingsPanelProps {
   settings: Setting[];
@@ -198,8 +198,7 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
       const fromCat = (selectedCatalog.models || []).filter((m) => !m.disabled).map((m) => m.id);
       return withActive(
         liveModels.length ? liveModels : fromCat,
-        selectedModel || catalog?.active_model || ''
-      );
+        selectedModel || catalog?.active_model || '');
     }
     const fromPreset = selectedPreset?.models || [];
     const fallback = selectedPreset?.llm?.llm_model ? [selectedPreset.llm.llm_model] : [];
@@ -396,7 +395,7 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
       const reg = await registerCatalogProvider({
         id: selectedProviderId || 'custom',
         name: preset?.name || selectedCatalog?.name || selectedProviderId || 'custom',
-        icon: preset?.icon || selectedCatalog?.icon || '🤖',
+        icon: preset?.icon || selectedCatalog?.icon || '',
         preset_id: selectedProviderId || null,
         llm_provider: llmProvider,
         llm_base_url: url,
@@ -507,8 +506,7 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
       addToast(
         (res.message || t('settings.genSaved')) +
           (catalog?.active_model ? ` · ${catalog.active_model}` : ''),
-        'success'
-      );
+        'success');
       await onSettingsRefetch();
       notifySettingsChanged(['temperature', 'max_tokens', 'context_window']);
     } catch (e: unknown) {
@@ -554,13 +552,12 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
   }
 
   const activeLabel = catalog?.active_model
-    ? `${catalog.active_provider_id || ''} · ${catalog.active_model}`
-    : t('settings.noActiveModel');
+    ? `${catalog.active_provider_id || ''} · ${catalog.active_model}`: t('settings.noActiveModel');
 
   return (
     <div className="space-y-6">
       {/* Hermes main: Provider | Model | Apply */}
-      <section className="space-y-3 rounded-2xl border border-border-subtle bg-card-bg/60 p-5">
+      <section className="space-y-3 tk-card rounded-2xl/60 p-5">
         <div>
           <h2 className="text-sm font-semibold text-foreground">{t('settings.chatProvider')}</h2>
           <p className="mt-0.5 text-xs text-foreground-muted">
@@ -592,8 +589,7 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
                   className={`${inputCls} min-w-[12rem] flex-1 font-mono text-xs`}
                   value={baseUrl}
                   onChange={(e) => setBaseUrl(e.target.value)}
-                  placeholder="https://api.example.com/v1"
-                />
+                  placeholder="https://api.example.com/v1"/>
               )}
               {selectedPreset?.needs_api_key !== false &&
                 (selectedCatalog?.llm_provider || selectedPreset?.llm?.llm_provider) !== 'ollama' && (
@@ -604,12 +600,9 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
                       value={apiKey}
                       onChange={(e) => setApiKey(e.target.value)}
                       placeholder={t('settings.pasteApiKey')}
-                      autoComplete="off"
-                    />
+                      autoComplete="off"/>
                     <button
-                      type="button"
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-foreground-dim"
-                      onClick={() => setShowKey((v) => !v)}
+                      type="button"className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-foreground-dim"onClick={() => setShowKey((v) => !v)}
                     >
                       {showKey ? t('settings.hide') : t('settings.show')}
                     </button>
@@ -620,8 +613,7 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
                 value={selectedModel}
                 onChange={(e) => setSelectedModel(e.target.value)}
                 placeholder={t('settings.modelName')}
-                list="takton-model-suggestions"
-              />
+                list="takton-model-suggestions"/>
               <datalist id="takton-model-suggestions">
                 {modelsForSelected.map((m) => (
                   <option key={m} value={m} />
@@ -631,8 +623,7 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
                 {fetchingModels ? t('settings.fetching') : t('settings.fetchModels')}
               </button>
               <button
-                type="button"
-                className={btnPrimary}
+                type="button"className={btnPrimary}
                 disabled={activating || !selectedProviderId}
                 onClick={() => void activateProvider()}
               >
@@ -657,8 +648,7 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
                 {fetchingModels ? '…' : t('settings.fetchModels')}
               </button>
               <button
-                type="button"
-                className={btnPrimary}
+                type="button"className={btnPrimary}
                 disabled={applying || !selectedProviderId || !selectedModel}
                 onClick={() => void applyMainModel()}
               >
@@ -688,8 +678,7 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
                 className={`${inputCls} min-w-[12rem] flex-1 font-mono text-xs`}
                 value={baseUrl}
                 onChange={(e) => setBaseUrl(e.target.value)}
-                placeholder="https://api.example.com/v1"
-              />
+                placeholder="https://api.example.com/v1"/>
               <div className="relative min-w-[12rem] flex-1">
                 <input
                   type={showKey ? 'text' : 'password'}
@@ -698,22 +687,17 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
                   onChange={(e) => setApiKey(e.target.value)}
                   placeholder={
                     selectedCatalog.has_api_key
-                      ? '粘贴新 API Key 以覆盖'
-                      : t('settings.pasteApiKey')
+                      ? '粘贴新 API Key 以覆盖': t('settings.pasteApiKey')
                   }
-                  autoComplete="off"
-                />
+                  autoComplete="off"/>
                 <button
-                  type="button"
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-foreground-dim"
-                  onClick={() => setShowKey((v) => !v)}
+                  type="button"className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-foreground-dim"onClick={() => setShowKey((v) => !v)}
                 >
                   {showKey ? t('settings.hide') : t('settings.show')}
                 </button>
               </div>
               <button
-                type="button"
-                className={btnPrimary}
+                type="button"className={btnPrimary}
                 disabled={updatingCreds || (!apiKey.trim() && !baseUrl.trim())}
                 onClick={() => void updateCredentials()}
               >
@@ -740,9 +724,7 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
         <div className="mb-2 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-foreground">{t('settings.configuredProviders')}</h2>
           <button
-            type="button"
-            className="text-[11px] text-brand-cyan hover:underline"
-            onClick={() => void refreshCatalog(true)}
+            type="button"className="text-[11px] text-brand-cyan hover:underline"onClick={() => void refreshCatalog(true)}
           >
             {t('nav.refreshList')}
           </button>
@@ -761,15 +743,11 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
                   key={p.id}
                   className={`rounded-xl border px-3 py-2.5 ${
                     isActive
-                      ? 'border-brand-purple/35 bg-brand-purple/[0.04]'
-                      : 'border-border-subtle bg-card-bg/50'
-                  }`}
+                      ? 'border-brand-purple/35 bg-brand-purple/[0.04]': 'border-border-subtle bg-card-bg/50'}`}
                 >
                   <div className="flex items-center gap-2">
                     <button
-                      type="button"
-                      className="min-w-0 flex-1 text-left"
-                      onClick={() => {
+                      type="button"className="min-w-0 flex-1 text-left"onClick={() => {
                         setSelectedProviderId(p.id);
                         const m =
                           p.active_model ||
@@ -799,9 +777,7 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
                     </span>
                     {models.length > MODEL_CHIP_COLLAPSE_AT && (
                       <button
-                        type="button"
-                        className="rounded-lg border border-border-subtle px-2 py-1 text-[11px] text-foreground-muted hover:text-foreground"
-                        onClick={() =>
+                        type="button"className="rounded-lg border border-border-subtle px-2 py-1 text-[11px] text-foreground-muted hover:text-foreground"onClick={() =>
                           setExpandedProviders((prev) => ({
                             ...prev,
                             [p.id]: !(prev[p.id] ?? false),
@@ -812,11 +788,9 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
                       </button>
                     )}
                     <button
-                      type="button"
-                      title={t('common.delete')}
+                      type="button"title={t('common.delete')}
                       disabled={deletingId === p.id}
-                      className="rounded-lg border border-border-subtle px-2 py-1 text-[11px] text-error-text hover:bg-error-bg disabled:opacity-50"
-                      onClick={() => void handleDeleteProvider(p.id, p.name)}
+                      className="rounded-lg border border-border-subtle px-2 py-1 text-[11px] text-error-text hover:bg-error-bg disabled:opacity-50"onClick={() => void handleDeleteProvider(p.id, p.name)}
                     >
                       {deletingId === p.id ? '…' : t('common.delete')}
                     </button>
@@ -842,12 +816,9 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
                           return (
                             <button
                               key={m.id}
-                              type="button"
-                              className={`rounded-md border px-2 py-1 text-[11px] ${
+                              type="button"className={`rounded-md border px-2 py-1 text-[11px] ${
                                 active
-                                  ? 'border-brand-purple/40 bg-brand-purple/10 font-medium'
-                                  : 'border-border-subtle bg-elevated-bg/50 text-foreground-muted hover:text-foreground'
-                              }`}
+                                  ? 'border-brand-purple/40 bg-brand-purple/10 font-medium': 'border-border-subtle bg-elevated-bg/50 text-foreground-muted hover:text-foreground'}`}
                               onClick={() => {
                                 setSelectedProviderId(p.id);
                                 setSelectedModel(m.id);
@@ -857,8 +828,7 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
                                     const res = await selectCatalogModel(p.id, m.id);
                                     addToast(
                                       res.message || t('settings.switchedTo').replace('{n}', m.id),
-                                      'success'
-                                    );
+                                      'success');
                                     if (res.temperature != null) setTemperature(Number(res.temperature));
                                     if (res.max_tokens != null) setMaxTokens(Number(res.max_tokens));
                                     if (res.context_window != null)
@@ -869,8 +839,7 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
                                   } catch (e: unknown) {
                                     addToast(
                                       e instanceof Error ? e.message : t('settings.switchModelFailed'),
-                                      'error'
-                                    );
+                                      'error');
                                   } finally {
                                     setApplying(false);
                                   }
@@ -883,9 +852,7 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
                         })}
                         {!expanded && models.length > shown.length && (
                           <button
-                            type="button"
-                            className="rounded-md border border-dashed border-border-subtle px-2 py-1 text-[11px] text-foreground-dim hover:text-foreground"
-                            onClick={() =>
+                            type="button"className="rounded-md border border-dashed border-border-subtle px-2 py-1 text-[11px] text-foreground-dim hover:text-foreground"onClick={() =>
                               setExpandedProviders((prev) => ({ ...prev, [p.id]: true }))
                             }
                           >
@@ -903,7 +870,7 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
       </section>
 
       {/* Gen params — bound to applied main (Hermes defaults) */}
-      <section className="space-y-4 rounded-2xl border border-border-subtle bg-card-bg/60 p-5">
+      <section className="space-y-4 tk-card rounded-2xl/60 p-5">
         <div>
           <h2 className="text-sm font-semibold text-foreground">{t('settings.generation')}</h2>
           <p className="mt-0.5 text-xs text-foreground-muted">{t('settings.generationPerModelHint')}</p>
@@ -915,21 +882,18 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
         <label className="block text-xs text-foreground-muted">
           {t('settings.creativity').replace('{n}', temperature.toFixed(1))}
           <input
-            type="range"
-            min={0}
+            type="range"min={0}
             max={2}
             step={0.1}
             value={temperature}
             onChange={(e) => setTemperature(Number(e.target.value))}
-            className="mt-1 h-1.5 w-full accent-violet-500"
-          />
+            className="mt-1 h-1.5 w-full accent-violet-500"/>
         </label>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label className="block text-xs text-foreground-muted">
             {t('settings.maxReplyLength')}
             <input
-              type="number"
-              min={256}
+              type="number"min={256}
               max={200000}
               step={256}
               value={maxTokens}
@@ -940,8 +904,7 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
           <label className="block text-xs text-foreground-muted">
             {t('settings.contextWindowLabel')}
             <input
-              type="number"
-              min={2048}
+              type="number"min={2048}
               max={1000000}
               step={1024}
               value={contextWindow}
@@ -967,8 +930,7 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
             value={
               modelOptionsFlat.find((o) => o.value === defaultLlmModel)?.value ||
               modelOptionsFlat.find((o) => o.model === defaultLlmModel)?.value ||
-              ''
-            }
+              ''}
             onChange={(e) => {
               // 存 provider_id|||model，新会话才能绑到正确供应商（禁止裸 model 误绑）
               setDefaultLlmModel(e.target.value);
@@ -985,11 +947,9 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
             className={`${inputCls} sm:max-w-[18rem] font-mono text-xs`}
             value={defaultLlmModel}
             onChange={(e) => setDefaultLlmModel(e.target.value)}
-            placeholder="openrouter|||tencent/hy3:free"
-          />
+            placeholder="openrouter|||tencent/hy3:free"/>
           <button
-            type="button"
-            className={btnPrimary}
+            type="button"className={btnPrimary}
             disabled={defaultSaving}
             onClick={() => void handleSaveDefaultModel()}
           >

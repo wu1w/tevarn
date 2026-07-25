@@ -30,22 +30,17 @@ export function ThinkingBlock({
   return (
     <div className="mb-3 overflow-hidden rounded-xl border border-violet-500/20 bg-violet-500/[0.06]">
       <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-violet-500/10"
-      >
+        type="button"onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-violet-500/10">
         <span
           className={`flex h-5 w-5 items-center justify-center rounded-md text-[11px] ${
             streaming
-              ? 'bg-violet-500/25 text-violet-300'
-              : 'bg-violet-500/15 text-violet-400'
-          }`}
+              ? 'bg-violet-500/25 text-violet-300': 'bg-violet-500/15 text-violet-400'}`}
         >
           {streaming ? (
             <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-violet-400" />
           ) : (
-            '💭'
-          )}
+            '')}
         </span>
         <span className="chat-tool-chip text-violet-300/90">
           {streaming ? t('chat.thinking') : t('chat._e75')}
@@ -58,12 +53,8 @@ export function ThinkingBlock({
         )}
         <svg
           className={`ml-auto h-3.5 w-3.5 shrink-0 text-violet-400/70 transition-transform ${
-            open ? 'rotate-180' : ''
-          }`}
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
+            open ? 'rotate-180' : ''}`}
+          fill="none"viewBox="0 0 24 24"stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
       </button>

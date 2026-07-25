@@ -151,7 +151,7 @@ function WebhookFormDialog({
                 placeholder={t('cron-webhook._e45')}
                 onKeyDown={(e) => e.key === 'Enter' && addEvent()}
               />
-              <button onClick={addEvent} className="px-3 py-1.5 text-sm bg-gray-100 dark:bg-gray-800 rounded">
+              <button onClick={addEvent} className="px-3 py-1.5 text-sm bg-[var(--input-bg)] dark:bg-gray-800 rounded">
                 添加
               </button>
             </div>
@@ -170,7 +170,7 @@ function WebhookFormDialog({
               失败重试
             </label>
             <div>
-              <label className="text-xs text-gray-500">最大重试: {form.max_retries}</label>
+              <label className="text-xs text-foreground-dim">最大重试: {form.max_retries}</label>
               <input type="number" value={form.max_retries} onChange={(e) => setForm({ ...form, max_retries: parseInt(e.target.value) || 3 })} className="w-16 border rounded px-2 py-1 text-sm dark:bg-gray-800 ml-2" min={0} max={10} />
             </div>
           </div>
@@ -399,13 +399,13 @@ export default function CronWebhookPanel() {
       <div className="flex items-center gap-4 border-b pb-2">
         <button
           onClick={() => setActiveTab('webhooks')}
-          className={`flex items-center gap-2 px-3 py-1.5 text-sm rounded ${activeTab === 'webhooks' ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300 font-medium' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+          className={`flex items-center gap-2 px-3 py-1.5 text-sm rounded ${activeTab === 'webhooks' ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300 font-medium' : 'text-foreground-dim hover:bg-[var(--input-bg)] dark:hover:bg-gray-800'}`}
         >
           <Globe className="w-4 h-4" /> Webhooks ({webhooks.length})
         </button>
         <button
           onClick={() => setActiveTab('hooks')}
-          className={`flex items-center gap-2 px-3 py-1.5 text-sm rounded ${activeTab === 'hooks' ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300 font-medium' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+          className={`flex items-center gap-2 px-3 py-1.5 text-sm rounded ${activeTab === 'hooks' ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300 font-medium' : 'text-foreground-dim hover:bg-[var(--input-bg)] dark:hover:bg-gray-800'}`}
         >
           <Link2 className="w-4 h-4" /> Hook 联动
         </button>
@@ -434,16 +434,16 @@ export default function CronWebhookPanel() {
                       <span className="text-xs text-gray-400 font-mono truncate max-w-[200px]">{wh.url}</span>
                     </div>
                     <div className="flex items-center gap-1">
-                      <button onClick={() => loadDeliveryLogs(wh.id)} className="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded" title={t('cron-webhook._e53')}>
+                      <button onClick={() => loadDeliveryLogs(wh.id)} className="p-1.5 hover:bg-[var(--card-bg-hover)] dark:hover:bg-gray-700 rounded" title={t('cron-webhook._e53')}>
                         <Search className="w-3.5 h-3.5" />
                       </button>
                       <button onClick={() => handleTestWebhook(wh.id)} className="p-1.5 hover:bg-blue-100 dark:hover:bg-blue-900/30 rounded" title={t('settings.test')}>
                         <ExternalLink className="w-3.5 h-3.5 text-blue-500" />
                       </button>
-                      <button onClick={() => setWebhookDialog(wh)} className="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded" title={t('memory.edit')}>
+                      <button onClick={() => setWebhookDialog(wh)} className="p-1.5 hover:bg-[var(--card-bg-hover)] dark:hover:bg-gray-700 rounded" title={t('memory.edit')}>
                         <Edit3 className="w-3.5 h-3.5" />
                       </button>
-                      <button onClick={() => handleDeleteWebhook(wh.id)} className="p-1.5 hover:bg-red-100 dark:hover:bg-red-900/30 rounded" title={t('memory.delete')}>
+                      <button onClick={() => handleDeleteWebhook(wh.id)} className="p-1.5 hover:bg-red-500/10 dark:hover:bg-red-900/30 rounded" title={t('memory.delete')}>
                         <Trash2 className="w-3.5 h-3.5 text-red-500" />
                       </button>
                     </div>
@@ -462,8 +462,8 @@ export default function CronWebhookPanel() {
           {logsWebhookId && (
             <div className="border rounded-lg p-3 bg-gray-50 dark:bg-gray-800/50">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-medium text-gray-500">{t('cron-webhook._e54')}</span>
-                <button onClick={() => setLogsWebhookId(null)} className="text-xs text-gray-400 hover:text-gray-600"><X className="w-3 h-3" /></button>
+                <span className="text-xs font-medium text-foreground-dim">{t('cron-webhook._e54')}</span>
+                <button onClick={() => setLogsWebhookId(null)} className="text-xs text-gray-400 hover:text-foreground-muted"><X className="w-3 h-3" /></button>
               </div>
               {deliveryLogs.length === 0 ? (
                 <div className="text-xs text-gray-400 text-center py-2">{t('cron-webhook._e55')}</div>
@@ -499,7 +499,7 @@ export default function CronWebhookPanel() {
                     <span className="text-xs text-gray-400 font-mono">{cj.schedule}</span>
                     {cj.last_status && (
                       <span className={`text-xs px-1.5 py-0.5 rounded ${
-                        cj.last_status === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                        cj.last_status === 'success' ? 'bg-emerald-500/10 text-green-700' : 'bg-red-500/10 text-red-700'
                       }`}>
                         {cj.last_status === 'success' ? t('common.success') : cj.last_status === 'failed' ? t('mcpStore.failed') : cj.last_status}
                       </span>
@@ -529,20 +529,20 @@ export default function CronWebhookPanel() {
                     {(hooksMap[cj.id] || []).map((hook) => (
                       <div key={hook.id} className="flex items-center justify-between px-2 py-1.5 rounded bg-gray-50 dark:bg-gray-800 text-xs">
                         <div className="flex items-center gap-2">
-                          <span className={`px-1.5 py-0.5 rounded ${hook.event === 'on_success' ? 'bg-green-100 text-green-700' : hook.event === 'on_failure' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>
+                          <span className={`px-1.5 py-0.5 rounded ${hook.event === 'on_success' ? 'bg-emerald-500/10 text-green-700' : hook.event === 'on_failure' ? 'bg-red-500/10 text-red-700' : 'bg-blue-100 text-blue-700'}`}>
                             {hook.event === 'on_success' ? t('common.success') : hook.event === 'on_failure' ? t('mcpStore.failed') : t('wf.run')}
                           </span>
                           <span className="font-medium">{hook.name}</span>
                           <span className="text-gray-400">→ {hook.target_type}: {hook.target_id.slice(0, 8)}...</span>
                         </div>
                         <div className="flex items-center gap-1">
-                          <button onClick={() => handleTriggerHook(hook.id)} className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded" title={t('cron-webhook._e57')}>
+                          <button onClick={() => handleTriggerHook(hook.id)} className="p-1 hover:bg-[var(--card-bg-hover)] dark:hover:bg-gray-700 rounded" title={t('cron-webhook._e57')}>
                             <Power className="w-3 h-3" />
                           </button>
-                          <button onClick={() => setHookDialog({ cronJobId: cj.id, hook })} className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded" title={t('memory.edit')}>
+                          <button onClick={() => setHookDialog({ cronJobId: cj.id, hook })} className="p-1 hover:bg-[var(--card-bg-hover)] dark:hover:bg-gray-700 rounded" title={t('memory.edit')}>
                             <Edit3 className="w-3 h-3" />
                           </button>
-                          <button onClick={() => handleDeleteHook(hook.id)} className="p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded" title={t('memory.delete')}>
+                          <button onClick={() => handleDeleteHook(hook.id)} className="p-1 hover:bg-red-500/10 dark:hover:bg-red-900/30 rounded" title={t('memory.delete')}>
                             <Trash2 className="w-3 h-3 text-red-500" />
                           </button>
                         </div>

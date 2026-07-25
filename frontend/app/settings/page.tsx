@@ -58,13 +58,7 @@ type Dot = 'ok' | 'warn' | 'err' | 'idle';
 
 function StatusDot({ state }: { state: Dot }) {
   const cls =
-    state === 'ok'
-      ? 'bg-success-text'
-      : state === 'warn'
-        ? 'bg-warning-text'
-        : state === 'err'
-          ? 'bg-error-text'
-          : 'bg-foreground-dim';
+    state === 'ok'? 'bg-success-text': state === 'warn'? 'bg-warning-text': state === 'err'? 'bg-error-text': 'bg-foreground-dim';
   return <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${cls}`} />;
 }
 
@@ -451,8 +445,7 @@ export default function SettingsPage() {
     const items: Record<string, unknown> = {
       ...selected.llm,
       llm_model: effectiveModel,
-      llm_base_url: (selected.custom || selected.id === 'ollama'
-        ? baseUrl
+      llm_base_url: (selected.custom || selected.id === 'ollama'? baseUrl
         : selected.llm.llm_base_url || baseUrl
       ).trim(),
       provider_catalog_id: selected.id,
@@ -877,7 +870,7 @@ export default function SettingsPage() {
         ) : (
           <>
             {/* 状态总览 — 简洁条 */}
-            <section className="rounded-xl border border-border-subtle bg-card-bg/80 px-4 py-3">
+            <section className="tk-card/80 px-4 py-3">
               <div className="mb-2 flex items-center justify-between">
                 <span className="text-[11px] font-medium text-foreground-dim">{t('settings.status')}</span>
                 {catalog?.active_model && (
@@ -928,8 +921,7 @@ export default function SettingsPage() {
                 ].map((item) => (
                   <div
                     key={item.k}
-                    className="flex min-w-[7.5rem] flex-1 items-center gap-2 rounded-lg border border-border-subtle/80 bg-elevated-bg/40 px-2.5 py-1.5"
-                  >
+                    className="flex min-w-[7.5rem] flex-1 items-center gap-2 rounded-lg border border-border-subtle/80 bg-elevated-bg/40 px-2.5 py-1.5">
                     <StatusDot state={item.dot} />
                     <div className="min-w-0">
                       <div className="truncate text-xs font-medium text-foreground">{item.label}</div>
@@ -948,7 +940,7 @@ export default function SettingsPage() {
               <SectionTitle step="3" title={t('settings.knowledgeRag')} hint={t('settings.knowledgeRagHint')} />
 
               {/* 主开关 */}
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border-subtle bg-card-bg/60 px-4 py-3">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3 tk-card rounded-2xl/60 px-4 py-3">
                 <div>
                   <div className="text-sm font-medium text-foreground">{t('settings.autoRetrieve')}</div>
                   <div className="text-xs text-foreground-muted">
@@ -959,44 +951,32 @@ export default function SettingsPage() {
                   )}
                 </div>
                 <button
-                  type="button"
-                  role="switch"
-                  aria-checked={ragEnabled}
+                  type="button"role="switch"aria-checked={ragEnabled}
                   onClick={() => handleToggleRag(!ragEnabled)}
                   disabled={ragSaving}
                   className={`relative inline-flex h-7 w-12 items-center rounded-full border-2 border-transparent transition ${
-                    ragEnabled ? 'bg-gradient-to-r from-brand-purple to-brand-cyan' : 'bg-elevated-bg'
-                  }`}
+                    ragEnabled ? 'bg-gradient-to-r from-brand-purple to-brand-cyan' : 'bg-elevated-bg'}`}
                 >
                   <span
                     className={`inline-block h-5 w-5 transform rounded-full bg-card-bg shadow transition ${
-                      ragEnabled ? 'translate-x-5' : 'translate-x-0.5'
-                    }`}
+                      ragEnabled ? 'translate-x-5' : 'translate-x-0.5'}`}
                   />
                 </button>
               </div>
 
               {/* 模式切换 */}
-              <div className="mb-4 inline-flex rounded-xl border border-border-subtle bg-card-bg p-1">
+              <div className="mb-4 inline-flex tk-card p-1">
                 <button
-                  type="button"
-                  onClick={() => setRagMode('quick')}
+                  type="button"onClick={() => setRagMode('quick')}
                   className={`rounded-lg px-3.5 py-1.5 text-sm transition-colors ${
-                    ragMode === 'quick'
-                      ? 'bg-gradient-to-r from-brand-purple/20 to-brand-cyan/15 font-medium text-foreground'
-                      : 'text-foreground-muted hover:text-foreground'
-                  }`}
+                    ragMode === 'quick'? 'bg-gradient-to-r from-brand-purple/20 to-brand-cyan/15 font-medium text-foreground': 'text-foreground-muted hover:text-foreground'}`}
                 >
                   {t('settings.quickStack')}
                 </button>
                 <button
-                  type="button"
-                  onClick={() => setRagMode('layers')}
+                  type="button"onClick={() => setRagMode('layers')}
                   className={`rounded-lg px-3.5 py-1.5 text-sm transition-colors ${
-                    ragMode === 'layers'
-                      ? 'bg-gradient-to-r from-brand-purple/20 to-brand-cyan/15 font-medium text-foreground'
-                      : 'text-foreground-muted hover:text-foreground'
-                  }`}
+                    ragMode === 'layers'? 'bg-gradient-to-r from-brand-purple/20 to-brand-cyan/15 font-medium text-foreground': 'text-foreground-muted hover:text-foreground'}`}
                 >
                   {t('settings.layeredConfig')}
                 </button>
@@ -1013,16 +993,13 @@ export default function SettingsPage() {
                       return (
                         <button
                           key={p.id}
-                          type="button"
-                          onClick={() => {
+                          type="button"onClick={() => {
                             setStackId(p.id);
                             fillFromPreset(p);
                           }}
                           className={`rounded-lg border px-2.5 py-2 text-left transition-colors ${
                             active
-                              ? 'border-brand-cyan/40 bg-brand-cyan/[0.06]'
-                              : 'border-border-subtle bg-card-bg/60 hover:border-border-default'
-                          }`}
+                              ? 'border-brand-cyan/40 bg-brand-cyan/[0.06]': 'border-border-subtle bg-card-bg/60 hover:border-border-default'}`}
                         >
                           <div className="flex items-start gap-2">
                             <MonoMark label={p.name} />
@@ -1041,7 +1018,7 @@ export default function SettingsPage() {
                     })}
                   </div>
                   {stackId && (
-                    <div className="space-y-3 rounded-2xl border border-border-subtle bg-card-bg/60 p-5">
+                    <div className="space-y-3 tk-card rounded-2xl/60 p-5">
                       {stackPresets.find((p) => p.id === stackId)?.help_text && (
                         <div className="rounded-xl border border-border-subtle bg-elevated-bg/40 px-3 py-2 text-xs text-foreground-muted">
                           {stackPresets.find((p) => p.id === stackId)?.help_text}
@@ -1049,13 +1026,11 @@ export default function SettingsPage() {
                       )}
                       <Field label={t('settings.stackKeyLabel')}>
                         <input
-                          type="password"
-                          value={stackKey}
+                          type="password"value={stackKey}
                           onChange={(e) => setStackKey(e.target.value)}
                           placeholder={t('settings.pasteKey')}
                           className={inputCls}
-                          autoComplete="off"
-                        />
+                          autoComplete="off"/>
                       </Field>
                       <div className="flex flex-wrap gap-2">
                         <button type="button" onClick={handleApplyStack} disabled={ragSaving} className={btnPrimary}>
@@ -1081,7 +1056,7 @@ export default function SettingsPage() {
                   </p>
 
                   {/* Embedding layer */}
-                  <div className="space-y-3 rounded-2xl border border-border-subtle bg-card-bg/60 p-5">
+                  <div className="space-y-3 tk-card rounded-2xl/60 p-5">
                     <div className="flex items-center gap-2">
                       <h3 className="text-sm font-semibold text-foreground">{t('settings.embedTitle')}</h3>
                       <span className="text-[10px] text-foreground-dim">{t('settings.embedNeedHint')}</span>
@@ -1090,10 +1065,8 @@ export default function SettingsPage() {
                       {embedPresets.map((p) => (
                         <button
                           key={p.id}
-                          type="button"
-                          onClick={() => fillFromPreset(p)}
-                          className="rounded-lg border border-border-subtle bg-elevated-bg/40 px-2.5 py-2 text-left text-xs hover:border-border-default"
-                        >
+                          type="button"onClick={() => fillFromPreset(p)}
+                          className="rounded-lg border border-border-subtle bg-elevated-bg/40 px-2.5 py-2 text-left text-xs hover:border-border-default">
                           {p.name}
                         </button>
                       ))}
@@ -1112,32 +1085,26 @@ export default function SettingsPage() {
                       </Field>
                       <Field label={t('settings.modelNameLabel')}>
                         <input
-                          type="text"
-                          value={embedModel}
+                          type="text"value={embedModel}
                           onChange={(e) => setEmbedModel(e.target.value)}
-                          placeholder="embedding-model / BAAI/bge-m3"
-                          className={monoInputCls}
+                          placeholder="embedding-model / BAAI/bge-m3"className={monoInputCls}
                         />
                       </Field>
                     </div>
                     <Field label={t('settings.baseUrl')}>
                       <input
-                        type="text"
-                        value={embedUrl}
+                        type="text"value={embedUrl}
                         onChange={(e) => setEmbedUrl(e.target.value)}
-                        placeholder="http://127.0.0.1:8086"
-                        className={monoInputCls}
+                        placeholder="http://127.0.0.1:8086"className={monoInputCls}
                       />
                     </Field>
                     <Field label={t('settings.apiKey')} hint={hasEmbedKey ? t('settings.keyConfiguredHint') : t('settings.localNoKeyHint')}>
                       <input
-                        type="password"
-                        value={embedKey}
+                        type="password"value={embedKey}
                         onChange={(e) => setEmbedKey(e.target.value)}
                         placeholder={hasEmbedKey ? t('settings.keyConfiguredPlaceholder') : t('settings.optional')}
                         className={inputCls}
-                        autoComplete="off"
-                      />
+                        autoComplete="off"/>
                     </Field>
                     <div className="flex flex-wrap gap-2">
                       <button type="button" onClick={handleSaveEmbed} disabled={ragSaving} className={btnPrimary}>
@@ -1150,7 +1117,7 @@ export default function SettingsPage() {
                   </div>
 
                   {/* Qdrant layer */}
-                  <div className="space-y-3 rounded-2xl border border-border-subtle bg-card-bg/60 p-5">
+                  <div className="space-y-3 tk-card rounded-2xl/60 p-5">
                     <div className="flex items-center gap-2">
                       <h3 className="text-sm font-semibold text-foreground">{t('settings.qdrantTitle')}</h3>
                       <span className="text-[10px] text-foreground-dim">{t('settings.qdrantRequiredHint')}</span>
@@ -1159,30 +1126,24 @@ export default function SettingsPage() {
                       {qdrantPresets.map((p) => (
                         <button
                           key={p.id}
-                          type="button"
-                          onClick={() => fillFromPreset(p)}
-                          className="rounded-xl border border-border-subtle bg-elevated-bg/40 px-3 py-2 text-xs hover:border-brand-cyan/40"
-                        >
+                          type="button"onClick={() => fillFromPreset(p)}
+                          className="rounded-xl border border-border-subtle bg-elevated-bg/40 px-3 py-2 text-xs hover:border-brand-cyan/40">
                           {p.icon} {p.name}
                         </button>
                       ))}
                     </div>
                     <Field label="Qdrant URL">
                       <input
-                        type="text"
-                        value={qdrantUrl}
+                        type="text"value={qdrantUrl}
                         onChange={(e) => setQdrantUrl(e.target.value)}
-                        placeholder="http://localhost:6333"
-                        className={monoInputCls}
+                        placeholder="http://localhost:6333"className={monoInputCls}
                       />
                     </Field>
                     <Field label={t('settings.collectionName')}>
                       <input
-                        type="text"
-                        value={qdrantCollection}
+                        type="text"value={qdrantCollection}
                         onChange={(e) => setQdrantCollection(e.target.value)}
-                        placeholder="knowledge_base"
-                        className={monoInputCls}
+                        placeholder="knowledge_base"className={monoInputCls}
                       />
                     </Field>
                     <div className="flex flex-wrap gap-2">
@@ -1196,7 +1157,7 @@ export default function SettingsPage() {
                   </div>
 
                   {/* Reranker layer */}
-                  <div className="space-y-3 rounded-2xl border border-border-subtle bg-card-bg/60 p-5">
+                  <div className="space-y-3 tk-card rounded-2xl/60 p-5">
                     <div className="flex items-center gap-2">
                       <h3 className="text-sm font-semibold text-foreground">{t('settings.rerankTitle')}</h3>
                       <span className="text-[10px] text-foreground-dim">{t('settings.rerankHint')}</span>
@@ -1205,10 +1166,8 @@ export default function SettingsPage() {
                       {rerankPresets.map((p) => (
                         <button
                           key={p.id}
-                          type="button"
-                          onClick={() => fillFromPreset(p)}
-                          className="rounded-lg border border-border-subtle bg-elevated-bg/40 px-2.5 py-2 text-left text-xs hover:border-border-default"
-                        >
+                          type="button"onClick={() => fillFromPreset(p)}
+                          className="rounded-lg border border-border-subtle bg-elevated-bg/40 px-2.5 py-2 text-left text-xs hover:border-border-default">
                           {p.name}
                         </button>
                       ))}
@@ -1227,32 +1186,26 @@ export default function SettingsPage() {
                       </Field>
                       <Field label={t('settings.modelNameLabel')}>
                         <input
-                          type="text"
-                          value={rerankModel}
+                          type="text"value={rerankModel}
                           onChange={(e) => setRerankModel(e.target.value)}
-                          placeholder="reranker-model"
-                          className={monoInputCls}
+                          placeholder="reranker-model"className={monoInputCls}
                         />
                       </Field>
                     </div>
                     <Field label={t('settings.baseUrl')}>
                       <input
-                        type="text"
-                        value={rerankUrl}
+                        type="text"value={rerankUrl}
                         onChange={(e) => setRerankUrl(e.target.value)}
-                        placeholder="http://127.0.0.1:8087"
-                        className={monoInputCls}
+                        placeholder="http://127.0.0.1:8087"className={monoInputCls}
                       />
                     </Field>
                     <Field label={t('settings.apiKey')} hint={hasRerankKey ? t('settings.keyConfiguredHint') : t('settings.localOptionalHint')}>
                       <input
-                        type="password"
-                        value={rerankKey}
+                        type="password"value={rerankKey}
                         onChange={(e) => setRerankKey(e.target.value)}
                         placeholder={hasRerankKey ? t('settings.keyConfiguredPlaceholder') : t('settings.optional')}
                         className={inputCls}
-                        autoComplete="off"
-                      />
+                        autoComplete="off"/>
                     </Field>
                     <div className="flex flex-wrap gap-2">
                       <button type="button" onClick={handleSaveRerank} disabled={ragSaving} className={btnPrimary}>
@@ -1273,11 +1226,9 @@ export default function SettingsPage() {
                       key={k}
                       className={`rounded-lg border px-3 py-2 text-xs ${
                         v.ok
-                          ? 'border-success-text/25 bg-success-bg text-success-text'
-                          : 'border-error-text/25 bg-error-bg text-error-text'
-                      }`}
+                          ? 'border-success-text/25 bg-success-bg text-success-text': 'border-error-text/25 bg-error-bg text-error-text'}`}
                     >
-                      {k}: {v.ok ? '✓' : '✗'} {v.message}
+                      {k}: {v.ok ? '' : ''} {v.message}
                     </div>
                   ))}
                 </div>
@@ -1301,7 +1252,7 @@ export default function SettingsPage() {
             {/* 4. 图片生成（可选） */}
             <section>
               <SectionTitle step="4" title={t('settings.image')} hint={t('settings.imageOptional')} />
-              <div className="space-y-3 rounded-2xl border border-border-subtle bg-card-bg/60 p-5">
+              <div className="space-y-3 tk-card rounded-2xl/60 p-5">
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <Field label={t('settings.serviceType')}>
                     <select
@@ -1315,8 +1266,7 @@ export default function SettingsPage() {
                   </Field>
                   <Field label={t('settings.model')}>
                     <input
-                      type="text"
-                      value={imageModel}
+                      type="text"value={imageModel}
                       onChange={(e) => setImageModel(e.target.value)}
                       placeholder={t('settings.imageModelPlaceholder')}
                       className={monoInputCls}
@@ -1325,22 +1275,18 @@ export default function SettingsPage() {
                 </div>
                 <Field label={t('settings.baseUrl')}>
                   <input
-                    type="text"
-                    value={imageUrl}
+                    type="text"value={imageUrl}
                     onChange={(e) => setImageUrl(e.target.value)}
-                    placeholder="https://..."
-                    className={monoInputCls}
+                    placeholder="https://..."className={monoInputCls}
                   />
                 </Field>
                 <Field label={t('settings.apiKey')}>
                   <input
-                    type="password"
-                    value={imageKey}
+                    type="password"value={imageKey}
                     onChange={(e) => setImageKey(e.target.value)}
                     placeholder={mapVal(settings, 'image_api_key') ? t('settings.keyConfiguredPlaceholder') : t('settings.optional')}
                     className={inputCls}
-                    autoComplete="off"
-                  />
+                    autoComplete="off"/>
                 </Field>
                 <button type="button" onClick={handleSaveImage} disabled={imageSaving} className={btnPrimary}>
                                   {imageSaving ? t('common.saving') : t('settings.saveImage')}
@@ -1352,17 +1298,15 @@ export default function SettingsPage() {
                             {/* 数据与隐私 · SFT 使用日志 */}
                             <section>
                               <SectionTitle title={t('settings.privacy')} hint={t('settings.privacyHint')} />
-                              <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border-subtle bg-card-bg/60 px-4 py-3">
+                              <div className="mb-4 flex flex-wrap items-center justify-between gap-3 tk-card rounded-2xl/60 px-4 py-3">
                                 <div className="min-w-0 flex-1">
                                   <div className="flex items-center gap-1.5 text-sm font-medium text-foreground">
                                     <span>{t('settings.sftCollect')}</span>
                                     <button
-                                      type="button"
-                                      title={t('settings.help')}
+                                      type="button"title={t('settings.help')}
                                       aria-label={t('settings.featureHelp')}
                                       onClick={() => setSftHelpOpen((v) => !v)}
-                                      className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-border-subtle text-[11px] font-semibold text-foreground-muted hover:border-brand-cyan/40 hover:text-brand-cyan"
-                                    >
+                                      className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-border-subtle text-[11px] font-semibold text-foreground-muted hover:border-brand-cyan/40 hover:text-brand-cyan">
                                       ?
                                     </button>
                                   </div>
@@ -1382,21 +1326,16 @@ export default function SettingsPage() {
                                   )}
                                 </div>
                                 <button
-                                  type="button"
-                                  role="switch"
-                                  aria-checked={sftLogEnabled}
+                                  type="button"role="switch"aria-checked={sftLogEnabled}
                                   onClick={() => void handleToggleSftLog(!sftLogEnabled)}
                                   disabled={sftSaving}
                                   className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border-2 border-transparent transition ${
                                     sftLogEnabled
-                                      ? 'bg-gradient-to-r from-brand-purple to-brand-cyan'
-                                      : 'bg-elevated-bg'
-                                  }`}
+                                      ? 'bg-gradient-to-r from-brand-purple to-brand-cyan': 'bg-elevated-bg'}`}
                                 >
                                   <span
                                     className={`inline-block h-5 w-5 transform rounded-full bg-card-bg shadow transition ${
-                                      sftLogEnabled ? 'translate-x-5' : 'translate-x-0.5'
-                                    }`}
+                                      sftLogEnabled ? 'translate-x-5' : 'translate-x-0.5'}`}
                                   />
                                 </button>
                               </div>
@@ -1405,7 +1344,7 @@ export default function SettingsPage() {
                             {/* 备用模型 */}
                             <section>
                               <SectionTitle title={t('settings.fallbackModel')} hint={t('settings.fallbackHint')} />
-                              <div className="space-y-2 rounded-2xl border border-border-subtle bg-card-bg/60 p-5">
+                              <div className="space-y-2 tk-card rounded-2xl/60 p-5">
                                 <Field label={t('settings.selectFallback')} hint={t('settings.selectFallbackHint')}>
                                   <select
                                     value={fallbackRef}
@@ -1435,15 +1374,14 @@ export default function SettingsPage() {
                             {/* 上下文压缩模型 */}
                             <section>
                               <SectionTitle title={t('settings.compressTitle')} hint={t('settings.compressHint')} />
-                              <div className="space-y-2 rounded-2xl border border-border-subtle bg-card-bg/60 p-5">
+                              <div className="space-y-2 tk-card rounded-2xl/60 p-5">
                                 <Field label={t('settings.selectCompress')} hint={t('settings.selectCompressHint')}>
                                   <select
                                     value={
                                       contextCompressModel
                                         ? modelOptions.find((o) => o.model === contextCompressModel)?.value ||
                                           contextCompressModel
-                                        : ''
-                                    }
+                                        : ''}
                                     disabled={compressSaving}
                                     onChange={(e) => void handleCompressSelect(e.target.value)}
                                     className={inputCls}

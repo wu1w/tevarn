@@ -90,8 +90,7 @@ export function MessageBubble({
     return message.tool_calls.map((tc) => {
       const dtc = tc as DisplayToolCall;
       const args =
-        dtc.arguments && typeof dtc.arguments === 'object'
-          ? (dtc.arguments as Record<string, unknown>)
+        dtc.arguments && typeof dtc.arguments === 'object'? (dtc.arguments as Record<string, unknown>)
           : {};
       return {
         id: dtc.id,
@@ -122,8 +121,7 @@ export function MessageBubble({
   if (isTool) {
     return (
       <div
-        className="group flex w-full flex-col"
-        id={`msg-${message.id}`}
+        className="group flex w-full flex-col"id={`msg-${message.id}`}
         data-message-id={message.id}
       >
         <div className="flex w-full justify-start">
@@ -148,20 +146,15 @@ export function MessageBubble({
             isUser
               ? // 浅色气泡 + 深色字，避免紫底黑字/可读性差
                 'max-w-[min(96%,56rem)] border border-brand-purple/25 bg-brand-purple/[0.10] text-foreground shadow-sm ' +
-                'dark:border-brand-purple/30 dark:bg-brand-purple/15 dark:text-foreground'
-              : isErr
-                ? 'max-w-[min(96%,56rem)] border border-red-500/30 bg-red-500/[0.08] text-sm text-red-700 dark:text-red-100/95'
-                : isAssistant
+                'dark:border-brand-purple/30 dark:bg-brand-purple/15 dark:text-foreground': isErr
+                ? 'max-w-[min(96%,56rem)] border border-red-500/30 bg-red-500/[0.08] text-sm text-red-700 dark:text-red-100/95': isAssistant
                   ? // 助手气泡随屏宽伸缩：窄屏 96%，宽屏可到 56–72rem
-                    'max-w-[min(96%,72rem)] border border-border-subtle/80 bg-card-bg/90 text-foreground shadow-sm'
-                  : 'max-w-[min(96%,56rem)] border border-amber-500/20 bg-amber-500/[0.07] text-sm text-amber-900 dark:text-amber-100/90'
-          }`}
+                    'max-w-[min(96%,72rem)] border border-border-subtle/80 bg-card-bg/90 text-foreground shadow-sm': 'max-w-[min(96%,56rem)] border border-amber-500/20 bg-amber-500/[0.07] text-sm text-amber-900 dark:text-amber-100/90'}`}
         >
           <button
             onClick={() => setShowMenu(!showMenu)}
             className={`absolute -top-2 ${
-              isUser ? '-left-10' : '-right-10'
-            } z-10 rounded-full border border-border-subtle bg-card-bg p-1.5 opacity-0 shadow-sm transition-opacity hover:bg-card-bg-hover group-hover:opacity-100`}
+              isUser ? '-left-10' : '-right-10'} z-10 rounded-full border border-border-subtle bg-card-bg p-1.5 opacity-0 shadow-sm transition-opacity hover:bg-card-bg-hover group-hover:opacity-100`}
             title={t('chat._e5')}
           >
             <IconMore className="h-3.5 w-3.5 text-foreground-muted" />
@@ -173,20 +166,16 @@ export function MessageBubble({
               <div
                 className={`absolute top-0 z-50 ${
                   isUser
-                    ? 'left-0 -translate-x-[calc(100%+8px)]'
-                    : 'right-0 translate-x-[calc(100%+8px)]'
-                } min-w-[160px] rounded-xl border border-border-default bg-card-bg py-1 shadow-xl`}
+                    ? 'left-0 -translate-x-[calc(100%+8px)]': 'right-0 translate-x-[calc(100%+8px)]'} min-w-[160px] rounded-xl border border-border-default bg-card-bg py-1 shadow-xl`}
               >
                 <button
                   onClick={handleCopyContent}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-xs text-foreground-muted transition-colors hover:bg-card-bg-hover hover:text-foreground"
-                >
+                  className="flex w-full items-center gap-2 px-3 py-2 text-xs text-foreground-muted transition-colors hover:bg-card-bg-hover hover:text-foreground">
                   复制内容
                 </button>
                 <button
                   onClick={handleCopyId}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-xs text-foreground-muted transition-colors hover:bg-card-bg-hover hover:text-foreground"
-                >
+                  className="flex w-full items-center gap-2 px-3 py-2 text-xs text-foreground-muted transition-colors hover:bg-card-bg-hover hover:text-foreground">
                   复制消息 ID
                 </button>
                 {isAssistant && onRegenerate && (
@@ -195,8 +184,7 @@ export function MessageBubble({
                       onRegenerate(message);
                       setShowMenu(false);
                     }}
-                    className="mt-1 flex w-full items-center gap-2 border-t border-border-subtle px-3 py-2 pt-1 text-xs text-foreground-muted transition-colors hover:bg-card-bg-hover hover:text-foreground"
-                  >
+                    className="mt-1 flex w-full items-center gap-2 border-t border-border-subtle px-3 py-2 pt-1 text-xs text-foreground-muted transition-colors hover:bg-card-bg-hover hover:text-foreground">
                     重新生成
                   </button>
                 )}
@@ -206,8 +194,7 @@ export function MessageBubble({
                       onEdit(message);
                       setShowMenu(false);
                     }}
-                    className="mt-1 flex w-full items-center gap-2 border-t border-border-subtle px-3 py-2 pt-1 text-xs text-foreground-muted transition-colors hover:bg-card-bg-hover hover:text-foreground"
-                  >
+                    className="mt-1 flex w-full items-center gap-2 border-t border-border-subtle px-3 py-2 pt-1 text-xs text-foreground-muted transition-colors hover:bg-card-bg-hover hover:text-foreground">
                     编辑并重新发送
                   </button>
                 )}
@@ -217,13 +204,11 @@ export function MessageBubble({
 
           {isErr && (
             <div className="mb-2 flex items-center gap-1.5 text-red-300/90">
-              <span className="text-xs">⚠</span>
+              <span className="text-xs"></span>
               <span className="chat-tool-chip text-red-300/90">{t('common.error')}</span>
               <button
-                type="button"
-                onClick={() => setShowErrorDetail((v) => !v)}
-                className="ml-2 text-xs text-red-300/70 underline-offset-2 hover:text-red-300 hover:underline"
-              >
+                type="button"onClick={() => setShowErrorDetail((v) => !v)}
+                className="ml-2 text-xs text-red-300/70 underline-offset-2 hover:text-red-300 hover:underline">
                 {showErrorDetail ? t('chat._e73') : t('chat._e74')}
               </button>
             </div>
@@ -243,10 +228,8 @@ export function MessageBubble({
           {isErr && onRegenerate && (
             <div className="mt-3 flex items-center gap-2">
               <button
-                type="button"
-                onClick={() => onRegenerate(message)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-red-400/30 bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-300 hover:bg-red-500/20 transition-colors"
-              >
+                type="button"onClick={() => onRegenerate(message)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-red-400/30 bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-300 hover:bg-red-500/20 transition-colors">
                 <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                   <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
                   <path d="M21 3v5h-5" />
@@ -317,10 +300,8 @@ function ToolResultBubble({ message }: { message: Message }) {
   return (
     <div className="overflow-hidden rounded-xl border border-border-subtle/90 bg-card-bg/60">
       <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-card-bg-hover"
-      >
+        type="button"onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-card-bg-hover">
         <span className="flex-shrink-0">
           <svg className="h-3.5 w-3.5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
@@ -341,12 +322,8 @@ function ToolResultBubble({ message }: { message: Message }) {
         )}
         <svg
           className={`h-3 w-3 flex-shrink-0 text-foreground-dim transition-transform ${
-            expanded ? 'rotate-180' : ''
-          }`}
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
+            expanded ? 'rotate-180' : ''}`}
+          fill="none"viewBox="0 0 24 24"stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
       </button>

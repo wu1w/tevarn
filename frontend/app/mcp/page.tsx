@@ -147,7 +147,7 @@ export default function MCPPage() {
         )}
 
         {tab === 'custom' && (
-          <section className="rounded-2xl border border-border-subtle bg-card-bg/60 p-5">
+          <section className="tk-card rounded-2xl/60 p-5">
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <h2 className="text-sm font-semibold">

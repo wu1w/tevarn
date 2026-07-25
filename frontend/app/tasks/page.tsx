@@ -36,7 +36,7 @@ export default function TasksPage() {
   // Skeleton component
   function SkeletonCard() {
     return (
-      <div className="rounded-xl border border-border-subtle bg-card-bg p-4 animate-pulse">
+      <div className="tk-card p-4 animate-pulse">
         <div className="h-4 bg-card-bg-hover rounded w-3/4 mb-3" />
         <div className="h-3 bg-card-bg-hover rounded w-1/2 mb-2" />
         <div className="h-3 bg-card-bg-hover rounded w-2/3" />
@@ -58,7 +58,7 @@ export default function TasksPage() {
         {loading ? (
           <>
             {[1, 2, 3, 4].map((i) => (
-              <div key={i} className="rounded-xl border border-border-subtle bg-card-bg p-4 animate-pulse">
+              <div key={i} className="tk-card p-4 animate-pulse">
                 <div className="h-8 bg-card-bg-hover rounded w-12 mb-2" />
                 <div className="h-3 bg-card-bg-hover rounded w-16" />
               </div>

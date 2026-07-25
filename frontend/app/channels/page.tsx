@@ -19,14 +19,14 @@ import { useT } from '@/stores/localeStore';
 
 /* ─── 平台配置 ─── */
 const PLATFORM_META: Record<string, { icon: string; color: string; labelKey?: string; label?: string }> = {
-  telegram:  { icon: '✈️', color: 'bg-sky-500',    label: 'Telegram' },
-  discord:   { icon: '🎮', color: 'bg-indigo-500',  label: 'Discord' },
-  wecom:     { icon: '💼', color: 'bg-green-600',    labelKey: 'channels.platform.wecom' },
-  qqbot:     { icon: '🐧', color: 'bg-cyan-500',     labelKey: 'channels.platform.qqbot' },
-  slack:     { icon: '💬', color: 'bg-purple-500',   label: 'Slack' },
-  feishu:    { icon: '🐦', color: 'bg-blue-500',     labelKey: 'channels.platform.feishu' },
-  dingtalk:  { icon: '🔔', color: 'bg-sky-600',      labelKey: 'channels.platform.dingtalk' },
-  signal:    { icon: '🔒', color: 'bg-blue-400',     label: 'Signal' },
+  telegram:  { icon: '', color: 'bg-sky-500',    label: 'Telegram' },
+  discord:   { icon: '', color: 'bg-indigo-500',  label: 'Discord' },
+  wecom:     { icon: '', color: 'bg-green-600',    labelKey: 'channels.platform.wecom' },
+  qqbot:     { icon: '', color: 'bg-cyan-500',     labelKey: 'channels.platform.qqbot' },
+  slack:     { icon: '', color: 'bg-purple-500',   label: 'Slack' },
+  feishu:    { icon: '', color: 'bg-blue-500',     labelKey: 'channels.platform.feishu' },
+  dingtalk:  { icon: '', color: 'bg-sky-600',      labelKey: 'channels.platform.dingtalk' },
+  signal:    { icon: '', color: 'bg-blue-400',     label: 'Signal' },
 };
 
 function platformLabel(platform: string, t: (k: any) => string): string {
@@ -37,7 +37,7 @@ function platformLabel(platform: string, t: (k: any) => string): string {
 }
 
 function PlatformBadge({ platform }: { platform: string }) {
-  const meta = PLATFORM_META[platform] || { icon: '📡', color: 'bg-foreground-dim', label: platform };
+  const meta = PLATFORM_META[platform] || { icon: '', color: 'bg-foreground-dim', label: platform };
   return (
     <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-xs ${meta.color}`}>
       {meta.icon}
@@ -106,13 +106,12 @@ function AddChannelModal({
             <h2 className="mb-3 text-sm font-semibold text-foreground">{t('channels.addTitle')}</h2>
             <div className="grid grid-cols-2 gap-1.5 max-h-[65vh] overflow-y-auto pr-1">
               {presets.map((p) => {
-                const meta = PLATFORM_META[p.platform] || { icon: '📡', label: p.name };
+                const meta = PLATFORM_META[p.platform] || { icon: '', label: p.name };
                 return (
                   <button
                     key={p.platform}
                     onClick={() => { setSelected(p.platform); setName(p.name); }}
-                    className="flex items-center gap-2.5 rounded-lg border border-border-subtle px-3 py-2.5 text-left transition-all hover:border-brand-purple/40 hover:bg-brand-purple/5"
-                  >
+                    className="flex items-center gap-2.5 rounded-lg border border-border-subtle px-3 py-2.5 text-left transition-all hover:border-brand-purple/40 hover:bg-brand-purple/5">
                     <span className="text-base">{meta.icon}</span>
                     <div className="min-w-0">
                       <div className="text-xs font-medium text-foreground truncate">{p.name}</div>
@@ -154,8 +153,7 @@ function AddChannelModal({
                     value={form[f.key] ?? ''}
                     onChange={(e) => setForm({ ...form, [f.key]: e.target.value })}
                     placeholder={f.help || ''}
-                    className="w-full rounded-md border border-border-subtle bg-elevated-bg px-2.5 py-1.5 text-xs text-foreground"
-                  />
+                    className="w-full rounded-md border border-border-subtle bg-elevated-bg px-2.5 py-1.5 text-xs text-foreground"/>
                 )}
               </div>
             ))}
@@ -268,7 +266,7 @@ function ChannelEditPanel({
     ...Object.entries(preset?.extra_schema || {}).map(([k, v]: any) => ({ key: k, ...v })),
   ], [preset]);
 
-  const meta = PLATFORM_META[channel.platform] || { icon: '📡', label: channel.platform };
+  const meta = PLATFORM_META[channel.platform] || { icon: '', label: channel.platform };
   const metaLabel = platformLabel(channel.platform, t);
 
   return (
@@ -329,8 +327,7 @@ function ChannelEditPanel({
                 value={form[f.key] ?? ''}
                 onChange={(e) => setForm({ ...form, [f.key]: e.target.value })}
                 placeholder={f.type === 'password' && form[f.key] === '••••••••' ? t('channels.keepOriginal') : (f.help || '')}
-                className="w-full rounded-md border border-border-subtle bg-elevated-bg px-2.5 py-1.5 text-xs text-foreground"
-              />
+                className="w-full rounded-md border border-border-subtle bg-elevated-bg px-2.5 py-1.5 text-xs text-foreground"/>
             )}
           </div>
         ))}
@@ -409,13 +406,13 @@ export default function ChannelsPage() {
         <div className="w-60 flex-shrink-0 border-r border-border-subtle overflow-y-auto">
           {channels.length === 0 ? (
             <div className="px-5 py-10 text-center">
-              <div className="text-xl mb-1.5">📡</div>
+              <div className="text-xl mb-1.5"></div>
               <div className="text-[10px] text-foreground-dim">{t('channels.emptyList')}</div>
             </div>
           ) : (
             <div className="p-1.5 space-y-0.5">
               {channels.map((ch) => {
-                const meta = PLATFORM_META[ch.platform] || { icon: '📡', label: ch.platform };
+                const meta = PLATFORM_META[ch.platform] || { icon: '', label: ch.platform };
                 const label = platformLabel(ch.platform, t);
                 return (
                   <button
@@ -423,9 +420,7 @@ export default function ChannelsPage() {
                     onClick={() => setEditing(ch.id)}
                     className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-all ${
                       editing === ch.id
-                        ? 'bg-brand-purple/10 border border-brand-purple/30'
-                        : 'hover:bg-white/[0.03] border border-transparent'
-                    }`}
+                        ? 'bg-brand-purple/10 border border-brand-purple/30': 'hover:bg-[var(--card-bg-hover)] border border-transparent'}`}
                   >
                     <span className="text-sm">{meta.icon}</span>
                     <div className="flex-1 min-w-0">
@@ -462,7 +457,7 @@ export default function ChannelsPage() {
             <div className="flex h-full min-h-[280px] items-center justify-center p-6">
               <div className="max-w-sm text-center">
                 <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-border-subtle bg-elevated-bg/50 text-2xl">
-                  📡
+                  
                 </div>
                 <div className="text-sm font-semibold text-foreground">{t('channels.selectTitle')}</div>
                 <p className="mt-1.5 text-xs leading-relaxed text-foreground-muted">

@@ -28,7 +28,7 @@ export function FilePreview({ path, onClose }: FilePreviewProps) {
   }, [path]);
 
   return (
-    <div className="flex flex-col h-full rounded-xl border border-border-subtle bg-card-bg overflow-hidden">
+    <div className="flex flex-col h-full tk-card overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border-subtle px-4 py-2">
         <div className="flex items-center gap-2 min-w-0">

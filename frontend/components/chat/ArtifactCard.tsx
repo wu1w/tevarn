@@ -139,7 +139,7 @@ export function ArtifactCard({ artifacts, onPreview }: ArtifactCardProps) {
         return (
           <div
             key={art.path}
-            className="flex items-center gap-3 rounded-xl border border-border-subtle bg-card-bg/80 px-3 py-2.5 shadow-sm transition-colors hover:border-brand-purple/25"
+            className="flex items-center gap-3 tk-card/80 px-3 py-2.5 shadow-sm transition-colors hover:border-brand-purple/25"
           >
             <KindIcon kind={art.kind} />
             <div className="min-w-0 flex-1">

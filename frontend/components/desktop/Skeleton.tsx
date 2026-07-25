@@ -38,7 +38,7 @@ export function Skeleton({
       {items.map((i) => (
         <div
           key={i}
-          className={`animate-pulse bg-gray-200 dark:bg-gray-700 ${className}`}
+          className={`animate-pulse bg-[var(--card-bg-hover)] dark:bg-gray-700 ${className}`}
           style={{
             width,
             height,
@@ -115,7 +115,7 @@ export function TableSkeleton({ rows = 5, columns = 4 }: { rows?: number; column
   return (
     <div className="flex flex-col gap-2">
       {/* 表头 */}
-      <div className="flex gap-4 p-3 border-b border-gray-200 dark:border-gray-700">
+      <div className="flex gap-4 p-3 border-b border-border-subtle dark:border-gray-700">
         {Array.from({ length: columns }, (_, i) => (
           <Skeleton key={`h-${i}`} width={`${100 / columns}%`} height="16px" />
         ))}
@@ -145,7 +145,7 @@ export function CardSkeleton({ count = 3 }: { count?: number }) {
       {Array.from({ length: count }, (_, i) => (
         <div
           key={i}
-          className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-3"
+          className="border border-border-subtle dark:border-gray-700 rounded-lg p-4 space-y-3"
         >
           <Skeleton width="60%" height="18px" />
           <Skeleton width="100%" height="14px" />
