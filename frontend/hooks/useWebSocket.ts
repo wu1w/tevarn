@@ -17,6 +17,7 @@ import type {
   NotificationMessage,
   GoalUpdateMessage,
   ToolEventMessage,
+  RunEventMessage,
   ScreenshotMessage,
   Notification,
 } from '@/types';
@@ -27,6 +28,7 @@ import {
   isMemoryUpdated,
   isGoalUpdate,
   isToolEvent,
+  isRunEvent,
   isScreenshot,
   createUserInputMessage,
   createPingMessage,
@@ -103,6 +105,7 @@ interface UseWebSocketOptions {
   onMemoryUpdated?: (msg: MemoryUpdatedMessage) => void;
   onGoalUpdate?: (msg: GoalUpdateMessage) => void;
   onToolEvent?: (msg: ToolEventMessage) => void;
+  onRunEvent?: (msg: RunEventMessage) => void;
   onScreenshot?: (msg: ScreenshotMessage) => void;
   onNotification?: (msg: NotificationMessage) => void;
   onSettingsChanged?: (keys: string[]) => void;
@@ -298,6 +301,8 @@ export function useWebSocket(options: UseWebSocketOptions) {
           optionsRef.current.onTaskUpdate?.(msg);
         } else if (isToolEvent(msg)) {
           optionsRef.current.onToolEvent?.(msg);
+        } else if (isRunEvent(msg)) {
+          optionsRef.current.onRunEvent?.(msg);
         } else if (isScreenshot(msg)) {
           optionsRef.current.onScreenshot?.(msg);
         } else if (isMemoryUpdated(msg)) {

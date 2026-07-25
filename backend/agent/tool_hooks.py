@@ -179,6 +179,8 @@ async def builtin_permission_before(name: str, arguments: dict[str, Any]) -> Bef
         if ask_mode in ("local_allow", "allow", "auto_allow"):
             logger.info("permission ask→local_allow tool=%s %s", name, gate.summarize(name, arguments))
             return BeforeHookResult(arguments=arguments)
+        if ask_mode == "interactive":
+            return await _interactive_approval(name, arguments, gate, profile)
         return BeforeHookResult(
             block=True,
             reason=(
@@ -190,6 +192,79 @@ async def builtin_permission_before(name: str, arguments: dict[str, Any]) -> Bef
     except Exception as e:
         logger.debug("permission hook skipped: %s", e)
         return BeforeHookResult(arguments=arguments)
+
+
+async def _interactive_approval(
+    name: str, arguments: dict[str, Any], gate: Any, profile: str
+) -> BeforeHookResult:
+    """agent_permission_ask_mode=interactive：WS 弹窗真确认（Phase 0.5.2 W2-3）
+
+    - 经 confirm_manager 推送 confirm_request 并挂起等待用户决定（超时默认拒绝）
+    - 等待期间 Run 状态机转 WAITING，结束后回 EXECUTING
+    - approval.requested / approval.resolved 事件进 EventBus（活动流可见）
+    - 通道异常时保守拒绝（宁拦不放）
+    """
+    summary = gate.summarize(name, arguments)
+    session_id = arguments.get("_session_id")
+    ws_manager = arguments.get("_ws_manager")
+    recorder = arguments.get("_run_recorder")
+    bus_payload = {
+        "session_id": str(session_id) if session_id else None,
+        "run_id": str(recorder.run_id) if recorder is not None and recorder.run_id else None,
+        "tool": name,
+        "summary": summary,
+        "profile": profile,
+    }
+
+    async def _publish(topic: str, extra: dict[str, Any] | None = None) -> None:
+        try:
+            from backend.core.event_bus import event_bus
+
+            await event_bus.publish(topic, {**bus_payload, **(extra or {})})
+        except Exception:
+            pass
+
+    async def _transition(dst: str, note: str) -> None:
+        if recorder is None:
+            return
+        try:
+            await recorder.transition(dst, note=note)
+        except Exception:
+            pass
+
+    try:
+        from backend.services.confirm_manager import request_confirmation
+
+        await _publish("approval.requested")
+        await _transition("waiting", note=f"approval: {name}")
+        approved = await request_confirmation(
+            ws_manager,
+            session_id,
+            title="工具调用确认",
+            command=summary,
+            reason=f"权限 profile={profile}，工具 {name} 需要确认",
+        )
+        await _publish("approval.resolved", {"approved": approved})
+        await _transition(
+            "executing", note=f"approval {'approved' if approved else 'denied'}: {name}"
+        )
+        if approved:
+            logger.info("permission ask→user approved tool=%s %s", name, summary)
+            return BeforeHookResult(arguments=arguments)
+        return BeforeHookResult(
+            block=True,
+            reason=f"[permission denied by user] {summary}",
+            arguments=arguments,
+        )
+    except Exception as e:
+        logger.warning("interactive approval failed, deny: %s", e)
+        await _publish("approval.resolved", {"approved": False, "error": str(e)})
+        await _transition("executing", note=f"approval channel error: {name}")
+        return BeforeHookResult(
+            block=True,
+            reason=f"[permission ask] 确认通道异常，已保守拒绝: {summary}",
+            arguments=arguments,
+        )
 
 
 async def builtin_file_history_before(name: str, arguments: dict[str, Any]) -> BeforeHookResult:

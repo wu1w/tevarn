@@ -354,6 +354,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Settings seeding skipped: {e}")
 
+    # EventBus → WS 活动流桥（Phase 0.5.2 W2-3）
+    try:
+        from backend.api.websocket import manager as ws_manager
+        from backend.integrations.event_bus_bridge import start_bridge
+
+        start_bridge(ws_manager)
+    except Exception as e:
+        logger.warning(f"event_bus WS bridge start skipped: {e}")
+
     # 将 DB 中的运行时设置加载进内存
     try:
         from backend.core.runtime_settings import load_settings_from_db

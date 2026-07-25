@@ -10,6 +10,7 @@ import {
   MemoryUpdatedMessage,
   GoalUpdateMessage,
   ToolEventMessage,
+  RunEventMessage,
   ScreenshotMessage,
 } from '@/types';
 
@@ -35,6 +36,10 @@ export function isGoalUpdate(msg: WSMessage): msg is GoalUpdateMessage {
 
 export function isToolEvent(msg: WSMessage): msg is ToolEventMessage {
   return msg.type === 'tool_event';
+}
+
+export function isRunEvent(msg: WSMessage): msg is RunEventMessage {
+  return msg.type === 'run_event';
 }
 
 export function isScreenshot(msg: WSMessage): msg is ScreenshotMessage {

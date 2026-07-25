@@ -467,6 +467,7 @@ export type WSMessageType =
   | 'stop'
   | 'confirm_request'
   | 'confirm_response'
+  | 'run_event'
   | 'screenshot';
 
 export interface WSMessage {
@@ -499,6 +500,23 @@ export interface ToolEventMessage extends WSMessage {
   arguments?: Record<string, unknown>;
   status: 'running' | 'completed' | 'failed';
   result?: string | null;
+}
+
+export interface RunEventMessage extends WSMessage {
+  type: 'run_event';
+  topic: string; // run.* / tool.* / approval.*
+  ts?: string;
+  data?: {
+    run_id?: string | null;
+    from?: string;
+    to?: string;
+    note?: string;
+    tool?: string;
+    status?: string;
+    approved?: boolean;
+    error?: string | null;
+    [k: string]: unknown;
+  };
 }
 
 export interface MemoryUpdatedMessage extends WSMessage {

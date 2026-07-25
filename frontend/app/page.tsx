@@ -17,7 +17,7 @@ import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { useTaskStore } from '@/stores/taskStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useSessionStore } from '@/stores/sessionStore';
-import { Message, StatusUpdateMessage, StreamDeltaMessage, GoalUpdateMessage, GoalState, ToolEventMessage, ScreenshotMessage } from '@/types';
+import { Message, StatusUpdateMessage, StreamDeltaMessage, GoalUpdateMessage, GoalState, ToolEventMessage, RunEventMessage, ScreenshotMessage } from '@/types';
 import { useScreenshotStore } from '@/stores/screenshotStore';
 import { generateImage } from '@/lib/api';
 import { generateUUID } from '@/lib/uuid';
@@ -317,12 +317,39 @@ export default function HomePage() {
       }
     }, []);
 
+  // Durable Run 生命周期事件 → 状态行（tool.* 已由 tool_event 覆盖，不重复显示）
+  const handleRunEvent = useCallback((msg: RunEventMessage) => {
+      const d = msg.data || {};
+      if (msg.topic === 'run.status_changed') {
+        const to = d.to || '';
+        const keyMap: Record<string, Parameters<typeof t>[0]> = {
+          planning: 'run.planning',
+          executing: 'chat.executing',
+          waiting: 'run.waiting',
+          verifying: 'run.verifying',
+        };
+        const key = keyMap[to];
+        if (key) setStreamStatusDetail(t(key));
+      } else if (msg.topic === 'approval.requested') {
+        setStreamStatusDetail(`${t('run.waiting')}: ${d.tool || ''}`.trim());
+      } else if (msg.topic === 'approval.resolved') {
+        setStreamStatusDetail(d.approved ? t('run.approved') : t('run.denied'));
+      } else if (msg.topic === 'run.completed') {
+        setStreamStatusDetail(t('run.done'));
+      } else if (msg.topic === 'run.failed') {
+        setStreamStatusDetail(t('run.runFailed'));
+      } else if (msg.topic === 'run.cancelled') {
+        setStreamStatusDetail(t('run.cancelled'));
+      }
+    }, [t]);
+
   const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, connect } = useWebSocket({
         sessionId: currentSession?.id || '',
         token,
         onStreamDelta: handleStreamDelta,
         onStatusUpdate: handleStatusUpdate,
         onToolEvent: handleToolEvent,
+        onRunEvent: handleRunEvent,
         onScreenshot: handleScreenshot,
         onGoalUpdate: handleGoalUpdate,
         onError: (err) => toastWsError(err),

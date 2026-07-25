@@ -197,12 +197,15 @@ class NexusAgentLoop(AgentLoopBase):
 
     async def _execute_registered_tool(self, name: str, arguments: dict[str, Any]):
         """统一工具执行入口 → ToolExecutorPort（默认 RegistryToolExecutor）。"""
+        # Durable Run：注入 recorder，permission 交互确认可切 WAITING 状态
+        arguments = dict(arguments or {})
+        arguments.setdefault("_run_recorder", getattr(self, "_run_recorder", None))
         ex = getattr(self, "tool_executor", None)
         if ex is not None:
-            return await ex.execute(name, arguments or {})
+            return await ex.execute(name, arguments)
         from backend.tools.registry import ToolRegistry as UnifiedToolRegistry
 
-        return await UnifiedToolRegistry.execute(name, arguments or {})
+        return await UnifiedToolRegistry.execute(name, arguments)
 
     async def _get_rag_service(self):
         """懒加载 RAG 服务。未配 Embedding+Qdrant 时为 Null（本地模式）。"""
