@@ -178,6 +178,22 @@ async def _run_cluster_background(
         _running_clusters.pop(task_id, None)
 
 
+def _check_cluster_admission() -> None:
+    """B2 准入控制：同时运行的 cluster 超限 → 429（诚实拒绝，不无限排队）"""
+    from backend.core.config import settings
+
+    limit = int(getattr(settings, "cluster_max_concurrent", 3) or 3)
+    running = len(_running_clusters)
+    if running >= limit:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"cluster 并发已满（{running}/{limit} 运行中）"
+                "——稍后重试，或调大 cluster_max_concurrent"
+            ),
+        )
+
+
 def _start_cluster_background(
     executor: ClusterExecutor,
     *,
@@ -187,7 +203,8 @@ def _start_cluster_background(
     plan_id: str | None = None,
     name: str = "",
 ) -> str:
-    """生成 task_id 并启动后台执行，立即返回句柄"""
+    """生成 task_id 并启动后台执行，立即返回句柄（先过准入配额）"""
+    _check_cluster_admission()
     task_id = str(uuid.uuid4())
     _running_clusters[task_id] = {
         "status": "running",

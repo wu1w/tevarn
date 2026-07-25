@@ -124,6 +124,9 @@ class Settings(BaseSettings):
     llm_request_timeout_seconds: float = 120.0
     llm_connect_timeout_seconds: float = 10.0
     llm_stream_read_timeout_seconds: float = 180.0
+    # cluster 准入配额（压测病灶 B2：此前全局 semaphore=5 共享、排队无上限无 429）
+    # 同时运行的 cluster 上限；超限立即 429（诚实拒绝，不无限排队）
+    cluster_max_concurrent: int = 3
     # doom-loop：同工具+近似参数连续 thrash（默认 on，替代/增强 ToolRepeatGuard）
     agent_doom_loop_enabled: bool = True
     # best-of-n：默认关；完整 fanout 依赖 worktree（Batch2）
