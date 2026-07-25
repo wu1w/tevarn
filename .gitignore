@@ -92,3 +92,4 @@ docs/bench/
 scripts/bench_agent/
 workspace/stress/
 /tmp/takton_desktop_shots/
+.takton/
