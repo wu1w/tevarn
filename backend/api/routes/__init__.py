@@ -24,6 +24,7 @@ from . import (
     knowledge,
     mcp,
     mcp_store,
+    memory_graph,
     messages,
     notifications,
     packages,
@@ -77,6 +78,7 @@ def register_routes(app, prefix: str = "") -> None:
     app.include_router(cron.router, prefix=p)
     app.include_router(cron_hook.router, prefix=p)
     app.include_router(knowledge.router, prefix=p)
+    app.include_router(memory_graph.router, prefix=p)
     app.include_router(wiki.router, prefix=p)
     app.include_router(settings.router, prefix=p)
     app.include_router(agent_profiles.router, prefix=p)

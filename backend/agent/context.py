@@ -150,16 +150,35 @@ class ContextManager:
         except Exception as e:
             self.last_workspace_contract = None
             logger.warning("workspace contract load failed: %s", e)
-
         # 文件驱动记忆
         if not memory_block:
             try:
                 from backend.agent.file_context import load_workspace_memory_bundle
+
                 mem_block, _meta = load_workspace_memory_bundle()
                 if mem_block:
                     memory_block = mem_block
             except Exception:
                 pass
+
+        # Memory Graph（Phase 1）：存在长期记忆时给一行提示，引导 agent 用 memory_graph 召回
+        try:
+            from backend.repositories.memory_graph_repo import AsyncMemoryGraphRepository
+
+            _mg_repo = AsyncMemoryGraphRepository()
+            _mg_count = await _mg_repo.count_nodes()
+            if _mg_count > 0:
+                _mg_recent = await _mg_repo.recall(query="", limit=3, bump_hits=False)
+                _mg_titles = "、".join(n.title for n in _mg_recent if n.title)[:120]
+                _mg_hint = (
+                    f"[Memory Graph] 已有 {_mg_count} 条长期记忆"
+                    + (f"（最近：{_mg_titles}）" if _mg_titles else "")
+                    + "。执行相关任务前可用 memory_graph(action=recall) 召回；"
+                    "重要决策/偏好/经验应主动 remember。"
+                )
+                memory_block = (memory_block + "\n\n" + _mg_hint).strip() if memory_block else _mg_hint
+        except Exception as e:
+            logger.debug("memory graph hint skipped: %s", e)
 
         # ── 组装系统提示词 ──
         package_snippets: list[dict[str, str]] = []

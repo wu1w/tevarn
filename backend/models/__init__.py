@@ -13,6 +13,7 @@ from .desktop_permission import DesktopPermission
 from .knowledge import Chunk, Document
 from .mcp_server import MCPServer
 from .message import Message
+from .memory_graph import MemoryEdge, MemoryNode
 from .notification import Notification
 from .session import Session
 from .setting import Setting
