@@ -19,11 +19,11 @@ const nextConfig: NextConfig = {
           return [
             {
               source: "/api/:path*",
-              destination: "http://127.0.0.1:8095/api/:path*",
+              destination: "http://127.0.0.1:8090/api/:path*",
             },
             {
               source: "/ws/:path*",
-              destination: "http://127.0.0.1:8095/api/ws/:path*",
+              destination: "http://127.0.0.1:8090/api/ws/:path*",
             },
           ];
         },
