@@ -205,12 +205,53 @@ class NexusAgentLoop(AgentLoopBase):
         arguments.setdefault("_agent_label", getattr(self, "_agent_label", ""))
         # 真 Sub-Agent：嵌套深度（delegate_task 防失控）
         arguments.setdefault("_subagent_depth", getattr(self, "_subagent_depth", 0))
+        # Skill 契约：已挂载包声明 tools 白名单时的执行边界拦截
+        blocked = await self._contract_tool_block_reason(name, arguments)
+        if blocked:
+            return blocked
         ex = getattr(self, "tool_executor", None)
         if ex is not None:
             return await ex.execute(name, arguments)
         from backend.tools.registry import ToolRegistry as UnifiedToolRegistry
 
         return await UnifiedToolRegistry.execute(name, arguments)
+
+    async def _contract_tool_block_reason(
+        self, name: str, arguments: dict[str, Any]
+    ) -> str | None:
+        """Skill 契约 tools 白名单检查；命中拦截返回错误文案，否则 None。
+
+        白名单 = 会话已挂载包 skill.yaml 声明的 tools 并集；无声明不过滤。
+        每个 loop 实例懒加载一次（session 级，run 内不变）。
+        """
+        if not hasattr(self, "_contract_wl_loaded"):
+            self._contract_wl_loaded = True
+            self._contract_whitelist = None
+            try:
+                sid = arguments.get("_session_id")
+                if sid:
+                    from backend.packages.session_packages import (
+                        get_session_attached_packages,
+                    )
+                    from backend.packages.loader import (
+                        resolve_attached_tool_whitelist,
+                    )
+
+                    attached = await get_session_attached_packages(str(sid))
+                    self._contract_whitelist = await resolve_attached_tool_whitelist(
+                        attached
+                    )
+            except Exception as e:
+                logger.debug("contract whitelist load skipped: %s", e)
+                self._contract_whitelist = None
+        wl = getattr(self, "_contract_whitelist", None)
+        if wl and name not in wl:
+            return (
+                f"[Skill Contract Blocked] 工具 '{name}' 不在已挂载包的 tools 白名单内"
+                f"（白名单: {', '.join(sorted(wl))}）。"
+                "请挂载声明该工具的包，或让包作者把它加入 skill.yaml 的 tools。"
+            )
+        return None
 
     async def _get_rag_service(self):
         """懒加载 RAG 服务。未配 Embedding+Qdrant 时为 Null（本地模式）。"""

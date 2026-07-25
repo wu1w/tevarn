@@ -80,6 +80,20 @@ def _manifest_from_dict(data: dict[str, Any], *, name_fallback: str, path: str, 
     return PackageManifest.model_validate(payload)
 
 
+def _attach_contract(m: PackageManifest, pkg_dir: Path) -> None:
+    """加载包目录 skill.yaml 契约到 manifest（失败降级为无契约 + errors）"""
+    try:
+        from backend.skills.contract import load_contract_for_dir
+
+        contract, errs = load_contract_for_dir(pkg_dir)
+        if contract is not None:
+            m.contract = contract.model_dump()
+        if errs:
+            m.contract_errors = errs
+    except Exception as e:
+        logger.debug("skill contract load skipped %s: %s", pkg_dir, e)
+
+
 def load_workspace_packages() -> list[PackageManifest]:
     found: list[PackageManifest] = []
     seen: set[str] = set()
@@ -110,6 +124,7 @@ def load_workspace_packages() -> list[PackageManifest]:
                             path=str(child),
                             virtual=False,
                         )
+                        _attach_contract(m, child)
                         if m.name not in seen:
                             seen.add(m.name)
                             found.append(m)
@@ -131,6 +146,7 @@ def load_workspace_packages() -> list[PackageManifest]:
                     sm = child / "SYSTEM.md"
                     if sm.is_file():
                         m.system_snippet = sm.read_text(encoding="utf-8", errors="replace")[:4000]
+                _attach_contract(m, child)
                 seen.add(m.name)
                 found.append(m)
         except Exception as e:
@@ -290,6 +306,14 @@ def package_to_list_item(p: PackageManifest, attached: bool = False) -> PackageL
 
 def package_to_detail(p: PackageManifest, attached: bool = False) -> PackageDetail:
     base = package_to_list_item(p, attached=attached)
+    missing: list[str] = []
+    if p.contract:
+        try:
+            from backend.skills.contract import SkillContract, check_requires
+
+            missing = check_requires(SkillContract.model_validate(p.contract))
+        except Exception:
+            missing = []
     return PackageDetail(
         **base.model_dump(),
         system_snippet=p.system_snippet or "",
@@ -297,11 +321,14 @@ def package_to_detail(p: PackageManifest, attached: bool = False) -> PackageDeta
         sub_agent_ids=list(p.sub_agent_ids or []),
         workflow_ids=list(p.workflow_ids or []),
         manifest=p.model_dump(),
+        contract=p.contract,
+        contract_errors=list(p.contract_errors or []),
+        missing_requires=missing,
     )
 
 
 async def resolve_attached_snippets(attached_names: list[str]) -> list[dict[str, str]]:
-    """返回会话已挂载包的 system snippets。"""
+    """返回会话已挂载包的 system snippets（含契约 workflow 渲染）。"""
     if not attached_names:
         return []
     pkgs = await list_all_packages()
@@ -312,7 +339,36 @@ async def resolve_attached_snippets(attached_names: list[str]) -> list[dict[str,
         if not p:
             continue
         snip = (p.system_snippet or "").strip()
+        # Skill 契约：workflow 步骤渲染进 snippet
+        if p.contract:
+            try:
+                from backend.skills.contract import SkillContract, render_workflow_block
+
+                wf = render_workflow_block(SkillContract.model_validate(p.contract))
+                if wf:
+                    snip = (snip + "\n\n" + wf).strip() if snip else wf
+            except Exception:
+                pass
         if not snip:
             continue
         out.append({"name": p.name, "icon": p.icon or "📦", "content": snip})
     return out
+
+
+async def resolve_attached_tool_whitelist(attached_names: list[str]) -> set[str] | None:
+    """已挂载包契约声明的 tools 白名单并集；无任何声明返回 None（不过滤）"""
+    if not attached_names:
+        return None
+    pkgs = await list_all_packages()
+    by_name = {p.name: p for p in pkgs}
+    union: set[str] = set()
+    declared = False
+    for name in attached_names:
+        p = by_name.get(name)
+        if not p or not p.contract:
+            continue
+        tools = p.contract.get("tools") if isinstance(p.contract, dict) else None
+        if isinstance(tools, list) and tools:
+            declared = True
+            union.update(str(t) for t in tools)
+    return union if declared else None

@@ -43,6 +43,10 @@ class PackageManifest(BaseModel):
     enabled_by_default: bool = False
     tags: list[str] = Field(default_factory=list)
 
+    # Skill 契约（Phase 1）：包目录 skill.yaml 解析结果（dict 形态，无契约=None）
+    contract: dict[str, Any] | None = None
+    contract_errors: list[str] = Field(default_factory=list)
+
     # 来源元数据（loader 填充）
     source: str = Field(default="workspace")  # workspace | skill | sub_agent | workflow
     path: str = Field(default="")
@@ -70,6 +74,10 @@ class PackageDetail(PackageListItem):
     sub_agent_ids: list[str] = Field(default_factory=list)
     workflow_ids: list[str] = Field(default_factory=list)
     manifest: dict[str, Any] = Field(default_factory=dict)
+    # Skill 契约透出（Phase 1）
+    contract: dict[str, Any] | None = None
+    contract_errors: list[str] = Field(default_factory=list)
+    missing_requires: list[str] = Field(default_factory=list)
 
 
 class SessionPackagesState(BaseModel):
