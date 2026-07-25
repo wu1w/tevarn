@@ -35,7 +35,6 @@ from backend.skills import SkillRegistry
 from backend.skills.dynamic import DynamicSkill
 from backend.core.config import settings
 from backend.agent.robust import (
-    is_continue_phrase,
     is_empty_assistant_content,
     is_transient_llm_error,
     tool_call_signature,
@@ -478,50 +477,22 @@ class NexusAgentLoop(AgentLoopBase):
             except Exception:
                 pass
 
-        # @device 远程执行（L1）：命中则短路，不进工具循环
-        if self.user_id and user_input and "@" in user_input:
-            try:
-                from backend.services.remote.dispatch import try_handle_at_device
+        # @device 远程执行（L1）：命中则短路，不进工具循环（phases/prologue）
+        from backend.agent.phases.prologue import (
+            expand_continue_phrase,
+            try_device_shortcut,
+        )
 
-                card = await try_handle_at_device(self.user_id, user_input)
-                if card is not None:
-                    try:
-                        await self._persist_user_input(session_id, user_input, attachments)
-                    except Exception as e:
-                        logger.warning("persist user input (@device) failed: %s", e)
-                    try:
-                        await self._persist_final_response(session_id, card)
-                    except Exception as e:
-                        logger.warning("persist final response (@device) failed: %s", e)
-                        # fallback plain save
-                        try:
-                            await self._save_message(session_id, "assistant", card)
-                        except Exception as e2:
-                            logger.error("fallback save assistant message failed: %s", e2)
-                    await self._push_status(session_id, "idle", "remote device command done")
-                    return card
-            except Exception as e:
-                logger.warning("@device dispatch failed: %s", e)
+        _device_card = await try_device_shortcut(self, session_id, user_input, attachments)
+        if _device_card is not None:
+            return _device_card
 
         import time as _time
         _max_dur = float(getattr(settings, "agent_max_duration_seconds", 0) or 0)
         _deadline = (_time.monotonic() + _max_dur) if _max_dur > 0 else None
 
-        # 「请继续」→ 自动接 Goal/checkpoint 续跑
-        if is_continue_phrase(user_input):
-            try:
-                from backend.agent.resume import build_resume_prompt
-                from backend.agent.goal_state import get_goal, load_goal_from_db
-
-                await load_goal_from_db(session_id)
-                rp = await build_resume_prompt(session_id)
-                if rp:
-                    user_input = rp
-                    if get_goal(session_id) is not None:
-                        mode = "goal"
-                    logger.info("Continue-phrase expanded to resume prompt for %s", session_id)
-            except Exception as e:
-                logger.warning("continue-phrase resume expand failed: %s", e)
+        # 「请继续」→ 自动接 Goal/checkpoint 续跑（phases/prologue）
+        user_input, mode = await expand_continue_phrase(session_id, user_input, mode)
 
         # 处理附件内容注入
         enriched_input = self._build_user_input_with_attachments(user_input, attachments or [])
@@ -766,106 +737,19 @@ class NexusAgentLoop(AgentLoopBase):
                     }
                 )
 
-        # 集群模式：注入所选子代理人物设定（协调者视角）
-        cluster_mode = mode == "cluster" or bool(sub_agent_ids)
-        sub_agents_info: list[dict] = []  # 存储子代理信息用于并行执行
-        
-        # 自动集群：默认关闭（agent_auto_cluster=false）；仅显式 cluster 模式或配置打开
-        auto_cluster = False
-        auto_cluster_enabled = bool(getattr(settings, "agent_auto_cluster", False))
-        if (
-            auto_cluster_enabled
-            and not cluster_mode
-            and mode == "default"
-        ):
-            complexity_score = await self._analyze_task_complexity(user_input)
-            if complexity_score >= 0.8:
-                auto_cluster = True
-                cluster_mode = True
-                logger.info(
-                    "Auto-cluster mode ACTIVATED: complexity=%.2f, task='%s'",
-                    complexity_score, user_input[:50]
-                )
-                sub_agents_info = await self._auto_create_sub_agents(user_input, complexity_score)
-                if not sub_agents_info:
-                    auto_cluster = False
-                    cluster_mode = False
-                    logger.info("Auto-cluster: no sub-agents created, fallback to single agent")
-        elif not cluster_mode and mode == "default":
-            logger.debug("Auto-cluster skipped (agent_auto_cluster=false)")
-        
-        if cluster_mode and (sub_agent_ids or auto_cluster):
-            try:
-                from backend.repositories.sub_agent_repo import AsyncSubAgentRepository
+        # 集群模式：注入所选子代理人物设定（协调者视角）/ 真·并行草稿扇出（phases/cluster_mode）
+        from backend.agent.phases.cluster_mode import prepare_cluster_mode
 
-                repo = AsyncSubAgentRepository()
-                roster_lines: list[str] = []
-                for aid in sub_agent_ids:
-                    try:
-                        agent_row = await repo.get_by_id(uuid.UUID(str(aid)))
-                    except Exception:
-                        agent_row = None
-                    if not agent_row or not getattr(agent_row, "enabled", True):
-                        continue
-                    prompt = (agent_row.system_prompt or "").strip()
-                    if len(prompt) > 1200:
-                        prompt = prompt[:1200] + "…"
-                    
-                    # 存储子代理信息
-                    sub_agents_info.append({
-                        "id": str(aid),
-                        "name": agent_row.name,
-                        "icon": agent_row.icon or "🤖",
-                        "description": agent_row.description or "",
-                        "model_ref": agent_row.model_ref,
-                        "system_prompt": prompt,
-                    })
-                    
-                    roster_lines.append(
-                        f"### {agent_row.icon or '🤖'} {agent_row.name}\n"
-                        f"- 任务名称: {agent_row.name}\n"
-                        f"- 职责: {agent_row.description or '（无）'}\n"
-                        f"- 模型: {agent_row.model_ref}\n"
-                        f"- 系统提示词:\n{prompt or '（未配置）'}"
-                    )
-                
-                # v0.2: 真·并行集群执行
-                if len(sub_agents_info) >= 2:
-                    logger.info(
-                        "Cluster mode: executing %s sub-agents in PARALLEL",
-                        len(sub_agents_info),
-                    )
-                    
-                    # 使用集群执行器并行执行
-                    cluster_result = await self._execute_cluster_parallel(
-                        user_input=user_input,
-                        sub_agents=sub_agents_info,
-                        session_id=session_id,
-                    )
-                    
-                    if cluster_result:
-                        return cluster_result
-                
-                # 兼容模式：单 LLM 协调者
-                if roster_lines:
-                    messages.append(
-                        {
-                            "role": "system",
-                            "content": (
-                                "【集群模式 Cluster Mode】你是集群协调者。用户已选择以下子代理参与本轮协作。\n"
-                                "请按子代理分工推进任务：综合各自专长给出统一、可执行的结果；"
-                                "需要时在回复中标明各子代理视角（如「审查员：…」「研究员：…」）。\n\n"
-                                + "\n\n".join(roster_lines)
-                            ),
-                        }
-                    )
-                    logger.info(
-                        "Cluster mode: injected %s sub-agents for session %s",
-                        len(roster_lines),
-                        session_id,
-                    )
-            except Exception as e:
-                logger.warning("cluster roster inject failed: %s", e)
+        _cluster_result = await prepare_cluster_mode(
+            self,
+            session_id=session_id,
+            user_input=user_input,
+            mode=mode,
+            sub_agent_ids=sub_agent_ids,
+            messages=messages,
+        )
+        if _cluster_result:
+            return _cluster_result
 
         # 6. 获取 LLM 服务（优先子代理覆盖快照 → 会话 LLM 快照 → 配置变更不影响本会话）
         llm_snapshot = getattr(self, "_llm_snapshot_override", None) or (
