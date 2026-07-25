@@ -1565,16 +1565,25 @@ class NexusAgentLoop:
                 except Exception as e:
                     logger.debug("use_tool_pack expand skipped: %s", e)
                 _tool_rounds += 1
-                # 重复工具签名熔断（同名同参连续空转）
+                # 重复工具/doom-loop 熔断（同名同参连续空转；Batch1 DoomLoopGuard）
                 try:
-                    _sigs = [
-                        tool_call_signature(
+                    _calls = [
+                        (
                             getattr(tc, "name", "") or "",
                             getattr(tc, "arguments", None),
                         )
                         for tc in tool_calls
                     ]
-                    if _tool_repeat_guard.observe(_sigs):
+                    _sigs = [
+                        tool_call_signature(n, a) for n, a in _calls
+                    ]
+                    _doom_on = bool(getattr(settings, "agent_doom_loop_enabled", True))
+                    _tripped = (
+                        _tool_repeat_guard.observe_calls(_calls)
+                        if _doom_on and hasattr(_tool_repeat_guard, "observe_calls")
+                        else _tool_repeat_guard.observe(_sigs)
+                    )
+                    if _tripped:
                         _turn_retry.note_and_decide(
                             RetryKind.THRASH, detail=",".join(_sigs)[:180]
                         )

@@ -280,8 +280,33 @@ class ContextManager:
         truncated = self._truncate_history(history)
         messages.extend(truncated)
 
-        # 当前用户输入
-        messages.append({"role": "user", "content": user_input})
+        # 当前用户输入（可选：本地图片路径 → 多模态 parts）
+        _user_content: Any = user_input
+        try:
+            from pathlib import Path as _Path
+
+            from backend.core.config import settings as _settings
+            from backend.agent.multimodal_parts import build_user_content
+
+            if bool(getattr(_settings, "agent_multimodal_images", True)) and isinstance(
+                user_input, str
+            ):
+                root_raw = (getattr(_settings, "file_browser_root", None) or "workspace").strip()
+                root = _Path(root_raw).expanduser()
+                if not root.is_absolute():
+                    root = (_Path.cwd() / root).resolve()
+                else:
+                    root = root.resolve()
+                _user_content = build_user_content(
+                    user_input,
+                    root,
+                    enabled=True,
+                    max_images=int(getattr(_settings, "agent_multimodal_max_images", 4) or 4),
+                )
+        except Exception as _mm_e:
+            logger.debug("multimodal user content skipped: %s", _mm_e)
+            _user_content = user_input
+        messages.append({"role": "user", "content": _user_content})
 
         total_tokens = self.estimate_tokens(messages)
         return messages, accessed_items, total_tokens

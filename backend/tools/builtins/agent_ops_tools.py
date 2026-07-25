@@ -531,7 +531,8 @@ class ApplyPatchTool(BaseTool):
             name="apply_patch",
             description=(
                 "对工作区文件做精确替换补丁。传 filepath + old_text + new_text；"
-                "或 patches 数组 [{filepath, old_text, new_text}, ...]。"
+                "或 patches 数组 [{filepath, old_text, new_text}, ...]；"
+                "或 filepath + unified_diff（unified diff 文本，可选 hunk_indices 只应用部分 hunk）。"
                 "old_text 必须在文件中唯一出现。"
             ),
             parameters={
@@ -540,6 +541,15 @@ class ApplyPatchTool(BaseTool):
                     "filepath": {"type": "string"},
                     "old_text": {"type": "string"},
                     "new_text": {"type": "string"},
+                    "unified_diff": {
+                        "type": "string",
+                        "description": "标准 unified diff；与 old_text/new_text 二选一",
+                    },
+                    "hunk_indices": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "仅应用这些 hunk 下标（默认全部）",
+                    },
                     "patches": {
                         "type": "array",
                         "items": {
@@ -559,11 +569,46 @@ class ApplyPatchTool(BaseTool):
         )
 
     async def execute(self, **kwargs: Any) -> Any:
+        from pathlib import Path
+
+        from backend.agent.hunks import apply_selected_hunks, parse_unified_hunks
         from backend.services.tools.executors import execute_edit
         from backend.tools.permissions import ToolPermissionManager
 
         mgr = ToolPermissionManager()
         base = {"base_path": mgr.workspace_root}
+
+        # unified diff path
+        udiff = kwargs.get("unified_diff")
+        if isinstance(udiff, str) and udiff.strip():
+            fp = (kwargs.get("filepath") or "").strip()
+            if not fp:
+                return "[Error] unified_diff requires filepath"
+            root = Path(str(mgr.workspace_root))
+            path = Path(fp)
+            if not path.is_absolute():
+                path = (root / path).resolve()
+            try:
+                path.relative_to(root.resolve())
+            except ValueError:
+                return f"[Error] path escapes workspace: {fp}"
+            if not path.is_file():
+                return f"[Error] file not found: {fp}"
+            original = path.read_text(encoding="utf-8", errors="replace")
+            hunks = parse_unified_hunks(udiff)
+            if not hunks:
+                return "[Error] no hunks parsed from unified_diff"
+            indices = kwargs.get("hunk_indices")
+            if not isinstance(indices, list) or not indices:
+                indices = list(range(len(hunks)))
+            indices = [int(i) for i in indices]
+            new_text, errs = apply_selected_hunks(original, hunks, indices)
+            path.write_text(new_text, encoding="utf-8")
+            msg = f"OK applied {len(indices)}/{len(hunks)} hunks → {fp}"
+            if errs:
+                msg += "\n" + "\n".join(errs)
+            return msg
+
         patches = kwargs.get("patches")
         if not patches:
             patches = [
@@ -574,7 +619,7 @@ class ApplyPatchTool(BaseTool):
                 }
             ]
         if not isinstance(patches, list) or not patches:
-            return "[Error] provide filepath/old_text/new_text or patches[]"
+            return "[Error] provide filepath/old_text/new_text or patches[] or unified_diff"
 
         results = []
         for i, p in enumerate(patches):

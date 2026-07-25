@@ -152,12 +152,17 @@ def classify_tool_result_error(result: str | None) -> str | None:
 
 
 class ToolRepeatGuard:
-    """连续相同工具签名熔断，防止空转。"""
+    """连续相同工具签名熔断，防止空转。
+
+    Batch1：内部委托 DoomLoopGuard（code 移植），API 保持 observe(signatures)。
+    loop 侧也可直接使用 DoomLoopGuard.record(name, args) 获得更好的参数归一。
+    """
 
     def __init__(self, max_repeat: int = 3) -> None:
+        from backend.agent.doom_loop import DoomLoopGuard
+
         self.max_repeat = max(2, int(max_repeat or 3))
-        self._last_sig: str | None = None
-        self._streak: int = 0
+        self._doom = DoomLoopGuard(threshold=self.max_repeat)
         self.tripped: bool = False
 
     def observe(self, signatures: list[str]) -> bool:
@@ -168,19 +173,30 @@ class ToolRepeatGuard:
         for sig in signatures:
             if not sig:
                 continue
-            if sig == self._last_sig:
-                self._streak += 1
-            else:
-                self._last_sig = sig
-                self._streak = 1
-            if self._streak >= self.max_repeat:
+            # signatures 已是 name|hash；整段作 name，args 空 dict
+            if self._doom.record(sig, {}):
+                self.tripped = True
+                tripped_now = True
+                break
+        return tripped_now
+
+    def observe_calls(self, calls: list[tuple[str, object]]) -> bool:
+        """按 (name, arguments) 记录，参数归一更好。"""
+        if self.tripped:
+            return False
+        tripped_now = False
+        for name, args in calls:
+            if self._doom.record(name or "", args):
                 self.tripped = True
                 tripped_now = True
                 break
         return tripped_now
 
     def reset(self) -> None:
-        self._last_sig = None
-        self._streak = 0
+        self._doom.reset_turn()
         self.tripped = False
+
+    @property
+    def streak(self) -> int:
+        return int(self._doom.streak)
 
