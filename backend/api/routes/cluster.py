@@ -153,6 +153,7 @@ async def execute_cluster(request: ClusterExecuteRequest):
             "sub_tasks": [st.to_dict() for st in result.sub_tasks],
             "aggregated_result": result.aggregated_result,
             "error": result.error,
+            "review": result.metadata.get("review"),
         }
         
     except Exception as e:
@@ -252,6 +253,7 @@ async def execute_plan(plan: ClusterPlan):
             "sub_tasks": [st.to_dict() for st in result.sub_tasks],
             "aggregated_result": result.aggregated_result,
             "error": result.error,
+            "review": result.metadata.get("review"),
         }
         
     except Exception as e:
