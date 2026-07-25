@@ -2621,7 +2621,14 @@ class NexusAgentLoop(AgentLoopBase):
     async def _push_status(
         self, session_id: uuid.UUID, state: str, detail: str
     ) -> None:
-        """推送状态更新到前端；同步 mirror 到 progress_sink（通道思考流）"""
+        """推送状态：优先 EventSinkPort，回落 ws_manager。"""
+        sink = getattr(self, "event_sink", None)
+        if sink is not None:
+            try:
+                await sink.push_status(session_id, state, detail or "")
+                return
+            except Exception as e:
+                logger.debug("event_sink.push_status failed: %s", e)
         if self.ws_manager:
             await self.ws_manager.broadcast(
                 session_id,
@@ -2631,7 +2638,6 @@ class NexusAgentLoop(AgentLoopBase):
                     detail=detail,
                 ).model_dump(mode="json"),
             )
-        # 社交通道只推「真实思考内容」，不推「第 N 轮思考中」这类硬编码状态
         if state == "error" and detail:
             await self._emit_progress("error", detail)
 
@@ -2641,7 +2647,20 @@ class NexusAgentLoop(AgentLoopBase):
         message_id: uuid.UUID,
         delta: str,
     ) -> None:
-        """推送流式文本到前端"""
+        """推送流式文本：优先 EventSinkPort，回落 ws_manager。"""
+        sink = getattr(self, "event_sink", None)
+        if sink is not None:
+            try:
+                # 兼容 message_id 关键字或位置
+                try:
+                    await sink.push_stream_delta(
+                        session_id, delta, message_id=message_id
+                    )
+                except TypeError:
+                    await sink.push_stream_delta(session_id, delta)
+                return
+            except Exception as e:
+                logger.debug("event_sink.push_stream_delta failed: %s", e)
         if self.ws_manager:
             await self.ws_manager.broadcast(
                 session_id,

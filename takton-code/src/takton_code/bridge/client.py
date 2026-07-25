@@ -40,6 +40,11 @@ class NullBridge:
     async def chat(self, req: ChatRequest) -> dict[str, Any]:
         raise BridgeError("bridge disabled")
 
+    async def agent_turn(self, req: Any) -> Any:
+        from takton_code.bridge.protocol import AgentTurnResult
+
+        return AgentTurnResult(ok=False, error="bridge disabled")
+
     async def list_skills(self) -> list[SkillInfo]:
         return []
 
@@ -126,6 +131,29 @@ class TaktonBridge:
         r = await c.post("/bridge/v1/chat/completions", json=req.model_dump(exclude_none=True))
         r.raise_for_status()
         return r.json()
+
+    async def agent_turn(self, req: Any) -> Any:
+        """Full Desktop agent loop turn (NexusAgentLoop)."""
+        from takton_code.bridge.protocol import AgentTurnRequest, AgentTurnResult
+
+        if not isinstance(req, AgentTurnRequest):
+            if isinstance(req, dict):
+                req = AgentTurnRequest.model_validate(req)
+            else:
+                req = AgentTurnRequest(message=str(req))
+        c = await self._get_client()
+        # agent turns can be long
+        r = await c.post(
+            "/bridge/v1/agent/turn",
+            json=req.model_dump(exclude_none=True),
+            timeout=max(self.config.timeout_sec, 600.0),
+        )
+        if r.status_code >= 400:
+            return AgentTurnResult(
+                ok=False,
+                error=f"HTTP {r.status_code}: {r.text[:800]}",
+            )
+        return AgentTurnResult.model_validate(r.json())
 
     async def list_skills(self) -> list[SkillInfo]:
         c = await self._get_client()

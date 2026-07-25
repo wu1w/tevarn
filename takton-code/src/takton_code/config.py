@@ -96,6 +96,9 @@ class BridgeSettings(BaseModel):
     use_desktop_tools: bool = True
     use_desktop_mcp: bool = True
     use_desktop_rag: bool = True
+    # When True and bridge healthy: TUI run_turn uses POST /bridge/v1/agent/turn
+    # (Desktop NexusAgentLoop) instead of local AgentRuntime tool loop.
+    use_desktop_agent_loop: bool = True
     timeout_sec: float = 60.0
 
 

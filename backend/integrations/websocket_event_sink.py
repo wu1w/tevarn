@@ -1,7 +1,12 @@
-"""EventSinkPort wrapping ws_manager + optional progress_sink."""
+"""EventSinkPort wrapping ws_manager + optional progress_sink.
+
+Matches NexusAgentLoop._push_status / _push_stream broadcast shape:
+  ws_manager.broadcast(session_id: UUID, message: dict)
+"""
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Any
 from uuid import UUID
 
@@ -14,32 +19,49 @@ class WebSocketEventSink:
         self.progress_sink = progress_sink
 
     async def push_status(self, session_id: UUID, state: str, detail: str = "") -> None:
-        if not self.ws_manager:
-            return
-        try:
-            from backend.schemas.ws import StatusUpdate
-
-            msg = StatusUpdate(session_id=str(session_id), state=state, detail=detail or "")
-            await self.ws_manager.broadcast(str(session_id), msg)
-        except Exception as e:
-            logger.debug("EventSink push_status skipped: %s", e)
-        if self.progress_sink and detail:
+        if self.ws_manager:
             try:
-                res = self.progress_sink("status", detail)
+                from backend.schemas.ws import StatusUpdate
+
+                payload = StatusUpdate(
+                    session_id=session_id,
+                    state=state,
+                    detail=detail or None,
+                ).model_dump(mode="json")
+                await self.ws_manager.broadcast(session_id, payload)
+            except Exception as e:
+                logger.debug("EventSink push_status skipped: %s", e)
+        # 社交通道：仅 error 细节
+        if self.progress_sink and state == "error" and detail:
+            try:
+                res = self.progress_sink("error", detail)
                 if hasattr(res, "__await__"):
                     await res
             except Exception:
                 pass
 
     async def push_stream_delta(
-        self, session_id: UUID, delta: str, *, done: bool = False
+        self,
+        session_id: UUID,
+        delta: str,
+        *,
+        done: bool = False,
+        message_id: UUID | None = None,
     ) -> None:
         if not self.ws_manager:
             return
         try:
             from backend.schemas.ws import StreamDelta
 
-            msg = StreamDelta(session_id=str(session_id), delta=delta, done=done)
-            await self.ws_manager.broadcast(str(session_id), msg)
+            mid = message_id or uuid.uuid4()
+            payload = StreamDelta(
+                session_id=session_id,
+                message_id=mid,
+                content=delta or "",
+            ).model_dump(mode="json")
+            # done 标记：schema 无字段时塞入扩展（前端可忽略）
+            if done:
+                payload["done"] = True
+            await self.ws_manager.broadcast(session_id, payload)
         except Exception as e:
             logger.debug("EventSink push_stream_delta skipped: %s", e)

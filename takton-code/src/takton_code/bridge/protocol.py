@@ -148,6 +148,7 @@ BRIDGE_ROUTES = {
     "health": "GET /bridge/v1/health",
     "list_models": "GET /bridge/v1/models",
     "chat": "POST /bridge/v1/chat/completions",
+    "agent_turn": "POST /bridge/v1/agent/turn",
     "list_skills": "GET /bridge/v1/skills",
     "list_tools": "GET /bridge/v1/tools",
     "invoke_tool": "POST /bridge/v1/tools/invoke",
@@ -160,11 +161,28 @@ BRIDGE_ROUTES = {
 }
 
 
+class AgentTurnRequest(BaseModel):
+    message: str
+    session_id: str | None = None
+    mode: str = "build"
+    project_root: str | None = None
+    title: str | None = None
+
+
+class AgentTurnResult(BaseModel):
+    ok: bool = True
+    session_id: str | None = None
+    mode: str | None = None
+    final_text: str = ""
+    error: str | None = None
+
+
 @runtime_checkable
 class BridgeClientProtocol(Protocol):
     async def health(self) -> dict[str, Any]: ...
     async def list_models(self) -> list[ModelInfo]: ...
     async def chat(self, req: ChatRequest) -> dict[str, Any]: ...
+    async def agent_turn(self, req: AgentTurnRequest) -> AgentTurnResult: ...
     async def list_skills(self) -> list[SkillInfo]: ...
     async def list_tools(self) -> list[ToolInfo]: ...
     async def invoke_tool(self, req: ToolInvokeRequest) -> ToolInvokeResult: ...

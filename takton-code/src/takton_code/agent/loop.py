@@ -116,6 +116,9 @@ class AgentRuntime:
     permission_broker: PermissionBroker | None = None
     file_history: FileHistory | None = None
     headless: bool = False  # when True, ask → deny unless always profile
+    # Desktop full agent loop via /bridge/v1/agent/turn (set in setup from settings)
+    use_bridge_agent_loop: bool = False
+    bridge_session_id: str | None = None  # UUID on Desktop side
     autoloop_enabled: bool = False
     autoloop_max_fix: int = 3
     _last_rewind: dict[str, Any] | None = None
@@ -197,6 +200,13 @@ class AgentRuntime:
         self.file_history = FileHistory(self.store, self.project.root)
         enable_sub = bool(getattr(self.settings_agent, "enable_subagents", True))
         self.autoloop_enabled = bool(getattr(self.settings_agent, "autoloop", False))
+        # bridge full loop (default on when bridge enabled; override via settings_agent.use_desktop_agent_loop)
+        try:
+            br_on = bool(self.bridge and getattr(self.bridge, "enabled", False))
+            use_loop = bool(getattr(self.settings_agent, "use_desktop_agent_loop", True))
+            self.use_bridge_agent_loop = br_on and use_loop
+        except Exception:
+            self.use_bridge_agent_loop = bool(self.bridge and getattr(self.bridge, "enabled", False))
         self.autoloop_max_fix = int(getattr(self.settings_agent, "autoloop_max_fix", 3) or 3)
         profile = str(getattr(self.settings_agent, "permission_profile", "cautious") or "cautious")
         if self.mode == "always":
@@ -621,6 +631,83 @@ class AgentRuntime:
             )
             return await _once()
 
+    def _bridge_loop_enabled_flag(self) -> bool:
+        if not (self.bridge and getattr(self.bridge, "enabled", False)):
+            return False
+        for obj in (self.settings_agent, getattr(self, "settings_llm", None)):
+            if obj is None:
+                continue
+            if hasattr(obj, "use_desktop_agent_loop"):
+                return bool(getattr(obj, "use_desktop_agent_loop"))
+            br = getattr(obj, "bridge", None)
+            if br is not None and hasattr(br, "use_desktop_agent_loop"):
+                return bool(br.use_desktop_agent_loop)
+        return bool(getattr(self, "use_bridge_agent_loop", False))
+
+    async def _should_use_bridge_agent_loop(self, text: str) -> bool:
+        if not self._bridge_loop_enabled_flag():
+            return False
+        if not text or text.startswith("/"):
+            return False
+        try:
+            h = await self.bridge.health()
+            return bool(h.get("ok"))
+        except Exception:
+            return False
+
+    async def _run_turn_via_bridge(
+        self, user_text: str, *, force_mode: str | None = None
+    ) -> TurnResult:
+        """Delegate one turn to Desktop NexusAgentLoop via bridge."""
+        from takton_code.bridge.protocol import AgentTurnRequest
+
+        mode = force_mode or self.mode or "build"
+        self.emit("bridge_agent_turn", mode=mode, session_id=self.bridge_session_id)
+        turn_id = f"turn_{uuid.uuid4().hex[:12]}"
+        await self._emit_part(part_step_start(0), turn_id=turn_id)
+
+        req = AgentTurnRequest(
+            message=user_text,
+            session_id=self.bridge_session_id,
+            mode=mode,
+            project_root=str(self.project.root) if self.project else None,
+            title="takton-code",
+        )
+        res = await self.bridge.agent_turn(req)
+        if getattr(res, "session_id", None):
+            self.bridge_session_id = res.session_id
+
+        final = (getattr(res, "final_text", None) or "") if res else ""
+        err = getattr(res, "error", None) if res else "no response"
+        ok = bool(getattr(res, "ok", False)) and not err
+
+        if final:
+            await self._emit_part(part_text(final, role_hint="assistant"), turn_id=turn_id)
+            self.messages.append({"role": "user", "content": user_text})
+            self.messages.append({"role": "assistant", "content": final})
+            if self.session_id:
+                try:
+                    await self.store.append_message(self.session_id, "user", user_text)
+                    await self.store.append_message(self.session_id, "assistant", final)
+                except Exception:
+                    pass
+
+        await self._emit_part(part_step_finish(0, reason="bridge"), turn_id=turn_id)
+        self.emit(
+            "bridge_agent_done",
+            ok=ok,
+            session_id=self.bridge_session_id,
+            error=err,
+        )
+        return TurnResult(
+            ok=ok,
+            final_text=final,
+            mode=mode,
+            error=None if ok else (err or "bridge agent turn failed"),
+            turn_id=turn_id,
+            parts=list(self.turn_parts),
+        )
+
     async def run_turn(self, user_text: str, *, force_mode: str | None = None) -> TurnResult:
         async with self._lock:
             return await self._run_turn_unlocked(user_text, force_mode=force_mode)
@@ -641,6 +728,16 @@ class AgentRuntime:
             if handled is not None:
                 self._running = False
                 return handled
+
+        # Desktop bridge agent loop (TUI → NexusAgentLoop)
+        if await self._should_use_bridge_agent_loop(text):
+            try:
+                result = await self._run_turn_via_bridge(text, force_mode=force_mode)
+                self._running = False
+                return result
+            except Exception as e:  # noqa: BLE001
+                self.emit("bridge_agent_fallback", error=str(e)[:300])
+                # fall through to local loop
 
         if force_mode:
             await self.set_mode(force_mode)

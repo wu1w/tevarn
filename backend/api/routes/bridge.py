@@ -118,7 +118,7 @@ async def bridge_health(
         "version": getattr(settings, "version", None) or "0.2.8",
         "product": "takton",
         "user": str(current_user.id),
-        "capabilities": ["models", "skills", "tools", "mcp", "rag", "sessions", "settings"],
+        "capabilities": ["models", "skills", "tools", "mcp", "rag", "sessions", "settings", "agent_turn"],
         "llm_provider": getattr(settings, "llm_provider", None),
         "llm_model": getattr(settings, "llm_model", None),
     }
@@ -607,6 +607,130 @@ async def bridge_settings(
         "single_user_mode": getattr(settings, "single_user_mode", None),
         "user_id": str(current_user.id),
     }
+
+
+# ---------------------------------------------------------------------------
+# Agent turn — full NexusAgentLoop for Takton Code TUI (bridge loop mode)
+# ---------------------------------------------------------------------------
+
+
+class AgentTurnIn(BaseModel):
+    message: str
+    session_id: str | None = None
+    mode: str = "default"  # default|plan|search|goal|...
+    project_root: str | None = None
+    title: str | None = None
+
+
+@router.post("/agent/turn")
+async def bridge_agent_turn(
+    body: AgentTurnIn,
+    current_user: UserRead = Depends(bridge_auth),
+) -> dict[str, Any]:
+    """Run one user turn on Desktop NexusAgentLoop (tools + permissions + history)."""
+    from backend.agent import NexusAgentLoop
+    from backend.repositories.message_repo import AsyncMessageRepository
+    from backend.repositories.session_repo import AsyncSessionRepository
+    from backend.repositories.task_repo import AsyncTaskRepository
+    from backend.repositories.context_repo import AsyncCtxItemRepository, AsyncContextFlowRepository
+    from backend.repositories.notification_repo import AsyncNotificationRepository
+
+    text = (body.message or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="empty message")
+
+    # optional workspace bind for tools
+    if body.project_root:
+        try:
+            import os
+            from pathlib import Path
+
+            root = Path(body.project_root).expanduser().resolve()
+            if root.is_dir():
+                os.environ["TAKTON_WORKSPACE_ROOT"] = str(root)
+                # also settings if present
+                try:
+                    settings.file_browser_root = str(root)  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+        except Exception as e:  # noqa: BLE001
+            logger.debug("bridge agent turn workspace bind skip: %s", e)
+
+    session_repo = AsyncSessionRepository()
+    message_repo = AsyncMessageRepository()
+    task_repo = AsyncTaskRepository()
+    ctx_item_repo = AsyncCtxItemRepository()
+    context_flow_repo = AsyncContextFlowRepository()
+    notification_repo = AsyncNotificationRepository()
+
+    sid: uuid.UUID
+    if body.session_id:
+        try:
+            sid = uuid.UUID(str(body.session_id))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail="session_id must be UUID") from e
+        sess = await session_repo.get_by_id(sid)
+        if sess is None:
+            await session_repo.create(
+                {
+                    "id": sid,
+                    "user_id": current_user.id,
+                    "config": {"source": "takton-code-bridge", "title": body.title or "code"},
+                }
+            )
+    else:
+        created = await session_repo.create(
+            {
+                "user_id": current_user.id,
+                "config": {"source": "takton-code-bridge", "title": body.title or "code"},
+            }
+        )
+        sid = created.id if hasattr(created, "id") else uuid.UUID(str(created["id"]))
+
+    mode = (body.mode or "default").strip().lower()
+    # map code modes
+    mode_map = {
+        "build": "default",
+        "always": "default",
+        "plan": "plan",
+        "ask": "plan",
+        "explore": "plan",
+        "default": "default",
+        "search": "search",
+        "goal": "goal",
+        "deepthink": "deepthink",
+    }
+    mode = mode_map.get(mode, mode if mode in mode_map.values() else "default")
+
+    agent = NexusAgentLoop(
+        session_repo=session_repo,
+        message_repo=message_repo,
+        task_repo=task_repo,
+        ctx_item_repo=ctx_item_repo,
+        context_flow_repo=context_flow_repo,
+        ws_manager=None,  # headless for code bridge
+        agent_name="Takton",
+        user_id=current_user.id,
+        notification_repo=notification_repo,
+    )
+    try:
+        final = await agent.run(sid, text, attachments=None, mode=mode, sub_agent_ids=None)
+        return {
+            "ok": True,
+            "session_id": str(sid),
+            "mode": mode,
+            "final_text": final or "",
+            "error": None,
+        }
+    except Exception as e:  # noqa: BLE001
+        logger.exception("bridge agent turn failed")
+        return {
+            "ok": False,
+            "session_id": str(sid),
+            "mode": mode,
+            "final_text": "",
+            "error": str(e)[:2000],
+        }
 
 
 # ---------------------------------------------------------------------------

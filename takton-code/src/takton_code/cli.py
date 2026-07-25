@@ -179,6 +179,17 @@ async def _open_runtime(
         stream=bool(getattr(settings.agent, "stream", True)),
         headless=headless,
     )
+    # expose bridge.use_desktop_agent_loop onto agent settings for setup()
+    try:
+        object.__setattr__(
+            settings.agent,
+            "use_desktop_agent_loop",
+            bool(getattr(settings.bridge, "use_desktop_agent_loop", True)),
+        )
+    except Exception:
+        settings.agent.use_desktop_agent_loop = bool(  # type: ignore[attr-defined]
+            getattr(settings.bridge, "use_desktop_agent_loop", True)
+        )
     await rt.setup(session_id=session_id)
     if rt.session_id and project.is_worktree:
         await store.bind_worktree(
