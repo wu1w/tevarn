@@ -44,6 +44,7 @@ def test_normalize_tool_result():
     long = "a" * 50_000
     out = normalize_tool_result(long, max_chars=1000, tool_name="t")
     assert len(out) < 1200
-    assert "截断" in out
+    # 截断标记统一为英文 omitted（tool_result_contract.truncate_for_llm 现行口径）
+    assert "chars omitted" in out
     assert is_tool_error("[Error] boom")
     assert not is_tool_error("ok")

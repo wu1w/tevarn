@@ -45,9 +45,28 @@ def _tool_args(tc: Any) -> dict[str, Any]:
     return args if isinstance(args, dict) else {}
 
 
+# 构建/测试/安装类实质动作不算犹豫窥探（072a783 口径；
+# aaffa3c 委托 classify_command 后 pytest 被误判 timid，恢复排除）
+_NOT_TIMID_CMDS = frozenset(
+    {
+        "pytest", "py.test", "npm", "pnpm", "yarn", "pip", "pip3", "uv",
+        "cargo", "make", "docker", "docker-compose", "go", "mvn", "gradle",
+    }
+)
+
+
 def is_timid_shell_command(command: str) -> bool:
     """True if command is read-only peek (cat/ls/head/git status/...)."""
-    return classify_command(command) == "read"
+    c = (command or "").strip()
+    if not c:
+        return False
+    first = c.split()[0].split("/")[-1]
+    if first in _NOT_TIMID_CMDS:
+        return False
+    # 多步串行（&&/;/换行）说明在干活，不算犹豫单读
+    if any(x in c for x in ("\n", "&&", ";")):
+        return False
+    return classify_command(c) == "read"
 
 
 _WRITEISH = frozenset({"file_write", "edit", "apply_patch"})

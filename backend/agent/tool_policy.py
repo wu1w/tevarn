@@ -524,27 +524,25 @@ def compact_capability_brief(
     *,
     scene: ScenePlan | None = None,
 ) -> str:
-    """短 brief + 可选场景说明。"""
+    """短 brief + 可选场景说明（compact 契约：总长 <600 字符）。"""
     n = len(tool_names) if tool_names is not None else "all"
     lines = [
-        "Tool discipline: use the provided tools for facts, files, shell, and live data. "
-        f"Available tool count this turn: {n}. "
-        "Do not claim a capability is missing without trying the matching tool first.",
+        "Tool discipline: use tools for facts/files/shell/live data "
+        f"(this turn: {n}). Never claim a missing capability before trying the matching tool.",
     ]
     if scene and scene.profile != "full":
         lines.append(
-            f"Profile/scene: {scene.summary()}. "
-            "If you need desktop/manage/evolution/office tools not listed, "
-            "call use_tool_pack(action='enable', packs=[...]) first "
-            "(action='list' to see packs)."
+            f"Profile/scene: {scene.summary()[:60]}. Need unlisted packs? "
+            "call use_tool_pack(action='enable', packs=[...]) ('list' to see)."
         )
     lines.append(
-        "Skill discipline: if an installed skill index matches the task, "
-        "you MUST follow/load that skill guidance before improvising workflows."
+        "Skill discipline: an installed skill matching the task MUST be followed/loaded before improvising."
     )
-    lines.append("Default cwd/workspace_root comes from session config (workspace_root|file_browser_root|cwd) or TAKTON_FILE_BROWSER_ROOT/TAKTON_TASK_ROOT. Pass command.cwd for subdirs. ""Prefer file_write/edit for multi-line files over cat/heredoc shells.")
-    lines.append("Minimize tool rounds: batch independent file_read/grep in one turn.")
-    lines.append("Prefer tools over speculation; finish the user task.")
+    lines.append(
+        "cwd: session workspace_root (else TAKTON_TASK_ROOT); pass command.cwd for subdirs. "
+        "Prefer file_write/edit over heredoc; batch independent reads."
+    )
+    lines.append("Prefer tools over speculation; finish the task.")
     return "\n".join(lines)
 
 
