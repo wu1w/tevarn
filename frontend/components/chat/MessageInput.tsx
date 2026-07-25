@@ -16,6 +16,7 @@ import { ClusterModePanel } from '@/components/subagent/SubAgentPanel';
 import { subAgentApi } from '@/lib/subagent-api';
 import { useT } from '@/stores/localeStore';
 import { useToastStore } from '@/stores/toastStore';
+import { APP_VERSION } from '@/lib/appVersion';
 import type { SubAgent } from '@/types/subagent';
 import type { Device } from '@/types';
 
@@ -178,7 +179,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       try {
         textareaRef.current?.focus({ preventScroll: true });
       } catch {
-        textareaRef.current?.focus();
+        textareaRef.current?.focus({ preventScroll: true });
       }
     }, 0);
   };
@@ -189,7 +190,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     try {
       el.focus({ preventScroll: true });
     } catch {
-      el.focus();
+      el.focus({ preventScroll: true });
     }
   }, []);
 
@@ -499,7 +500,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
 
   return (
     <div
-      className={`chat-composer relative z-30 flex-shrink-0 border-t border-border-subtle bg-card-bg p-4 ${
+      className={`chat-composer relative z-30 flex-shrink-0 border-t border-border-subtle bg-[var(--glass-bg,var(--card-bg))] backdrop-blur-xl ${
         composerDragging ? 'ring-2 ring-inset ring-brand-purple/40' : ''
       }`}
       data-testid="chat-composer"
@@ -509,6 +510,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       onDragOver={onDragOver}
       onDrop={onDropLocal}
     >
+      <div className="px-4 pt-3 pb-2">
       {composerDragging && (
         <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-brand-purple/5 backdrop-blur-[1px]">
           <p className="rounded-full border border-brand-purple/30 bg-card-bg px-4 py-2 text-xs font-medium text-brand-purple">
@@ -584,11 +586,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
         </div>
       )}
 
-      <div className="mb-3 flex flex-wrap items-center gap-1.5" data-no-composer-focus>
-        {showModelPicker && (
-          <ModelPicker disabled={inputLocked} onChanged={onModelChanged} sessionId={sessionId} />
-        )}
-        <span className="mx-0.5 hidden h-4 w-px bg-border-subtle sm:inline-block" aria-hidden />
+      <div className="mb-2 flex flex-wrap items-center gap-1.5" data-no-composer-focus>
         {(['utility', 'think', 'action'] as const).map((group, gi) => (
           <React.Fragment key={group}>
             {gi > 0 && (
@@ -672,7 +670,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
             readOnly={inputLocked}
             rows={2}
             data-testid="chat-composer-textarea"
-            className="chat-surface chat-composer-textarea block w-full max-w-full resize-none rounded-2xl border border-border-subtle bg-input-bg px-4 py-3 text-foreground placeholder:text-input-placeholder focus:border-brand-purple/40 focus:outline-none focus:ring-1 focus:ring-brand-purple/20 transition-all"
+            className="chat-surface chat-composer-textarea block w-full max-w-full resize-none rounded-2xl border border-border-subtle bg-input-bg px-4 py-3 text-foreground placeholder:text-input-placeholder focus:border-brand-purple/40 focus:outline-none focus:ring-1 focus:ring-brand-cyan/25 transition-all"
             style={{
               minHeight: '52px',
               maxHeight: '200px',
@@ -725,7 +723,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
           className={`inline-flex flex-shrink-0 items-center gap-2 rounded-2xl px-5 py-3 text-[0.8125rem] font-semibold tracking-tight text-white shadow-lg transition-all hover:opacity-90 disabled:opacity-30 ${
             isStreaming
               ? 'bg-gradient-to-r from-rose-500 to-orange-500 shadow-rose-500/20'
-              : 'bg-gradient-to-r from-brand-purple to-brand-cyan shadow-brand-purple/15'
+              : 'bg-gradient-to-r from-brand-purple to-brand-cyan shadow-brand-cyan/20'
           }`}
         >
           <span>{isStreaming ? t('chat.stopGenerating') : t('chat.sendBtn')}</span>
@@ -734,6 +732,26 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
             <span className="inline-block h-3.5 w-3.5 rounded-sm bg-white/95" aria-hidden />
           )}
         </button>
+      </div>
+      </div>
+
+      {/* 底栏：模型选择 + 版本号（贴底，对齐小汐 status-bar） */}
+      <div
+        className="flex h-8 flex-shrink-0 items-center gap-2 border-t border-[var(--glass-border,var(--border-subtle))] bg-[color-mix(in_srgb,var(--page-bg)_55%,transparent)] px-3 backdrop-blur-md"
+        data-no-composer-focus
+      >
+        {showModelPicker ? (
+          <ModelPicker disabled={inputLocked} onChanged={onModelChanged} sessionId={sessionId} />
+        ) : (
+          <span className="text-[11px] text-foreground-dim">Takton</span>
+        )}
+        <span className="hidden text-[10px] text-foreground-dim sm:inline">Enter 发送</span>
+        <span className="hidden h-2.5 w-px bg-[var(--glass-border,var(--border-subtle))] sm:inline-block" aria-hidden />
+        <span className="hidden text-[10px] text-foreground-dim sm:inline">Shift+Enter 换行</span>
+        <span className="flex-1" />
+        <span className="font-mono text-[10px] tabular-nums text-foreground-dim">
+          Takton v{APP_VERSION}
+        </span>
       </div>
 
       <input

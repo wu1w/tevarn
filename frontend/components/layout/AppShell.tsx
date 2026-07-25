@@ -22,6 +22,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const isLoginPage = pathname === '/login' || pathname === '/login/';
+  const isChatHome = pathname === '/' || pathname === '' || pathname === null;
 
   const [backendReady, setBackendReady] = useState(false);
   const [startupStage, setStartupStage] = useState(t('layout._e108'));
@@ -134,6 +135,41 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     window.location.reload();
   }, []);
 
+  // chat 主区禁止被焦点 scrollIntoView 顶开（否则 composer 离底边有空隙）
+  useEffect(() => {
+    if (!isChatHome) return;
+    const stop = (e: Event) => {
+      const t = e.target;
+      if (!(t instanceof Element)) return;
+      // 允许消息列表内部滚动
+      if (t.closest('.chat-messages-pane, [data-radix-scroll-area-viewport], .overflow-y-auto')) {
+        return;
+      }
+      const scrollables = document.querySelectorAll('main.tk-main, .tk-app-body, .chat-page-root, main.tk-main > div');
+      scrollables.forEach((el) => {
+        if (el instanceof HTMLElement) {
+          el.scrollTop = 0;
+          el.scrollLeft = 0;
+        }
+      });
+    };
+    const pin = () => {
+      document.querySelectorAll('main.tk-main, .tk-app-body, .chat-page-root, main.tk-main > div').forEach((el) => {
+        if (el instanceof HTMLElement && el.scrollTop) el.scrollTop = 0;
+      });
+    };
+    pin();
+    const raf = window.setInterval(pin, 50);
+    window.addEventListener('scroll', stop, true);
+    // 焦点引起的 scrollIntoView
+    document.addEventListener('focusin', pin, true);
+    return () => {
+      window.clearInterval(raf);
+      window.removeEventListener('scroll', stop, true);
+      document.removeEventListener('focusin', pin, true);
+    };
+  }, [isChatHome, pathname]);
+
   if (!hasHydrated) {
     return (
       <div className="flex h-screen items-center justify-center bg-page-bg app-ambient">
@@ -178,7 +214,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           onReconnect={handleReconnect}
         />
 
-        <div className={`tk-app-body ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
+        <div className={`tk-app-body min-h-0 flex-1 ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
           <IconRail onToggleSidebar={toggleSidebar} sidebarOpen={sidebarOpen} />
           <div className="tk-sidebar" aria-hidden={!sidebarOpen}>
             <div className="tk-sidebar-inner">
@@ -186,8 +222,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </div>
           </div>
           <main className="tk-main main-workbench relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden">
-              <PageTransition>{children}</PageTransition>
+            <div
+              className={`flex min-h-0 flex-1 flex-col self-stretch overflow-x-hidden ${
+                isChatHome ? 'h-full min-h-0 overflow-hidden' : 'overflow-y-auto'
+              }`}
+            >
+              <PageTransition fill={isChatHome}>{children}</PageTransition>
             </div>
           </main>
         </div>

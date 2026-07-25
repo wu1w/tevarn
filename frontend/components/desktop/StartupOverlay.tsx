@@ -34,7 +34,7 @@ export function StartupOverlay({ backendReady, stage }: StartupOverlayProps) {
 
   return (
     <div
-      className={`fixed inset-0 z-[9999] flex items-center justify-center bg-page-bg transition-opacity duration-500 ${
+      className={`startup-overlay fixed inset-0 z-[9999] flex items-center justify-center bg-page-bg transition-opacity duration-500 ${
         fading ? 'opacity-0 pointer-events-none' : 'opacity-100'
       }`}
     >

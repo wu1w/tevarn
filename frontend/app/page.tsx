@@ -638,7 +638,7 @@ export default function HomePage() {
 
   return (
     <div
-      className="flex h-full min-h-0 flex-1 flex-col relative overflow-hidden"
+      className="chat-page-root relative flex h-full min-h-0 max-h-full w-full flex-1 flex-col overflow-hidden"
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
