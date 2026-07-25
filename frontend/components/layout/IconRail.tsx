@@ -2,8 +2,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
-import { AppLogo } from '@/components/brand/AppLogo';
+import { usePathname } from 'next/navigation';
 import { useT } from '@/stores/localeStore';
 import { useNotificationStore } from '@/stores/notificationStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -99,7 +98,6 @@ export function IconRail({
   sidebarOpen?: boolean;
 }) {
   const pathname = usePathname() || '/';
-  const router = useRouter();
   const t = useT();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const {
@@ -143,14 +141,7 @@ export function IconRail({
 
   return (
     <nav className="tk-rail" aria-label="primary">
-      <button
-        type="button"
-        className="tk-rail-logo"
-        title="Takton"
-        onClick={() => router.push('/')}
-      >
-        <AppLogo size="sm" />
-      </button>
+      <div className="tk-rail-top-pad" aria-hidden />
 
       {RAIL_TOP.map((item) => (
         <React.Fragment key={item.titleKey + (item.href || '')}>

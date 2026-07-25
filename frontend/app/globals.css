@@ -194,8 +194,8 @@ pre {
   --input-bg: rgba(244, 245, 250, 0.9);
   --input-placeholder: #9b9bb0;
   --glass-bg: rgba(255, 255, 255, 0.55);
-  --glass-border: rgba(124, 92, 255, 0.1);
-  --glass-inner: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+  --glass-border: color-mix(in srgb, rgba(124, 92, 255, 0.12) 65%, rgba(31, 181, 167, 0.1));
+  --glass-inner: inset 0 1px 0 rgba(255, 255, 255, 0.7), inset 0 -1px 0 rgba(31, 181, 167, 0.04);
   --ease-v2: cubic-bezier(0.4, 0, 0.2, 1);
   --dur-v2: 200ms;
   --r-sm: 6px;
@@ -231,8 +231,8 @@ pre {
   --input-bg: rgba(10, 10, 16, 0.7);
   --input-placeholder: #5c5c72;
   --glass-bg: rgba(14, 14, 22, 0.55);
-  --glass-border: rgba(124, 92, 255, 0.08);
-  --glass-inner: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --glass-border: color-mix(in srgb, rgba(124, 92, 255, 0.1) 70%, rgba(52, 211, 196, 0.08));
+  --glass-inner: inset 0 1px 0 rgba(255, 255, 255, 0.04), inset 0 -1px 0 rgba(52, 211, 196, 0.03);
   --ease-v2: cubic-bezier(0.4, 0, 0.2, 1);
   --dur-v2: 200ms;
   --r-sm: 6px;
@@ -395,9 +395,11 @@ pre {
   inset: 0;
   z-index: 0;
   background:
-    radial-gradient(ellipse 80% 50% at 10% -10%, rgba(124, 58, 237, 0.14), transparent 55%),
-    radial-gradient(ellipse 60% 40% at 90% 0%, rgba(6, 182, 212, 0.1), transparent 50%),
-    radial-gradient(ellipse 50% 40% at 50% 110%, rgba(124, 58, 237, 0.06), transparent 55%);
+    radial-gradient(ellipse 80% 50% at 8% -8%, color-mix(in srgb, var(--brand-purple) 16%, transparent), transparent 55%),
+    radial-gradient(ellipse 55% 42% at 92% 4%, color-mix(in srgb, var(--brand-cyan) 14%, transparent), transparent 52%),
+    radial-gradient(ellipse 40% 35% at 70% 85%, color-mix(in srgb, var(--brand-cyan) 8%, transparent), transparent 60%),
+    radial-gradient(ellipse 50% 40% at 40% 110%, color-mix(in srgb, var(--brand-purple) 7%, transparent), transparent 55%),
+    radial-gradient(ellipse 30% 25% at 20% 60%, color-mix(in srgb, var(--brand-cyan) 5%, transparent), transparent 70%);
 }
 .app-ambient > * {
   position: relative;
@@ -415,6 +417,7 @@ pre {
 .titlebar {
   -webkit-app-region: drag;
   app-region: drag;
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--brand-cyan) 10%, transparent);
 }
 .titlebar button,
 .titlebar a,
@@ -597,7 +600,7 @@ button {
   background: var(--sidebar);
   backdrop-filter: blur(20px) saturate(1.4);
   -webkit-backdrop-filter: blur(20px) saturate(1.4);
-  border-right: 1px solid var(--glass-border, var(--border-subtle));
+  border-right: 1px solid color-mix(in srgb, var(--brand-cyan) 12%, var(--glass-border, var(--border-subtle)));
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -615,21 +618,13 @@ button {
   pointer-events: none;
   background: linear-gradient(180deg, rgba(124, 92, 255, 0.03) 0%, transparent 40%, rgba(52, 211, 196, 0.02) 100%);
 }
-.tk-rail-logo {
-  width: 34px;
-  height: 34px;
-  border-radius: var(--r-md, 10px);
-  margin-bottom: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  position: relative;
+.tk-rail-top-pad {
+  height: 10px;
+  width: 100%;
+  flex-shrink: 0;
   z-index: 1;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  padding: 0;
 }
+.tk-rail-logo { display: none; }
 .tk-rail-btn {
   width: 40px;
   height: 40px;
@@ -646,19 +641,21 @@ button {
   z-index: 1;
   text-decoration: none;
 }
-.tk-rail-btn:hover {
-  color: var(--foreground-muted);
-  background: var(--card-bg-hover);
-}
 .tk-rail-btn.active {
-  background: linear-gradient(135deg, var(--brand-purple), color-mix(in srgb, var(--brand-purple) 70%, #000));
+  background: linear-gradient(135deg, var(--brand-purple), color-mix(in srgb, var(--brand-cyan) 55%, var(--brand-purple)));
   color: #fff;
-  box-shadow: 0 2px 14px color-mix(in srgb, var(--brand-purple) 40%, transparent);
+  box-shadow:
+    0 2px 14px color-mix(in srgb, var(--brand-purple) 32%, transparent),
+    0 0 18px color-mix(in srgb, var(--brand-cyan) 18%, transparent);
+}
+.tk-rail-btn:hover:not(.active) {
+  color: color-mix(in srgb, var(--brand-cyan) 70%, var(--foreground-muted));
+  background: color-mix(in srgb, var(--brand-cyan) 8%, var(--card-bg-hover));
 }
 .tk-rail-sep {
   width: 24px;
   height: 1px;
-  background: var(--glass-border, var(--border-subtle));
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--brand-cyan) 35%, var(--glass-border, var(--border-subtle))), transparent);
   margin: 4px 0;
   z-index: 1;
 }
@@ -740,7 +737,7 @@ button {
   left: -60px;
   width: 300px;
   height: 300px;
-  background: radial-gradient(circle, color-mix(in srgb, var(--brand-cyan) 10%, transparent) 0%, transparent 70%);
+  background: radial-gradient(circle, color-mix(in srgb, var(--brand-cyan) 16%, transparent) 0%, transparent 70%);
   pointer-events: none;
   z-index: 0;
 }
