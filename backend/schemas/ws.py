@@ -107,6 +107,7 @@ class ScreenshotEvent(WSMessage):
     """实时截图推送（desktop_screenshot / browser screenshot / computer_use capture）"""
 
     type: Literal["screenshot"] = "screenshot"
-    image_base64: str  # data:image/png;base64,... 或纯 base64
+    image_base64: str = ""  # data:image/...;base64,... 或纯 base64（可空，改用 image_url）
+    image_url: str = ""  # 优先：可直接 <img src> 的 URL
     tool_name: str = ""  # 触发截图的工具名
     timestamp: str = ""  # ISO 8601

@@ -266,13 +266,30 @@ async def _browser_playwright(
         return f"[pressed] {key or 'Enter'} on {target}"
 
     if action == "screenshot":
-        import base64
+        import json as _json
+        import os
+        import tempfile
+        import time
+        from pathlib import Path as _Path
 
         raw = await page.screenshot(type="jpeg", quality=60, full_page=False)
-        b64 = base64.b64encode(raw).decode("ascii")
-        return (
-            f"[screenshot] url={page.url} session={session_key} jpeg_base64_len={len(b64)}\n"
-            f"data:image/jpeg;base64,{b64[:200]}...[omitted]"
+        out_dir = os.environ.get("TAKTON_BROWSER_SHOT_DIR") or os.path.join(
+            tempfile.gettempdir(), "takton_browser_shots"
+        )
+        os.makedirs(out_dir, exist_ok=True)
+        out_path = str(_Path(out_dir) / f"browser_{int(time.time() * 1000)}.jpg")
+        with open(out_path, "wb") as f:
+            f.write(raw)
+        return _json.dumps(
+            {
+                "ok": True,
+                "path": out_path,
+                "bytes": len(raw),
+                "url": page.url,
+                "session": session_key,
+                "image": "",
+            },
+            ensure_ascii=False,
         )
 
     return (

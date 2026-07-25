@@ -2719,50 +2719,108 @@ class NexusAgentLoop(AgentLoopBase):
         tool_name: str,
         tool_result: str,
     ) -> None:
-        """从截图类工具结果中提取 base64 图像，推送 WS screenshot 事件。"""
+        """从截图工具结果提取图像：支持 path 落盘 / data URL / base64，推送 WS。"""
         if not self.ws_manager:
             return
         try:
             import base64
             import json as _json
+            import os
             import re
+            from pathlib import Path
 
             b64: str | None = None
+            image_url = ""
+            mime = "image/png"
             raw = str(tool_result)
 
-            # 1) data:image/...;base64,... 直出
-            m = re.search(r"data:image/[^;]+;base64,([A-Za-z0-9+/=\s]+)", raw)
-            if m:
-                b64 = m.group(1).replace("\n", "")
-            else:
-                # 2) JSON 里有 image/data.image 字段
-                try:
-                    data = _json.loads(raw)
-                    img = data.get("image") or (data.get("data") or {}).get("image")
-                    if isinstance(img, str) and len(img) > 100:
-                        b64 = img
-                except Exception:
-                    pass
-                # 3) 长 base64 串（>500 chars，大概率是截图）
-                if not b64:
-                    m2 = re.search(r"([A-Za-z0-9+/=]{500,})", raw)
-                    if m2:
-                        b64 = m2.group(1)
+            # 1) data:image/...;base64,...（完整，非 omitted 截断）
+            m = re.search(r"(data:image/([^;]+);base64,)([A-Za-z0-9+/=\s]{200,})", raw)
+            if m and "...[omitted]" not in raw[m.start() : m.end() + 20]:
+                mime = m.group(2) or "image/png"
+                b64 = m.group(3).replace("\n", "").replace(" ", "")
 
+            data_obj: dict | None = None
             if not b64:
+                try:
+                    data_obj = _json.loads(raw)
+                except Exception:
+                    # 工具结果可能是 "ok\n{json}"
+                    mjson = re.search(r"(\{[\s\S]*\})\s*$", raw)
+                    if mjson:
+                        try:
+                            data_obj = _json.loads(mjson.group(1))
+                        except Exception:
+                            data_obj = None
+
+            path = None
+            if isinstance(data_obj, dict):
+                img = data_obj.get("image") or (data_obj.get("data") or {}).get("image")
+                if isinstance(img, str) and len(img) > 200 and "omitted" not in img[:40]:
+                    if img.startswith("data:image"):
+                        mm = re.match(r"data:image/([^;]+);base64,(.+)", img, re.S)
+                        if mm:
+                            mime = mm.group(1)
+                            b64 = mm.group(2).replace("\n", "")
+                    else:
+                        b64 = img
+                path = (
+                    data_obj.get("path")
+                    or (data_obj.get("data") or {}).get("path")
+                    or data_obj.get("filepath")
+                )
+
+            if not path:
+                mp = re.search(
+                    r"(?:path|filepath).{0,24}(/[\w./\\-]+\.(?:png|jpe?g|webp))",
+                    raw,
+                    re.I,
+                )
+                if mp:
+                    path = mp.group(1)
+
+            # 2) 落盘路径 → 读文件 + 生成可访问 URL
+            if path and isinstance(path, str) and os.path.isfile(path):
+                p = Path(path)
+                if p.suffix.lower() in {".jpg", ".jpeg"}:
+                    mime = "image/jpeg"
+                elif p.suffix.lower() == ".webp":
+                    mime = "image/webp"
+                else:
+                    mime = "image/png"
+                # URL：经 /api/desktop/shots/{filename}
+                image_url = f"/api/desktop/shots/{p.name}"
+                if not b64:
+                    try:
+                        raw_bytes = p.read_bytes()
+                        # WS 体积保护：>1.8MB 只走 URL
+                        if len(raw_bytes) <= 1_800_000:
+                            b64 = base64.b64encode(raw_bytes).decode("ascii")
+                    except OSError:
+                        pass
+
+            if not b64 and not image_url:
                 return
 
             from backend.schemas.ws import ScreenshotEvent
+            from datetime import datetime, timezone
+
+            payload_b64 = ""
+            if b64:
+                payload_b64 = (
+                    b64
+                    if b64.startswith("data:")
+                    else f"data:{mime};base64,{b64}"
+                )
 
             await self.ws_manager.broadcast(
                 session_id,
                 ScreenshotEvent(
                     session_id=session_id,
-                    image_base64=b64,
+                    image_base64=payload_b64,
+                    image_url=image_url or "",
                     tool_name=tool_name,
-                    timestamp=__import__("datetime").datetime.now(
-                        __import__("datetime").timezone.utc
-                    ).isoformat(),
+                    timestamp=datetime.now(timezone.utc).isoformat(),
                 ).model_dump(mode="json"),
             )
         except Exception as e:

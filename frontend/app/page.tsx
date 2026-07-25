@@ -172,7 +172,8 @@ export default function HomePage() {
 
     const handleScreenshot = useCallback((msg: ScreenshotMessage) => {
       addShot({
-        image_base64: msg.image_base64,
+        image_base64: msg.image_base64 || '',
+        image_url: msg.image_url || '',
         tool_name: msg.tool_name || 'screenshot',
         timestamp: msg.timestamp || new Date().toISOString(),
         session_id: msg.session_id,

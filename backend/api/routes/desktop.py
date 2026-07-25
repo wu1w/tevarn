@@ -289,3 +289,41 @@ async def desktop_stream(
             "error": str(e),
         })
         await websocket.close()
+
+
+@router.get("/shots/{filename}")
+async def get_saved_shot(
+    filename: str,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """读取桌面/浏览器截图落盘文件（实时画面面板用）。"""
+    import os
+    import re
+    import tempfile
+    from pathlib import Path
+
+    from fastapi.responses import FileResponse
+
+    # 仅允许简单文件名，防路径穿越
+    name = Path(filename).name
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,180}", name):
+        raise HTTPException(status_code=400, detail="invalid filename")
+
+    shot_dirs = [
+        os.environ.get("TAKTON_DESKTOP_SHOT_DIR") or "",
+        os.path.join(tempfile.gettempdir(), "takton_desktop_shots"),
+        os.path.join(tempfile.gettempdir(), "takton_browser_shots"),
+    ]
+    for d in shot_dirs:
+        if not d:
+            continue
+        path = Path(d) / name
+        try:
+            path = path.resolve()
+            path.relative_to(Path(d).resolve())
+        except Exception:
+            continue
+        if path.is_file():
+            media = "image/jpeg" if path.suffix.lower() in {".jpg", ".jpeg"} else "image/png"
+            return FileResponse(path, media_type=media, filename=name)
+    raise HTTPException(status_code=404, detail="shot not found")

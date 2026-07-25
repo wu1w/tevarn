@@ -508,7 +508,8 @@ export interface MemoryUpdatedMessage extends WSMessage {
 
 export interface ScreenshotMessage extends WSMessage {
   type: 'screenshot';
-  image_base64: string;
+  image_base64?: string;
+  image_url?: string;
   tool_name?: string;
   timestamp?: string;
 }

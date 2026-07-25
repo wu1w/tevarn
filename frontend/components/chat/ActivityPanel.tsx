@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import type { ToolCallData } from './ToolCallPanel';
 import { useT } from '@/stores/localeStore';
 
@@ -10,20 +10,16 @@ interface ActivityPanelProps {
   isStreaming: boolean;
 }
 
-const STATUS_ICON: Record<string, string> = {
-  running: '⏳',
-  completed: '',
-  failed: '',
-};
-
 const STATUS_COLOR: Record<string, string> = {
   running: 'text-brand-cyan',
-  completed: 'text-green-400',
+  completed: 'text-emerald-400',
   failed: 'text-red-400',
 };
 
 export function ActivityPanel({ liveToolCalls, streamStatusDetail, isStreaming }: ActivityPanelProps) {
   const t = useT();
+  // 默认折叠：只显示标题行，展开后看工具块
+  const [open, setOpen] = useState(false);
 
   const items = useMemo(() => {
     return liveToolCalls.map((tc) => ({
@@ -35,33 +31,73 @@ export function ActivityPanel({ liveToolCalls, streamStatusDetail, isStreaming }
     }));
   }, [liveToolCalls]);
 
+  const running = items.filter((i) => i.status === 'running').length;
+  const done = items.filter((i) => i.status === 'completed').length;
+  const failed = items.filter((i) => i.status === 'failed').length;
+
+  // 新工具开始时若面板关着保持折叠；有 running 时标题高亮
+  useEffect(() => {
+    if (!isStreaming && items.length === 0) setOpen(false);
+  }, [isStreaming, items.length]);
+
   if (!isStreaming && items.length === 0) return null;
 
   return (
-    <div className="border-t border-border-subtle bg-elevated-bg/30 px-4 py-2">
-      <div className="mb-1 flex items-center gap-2">
+    <div className="border-t border-border-subtle bg-elevated-bg/30 px-3 py-1.5">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2 rounded-lg px-1 py-1 text-left transition-colors hover:bg-card-bg-hover/60"
+      >
+        <svg
+          className={`h-3 w-3 flex-shrink-0 text-foreground-dim transition-transform ${open ? 'rotate-90' : ''}`}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
         <span className="text-[10px] font-semibold uppercase tracking-wider text-foreground-dim">
           {t('activity.title')}
         </span>
-        {isStreaming && (
-          <span className="flex items-center gap-1 text-[10px] text-brand-cyan">
-            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-brand-cyan" />
-            {streamStatusDetail || t('chat.aiReplying')}
+        {items.length > 0 && (
+          <span className="rounded-full bg-card-bg px-1.5 py-0.5 font-mono text-[10px] text-foreground-dim">
+            {items.length}
+            {running > 0 ? ` · ${running} 进行中` : ''}
+            {done > 0 ? ` · ${done} 完成` : ''}
+            {failed > 0 ? ` · ${failed} 失败` : ''}
           </span>
         )}
-      </div>
-      <div className="flex flex-wrap gap-1.5">
-        {items.map((item) => (
-          <div
-            key={item.id}
-            className="flex items-center gap-1.5 rounded-lg border border-border-subtle bg-card-bg px-2.5 py-1">
-            <span className="text-xs">{STATUS_ICON[item.status] || '⏳'}</span>
-            <span className={`text-xs font-medium ${STATUS_COLOR[item.status] || 'text-foreground-muted'}`}>
-              {item.name}
-            </span>
-          </div>
-        ))}
-      </div>
+        {isStreaming && (
+          <span className="ml-auto flex min-w-0 items-center gap-1 truncate text-[10px] text-brand-cyan">
+            <span className="inline-block h-1.5 w-1.5 flex-shrink-0 animate-pulse rounded-full bg-brand-cyan" />
+            <span className="truncate">{streamStatusDetail || t('chat.aiReplying')}</span>
+          </span>
+        )}
+        {!isStreaming && <span className="ml-auto text-[10px] text-foreground-dim">{open ? '收起' : '展开'}</span>}
+      </button>
+
+      {open && items.length > 0 && (
+        <div className="mt-1.5 max-h-28 space-y-1 overflow-y-auto scrollbar-thin">
+          {items.map((item) => (
+            <div
+              key={item.id}
+              className="flex items-center gap-2 rounded-md border border-border-subtle/80 bg-card-bg/50 px-2 py-1"
+            >
+              {item.status === 'running' ? (
+                <span className="inline-block h-1.5 w-1.5 flex-shrink-0 animate-pulse rounded-full bg-brand-cyan" />
+              ) : item.status === 'failed' ? (
+                <span className="inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full bg-red-400" />
+              ) : (
+                <span className="inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full bg-emerald-400" />
+              )}
+              <span className={`truncate text-[11px] font-medium ${STATUS_COLOR[item.status] || 'text-foreground-muted'}`}>
+                {item.name}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

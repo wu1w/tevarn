@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useT } from '@/stores/localeStore';
 import {
   formatToolResultForDisplay,
@@ -45,9 +45,14 @@ function ToolCallCard({
   const hasResult = toolCall.result !== undefined && toolCall.result !== null;
   const hasArgs =
     toolCall.arguments && Object.keys(toolCall.arguments).length > 0;
-  // 有结果时默认折叠；运行中默认展开参数
-  const [expanded, setExpanded] = useState(status === 'running' && !hasResult);
+  // 默认全部折叠，仅运行中时展开参数（完成后自动收起由用户点开）
+  const [expanded, setExpanded] = useState(false);
   const [resultOpen, setResultOpen] = useState(false);
+
+  // 运行中→完成时收起
+  useEffect(() => {
+    if (status === 'running') setExpanded(false);
+  }, [status]);
 
   const summary = useMemo(() => {
     if (hasResult) return summarizeToolResult(toolCall.result, toolCall.name);

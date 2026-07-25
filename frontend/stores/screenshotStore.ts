@@ -3,6 +3,7 @@ import { create } from 'zustand';
 export interface ScreenshotEntry {
   id: string;
   image_base64: string;
+  image_url?: string;
   tool_name: string;
   timestamp: string;
   session_id?: string;
