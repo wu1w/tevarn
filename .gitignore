@@ -93,3 +93,45 @@ scripts/bench_agent/
 workspace/stress/
 /tmp/takton_desktop_shots/
 .takton/
+
+# Repo hygiene 0.3.0
+
+# Python / test caches (belt and suspenders)
+**/__pycache__/
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+*.egg-info/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Local agent / workspace junk
+.takton/
+**/.takton/file-history/
+**/worktrees.json
+takton.db
+takton.db-*
+*.db-journal
+
+# Frontend local outputs
+frontend/release/
+frontend/dist/
+frontend/.turbo/
+frontend/e2e/screenshots/
+frontend/test-results/
+frontend/playwright-report/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+
+# Hermes / agent local
+../
