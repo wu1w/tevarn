@@ -4,11 +4,10 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/authStore';
-import { useNotificationStore } from '@/stores/notificationStore';
 import { useSession } from '@/hooks/useSession';
 import { useThemeStore } from '@/stores/themeStore';
-import { Session, User, Notification } from '@/types';
-import { getNotifications, markNotificationRead, markAllNotificationsRead, getMySessions, deleteSession, getMessages } from '@/lib/api';
+import { Session, User } from '@/types';
+import { getMySessions, deleteSession, getMessages } from '@/lib/api';
 import { useActionLock } from '@/hooks/useActionLock';
 import { useSessionStore } from '@/stores/sessionStore';
 import { FilePreview } from '@/components/filetree/FilePreview';
@@ -117,7 +116,6 @@ export function Sidebar() {
   const addToast = useToastStore((s) => s.addToast);
   const t = useT();
   const { user, logout, isAuthenticated } = useAuthStore();
-  const { notifications, unreadCount, setNotifications, markAsRead, markAllAsRead, setUnreadCount } = useNotificationStore();
   const {
     currentSession,
     setCurrentSession,
@@ -132,8 +130,6 @@ export function Sidebar() {
     setSessionTitle,
     toggleStarredSession,
   } = useSessionStore();
-
-  const [notifOpen, setNotifOpen] = useState(false);
   // 默认折叠：历史会话 / Agent 记忆不抢主导航空间，需要时再点开
   const [sessionsOpen, setSessionsOpen] = useState(true);
   const [mySessions, setMySessions] = useState<Session[]>([]);
@@ -156,20 +152,7 @@ export function Sidebar() {
   const [agentMdLoading, setAgentMdLoading] = useState(false);
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
   const [showFilePreview, setShowFilePreview] = useState(false);
-  const notifRef = useRef<HTMLDivElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    if (notifOpen && notifications.length === 0) {
-      getNotifications(true)
-        .then((data) => {
-          setNotifications(data?.items ?? []);
-          setUnreadCount(data?.unread ?? 0);
-        })
-        .catch(console.error);
-    }
-  }, [isAuthenticated, notifOpen, notifications.length, setNotifications, setUnreadCount]);
 
   const refreshSessions = useCallback(async () => {
     if (!isAuthenticated) return;
@@ -275,16 +258,6 @@ export function Sidebar() {
     },
     [switchingId, router, switchSession, addToast, refreshSessions]
   );
-
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
-        setNotifOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, []);
 
   useEffect(() => {
     if (editingTitle && editInputRef.current) {
@@ -519,63 +492,7 @@ export function Sidebar() {
                 </button>
       </div>
 
-      {/* Notification Bell */}
-      <div ref={notifRef} className="relative px-3 pb-1">
-        <button
-          onClick={() => setNotifOpen((v) => !v)}
-          className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-[13px] text-foreground-muted transition-colors hover:bg-[var(--card-bg-hover)] hover:text-foreground"
-        >
-          <span className="flex items-center gap-2.5">
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-            </svg>
-            {t('nav.notifications')}
-          </span>
-          {unreadCount > 0 && (
-            <span className="flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-gradient-to-r from-brand-purple to-brand-cyan px-1.5 text-[10px] font-bold text-white shadow-lg shadow-violet-500/20">
-              {unreadCount}
-            </span>
-          )}
-        </button>
-
-        {notifOpen && (
-          <div className="absolute left-4 right-4 top-11 z-50 max-h-80 overflow-y-auto rounded-xl border border-border-default bg-card-bg shadow-xl">
-            <div className="flex items-center justify-between border-b border-border-subtle px-3 py-2.5">
-              <span className="text-xs font-semibold text-foreground-muted">{t('nav.notifications')}</span>
-              {unreadCount > 0 && (
-                <button
-                  onClick={async () => {
-                    await markAllNotificationsRead();
-                    markAllAsRead();
-                  }}
-                  className="text-[10px] text-brand-cyan hover:text-brand-purple transition-colors"
-                >
-                  {t('nav.markAllRead')}
-                </button>
-              )}
-            </div>
-            {notifications.length === 0 ? (
-              <div className="px-3 py-6 text-center text-xs text-foreground-dim">{t('nav.noNotifications')}</div>
-            ) : (
-              notifications.slice(0, 20).map((n) => (
-                <div
-                  key={n.id}
-                  onClick={async () => {
-                    if (!n.is_read) {
-                      await markNotificationRead(n.id);
-                      markAsRead(n.id);
-                    }
-                  }}
-                  className={`cursor-pointer border-b border-border-subtle px-3 py-2.5 last:border-0 transition-colors ${n.is_read ? 'opacity-50' : 'hover:bg-card-bg-hover'}`}
-                >
-                  <div className="text-xs font-medium text-foreground">{n.title}</div>
-                  <div className="mt-0.5 text-[10px] text-foreground-dim line-clamp-2">{n.content}</div>
-                </div>
-              ))
-            )}
-          </div>
-        )}
-      </div>
+      {/* Session
 
       {/* Session 列表 */}
       {isAuthenticated && (

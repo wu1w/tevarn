@@ -1,19 +1,23 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { AppLogo } from '@/components/brand/AppLogo';
 import { useT } from '@/stores/localeStore';
 import { useNotificationStore } from '@/stores/notificationStore';
+import { useAuthStore } from '@/stores/authStore';
+import {
+  getNotifications,
+  markAllNotificationsRead,
+  markNotificationRead,
+} from '@/lib/api';
 
 type RailItem = {
   href?: string;
   titleKey: string;
   d: string;
   match?: (path: string) => boolean;
-  onClick?: () => void;
-  badge?: boolean;
   sepAfter?: boolean;
 };
 
@@ -28,7 +32,7 @@ function RailIcon({ d }: { d: string }) {
 const RAIL_TOP: RailItem[] = [
   {
     href: '/',
-    titleKey: 'nav.agent',
+    titleKey: 'nav.chat',
     d: 'M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z',
     match: (p) => p === '/' || p === '',
     sepAfter: true,
@@ -97,7 +101,38 @@ export function IconRail({
   const pathname = usePathname() || '/';
   const router = useRouter();
   const t = useT();
-  const unread = useNotificationStore((s) => s.unreadCount);
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const {
+    notifications,
+    unreadCount,
+    setNotifications,
+    markAsRead,
+    markAllAsRead,
+    setUnreadCount,
+  } = useNotificationStore();
+  const [notifOpen, setNotifOpen] = useState(false);
+  const notifRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isAuthenticated || !notifOpen) return;
+    if (notifications.length > 0) return;
+    getNotifications(true)
+      .then((data) => {
+        setNotifications(data?.items ?? []);
+        setUnreadCount(data?.unread ?? 0);
+      })
+      .catch(console.error);
+  }, [isAuthenticated, notifOpen, notifications.length, setNotifications, setUnreadCount]);
+
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
+        setNotifOpen(false);
+      }
+    };
+    if (notifOpen) document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [notifOpen]);
 
   const isActive = (item: RailItem) => {
     if (item.match) return item.match(pathname);
@@ -127,16 +162,7 @@ export function IconRail({
             >
               <RailIcon d={item.d} />
             </Link>
-          ) : (
-            <button
-              type="button"
-              title={t(item.titleKey as never)}
-              className="tk-rail-btn"
-              onClick={item.onClick}
-            >
-              <RailIcon d={item.d} />
-            </button>
-          )}
+          ) : null}
           {item.sepAfter && <div className="tk-rail-sep" />}
         </React.Fragment>
       ))}
@@ -160,14 +186,72 @@ export function IconRail({
         <RailIcon d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
       </Link>
 
-      <Link
-        href="/channels"
-        title={t('nav.notifications')}
-        className="tk-rail-btn relative"
-      >
-        <RailIcon d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-        {unread > 0 && <span className="tk-rail-badge" aria-hidden />}
-      </Link>
+      {/* 左下角通知 */}
+      <div ref={notifRef} className="relative z-40">
+        <button
+          type="button"
+          title={t('nav.notifications')}
+          className={`tk-rail-btn relative ${notifOpen ? 'active' : ''}`}
+          onClick={() => setNotifOpen((v) => !v)}
+        >
+          <RailIcon d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+          {unreadCount > 0 && <span className="tk-rail-badge" aria-hidden />}
+        </button>
+
+        {notifOpen && (
+          <div className="absolute bottom-0 left-full z-50 ml-2 w-72 max-h-80 overflow-hidden rounded-[var(--r-lg,14px)] border border-[var(--glass-border,var(--border-subtle))] bg-[var(--elevated-bg)] shadow-2xl shadow-black/40">
+            <div className="flex items-center justify-between border-b border-border-subtle px-3 py-2.5">
+              <span className="text-xs font-semibold text-foreground-muted">
+                {t('nav.notifications')}
+              </span>
+              {unreadCount > 0 && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await markAllNotificationsRead();
+                    markAllAsRead();
+                  }}
+                  className="text-[10px] text-brand-cyan transition-colors hover:text-brand-purple"
+                >
+                  {t('nav.markAllRead')}
+                </button>
+              )}
+            </div>
+            <div className="max-h-64 overflow-y-auto scrollbar-thin">
+              {notifications.length === 0 ? (
+                <div className="px-3 py-6 text-center text-xs text-foreground-dim">
+                  {t('nav.noNotifications')}
+                </div>
+              ) : (
+                notifications.slice(0, 20).map((n) => (
+                  <div
+                    key={n.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={async () => {
+                      if (!n.is_read) {
+                        await markNotificationRead(n.id);
+                        markAsRead(n.id);
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') e.currentTarget.click();
+                    }}
+                    className={`cursor-pointer border-b border-border-subtle px-3 py-2.5 last:border-0 transition-colors ${
+                      n.is_read ? 'opacity-50' : 'hover:bg-[var(--card-bg-hover)]'
+                    }`}
+                  >
+                    <div className="text-xs font-medium text-foreground">{n.title}</div>
+                    <div className="mt-0.5 line-clamp-2 text-[10px] text-foreground-dim">
+                      {n.content}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+      </div>
     </nav>
   );
 }

@@ -58,11 +58,7 @@ const TOOLS = [
   { key: 'attachment', toggle: false, group: 'utility' },
   { key: 'goal', toggle: true, group: 'think' },
   { key: 'cluster', toggle: true, group: 'think' },
-  { key: 'deepthink', toggle: true, group: 'think' },
-  { key: 'search', toggle: true, group: 'think' },
   { key: 'image', toggle: true, group: 'action' },
-  { key: 'ppt', toggle: true, group: 'action' },
-  { key: 'report', toggle: true, group: 'action' },
 ] as const;
 
 function isImageType(type: string, filename: string): boolean {
@@ -342,19 +338,11 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       return;
     }
 
-    const mode: ChatMode = activeModes.has('ppt')
-      ? 'ppt'
-      : activeModes.has('report')
-        ? 'report'
-        : activeModes.has('cluster')
-          ? 'cluster'
-          : activeModes.has('goal')
-            ? 'goal'
-            : activeModes.has('search')
-              ? 'search'
-              : activeModes.has('deepthink')
-                ? 'deepthink'
-                : 'default';
+    const mode: ChatMode = activeModes.has('cluster')
+      ? 'cluster'
+      : activeModes.has('goal')
+        ? 'goal'
+        : 'default';
 
     const subIds = mode === 'cluster' ? selectedSubAgentIds : undefined;
     // 只发已上传成功的附件；失败的 chip 留在栏上让用户删
@@ -371,8 +359,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     localStorage.removeItem('takton-chat-draft');
     setActiveModes((prev) => {
       const next = new Set(prev);
-      next.delete('ppt');
-      next.delete('report');
+      next.delete('image');
       return next;
     });
     sendingRef.current = false;
@@ -442,9 +429,8 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else {
-        if (key === 'ppt' || key === 'report' || key === 'image') {
-          next.delete('ppt');
-          next.delete('report');
+        // image 与其它 action 互斥即可
+        if (key === 'image') {
           next.delete('image');
         }
         next.add(key);

@@ -372,7 +372,7 @@ const zh = {
   'screenshot.empty': '暂无截图，Agent 截屏时会自动推送到这里',
   'activity.title': '活动流',
   'chat.onlineDevices': '在线设备',
-  'chat.tag.goal': 'Goal 模式',
+  'chat.tag.goal': '目标',
   'chat.tag.cluster': '集群模式',
   'chat.tag.code': '编码',
   'chat.tag.research': '调研',
@@ -392,7 +392,7 @@ const zh = {
 
   // 输入区工具栏
   'chat.tool.attachment': '附件',
-  'chat.tool.goal': 'Goal 模式',
+  'chat.tool.goal': '目标',
   'chat.tool.cluster': '集群模式',
   'chat.tool.deepthink': '深度思考',
   'chat.tool.search': '联网搜索',
@@ -2358,7 +2358,7 @@ const en: Record<keyof typeof zh, string> = {
   'screenshot.empty': 'No screenshots yet — they will appear here when the Agent captures',
   'activity.title': 'Activity',
   'chat.onlineDevices': 'Online Devices',
-  'chat.tag.goal': 'Goal Mode',
+  'chat.tag.goal': 'Goal',
   'chat.tag.cluster': 'Cluster Mode',
   'chat.tag.code': 'Coding',
   'chat.tag.research': 'Research',
@@ -2378,7 +2378,7 @@ const en: Record<keyof typeof zh, string> = {
 
   // Input toolbar
   'chat.tool.attachment': 'Attachment',
-  'chat.tool.goal': 'Goal Mode',
+  'chat.tool.goal': 'Goal',
   'chat.tool.cluster': 'Cluster Mode',
   'chat.tool.deepthink': 'Deep Thinking',
   'chat.tool.search': 'Web Search',
