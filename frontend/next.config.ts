@@ -9,7 +9,7 @@ const nextConfig: NextConfig = {
   },
   allowedDevOrigins: process.env.ALLOWED_DEV_ORIGINS?.split(',') || ["localhost", "127.0.0.1"],
   distDir: "dist",
-  // 静态导出模式：前后端通过 IPC 直连（lib/api.ts 在 Electron 环境返回 http://127.0.0.1:8000/api）
+  // 静态导出模式：前后端通过 IPC 直连（lib/api.ts 在 Electron 环境返回 http://127.0.0.1:8095/api）
   ...(isExport ? { output: "export" as const, trailingSlash: true } : {}),
   // 开发/测试模式：用 Next.js rewrites 做 API 反向代理，方便浏览器 E2E
   ...(isExport
@@ -19,11 +19,11 @@ const nextConfig: NextConfig = {
           return [
             {
               source: "/api/:path*",
-              destination: "http://127.0.0.1:8090/api/:path*",
+              destination: "http://127.0.0.1:8095/api/:path*",
             },
             {
               source: "/ws/:path*",
-              destination: "http://127.0.0.1:8090/api/ws/:path*",
+              destination: "http://127.0.0.1:8095/api/ws/:path*",
             },
           ];
         },

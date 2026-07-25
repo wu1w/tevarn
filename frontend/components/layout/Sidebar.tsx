@@ -6,7 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/authStore';
 import { useSession } from '@/hooks/useSession';
 import { useThemeStore } from '@/stores/themeStore';
-import { Session, User } from '@/types';
+import { Session } from '@/types';
 import { getMySessions, deleteSession, getMessages } from '@/lib/api';
 import { useActionLock } from '@/hooks/useActionLock';
 import { useSessionStore } from '@/stores/sessionStore';
@@ -115,7 +115,7 @@ export function Sidebar() {
   const router = useRouter();
   const addToast = useToastStore((s) => s.addToast);
   const t = useT();
-  const { user, logout, isAuthenticated } = useAuthStore();
+  const { isAuthenticated } = useAuthStore();
   const {
     currentSession,
     setCurrentSession,
@@ -873,105 +873,18 @@ export function Sidebar() {
       {/* Git Status */}
       <GitStatusWidget onSelectFile={handleSelectFile} />
 
-      {/* Footer */}
-      <div className="border-t border-border-subtle/70 p-2.5">
-        {isAuthenticated && user ? (
-          <UserCard user={user} logout={logout} />
-        ) : (
+      {/* Footer: 用户入口已移至左侧 Rail 圆形头像 */}
+      {!isAuthenticated && (
+        <div className="border-t border-border-subtle/70 p-2.5">
           <Link
             href="/login"
             className="block rounded-xl bg-gradient-to-r from-brand-purple to-brand-cyan px-3 py-2.5 text-center text-xs font-semibold text-white shadow-lg shadow-violet-500/20 transition-opacity hover:opacity-90"
           >
             {t('nav.loginRegister')}
           </Link>
-        )}
-      </div>
-    </aside>
-  );
-}
-
-function UserCard({ user, logout }: { user: User; logout: () => void }) {
-  const t = useT();
-  const [showCard, setShowCard] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const handleEnter = () => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-    setShowCard(true);
-  };
-
-  const handleLeave = () => {
-    timerRef.current = setTimeout(() => setShowCard(false), 200);
-  };
-
-  const avatarText = user.display_name?.[0] || user.username[0]?.toUpperCase() || '?';
-  const displayName = user.display_name || user.username;
-
-  return (
-    <div className="relative" onMouseEnter={handleEnter} onMouseLeave={handleLeave}>
-      {showCard && (
-        <div className="absolute bottom-full left-0 right-0 mb-2 tk-card-solid rounded-2xl/95 p-3 shadow-2xl shadow-black/40 backdrop-blur-xl">
-          <div className="flex items-start gap-3">
-            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand-purple/30 to-brand-cyan/20 text-sm font-bold text-brand-cyan ring-1 ring-white/10">
-              {avatarText}
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-semibold text-foreground">{displayName}</div>
-              <div className="text-[11px] text-foreground-dim">@{user.username}</div>
-            </div>
-          </div>
-          <div className="mt-2 space-y-1 border-t border-border-subtle pt-2">
-            <div className="flex items-center gap-1.5 text-[11px] text-foreground-muted">
-              <svg className="h-3 w-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-              </svg>
-              <span className="truncate">{user.email}</span>
-            </div>
-            {user.last_login_at && (
-              <div className="flex items-center gap-1.5 text-[11px] text-foreground-dim">
-                <svg className="h-3 w-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <span>{t('sidebar.lastLogin')}{new Date(user.last_login_at).toLocaleString()}</span>
-              </div>
-            )}
-            <div className="flex items-center gap-1.5 text-[11px] text-foreground-dim">
-              <svg className="h-3 w-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-              </svg>
-              <span>{t('sidebar.registered')}{new Date(user.created_at).toLocaleDateString()}</span>
-            </div>
-          </div>
-          <div className="mt-2 flex gap-2 border-t border-border-subtle pt-2">
-            <Link
-              href="/profile"
-              className="flex-1 rounded-lg bg-brand-purple/10 px-2 py-1.5 text-center text-[11px] font-medium text-brand-purple hover:bg-brand-purple/20 transition-colors border border-brand-purple/20"
-            >
-              {t('nav.profileSettings')}
-            </Link>
-            <button
-              onClick={logout}
-              className="flex-1 rounded-lg bg-page-bg px-2 py-1.5 text-center text-[11px] font-medium text-foreground-muted hover:bg-error-bg hover:text-error-text transition-colors border border-border-subtle"
-            >
-              {t('nav.logout')}
-            </button>
-          </div>
         </div>
       )}
-
-      <Link
-        href="/profile"
-        className="flex items-center gap-2.5 rounded-xl px-2 py-2 transition-colors hover:bg-[var(--card-bg-hover)]"
-      >
-        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-brand-purple/30 to-brand-cyan/20 text-xs font-bold text-brand-cyan ring-1 ring-white/10">
-          {avatarText}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-[12px] font-medium text-foreground">{displayName}</div>
-          <div className="truncate text-[10px] text-foreground-dim">{user.email}</div>
-        </div>
-      </Link>
-    </div>
+    </aside>
   );
 }
 

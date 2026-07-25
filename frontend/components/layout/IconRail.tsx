@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 import { useT } from '@/stores/localeStore';
 import { useNotificationStore } from '@/stores/notificationStore';
 import { useAuthStore } from '@/stores/authStore';
+import type { User } from '@/types';
 import {
   getNotifications,
   markAllNotificationsRead,
@@ -99,7 +100,7 @@ export function IconRail({
 }) {
   const pathname = usePathname() || '/';
   const t = useT();
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const { isAuthenticated, user, logout } = useAuthStore();
   const {
     notifications,
     unreadCount,
@@ -177,6 +178,19 @@ export function IconRail({
         <RailIcon d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
       </Link>
 
+      {/* 左下角用户圆形头像 */}
+      {isAuthenticated && user ? (
+        <RailUserAvatar user={user} logout={logout} t={t} />
+      ) : (
+        <Link
+          href="/login"
+          title={t('nav.loginRegister')}
+          className="tk-rail-btn"
+        >
+          <RailIcon d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+        </Link>
+      )}
+
       {/* 左下角通知 */}
       <div ref={notifRef} className="relative z-40">
         <button
@@ -244,5 +258,77 @@ export function IconRail({
         )}
       </div>
     </nav>
+  );
+}
+
+function RailUserAvatar({
+  user,
+  logout,
+  t,
+}: {
+  user: User;
+  logout: () => void;
+  t: (k: never) => string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const avatarText = user.display_name?.[0] || user.username[0]?.toUpperCase() || '?';
+  const displayName = user.display_name || user.username;
+
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    if (open) document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative z-40">
+      <button
+        type="button"
+        title={displayName}
+        onClick={() => setOpen((v) => !v)}
+        className={`tk-rail-avatar ${open ? 'active' : ''}`}
+        aria-label={displayName}
+      >
+        <span className="tk-rail-avatar-inner">{avatarText}</span>
+      </button>
+      {open && (
+        <div className="absolute bottom-0 left-full z-50 mb-0 ml-2 w-64 overflow-hidden rounded-[var(--r-lg,14px)] border border-[var(--glass-border,var(--border-subtle))] bg-[var(--elevated-bg)] p-3 shadow-2xl shadow-black/40">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand-purple/30 to-brand-cyan/25 text-sm font-bold text-brand-cyan ring-1 ring-brand-cyan/20">
+              {avatarText}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-semibold text-foreground">{displayName}</div>
+              <div className="truncate text-[11px] text-foreground-dim">@{user.username}</div>
+            </div>
+          </div>
+          <div className="mt-2 space-y-1 border-t border-border-subtle pt-2 text-[11px] text-foreground-muted">
+            <div className="truncate">{user.email}</div>
+          </div>
+          <div className="mt-2 flex gap-2 border-t border-border-subtle pt-2">
+            <Link
+              href="/profile"
+              onClick={() => setOpen(false)}
+              className="flex-1 rounded-lg border border-brand-purple/20 bg-brand-purple/10 px-2 py-1.5 text-center text-[11px] font-medium text-brand-purple transition-colors hover:bg-brand-purple/20"
+            >
+              {t('nav.profileSettings' as never)}
+            </Link>
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                logout();
+              }}
+              className="flex-1 rounded-lg border border-border-subtle bg-page-bg px-2 py-1.5 text-center text-[11px] font-medium text-foreground-muted transition-colors hover:bg-error-bg hover:text-error-text"
+            >
+              {t('nav.logout' as never)}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
