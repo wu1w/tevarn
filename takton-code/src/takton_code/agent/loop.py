@@ -21,9 +21,20 @@ from takton_code.agent.parts import (
 )
 from takton_code.agent.prompt import build_system_prompt
 from takton_code.agent.refs import cycle_permission_mode, expand_at_refs
-from takton_code.agent.permissions import PermissionBroker, PermissionGate, Reply, rules_for_profile
-from takton_code.agent.file_history import FileHistory
 from takton_code.agent.tools import ToolRuntime
+from takton_code.compat.backend_core import (
+    DiffEngine,
+    DoomLoopGuard,
+    FileHistory,
+    PermissionBroker,
+    PermissionGate,
+    PlanDocument,
+    PlanGate,
+    PlanState,
+    Reply,
+    rules_for_profile,
+    should_auto_plan,
+)
 from takton_code.context.compressor import (
     ContextCompressor,
     TokenMeter,
@@ -33,7 +44,6 @@ from takton_code.context.compressor import (
     microcompact_tools,
     validate_tool_integrity,
 )
-from takton_code.agent.doom_loop import DoomLoopGuard
 from takton_code.context.policy import (
     ThrashingGuard,
     build_context_meter,
@@ -41,9 +51,7 @@ from takton_code.context.policy import (
     rag_assist_summary,
     recommended_thrashing,
 )
-from takton_code.diff.engine import DiffEngine
 from takton_code.llm.provider import LLMProvider, LLMResponse, collect_stream
-from takton_code.plan.gate import PlanDocument, PlanGate, PlanState, should_auto_plan
 from takton_code.project.binder import ProjectContext
 from takton_code.session.store import SessionStore
 
@@ -656,7 +664,7 @@ class AgentRuntime:
         if expanded != text:
             self.emit("at_expand", original=text[:200], expanded_chars=len(expanded))
         # multimodal: local image paths → OpenAI vision content parts
-        from takton_code.agent.multimodal import build_user_content, content_for_storage
+        from takton_code.compat.backend_core import build_user_content, content_for_storage
 
         allow_img = bool(getattr(self.settings_agent, "allow_images", True))
         max_img = int(getattr(self.settings_agent, "max_images_per_message", 4) or 4)
@@ -1157,7 +1165,7 @@ class AgentRuntime:
 
     def focus_rewind_patch(self, which: str | int | None = None) -> str:
         """Cycle / select focused unified diff in last rewind payload for side panel."""
-        from takton_code.agent.file_history import format_rewind_side_panel
+        from takton_code.compat.backend_core import format_rewind_side_panel
 
         res = self._last_rewind
         if not res:
@@ -1215,7 +1223,7 @@ class AgentRuntime:
         return "\n".join(lines)
 
     async def list_hunks(self, path: str | None = None) -> str:
-        from takton_code.agent.hunks import hunks_summary, parse_unified_hunks
+        from takton_code.compat.backend_core import hunks_summary, parse_unified_hunks
 
         res = self._last_rewind or {}
         udiffs = res.get("unified_diffs") or []
@@ -1237,7 +1245,7 @@ class AgentRuntime:
 
     async def apply_hunks_cmd(self, spec: str) -> str:
         """spec: '0,2,3' or 'all' using focused patch from last rewind."""
-        from takton_code.agent.hunks import parse_unified_hunks
+        from takton_code.compat.backend_core import parse_unified_hunks
 
         assert self.session_id and self.file_history
         res = self._last_rewind or {}
@@ -1857,7 +1865,7 @@ class AgentRuntime:
                 "usage_totals": self.usage_totals,
             }
             try:
-                from takton_code.project.worktree import inspect_worktree_state
+                from takton_code.compat.backend_core import inspect_worktree_state
 
                 info["worktrees"] = inspect_worktree_state(self.project.main_repo or self.project.root)
             except Exception as e:  # noqa: BLE001
@@ -2041,7 +2049,7 @@ class AgentRuntime:
             return TurnResult(ok=True, final_text="\n".join(lines) or "(none)", mode=self.mode)
 
         if cmd == "/worktree":
-            from takton_code.project.worktree import WorktreeError, inspect_worktree_state, list_worktrees
+            from takton_code.compat.backend_core import WorktreeError, inspect_worktree_state, list_worktrees
 
             root = self.project.main_repo or self.project.root
             sub = arg.strip().split(maxsplit=1)

@@ -8,7 +8,7 @@ from typing import Any
 
 from takton_code.agent.prompt import build_system_prompt
 from takton_code.agent.tools import ToolRuntime
-from takton_code.diff.engine import DiffEngine
+from takton_code.compat.backend_core import DiffEngine
 from takton_code.llm.provider import LLMProvider, collect_stream
 
 

@@ -2138,7 +2138,7 @@ class TaktonCodeApp(App[int]):
 
     async def _open_hunks(self) -> None:
         chat = self.query_one("#chat", RichLog)
-        from takton_code.agent.hunks import parse_unified_hunks
+        from takton_code.compat.backend_core import parse_unified_hunks
 
         res = getattr(self.runtime, "_last_rewind", None) or {}
         udiffs = res.get("unified_diffs") or []
@@ -2220,7 +2220,7 @@ class TaktonCodeApp(App[int]):
             if focus_only and last.get("side_summary_focus"):
                 summary = last["side_summary_focus"]
             elif focus_only:
-                from takton_code.agent.file_history import format_rewind_side_panel
+                from takton_code.compat.backend_core import format_rewind_side_panel
 
                 summary = format_rewind_side_panel(last, focus_only=True)
             else:

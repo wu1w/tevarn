@@ -155,7 +155,7 @@ async def run_autoloop(
         out.stop_reason = "interrupted"
         return out
 
-    from takton_code.plan.gate import PlanState
+    from takton_code.compat.backend_core import PlanState
 
     # --- phase: plan gate ---
     if runtime.plan_gate.state == PlanState.PLAN_READY:

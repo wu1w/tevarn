@@ -218,7 +218,7 @@ def bind_project(
     wt_info = None
     main_repo: Path | None = None
     if worktree is not None and worktree is not False:
-        from takton_code.project.worktree import WorktreeError, resolve_session_root
+        from takton_code.compat.backend_core import WorktreeError, resolve_session_root
 
         try:
             active, wt_info, main_repo = resolve_session_root(

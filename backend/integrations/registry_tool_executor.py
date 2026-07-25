@@ -15,5 +15,6 @@ class RegistryToolExecutor:
     async def execute(self, name: str, arguments: dict[str, Any]) -> Any:
         return await self._reg.execute(name, arguments or {})
 
-    def list_schemas(self, names: set[str] | None = None) -> list[dict[str, Any]]:
-        return self._reg.get_tools_schema(names)
+    def list_schemas(self, names: set[str] | list[str] | None = None) -> list[dict[str, Any]]:
+        name_list = None if names is None else list(names)
+        return self._reg.get_tools_schema(name_list)

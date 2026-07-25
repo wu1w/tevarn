@@ -89,3 +89,37 @@ def test_takton_code_compat_import():
     assert g.record("t", {}) is True
     pg = PermissionGate(profile="plan", mode="plan")
     assert pg.check("edit", {"path": "a.py"}) == "deny"
+
+
+@pytest.mark.asyncio
+async def test_nexus_port_helpers_save_and_history():
+    """NexusAgentLoop._save_message / _load_history go through message_store."""
+    from backend.agent.loop import NexusAgentLoop
+
+    repo = _FakeRepo()
+    loop = NexusAgentLoop.__new__(NexusAgentLoop)
+    from backend.integrations.sqlalchemy_message_store import SqlAlchemyMessageStore
+
+    loop.message_repo = repo
+    loop.message_store = SqlAlchemyMessageStore(repo)
+    sid = uuid4()
+    await loop._save_message(sid, "user", "hello-port")
+    hist = await loop._load_history(sid)
+    assert hist and hist[0]["content"] == "hello-port"
+
+
+@pytest.mark.asyncio
+async def test_nexus_execute_registered_tool_uses_executor():
+    from backend.agent.loop import NexusAgentLoop
+
+    class FakeEx:
+        async def execute(self, name, arguments):
+            return f"ok:{name}:{arguments.get('x')}"
+
+        def list_schemas(self, names=None):
+            return []
+
+    loop = NexusAgentLoop.__new__(NexusAgentLoop)
+    loop.tool_executor = FakeEx()
+    out = await loop._execute_registered_tool("demo", {"x": 1})
+    assert out == "ok:demo:1"

@@ -407,7 +407,7 @@ async def _headless(
         prompt = prompt.rstrip() + CHECK_SUFFIX
 
     if best_of_n and best_of_n > 1:
-        from takton_code.agent.best_of_n import run_best_of_n
+        from takton_code.compat.backend_core import run_best_of_n
 
         # bon: free permissions so shell/tests aren't denied headless
         bon_profile = permission_profile or "free"
@@ -795,7 +795,7 @@ def inspect_cmd(path: Optional[Path] = typer.Option(None, "--path", "-C")) -> No
             table.add_row("bridge.live", f"{settings.bridge.base_url} OK")
         # worktrees
         try:
-            from takton_code.project.worktree import inspect_worktree_state
+            from takton_code.compat.backend_core import inspect_worktree_state
 
             wt = inspect_worktree_state(project.root)
             table.add_row("worktrees.count", str(wt.get("count", 0)))
@@ -957,7 +957,7 @@ def wt_list(
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
     """List git worktrees for the repo."""
-    from takton_code.project.worktree import WorktreeError, inspect_worktree_state, list_worktrees
+    from takton_code.compat.backend_core import WorktreeError, inspect_worktree_state, list_worktrees
 
     try:
         items = list_worktrees(path or Path.cwd())
@@ -993,7 +993,7 @@ def wt_add(
     force: bool = typer.Option(False, "--force"),
 ) -> None:
     """Create a worktree under .takton/worktrees/<name>."""
-    from takton_code.project.worktree import WorktreeError, add_worktree
+    from takton_code.compat.backend_core import WorktreeError, add_worktree
 
     try:
         info = add_worktree(path or Path.cwd(), name=name, ref=ref, force=force)
@@ -1008,7 +1008,7 @@ def wt_show(
     name: str = typer.Argument(..., help="Worktree name or path"),
     path: Optional[Path] = typer.Option(None, "--path", "-C"),
 ) -> None:
-    from takton_code.project.worktree import WorktreeError, show_worktree
+    from takton_code.compat.backend_core import WorktreeError, show_worktree
 
     try:
         info = show_worktree(path or Path.cwd(), name)
@@ -1025,7 +1025,7 @@ def wt_rm(
     force: bool = typer.Option(False, "--force"),
     delete_branch: bool = typer.Option(False, "--delete-branch", help="Also delete tkc/* branch"),
 ) -> None:
-    from takton_code.project.worktree import WorktreeError, remove_worktree
+    from takton_code.compat.backend_core import WorktreeError, remove_worktree
 
     try:
         msg = remove_worktree(path or Path.cwd(), name, force=force, delete_branch=delete_branch)
@@ -1038,7 +1038,7 @@ def wt_rm(
 @worktree_app.command("gc")
 def wt_gc(path: Optional[Path] = typer.Option(None, "--path", "-C")) -> None:
     """Prune stale worktree metadata and empty dirs."""
-    from takton_code.project.worktree import WorktreeError, gc_worktrees
+    from takton_code.compat.backend_core import WorktreeError, gc_worktrees
 
     try:
         msgs = gc_worktrees(path or Path.cwd())

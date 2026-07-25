@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from takton_code.diff.engine import DiffEngine
+from takton_code.compat.backend_core import DiffEngine
 
 
 ToolHandler = Callable[[dict[str, Any]], Awaitable[str]]

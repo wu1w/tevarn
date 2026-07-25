@@ -164,6 +164,46 @@ class NexusAgentLoop(AgentLoopBase):
         self._should_stop = True
         logger.info("Stop signal set for agent loop")
 
+    # ── Batch3 port helpers（优先 message_store / tool_executor）─────────
+    async def _save_message(
+        self,
+        session_id: uuid.UUID,
+        role: str,
+        content: str,
+        tool_calls: list[dict[str, Any]] | None = None,
+        token_count: int | None = None,
+    ):
+        store = getattr(self, "message_store", None)
+        if store is not None:
+            return await store.save_message(
+                session_id, role, content, tool_calls=tool_calls, token_count=token_count
+            )
+        return await self._save_message(
+            session_id, role, content, tool_calls=tool_calls, token_count=token_count
+        )
+
+    async def _load_history(
+        self,
+        session_id: uuid.UUID,
+        limit: int = 100,
+        offset: int = 0,
+    ):
+        store = getattr(self, "message_store", None)
+        if store is not None:
+            return await store.get_history(session_id, limit=limit, offset=offset)
+        return await self._load_history(
+            session_id, limit=limit, offset=offset
+        )
+
+    async def _execute_registered_tool(self, name: str, arguments: dict[str, Any]):
+        """统一工具执行入口 → ToolExecutorPort（默认 RegistryToolExecutor）。"""
+        ex = getattr(self, "tool_executor", None)
+        if ex is not None:
+            return await ex.execute(name, arguments or {})
+        from backend.tools.registry import ToolRegistry as UnifiedToolRegistry
+
+        return await UnifiedToolRegistry.execute(name, arguments or {})
+
     async def _get_rag_service(self):
         """懒加载 RAG 服务。未配 Embedding+Qdrant 时为 Null（本地模式）。"""
         if self._rag_service is None:
@@ -348,7 +388,7 @@ class NexusAgentLoop(AgentLoopBase):
                         logger.warning("persist final response (@device) failed: %s", e)
                         # fallback plain save
                         try:
-                            await self.message_repo.save_message(session_id, "assistant", card)
+                            await self._save_message(session_id, "assistant", card)
                         except Exception as e2:
                             logger.error("fallback save assistant message failed: %s", e2)
                     await self._push_status(session_id, "idle", "remote device command done")
@@ -428,7 +468,7 @@ class NexusAgentLoop(AgentLoopBase):
         # 动态 limit：按 context_window 估算最大消息数，避免只加载 100 条导致压缩无法触发
         _ctx_win = int(getattr(settings, "context_window", 128_000) or 128_000)
         _est_limit = max(200, _ctx_win // 50)  # 每 50 tokens 一条消息的保守估计
-        history = await self.message_repo.get_history_by_session(
+        history = await self._load_history(
             session_id, limit=_est_limit
         )
         logger.info("Loaded %d history messages for session %s (limit=%d)", len(history), session_id, _est_limit)
@@ -1168,7 +1208,7 @@ class NexusAgentLoop(AgentLoopBase):
 
                 # 持久化中间 assistant（含 tool_calls），便于跨轮续跑
                 try:
-                    await self.message_repo.save_message(
+                    await self._save_message(
                         session_id,
                         "assistant",
                         accumulated_content or "",
@@ -1244,13 +1284,11 @@ class NexusAgentLoop(AgentLoopBase):
                             )
                             if _tool_timeout > 0:
                                 tool_result = await asyncio.wait_for(
-                                    UnifiedToolRegistry.execute(tc.name, validated_args),
+                                    self._execute_registered_tool(tc.name, validated_args),
                                     timeout=_tool_timeout,
                                 )
                             else:
-                                tool_result = await UnifiedToolRegistry.execute(
-                                    tc.name, validated_args
-                                )
+                                tool_result = await self._execute_registered_tool(tc.name, validated_args)
                             query = (
                                 tc.arguments.get("query", "")
                                 if tc.name == "search_knowledge_base"
@@ -1450,7 +1488,7 @@ class NexusAgentLoop(AgentLoopBase):
 
                     # 持久化 tool 结果（tool_call_id 塞进 tool_calls JSON 旁路字段，保持 list 形态）
                     try:
-                        await self.message_repo.save_message(
+                        await self._save_message(
                             session_id,
                             "tool",
                             tool_result,
