@@ -49,6 +49,7 @@ export default function HomePage() {
       name: workspaceName,
       setForceProjectOpen,
       appendAgentOutput,
+      appendAgentOutputTo,
       unreadTerminal,
       bindRoot,
     } = useWorkspaceStore();
@@ -340,8 +341,24 @@ export default function HomePage() {
         setStreamStatusDetail(t('run.runFailed'));
       } else if (msg.topic === 'run.cancelled') {
         setStreamStatusDetail(t('run.cancelled'));
+      } else if (msg.topic === 'computer.exec') {
+        // Agent Computer：按 agent_key 路由到对应终端 tab
+        const key = (d.agent_key as string) || 'main';
+        const label = (d.agent_label as string) || (key === 'main' ? 'Agent' : key);
+        if (d.phase === 'start') {
+          appendAgentOutputTo(key, label, `$ ${d.command || ''}`, 'in');
+        } else {
+          if (d.stdout_tail) appendAgentOutputTo(key, label, String(d.stdout_tail), 'out');
+          if (d.stderr_tail) appendAgentOutputTo(key, label, String(d.stderr_tail), 'err');
+          const tag = d.sandboxed ? ` · ${d.backend || 'sandbox'}` : '';
+          appendAgentOutputTo(
+            key, label,
+            `exit ${d.exit_code ?? '?'}${tag} · ${Math.round(Number(d.duration_ms) || 0)}ms`,
+            'sys'
+          );
+        }
       }
-    }, [t]);
+    }, [t, appendAgentOutputTo]);
 
   const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, connect } = useWebSocket({
         sessionId: currentSession?.id || '',

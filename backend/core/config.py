@@ -133,6 +133,12 @@ class Settings(BaseSettings):
     agent_auto_plan_simple_max_chars: int = 120
     # git worktree helpers available (opt-in tools later)
     agent_worktree_enabled: bool = True
+    # Agent Computer（Phase 0.5.3）：command/python 走隔离执行后端
+    agent_computer_enabled: bool = False
+    # bwrap=Linux 沙箱（推荐，需 bubblewrap）；local=现状直跑
+    agent_computer_backend: str = "bwrap"
+    # 沙箱内是否放开网络（默认断网 --unshare-net）
+    agent_computer_network: bool = False
     # 写文件工具前自动快照到 .takton/checkpoints/
     agent_file_checkpoint: bool = True
     # 搜索：有 Key 时 web_search/search 优先 Tavily

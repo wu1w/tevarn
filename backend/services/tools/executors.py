@@ -556,6 +556,34 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
             + format_process(item, tail=2000)
         )
 
+    # Agent Computer（Phase 0.5.3 C0.2）：启用后前台命令走隔离执行后端
+    try:
+        from backend.core.config import settings as _cs
+
+        if bool(getattr(_cs, "agent_computer_enabled", False)):
+            from backend.computer.manager import get_computer_manager
+
+            return await get_computer_manager().execute(
+                command,
+                agent_key=str(arguments.get("_agent_key") or "main"),
+                agent_label=str(arguments.get("_agent_label") or ""),
+                session_id=arguments.get("_session_id"),
+                recorder=arguments.get("_run_recorder"),
+                cwd=cwd,
+                timeout=timeout,
+                max_output=max_output,
+            )
+    except Exception as _ce:
+        # 安全口径：用户开了沙箱就是要隔离，静默降级到本地直跑会破坏预期。
+        # 给清晰错误，由用户决定关 computer 或换 local 后端。
+        __import__("logging").getLogger(__name__).warning(
+            "agent computer execute failed: %s", _ce
+        )
+        return (
+            f"[Error] Agent Computer 执行失败: {_ce}"
+            "（未降级本地直跑；可关闭 agent_computer_enabled 或设 agent_computer_backend=local）"
+        )
+
     try:
         proc = await asyncio.create_subprocess_shell(
             command,
@@ -731,6 +759,34 @@ async def execute_python(config: dict[str, Any], arguments: dict[str, Any]) -> s
 
     # Prefer current interpreter (Windows rarely has python3 on PATH)
     py = sys.executable or "python3"
+
+    # Agent Computer（Phase 0.5.3 C0.2）：启用后 python 也走隔离执行后端
+    try:
+        from backend.core.config import settings as _cs
+
+        if bool(getattr(_cs, "agent_computer_enabled", False)):
+            import shlex
+
+            from backend.computer.manager import get_computer_manager
+
+            _cmd = f"{shlex.quote(py)} -c {shlex.quote(code)}"
+            return await get_computer_manager().execute(
+                _cmd,
+                agent_key=str(arguments.get("_agent_key") or "main"),
+                agent_label=str(arguments.get("_agent_label") or ""),
+                session_id=arguments.get("_session_id"),
+                recorder=arguments.get("_run_recorder"),
+                timeout=int(timeout or 30),
+            )
+    except Exception as _ce:
+        __import__("logging").getLogger(__name__).warning(
+            "agent computer python failed: %s", _ce
+        )
+        return (
+            f"[Error] Agent Computer 执行失败: {_ce}"
+            "（未降级本地直跑；可关闭 agent_computer_enabled 或设 agent_computer_backend=local）"
+        )
+
     try:
         proc = await asyncio.create_subprocess_exec(
             py, "-c", code,

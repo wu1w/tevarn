@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import { FileTree } from '@/components/filetree/FileTree';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import type { FileTreeItem } from '@/types';
@@ -161,9 +162,13 @@ export function WorkspaceDock() {
       <div className="flex min-h-0 flex-1 flex-col" style={{ height: `${100 - split}%` }}>
         <div className="flex items-center gap-0.5 overflow-x-auto border-b border-border-subtle bg-page-bg/80 px-1 py-1">
           {tabs.map((t) => (
-            <button
+            <motion.button
+              layout
               key={t.id}
               type="button"
+              initial={{ opacity: 0, scale: 0.92 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.16, ease: 'easeOut' }}
               onClick={() => {
                 setActiveTab(t.id);
                 clearUnread();
@@ -188,7 +193,7 @@ export function WorkspaceDock() {
                   ×
                 </span>
               )}
-            </button>
+            </motion.button>
           ))}
           <button
             type="button"
@@ -204,22 +209,35 @@ export function WorkspaceDock() {
         </div>
 
         <div className="min-h-0 flex-1 overflow-auto bg-[#0d1117] px-2 py-1.5 font-mono text-[11px] leading-relaxed text-zinc-300">
-          {active?.lines.map((line) => (
-            <div
-              key={line.id}
-              className={
-                line.type === 'in'
-                  ? 'text-brand-cyan'
-                  : line.type === 'err'
-                    ? 'text-red-400'
-                    : line.type === 'sys'
-                      ? 'text-zinc-500'
-                      : 'text-zinc-300'
-              }
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={activeTabId}
+              initial={{ opacity: 0, x: 10 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -10 }}
+              transition={{ duration: 0.15, ease: 'easeOut' }}
             >
-              <pre className="whitespace-pre-wrap break-words font-mono">{line.text}</pre>
-            </div>
-          ))}
+              {active?.lines.map((line) => (
+                <motion.div
+                  key={line.id}
+                  initial={{ opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.14, ease: 'easeOut' }}
+                  className={
+                    line.type === 'in'
+                      ? 'text-brand-cyan'
+                      : line.type === 'err'
+                        ? 'text-red-400'
+                        : line.type === 'sys'
+                          ? 'text-zinc-500'
+                          : 'text-zinc-300'
+                  }
+                >
+                  <pre className="whitespace-pre-wrap break-words font-mono">{line.text}</pre>
+                </motion.div>
+              ))}
+            </motion.div>
+          </AnimatePresence>
           <div ref={termEndRef} />
         </div>
 
@@ -251,7 +269,9 @@ export function WorkspaceDock() {
         )}
         {active?.kind === 'agent' && (
           <div className="border-t border-white/5 bg-[#0d1117] px-2 py-1 text-[10px] text-zinc-600">
-            Agent 工具输出（只读）· 新建 shell 页可手动执行命令
+            {active.id === 'agent'
+              ? 'Agent 工具输出（只读）· 新建 shell 页可手动执行命令'
+              : `${active.title} 沙箱输出（只读）`}
           </div>
         )}
       </div>

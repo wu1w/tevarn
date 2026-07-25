@@ -17,7 +17,7 @@ from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
-BRIDGE_PATTERNS = ("run.*", "tool.*", "approval.*")
+BRIDGE_PATTERNS = ("run.*", "tool.*", "approval.*", "computer.*")
 
 
 class EventBusWSBridge:

@@ -56,6 +56,8 @@ export interface WorkspaceState {
   setActiveTab: (id: string) => void;
   appendToTab: (tabId: string, line: Omit<TerminalLine, 'id' | 'ts'> & { id?: string }) => void;
   appendAgentOutput: (text: string, type?: 'out' | 'err' | 'sys' | 'in') => void;
+  ensureAgentTab: (key: string, label: string) => string;
+  appendAgentOutputTo: (key: string, label: string, text: string, type?: 'out' | 'err' | 'sys' | 'in') => void;
   runCommand: (command: string, tabId?: string) => Promise<void>;
   clearUnread: () => void;
 }
@@ -188,6 +190,29 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         if (get().uiMode === 'pro') {
           set({ unreadTerminal: !get().dockOpen || get().activeTabId !== 'agent' });
         }
+      },
+
+      // Agent Computer（Phase 0.5.3）：per-agent 终端。main → 既有 'agent' tab；
+      // 其余 agent 懒创建 'agent:<key>' tab（不抢焦点，仅亮未读点）
+      ensureAgentTab: (key, label) => {
+        if (!key || key === 'main') return 'agent';
+        const tabId = `agent:${key}`;
+        const existing = get().tabs.find((t) => t.id === tabId);
+        if (existing) return tabId;
+        const tab: TerminalTab = {
+          id: tabId,
+          title: label || key,
+          kind: 'agent',
+          lines: [],
+          status: 'idle',
+        };
+        set({ tabs: [...get().tabs, tab] });
+        return tabId;
+      },
+
+      appendAgentOutputTo: (key, label, text, type = 'out') => {
+        const tabId = get().ensureAgentTab(key, label);
+        get().appendToTab(tabId, { type, text });
       },
 
       runCommand: async (command, tabId) => {

@@ -200,6 +200,9 @@ class NexusAgentLoop(AgentLoopBase):
         # Durable Run：注入 recorder，permission 交互确认可切 WAITING 状态
         arguments = dict(arguments or {})
         arguments.setdefault("_run_recorder", getattr(self, "_run_recorder", None))
+        # Agent Computer：agent 身份（主 Agent=main；子代理 loop 实例可自带 key/label）
+        arguments.setdefault("_agent_key", getattr(self, "_agent_key", "main"))
+        arguments.setdefault("_agent_label", getattr(self, "_agent_label", ""))
         ex = getattr(self, "tool_executor", None)
         if ex is not None:
             return await ex.execute(name, arguments)
