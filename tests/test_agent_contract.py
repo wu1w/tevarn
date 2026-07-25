@@ -272,6 +272,50 @@ async def test_reviewer_failure_does_not_block_delivery():
 
 
 @pytest.mark.asyncio
+async def test_reviewer_uses_independent_model_ref():
+    """cluster_review_model_ref 配置后，reviewer 走独立模型（不与子代理同源）"""
+    sub_llm = _ScriptedLLM([
+        '{"content": "结果A", "confidence": 0.8}',
+        '{"content": "结果B", "confidence": 0.8}',
+    ])
+    reviewer_llm = _ScriptedLLM([
+        json.dumps([
+            {"task_id": "t1", "verdict": "pass", "score": 0.9},
+            {"task_id": "t2", "verdict": "pass", "score": 0.9},
+        ]),
+    ])
+    synth_llm = _ScriptedLLM(["综合"])
+    snapshot_models: list[str] = []
+
+    def _snapshot_router(snapshot):
+        snapshot_models.append(snapshot["model"])
+        if snapshot["model"] == "model-rev":
+            return reviewer_llm
+        return sub_llm
+
+    with patch(
+        "backend.services.llm.LLMServiceFactory.get_service_for_snapshot",
+        side_effect=_snapshot_router,
+    ), patch(
+        "backend.services.llm.LLMServiceFactory.get_service",
+        return_value=synth_llm,
+    ), patch(
+        "backend.core.config.settings.cluster_review_model_ref",
+        "prov-rev/model-rev",
+    ):
+        ex = ClusterExecutor()
+        result = await ex.execute("总任务", _SUBTASKS, AggregationStrategy.SYNTHESIZE)
+
+    assert result.status.value == "completed"
+    # reviewer 确实经独立 model_ref 解析
+    assert "model-rev" in snapshot_models
+    # 复核执行了（reviewer_llm 被调用一次）
+    assert len(reviewer_llm.calls) == 1
+    # 综合仍走默认服务
+    assert result.aggregated_result["synthesized"] == "综合"
+
+
+@pytest.mark.asyncio
 async def test_review_disabled_by_setting():
     sub_llm = _ScriptedLLM(["结果A", "结果B"])
     reviewer_llm = _ScriptedLLM(["综合"])

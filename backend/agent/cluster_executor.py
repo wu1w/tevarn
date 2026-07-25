@@ -425,8 +425,11 @@ class ClusterExecutor:
             t.metadata["deliverable"] = d.to_dict()
 
         # 2) reviewer 复核（失败不阻塞）
+        # 独立 model_ref 可用时优先（避免与子代理同源「自己审自己」），否则默认服务
         try:
-            reviewer = LLMServiceFactory.get_service()
+            reviewer = self._resolve_llm(
+                {"model_ref": str(getattr(settings, "cluster_review_model_ref", "") or "")}
+            )
         except Exception as e:
             logger.warning("reviewer LLM unavailable, skip review: %s", e)
             return

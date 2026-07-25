@@ -1168,118 +1168,28 @@ class NexusAgentLoop(AgentLoopBase):
                     except Exception:
                         pass
 
-        # 正常结束则清理 checkpoint
-        try:
-            from backend.agent.checkpoint import clear_checkpoint
-            from backend.agent.goal_state import get_goal
+        # 收尾聚合（phases/epilogue；行为冻结 tests/test_loop_freeze.py）
+        from backend.agent.phases.epilogue import run_epilogue
 
-            g_done = get_goal(session_id) if goal_mode else None
-            if not self._should_stop and (not goal_mode or (g_done is None or g_done.is_complete())):
-                await clear_checkpoint(session_id)
-        except Exception:
-            pass
-
-        # 7.5 多信源最终聚合（额外一次无工具 LLM，避免「四个都对」并列）
-        try:
-            if final_content and not self._should_stop:
-                _before = final_content
-                final_content = await self._maybe_aggregate_multi_source(
-                    llm_service=llm_service,
-                    session_id=session_id,
-                    user_input=user_input,
-                    draft=final_content,
-                    tool_rounds=_tool_rounds,
-                    last_tool_count=_last_tool_round_count,
-                    multi_pending=_multi_source_pending,
-                )
-                if final_content and (
-                    _suppress_content_stream
-                    or final_content != _before
-                    or _multi_source_pending
-                ):
-                    try:
-                        await self._push_stream(session_id, uuid.uuid4(), final_content)
-                    except Exception as pe:
-                        logger.debug("push aggregated stream skipped: %s", pe)
-                _suppress_content_stream = False
-        except Exception as e:
-            logger.warning("multi-source aggregate skipped: %s", e)
-
-        # 7.6 TEE 自主进化：验收/归因/过门后 auto_apply（默认关总开关）
-        try:
-            from backend.evolution.config import get_evolution_config
-            from backend.evolution.manager import get_evolution_manager
-
-            if get_evolution_config().enabled and final_content and not self._should_stop:
-                await get_evolution_manager().on_turn_final(
-                    str(session_id),
-                    user_input=user_input or "",
-                    final_content=final_content or "",
-                )
-        except Exception as e:
-            logger.warning("evolution turn hook skipped: %s", e)
-
-        # 7.7 SFT / 使用日志（设置里开关，默认关）
-        try:
-            from backend.services.sft_collector import collect_if_enabled
-
-            await collect_if_enabled(
-                session_id=str(session_id),
-                user_input=user_input or "",
-                assistant_output=final_content or "",
-                tools=list(_sft_tools),
-                meta={"source": "agent_loop"},
-            )
-        except Exception as e:
-            logger.debug("sft collect skipped: %s", e)
-
-        # 8. 保存最终回复 + 同步 CtxItem + 状态 + 通知（同一事务）
-        try:
-            await self._persist_final_response(session_id, final_content)
-        except Exception as e:
-            logger.error(f"Failed to persist final response: {e}")
-            # 兜底：至少把状态恢复为 idle
-            try:
-                await self.session_repo.update_status(session_id, "idle")
-            except Exception as status_err:
-                logger.error(f"Failed to update session status: {status_err}")
-
-        # 8.5 透明化轨迹持久化
-        try:
-            from backend.repositories.trace_repo import TraceRepository
-            from backend.database import get_db_context
-
-            _trace_duration = (__import__("time").monotonic() - _trace_start_time) * 1000
-            _iter_count = 0
-            try:
-                _iter_count = _global_iter + 1
-            except Exception:
-                pass
-            async with get_db_context() as db:
-                trace_repo = TraceRepository(db)
-                await trace_repo.create({
-                    "session_id": session_id,
-                    "user_id": self.user_id,
-                    "thinking_steps": _trace_thinking_steps,
-                    "tool_calls_trace": _trace_tool_calls,
-                    "rag_sources": _trace_rag_sources,
-                    "total_iterations": _iter_count,
-                    "total_tool_calls": len(_trace_tool_calls),
-                    "duration_ms": _trace_duration,
-                    "user_input_summary": (user_input or "")[:200],
-                    "status": "completed",
-                })
-        except Exception as e:
-            logger.debug("trace save skipped: %s", e)
-
-        # 9. 推送状态为 idle（无论成功或失败都恢复状态）
-        await self._push_status(session_id, "idle", "Ready")
-
-        logger.info(f"Agent loop completed for session {session_id}")
-        try:
-            _ws_reset()
-        except Exception:
-            pass
+        final_content = await run_epilogue(
+            self,
+            session_id=session_id,
+            final_content=final_content,
+            goal_mode=goal_mode,
+            llm_service=llm_service,
+            user_input=user_input,
+            tool_rounds=_tool_rounds,
+            last_tool_round_count=_last_tool_round_count,
+            multi_source_pending=_multi_source_pending,
+            suppress_content_stream=_suppress_content_stream,
+            sft_tools=_sft_tools,
+            trace_start_time=_trace_start_time,
+            global_iter=_global_iter,
+            trace_thinking_steps=_trace_thinking_steps,
+            trace_tool_calls=_trace_tool_calls,
+            trace_rag_sources=_trace_rag_sources,
+            ws_reset=_ws_reset,
+        )
         return final_content
 
     # ─────────── P0 helpers ───────────

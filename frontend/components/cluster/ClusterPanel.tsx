@@ -28,6 +28,7 @@ import {
   Fingerprint,
   Sparkles,
   Radio,
+  History,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -118,6 +119,14 @@ interface LiveMsg {
   ts: string;
   message: string;
   sub_task_id?: string;
+}
+
+interface HistoryItem {
+  task_id: string;
+  name: string;
+  status: string;
+  sub_task_count: number;
+  started_at: string | null;
 }
 
 /** 执行中的子任务实时状态骨架（由 WS 事件驱动） */
@@ -300,6 +309,32 @@ export function ClusterPanel({ className }: { className?: string }) {
   const [liveLog, setLiveLog] = useState<LiveMsg[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // 历史（/cluster/list + 详情回落）
+  const [view, setView] = useState<'run' | 'history'>('run');
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyDetail, setHistoryDetail] = useState<ClusterResultState | null>(null);
+  const [historyDetailLoading, setHistoryDetailLoading] = useState(false);
+
+  const loadHistory = useCallback(async () => {
+    setHistoryLoading(true);
+    try {
+      const { data } = await apiClient.get('/cluster/list', { timeout: 15_000 });
+      setHistory((data.clusters || []) as HistoryItem[]);
+    } catch { /* 列表失败保持空态 */ }
+    finally { setHistoryLoading(false); }
+  }, []);
+
+  const openHistoryDetail = useCallback(async (taskId: string) => {
+    setHistoryDetailLoading(true);
+    setHistoryDetail(null);
+    try {
+      const { data } = await apiClient.get(`/cluster/status/${taskId}`, { timeout: 30_000 });
+      setHistoryDetail(data as ClusterResultState);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || e?.message || 'load history detail failed');
+    } finally { setHistoryDetailLoading(false); }
+  }, []);
 
   const toggleTask = useCallback((taskId: string) => {
     setExpandedTasks(prev => {
@@ -478,6 +513,115 @@ export function ClusterPanel({ className }: { className?: string }) {
       </CardHeader>
 
       <CardContent className="space-y-4">
+        {/* 视图切换：执行 / 历史 */}
+        <div className="flex gap-1 border-b pb-2">
+          <button
+            onClick={() => setView('run')}
+            className={cn(
+              'px-3 py-1.5 text-sm rounded-md',
+              view === 'run' ? 'bg-brand-purple text-white' : 'text-muted-foreground hover:bg-elevated-bg',
+            )}
+          >
+            <Play className="w-3.5 h-3.5 inline mr-1" />编排执行
+          </button>
+          <button
+            onClick={() => { setView('history'); void loadHistory(); }}
+            className={cn(
+              'px-3 py-1.5 text-sm rounded-md',
+              view === 'history' ? 'bg-brand-purple text-white' : 'text-muted-foreground hover:bg-elevated-bg',
+            )}
+          >
+            <History className="w-3.5 h-3.5 inline mr-1" />历史记录
+          </button>
+        </div>
+
+        {/* 错误展示（诚实暴露，不吞） */}
+        {error && (
+          <div className="flex items-start gap-2 rounded-md border border-red-300 bg-red-50 dark:bg-red-950/30 p-3 text-sm text-red-700 dark:text-red-400">
+            <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        {view === 'history' ? (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">含跨重启持久化记录</span>
+              <Button variant="outline" size="sm" onClick={() => void loadHistory()} disabled={historyLoading}>
+                {historyLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : '刷新'}
+              </Button>
+            </div>
+            {history.length === 0 && !historyLoading && (
+              <div className="text-sm text-muted-foreground py-4 text-center">暂无历史记录</div>
+            )}
+            {history.map((h) => (
+              <div
+                key={h.task_id}
+                className="border rounded-lg p-2.5 text-sm cursor-pointer hover:bg-elevated-bg transition-colors"
+                onClick={() => void openHistoryDetail(h.task_id)}
+              >
+                <div className="flex items-center gap-2">
+                  <StatusIcon status={
+                    h.status === 'completed' ? 'completed'
+                    : h.status === 'running' ? 'running' : 'failed'
+                  } />
+                  <span className="flex-1 truncate">{h.name || h.task_id.slice(0, 8)}</span>
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      'text-xs',
+                      h.status === 'interrupted' && 'border-amber-500 text-amber-600',
+                      h.status === 'failed' && 'border-red-500 text-red-600',
+                    )}
+                  >
+                    {h.status}
+                  </Badge>
+                  <span className="text-xs text-muted-foreground">{h.sub_task_count} 任务</span>
+                  <span className="text-xs text-muted-foreground hidden sm:inline">
+                    {h.started_at ? new Date(h.started_at).toLocaleString() : ''}
+                  </span>
+                </div>
+              </div>
+            ))}
+
+            {historyDetailLoading && (
+              <div className="flex justify-center p-3">
+                <Loader2 className="w-4 h-4 animate-spin" />
+              </div>
+            )}
+            {historyDetail && (
+              <div className="border-t pt-3 space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium">详情 {historyDetail.task_id.slice(0, 8)}</span>
+                  {historyDetail.review && (
+                    <Badge variant="outline" className="text-xs">
+                      复核 {historyDetail.review.reviewed} 项
+                      {historyDetail.review.rejected > 0 && ` · 拒绝 ${historyDetail.review.rejected}`}
+                    </Badge>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  {historyDetail.sub_tasks.map((task) => (
+                    <SubTaskCard
+                      key={task.id}
+                      task={task}
+                      expanded={expandedTasks.has(`h-${task.id}`)}
+                      onToggle={() => toggleTask(`h-${task.id}`)}
+                    />
+                  ))}
+                </div>
+                {historyDetail.aggregated_result?.synthesized && (
+                  <ScrollArea className="max-h-48">
+                    <pre className="text-sm whitespace-pre-wrap text-foreground-dim bg-elevated-bg rounded p-3">
+                      {historyDetail.aggregated_result.synthesized}
+                    </pre>
+                  </ScrollArea>
+                )}
+              </div>
+            )}
+          </div>
+        ) : (
+          <>
         {/* 任务输入 */}
         <div className="space-y-2">
           <Label htmlFor="cluster-task-desc">{t('cluster._e30')}</Label>
@@ -524,14 +668,6 @@ export function ClusterPanel({ className }: { className?: string }) {
             {phase === 'executing' ? '执行中…' : plan ? '执行计划' : '快速执行'}
           </Button>
         </div>
-
-        {/* 错误展示（诚实暴露，不吞） */}
-        {error && (
-          <div className="flex items-start gap-2 rounded-md border border-red-300 bg-red-50 dark:bg-red-950/30 p-3 text-sm text-red-700 dark:text-red-400">
-            <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-            <span>{error}</span>
-          </div>
-        )}
 
         {/* 执行中：实时进度（WS 驱动 + 轮询兜底） */}
         {phase === 'executing' && (
@@ -631,6 +767,8 @@ export function ClusterPanel({ className }: { className?: string }) {
               </div>
             )}
           </div>
+        )}
+          </>
         )}
       </CardContent>
     </Card>

@@ -117,6 +117,9 @@ class Settings(BaseSettings):
     # reviewer 独立复核；revise 触发有限次返工，reject 从综合输入剔除
     cluster_review_enabled: bool = True
     cluster_review_max_revise: int = 1
+    # reviewer 专用模型（provider_id/model 格式；空 = 与综合共用默认服务）
+    # 独立模型可避免「自己审自己」的同源偏差
+    cluster_review_model_ref: str = ""
     # doom-loop：同工具+近似参数连续 thrash（默认 on，替代/增强 ToolRepeatGuard）
     agent_doom_loop_enabled: bool = True
     # best-of-n：默认关；完整 fanout 依赖 worktree（Batch2）
