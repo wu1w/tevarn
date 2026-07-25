@@ -179,6 +179,11 @@ class Settings(BaseSettings):
     prompt_skill_full_max_chars: int = 6000  # 单个 skill 正文上限
     prompt_skill_match_threshold: float = 0.85  # auto 模式相关度阈值
 
+    # Memory Graph 二期
+    memory_graph_auto_recall: bool = True  # 按用户输入自动召回注入 context（无命中回退静态提示）
+    memory_graph_recall_limit: int = 3  # 单轮最多注入几条记忆
+    memory_graph_auto_link: bool = True  # remember 时自动与相似节点建 related_to 边
+
     # Embedding — 默认空，未配置时不启用
     embedding_provider: Literal["ollama", "openai", "openai-compatible", ""] = ""
     embedding_base_url: str = ""

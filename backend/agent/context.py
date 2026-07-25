@@ -161,22 +161,41 @@ class ContextManager:
             except Exception:
                 pass
 
-        # Memory Graph（Phase 1）：存在长期记忆时给一行提示，引导 agent 用 memory_graph 召回
+        # Memory Graph：按用户输入自动召回注入（二期）；无命中回退一期静态提示
         try:
+            from backend.core.config import settings as _settings
             from backend.repositories.memory_graph_repo import AsyncMemoryGraphRepository
 
             _mg_repo = AsyncMemoryGraphRepository()
             _mg_count = await _mg_repo.count_nodes()
             if _mg_count > 0:
-                _mg_recent = await _mg_repo.recall(query="", limit=3, bump_hits=False)
-                _mg_titles = "、".join(n.title for n in _mg_recent if n.title)[:120]
-                _mg_hint = (
-                    f"[Memory Graph] 已有 {_mg_count} 条长期记忆"
-                    + (f"（最近：{_mg_titles}）" if _mg_titles else "")
-                    + "。执行相关任务前可用 memory_graph(action=recall) 召回；"
-                    "重要决策/偏好/经验应主动 remember。"
-                )
-                memory_block = (memory_block + "\n\n" + _mg_hint).strip() if memory_block else _mg_hint
+                _mg_block = None
+                _mg_query = (user_input or "").strip()[:120]
+                if _settings.memory_graph_auto_recall and _mg_query:
+                    _mg_hits = await _mg_repo.recall(
+                        query=_mg_query,
+                        limit=max(1, _settings.memory_graph_recall_limit),
+                        bump_hits=True,
+                        match_any=True,
+                    )
+                    if _mg_hits:
+                        lines = ["[Memory Graph] 召回的相关长期记忆："]
+                        for n in _mg_hits:
+                            preview = (n.content or "").strip().replace("\n", " ")[:200]
+                            lines.append(
+                                f"- [{n.kind}] {n.title}" + (f" — {preview}" if preview else "")
+                            )
+                        _mg_block = "\n".join(lines)
+                if _mg_block is None:
+                    _mg_recent = await _mg_repo.recall(query="", limit=3, bump_hits=False)
+                    _mg_titles = "、".join(n.title for n in _mg_recent if n.title)[:120]
+                    _mg_block = (
+                        f"[Memory Graph] 已有 {_mg_count} 条长期记忆"
+                        + (f"（最近：{_mg_titles}）" if _mg_titles else "")
+                        + "。执行相关任务前可用 memory_graph(action=recall) 召回；"
+                        "重要决策/偏好/经验应主动 remember。"
+                    )
+                memory_block = (memory_block + "\n\n" + _mg_block).strip() if memory_block else _mg_block
         except Exception as e:
             logger.debug("memory graph hint skipped: %s", e)
 

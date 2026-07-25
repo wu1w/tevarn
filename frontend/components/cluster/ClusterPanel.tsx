@@ -40,6 +40,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { apiClient } from '@/lib/api';
 import { useT } from '@/stores/localeStore';
+import { PlanDag } from './PlanDag';
 
 // ─────────── 类型（与后端 SubTask.to_dict / 复核契约对齐）───────────
 
@@ -315,6 +316,15 @@ export function ClusterPanel({ className }: { className?: string }) {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyDetail, setHistoryDetail] = useState<ClusterResultState | null>(null);
   const [historyDetailLoading, setHistoryDetailLoading] = useState(false);
+  // 计划编排：DAG 选中节点 + prompt 就地编辑
+  const [selectedPlanTask, setSelectedPlanTask] = useState<string | null>(null);
+
+  /** 就地更新计划子任务字段（name/prompt/agent_role），执行时随 plan 提交 */
+  const updatePlanTask = useCallback((taskId: string, patch: Partial<PlanTask>) => {
+    setPlan(prev => prev
+      ? { ...prev, tasks: prev.tasks.map(t => (t.id === taskId ? { ...t, ...patch } : t)) }
+      : prev);
+  }, []);
 
   const loadHistory = useCallback(async () => {
     setHistoryLoading(true);
@@ -701,26 +711,55 @@ export function ClusterPanel({ className }: { className?: string }) {
           </div>
         )}
 
-        {/* 计划预览 */}
+        {/* 计划预览：DAG 可视化 + 子任务就地编辑 */}
         {plan && !result && phase !== 'executing' && (
           <div className="space-y-2">
-            <div className="text-sm font-medium">
-              执行计划：{plan.name}（{plan.tasks.length} 个子任务）
-            </div>
-            {plan.tasks.map((pt) => (
-              <div key={pt.id} className="border rounded-lg p-3 text-sm space-y-1">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium flex-1">{pt.name}</span>
-                  {pt.agent_role && <Badge variant="outline" className="text-xs">{pt.agent_role}</Badge>}
-                  {pt.depends_on && pt.depends_on.length > 0 && (
-                    <Badge variant="outline" className="text-xs">
-                      <GitBranch className="w-3 h-3 mr-1" />{pt.depends_on.join(', ')}
-                    </Badge>
-                  )}
-                </div>
-                <p className="text-xs text-muted-foreground line-clamp-2">{pt.prompt}</p>
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-medium">
+                执行计划：{plan.name}（{plan.tasks.length} 个子任务）
               </div>
-            ))}
+              <span className="text-xs text-muted-foreground">点击节点定位；prompt 可就地修改</span>
+            </div>
+            <PlanDag
+              tasks={plan.tasks}
+              selectedId={selectedPlanTask}
+              onSelect={(id) => setSelectedPlanTask(prev => (prev === id ? null : id))}
+            />
+            {plan.tasks.map((pt) => {
+              const selected = selectedPlanTask === pt.id;
+              return (
+                <div
+                  key={pt.id}
+                  className={cn(
+                    'border rounded-lg p-3 text-sm space-y-2 transition-colors',
+                    selected && 'border-brand-purple bg-brand-purple/[0.04]',
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    <Input
+                      value={pt.name}
+                      onChange={(e) => updatePlanTask(pt.id, { name: e.target.value })}
+                      className="h-7 flex-1 text-sm font-medium"
+                      disabled={busy}
+                    />
+                    {pt.agent_role && <Badge variant="outline" className="text-xs">{pt.agent_role}</Badge>}
+                    {pt.depends_on && pt.depends_on.length > 0 && (
+                      <Badge variant="outline" className="text-xs">
+                        <GitBranch className="w-3 h-3 mr-1" />{pt.depends_on.join(', ')}
+                      </Badge>
+                    )}
+                  </div>
+                  <Textarea
+                    value={pt.prompt}
+                    onChange={(e) => updatePlanTask(pt.id, { prompt: e.target.value })}
+                    rows={selected ? 4 : 2}
+                    className="text-xs text-muted-foreground"
+                    disabled={busy}
+                    onFocus={() => setSelectedPlanTask(pt.id)}
+                  />
+                </div>
+              );
+            })}
           </div>
         )}
 

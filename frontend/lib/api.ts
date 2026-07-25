@@ -1432,6 +1432,41 @@ export async function detachPackage(sessionId: string, name: string): Promise<{
   return res.data;
 }
 
+// ====== Package 市场（Phase 4：发布 / 安装 / 卸载）======
+
+export interface PackageInstallResult {
+  ok: boolean;
+  name: string;
+  path?: string;
+  version?: string;
+  contract?: Record<string, unknown> | null;
+  contract_errors?: string[];
+  missing_requires?: string[];
+  error?: string;
+}
+
+/** 发布：本地包导出为 .takton-pkg.zip 的下载 URL（浏览器直接触发下载） */
+export function exportPackageUrl(name: string): string {
+  return `${resolveBaseUrl()}/packages/export/${encodeURIComponent(name)}`;
+}
+
+/** 安装：上传 .takton-pkg.zip */
+export async function installPackageFile(file: File, overwrite = false): Promise<PackageInstallResult> {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await api.post('/packages/install', form, {
+    params: { overwrite },
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return res.data;
+}
+
+/** 卸载：删除可写安装根内的同名包 */
+export async function uninstallInstalledPackage(name: string): Promise<{ ok: boolean; name: string }> {
+  const res = await api.delete(`/packages/installed/${encodeURIComponent(name)}`);
+  return res.data;
+}
+
 // ====== Notification APIs ======
 
 export async function getNotifications(unreadOnly = false, limit = 50, offset = 0): Promise<NotificationList> {

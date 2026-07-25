@@ -1,0 +1,14 @@
+name: code-review-lite
+version: 0.1.0
+description: 轻量代码审查包：按 checklist 走 diff，输出问题清单
+requires:
+  bins: [git]
+  python: []
+tools: [command, file_read]
+permissions:
+  fs: workspace
+  network: false
+workflow:
+  - 先 git diff 看全量改动
+  - 按 checklist 逐项审查：边界条件、错误处理、资源释放、并发安全
+  - 输出按严重度排序的问题清单，无问题也要明说

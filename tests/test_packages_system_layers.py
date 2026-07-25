@@ -16,7 +16,8 @@ def test_package_manifest_files_exist():
 
 
 def test_workspace_example_package():
-    p = ROOT / "workspace/packages/code-review-lite/takton.package.json"
+    # 示例包随仓库分发（workspace/ 被 gitignore，不能作为分发位置）
+    p = ROOT / "backend/packages/examples/code-review-lite/takton.package.json"
     assert p.is_file()
     text = p.read_text(encoding="utf-8")
     assert "code-review-lite" in text

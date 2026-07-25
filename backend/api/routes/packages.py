@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
 from backend.packages.loader import (
@@ -146,3 +146,102 @@ async def get_package(
         att = await get_session_attached_packages(session_id)
         attached = name in att
     return package_to_detail(p, attached=attached).model_dump()
+
+
+# ─────────── Phase 4：发布 / 安装 / 卸载 ───────────
+
+
+class InstallUrlBody(BaseModel):
+    url: str
+    overwrite: bool = False
+
+
+@router.get("/export/{name}")
+async def export_pkg(
+    name: str,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """发布：本地包导出为 .takton-pkg.zip 下载"""
+    from fastapi.responses import Response
+
+    from backend.packages.publisher import export_package_zip
+
+    try:
+        content, filename = export_package_zip(name)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    return Response(
+        content=content,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/install")
+async def install_pkg_upload(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+    file: UploadFile = File(...),
+    overwrite: bool = Query(default=False),
+):
+    """安装：上传 .takton-pkg.zip → 校验 → 解压到安装根 → 契约/requires 透出"""
+    from backend.packages.publisher import install_package_zip
+
+    data = await file.read()
+    if len(data) > 64 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="package zip too large (64MB max)")
+    result = install_package_zip(data, overwrite=overwrite)
+    if not result.ok:
+        status = 409 if "already installed" in result.error else 400
+        raise HTTPException(status_code=status, detail=result.error)
+    return result.model_dump()
+
+
+@router.post("/install-url")
+async def install_pkg_url(
+    body: InstallUrlBody,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """安装：从 URL 拉取 zip（公网校验防 SSRF）→ 同上传安装流程"""
+    import aiohttp
+
+    from backend.core.net_safety import UnsafeURLError, validate_public_url
+    from backend.packages.publisher import install_package_zip
+
+    try:
+        validate_public_url(body.url)
+    except UnsafeURLError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(body.url, timeout=aiohttp.ClientTimeout(total=60)) as resp:
+                if resp.status != 200:
+                    raise HTTPException(status_code=502, detail=f"download failed: HTTP {resp.status}")
+                data = await resp.read()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"download failed: {e}") from e
+    if len(data) > 64 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="package zip too large (64MB max)")
+    result = install_package_zip(data, overwrite=body.overwrite)
+    if not result.ok:
+        status = 409 if "already installed" in result.error else 400
+        raise HTTPException(status_code=status, detail=result.error)
+    return result.model_dump()
+
+
+@router.delete("/installed/{name}")
+async def uninstall_pkg(
+    name: str,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """卸载：删除可写安装根内的同名包（examples/只读根的包拒绝）"""
+    from backend.packages.publisher import uninstall_package
+
+    try:
+        removed = uninstall_package(name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"installed package `{name}` not found")
+    return {"ok": True, "name": name}

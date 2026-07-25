@@ -93,6 +93,41 @@ _running_clusters: dict[str, dict] = {}
 # 强引用防 GC（create_task 的 fire-and-forget 必须持引用）
 _bg_tasks: set[asyncio.Task] = set()
 
+# ─────────── cluster/list 历史短 TTL 缓存（B4）───────────
+# 压测病灶：list 每请求一次 per-call session（NullPool 下=新建 sqlite 连接+PRAGMA），
+# c=50 并发打到同一端点时连接开销叠加出 0.15% 异常。
+# 历史列表允许秒级陈旧（运行中状态由内存注册表覆盖，不受缓存影响）。
+_CLUSTER_HISTORY_TTL_S = 1.0
+_cluster_history_cache: dict[str, Any] = {"ts": 0.0, "rows": []}
+
+
+async def _load_cluster_history(limit: int = 50) -> list[dict]:
+    """读取持久化 cluster 历史（TTL 缓存；DB 失败回落旧缓存/空表）"""
+    import time
+
+    now = time.monotonic()
+    if now - _cluster_history_cache["ts"] < _CLUSTER_HISTORY_TTL_S:
+        return [dict(r) for r in _cluster_history_cache["rows"]]
+    from backend.repositories.cluster_run_repo import AsyncClusterRunRepository
+
+    try:
+        rows = [
+            {
+                "task_id": row.task_id,
+                "name": row.name,
+                "status": row.status,
+                "sub_task_count": row.sub_task_count,
+                "started_at": row.started_at.isoformat() if row.started_at else None,
+            }
+            for row in await AsyncClusterRunRepository().list_recent(limit=limit)
+        ]
+    except Exception as e:
+        logger.warning("cluster list db read failed, memory only: %s", e)
+        return [dict(r) for r in _cluster_history_cache["rows"]]
+    _cluster_history_cache["ts"] = now
+    _cluster_history_cache["rows"] = rows
+    return [dict(r) for r in rows]
+
 
 async def _run_cluster_background(
     task_id: str,
@@ -441,20 +476,9 @@ async def get_cluster_status(task_id: str):
 async def list_clusters():
     """列出集群任务（内存运行中 + 持久化历史，按时间倒序）"""
     items: dict[str, dict] = {}
-    # 持久化历史（含 interrupted/completed/failed）
-    from backend.repositories.cluster_run_repo import AsyncClusterRunRepository
-
-    try:
-        for row in await AsyncClusterRunRepository().list_recent(limit=50):
-            items[row.task_id] = {
-                "task_id": row.task_id,
-                "name": row.name,
-                "status": row.status,
-                "sub_task_count": row.sub_task_count,
-                "started_at": row.started_at.isoformat() if row.started_at else None,
-            }
-    except Exception as e:
-        logger.warning("cluster list db read failed, memory only: %s", e)
+    # 持久化历史（含 interrupted/completed/failed，TTL 缓存抗并发）
+    for row in await _load_cluster_history(limit=50):
+        items[row["task_id"]] = row
     # 内存态覆盖（运行中/刚完成的最新状态优先）
     for task_id, result in _active_clusters.items():
         items[task_id] = {

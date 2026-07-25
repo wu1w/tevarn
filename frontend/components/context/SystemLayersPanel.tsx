@@ -1,11 +1,14 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   attachPackage,
   detachPackage,
+  exportPackageUrl,
   getSystemLayers,
+  installPackageFile,
   listPackages,
+  uninstallInstalledPackage,
   type SystemLayer,
   type SystemLayersReport,
   type TaktonPackageItem,
@@ -112,6 +115,47 @@ export default function SystemLayersPanel({ sessionId }: { sessionId?: string | 
     }
   };
 
+  // ───── Phase 4：发布 / 安装 / 卸载 ─────
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [installing, setInstalling] = useState(false);
+
+  const onInstallFile = async (file: File) => {
+    setInstalling(true);
+    try {
+      const result = await installPackageFile(file);
+      const miss = result.missing_requires?.length
+        ? `（缺依赖: ${result.missing_requires.join(', ')}）`
+        : '';
+      addToast(`已安装 ${result.name}${miss}`, 'success');
+      await load();
+    } catch (e) {
+      const detail =
+        (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+        (e instanceof Error ? e.message : t('modelPicker.opFailed'));
+      addToast(detail, 'error');
+    } finally {
+      setInstalling(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const onUninstall = async (pkg: TaktonPackageItem) => {
+    setBusyName(pkg.name);
+    try {
+      await uninstallInstalledPackage(pkg.name);
+      addToast(`已删除包 ${pkg.name}`, 'success');
+      await load();
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : t('modelPicker.opFailed'), 'error');
+    } finally {
+      setBusyName(null);
+    }
+  };
+
+  /** 仅可写安装根（workspace/packages）内的包允许删除 */
+  const canUninstall = (pkg: TaktonPackageItem) =>
+    !pkg.virtual && !!pkg.path && pkg.path.replace(/\\/g, '/').includes('workspace/packages/');
+
   const totals = report?.totals;
 
   return (
@@ -157,16 +201,38 @@ export default function SystemLayersPanel({ sessionId }: { sessionId?: string | 
       </div>
 
       <div className="rounded-xl border border-border-default bg-card-bg p-4">
-        <div className="mb-3">
-          <h2 className="text-sm font-semibold text-foreground">Takton Packages</h2>
-          <p className="mt-0.5 text-[11px] text-foreground-muted">
-            统一 skill / 子代理 / 工作流投影；挂载后只注入 Context 层，不污染核心
-          </p>
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">Takton Packages</h2>
+            <p className="mt-0.5 text-[11px] text-foreground-muted">
+              统一 skill / 子代理 / 工作流投影；挂载后只注入 Context 层，不污染核心
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".zip"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void onInstallFile(f);
+              }}
+            />
+            <button
+              type="button"
+              disabled={installing}
+              onClick={() => fileInputRef.current?.click()}
+              className="rounded-md border border-border-default px-2.5 py-1 text-[11px] text-foreground-muted hover:bg-elevated-bg disabled:opacity-50"
+            >
+              {installing ? '安装中…' : '安装 .zip 包'}
+            </button>
+          </div>
         </div>
         <div className="max-h-72 space-y-1.5 overflow-y-auto">
           {packages.length === 0 && (
             <div className="py-6 text-center text-xs text-foreground-muted">
-              暂无包。可在 workspace/packages 下放 takton.package.json
+              暂无包。可安装 .takton-pkg.zip，或在 workspace/packages 下放 takton.package.json
             </div>
           )}
           {packages.map((pkg) => (
@@ -185,6 +251,27 @@ export default function SystemLayersPanel({ sessionId }: { sessionId?: string | 
                   {pkg.description ? ` · ${pkg.description}` : ''}
                 </div>
               </div>
+              {!pkg.virtual && (
+                <a
+                  href={exportPackageUrl(pkg.name)}
+                  download
+                  title="导出为 .takton-pkg.zip"
+                  className="shrink-0 rounded-md border border-border-subtle px-2 py-1 text-[11px] text-foreground-muted hover:bg-elevated-bg"
+                >
+                  导出
+                </a>
+              )}
+              {canUninstall(pkg) && (
+                <button
+                  type="button"
+                  disabled={busyName === pkg.name}
+                  onClick={() => void onUninstall(pkg)}
+                  title="从安装根删除该包"
+                  className="shrink-0 rounded-md border border-border-subtle px-2 py-1 text-[11px] text-red-400 hover:bg-elevated-bg disabled:opacity-50"
+                >
+                  删除
+                </button>
+              )}
               <button
                 type="button"disabled={!sessionId || busyName === pkg.name}
                 onClick={() => void togglePkg(pkg)}

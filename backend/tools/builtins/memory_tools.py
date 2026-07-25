@@ -9,10 +9,13 @@ agent 显式读写长期记忆图：
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any
 
 from backend.tools.base import BaseTool, ToolRiskLevel, ToolSource
+
+logger = logging.getLogger(__name__)
 
 
 class MemoryGraphTool(BaseTool):
@@ -108,6 +111,16 @@ class MemoryGraphTool(BaseTool):
                     out += f"（已关联到 {link_to}）"
                 except (ValueError, Exception) as e:
                     out += f"（关联失败: {e}）"
+            # 二期：自动写边（受 settings.memory_graph_auto_link 控制）
+            try:
+                from backend.core.config import settings
+
+                if settings.memory_graph_auto_link:
+                    auto_edges = await repo.auto_link(node)
+                    if auto_edges:
+                        out += f"（自动关联 {len(auto_edges)} 条相似记忆）"
+            except Exception as e:
+                logger.debug("auto_link skipped: %s", e)
             return out
 
         if action == "recall":

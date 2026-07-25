@@ -165,3 +165,80 @@ def test_status_endpoint_db_fallback(repo_db):
 
         # 不存在的仍然 404
         assert client.get(f"/cluster/status/{uuid.uuid4().hex}").status_code == 404
+
+
+@pytest.fixture()
+def list_client(repo_db):
+    """挂真路由的 TestClient；每个用例前后清空 list 历史缓存，避免用例间串扰"""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from backend.api.routes import cluster as cluster_mod
+
+    cluster_mod._cluster_history_cache["ts"] = 0.0
+    cluster_mod._cluster_history_cache["rows"] = []
+    cluster_mod._active_clusters.clear()
+    cluster_mod._running_clusters.clear()
+
+    app = FastAPI()
+    app.include_router(cluster_mod.router)
+    with TestClient(app) as client:
+        yield client, cluster_mod
+    cluster_mod._cluster_history_cache["ts"] = 0.0
+    cluster_mod._cluster_history_cache["rows"] = []
+
+
+def test_list_history_ttl_cache(list_client):
+    """TTL 内走缓存（新入库不可见）；过期后重新读库可见"""
+    client, cluster_mod = list_client
+    asyncio.run(_create(uuid.uuid4().hex))
+    asyncio.run(_create(uuid.uuid4().hex))
+
+    resp = client.get("/cluster/list")
+    assert resp.status_code == 200, resp.text
+    assert len(resp.json()["clusters"]) == 2
+
+    # TTL 内再入库一条 → 列表仍返回缓存的 2 条
+    asyncio.run(_create(uuid.uuid4().hex))
+    resp = client.get("/cluster/list")
+    assert len(resp.json()["clusters"]) == 2
+
+    # 拨过时钟 → 重新读库 → 3 条
+    cluster_mod._cluster_history_cache["ts"] = 0.0
+    resp = client.get("/cluster/list")
+    assert len(resp.json()["clusters"]) == 3
+
+
+def test_list_history_db_failure_falls_back_to_cache(list_client):
+    """DB 读失败：回落旧缓存（有）或空表（无），HTTP 始终 200"""
+    client, cluster_mod = list_client
+    asyncio.run(_create(uuid.uuid4().hex))
+    resp = client.get("/cluster/list")
+    assert resp.status_code == 200
+    assert len(resp.json()["clusters"]) == 1
+
+    # 真错误路径：session 工厂指向不存在目录的 sqlite → 连接必失败
+    bad_engine = create_async_engine(
+        "sqlite+aiosqlite:////nonexistent_dir_b4/bad.db", future=True
+    )
+    BadSession = async_sessionmaker(bad_engine, class_=AsyncSession, expire_on_commit=False)
+    cluster_mod._cluster_history_cache["ts"] = 0.0  # 强制过期，逼出 DB 读
+    with patch("backend.repositories.base.AsyncSessionLocal", BadSession):
+        resp = client.get("/cluster/list")
+        assert resp.status_code == 200, resp.text
+        # 回落旧缓存：仍能拿到失败前的那 1 条
+        assert len(resp.json()["clusters"]) == 1
+    asyncio.run(bad_engine.dispose())
+
+
+def test_list_cache_returns_copies(list_client):
+    """缓存返回拷贝：调用方改写不污染后续读取"""
+    client, cluster_mod = list_client
+    tid = uuid.uuid4().hex
+    asyncio.run(_create(tid))
+    resp = client.get("/cluster/list")
+    resp.json()["clusters"][0]["status"] = "hacked"
+
+    cluster_mod._cluster_history_cache["ts"] = 0.0  # 过期重读
+    resp = client.get("/cluster/list")
+    assert resp.json()["clusters"][0]["status"] == "running"

@@ -1,0 +1,11 @@
+{
+  "name": "code-review-lite",
+  "version": "0.1.0",
+  "type": "skill",
+  "description": "轻量代码审查包：按 checklist 走 diff，输出问题清单",
+  "author": "takton",
+  "system_snippet": "# Code Review Lite\n审查当前改动的正确性 > 稳定性 > 风格。先 git diff 看全量改动，再按 checklist 逐项核对：边界条件、错误处理、资源释放、并发安全。输出按严重度排序的问题清单，无问题也要明说。",
+  "tools": ["command", "file_read"],
+  "tags": ["review", "git"],
+  "enabled_by_default": false
+}

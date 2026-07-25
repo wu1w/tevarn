@@ -45,6 +45,8 @@ SCENARIOS = [
         "path": "/api/cluster/execute",
         "json_factory": _cluster_execute_body,
         # 全异步管线：落库 + 后台任务 + LLM 快速失败 + finish_run 更新
+        # 429 为 M4 Budget 设计内背压（超并发槽立即拒绝，非异常）
+        "expect": (200, 429),
         "max_concurrency": 25,
         "requests_per_level": 30,
     },
