@@ -26,11 +26,17 @@ export interface Attachment {
   text_content?: string;
   /** 本地预览用（blob:），不发送给后端 */
   previewUrl?: string;
+  /** 本地 staging id：拖入/选择后立刻出现在发送栏上方 */
+  localId?: string;
+  /** uploading=上传中 ready=可发送 error=失败（可移除） */
+  status?: 'uploading' | 'ready' | 'error';
+  error?: string;
 }
 
 export type ChatMode = 'default' | 'deepthink' | 'search' | 'ppt' | 'report' | 'goal' | 'cluster';
 
 export interface MessageInputHandle {
+  /** 与点「附件」同一路径：只挂发送栏，绝不自动发送 */
   ingestFiles: (files: FileList | File[] | null | undefined) => Promise<void>;
 }
 
@@ -217,37 +223,72 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       if (!files) return;
       const list = Array.from(files as ArrayLike<File>).filter(Boolean);
       if (list.length === 0) return;
+      // 仅 AI 回复中禁止挂附件；上传中仍可继续往发送栏加
       if (disabled) {
         addToast(t('chat.aiReplying'), 'error');
         return;
       }
-      setUploading(true);
+
+      // 1) 立刻出现在发送栏上方（与点附件一致，绝不自动发送）
+      const staged: Attachment[] = list.map((file, i) => {
+        const localId = `local-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 8)}`;
+        const previewUrl = isImageType(file.type || '', file.name)
+          ? URL.createObjectURL(file)
+          : undefined;
+        return {
+          localId,
+          filename: file.name,
+          url: '',
+          type: file.type || 'application/octet-stream',
+          previewUrl,
+          status: 'uploading' as const,
+        };
+      });
+      setAttachments((prev) => [...prev, ...staged]);
       setUploadError(null);
-      const results: Attachment[] = [];
+      setUploading(true);
+      addToast(
+        t('chat.stagedPending').replace('{n}', String(staged.length)),
+        'success'
+      );
+      window.setTimeout(() => focusComposer(), 0);
+
+      // 2) 后台上传，成功才变成 ready；失败标红，仍不发送
       const errors: string[] = [];
-      for (const file of list) {
+      for (let i = 0; i < list.length; i++) {
+        const file = list[i];
+        const localId = staged[i].localId!;
         try {
           const result: UploadResult = await uploadFile(file);
-          const previewUrl = isImageType(file.type || result.type, result.filename)
-            ? URL.createObjectURL(file)
-            : undefined;
-          results.push({
-            filename: result.filename,
-            url: result.url,
-            type: result.type || file.type,
-            text_content: result.text_content,
-            previewUrl,
-          });
+          setAttachments((prev) =>
+            prev.map((a) =>
+              a.localId === localId
+                ? {
+                    ...a,
+                    filename: result.filename || a.filename,
+                    url: result.url,
+                    type: result.type || a.type,
+                    text_content: result.text_content,
+                    status: 'ready',
+                    error: undefined,
+                  }
+                : a
+            )
+          );
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           errors.push(`${file.name}: ${msg}`);
           console.error('Upload failed:', err);
+          setAttachments((prev) =>
+            prev.map((a) =>
+              a.localId === localId
+                ? { ...a, status: 'error', error: msg }
+                : a
+            )
+          );
         }
       }
-      if (results.length > 0) {
-        setAttachments((prev) => [...prev, ...results]);
-        addToast(t('chat.uploadOkAttached').replace('{n}', String(results.length)), 'success');
-      }
+
       if (errors.length > 0) {
         const joined = errors.slice(0, 3).join('; ');
         setUploadError(joined);
@@ -264,9 +305,22 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
 
   const handleSend = () => {
     const trimmed = content.trim();
-    if (!trimmed && attachments.length === 0) return;
+    const readyAtts = attachments.filter((a) => a.status !== 'error' && a.url);
+    const pending = attachments.some((a) => a.status === 'uploading');
+    if (!trimmed && readyAtts.length === 0 && attachments.length === 0) return;
     if (disabled) return;
     if (sendingRef.current) return;
+    // 有文件还在上传：不发送，提示等一下（绝不自动在上传完发送）
+    if (pending || uploading) {
+      addToast(t('chat.waitUploadBeforeSend'), 'error');
+      return;
+    }
+    if (!trimmed && readyAtts.length === 0) {
+      if (attachments.some((a) => a.status === 'error')) {
+        addToast(t('chat.removeFailedAttachments'), 'error');
+      }
+      return;
+    }
     sendingRef.current = true;
 
     if (activeModes.has('image')) {
@@ -303,7 +357,8 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
                 : 'default';
 
     const subIds = mode === 'cluster' ? selectedSubAgentIds : undefined;
-    const payload = attachments.map(({ filename, url, type, text_content }) => ({
+    // 只发已上传成功的附件；失败的 chip 留在栏上让用户删
+    const payload = readyAtts.map(({ filename, url, type, text_content }) => ({
       filename,
       url,
       type,
@@ -412,7 +467,11 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     );
   };
 
-  const canSend = (!!content.trim() || attachments.length > 0) && !disabled && !uploading;
+  const canSend =
+    (!!content.trim() || attachments.some((a) => a.status !== 'error' && !!a.url)) &&
+    !disabled &&
+    !uploading &&
+    !attachments.some((a) => a.status === 'uploading');
 
   const handleComposerPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement | null;
@@ -441,11 +500,15 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     e.stopPropagation();
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
   };
+  /** 与点附件同一路径：只 ingest → 发送栏 chip，不 onSend */
   const onDropLocal = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setComposerDragging(false);
-    void ingestFiles(e.dataTransfer?.files);
+    const files = e.dataTransfer?.files;
+    if (files && files.length > 0) {
+      void ingestFiles(files);
+    }
   };
 
   return (
@@ -474,7 +537,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
         </div>
       )}
       {attachments.length > 0 && (
-        <div className="mb-3 flex flex-wrap gap-2">
+        <div className="mb-3 flex flex-wrap gap-2" data-testid="composer-attachments">
           {attachments.map((att, idx) => {
             const img = isImageType(att.type || '', att.filename);
             const src =
@@ -484,24 +547,37 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
                   ? att.url
                   : `/${att.url}`
                 : '');
+            const uploadingChip = att.status === 'uploading';
+            const errChip = att.status === 'error';
             return (
               <span
-                key={`${att.url}-${idx}`}
-                className="inline-flex max-w-[200px] items-center gap-1.5 rounded-xl border border-brand-purple/20 bg-brand-purple/10 py-1 pl-1 pr-2 text-xs text-brand-purple"
+                key={att.localId || `${att.url}-${idx}`}
+                title={errChip ? att.error : undefined}
+                className={`inline-flex max-w-[220px] items-center gap-1.5 rounded-xl border py-1 pl-1 pr-2 text-xs ${
+                  errChip
+                    ? 'border-red-500/30 bg-red-500/10 text-red-300'
+                    : uploadingChip
+                      ? 'border-brand-purple/20 bg-brand-purple/10 text-brand-purple/80'
+                      : 'border-brand-purple/20 bg-brand-purple/10 text-brand-purple'
+                }`}
               >
                 {img && src ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={src} alt="" className="h-8 w-8 flex-shrink-0 rounded-lg object-cover" />
                 ) : (
                   <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-brand-purple/15 text-[10px]">
-                    FILE
+                    {uploadingChip ? '…' : errChip ? '!' : 'FILE'}
                   </span>
                 )}
                 <span className="max-w-[120px] truncate">{att.filename}</span>
+                {uploadingChip && (
+                  <span className="text-[10px] text-foreground-dim">{t('chat.uploadingShort')}</span>
+                )}
                 <button
                   type="button"
                   onClick={() => removeAttachment(idx)}
                   className="ml-0.5 text-brand-purple/60 transition-colors hover:text-brand-purple"
+                  aria-label="remove"
                 >
                   ×
                 </button>

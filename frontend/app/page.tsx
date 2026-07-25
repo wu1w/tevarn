@@ -598,7 +598,7 @@ export default function HomePage() {
 
       const files = e.dataTransfer.files;
       if (!files || files.length === 0) return;
-      // 挂到 composer pending 附件，不造假消息、不自动发送
+      // 与点「附件」完全一致：只挂发送栏上方 chip，绝不 addMessage / sendMessage
       if (composerRef.current?.ingestFiles) {
         await composerRef.current.ingestFiles(files);
       } else {
