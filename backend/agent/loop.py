@@ -1221,6 +1221,7 @@ class NexusAgentLoop:
                                 validated_args["user_id"] = str(self.user_id)
                                 validated_args["_user_id"] = str(self.user_id)
                             validated_args["_session_id"] = str(session_id)
+                            validated_args["_chat_mode"] = str(mode or "default")
                             validated_args["_ws_manager"] = self.ws_manager
                             _tool_timeout = float(
                                 getattr(settings, "agent_tool_timeout_seconds", 180) or 0
@@ -1248,6 +1249,7 @@ class NexusAgentLoop:
                                     validated_args["user_id"] = str(self.user_id)
                                     validated_args["_user_id"] = str(self.user_id)
                                 validated_args["_session_id"] = str(session_id)
+                                validated_args["_chat_mode"] = str(mode or "default")
                                 validated_args["_ws_manager"] = self.ws_manager
                                 tool_result = await skill.execute(**validated_args)
                                 query = ""

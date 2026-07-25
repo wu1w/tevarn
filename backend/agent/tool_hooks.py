@@ -111,10 +111,128 @@ async def builtin_write_checkpoint_before(name: str, arguments: dict[str, Any]) 
     return BeforeHookResult(arguments=arguments)
 
 
+
+
+# ── Batch2: permission rules + file history ────────────────────
+
+_EDIT_TOOLS = frozenset(
+    {
+        "file_write",
+        "edit",
+        "apply_patch",
+        "desktop_write_file",
+        "doc_write",
+    }
+)
+
+
+def _project_root_path():
+    try:
+        from backend.tools.permissions import resolve_agent_workspace_root
+
+        return __import__("pathlib").Path(resolve_agent_workspace_root())
+    except Exception:
+        from pathlib import Path
+
+        return Path.cwd()
+
+
+async def builtin_permission_before(name: str, arguments: dict[str, Any]) -> BeforeHookResult:
+    """Last-match permission gate (code permissions_rules)."""
+    try:
+        from backend.core.config import settings
+
+        if not bool(getattr(settings, "agent_permission_enabled", True)):
+            return BeforeHookResult(arguments=arguments)
+    except Exception:
+        return BeforeHookResult(arguments=arguments)
+
+    try:
+        from backend.agent.permissions_rules import PermissionGate, rules_for_profile
+
+        profile = str(getattr(settings, "agent_permission_profile", "cautious") or "cautious")
+        # session mode overlay: if profile is plan OR chat mode plan
+        mode = "build"
+        chat_mode = str(arguments.get("_chat_mode") or getattr(settings, "_active_chat_mode", "") or "")
+        if profile.lower() == "plan" or chat_mode.lower() in ("plan", "ask", "explore"):
+            mode = "plan"
+            if profile.lower() != "plan":
+                # overlay plan rules when chat mode is plan
+                profile = "plan"
+        gate = PermissionGate(
+            profile=profile,
+            mode=mode,
+            project_root=_project_root_path(),
+            rules=rules_for_profile(profile),
+        )
+        decision = gate.check(name, arguments)
+        if decision == "allow":
+            return BeforeHookResult(arguments=arguments)
+        if decision == "deny":
+            return BeforeHookResult(
+                block=True,
+                reason=f"[permission deny] {gate.summarize(name, arguments)}",
+                arguments=arguments,
+            )
+        # ask
+        ask_mode = str(getattr(settings, "agent_permission_ask_mode", "local_allow") or "local_allow")
+        if ask_mode in ("local_allow", "allow", "auto_allow"):
+            logger.info("permission ask→local_allow tool=%s %s", name, gate.summarize(name, arguments))
+            return BeforeHookResult(arguments=arguments)
+        return BeforeHookResult(
+            block=True,
+            reason=(
+                f"[permission ask] 需要确认: {gate.summarize(name, arguments)}. "
+                f"单用户可设 agent_permission_ask_mode=local_allow"
+            ),
+            arguments=arguments,
+        )
+    except Exception as e:
+        logger.debug("permission hook skipped: %s", e)
+        return BeforeHookResult(arguments=arguments)
+
+
+async def builtin_file_history_before(name: str, arguments: dict[str, Any]) -> BeforeHookResult:
+    """Snapshot into FileHistory before edit tools."""
+    if name not in _EDIT_TOOLS:
+        return BeforeHookResult(arguments=arguments)
+    try:
+        from backend.core.config import settings
+
+        if not bool(getattr(settings, "agent_file_history", True)):
+            return BeforeHookResult(arguments=arguments)
+    except Exception:
+        return BeforeHookResult(arguments=arguments)
+    try:
+        from backend.agent.file_history import get_file_history
+
+        root = _project_root_path()
+        sid = str(arguments.get("_session_id") or "default")
+        path = (
+            arguments.get("filepath")
+            or arguments.get("path")
+            or arguments.get("file")
+            or ""
+        )
+        paths = [str(path)] if path else []
+        hist = get_file_history(root, sid)
+        if paths:
+            pt = hist.create_point(paths=paths, label=f"before:{name}", kind="pre_write")
+            arguments = dict(arguments)
+            arguments["_history_point"] = pt.id
+            logger.info("file_history point %s for %s", pt.id, paths)
+    except Exception as e:
+        logger.debug("file_history before skipped: %s", e)
+    return BeforeHookResult(arguments=arguments)
+
+
 def ensure_builtin_hooks_registered() -> None:
     if builtin_write_checkpoint_before not in _before_handlers:
         register_before_tool_call(builtin_write_checkpoint_before)
-
+    if builtin_permission_before not in _before_handlers:
+        register_before_tool_call(builtin_permission_before)
+    if builtin_file_history_before not in _before_handlers:
+        register_before_tool_call(builtin_file_history_before)
 
 __all__ = [
     "BeforeHookResult",
@@ -125,4 +243,6 @@ __all__ = [
     "run_after_tool_call",
     "ensure_builtin_hooks_registered",
     "builtin_write_checkpoint_before",
+    "builtin_permission_before",
+    "builtin_file_history_before",
 ]

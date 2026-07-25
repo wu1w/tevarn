@@ -145,7 +145,12 @@ class ToolRegistry:
             return f"[Security Blocked] {reason}"
 
         # 内部 meta 不传给工具实现
-        exec_args = {k: v for k, v in args.items() if not str(k).startswith("_checkpoint")}
+        _DROP_META = {"_session_id", "_chat_mode", "_history_point", "_checkpoint_path"}
+        exec_args = {
+            k: v
+            for k, v in args.items()
+            if k not in _DROP_META and not str(k).startswith("_checkpoint")
+        }
 
         result = await tool.execute(**exec_args)
 

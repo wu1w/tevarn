@@ -120,6 +120,19 @@ class Settings(BaseSettings):
     # 用户消息中本地图片路径 → 多模态 parts
     agent_multimodal_images: bool = True
     agent_multimodal_max_images: int = 4
+    # Batch2: permissions last-match profile
+    # cautious|acceptEdits|dontAsk|free|plan|auto
+    agent_permission_profile: str = "cautious"
+    # ask 决策：local_allow=单用户直接放行并记日志；deny=拒绝并回模型；broker=预留交互
+    agent_permission_ask_mode: str = "local_allow"
+    agent_permission_enabled: bool = True
+    # file history after writes
+    agent_file_history: bool = True
+    # plan mode auto-detect complex tasks (soft; does not force mode alone)
+    agent_auto_plan_complex: bool = False
+    agent_auto_plan_simple_max_chars: int = 120
+    # git worktree helpers available (opt-in tools later)
+    agent_worktree_enabled: bool = True
     # 写文件工具前自动快照到 .takton/checkpoints/
     agent_file_checkpoint: bool = True
     # 搜索：有 Key 时 web_search/search 优先 Tavily
