@@ -355,9 +355,30 @@ class NexusAgentLoop(AgentLoopBase):
         lock = _get_session_lock(session_id)
         async with lock:
             _ws_reset = lambda: None  # noqa: E731
-            return await self._run_locked(
-                session_id, user_input, attachments, mode, sub_agent_ids or []
+            # Durable Run（Phase 0.5.2）：一次 run() = 一条 AgentRun 记录
+            from backend.agent.run_recorder import RunRecorder
+
+            recorder = RunRecorder(
+                session_id,
+                user_id=self.user_id,
+                mode=mode,
             )
+            self._run_recorder = recorder
+            await recorder.start(input_summary=user_input or "")
+            try:
+                result = await self._run_locked(
+                    session_id, user_input, attachments, mode, sub_agent_ids or []
+                )
+                if self._should_stop:
+                    await recorder.cancel("stopped by user")
+                else:
+                    await recorder.finish_ok(final_summary=result or "")
+                return result
+            except Exception as e:
+                await recorder.finish_fail(str(e))
+                raise
+            finally:
+                self._run_recorder = None
 
     async def _run_locked(
         self,
@@ -370,6 +391,16 @@ class NexusAgentLoop(AgentLoopBase):
         """实际的 Agent Loop 逻辑（已被外层锁保护）"""
         logger.info(f"Agent loop started for session {session_id}, mode={mode}")
         logger.info(f"DEBUG_START: should_stop={self._should_stop}")
+
+        # Durable Run：进入规划阶段
+        _rc = getattr(self, "_run_recorder", None)
+        if _rc is not None:
+            try:
+                from backend.agent.run_state import RunStatus as _RS
+
+                await _rc.transition(_RS.PLANNING, note=f"mode={mode}")
+            except Exception:
+                pass
 
         # @device 远程执行（L1）：命中则短路，不进工具循环
         if self.user_id and user_input and "@" in user_input:
@@ -932,6 +963,7 @@ class NexusAgentLoop(AgentLoopBase):
                         mode=mode,
                         note="auto-continue segment boundary",
                         extra={"goal_complete": bool(g_chk and g_chk.is_complete())},
+                        run_id=str(_rc.run_id) if _rc is not None and _rc.run_id else None,
                     )
                     if goal_mode:
                         await save_goal_to_db(session_id)
@@ -1225,6 +1257,13 @@ class NexusAgentLoop(AgentLoopBase):
 
                 # 执行每个 tool call
                 for tc in tool_calls:
+                    # Durable Run：首个工具触发 EXECUTING；记录起始时间
+                    _tc_t0 = _time.monotonic()
+                    if _rc is not None:
+                        try:
+                            await _rc.transition(_RS.EXECUTING)
+                        except Exception:
+                            pass
                     # 实时推送：工具开始
                     args_dict = tc.arguments if isinstance(tc.arguments, dict) else {}
                     if not isinstance(args_dict, dict):
@@ -1477,6 +1516,24 @@ class NexusAgentLoop(AgentLoopBase):
                             result=tool_result,
                         )
 
+                    # Durable Run：记录工具步骤（成功/失败/超时统一在此落库）
+                    if _rc is not None:
+                        try:
+                            _tr_str = str(tool_result)
+                            _tc_ok = not _tr_str.startswith(("[Error", "[Security Blocked]"))
+                            await _rc.tool_step(
+                                tc.name,
+                                args_summary=json.dumps(
+                                    args_dict if isinstance(args_dict, dict) else {},
+                                    ensure_ascii=False,
+                                )[:500],
+                                status="completed" if _tc_ok else "failed",
+                                result_summary=_tr_str[:500],
+                                duration_ms=(_time.monotonic() - _tc_t0) * 1000,
+                            )
+                        except Exception:
+                            pass
+
                     # 将工具结果追加到 messages（部分 API 需要 name 字段）
                     tool_msg = {
                         "role": "tool",
@@ -1721,6 +1778,7 @@ class NexusAgentLoop(AgentLoopBase):
                             iteration=_global_iter + 1,
                             mode=mode,
                             note=f"tool_round={_tool_rounds}",
+                            run_id=str(_rc.run_id) if _rc is not None and _rc.run_id else None,
                         )
                         if goal_mode:
                             await save_goal_to_db(session_id)
@@ -1844,6 +1902,13 @@ class NexusAgentLoop(AgentLoopBase):
                     try:
                         from backend.agent.completion_gate import evaluate_completion
 
+                        # Durable Run：进入完成度校验阶段
+                        if _rc is not None:
+                            try:
+                                await _rc.transition(_RS.VERIFYING)
+                            except Exception:
+                                pass
+
                         _ver = evaluate_completion(
                             user_input or enriched_input or "",
                             _tools_used_run,
@@ -1907,6 +1972,7 @@ class NexusAgentLoop(AgentLoopBase):
                             iteration=_total_iters,
                             mode=mode,
                             note="budget_exhausted",
+                            run_id=str(_rc.run_id) if _rc is not None and _rc.run_id else None,
                         )
                     except Exception:
                         pass

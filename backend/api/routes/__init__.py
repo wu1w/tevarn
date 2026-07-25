@@ -27,6 +27,7 @@ from . import (
     messages,
     notifications,
     packages,
+    runs,
     sessions,
     settings,
     skills,
@@ -70,6 +71,7 @@ def register_routes(app, prefix: str = "") -> None:
     app.include_router(tools.router, prefix=p)
     app.include_router(context.router, prefix=p)
     app.include_router(packages.router, prefix=p)
+    app.include_router(runs.router, prefix=p)
     app.include_router(devices.router, prefix=p)
     app.include_router(workflows.router, prefix=p)
     app.include_router(cron.router, prefix=p)

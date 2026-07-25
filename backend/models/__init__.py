@@ -1,4 +1,5 @@
 from .agent_profile import AgentProfile
+from .agent_run import AgentRun, RunStep
 from .audit_log import AuditLog
 from .base import Base
 from .channel import Channel

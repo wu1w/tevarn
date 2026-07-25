@@ -19,6 +19,7 @@ async def save_checkpoint(
     mode: str,
     note: str = "",
     extra: dict[str, Any] | None = None,
+    run_id: str | None = None,
 ) -> None:
     try:
         from backend.repositories.session_repo import AsyncSessionRepository
@@ -35,6 +36,9 @@ async def save_checkpoint(
             "note": note,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
+        # Phase 0.5.2：checkpoint 挂到具体 run，resume 可溯源
+        if run_id:
+            payload["run_id"] = run_id
         if extra:
             payload["extra"] = extra
         cfg[CHECKPOINT_KEY] = payload
