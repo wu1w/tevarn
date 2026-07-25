@@ -44,6 +44,10 @@ from backend.agent.robust import (
 from backend.agent.iteration_budget import IterationBudget
 from backend.agent.turn_retry import RetryKind, TurnRetryState
 from backend.agent.tool_result_contract import normalize_tool_result
+from backend.agent.loop_base import AgentLoopBase
+from backend.integrations.sqlalchemy_message_store import SqlAlchemyMessageStore
+from backend.integrations.registry_tool_executor import RegistryToolExecutor
+from backend.integrations.websocket_event_sink import WebSocketEventSink
 
 from .context import ContextManager
 
@@ -86,7 +90,7 @@ def _remove_session_lock(session_id: uuid.UUID) -> None:
 
 
 
-class NexusAgentLoop:
+class NexusAgentLoop(AgentLoopBase):
     """
     Nexus Agent 核心循环
 
@@ -134,6 +138,18 @@ class NexusAgentLoop:
         self.notification_repo = notification_repo
         # 可选：async (kind: str, text: str) -> None；仅人类可读进度/思考，不含工具细节
         self.progress_sink = progress_sink
+        # Batch3a: ports (default adapters; injectable later)
+        _store = SqlAlchemyMessageStore(message_repo) if message_repo is not None else None
+        _tools = RegistryToolExecutor()
+        _sink = WebSocketEventSink(ws_manager=ws_manager, progress_sink=progress_sink)
+        AgentLoopBase.__init__(
+            self,
+            message_store=_store,
+            event_sink=_sink,
+            tool_executor=_tools,
+            agent_name=agent_name,
+            user_id=user_id,
+        )
         self.context_manager = ContextManager(ctx_item_repo=ctx_item_repo)
         # 长链/编码任务默认允许更多工具轮次；可用 TAKTON_AGENT_MAX_ITERATIONS 覆盖
         self.max_iterations = int(getattr(settings, "agent_max_iterations", 25) or 25)
