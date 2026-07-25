@@ -672,7 +672,7 @@ class NexusAgentLoop(AgentLoopBase):
             and mode == "default"
         ):
             complexity_score = await self._analyze_task_complexity(user_input)
-            if complexity_score >= 0.7:
+            if complexity_score >= 0.8:
                 auto_cluster = True
                 cluster_mode = True
                 logger.info(
@@ -2364,13 +2364,12 @@ class NexusAgentLoop(AgentLoopBase):
         elif len(user_input) > 100:
             score += 0.1
         
-        # 多步骤关键词
+        # 多步骤关键词（仅实义词；连词类虚词如「和/与/以及/同时」误伤率过高，已移除）
         multi_step_keywords = [
             "分析", "比较", "对比", "评估", "设计", "架构", "规划",
             "实现", "开发", "创建", "构建", "优化", "改进",
             "研究", "调查", "探索", "深入", "详细",
             "多个", "几个", "一系列", "批量", "综合",
-            "和", "与", "以及", "并且", "同时", "然后", "接着",
         ]
         keyword_count = sum(1 for kw in multi_step_keywords if kw in input_lower)
         score += min(keyword_count * 0.15, 0.4)

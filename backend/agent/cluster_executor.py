@@ -344,14 +344,8 @@ class ClusterExecutor:
             }
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
-            # 降级到模拟结果
-            return {
-                "status": "simulated",
-                "prompt": prompt,
-                "result": f"[LLM 调用失败，使用模拟结果] {prompt[:100]}...",
-                "metadata": metadata,
-                "error": str(e),
-            }
+            # 禁止以「模拟结果」冒充成功：向上抛出，由调用方标记 TaskStatus.FAILED
+            raise RuntimeError(f"sub-agent LLM call failed: {e}") from e
     
     async def _aggregate_results(
         self,

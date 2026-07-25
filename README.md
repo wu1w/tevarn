@@ -31,34 +31,34 @@
 
 ## 🎯 Why Takton? · 为什么选择 Takton？
 
-> **Takton is not another chat wrapper.** It's a full-featured agent workstation that runs entirely on your machine — your data never leaves your disk. One agent handles simple questions; a cluster of sub-agents tackles complex research. Skills are not just installed — they're **auto-generated** when the agent encounters a new task type.
+> **Takton is not another chat wrapper.** It's a full-featured agent workstation that runs entirely on your machine — your data never leaves your disk. One agent handles simple questions; complex research can optionally fan out into parallel draft passes (no tool access) that get synthesized into one answer. Skills are not just installed — they're **auto-generated** when the agent encounters a new task type.
 >
-> **Takton 不是又一个聊天套壳。** 它是一个全功能 Agent 工作站，完全运行在你的本机——数据永远不离开你的磁盘。简单问题单 Agent 搞定；复杂调研自动拆分给子代理集群。技能不只是安装——遇到新任务类型时 Agent 会**自动编写新技能**。
+> **Takton 不是又一个聊天套壳。** 它是一个全功能 Agent 工作站，完全运行在你的本机——数据永远不离开你的磁盘。简单问题单 Agent 搞定；复杂调研可选「并行草稿扇出」（子任务无工具权限），多份草稿汇总成一份答案。技能不只是安装——遇到新任务类型时 Agent 会**自动编写新技能**。
 
 <table>
 <tr>
 <td width="50%">
 
 ### 🧠 Smart Agent Orchestration
-Simple questions → single agent. Complex tasks → auto-spawn sub-agent clusters. No manual configuration needed.
+Simple questions → single agent. Complex tasks → optional parallel draft fan-out (no tool access) with synthesis. Off by default.
 
 ### 🔧 Skill Auto-Generation
 Agent writes its own tools when it hits a new task type. 17 builtin skills + infinite extensibility.
 
 ### 🖥️ OS-Level Operations
-File read/write, terminal commands, browser control, SQLite queries — all sandboxed with permission checks.
+File read/write, terminal commands, browser control, SQLite queries — all gated by a three-level permission model.
 
 </td>
 <td width="50%">
 
 ### 🧠 智能 Agent 编排
-简单问题 → 单 Agent。复杂任务 → 自动拆分子代理集群。无需手动配置。
+简单问题 → 单 Agent。复杂任务 → 可选并行草稿扇出（无工具权限）+ 汇总。默认关闭。
 
 ### 🔧 技能自动生成
 Agent 遇到新任务类型时自动编写新工具。17 个内置技能 + 无限扩展。
 
 ### 🖥️ 操作系统级能力
-文件读写、终端命令、浏览器控制、SQLite 查询——全部沙箱化 + 权限校验。
+文件读写、终端命令、浏览器控制、SQLite 查询——全部经三级权限模型校验。
 
 </td>
 </tr>
@@ -109,7 +109,7 @@ Agent 遇到新任务类型时自动编写新工具。17 个内置技能 + 无�
 | Feature | Description | 说明 |
 |---------|-------------|------|
 | **💬 Multi-Session Chat** | Context compression, goal tracking, breakpoint resume | 多会话管理，上下文压缩，目标追踪，断点续传 |
-| **🤖 Sub-Agent Clusters** | Auto-spawn Coder/Researcher/Writer agents for complex tasks | 复杂任务自动拆分给 Coder/Researcher/Writer 子代理 |
+| **🤖 Parallel Draft Fan-out** | Optional multi-perspective drafts for complex tasks (no tool access), synthesized into one answer | 复杂任务可选多视角并行草稿（无工具权限），汇总为单一答案 |
 | **🔧 Skill System** | 17 builtin skills + auto-generation + community store | 17 个内置技能 + 自动生成 + 社区商店 |
 | **⚡ Workflow Engine** | Visual editor, trigger conditions, parallel execution | 可视化工作流编辑器，触发条件，并行执行 |
 | **📚 RAG Knowledge Base** | Qdrant vector DB, hybrid search (BM25 + vector) | Qdrant 向量数据库，混合检索（BM25 + 向量） |
