@@ -3,6 +3,7 @@ Cluster API - 集群模式 API 路由
 支持任务分发、并行执行、结果聚合
 """
 
+import asyncio
 import json
 import logging
 import uuid
@@ -75,6 +76,7 @@ class ClusterStatusResponse(BaseModel):
     error: str | None = None
     started_at: str
     completed_at: str | None = None
+    review: dict | None = None
 
 
 # ─────────── 存储（内存，后续可改数据库）───────────
@@ -84,6 +86,87 @@ _cluster_websockets: dict[str, list[WebSocket]] = {}
 
 
 # ─────────── API 端点 ───────────
+
+# ─────────── 后台执行注册表 ───────────
+# task_id → {"status": "running", "started_at": iso}；完成/失败后移入 _active_clusters
+_running_clusters: dict[str, dict] = {}
+# 强引用防 GC（create_task 的 fire-and-forget 必须持引用）
+_bg_tasks: set[asyncio.Task] = set()
+
+
+async def _run_cluster_background(
+    task_id: str,
+    executor: ClusterExecutor,
+    *,
+    task_description: str,
+    sub_tasks: list[dict],
+    strategy: AggregationStrategy,
+) -> None:
+    """后台执行集群任务：进度经 WS 广播，结果落 _active_clusters 供 status 查询"""
+
+    def _on_progress(sub_task_id: str, progress: int, message: str) -> None:
+        # executor 以同步方式调用回调 → 调度协程广播
+        try:
+            asyncio.get_running_loop().create_task(
+                broadcast_progress(
+                    task_id, progress, message, sub_task_id=sub_task_id
+                )
+            )
+        except RuntimeError:
+            pass
+
+    try:
+        result = await executor.execute(
+            task_description=task_description,
+            sub_tasks=sub_tasks,
+            aggregation_strategy=strategy,
+            progress_callback=_on_progress,
+        )
+        _active_clusters[task_id] = result
+        await broadcast_progress(
+            task_id, 100, "done", event="completed", status=result.status.value
+        )
+    except Exception as e:
+        logger.error(f"Background cluster execution failed: {e}")
+        failed = ClusterResult(
+            task_id=task_id,
+            status=TaskStatus.FAILED,
+            sub_tasks=[],
+            error=str(e),
+        )
+        failed.completed_at = datetime.now(timezone.utc)
+        _active_clusters[task_id] = failed
+        await broadcast_progress(task_id, 100, str(e), event="failed")
+    finally:
+        _running_clusters.pop(task_id, None)
+
+
+def _start_cluster_background(
+    executor: ClusterExecutor,
+    *,
+    task_description: str,
+    sub_tasks: list[dict],
+    strategy: AggregationStrategy,
+) -> str:
+    """生成 task_id 并启动后台执行，立即返回句柄"""
+    task_id = str(uuid.uuid4())
+    _running_clusters[task_id] = {
+        "status": "running",
+        "started_at": datetime.now(timezone.utc).isoformat(),
+    }
+    bg = asyncio.create_task(
+        _run_cluster_background(
+            task_id,
+            executor,
+            task_description=task_description,
+            sub_tasks=sub_tasks,
+            strategy=strategy,
+        )
+    )
+    _bg_tasks.add(bg)
+    bg.add_done_callback(_bg_tasks.discard)
+    return task_id
+
 
 @router.post("/cluster/execute", response_model=dict)
 async def execute_cluster(request: ClusterExecuteRequest):
@@ -132,33 +215,20 @@ async def execute_cluster(request: ClusterExecuteRequest):
         }
         for i, st in enumerate(request.sub_tasks)
     ]
-    
-    # 获取执行器
+
+    # 后台执行，立即返回句柄；进度经 /cluster/ws/{task_id} 推送
     executor = get_cluster_executor()
-    
-    # 执行
-    try:
-        result = await executor.execute(
-            task_description=request.task_description,
-            sub_tasks=sub_tasks,
-            aggregation_strategy=AggregationStrategy(request.aggregation_strategy),
-        )
-        
-        # 存储结果
-        _active_clusters[task_id] = result
-        
-        return {
-            "task_id": task_id,
-            "status": result.status.value,
-            "sub_tasks": [st.to_dict() for st in result.sub_tasks],
-            "aggregated_result": result.aggregated_result,
-            "error": result.error,
-            "review": result.metadata.get("review"),
-        }
-        
-    except Exception as e:
-        logger.error(f"Cluster execution failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    handle = _start_cluster_background(
+        executor,
+        task_description=request.task_description,
+        sub_tasks=sub_tasks,
+        strategy=AggregationStrategy(request.aggregation_strategy),
+    )
+    return {
+        "task_id": handle,
+        "status": "running",
+        "ws_url": f"/cluster/ws/{handle}",
+    }
 
 
 @router.post("/cluster/decompose", response_model=dict)
@@ -232,40 +302,37 @@ async def execute_plan(plan: ClusterPlan):
     
     # 转换为执行器格式
     sub_tasks = ClusterProtocol.plan_to_executor_format(plan)
-    
-    # 获取执行器
+
+    # 后台执行，立即返回句柄；进度经 /cluster/ws/{task_id} 推送
     executor = get_cluster_executor()
-    
-    try:
-        result = await executor.execute(
-            task_description=plan.description,
-            sub_tasks=sub_tasks,
-            aggregation_strategy=AggregationStrategy(plan.aggregation_strategy),
-        )
-        
-        task_id = str(uuid.uuid4())
-        _active_clusters[task_id] = result
-        
-        return {
-            "task_id": task_id,
-            "plan_id": plan.id,
-            "status": result.status.value,
-            "sub_tasks": [st.to_dict() for st in result.sub_tasks],
-            "aggregated_result": result.aggregated_result,
-            "error": result.error,
-            "review": result.metadata.get("review"),
-        }
-        
-    except Exception as e:
-        logger.error(f"Plan execution failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    handle = _start_cluster_background(
+        executor,
+        task_description=plan.description,
+        sub_tasks=sub_tasks,
+        strategy=AggregationStrategy(plan.aggregation_strategy),
+    )
+    return {
+        "task_id": handle,
+        "plan_id": plan.id,
+        "status": "running",
+        "ws_url": f"/cluster/ws/{handle}",
+    }
 
 
 @router.get("/cluster/status/{task_id}", response_model=ClusterStatusResponse)
 async def get_cluster_status(task_id: str):
-    """获取集群任务状态"""
+    """获取集群任务状态（运行中返回 200 + status=running，不 404）"""
     result = _active_clusters.get(task_id)
     if result is None:
+        running = _running_clusters.get(task_id)
+        if running is not None:
+            return ClusterStatusResponse(
+                task_id=task_id,
+                status="running",
+                progress=0,
+                sub_tasks=[],
+                started_at=running["started_at"],
+            )
         raise HTTPException(status_code=404, detail="Task not found")
     
     # 计算进度
@@ -282,6 +349,7 @@ async def get_cluster_status(task_id: str):
         error=result.error,
         started_at=result.started_at.isoformat(),
         completed_at=result.completed_at.isoformat() if result.completed_at else None,
+        review=result.metadata.get("review"),
     )
 
 
@@ -340,17 +408,32 @@ async def cluster_websocket(websocket: WebSocket, task_id: str):
 
 # ─────────── 辅助函数 ───────────
 
-async def broadcast_progress(task_id: str, progress: int, message: str):
-    """广播进度到 WebSocket"""
+async def broadcast_progress(
+    task_id: str,
+    progress: int,
+    message: str,
+    *,
+    sub_task_id: str | None = None,
+    event: str | None = None,
+    status: str | None = None,
+):
+    """广播进度到 WebSocket（event: completed/failed 为终态事件）"""
     if task_id in _cluster_websockets:
+        payload: dict[str, Any] = {
+            "task_id": task_id,
+            "progress": progress,
+            "message": message,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        if sub_task_id:
+            payload["sub_task_id"] = sub_task_id
+        if event:
+            payload["event"] = event
+        if status:
+            payload["status"] = status
         for ws in _cluster_websockets[task_id]:
             try:
-                await ws.send_json({
-                    "task_id": task_id,
-                    "progress": progress,
-                    "message": message,
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                })
+                await ws.send_json(payload)
             except Exception as e:
                 logger.error(f"Failed to broadcast progress: {e}")
 

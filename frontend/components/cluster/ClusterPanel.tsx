@@ -1,13 +1,14 @@
 'use client';
 
 /**
- * 集群编排面板（Phase 3：真实 API + 复核可视化）
+ * 集群编排面板（Phase 3：真实 API + WS 实时进度 + 复核可视化）
  *
  * H0 红线：本面板只展示后端真实返回。旧版 setTimeout 模拟执行已移除。
- * 流程：任务描述 →（可选）LLM 分解为计划 → 执行计划/快速执行 →
+ * 流程：任务描述 →（可选）LLM 分解为计划 → 后台执行（立即返回句柄）→
+ * WS /cluster/ws/{task_id} 实时进度 → 终态事件后拉取完整结果 →
  * 展示子任务交付物（置信度/签名/断言）与复核结论（pass/revise/reject）。
  */
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Play,
@@ -26,6 +27,7 @@ import {
   ShieldQuestion,
   Fingerprint,
   Sparkles,
+  Radio,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -109,6 +111,41 @@ interface ClusterResultState {
     rejected?: string[];
   } | null;
   error?: string | null;
+  review?: { reviewed: number; rejected: number } | null;
+}
+
+interface LiveMsg {
+  ts: string;
+  message: string;
+  sub_task_id?: string;
+}
+
+/** 执行中的子任务实时状态骨架（由 WS 事件驱动） */
+interface LiveSubTask {
+  id: string;
+  name: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+}
+
+// ─────────── WS 地址解析（与 useWebSocket 同策略的精简版）───────────
+
+function resolveWsUrl(path: string): string {
+  if (typeof window === 'undefined') return path;
+  const { hostname, port, protocol } = window.location;
+  const isLocalHost = hostname === '127.0.0.1' || hostname === 'localhost';
+  const injected = (window as unknown as { __TAKTON_WS_URL__?: string }).__TAKTON_WS_URL__;
+  let base: string;
+  if (injected) {
+    base = injected.replace(/\/$/, '');
+  } else if (isLocalHost && (port === '3000' || port === '3001')) {
+    // next dev 不支持 WS upgrade，直连后端
+    base = 'ws://127.0.0.1:8090/api';
+  } else {
+    const wsProto = protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = port ? `${hostname}:${port}` : hostname;
+    base = `${wsProto}//${host}/api`;
+  }
+  return `${base}${path}`;
 }
 
 // ─────────── 展示组件 ───────────
@@ -258,6 +295,11 @@ export function ClusterPanel({ className }: { className?: string }) {
   const [phase, setPhase] = useState<'idle' | 'decomposing' | 'executing'>('idle');
   const [error, setError] = useState<string | null>(null);
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
+  // 执行中实时状态（WS 驱动）
+  const [liveSubTasks, setLiveSubTasks] = useState<LiveSubTask[]>([]);
+  const [liveLog, setLiveLog] = useState<LiveMsg[]>([]);
+  const wsRef = useRef<WebSocket | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const toggleTask = useCallback((taskId: string) => {
     setExpandedTasks(prev => {
@@ -269,6 +311,80 @@ export function ClusterPanel({ className }: { className?: string }) {
   }, []);
 
   const busy = phase !== 'idle';
+
+  /** 清理 WS 与轮询 */
+  const teardownLive = useCallback(() => {
+    if (wsRef.current) {
+      try { wsRef.current.close(); } catch { /* ignore */ }
+      wsRef.current = null;
+    }
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => teardownLive, [teardownLive]);
+
+  /** 终态：拉取完整结果 */
+  const finalize = useCallback(async (taskId: string) => {
+    teardownLive();
+    try {
+      const { data } = await apiClient.get(`/cluster/status/${taskId}`, { timeout: 30_000 });
+      setResult(data as ClusterResultState);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || e?.message || 'fetch result failed');
+    } finally {
+      setPhase('idle');
+    }
+  }, [teardownLive]);
+
+  /** 启动后台执行句柄 → WS 订阅 + 轮询兜底 */
+  const startLive = useCallback((taskId: string, wsUrl: string, skeleton: LiveSubTask[]) => {
+    teardownLive();
+    setLiveSubTasks(skeleton);
+    setLiveLog([]);
+
+    // WS 实时进度
+    try {
+      const ws = new WebSocket(resolveWsUrl(wsUrl));
+      wsRef.current = ws;
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data as string);
+          if (msg.event === 'completed' || msg.event === 'failed') {
+            void finalize(taskId);
+            return;
+          }
+          if (typeof msg.message === 'string') {
+            setLiveLog(prev => [...prev.slice(-19), {
+              ts: msg.timestamp || new Date().toISOString(),
+              message: msg.message,
+              sub_task_id: msg.sub_task_id,
+            }]);
+          }
+          if (msg.sub_task_id) {
+            setLiveSubTasks(prev => prev.map(st =>
+              st.id === msg.sub_task_id
+                ? { ...st, status: msg.progress >= 100 ? 'completed' : 'running' }
+                : st
+            ));
+          }
+        } catch { /* 非 JSON 帧忽略 */ }
+      };
+      ws.onerror = () => { /* 轮询兜底会接管 */ };
+    } catch { /* 轮询兜底会接管 */ }
+
+    // 轮询兜底（WS 断开/代理不支持 upgrade 时仍能看到终态）
+    pollRef.current = setInterval(async () => {
+      try {
+        const { data } = await apiClient.get(`/cluster/status/${taskId}`, { timeout: 15_000 });
+        if (data.status !== 'running') {
+          await finalize(taskId);
+        }
+      } catch { /* 下次再试 */ }
+    }, 4000);
+  }, [finalize, teardownLive]);
 
   /** 智能分解：LLM 协调者产出执行计划（真实 /cluster/decompose） */
   const handleDecompose = useCallback(async () => {
@@ -291,7 +407,7 @@ export function ClusterPanel({ className }: { className?: string }) {
     }
   }, [taskDescription, numAgents, busy]);
 
-  /** 执行已分解的计划（真实 /cluster/execute-plan） */
+  /** 执行已分解的计划（后台执行 + WS 进度） */
   const handleExecutePlan = useCallback(async () => {
     if (!plan || busy) return;
     setPhase('executing');
@@ -305,16 +421,18 @@ export function ClusterPanel({ className }: { className?: string }) {
         tasks: plan.tasks,
         max_parallel: plan.max_parallel ?? numAgents,
         aggregation_strategy: plan.aggregation_strategy ?? 'synthesize',
-      }, { timeout: 600_000 });
-      setResult(data as ClusterResultState);
+      }, { timeout: 30_000 });
+      const skeleton: LiveSubTask[] = plan.tasks.map(pt => ({
+        id: pt.id, name: pt.name, status: 'pending',
+      }));
+      startLive(data.task_id, data.ws_url, skeleton);
     } catch (e: any) {
       setError(e?.response?.data?.detail || e?.message || 'execute failed');
-    } finally {
       setPhase('idle');
     }
-  }, [plan, numAgents, busy]);
+  }, [plan, numAgents, busy, startLive]);
 
-  /** 快速执行：不分解，直接 N 路并行（真实 /cluster/quick） */
+  /** 快速执行：不分解，直接 N 路并行（后台执行 + WS 进度） */
   const handleQuick = useCallback(async () => {
     if (!taskDescription.trim() || busy) return;
     setPhase('executing');
@@ -328,15 +446,18 @@ export function ClusterPanel({ className }: { className?: string }) {
           num_agents: numAgents,
           strategy: 'synthesize',
         },
-        timeout: 600_000,
+        timeout: 30_000,
       });
-      setResult(data as ClusterResultState);
+      // quick 的子任务 id 为 task-0..task-N（后端约定）
+      const skeleton: LiveSubTask[] = Array.from({ length: numAgents }, (_, i) => ({
+        id: `task-${i}`, name: `子任务 ${i + 1}`, status: 'pending',
+      }));
+      startLive(data.task_id, data.ws_url, skeleton);
     } catch (e: any) {
       setError(e?.response?.data?.detail || e?.message || 'quick cluster failed');
-    } finally {
       setPhase('idle');
     }
-  }, [taskDescription, numAgents, busy]);
+  }, [taskDescription, numAgents, busy, startLive]);
 
   return (
     <Card className={cn('w-full', className)}>
@@ -352,7 +473,7 @@ export function ClusterPanel({ className }: { className?: string }) {
           </Badge>
         </div>
         <CardDescription>
-          真实执行：LLM 分解计划 → 子代理并行 → 交付契约（置信度/签名）→ reviewer 复核 → 综合
+          真实执行：LLM 分解计划 → 子代理并行（WS 实时进度）→ 交付契约 → reviewer 复核 → 综合
         </CardDescription>
       </CardHeader>
 
@@ -400,7 +521,7 @@ export function ClusterPanel({ className }: { className?: string }) {
             {phase === 'executing'
               ? <Loader2 className="w-4 h-4 mr-1 animate-spin" />
               : <Play className="w-4 h-4 mr-1" />}
-            {phase === 'executing' ? '执行中（同步请求，最长 10 分钟）…' : plan ? '执行计划' : '快速执行'}
+            {phase === 'executing' ? '执行中…' : plan ? '执行计划' : '快速执行'}
           </Button>
         </div>
 
@@ -412,8 +533,40 @@ export function ClusterPanel({ className }: { className?: string }) {
           </div>
         )}
 
+        {/* 执行中：实时进度（WS 驱动 + 轮询兜底） */}
+        {phase === 'executing' && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Radio className="w-4 h-4 text-blue-500 animate-pulse" />
+              实时进度（WebSocket）
+            </div>
+            {liveSubTasks.length > 0 && (
+              <div className="space-y-1.5">
+                {liveSubTasks.map((st) => (
+                  <div key={st.id} className="flex items-center gap-2 border rounded-lg p-2.5 text-sm">
+                    <StatusIcon status={st.status} />
+                    <span className="flex-1">{st.name}</span>
+                    <Badge variant="outline" className="text-xs">{st.status}</Badge>
+                  </div>
+                ))}
+              </div>
+            )}
+            {liveLog.length > 0 && (
+              <ScrollArea className="max-h-32 border rounded-lg p-2">
+                <div className="space-y-0.5">
+                  {liveLog.map((m, i) => (
+                    <div key={i} className="text-xs text-muted-foreground font-mono">
+                      {m.message}
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+            )}
+          </div>
+        )}
+
         {/* 计划预览 */}
-        {plan && !result && (
+        {plan && !result && phase !== 'executing' && (
           <div className="space-y-2">
             <div className="text-sm font-medium">
               执行计划：{plan.name}（{plan.tasks.length} 个子任务）
@@ -436,13 +589,19 @@ export function ClusterPanel({ className }: { className?: string }) {
         )}
 
         {/* 执行结果 */}
-        {result && (
+        {result && phase !== 'executing' && (
           <div className="space-y-3">
             <div className="flex items-center gap-2">
               <StatusIcon status={result.status === 'completed' ? 'completed' : 'failed'} />
               <span className="text-sm font-medium">
                 {result.status === 'completed' ? '执行完成' : `执行失败：${result.error || ''}`}
               </span>
+              {result.review && (
+                <Badge variant="outline" className="text-xs">
+                  复核 {result.review.reviewed} 项
+                  {result.review.rejected > 0 && ` · 拒绝 ${result.review.rejected}`}
+                </Badge>
+              )}
               {result.aggregated_result?.rejected && result.aggregated_result.rejected.length > 0 && (
                 <Badge variant="outline" className="text-xs border-red-500 text-red-600">
                   {result.aggregated_result.rejected.length} 个交付被复核拒绝
