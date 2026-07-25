@@ -12,6 +12,7 @@ import json
 import logging
 import logging.handlers
 import os
+import queue
 import sys
 import uuid
 from datetime import datetime, timezone
@@ -20,6 +21,9 @@ from typing import Any, Optional
 
 from .config import settings
 from .timezone import local_now, utc_now
+
+# 活跃 QueueListener 注册表（防 GC + 支持 shutdown/重复 setup 时停旧的）
+_ASYNC_LISTENERS: list[logging.handlers.QueueListener] = []
 
 # 敏感字段列表（日志输出时自动脱敏）
 SENSITIVE_FIELDS = {"password", "secret", "token", "api_key", "authorization", "cookie", "session_id"}
@@ -158,8 +162,9 @@ def setup_logging(
     root_logger = logging.getLogger()
     root_logger.setLevel(log_level)
 
-    # 清除已有 handlers（避免重复配置）
+    # 清除已有 handlers（避免重复配置）；旧 listener 线程一并停止
     root_logger.handlers.clear()
+    stop_async_logging()
 
     # Console handler
     console_handler = logging.StreamHandler(sys.stdout)
@@ -188,13 +193,39 @@ def setup_logging(
     )
     error_handler.setLevel(logging.ERROR)
     error_handler.setFormatter(JSONFormatter())
-    root_logger.addHandler(error_handler)
+
+    # B3 日志异步化（压测病灶：每请求 JSON 序列化 + stdout/文件同步写阻塞事件循环）
+    # QueueHandler 只做入队（微秒级），QueueListener 后台线程承担序列化与 I/O。
+    # respect_handler_level=True 保证 error_handler 只收 ERROR+。
+    log_queue: queue.Queue = queue.Queue(-1)
+    queue_handler = logging.handlers.QueueHandler(log_queue)
+    root_logger.addHandler(queue_handler)
+
+    listener = logging.handlers.QueueListener(
+        log_queue,
+        console_handler,
+        file_handler,
+        error_handler,
+        respect_handler_level=True,
+    )
+    listener.start()
+    _ASYNC_LISTENERS.append(listener)
 
     # 降低第三方库的日志级别
     for noisy_logger in ("uvicorn.access", "httpx", "httpcore", "aiosqlite", "sqlalchemy.engine"):
         logging.getLogger(noisy_logger).setLevel(logging.WARNING)
 
     logging.info(f"Logging initialized: dir={log_dir}, level={log_level}, json={json_output}")
+
+
+def stop_async_logging() -> None:
+    """停止所有异步日志 listener（应用 shutdown 时调用，防日志丢失/线程泄漏）"""
+    while _ASYNC_LISTENERS:
+        listener = _ASYNC_LISTENERS.pop()
+        try:
+            listener.stop()
+        except Exception:
+            pass
 
 
 def get_logger(name: str, request_id: str | None = None) -> RequestIDAdapter:

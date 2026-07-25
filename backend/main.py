@@ -462,6 +462,14 @@ async def lifespan(app: FastAPI):
     # ---- Shutdown ----
     logger.info("Takton Backend Shutting down...")
 
+    # 停止异步日志 listener（排空队列，防尾部日志丢失）
+    try:
+        from backend.core.logging_config import stop_async_logging
+
+        stop_async_logging()
+    except Exception:
+        pass
+
     # Cancel fire-and-forget startup tasks
     for t in list(_bg_tasks):
         t.cancel()
