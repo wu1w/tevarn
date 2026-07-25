@@ -3,34 +3,26 @@
 import React from 'react';
 import { t, useT } from '@/stores/localeStore';
 
+function EmptyIcon() {
+  return (
+    <svg className="h-7 w-7 text-foreground-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12" />
+    </svg>
+  );
+}
+
 interface EmptyStateProps {
-  /** 图标（emoji 或自定义元素） */
   icon?: React.ReactNode;
-  /** 标题 */
   title: string;
-  /** 描述文字 */
   description?: string;
-  /** 主操作 */
-  action?: {
-    label: string;
-    onClick: () => void;
-  };
-  /** 次要操作 */
-  secondaryAction?: {
-    label: string;
-    onClick: () => void;
-  };
-  /** 额外 CSS 类名 */
+  action?: { label: string; onClick: () => void };
+  secondaryAction?: { label: string; onClick: () => void };
   className?: string;
-  /** 紧凑模式 */
   compact?: boolean;
 }
 
-/**
- * 统一空状态：暗色主题友好，主按钮用品牌渐变
- */
 export function EmptyState({
-  icon = '📭',
+  icon,
   title,
   description,
   action,
@@ -47,10 +39,10 @@ export function EmptyState({
     >
       <div
         className={`mb-4 flex items-center justify-center rounded-2xl border border-border-subtle bg-elevated-bg/50 ${
-          compact ? 'h-14 w-14 text-2xl' : 'h-16 w-16 text-3xl'
+          compact ? 'h-14 w-14' : 'h-16 w-16'
         }`}
       >
-        {icon}
+        {icon ?? <EmptyIcon />}
       </div>
       <h3 className={`font-semibold text-foreground ${compact ? 'text-sm' : 'text-base'} mb-1.5`}>
         {title}
@@ -84,36 +76,35 @@ export function EmptyState({
   );
 }
 
-/** 预设场景（onClick 需由调用方覆盖时请直接用 EmptyState） */
 export const EmptyStates = {
   noSessions: (
-    <EmptyState icon="💬" title={t('empty.noSessions.title')} description={t('empty.noSessions.desc')} />
+    <EmptyState title={t('empty.noSessions.title')} description={t('empty.noSessions.desc')} />
   ),
   noMessages: (
-    <EmptyState icon="✨" title={t('empty.noMessages.title')} description={t('empty.noMessages.desc')} />
+    <EmptyState title={t('empty.noMessages.title')} description={t('empty.noMessages.desc')} />
   ),
   noSkills: (
-    <EmptyState icon="🛠️" title={t('empty.noSkills.title')} description={t('empty.noSkills.desc')} />
+    <EmptyState title={t('empty.noSkills.title')} description={t('empty.noSkills.desc')} />
   ),
   noTools: (
-    <EmptyState icon="🔧" title={t('empty.noTools.title')} description={t('empty.noTools.desc')} />
+    <EmptyState title={t('empty.noTools.title')} description={t('empty.noTools.desc')} />
   ),
   noKnowledge: (
-    <EmptyState icon="📚" title={t('empty.noKnowledge.title')} description={t('empty.noKnowledge.desc')} />
+    <EmptyState title={t('empty.noKnowledge.title')} description={t('empty.noKnowledge.desc')} />
   ),
   noWorkflows: (
-    <EmptyState icon="🔄" title={t('empty.noWorkflows.title')} description={t('empty.noWorkflows.desc')} />
+    <EmptyState title={t('empty.noWorkflows.title')} description={t('empty.noWorkflows.desc')} />
   ),
   noCron: (
-    <EmptyState icon="⏰" title={t('cron.emptyTitle')} description={t('empty.noCron.desc')} />
+    <EmptyState title={t('cron.emptyTitle')} description={t('empty.noCron.desc')} />
   ),
   noChannels: (
-    <EmptyState icon="📡" title={t('empty.noChannels.title')} description={t('empty.noChannels.desc')} />
+    <EmptyState title={t('empty.noChannels.title')} description={t('empty.noChannels.desc')} />
   ),
   noSearchResults: (
-    <EmptyState icon="🔍" title={t('empty.noSearch.title')} description={t('empty.noSearch.desc')} compact />
+    <EmptyState title={t('empty.noSearch.title')} description={t('empty.noSearch.desc')} compact />
   ),
   disconnected: (
-    <EmptyState icon="🔌" title={t('empty.disconnected.title')} description={t('empty.disconnected.desc')} />
+    <EmptyState title={t('empty.disconnected.title')} description={t('empty.disconnected.desc')} />
   ),
 };

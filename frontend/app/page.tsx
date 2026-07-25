@@ -679,7 +679,7 @@ export default function HomePage() {
                     className="max-w-[200px] truncate rounded-full border border-border-subtle bg-card-bg px-2.5 py-0.5 text-[11px] text-foreground-muted hover:border-brand-purple/40"
                     title={workspaceRoot || t('chat.selectProjectTitle')}
                   >
-                    📁 {workspaceName || workspaceRoot || t('chat.selectProject')}
+                    {workspaceName || workspaceRoot || t('chat.selectProject')}
                   </button>
                 )}
               </div>

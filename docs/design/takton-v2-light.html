@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Takton v2 — Light Mode Demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/lucide@0.263.1/dist/umd/lucide.min.js"></script>
+<style>
+/* ═══════════════ Light Mode Liquid Glass ═══════════════ */
+:root {
+  /* Base: warm-cool neutral, not pure white */
+  --bg-base: #f2f1f6;
+  --bg-panel: rgba(255,255,255,0.72);
+  --bg-card: rgba(255,255,255,0.58);
+  --bg-card-solid: #fff;
+  --bg-input: rgba(255,255,255,0.65);
+  --bg-hover: rgba(108,92,210,0.05);
+  --bg-active: rgba(108,92,210,0.08);
+
+  /* Glass */
+  --glass-bg: rgba(255,255,255,0.55);
+  --glass-border: rgba(108,92,210,0.10);
+  --glass-inner: inset 0 1px 0 rgba(255,255,255,0.85), inset 0 -1px 0 rgba(0,0,0,0.02);
+  --glass-shadow: 0 1px 3px rgba(108,92,210,0.06), 0 4px 16px rgba(108,92,210,0.04);
+
+  /* Brand purple — desaturated for light mode */
+  --brand-50: #f0ecff;
+  --brand-100: #e0d8ff;
+  --brand-200: #c4b8ff;
+  --brand-400: #8b6dff;
+  --brand-500: #6c5cd2;
+  --brand-600: #5545b0;
+  --brand-700: #41338a;
+
+  /* Accent cyan — slightly muted for light */
+  --accent-400: #4ecdc4;
+  --accent-500: #2ab5a8;
+  --accent-600: #1f9689;
+
+  /* Text */
+  --text-primary: #1a1a2e;
+  --text-secondary: #5a5a72;
+  --text-dim: #9b9bb0;
+  --text-on-brand: #fff;
+
+  /* Borders */
+  --border-subtle: rgba(108,92,210,0.08);
+  --border-default: rgba(108,92,210,0.14);
+  --border-focus: rgba(108,92,210,0.45);
+
+  /* Functional */
+  --error: #e04040;
+  --warning: #e6950a;
+  --success: #2ab5a8;
+
+  --r-sm:6px; --r-md:10px; --r-lg:14px; --r-xl:18px;
+  --ease:cubic-bezier(0.4,0,0.2,1); --dur:200ms;
+}
+
+*{margin:0;padding:0;box-sizing:border-box;}
+body{
+  background:var(--bg-base);
+  color:var(--text-primary);
+  font-family:'Noto Sans SC','Geist',system-ui,sans-serif;
+  font-size:14px;line-height:1.55;
+  -webkit-font-smoothing:antialiased;
+  overflow:hidden;height:100vh;
+  /* subtle noise texture */
+  background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.02'/%3E%3C/svg%3E");
+  background-size:200px;
+}
+code,.mono{font-family:'Geist Mono','SF Mono',monospace;}
+
+/* ═══════════════ App Layout ═══════════════ */
+.app{display:grid;grid-template-columns:56px 260px 1fr;height:100vh;}
+
+/* ═══════════════ Rail ═══════════════ */
+.rail{
+  background:var(--bg-panel);
+  backdrop-filter:blur(24px) saturate(1.6);
+  -webkit-backdrop-filter:blur(24px) saturate(1.6);
+  border-right:1px solid var(--glass-border);
+  box-shadow:var(--glass-inner);
+  display:flex;flex-direction:column;align-items:center;
+  padding:12px 0;gap:4px;z-index:20;position:relative;overflow:hidden;
+}
+.rail::after{content:'';position:absolute;inset:0;pointer-events:none;
+  background:linear-gradient(180deg,rgba(108,92,210,0.03) 0%,transparent 40%,rgba(42,181,168,0.02) 100%);}
+.rail-logo{
+  width:34px;height:34px;border-radius:var(--r-md);
+  background:linear-gradient(135deg,var(--brand-500),var(--accent-500));
+  margin-bottom:20px;display:flex;align-items:center;justify-content:center;
+  font-weight:700;font-size:15px;color:#fff;position:relative;z-index:1;
+  box-shadow:0 2px 10px rgba(108,92,210,0.25);
+}
+.rail-btn{
+  width:40px;height:40px;border:none;background:transparent;
+  border-radius:var(--r-md);display:flex;align-items:center;justify-content:center;
+  color:var(--text-dim);cursor:pointer;transition:all var(--dur) var(--ease);position:relative;z-index:1;
+}
+.rail-btn:hover{color:var(--brand-500);background:var(--bg-hover);}
+.rail-btn.active{
+  background:linear-gradient(135deg,var(--brand-500),var(--brand-600));
+  color:#fff;box-shadow:0 2px 12px rgba(108,92,210,0.25);
+}
+.rail-btn svg{width:20px;height:20px;stroke-width:1.5;}
+.rail-sep{width:24px;height:1px;background:var(--glass-border);margin:4px 0;z-index:1;}
+.rail-spacer{flex:1;z-index:1;}
+.rail-badge{position:absolute;top:6px;right:6px;width:8px;height:8px;border-radius:50%;background:var(--accent-500);box-shadow:0 0 6px rgba(42,181,168,0.4);z-index:2;}
+
+/* ═══════════════ Sidebar ═══════════════ */
+.sidebar{
+  background:var(--bg-panel);
+  backdrop-filter:blur(24px) saturate(1.6);
+  -webkit-backdrop-filter:blur(24px) saturate(1.6);
+  border-right:1px solid var(--glass-border);
+  box-shadow:var(--glass-inner);
+  display:flex;flex-direction:column;overflow:hidden;position:relative;
+}
+.sidebar::after{content:'';position:absolute;inset:0;pointer-events:none;
+  background:linear-gradient(180deg,rgba(108,92,210,0.02) 0%,transparent 30%,rgba(42,181,168,0.015) 100%);}
+.sidebar-inner{position:relative;z-index:1;display:flex;flex-direction:column;height:100%;}
+
+/* session section */
+.session-section{padding:12px 12px 8px;border-bottom:1px solid var(--glass-border);}
+.session-hdr{display:flex;align-items:center;justify-content:space-between;padding:2px 4px;margin-bottom:8px;}
+.session-hdr span{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-dim);}
+.session-hdr-right{display:flex;gap:6px;}
+.session-hdr-right button{background:none;border:none;color:var(--text-dim);cursor:pointer;padding:2px;border-radius:4px;}
+.session-hdr-right button:hover{color:var(--brand-500);}
+
+.search-wrap{position:relative;}
+.search-wrap svg{position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--text-dim);pointer-events:none;}
+.search-box{
+  width:100%;background:var(--bg-input);
+  border:1px solid var(--glass-border);
+  border-radius:var(--r-md);
+  padding:7px 10px 7px 30px;font-size:12px;color:var(--text-primary);
+  outline:none;transition:border-color var(--dur) var(--ease),box-shadow var(--dur) var(--ease);
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+}
+.search-box::placeholder{color:var(--text-dim);}
+.search-box:focus{border-color:var(--border-focus);box-shadow:0 0 0 3px rgba(108,92,210,0.06);}
+
+.sessions{max-height:200px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:rgba(108,92,210,0.12) transparent;}
+.session-item{display:flex;align-items:center;gap:6px;padding:7px 8px;border-radius:var(--r-sm);cursor:pointer;transition:all var(--dur) var(--ease);position:relative;margin-bottom:1px;}
+.session-item:hover{background:var(--bg-hover);}
+.session-item.active{background:var(--bg-active);}
+.session-item.active::before{content:'';position:absolute;left:0;top:6px;bottom:6px;width:3px;background:var(--brand-500);border-radius:2px;}
+.session-dot{width:6px;height:6px;border-radius:50%;background:var(--text-dim);flex-shrink:0;}
+.session-item.active .session-dot{background:var(--accent-500);box-shadow:0 0 5px rgba(42,181,168,0.4);}
+.session-name{flex:1;font-size:12px;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.session-item.active .session-name{color:var(--text-primary);font-weight:500;}
+.session-date{font-size:10px;color:var(--text-dim);flex-shrink:0;}
+.session-del{opacity:0;border:none;background:none;color:var(--error);cursor:pointer;padding:2px;border-radius:4px;transition:opacity var(--dur) var(--ease);}
+.session-item:hover .session-del{opacity:0.5;}
+.session-del:hover{opacity:1;}
+
+/* nav groups */
+.nav-groups{flex:1;overflow-y:auto;padding:8px 10px;scrollbar-width:thin;scrollbar-color:rgba(108,92,210,0.12) transparent;}
+.nav-group{margin-bottom:2px;}
+.nav-group-hdr{display:flex;align-items:center;justify-content:space-between;padding:6px 6px;cursor:pointer;border-radius:var(--r-sm);transition:background var(--dur) var(--ease);}
+.nav-group-hdr:hover{background:var(--bg-hover);}
+.nav-group-title{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-dim);}
+.nav-group-hdr svg{width:12px;height:12px;color:var(--text-dim);transition:transform var(--dur) var(--ease);}
+.nav-group-hdr.open svg{transform:rotate(180deg);}
+.nav-group-items{padding:2px 0;overflow:hidden;max-height:0;transition:max-height 250ms var(--ease),opacity 200ms var(--ease);opacity:0;}
+.nav-group-items.open{max-height:400px;opacity:1;}
+.nav-item{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:var(--r-sm);font-size:12.5px;color:var(--text-secondary);cursor:pointer;transition:all var(--dur) var(--ease);text-decoration:none;}
+.nav-item:hover{background:var(--bg-hover);color:var(--text-primary);}
+.nav-item.active{background:var(--bg-active);color:var(--brand-500);font-weight:500;}
+.nav-item svg{width:16px;height:16px;stroke-width:1.5;flex-shrink:0;}
+
+/* memory section */
+.memory-section{border-top:1px solid var(--glass-border);padding:6px 10px;}
+.memory-hdr{display:flex;align-items:center;justify-content:space-between;padding:6px;border-radius:var(--r-sm);cursor:pointer;transition:background var(--dur) var(--ease);}
+.memory-hdr:hover{background:var(--bg-hover);}
+.memory-hdr-left{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:500;color:var(--text-secondary);}
+.memory-hdr-left svg{width:14px;height:14px;stroke-width:1.5;}
+.memory-hdr-right{display:flex;align-items:center;gap:6px;}
+.memory-hdr-right span{font-size:10px;color:var(--text-dim);}
+.memory-hdr-right svg{width:12px;height:12px;color:var(--text-dim);transition:transform var(--dur) var(--ease);}
+.memory-items{max-height:140px;overflow-y:auto;scrollbar-width:thin;margin-top:4px;}
+.memory-item{display:flex;align-items:center;gap:6px;padding:5px 6px;border-radius:var(--r-sm);font-size:11.5px;color:var(--text-secondary);cursor:pointer;transition:background var(--dur) var(--ease);}
+.memory-item:hover{background:var(--bg-hover);color:var(--text-primary);}
+.memory-item svg{width:12px;height:12px;flex-shrink:0;color:var(--brand-400);}
+.memory-item.muted{color:var(--text-dim);opacity:0.6;}
+.memory-item.muted svg{color:var(--text-dim);}
+
+/* sidebar footer */
+.sb-footer{padding:10px 12px;border-top:1px solid var(--glass-border);display:flex;gap:8px;}
+.sb-footer button{flex:1;padding:8px 0;border-radius:var(--r-md);font-size:12px;cursor:pointer;transition:all var(--dur) var(--ease);font-weight:500;}
+.sb-footer .secondary{background:transparent;border:1px solid var(--border-default);color:var(--text-secondary);}
+.sb-footer .secondary:hover{background:var(--bg-hover);border-color:var(--brand-400/40);}
+.sb-footer .primary{
+  background:linear-gradient(135deg,var(--brand-500),var(--brand-600));
+  color:#fff;border:none;
+  box-shadow:0 1px 6px rgba(108,92,210,0.20),0 0 0 1px rgba(108,92,210,0.1);
+}
+.sb-footer .primary:hover{box-shadow:0 2px 12px rgba(108,92,210,0.30);transform:translateY(-1px);}
+
+/* ═══════════════ Main ═══════════════ */
+.main{display:flex;flex-direction:column;overflow:hidden;background:var(--bg-base);position:relative;}
+/* ambient glow — purple top-right, cyan bottom-left */
+.main::before{content:'';position:absolute;top:-140px;right:-120px;width:440px;height:440px;
+  background:radial-gradient(circle,rgba(108,92,210,0.06) 0%,transparent 70%);pointer-events:none;z-index:0;}
+.main::after{content:'';position:absolute;bottom:-100px;left:-80px;width:340px;height:340px;
+  background:radial-gradient(circle,rgba(42,181,168,0.04) 0%,transparent 70%);pointer-events:none;z-index:0;}
+
+/* topbar */
+.topbar{
+  height:48px;border-bottom:1px solid var(--glass-border);
+  background:rgba(255,255,255,0.55);
+  backdrop-filter:blur(20px) saturate(1.6);
+  -webkit-backdrop-filter:blur(20px) saturate(1.6);
+  box-shadow:var(--glass-inner),0 1px 4px rgba(108,92,210,0.04);
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 24px;flex-shrink:0;z-index:10;position:relative;
+}
+.topbar-title{font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px;}
+.model-tag{
+  font-size:11px;font-weight:500;padding:2px 8px;border-radius:20px;
+  background:rgba(42,181,168,0.08);color:var(--accent-600);
+  border:1px solid rgba(42,181,168,0.15);
+}
+.topbar-actions{display:flex;align-items:center;gap:6px;}
+.topbar-btn{width:32px;height:32px;border:none;background:transparent;border-radius:var(--r-sm);color:var(--text-dim);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all var(--dur) var(--ease);}
+.topbar-btn:hover{color:var(--brand-500);background:var(--bg-hover);}
+
+/* chat */
+.chat{flex:1;overflow-y:auto;padding:24px 32px;display:flex;flex-direction:column;gap:16px;scrollbar-width:thin;scrollbar-color:rgba(108,92,210,0.12) transparent;position:relative;z-index:1;}
+
+/* empty */
+.empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;}
+.empty-logo{width:56px;height:56px;border-radius:var(--r-xl);background:linear-gradient(135deg,var(--brand-400),var(--accent-400));display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700;color:#fff;opacity:0.2;}
+.empty h2{font-size:18px;font-weight:600;color:var(--text-primary);opacity:0.5;}
+.empty p{font-size:13px;color:var(--text-dim);max-width:400px;text-align:center;}
+.example-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;max-width:500px;width:100%;}
+.example-card{
+  background:var(--bg-card);
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  border:1px solid var(--glass-border);
+  box-shadow:var(--glass-inner),var(--glass-shadow);
+  border-radius:var(--r-md);padding:12px 16px;cursor:pointer;
+  transition:all var(--dur) var(--ease);
+}
+.example-card:hover{
+  border-color:rgba(108,92,210,0.2);
+  box-shadow:var(--glass-inner),0 4px 16px rgba(108,92,210,0.08);
+  transform:translateY(-1px);
+}
+.example-card .label{font-size:13px;color:var(--text-primary);font-weight:500;}
+.example-card .hint{font-size:11px;color:var(--text-dim);margin-top:2px;}
+
+/* messages */
+.msg{display:flex;gap:10px;max-width:740px;animation:msgIn 250ms var(--ease) forwards;}
+.msg.user{align-self:flex-end;flex-direction:row-reverse;}
+.msg.assistant{align-self:flex-start;}
+@keyframes msgIn{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+.msg-avatar{width:28px;height:28px;border-radius:var(--r-sm);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;}
+.msg.user .msg-avatar{background:linear-gradient(135deg,var(--brand-500),var(--brand-600));color:#fff;}
+.msg.assistant .msg-avatar{
+  background:var(--bg-card-solid);color:var(--brand-500);
+  border:1px solid var(--glass-border);
+  box-shadow:var(--glass-inner),var(--glass-shadow);
+}
+.msg-body{
+  padding:12px 16px;border-radius:var(--r-lg);font-size:13.5px;line-height:1.65;max-width:620px;
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+}
+.msg.user .msg-body{
+  background:linear-gradient(135deg,var(--brand-500),var(--brand-600));
+  color:#fff;border-radius:var(--r-lg) var(--r-lg) 4px var(--r-lg);
+  box-shadow:0 2px 10px rgba(108,92,210,0.18);
+}
+.msg.assistant .msg-body{
+  background:var(--bg-card);
+  border:1px solid var(--glass-border);
+  color:var(--text-primary);
+  border-radius:var(--r-lg) var(--r-lg) var(--r-lg) 4px;
+  box-shadow:var(--glass-inner),var(--glass-shadow);
+}
+.msg-body code{
+  background:rgba(108,92,210,0.07);padding:1px 5px;border-radius:4px;
+  font-size:12.5px;color:var(--brand-600);
+}
+
+/* tool chip */
+.tool-chip{
+  display:inline-flex;align-items:center;gap:5px;margin-top:8px;
+  padding:4px 10px;background:rgba(42,181,168,0.06);
+  border:1px solid rgba(42,181,168,0.16);border-radius:20px;
+  font-size:11.5px;color:var(--accent-600);
+  backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);
+  transition:all var(--dur) var(--ease);cursor:pointer;
+}
+.tool-chip:hover{background:rgba(42,181,168,0.10);}
+.tool-chip .dot{width:5px;height:5px;border-radius:50%;background:var(--accent-500);animation:pulse 2s infinite;}
+.tool-chip .dot.done{animation:none;background:var(--success);}
+@keyframes pulse{0%,100%{opacity:0.4;}50%{opacity:1;}}
+
+/* input */
+.input-area{padding:16px 32px 20px;flex-shrink:0;position:relative;z-index:1;}
+.input-wrap{
+  background:var(--glass-bg);
+  backdrop-filter:blur(24px) saturate(1.6);
+  -webkit-backdrop-filter:blur(24px) saturate(1.6);
+  border:1px solid var(--glass-border);
+  box-shadow:var(--glass-inner),var(--glass-shadow);
+  border-radius:var(--r-lg);padding:12px 16px;
+  display:flex;flex-direction:column;gap:8px;
+  transition:border-color var(--dur) var(--ease),box-shadow var(--dur) var(--ease);
+}
+.input-wrap:focus-within{
+  border-color:var(--border-focus);
+  box-shadow:var(--glass-inner),0 0 0 3px rgba(108,92,210,0.06),0 4px 20px rgba(108,92,210,0.08);
+}
+.input-tools{display:flex;gap:6px;}
+.tool-btn{
+  padding:5px 10px;border:1px solid var(--glass-border);border-radius:20px;
+  background:transparent;color:var(--text-dim);font-size:11.5px;cursor:pointer;
+  display:flex;align-items:center;gap:4px;transition:all var(--dur) var(--ease);
+  backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);
+}
+.tool-btn:hover{color:var(--brand-500);border-color:var(--border-default);}
+.tool-btn.active{color:var(--accent-600);border-color:rgba(42,181,168,0.25);background:rgba(42,181,168,0.04);}
+.tool-btn svg{width:14px;height:14px;}
+.input-row{display:flex;align-items:flex-end;gap:8px;}
+.input-row textarea{flex:1;background:transparent;border:none;color:var(--text-primary);font-size:14px;font-family:inherit;resize:none;outline:none;min-height:22px;max-height:120px;line-height:1.55;}
+.input-row textarea::placeholder{color:var(--text-dim);}
+.send-btn{
+  width:34px;height:34px;border:none;border-radius:var(--r-md);
+  background:linear-gradient(135deg,var(--brand-500),var(--brand-600));
+  color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;
+  flex-shrink:0;transition:all var(--dur) var(--ease);
+  box-shadow:0 1px 6px rgba(108,92,210,0.20),0 0 0 1px rgba(108,92,210,0.1);
+}
+.send-btn:hover{transform:scale(1.04);box-shadow:0 2px 12px rgba(108,92,210,0.30);}
+.send-btn:active{transform:scale(0.96);}
+.send-btn svg{width:16px;height:16px;}
+.input-meta{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-dim);}
+
+/* status bar */
+.status-bar{
+  height:28px;border-top:1px solid var(--glass-border);
+  background:rgba(255,255,255,0.50);
+  backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+  display:flex;align-items:center;padding:0 16px;gap:12px;
+  font-size:11px;color:var(--text-dim);flex-shrink:0;position:relative;
+}
+.status-bar .dot{width:6px;height:6px;border-radius:50%;background:var(--success);}
+.status-bar .model{color:var(--text-secondary);}
+.status-sep{width:1px;height:10px;background:var(--glass-border);}
+
+/* scrollbar */
+::-webkit-scrollbar{width:5px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:rgba(108,92,210,0.10);border-radius:3px;}
+::-webkit-scrollbar-thumb:hover{background:rgba(108,92,210,0.20);}
+</style>
+</head>
+<body>
+
+<div class="app" id="app">
+
+  <!-- Rail -->
+  <nav class="rail">
+    <div class="rail-logo">T</div>
+    <button class="rail-btn active" title="对话"><i data-lucide="message-square"></i></button>
+    <button class="rail-btn" title="任务"><i data-lucide="list-checks"></i></button>
+    <button class="rail-btn" title="工作流"><i data-lucide="git-branch"></i></button>
+    <div class="rail-sep"></div>
+    <button class="rail-btn" title="配置"><i data-lucide="brain"></i></button>
+    <button class="rail-btn" title="工具"><i data-lucide="wrench"></i></button>
+    <button class="rail-btn" title="技能"><i data-lucide="puzzle"></i></button>
+    <button class="rail-btn" title="进化"><i data-lucide="refresh-cw"></i></button>
+    <button class="rail-btn" title="MCP"><i data-lucide="plug"></i></button>
+    <div class="rail-sep"></div>
+    <button class="rail-btn" title="知识库"><i data-lucide="book-open"></i></button>
+    <button class="rail-btn" title="记忆"><i data-lucide="lightbulb"></i></button>
+    <button class="rail-btn" title="Wiki"><i data-lucide="network"></i></button>
+    <div class="rail-spacer"></div>
+    <button class="rail-btn" title="设置"><i data-lucide="settings"></i></button>
+    <button class="rail-btn" title="通知"><i data-lucide="bell"></i><span class="rail-badge"></span></button>
+  </nav>
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+      <div class="session-section">
+        <div class="session-hdr">
+          <span>历史会话</span>
+          <div class="session-hdr-right">
+            <button title="收起"><i data-lucide="panel-left-close" style="width:13px;height:13px"></i></button>
+            <button title="新建"><i data-lucide="plus" style="width:13px;height:13px"></i></button>
+          </div>
+        </div>
+        <div class="search-wrap" style="margin-bottom:6px;">
+          <i data-lucide="search" style="width:12px;height:12px"></i>
+          <input class="search-box" placeholder="搜索会话…" />
+        </div>
+        <div class="sessions">
+          <div class="session-item active">
+            <span class="session-dot"></span><span class="session-name">Takton v2 前端重构方案</span>
+            <span class="session-date">今天</span>
+            <button class="session-del"><i data-lucide="x" style="width:11px;height:11px"></i></button>
+          </div>
+          <div class="session-item">
+            <span class="session-dot"></span><span class="session-name">Grok 代理配置排查</span>
+            <span class="session-date">今天</span>
+            <button class="session-del"><i data-lucide="x" style="width:11px;height:11px"></i></button>
+          </div>
+          <div class="session-item">
+            <span class="session-dot"></span><span class="session-name">Takton vs Hermes 压测对比</span>
+            <span class="session-date">昨天</span>
+            <button class="session-del"><i data-lucide="x" style="width:11px;height:11px"></i></button>
+          </div>
+          <div class="session-item">
+            <span class="session-dot"></span><span class="session-name">模块化架构方案</span>
+            <span class="session-date">7月24日</span>
+            <button class="session-del"><i data-lucide="x" style="width:11px;height:11px"></i></button>
+          </div>
+          <div class="session-item">
+            <span class="session-dot"></span><span class="session-name">Claude Code 源码拆解</span>
+            <span class="session-date">7月21日</span>
+            <button class="session-del"><i data-lucide="x" style="width:11px;height:11px"></i></button>
+          </div>
+        </div>
+      </div>
+
+      <div class="nav-groups">
+        <div class="nav-group">
+          <div class="nav-group-hdr open" onclick="toggleGroup(this)">
+            <span class="nav-group-title">工作区</span><i data-lucide="chevron-down"></i>
+          </div>
+          <div class="nav-group-items open">
+            <a class="nav-item" href="#"><i data-lucide="list-checks"></i>任务</a>
+            <a class="nav-item" href="#"><i data-lucide="monitor"></i>设备</a>
+            <a class="nav-item" href="#"><i data-lucide="git-branch"></i>工作流</a>
+          </div>
+        </div>
+        <div class="nav-group">
+          <div class="nav-group-hdr open" onclick="toggleGroup(this)">
+            <span class="nav-group-title">Agent</span><i data-lucide="chevron-down"></i>
+          </div>
+          <div class="nav-group-items open">
+            <a class="nav-item active" href="#"><i data-lucide="message-square"></i>对话</a>
+            <a class="nav-item" href="#"><i data-lucide="brain"></i>配置</a>
+            <a class="nav-item" href="#"><i data-lucide="wrench"></i>工具</a>
+            <a class="nav-item" href="#"><i data-lucide="puzzle"></i>技能</a>
+            <a class="nav-item" href="#"><i data-lucide="refresh-cw"></i>进化</a>
+            <a class="nav-item" href="#"><i data-lucide="plug"></i>MCP</a>
+            <a class="nav-item" href="#"><i data-lucide="users"></i>画像</a>
+            <a class="nav-item" href="#"><i data-lucide="package"></i>上下文</a>
+            <a class="nav-item" href="#"><i data-lucide="clock"></i>定时</a>
+          </div>
+        </div>
+        <div class="nav-group">
+          <div class="nav-group-hdr" onclick="toggleGroup(this)">
+            <span class="nav-group-title">记忆</span><i data-lucide="chevron-down"></i>
+          </div>
+          <div class="nav-group-items">
+            <a class="nav-item" href="#"><i data-lucide="book-open"></i>知识库</a>
+            <a class="nav-item" href="#"><i data-lucide="lightbulb"></i>记忆</a>
+            <a class="nav-item" href="#"><i data-lucide="network"></i>Wiki</a>
+          </div>
+        </div>
+        <div class="nav-group">
+          <div class="nav-group-hdr" onclick="toggleGroup(this)">
+            <span class="nav-group-title">系统</span><i data-lucide="chevron-down"></i>
+          </div>
+          <div class="nav-group-items">
+            <a class="nav-item" href="#"><i data-lucide="radio"></i>通道</a>
+            <a class="nav-item" href="#"><i data-lucide="settings"></i>设置</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="memory-section">
+        <div class="memory-hdr" onclick="this.nextElementSibling.classList.toggle('open')">
+          <div class="memory-hdr-left"><i data-lucide="file-text"></i><span>Agent 记忆</span></div>
+          <div class="memory-hdr-right"><span>3 files</span><i data-lucide="chevron-down"></i></div>
+        </div>
+        <div class="memory-items open">
+          <div class="memory-item"><i data-lucide="file"></i>AGENTS.md</div>
+          <div class="memory-item"><i data-lucide="file"></i>SOUL.md</div>
+          <div class="memory-item muted"><i data-lucide="file-plus"></i>USER.md</div>
+        </div>
+      </div>
+
+      <div class="sb-footer">
+        <button class="secondary">管理</button>
+        <button class="primary">+ 新对话</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div class="main">
+    <header class="topbar">
+      <div class="topbar-title">
+        Takton v2 前端重构方案
+        <span class="model-tag">local-llm</span>
+      </div>
+      <div class="topbar-actions">
+        <button class="topbar-btn"><i data-lucide="brain" style="width:18px;height:18px"></i></button>
+        <button class="topbar-btn"><i data-lucide="wrench" style="width:18px;height:18px"></i></button>
+        <button class="topbar-btn"><i data-lucide="download" style="width:18px;height:18px"></i></button>
+        <button class="topbar-btn"><i data-lucide="more-horizontal" style="width:18px;height:18px"></i></button>
+      </div>
+    </header>
+
+    <div class="chat">
+      <div class="msg user">
+        <div class="msg-avatar">一</div>
+        <div class="msg-body">我们前端样式不够高级，参考豆包的建议做一版浅色 demo</div>
+      </div>
+      <div class="msg assistant">
+        <div class="msg-avatar">汐</div>
+        <div class="msg-body">
+          浅色模式的难点是「紫青在白底上容易廉价」。解法：基底用暖灰 <code>#f2f1f6</code> 而非纯白，紫色降饱和到 <code>#6c5cd2</code>，玻璃效果加厚内边折射。<br><br>
+          <div class="tool-chip"><span class="dot done"></span><span>write_file · docs/demo-v2-ui-light.html</span></div>
+        </div>
+      </div>
+      <div class="msg user">
+        <div class="msg-avatar">一</div>
+        <div class="msg-body">对比深色模式，浅色下科技感怎么保持？</div>
+      </div>
+      <div class="msg assistant">
+        <div class="msg-avatar">汐</div>
+        <div class="msg-body">
+          三个手法：<br>
+          1. <strong>液态玻璃</strong>——所有面板 <code>backdrop-filter: blur(24px) saturate(1.6)</code> + 内边高光折射，模拟物理材质<br>
+          2. <strong>环境光</strong>——右上紫光/左下青光 radial-gradient，给白底加一层科技感氛围<br>
+          3. <strong>噪声纹理</strong>——SVG feTurbulence 叠加极低 opacity，打破纯白平面感
+        </div>
+      </div>
+    </div>
+
+    <div class="input-area">
+      <div class="input-wrap">
+        <div class="input-tools">
+          <button class="tool-btn active"><i data-lucide="brain"></i> 深度思考</button>
+          <button class="tool-btn"><i data-lucide="globe"></i> 联网搜索</button>
+          <button class="tool-btn"><i data-lucide="image"></i> 图片生成</button>
+          <button class="tool-btn"><i data-lucide="presentation"></i> PPT</button>
+        </div>
+        <div class="input-row">
+          <textarea rows="1" placeholder="输入消息…" id="chatInput"></textarea>
+          <button class="send-btn"><i data-lucide="arrow-up"></i></button>
+        </div>
+        <div class="input-meta">
+          <span>Enter 发送</span>
+          <span style="width:1px;height:10px;background:var(--glass-border);display:inline-block"></span>
+          <span>Shift+Enter 换行</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="status-bar">
+      <span class="dot"></span>
+      <span class="model">local-llm · OpenCode Go</span>
+      <span style="flex:1"></span>
+      <span>已连接</span>
+      <span class="status-sep"></span>
+      <span>Takton v0.2.6</span>
+    </div>
+  </div>
+</div>
+
+<script>
+lucide.createIcons();
+document.querySelectorAll('.rail-btn[data-nav]').forEach(b=>{
+  b.addEventListener('click',()=>{document.querySelectorAll('.rail-btn[data-nav]').forEach(x=>x.classList.remove('active'));b.classList.add('active');});
+});
+document.querySelectorAll('.tool-btn').forEach(b=>{b.addEventListener('click',()=>b.classList.toggle('active'));});
+const ta=document.getElementById('chatInput');
+ta.addEventListener('input',()=>{ta.style.height='auto';ta.style.height=Math.min(ta.scrollHeight,120)+'px';});
+function toggleGroup(el){el.classList.toggle('open');el.nextElementSibling.classList.toggle('open');}
+</script>
+</body>
+</html>

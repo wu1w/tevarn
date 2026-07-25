@@ -6,11 +6,15 @@ import { useAuthStore } from '@/stores/authStore';
 import { useWsStore } from '@/stores/wsStore';
 import { Sidebar } from './Sidebar';
 import { TitleBar } from './TitleBar';
+import { IconRail } from './IconRail';
+import { PageTransition } from './PageTransition';
 import { StartupOverlay } from '@/components/desktop/StartupOverlay';
 import { ErrorBoundary } from '@/components/desktop/ErrorBoundary';
 import { ConnectionState } from '@/components/desktop/ConnectionIndicator';
 import { AppLogo } from '@/components/brand/AppLogo';
 import { useT } from '@/stores/localeStore';
+
+const SIDEBAR_KEY = 'takton-sidebar-open';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const t = useT();
@@ -23,7 +27,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [startupStage, setStartupStage] = useState(t('layout._e108'));
   const isWsConnected = useWsStore((s) => s.isConnected);
   const isWsConnecting = useWsStore((s) => s.isConnecting);
-  // 无会话时 WS 本来就不连：后端健康 = 就绪，不是「断开」
   const wsState: ConnectionState = isWsConnected
     ? 'connected'
     : isWsConnecting
@@ -32,6 +35,29 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         ? 'ready'
         : 'disconnected';
   const [retryCount, setRetryCount] = useState(0);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem(SIDEBAR_KEY);
+      if (v === '0') setSidebarOpen(false);
+      if (v === '1') setSidebarOpen(true);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const toggleSidebar = useCallback(() => {
+    setSidebarOpen((v) => {
+      const next = !v;
+      try {
+        localStorage.setItem(SIDEBAR_KEY, next ? '1' : '0');
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     if (!hasHydrated) return;
@@ -55,7 +81,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             return true;
           }
         }
-        // 浏览器直连开发后端
         try {
           const r2 = await fetch('http://127.0.0.1:8000/api/health', { cache: 'no-store' });
           if (r2.ok) {
@@ -102,7 +127,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         }, 500);
       }
     });
-  }, []);
+  }, [t]);
 
   const handleReconnect = useCallback(() => {
     setRetryCount(0);
@@ -110,18 +135,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, []);
 
   if (!hasHydrated) {
-      return (
-        <div className="flex h-screen items-center justify-center bg-page-bg app-ambient">
-          <div className="flex flex-col items-center gap-4">
-            <BrandMark pulse />
-            {/* suppressHydrationWarning：auth hydrate 前避免 locale 首帧不一致 */}
-            <div className="text-sm text-foreground-dim" suppressHydrationWarning>
-              {t('contextDash.loading')}
-            </div>
+    return (
+      <div className="flex h-screen items-center justify-center bg-page-bg app-ambient">
+        <div className="flex flex-col items-center gap-4">
+          <BrandMark pulse />
+          <div className="text-sm text-foreground-dim" suppressHydrationWarning>
+            {t('contextDash.loading')}
           </div>
         </div>
-      );
-    }
+      </div>
+    );
+  }
 
   if (!isAuthenticated && !isLoginPage) {
     return (
@@ -134,7 +158,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     );
   }
 
-  // 登录页：无侧栏，仅自定义顶栏（桌面感）
   if (isLoginPage) {
     return (
       <div className="flex h-screen w-screen flex-col overflow-hidden bg-page-bg app-ambient">
@@ -155,13 +178,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           onReconnect={handleReconnect}
         />
 
-        <div className="flex min-h-0 flex-1">
-          <Sidebar />
-          {/* 右侧功能区：无内嵌圆角边框，与侧栏平齐铺满（现代 Agent UI） */}
-          <main className="main-workbench relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-page-bg">
-            {/* 列表/设置页可滚动；全屏 flex 页（对话）自行 overflow-hidden */}
+        <div className={`tk-app-body ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
+          <IconRail onToggleSidebar={toggleSidebar} sidebarOpen={sidebarOpen} />
+          <div className="tk-sidebar" aria-hidden={!sidebarOpen}>
+            <div className="tk-sidebar-inner">
+              <Sidebar />
+            </div>
+          </div>
+          <main className="tk-main main-workbench relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
             <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden">
-              {children}
+              <PageTransition>{children}</PageTransition>
             </div>
           </main>
         </div>

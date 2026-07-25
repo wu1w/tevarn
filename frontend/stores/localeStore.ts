@@ -246,6 +246,7 @@ const zh = {
   // 侧栏导航
   'nav.workspace': '工作区',
   'nav.agent': 'Agent',
+  'nav.chat': '对话',
   'nav.memoryGroup': '记忆',
   'nav.system': '系统',
   'nav.tasks': '任务',
@@ -2231,6 +2232,7 @@ const en: Record<keyof typeof zh, string> = {
   // Sidebar nav
   'nav.workspace': 'Workspace',
   'nav.agent': 'Agent',
+  'nav.chat': 'Chat',
   'nav.memoryGroup': 'Memory',
   'nav.system': 'System',
   'nav.tasks': 'Tasks',

@@ -167,61 +167,80 @@ pre {
   font-feature-settings: "tnum";
 }
 
-/* Light Theme — soft, product-like */
+/* Light Theme — Takton v2 liquid glass */
 [data-theme="light"] {
-  --page-bg: #f4f5f8;
-  --card-bg: #ffffff;
-  --card-bg-hover: #f0f1f5;
+  --page-bg: #f4f5fa;
+  --card-bg: rgba(255, 255, 255, 0.72);
+  --card-bg-hover: rgba(244, 245, 250, 0.9);
   --elevated-bg: #ffffff;
-  --chrome: #fafbfc;
-  --sidebar: #f7f8fa;
-  --foreground: #111827;
-  --foreground-muted: #4b5563;
-  --foreground-dim: #9ca3af;
-  --brand-purple: #7C3AED;
-  --brand-cyan: #0891b2;
-  --brand-gradient-start: #7C3AED;
-  --brand-gradient-end: #06B6D4;
-  --border-subtle: rgba(15, 23, 42, 0.06);
-  --border-default: rgba(15, 23, 42, 0.1);
-  --border-focus: rgba(124, 58, 237, 0.35);
-  --status-online: #10b981;
-  --status-offline: #ef4444;
-  --error-bg: rgba(239, 68, 68, 0.08);
-  --error-text: #dc2626;
-  --success-bg: rgba(16, 185, 129, 0.08);
-  --success-text: #059669;
-  --input-bg: #f3f4f6;
-  --input-placeholder: #9ca3af;
+  --chrome: rgba(255, 255, 255, 0.82);
+  --sidebar: rgba(255, 255, 255, 0.78);
+  --foreground: #1a1a2e;
+  --foreground-muted: #5c5c72;
+  --foreground-dim: #9b9bb0;
+  --brand-purple: #7c5cff;
+  --brand-cyan: #1fb5a7;
+  --brand-gradient-start: #7c5cff;
+  --brand-gradient-end: #34d3c4;
+  --border-subtle: rgba(124, 92, 255, 0.08);
+  --border-default: rgba(124, 92, 255, 0.14);
+  --border-focus: rgba(124, 92, 255, 0.45);
+  --status-online: #1fb5a7;
+  --status-offline: #ff5c5c;
+  --error-bg: rgba(255, 92, 92, 0.08);
+  --error-text: #e03e3e;
+  --success-bg: rgba(52, 211, 196, 0.1);
+  --success-text: #1fb5a7;
+  --input-bg: rgba(244, 245, 250, 0.9);
+  --input-placeholder: #9b9bb0;
+  --glass-bg: rgba(255, 255, 255, 0.55);
+  --glass-border: rgba(124, 92, 255, 0.1);
+  --glass-inner: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+  --ease-v2: cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-v2: 200ms;
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-xl: 18px;
 }
 
-/* Dark Theme — ChatGPT / Grok 风格深空 */
+/* Dark Theme — Takton v2 liquid glass */
 [data-theme="dark"] {
-  --page-bg: #0a0b10;
-  --card-bg: #12141c;
-  --card-bg-hover: rgba(255, 255, 255, 0.04);
-  --elevated-bg: #161822;
-  --chrome: #0d0e14;
-  --sidebar: #0c0d13;
-  --foreground: #f4f4f5;
-  --foreground-muted: #a1a1aa;
-  --foreground-dim: #71717a;
-  --brand-purple: #8B5CF6;
-  --brand-cyan: #22D3EE;
-  --brand-gradient-start: #8B5CF6;
-  --brand-gradient-end: #22D3EE;
-  --border-subtle: rgba(255, 255, 255, 0.06);
-  --border-default: rgba(255, 255, 255, 0.09);
-  --border-focus: rgba(139, 92, 246, 0.45);
-  --status-online: #34d399;
-  --status-offline: #f87171;
-  --error-bg: rgba(239, 68, 68, 0.12);
-  --error-text: #f87171;
-  --success-bg: rgba(16, 185, 129, 0.12);
-  --success-text: #34d399;
-  --input-bg: #161822;
-  --input-placeholder: #71717a;
+  --page-bg: #0c0c14;
+  --card-bg: rgba(24, 24, 36, 0.68);
+  --card-bg-hover: rgba(30, 30, 48, 0.55);
+  --elevated-bg: #181824;
+  --chrome: rgba(14, 14, 22, 0.82);
+  --sidebar: rgba(14, 14, 22, 0.82);
+  --foreground: #e6e6f0;
+  --foreground-muted: #9b9bb0;
+  --foreground-dim: #5c5c72;
+  --brand-purple: #7c5cff;
+  --brand-cyan: #34d3c4;
+  --brand-gradient-start: #7c5cff;
+  --brand-gradient-end: #34d3c4;
+  --border-subtle: rgba(124, 92, 255, 0.08);
+  --border-default: rgba(124, 92, 255, 0.14);
+  --border-focus: rgba(124, 92, 255, 0.45);
+  --status-online: #34d3c4;
+  --status-offline: #ff5c5c;
+  --error-bg: rgba(255, 92, 92, 0.12);
+  --error-text: #ff5c5c;
+  --success-bg: rgba(52, 211, 196, 0.12);
+  --success-text: #34d3c4;
+  --input-bg: rgba(10, 10, 16, 0.7);
+  --input-placeholder: #5c5c72;
+  --glass-bg: rgba(14, 14, 22, 0.55);
+  --glass-border: rgba(124, 92, 255, 0.08);
+  --glass-inner: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --ease-v2: cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-v2: 200ms;
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-xl: 18px;
 }
+
 
 @layer utilities {
   .glass {
@@ -560,4 +579,208 @@ button {
 /* 减少原生控件突兀感 */
 button {
   cursor: pointer;
+}
+
+
+/* ═══════════════ Takton v2 Shell (Rail + Sidebar) ═══════════════ */
+.tk-app-body {
+  display: grid;
+  grid-template-columns: 56px 260px minmax(0, 1fr);
+  min-height: 0;
+  flex: 1 1 auto;
+  transition: grid-template-columns 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.tk-app-body.sidebar-collapsed {
+  grid-template-columns: 56px 0px minmax(0, 1fr);
+}
+.tk-rail {
+  background: var(--sidebar);
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  border-right: 1px solid var(--glass-border, var(--border-subtle));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 12px 0;
+  gap: 4px;
+  z-index: 30;
+  position: relative;
+  overflow: hidden;
+  width: 56px;
+}
+.tk-rail::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(124, 92, 255, 0.03) 0%, transparent 40%, rgba(52, 211, 196, 0.02) 100%);
+}
+.tk-rail-logo {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--r-md, 10px);
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  z-index: 1;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+}
+.tk-rail-btn {
+  width: 40px;
+  height: 40px;
+  border: none;
+  background: transparent;
+  border-radius: var(--r-md, 10px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--foreground-dim);
+  cursor: pointer;
+  transition: color 200ms cubic-bezier(0.4, 0, 0.2, 1), background 200ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 200ms cubic-bezier(0.4, 0, 0.2, 1), transform 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  z-index: 1;
+  text-decoration: none;
+}
+.tk-rail-btn:hover {
+  color: var(--foreground-muted);
+  background: var(--card-bg-hover);
+}
+.tk-rail-btn.active {
+  background: linear-gradient(135deg, var(--brand-purple), color-mix(in srgb, var(--brand-purple) 70%, #000));
+  color: #fff;
+  box-shadow: 0 2px 14px color-mix(in srgb, var(--brand-purple) 40%, transparent);
+}
+.tk-rail-sep {
+  width: 24px;
+  height: 1px;
+  background: var(--glass-border, var(--border-subtle));
+  margin: 4px 0;
+  z-index: 1;
+}
+.tk-rail-spacer {
+  flex: 1;
+  z-index: 1;
+  min-height: 8px;
+}
+.tk-rail-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--brand-cyan);
+  box-shadow: 0 0 6px var(--brand-cyan);
+  z-index: 2;
+}
+
+.tk-sidebar {
+  background: var(--sidebar);
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  border-right: 1px solid var(--glass-border, var(--border-subtle));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  width: 260px;
+  min-width: 0;
+  transition: opacity 220ms cubic-bezier(0.4, 0, 0.2, 1), transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.tk-app-body.sidebar-collapsed .tk-sidebar {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-8px);
+  overflow: hidden;
+}
+.tk-sidebar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(124, 92, 255, 0.025) 0%, transparent 30%, rgba(52, 211, 196, 0.015) 100%);
+}
+.tk-sidebar-inner {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.tk-main {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--page-bg);
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+.tk-main::before {
+  content: '';
+  position: absolute;
+  top: -120px;
+  right: -100px;
+  width: 400px;
+  height: 400px;
+  background: radial-gradient(circle, color-mix(in srgb, var(--brand-purple) 12%, transparent) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+.tk-main::after {
+  content: '';
+  position: absolute;
+  bottom: -80px;
+  left: -60px;
+  width: 300px;
+  height: 300px;
+  background: radial-gradient(circle, color-mix(in srgb, var(--brand-cyan) 10%, transparent) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+.tk-main > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* nav group expand animation */
+.tk-nav-items {
+  overflow: hidden;
+  transition: max-height 280ms cubic-bezier(0.4, 0, 0.2, 1), opacity 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  max-height: 0;
+  opacity: 0;
+}
+.tk-nav-items.open {
+  max-height: 480px;
+  opacity: 1;
+}
+
+.tk-session-item {
+  position: relative;
+  transition: background 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.tk-session-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  background: var(--brand-purple);
+  border-radius: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tk-app-body,
+  .tk-sidebar,
+  .tk-rail-btn,
+  .tk-nav-items {
+    transition: none !important;
+  }
 }

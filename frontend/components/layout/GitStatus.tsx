@@ -112,7 +112,7 @@ export function GitStatusWidget({ onSelectFile }: GitStatusProps) {
           <div className="flex gap-3 text-[10px] text-foreground-dim">
             {status.ahead > 0 && <span>↑ {status.ahead}</span>}
             {status.behind > 0 && <span>↓ {status.behind}</span>}
-            <span>📝 {status.total_commits} commits</span>
+            <span>{status.total_commits} commits</span>
           </div>
 
           {/* Changed files */}

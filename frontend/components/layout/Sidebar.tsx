@@ -80,6 +80,7 @@ const navGroups: NavGroup[] = [
     id: 'agent',
     titleKey: 'nav.agent',
     items: [
+      { labelKey: 'nav.chat', href: '/', icon: ic('M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z') },
       { labelKey: 'nav.config', href: '/config', icon: ic('M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z') },
       { labelKey: 'nav.tools', href: '/tools', icon: ic('M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z') },
             // 技能与工具并列：能力扩展路径 工具 → 技能 → MCP
@@ -134,7 +135,7 @@ export function Sidebar() {
 
   const [notifOpen, setNotifOpen] = useState(false);
   // 默认折叠：历史会话 / Agent 记忆不抢主导航空间，需要时再点开
-  const [sessionsOpen, setSessionsOpen] = useState(false);
+  const [sessionsOpen, setSessionsOpen] = useState(true);
   const [mySessions, setMySessions] = useState<Session[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [switchingId, setSwitchingId] = useState<string | null>(null);
@@ -146,7 +147,7 @@ export function Sidebar() {
     // 侧栏分组：工作区常开；Agent/记忆/系统默认折叠，减认知噪音（key 用固定 id，不随语言变）
     const [openNavGroups, setOpenNavGroups] = useState<Record<string, boolean>>({
       workspace: true,
-      agent: false,
+      agent: true,
       memory: false,
       system: false,
     });
@@ -439,7 +440,7 @@ export function Sidebar() {
   };
 
   return (
-    <aside className="flex h-full w-60 flex-shrink-0 flex-col border-r border-border-subtle/70 bg-sidebar">
+    <aside className="flex h-full w-full flex-shrink-0 flex-col bg-transparent">
       {/* 快捷操作条 */}
       <div className="flex items-center gap-1.5 px-3 pt-3 pb-2">
         <button
@@ -649,10 +650,10 @@ export function Sidebar() {
                     return (
                       <div
                         key={session.id}
-                        className={`group/session flex items-center gap-0.5 rounded-xl transition-all ${
+                        className={`group/session tk-session-item flex items-center gap-0.5 rounded-[var(--r-sm,6px)] transition-all duration-200 ${
                           isActive
-                            ? 'bg-white/[0.06] ring-1 ring-inset ring-white/[0.06]'
-                            : 'hover:bg-white/[0.04]'
+                            ? 'active bg-[color-mix(in_srgb,var(--brand-purple)_8%,transparent)]'
+                            : 'hover:bg-[var(--card-bg-hover)]'
                         } ${isSwitching ? 'opacity-70' : ''}`}
                       >
                         <button
@@ -899,8 +900,8 @@ export function Sidebar() {
                       <span>{t(group.titleKey as never)}</span>
                       <span className="text-[9px] opacity-60">{expanded ? '−' : '+'}</span>
                     </button>
-                    {expanded && (
-                    <ul className="space-y-0.5">
+                    <div className={`tk-nav-items ${expanded ? 'open' : ''}`}>
+                    <ul className="space-y-0.5 pb-1">
                       {group.items.map((item) => {
                         const isActive =
                           pathname === item.href ||
@@ -912,8 +913,8 @@ export function Sidebar() {
                               href={item.href}
                               className={`group flex items-center gap-2.5 rounded-xl px-3 py-2 text-[13px] transition-all duration-150 ${
                                 isActive
-                                  ? 'bg-white/[0.06] font-medium text-foreground shadow-sm ring-1 ring-inset ring-white/[0.06]'
-                                  : 'text-foreground-muted hover:bg-white/[0.04] hover:text-foreground'
+                                  ? 'bg-[color-mix(in_srgb,var(--brand-purple)_8%,transparent)] font-medium text-[color:var(--brand-purple)]'
+                                  : 'text-foreground-muted hover:bg-[var(--card-bg-hover)] hover:text-foreground'
                               }`}
                               title={HELP_KEYS[item.href] ? t(HELP_KEYS[item.href] as never) : undefined}
                             >
@@ -934,7 +935,7 @@ export function Sidebar() {
                         );
                       })}
                     </ul>
-                    )}
+                    </div>
                   </div>
                   );
                 })}
