@@ -147,7 +147,10 @@ async def test_persona_system_prompt_goes_to_system_message():
     messages = llm.chat_complete.await_args.args[0]
     assert messages[0]["role"] == "system"
     assert "资深安全审计员" in messages[0]["content"]
-    assert messages[1] == {"role": "user", "content": "审查这段代码"}
+    # Phase 2：user 消息 = 原始 prompt + 交付契约格式要求
+    assert messages[1]["role"] == "user"
+    assert "审查这段代码" in messages[1]["content"]
+    assert "交付格式要求" in messages[1]["content"]
 
 
 @pytest.mark.asyncio

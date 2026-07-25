@@ -113,6 +113,10 @@ class Settings(BaseSettings):
     # 空正文重试 / 工具重复熔断（loop 读取，缺省有 fallback）
     agent_empty_reply_retries: int = 2
     agent_tool_repeat_max: int = 3
+    # 集群复核（Phase 2 Agent Contract + Review Loop）：子代理交付物契约化 +
+    # reviewer 独立复核；revise 触发有限次返工，reject 从综合输入剔除
+    cluster_review_enabled: bool = True
+    cluster_review_max_revise: int = 1
     # doom-loop：同工具+近似参数连续 thrash（默认 on，替代/增强 ToolRepeatGuard）
     agent_doom_loop_enabled: bool = True
     # best-of-n：默认关；完整 fanout 依赖 worktree（Batch2）

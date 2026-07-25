@@ -158,13 +158,20 @@ class ClusterExecutor:
         try:
             # 并行执行
             await self._execute_parallel(tasks, progress_callback)
-            
+
+            # Phase 2：交付契约解析 + reviewer 复核（settings.cluster_review_enabled）
+            await self._run_review_loop(tasks, task_description)
+
             # 聚合结果
             aggregated = await self._aggregate_results(tasks, strategy)
-            
+
             result.status = TaskStatus.COMPLETED
             result.aggregated_result = aggregated
             result.completed_at = datetime.now(timezone.utc)
+            result.metadata["review"] = {
+                "reviewed": sum(1 for t in tasks if t.metadata.get("review")),
+                "rejected": sum(1 for t in tasks if t.metadata.get("rejected")),
+            }
             
         except Exception as e:
             logger.error(f"Cluster execution failed: {e}")
@@ -347,28 +354,129 @@ class ClusterExecutor:
     
     async def _execute_agent_prompt(self, agent: Any, prompt: str, metadata: dict) -> Any:
         """执行子代理提示 - 真实调用 LLM（按 persona 解析模型与系统提示词）"""
+        from backend.agent.agent_contract import CONTRACT_INSTRUCTION
+
         llm = self._resolve_llm(agent)
         system_prompt = (
             str((agent or {}).get("system_prompt") or "").strip()
             or "你是一个专业的 AI 助手，请认真完成分配给你的子任务。"
         )
+        model_ref = str((agent or {}).get("model_ref") or "").strip() or None
         try:
-            # 调用 LLM 生成回复（使用非流式接口）
+            # 调用 LLM 生成回复（使用非流式接口；附加交付契约格式要求）
             response = await llm.chat_complete([
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
+                {"role": "user", "content": prompt + CONTRACT_INSTRUCTION}
             ])
-            
+
             return {
                 "status": "success",
                 "prompt": prompt,
                 "result": response.content if hasattr(response, 'content') else str(response),
+                "model": model_ref,
                 "metadata": metadata,
             }
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
             # 禁止以「模拟结果」冒充成功：向上抛出，由调用方标记 TaskStatus.FAILED
             raise RuntimeError(f"sub-agent LLM call failed: {e}") from e
+
+    async def _run_review_loop(self, tasks: list[SubTask], task_description: str) -> None:
+        """Phase 2 Review Loop：契约解析交付物 → reviewer 复核 → revise 返工 / reject 剔除
+
+        诚实降级：reviewer 不可用或输出不可解析 → 全部默认 pass，不阻塞交付。
+        """
+        from backend.core.config import settings
+
+        if not getattr(settings, "cluster_review_enabled", True):
+            return
+
+        import copy
+
+        from backend.agent.agent_contract import (
+            REVIEWER_SYSTEM_PROMPT,
+            AgentDeliverable,
+            build_review_prompt,
+            parse_deliverable,
+            parse_review_verdicts,
+        )
+        from backend.services.llm import LLMServiceFactory
+
+        done = [
+            t for t in tasks
+            if t.status == TaskStatus.COMPLETED and isinstance(t.result, dict)
+        ]
+        if not done:
+            return
+
+        def _mk_deliverable(t: SubTask) -> AgentDeliverable:
+            return parse_deliverable(
+                str((t.result or {}).get("result") or ""),
+                agent_id=str(t.agent_config.get("agent_id") or "default"),
+                task_id=t.id,
+                model=str(t.agent_config.get("model_ref") or "").strip() or None,
+            )
+
+        # 1) 契约解析
+        dmap: dict[str, AgentDeliverable] = {}
+        for t in done:
+            d = _mk_deliverable(t)
+            dmap[t.id] = d
+            t.metadata["deliverable"] = d.to_dict()
+
+        # 2) reviewer 复核（失败不阻塞）
+        try:
+            reviewer = LLMServiceFactory.get_service()
+        except Exception as e:
+            logger.warning("reviewer LLM unavailable, skip review: %s", e)
+            return
+
+        max_revise = int(getattr(settings, "cluster_review_max_revise", 1) or 0)
+        rounds = 0
+        while True:
+            try:
+                resp = await reviewer.chat_complete([
+                    {"role": "system", "content": REVIEWER_SYSTEM_PROMPT},
+                    {"role": "user", "content": build_review_prompt(
+                        task_description, list(dmap.values())
+                    )},
+                ])
+                raw = resp.content if hasattr(resp, "content") else str(resp)
+            except Exception as e:
+                logger.warning("reviewer call failed, treat all as pass: %s", e)
+                return
+
+            verdicts = parse_review_verdicts(raw, [t.id for t in done])
+            for t in done:
+                v = verdicts[t.id]
+                t.metadata["review"] = v.to_dict()
+                if v.verdict == "reject":
+                    t.metadata["rejected"] = True
+
+            revise_tasks = [t for t in done if verdicts[t.id].verdict == "revise"]
+            if not revise_tasks or rounds >= max_revise:
+                break
+            rounds += 1
+            for t in revise_tasks:
+                v = verdicts[t.id]
+                try:
+                    agent = await self._get_or_create_agent(t)
+                    t2 = copy.copy(t)
+                    t2.prompt = (
+                        t.prompt
+                        + "\n\n---\n【复核返工要求】复核发现的问题："
+                        + ("；".join(v.issues) or "无")
+                        + f"。修改建议：{v.suggestion or '无'}。请修正后重新交付。"
+                    )
+                    t.result = await self._run_agent_task(agent, t2)
+                    t.metadata["rejected"] = False
+                    t.metadata["review_rounds"] = rounds
+                    d = _mk_deliverable(t)
+                    dmap[t.id] = d
+                    t.metadata["deliverable"] = d.to_dict()
+                except Exception as e:
+                    logger.warning("revise re-run failed for %s: %s", t.id, e)
+                    t.metadata["rejected"] = True
     
     async def _aggregate_results(
         self,
@@ -386,7 +494,7 @@ class ClusterExecutor:
         elif strategy == AggregationStrategy.CHAIN:
             return self._aggregate_chain(tasks)
         elif strategy == AggregationStrategy.SYNTHESIZE:
-            return await self._aggregate_synthesize(results, errors)
+            return await self._aggregate_synthesize(tasks, errors)
         else:
             return {"results": results, "errors": errors}
     
@@ -437,40 +545,68 @@ class ClusterExecutor:
     
     async def _aggregate_synthesize(
         self,
-        results: list[Any],
+        tasks: list[SubTask],
         errors: list[str | None],
     ) -> Any:
-        """主 LLM 综合聚合"""
+        """主 LLM 综合聚合（Phase 2：剔除 reject，携带契约/复核元数据）"""
+        # reject 的交付物不参与综合
+        used = [
+            t for t in tasks
+            if t.status == TaskStatus.COMPLETED and not t.metadata.get("rejected")
+        ]
+        results = [t.result for t in used]
+        rejected_names = [t.name for t in tasks if t.metadata.get("rejected")]
+        review_notes = [
+            {
+                "task": t.name,
+                "verdict": (t.metadata.get("review") or {}).get("verdict"),
+                "score": (t.metadata.get("review") or {}).get("score"),
+                "confidence": (t.metadata.get("deliverable") or {}).get("confidence"),
+                "signature": (t.metadata.get("deliverable") or {}).get("signature"),
+                "issues": (t.metadata.get("review") or {}).get("issues"),
+            }
+            for t in used
+            if t.metadata.get("review") or t.metadata.get("deliverable")
+        ]
         # 使用 LLM 综合所有结果
         try:
             from backend.services.llm import LLMServiceFactory
-            
+
             llm = LLMServiceFactory.get_service()
-            
+
             prompt = f"""请综合以下子任务结果，给出最终答案：
 
 子任务结果：
 {json.dumps(results, indent=2, ensure_ascii=False)}
 
+交付元数据（置信度/复核结论，低分结果请谨慎采纳）：
+{json.dumps(review_notes, indent=2, ensure_ascii=False)}
+
 错误信息：
 {json.dumps([e for e in errors if e], indent=2, ensure_ascii=False)}
 
 请给出综合后的结果："""
-            
+
             response = await llm.chat_complete([
                 {"role": "user", "content": prompt}
             ])
-            
+
             return {
                 "synthesized": response.content if hasattr(response, 'content') else str(response),
                 "raw_results": results,
                 "errors": [e for e in errors if e],
+                "review_notes": review_notes,
+                "rejected": rejected_names,
             }
-            
+
         except Exception as e:
             logger.error(f"LLM synthesis failed: {e}")
             # 降级到简单合并
-            return self._aggregate_merge(results)
+            merged = self._aggregate_merge(results)
+            if isinstance(merged, dict):
+                merged["review_notes"] = review_notes
+                merged["rejected"] = rejected_names
+            return merged
 
 
 # 全局实例
