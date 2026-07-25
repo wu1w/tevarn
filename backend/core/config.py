@@ -139,6 +139,9 @@ class Settings(BaseSettings):
     agent_computer_backend: str = "bwrap"
     # 沙箱内是否放开网络（默认断网 --unshare-net）
     agent_computer_network: bool = False
+    # 真 Sub-Agent（Phase 1）：嵌套深度 / 总超时防失控
+    agent_subagent_max_depth: int = 1
+    agent_subagent_timeout_seconds: int = 300
     # 写文件工具前自动快照到 .takton/checkpoints/
     agent_file_checkpoint: bool = True
     # 搜索：有 Key 时 web_search/search 优先 Tavily

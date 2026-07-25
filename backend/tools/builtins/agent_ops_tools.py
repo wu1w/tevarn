@@ -250,8 +250,9 @@ class DelegateTaskTool(BaseTool):
         super().__init__(
             name="delegate_task",
             description=(
-                "把子任务委派给子代理。action=list_agents|run。"
-                "run 需要 goal；可选 agent_id/name。用于拆分编码/调研等并行工作。"
+                "把子任务委派给子代理执行带工具的迷你 Run（独立沙箱 computer）。"
+                "action=list_agents|run。run 需要 goal；可选 agent_id/name、context。"
+                "用于拆分编码/调研等工作；子代理可用工具，结果精炼返回。"
             ),
             parameters={
                 "type": "object",
@@ -324,43 +325,25 @@ class DelegateTaskTool(BaseTool):
         if target is None:
             return "[Error] no sub-agent available. Create one in /profiles first."
 
-        # try cluster quick path or simple LLM complete with agent prompt
+        # 真 Sub-Agent（Phase 1）：带工具的迷你 Run（替换原纯 LLM 一次性补全）
         ctx = (kwargs.get("context") or "").strip()
-        prompt = f"You are sub-agent «{getattr(target,'name','agent')}».\nGoal: {goal}\n"
-        if ctx:
-            prompt += f"Context:\n{ctx}\n"
-        prompt += "Complete the goal and return a concise result."
-
         try:
-            from backend.services.llm.factory import LLMServiceFactory
+            from backend.agent.subagent_runner import run_subagent
 
-            svc = LLMServiceFactory.get_service()
-            # chat_complete if exists；provider 签名不含 temperature，需 TypeError 兜底
-            if hasattr(svc, "chat_complete"):
-                try:
-                    resp = await svc.chat_complete(
-                        [{"role": "user", "content": prompt}],
-                        temperature=0.3,
-                    )
-                except TypeError:
-                    resp = await svc.chat_complete(
-                        [{"role": "user", "content": prompt}]
-                    )
-                # chat_complete 返回 LLMResponse 对象，需取 .content 文本
-                text = getattr(resp, "content", None) or str(resp)
-            else:
-                chunks = []
-                async for ch in svc.chat([{"role": "user", "content": prompt}]):
-                    c = getattr(ch, "content", None) or getattr(ch, "delta", None) or ""
-                    if c:
-                        chunks.append(c)
-                text = "".join(chunks)
-            return (
-                f"[delegate_task -> {getattr(target,'name', target)}]\n"
-                f"{text or '(empty response)'}"
+            _uid = kwargs.get("user_id") or kwargs.get("_user_id")
+            _recorder = kwargs.get("_run_recorder")
+            return await run_subagent(
+                session_id=str(kwargs.get("_session_id") or ""),
+                sub_agent=target,
+                goal=goal,
+                context=ctx,
+                user_id=uuid.UUID(str(_uid)) if _uid else None,
+                ws_manager=kwargs.get("_ws_manager"),
+                parent_run_id=getattr(_recorder, "run_id", None),
+                depth=int(kwargs.get("_subagent_depth") or 0),
             )
         except Exception as e:
-            return f"[Error] delegate_task LLM failed: {e}"
+            return f"[Error] delegate_task subagent run failed: {e}"
 
 
 class ClarifyTool(BaseTool):

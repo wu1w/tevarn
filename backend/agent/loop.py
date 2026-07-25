@@ -203,6 +203,8 @@ class NexusAgentLoop(AgentLoopBase):
         # Agent Computer：agent 身份（主 Agent=main；子代理 loop 实例可自带 key/label）
         arguments.setdefault("_agent_key", getattr(self, "_agent_key", "main"))
         arguments.setdefault("_agent_label", getattr(self, "_agent_label", ""))
+        # 真 Sub-Agent：嵌套深度（delegate_task 防失控）
+        arguments.setdefault("_subagent_depth", getattr(self, "_subagent_depth", 0))
         ex = getattr(self, "tool_executor", None)
         if ex is not None:
             return await ex.execute(name, arguments)
@@ -353,38 +355,65 @@ class NexusAgentLoop(AgentLoopBase):
         attachments: list[dict[str, Any]] | None = None,
         mode: str = "default",
         sub_agent_ids: list[str] | None = None,
+        _nested: bool = False,
     ) -> str:
         """
         执行 Agent Loop（同一 session 并发安全：使用 asyncio.Lock 串行执行）
+
+        _nested=True：子代理迷你 Run 专用——父 run 已持有 session 锁并在等待
+        子 run 完成，此时直接执行，避免自死锁。
         """
+        if _nested:
+            return await self._run_inner(session_id, user_input, attachments, mode, sub_agent_ids or [])
         # 安全修复：获取 session 级锁，防止同一 session 的并发竞态
         lock = _get_session_lock(session_id)
         async with lock:
-            _ws_reset = lambda: None  # noqa: E731
-            # Durable Run（Phase 0.5.2）：一次 run() = 一条 AgentRun 记录
-            from backend.agent.run_recorder import RunRecorder
+            return await self._run_inner(session_id, user_input, attachments, mode, sub_agent_ids or [])
 
-            recorder = RunRecorder(
-                session_id,
-                user_id=self.user_id,
-                mode=mode,
+    async def _run_inner(
+        self,
+        session_id: uuid.UUID,
+        user_input: str,
+        attachments: list[dict[str, Any]] | None,
+        mode: str,
+        sub_agent_ids: list[str],
+    ) -> str:
+        """Durable Run 包装：recorder 创建/收尾 + 调用 _run_locked"""
+        _ws_reset = lambda: None  # noqa: E731
+        # Durable Run（Phase 0.5.2）：一次 run() = 一条 AgentRun 记录
+        from backend.agent.run_recorder import RunRecorder
+
+        meta: dict[str, Any] = {}
+        parent_run_id = getattr(self, "_parent_run_id", None)
+        if parent_run_id:
+            meta["parent_run_id"] = str(parent_run_id)
+        agent_key = getattr(self, "_agent_key", None)
+        if agent_key and agent_key != "main":
+            meta["agent_key"] = agent_key
+            meta["agent_label"] = getattr(self, "_agent_label", "")
+
+        recorder = RunRecorder(
+            session_id,
+            user_id=self.user_id,
+            mode=mode,
+            meta=meta or None,
+        )
+        self._run_recorder = recorder
+        await recorder.start(input_summary=user_input or "")
+        try:
+            result = await self._run_locked(
+                session_id, user_input, attachments, mode, sub_agent_ids
             )
-            self._run_recorder = recorder
-            await recorder.start(input_summary=user_input or "")
-            try:
-                result = await self._run_locked(
-                    session_id, user_input, attachments, mode, sub_agent_ids or []
-                )
-                if self._should_stop:
-                    await recorder.cancel("stopped by user")
-                else:
-                    await recorder.finish_ok(final_summary=result or "")
-                return result
-            except Exception as e:
-                await recorder.finish_fail(str(e))
-                raise
-            finally:
-                self._run_recorder = None
+            if self._should_stop:
+                await recorder.cancel("stopped by user")
+            else:
+                await recorder.finish_ok(final_summary=result or "")
+            return result
+        except Exception as e:
+            await recorder.finish_fail(str(e))
+            raise
+        finally:
+            self._run_recorder = None
 
     async def _run_locked(
         self,
@@ -797,8 +826,10 @@ class NexusAgentLoop(AgentLoopBase):
             except Exception as e:
                 logger.warning("cluster roster inject failed: %s", e)
 
-        # 6. 获取 LLM 服务（优先用会话创建时的 LLM 快照 → 配置变更不影响本会话）
-        llm_snapshot = (config or {}).get("llm") if isinstance(config, dict) else None
+        # 6. 获取 LLM 服务（优先子代理覆盖快照 → 会话 LLM 快照 → 配置变更不影响本会话）
+        llm_snapshot = getattr(self, "_llm_snapshot_override", None) or (
+            (config or {}).get("llm") if isinstance(config, dict) else None
+        )
         llm_service = LLMServiceFactory.get_service_for_snapshot(llm_snapshot)
 
         # 6.5 上下文引擎 pipeline（L1/L3/L5）
