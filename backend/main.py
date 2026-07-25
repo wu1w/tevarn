@@ -354,6 +354,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Settings seeding skipped: {e}")
 
+    # Cluster 启动清扫：上次进程退出时仍在 running 的记录 → interrupted（诚实标记）
+    try:
+        from backend.repositories.cluster_run_repo import AsyncClusterRunRepository
+
+        n = await AsyncClusterRunRepository().mark_interrupted_running()
+        if n:
+            logger.info("Marked %d stale cluster run(s) as interrupted", n)
+    except Exception as e:
+        logger.warning(f"Cluster run startup sweep skipped: {e}")
+
     # EventBus → WS 活动流桥（Phase 0.5.2 W2-3）
     try:
         from backend.api.websocket import manager as ws_manager

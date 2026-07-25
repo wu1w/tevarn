@@ -101,8 +101,10 @@ async def _run_cluster_background(
     task_description: str,
     sub_tasks: list[dict],
     strategy: AggregationStrategy,
+    plan_id: str | None = None,
+    name: str = "",
 ) -> None:
-    """后台执行集群任务：进度经 WS 广播，结果落 _active_clusters 供 status 查询"""
+    """后台执行集群任务：进度经 WS 广播，结果落库 + _active_clusters 供 status 查询"""
 
     def _on_progress(sub_task_id: str, progress: int, message: str) -> None:
         # executor 以同步方式调用回调 → 调度协程广播
@@ -115,6 +117,24 @@ async def _run_cluster_background(
         except RuntimeError:
             pass
 
+    # 持久化：启动即落 running 记录（失败不阻塞执行）
+    from backend.repositories.cluster_run_repo import AsyncClusterRunRepository
+
+    repo = AsyncClusterRunRepository()
+    try:
+        await repo.create_run({
+            "task_id": task_id,
+            "plan_id": plan_id,
+            "name": name or task_description[:60],
+            "description": task_description,
+            "status": "running",
+            "aggregation_strategy": strategy.value,
+            "sub_task_count": len(sub_tasks),
+            "started_at": datetime.now(timezone.utc),
+        })
+    except Exception as e:
+        logger.warning("cluster run persist (start) skipped: %s", e)
+
     try:
         result = await executor.execute(
             task_description=task_description,
@@ -123,6 +143,19 @@ async def _run_cluster_background(
             progress_callback=_on_progress,
         )
         _active_clusters[task_id] = result
+        try:
+            await repo.finish_run(
+                task_id,
+                status=result.status.value,
+                sub_tasks=[st.to_dict() for st in result.sub_tasks],
+                aggregated_result=result.aggregated_result
+                if isinstance(result.aggregated_result, dict)
+                else {"value": result.aggregated_result},
+                review=result.metadata.get("review"),
+                error=result.error,
+            )
+        except Exception as e:
+            logger.warning("cluster run persist (finish) skipped: %s", e)
         await broadcast_progress(
             task_id, 100, "done", event="completed", status=result.status.value
         )
@@ -136,6 +169,10 @@ async def _run_cluster_background(
         )
         failed.completed_at = datetime.now(timezone.utc)
         _active_clusters[task_id] = failed
+        try:
+            await repo.finish_run(task_id, status="failed", error=str(e))
+        except Exception as pe:
+            logger.warning("cluster run persist (fail) skipped: %s", pe)
         await broadcast_progress(task_id, 100, str(e), event="failed")
     finally:
         _running_clusters.pop(task_id, None)
@@ -147,6 +184,8 @@ def _start_cluster_background(
     task_description: str,
     sub_tasks: list[dict],
     strategy: AggregationStrategy,
+    plan_id: str | None = None,
+    name: str = "",
 ) -> str:
     """生成 task_id 并启动后台执行，立即返回句柄"""
     task_id = str(uuid.uuid4())
@@ -161,6 +200,8 @@ def _start_cluster_background(
             task_description=task_description,
             sub_tasks=sub_tasks,
             strategy=strategy,
+            plan_id=plan_id,
+            name=name,
         )
     )
     _bg_tasks.add(bg)
@@ -310,6 +351,8 @@ async def execute_plan(plan: ClusterPlan):
         task_description=plan.description,
         sub_tasks=sub_tasks,
         strategy=AggregationStrategy(plan.aggregation_strategy),
+        plan_id=plan.id,
+        name=plan.name,
     )
     return {
         "task_id": handle,
@@ -321,7 +364,7 @@ async def execute_plan(plan: ClusterPlan):
 
 @router.get("/cluster/status/{task_id}", response_model=ClusterStatusResponse)
 async def get_cluster_status(task_id: str):
-    """获取集群任务状态（运行中返回 200 + status=running，不 404）"""
+    """获取集群任务状态（运行中 200+running；内存未命中时回落持久化记录）"""
     result = _active_clusters.get(task_id)
     if result is None:
         running = _running_clusters.get(task_id)
@@ -333,7 +376,31 @@ async def get_cluster_status(task_id: str):
                 sub_tasks=[],
                 started_at=running["started_at"],
             )
-        raise HTTPException(status_code=404, detail="Task not found")
+        # 持久化回落：重启后历史记录仍可查
+        from backend.repositories.cluster_run_repo import AsyncClusterRunRepository
+
+        try:
+            row = await AsyncClusterRunRepository().get_by_task_id(task_id)
+        except Exception as e:
+            logger.warning("cluster status db fallback failed: %s", e)
+            row = None
+        if row is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        total = row.sub_task_count or len(row.sub_tasks or [])
+        completed = len([
+            t for t in (row.sub_tasks or []) if t.get("status") == "completed"
+        ])
+        return ClusterStatusResponse(
+            task_id=task_id,
+            status=row.status,
+            progress=int(completed / total * 100) if total else 0,
+            sub_tasks=row.sub_tasks or [],
+            aggregated_result=row.aggregated_result,
+            error=row.error,
+            started_at=row.started_at.isoformat() if row.started_at else "",
+            completed_at=row.ended_at.isoformat() if row.ended_at else None,
+            review=row.review,
+        )
     
     # 计算进度
     total = len(result.sub_tasks)
@@ -355,18 +422,43 @@ async def get_cluster_status(task_id: str):
 
 @router.get("/cluster/list", response_model=dict)
 async def list_clusters():
-    """列出所有集群任务"""
-    return {
-        "clusters": [
-            {
-                "task_id": task_id,
-                "status": result.status.value,
-                "sub_task_count": len(result.sub_tasks),
-                "started_at": result.started_at.isoformat(),
+    """列出集群任务（内存运行中 + 持久化历史，按时间倒序）"""
+    items: dict[str, dict] = {}
+    # 持久化历史（含 interrupted/completed/failed）
+    from backend.repositories.cluster_run_repo import AsyncClusterRunRepository
+
+    try:
+        for row in await AsyncClusterRunRepository().list_recent(limit=50):
+            items[row.task_id] = {
+                "task_id": row.task_id,
+                "name": row.name,
+                "status": row.status,
+                "sub_task_count": row.sub_task_count,
+                "started_at": row.started_at.isoformat() if row.started_at else None,
             }
-            for task_id, result in _active_clusters.items()
-        ]
-    }
+    except Exception as e:
+        logger.warning("cluster list db read failed, memory only: %s", e)
+    # 内存态覆盖（运行中/刚完成的最新状态优先）
+    for task_id, result in _active_clusters.items():
+        items[task_id] = {
+            "task_id": task_id,
+            "name": (result.sub_tasks[0].name if result.sub_tasks else "")[:60],
+            "status": result.status.value,
+            "sub_task_count": len(result.sub_tasks),
+            "started_at": result.started_at.isoformat(),
+        }
+    for task_id, running in _running_clusters.items():
+        items[task_id] = {
+            "task_id": task_id,
+            "name": "",
+            "status": "running",
+            "sub_task_count": 0,
+            "started_at": running["started_at"],
+        }
+    clusters = sorted(
+        items.values(), key=lambda x: x.get("started_at") or "", reverse=True
+    )
+    return {"clusters": clusters}
 
 
 @router.delete("/cluster/{task_id}")

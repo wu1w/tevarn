@@ -3,6 +3,7 @@ from .agent_run import AgentRun, RunStep
 from .audit_log import AuditLog
 from .base import Base
 from .channel import Channel
+from .cluster_run import ClusterRun
 from .context import ContextFlow, CtxItem
 from .cron import CronJob
 from .cron import CronJob

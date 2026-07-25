@@ -11,7 +11,9 @@ import {
   executeWorkflow,
   controlWorkflow,
   generateWorkflowFromNl,
+  apiClient,
 } from '@/lib/api';
+import { dagToClusterPlan } from '@/lib/clusterPlan';
 import NodePalette from '@/components/workflow/NodePalette';
 import WorkflowCanvas from '@/components/workflow/WorkflowCanvas';
 import NodePropertyPanel from '@/components/workflow/NodePropertyPanel';
@@ -418,6 +420,36 @@ export default function WorkflowsPage() {
     }
   };
 
+  /* ── 作为集群计划执行（Phase 3：DAG → cluster plan，后台执行）── */
+  const [clusterStarting, setClusterStarting] = useState(false);
+  const handleRunCluster = async () => {
+    if (!selected) return;
+    const { plan, warnings } = dagToClusterPlan(nodes, edges, {
+      id: selected.id,
+      name: selected.name,
+      description: selected.description || undefined,
+    });
+    if (!plan) {
+      addToast(warnings[0] || 'DAG 无法转换为集群计划', 'info');
+      return;
+    }
+    setClusterStarting(true);
+    setLastResult(null);
+    try {
+      const { data } = await apiClient.post('/cluster/execute-plan', plan, { timeout: 30_000 });
+      setLastResult(
+        `已启动集群执行（后台运行）\ntask_id: ${data.task_id}\n`
+        + (warnings.length ? `注意：\n${warnings.map((w) => `· ${w}`).join('\n')}\n` : '')
+        + `实时进度与复核结论请前往「集群编排」页查看`,
+      );
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || err?.message || String(err);
+      setLastResult(`集群执行启动失败: ${detail}`);
+    } finally {
+      setClusterStarting(false);
+    }
+  };
+
   /* ── 自然语言生成 ── */
   const handleNlGenerate = async (save = true) => {
     const description = nlPrompt.trim();
@@ -694,6 +726,14 @@ export default function WorkflowsPage() {
                 className="inline-flex items-center gap-1 rounded-md bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50">
                 <PlayIcon className="h-3.5 w-3.5" />
                 {running ? t('wf.running') : t('wf.run')}
+              </button>
+              <button
+                onClick={handleRunCluster}
+                disabled={clusterStarting || nodes.length === 0}
+                title="将当前 DAG 转为集群计划后台执行（llm/agent 节点 → 子代理，含 reviewer 复核）"
+                className="inline-flex items-center gap-1 rounded-md bg-brand-purple px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50">
+                <PlayIcon className="h-3.5 w-3.5" />
+                {clusterStarting ? '启动中…' : '集群执行'}
               </button>
               <button
                 onClick={handleDelete}
