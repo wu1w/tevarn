@@ -11,6 +11,8 @@ from typing import Any
 
 import aiohttp
 
+from .http_session import ensure_session, request_timeout, stream_timeout
+
 from backend.core.config import settings
 
 from .interface import LLMService
@@ -71,32 +73,32 @@ class VLLMService(LLMService):
 
         if not stream:
             try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(url, json=payload, headers=self._get_headers()) as resp:
-                        resp.raise_for_status()
-                        data = await resp.json()
-                        choice = data.get("choices", [{}])[0]
-                        msg = choice.get("message", {})
-                        content = msg.get("content", "")
-                        tool_calls = msg.get("tool_calls", [])
-                        finish_reason = choice.get("finish_reason", "stop")
+                session = ensure_session(self)
+                async with session.post(url, json=payload, headers=self._get_headers(), timeout=request_timeout()) as resp:
+                    resp.raise_for_status()
+                    data = await resp.json()
+                    choice = data.get("choices", [{}])[0]
+                    msg = choice.get("message", {})
+                    content = msg.get("content", "")
+                    tool_calls = msg.get("tool_calls", [])
+                    finish_reason = choice.get("finish_reason", "stop")
 
-                        if tool_calls:
-                            for tc in tool_calls:
-                                try:
-                                    args = json.loads(tc["function"]["arguments"]) if isinstance(tc["function"]["arguments"], str) else tc["function"]["arguments"]
-                                except (json.JSONDecodeError, KeyError):
-                                    args = {}
-                                yield LLMChunk(
-                                    message_id=message_id,
-                                    delta="",
-                                    tool_call=ToolCall(
-                                        id=tc.get("id", f"call_{uuid.uuid4().hex[:8]}"),
-                                        name=tc.get("function", {}).get("name", ""),
-                                        arguments=args,
-                                    ),
-                                )
-                        yield LLMChunk(message_id=message_id, delta=content, finish_reason=finish_reason)
+                    if tool_calls:
+                        for tc in tool_calls:
+                            try:
+                                args = json.loads(tc["function"]["arguments"]) if isinstance(tc["function"]["arguments"], str) else tc["function"]["arguments"]
+                            except (json.JSONDecodeError, KeyError):
+                                args = {}
+                            yield LLMChunk(
+                                message_id=message_id,
+                                delta="",
+                                tool_call=ToolCall(
+                                    id=tc.get("id", f"call_{uuid.uuid4().hex[:8]}"),
+                                    name=tc.get("function", {}).get("name", ""),
+                                    arguments=args,
+                                ),
+                            )
+                    yield LLMChunk(message_id=message_id, delta=content, finish_reason=finish_reason)
             except Exception as e:
                 logger.error(f"vLLM chat error: {e}")
                 yield LLMChunk(message_id=message_id, delta="", finish_reason="error")
@@ -148,50 +150,51 @@ class VLLMService(LLMService):
             return out
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    url, json=payload, headers=self._get_headers()
-                ) as resp:
-                    resp.raise_for_status()
-                    async for line in resp.content:
-                        line = line.decode("utf-8").strip()
-                        if not line or line == "data: [DONE]":
-                            continue
-                        if not line.startswith("data: "):
-                            continue
+            session = ensure_session(self)
+            async with session.post(
+                url, json=payload, headers=self._get_headers(),
+                timeout=stream_timeout(),
+            ) as resp:
+                resp.raise_for_status()
+                async for line in resp.content:
+                    line = line.decode("utf-8").strip()
+                    if not line or line == "data: [DONE]":
+                        continue
+                    if not line.startswith("data: "):
+                        continue
 
-                        try:
-                            data = json.loads(line[6:])
-                        except json.JSONDecodeError:
-                            continue
+                    try:
+                        data = json.loads(line[6:])
+                    except json.JSONDecodeError:
+                        continue
 
-                        choice = data.get("choices", [{}])[0]
-                        delta = choice.get("delta", {})
+                    choice = data.get("choices", [{}])[0]
+                    delta = choice.get("delta", {})
 
-                        content = delta.get("content", "")
-                        if content:
-                            yield LLMChunk(message_id=message_id, delta=content)
+                    content = delta.get("content", "")
+                    if content:
+                        yield LLMChunk(message_id=message_id, delta=content)
 
-                        for tc in delta.get("tool_calls") or []:
-                            _merge_tool_delta(tc)
+                    for tc in delta.get("tool_calls") or []:
+                        _merge_tool_delta(tc)
 
-                        finish_reason = choice.get("finish_reason")
-                        if finish_reason:
-                            emitted = _emit_tool_calls()
-                            for chunk in emitted:
-                                yield chunk
-                            effective = "tool_calls" if emitted else finish_reason
-                            yield LLMChunk(
-                                message_id=message_id, delta="", finish_reason=effective
-                            )
-                            break
-                    else:
-                        if accumulated_tool_calls:
-                            for chunk in _emit_tool_calls():
-                                yield chunk
-                            yield LLMChunk(
-                                message_id=message_id, delta="", finish_reason="tool_calls"
-                            )
+                    finish_reason = choice.get("finish_reason")
+                    if finish_reason:
+                        emitted = _emit_tool_calls()
+                        for chunk in emitted:
+                            yield chunk
+                        effective = "tool_calls" if emitted else finish_reason
+                        yield LLMChunk(
+                            message_id=message_id, delta="", finish_reason=effective
+                        )
+                        break
+                else:
+                    if accumulated_tool_calls:
+                        for chunk in _emit_tool_calls():
+                            yield chunk
+                        yield LLMChunk(
+                            message_id=message_id, delta="", finish_reason="tool_calls"
+                        )
 
         except Exception as e:
             logger.error(f"vLLM chat error: {e}")

@@ -11,6 +11,8 @@ from typing import Any
 
 import aiohttp
 
+from .http_session import ensure_session, request_timeout, stream_timeout
+
 from backend.core.config import settings
 
 from .interface import LLMService
@@ -56,12 +58,12 @@ class OllamaService(LLMService):
 
         if not stream:
             try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(url, json=payload) as resp:
-                        resp.raise_for_status()
-                        data = await resp.json()
-                        content = data.get("message", {}).get("content", "")
-                        yield LLMChunk(message_id=message_id, delta=content, finish_reason="stop")
+                session = ensure_session(self)
+                async with session.post(url, json=payload, timeout=request_timeout()) as resp:
+                    resp.raise_for_status()
+                    data = await resp.json()
+                    content = data.get("message", {}).get("content", "")
+                    yield LLMChunk(message_id=message_id, delta=content, finish_reason="stop")
             except Exception as e:
                 logger.error(f"Ollama chat error: {e}")
                 yield LLMChunk(message_id=message_id, delta="", finish_reason="error")
@@ -70,40 +72,40 @@ class OllamaService(LLMService):
         accumulated_content = ""
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload) as resp:
-                    resp.raise_for_status()
-                    async for line in resp.content:
-                        if not line:
-                            continue
-                        try:
-                            data = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
+            session = ensure_session(self)
+            async with session.post(url, json=payload, timeout=stream_timeout()) as resp:
+                resp.raise_for_status()
+                async for line in resp.content:
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
 
-                        delta = data.get("message", {}).get("content", "")
-                        if delta:
-                            accumulated_content += delta
-                            yield LLMChunk(message_id=message_id, delta=delta)
+                    delta = data.get("message", {}).get("content", "")
+                    if delta:
+                        accumulated_content += delta
+                        yield LLMChunk(message_id=message_id, delta=delta)
 
-                        tool_calls = data.get("message", {}).get("tool_calls", [])
-                        if tool_calls:
-                            for tc in tool_calls:
-                                func = tc.get("function", {})
-                                if func:
-                                    yield LLMChunk(
-                                        message_id=message_id,
-                                        delta="",
-                                        tool_call=ToolCall(
-                                            id=f"call_{uuid.uuid4().hex[:8]}",
-                                            name=func.get("name", ""),
-                                            arguments=func.get("arguments", {}),
-                                        ),
-                                    )
+                    tool_calls = data.get("message", {}).get("tool_calls", [])
+                    if tool_calls:
+                        for tc in tool_calls:
+                            func = tc.get("function", {})
+                            if func:
+                                yield LLMChunk(
+                                    message_id=message_id,
+                                    delta="",
+                                    tool_call=ToolCall(
+                                        id=f"call_{uuid.uuid4().hex[:8]}",
+                                        name=func.get("name", ""),
+                                        arguments=func.get("arguments", {}),
+                                    ),
+                                )
 
-                        if data.get("done"):
-                            yield LLMChunk(message_id=message_id, delta="", finish_reason="stop")
-                            break
+                    if data.get("done"):
+                        yield LLMChunk(message_id=message_id, delta="", finish_reason="stop")
+                        break
 
         except Exception as e:
             logger.error(f"Ollama chat error: {e}")

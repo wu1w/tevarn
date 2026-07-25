@@ -318,55 +318,60 @@ class OpenAICompatibleService(LLMService):
 
         if not stream:
             try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(url, json=payload, headers=self._get_headers()) as resp:
-                        resp.raise_for_status()
-                        data = await resp.json()
-                        choice = data.get("choices", [{}])[0]
-                        msg = choice.get("message", {})
-                        content = msg.get("content", "") or ""
-                        tool_calls = msg.get("tool_calls", [])
-                        finish_reason = choice.get("finish_reason", "stop")
-                        reasoning = (
-                            msg.get("reasoning_content")
-                            or msg.get("reasoning")
-                            or ""
-                        )
-                        if isinstance(reasoning, dict):
-                            reasoning = reasoning.get("text") or reasoning.get("content") or ""
+                from .http_session import ensure_session, request_timeout
 
-                        if tool_calls:
-                            for tc in tool_calls:
-                                try:
-                                    raw_args = (tc.get("function") or {}).get("arguments")
-                                    if isinstance(raw_args, str):
-                                        args = json.loads(raw_args)
-                                    else:
-                                        args = raw_args or {}
-                                except (json.JSONDecodeError, KeyError, TypeError):
-                                    args = {}
-                                if not isinstance(args, dict):
-                                    args = {"value": args}
-                                yield LLMChunk(
-                                    message_id=message_id,
-                                    delta="",
-                                    tool_call=ToolCall(
-                                        id=tc.get("id", f"call_{uuid.uuid4().hex[:8]}"),
-                                        name=(tc.get("function") or {}).get("name", ""),
-                                        arguments=args,
-                                    ),
-                                )
-                        if reasoning:
+                session = ensure_session(self)
+                async with session.post(
+                    url, json=payload, headers=self._get_headers(),
+                    timeout=request_timeout(),
+                ) as resp:
+                    resp.raise_for_status()
+                    data = await resp.json()
+                    choice = data.get("choices", [{}])[0]
+                    msg = choice.get("message", {})
+                    content = msg.get("content", "") or ""
+                    tool_calls = msg.get("tool_calls", [])
+                    finish_reason = choice.get("finish_reason", "stop")
+                    reasoning = (
+                        msg.get("reasoning_content")
+                        or msg.get("reasoning")
+                        or ""
+                    )
+                    if isinstance(reasoning, dict):
+                        reasoning = reasoning.get("text") or reasoning.get("content") or ""
+
+                    if tool_calls:
+                        for tc in tool_calls:
+                            try:
+                                raw_args = (tc.get("function") or {}).get("arguments")
+                                if isinstance(raw_args, str):
+                                    args = json.loads(raw_args)
+                                else:
+                                    args = raw_args or {}
+                            except (json.JSONDecodeError, KeyError, TypeError):
+                                args = {}
+                            if not isinstance(args, dict):
+                                args = {"value": args}
                             yield LLMChunk(
                                 message_id=message_id,
                                 delta="",
-                                reasoning_delta=str(reasoning),
+                                tool_call=ToolCall(
+                                    id=tc.get("id", f"call_{uuid.uuid4().hex[:8]}"),
+                                    name=(tc.get("function") or {}).get("name", ""),
+                                    arguments=args,
+                                ),
                             )
+                    if reasoning:
                         yield LLMChunk(
                             message_id=message_id,
-                            delta=content or "",
-                            finish_reason=finish_reason,
+                            delta="",
+                            reasoning_delta=str(reasoning),
                         )
+                    yield LLMChunk(
+                        message_id=message_id,
+                        delta=content or "",
+                        finish_reason=finish_reason,
+                    )
             except aiohttp.ClientResponseError as e:
                 logger.error(f"OpenAI-compatible chat error: status={e.status}, message='{e.message}', url='{e.request_info.url}'")
 
@@ -459,80 +464,83 @@ class OpenAICompatibleService(LLMService):
             return out
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    url, json=payload, headers=self._get_headers()
-                ) as resp:
-                    resp.raise_for_status()
-                    async for line in resp.content:
-                        line = line.decode("utf-8").strip()
-                        if not line or line == "data: [DONE]":
-                            continue
-                        if not line.startswith("data: "):
-                            continue
+            from .http_session import ensure_session, stream_timeout
 
-                        try:
-                            data = json.loads(line[6:])
-                        except json.JSONDecodeError:
-                            continue
+            session = ensure_session(self)
+            async with session.post(
+                url, json=payload, headers=self._get_headers(),
+                timeout=stream_timeout(),
+            ) as resp:
+                resp.raise_for_status()
+                async for line in resp.content:
+                    line = line.decode("utf-8").strip()
+                    if not line or line == "data: [DONE]":
+                        continue
+                    if not line.startswith("data: "):
+                        continue
 
-                        choice = data.get("choices", [{}])[0]
-                        delta = choice.get("delta", {})
+                    try:
+                        data = json.loads(line[6:])
+                    except json.JSONDecodeError:
+                        continue
 
-                        content = delta.get("content", "") or ""
-                        if content:
-                            yield LLMChunk(message_id=message_id, delta=content)
+                    choice = data.get("choices", [{}])[0]
+                    delta = choice.get("delta", {})
 
-                        # 思考链：DeepSeek/Qwen/部分兼容接口
+                    content = delta.get("content", "") or ""
+                    if content:
+                        yield LLMChunk(message_id=message_id, delta=content)
+
+                    # 思考链：DeepSeek/Qwen/部分兼容接口
+                    reasoning = (
+                        delta.get("reasoning_content")
+                        or delta.get("reasoning")
+                        or delta.get("thought")
+                        or ""
+                    )
+                    if isinstance(reasoning, dict):
                         reasoning = (
-                            delta.get("reasoning_content")
-                            or delta.get("reasoning")
-                            or delta.get("thought")
+                            reasoning.get("text")
+                            or reasoning.get("content")
+                            or reasoning.get("summary")
                             or ""
                         )
-                        if isinstance(reasoning, dict):
-                            reasoning = (
-                                reasoning.get("text")
-                                or reasoning.get("content")
-                                or reasoning.get("summary")
-                                or ""
-                            )
-                        if reasoning:
-                            yield LLMChunk(
-                                message_id=message_id,
-                                delta="",
-                                reasoning_delta=str(reasoning),
-                            )
+                    if reasoning:
+                        yield LLMChunk(
+                            message_id=message_id,
+                            delta="",
+                            reasoning_delta=str(reasoning),
+                        )
 
-                        for tc in delta.get("tool_calls") or []:
-                            _merge_tool_delta(tc)
+                    for tc in delta.get("tool_calls") or []:
+                        _merge_tool_delta(tc)
 
-                        finish_reason = choice.get("finish_reason")
-                        if finish_reason:
-                            last_finish_reason = finish_reason
-                            # 关键：部分兼容服务商用 stop / function_call 结束，但仍带 tool_calls
-                            emitted = _emit_tool_calls()
-                            for chunk in emitted:
-                                yield chunk
-                            effective = "tool_calls" if emitted else finish_reason
-                            yield LLMChunk(
-                                message_id=message_id, delta="", finish_reason=effective
-                            )
-                            break
-                    else:
-                        # 流正常结束但没有 finish_reason：仍冲刷工具调用
-                        if accumulated_tool_calls:
-                            for chunk in _emit_tool_calls():
-                                yield chunk
-                            yield LLMChunk(
-                                message_id=message_id,
-                                delta="",
-                                finish_reason="tool_calls",
-                            )
-                        elif last_finish_reason is None:
-                            yield LLMChunk(
-                                message_id=message_id, delta="", finish_reason="stop"
-                            )
+                    finish_reason = choice.get("finish_reason")
+                    if finish_reason:
+                        last_finish_reason = finish_reason
+                        # 关键：部分兼容服务商用 stop / function_call 结束，但仍带 tool_calls
+                        emitted = _emit_tool_calls()
+                        for chunk in emitted:
+                            yield chunk
+                        effective = "tool_calls" if emitted else finish_reason
+                        yield LLMChunk(
+                            message_id=message_id, delta="", finish_reason=effective
+                        )
+                        break
+                else:
+                    # 流正常结束但没有 finish_reason：仍冲刷工具调用
+                    if accumulated_tool_calls:
+                        for chunk in _emit_tool_calls():
+                            yield chunk
+                        yield LLMChunk(
+                            message_id=message_id,
+                            delta="",
+                            finish_reason="tool_calls",
+                        )
+                    elif last_finish_reason is None:
+                        yield LLMChunk(
+                            message_id=message_id, delta="", finish_reason="stop"
+                        )
 
         except aiohttp.ClientResponseError as e:
             logger.error(f"OpenAI-compatible chat error: status={e.status}, message='{e.message}', url='{e.request_info.url}'")

@@ -120,6 +120,10 @@ class Settings(BaseSettings):
     # reviewer 专用模型（provider_id/model 格式；空 = 与综合共用默认服务）
     # 独立模型可避免「自己审自己」的同源偏差
     cluster_review_model_ref: str = ""
+    # LLM HTTP 超时（压测病灶 B1：此前无显式超时，provider 故障挂 300s）
+    llm_request_timeout_seconds: float = 120.0
+    llm_connect_timeout_seconds: float = 10.0
+    llm_stream_read_timeout_seconds: float = 180.0
     # doom-loop：同工具+近似参数连续 thrash（默认 on，替代/增强 ToolRepeatGuard）
     agent_doom_loop_enabled: bool = True
     # best-of-n：默认关；完整 fanout 依赖 worktree（Batch2）

@@ -11,6 +11,8 @@ from typing import Any
 
 import aiohttp
 
+from .http_session import ensure_session, request_timeout, stream_timeout
+
 from backend.core.config import settings
 
 from .interface import LLMService
@@ -162,25 +164,25 @@ class AnthropicService(LLMService):
 
         if not stream:
             try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(url, json=payload, headers=self._get_headers()) as resp:
-                        resp.raise_for_status()
-                        data = await resp.json()
-                        content_parts = []
-                        tool_calls = []
-                        for block in data.get("content", []):
-                            if block.get("type") == "text":
-                                content_parts.append(block.get("text", ""))
-                            elif block.get("type") == "tool_use":
-                                tc = ToolCall(
-                                    id=block.get("id", f"call_{uuid.uuid4().hex[:8]}"),
-                                    name=block.get("name", ""),
-                                    arguments=block.get("input", {}),
-                                )
-                                tool_calls.append(tc)
-                                yield LLMChunk(message_id=message_id, delta="", tool_call=tc)
-                        finish_reason = "tool_calls" if tool_calls else data.get("stop_reason", "stop")
-                        yield LLMChunk(message_id=message_id, delta="".join(content_parts), finish_reason=finish_reason)
+                session = ensure_session(self)
+                async with session.post(url, json=payload, headers=self._get_headers(), timeout=request_timeout()) as resp:
+                    resp.raise_for_status()
+                    data = await resp.json()
+                    content_parts = []
+                    tool_calls = []
+                    for block in data.get("content", []):
+                        if block.get("type") == "text":
+                            content_parts.append(block.get("text", ""))
+                        elif block.get("type") == "tool_use":
+                            tc = ToolCall(
+                                id=block.get("id", f"call_{uuid.uuid4().hex[:8]}"),
+                                name=block.get("name", ""),
+                                arguments=block.get("input", {}),
+                            )
+                            tool_calls.append(tc)
+                            yield LLMChunk(message_id=message_id, delta="", tool_call=tc)
+                    finish_reason = "tool_calls" if tool_calls else data.get("stop_reason", "stop")
+                    yield LLMChunk(message_id=message_id, delta="".join(content_parts), finish_reason=finish_reason)
             except Exception as e:
                 logger.error(f"Anthropic chat error: {e}")
                 yield LLMChunk(message_id=message_id, delta="", finish_reason="error")
@@ -191,69 +193,70 @@ class AnthropicService(LLMService):
         tool_calls_list: list[ToolCall] = []
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    url, json=payload, headers=self._get_headers()
-                ) as resp:
-                    resp.raise_for_status()
-                    async for line in resp.content:
-                        line = line.decode("utf-8").strip()
-                        if not line or not line.startswith("data: "):
-                            continue
-                        if line == "data: [DONE]":
-                            continue
+            session = ensure_session(self)
+            async with session.post(
+                url, json=payload, headers=self._get_headers(),
+                timeout=stream_timeout(),
+            ) as resp:
+                resp.raise_for_status()
+                async for line in resp.content:
+                    line = line.decode("utf-8").strip()
+                    if not line or not line.startswith("data: "):
+                        continue
+                    if line == "data: [DONE]":
+                        continue
 
-                        try:
-                            data = json.loads(line[6:])
-                        except json.JSONDecodeError:
-                            continue
+                    try:
+                        data = json.loads(line[6:])
+                    except json.JSONDecodeError:
+                        continue
 
-                        event_type = data.get("type", "")
+                    event_type = data.get("type", "")
 
-                        if event_type == "content_block_delta":
-                            delta = data.get("delta", {})
-                            delta_type = delta.get("type", "")
+                    if event_type == "content_block_delta":
+                        delta = data.get("delta", {})
+                        delta_type = delta.get("type", "")
 
-                            if delta_type == "text_delta":
-                                text = delta.get("text", "")
-                                if text:
-                                    accumulated_content += text
-                                    yield LLMChunk(message_id=message_id, delta=text)
+                        if delta_type == "text_delta":
+                            text = delta.get("text", "")
+                            if text:
+                                accumulated_content += text
+                                yield LLMChunk(message_id=message_id, delta=text)
 
-                            elif delta_type == "input_json_delta":
-                                partial_json = delta.get("partial_json", "")
-                                if current_tool_call is not None and partial_json:
-                                    current_tool_call["arguments_json"] = current_tool_call.get("arguments_json", "") + partial_json
+                        elif delta_type == "input_json_delta":
+                            partial_json = delta.get("partial_json", "")
+                            if current_tool_call is not None and partial_json:
+                                current_tool_call["arguments_json"] = current_tool_call.get("arguments_json", "") + partial_json
 
-                        elif event_type == "content_block_start":
-                            content_block = data.get("content_block", {})
-                            block_type = content_block.get("type", "")
-                            if block_type == "tool_use":
-                                current_tool_call = {
-                                    "id": content_block.get("id", ""),
-                                    "name": content_block.get("name", ""),
-                                    "arguments_json": "",
-                                }
+                    elif event_type == "content_block_start":
+                        content_block = data.get("content_block", {})
+                        block_type = content_block.get("type", "")
+                        if block_type == "tool_use":
+                            current_tool_call = {
+                                "id": content_block.get("id", ""),
+                                "name": content_block.get("name", ""),
+                                "arguments_json": "",
+                            }
 
-                        elif event_type == "content_block_stop":
-                            if current_tool_call is not None:
-                                try:
-                                    args = json.loads(current_tool_call.get("arguments_json", "{}"))
-                                except json.JSONDecodeError:
-                                    args = {}
-                                tc = ToolCall(
-                                    id=current_tool_call.get("id", f"call_{uuid.uuid4().hex[:8]}"),
-                                    name=current_tool_call.get("name", ""),
-                                    arguments=args,
-                                )
-                                tool_calls_list.append(tc)
-                                yield LLMChunk(message_id=message_id, delta="", tool_call=tc)
-                                current_tool_call = None
+                    elif event_type == "content_block_stop":
+                        if current_tool_call is not None:
+                            try:
+                                args = json.loads(current_tool_call.get("arguments_json", "{}"))
+                            except json.JSONDecodeError:
+                                args = {}
+                            tc = ToolCall(
+                                id=current_tool_call.get("id", f"call_{uuid.uuid4().hex[:8]}"),
+                                name=current_tool_call.get("name", ""),
+                                arguments=args,
+                            )
+                            tool_calls_list.append(tc)
+                            yield LLMChunk(message_id=message_id, delta="", tool_call=tc)
+                            current_tool_call = None
 
-                        elif event_type == "message_stop":
-                            finish_reason = "tool_calls" if tool_calls_list else "stop"
-                            yield LLMChunk(message_id=message_id, delta="", finish_reason=finish_reason)
-                            break
+                    elif event_type == "message_stop":
+                        finish_reason = "tool_calls" if tool_calls_list else "stop"
+                        yield LLMChunk(message_id=message_id, delta="", finish_reason=finish_reason)
+                        break
 
         except Exception as e:
             logger.error(f"Anthropic chat error: {e}")
