@@ -1102,139 +1102,34 @@ class NexusAgentLoop(AgentLoopBase):
                 continue
 
             else:
-                # 没有 tool calls
-                if goal_mode:
-                    from backend.agent.goal_state import get_goal
+                # 没有 tool calls（phases/no_tool_round）
+                from backend.agent.phases.no_tool_round import run_no_tool_round
 
-                    g = get_goal(session_id)
-                    incomplete = g is not None and not g.is_complete()
-                    # 无 todo 也算未规划完成（允许 1 次纯文本规划后必须建 todo）
-                    no_plan = g is None or (not g.todos and g.status != "completed")
-                    if (incomplete or no_plan) and goal_nudge_count < 8 and iteration < _seg_size - 1:
-                        goal_nudge_count += 1
-                        # 把当前文本当作中间思考，要求继续
-                        if accumulated_content:
-                            messages.append(
-                                {
-                                    "role": "assistant",
-                                    "content": accumulated_content,
-                                }
-                            )
-                            # 中间内容推到流，便于 UI 展示
-                            await self._push_status(
-                                session_id,
-                                "thinking",
-                                f"Goal 未完成，继续执行 ({goal_nudge_count})…",
-                            )
-                        nudge = (
-                            "Goal 尚未达成。请：\n"
-                            "1) 若还没有 todo，调用 manage_goal 创建任务列表；\n"
-                            "2) 推进未完成项并 update_todo；\n"
-                            "3) 全部完成后 manage_goal(action=complete) 再给出最终总结。\n"
-                            "不要在未完成时停止。"
-                        )
-                        if g:
-                            nudge += "\n\n" + g.summary_for_llm()
-                        messages.append({"role": "user", "content": nudge})
-                        logger.info(
-                            f"Goal nudge #{goal_nudge_count} for session {session_id}"
-                        )
-                        continue
-
-                # 空正文：TurnRetryState 分类重试 / 耗尽则 force_final
-                if is_empty_assistant_content(accumulated_content) and not self._should_stop:
-                    action = _turn_retry.note_and_decide(
-                        RetryKind.EMPTY_CONTENT, detail="empty assistant content"
-                    )
-                    _empty_reply_retries = int(
-                        _turn_retry.counts.get(RetryKind.EMPTY_CONTENT.value, 0)
-                    )
-                    if action == "retry" and _empty_reply_retries <= _empty_reply_max:
-                        await self._push_status(
-                            session_id,
-                            "thinking",
-                            f"模型空回复，重试 {_empty_reply_retries}/{_empty_reply_max}…",
-                        )
-                        messages.append(
-                            {
-                                "role": "system",
-                                "content": (
-                                "你上一轮没有输出任何可见正文。请直接用自然语言回答用户。"
-                                + (
-                                    "你刚才已调用过工具：必须根据工具结果给出最终中文答复"
-                                    "（例如复述 command 的 stdout 关键行），禁止只返回空白。"
-                                    if _last_tool_round_count > 0
-                                    else "若需要文件/命令事实，先调用工具再回答；不要只输出空白。"
-                                )
-                            ),
-                            }
-                        )
-                        logger.info(
-                            "Empty assistant reply retry %s session=%s action=%s",
-                            _empty_reply_retries,
-                            session_id,
-                            action,
-                        )
-                        continue
-                    if action == "force_final":
-                        _force_final_no_tools = True
-                        await self._push_status(
-                            session_id,
-                            "thinking",
-                            "空回复重试耗尽，强制生成最终文字…",
-                        )
-                        messages.append(
-                            {
-                                "role": "system",
-                                "content": (
-                                    "请立刻用简洁中文给出最终回答，不要再调用工具。"
-                                ),
-                            }
-                        )
-                        continue
-
-                # needsFollowUp：声称完成但未做必要写入/验证 → 强制再来一轮
-                if not _force_final_no_tools and not self._should_stop:
-                    try:
-                        from backend.agent.completion_gate import evaluate_completion
-
-                        # Durable Run：进入完成度校验阶段
-                        if _rc is not None:
-                            try:
-                                await _rc.transition(_RS.VERIFYING)
-                            except Exception:
-                                pass
-
-                        _ver = evaluate_completion(
-                            user_input or enriched_input or "",
-                            _tools_used_run,
-                            accumulated_content or "",
-                            max_followups_done=_completion_followups,
-                        )
-                        if not _ver.ok and _ver.nudge:
-                            _completion_followups += 1
-                            await self._push_status(
-                                session_id,
-                                "thinking",
-                                f"完成校验未过（{_ver.reason}），继续…",
-                            )
-                            messages.append(
-                                {"role": "system", "content": _ver.nudge}
-                            )
-                            # allow tools again
-                            _force_final_no_tools = False
-                            logger.info(
-                                "completion gate followup=%s reason=%s session=%s",
-                                _completion_followups,
-                                _ver.reason,
-                                session_id,
-                            )
-                            continue
-                    except Exception as _cg_e:
-                        logger.debug("completion gate skipped: %s", _cg_e)
-
-                # 得到最终回复
-                final_content = accumulated_content
+                _nr = await run_no_tool_round(
+                    self,
+                    session_id=session_id,
+                    iteration=iteration,
+                    seg_size=_seg_size,
+                    messages=messages,
+                    accumulated_content=accumulated_content,
+                    goal_mode=goal_mode,
+                    goal_nudge_count=goal_nudge_count,
+                    turn_retry=_turn_retry,
+                    empty_reply_max=_empty_reply_max,
+                    last_tool_round_count=_last_tool_round_count,
+                    force_final_no_tools=_force_final_no_tools,
+                    user_input=user_input,
+                    enriched_input=enriched_input,
+                    tools_used_run=_tools_used_run,
+                    completion_followups=_completion_followups,
+                )
+                goal_nudge_count = _nr.goal_nudge_count
+                _completion_followups = _nr.completion_followups
+                if _nr.force_final_no_tools is not None:
+                    _force_final_no_tools = _nr.force_final_no_tools
+                if _nr.action == "continue":
+                    continue
+                final_content = _nr.final_content
                 break
         else:
             # 用尽全部分段预算
