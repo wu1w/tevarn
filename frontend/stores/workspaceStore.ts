@@ -208,7 +208,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           if (data.stderr) get().appendToTab(id, { type: 'err', text: data.stderr.replace(/\n$/, '') });
           get().appendToTab(id, {
             type: 'sys',
-            text: `exit ${data.exit_code}${data.dangerous ? '  ⚠ Command flagged as high-risk' : ''}`,
+            text: `exit ${data.exit_code}${data.dangerous ? '   Command flagged as high-risk' : ''}`,
           });
         } catch (e: unknown) {
           const msg =

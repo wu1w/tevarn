@@ -7,13 +7,14 @@ import Toasts from "@/components/Toasts";
 import { ThemeProvider } from "@/components/ThemeProvider";
 
 /**
+ * 字体：优先苹果系统字体（SF Pro / PingFang），跨平台回退
  * 不依赖 Google Fonts 在线拉取（离线/代理构建会失败）。
  */
 const fontStyle = {
   ["--font-inter" as string]:
-    "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', sans-serif",
+    "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Helvetica Neue', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI', system-ui, sans-serif",
   ["--font-jetbrains" as string]:
-    "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
+    "ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Monaco, 'Cascadia Code', Consolas, 'Liberation Mono', monospace",
 } as React.CSSProperties;
 
 export const metadata: Metadata = {

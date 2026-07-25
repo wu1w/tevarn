@@ -3,9 +3,9 @@
 import React from 'react';
 import { useLocaleStore, useT, type Locale } from '@/stores/localeStore';
 
-const languages: { value: Locale; label: string; flag: string }[] = [
-  { value: 'zh', label: '中文', flag: '🇨🇳' },
-  { value: 'en', label: 'English', flag: '🇺🇸' },
+const languages: { value: Locale; label: string }[] = [
+  { value: 'zh', label: '中文' },
+  { value: 'en', label: 'English' },
 ];
 
 /**
@@ -31,7 +31,7 @@ export function LanguageSwitcher({ compact = false }: { compact?: boolean }) {
       >
         {languages.map((lang) => (
           <option key={lang.value} value={lang.value}>
-            {lang.flag} {lang.label}
+            {lang.label}
           </option>
         ))}
       </select>
@@ -56,7 +56,6 @@ export function LanguageCard() {
   return (
     <div className="rounded-xl border border-border-default bg-card-bg p-4">
       <div className="mb-3 flex items-center gap-2">
-        <span className="text-base"></span>
         <h3 className="text-sm font-semibold text-foreground">{t('settings.language')}</h3>
       </div>
       <p className="mb-3 text-xs text-foreground-dim">{t('settings.languageHint')}</p>
@@ -64,14 +63,16 @@ export function LanguageCard() {
         {languages.map((lang) => (
           <button
             key={lang.value}
-            type="button"onClick={() => setLocale(lang.value)}
+            type="button"
+            onClick={() => setLocale(lang.value)}
             className={`flex-1 rounded-lg border px-3 py-2.5 text-sm font-medium transition-all
               ${
                 locale === lang.value
-                  ? 'border-brand-purple/50 bg-brand-purple/10 text-brand-purple shadow-sm shadow-brand-purple/10': 'border-border-default bg-input-bg text-foreground-muted hover:border-border-strong hover:text-foreground'}
+                  ? 'border-brand-purple/50 bg-brand-purple/10 text-brand-purple shadow-sm shadow-brand-purple/10'
+                  : 'border-border-default bg-input-bg text-foreground-muted hover:border-border-strong hover:text-foreground'
+              }
             `}
           >
-            <span className="mr-1.5">{lang.flag}</span>
             {lang.label}
           </button>
         ))}

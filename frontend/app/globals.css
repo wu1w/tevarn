@@ -25,11 +25,12 @@
   --color-success-text: var(--success-text);
   --color-input-bg: var(--input-bg);
   --color-input-placeholder: var(--input-placeholder);
-  /* Inter + Noto SC：拉丁与中文统一高级感 */
-  --font-sans: var(--font-inter), "Noto Sans SC", "PingFang SC", "HarmonyOS Sans SC",
+  /* ── 字体：苹果优先 + 中文 PingFang / 回退 ── */
+  --font-sans: var(--font-inter), -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    "SF Pro Display", "Helvetica Neue", "PingFang SC", "Hiragino Sans GB",
     "Microsoft YaHei UI", "Segoe UI", system-ui, sans-serif;
-  --font-mono: var(--font-jetbrains), "SF Mono", "Cascadia Code", "Consolas", ui-monospace,
-    monospace;
+  --font-mono: var(--font-jetbrains), "SF Mono", SFMono-Regular, Menlo, Monaco,
+    "Cascadia Code", Consolas, ui-monospace, monospace;
 }
 
 /* ── 本地字体：Noto Sans SC ── */
@@ -65,13 +66,13 @@
 /* ── 全局字体与渲染 ── */
 .text-ui,
 body {
-  font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01";
+  font-feature-settings: "ss01", "ss02", "cv01";
   font-optical-sizing: auto;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  letter-spacing: -0.011em;
-  line-height: 1.5;
+  letter-spacing: -0.015em;
+  line-height: 1.47;
 }
 
 /* 标题略收紧字距，更像产品 UI */
