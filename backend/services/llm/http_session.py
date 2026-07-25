@@ -60,10 +60,12 @@ def ensure_session(owner: object) -> aiohttp.ClientSession:
 
     sess = getattr(owner, "_llm_shared_session", None)
     sess_loop = getattr(owner, "_llm_shared_session_loop", None)
-    if sess is not None and not sess.closed and sess_loop is loop:
+    # getattr 容错：测试替身/鸭子类型 session 可能没有 .closed
+    sess_closed = getattr(sess, "closed", False) if sess is not None else True
+    if sess is not None and not sess_closed and sess_loop is loop:
         return sess
 
-    if sess is not None and not sess.closed:
+    if sess is not None and not sess_closed:
         # 跨 loop 废弃：不 close（跨 loop close 会报错），仅记日志
         logger.debug("abandon LLM session bound to a different event loop")
 
