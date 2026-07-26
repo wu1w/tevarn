@@ -266,6 +266,12 @@ export async function getMySessions(): Promise<Session[]> {
   return res.data;
 }
 
+/** 有活跃 WS 连接或运行中 agent 的 session id（空白清理兜底，防误删运行中会话） */
+export async function getActiveSessionIds(): Promise<string[]> {
+  const res = await api.get('/sessions/active-ids');
+  return Array.isArray(res.data) ? res.data : [];
+}
+
 export async function getSession(sessionId: string): Promise<Session> {
   const res = await api.get(`/sessions/${sessionId}`);
   return res.data;
@@ -276,8 +282,8 @@ export async function updateSessionConfig(sessionId: string, config: SessionConf
   return res.data;
 }
 
-export async function deleteSession(sessionId: string): Promise<{ deleted: boolean }> {
-  const res = await api.delete(`/sessions/${sessionId}`);
+export async function deleteSession(sessionId: string, force = false): Promise<{ deleted: boolean }> {
+  const res = await api.delete(`/sessions/${sessionId}${force ? '?force=true' : ''}`);
   return res.data;
 }
 

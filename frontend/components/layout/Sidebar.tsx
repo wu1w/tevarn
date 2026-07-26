@@ -7,7 +7,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useSession } from '@/hooks/useSession';
 import { useThemeStore } from '@/stores/themeStore';
 import { Session } from '@/types';
-import { getMySessions, deleteSession, getMessages } from '@/lib/api';
+import { getMySessions, deleteSession, getMessages, getActiveSessionIds } from '@/lib/api';
 import { useActionLock } from '@/hooks/useActionLock';
 import { useSessionStore } from '@/stores/sessionStore';
 import { FilePreview } from '@/components/filetree/FilePreview';
@@ -162,10 +162,20 @@ export function Sidebar() {
       const sessions = await getMySessions();
       const list = Array.isArray(sessions) ? sessions : [];
       const currentId = useSessionStore.getState().currentSession?.id;
+      // 活跃会话（WS 连接中 / agent 运行中）绝不进入删除候选——
+      // 流式运行中消息可能尚未落库，按 DB 内容判空白会误删（事故修复）
+      let activeIds = new Set<string>();
+      try {
+        activeIds = new Set(await getActiveSessionIds());
+      } catch { /* 接口不可用时退化为原判定链，宁可不删 */ }
 
       const flags = await Promise.all(
         list.map(async (s) => {
-          // 运行保护：会话最近有活动（消息落库会刷新 updated_at），
+          // 运行保护 0：后端确认活跃（连接中/推理中），最高优先级
+          if (activeIds.has(s.id)) {
+            return { session: s, keep: true };
+          }
+          // 运行保护 1：会话最近有活动（消息落库会刷新 updated_at），
           // 可能正在流式生成，消息尚未完全落地，绝不能误删。
           const updatedAt = s.updated_at ? new Date(s.updated_at).getTime() : 0;
           const isRecentlyActive =
@@ -646,7 +656,8 @@ export function Sidebar() {
                           onClick={(e) => {
                             e.stopPropagation();
                             if (!confirm(t('nav.confirmDeleteSession'))) return;
-                            deleteSession(session.id)
+                            // 用户显式删除：force 放行活跃保护（后端自动清理路径不带 force 会被 409 拦截）
+                            deleteSession(session.id, true)
                               .then(() => {
                                 setMySessions((prev) => prev.filter((s) => s.id !== session.id));
                                 if (currentSession?.id === session.id) {

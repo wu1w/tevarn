@@ -33,6 +33,21 @@ async def list_my_sessions(
     return sessions
 
 
+@router.get("/active-ids", response_model=list[str])
+async def list_active_session_ids(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """有活跃 WS 连接或运行中 agent 的 session id 列表。
+
+    前端「空白会话自动清理」必须用此接口兜底：流式运行中消息可能尚未落库，
+    仅按 DB 消息判空白会误删活跃会话（已发生事故：运行中切页后会话被清，
+    回来报 Session not found）。
+    """
+    from backend.api.websocket import manager as ws_manager
+
+    return sorted(ws_manager.active_session_ids())
+
+
 @router.post("", response_model=SessionRead)
 async def create_session(
     data: SessionCreate,
@@ -129,8 +144,23 @@ async def update_session_config(
 async def delete_session(
     session_id: uuid.UUID,
     current_user: Annotated[UserRead, Depends(get_current_user)],
+    force: bool = False,
 ):
-    """删除会话（归属校验与删除在同一事务）"""
+    """删除会话（归属校验与删除在同一事务）。
+
+    活跃保护（纵深防御）：WS 连接中或 agent 运行中的会话默认拒删（409），
+    防止自动清理逻辑误删运行中会话（流式消息未落库时按内容判空白会误杀）。
+    用户显式删除时前端带 force=true 放行。
+    """
+    from backend.api.websocket import manager as ws_manager
+
+    if not force and session_id in {
+        uuid.UUID(s) for s in ws_manager.active_session_ids()
+    }:
+        raise HTTPException(
+            status_code=409,
+            detail="Session is active (connected or running), cannot delete",
+        )
     async with UnitOfWork() as uow:
         session = await uow.sessions.get_by_id(session_id)
         if session is None:

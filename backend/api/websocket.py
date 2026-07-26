@@ -121,6 +121,18 @@ class ConnectionManager:
         t = self._agent_tasks.get(session_id)
         return t is not None and not t.done()
 
+    def active_session_ids(self) -> set[str]:
+        """有活跃 WS 连接或运行中 agent 的 session id 集合（字符串形式）。
+
+        供前端「空白会话清理」等逻辑兜底：活跃会话绝不许误删——
+        流式运行中消息可能尚未落库，仅按 DB 内容判空白会误杀活跃会话。
+        """
+        ids = {str(sid) for sid in self._connections.keys()}
+        for sid, t in self._agent_tasks.items():
+            if t is not None and not t.done():
+                ids.add(str(sid))
+        return ids
+
     async def cancel_agent(self, session_id: uuid.UUID) -> None:
         """取消正在运行的 agent（配合 agent.stop() 使用）。"""
         t = self._agent_tasks.get(session_id)
