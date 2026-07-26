@@ -45,8 +45,8 @@ from takton_code.project.binder import bind_project, init_project_files
 from takton_code.session.export_fmt import write_export
 from takton_code.session.store import SessionStore
 
-AIGA_BASE = os.environ.get("TAKTON_CODE_BASE_URL", "http://127.0.0.1:8088/v1")
-AIGA_MODEL = os.environ.get("TAKTON_CODE_MODEL", "local-model.gguf")
+LOCAL_BASE = os.environ.get("TAKTON_CODE_BASE_URL", "http://127.0.0.1:8088/v1")
+LOCAL_MODEL = os.environ.get("TAKTON_CODE_MODEL", "<your-model.gguf>")
 # Small window + low threshold → multiple auto compresses during real turns
 CTX = int(os.environ.get("TAKTON_CODE_CONTEXT_WINDOW", "12000"))
 THRESH = float(os.environ.get("TAKTON_CODE_COMPRESS_THRESHOLD", "0.18"))
@@ -91,9 +91,9 @@ def prep_repo() -> Path:
 
 async def check_llm() -> dict:
     p = OpenAICompatibleProvider(
-        base_url=AIGA_BASE,
+        base_url=LOCAL_BASE,
         api_key="no-key",
-        model=AIGA_MODEL,
+        model=LOCAL_MODEL,
         max_tokens=64,
         temperature=0.1,
     )
@@ -117,15 +117,15 @@ async def check_llm() -> dict:
 
 async def make_runtime(repo: Path, home: Path) -> tuple[AgentRuntime, SessionStore, list[dict]]:
     os.environ["TAKTON_CODE_HOME"] = str(home)
-    os.environ["TAKTON_CODE_BASE_URL"] = AIGA_BASE
-    os.environ["TAKTON_CODE_MODEL"] = AIGA_MODEL
+    os.environ["TAKTON_CODE_BASE_URL"] = LOCAL_BASE
+    os.environ["TAKTON_CODE_MODEL"] = LOCAL_MODEL
     os.environ["TAKTON_CODE_CONTEXT_WINDOW"] = str(CTX)
     os.environ["TAKTON_CODE_COMPRESS_THRESHOLD"] = str(THRESH)
     os.environ["TAKTON_CODE_MAX_TOKENS"] = str(MAX_TOKENS)
 
     settings = load_settings()
-    settings.llm.base_url = AIGA_BASE
-    settings.llm.model = AIGA_MODEL
+    settings.llm.base_url = LOCAL_BASE
+    settings.llm.model = LOCAL_MODEL
     settings.llm.api_key = "no-key"
     settings.llm.context_window = CTX
     settings.llm.compress_threshold = THRESH
@@ -372,14 +372,14 @@ async def main() -> int:
     home = Path(tempfile.mkdtemp(prefix="tkc-stress-home-"))
     repo = prep_repo()
     report: dict = {
-        "llm": {"base": AIGA_BASE, "model": AIGA_MODEL, "ctx": CTX, "thresh": THRESH},
+        "llm": {"base": LOCAL_BASE, "model": LOCAL_MODEL, "ctx": CTX, "thresh": THRESH},
         "home": str(home),
         "repo": str(repo),
         "phases": {},
     }
     log(f"home={home}")
     log(f"repo={repo}")
-    log(f"target {AIGA_BASE} model={AIGA_MODEL} ctx={CTX} thresh={THRESH}")
+    log(f"target {LOCAL_BASE} model={LOCAL_MODEL} ctx={CTX} thresh={THRESH}")
 
     try:
         ping = await check_llm()

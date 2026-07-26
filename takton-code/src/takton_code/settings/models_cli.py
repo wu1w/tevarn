@@ -245,7 +245,7 @@ def register_models_commands(app: typer.Typer) -> None:
             None,
             "--preset",
             "-p",
-            help="非交互：直接套用预设 id（local/local/ollama/desktop/...）",
+            help="非交互：直接套用预设 id（local/ollama/desktop/...）",
         ),
     ) -> None:
         """首次模型配置向导（交互）。"""

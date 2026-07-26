@@ -877,7 +877,7 @@ def config_cmd(
             Panel(
                 "[bold]模型配置请用更浅的入口[/]\n\n"
                 "  [cyan]takton-code models[/]         看当前 + 预设\n"
-                "  [cyan]takton-code models set local[/] 一键切 LOCAL\n"
+                "  [cyan]takton-code models set local[/] 一键切本机服务\n"
                 "  [cyan]takton-code models list[/]    拉远端模型列表\n"
                 "  [cyan]takton-code models test[/]    连通性\n"
                 "  [cyan]takton-code setup[/]          向导\n\n"

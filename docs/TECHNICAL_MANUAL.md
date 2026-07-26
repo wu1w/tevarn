@@ -1,7 +1,7 @@
 # Takton 技术手册
 
-版本：0.2.4  
-更新：2026-07-21
+版本：0.3.2  
+更新：2026-07-26
 
 ---
 
@@ -550,9 +550,9 @@ python backend/main.py
 | `SECRET_KEY` | JWT 密钥 | 随机生成 |
 | `QDRANT_URL` | Qdrant 地址 | `http://localhost:6333` |
 | `EMBEDDING_BASE_URL` | Embedding 服务（OpenAI 兼容） | `http://localhost:8086/v1` |
-| `EMBEDDING_MODEL` | Embedding 模型 | `embedding-model` |
+| `EMBEDDING_MODEL` | Embedding 模型 | 任意 OpenAI 兼容 Embedding 模型（如 BGE 系列） |
 | `RERANKER_BASE_URL` | Reranker 服务（OpenAI 兼容） | `http://localhost:8087/v1` |
-| `RERANKER_MODEL` | Reranker 模型 | `reranker-model` |
+| `RERANKER_MODEL` | Reranker 模型 | 任意 OpenAI 兼容 Reranker 模型 |
 | `OPENAI_API_KEY` | OpenAI API Key | - |
 | `OPENAI_BASE_URL` | OpenAI 兼容 API | `https://api.openai.com/v1` |
 
@@ -628,8 +628,8 @@ npx playwright test
 | 3000 | Next.js Dev | 前端开发服务器 |
 | 8000 | FastAPI | 后端 API 服务 |
 | 6333 | Qdrant | 向量数据库 |
-| 8086 | Embedding | embedding-model（llama-server） |
-| 8087 | Reranker | reranker-model（llama-server，走 chat/logprobs） |
+| 8086 | Embedding | 本地 Embedding 服务示例（llama-server，模型自选） |
+| 8087 | Reranker | 本地 Reranker 服务示例（llama-server，走 chat/logprobs） |
 
 ### B. 文件路径
 
@@ -654,9 +654,9 @@ npx playwright test
   - 版本号统一：package.json / frontend/package.json / backend/main.py / bridge.py / README 全量对齐 0.2.5
 
 - **v0.2.4** (2026-07-21)
-  - RAG 全家桶接入 dev-machine：Qdrant 向量库（127.0.0.1:6333）+ embedding-model（:8086）+ reranker-model（:8087），配置经 settings 持久化至 DB，重启保留
+  - RAG 全家桶接入：Qdrant 向量库 + 本地 Embedding/Reranker 服务（OpenAI 兼容），配置经 settings 持久化至 DB，重启保留
   - 修复 RAG 检索全链路卡死的真 bug：`QdrantRAGService.__init__` 未初始化 `self._ensured_collections`，`_ensure_collection` 首次检索即 AttributeError（`backend/services/rag/qdrant_impl.py`）
-  - Qwen3-Reranker 精排：llama.cpp 原生 `/v1/rerank` 因 BGE prompt 模板与 Qwen3 ChatML 不兼容返回坏分数（relevance_score 1e-24、排序反转）。新增 `_qwen3_chat_rerank`：走 `/v1/chat/completions` + `enable_thinking=False` + `max_tokens=1` + `top_logprobs=50`，取 yes/no token logprob 做 softmax 归一化得相关性分数（`backend/services/reranker/local.py`）。单 session 复用 + 信号量限 2 路并发，规避 llama-server 突发多连接断连
+  - Chat 式 Reranker 精排：部分模型的 llama.cpp 原生 `/v1/rerank` 因 prompt 模板不兼容返回坏分数（relevance_score 1e-24、排序反转）。新增 `_qwen3_chat_rerank`：走 `/v1/chat/completions` + `enable_thinking=False` + `max_tokens=1` + `top_logprobs=50`，取 yes/no token logprob 做 softmax 归一化得相关性分数（`backend/services/reranker/local.py`）。单 session 复用 + 信号量限 2 路并发，规避 llama-server 突发多连接断连
   - 顶栏「打开 Takton Code」按钮：TitleBar 新增终端图标按钮，经 `open-takton-code` IPC 在系统终端拉起 takton-code TUI，注入 `TAKTON_CODE_BRIDGE_URL` 桥接当前 backend（复用 LLM/skills/tools/MCP/RAG）
   - takton-code 内嵌打包：PyInstaller `--onefile` 产物放到 vendor/takton-code/（不进 git，见该目录 README）；打包时可拷入 extraResources。顶栏按钮三级探测：PATH → 开发 bundle venv → 打包 resources
   - 版本号统一：package.json / frontend/package.json / backend/main.py / bridge.py / README 全量对齐 0.2.4

@@ -45,15 +45,6 @@ class ModelPreset:
 PRESETS: dict[str, ModelPreset] = {
     "local": ModelPreset(
         id="local",
-        name="LOCAL llama.cpp (局域网)",
-        base_url="http://127.0.0.1:8088/v1",
-        model="local-model.gguf",
-        context_window=262144,
-        max_tokens=4096,
-        note="本机/内网 LOCAL · OpenAI-compatible",
-    ),
-    "local": ModelPreset(
-        id="local",
         name="本机 llama.cpp / Ollama",
         base_url="http://127.0.0.1:8088/v1",
         model="default",

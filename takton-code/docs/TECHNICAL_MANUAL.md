@@ -55,7 +55,7 @@ takton-code/
 │   ├── leader/               # 本地 multi-session leader
 │   └── settings/             # 模型引导 CLI 文案
 ├── tests/                    # pytest（pythonpath=src）
-├── smoke/                    # LOCAL 真模型 smoke/stress
+├── smoke/                    # 真模型 smoke/stress（本地 llama.cpp 服务）
 ├── fixtures/sample_repo/     # 测试用小仓库
 ├── docs/                     # 文档（本手册等）
 ├── config.example.toml
@@ -298,7 +298,7 @@ Plan 文档解析、批准状态机；与 mode=plan 写保护配合。
 [llm]
 base_url = "http://127.0.0.1:8088/v1"
 api_key = "no-key"
-model = "local-model.gguf"
+model = "<your-model.gguf>"
 context_window = 65536
 max_tokens = 4096
 compress_threshold = 0.55
@@ -387,7 +387,7 @@ TUI 显示 `[THRASH]`；`/context` 可见状态。
 # 单元 + 集成（无网）
 PYTHONPATH=src python -m pytest tests/ -q
 
-# LOCAL 真模型 smoke / 高负载
+# 真模型 smoke（经 TAKTON_CODE_BASE_URL 指向本地 llama.cpp 服务） / 高负载
 PYTHONPATH=src python smoke/smoke_aiga.py
 PYTHONPATH=src python smoke/stress_aiga_load.py
 ```
@@ -401,7 +401,7 @@ PYTHONPATH=src python smoke/stress_aiga_load.py
 | `test_core_robustness` | FakeLLM 真 loop + overflow |
 | `stress_aiga_load` | 真模型：工具链+多次 threshold 压缩+interrupt+tokens 落库 |
 
-**压测结论（2026-07-21，LOCAL Qwen3.5-122B）：**  
+**压测结论（2026-07-21，本地 122B 级模型）：**  
 ALL STRESS PASSED；compress×数十次 integrity_ok；tokens_in/out 落库非 0。
 
 ---
@@ -477,7 +477,7 @@ ALL STRESS PASSED；compress×数十次 integrity_ok；tokens_in/out 落库非 0
 | 2 | 子代理成功路径 final + idle/end | **曾漏 → 已修** | 原成功路径只 `return TurnResult`，TUI 听的 `turn_end`/`idle`/`assistant_final` 未推。现正常结束与 LLM error 均 emit。测试：`test_p1_subagent_success_emits_idle_and_final`、`test_p1_spawn_subagent_success_path` |
 | 3 | microcompact 保 id + middle 前归档 | **属实** | `microcompact_tools` 只改 content；`_archive_middle`→`archives/<session>/transcript.jsonl`。测试：`test_p0_microcompact_keeps_tool_call_ids`、`test_p0_middle_summary_archives_transcript` |
 | 4 | sanitize 空 content→null；截断 JSON 合法 | **曾有问题 → 已修** | 旧逻辑 `args[:30000]+"/*truncated*/"` 可破坏 JSON。现 `_truncate_tool_arguments` 产出合法 JSON。测试：`test_p0_sanitize_empty_content_null_and_json_args` |
-| 5 | pytest + LOCAL stress | **属实** | `pytest tests/ -q` → **107 passed**（本轮）。`smoke/stress_aiga_load.py` → **ALL STRESS PASSED 334.6s**；tokens_in=232665、compress=54、integrity_ok；事件含 `turn_end`/`idle`/`assistant_final`×10 |
+| 5 | pytest + 真模型 stress | **属实** | `pytest tests/ -q` → **107 passed**（本轮）。`smoke/stress_aiga_load.py` → **ALL STRESS PASSED 334.6s**；tokens_in=232665、compress=54、integrity_ok；事件含 `turn_end`/`idle`/`assistant_final`×10 |
 
 ### A.1 本轮代码修复（非“只改嘴”）
 
@@ -489,7 +489,7 @@ ALL STRESS PASSED；compress×数十次 integrity_ok；tokens_in/out 落库非 0
 6. leader client 重连  
 7. sessions.worktree_name/path 绑定  
 
-### A.2 Thrashing 推荐（LOCAL）
+### A.2 Thrashing 推荐（本地服务）
 
 | context_window | max_events | window_sec | cooldown_sec |
 |----------------|------------|------------|--------------|

@@ -40,7 +40,7 @@ class LLMSettings(BaseModel):
     thrashing_window_sec: float = 180.0
     thrashing_cooldown_sec: float = 300.0
     rag_compact: bool = False  # advanced: inject Desktop RAG into compact summary
-    # thinking models (Qwen3.5 etc.) may put text in reasoning_content
+    # thinking models may put text in reasoning_content
     strip_thinking_tags: bool = True
 
 

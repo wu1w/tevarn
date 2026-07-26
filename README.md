@@ -14,7 +14,7 @@
 
 <br/>
 
-[![Version](https://img.shields.io/badge/version-0.3.1-7C3AED?style=flat-square)](https://github.com/wu1w/takton/releases)
+[![Version](https://img.shields.io/badge/version-0.3.2-7C3AED?style=flat-square)](https://github.com/wu1w/takton/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-06B6D4?style=flat-square)](https://github.com/wu1w/takton/releases)
 [![License](https://img.shields.io/badge/license-MIT-22C55E?style=flat-square)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/wu1w/takton?style=flat-square&logo=github)](https://github.com/wu1w/takton/stargazers)
@@ -59,6 +59,9 @@ Agent 遇到新任务类型时自动编写新工具。17 个内置技能 + 无�
 
 ### 🖥️ 操作系统级能力
 文件读写、终端命令、浏览器控制、SQLite 查询——全部经三级权限模型校验。
+
+### 🛡️ 权限控制台
+独立 `/security` 面板：沙箱/本地执行模式一键切换（Linux bwrap · macOS sandbox-exec · Windows WSL/Job），8 类高危命令逐类三态（放行/每次确认/禁止）。
 
 </td>
 </tr>
@@ -141,10 +144,10 @@ curl -fsSL https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.sh
 
 | Platform | Package | 下载 |
 |----------|---------|------|
-| Windows | Setup.exe | [Takton-Setup-0.3.1.exe](https://github.com/wu1w/takton/releases/download/v0.3.1/Takton-Setup-0.3.1.exe) |
-| Windows | Portable.zip | [Takton-0.3.1-win-x64-portable.zip](https://github.com/wu1w/takton/releases/download/v0.3.1/Takton-0.3.1-win-x64-portable.zip) |
-| Linux | AppImage | v0.3.1 待补 · 暂用 [Takton-0.3.0.AppImage](https://github.com/wu1w/takton/releases/download/v0.3.0/Takton-0.3.0.AppImage) |
-| Linux | deb | v0.3.1 待补 · 暂用 [takton_0.3.0_amd64.deb](https://github.com/wu1w/takton/releases/download/v0.3.0/takton_0.3.0_amd64.deb) |
+| Windows | Setup.exe | v0.3.2 构建中 · 暂用 [Takton-Setup-0.3.1.exe](https://github.com/wu1w/takton/releases/download/v0.3.1/Takton-Setup-0.3.1.exe) |
+| Windows | Portable.zip | v0.3.2 构建中 · 暂用 [Takton-0.3.1-win-x64-portable.zip](https://github.com/wu1w/takton/releases/download/v0.3.1/Takton-0.3.1-win-x64-portable.zip) |
+| Linux | AppImage | v0.3.2 随 release 发布 · 见 [Releases](https://github.com/wu1w/takton/releases) |
+| Linux | deb | v0.3.2 随 release 发布 · 见 [Releases](https://github.com/wu1w/takton/releases) |
 
 > 一键脚本会自动解析 [最新 Release](https://github.com/wu1w/takton/releases/latest) 资产；上表为固定直链备份。
 
@@ -220,6 +223,7 @@ Open http://localhost:3000 · 访问 http://localhost:3000
 
 ## 📖 Documentation · 文档
 
+- [Changelog · 版本记录](CHANGELOG.md) — Release notes for every version
 - [Technical Manual · 技术手册](docs/TECHNICAL_MANUAL.md) — Architecture, API, Database design
 - [AGENTS.md](AGENTS.md) — AI coding assistant configuration guide
 

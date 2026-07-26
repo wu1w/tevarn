@@ -31,9 +31,9 @@ from takton_code.llm.provider import OpenAICompatibleProvider, build_llm_provide
 from takton_code.project.binder import bind_project, init_project_files
 from takton_code.session.store import SessionStore
 
-AIGA_BASE = os.environ.get("TAKTON_CODE_BASE_URL", "http://127.0.0.1:8088/v1")
-AIGA_MODEL = os.environ.get(
-    "TAKTON_CODE_MODEL", "local-model.gguf"
+LOCAL_BASE = os.environ.get("TAKTON_CODE_BASE_URL", "http://127.0.0.1:8088/v1")
+LOCAL_MODEL = os.environ.get(
+    "TAKTON_CODE_MODEL", "<your-model.gguf>"
 )
 # aggressive compression for smoke
 SMOKE_CTX = int(os.environ.get("TAKTON_CODE_CONTEXT_WINDOW", "8000"))
@@ -50,9 +50,9 @@ def log(msg: str) -> None:
 
 async def check_llm() -> None:
     p = OpenAICompatibleProvider(
-        base_url=AIGA_BASE,
+        base_url=LOCAL_BASE,
         api_key="no-key",
-        model=AIGA_MODEL,
+        model=LOCAL_MODEL,
         max_tokens=256,
         temperature=0.1,
     )
@@ -90,16 +90,16 @@ def prep_repo() -> Path:
 
 async def make_runtime(repo: Path, home: Path, session_id: str | None = None) -> tuple[AgentRuntime, SessionStore]:
     os.environ["TAKTON_CODE_HOME"] = str(home)
-    os.environ["TAKTON_CODE_BASE_URL"] = AIGA_BASE
-    os.environ["TAKTON_CODE_MODEL"] = AIGA_MODEL
+    os.environ["TAKTON_CODE_BASE_URL"] = LOCAL_BASE
+    os.environ["TAKTON_CODE_MODEL"] = LOCAL_MODEL
     os.environ["TAKTON_CODE_CONTEXT_WINDOW"] = str(SMOKE_CTX)
     os.environ["TAKTON_CODE_COMPRESS_THRESHOLD"] = str(SMOKE_THRESH)
     os.environ["TAKTON_CODE_MAX_TOKENS"] = "2048"
 
     settings = load_settings()
     # force smoke compression knobs
-    settings.llm.base_url = AIGA_BASE
-    settings.llm.model = AIGA_MODEL
+    settings.llm.base_url = LOCAL_BASE
+    settings.llm.model = LOCAL_MODEL
     settings.llm.context_window = SMOKE_CTX
     settings.llm.compress_threshold = SMOKE_THRESH
     settings.llm.max_tokens = 2048
@@ -309,7 +309,7 @@ async def main() -> int:
     repo = prep_repo()
     log(f"home={home}")
     log(f"repo={repo}")
-    log(f"llm={AIGA_BASE} model={AIGA_MODEL} ctx={SMOKE_CTX} thresh={SMOKE_THRESH}")
+    log(f"llm={LOCAL_BASE} model={LOCAL_MODEL} ctx={SMOKE_CTX} thresh={SMOKE_THRESH}")
 
     try:
         await test_bridge_interfaces_reserved()

@@ -2,7 +2,7 @@
 
 Covers:
 1. Unit: plan gate, diff, compress x5+, store parts/queue/undo
-2. LLM (LOCAL): coding task + tests green
+2. LLM (local service): coding task + tests green
 3. Interrupt x3 + continue
 4. Compress >=5 then still functional
 5. Session/settings reopen
@@ -37,8 +37,8 @@ from takton_code.plan.gate import PlanGate, should_auto_plan
 from takton_code.project.binder import bind_project, init_project_files
 from takton_code.session.store import SessionStore
 
-AIGA_BASE = os.environ.get("TAKTON_CODE_BASE_URL", "http://127.0.0.1:8088/v1")
-AIGA_MODEL = os.environ.get("TAKTON_CODE_MODEL", "local-model.gguf")
+LOCAL_BASE = os.environ.get("TAKTON_CODE_BASE_URL", "http://127.0.0.1:8088/v1")
+LOCAL_MODEL = os.environ.get("TAKTON_CODE_MODEL", "<your-model.gguf>")
 SMOKE_CTX = int(os.environ.get("TAKTON_CODE_CONTEXT_WINDOW", "8000"))
 SMOKE_THRESH = float(os.environ.get("TAKTON_CODE_COMPRESS_THRESHOLD", "0.25"))
 BRIDGE_URL = os.environ.get("TAKTON_CODE_BRIDGE_URL", "http://127.0.0.1:8090/api")
@@ -68,15 +68,15 @@ def prep_repo() -> Path:
 
 async def make_runtime(repo: Path, home: Path, session_id: str | None = None, bridge_on: bool = False):
     os.environ["TAKTON_CODE_HOME"] = str(home)
-    os.environ["TAKTON_CODE_BASE_URL"] = AIGA_BASE
-    os.environ["TAKTON_CODE_MODEL"] = AIGA_MODEL
+    os.environ["TAKTON_CODE_BASE_URL"] = LOCAL_BASE
+    os.environ["TAKTON_CODE_MODEL"] = LOCAL_MODEL
     os.environ["TAKTON_CODE_CONTEXT_WINDOW"] = str(SMOKE_CTX)
     os.environ["TAKTON_CODE_COMPRESS_THRESHOLD"] = str(SMOKE_THRESH)
     os.environ["TAKTON_CODE_MAX_TOKENS"] = "2048"
 
     settings = load_settings()
-    settings.llm.base_url = AIGA_BASE
-    settings.llm.model = AIGA_MODEL
+    settings.llm.base_url = LOCAL_BASE
+    settings.llm.model = LOCAL_MODEL
     settings.llm.context_window = SMOKE_CTX
     settings.llm.compress_threshold = SMOKE_THRESH
     settings.llm.max_tokens = 2048
@@ -174,7 +174,7 @@ async def test_unit_local() -> None:
 
 
 async def test_llm_ping() -> None:
-    p = OpenAICompatibleProvider(base_url=AIGA_BASE, api_key="no-key", model=AIGA_MODEL, max_tokens=256)
+    p = OpenAICompatibleProvider(base_url=LOCAL_BASE, api_key="no-key", model=LOCAL_MODEL, max_tokens=256)
     try:
         r = await p.chat(
             [{"role": "system", "content": "Reply exactly: PONG"}, {"role": "user", "content": "ping"}]
@@ -364,7 +364,7 @@ async def main() -> int:
     repo = prep_repo()
     log(f"home={home}")
     log(f"repo={repo}")
-    log(f"llm={AIGA_BASE} model={AIGA_MODEL}")
+    log(f"llm={LOCAL_BASE} model={LOCAL_MODEL}")
     try:
         await test_unit_local()
         await test_bridge()

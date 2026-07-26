@@ -15,7 +15,7 @@ CompactMode = Literal["static", "balanced", "aggressive"]
 
 
 def recommended_thrashing(context_window: int) -> dict[str, float | int]:
-    """Calibrate thrashing guard to real context window (LOCAL small vs 64k+).
+    """Calibrate thrashing guard to real context window (small local model vs 64k+).
 
     Small windows (e.g. stress 12k) trigger hard compact often — defaults of
     3/180s would false-trip and freeze middle summary while context stays hot.

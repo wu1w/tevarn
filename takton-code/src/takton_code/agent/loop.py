@@ -2075,7 +2075,7 @@ class AgentRuntime:
                 lines.append("")
                 lines.append("presets: " + ", ".join(PRESETS.keys()))
                 lines.append("usage:")
-                lines.append("  /model local              套用预设")
+                lines.append("  /model local             套用预设")
                 lines.append("  /model <model名>         只改模型名")
                 lines.append("  /model set url=... model=... key=...")
                 return TurnResult(ok=True, final_text="\n".join(lines), mode=self.mode)

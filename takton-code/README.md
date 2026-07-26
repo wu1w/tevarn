@@ -8,7 +8,7 @@ Independent process. Desktop is **entry-only**; full backend power via `/api/bri
 
 ```bash
 takton-code models              # 一眼看当前 + 全部预设
-takton-code models set local     # 一键 LOCAL
+takton-code models set local     # 一键切本机服务
 takton-code models set desktop  # 跟桌面端同一模型
 takton-code models list         # 拉 /v1/models
 takton-code models test         # PONG 冒烟
@@ -201,9 +201,9 @@ Competitor audit: `docs/COMPETITOR_LOCAL_AUDIT.md`
 ## Smoke
 
 ```bash
-# LOCAL llama.cpp + optional live bridge
+# 本地 llama.cpp 服务 + optional live bridge
 export TAKTON_CODE_BASE_URL=http://127.0.0.1:8088/v1
-export TAKTON_CODE_MODEL=local-model.gguf
+export TAKTON_CODE_MODEL=<your-model.gguf>
 python smoke/smoke_full.py
 ```
 
