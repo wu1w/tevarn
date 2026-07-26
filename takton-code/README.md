@@ -196,7 +196,6 @@ takton-code -p "…" --mode always --bridge
 Skills / MCP / desktop tools / RAG **come from Takton Desktop bridge** (`--bridge` or auto-detect `:8090`). No second local skill/MCP stack.
 
 Bridge contract: `docs/DESKTOP_BRIDGE.md`  
-Competitor audit: `docs/COMPETITOR_LOCAL_AUDIT.md`
 
 ## Smoke
 

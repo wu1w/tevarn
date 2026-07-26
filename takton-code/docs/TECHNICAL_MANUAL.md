@@ -377,7 +377,7 @@ TUI 显示 `[THRASH]`；`/context` 可见状态。
 - Bridge token 可选 Bearer  
 - Leader 默认绑 127.0.0.1  
 
-隐私 hardening 记录见 `docs/PRIVACY_HARDENING_LOCAL.md`。
+隐私设计见上文「Privacy」章节。
 
 ---
 
@@ -436,7 +436,6 @@ ALL STRESS PASSED；compress×数十次 integrity_ok；tokens_in/out 落库非 0
 | `docs/TECHNICAL_MANUAL.md` | **本手册** |
 | `docs/DESKTOP_BRIDGE.md` | Bridge 契约 |
 | `docs/COMPETITOR_*` | 竞品审计与坑 |
-| `docs/PRIVACY_HARDENING_LOCAL.md` | 隐私 |
 | `config.example.toml` | 配置样例 |
 | `smoke/stress_aiga_load.py` | 高负载脚本 |
 
