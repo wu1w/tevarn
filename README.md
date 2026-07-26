@@ -141,10 +141,10 @@ curl -fsSL https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.sh
 
 | Platform | Package | 下载 |
 |----------|---------|------|
-| Windows | Setup.exe | [Takton-Setup-0.3.0.exe](https://github.com/wu1w/takton/releases/download/v0.3.0/Takton-Setup-0.3.0.exe) |
-| Windows | Portable.zip | [Takton-0.3.0-win-x64-portable.zip](https://github.com/wu1w/takton/releases/download/v0.3.0/Takton-0.3.0-win-x64-portable.zip) |
-| Linux | AppImage | [Takton-0.3.0.AppImage](https://github.com/wu1w/takton/releases/download/v0.3.0/Takton-0.3.0.AppImage) |
-| Linux | deb | [takton_0.3.0_amd64.deb](https://github.com/wu1w/takton/releases/download/v0.3.0/takton_0.3.0_amd64.deb) |
+| Windows | Setup.exe | [Takton-Setup-0.3.1.exe](https://github.com/wu1w/takton/releases/download/v0.3.1/Takton-Setup-0.3.1.exe) |
+| Windows | Portable.zip | [Takton-0.3.1-win-x64-portable.zip](https://github.com/wu1w/takton/releases/download/v0.3.1/Takton-0.3.1-win-x64-portable.zip) |
+| Linux | AppImage | v0.3.1 待补 · 暂用 [Takton-0.3.0.AppImage](https://github.com/wu1w/takton/releases/download/v0.3.0/Takton-0.3.0.AppImage) |
+| Linux | deb | v0.3.1 待补 · 暂用 [takton_0.3.0_amd64.deb](https://github.com/wu1w/takton/releases/download/v0.3.0/takton_0.3.0_amd64.deb) |
 
 > 一键脚本会自动解析 [最新 Release](https://github.com/wu1w/takton/releases/latest) 资产；上表为固定直链备份。
 
