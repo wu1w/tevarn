@@ -3,4 +3,5 @@ export { DesktopControlPanel } from './DesktopControlPanel';
 export { DesktopAgentPanel } from './DesktopAgentPanel';
 export { DesktopToggle } from './DesktopToggle';
 export { ConfirmDialog } from './ConfirmDialog';
+export { PromptDialog } from './PromptDialog';
 export { ConnectionIndicator } from './ConnectionIndicator';

@@ -19,6 +19,7 @@ import WorkflowCanvas from '@/components/workflow/WorkflowCanvas';
 import NodePropertyPanel from '@/components/workflow/NodePropertyPanel';
 import { useToastStore } from '@/stores/toastStore';
 import { useConfirm } from '@/components/desktop/ConfirmDialog';
+import { PromptDialog } from '@/components/desktop/PromptDialog';
 import { useT } from '@/stores/localeStore';
 
 
@@ -301,55 +302,21 @@ export default function WorkflowsPage() {
     }
   }, [selectedId]);
 
-  /* ── 新建 ── */
-  const handleCreate = async () => {
-    const name = prompt(t('wf.prompt.name'), t('wf.prompt.defaultName'));
-    if (!name) return;
-    try {
-      const wf = await createWorkflow({
-        name,
-        description: '',
-        dag: EMPTY_DAG,
-        trigger: 'manual',
-      });
-      setWorkflows((prev) => [...prev, wf]);
-      setSelectedId(wf.id);
-      setShowDropdown(false);
-    } catch (err) {
-      console.error(err);
-      addToast(t('wf.createFailed'), 'error');
-    }
-  };
+  /* ── 新建/示例：经 PromptDialog 取名（Electron 不支持 window.prompt，原生调用会静默挂死） ── */
+  const [nameDialogMode, setNameDialogMode] = useState<'create' | 'example' | 'basic' | null>(null);
 
-  /* ── 加载示例 ── */
-  const handleLoadExample = async () => {
-    const name = prompt(t('wf.prompt.name'), t('wf.prompt.exampleName'));
-    if (!name) return;
+  const createWithName = async (mode: 'create' | 'example' | 'basic', name: string) => {
+    const preset =
+      mode === 'example'
+        ? { description: t('workflows._e61'), dag: DEFAULT_DAG_EXAMPLE }
+        : mode === 'basic'
+          ? { description: t('workflows._e62'), dag: DEFAULT_DAG_BASIC }
+          : { description: '', dag: EMPTY_DAG };
     try {
       const wf = await createWorkflow({
         name,
-        description: t('workflows._e61'),
-        dag: DEFAULT_DAG_EXAMPLE,
-        trigger: 'manual',
-      });
-      setWorkflows((prev) => [...prev, wf]);
-      setSelectedId(wf.id);
-      setShowDropdown(false);
-    } catch (err) {
-      console.error(err);
-      addToast(t('wf.createFailed'), 'error');
-    }
-  };
-
-  /* ── 加载基础可运行示例 ── */
-  const handleLoadBasicExample = async () => {
-    const name = prompt(t('wf.prompt.name'), t('wf.prompt.basicName'));
-    if (!name) return;
-    try {
-      const wf = await createWorkflow({
-        name,
-        description: t('workflows._e62'),
-        dag: DEFAULT_DAG_BASIC,
+        description: preset.description,
+        dag: preset.dag,
         trigger: 'manual',
       });
       setWorkflows((prev) => [...prev, wf]);
@@ -676,19 +643,19 @@ export default function WorkflowsPage() {
                 )}
                 <div className="my-1 border-t border-gray-100" />
                 <button
-                  onClick={handleCreate}
+                  onClick={() => setNameDialogMode('create')}
                   className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-foreground-muted hover:bg-elevated-bg">
                   <PlusIcon className="h-3.5 w-3.5" />
                   {t('wf.newBlank')}
                 </button>
                 <button
-                  onClick={handleLoadBasicExample}
+                  onClick={() => setNameDialogMode('basic')}
                   className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-foreground-muted hover:bg-elevated-bg">
                   <PlayIcon className="h-3.5 w-3.5" />
                   {t('wf.loadBasic')}
                 </button>
                 <button
-                  onClick={handleLoadExample}
+                  onClick={() => setNameDialogMode('example')}
                   className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-foreground-muted hover:bg-elevated-bg">
                   <PlayIcon className="h-3.5 w-3.5" />
                   {t('wf.loadExample')}
@@ -818,12 +785,12 @@ export default function WorkflowsPage() {
             </p>
             <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
               <button
-                type="button"onClick={() => void handleCreate()}
+                type="button"onClick={() => setNameDialogMode('create')}
                 className="rounded-xl bg-gradient-to-r from-brand-purple to-brand-cyan px-4 py-2 text-sm font-medium text-white shadow-lg shadow-violet-500/15 hover:opacity-90">
                 {t('wf.empty.create')}
               </button>
               <button
-                type="button"onClick={() => void handleLoadExample()}
+                type="button"onClick={() => setNameDialogMode('example')}
                 className="rounded-xl border border-border-default px-4 py-2 text-sm font-medium text-foreground-muted hover:bg-elevated-bg hover:text-foreground">
                 {t('wf.empty.loadExample')}
               </button>
@@ -835,6 +802,24 @@ export default function WorkflowsPage() {
       <HelpModal />
 
       {ConfirmDialogComponent}
+
+      <PromptDialog
+        open={nameDialogMode !== null}
+        title={t('wf.prompt.name')}
+        defaultValue={
+          nameDialogMode === 'example'
+            ? t('wf.prompt.exampleName')
+            : nameDialogMode === 'basic'
+              ? t('wf.prompt.basicName')
+              : t('wf.prompt.defaultName')
+        }
+        onSubmit={(name) => {
+          const mode = nameDialogMode ?? 'create';
+          setNameDialogMode(null);
+          void createWithName(mode, name);
+        }}
+        onCancel={() => setNameDialogMode(null)}
+      />
     </div>
   );
 }
