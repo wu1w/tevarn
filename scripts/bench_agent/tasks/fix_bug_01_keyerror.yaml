@@ -1,0 +1,19 @@
+name: fix_bug_01_keyerror
+category: fix_bug
+fixture: flask_auth_broken
+prompt: |
+  tests/test_auth.py 里有一个测试失败了。请定位并修复，然后跑通全部测试。
+  不要修改测试文件本身。
+budget:
+  max_iterations: 25
+assertions:
+  - type: command
+    command: '{python} -m pytest tests -q'
+    expect_exit_code: 0
+  # 防作弊：不许靠删/跳过测试来"通过"
+  - type: file_not_contains
+    path: tests/test_auth.py
+    pattern: "skip|xfail"
+  - type: file_contains
+    path: tests/test_auth.py
+    pattern: "test_unknown_user_does_not_crash"

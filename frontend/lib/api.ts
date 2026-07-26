@@ -987,6 +987,56 @@ export async function saveCommandPolicy(
   );
 }
 
+/* ── 工作方式 / 执行环境（权限控制台，T5）────────────────────── */
+
+export interface WorkingModeOption {
+  id: string;
+  label: string;
+  label_en: string;
+  desc: string;
+  desc_en: string;
+  recommended: boolean;
+  /** 执行环境专有：本机不具备该能力时置灰（如无沙箱时的「强制沙箱」） */
+  available?: boolean;
+  profile?: string;
+}
+
+export interface WorkingModePayload {
+  working_mode: string;
+  execution_mode: string;
+  /** 用户所选 vs 实际生效可能不一致（无沙箱回退 / 高级覆盖），必须显式呈现 */
+  effective: {
+    permission_profile: string;
+    ask_mode: string;
+    permission_enabled: boolean;
+    headless_fallback: string;
+    use_sandbox: boolean;
+    sandbox_backend: string;
+    sandbox_label: string;
+    sandbox_degraded: boolean;
+    sandbox_reason: string;
+  };
+  overrides: {
+    permission_profile: string | null;
+    ask_mode: string | null;
+  };
+  working_modes: WorkingModeOption[];
+  execution_modes: WorkingModeOption[];
+}
+
+export async function getWorkingMode(): Promise<WorkingModePayload> {
+  const res = await api.get('/settings/security/working-mode');
+  return res.data;
+}
+
+export async function saveWorkingMode(payload: {
+  working_mode?: string;
+  execution_mode?: string;
+}): Promise<WorkingModePayload> {
+  const res = await api.post('/settings/security/working-mode', payload);
+  return res.data;
+}
+
 export interface ProviderPreset {
   id: string;
   name: string;

@@ -7,9 +7,22 @@ from pathlib import Path
 
 import pytest
 
+from backend.core.config import settings
 from backend.services.tools.executors import execute_command
 from backend.tools.permissions import resolve_agent_workspace_root
 from backend.agent.turn_retry import classify_tool_result, RetryKind
+
+
+@pytest.fixture(autouse=True)
+def _local_execution(monkeypatch):
+    """本文件测的是**本机执行**语义（heredoc / 反引号 / 默认 cwd）。
+
+    T5 起沙箱默认开启，而沙箱只允许 cwd 落在其 workspace 根内；
+    这些用例用 tmp_path 作 cwd，在沙箱下会被正确拒绝。
+    execution mode 现在有三档，测试必须显式声明自己走哪条路径。
+    """
+    monkeypatch.setattr(settings, "agent_execution_mode", "local", raising=False)
+    monkeypatch.setattr(settings, "agent_computer_enabled", False, raising=False)
 
 
 @pytest.mark.asyncio

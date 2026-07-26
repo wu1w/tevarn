@@ -75,14 +75,26 @@ class FileReadTool(_BuiltinToolBase):
         super().__init__(
             name="file_read",
             description=(
-                "读取工作区内文件正文。改代码/查配置前必须先读再改。"
-                "参数 filepath=路径。大文件可先 grep/glob 定位再读。"
+                "读取工作区内文件正文，输出带行号（`行号 TAB 正文`）。改代码/查配置前必须先读再改。"
+                "大文件会在行边界处停止并提示续读的 offset——看到该提示就再调一次补齐，"
+                "不要基于不完整内容改代码。大文件也可先 grep/glob 定位再按 offset 精读。"
+                "重要：行号是展示前缀，不属于文件内容，写 edit 的 old_text 时不要带上。"
                 "失败时检查路径是否在 workspace 内、文件是否存在。"
             ),
             parameters={
                 "type": "object",
                 "properties": {
-                    "filepath": {"type": "string", "description": "要读取的文件路径"}
+                    "filepath": {"type": "string", "description": "要读取的文件路径"},
+                    "offset": {
+                        "type": "integer",
+                        "description": "起始行号（1-based），续读大文件时用，默认 1",
+                        "default": 1,
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "读取行数，默认 1000",
+                        "default": 1000,
+                    },
                 },
                 "required": ["filepath"],
             },
@@ -123,15 +135,23 @@ class EditTool(_BuiltinToolBase):
             description=(
                 "在文件中精确替换一段唯一字符串（old_text→new_text）。"
                 "old_text 必须在文件中唯一且与原文完全一致（含缩进）；"
-                "不唯一或找不到会失败——先 file_read/grep 再改。"
+                "不唯一或找不到会报错并告诉你重复出现的行号——先 file_read/grep 再改。"
+                "要替换全部同名片段时显式传 replace_all=true。"
+                "注意：file_read 输出的行号前缀（如 `   12\\t`）是展示用的，"
+                "不属于文件内容，写 old_text 时不要带上。"
                 "适合小范围修改；大块重构可用 apply_patch 或 file_write。"
             ),
             parameters={
                 "type": "object",
                 "properties": {
                     "filepath": {"type": "string", "description": "文件路径"},
-                    "old_text": {"type": "string", "description": "要替换的文本"},
+                    "old_text": {"type": "string", "description": "要替换的文本（须唯一）"},
                     "new_text": {"type": "string", "description": "新文本"},
+                    "replace_all": {
+                        "type": "boolean",
+                        "description": "替换全部匹配（默认 false：多处匹配时报错）",
+                        "default": False,
+                    },
                 },
                 "required": ["filepath", "old_text", "new_text"],
             },

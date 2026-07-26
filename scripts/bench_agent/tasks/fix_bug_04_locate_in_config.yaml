@@ -1,0 +1,22 @@
+name: fix_bug_04_locate_in_config
+category: fix_bug
+fixture: config_repo
+prompt: |
+  生产环境要求日志级别为 WARNING、缓存 TTL 为 600 秒。请改 conf/app.yaml 使其符合要求，
+  其它配置一律不动。
+budget:
+  max_iterations: 18
+assertions:
+  - type: file_contains
+    path: conf/app.yaml
+    pattern: "level:\\s*WARNING"
+  - type: file_contains
+    path: conf/app.yaml
+    pattern: "ttl_seconds:\\s*600"
+  # 最小改动：不相关的键必须原样
+  - type: file_contains
+    path: conf/app.yaml
+    pattern: "port:\\s*8080"
+  - type: file_contains
+    path: conf/app.yaml
+    pattern: "pool_size:\\s*10"

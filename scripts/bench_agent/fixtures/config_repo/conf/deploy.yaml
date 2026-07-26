@@ -1,0 +1,5 @@
+replicas: 3
+image: registry.example.com/app:1.4.2
+resources:
+  cpu: "500m"
+  memory: "512Mi"

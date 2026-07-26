@@ -358,7 +358,17 @@ def build_system_prompt(
     }
 
 
-def merge_prompt_parts(parts: dict[str, str]) -> str:
-    """将三层合并为完整 system prompt 字符串。"""
-    ordered = [parts.get("stable", ""), parts.get("context", ""), parts.get("volatile", "")]
+def merge_prompt_parts(parts: dict[str, str], *, include_volatile: bool = True) -> str:
+    """将三层合并为完整 system prompt 字符串。
+
+    include_volatile=False（prompt-cache 友好模式，见 T4）：
+        只合并 stable+context。Volatile 层含**秒级时间戳**，若并入 messages[0]，
+        每个新用户轮次 system 块都不同 —— Anthropic 的 system cache 与 OpenAI 的
+        自动前缀缓存会在第一个 block 就失配，整段历史前缀缓存全部作废。
+        调用方（ContextManager）改为把 volatile 放到 messages 尾部，
+        既保住稳定前缀，又因更靠近当前问题而更容易被模型注意到。
+    """
+    ordered = [parts.get("stable", ""), parts.get("context", "")]
+    if include_volatile:
+        ordered.append(parts.get("volatile", ""))
     return "\n\n".join(p for p in ordered if p and p.strip())

@@ -276,8 +276,11 @@ def test_execute_command_computer_failure_no_silent_fallback(tmp_path):
         out = asyncio.run(
             execute_command({}, {"command": "echo should-not-run", "cwd": str(tmp_path)})
         )
-        assert out.startswith("[Error] Agent Computer 执行失败")
+        # 文案在 T5 统一为「沙箱执行失败」；不变的是意图：报错而非偷偷跑本机
+        assert out.startswith("[Error] 沙箱执行失败")
         assert "should-not-run" not in out
+        # 必须指引用户去权限控制台改「执行环境」，而不是让他猜配置键
+        assert "权限控制台" in out
 
 
 def test_execute_python_via_computer(tmp_path):

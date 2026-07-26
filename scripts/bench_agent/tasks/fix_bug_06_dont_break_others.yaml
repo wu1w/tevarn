@@ -1,0 +1,15 @@
+name: fix_bug_06_dont_break_others
+category: fix_bug
+fixture: flask_auth_broken
+prompt: |
+  login() 在密码错误时应该同时返回 reason 字段说明原因（值为 "bad_password"），
+  用户不存在时 reason 为 "no_such_user"。改完保证原有测试仍然全绿。
+budget:
+  max_iterations: 28
+assertions:
+  - type: command
+    command: '{python} -m pytest tests -q'
+    expect_exit_code: 0
+  - type: command
+    command: '{python} -c "import sys;sys.path.insert(0,''.'');from app.auth import login;assert login(''alice'',''x'')[''reason'']==''bad_password'';assert login(''zz'',''x'')[''reason'']==''no_such_user''"'
+    expect_exit_code: 0

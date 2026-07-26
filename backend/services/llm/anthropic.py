@@ -21,6 +21,50 @@ from .schemas import LLMChunk, LLMResponse, ToolCall
 logger = logging.getLogger(__name__)
 
 
+def _extract_usage(raw: dict[str, Any]) -> dict[str, int]:
+    """Anthropic usage → 统一字段（T4）。
+
+    Anthropic 的 input_tokens **不含**缓存命中部分，cache_read_input_tokens 单列。
+    为了让 prompt_tokens 与 OpenAI 口径一致（= 本轮实际前缀总量），这里把三者相加。
+    """
+
+    def _i(key: str) -> int:
+        try:
+            v = int(raw.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0
+        return max(0, v)
+
+    inp = _i("input_tokens")
+    cache_read = _i("cache_read_input_tokens")
+    cache_write = _i("cache_creation_input_tokens")
+    out: dict[str, int] = {}
+    if inp or cache_read or cache_write:
+        out["prompt_tokens"] = inp + cache_read + cache_write
+        out["cache_read_input_tokens"] = cache_read
+        out["cache_creation_input_tokens"] = cache_write
+    if raw.get("output_tokens") is not None:
+        out["completion_tokens"] = _i("output_tokens")
+    return out
+
+
+def _log_cache_usage(model: str, usage: dict[str, int]) -> None:
+    """把缓存命中率打进日志——没有可观测性就无法验证 T4 是否真的生效。"""
+    total = int(usage.get("prompt_tokens") or 0)
+    if total <= 0:
+        return
+    read = int(usage.get("cache_read_input_tokens") or 0)
+    write = int(usage.get("cache_creation_input_tokens") or 0)
+    logger.info(
+        "prompt cache model=%s prompt_tokens=%s cache_read=%s (%.0f%%) cache_write=%s",
+        model,
+        total,
+        read,
+        100.0 * read / total,
+        write,
+    )
+
+
 class AnthropicService(LLMService):
     """Anthropic Claude LLM 服务"""
 
@@ -139,6 +183,73 @@ class AnthropicService(LLMService):
             })
         return anthropic_tools
 
+    @staticmethod
+    def _cache_enabled() -> bool:
+        try:
+            return bool(getattr(settings, "agent_prompt_cache_anthropic", True))
+        except Exception:
+            return True
+
+    @staticmethod
+    def _mark_cache_breakpoint(blocks: list[dict[str, Any]]) -> None:
+        """在最后一个 block 上打 ephemeral 断点（原地修改）。
+
+        Anthropic 缓存的是**断点之前的全部前缀**，所以只需标最后一块。
+        """
+        if blocks:
+            blocks[-1] = {**blocks[-1], "cache_control": {"type": "ephemeral"}}
+
+    def _apply_prompt_cache(
+        self,
+        payload: dict[str, Any],
+        anthropic_messages: list[dict[str, Any]],
+    ) -> None:
+        """给 system / tools / 历史前缀打缓存断点（T4）。
+
+        Agent loop 每轮把整个 messages 重发一遍，system + 工具 schema + 全部历史
+        会被按新 token 反复计费。命中缓存后输入成本降到约 1/10。
+
+        断点位置：
+        1. system 块尾 —— 稳定前缀（前提：Volatile 层已被剥离，见 agent_prompt_cache_friendly）
+        2. tools 数组尾 —— 工具 schema 通常是最大的一块
+        3. 倒数第二条消息 —— 滚动缓存历史，最新一轮保持未缓存
+        """
+        if not self._cache_enabled():
+            return
+
+        # 1. system：字符串 → 结构化 block 才能挂 cache_control
+        sys_text = payload.get("system")
+        if isinstance(sys_text, str) and sys_text.strip():
+            payload["system"] = [
+                {
+                    "type": "text",
+                    "text": sys_text,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
+
+        # 2. tools：标最后一个，缓存整份工具定义
+        tools_payload = payload.get("tools")
+        if isinstance(tools_payload, list) and tools_payload:
+            self._mark_cache_breakpoint(tools_payload)
+
+        # 3. 历史：倒数第二条消息尾部（保留最新一轮不缓存，便于下轮增量命中）
+        if len(anthropic_messages) >= 2:
+            target = anthropic_messages[-2]
+            content = target.get("content")
+            if isinstance(content, str):
+                if content.strip():
+                    target["content"] = [
+                        {
+                            "type": "text",
+                            "text": content,
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ]
+            elif isinstance(content, list) and content:
+                target["content"] = list(content)
+                self._mark_cache_breakpoint(target["content"])
+
     async def chat(
         self,
         messages: list[dict[str, Any]],
@@ -159,6 +270,9 @@ class AnthropicService(LLMService):
             payload["system"] = system_text
         if tools:
             payload["tools"] = self._convert_tools(tools)
+
+        # T4：prompt caching 断点（system / tools / 历史前缀）
+        self._apply_prompt_cache(payload, anthropic_messages)
 
         message_id = uuid.uuid4()
 
@@ -182,7 +296,15 @@ class AnthropicService(LLMService):
                             tool_calls.append(tc)
                             yield LLMChunk(message_id=message_id, delta="", tool_call=tc)
                     finish_reason = "tool_calls" if tool_calls else data.get("stop_reason", "stop")
-                    yield LLMChunk(message_id=message_id, delta="".join(content_parts), finish_reason=finish_reason)
+                    _usage = _extract_usage(data.get("usage") or {})
+                    if _usage:
+                        _log_cache_usage(self.model, _usage)
+                    yield LLMChunk(
+                        message_id=message_id,
+                        delta="".join(content_parts),
+                        finish_reason=finish_reason,
+                        usage=_usage,
+                    )
             except Exception as e:
                 logger.error(f"Anthropic chat error: {e}")
                 yield LLMChunk(message_id=message_id, delta="", finish_reason="error")
@@ -191,6 +313,7 @@ class AnthropicService(LLMService):
         accumulated_content = ""
         current_tool_call: dict[str, Any] | None = None
         tool_calls_list: list[ToolCall] = []
+        stream_usage: dict[str, int] = {}
 
         try:
             session = ensure_session(self)
@@ -212,6 +335,17 @@ class AnthropicService(LLMService):
                         continue
 
                     event_type = data.get("type", "")
+
+                    # 用量与缓存命中（T4）：input/cache_* 在 message_start，
+                    # output_tokens 在 message_delta —— 两处都要收。
+                    if event_type in ("message_start", "message_delta"):
+                        src = (
+                            (data.get("message") or {}).get("usage")
+                            if event_type == "message_start"
+                            else data.get("usage")
+                        )
+                        if isinstance(src, dict):
+                            stream_usage.update(_extract_usage(src))
 
                     if event_type == "content_block_delta":
                         delta = data.get("delta", {})
@@ -255,7 +389,14 @@ class AnthropicService(LLMService):
 
                     elif event_type == "message_stop":
                         finish_reason = "tool_calls" if tool_calls_list else "stop"
-                        yield LLMChunk(message_id=message_id, delta="", finish_reason=finish_reason)
+                        if stream_usage:
+                            _log_cache_usage(self.model, stream_usage)
+                        yield LLMChunk(
+                            message_id=message_id,
+                            delta="",
+                            finish_reason=finish_reason,
+                            usage=stream_usage,
+                        )
                         break
 
         except Exception as e:

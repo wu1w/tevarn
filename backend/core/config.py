@@ -184,6 +184,10 @@ class Settings(BaseSettings):
     max_tool_result_length: int = 12_000
     # 单次工具执行超时（秒）；0 = 不限制
     agent_tool_timeout_seconds: float = 180.0
+    # T1：同一轮内的只读工具并发执行（system_prompt 的 PARALLEL_TOOL_CALLS 段
+    # 已向模型承诺并发；此前实现是串行 for 循环）。整批含写类工具时自动退回串行。
+    agent_tool_parallel: bool = True
+    agent_tool_parallel_max: int = 5
     # 用户单条输入硬上限（字符），超出截断并提示
     agent_max_user_input_chars: int = 100_000
     # 大输入 soft 策略：超过则保留头尾，中间省略（仍受硬上限约束）
@@ -227,12 +231,29 @@ class Settings(BaseSettings):
     # 用户消息中本地图片路径 → 多模态 parts
     agent_multimodal_images: bool = True
     agent_multimodal_max_images: int = 4
+    # ── 工作方式 / 执行环境（T5：权限体系的两个正交开关，见 agent/working_mode.py）──
+    # 用户只需选这两个；下面的 profile / ask_mode / 沙箱后端都由它们派生。
+    # readonly | cautious | auto_edit | autonomous
+    agent_working_mode: str = "cautious"
+    # sandbox（强制隔离，不可用则报错）| auto（有则用，无则本机并明示）| local
+    agent_execution_mode: str = "auto"
+
     # Batch2: permissions last-match profile
-    # cautious|acceptEdits|dontAsk|free|plan|auto
-    agent_permission_profile: str = "cautious"
-    # ask 决策：local_allow=单用户直接放行并记日志；deny=拒绝并回模型；broker=预留交互
-    agent_permission_ask_mode: str = "local_allow"
+    # auto（跟随工作方式）|cautious|acceptEdits|dontAsk|free|plan
+    # 显式设成非 auto 即为高级覆盖，会在权限控制台标记为 custom。
+    agent_permission_profile: str = "auto"
+    # ask 决策：auto（有确认通道则弹窗，否则走 headless 兜底）|interactive|local_allow|deny
+    # 此前默认 local_allow —— 把所有 ask 静默降级为放行，使整套权限规则形同虚设。
+    agent_permission_ask_mode: str = "auto"
+    # 无确认通道（cron / 渠道机器人 / headless）时的兜底：allow | deny
+    # 保持 allow 以免定时任务集体卡死；要更严就设 deny。
+    agent_permission_headless: str = "allow"
     agent_permission_enabled: bool = True
+    # T4 prompt caching：Volatile 层（秒级时间戳/记忆）不并入 messages[0] 的 system 块，
+    # 改挂 messages 尾部，保住可缓存的稳定前缀。设 False 回到旧的三层合并行为。
+    agent_prompt_cache_friendly: bool = True
+    # 向 Anthropic 请求写入 cache_control 断点（system / tools / 历史前缀）
+    agent_prompt_cache_anthropic: bool = True
     # file history after writes
     agent_file_history: bool = True
     # plan mode auto-detect complex tasks (soft; does not force mode alone)
@@ -241,6 +262,8 @@ class Settings(BaseSettings):
     # git worktree helpers available (opt-in tools later)
     agent_worktree_enabled: bool = True
     # Agent Computer（Phase 0.5.3）：command/python 走隔离执行后端
+    # 兼容键：真正的开关是 agent_execution_mode。设为 True 等价于 execution_mode=sandbox，
+    # 保留是为了旧配置/旧前端不炸；新代码一律走 working_mode.decide_sandbox()。
     agent_computer_enabled: bool = False
     # bwrap=Linux 沙箱（推荐，需 bubblewrap）；local=现状直跑
     # 沙箱后端：auto = 按平台自动选最强（linux→bwrap / darwin→seatbelt / win32→wsl|job）；

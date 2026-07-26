@@ -1,0 +1,11 @@
+name: read_only_01_answer
+category: answer
+fixture: config_repo
+prompt: |
+  这个仓库里配置的数据库连接池大小是多少？只回答，不要改任何文件。
+budget:
+  max_iterations: 10
+assertions:
+  - type: reply_contains
+    pattern: "\\b10\\b"
+  - type: workspace_unchanged

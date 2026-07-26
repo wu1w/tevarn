@@ -1,0 +1,22 @@
+name: feature_03_edit_not_recreate
+category: feature
+fixture: calc_lib
+prompt: |
+  给 calc.py 里已有的 add 函数加上类型注解和一行 docstring。
+  不要新建文件，也不要动其它函数的行为。
+budget:
+  max_iterations: 15
+assertions:
+  - type: file_contains
+    path: calc.py
+    pattern: "def add\\(a: .+, b: .+\\)"
+  # 其它函数必须原样保留（考察最小改动）
+  - type: file_contains
+    path: calc.py
+    pattern: "def sub"
+  - type: file_contains
+    path: calc.py
+    pattern: "def mul"
+  - type: command
+    command: '{python} -m pytest test_calc.py -q'
+    expect_exit_code: 0

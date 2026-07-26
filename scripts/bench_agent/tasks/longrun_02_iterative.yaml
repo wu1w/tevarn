@@ -1,0 +1,21 @@
+name: longrun_02_iterative
+category: long_task
+fixture: py_pkg
+prompt: |
+  从零搭一个 strutil 包并保证测试全绿：
+  1. strutil/__init__.py 暴露 slugify 和 truncate
+  2. strutil/core.py 实现：slugify 把 "Hello World!" 变成 "hello-world"；
+     truncate(s, n) 超长时截断并加省略号
+  3. test_strutil.py 覆盖两个函数各至少两种情况
+  4. 跑 `python -m pytest test_strutil.py -q`
+budget:
+  max_iterations: 40
+assertions:
+  - type: file_exists
+    path: strutil/core.py
+  - type: command
+    command: '{python} -m pytest test_strutil.py -q'
+    expect_exit_code: 0
+  - type: command
+    command: '{python} -c "from strutil import slugify; assert slugify(''Hello World!'')==''hello-world''"'
+    expect_exit_code: 0

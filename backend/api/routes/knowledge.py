@@ -4,6 +4,7 @@ Knowledge 路由
 """
 
 import json
+import logging
 import uuid
 from typing import Annotated, Any, Optional
 
@@ -16,6 +17,10 @@ from backend.schemas.user import UserRead
 from backend.core.config import settings
 
 from ..dependencies import get_current_user, get_document_repo
+
+# rebuild_index 等后台任务里引用了 logger 却从未定义 —— 该路径必然 NameError，
+# 且因跑在 BackgroundTasks 里，失败被静默吞掉，表现为「重建索引点了没反应」。
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/knowledge", tags=["Knowledge"])
 

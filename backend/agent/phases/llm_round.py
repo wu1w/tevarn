@@ -71,6 +71,7 @@ async def run_llm_round(
     accumulated_content = ""
     accumulated_reasoning = ""
     tool_calls: list[Any] = []
+    stream_usage: dict[str, int] = {}
 
     try:
         logger.info(
@@ -104,6 +105,11 @@ async def run_llm_round(
             # 收集 tool call
             if chunk.tool_call:
                 tool_calls.append(chunk.tool_call)
+
+            # 真实用量（T4）：provider 回填时优先于粗估
+            _cu = getattr(chunk, "usage", None)
+            if isinstance(_cu, dict) and _cu:
+                stream_usage.update(_cu)
 
             # 结束标记
             if chunk.finish_reason:
@@ -190,19 +196,26 @@ async def run_llm_round(
         result.final_content = f"[Error] LLM service failed: {e}"
         return result
 
-    # 引擎层：流式无 usage 时用粗估回写，驱动后续是否再压缩
+    # 引擎层回写：有 provider 真实 usage 就用真值，否则粗估（驱动后续是否再压缩）
     try:
         from backend.agent.context_engine import get_context_engine
         from backend.agent.token_meter import TokenMeter
 
         eng = get_context_engine()
-        est = TokenMeter(
-            context_window=int(getattr(settings, "context_window", 128_000) or 128_000)
-        ).estimate_messages(messages)
-        eng.update_from_response({
-            "prompt_tokens": est,
-            "completion_tokens": max(8, round(len(accumulated_content or "") / 3.4)),
-        })
+        if stream_usage.get("prompt_tokens"):
+            eng.update_from_response(dict(stream_usage))
+        else:
+            est = TokenMeter(
+                context_window=int(
+                    getattr(settings, "context_window", 128_000) or 128_000
+                )
+            ).estimate_messages(messages)
+            eng.update_from_response({
+                "prompt_tokens": est,
+                "completion_tokens": max(
+                    8, round(len(accumulated_content or "") / 3.4)
+                ),
+            })
     except Exception:
         pass
 

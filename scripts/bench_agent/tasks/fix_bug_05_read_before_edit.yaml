@@ -1,0 +1,15 @@
+name: fix_bug_05_read_before_edit
+category: fix_bug
+fixture: calc_lib
+prompt: |
+  把 calc.py 里的 sub 函数改成能处理字符串数字（比如 sub("5", "2") 返回 3），
+  同时保持原有整数行为不变。改完跑测试。
+budget:
+  max_iterations: 25
+assertions:
+  - type: command
+    command: '{python} -m pytest test_calc.py -q'
+    expect_exit_code: 0
+  - type: command
+    command: '{python} -c "from calc import sub; assert sub(''5'',''2'')==3; assert sub(5,2)==3"'
+    expect_exit_code: 0

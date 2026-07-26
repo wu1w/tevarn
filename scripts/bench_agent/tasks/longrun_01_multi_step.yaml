@@ -1,0 +1,24 @@
+name: longrun_01_multi_step
+category: long_task
+fixture: calc_lib
+prompt: |
+  按顺序完成：
+  1. 给 calc.py 加 div（除零抛 ValueError）
+  2. 给 calc.py 加 power(a, b)
+  3. 为两个新函数补测试
+  4. 跑通全部测试
+  5. 写一个 CHANGELOG.md 记录本次新增的函数
+budget:
+  max_iterations: 40
+assertions:
+  - type: file_contains
+    path: calc.py
+    pattern: "def div"
+  - type: file_contains
+    path: calc.py
+    pattern: "def power"
+  - type: file_exists
+    path: CHANGELOG.md
+  - type: command
+    command: '{python} -m pytest test_calc.py -q'
+    expect_exit_code: 0

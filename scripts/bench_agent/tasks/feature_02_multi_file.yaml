@@ -1,0 +1,19 @@
+name: feature_02_multi_file
+category: feature
+fixture: py_pkg
+prompt: |
+  在当前目录创建一个可运行的小包：
+  - mathx/__init__.py 暴露 mean 和 median
+  - mathx/stats.py 实现这两个函数（空列表抛 ValueError）
+  - test_stats.py 覆盖正常值与空列表
+  最后跑 `python -m pytest test_stats.py -q` 必须全绿。
+budget:
+  max_iterations: 30
+assertions:
+  - type: file_exists
+    path: mathx/stats.py
+  - type: file_exists
+    path: test_stats.py
+  - type: command
+    command: '{python} -m pytest test_stats.py -q'
+    expect_exit_code: 0

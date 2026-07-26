@@ -120,7 +120,19 @@ def test_remember_tool_reports_auto_link(repo_db):
 
 
 def test_auto_recall_injects_into_context(repo_db):
-    """build_messages：user_input 命中记忆时注入召回块，不命中回退静态提示"""
+    """build_messages：user_input 命中记忆时注入召回块，不命中回退静态提示
+
+    注：记忆属于 Volatile 层。T4（prompt caching）起，Volatile 不再并入
+    messages[0] —— 它随记忆写入而变，会让整段可缓存前缀失配。改挂 messages
+    尾部后内容不变、位置改变，故这里断言「出现在 messages 里」而非固定下标。
+    """
+    def _all_system_text(messages):
+        return "\n".join(
+            str(m.get("content") or "")
+            for m in messages
+            if m.get("role") == "system"
+        )
+
     async def _run():
         await _node("Xray 出站配置", content="SNI 必须与 outbounds serverName 同步", tags=["xray"])
 
@@ -134,9 +146,11 @@ def test_auto_recall_injects_into_context(repo_db):
             tools_enabled=[],
             model="test-model",
         )
-        system_text = messages[0]["content"]
+        system_text = _all_system_text(messages)
         assert "召回的相关长期记忆" in system_text
         assert "Xray 出站配置" in system_text
+        # 记忆必须留在可缓存前缀之外
+        assert "Xray 出站配置" not in messages[0]["content"]
 
         # 不命中 → 回退静态提示
         builder2 = ContextManager(ctx_item_repo=None)
@@ -147,6 +161,6 @@ def test_auto_recall_injects_into_context(repo_db):
             tools_enabled=[],
             model="test-model",
         )
-        assert "条长期记忆" in messages2[0]["content"]
+        assert "条长期记忆" in _all_system_text(messages2)
 
     asyncio.run(_run())

@@ -222,27 +222,38 @@ class NexusAgentLoop(AgentLoopBase):
 
         白名单 = 会话已挂载包 skill.yaml 声明的 tools 并集；无声明不过滤。
         每个 loop 实例懒加载一次（session 级，run 内不变）。
-        """
-        if not hasattr(self, "_contract_wl_loaded"):
-            self._contract_wl_loaded = True
-            self._contract_whitelist = None
-            try:
-                sid = arguments.get("_session_id")
-                if sid:
-                    from backend.packages.session_packages import (
-                        get_session_attached_packages,
-                    )
-                    from backend.packages.loader import (
-                        resolve_attached_tool_whitelist,
-                    )
 
-                    attached = await get_session_attached_packages(str(sid))
-                    self._contract_whitelist = await resolve_attached_tool_whitelist(
-                        attached
-                    )
-            except Exception as e:
-                logger.debug("contract whitelist load skipped: %s", e)
-                self._contract_whitelist = None
+        并发安全（T1）：加载必须在锁内完成。原实现「先置 _contract_wl_loaded=True
+        再 await 加载」，并发调用下第二个调用会看到标志已置位、白名单仍是 None，
+        从而静默绕过契约拦截。串行时不暴露，一旦工具并行就是安全漏洞。
+        """
+        if not getattr(self, "_contract_wl_ready", False):
+            lock = getattr(self, "_contract_wl_lock", None)
+            if lock is None:
+                lock = self._contract_wl_lock = asyncio.Lock()
+            async with lock:
+                # 双检：等锁期间可能已被别的调用加载完
+                if not getattr(self, "_contract_wl_ready", False):
+                    self._contract_whitelist = None
+                    try:
+                        sid = arguments.get("_session_id")
+                        if sid:
+                            from backend.packages.session_packages import (
+                                get_session_attached_packages,
+                            )
+                            from backend.packages.loader import (
+                                resolve_attached_tool_whitelist,
+                            )
+
+                            attached = await get_session_attached_packages(str(sid))
+                            self._contract_whitelist = (
+                                await resolve_attached_tool_whitelist(attached)
+                            )
+                    except Exception as e:
+                        logger.debug("contract whitelist load skipped: %s", e)
+                        self._contract_whitelist = None
+                    # 只有真正加载完才置位
+                    self._contract_wl_ready = True
         wl = getattr(self, "_contract_whitelist", None)
         if wl and name not in wl:
             return (
@@ -1190,6 +1201,11 @@ class NexusAgentLoop(AgentLoopBase):
             trace_rag_sources=_trace_rag_sources,
             ws_reset=_ws_reset,
         )
+        # 本轮实际用掉的迭代/工具轮次：bench harness 与运行诊断都需要，
+        # 不暴露就只能靠翻日志反推。
+        self.last_iterations = _global_iter + 1
+        self.last_tool_rounds = _tool_rounds
+        self.last_exit_reason = _loop_exit_reason
         return final_content
 
     # ─────────── P0 helpers ───────────

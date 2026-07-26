@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { WorkflowNodeType } from '@/types';
 import { subAgentApi } from '@/lib/subagent-api';
 import type { SubAgent } from '@/types/subagent';
-import { useT } from '@/stores/localeStore';
+import { useT, useLocaleStore } from '@/stores/localeStore';
 
 const CATEGORY_LABELS: Record<string, string> = {
   input: 'workflow._e143',
@@ -35,6 +35,9 @@ interface NodePaletteProps {
 
 export default function NodePalette({ nodeTypes, subAgents: subAgentsProp }: NodePaletteProps) {
   const t = useT();
+  // useT 返回的 t 是稳定标识（内部读 getState().locale），放进依赖数组不起作用。
+  // 下面的 useMemo 把已翻译文案**烤进**缓存对象，必须依赖 locale 才会在切换语言后重算。
+  const locale = useLocaleStore((s) => s.locale);
   const [subAgents, setSubAgents] = useState<SubAgent[]>(subAgentsProp || []);
 
   useEffect(() => {
@@ -92,7 +95,8 @@ export default function NodePalette({ nodeTypes, subAgents: subAgentsProp }: Nod
           { key: 'append_system_prompt', label: t('workflow._e153'), type: 'textarea', default: '' },
         ],
       } as WorkflowNodeType),
-    [nodeTypes]
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- t 标识稳定，真正的变量是 locale
+    [nodeTypes, locale]
   );
 
   const handleDragStartNode = (e: React.DragEvent, nt: WorkflowNodeType) => {

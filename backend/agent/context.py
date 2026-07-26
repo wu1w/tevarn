@@ -287,7 +287,15 @@ class ContextManager:
             self.last_prompt_skill_plan = None
             logger.warning("prompt-skills block failed: %s", e, exc_info=True)
 
-        system_content = merge_prompt_parts(parts)
+        # T4：prompt-cache 友好模式下 Volatile 层（记忆 + 秒级时间戳 + 会话信息）
+        # 不进 messages[0]，改挂到 messages 尾部，保住可缓存的稳定前缀。
+        from backend.core.config import settings as _cfg
+
+        cache_friendly = bool(
+            getattr(_cfg, "agent_prompt_cache_friendly", True)
+        )
+        system_content = merge_prompt_parts(parts, include_volatile=not cache_friendly)
+        volatile_tail = (parts.get("volatile") or "").strip() if cache_friendly else ""
 
         # 分层报告挂到实例，供 API 读取最近一次组装
         try:
@@ -344,6 +352,12 @@ class ContextManager:
         except Exception as _mm_e:
             logger.debug("multimodal user content skipped: %s", _mm_e)
             _user_content = user_input
+
+        # Volatile 层挂在用户问题**之前**：前缀（system + history）保持字节稳定可缓存，
+        # 同时把记忆/时间放在离问题最近处，比埋在 system 顶部更容易被模型用上。
+        if volatile_tail:
+            messages.append({"role": "system", "content": volatile_tail})
+
         messages.append({"role": "user", "content": _user_content})
 
         total_tokens = self.estimate_tokens(messages)

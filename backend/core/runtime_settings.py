@@ -59,6 +59,12 @@ _KEY_MAP: dict[str, str] = {
     "single_user_mode": "single_user_mode",
     "agent_computer_enabled": "agent_computer_enabled",
     "bridge_token": "bridge_token",
+    # 权限控制台：工作方式 / 执行环境（T5）
+    "agent_working_mode": "agent_working_mode",
+    "agent_execution_mode": "agent_execution_mode",
+    "agent_permission_headless": "agent_permission_headless",
+    "agent_permission_profile": "agent_permission_profile",
+    "agent_permission_ask_mode": "agent_permission_ask_mode",
 }
 
 # 这些 key 变更后需要重建对应服务单例

@@ -74,6 +74,19 @@ async def _clear_policy():
 
 
 @pytest.fixture(autouse=True)
+def _local_execution(monkeypatch):
+    """本文件测的是高危命令三态策略，走本机执行路径。
+
+    T5 起沙箱默认开启，而沙箱只允许 cwd 落在其 workspace 根内；
+    用例用 tmp_path 作 cwd，在沙箱下会被正确拒绝。
+    """
+    from backend.core.config import settings
+
+    monkeypatch.setattr(settings, "agent_execution_mode", "local", raising=False)
+    monkeypatch.setattr(settings, "agent_computer_enabled", False, raising=False)
+
+
+@pytest.fixture(autouse=True)
 async def _policy_cleanup():
     """每个用例前后保证策略干净（repo 走全局库，必须显式清理）。"""
     await _clear_policy()

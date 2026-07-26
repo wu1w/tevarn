@@ -1,0 +1,13 @@
+name: read_only_03_multi_file
+category: answer
+fixture: config_repo
+prompt: |
+  告诉我 server 端口和部署副本数分别是多少。只回答，不要改文件。
+budget:
+  max_iterations: 12
+assertions:
+  - type: reply_contains
+    pattern: "8080"
+  - type: reply_contains
+    pattern: "\\b3\\b"
+  - type: workspace_unchanged

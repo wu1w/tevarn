@@ -111,9 +111,20 @@ def test_file_history_restore_and_unrewind(tmp_path: Path):
     assert f.read_text(encoding="utf-8") == "v2\n"
 
 
-def test_worktree_parse_and_find_root():
-    root = find_git_root(Path(__file__).resolve())
-    assert root is not None
+def test_worktree_parse_and_find_root(tmp_path):
+    """自建临时仓库，不依赖「本 checkout 恰好是 git 仓库」这一环境前提。"""
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    nested = repo / "a" / "b"
+    nested.mkdir(parents=True)
+    a_file = nested / "x.py"
+    a_file.write_text("x = 1\n", encoding="utf-8")
+
+    # 目录与文件两种入参都必须能找到根（传文件时曾把文件当 cwd 传给 git）
+    assert find_git_root(nested) == repo.resolve()
+    root = find_git_root(a_file)
+    assert root == repo.resolve()
+
     porcelain = f"""worktree {root}
 HEAD abcdef123456
 branch refs/heads/main
@@ -121,6 +132,15 @@ branch refs/heads/main
 """
     items = parse_worktree_list(porcelain, root)
     assert items and items[0].path
+
+
+def test_find_git_root_returns_none_outside_repo(tmp_path):
+    """非仓库路径下 rev-parse 回退失败时返回 None，不得抛裸 OSError。"""
+    lonely = tmp_path / "not_a_repo" / "deep"
+    lonely.mkdir(parents=True)
+    assert find_git_root(lonely) is None
+    missing = lonely / "ghost.py"
+    assert find_git_root(missing) is None
 
 
 def test_auto_classify_deny_rm_rf():

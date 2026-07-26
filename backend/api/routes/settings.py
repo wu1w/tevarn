@@ -2466,6 +2466,86 @@ async def get_command_policy(
     return await policy_payload()
 
 
+@router.get("/security/working-mode")
+async def get_working_mode(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """权限控制台：当前工作方式 / 执行环境 + 实际生效值 + 可选项目录（T5）。
+
+    返回 effective.* 是刻意的：用户选的和真正生效的可能不一致
+    （本机无沙箱 → auto 退回本机；高级用户单独覆盖了底层键），必须让用户看得见。
+    """
+    from backend.agent.working_mode import describe_current
+
+    return describe_current()
+
+
+class WorkingModeUpdate(BaseModel):
+    working_mode: Optional[str] = None
+    execution_mode: Optional[str] = None
+
+
+@router.post("/security/working-mode")
+async def set_working_mode(
+    payload: WorkingModeUpdate,
+    request: Request,
+    current_user: Annotated[UserRead, Depends(require_admin)],
+    repo: Annotated[SettingRepository, Depends(get_setting_repo)],
+):
+    """切换工作方式 / 执行环境（实时生效 + DB 持久化）。"""
+    from backend.agent.working_mode import (
+        EXECUTION_MODE_BY_ID,
+        WORKING_MODE_BY_ID,
+        describe_current,
+    )
+
+    changed: dict[str, str] = {}
+
+    if payload.working_mode is not None:
+        wm = str(payload.working_mode).strip().lower()
+        if wm not in WORKING_MODE_BY_ID:
+            raise HTTPException(
+                status_code=400,
+                detail=f"未知工作方式 '{wm}'，可选: {', '.join(WORKING_MODE_BY_ID)}",
+            )
+        changed["agent_working_mode"] = wm
+
+    if payload.execution_mode is not None:
+        em = str(payload.execution_mode).strip().lower()
+        if em not in EXECUTION_MODE_BY_ID:
+            raise HTTPException(
+                status_code=400,
+                detail=f"未知执行环境 '{em}'，可选: {', '.join(EXECUTION_MODE_BY_ID)}",
+            )
+        changed["agent_execution_mode"] = em
+        # 兼容键同步：旧 agent_computer_enabled 仍被旧前端/旧配置读写，
+        # 不同步会出现「控制台显示本机、实则强制沙箱」的错位。
+        changed["agent_computer_enabled"] = "true" if em == "sandbox" else "false"
+
+    if not changed:
+        raise HTTPException(status_code=400, detail="未提供任何变更")
+
+    for key, value in changed.items():
+        await repo.upsert(
+            key=key,
+            value=value,
+            category="security",
+            description="权限控制台：工作方式 / 执行环境",
+        )
+        apply_setting_value(key, value)
+
+    await log_action(
+        AuditAction.SETTINGS_UPDATE,
+        request=request,
+        user_id=current_user.id,
+        resource_type="setting",
+        resource_id="working_mode",
+        details={"category": "security", "changed": changed},
+    )
+
+    return describe_current()
+
+
 @router.post("/security/generate-bridge-token")
 async def generate_bridge_token(
     request: Request,

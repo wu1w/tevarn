@@ -93,8 +93,17 @@ async def test_file_read_execution():
     assert isinstance(result, str)
 
 
-async def test_python_execution():
-    """python 工具可以执行代码"""
+async def test_python_execution(monkeypatch):
+    """python 工具可以执行代码（本机执行路径）
+
+    T5 起沙箱默认开启，沙箱要求 cwd 落在其 workspace 根内；
+    本用例验证的是工具通路本身，故显式走本机模式。
+    """
+    from backend.core.config import settings
+
+    monkeypatch.setattr(settings, "agent_execution_mode", "local", raising=False)
+    monkeypatch.setattr(settings, "agent_computer_enabled", False, raising=False)
+
     await load_all_tools()
     result = await ToolRegistry.execute("python", {"code": "print('ok')"})
     assert isinstance(result, str)

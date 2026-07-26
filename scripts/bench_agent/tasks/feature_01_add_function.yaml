@@ -1,0 +1,21 @@
+name: feature_01_add_function
+category: feature
+fixture: calc_lib
+prompt: |
+  给 calc.py 增加一个 div(a, b) 函数：除数为 0 时抛 ValueError 而不是 ZeroDivisionError。
+  同时在 test_calc.py 里补上对应测试（正常除法 + 除零），最后跑通全部测试。
+budget:
+  max_iterations: 25
+assertions:
+  - type: file_contains
+    path: calc.py
+    pattern: "def div"
+  - type: file_contains
+    path: calc.py
+    pattern: "ValueError"
+  - type: file_contains
+    path: test_calc.py
+    pattern: "div"
+  - type: command
+    command: '{python} -m pytest test_calc.py -q'
+    expect_exit_code: 0

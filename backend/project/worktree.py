@@ -57,6 +57,9 @@ def _run_git(args: list[str], cwd: Path, *, check: bool = False) -> tuple[int, s
         raise WorktreeError("git not found on PATH") from e
     except subprocess.TimeoutExpired as e:
         raise WorktreeError(f"git timed out: {' '.join(args)}") from e
+    except OSError as e:
+        # cwd 不存在 / 不是目录 / 无权限：转成受控错误，不让裸 OSError 冒到调用方
+        raise WorktreeError(f"cannot run git in {cwd}: {e}") from e
     out = (r.stdout or "").strip()
     err = (r.stderr or "").strip()
     if check and r.returncode != 0:
@@ -65,7 +68,13 @@ def _run_git(args: list[str], cwd: Path, *, check: bool = False) -> tuple[int, s
 
 
 def find_git_root(start: Path) -> Path | None:
+    """从 start 向上找 git 仓库根；start 可以是文件或目录。"""
     cur = start.resolve()
+    # start 是文件（或不存在）时取其所在目录：下面的 rev-parse 要拿它当 cwd，
+    # 传文件路径会让 subprocess 抛 NotADirectoryError。
+    search_dir = cur if cur.is_dir() else cur.parent
+
+    cur = search_dir
     for _ in range(16):
         if (cur / ".git").exists():
             return cur
@@ -73,7 +82,10 @@ def find_git_root(start: Path) -> Path | None:
             break
         cur = cur.parent
     # also try git rev-parse
-    code, out, _ = _run_git(["rev-parse", "--show-toplevel"], start)
+    try:
+        code, out, _ = _run_git(["rev-parse", "--show-toplevel"], search_dir)
+    except WorktreeError:
+        return None
     if code == 0 and out:
         return Path(out).resolve()
     return None

@@ -175,7 +175,11 @@ async def trigger_hook(
                 raise Exception(f"Workflow {obj.target_id} not found")
             dag = wf.dag if isinstance(wf.dag, dict) else {}
             engine = WorkflowEngine()
-            engine_result = await engine.execute(dag, workflow_id=str(hook.workflow_id), trigger="webhook")
+            # 此处原写 hook.workflow_id —— 本函数里没有 hook 这个名字（是 obj），
+            # 导致 target_type="workflow" 的钩子每次触发都 NameError，工作流从未真正执行。
+            engine_result = await engine.execute(
+                dag, workflow_id=str(wf.id), trigger="webhook"
+            )
             if not engine_result.get("success", True):
                 logs = engine_result.get("logs") or []
                 err = next(

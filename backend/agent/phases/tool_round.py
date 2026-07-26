@@ -43,6 +43,93 @@ class ToolRoundState:
     last_tool_round_count: int
 
 
+# T1：可安全并发的只读风险等级。写类/命令类一律串行，避免「并发读 + 写同一文件」竞态。
+_PARALLEL_SAFE_RISK = frozenset({"safe", "low"})
+
+
+def _risk_name(tool: Any) -> str:
+    rl = getattr(tool, "risk_level", None)
+    return str(getattr(rl, "value", rl) or "").lower()
+
+
+async def _prefetch_readonly_calls(
+    loop: Any,
+    *,
+    session_id: uuid.UUID,
+    mode: str,
+    tool_calls: list[Any],
+) -> dict[str, tuple[Any, BaseException | None]]:
+    """并发执行本轮的只读工具，返回 {tool_call_id: (result, exc)}。
+
+    system_prompt 的 PARALLEL_TOOL_CALLS 段向模型承诺「runtime executes independent
+    calls concurrently」，但此前实现是纯串行 for 循环 —— 模型照做批量请求反而更慢。
+    本函数兑现该承诺。
+
+    保守策略（正确性优先于速度）：
+    - 整批必须全是只读工具，混入任何写类/命令类则整批退回串行；
+      否则「并发读 + 写同一文件」会读到中间态。
+    - 单个调用不并发（无收益，徒增复杂度）。
+    - 异常不在这里处理，原样带回给串行主体重抛，失败语义与串行完全一致。
+    """
+    if len(tool_calls) < 2:
+        return {}
+    if not bool(getattr(settings, "agent_tool_parallel", True)):
+        return {}
+
+    from backend.tools.registry import ToolRegistry as UnifiedToolRegistry
+
+    tools = []
+    for tc in tool_calls:
+        tool = UnifiedToolRegistry.get(getattr(tc, "name", "") or "")
+        if tool is None or _risk_name(tool) not in _PARALLEL_SAFE_RISK:
+            return {}  # 有一个不安全就整批串行
+        tools.append((tc, tool))
+
+    limit = max(1, int(getattr(settings, "agent_tool_parallel_max", 5) or 5))
+    sem = asyncio.Semaphore(limit)
+    timeout = float(getattr(settings, "agent_tool_timeout_seconds", 180) or 0)
+
+    # 契约白名单预热：懒加载在锁内完成，避免并发首调时白名单尚未就位
+    try:
+        await loop._contract_tool_block_reason(
+            "__prefetch_warmup__", {"_session_id": str(session_id)}
+        )
+    except Exception:
+        pass
+
+    async def _run(tc: Any, tool: Any) -> tuple[Any, BaseException | None]:
+        async with sem:
+            try:
+                args = loop._validate_tool_args(tool.parameters, tc.arguments)
+                if loop.user_id is not None:
+                    args["user_id"] = str(loop.user_id)
+                    args["_user_id"] = str(loop.user_id)
+                args["_session_id"] = str(session_id)
+                args["_chat_mode"] = str(mode or "default")
+                args["_ws_manager"] = loop.ws_manager
+                if timeout > 0:
+                    return (
+                        await asyncio.wait_for(
+                            loop._execute_registered_tool(tc.name, args),
+                            timeout=timeout,
+                        ),
+                        None,
+                    )
+                return await loop._execute_registered_tool(tc.name, args), None
+            except BaseException as e:  # 原样带回串行主体重抛
+                return "", e
+
+    t0 = _time.monotonic()
+    results = await asyncio.gather(*(_run(tc, tool) for tc, tool in tools))
+    logger.info(
+        "parallel tool prefetch: %s calls (%s) in %.0fms",
+        len(tools),
+        ",".join(getattr(tc, "name", "?") for tc, _ in tools),
+        (_time.monotonic() - t0) * 1000,
+    )
+    return {tc.id: res for (tc, _), res in zip(tools, results)}
+
+
 async def run_tool_round(
     loop: Any,
     *,
@@ -72,6 +159,13 @@ async def run_tool_round(
 
     _rc = getattr(loop, "_run_recorder", None)
     messages = state.messages
+
+    # T1：本轮只读工具先并发跑完，结果按 tool_call_id 缓存。
+    # 下面的串行主体一行不动地照常走（WS 事件 / 持久化 / messages 顺序全部不变），
+    # 只是执行那一步改为取预取结果 —— 把并行的风险面压到最小。
+    prefetched = await _prefetch_readonly_calls(
+        loop, session_id=session_id, mode=mode, tool_calls=tool_calls
+    )
 
     # 执行每个 tool call
     for tc in tool_calls:
@@ -128,7 +222,20 @@ async def run_tool_round(
             from backend.tools.registry import ToolRegistry as UnifiedToolRegistry
 
             tool = UnifiedToolRegistry.get(tc.name)
-            if tool is not None:
+            # T1：只读工具已在本轮开始时并发跑完，这里直接取结果；
+            # 异常原样重抛，交给下面既有的 TimeoutError / Exception 处理分支，
+            # 保证并行与串行的失败语义完全一致。
+            if tc.id in prefetched:
+                _res, _exc = prefetched.pop(tc.id)
+                if _exc is not None:
+                    raise _exc
+                tool_result = _res
+                query = (
+                    tc.arguments.get("query", "")
+                    if tc.name == "search_knowledge_base"
+                    else ""
+                )
+            elif tool is not None:
                 validated_args = loop._validate_tool_args(tool.parameters, tc.arguments)
                 if loop.user_id is not None:
                     validated_args["user_id"] = str(loop.user_id)
@@ -194,10 +301,15 @@ async def run_tool_round(
             tool_result = normalize_tool_result(
                 tool_result, tool_name=_tname
             )
-            # 全局硬顶（settings）仍生效
-            if _max_tr and len(tool_result) > int(_max_tr):
+            # 全局硬顶（settings）仍生效；但 TOOL_RESULT_BUDGET 里显式给出的
+            # 更高的 per-tool 预算优先（T3：file_read 已按行边界自分页并给出续读
+            # offset，若在此被通用上限二次 head+tail 拼接，模型会拿到断裂视图）。
+            from backend.agent.tool_result_contract import TOOL_RESULT_BUDGET
+
+            _cap = max(_max_tr, int(TOOL_RESULT_BUDGET.get(_tname, 0) or 0))
+            if _cap and len(tool_result) > _cap:
                 from backend.agent.tool_result_contract import truncate_for_llm
-                tool_result = truncate_for_llm(_tname, tool_result, budget=int(_max_tr))
+                tool_result = truncate_for_llm(_tname, tool_result, budget=_cap)
             # shell 安全拦截 / 127：记入重试分类，并提示改用 file_write 或修 cwd
             try:
                 from backend.agent.turn_retry import classify_tool_result, RetryKind as _RK

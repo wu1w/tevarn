@@ -39,3 +39,8 @@ class LLMChunk(BaseModel):
     reasoning_delta: str = ""  # 思考/reasoning 增量（不进最终用户答复也可用于通道进度）
     tool_call: ToolCall | None = None  # 工具调用增量
     finish_reason: Literal["stop", "tool_calls", "length", "error"] | None = None
+    # 用量（T4）：流式下由 provider 在收尾块回填。
+    # 含 prompt_tokens / completion_tokens，以及 prompt caching 的
+    # cache_read_input_tokens / cache_creation_input_tokens —— 没有这两个指标
+    # 就无法验证缓存是否真的命中，T4 等于没做。
+    usage: dict[str, int] = Field(default_factory=dict)

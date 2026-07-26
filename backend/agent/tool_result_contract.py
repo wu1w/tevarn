@@ -8,8 +8,14 @@ from typing import Any
 
 # 按工具类型差异化截断（超出 → head+tail preview）
 # 注意：file_write/edit 结果要保留完整路径与成功信息，budget 不能太狠
+#
+# file_read（T3）：executor 已按行边界分页并给出续读 offset，是截断的权威。
+# 这里再来一刀 head+tail 拼接会把「第 1-30 行 …省略… 末尾几行」交给模型，
+# 而模型以为自己读到了完整文件 —— 基于断裂视图改代码是静默错改的主因。
+# 故 budget 抬到与 executor 的 FILE_READ_MAX_CHARS 同量级，让分页成为唯一截断点；
+# 只有病态超长行才会兜底走 head+tail。
 TOOL_RESULT_BUDGET: dict[str, int] = {
-    "file_read": 2000,
+    "file_read": 21_000,
     "grep": 1500,
     "glob": 800,
     "command": 3000,

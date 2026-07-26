@@ -149,8 +149,13 @@ async def builtin_permission_before(name: str, arguments: dict[str, Any]) -> Bef
 
     try:
         from backend.agent.permissions_rules import PermissionGate, rules_for_profile
+        from backend.agent.working_mode import (
+            effective_ask_mode,
+            effective_permission_profile,
+        )
 
-        profile = str(getattr(settings, "agent_permission_profile", "cautious") or "cautious")
+        # profile / ask_mode 由「工作方式」派生（高级用户可显式覆盖），见 working_mode.py
+        profile = effective_permission_profile()
         # session mode overlay: if profile is plan OR chat mode plan
         mode = "build"
         chat_mode = str(arguments.get("_chat_mode") or getattr(settings, "_active_chat_mode", "") or "")
@@ -166,6 +171,14 @@ async def builtin_permission_before(name: str, arguments: dict[str, Any]) -> Bef
             rules=rules_for_profile(profile),
         )
         decision = gate.check(name, arguments)
+
+        # 工具自声明 requires_confirmation：此前该标志全项目无人读取（死标志）。
+        # 现在把它接进唯一决策器 —— 仅用于**收紧**：规则说 allow 但工具自称高危时升级为 ask。
+        # 只对规则未覆盖的工具生效（自定义 / MCP 工具），避免和 profile 语义打架：
+        # 比如 acceptEdits 明确表达「工作区编辑不要问我」，就不该被 file_write 的声明推翻。
+        if decision == "allow" and _tool_self_declares_confirmation(name):
+            decision = "ask"
+
         if decision == "allow":
             return BeforeHookResult(arguments=arguments)
         if decision == "deny":
@@ -174,8 +187,25 @@ async def builtin_permission_before(name: str, arguments: dict[str, Any]) -> Bef
                 reason=f"[permission deny] {gate.summarize(name, arguments)}",
                 arguments=arguments,
             )
-        # ask
-        ask_mode = str(getattr(settings, "agent_permission_ask_mode", "local_allow") or "local_allow")
+
+        # ── ask 分支 ──
+        ask_mode = effective_ask_mode()
+        if ask_mode == "auto":
+            # 有确认通道就真弹窗；没有（cron / 渠道机器人 / headless）走兜底策略。
+            has_channel = arguments.get("_ws_manager") is not None
+            if has_channel:
+                ask_mode = "interactive"
+            else:
+                fallback = str(
+                    getattr(settings, "agent_permission_headless", "allow") or "allow"
+                ).strip().lower()
+                ask_mode = "deny" if fallback == "deny" else "local_allow"
+                logger.info(
+                    "permission ask (no approval channel) → headless %s tool=%s",
+                    ask_mode,
+                    name,
+                )
+
         if ask_mode in ("local_allow", "allow", "auto_allow"):
             logger.info("permission ask→local_allow tool=%s %s", name, gate.summarize(name, arguments))
             return BeforeHookResult(arguments=arguments)
@@ -185,13 +215,32 @@ async def builtin_permission_before(name: str, arguments: dict[str, Any]) -> Bef
             block=True,
             reason=(
                 f"[permission ask] 需要确认: {gate.summarize(name, arguments)}. "
-                f"单用户可设 agent_permission_ask_mode=local_allow"
+                f"可在权限控制台调整「工作方式」"
             ),
             arguments=arguments,
         )
     except Exception as e:
         logger.debug("permission hook skipped: %s", e)
         return BeforeHookResult(arguments=arguments)
+
+
+def _tool_self_declares_confirmation(name: str) -> bool:
+    """工具自称需要确认，且 PermissionGate 规则未覆盖它。
+
+    内置工具都有规则覆盖（TOOL_TO_KEY），走 profile 语义；
+    自定义 / MCP / DB 工具没有规则，此前 requires_confirmation=True 完全不起作用。
+    """
+    try:
+        from backend.agent.permissions_rules import TOOL_TO_KEY
+
+        if name in TOOL_TO_KEY:
+            return False
+        from backend.tools.registry import ToolRegistry
+
+        tool = ToolRegistry.get(name)
+        return bool(tool is not None and getattr(tool, "requires_confirmation", False))
+    except Exception:
+        return False
 
 
 async def _interactive_approval(

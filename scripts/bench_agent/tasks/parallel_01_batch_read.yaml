@@ -1,0 +1,14 @@
+name: parallel_01_batch_read
+category: efficiency
+fixture: config_repo
+prompt: |
+  同时看一下 conf/app.yaml 和 conf/deploy.yaml，然后用一句话总结这个服务的部署规模
+  （端口、副本数、内存限制）。不要改文件。
+budget:
+  max_iterations: 10
+assertions:
+  - type: reply_contains
+    pattern: "8080"
+  - type: reply_contains
+    pattern: "512Mi|512"
+  - type: workspace_unchanged

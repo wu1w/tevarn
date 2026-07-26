@@ -525,8 +525,35 @@ async def execute_remote_exec(config: dict[str, Any], arguments: dict[str, Any])
 import re
 
 
+def should_use_sandbox() -> bool:
+    """本次命令是否走隔离后端。
+
+    单一事实源在 working_mode.decide_sandbox()；这里额外兼容旧的
+    agent_computer_enabled=True（等价于强制沙箱），以免旧配置升级后静默失去隔离。
+    """
+    try:
+        from backend.core.config import settings as _cs
+
+        if bool(getattr(_cs, "agent_computer_enabled", False)):
+            return True
+    except Exception:
+        pass
+    try:
+        from backend.agent.working_mode import decide_sandbox
+
+        return decide_sandbox().use_sandbox
+    except Exception:
+        return False
+
+
 def _match_dangerous(command: str) -> str | None:
-    """检测命令是否命中危险模式，返回危险原因（None=安全）。"""
+    """检测命令是否命中危险模式，返回危险原因（None=安全）。
+
+    定位说明（T5）：这是一条**便利提示**，不是安全边界。
+    正则黑名单的绕过成本极低（`$(printf '\\x72\\x6d')`、base64 管道、变量拼接…），
+    真正的边界是执行环境里的沙箱（见 working_mode.decide_sandbox）。
+    保留它是为了在用户误敲高危命令时给一次确认机会，不要当作防护依赖。
+    """
     for pattern, reason in _DANGEROUS_PATTERNS:
         if re.search(pattern, command, re.IGNORECASE):
             return reason
@@ -640,11 +667,9 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
             + format_process(item, tail=2000)
         )
 
-    # Agent Computer（Phase 0.5.3 C0.2）：启用后前台命令走隔离执行后端
-    try:
-        from backend.core.config import settings as _cs
-
-        if bool(getattr(_cs, "agent_computer_enabled", False)):
+    # 执行环境裁决（T5）：sandbox=必须隔离 / auto=有则用无则本机 / local=显式本机
+    if should_use_sandbox():
+        try:
             from backend.computer.manager import get_computer_manager
 
             return await get_computer_manager().execute(
@@ -657,16 +682,16 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
                 timeout=timeout,
                 max_output=max_output,
             )
-    except Exception as _ce:
-        # 安全口径：用户开了沙箱就是要隔离，静默降级到本地直跑会破坏预期。
-        # 给清晰错误，由用户决定关 computer 或换 local 后端。
-        __import__("logging").getLogger(__name__).warning(
-            "agent computer execute failed: %s", _ce
-        )
-        return (
-            f"[Error] Agent Computer 执行失败: {_ce}"
-            "（未降级本地直跑；可关闭 agent_computer_enabled 或设 agent_computer_backend=local）"
-        )
+        except Exception as _ce:
+            # 安全口径：用户要的是隔离，静默降级到本机直跑会破坏预期。
+            # 给清晰错误，由用户在权限控制台改「执行环境」。
+            __import__("logging").getLogger(__name__).warning(
+                "agent computer execute failed: %s", _ce
+            )
+            return (
+                f"[Error] 沙箱执行失败: {_ce}"
+                "（未降级本机直跑。可在权限控制台把「执行环境」改为「自动」或「本机直跑」）"
+            )
 
     try:
         proc = await asyncio.create_subprocess_shell(
@@ -700,13 +725,121 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
         return f"[Error] {e}"
 
 
+# file_read 分页参数（T3）
+FILE_READ_DEFAULT_LIMIT = 1000        # 单次默认行数
+FILE_READ_MAX_CHARS = 20_000          # 单次输出字符上限（按行边界收口）
+FILE_READ_MAX_LINE_CHARS = 2_000      # 单行过长时的截断长度
+
+
+def _file_read_char_budget() -> int:
+    """分页上限须低于 tool_round 的有效上限，否则那里会再做一次 head+tail 拼接，
+    把按行分好的视图重新打断（正是 T3 要消灭的故障）。
+
+    有效上限 = max(settings.max_tool_result_length, TOOL_RESULT_BUDGET['file_read'])
+    —— 与 tool_round 的计算保持一致。
+    """
+    try:
+        from backend.core.config import settings as _s
+
+        hard = int(getattr(_s, "max_tool_result_length", 12_000) or 12_000)
+    except Exception:
+        hard = 12_000
+    try:
+        from backend.agent.tool_result_contract import TOOL_RESULT_BUDGET
+
+        hard = max(hard, int(TOOL_RESULT_BUDGET.get("file_read", 0) or 0))
+    except Exception:
+        pass
+    # 留出 footer 续读提示的余量
+    return max(2_000, min(FILE_READ_MAX_CHARS, hard - 1_000))
+
+
+def _read_file_paginated(
+    full_path: str, filepath: str, offset: int, limit: int, char_budget: int
+) -> str:
+    """同步读文件并渲染带行号的分页视图（在线程里跑，见 execute_file_read）。"""
+    with open(full_path, "rb") as fb:
+        head = fb.read(8000)
+    if b"\x00" in head:
+        return (
+            f"[Error] {filepath} looks like a binary file. "
+            f"Use the command tool (e.g. `file`, `xxd`) if you need to inspect it."
+        )
+
+    with open(full_path, "r", encoding="utf-8", errors="replace") as f:
+        lines = f.readlines()
+
+    total = len(lines)
+    if total == 0:
+        return f"[Empty file] {filepath} has 0 lines."
+    if offset > total:
+        return (
+            f"[Error] offset {offset} is past end of {filepath} "
+            f"(file has {total} lines)."
+        )
+
+    start = offset - 1
+    end = min(total, start + limit)
+
+    out: list[str] = []
+    used = 0
+    stopped_on_chars = False
+    for idx in range(start, end):
+        raw = lines[idx].rstrip("\n").rstrip("\r")
+        if len(raw) > FILE_READ_MAX_LINE_CHARS:
+            raw = (
+                raw[:FILE_READ_MAX_LINE_CHARS]
+                + f"…[line truncated, {len(raw)} chars total]"
+            )
+        rendered = f"{idx + 1:6d}\t{raw}"
+        # 按行边界收口，绝不半行截断
+        if used + len(rendered) + 1 > char_budget and out:
+            stopped_on_chars = True
+            break
+        out.append(rendered)
+        used += len(rendered) + 1
+
+    last_shown = start + len(out)
+    body = "\n".join(out)
+
+    if last_shown < total:
+        reason = "char budget" if stopped_on_chars else "line limit"
+        footer = (
+            f"\n\n[{filepath}: showing lines {start + 1}-{last_shown} of {total} "
+            f"(stopped on {reason}). Call file_read again with offset={last_shown + 1} "
+            f"to continue.]"
+        )
+    else:
+        footer = f"\n\n[{filepath}: lines {start + 1}-{last_shown} of {total} — end of file]"
+    return body + footer
+
+
 async def execute_file_read(config: dict[str, Any], arguments: dict[str, Any]) -> str:
     """
-    文件读取工具：读取指定文件内容
+    文件读取工具：带行号读取，支持 offset/limit 分页（T3）。
+
+    输出为 `cat -n` 风格：行号 + TAB + 正文。行号是展示前缀，不属于文件内容，
+    模型写 edit 的 old_text 时不得带上（工具描述里已声明）。
+    截断永远发生在行边界，并给出可续读的 offset，避免模型基于断裂视图改代码。
     """
     filepath = arguments.get("filepath", "")
     if not filepath:
         return "[Error] filepath is required"
+
+    # 约定：缺省 / None / 0 一律回落到默认值（模型常用 0 表达「从头开始」）；
+    # 负数是明确的调用错误，报错而非静默兜底。
+    try:
+        offset = int(arguments.get("offset") or 1)
+    except (TypeError, ValueError):
+        return "[Error] offset must be an integer (1-based line number)"
+    try:
+        limit = int(arguments.get("limit") or FILE_READ_DEFAULT_LIMIT)
+    except (TypeError, ValueError):
+        return "[Error] limit must be an integer (number of lines)"
+    if offset < 1:
+        return "[Error] offset must be >= 1 (line numbers are 1-based)"
+    if limit < 1:
+        return "[Error] limit must be >= 1 (omit it to use the default)"
 
     base_path = config.get("base_path", "./workspace")
     full_path, base_abs = _resolve_workspace_path(base_path, filepath)
@@ -724,11 +857,15 @@ async def execute_file_read(config: dict[str, Any], arguments: dict[str, Any]) -
         return f"[Error] Not a file: {filepath}"
 
     try:
-        with open(full_path, "r", encoding="utf-8", errors="replace") as f:
-            content = f.read()
-        if len(content) > 20000:
-            content = content[:20000] + "\n...[truncated]"
-        return content
+        # 阻塞 I/O 丢进线程，让同轮并发的 tool call 真正并行（T1b）
+        return await asyncio.to_thread(
+            _read_file_paginated,
+            full_path,
+            filepath,
+            offset,
+            limit,
+            _file_read_char_budget(),
+        )
     except Exception as e:
         return f"[Error] {e}"
 
@@ -844,11 +981,9 @@ async def execute_python(config: dict[str, Any], arguments: dict[str, Any]) -> s
     # Prefer current interpreter (Windows rarely has python3 on PATH)
     py = sys.executable or "python3"
 
-    # Agent Computer（Phase 0.5.3 C0.2）：启用后 python 也走隔离执行后端
-    try:
-        from backend.core.config import settings as _cs
-
-        if bool(getattr(_cs, "agent_computer_enabled", False)):
+    # 执行环境裁决（T5）：python 与 command 走同一口径
+    if should_use_sandbox():
+        try:
             import shlex
 
             from backend.computer.manager import get_computer_manager
@@ -862,14 +997,14 @@ async def execute_python(config: dict[str, Any], arguments: dict[str, Any]) -> s
                 recorder=arguments.get("_run_recorder"),
                 timeout=int(timeout or 30),
             )
-    except Exception as _ce:
-        __import__("logging").getLogger(__name__).warning(
-            "agent computer python failed: %s", _ce
-        )
-        return (
-            f"[Error] Agent Computer 执行失败: {_ce}"
-            "（未降级本地直跑；可关闭 agent_computer_enabled 或设 agent_computer_backend=local）"
-        )
+        except Exception as _ce:
+            __import__("logging").getLogger(__name__).warning(
+                "agent computer python failed: %s", _ce
+            )
+            return (
+                f"[Error] 沙箱执行失败: {_ce}"
+                "（未降级本机直跑。可在权限控制台把「执行环境」改为「自动」或「本机直跑」）"
+            )
 
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -1029,13 +1164,21 @@ async def execute_edit(config: dict[str, Any], arguments: dict[str, Any]) -> str
     """
     文件编辑工具：在现有文件中精确替换字符串
     类似 Claude Code 的 Edit 工具
+
+    唯一性契约（T2）：old_text 必须在文件中唯一，否则报错而非静默改第一处。
+    多处匹配时静默替换是最难排查的 agent 故障——模型以为改对了继续往下跑，
+    错误在几十轮后才暴露。需要全改时显式传 replace_all=true。
     """
     filepath = arguments.get("filepath", "")
     old_text = arguments.get("old_text", "")
     new_text = arguments.get("new_text", "")
+    replace_all = bool(arguments.get("replace_all") or False)
 
     if not filepath or old_text == "":
         return "[Error] filepath and old_text are required"
+
+    if old_text == new_text:
+        return "[Error] old_text and new_text are identical; nothing to change"
 
     base_path = config.get("base_path", "./workspace")
     full_path, base_abs = _resolve_workspace_path(base_path, filepath)
@@ -1055,16 +1198,43 @@ async def execute_edit(config: dict[str, Any], arguments: dict[str, Any]) -> str
         with open(full_path, "r", encoding="utf-8", errors="replace") as f:
             content = f.read()
 
-        if old_text not in content:
-            return f"[Error] old_text not found in {filepath}"
+        occurrences = content.count(old_text)
 
-        new_content = content.replace(old_text, new_text, 1)
+        if occurrences == 0:
+            return (
+                f"[Error] old_text not found in {filepath}. "
+                f"Read the file first and copy the exact text, including indentation "
+                f"and line breaks."
+            )
+
+        if occurrences > 1 and not replace_all:
+            # 定位前两处所在行号，帮模型判断该扩多少上下文
+            first = content[: content.index(old_text)].count("\n") + 1
+            second_off = content.index(old_text, content.index(old_text) + 1)
+            second = content[:second_off].count("\n") + 1
+            return (
+                f"[Error] old_text appears {occurrences} times in {filepath} "
+                f"(first at line {first}, next at line {second}). "
+                f"Include more surrounding lines to make it unique, "
+                f"or pass replace_all=true to replace every occurrence."
+            )
+
+        line_no = content[: content.index(old_text)].count("\n") + 1
+        if replace_all:
+            new_content = content.replace(old_text, new_text)
+        else:
+            new_content = content.replace(old_text, new_text, 1)
 
         with open(full_path, "w", encoding="utf-8") as f:
             f.write(new_content)
 
+        if replace_all and occurrences > 1:
+            return (
+                f"[Success] Edited {filepath}: replaced all {occurrences} occurrences "
+                f"(first at line {line_no}), {len(old_text)} -> {len(new_text)} chars each"
+            )
         return (
-            f"[Success] Edited {filepath}: "
+            f"[Success] Edited {filepath}:{line_no} — "
             f"replaced {len(old_text)} chars with {len(new_text)} chars"
         )
     except Exception as e:
@@ -1089,7 +1259,7 @@ async def execute_glob(config: dict[str, Any], arguments: dict[str, Any]) -> str
 
     search_path = os.path.join(base_abs, pattern)
 
-    try:
+    def _scan() -> str:
         matches = glob.glob(search_path, recursive=True)
         rel_matches = []
         for m in sorted(matches):
@@ -1102,6 +1272,10 @@ async def execute_glob(config: dict[str, Any], arguments: dict[str, Any]) -> str
         if not rel_matches:
             return "No files matched."
         return f"Matched {len(rel_matches)} file(s):\n" + "\n".join(rel_matches)
+
+    try:
+        # 阻塞的目录遍历丢进线程，同轮并发的 tool call 才能真正重叠（T1b）
+        return await asyncio.to_thread(_scan)
     except Exception as e:
         return f"[Error] {e}"
 
@@ -1132,7 +1306,11 @@ async def execute_grep(config: dict[str, Any], arguments: dict[str, Any]) -> str
 
     try:
         regex = re.compile(pattern)
-        matches = []
+    except re.error as e:
+        return f"[Error] Invalid regex pattern: {e}"
+
+    def _scan() -> str:
+        matches: list[str] = []
 
         if os.path.isfile(target_path):
             files = [target_path]
@@ -1162,8 +1340,10 @@ async def execute_grep(config: dict[str, Any], arguments: dict[str, Any]) -> str
             return "No matches found."
         header = f"Found {len(matches)} match(es) (showing up to 100):\n"
         return header + "\n".join(matches)
-    except re.error as e:
-        return f"[Error] Invalid regex pattern: {e}"
+
+    try:
+        # 阻塞的 os.walk + 逐文件读丢进线程（T1b）
+        return await asyncio.to_thread(_scan)
     except Exception as e:
         return f"[Error] {e}"
 

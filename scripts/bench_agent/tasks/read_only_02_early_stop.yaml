@@ -1,0 +1,13 @@
+name: read_only_02_early_stop
+category: answer
+fixture: notes_repo
+prompt: |
+  notes.md 里提到 p99 延迟从多少降到了多少？直接回答。
+budget:
+  max_iterations: 8
+assertions:
+  - type: reply_contains
+    pattern: "800"
+  - type: reply_contains
+    pattern: "320"
+  - type: workspace_unchanged

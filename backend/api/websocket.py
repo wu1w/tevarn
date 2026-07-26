@@ -33,6 +33,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+async def safe_close_ws(
+    websocket: WebSocket, code: int = 1000, reason: str = ""
+) -> None:
+    """安全关闭 WebSocket，避免重复 close 导致 RuntimeError。
+
+    模块级函数：websocket_endpoint 不是方法，拿不到 self。此前那里直接写了
+    `self._safe_close(...)`，使**每一条认证失败路径都抛 NameError**
+    （空/非法 auth 消息、token 过期、token 非法、会话过期、无权访问），
+    连接不会被干净关闭，异常反而冒到 ASGI 层。
+    """
+    try:
+        await websocket.close(code=code, reason=reason)
+    except RuntimeError as e:
+        if "close message has been sent" in str(e):
+            return
+        raise
+    except Exception:
+        pass
+
+
 class ConnectionManager:
     """
     WebSocket 连接管理器
@@ -58,14 +78,7 @@ class ConnectionManager:
 
     async def _safe_close(self, websocket: WebSocket, code: int = 1000, reason: str = "") -> None:
         """安全关闭 WebSocket，避免重复 close 导致 RuntimeError"""
-        try:
-            await websocket.close(code=code, reason=reason)
-        except RuntimeError as e:
-            if "close message has been sent" in str(e):
-                return
-            raise
-        except Exception:
-            pass
+        await safe_close_ws(websocket, code=code, reason=reason)
 
     def _track_task(self, session_id: uuid.UUID, task: asyncio.Task) -> None:
         """跟踪一个后台任务，任务完成时自动移除"""
@@ -299,7 +312,7 @@ async def websocket_endpoint(
                 )
             except Exception:
                 pass
-            await self._safe_close(websocket, code=1008, reason="Authentication required")
+            await safe_close_ws(websocket, code=1008, reason="Authentication required")
             return
 
     effective_token = token_from_query or token_from_message or ""
@@ -316,7 +329,7 @@ async def websocket_endpoint(
                 )
             except Exception:
                 pass
-            await self._safe_close(websocket, code=1008, reason="Invalid or expired token")
+            await safe_close_ws(websocket, code=1008, reason="Invalid or expired token")
             return
 
         try:
@@ -329,7 +342,7 @@ async def websocket_endpoint(
                 )
             except Exception:
                 pass
-            await self._safe_close(websocket, code=1008, reason="Invalid token")
+            await safe_close_ws(websocket, code=1008, reason="Invalid token")
             return
 
         # 单用户模式下：如果 token 里的 user_id 在数据库中不存在，
@@ -381,7 +394,7 @@ async def websocket_endpoint(
             )
         except Exception:
             pass
-        await self._safe_close(websocket, code=1008, reason="Authentication required")
+        await safe_close_ws(websocket, code=1008, reason="Authentication required")
         return
 
     # query-token 路径此前尚未 accept
@@ -399,7 +412,7 @@ async def websocket_endpoint(
                     await websocket.send_json(
                         {"type": "error", "detail": "Session expired"}
                     )
-                    await self._safe_close(websocket, code=1008, reason="Session expired")
+                    await safe_close_ws(websocket, code=1008, reason="Session expired")
                     return
 
                 # 会话用户隔离检查（单用户模式本机不卡）
@@ -411,7 +424,7 @@ async def websocket_endpoint(
                     await websocket.send_json(
                         {"type": "error", "detail": "Session access denied"}
                     )
-                    await self._safe_close(websocket, code=1008, reason="Session access denied")
+                    await safe_close_ws(websocket, code=1008, reason="Session access denied")
                     return
             else:
                 # Session 不存在，自动创建（使用前端传入的 session_id）

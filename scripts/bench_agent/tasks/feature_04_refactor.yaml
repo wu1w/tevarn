@@ -1,0 +1,18 @@
+name: feature_04_refactor
+category: feature
+fixture: flask_auth_broken
+prompt: |
+  auth.py 用的是 md5 存密码，不安全。改成 hashlib.sha256，
+  并同步更新 _USERS 里 alice 的哈希（原密码仍是 "password"），保证测试继续全绿。
+budget:
+  max_iterations: 30
+assertions:
+  - type: file_contains
+    path: app/auth.py
+    pattern: "sha256"
+  - type: file_not_contains
+    path: app/auth.py
+    pattern: "md5"
+  - type: command
+    command: '{python} -m pytest tests -q'
+    expect_exit_code: 0

@@ -89,7 +89,10 @@ logs/
 
 # Local bench / E2E (not published)
 docs/bench/
-scripts/bench_agent/
+# bench harness 本身要入库：它是回归基准，必须人人跑得出同一结论
+# （此前整个 scripts/bench_agent/ 被忽略，正是 docs 引用了 run_bench.py 却找不到的原因）
+# 只忽略每次跑出来的结果产物。
+bench/results/
 workspace/stress/
 /tmp/takton_desktop_shots/
 .takton/

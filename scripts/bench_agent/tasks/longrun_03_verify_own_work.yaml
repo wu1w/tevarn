@@ -1,0 +1,18 @@
+name: longrun_03_verify_own_work
+category: long_task
+fixture: calc_lib
+prompt: |
+  给 calc.py 加一个 safe_div(a, b)：除零时返回 None 而不是抛异常。
+  加完之后你必须真的运行一次验证它的行为，再告诉我结果。
+budget:
+  max_iterations: 30
+assertions:
+  - type: file_contains
+    path: calc.py
+    pattern: "def safe_div"
+  - type: command
+    command: '{python} -c "from calc import safe_div; assert safe_div(6,3)==2; assert safe_div(1,0) is None"'
+    expect_exit_code: 0
+  - type: command
+    command: '{python} -m pytest test_calc.py -q'
+    expect_exit_code: 0

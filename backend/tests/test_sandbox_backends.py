@@ -55,9 +55,16 @@ class TestSeatbeltProfile:
         assert b._check_cwd("/etc") is not None
         assert b._check_cwd("/tmp/ws/sub") is None
 
-    async def test_run_on_linux_friendly_error(self, tmp_path):
-        """Linux 上无 sandbox-exec：返回明确错误而非崩溃。"""
-        b = SeatbeltBackend(str(tmp_path), "main")
+    async def test_run_without_sandbox_exec_friendly_error(self, tmp_path):
+        """sandbox-exec 不可用时返回明确错误而非崩溃。
+
+        原实现依赖「跑在 Linux 上、sandbox-exec 必然缺失」这一宿主前提，
+        在 macOS 上会因该二进制真实存在而失败。改为显式注入不存在的路径，
+        直接覆盖 FileNotFoundError 分支，任何平台结果一致。
+        """
+        b = SeatbeltBackend(
+            str(tmp_path), "main", sandbox_exec_path="/nonexistent/sandbox-exec"
+        )
         res = await b.run("echo hi", cwd=str(tmp_path))
         assert res.exit_code == 127
         assert "sandbox-exec" in (res.error or "")
@@ -123,42 +130,84 @@ class TestJobBackend:
 
 
 class TestDetect:
-    def test_linux_with_bwrap(self):
-        # 本机（Linux + bwrap 已装）：full
+    """平台能力探测：全部 mock 掉宿主探测，使分支逻辑在任何开发机上结果一致。
+
+    原实现假设「开发机是装了 bwrap 的 Linux」，在 macOS / Windows 上必然失败 ——
+    那是在测机器而不是测代码。
+    """
+
+    def test_linux_with_bwrap(self, monkeypatch):
+        monkeypatch.setattr(
+            "backend.computer.detect.shutil.which",
+            lambda name: "/usr/bin/bwrap" if name == "bwrap" else None,
+        )
         cap = detect_sandbox_capability("linux")
         assert cap.mode == "bwrap" and cap.level == "full" and cap.available
 
-    def test_darwin_without_sandbox_exec_on_linux(self):
-        # 在 Linux 上探测 darwin 分支：sandbox-exec 不存在 → none
+    def test_linux_without_bwrap_has_actionable_note(self, monkeypatch):
+        monkeypatch.setattr("backend.computer.detect.shutil.which", lambda name: None)
+        cap = detect_sandbox_capability("linux")
+        assert cap.mode == "none" and not cap.available
+        assert "bubblewrap" in cap.note  # 必须给出安装指引
+
+    def test_darwin_with_sandbox_exec(self, monkeypatch):
+        monkeypatch.setattr(
+            "backend.computer.seatbelt_backend.find_sandbox_exec",
+            lambda: "/usr/bin/sandbox-exec",
+        )
+        cap = detect_sandbox_capability("darwin")
+        assert cap.mode == "seatbelt" and cap.level == "full" and cap.available
+
+    def test_darwin_without_sandbox_exec(self, monkeypatch):
+        monkeypatch.setattr(
+            "backend.computer.seatbelt_backend.find_sandbox_exec", lambda: None
+        )
         cap = detect_sandbox_capability("darwin")
         assert cap.mode == "none" and not cap.available
 
-    def test_win32_without_wsl_falls_back_to_job(self):
-        # 在 Linux 上探测 win32 分支：无 wsl.exe → Job 受限模式
+    def test_win32_without_wsl_falls_back_to_job(self, monkeypatch):
+        monkeypatch.setattr("backend.computer.wsl_backend.find_wsl", lambda: None)
         cap = detect_sandbox_capability("win32")
         assert cap.mode == "job" and cap.level == "restricted" and cap.available
         assert "WSL2" in cap.note  # 引导升级路径
 
-    def test_manager_auto_dispatch_linux(self, tmp_path):
-        """auto 模式在本机（Linux+bwrap）分派到 BwrapBackend。"""
+    def test_manager_auto_dispatch_to_bwrap(self, monkeypatch):
+        """auto 模式按 detect 结果分派到 BwrapBackend。"""
+        from backend.computer.bwrap_backend import BwrapBackend
+        from backend.computer.detect import SandboxCapability
         from backend.computer.manager import ComputerManager
 
-        mgr = ComputerManager()
-        backend = mgr._make_backend("main")
-        from backend.computer.bwrap_backend import BwrapBackend
+        monkeypatch.setattr(
+            "backend.computer.detect.detect_sandbox_capability",
+            lambda platform=None: SandboxCapability("bwrap", "full", True, "bwrap"),
+        )
+        monkeypatch.setattr(
+            "backend.computer.manager.shutil.which", lambda name: "/usr/bin/bwrap"
+        )
+        assert isinstance(ComputerManager()._make_backend("main"), BwrapBackend)
 
-        assert isinstance(backend, BwrapBackend)
+    def test_manager_auto_with_no_sandbox_raises(self, monkeypatch):
+        """无可用沙箱时必须报错，不得静默退回本机直跑。"""
+        from backend.computer.detect import SandboxCapability
+        from backend.computer.manager import ComputerManager
 
-    def test_manager_explicit_seatbelt_on_linux_errors(self, tmp_path):
-        """显式指定 seatbelt 但非 macOS：明确报错。"""
+        monkeypatch.setattr(
+            "backend.computer.detect.detect_sandbox_capability",
+            lambda platform=None: SandboxCapability("none", "none", False, "无沙箱"),
+        )
+        with pytest.raises(RuntimeError, match="无可用沙箱"):
+            ComputerManager()._make_backend("main")
+
+    def test_manager_explicit_seatbelt_without_binary_errors(self, monkeypatch):
+        """显式指定 seatbelt 但二进制不可用：明确报错。"""
         from backend.computer.manager import ComputerManager
         from backend.core.config import settings
 
-        orig = settings.agent_computer_backend
-        settings.agent_computer_backend = "seatbelt"
-        try:
-            mgr = ComputerManager()
-            with pytest.raises(RuntimeError, match="sandbox-exec"):
-                mgr._make_backend("main")
-        finally:
-            settings.agent_computer_backend = orig
+        monkeypatch.setattr(
+            "backend.computer.seatbelt_backend.find_sandbox_exec", lambda: None
+        )
+        monkeypatch.setattr(
+            settings, "agent_computer_backend", "seatbelt", raising=False
+        )
+        with pytest.raises(RuntimeError, match="sandbox-exec"):
+            ComputerManager()._make_backend("main")

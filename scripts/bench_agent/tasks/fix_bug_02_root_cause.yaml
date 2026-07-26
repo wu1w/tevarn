@@ -1,0 +1,14 @@
+name: fix_bug_02_root_cause
+category: fix_bug
+fixture: flask_auth_broken
+prompt: |
+  check_password 在用户不存在时会抛 KeyError。请修好它，并说明根因。
+budget:
+  max_iterations: 20
+assertions:
+  - type: command
+    command: '{python} -m pytest tests -q'
+    expect_exit_code: 0
+  - type: file_not_contains
+    path: app/auth.py
+    pattern: "_USERS\\[user\\]\\s*$"
