@@ -1,4 +1,4 @@
-"""TCP leader protocol — localhost only, no auth token (维护者 recommendation)."""
+"""TCP leader protocol — localhost only, no auth token（本机可信通道，有意为之）."""
 
 from __future__ import annotations
 

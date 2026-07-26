@@ -67,7 +67,7 @@ async def run_best_of_n(
 ) -> dict[str, Any]:
     """
     Run prompt N ways in isolated worktrees.
-    Does NOT apply winner back to main tree (维护者 recommendation).
+    Does NOT apply winner back to main tree (by design).
     """
     n = max(1, min(int(n), 8))
     concurrency = max(1, min(int(concurrency), n))

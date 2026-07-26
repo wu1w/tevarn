@@ -21,7 +21,7 @@
 ```bash
 .venv311/bin/python -m pytest backend/tests/test_l4_packs.py -q
 set -a; source /opt/hermes-workspace/.secrets/bench_llm.env; set +a
-.venv311/bin/python scripts/bench_agent/run_bench.py --models local-llm,kimi
+.venv311/bin/python scripts/bench_agent/run_bench.py --models local,kimi
 ```
 
 单测：`test_l4_packs.py`  

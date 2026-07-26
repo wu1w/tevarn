@@ -61,7 +61,7 @@ from backend.agent.tool_hooks import register_before_tool_call, BeforeHookResult
 
 ```bash
 set -a; source /opt/hermes-workspace/.secrets/bench_llm.env; set +a
-.venv311/bin/python scripts/bench_agent/run_bench.py --models local-llm,kimi
+.venv311/bin/python scripts/bench_agent/run_bench.py --models local,kimi
 ```
 
 ## 非目标（主脑不做）

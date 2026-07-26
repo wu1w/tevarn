@@ -135,3 +135,6 @@ Thumbs.db
 
 # Hermes / agent local
 ../
+
+# 本地工作锚点（会话连续性用，不入库）
+CURRENT_TASK.md
