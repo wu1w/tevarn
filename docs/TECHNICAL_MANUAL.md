@@ -174,6 +174,31 @@ if (stored === 'dark' || stored === 'light') {
 
 ## 3. 后端设计
 
+### 3.0 Agent Kernel（控制平面，v0.4 引入）
+
+`backend/kernel/` 是系统的控制平面，把「一次 agent 运行」抽象为 **AgentProcess**，
+所有执行动作统一经 **Kernel.mediate()** 中介并留下不可变审计事件。
+
+```
+backend/kernel/
+├── process.py      # AgentProcess：identity / capabilities / token_budget / 生命周期状态机
+├── capability.py   # CapabilityToken：narrowing 单调递减（子令牌只能是父令牌子集）
+└── kernel.py       # AgentKernel：进程管理 + mediate() + 预算治理 + 审计事件
+```
+
+核心语义：
+
+- **能力单调递减**：`create_process(parent_id=...)` 时子进程能力只能是父进程子集，
+  试图扩大抛 `CapabilityEscalationError`；子进程预算不得超过父进程剩余预算。
+- **兼容模式**：`capabilities=None` 的进程不启用能力强制（旧路径行为不变），
+  显式能力集进程每次 mediate 强制检查，未授权抛 `KernelPermissionError`。
+- **审计**：`process_created / process_ended / mediation / budget_exceeded`
+  四类事件进环形缓冲（5000 条），`kernel.events()` 可查询。
+- **接入点**：`agent/loop.py::_run_inner` 在 run 生命周期内创建/结束进程；
+  配置开关 `agent_kernel_enabled`（默认开），装配失败显式降级并告警。
+- **演进路线**：W2 补 Token 过期/签名与 Console 展示；W3 所有 tool/skill/MCP
+  调用收口到 mediate()；阶段 3 审计事件接入哈希链持久化。
+
 ### 3.1 目录结构
 
 ```

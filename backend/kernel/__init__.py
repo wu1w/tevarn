@@ -1,0 +1,33 @@
+"""Takton Agent Kernel —— 控制平面（阶段 1 / W1 骨架）。
+
+公开接口：
+    AgentKernel      进程管理 + 执行中介 + 预算治理 + 审计
+    AgentProcess     执行实体（身份/能力/预算/生命周期）
+    CapabilityToken  能力令牌（narrowing 单调递减）
+    get_kernel()     进程级单例
+"""
+
+from backend.kernel.capability import CapabilityEscalationError, CapabilityToken
+from backend.kernel.kernel import (
+    AgentKernel,
+    BudgetExceededError,
+    KernelEvent,
+    KernelPermissionError,
+    MediationDecision,
+    get_kernel,
+    reset_kernel_for_tests,
+)
+from backend.kernel.process import AgentProcess
+
+__all__ = [
+    "AgentKernel",
+    "AgentProcess",
+    "BudgetExceededError",
+    "CapabilityEscalationError",
+    "CapabilityToken",
+    "KernelEvent",
+    "KernelPermissionError",
+    "MediationDecision",
+    "get_kernel",
+    "reset_kernel_for_tests",
+]

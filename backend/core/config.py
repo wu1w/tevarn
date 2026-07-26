@@ -187,6 +187,10 @@ class Settings(BaseSettings):
     # T1：同一轮内的只读工具并发执行（system_prompt 的 PARALLEL_TOOL_CALLS 段
     # 已向模型承诺并发；此前实现是串行 for 循环）。整批含写类工具时自动退回串行。
     agent_tool_parallel: bool = True
+    # ── Agent Kernel（阶段 1/W1）──
+    # Kernel 控制平面：loop 运行纳入 AgentProcess 生命周期管理 + 中介审计。
+    # 关闭后退回纯旧路径（不影响功能，仅失去 kernel 可观测性）。
+    agent_kernel_enabled: bool = True
     agent_tool_parallel_max: int = 5
     # 用户单条输入硬上限（字符），超出截断并提示
     agent_max_user_input_chars: int = 100_000

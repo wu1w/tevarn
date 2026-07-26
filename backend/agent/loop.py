@@ -451,6 +451,28 @@ class NexusAgentLoop(AgentLoopBase):
         )
         self._run_recorder = recorder
         await recorder.start(input_summary=user_input or "")
+
+        # ── Agent Kernel（阶段 1/W1）：本次 run 纳入进程生命周期管理 ──
+        kernel = None
+        kernel_proc = None
+        if bool(getattr(settings, "agent_kernel_enabled", True)):
+            from backend.kernel import get_kernel
+
+            kernel = get_kernel()
+            try:
+                kernel_proc = await kernel.create_process(
+                    agent_key or "main",
+                    session_id=str(session_id),
+                    parent_id=str(parent_run_id) if parent_run_id else None,
+                    meta={"mode": mode},
+                )
+                await kernel.mark_running(kernel_proc.id)
+                self._kernel_process = kernel_proc
+            except Exception as e:
+                # Kernel 装配失败不阻断对话（显式降级并告警，非静默）
+                logger.warning("kernel create_process 失败，退回无 kernel 路径: %s", e)
+                kernel_proc = None
+                self._kernel_process = None
         try:
             result = await self._run_locked(
                 session_id, user_input, attachments, mode, sub_agent_ids
@@ -459,12 +481,21 @@ class NexusAgentLoop(AgentLoopBase):
                 await recorder.cancel("stopped by user")
             else:
                 await recorder.finish_ok(final_summary=result or "")
+            if kernel is not None and kernel_proc is not None:
+                await kernel.end_process(
+                    kernel_proc.id,
+                    state="killed" if self._should_stop else "completed",
+                    reason="stopped by user" if self._should_stop else None,
+                )
             return result
         except Exception as e:
             await recorder.finish_fail(str(e))
+            if kernel is not None and kernel_proc is not None:
+                await kernel.end_process(kernel_proc.id, state="failed", reason=str(e))
             raise
         finally:
             self._run_recorder = None
+            self._kernel_process = None
 
     async def _run_locked(
         self,
