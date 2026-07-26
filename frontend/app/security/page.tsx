@@ -15,10 +15,14 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   getCommandPolicy,
+  getKernelEvents,
+  getKernelProcesses,
   getWorkingMode,
   saveCommandPolicy,
   saveWorkingMode,
   type CommandPolicyCategory,
+  type KernelEvent,
+  type KernelProcess,
   type WorkingModeOption,
   type WorkingModePayload,
 } from '@/lib/api';
@@ -311,6 +315,9 @@ export default function SecurityPage() {
           </div>
         </section>
 
+        {/* Agent Kernel：进程能力/预算 + 中介审计 */}
+        <KernelSection />
+
         {/* 访问与凭证 + 安全自检（复用设置页安全组件） */}
         <section>
           <div className="mb-2 text-sm font-medium text-foreground">{t('security.access')}</div>
@@ -318,5 +325,118 @@ export default function SecurityPage() {
         </section>
       </div>
     </div>
+  );
+}
+
+/** Agent Kernel 区块：当前进程（能力/预算） + 最近中介事件。
+ *  进程是动态的——5s 轮询，页面不可见时靠 effect 清理停止。 */
+function KernelSection() {
+  const t = useT();
+  const [procs, setProcs] = useState<KernelProcess[]>([]);
+  const [events, setEvents] = useState<KernelEvent[]>([]);
+
+  useEffect(() => {
+    let alive = true;
+    const tick = async () => {
+      try {
+        const [p, e] = await Promise.all([getKernelProcesses(), getKernelEvents(30)]);
+        if (!alive) return;
+        setProcs(p.processes);
+        setEvents(e.events.slice().reverse()); // 最新在前
+      } catch {
+        if (alive) {
+          setProcs([]);
+          setEvents([]);
+        }
+      }
+    };
+    void tick();
+    const timer = setInterval(() => void tick(), 5000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, []);
+
+  return (
+    <section>
+      <div className="mb-2">
+        <div className="text-sm font-medium text-foreground">{t('security.kernel')}</div>
+        <div className="mt-0.5 text-xs text-foreground-muted">{t('security.kernelHint')}</div>
+      </div>
+
+      {/* 进程列表 */}
+      <div className="mb-1 text-xs font-medium text-foreground-muted">
+        {t('security.kernelProcesses')}
+      </div>
+      <div className="mb-4 space-y-2">
+        {procs.map((p) => (
+          <div key={p.id} className="tk-card rounded-2xl/60 px-4 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-sm font-medium text-foreground">
+                {p.identity}
+                <span className="ml-2 font-mono text-[11px] text-foreground-dim">{p.id}</span>
+              </div>
+              <span
+                className={`rounded-md border px-2 py-0.5 text-[11px] ${
+                  p.state === 'running'
+                    ? 'border-emerald-400/60 bg-emerald-400/15 text-emerald-300'
+                    : 'border-border-subtle text-foreground-muted'
+                }`}
+              >
+                {p.state}
+              </span>
+            </div>
+            <div className="mt-1 font-mono text-[11px] text-foreground-dim">
+              {p.capabilities === null
+                ? 'capabilities: *（兼容模式）'
+                : `capabilities: [${p.capabilities.join(', ') || '∅'}]`}
+              {p.token_budget !== null && (
+                <span className="ml-3">
+                  {t('security.kernelBudget')}: {p.tokens_used}/{p.token_budget}
+                  {p.budget_remaining !== null && `（剩 ${p.budget_remaining}）`}
+                </span>
+              )}
+              {p.parent_id && <span className="ml-3">parent: {p.parent_id}</span>}
+            </div>
+          </div>
+        ))}
+        {procs.length === 0 && (
+          <div className="text-xs text-foreground-muted">{t('security.kernelEmpty')}</div>
+        )}
+      </div>
+
+      {/* 中介事件 */}
+      <div className="mb-1 text-xs font-medium text-foreground-muted">
+        {t('security.kernelEvents')}
+      </div>
+      <div className="space-y-1">
+        {events.map((e) => (
+          <div
+            key={e.id}
+            className="flex flex-wrap items-baseline gap-2 rounded-lg px-2 py-1 font-mono text-[11px] text-foreground-dim hover:bg-white/5"
+          >
+            <span>{new Date(e.ts * 1000).toLocaleTimeString()}</span>
+            <span
+              className={
+                e.detail.allowed === false ? 'text-red-300' : 'text-foreground-muted'
+              }
+            >
+              {e.kind}
+            </span>
+            <span className="text-foreground-dim">{String(e.process_id).slice(0, 8)}</span>
+            {Boolean(e.detail.target) && (
+              <span className="text-foreground-muted">{String(e.detail.target)}</span>
+            )}
+            {Boolean(e.detail.reason) && (
+              <span className="text-amber-200/80">{String(e.detail.reason)}</span>
+            )}
+          </div>
+        ))}
+        {events.length === 0 && (
+          <div className="text-xs text-foreground-muted">{t('security.kernelEventsEmpty')}</div>
+        )}
+      </div>
+    </section>
   );
 }

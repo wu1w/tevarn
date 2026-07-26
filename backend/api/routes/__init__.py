@@ -21,6 +21,7 @@ from . import (
     files,
     git,
     images,
+    kernel,
     knowledge,
     mcp,
     mcp_store,
@@ -83,6 +84,7 @@ def register_routes(app, prefix: str = "") -> None:
     app.include_router(settings.router, prefix=p)
     app.include_router(agent_profiles.router, prefix=p)
     app.include_router(audit.router, prefix=p)
+    app.include_router(kernel.router, prefix=p)
     app.include_router(notifications.router, prefix=p)
     app.include_router(files.router, prefix=p)
     app.include_router(git.router, prefix=p)

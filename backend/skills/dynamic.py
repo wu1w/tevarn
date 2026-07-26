@@ -63,6 +63,19 @@ class DynamicSkill(BaseSkill):
             return []
 
     async def execute(self, **kwargs: Any) -> str:
+        # ── Agent Kernel（阶段 1/W3）：dynamic skill 执行同样经中介 ──
+        # _kernel_process_id 由 loop._execute_registered_tool 注入；
+        # 工作流等非 loop 路径调用时为空 → 跳过（该路径有自己的工作流权限）。
+        proc_id = kwargs.pop("_kernel_process_id", None)
+        if proc_id:
+            from backend.kernel import KernelPermissionError, get_kernel
+
+            try:
+                await get_kernel().mediate(
+                    str(proc_id), "skill_exec", self.name, args=kwargs
+                )
+            except KernelPermissionError as e:
+                return f"[Error] Kernel 权限拒绝——{e}"
         if self.handler == "http":
             return await self._run_http(kwargs)
         if self.handler == "python":

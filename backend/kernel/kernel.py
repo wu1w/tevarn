@@ -6,7 +6,7 @@
   3. 执行中介：mediate() —— W1 记录审计事件 + 显式能力集强制检查，
      W3 所有 tool/skill/MCP 调用统一收口到这里
   4. 预算治理：charge_tokens / 超限判定（强制中断在 W2-阶段2 完善）
-  5. 可观测性：每次中介/生命周期变迁都产生不可变审计事件
+  5. 可观测性：每次中介/生命周期变迁都产生不可变审计事件（哈希链，阶段 3）
 
 渐进原则：capabilities=None 的进程走兼容模式（放行 + 记录），
 现有 loop 行为不变；显式能力集才强制检查。
@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import time
 import uuid
@@ -27,16 +29,39 @@ logger = logging.getLogger(__name__)
 
 MediationAction = Literal["tool_call", "skill_exec", "mcp_call", "command_exec", "subagent_spawn"]
 
+_GENESIS_HASH = "0" * 64
+
+
+def _event_hash(prev_hash: str, kind: str, process_id: str, detail: dict, ts: float, eid: str) -> str:
+    """事件内容哈希（SHA-256）。链式：每条事件哈希包含前一条的哈希，
+    篡改任何历史事件都会导致其后所有哈希校验失败。"""
+    payload = json.dumps(
+        {
+            "prev": prev_hash,
+            "kind": kind,
+            "process_id": process_id,
+            "detail": detail,
+            "ts": ts,
+            "id": eid,
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+        default=str,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
 
 @dataclass(frozen=True)
 class KernelEvent:
-    """不可变审计事件。W1 存内存环形缓冲；阶段 3 接入哈希链持久化。"""
+    """不可变审计事件。哈希链持久化（阶段 3）：prev_hash 链接前一条事件。"""
 
     kind: str  # process_created / process_ended / mediation / budget_exceeded
     process_id: str
     detail: dict[str, Any] = field(default_factory=dict)
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:16])
     ts: float = field(default_factory=time.time)
+    prev_hash: str = _GENESIS_HASH
+    hash: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -45,6 +70,8 @@ class KernelEvent:
             "process_id": self.process_id,
             "detail": self.detail,
             "ts": self.ts,
+            "prev_hash": self.prev_hash,
+            "hash": self.hash,
         }
 
 
@@ -204,7 +231,25 @@ class AgentKernel:
             })
             raise KernelPermissionError(decision.reason, decision)
 
-        if proc.capabilities is not None and not proc.has_capability(target):
+        # W2：进程持有令牌时以令牌为准——过期 / 范围外一律拒绝
+        if proc.token is not None:
+            if proc.token.is_expired:
+                decision = MediationDecision(False, "能力令牌已过期", capability_checked=True)
+                self._emit("mediation", proc.id, {
+                    "action": action, "target": target, "allowed": False,
+                    "reason": decision.reason, "token_id": proc.token.id,
+                })
+                raise KernelPermissionError(decision.reason, decision)
+            if not proc.token.allows(target):
+                decision = MediationDecision(
+                    False, f"令牌范围不含 '{target}'（action={action}）", capability_checked=True
+                )
+                self._emit("mediation", proc.id, {
+                    "action": action, "target": target, "allowed": False,
+                    "reason": decision.reason, "token_id": proc.token.id,
+                })
+                raise KernelPermissionError(decision.reason, decision)
+        elif proc.capabilities is not None and not proc.has_capability(target):
             decision = MediationDecision(
                 False, f"能力集不含 '{target}'（action={action}）", capability_checked=True
             )
@@ -266,17 +311,43 @@ class AgentKernel:
                 raise CapabilityEscalationError(
                     f"令牌能力 {sorted(extra)} 超出进程能力集"
                 )
+        proc.token = token  # 挂载后 mediate 以令牌为准（含过期强制）
         return token
 
     # ── 审计 ──────────────────────────────────────────────
 
     def _emit(self, kind: str, process_id: str, detail: dict[str, Any]) -> KernelEvent:
-        event = KernelEvent(kind=kind, process_id=process_id, detail=detail)
+        prev = self._events[-1].hash if self._events else _GENESIS_HASH
+        eid = uuid.uuid4().hex[:16]
+        ts = time.time()
+        event = KernelEvent(
+            kind=kind,
+            process_id=process_id,
+            detail=detail,
+            id=eid,
+            ts=ts,
+            prev_hash=prev,
+            hash=_event_hash(prev, kind, process_id, detail, ts, eid),
+        )
         self._events.append(event)
         if len(self._events) > _EVENT_BUFFER_MAX:
             del self._events[: len(self._events) - _EVENT_BUFFER_MAX]
         logger.debug("kernel event %s proc=%s %s", kind, process_id, detail)
         return event
+
+    def verify_event_chain(self) -> tuple[bool, int]:
+        """验证事件哈希链完整性。返回 (是否完整, 首个断链位置索引或 -1)。
+
+        注意：环形缓冲截断后，最旧事件的 prev_hash 指向已丢弃事件——
+        这是合法截断不算篡改，验证从缓冲内第二条开始检查链接关系。
+        """
+        for i, e in enumerate(self._events):
+            expected = _event_hash(e.prev_hash, e.kind, e.process_id, e.detail, e.ts, e.id)
+            if e.hash != expected:
+                return False, i
+            if i > 0 and e.prev_hash != self._events[i - 1].hash:
+                return False, i
+        return True, -1
 
     def events(
         self,

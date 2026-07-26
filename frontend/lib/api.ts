@@ -1037,6 +1037,49 @@ export async function saveWorkingMode(payload: {
   return res.data;
 }
 
+// ── Agent Kernel（阶段 1/W2）：进程与中介审计 ──
+
+export interface KernelProcess {
+  id: string;
+  identity: string;
+  session_id: string | null;
+  parent_id: string | null;
+  capabilities: string[] | null;
+  token_budget: number | null;
+  tokens_used: number;
+  budget_remaining: number | null;
+  state: string;
+  created_at: number;
+  started_at: number | null;
+  ended_at: number | null;
+  exit_reason: string | null;
+}
+
+export interface KernelEvent {
+  id: string;
+  kind: string;
+  process_id: string;
+  detail: Record<string, unknown>;
+  ts: number;
+}
+
+export async function getKernelProcesses(): Promise<{
+  enabled: boolean;
+  processes: KernelProcess[];
+  total: number;
+}> {
+  const res = await api.get('/kernel/processes');
+  return res.data;
+}
+
+export async function getKernelEvents(limit = 50): Promise<{
+  events: KernelEvent[];
+  total: number;
+}> {
+  const res = await api.get('/kernel/events', { params: { limit } });
+  return res.data;
+}
+
 export interface ProviderPreset {
   id: string;
   name: string;

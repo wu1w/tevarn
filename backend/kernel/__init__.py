@@ -8,6 +8,13 @@
 """
 
 from backend.kernel.capability import CapabilityEscalationError, CapabilityToken
+from backend.kernel.intent import (
+    DEFAULT_GRANTABLE,
+    RISKY_CAPABILITIES,
+    IntentDeclaration,
+    synthesize_capabilities,
+    synthesize_token,
+)
 from backend.kernel.kernel import (
     AgentKernel,
     BudgetExceededError,
@@ -25,9 +32,14 @@ __all__ = [
     "BudgetExceededError",
     "CapabilityEscalationError",
     "CapabilityToken",
+    "DEFAULT_GRANTABLE",
+    "IntentDeclaration",
     "KernelEvent",
     "KernelPermissionError",
     "MediationDecision",
+    "RISKY_CAPABILITIES",
     "get_kernel",
     "reset_kernel_for_tests",
+    "synthesize_capabilities",
+    "synthesize_token",
 ]

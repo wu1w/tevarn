@@ -42,6 +42,9 @@ class AgentProcess:
     ended_at: float | None = None
     exit_reason: str | None = None
     meta: dict[str, Any] = field(default_factory=dict)
+    # W2：进程持有的能力令牌（可选）。挂载后 mediate 以令牌为准（含过期强制），
+    # capabilities 列表退化为展示/继承语义。
+    token: Any = None  # CapabilityToken，避免循环 import 用 Any
 
     @property
     def is_terminal(self) -> bool:

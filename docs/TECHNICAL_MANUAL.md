@@ -192,12 +192,30 @@ backend/kernel/
   试图扩大抛 `CapabilityEscalationError`；子进程预算不得超过父进程剩余预算。
 - **兼容模式**：`capabilities=None` 的进程不启用能力强制（旧路径行为不变），
   显式能力集进程每次 mediate 强制检查，未授权抛 `KernelPermissionError`。
-- **审计**：`process_created / process_ended / mediation / budget_exceeded`
-  四类事件进环形缓冲（5000 条），`kernel.events()` 可查询。
+- **令牌强制（W2）**：`issue_token()` 将 CapabilityToken 挂载到进程后，
+  mediate 以令牌为准——过期（`expires_at`）与范围外一律拒绝；
+  令牌可 `narrow()` 出更严格子令牌（过期时间同样单调递减）。
+- **全路径中介（W3）**：所有工具调用（含并行预取）经
+  `loop._execute_registered_tool → kernel.mediate("tool_call")`；
+  dynamic skill 经 `mediate("skill_exec")`（`_kernel_process_id` 由 loop 注入）；
+  MCP 工具走统一注册表，同样覆盖。拦截返回工具级错误反馈模型，不炸 run。
+- **预算强制**：`llm_round` 每轮按 provider usage 扣减进程预算，
+  耗尽置 `_should_stop` 中断 run 并返回 `[Budget Exceeded]`。
+- **Intent Declaration（阶段 2 雏形）**：`kernel/intent.py`
+  声明（goal/capabilities/constraints）→ 白名单策略合成最小能力令牌；
+  高危能力需 `allow_risky=True`；有父令牌自动 narrow。
+- **哈希链审计（阶段 3）**：每条事件 `prev_hash` 链接前一条（SHA-256），
+  `kernel.verify_event_chain()` 检测篡改；环形缓冲截断不算断链。
+- **观测 API**：`GET /api/kernel/processes`（进程树：能力/预算/状态）、
+  `GET /api/kernel/events`（中介审计流，含哈希），Security Console
+  `/security` 页 Kernel 区块 5s 轮询展示。
+- **系统服务化（阶段 3）**：`deploy/takton-backend.service`（systemd 加固单元）
+  + `deploy/README.md`（Linux systemd / Windows NSSM）。
 - **接入点**：`agent/loop.py::_run_inner` 在 run 生命周期内创建/结束进程；
   配置开关 `agent_kernel_enabled`（默认开），装配失败显式降级并告警。
-- **演进路线**：W2 补 Token 过期/签名与 Console 展示；W3 所有 tool/skill/MCP
-  调用收口到 mediate()；阶段 3 审计事件接入哈希链持久化。
+- **演进路线**：阶段 2 后续——动态 skill 默认强隔离（WASM/bwrap）、
+  多 Agent 优先级调度器；阶段 3 后续——审计事件落盘持久化、
+  Evolution Engine 生成 Kernel 配置。
 
 ### 3.1 目录结构
 

@@ -219,6 +219,29 @@ async def run_llm_round(
     except Exception:
         pass
 
+    # ── Agent Kernel 预算强制（TC-B2）：进程级 token 预算扣减，超限中断 run ──
+    kernel_proc = getattr(loop, "_kernel_process", None)
+    if kernel_proc is not None and kernel_proc.token_budget is not None:
+        from backend.kernel import BudgetExceededError, get_kernel
+
+        try:
+            spent = int(stream_usage.get("prompt_tokens") or 0) + int(
+                stream_usage.get("completion_tokens") or 0
+            )
+            if spent > 0:
+                get_kernel().charge_tokens(kernel_proc.id, spent)
+        except BudgetExceededError as e:
+            logger.warning("kernel 预算耗尽，中断 run proc=%s: %s", kernel_proc.id, e)
+            loop._should_stop = True
+            result.action = "break"
+            result.final_content = (
+                f"[Budget Exceeded] 进程 token 预算耗尽，运行已中断（{e}）。"
+                "可在创建进程时提高预算或拆小任务。"
+            )
+            return result
+        except Exception as e:
+            logger.debug("kernel charge_tokens 跳过: %s", e)
+
     # 本轮 LLM 成功，重置失败计数
     loop._llm_fail_streak = 0
 

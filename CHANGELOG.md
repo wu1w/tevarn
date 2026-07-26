@@ -2,6 +2,42 @@
 
 本项目版本记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [0.4.0-alpha] - 2026-07-26
+
+Agent Kernel 控制平面正式引入：进程抽象、能力令牌、全路径执行中介、
+预算强制、意图声明雏形、哈希链审计、系统服务化。
+
+### Added
+
+- **Agent Kernel（`backend/kernel/`）**：`AgentProcess` 六态生命周期 +
+  `CapabilityToken`（narrowing 单调递减/过期单调递减/可序列化）+
+  `AgentKernel`（进程管理/mediate/预算治理/审计）
+- **全路径执行中介**：所有工具调用（含并行预取）、dynamic skill、MCP 工具
+  统一经 `kernel.mediate()`；显式能力集/令牌未授权即拦截，
+  拦截作为工具级错误反馈模型（不中断 run）
+- **能力单调递减**：子进程能力只能是父集子集，预算不超父余额，
+  提权在数据结构层面不可能
+- **预算强制**：进程级 token 预算按 provider usage 扣减，
+  耗尽自动中断 run（`[Budget Exceeded]`）
+- **Intent Declaration 雏形**：意图声明 → 白名单策略合成最小能力令牌，
+  高危能力需显式 `allow_risky`，父令牌自动 narrow
+- **哈希链审计**：KernelEvent 链式 SHA-256，`verify_event_chain()` 篡改检测
+- **观测 API + Console**：`GET /api/kernel/processes|events`，
+  权限控制台新增 Agent Kernel 区块（进程能力/预算 + 中介事件流，5s 轮询）
+- **系统服务化**：`deploy/takton-backend.service`（systemd 加固单元）+
+  Windows NSSM 部署指南
+
+### Changed
+
+- `agent_kernel_enabled` 配置开关（默认开）：loop 运行纳入 Kernel 进程管理，
+  装配失败显式降级告警（兼容模式行为与旧路径完全一致）
+
+### Tests
+
+- 新增 `backend/tests/kernel/` 33 用例：进程生命周期 / 令牌 narrowing /
+  过期与范围强制 / 中介拦截 / 预算上限 / Intent 合成 / 哈希链篡改检测 /
+  观测 API。全量回归 661/0。
+
 ## [0.3.2] - 2026-07-26
 
 安全加固与跨平台沙箱大版本：访问控制、密钥管理、命令执行隔离、

@@ -208,6 +208,23 @@ class NexusAgentLoop(AgentLoopBase):
         blocked = await self._contract_tool_block_reason(name, arguments)
         if blocked:
             return blocked
+        # ── Agent Kernel（阶段 1/W3）：所有工具调用经 kernel.mediate 中介 ──
+        # 兼容模式进程（capabilities=None）放行+记录；显式能力集/令牌未授权 →
+        # 返回工具级权限错误（反馈给模型，不炸掉整个 run）。
+        kernel_proc = getattr(self, "_kernel_process", None)
+        if kernel_proc is not None:
+            arguments.setdefault("_kernel_process_id", kernel_proc.id)
+            from backend.kernel import KernelPermissionError, get_kernel
+
+            try:
+                await get_kernel().mediate(
+                    kernel_proc.id, "tool_call", name, args=arguments
+                )
+            except KernelPermissionError as e:
+                logger.warning(
+                    "kernel 拦截工具调用 tool=%s proc=%s: %s", name, kernel_proc.id, e
+                )
+                return f"Error: Kernel 权限拒绝——{e}"
         ex = getattr(self, "tool_executor", None)
         if ex is not None:
             return await ex.execute(name, arguments)
