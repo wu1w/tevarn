@@ -205,9 +205,9 @@ export function ModelPicker({ disabled = false, onChanged, sessionId }: ModelPic
       <button
         type="button"onClick={handleOpen}
         disabled={disabled}
-        className={`inline-flex max-w-full items-center gap-1.5 rounded-xl border px-3 py-2 text-xs transition disabled:opacity-40 ${
+        className={`inline-flex max-w-full items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs transition disabled:opacity-40 ${
           catalog?.active_model
-            ? 'border-brand-purple/35 bg-brand-purple/10 text-foreground hover:border-brand-purple/50': 'border-amber-500/40 bg-amber-500/10 text-foreground-muted hover:border-amber-500/60'}`}
+            ? 'text-foreground hover:bg-brand-cyan/10': 'text-amber-500/90 hover:bg-brand-cyan/10'}`}
         title={t('modelPicker.title')}
       >
         <span className="text-sm leading-none" aria-hidden>

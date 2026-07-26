@@ -735,9 +735,9 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       </div>
       </div>
 
-      {/* 底栏：模型选择 + 版本号（贴底，对齐小汐 status-bar） */}
+      {/* 底栏：模型选择 + 版本号（贴底，对齐小汐 status-bar；无顶部分割线，保持干净） */}
       <div
-        className="flex h-8 flex-shrink-0 items-center gap-2 border-t border-[var(--glass-border,var(--border-subtle))] bg-[color-mix(in_srgb,var(--page-bg)_55%,transparent)] px-3 backdrop-blur-md"
+        className="flex h-8 flex-shrink-0 items-center gap-2 bg-[color-mix(in_srgb,var(--page-bg)_55%,transparent)] px-3 backdrop-blur-md"
         data-no-composer-focus
       >
         {showModelPicker ? (
