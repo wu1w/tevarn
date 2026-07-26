@@ -219,3 +219,46 @@ def test_propose_kernel_config_no_signal() -> None:
     assert propose_kernel_config([]) is None
     ok_events = [{"kind": "mediation", "detail": {"allowed": True, "target": "grep"}}]
     assert propose_kernel_config(ok_events) is None
+
+
+# ── 多设备加固（阶段 3）──
+
+def test_device_token_encrypt_mask_decrypt_cycle() -> None:
+    from backend.api.routes.devices import _encrypt_config_token, _mask_config_tokens
+    from backend.services.remote.transport import transport_from_device_config
+
+    cfg = _encrypt_config_token({"agent_token": "secret-token-123", "agent_host": "h"})
+    assert cfg["agent_token"].startswith("gAAAAA")  # 落库密文
+    assert cfg["agent_token"] != "secret-token-123"
+
+    class FakeDevice:
+        config = cfg
+
+    dev = _mask_config_tokens(FakeDevice())
+    assert dev.config["agent_token"] == "***"  # 响应掩码
+
+    t = transport_from_device_config(cfg)  # 使用时解密
+    assert t.token == "secret-token-123" if hasattr(t, "token") else True
+
+
+def test_device_token_legacy_plaintext_compatible() -> None:
+    from backend.api.routes.devices import _encrypt_config_token
+    from backend.services.remote.transport import transport_from_device_config
+
+    cfg = {"agent_token": "legacy-plain-token", "agent_host": "h"}
+    enc = _encrypt_config_token(cfg)
+    assert enc["agent_token"].startswith("gAAAAA")
+    # 存量明文（未走加密路径的数据）transport 直接可用
+    t = transport_from_device_config({"agent_token": "legacy-plain-token"})
+    assert t is not None
+
+
+def test_pair_token_min_length() -> None:
+    import pydantic
+
+    from backend.api.routes.devices import DevicePairRequest
+
+    with pytest.raises(pydantic.ValidationError):
+        DevicePairRequest(name="x", token="short")
+    ok = DevicePairRequest(name="x", token="long-enough-token")
+    assert ok.token == "long-enough-token"

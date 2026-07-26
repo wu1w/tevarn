@@ -24,7 +24,7 @@ class DevicePairRequest(BaseModel):
     name: str = Field(..., max_length=128)
     host: str = Field(default="127.0.0.1", max_length=255)
     port: int = Field(default=19876, ge=1, le=65535)
-    token: str = Field(..., min_length=4, max_length=256)
+    token: str = Field(..., min_length=8, max_length=256)
     root_hint: Optional[str] = Field(default=None, max_length=512)
 
 
@@ -40,13 +40,60 @@ def _ensure_owner(device, user_id: uuid.UUID) -> None:
         raise HTTPException(status_code=403, detail="Access denied")
 
 
+# ── 多设备加固（阶段 3）──
+# agent_token 落库 Fernet 加密（复用 core/encryption），API 响应一律掩码；
+# 存量明文数据由 decrypt_setting 兼容（非 Fernet 串原样返回）。
+_TOKEN_MASK = "***"
+
+
+def _encrypt_config_token(config: dict[str, Any]) -> dict[str, Any]:
+    from backend.core.encryption import encrypt_setting
+
+    cfg = dict(config or {})
+    token = cfg.get("agent_token")
+    if isinstance(token, str) and token and not token.startswith("gAAAAA"):
+        cfg["agent_token"] = encrypt_setting(token)
+    return cfg
+
+
+def _mask_config_tokens(device: Any) -> Any:
+    """响应层打码：config.agent_token 永不回显（密文也不给前端）。"""
+    cfg = getattr(device, "config", None)
+    if isinstance(cfg, dict) and cfg.get("agent_token"):
+        device.config = {**cfg, "agent_token": _TOKEN_MASK}
+    return device
+
+
+async def _audit(
+    action: str,
+    user_id: uuid.UUID,
+    device_id: Any,
+    details: dict[str, Any] | None = None,
+    success: bool = True,
+) -> None:
+    try:
+        from backend.repositories.audit_log_repo import AsyncAuditLogRepository
+
+        await AsyncAuditLogRepository().create_log(
+            action=action,
+            user_id=user_id,
+            resource_type="device",
+            resource_id=str(device_id),
+            details=details,
+            success=success,
+        )
+    except Exception:
+        pass  # 审计失败不阻断主流程（仓库层已有自身日志）
+
+
 @router.get("", response_model=list[DeviceRead])
 async def list_devices(
     current_user: Annotated[UserRead, Depends(get_current_user)],
     repo: Annotated[DeviceRepository, Depends(get_device_repo)],
 ):
     """列出当前用户的所有设备"""
-    return await repo.list_by_user(current_user.id) or []
+    devices = await repo.list_by_user(current_user.id) or []
+    return [_mask_config_tokens(d) for d in devices]
 
 
 @router.post("", response_model=DeviceRead)
@@ -96,16 +143,23 @@ async def pair_remote_agent(
         "last_latency_ms": latency,
         "transport": "l1-ws",
     }
-    return await repo.create(
+    device = await repo.create(
         {
             "name": data.name,
             "device_type": "shell",
             "status": "online",
             "capabilities": caps or ["file.list", "file.read", "exec.run", "ping"],
-            "config": config,
+            "config": _encrypt_config_token(config),
             "user_id": current_user.id,
         }
     )
+    await _audit(
+        "device.pair",
+        current_user.id,
+        device.id,
+        details={"name": data.name, "host": data.host, "port": data.port},
+    )
+    return _mask_config_tokens(device)
 
 
 
@@ -129,7 +183,7 @@ async def get_device(
 ):
     device = await repo.get_by_id(device_id)
     _ensure_owner(device, current_user.id)
-    return device
+    return _mask_config_tokens(device)
 
 
 @router.put("/{device_id}", response_model=DeviceRead)
@@ -141,10 +195,13 @@ async def update_device(
 ):
     device = await repo.get_by_id(device_id)
     _ensure_owner(device, current_user.id)
-    updated = await repo.update(device_id, data.model_dump(exclude_unset=True))
+    update_data = data.model_dump(exclude_unset=True)
+    if isinstance(update_data.get("config"), dict):
+        update_data["config"] = _encrypt_config_token(update_data["config"])
+    updated = await repo.update(device_id, update_data)
     if updated is None:
         raise HTTPException(status_code=404, detail="Device not found")
-    return updated
+    return _mask_config_tokens(updated)
 
 
 @router.delete("/{device_id}")
@@ -158,6 +215,12 @@ async def delete_device(
     success = await repo.delete(device_id)
     if not success:
         raise HTTPException(status_code=404, detail="Device not found")
+    await _audit(
+        "device.delete",
+        current_user.id,
+        device_id,
+        details={"name": getattr(device, "name", "")},
+    )
     return {"deleted": True}
 
 

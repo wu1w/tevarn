@@ -99,6 +99,12 @@ def transport_from_device_config(config: dict[str, Any] | None) -> RemoteTranspo
     host = cfg.get("agent_host") or cfg.get("host") or "127.0.0.1"
     port = int(cfg.get("agent_port") or cfg.get("port") or 19876)
     token = cfg.get("agent_token") or cfg.get("token") or ""
+    if token:
+        # 多设备加固：落库为 Fernet 密文，使用时解密；
+        # 存量明文数据 decrypt_setting 原样兼容
+        from backend.core.encryption import decrypt_setting
+
+        token = decrypt_setting(token)
     url = cfg.get("agent_url") or f"ws://{host}:{port}"
     return RemoteTransport(url=url, token=token)
 
