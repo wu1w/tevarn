@@ -68,8 +68,8 @@ class LocalRerankerService(RerankerService):
                 return results[:top_n]
         except Exception as e:
             logger.warning("Local rerank error: %s", e)
-            # Qwen3-Reranker 走 llama.cpp 原生 /v1/rerank 会因 BGE 模板不兼容返回坏分数
-            # （见 developer 部署笔记）。此处回退到 /v1/chat/completions + logprobs yes/no softmax。
+            # 部分模型的 llama.cpp 原生 /v1/rerank 因 prompt 模板不兼容返回坏分数。
+            # 回退到 /v1/chat/completions + logprobs yes/no softmax。
             qwen = await self._qwen3_chat_rerank(query, documents, top_n)
             if qwen:
                 return qwen

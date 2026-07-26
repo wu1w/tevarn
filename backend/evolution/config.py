@@ -35,7 +35,7 @@ class EvolutionConfig:
         default_factory=lambda: (
             "ghp_",
             "sk-",
-            "local-l1-token",
+            "bridge-token-",
             "BEGIN RSA PRIVATE",
             "api_key=",
             "password=",
