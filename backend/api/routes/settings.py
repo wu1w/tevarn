@@ -2379,6 +2379,13 @@ async def upsert_setting(
             invalidate_enabled_cache()
         except Exception:
             pass
+    if key == "command_security_policy":
+        try:
+            from backend.core.command_policy import invalidate_command_policy_cache
+
+            invalidate_command_policy_cache()
+        except Exception:
+            pass
     # upsert 已返回明文；再保险一次
     plain = decrypt_setting(setting.value, key=key) if isinstance(setting.value, str) else data.value
     if apply_setting_value(key, plain):
@@ -2436,7 +2443,7 @@ async def rag_capability_status(
 async def get_security_audit(
     current_user: Annotated[UserRead, Depends(get_current_user)],
 ):
-    """复跑统一安全自检，返回结构化结果供设置页「安全」区块展示。"""
+    """复跑统一安全自检，返回结构化结果供权限控制台展示。"""
     from backend.core.security_check import collect_security_report
 
     report = collect_security_report()
@@ -2447,6 +2454,16 @@ async def get_security_audit(
             for r in report.results
         ],
     }
+
+
+@router.get("/security/command-policy")
+async def get_command_policy(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """权限控制台：高危命令分类元数据 + 当前三态动作。"""
+    from backend.core.command_policy import policy_payload
+
+    return await policy_payload()
 
 
 @router.post("/security/generate-bridge-token")

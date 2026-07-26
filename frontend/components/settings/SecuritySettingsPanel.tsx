@@ -70,7 +70,6 @@ export default function SecuritySettingsPanel() {
   const toast = useToastStore((s) => s.addToast);
   const [audit, setAudit] = useState<SecurityAuditReport | null>(null);
   const [singleUser, setSingleUser] = useState<boolean | null>(null);
-  const [sandbox, setSandbox] = useState<boolean | null>(null);
   const [bridgeToken, setBridgeToken] = useState<string | null>(null);
   const [saving, setSaving] = useState<string | null>(null);
   const [confirmOff, setConfirmOff] = useState(false);
@@ -85,13 +84,10 @@ export default function SecuritySettingsPanel() {
 
   useEffect(() => {
     void refreshAudit();
-    // 读取两个开关当前值（DB 无 key 时用安全默认：single_user=true / sandbox=false）
+    // 读取开关当前值（DB 无 key 时用安全默认 true）
     getSetting('single_user_mode')
       .then((s) => setSingleUser(parseBool((s as { value?: unknown }).value, true)))
       .catch(() => setSingleUser(true));
-    getSetting('agent_computer_enabled')
-      .then((s) => setSandbox(parseBool((s as { value?: unknown }).value, false)))
-      .catch(() => setSandbox(false));
   }, [refreshAudit]);
 
   const applyBool = async (key: string, next: boolean, setter: (v: boolean) => void) => {
@@ -131,7 +127,6 @@ export default function SecuritySettingsPanel() {
   };
 
   const auditRow = (id: string) => audit?.results.find((r) => r.id === id);
-  const sandboxRow = auditRow('command_sandbox');
   const bridgeRow = auditRow('bridge_token');
 
   return (
@@ -199,22 +194,6 @@ export default function SecuritySettingsPanel() {
           checked={singleUser ?? true}
           disabled={saving === 'single_user_mode' || singleUser === null}
           onChange={onToggleSingleUser}
-        />
-      </div>
-
-      {/* 命令执行沙箱 */}
-      <div className="flex flex-wrap items-center justify-between gap-3 tk-card rounded-2xl/60 px-4 py-3">
-        <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium text-foreground">{t('settings.sandboxMode')}</div>
-          <div className="mt-1 text-xs text-foreground-muted">{t('settings.sandboxModeDesc')}</div>
-          {sandboxRow && sandboxRow.level !== 'ok' && (
-            <div className="mt-1.5 text-[11px] text-amber-400">{sandboxRow.hint || sandboxRow.message}</div>
-          )}
-        </div>
-        <Toggle
-          checked={sandbox ?? false}
-          disabled={saving === 'agent_computer_enabled' || sandbox === null}
-          onChange={(next) => void applyBool('agent_computer_enabled', next, setSandbox)}
         />
       </div>
 

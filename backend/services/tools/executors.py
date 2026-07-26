@@ -88,6 +88,43 @@ _DANGEROUS_PATTERNS = [
     (r"\bchmod\s+(-R\s+)?777\b", "放开文件权限 777"),
 ]
 
+# ---- 高危命令分类（权限控制台的三态控制粒度，2026-07-26）----
+# 每类可独立配置：allow（直接放行）/ confirm（每次弹窗确认）/ deny（硬禁止）
+COMMAND_CATEGORIES: dict[str, str] = {
+    "delete": "删除文件/目录",
+    "privilege": "提权执行（sudo）",
+    "power": "关机/重启",
+    "disk": "磁盘操作（格式化/分区）",
+    "system": "系统服务/注册表/账户管理",
+    "remote_pipe": "远程脚本管道执行",
+    "exfiltration": "数据外泄（上传/反弹/凭证读取）",
+    "system_write": "写入系统目录/放开权限",
+}
+
+# label → category（_DANGEROUS_PATTERNS 保持二元组结构，分类经此映射）
+_LABEL_TO_CATEGORY: dict[str, str] = {
+    "递归/强制删除文件": "delete",
+    "强制删除文件 (Windows)": "delete",
+    "递归删除目录 (Windows)": "delete",
+    "递归删除 (PowerShell)": "delete",
+    "提权执行": "privilege",
+    "关机/重启": "power",
+    "磁盘操作": "disk",
+    "格式化磁盘 (Windows)": "disk",
+    "修改注册表": "system",
+    "修改系统服务": "system",
+    "网络/账户管理": "system",
+    "强制结束进程": "system",
+    "远程脚本管道执行": "remote_pipe",
+    "疑似文件上传/数据外泄": "exfiltration",
+    "疑似反弹/外发连接": "exfiltration",
+    "读取云凭证/私钥文件": "exfiltration",
+    "疑似编码后外发": "exfiltration",
+    "疑似远程文件传输": "exfiltration",
+    "写入系统目录": "system_write",
+    "放开文件权限 777": "system_write",
+}
+
 # 内容层高严重度子集（evolution G2 等"检查文本内容"场景共用）：
 # 只含破坏性 + 数据外泄类，不含 sudo/rm 等文档语境常见词，避免误杀教学性内容。
 CONTENT_SEVERE_PATTERNS = [
@@ -496,6 +533,14 @@ def _match_dangerous(command: str) -> str | None:
     return None
 
 
+def _match_dangerous_full(command: str) -> tuple[str, str] | None:
+    """命中返回 (危险原因, 分类 id)；分类缺失时兜底 system。"""
+    reason = _match_dangerous(command)
+    if reason is None:
+        return None
+    return reason, _LABEL_TO_CATEGORY.get(reason, "system")
+
+
 async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> str:
     """
     命令行工具：执行 shell 命令（P0 增强：cwd / 更长超时 / 输出截断 / 后台）。
@@ -515,22 +560,35 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
 
     danger_reason = _match_dangerous(command)
     if danger_reason:
-        from backend.services import confirm_manager
+        # 权限策略三态：allow（放行）/ confirm（弹窗）/ deny（硬禁止）
+        from backend.core.command_policy import get_category_action
 
-        ws_manager = arguments.get("_ws_manager")
-        session_id = arguments.get("_session_id")
-        approved = await confirm_manager.request_confirmation(
-            ws_manager,
-            session_id,
-            title="危险操作确认",
-            command=command,
-            reason=danger_reason,
-        )
-        if not approved:
+        category = _LABEL_TO_CATEGORY.get(danger_reason, "system")
+        action = await get_category_action(category)
+        if action == "deny":
             return (
-                f"[Denied] Dangerous command was rejected by user "
-                f"({danger_reason}): {command}"
+                f"[Policy Blocked] 该命令属于「{category}」高危类别，"
+                f"已在权限控制台被设为禁止（原因：{danger_reason}）。"
+                f"如需执行，请在权限控制台将该类别改为「每次确认」或「放行」: {command}"
             )
+        if action != "allow":
+            # confirm（默认）：走前端确认流程
+            from backend.services import confirm_manager
+
+            ws_manager = arguments.get("_ws_manager")
+            session_id = arguments.get("_session_id")
+            approved = await confirm_manager.request_confirmation(
+                ws_manager,
+                session_id,
+                title="危险操作确认",
+                command=command,
+                reason=danger_reason,
+            )
+            if not approved:
+                return (
+                    f"[Denied] Dangerous command was rejected by user "
+                    f"({danger_reason}): {command}"
+                )
 
     timeout = int(arguments.get("timeout") or config.get("timeout") or 120)
     timeout = max(1, min(timeout, 600))

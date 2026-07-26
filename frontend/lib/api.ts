@@ -958,6 +958,35 @@ export async function generateBridgeToken(): Promise<{ bridge_token: string }> {
   return res.data;
 }
 
+export interface CommandPolicyCategory {
+  id: string;
+  name: string;
+  action: 'allow' | 'confirm' | 'deny';
+  examples: string[];
+}
+
+export interface CommandPolicyPayload {
+  actions: ('allow' | 'confirm' | 'deny')[];
+  categories: CommandPolicyCategory[];
+}
+
+export async function getCommandPolicy(): Promise<CommandPolicyPayload> {
+  const res = await api.get('/settings/security/command-policy');
+  return res.data;
+}
+
+export async function saveCommandPolicy(
+  categories: Record<string, 'allow' | 'confirm' | 'deny'>
+): Promise<unknown> {
+  // JSON 整体写入 settings 表（后端 sanitize 合并默认值 + invalidate 缓存）
+  return updateSetting(
+    'command_security_policy',
+    JSON.stringify({ categories }),
+    'security',
+    '权限控制台：高危命令分类策略'
+  );
+}
+
 export interface ProviderPreset {
   id: string;
   name: string;

@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import SecuritySettingsPanel from '@/components/settings/SecuritySettingsPanel';
 import { Setting } from '@/types';
 import { useSettings } from '@/lib/api-hooks';
 import {
@@ -1340,12 +1339,6 @@ export default function SettingsPage() {
                                   />
                                 </button>
                               </div>
-                            </section>
-
-                            {/* 安全 · 访问控制 / 沙箱 / 桥接令牌 */}
-                            <section>
-                              <SectionTitle title={t('settings.security')} hint={t('settings.securityHint')} />
-                              <SecuritySettingsPanel />
                             </section>
 
                             {/* 备用模型 */}
