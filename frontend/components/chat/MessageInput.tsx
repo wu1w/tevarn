@@ -102,7 +102,8 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   const [mentionFilter, setMentionFilter] = useState('');
   const [mentionIndex, setMentionIndex] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const composerRootRef = useRef<HTMLDivElement | null>(null);
   const sendingRef = useRef(false);
   const isEditing = !!initialContent;
   const inputLocked = disabled || uploading;
@@ -215,6 +216,23 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     return () => window.removeEventListener('focus', onWinFocus);
   }, [focusComposer]);
 
+  // 焦点兜底：任何落在 composer 内的 pointerdown（document 捕获阶段）都确保
+  // textarea 最终获得焦点。覆盖 Electron 托盘 hide→show、原生对话框开关后
+  // webContents 焦点丢失、以及点击未触发原生 focus 的整类场景。
+  useEffect(() => {
+    const onPointerDownCapture = (e: PointerEvent) => {
+      const root = composerRootRef.current;
+      const target = e.target as HTMLElement | null;
+      if (!root || !target || !root.contains(target)) return;
+      if (target.closest('button, a, select, input:not([type="file"]), [data-no-composer-focus]')) return;
+      window.setTimeout(() => {
+        if (document.activeElement !== textareaRef.current) focusComposer();
+      }, 0);
+    };
+    document.addEventListener('pointerdown', onPointerDownCapture, true);
+    return () => document.removeEventListener('pointerdown', onPointerDownCapture, true);
+  }, [focusComposer]);
+
   const ingestFiles = useCallback(
     async (files: FileList | File[] | null | undefined) => {
       if (!files) return;
@@ -252,38 +270,44 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
 
       // 2) 后台上传，成功才变成 ready；失败标红，仍不发送
       const errors: string[] = [];
-      for (let i = 0; i < list.length; i++) {
-        const file = list[i];
-        const localId = staged[i].localId!;
-        try {
-          const result: UploadResult = await uploadFile(file);
-          setAttachments((prev) =>
-            prev.map((a) =>
-              a.localId === localId
-                ? {
-                    ...a,
-                    filename: result.filename || a.filename,
-                    url: result.url,
-                    type: result.type || a.type,
-                    text_content: result.text_content,
-                    status: 'ready',
-                    error: undefined,
-                  }
-                : a
-            )
-          );
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          errors.push(`${file.name}: ${msg}`);
-          console.error('Upload failed:', err);
-          setAttachments((prev) =>
-            prev.map((a) =>
-              a.localId === localId
-                ? { ...a, status: 'error', error: msg }
-                : a
-            )
-          );
+      try {
+        for (let i = 0; i < list.length; i++) {
+          const file = list[i];
+          const localId = staged[i].localId!;
+          try {
+            const result: UploadResult = await uploadFile(file);
+            setAttachments((prev) =>
+              prev.map((a) =>
+                a.localId === localId
+                  ? {
+                      ...a,
+                      filename: result.filename || a.filename,
+                      url: result.url,
+                      type: result.type || a.type,
+                      text_content: result.text_content,
+                      status: 'ready',
+                      error: undefined,
+                    }
+                  : a
+              )
+            );
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            errors.push(`${file.name}: ${msg}`);
+            console.error('Upload failed:', err);
+            setAttachments((prev) =>
+              prev.map((a) =>
+                a.localId === localId
+                  ? { ...a, status: 'error', error: msg }
+                  : a
+              )
+            );
+          }
         }
+      } finally {
+        // 任何异常路径都必须解锁，否则 uploading 卡 true 会让输入框永久 readOnly
+        setUploading(false);
+        if (fileInputRef.current) fileInputRef.current.value = '';
       }
 
       if (errors.length > 0) {
@@ -291,8 +315,6 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
         setUploadError(joined);
         addToast(joined, 'error');
       }
-      setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
       window.setTimeout(() => focusComposer(), 0);
     },
     [addToast, disabled, focusComposer, t]
@@ -500,6 +522,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
 
   return (
     <div
+      ref={composerRootRef}
       className={`chat-composer relative z-30 flex-shrink-0 border-t border-border-subtle bg-[var(--glass-bg,var(--card-bg))] backdrop-blur-xl ${
         composerDragging ? 'ring-2 ring-inset ring-brand-purple/40' : ''
       }`}

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import { CopyButton } from '@/components/ui/CopyButton';
 import { Message } from '@/types';
 import { MarkdownContent } from './MarkdownContent';
@@ -72,6 +72,30 @@ export function MessageBubble({
   const isAssistant = message.role === 'assistant';
   const isTool = message.role === 'tool';
   const [showMenu, setShowMenu] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  // 菜单关闭：非阻塞全局监听（点外面/Escape/滚动均关闭）。
+  // 不渲染透明全屏遮罩——遮罩会盖住 composer(z-30) 吞掉点击，
+  // 导致「点输入框没反应」（事故修复：透明 fixed inset-0 层一律禁止）。
+  useEffect(() => {
+    if (!showMenu) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const el = menuRef.current;
+      if (el && !el.contains(e.target as Node)) setShowMenu(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowMenu(false);
+    };
+    const onScroll = () => setShowMenu(false);
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('scroll', onScroll, true);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('scroll', onScroll, true);
+    };
+  }, [showMenu]);
 
   const handleCopyContent = useCallback(async () => {
     if (message.content) {
@@ -161,10 +185,9 @@ export function MessageBubble({
           </button>
 
           {showMenu && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={() => setShowMenu(false)} />
-              <div
-                className={`absolute top-0 z-50 ${
+            <div
+              ref={menuRef}
+              className={`absolute top-0 z-50 ${
                   isUser
                     ? 'left-0 -translate-x-[calc(100%+8px)]': 'right-0 translate-x-[calc(100%+8px)]'} min-w-[160px] rounded-xl border border-border-default bg-card-bg py-1 shadow-xl`}
               >
@@ -199,7 +222,6 @@ export function MessageBubble({
                   </button>
                 )}
               </div>
-            </>
           )}
 
           {isErr && (
