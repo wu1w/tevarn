@@ -1087,7 +1087,7 @@ export default function SettingsPage() {
                         <input
                           type="text"value={embedModel}
                           onChange={(e) => setEmbedModel(e.target.value)}
-                          placeholder="embedding-model / BAAI/bge-m3"className={monoInputCls}
+                          placeholder="BAAI/bge-m3 等 OpenAI 兼容模型"className={monoInputCls}
                         />
                       </Field>
                     </div>
@@ -1188,7 +1188,7 @@ export default function SettingsPage() {
                         <input
                           type="text"value={rerankModel}
                           onChange={(e) => setRerankModel(e.target.value)}
-                          placeholder="reranker-model"className={monoInputCls}
+                          placeholder="BAAI/bge-reranker 等 OpenAI 兼容模型"className={monoInputCls}
                         />
                       </Field>
                     </div>
