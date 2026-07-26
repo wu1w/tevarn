@@ -11,7 +11,7 @@ import logging
 import uuid
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from backend.api.dependencies import _user_repo, get_current_user
@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 async def bridge_auth(
+    request: Request,
     authorization: str | None = Header(default=None, alias="Authorization"),
 ) -> UserRead:
     """Bridge 鉴权（本地单用户优先，可选 Bearer 加固）。
@@ -36,7 +37,7 @@ async def bridge_auth(
     token = (settings.bridge_token or "").strip()
     if not token:
         # 无 bridge token：沿用标准用户认证（single_user 免 token 回落）
-        return await get_current_user(authorization, _user_repo)
+        return await get_current_user(request, authorization, _user_repo)
 
     import hmac
 
@@ -50,7 +51,7 @@ async def bridge_auth(
             headers={"WWW-Authenticate": "Bearer"},
         )
     # token 校验通过：以本地默认用户身份执行（bridge 是本地可信通道）
-    return await get_current_user(None, _user_repo)
+    return await get_current_user(request, None, _user_repo)
 
 
 router = APIRouter(prefix="/bridge/v1", tags=["bridge"])

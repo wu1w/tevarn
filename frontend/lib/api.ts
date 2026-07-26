@@ -934,6 +934,30 @@ export async function deleteSetting(key: string): Promise<{ deleted: boolean }> 
   return res.data;
 }
 
+// ====== Security APIs（安全加固 2026-07-26）======
+
+export interface SecurityAuditItem {
+  id: string;
+  level: 'ok' | 'warn' | 'fail';
+  message: string;
+  hint: string;
+}
+
+export interface SecurityAuditReport {
+  worst: 'ok' | 'warn' | 'fail';
+  results: SecurityAuditItem[];
+}
+
+export async function getSecurityAudit(): Promise<SecurityAuditReport> {
+  const res = await api.get('/settings/security/audit');
+  return res.data;
+}
+
+export async function generateBridgeToken(): Promise<{ bridge_token: string }> {
+  const res = await api.post('/settings/security/generate-bridge-token');
+  return res.data;
+}
+
 export interface ProviderPreset {
   id: string;
   name: string;

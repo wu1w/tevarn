@@ -77,9 +77,35 @@ _DANGEROUS_PATTERNS = [
     (r"\btaskkill\s+/f", "强制结束进程"),
     # 远程脚本执行
     (r"(curl|wget)[^|]*\|\s*(sh|bash|zsh|python)", "远程脚本管道执行"),
+    # 数据外泄类（提示词注入放大风险：读凭证/上传/反弹连接/编码外发）
+    (r"(curl|wget)[^|]*(-d\s|--data|--data-binary|-F\s|--upload-file|-T\s)", "疑似文件上传/数据外泄"),
+    (r"\b(nc|ncat|netcat)\b.{0,40}\d{2,5}\b", "疑似反弹/外发连接"),
+    (r"\.ssh/(id_rsa|id_ed25519|id_ecdsa)|\.aws/credentials|\.config/gcloud", "读取云凭证/私钥文件"),
+    (r"base64\s+[^|]*\|\s*(curl|wget|nc|ncat)", "疑似编码后外发"),
+    (r"\bscp\s+.*@|\brsync\s+.*@", "疑似远程文件传输"),
     # 写系统目录
     (r"[>]\s*/etc/|[>]\s*/usr/|[>]\s*C:\\\\Windows", "写入系统目录"),
     (r"\bchmod\s+(-R\s+)?777\b", "放开文件权限 777"),
+]
+
+# 内容层高严重度子集（evolution G2 等"检查文本内容"场景共用）：
+# 只含破坏性 + 数据外泄类，不含 sudo/rm 等文档语境常见词，避免误杀教学性内容。
+CONTENT_SEVERE_PATTERNS = [
+    (pattern, label)
+    for pattern, label in _DANGEROUS_PATTERNS
+    if label
+    in {
+        "磁盘操作",
+        "格式化磁盘 (Windows)",
+        "修改注册表",
+        "远程脚本管道执行",
+        "疑似文件上传/数据外泄",
+        "疑似反弹/外发连接",
+        "读取云凭证/私钥文件",
+        "疑似编码后外发",
+        "疑似远程文件传输",
+        "写入系统目录",
+    }
 ]
 
 # 硬禁止：空字节。换行已放开（支持 cat <<EOF heredoc）；反引号放开（与 Hermes 对齐）。

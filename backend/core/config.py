@@ -1,11 +1,95 @@
-"""
-Project Nexus 全局配置管理
+"""Project Nexus 全局配置管理
 使用 pydantic-settings 从环境变量加载配置
 """
 
+import json
+import logging
+import os
+import secrets as _secrets
+from pathlib import Path
 from typing import Literal, Optional
-from pydantic import field_validator
+
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_logger = logging.getLogger(__name__)
+
+# 公开仓库中出现过的已知弱密钥（显式设置这些值一律拒绝）
+_KNOWN_WEAK_SECRETS = frozenset({
+    "change-me",
+    "change-me-in-production",
+    "nexus-api-key-change-me",
+    "takton-dev-secret-key-2026",
+    "takton-dev-api-key-2026",
+})
+
+
+def _secrets_file_path() -> Path:
+    override = os.environ.get("TAKTON_SECRETS_FILE", "").strip()
+    if override:
+        return Path(override)
+    return Path.home() / ".takton" / "secrets.json"
+
+
+def _load_or_generate_secret(kind: str) -> str:
+    """首次启动生成随机密钥并持久化到本地文件，之后复用（重启后已签发 token 不失效）。
+
+    环境变量（TAKTON_JWT_SECRET 等）由 pydantic 优先于 default_factory 处理，
+    本函数只兜底"未配置环境变量"的场景，保证默认值不再是源码里的已知字符串。
+    """
+    path = _secrets_file_path()
+    try:
+        data: dict = {}
+        if path.exists():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                data = {}
+        val = str(data.get(kind, "")).strip()
+        if len(val) >= 16:
+            return val
+        data[kind] = _secrets.token_urlsafe(32)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        os.chmod(path, 0o600)
+        _logger.info("Generated new %s and persisted to %s", kind, path)
+        return data[kind]
+    except Exception as e:
+        # 只读文件系统等场景：退回纯随机值（重启后 token 失效，但绝不落已知默认值）
+        _logger.warning("Cannot persist %s to %s (%s); using ephemeral random secret", kind, path, e)
+        return _secrets.token_urlsafe(32)
+
+
+def get_or_create_initial_admin_password() -> str:
+    """非 Electron 部署首次创建默认用户时：随机生成管理员密码并持久化（0600）。
+
+    只打印文件路径、不打印密码本身；用户首次登录后应立即修改。
+    """
+    path = _secrets_file_path().parent / "initial_admin_password"
+    try:
+        if path.exists():
+            val = path.read_text(encoding="utf-8").strip()
+            if val:
+                return val
+        pw = _secrets.token_urlsafe(12)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(pw, encoding="utf-8")
+        os.chmod(path, 0o600)
+        _logger.warning(
+            "Initial admin password generated and written to %s — "
+            "log in with admin@takton.dev and change it immediately",
+            path,
+        )
+        return pw
+    except Exception as e:
+        # 无法持久化：用临时随机密码并明确告知（密码仅本次运行有效）
+        pw = _secrets.token_urlsafe(12)
+        _logger.warning(
+            "Cannot persist initial admin password (%s); ephemeral password for THIS RUN ONLY: %s",
+            e,
+            pw,
+        )
+        return pw
 
 
 class LLMConfig(BaseSettings):
@@ -59,14 +143,23 @@ class Settings(BaseSettings):
         extra="ignore",
         env_prefix="TAKTON_",  # 桌面模式通过 TAKTON_* 环境变量注入
         protected_namespaces=(),  # 允许 settings_encryption_salt 等含 "settings_" 前缀的字段名
+        populate_by_name=True,  # 允许代码级 Settings(jwt_secret=...) 传参（alias 不屏蔽字段名）
     )
 
     # Database
     db_url: str = "sqlite+aiosqlite:///./takton.db"
 
     # Security
-    jwt_secret: str = "takton-dev-secret-key-2026"
-    api_key: str = "takton-dev-api-key-2026"
+    # 默认随机生成并持久化到 ~/.takton/secrets.json（可用 TAKTON_SECRETS_FILE 覆盖），
+    # 源码不再含已知默认密钥；alias 兼容旧变量名 TAKTON_SECRET_KEY（deprecated）。
+    jwt_secret: str = Field(
+        default_factory=lambda: _load_or_generate_secret("jwt_secret"),
+        validation_alias=AliasChoices("TAKTON_JWT_SECRET", "TAKTON_SECRET_KEY"),
+    )
+    api_key: str = Field(
+        default_factory=lambda: _load_or_generate_secret("api_key"),
+        validation_alias=AliasChoices("TAKTON_API_KEY"),
+    )
     # Takton Code ↔ Desktop bridge 可选独立 Bearer token。
     # 留空 → 回落 get_current_user（single_user_mode 下 loopback 免 token）。
     # 设置后 → /bridge/v1/* 强制校验该 token（共享机/非 loopback 加固）。
@@ -258,25 +351,31 @@ class Settings(BaseSettings):
     file_browser_root: str = "."
     # 上传目录（桌面模式由 Electron 注入 userData/uploads）
     uploads_dir: str = ""
-    # 单用户模式默认管理员密码（仅首次创建用户时使用；桌面由 Electron 注入）
-    default_admin_password: str = "admin"
+    # 单用户模式默认管理员密码（仅首次创建用户时使用；桌面由 Electron 注入随机值）。
+    # 留空（默认）→ 首次创建用户时随机生成并写入 ~/.takton/initial_admin_password（0600）。
+    default_admin_password: str = ""
     # 单用户模式（个人部署时无需登录）
     single_user_mode: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def _warn_legacy_env_names(cls, data):
+        """旧变量名 TAKTON_SECRET_KEY 仍生效但告警，引导迁移到 TAKTON_JWT_SECRET。"""
+        if isinstance(data, dict) and "TAKTON_SECRET_KEY" in data:
+            _logger.warning(
+                "TAKTON_SECRET_KEY is deprecated; please rename to TAKTON_JWT_SECRET"
+            )
+        return data
 
     @field_validator("jwt_secret", "api_key", mode="after")
     @classmethod
     def _reject_default_secrets(cls, v: str, info) -> str:
-        """禁止在生产环境使用默认弱密钥"""
-        field_name = info.field_name
-        defaults = {
-            "jwt_secret": "change-me",
-            "api_key": "nexus-api-key-change-me",
-        }
-        default_value = defaults.get(field_name, "")
-        if v == default_value:
+        """拒绝公开仓库中出现过的已知弱密钥（无论通过何种途径注入）"""
+        if v.strip() in _KNOWN_WEAK_SECRETS:
             raise ValueError(
-                f"{field_name} is using the default insecure value '{v}'. "
-                f"Please set a strong random value via environment variable."
+                f"{info.field_name} is using a known insecure default value. "
+                f"Please set a strong random value via environment variable "
+                f"(e.g. TAKTON_{info.field_name.upper()})."
             )
         return v
 

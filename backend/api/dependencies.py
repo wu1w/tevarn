@@ -5,9 +5,9 @@ FastAPI 依赖注入
 
 from typing import Annotated
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 
-from backend.core.config import settings
+from backend.core.config import get_or_create_initial_admin_password, settings
 from backend.core.security import decode_access_token
 from backend.repositories import (
     AgentProfileRepository,
@@ -72,7 +72,27 @@ async def verify_api_key(x_api_key: Annotated[str, Header()]) -> str:
 
 # ---- Authentication ----
 
+def _is_loopback_host(host: str | None) -> bool:
+    """是否 loopback 来源（只信直连对端，不信可伪造的 X-Forwarded-For）。
+
+    "testclient" 是 httpx ASGITransport/TestClient 的默认对端名——真实网络对端
+    来自 socket getpeername 只可能是 IP，故此名只可能出现在进程内测试中，
+    语义等价 loopback。
+    """
+    if not host:
+        return False
+    if host in ("localhost", "testclient"):
+        return True
+    import ipaddress
+
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 async def get_current_user(
+    request: Request,
     authorization: str | None = Header(default=None, alias="Authorization"),
     user_repo: UserRepository = Depends(lambda: _user_repo),
 ) -> UserRead:
@@ -80,7 +100,7 @@ async def get_current_user(
 
     - 有 Bearer 且有效 → 对应用户
     - 有 Bearer 但无效/过期 → 401（禁止静默回落，避免会话 403 身份错乱）
-    - 无 Bearer 且 single_user_mode → 默认 admin@takton.dev
+    - 无 Bearer 且 single_user_mode → 默认 admin@takton.dev（仅 loopback）
     """
     has_bearer = bool(authorization and authorization.startswith("Bearer "))
     if has_bearer:
@@ -110,6 +130,17 @@ async def get_current_user(
         )
 
     if settings.single_user_mode:
+        # 安全闸门：single_user_mode 的"无 Bearer 放行 admin"仅限 loopback 来源。
+        # 服务若绑定 0.0.0.0（Docker 部署常见），非本机请求必须走真实登录。
+        client_host = request.client.host if request.client else None
+        if not _is_loopback_host(client_host):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "single_user_mode allows loopback access only; "
+                    "set TAKTON_SINGLE_USER_MODE=false for non-local deployments"
+                ),
+            )
         # 查找或创建默认用户
         default = await user_repo.get_by_email("admin@takton.dev")
         if default:
@@ -122,7 +153,7 @@ async def get_current_user(
         default_pw = (
             (settings.default_admin_password or "").strip()
             or os.environ.get("TAKTON_DEFAULT_ADMIN_PASSWORD", "").strip()
-            or "admin"
+            or get_or_create_initial_admin_password()
         )
         try:
             user = await user_repo.create(

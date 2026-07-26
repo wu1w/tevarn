@@ -2408,6 +2408,10 @@ async def delete_setting(
     success = await repo.delete(key)
     if not success:
         raise HTTPException(status_code=404, detail="Setting not found")
+    # 内存同步：已知 runtime key 重置为字段默认值（避免 DB 删了内存还留着）
+    from backend.core.runtime_settings import clear_setting_value
+
+    clear_setting_value(key)
     return {"deleted": True}
 
 @router.get("/rag-status")
@@ -2422,3 +2426,52 @@ async def rag_capability_status(
     st = get_rag_status(force=True)
     RAGServiceFactory.reset()  # 下次 get_service 按新能力重建
     return st.to_dict()
+
+
+# ---- 安全加固（2026-07-26）：自检报告 + 桥接令牌生成 ----
+# 注意路径均为两段（/security/*），不会被上方 /{key} 通配吞掉。
+
+
+@router.get("/security/audit")
+async def get_security_audit(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """复跑统一安全自检，返回结构化结果供设置页「安全」区块展示。"""
+    from backend.core.security_check import collect_security_report
+
+    report = collect_security_report()
+    return {
+        "worst": report.worst,
+        "results": [
+            {"id": r.id, "level": r.level, "message": r.message, "hint": r.hint}
+            for r in report.results
+        ],
+    }
+
+
+@router.post("/security/generate-bridge-token")
+async def generate_bridge_token(
+    request: Request,
+    current_user: Annotated[UserRead, Depends(require_admin)],
+    repo: Annotated[SettingRepository, Depends(get_setting_repo)],
+):
+    """生成随机 bridge_token 并立即生效（DB 持久化 + 内存应用）。token 仅此一次完整返回。"""
+    import secrets as _secrets
+
+    token = _secrets.token_urlsafe(24)
+    await repo.upsert(
+        key="bridge_token",
+        value=token,
+        category="security",
+        description="Takton Code ↔ Desktop 桥接令牌（设置页生成）",
+    )
+    apply_setting_value("bridge_token", token)
+    await log_action(
+        AuditAction.SETTINGS_UPDATE,
+        request=request,
+        user_id=current_user.id,
+        resource_type="setting",
+        resource_id="bridge_token",
+        details={"category": "security", "action": "generate"},
+    )
+    return {"bridge_token": token}

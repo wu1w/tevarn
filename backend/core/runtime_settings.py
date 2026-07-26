@@ -55,6 +55,10 @@ _KEY_MAP: dict[str, str] = {
     "qdrant_url": "qdrant_url",
     "qdrant_collection": "qdrant_collection",
     "rag_enabled": "rag_enabled",
+    # 安全开关（设置页「安全」区块）
+    "single_user_mode": "single_user_mode",
+    "agent_computer_enabled": "agent_computer_enabled",
+    "bridge_token": "bridge_token",
 }
 
 # 这些 key 变更后需要重建对应服务单例
@@ -178,6 +182,27 @@ def apply_setting_value(key: str, value: Any) -> bool:
             return True
         except Exception as e:
             logger.warning("Failed to apply setting %s: %s", key, e)
+            return False
+
+
+def clear_setting_value(key: str) -> bool:
+    """删除 DB key 后，把内存值重置为字段静态默认值（仅对静态 default 的安全 key 生效）。"""
+    from backend.core.config import Settings
+
+    attr = _KEY_MAP.get(key)
+    if not attr or not hasattr(settings, attr):
+        return False
+    default = Settings.model_fields[attr].default
+    from pydantic_core import PydanticUndefined
+
+    if default is PydanticUndefined:
+        return False
+    with _settings_lock:
+        try:
+            setattr(settings, attr, default)
+            return True
+        except Exception as e:
+            logger.warning("Failed to clear setting %s: %s", key, e)
             return False
 
 

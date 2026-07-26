@@ -1,36 +1,48 @@
 version: '3.8'
 
+# Takton Docker 部署
+#
+# 安全默认值（2026-07-26 安全加固）：
+# - single_user_mode 默认 false：容器间/宿主机访问均非 loopback，必须走真实账号登录
+# - 不再注入任何弱默认密钥；未设 TAKTON_JWT_SECRET 时容器首启自动生成随机密钥，
+#   持久化到 takton_data volume（/app/data/secrets.json，0600）
+# - qdrant 不对外暴露端口（仅容器网络内可达）；调试时自行加 ports
+# - 环境变量名以 backend/core/config.py 的 Settings 字段为准（env_prefix=TAKTON_）
+
 services:
   takton-backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=sqlite+aiosqlite:///./data/takton.db
-      - QDRANT_URL=http://qdrant:6333
-      - REDIS_URL=redis://redis:6379
-      - TAKTON_SECRET_KEY=${TAKTON_SECRET_KEY:-change-me-in-production}
-      - TAKTON_ENCRYPTION_SALT=${TAKTON_ENCRYPTION_SALT:-change-me-salt}
+      - TAKTON_DB_URL=sqlite+aiosqlite:////app/data/takton.db
+      - TAKTON_QDRANT_URL=http://qdrant:6333
+      - TAKTON_SINGLE_USER_MODE=${TAKTON_SINGLE_USER_MODE:-false}
+      # 生产建议显式设置强随机值；留空则首启自动生成并持久化到 volume
+      - TAKTON_JWT_SECRET=${TAKTON_JWT_SECRET:-}
+      - TAKTON_SETTINGS_ENCRYPTION_SALT=${TAKTON_SETTINGS_ENCRYPTION_SALT:-}
+      # 共享机/非 loopback 场景建议设置桥接令牌（留空 → 回落用户鉴权）
+      - TAKTON_BRIDGE_TOKEN=${TAKTON_BRIDGE_TOKEN:-}
     volumes:
       - takton_data:/app/data
       - takton_logs:/app/logs
     depends_on:
       - qdrant
-      - redis
     restart: unless-stopped
     networks:
       - takton
 
   takton-frontend:
     build:
-      context: ./frontend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        # 浏览器侧访问后端的地址（构建期内联）；对外部署改为实际域名/IP
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     ports:
       - "3000:3000"
-    environment:
-      - NEXT_PUBLIC_API_URL=http://takton-backend:8000
     depends_on:
       - takton-backend
     restart: unless-stopped
@@ -39,20 +51,11 @@ services:
 
   qdrant:
     image: qdrant/qdrant:latest
-    ports:
-      - "6333:6333"
+    # 不暴露到宿主机；需要宿主机调试时取消下一行注释
+    # ports:
+    #   - "6333:6333"
     volumes:
       - qdrant_data:/qdrant/storage
-    restart: unless-stopped
-    networks:
-      - takton
-
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
     restart: unless-stopped
     networks:
       - takton
@@ -78,7 +81,6 @@ volumes:
   takton_data:
   takton_logs:
   qdrant_data:
-  redis_data:
   postgres_data:
 
 networks:

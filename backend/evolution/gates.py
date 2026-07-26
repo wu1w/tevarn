@@ -36,10 +36,21 @@ def run_gates(
         if p and p in text:
             banned_hit = p
             break
-    destructive = bool(
-        re.search(r"rm\s+-rf\s+/|format\s+c:|DROP\s+DATABASE|os\.system\(", text, re.I)
-    )
-    g2_ok = banned_hit is None and not destructive
+    # 与 command 工具共用高严重度危险模式子集（破坏性 + 数据外泄类），
+    # 避免自动生成的 skill/tool playbook 绕过独立的一套弱检查；
+    # 同时不含 sudo/rm 等文档语境常见词，避免误杀教学性内容。
+    from backend.services.tools.executors import CONTENT_SEVERE_PATTERNS
+
+    destructive_hit = None
+    for pattern, label in CONTENT_SEVERE_PATTERNS:
+        if re.search(pattern, text, re.I):
+            destructive_hit = label
+            break
+    if destructive_hit is None and re.search(
+        r"format\s+c:|DROP\s+DATABASE|os\.system\(", text, re.I
+    ):
+        destructive_hit = "破坏性内容"
+    g2_ok = banned_hit is None and destructive_hit is None
     gates.append(
         {
             "id": "G2_content",
@@ -47,7 +58,11 @@ def run_gates(
             "reason": (
                 ""
                 if g2_ok
-                else (f"命中敏感模式: {banned_hit}" if banned_hit else "疑似破坏性内容")
+                else (
+                    f"命中敏感模式: {banned_hit}"
+                    if banned_hit
+                    else f"疑似危险内容: {destructive_hit}"
+                )
             ),
         }
     )

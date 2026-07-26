@@ -58,20 +58,18 @@ def _spawn_bg(coro, name: str) -> None:
 
 
 def _validate_secrets() -> None:
-    """启动前强制检查密钥强度，防止默认弱密钥上线"""
-    insecure_defaults = {
-        "jwt_secret": "change-me",
-        "api_key": "nexus-api-key-change-me",
-    }
-    for field, default in insecure_defaults.items():
+    """启动前强制检查密钥强度，防止默认弱密钥上线（比对真实已知弱值集合）"""
+    from backend.core.config import _KNOWN_WEAK_SECRETS
+
+    for field in ("jwt_secret", "api_key"):
         value = getattr(settings, field, "")
-        if value == default:
+        if value.strip() in _KNOWN_WEAK_SECRETS:
             logger.error(
-                f"SECURITY ERROR: {field} is using the default insecure value '{value}'. "
+                f"SECURITY ERROR: {field} is using a known insecure default value. "
                 f"Please set a strong random value via environment variable or .env file."
             )
             raise RuntimeError(
-                f"{field} must be changed from the default insecure value. "
+                f"{field} must be changed from the known insecure value. "
                 f"Set it via environment variable before starting the application."
             )
 
@@ -92,10 +90,11 @@ async def _seed_default_user() -> None:
         return
     from backend.core.security import get_password_hash
     import os
+    from backend.core.config import get_or_create_initial_admin_password
     default_pw = (
         (settings.default_admin_password or "").strip()
         or os.environ.get("TAKTON_DEFAULT_ADMIN_PASSWORD", "").strip()
-        or "admin"
+        or get_or_create_initial_admin_password()
     )
     try:
         user = await repo.create({
@@ -326,6 +325,10 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理（替代已弃用的 on_event）"""
     # ---- Startup ----
     _validate_secrets()
+    # 统一安全自检：fail 级（如非 loopback + single_user_mode）直接拒绝启动
+    from backend.core.security_check import run_startup_security_check
+
+    run_startup_security_check()
 
     logger.info("=" * 50)
     logger.info("Takton Backend Starting...")
