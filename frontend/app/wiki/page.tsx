@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { WikiEntity, WikiRelation } from '@/types';
 import { getWikiGraph, createWikiEntity, updateWikiEntity, deleteWikiEntity, createWikiRelation, deleteWikiRelation, importWiki, previewWikiImport } from '@/lib/api';
+import { useConfirm } from '@/components/desktop/ConfirmDialog';
 import { useT, t as tFn } from '@/stores/localeStore';
 
 /** 由导出的 t 反推出的合法 key 类型，用于动态拼接 key 的精确断言 */
@@ -99,6 +100,9 @@ export default function WikiExplorer() {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3000);
   }, []);
+
+  // 原生 window.confirm 的桌面端替代（体验统一，与 skills/cron 同款）
+  const { confirm, ConfirmDialogComponent } = useConfirm();
 
   const loadData = useCallback(async () => {
     try {
@@ -226,7 +230,7 @@ export default function WikiExplorer() {
   const handleDeleteEntity = async (id: string) => {
     const entity = entityMap.get(id);
     const name = entity?.name || id.slice(0, 8);
-    if (!window.confirm(t('wiki.msg.confirmDeleteEntity').replace('{name}', name))) return;
+    if (!(await confirm(t('wiki.msg.confirmDeleteEntity').replace('{name}', name)))) return;
     try {
       await deleteWikiEntity(id);
       addToast(t('wiki.msg.entityDeleted'), 'success');
@@ -652,6 +656,7 @@ export default function WikiExplorer() {
           </div>
         </div>
       )}
+      {ConfirmDialogComponent}
     </div>
   );
 }

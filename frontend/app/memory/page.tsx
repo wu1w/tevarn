@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useT } from '@/stores/localeStore';
+import { useConfirm } from '@/components/desktop/ConfirmDialog';
 
 
 interface Entity {
@@ -35,6 +36,8 @@ export default function MemoryPage() {
   const [filterType, setFilterType] = useState<string>('');
   const [showCreate, setShowCreate] = useState(false);
   const [editingEntity, setEditingEntity] = useState<Entity | null>(null);
+  // 原生 window.confirm 的桌面端替代
+  const { confirm, ConfirmDialogComponent } = useConfirm();
 
   const fetchEntities = useCallback(async () => {
     try {
@@ -82,7 +85,7 @@ export default function MemoryPage() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm(t('memory.confirmDelete'))) return;
+    if (!(await confirm(t('memory.confirmDelete')))) return;
     try {
       const token = localStorage.getItem('takton_token');
       await fetch(`/api/entities/${id}`, {
@@ -192,6 +195,7 @@ export default function MemoryPage() {
           }}
         />
       )}
+      {ConfirmDialogComponent}
     </div>
   );
 }
