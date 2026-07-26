@@ -51,9 +51,22 @@ class ComputerManager:
 
     def _make_backend(self, agent_key: str) -> ExecutionBackend:
         s = self._settings()
-        backend_name = str(getattr(s, "agent_computer_backend", "bwrap") or "bwrap").lower()
+        backend_name = str(getattr(s, "agent_computer_backend", "auto") or "auto").lower()
         network = bool(getattr(s, "agent_computer_network", False))
         ws = self._workspace_root()
+
+        # auto：按平台能力自动分派（detect 是唯一事实源）
+        if backend_name == "auto":
+            from backend.computer.detect import detect_sandbox_capability
+
+            backend_name = detect_sandbox_capability().mode
+            if backend_name == "none":
+                raise RuntimeError(
+                    "当前平台无可用沙箱方案。Linux 安装 bubblewrap；"
+                    "macOS 需 sandbox-exec（系统自带）；Windows 安装 WSL2 或使用受限模式。"
+                    "也可设 agent_computer_backend=local 放弃沙箱。"
+                )
+
         if backend_name == "bwrap":
             if shutil.which("bwrap") is None:
                 raise RuntimeError(
@@ -62,6 +75,32 @@ class ComputerManager:
             from backend.computer.bwrap_backend import BwrapBackend
 
             return BwrapBackend(ws, agent_key, network=network)
+
+        if backend_name == "seatbelt":
+            from backend.computer.seatbelt_backend import SeatbeltBackend, find_sandbox_exec
+
+            if find_sandbox_exec() is None:
+                raise RuntimeError(
+                    "sandbox-exec 不可用（非 macOS 或系统组件缺失），"
+                    "或设 agent_computer_backend=local"
+                )
+            return SeatbeltBackend(ws, agent_key, network=network)
+
+        if backend_name in ("wsl", "wsl-bwrap"):
+            from backend.computer.wsl_backend import WslBwrapBackend, wsl_has_bwrap
+
+            if not wsl_has_bwrap():
+                raise RuntimeError(
+                    "WSL2 不可用或其内未安装 bubblewrap（wsl -e bash -lc 'sudo apt install bubblewrap'），"
+                    "或设 agent_computer_backend=job（受限模式）/ local"
+                )
+            return WslBwrapBackend(ws, agent_key, network=network)
+
+        if backend_name == "job":
+            from backend.computer.job_backend import JobBackend
+
+            return JobBackend(ws, agent_key)
+
         from backend.computer.local_backend import LocalBackend
 
         return LocalBackend(ws)

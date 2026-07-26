@@ -243,7 +243,9 @@ class Settings(BaseSettings):
     # Agent Computer（Phase 0.5.3）：command/python 走隔离执行后端
     agent_computer_enabled: bool = False
     # bwrap=Linux 沙箱（推荐，需 bubblewrap）；local=现状直跑
-    agent_computer_backend: str = "bwrap"
+    # 沙箱后端：auto = 按平台自动选最强（linux→bwrap / darwin→seatbelt / win32→wsl|job）；
+    # 也可显式指定 bwrap | seatbelt | job | wsl | local
+    agent_computer_backend: str = "auto"
     # 沙箱内是否放开网络（默认断网 --unshare-net）
     agent_computer_network: bool = False
     # 真 Sub-Agent（Phase 1）：嵌套深度 / 总超时防失控

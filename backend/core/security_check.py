@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import ipaddress
 import logging
-import shutil
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -139,28 +138,48 @@ def collect_security_report() -> SecurityReport:
             )
         )
 
-    # 5. 命令执行沙箱（P0-5）
+    # 5. 命令执行沙箱（跨平台能力探测）
     if settings.agent_computer_enabled:
-        if shutil.which("bwrap"):
+        from backend.computer.detect import detect_sandbox_capability
+
+        cap = detect_sandbox_capability()
+        if cap.level == "full":
             report.results.append(
-                CheckResult(id="command_sandbox", level="ok", message="命令执行沙箱已启用（bwrap）")
+                CheckResult(
+                    id="command_sandbox",
+                    level="ok",
+                    message=f"命令执行沙箱已启用（{cap.label}）",
+                    hint=cap.note,
+                )
+            )
+        elif cap.level == "restricted":
+            report.results.append(
+                CheckResult(
+                    id="command_sandbox",
+                    level="warn",
+                    message=f"命令执行沙箱已启用（{cap.label}）",
+                    hint=cap.note,
+                )
             )
         else:
             report.results.append(
                 CheckResult(
                     id="command_sandbox",
                     level="warn",
-                    message="沙箱已开启但系统缺少 bwrap，将退回无沙箱执行",
-                    hint="Linux 安装 bubblewrap；Windows/macOS 暂无等效实现",
+                    message="沙箱已开启但当前平台无可用方案，将退回无沙箱执行",
+                    hint=cap.note or "Linux 安装 bubblewrap；Windows/macOS 见文档",
                 )
             )
     else:
+        from backend.computer.detect import detect_sandbox_capability
+
+        cap = detect_sandbox_capability()
         report.results.append(
             CheckResult(
                 id="command_sandbox",
                 level="warn",
                 message="命令执行沙箱未启用，agent 命令直接在本机 shell 执行",
-                hint="设置页 → 安全 → 打开「命令执行沙箱」（依赖 Linux bubblewrap）",
+                hint=f"权限控制台 → 打开「沙箱模式」（本机能力：{cap.label}）",
             )
         )
 
