@@ -6,7 +6,7 @@ import { MessageInput, Attachment, ChatMode, type MessageInputHandle } from '@/c
 import { FilePreviewHost } from '@/components/chat/FilePreviewHost';
 import { SessionArtifactsBar } from '@/components/chat/SessionArtifactsBar';
 import type { ChatArtifact } from '@/lib/artifacts';
-import { ScreenshotPanel } from '@/components/chat/ScreenshotPanel';
+import { TerminalPanel, formatArgsText, formatResultText } from '@/components/chat/TerminalPanel';
 import { ActivityPanel } from '@/components/chat/ActivityPanel';
 import { TaskPanel } from '@/components/tasks/TaskPanel';
 import { TransparencyPanel } from '@/components/chat/TransparencyPanel';
@@ -17,8 +17,8 @@ import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { useTaskStore } from '@/stores/taskStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useSessionStore } from '@/stores/sessionStore';
-import { Message, StatusUpdateMessage, StreamDeltaMessage, GoalUpdateMessage, GoalState, ToolEventMessage, RunEventMessage, ScreenshotMessage } from '@/types';
-import { useScreenshotStore } from '@/stores/screenshotStore';
+import { Message, StatusUpdateMessage, StreamDeltaMessage, GoalUpdateMessage, GoalState, ToolEventMessage, RunEventMessage } from '@/types';
+import { useTerminalStore } from '@/stores/terminalStore';
 import { generateImage } from '@/lib/api';
 import { generateUUID } from '@/lib/uuid';
 import { useRouter } from 'next/navigation';
@@ -74,7 +74,9 @@ export default function HomePage() {
         }, [streamingContent]);
         const [liveToolCalls, setLiveToolCalls] = useState<ToolCallData[]>([]);
                 const [streamStatusDetail, setStreamStatusDetail] = useState<string | null>(null);
-        const { addShot } = useScreenshotStore();
+        // 实时终端面板订阅（header 开关按钮的未读点）
+        const termPanelOpen = useTerminalStore((s) => s.panelOpen);
+        const termHasEntries = useTerminalStore((s) => s.entries.length > 0);
 
             const [isGeneratingImage, setIsGeneratingImage] = useState(false);
     const [searchOpen, setSearchOpen] = useState(false);
@@ -171,19 +173,17 @@ export default function HomePage() {
       });
     }, []);
 
-    const handleScreenshot = useCallback((msg: ScreenshotMessage) => {
-      addShot({
-        image_base64: msg.image_base64 || '',
-        image_url: msg.image_url || '',
-        tool_name: msg.tool_name || 'screenshot',
-        timestamp: msg.timestamp || new Date().toISOString(),
-        session_id: msg.session_id,
-      });
-    }, [addShot]);
-
     const handleToolEvent = useCallback((msg: ToolEventMessage) => {
-          setIsStreaming(true);
-          setLiveToolCalls((prev) => {
+      setIsStreaming(true);
+      // 实时终端流：desktop/shell 等全部工具调用入流（截图推送已退役，纯命令流）
+      useTerminalStore.getState().upsert({
+        callId: msg.tool_call_id,
+        name: msg.name,
+        argsText: formatArgsText(msg.arguments || {}),
+        status: msg.phase === 'start' ? 'running' : msg.status === 'failed' ? 'failed' : 'completed',
+        resultText: msg.phase === 'start' ? '' : formatResultText(msg.result ?? undefined),
+      });
+      setLiveToolCalls((prev) => {
             const idx = prev.findIndex(
               (t) => t.id === msg.tool_call_id || (t.name === msg.name && t.status === 'running')
             );
@@ -367,7 +367,6 @@ export default function HomePage() {
         onStatusUpdate: handleStatusUpdate,
         onToolEvent: handleToolEvent,
         onRunEvent: handleRunEvent,
-        onScreenshot: handleScreenshot,
         onGoalUpdate: handleGoalUpdate,
         onError: (err) => toastWsError(err),
         onSettingsChanged: (keys) => {
@@ -788,6 +787,16 @@ export default function HomePage() {
                                 </span>
                               )}
                               <button
+                                onClick={() => useTerminalStore.getState().togglePanel()}
+                                className="relative rounded-lg border border-border-subtle bg-card-bg px-3.5 py-1.5 text-xs font-medium text-foreground-muted transition-all hover:border-border-default hover:bg-card-bg-hover"
+                                title={t('terminal.title')}
+                              >
+                                {t('terminal.toggle')}
+                                {termHasEntries && !termPanelOpen && (
+                                  <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-brand-cyan" />
+                                )}
+                              </button>
+                              <button
                                 onClick={() => setIsTransparencyOpen(true)}
                                 className="rounded-lg border border-border-subtle bg-card-bg px-3.5 py-1.5 text-xs font-medium text-foreground-muted transition-all hover:border-border-default hover:bg-card-bg-hover"
                               >
@@ -876,8 +885,8 @@ export default function HomePage() {
                     )}
                     <WorkspaceDock />
 
-                    {/* 实时截图面板：desktop/browser 截图流 */}
-                    <ScreenshotPanel />
+                    {/* 实时终端面板：desktop/shell 工具调用命令流 */}
+                    <TerminalPanel />
 
                     {/* 任务面板抽屉：Goal + 已进行操作（可跳转会话） */}
                                         <TaskPanel

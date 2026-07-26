@@ -245,8 +245,9 @@ async def run_tool_round(
                 status="completed",
                 result=tool_result,
             )
-            # 截图工具结果 → 推送 WS screenshot 事件
-            await loop._maybe_push_screenshot(session_id, tc.name, tool_result)
+            # 截图推送已退役：前端实时面板改为纯命令流终端（2026-07-26 用户决策），
+            # desktop_screenshot 工具本身保留供 agent 视觉感知，仅不再向 WS 推图。
+            # 如需恢复推送，还原此行对 loop._maybe_push_screenshot 的调用。
             # TEE: 记录工具轨迹 / 使用次数
             try:
                 from backend.evolution.manager import get_evolution_manager

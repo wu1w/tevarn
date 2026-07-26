@@ -376,9 +376,11 @@ const zh = {
 
   // 聊天窗口欢迎区
   'chat.tagline': '个人多机 Agent 工作台 — 对话调度本机与远程设备',
-  'screenshot.title': '实时画面',
-  'screenshot.clear': '清空',
-  'screenshot.empty': '暂无截图，Agent 截屏时会自动推送到这里',
+  'terminal.title': '实时终端',
+  'terminal.toggle': '终端',
+  'terminal.clear': '清空',
+  'terminal.collapse': '收起',
+  'terminal.empty': '暂无命令——Agent 执行桌面/shell 操作时会实时显示在这里',
   'activity.title': '活动流',
   'chat.onlineDevices': '在线设备',
   'chat.tag.goal': '目标',
@@ -2371,9 +2373,11 @@ const en: Record<keyof typeof zh, string> = {
 
   // Chat window welcome area
   'chat.tagline': 'Personal multi-machine Agent workspace — orchestrate local and remote devices via chat',
-  'screenshot.title': 'Live View',
-  'screenshot.clear': 'Clear',
-  'screenshot.empty': 'No screenshots yet — they will appear here when the Agent captures',
+  'terminal.title': 'Live Terminal',
+  'terminal.toggle': 'Terminal',
+  'terminal.clear': 'Clear',
+  'terminal.collapse': 'Collapse',
+  'terminal.empty': 'No commands yet — desktop/shell operations will stream here in real time',
   'activity.title': 'Activity',
   'chat.onlineDevices': 'Online Devices',
   'chat.tag.goal': 'Goal',
