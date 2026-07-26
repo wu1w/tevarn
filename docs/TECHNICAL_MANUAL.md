@@ -211,11 +211,26 @@ backend/kernel/
   `/security` 页 Kernel 区块 5s 轮询展示。
 - **系统服务化（阶段 3）**：`deploy/takton-backend.service`（systemd 加固单元）
   + `deploy/README.md`（Linux systemd / Windows NSSM）。
+- **审计落盘（阶段 3）**：`kernel/audit_store.py` 事件追加 JSONL
+  （默认 `~/.takton/kernel_events.jsonl`，`agent_kernel_audit_persist` 可关），
+  重启后新事件从磁盘链尾续 `prev_hash`（跨进程链连续），
+  `verify_file_chain()` 全量验证；写失败只告警不阻断。
+- **多 Agent 调度器（阶段 2 雏形）**：`kernel/scheduler.py`
+  优先级队列（数值小者优先）+ 同优先级 FIFO + aging 防饿死
+  （等待超阈值自动提档），`kernel.scheduler` 挂载。
+- **动态 skill 强隔离（阶段 2）**：`computer/sandbox_exec.py`
+  bwrap 包装（断网/clearenv/只读系统目录/隔离 HOME），
+  `_run_code_in_subprocess(sandbox=...)` 三态：off/auto（默认，有则用）/
+  required（无则拒绝）；工作流节点默认 off 不受影响。
+- **Evolution 生成 Kernel 配置（阶段 3 雏形）**：
+  `evolution/improver.propose_kernel_config(events)` 从审计事件分析
+  高频被拒能力与预算耗尽，产出 `kernel_config` 建议资产（auto_apply=False，
+  必须人工确认）——Kernel 观测 → Evolution 分析 → 策略建议的闭环。
 - **接入点**：`agent/loop.py::_run_inner` 在 run 生命周期内创建/结束进程；
   配置开关 `agent_kernel_enabled`（默认开），装配失败显式降级并告警。
-- **演进路线**：阶段 2 后续——动态 skill 默认强隔离（WASM/bwrap）、
-  多 Agent 优先级调度器；阶段 3 后续——审计事件落盘持久化、
-  Evolution Engine 生成 Kernel 配置。
+- **演进路线**：阶段 2 后续——调度器与 loop 执行耦合（替换 session 锁）、
+  Intent Declaration 接入 subagent 派生路径；阶段 3 后续——
+  审计建议的人工确认 UI、多设备同步加固。
 
 ### 3.1 目录结构
 

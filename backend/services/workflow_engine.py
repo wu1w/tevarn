@@ -740,6 +740,7 @@ class WorkflowEngine:
         context_data: dict[str, Any],
         timeout: int = _CODE_EXEC_TIMEOUT,
         label: str = "<workflow>",
+        sandbox: str = "off",
     ) -> dict[str, Any]:
         """
         在独立子进程中执行用户代码。
@@ -749,6 +750,10 @@ class WorkflowEngine:
         - stdout 最后一行作为结果 JSON 解析
         - 超时后强制 kill 子进程
         - stdout/stderr 超过上限时截断，防止 PIPE 耗尽宿主内存
+        - sandbox（阶段 2）：动态 skill 默认强隔离
+          "off"=仅 AST+子进程（工作流节点现状）；
+          "auto"=bwrap 可用则套沙箱，不可用回退并告警；
+          "required"=bwrap 不可用直接拒绝执行。
         """
         builtins_str = ", ".join(f'"{name}": {name}' for name in _SAFE_BUILTIN_NAMES)
         wrapper_code = _CHILD_WRAPPER_TEMPLATE.replace("{BUILTINS}", builtins_str)
@@ -765,9 +770,35 @@ class WorkflowEngine:
                 {"code": code, "input_data": input_data, "context": context_data},
                 default=str,
             )
+            exec_argv: list[str] = [sys.executable, script_path]
+            if sandbox != "off":
+                from backend.computer.sandbox_exec import (
+                    skill_sandbox_available,
+                    wrap_python_argv_sandboxed,
+                )
+
+                if skill_sandbox_available():
+                    from backend.core.config import settings as _cfg
+
+                    exec_argv = wrap_python_argv_sandboxed(
+                        exec_argv,
+                        workspace_root=str(
+                            getattr(_cfg, "workspace_root", None) or os.getcwd()
+                        ),
+                        agent_key=label.strip("<>") or "skills",
+                        script_paths=[script_path],
+                    )
+                elif sandbox == "required":
+                    raise WorkflowExecutionError(
+                        "动态代码执行要求沙箱隔离，但本机 bwrap 不可用"
+                        "（Linux 请安装 bubblewrap；或将 sandbox 策略降为 auto）"
+                    )
+                else:
+                    logger.warning(
+                        "sandbox=auto 但 bwrap 不可用，%s 回退为无沙箱子进程执行", label
+                    )
             proc = await asyncio.create_subprocess_exec(
-                sys.executable,
-                script_path,
+                *exec_argv,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,

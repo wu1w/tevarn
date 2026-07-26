@@ -1,0 +1,99 @@
+"""Kernel 审计事件落盘（阶段 3：审计可验证）。
+
+内存环形缓冲（5000 条）解决「看得见」，落盘解决「丢不了、可验证」：
+- 每条事件追加一行 JSONL（含哈希链字段），跨重启可回放验证
+- 启动时加载尾部事件重建链尾（last_hash），保证链跨进程生命周期连续
+- 文件写入失败只告警不阻断（审计是增强，不是单点）
+
+文件位置：~/.takton/kernel_events.jsonl（可用 agent_kernel_audit_path 覆盖）。
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import threading
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+_DEFAULT_PATH = os.path.expanduser("~/.takton/kernel_events.jsonl")
+_TAIL_LOAD_LIMIT = 200  # 启动时只回放尾部，链验证按需全量读文件
+
+
+class AuditEventStore:
+    """线程安全的 JSONL 追加存储 + 链尾恢复。"""
+
+    def __init__(self, path: str | None = None) -> None:
+        self._path = path or _DEFAULT_PATH
+        self._lock = threading.Lock()
+
+    @property
+    def path(self) -> str:
+        return self._path
+
+    def append(self, event_dict: dict[str, Any]) -> bool:
+        """追加一条事件。返回是否成功（失败告警不抛）。"""
+        try:
+            os.makedirs(os.path.dirname(self._path), exist_ok=True)
+            line = json.dumps(event_dict, ensure_ascii=False, default=str)
+            with self._lock, open(self._path, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+            return True
+        except OSError as e:
+            logger.warning("kernel 审计落盘失败（不阻断）: %s", e)
+            return False
+
+    def load_tail_hash(self) -> str | None:
+        """读文件尾部最后一条事件的 hash——用于重启后续链。"""
+        try:
+            if not os.path.isfile(self._path):
+                return None
+            last_hash: str | None = None
+            with open(self._path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        h = json.loads(line).get("hash")
+                    except json.JSONDecodeError:
+                        continue
+                    if h:
+                        last_hash = h
+            return last_hash
+        except OSError:
+            return None
+
+    def verify_file_chain(self) -> tuple[bool, int]:
+        """全量验证落盘文件哈希链。返回 (是否完整, 断链行号或 -1)。"""
+        from backend.kernel.kernel import _event_hash
+
+        prev = None
+        try:
+            with open(self._path, "r", encoding="utf-8") as f:
+                for lineno, line in enumerate(f, 1):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        e = json.loads(line)
+                    except json.JSONDecodeError:
+                        return False, lineno
+                    expected = _event_hash(
+                        str(e.get("prev_hash") or ""),
+                        str(e.get("kind") or ""),
+                        str(e.get("process_id") or ""),
+                        e.get("detail") or {},
+                        float(e.get("ts") or 0),
+                        str(e.get("id") or ""),
+                    )
+                    if e.get("hash") != expected:
+                        return False, lineno
+                    if prev is not None and e.get("prev_hash") != prev:
+                        return False, lineno
+                    prev = e.get("hash")
+        except OSError:
+            return False, 0
+        return True, -1

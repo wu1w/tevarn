@@ -308,3 +308,69 @@ version: "0.1.1"
 ## Reference draft (truncated)
 {(final_content or '')[:700]}
 """
+
+
+def propose_kernel_config(
+    events: list[dict[str, Any]],
+    *,
+    min_denied_hits: int = 3,
+) -> dict[str, Any] | None:
+    """从 Kernel 审计事件生成权限策略/配置建议片段（阶段 3）。
+
+    闭环：Kernel 观测（mediation 拒绝/预算耗尽高频出现）
+        → Evolution 分析 → 生成配置建议（人工确认后生效）。
+
+    规则（保守，只产建议不自动应用）：
+    - 某 target 被拒绝 ≥ min_denied_hits 次：建议把它加入常用能力集
+      （说明 agent 反复需要但被策略挡——要么授予要么明确文档化拒绝）
+    - budget_exceeded 出现：建议上调默认预算或拆分任务
+    返回 evo_assets 兼容的 dict（kind=kernel_config），无信号时返回 None。
+    """
+    from collections import Counter
+
+    denied: Counter[str] = Counter()
+    budget_hits = 0
+    for e in events:
+        if e.get("kind") == "mediation" and (e.get("detail") or {}).get("allowed") is False:
+            target = str((e.get("detail") or {}).get("target") or "")
+            if target:
+                denied[target] += 1
+        elif e.get("kind") == "budget_exceeded":
+            budget_hits += 1
+
+    suggestions: list[dict[str, Any]] = []
+    for target, hits in denied.most_common(10):
+        if hits >= min_denied_hits:
+            suggestions.append({
+                "type": "grant_capability",
+                "capability": target,
+                "denied_hits": hits,
+                "rationale": f"被拒绝 {hits} 次——agent 反复需要 '{target}'，"
+                "建议授予（加入能力白名单）或在文档中明确拒绝理由",
+            })
+    if budget_hits > 0:
+        suggestions.append({
+            "type": "raise_budget",
+            "budget_exceeded_hits": budget_hits,
+            "rationale": f"预算耗尽 {budget_hits} 次——建议提高默认 token_budget "
+            "或在 Intent Declaration 中拆小任务粒度",
+        })
+    if not suggestions:
+        return None
+
+    return {
+        "kind": "kernel_config",
+        "name": "kernel-policy-suggestion",
+        "summary": f"Kernel 策略建议：{len(suggestions)} 项"
+        f"（{len(denied)} 个被拒能力 / {budget_hits} 次预算耗尽）",
+        "content": {
+            "schema": "takton.kernel_config.v1",
+            "suggestions": suggestions,
+            "auto_apply": False,  # 建议必须经人工确认
+        },
+        "meta": {
+            "source": "kernel_audit_events",
+            "event_count": len(events),
+            "denied_targets": dict(denied.most_common(10)),
+        },
+    }

@@ -144,6 +144,8 @@ class DynamicSkill(BaseSkill):
                 context_data={},
                 timeout=10,
                 label=f"<skill:{self.name}>",
+                # 阶段 2：动态生成的 skill 默认进入更强隔离（auto=bwrap 有则用）
+                sandbox=str(getattr(settings, "agent_skill_sandbox", "auto") or "auto"),
             )
         except Exception as e:
             return f"[Error] Python execution failed: {e}"

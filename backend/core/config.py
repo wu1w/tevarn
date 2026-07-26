@@ -191,6 +191,14 @@ class Settings(BaseSettings):
     # Kernel 控制平面：loop 运行纳入 AgentProcess 生命周期管理 + 中介审计。
     # 关闭后退回纯旧路径（不影响功能，仅失去 kernel 可观测性）。
     agent_kernel_enabled: bool = True
+    # ── 动态 skill 隔离（阶段 2）──
+    # python handler 的沙箱策略：off=仅 AST+子进程 / auto=bwrap 有则用（默认）/
+    # required=bwrap 不可用即拒绝执行
+    agent_skill_sandbox: str = "auto"
+    # ── Kernel 审计落盘（阶段 3）──
+    agent_kernel_audit_persist: bool = True
+    # 空 = 默认 ~/.takton/kernel_events.jsonl
+    agent_kernel_audit_path: str = ""
     agent_tool_parallel_max: int = 5
     # 用户单条输入硬上限（字符），超出截断并提示
     agent_max_user_input_chars: int = 100_000

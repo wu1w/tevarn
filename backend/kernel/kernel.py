@@ -98,9 +98,23 @@ _EVENT_BUFFER_MAX = 5000
 
 
 class AgentKernel:
-    def __init__(self) -> None:
+    def __init__(self, audit_store: Any | None = None) -> None:
         self._processes: dict[str, AgentProcess] = {}
         self._events: list[KernelEvent] = []
+        # 阶段 3：审计落盘。挂载后每条事件追加 JSONL；
+        # 内存缓冲为空时从文件链尾续 prev_hash（跨重启链连续）。
+        self._audit_store = audit_store
+        self._disk_tail_hash: str | None = (
+            audit_store.load_tail_hash() if audit_store is not None else None
+        )
+        # 阶段 2：多 Agent 调度器（优先级 + aging 公平性）
+        from backend.kernel.scheduler import AgentScheduler
+
+        self._scheduler = AgentScheduler()
+
+    @property
+    def scheduler(self) -> Any:
+        return self._scheduler
 
     # ── 进程管理 ──────────────────────────────────────────────
 
@@ -317,7 +331,12 @@ class AgentKernel:
     # ── 审计 ──────────────────────────────────────────────
 
     def _emit(self, kind: str, process_id: str, detail: dict[str, Any]) -> KernelEvent:
-        prev = self._events[-1].hash if self._events else _GENESIS_HASH
+        if self._events:
+            prev = self._events[-1].hash
+        elif self._disk_tail_hash:
+            prev = self._disk_tail_hash  # 跨重启续链
+        else:
+            prev = _GENESIS_HASH
         eid = uuid.uuid4().hex[:16]
         ts = time.time()
         event = KernelEvent(
@@ -332,6 +351,8 @@ class AgentKernel:
         self._events.append(event)
         if len(self._events) > _EVENT_BUFFER_MAX:
             del self._events[: len(self._events) - _EVENT_BUFFER_MAX]
+        if self._audit_store is not None:
+            self._audit_store.append(event.to_dict())
         logger.debug("kernel event %s proc=%s %s", kind, process_id, detail)
         return event
 
@@ -380,10 +401,25 @@ _kernel_singleton: AgentKernel | None = None
 
 
 def get_kernel() -> AgentKernel:
-    """进程级单例 Kernel（local-first 单用户语义；多实例调度是阶段 2 的事）。"""
+    """进程级单例 Kernel（local-first 单用户语义；多实例调度是阶段 2 的事）。
+
+    默认挂载审计落盘（~/.takton/kernel_events.jsonl）；
+    agent_kernel_audit_persist=false 可关（仅内存缓冲）。
+    """
     global _kernel_singleton
     if _kernel_singleton is None:
-        _kernel_singleton = AgentKernel()
+        store = None
+        try:
+            from backend.core.config import settings
+
+            if bool(getattr(settings, "agent_kernel_audit_persist", True)):
+                from backend.kernel.audit_store import AuditEventStore
+
+                path = str(getattr(settings, "agent_kernel_audit_path", "") or "") or None
+                store = AuditEventStore(path)
+        except Exception as e:
+            logger.warning("kernel 审计落盘初始化失败（仅内存缓冲）: %s", e)
+        _kernel_singleton = AgentKernel(audit_store=store)
     return _kernel_singleton
 
 

@@ -25,10 +25,12 @@ from backend.kernel.kernel import (
     reset_kernel_for_tests,
 )
 from backend.kernel.process import AgentProcess
+from backend.kernel.scheduler import AgentScheduler, ScheduledTask
 
 __all__ = [
     "AgentKernel",
     "AgentProcess",
+    "AgentScheduler",
     "BudgetExceededError",
     "CapabilityEscalationError",
     "CapabilityToken",
@@ -38,6 +40,7 @@ __all__ = [
     "KernelPermissionError",
     "MediationDecision",
     "RISKY_CAPABILITIES",
+    "ScheduledTask",
     "get_kernel",
     "reset_kernel_for_tests",
     "synthesize_capabilities",
