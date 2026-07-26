@@ -898,7 +898,9 @@ function createWindow(): void {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      // preload 仅用 contextBridge + ipcRenderer（sandbox 白名单内），
+      // 可安全开启 OS 级渲染进程沙箱（安全加固 P2）
+      sandbox: true,
     },
   });
 

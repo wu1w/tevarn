@@ -540,6 +540,33 @@ export default function MCPStorePanel({
                 </div>
               )}
               <div className="mb-4 space-y-2 text-xs text-foreground-muted">
+                {/* 供应链透明（安全加固 P2）：安装前展示来源域名 + 包标识 */}
+                {(selected.source_url || selected.package_id) && (
+                  <div className="rounded-lg border border-border-subtle bg-card-bg/50 px-3 py-2">
+                    {selected.source_url && (
+                      <div>
+                        {t('mcpStore.sourceOrigin')}:{' '}
+                        <a
+                          href={selected.source_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="break-all text-brand-cyan hover:underline"
+                        >
+                          {selected.source_url}
+                        </a>
+                      </div>
+                    )}
+                    {selected.package_id && (
+                      <div className="mt-1">
+                        {t('mcpStore.packageId')}:{' '}
+                        <code className="break-all text-foreground">
+                          {selected.registry_type ? `${selected.registry_type}:` : ''}
+                          {selected.package_id}
+                        </code>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div>
                   Transport: <code className="text-foreground">{selected.transport}</code>
                 </div>

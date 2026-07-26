@@ -6,7 +6,8 @@ JWT token creation/decoding and password hashing
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
-from jose import JWTError, jwt
+import jwt  # PyJWT（2026-07 替换弃维护的 python-jose，连带消除 ecdsa/pyasn1 CVE）
+from jwt import PyJWTError as JWTError
 from passlib.context import CryptContext
 
 from backend.core.config import settings

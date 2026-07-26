@@ -55,6 +55,28 @@ class AuditAction:
 
 _audit_repo = AsyncAuditLogRepository()
 
+# details 落盘前的敏感键打码（纵深防御：防止调用方手滑把密钥/口令塞进审计日志）
+_SENSITIVE_KEY_PARTS = ("api_key", "apikey", "password", "passwd", "secret", "token", "authorization", "credential")
+_REDACTED = "[REDACTED]"
+
+
+def _sanitize_details(value: Any, depth: int = 0) -> Any:
+    """递归打码：键名含敏感片段的值替换为 [REDACTED]；结构/其他值原样保留。"""
+    if depth > 6:
+        return value
+    if isinstance(value, dict):
+        out = {}
+        for k, v in value.items():
+            kl = str(k).lower()
+            if any(part in kl for part in _SENSITIVE_KEY_PARTS):
+                out[k] = _REDACTED
+            else:
+                out[k] = _sanitize_details(v, depth + 1)
+        return out
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_details(v, depth + 1) for v in value]
+    return value
+
 
 def _get_client_ip(request: Request | None) -> str | None:
     if request is None:
@@ -81,7 +103,7 @@ async def log_action(
             user_id=user_id,
             resource_type=resource_type,
             resource_id=resource_id,
-            details=details,
+            details=_sanitize_details(details) if details else details,
             ip_address=_get_client_ip(request),
             user_agent=request.headers.get("user-agent") if request else None,
             success=success,
