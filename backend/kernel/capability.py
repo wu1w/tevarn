@@ -65,8 +65,8 @@ class CapabilityToken:
             expires_at=effective_expiry,
         )
 
-    def to_dict(self) -> dict:
-        return {
+    def to_dict(self, *, sign: bool = True) -> dict:
+        data = {
             "id": self.id,
             "process_id": self.process_id,
             "parent_token_id": self.parent_token_id,
@@ -74,9 +74,23 @@ class CapabilityToken:
             "issued_at": self.issued_at,
             "expires_at": self.expires_at,
         }
+        if sign:
+            from backend.kernel.signing import sign_token_dict
+
+            data["signature"] = sign_token_dict(data)
+        return data
 
     @classmethod
-    def from_dict(cls, data: dict) -> "CapabilityToken":
+    def from_dict(cls, data: dict, *, verify: bool = True) -> "CapabilityToken":
+        """反序列化。verify=True（默认）时签名缺失/不匹配即拒绝（防伪造）；
+        verify=False 仅用于读取历史无签名数据（向后兼容窗口）。"""
+        if verify:
+            from backend.kernel.signing import TokenSignatureError, verify_token_dict
+
+            if not verify_token_dict(data):
+                raise TokenSignatureError(
+                    "Token 签名验证失败——拒绝反序列化不可信来源的能力令牌"
+                )
         return cls(
             capabilities=frozenset(data.get("capabilities") or []),
             process_id=str(data.get("process_id") or ""),

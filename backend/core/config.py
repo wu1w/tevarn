@@ -199,6 +199,9 @@ class Settings(BaseSettings):
     agent_kernel_audit_persist: bool = True
     # 空 = 默认 ~/.takton/kernel_events.jsonl
     agent_kernel_audit_path: str = ""
+    # 主进程能力显式化：开启后挂注册表全集快照（等效放行，
+    # 但使 subagent 继承/narrow 生效）；Intent 最小权限落地的前置
+    agent_kernel_explicit_capabilities: bool = False
     agent_tool_parallel_max: int = 5
     # 用户单条输入硬上限（字符），超出截断并提示
     agent_max_user_input_chars: int = 100_000

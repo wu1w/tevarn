@@ -58,6 +58,7 @@ async def run_subagent(
     ws_manager: Any = None,
     parent_run_id: uuid.UUID | None = None,
     depth: int = 0,
+    parent_kernel_process_id: str | None = None,
 ) -> str:
     """以子代理 persona 跑一个带工具的迷你 Run，返回结果文本。
 
@@ -115,6 +116,11 @@ async def run_subagent(
         child._llm_snapshot_override = override
     child._subagent_depth = depth + 1
     child._parent_run_id = parent_run_id
+    # Kernel（审计修复）：父 kernel 进程 id——子进程 create_process(parent_id=...)
+    # 时按父能力集 narrow。注意 parent_run_id 是 run 记录 id，不是 kernel 进程 id，
+    # 两者不可混用（此前混用导致 parent 查找落空、子进程实为无父顶级进程）。
+    if parent_kernel_process_id:
+        child._parent_kernel_process_id = parent_kernel_process_id
     try:
         child.max_iterations = max(
             1, int(getattr(sub_agent, "max_iterations", 0) or 12)

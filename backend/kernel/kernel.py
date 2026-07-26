@@ -10,6 +10,13 @@
 
 渐进原则：capabilities=None 的进程走兼容模式（放行 + 记录），
 现有 loop 行为不变；显式能力集才强制检查。
+
+并发假设（审计项 #6，已文档化）：
+  本类所有 public async 方法内部**不含任何 await**——纯同步逻辑，
+  在 asyncio 单线程语义下不存在竞态窗口（事件循环不会在中途出让）。
+  ⚠ 维护红线：在 create_process / mediate / charge_tokens / _emit
+  内部引入任何 await 之前，必须先为 _processes / _events / scheduler
+  加 asyncio.Lock（参考 loop.py 契约白名单的竞态教训）。
 """
 
 from __future__ import annotations

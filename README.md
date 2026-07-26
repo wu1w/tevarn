@@ -206,7 +206,12 @@ Open http://localhost:3000 · 访问 http://localhost:3000
 │                       │                               │
 │  ┌────────────────────┼─────────────────────────────┐ │
 │  │              FastAPI Backend                     │ │
-│  │  ┌─────────┐ ┌─────────┐ ┌──────────────────┐  │ │
+│  │  ┌───────────────────────────────────────────┐  │ │
+│  │  │  Agent Kernel (control plane, v0.4-alpha) │  │ │
+│  │  │  processes · capability tokens · mediate  │  │ │
+│  │  │  budgets · intent synthesis · audit chain │  │ │
+│  │  └──────────────┬────────────────────────────┘  │ │
+│  │  ┌─────────┐ ┌──┴──────┐ ┌──────────────────┐  │ │
 │  │  │ Agent   │ │ Tool    │ │  Cron Scheduler  │  │ │
 │  │  │ Loop    │ │ Registry│ │                  │  │ │
 │  │  └────┬────┘ └────┬────┘ └────────┬─────────┘  │ │
@@ -218,6 +223,33 @@ Open http://localhost:3000 · 访问 http://localhost:3000
 │  └─────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────┘
 ```
+
+### 🧠 Agent Kernel（v0.4.0-alpha，`feature/agent-kernel` 分支）
+
+Takton is evolving from an agent workstation into a **Personal Agent OS**.
+The Agent Kernel is its control plane — currently in alpha on the
+`feature/agent-kernel` branch, not yet merged to `main`.
+
+Takton 正从「Agent 工作站」演进为 **Personal Agent OS**，Agent Kernel
+是其控制平面——当前为 alpha 测试版，位于 `feature/agent-kernel` 分支。
+
+- **AgentProcess · 进程抽象**：每次 agent 运行是一个进程
+  （identity / capabilities / budget / 六态生命周期），子进程能力
+  只能是父进程子集——提权在数据结构层面不可能
+- **CapabilityToken · 能力令牌**：narrowing 单调递减 + 过期强制 +
+  HMAC-SHA256 签名防伪造
+- **Mediation · 执行中介**：所有工具调用（含并行）、dynamic skill、
+  MCP 统一经 `kernel.mediate()`，未授权即拦截并留痕
+- **Budget · 预算治理**：进程级 token 预算按真实 usage 扣减，
+  耗尽自动中断
+- **Intent Declaration · 意图声明**：声明目标 → 白名单合成最小能力集
+- **Hash-chain Audit · 哈希链审计**：事件链式 SHA-256 + 落盘续链，
+  篡改可检测
+- **Observable · 可观测**：`/security` 权限控制台实时展示进程树与
+  中介事件流；`GET /api/kernel/processes|events`
+
+详见 [Technical Manual §3.0](docs/TECHNICAL_MANUAL.md) 与
+[CHANGELOG 0.4.0-alpha](CHANGELOG.md)。
 
 ---
 

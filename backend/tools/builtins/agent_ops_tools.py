@@ -341,6 +341,8 @@ class DelegateTaskTool(BaseTool):
                 ws_manager=kwargs.get("_ws_manager"),
                 parent_run_id=getattr(_recorder, "run_id", None),
                 depth=int(kwargs.get("_subagent_depth") or 0),
+                # Kernel：父进程 id（W3 由 loop 注入），子进程能力按父集 narrow
+                parent_kernel_process_id=kwargs.get("_kernel_process_id"),
             )
         except Exception as e:
             return f"[Error] delegate_task subagent run failed: {e}"

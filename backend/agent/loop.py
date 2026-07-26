@@ -477,11 +477,28 @@ class NexusAgentLoop(AgentLoopBase):
 
             kernel = get_kernel()
             try:
+                # 父进程解析：subagent 场景显式传入的 kernel 进程 id 优先；
+                # parent_run_id 是 run 记录 id（≠ kernel 进程 id），仅作兜底展示
+                parent_pid = getattr(self, "_parent_kernel_process_id", None)
+                # 能力显式化（审计项 #2）：开启后主进程挂注册表全集快照——
+                # 与兼容模式等效放行，但使 subagent 继承/narrow 真实生效；
+                # 快照失败降级 None（兼容模式）。Intent 最小权限交互落地前
+                # 这是 narrowing 链路的正确前置。
+                caps: list[str] | None = None
+                if bool(getattr(settings, "agent_kernel_explicit_capabilities", False)):
+                    try:
+                        from backend.tools.registry import ToolRegistry
+
+                        caps = sorted(ToolRegistry._tools.keys()) or None
+                    except Exception as e:
+                        logger.debug("能力快照失败，降级兼容模式: %s", e)
+                        caps = None
                 kernel_proc = await kernel.create_process(
                     agent_key or "main",
                     session_id=str(session_id),
-                    parent_id=str(parent_run_id) if parent_run_id else None,
-                    meta={"mode": mode},
+                    parent_id=parent_pid,
+                    capabilities=caps,
+                    meta={"mode": mode, "parent_run_id": str(parent_run_id) if parent_run_id else None},
                 )
                 await kernel.mark_running(kernel_proc.id)
                 self._kernel_process = kernel_proc
