@@ -62,10 +62,75 @@ function groupDocuments(docs: Document[]): DocGroup[] {
   return groups;
 }
 
+/* ─── 文档类型（demo v2 对齐：综述/SOP/决策记录/其他，存 meta.doc_type）─── */
+const DOC_TYPE_OPTIONS = ['综述', 'SOP', '决策记录'] as const;
+
+function docTypeOf(d: Document): string {
+  const v = d.meta?.doc_type;
+  return typeof v === 'string' && (DOC_TYPE_OPTIONS as readonly string[]).includes(v) ? v : '其他';
+}
+
+const DOC_TYPE_COLORS: Record<string, string> = {
+  '综述': 'bg-brand-purple/15 text-brand-purple',
+  'SOP': 'bg-brand-cyan/15 text-brand-cyan',
+  '决策记录': 'bg-amber-500/10 text-amber-500',
+  '其他': 'bg-elevated-bg text-foreground-dim',
+};
+
+/* ─── 全文只读抽屉（demo v2：查看全文）─── */
+function DocReadDrawer({ doc, onClose, onEdit }: { doc: Document; onClose: () => void; onEdit: (d: Document) => void }) {
+  const t = useT();
+  const STATUS_MAP = useStatusMap();
+  const status = STATUS_MAP[doc.status] || STATUS_MAP.pending;
+  const content = doc.content || (typeof doc.meta?.content === 'string' ? doc.meta.content : '');
+  const dt = docTypeOf(doc);
+  return (
+    <>
+      <div className="fixed inset-0 z-40 bg-black/40" onClick={onClose} />
+      <div className="fixed inset-y-0 right-0 z-50 flex w-full max-w-xl flex-col border-l border-border-default bg-elevated-bg shadow-2xl">
+        <div className="flex items-start justify-between gap-3 border-b border-border-subtle p-5">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${DOC_TYPE_COLORS[dt]}`}>{dt}</span>
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${status.color}`}>{status.icon} {status.label}</span>
+            </div>
+            <h2 className="mt-2 text-base font-bold text-foreground">{doc.title}</h2>
+            <div className="mt-1 text-[10px] text-foreground-dim">
+              {new Date(doc.created_at).toLocaleString()} · #{doc.id.slice(0, 8)} · {doc.chunk_count ?? 0} {t('kb.chunks')}
+            </div>
+          </div>
+          <button onClick={onClose} className="rounded-md p-1.5 text-foreground-dim hover:bg-card-bg">✕</button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-5">
+          <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-foreground-muted">{content || '（无正文）'}</pre>
+        </div>
+        <div className="flex gap-2 border-t border-border-subtle p-4">
+          <button onClick={() => { onClose(); onEdit(doc); }} className="rounded-md bg-brand-purple px-4 py-2 text-sm font-medium text-white hover:bg-brand-purple/80">
+            {t('kb.edit')}
+          </button>
+          <button
+            onClick={() => {
+              const blob = new Blob([`# ${doc.title}\n\n${content}`], { type: 'text/markdown' });
+              const a = document.createElement('a');
+              a.href = URL.createObjectURL(blob);
+              a.download = `${doc.title.replace(/[\\/:*?"<>|]/g, '_')}.md`;
+              a.click();
+              URL.revokeObjectURL(a.href);
+            }}
+            className="rounded-md border border-border-default px-4 py-2 text-sm text-foreground-muted hover:bg-card-bg">
+            导出 Markdown
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
 /* ─── 文档卡片 ─── */
 function DocCard({
   doc,
   onEdit,
+  onRead,
   onIndex,
   onDelete,
   indexingId,
@@ -76,6 +141,7 @@ function DocCard({
 }: {
   doc: Document;
   onEdit: (d: Document) => void;
+  onRead: (d: Document) => void;
   onIndex: (d: Document) => void;
   onDelete: (id: string) => void;
   indexingId: string | null;
@@ -96,7 +162,8 @@ function DocCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="text-base"></span>
-            <span className="font-medium text-foreground truncate">{doc.title}</span>
+            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${DOC_TYPE_COLORS[docTypeOf(doc)]}`}>{docTypeOf(doc)}</span>
+            <button type="button" onClick={() => onRead(doc)} className="font-medium text-foreground truncate text-left hover:text-brand-purple transition-colors" title="查看全文">{doc.title}</button>
             {duplicateCount > 0 && (
               <button
                 type="button"onClick={onToggleExpand}
@@ -446,6 +513,7 @@ function DocEditModal({
   const addToast = useToastStore((s) => s.addToast);
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
+  const [docType, setDocType] = useState('其他');
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -453,9 +521,11 @@ function DocEditModal({
       setTitle(editing.title);
       const c = editing.content || (typeof editing.meta?.content === 'string' ? editing.meta.content : '');
       setContent(c);
+      setDocType(docTypeOf(editing));
     } else {
       setTitle('');
       setContent('');
+      setDocType('其他');
     }
   }, [editing]);
 
@@ -467,12 +537,12 @@ function DocEditModal({
     setSubmitting(true);
     try {
       if (editing) {
-        await updateDocument(editing.id, { title, meta: { ...(editing.meta || {}), content } });
+        await updateDocument(editing.id, { title, meta: { ...(editing.meta || {}), content, doc_type: docType } });
         if (content.trim()) {
           await indexDocument(editing.id, content).catch(() => {});
         }
       } else {
-        await createDocument({ title, content, status: 'pending', meta: { content } } as Partial<Document>);
+        await createDocument({ title, content, status: 'pending', meta: { content, doc_type: docType } } as Partial<Document>);
       }
       addToast(editing ? t('kb.docUpdated') : t('kb.docCreated'), 'success');
       onClose();
@@ -491,12 +561,20 @@ function DocEditModal({
           {editing ? ` ${t('kb.editDoc')}` : ` ${t('kb.newDoc')}`}
         </h3>
         <form onSubmit={handleSubmit} className="space-y-3">
-          <input
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder={t('kb.docTitle')}
-            className="w-full rounded-md border border-border-default px-3 py-2 text-sm focus:border-brand-purple focus:outline-none focus:ring-1 focus:ring-brand-purple"required
-          />
+          <div className="flex gap-2">
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder={t('kb.docTitle')}
+              className="flex-1 rounded-md border border-border-default px-3 py-2 text-sm focus:border-brand-purple focus:outline-none focus:ring-1 focus:ring-brand-purple"required
+            />
+            <select
+              value={docType}
+              onChange={(e) => setDocType(e.target.value)}
+              className="rounded-md border border-border-default bg-card-bg px-2 py-2 text-sm text-foreground-muted focus:border-brand-purple focus:outline-none">
+              {[...DOC_TYPE_OPTIONS, '其他'].map((tp) => <option key={tp} value={tp}>{tp}</option>)}
+            </select>
+          </div>
           <textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
@@ -529,6 +607,8 @@ export default function KnowledgeCenter() {
   const [showEdit, setShowEdit] = useState(false);
   const [indexingId, setIndexingId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [typeFilter, setTypeFilter] = useState('全部');
+  const [readingDoc, setReadingDoc] = useState<Document | null>(null);
   const [showSearchTest, setShowSearchTest] = useState(false);
   const [showQdrantPanel, setShowQdrantPanel] = useState(false);
   const [qdrantStatus, setQdrantStatus] = useState<QdrantStatus | null>(null);
@@ -548,10 +628,12 @@ export default function KnowledgeCenter() {
   useEffect(() => { load(); }, [load]);
 
   const filteredDocs = useMemo(() => {
-    if (!search) return docs;
+    let out = docs;
+    if (typeFilter !== '全部') out = out.filter((d) => docTypeOf(d) === typeFilter);
+    if (!search) return out;
     const q = search.toLowerCase();
-    return docs.filter((d) => d.title.toLowerCase().includes(q) || (d.content || '').toLowerCase().includes(q));
-  }, [docs, search]);
+    return out.filter((d) => d.title.toLowerCase().includes(q) || (d.content || '').toLowerCase().includes(q));
+  }, [docs, search, typeFilter]);
 
   const docGroups = useMemo(() => groupDocuments(filteredDocs), [filteredDocs]);
   const duplicateTotal = useMemo(
@@ -844,6 +926,23 @@ export default function KnowledgeCenter() {
         )}
       </div>
 
+      {/* 类型筛选 chips（demo v2）*/}
+      <div className="flex flex-wrap gap-1.5">
+        {['全部', ...DOC_TYPE_OPTIONS, '其他'].map((tp) => (
+          <button
+            key={tp}
+            type="button"
+            onClick={() => setTypeFilter(tp)}
+            className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+              typeFilter === tp
+                ? 'border-brand-purple bg-brand-purple/10 text-brand-purple'
+                : 'border-border-subtle text-foreground-dim hover:bg-elevated-bg'
+            }`}>
+            {tp}
+          </button>
+        ))}
+      </div>
+
       {/* 文档列表 */}
       {loading ? (
         <div className="py-12 text-center text-foreground-muted">{t('kb.loading')}</div>
@@ -869,6 +968,7 @@ export default function KnowledgeCenter() {
                 });
               }}
               onEdit={(d) => { setEditing(d); setShowEdit(true); }}
+              onRead={(d) => setReadingDoc(d)}
               onIndex={handleIndex}
               onDelete={handleDelete}
               indexingId={indexingId}
@@ -879,6 +979,15 @@ export default function KnowledgeCenter() {
 
       {/* 编辑弹窗 */}
       <DocEditModal open={showEdit} editing={editing} onClose={() => setShowEdit(false)} onSaved={load} />
+
+      {/* 全文只读抽屉 */}
+      {readingDoc && (
+        <DocReadDrawer
+          doc={readingDoc}
+          onClose={() => setReadingDoc(null)}
+          onEdit={(d) => { setEditing(d); setShowEdit(true); }}
+        />
+      )}
 
       {ConfirmDialogComponent}
     </div>
