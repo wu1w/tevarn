@@ -26,10 +26,8 @@ body { background:var(--bg); color:var(--fg); overflow:hidden; -webkit-font-smoo
 .shell { display:grid; grid-template-columns:56px 232px 1fr; height:100vh; }
 .rail { background:var(--bg-soft); border-right:1px solid var(--border-soft);
   display:flex; flex-direction:column; align-items:center; padding:10px 0; gap:2px; z-index:5; }
-.rail .logo { width:34px; height:34px; border-radius:9px; margin-bottom:12px;
-  background:linear-gradient(135deg,var(--purple),#5a3ee0); display:flex; align-items:center;
-  justify-content:center; font-weight:700; font-size:15px; color:#fff;
-  box-shadow:0 2px 12px rgba(124,92,255,0.4); cursor:pointer; }
+.rail .logo { width:38px; height:38px; border-radius:50%; margin-bottom:12px;
+  display:flex; align-items:center; justify-content:center; cursor:pointer; }
 .rail-btn { width:40px; height:40px; border-radius:10px; border:none; cursor:pointer;
   background:transparent; color:var(--fg-faint); display:flex; align-items:center;
   justify-content:center; transition:all 180ms var(--ease); position:relative; }
@@ -254,10 +252,9 @@ body { background:var(--bg); color:var(--fg); overflow:hidden; -webkit-font-smoo
 <div class="shell">
   <nav class="rail" id="rail"></nav>
   <aside class="sidebar">
-    <div class="sb-head" style="display:flex;align-items:center;gap:10px">
-      <img src="takton-logo.png" alt="takton" style="width:34px;height:34px;border-radius:9px">
-      <div><div class="sb-title">takton</div>
-      <div class="sb-sub" id="sb-sub">7 个 Agent 运行中</div></div>
+    <div class="sb-head">
+      <div class="sb-title">takton</div>
+      <div class="sb-sub" id="sb-sub">7 个 Agent 运行中</div>
     </div>
     <div class="sb-search" onclick="toast('全局搜索：Agent / 目标 / 知识 / 审批 / 进程（demo 占位）')">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
@@ -457,7 +454,7 @@ function avatarHtml(a, lg) { return `<span class="avatar${lg?' lg':''}" style="b
 /* ── rail / sidebar 渲染 ── */
 function renderRail() {
   const rail = document.getElementById('rail');
-  rail.innerHTML = '<div class="logo" onclick="switchView(\'dashboard\')" title="Takton AIOS">T</div>' +
+  rail.innerHTML = '<div class="logo" onclick="switchView(\'dashboard\')" title="takton"><img src="takton-logo.png" alt="takton" style="width:38px;height:38px;border-radius:50%;display:block"></div>' +
     VIEWS.filter(v=>!v.bottom).map(v => `
       <button class="rail-btn" data-view="${v.id}" title="${v.t}" onclick="switchView('${v.id}')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">${v.icon}</svg>
