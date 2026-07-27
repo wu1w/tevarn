@@ -35,6 +35,28 @@ _DISTILL_MIN_DONE = 5       # SOP 沉淀最小完成单数
 _DISTILL_MIN_SUCCESS = 0.8  # SOP 沉淀最小成功率
 _PLANNER_TUNE_FAIL_RATE = 0.3  # planner 调整建议的失败率阈值
 
+# settings 键名映射（Alpha Review #3：阈值参数化——不同身份工作模式
+# 不同，统一硬编码不合理；读配置而非读常量，常量仅作默认值兜底）
+_SETTING_KEYS = {
+    "_MIN_SAMPLES": "agent_evolution_min_samples",
+    "_DEPRECATE_DENIAL_RATE": "agent_evolution_deprecate_denial_rate",
+    "_CAPS_ADJUST_APPROVALS": "agent_evolution_caps_adjust_approvals",
+    "_DISTILL_MIN_DONE": "agent_evolution_distill_min_done",
+    "_DISTILL_MIN_SUCCESS": "agent_evolution_distill_min_success",
+    "_PLANNER_TUNE_FAIL_RATE": "agent_evolution_planner_tune_fail_rate",
+}
+
+
+def _threshold(const_name: str):
+    """读 settings 中的演化阈值；未配置/异常时回退模块常量默认值。"""
+    default = globals()[const_name]
+    try:
+        from backend.core.config import settings
+
+        return getattr(settings, _SETTING_KEYS[const_name], default)
+    except Exception:
+        return default
+
 
 class EvolutionEngine:
     """受控进化引擎。由 workforce 装配（kernel + registry + inbox）。"""
@@ -75,7 +97,7 @@ class EvolutionEngine:
         proposals: list[Any] = []
 
         # 规则 1：SOP 沉淀（memory_distill）——干得又多又好 → 方法论该进档案
-        if len(done) >= _DISTILL_MIN_DONE and success_rate >= _DISTILL_MIN_SUCCESS:
+        if len(done) >= _threshold("_DISTILL_MIN_DONE") and success_rate >= _threshold("_DISTILL_MIN_SUCCESS"):
             recent = [i.instruction[:80] for i in done[-5:]]
             p = await self._create_if_no_pending(
                 iid,
@@ -101,7 +123,7 @@ class EvolutionEngine:
                 proposals.append(p)
 
         # 规则 2：失败率过高（planner_tune）——该检讨工作方式
-        if total_finished >= _DISTILL_MIN_DONE and success_rate < (1 - _PLANNER_TUNE_FAIL_RATE):
+        if total_finished >= _threshold("_DISTILL_MIN_DONE") and success_rate < (1 - _threshold("_PLANNER_TUNE_FAIL_RATE")):
             errors = [ (i.error or "")[:80] for i in failed[-3:] ]
             p = await self._create_if_no_pending(
                 iid,
@@ -109,7 +131,7 @@ class EvolutionEngine:
                 title=f"工作方式检讨（失败率 {1 - success_rate:.0%}）",
                 rationale=(
                     f"完成 {len(done)} 单 / 失败 {len(failed)} 单，失败率 "
-                    f"{1 - success_rate:.0%} 超过阈值 {_PLANNER_TUNE_FAIL_RATE:.0%}。"
+                    f"{1 - success_rate:.0%} 超过阈值 {_threshold('_PLANNER_TUNE_FAIL_RATE'):.0%}。"
                     f"近期失败原因：{'；'.join(errors) or '无'}。"
                     f"建议调整 planner 偏好（缩小任务范围/增加验证步骤）。"
                 ),
@@ -129,7 +151,7 @@ class EvolutionEngine:
             for cap in (e.detail.get("capabilities") or []):
                 approved_caps[cap] = approved_caps.get(cap, 0) + 1
         for cap, count in approved_caps.items():
-            if count >= _CAPS_ADJUST_APPROVALS and cap not in (ident.capabilities or []):
+            if count >= _threshold("_CAPS_ADJUST_APPROVALS") and cap not in (ident.capabilities or []):
                 p = await self._create_if_no_pending(
                     iid,
                     kind="caps_adjust",
@@ -157,9 +179,9 @@ class EvolutionEngine:
             if e.detail.get("allowed") is False:
                 denials[target] = denials.get(target, 0) + 1
         for target, n in attempts.items():
-            if n >= _MIN_SAMPLES and target in (ident.capabilities or []):
+            if n >= _threshold("_MIN_SAMPLES") and target in (ident.capabilities or []):
                 rate = denials.get(target, 0) / n
-                if rate >= _DEPRECATE_DENIAL_RATE:
+                if rate >= _threshold("_DEPRECATE_DENIAL_RATE"):
                     p = await self._create_if_no_pending(
                         iid,
                         kind="tool_deprecate",

@@ -217,6 +217,14 @@ class Settings(BaseSettings):
     agent_inbox_item_timeout: float = 600.0  # 单工单执行超时（秒）
     # 异步兜底预算：身份未设默认预算时按此硬顶（0 = 显式不限，不推荐）
     agent_workforce_fallback_budget: int = 50000
+    # 演化分析阈值（Alpha Review #3：参数化——研发型/运营型身份工作模式
+    # 不同，阈值应可调而非统一硬编码；默认值与 alpha 常量一致）
+    agent_evolution_min_samples: int = 5
+    agent_evolution_deprecate_denial_rate: float = 0.5
+    agent_evolution_caps_adjust_approvals: int = 2
+    agent_evolution_distill_min_done: int = 5
+    agent_evolution_distill_min_success: float = 0.8
+    agent_evolution_planner_tune_fail_rate: float = 0.3
     agent_tool_parallel_max: int = 5
     # 研究任务收敛刹车：同 run 内同查询重复搜索，第 2 次提醒、第 3 次拦截
     agent_search_repeat_guard: bool = True
