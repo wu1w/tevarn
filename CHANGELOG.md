@@ -2,9 +2,41 @@
 
 本项目版本记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
-## [0.5.0-alpha] - 2026-07-27
+## [0.4.3-alpha] - 2026-07-27
 
-0.5「编制与档案」落地（PLAN_AI_WORKFORCE 第一阶段）：Agent 从运行时对象
+PLAN 阶段 0.6「自主运转」落地：workforce 开始异步运转——
+**当你回来时，工作已经推进了**。
+
+### Added
+
+- **Agent 收件箱**：`agent_inbox_items` 表 + `InboxService`——
+  cron/webhook/api/manual 统一转工单；**有界红线**（`agent_inbox_max_pending`
+  默认 200，超限丢弃最旧 pending + 审计）；身份停职拒收/归档拒投，
+  全程哈希链审计（enqueued/claimed/done/retry/failed/dropped）
+- **Workforce Dispatcher（唤醒执行器）**：扫描 inbox → 唤醒身份——
+  kernel 进程挂**编制内权限档案与默认预算**（异步入口不绕过权限与预算，
+  越权工具被 mediate 拦截、token 真实扣减）；**编制内串行**
+  （同身份同时在手一单）；失败自动重试（attempts≤3）后 failed；
+  单工单超时熔断（`agent_inbox_item_timeout`）
+- **休眠-唤醒-续作**：无常驻进程（零成本休眠）→ 工单唤醒 →
+  身份专属 workforce session 复用（历史对话即 Episodic 上下文）+
+  **Identity Memory 注入 prompt**（人格/职责/方法论常驻）
+- **cron 派活**：`cron_jobs.identity_id + instruction`——
+  定时任务从「跑 workflow」升级为「定时给员工派活」（优先于 workflow_id）
+- **「你不在的这段时间」日报**：`GET /api/kernel/workforce/report?hours=`——
+  工单统计/各身份产出/中介拦截/待批准提权聚合；
+  首页空状态新增 **workforce 工作汇报卡片**（有活动才显示）
+- **工单 API**：`POST/GET /api/kernel/inbox`（手动派活 + 查询）
+- **测试**：+7（身份门控/有界溢出/优先级+串行/全流程 mediate+预算/
+  重试熔断/停职不派发复职恢复/日报聚合），全量 706/0
+
+### Changed
+
+- lifespan 启动装配 inbox + dispatcher（`agent_dispatcher_enabled=false` 可关）
+
+## [0.4.2-alpha] - 2026-07-27
+
+PLAN 阶段 0.5「编制与档案」落地（PLAN_AI_WORKFORCE 第一阶段）：Agent 从运行时对象
 变为持久实体——**进程可以死，Agent 不死**。
 
 ### Added

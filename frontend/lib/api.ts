@@ -1113,6 +1113,42 @@ export async function denyKernelEscalation(id: string): Promise<KernelEscalation
   return res.data;
 }
 
+// ── Workforce 日报（0.6 自主运转）：「你不在的这段时间」──
+
+export interface WorkforceReport {
+  hours: number;
+  since_ts: number;
+  inbox: {
+    stats: Record<string, number>;
+    total: number;
+    recent_done: Array<{
+      id: string;
+      identity_id: string;
+      source: string;
+      instruction: string;
+      result: string;
+      finished_at: number | null;
+    }>;
+    recent_failed: Array<{
+      id: string;
+      identity_id: string;
+      instruction: string;
+      error: string;
+    }>;
+  };
+  by_identity: Record<string, { done: number; failed?: number; latest_results: string[] }>;
+  kernel: {
+    event_kinds: Record<string, number>;
+    mediation_denials: number;
+    pending_escalations: number;
+  };
+}
+
+export async function getWorkforceReport(hours = 24): Promise<WorkforceReport> {
+  const res = await api.get('/kernel/workforce/report', { params: { hours } });
+  return res.data;
+}
+
 export interface ProviderPreset {
   id: string;
   name: string;

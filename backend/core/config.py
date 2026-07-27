@@ -210,6 +210,11 @@ class Settings(BaseSettings):
     agent_kernel_persistence: bool = True
     # checkpoint 快照间隔（事件数）：恢复=快照+增量，禁止全量 replay
     agent_kernel_checkpoint_interval: int = 500
+    # 0.6 自主运转：收件箱/派遣器
+    agent_dispatcher_enabled: bool = True
+    agent_dispatcher_poll_seconds: float = 10.0
+    agent_inbox_max_pending: int = 200  # 有界红线：超限丢弃最旧 pending
+    agent_inbox_item_timeout: float = 600.0  # 单工单执行超时（秒）
     agent_tool_parallel_max: int = 5
     # 用户单条输入硬上限（字符），超出截断并提示
     agent_max_user_input_chars: int = 100_000

@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base, TimestampMixin, UUIDMixin, utc_now
@@ -28,6 +28,9 @@ class CronJob(Base, UUIDMixin, TimestampMixin):
     workflow_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("workflows.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # 0.6 自主运转：挂身份 = 定时给员工派活（优先于 workflow_id）
+    identity_id: Mapped[Optional[uuid.UUID]] = mapped_column(nullable=True, index=True)
+    instruction: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     enabled: Mapped[bool] = mapped_column(default=True)
     last_run_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
     next_run_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)

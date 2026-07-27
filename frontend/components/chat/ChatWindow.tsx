@@ -3,6 +3,7 @@
 import React, { useRef, useEffect, useMemo, useState } from 'react';
 import { Message } from '@/types';
 import { MessageBubble } from './MessageBubble';
+import { WorkforceReportCard } from './WorkforceReport';
 import { AppLogo } from '@/components/brand/AppLogo';
 import { getDevices } from '@/lib/api';
 import { useT } from '@/stores/localeStore';
@@ -97,6 +98,9 @@ export function ChatWindow({
           <p className="mb-6 max-w-md text-sm text-foreground-dim">
             {t('chat.tagline')}
           </p>
+
+          {/* 「你不在的这段时间」——workforce 工作汇报（0.6 自主运转）*/}
+          <WorkforceReportCard />
 
           <div className="mb-6 grid w-full max-w-lg gap-2 sm:grid-cols-1">
             {EXAMPLE_KEYS.map((n) => (

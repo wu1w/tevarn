@@ -225,7 +225,28 @@ class CronScheduler:
                     log_repo = None
                     log_id = None
 
-                if job.workflow_id:
+                if getattr(job, "identity_id", None):
+                    # 0.6 自主运转：定时给员工派活 → 投递工单到身份收件箱
+                    from backend.kernel.workforce import get_workforce_inbox
+
+                    inbox = get_workforce_inbox()
+                    if inbox is None:
+                        raise RuntimeError("workforce inbox 未启用")
+                    item = await inbox.enqueue(
+                        job.identity_id,
+                        str(getattr(job, "instruction", "") or job_name),
+                        source="cron",
+                        source_ref=str(job_id),
+                        payload={"cron_job": job_name, "schedule": getattr(job, "schedule", "")},
+                    )
+                    if item is None:
+                        raise RuntimeError("工单被拒收（身份停用或不存在）")
+                    logger.info(
+                        "Cron job '%s' → 工单 %s 已投递给身份 %s",
+                        job_name, item.id, job.identity_id,
+                    )
+                    output_text = f"inbox_item={item.id}"
+                elif job.workflow_id:
                     from backend.repositories.workflow_repo import WorkflowRepository
                     from backend.services.workflow_engine import WorkflowEngine
 

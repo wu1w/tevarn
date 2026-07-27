@@ -156,6 +156,12 @@ async def _migrate_tool_columns(conn) -> None:
     await _add_column_if_missing(conn, "tools", "allowed_paths", "JSON DEFAULT NULL")
 
 
+async def _migrate_workforce_columns(conn) -> None:
+    """0.6 自主运转：cron_jobs 可挂身份（定时给员工派活）"""
+    await _add_column_if_missing(conn, "cron_jobs", "identity_id", "CHAR(36)")
+    await _add_column_if_missing(conn, "cron_jobs", "instruction", "TEXT")
+
+
 async def init_db() -> None:
     """Initialize database tables"""
     async with engine.begin() as conn:
@@ -163,3 +169,4 @@ async def init_db() -> None:
         await _migrate_skill_columns(conn)
         await _migrate_tenant_columns(conn)
         await _migrate_tool_columns(conn)
+        await _migrate_workforce_columns(conn)

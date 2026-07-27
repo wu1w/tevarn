@@ -131,3 +131,39 @@ class KernelCheckpoint(Base, UUIDMixin, TimestampMixin):
     event_count: Mapped[int] = mapped_column(Integer)  # 快照覆盖的事件总数
     tail_hash: Mapped[str] = mapped_column(String(64))  # 快照时链尾哈希（连续性锚点）
     state_snapshot: Mapped[Any] = mapped_column(JSON)  # 身份/进程状态序列化
+
+
+class AgentInboxItem(Base, UUIDMixin, TimestampMixin):
+    """Agent 收件箱工单（PLAN 阶段 0.6：cron/webhook/邮件/文件变更 → 工单）。
+
+    Task 只是 Agent 生命周期中的一个事件——工单就是「一封信」，
+    由 Dispatcher 唤醒对应身份来处理。
+
+    状态机：pending → claimed → done/failed；
+    溢出/拒收 → dropped（全部进审计链）。
+    有界红线：全局 pending 超上限时丢弃最旧 pending（不无限堆积）。
+    """
+
+    __tablename__ = "agent_inbox_items"
+
+    identity_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("agent_identities.id", ondelete="CASCADE"), index=True
+    )
+    # cron / webhook / api / manual
+    source: Mapped[str] = mapped_column(String(16), index=True)
+    source_ref: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+    instruction: Mapped[str] = mapped_column(Text)  # 任务描述（派活内容）
+    payload: Mapped[Any] = mapped_column(JSON, default=dict)
+    priority: Mapped[int] = mapped_column(Integer, default=0)
+
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+
+    result: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # 执行它的 kernel 进程（审计链可回溯到 mediation/budget 全记录）
+    process_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+
+    claimed_at: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    finished_at: Mapped[Optional[float]] = mapped_column(Float, nullable=True)

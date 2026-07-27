@@ -380,6 +380,22 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"kernel persistence startup skipped: {e}")
 
+    # 0.6 自主运转：装配 inbox + dispatcher（定时/外部事件给员工派活）
+    try:
+        if bool(getattr(settings, "agent_dispatcher_enabled", True)):
+            from backend.database import AsyncSessionLocal
+            from backend.kernel.kernel import get_kernel
+            from backend.kernel.workforce import init_workforce
+
+            kernel = get_kernel()
+            if bool(getattr(settings, "agent_kernel_persistence", True)):
+                inbox, dispatcher = init_workforce(kernel, AsyncSessionLocal, settings)
+                if dispatcher is not None:
+                    _spawn_bg(dispatcher.run_forever(), name="workforce-dispatcher")
+                    logger.info("workforce dispatcher 已启动（inbox 就绪）")
+    except Exception as e:
+        logger.warning(f"workforce dispatcher startup skipped: {e}")
+
     # EventBus → WS 活动流桥（Phase 0.5.2 W2-3）
     try:
         from backend.api.websocket import manager as ws_manager

@@ -277,3 +277,79 @@ async def supersede_identity_memory(
     except ValueError as e:
         return {"error": str(e)}
     return _memory_dict(entry)
+
+
+# ── 收件箱与日报（0.6 自主运转）─────────────────────────────────
+
+
+@router.post("/inbox")
+async def enqueue_inbox_item(
+    body: dict,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """手动派活：给身份投递工单。"""
+    from backend.kernel.workforce import get_workforce_inbox
+
+    inbox = get_workforce_inbox()
+    if inbox is None:
+        return {"error": "workforce inbox 未启用"}
+    try:
+        item = await inbox.enqueue(
+            str(body.get("identity_id") or ""),
+            str(body.get("instruction") or ""),
+            source=str(body.get("source") or "api"),
+            payload=body.get("payload"),
+            priority=int(body.get("priority") or 0),
+        )
+    except ValueError as e:
+        return {"error": str(e)}
+    if item is None:
+        return {"error": "工单被拒收（身份停用或不存在）"}
+    return {"id": str(item.id), "status": item.status}
+
+
+@router.get("/inbox")
+async def list_inbox_items(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+    identity_id: str | None = Query(None),
+    status: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+):
+    from backend.kernel.workforce import get_workforce_inbox
+
+    inbox = get_workforce_inbox()
+    if inbox is None:
+        return {"error": "workforce inbox 未启用", "items": [], "total": 0}
+    items = await inbox.list_items(identity_id=identity_id, status=status, limit=limit)
+    return {
+        "items": [
+            {
+                "id": str(i.id),
+                "identity_id": str(i.identity_id),
+                "source": i.source,
+                "instruction": i.instruction[:300],
+                "status": i.status,
+                "attempts": i.attempts,
+                "result": (i.result or "")[:500],
+                "error": (i.error or "")[:300],
+                "created_at": i.created_at.isoformat() if i.created_at else None,
+                "finished_at": i.finished_at,
+            }
+            for i in items
+        ],
+        "total": len(items),
+    }
+
+
+@router.get("/workforce/report")
+async def workforce_report(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+    hours: int = Query(24, ge=1, le=24 * 90),
+):
+    """「你不在的这段时间」——workforce 工作汇报。"""
+    from backend.kernel.workforce import build_daily_report, get_workforce_inbox
+
+    inbox = get_workforce_inbox()
+    if inbox is None:
+        return {"error": "workforce inbox 未启用"}
+    return await build_daily_report(get_kernel(), inbox, hours=hours)

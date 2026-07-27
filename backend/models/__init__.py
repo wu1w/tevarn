@@ -1,6 +1,7 @@
 from .agent_profile import AgentProfile
 from .agent_identity import (
     AgentIdentity,
+    AgentInboxItem,
     IdentityMemoryEntry,
     KernelCheckpoint,
     KernelProcessRecord,

@@ -501,7 +501,12 @@ class NexusAgentLoop(AgentLoopBase):
                 # 快照失败降级 None（兼容模式）。Intent 最小权限交互落地前
                 # 这是 narrowing 链路的正确前置。
                 caps: list[str] | None = None
-                if bool(getattr(settings, "agent_kernel_explicit_capabilities", False)):
+                # 0.6：workforce 派遣可显式指定进程选项（身份权限档案/默认预算）——
+                # 异步唤醒的 agent 以其「编制」内的权限与预算运行
+                proc_opts = getattr(self, "_kernel_process_options", None) or {}
+                if proc_opts.get("capabilities") is not None:
+                    caps = list(proc_opts["capabilities"])
+                elif bool(getattr(settings, "agent_kernel_explicit_capabilities", False)):
                     try:
                         from backend.tools.registry import ToolRegistry
 
@@ -514,6 +519,7 @@ class NexusAgentLoop(AgentLoopBase):
                     session_id=str(session_id),
                     parent_id=parent_pid,
                     capabilities=caps,
+                    token_budget=proc_opts.get("token_budget"),
                     meta={"mode": mode, "parent_run_id": str(parent_run_id) if parent_run_id else None},
                 )
                 await kernel.mark_running(kernel_proc.id)
