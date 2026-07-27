@@ -213,38 +213,121 @@ export default function ApprovalsPage() {
 
       {/* 审批规则模态 */}
       {rulesOpen ? (
-        <Modal onClose={() => setRulesOpen(false)} wide>
-          <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--foreground)' }}>
-            {zh ? '审批规则（自动放行的边界）' : 'Approval rules (auto-approve boundaries)'}
-          </div>
-          <div style={{ fontSize: 12, color: 'var(--foreground-dim)', marginTop: 6, lineHeight: 1.6 }}>
-            {zh
-              ? '规则内的事 Agent 自己干，规则外才打扰你。每加一条规则 = 多一份信任，请谨慎。'
-              : 'Agents act freely within rules; only exceptions reach you. Each rule = more trust.'}
-          </div>
-          <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <RuleRow on zh={zh} title={zh ? '低风险任务自动执行' : 'Auto-run low-risk tasks'} sub={zh ? '能力白名单内 + 单任务预算 ≤ 50k' : 'Within whitelist + per-task budget ≤ 50k'} />
-            <RuleRow on zh={zh} title={zh ? '高危操作必审 + 二次确认' : 'High-risk ops require review + double confirm'} sub={zh ? '删除 / 覆盖 / 对外发布' : 'Delete / overwrite / publish'} warn />
-            <RuleRow on zh={zh} title={zh ? '能力升级需审批' : 'Capability upgrades need approval'} sub={zh ? '新数据源 / 新工具 / 出站网络' : 'New data sources / tools / egress'} warn />
-            <RuleRow on zh={zh} title={zh ? '超日均 2× 时自动收紧' : 'Auto-tighten at 2× daily average'} sub={zh ? '自动降额并通知你' : 'Auto-reduce and notify you'} />
-          </div>
-          <div style={{ fontSize: 10.5, color: 'var(--foreground-dim)', marginTop: 14 }}>
-            {zh ? '红线规则不建议关闭 · 规则持久化在 P6（内核·治理）接入' : 'Red-line rules should stay on · persistence lands in P6 (kernel governance)'}
-          </div>
-        </Modal>
+        <RulesModal zh={zh} onClose={() => setRulesOpen(false)} />
       ) : null}
     </div>
   );
 }
 
-function RuleRow({ on, zh, title, sub, warn }: { on: boolean; zh: boolean; title: string; sub: string; warn?: boolean }) {
+/* ── 审批规则（持久化：settings KV「approval_rules」）── */
+
+interface ApprovalRule {
+  key: string;
+  enabled: boolean;
+  warn?: boolean;
+}
+
+const DEFAULT_RULES: ApprovalRule[] = [
+  { key: 'auto_low_risk', enabled: true },
+  { key: 'review_high_risk', enabled: true, warn: true },
+  { key: 'review_capability_upgrade', enabled: true, warn: true },
+  { key: 'auto_tighten_2x', enabled: true },
+];
+
+const RULE_TEXT: Record<string, { zh: [string, string]; en: [string, string] }> = {
+  auto_low_risk: {
+    zh: ['低风险任务自动执行', '能力白名单内 + 单任务预算 ≤ 50k'],
+    en: ['Auto-run low-risk tasks', 'Within whitelist + per-task budget ≤ 50k'],
+  },
+  review_high_risk: {
+    zh: ['高危操作必审 + 二次确认', '删除 / 覆盖 / 对外发布'],
+    en: ['High-risk ops require review + double confirm', 'Delete / overwrite / publish'],
+  },
+  review_capability_upgrade: {
+    zh: ['能力升级需审批', '新数据源 / 新工具 / 出站网络'],
+    en: ['Capability upgrades need approval', 'New data sources / tools / egress'],
+  },
+  auto_tighten_2x: {
+    zh: ['超日均 2× 时自动收紧', '自动降额并通知你'],
+    en: ['Auto-tighten at 2× daily average', 'Auto-reduce and notify you'],
+  },
+};
+
+function RulesModal({ zh, onClose }: { zh: boolean; onClose: () => void }) {
+  const addToast = useToastStore((s) => s.addToast);
+  const [rules, setRules] = useState<ApprovalRule[] | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const r = await api.get('/settings/approval_rules');
+        const val = r.data?.value;
+        setRules(Array.isArray(val) && val.length ? val : DEFAULT_RULES);
+      } catch {
+        // 未初始化：写入默认值
+        try { await api.put('/settings/approval_rules', { value: DEFAULT_RULES }); } catch { /* 忽略 */ }
+        setRules(DEFAULT_RULES);
+      }
+    })();
+  }, []);
+
+  const toggle = async (key: string) => {
+    if (!rules || busy) return;
+    const next = rules.map((r) => (r.key === key ? { ...r, enabled: !r.enabled } : r));
+    setRules(next);  // 乐观更新
+    setBusy(true);
+    try {
+      await api.put('/settings/approval_rules', { value: next });
+      const rule = next.find((r) => r.key === key)!;
+      const text = RULE_TEXT[key]?.[zh ? 'zh' : 'en'][0] ?? key;
+      addToast(rule.enabled
+        ? (zh ? `已开启：${text}` : `Enabled: ${text}`)
+        : (zh ? `已关闭：${text}` : `Disabled: ${text}`), 'success');
+    } catch (err) {
+      setRules(rules);  // 回滚
+      addToast(String(err), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, border: '1px solid var(--border-subtle)', background: 'var(--card-bg)' }}>
+    <Modal onClose={onClose} wide>
+      <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--foreground)' }}>
+        {zh ? '审批规则（自动放行的边界）' : 'Approval rules (auto-approve boundaries)'}
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--foreground-dim)', marginTop: 6, lineHeight: 1.6 }}>
+        {zh
+          ? '规则内的事 Agent 自己干，规则外才打扰你。每加一条规则 = 多一份信任，请谨慎。'
+          : 'Agents act freely within rules; only exceptions reach you. Each rule = more trust.'}
+      </div>
+      <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {(rules ?? []).map((r) => {
+          const text = RULE_TEXT[r.key]?.[zh ? 'zh' : 'en'] ?? [r.key, ''];
+          return (
+            <RuleRow key={r.key} on={r.enabled} warn={r.warn} title={text[0]} sub={text[1]}
+              onToggle={() => toggle(r.key)} />
+          );
+        })}
+        {rules === null ? <div style={{ fontSize: 12, color: 'var(--foreground-dim)', padding: 12 }}>Loading…</div> : null}
+      </div>
+      <div style={{ fontSize: 10.5, color: 'var(--foreground-dim)', marginTop: 14 }}>
+        {zh ? '红线规则不建议关闭 · 已持久化（settings/approval_rules）' : 'Red-line rules should stay on · persisted (settings/approval_rules)'}
+      </div>
+    </Modal>
+  );
+}
+
+function RuleRow({ on, title, sub, warn, onToggle }: { on: boolean; title: string; sub: string; warn?: boolean; onToggle?: () => void }) {
+  return (
+    <div onClick={onToggle} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, border: '1px solid var(--border-subtle)', background: 'var(--card-bg)', cursor: onToggle ? 'pointer' : 'default' }}>
       <span style={{
         width: 34, height: 20, borderRadius: 10, flexShrink: 0, position: 'relative',
         background: on ? (warn ? 'var(--status-offline)' : 'var(--status-online)') : 'var(--input-bg)',
+        transition: 'background .2s',
       }}>
-        <span style={{ position: 'absolute', top: 2, left: on ? 16 : 2, width: 16, height: 16, borderRadius: '50%', background: '#fff' }} />
+        <span style={{ position: 'absolute', top: 2, left: on ? 16 : 2, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left .2s' }} />
       </span>
       <span style={{ flex: 1 }}>
         <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: 'var(--foreground)' }}>{title}</span>

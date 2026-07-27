@@ -64,7 +64,7 @@ function AgentRow({ profile }: { profile: KernelIdentity }) {
 export function AgentSidebar() {
   const t = useT();
   const addToast = useToastStore((s) => s.addToast);
-  const { data } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['kernel-identities'],
     queryFn: () => getKernelIdentities(),
     staleTime: 30_000,
@@ -104,7 +104,13 @@ export function AgentSidebar() {
       {/* Agent 列表 */}
       <div className="tk-sb-section">{t('nav.sidebarAgents' as never)}</div>
       <div className="tk-sb-list">
-        {list.length === 0 ? (
+        {isError ? (
+          <button type="button" className="tk-sb-empty" style={{ cursor: 'pointer', color: 'var(--status-offline)' }} onClick={() => refetch()}>
+            加载失败，点击重试
+          </button>
+        ) : isLoading ? (
+          <div className="tk-sb-empty">加载中…</div>
+        ) : list.length === 0 ? (
           <div className="tk-sb-empty">{t('nav.noAgents' as never)}</div>
         ) : (
           list.map((p) => <AgentRow key={p.id} profile={p} />)

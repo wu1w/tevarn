@@ -70,6 +70,14 @@ class AsyncGoalRepository(AsyncBaseRepository, GoalRepository):
         finally:
             await self._close_session(session)
 
+    async def list_all(self) -> list[Goal]:
+        session = await self._get_session()
+        try:
+            result = await session.execute(select(Goal).order_by(Goal.created_at.desc()))
+            return list(result.scalars().all())
+        finally:
+            await self._close_session(session)
+
     async def list_children(self, parent_id: uuid.UUID) -> list[Goal]:
         session = await self._get_session()
         try:

@@ -42,10 +42,17 @@ async def get_goal_tree(
     current_user: Annotated[UserRead, Depends(get_current_user)],
 ) -> dict[str, Any]:
     repo = AsyncGoalRepository()
-    objectives = await repo.list_objectives()
+    all_goals = await repo.list_all()  # 单次查询，内存组树（消除 N+1）
+    krs_by_parent: dict[str, list] = {}
+    objectives = []
+    for g in all_goals:
+        if g.kind == "objective":
+            objectives.append(g)
+        elif g.parent_id is not None:
+            krs_by_parent.setdefault(str(g.parent_id), []).append(g)
     tree = []
     for o in objectives:
-        krs = await repo.list_children(o.id)
+        krs = krs_by_parent.get(str(o.id), [])
         od = o.to_dict()
         if krs:
             od["progress"] = round(sum(k.progress for k in krs) / len(krs), 1)

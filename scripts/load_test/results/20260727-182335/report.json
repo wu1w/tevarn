@@ -1,0 +1,651 @@
+{
+  "base": "http://127.0.0.1:3001",
+  "ts": "20260727-182335",
+  "stages": {
+    "c1": {
+      "page.dashboard": {
+        "count": 10,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 49.1,
+        "p95": 83.4,
+        "p99": 83.4,
+        "max": 83.4,
+        "mean": 53.7
+      },
+      "page.agents": {
+        "count": 10,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 48.9,
+        "p95": 244.1,
+        "p99": 244.1,
+        "max": 244.1,
+        "mean": 68.1
+      },
+      "page.goals": {
+        "count": 10,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 51.7,
+        "p95": 253.7,
+        "p99": 253.7,
+        "max": 253.7,
+        "mean": 75.0
+      },
+      "page.activity": {
+        "count": 9,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 46.3,
+        "p95": 57.5,
+        "p99": 57.5,
+        "max": 57.5,
+        "mean": 47.5
+      },
+      "page.kernel": {
+        "count": 9,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 50.3,
+        "p95": 65.5,
+        "p99": 65.5,
+        "max": 65.5,
+        "mean": 51.8
+      },
+      "page.approvals": {
+        "count": 9,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 51.6,
+        "p95": 67.8,
+        "p99": 67.8,
+        "max": 67.8,
+        "mean": 55.5
+      },
+      "page.knowledge": {
+        "count": 9,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 46.9,
+        "p95": 85.8,
+        "p99": 85.8,
+        "max": 85.8,
+        "mean": 52.4
+      },
+      "api.health": {
+        "count": 18,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 9.5,
+        "p95": 110.6,
+        "p99": 110.6,
+        "max": 110.6,
+        "mean": 14.7
+      },
+      "api.identities": {
+        "count": 27,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 11.4,
+        "p95": 71.9,
+        "p99": 75.9,
+        "max": 75.9,
+        "mean": 17.6
+      },
+      "api.processes": {
+        "count": 27,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 8.1,
+        "p95": 10.5,
+        "p99": 13.3,
+        "max": 13.3,
+        "mean": 8.5
+      },
+      "api.events": {
+        "count": 18,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 8.3,
+        "p95": 10.9,
+        "p99": 10.9,
+        "max": 10.9,
+        "mean": 8.6
+      },
+      "api.escalations": {
+        "count": 27,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 8.1,
+        "p95": 13.3,
+        "p99": 13.3,
+        "max": 13.3,
+        "mean": 8.7
+      },
+      "api.goal_tree": {
+        "count": 27,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 12.9,
+        "p95": 24.5,
+        "p99": 129.9,
+        "max": 129.9,
+        "mean": 18.5
+      },
+      "api.documents": {
+        "count": 9,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 13.1,
+        "p95": 18.7,
+        "p99": 18.7,
+        "max": 18.7,
+        "mean": 14.0
+      },
+      "api.notifications": {
+        "count": 9,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 20.0,
+        "p95": 24.5,
+        "p99": 24.5,
+        "max": 24.5,
+        "mean": 20.7
+      },
+      "crud.goals": {
+        "count": 0
+      }
+    },
+    "c10": {
+      "page.dashboard": {
+        "count": 21,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 464.3,
+        "p95": 870.4,
+        "p99": 890.9,
+        "max": 890.9,
+        "mean": 455.6
+      },
+      "page.agents": {
+        "count": 22,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 514.3,
+        "p95": 1067.6,
+        "p99": 1130.6,
+        "max": 1130.6,
+        "mean": 620.3
+      },
+      "page.goals": {
+        "count": 23,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 504.9,
+        "p95": 1013.4,
+        "p99": 1072.9,
+        "max": 1072.9,
+        "mean": 525.3
+      },
+      "page.activity": {
+        "count": 24,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 526.2,
+        "p95": 1040.9,
+        "p99": 1077.0,
+        "max": 1077.0,
+        "mean": 611.7
+      },
+      "page.kernel": {
+        "count": 25,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 491.7,
+        "p95": 1025.8,
+        "p99": 1051.5,
+        "max": 1051.5,
+        "mean": 520.8
+      },
+      "page.approvals": {
+        "count": 26,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 383.5,
+        "p95": 596.7,
+        "p99": 1011.8,
+        "max": 1011.8,
+        "mean": 418.7
+      },
+      "page.knowledge": {
+        "count": 27,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 320.5,
+        "p95": 983.9,
+        "p99": 998.7,
+        "max": 998.7,
+        "mean": 375.8
+      },
+      "api.health": {
+        "count": 47,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 73.2,
+        "p95": 241.6,
+        "p99": 558.0,
+        "max": 558.0,
+        "mean": 94.3
+      },
+      "api.identities": {
+        "count": 70,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 76.8,
+        "p95": 257.7,
+        "p99": 305.9,
+        "max": 305.9,
+        "mean": 102.2
+      },
+      "api.processes": {
+        "count": 62,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 55.9,
+        "p95": 209.2,
+        "p99": 256.3,
+        "max": 256.3,
+        "mean": 76.0
+      },
+      "api.events": {
+        "count": 40,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 49.2,
+        "p95": 192.5,
+        "p99": 204.7,
+        "max": 204.7,
+        "mean": 66.6
+      },
+      "api.escalations": {
+        "count": 60,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 48.7,
+        "p95": 183.4,
+        "p99": 218.6,
+        "max": 218.6,
+        "mean": 66.5
+      },
+      "api.goal_tree": {
+        "count": 60,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 92.5,
+        "p95": 525.9,
+        "p99": 604.0,
+        "max": 604.0,
+        "mean": 125.3
+      },
+      "api.documents": {
+        "count": 20,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 111.9,
+        "p95": 511.0,
+        "p99": 511.0,
+        "max": 511.0,
+        "mean": 136.5
+      },
+      "api.notifications": {
+        "count": 20,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 160.6,
+        "p95": 555.9,
+        "p99": 555.9,
+        "max": 555.9,
+        "mean": 170.3
+      },
+      "crud.goals": {
+        "count": 15,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 417.3,
+        "p95": 904.6,
+        "p99": 904.6,
+        "max": 904.6,
+        "mean": 502.3
+      }
+    },
+    "c50": {
+      "page.dashboard": {
+        "count": 35,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 1837.3,
+        "p95": 2673.8,
+        "p99": 2924.3,
+        "max": 2924.3,
+        "mean": 1879.9
+      },
+      "page.agents": {
+        "count": 30,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 1491.0,
+        "p95": 2920.7,
+        "p99": 3011.1,
+        "max": 3011.1,
+        "mean": 1547.7
+      },
+      "page.goals": {
+        "count": 29,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 1545.2,
+        "p95": 2240.9,
+        "p99": 2313.9,
+        "max": 2313.9,
+        "mean": 1501.7
+      },
+      "page.activity": {
+        "count": 25,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 1517.5,
+        "p95": 2316.1,
+        "p99": 2370.5,
+        "max": 2370.5,
+        "mean": 1554.2
+      },
+      "page.kernel": {
+        "count": 18,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 1185.1,
+        "p95": 2682.3,
+        "p99": 2682.3,
+        "max": 2682.3,
+        "mean": 1365.5
+      },
+      "page.approvals": {
+        "count": 18,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 1181.5,
+        "p95": 1878.8,
+        "p99": 1878.8,
+        "max": 1878.8,
+        "mean": 1197.0
+      },
+      "page.knowledge": {
+        "count": 20,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 1466.0,
+        "p95": 2257.6,
+        "p99": 2257.6,
+        "max": 2257.6,
+        "mean": 1386.1
+      },
+      "api.health": {
+        "count": 40,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 528.7,
+        "p95": 1620.3,
+        "p99": 1775.1,
+        "max": 1775.1,
+        "mean": 597.0
+      },
+      "api.identities": {
+        "count": 67,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 563.0,
+        "p95": 1567.1,
+        "p99": 1831.3,
+        "max": 1831.3,
+        "mean": 726.0
+      },
+      "api.processes": {
+        "count": 77,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 613.0,
+        "p95": 1441.1,
+        "p99": 1851.3,
+        "max": 1851.3,
+        "mean": 691.5
+      },
+      "api.events": {
+        "count": 56,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 525.2,
+        "p95": 1441.1,
+        "p99": 1620.0,
+        "max": 1620.0,
+        "mean": 647.9
+      },
+      "api.escalations": {
+        "count": 91,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 605.8,
+        "p95": 1494.1,
+        "p99": 1806.5,
+        "max": 1806.5,
+        "mean": 691.8
+      },
+      "api.goal_tree": {
+        "count": 97,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 767.6,
+        "p95": 1507.9,
+        "p99": 1859.6,
+        "max": 1859.6,
+        "mean": 812.0
+      },
+      "api.documents": {
+        "count": 34,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 871.2,
+        "p95": 1525.7,
+        "p99": 1687.5,
+        "max": 1687.5,
+        "mean": 899.6
+      },
+      "api.notifications": {
+        "count": 35,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 943.0,
+        "p95": 1697.2,
+        "p99": 1713.4,
+        "max": 1713.4,
+        "mean": 1014.0
+      },
+      "crud.goals": {
+        "count": 4,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 2939.3,
+        "p95": 3026.6,
+        "p99": 3026.6,
+        "max": 3026.6,
+        "mean": 2772.0
+      }
+    },
+    "c100": {
+      "page.dashboard": {
+        "count": 43,
+        "errors": 9,
+        "error_rate": 0.2093,
+        "p50": 2470.8,
+        "p95": 8995.3,
+        "p99": 8997.0,
+        "max": 8997.0,
+        "mean": 3741.4
+      },
+      "page.agents": {
+        "count": 36,
+        "errors": 4,
+        "error_rate": 0.1111,
+        "p50": 2397.6,
+        "p95": 8279.3,
+        "p99": 8282.1,
+        "max": 8282.1,
+        "mean": 3116.2
+      },
+      "page.goals": {
+        "count": 28,
+        "errors": 4,
+        "error_rate": 0.1429,
+        "p50": 2053.5,
+        "p95": 8103.6,
+        "p99": 8112.3,
+        "max": 8112.3,
+        "mean": 2886.0
+      },
+      "page.activity": {
+        "count": 27,
+        "errors": 3,
+        "error_rate": 0.1111,
+        "p50": 2028.4,
+        "p95": 7326.4,
+        "p99": 7351.4,
+        "max": 7351.4,
+        "mean": 2707.6
+      },
+      "page.kernel": {
+        "count": 24,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 1834.8,
+        "p95": 3582.0,
+        "p99": 3683.8,
+        "max": 3683.8,
+        "mean": 2057.6
+      },
+      "page.approvals": {
+        "count": 24,
+        "errors": 2,
+        "error_rate": 0.0833,
+        "p50": 1828.6,
+        "p95": 8835.7,
+        "p99": 8887.1,
+        "max": 8887.1,
+        "mean": 2513.9
+      },
+      "page.knowledge": {
+        "count": 25,
+        "errors": 2,
+        "error_rate": 0.08,
+        "p50": 1842.2,
+        "p95": 7746.7,
+        "p99": 8879.9,
+        "max": 8879.9,
+        "mean": 2529.0
+      },
+      "api.health": {
+        "count": 54,
+        "errors": 4,
+        "error_rate": 0.0741,
+        "p50": 920.7,
+        "p95": 7870.9,
+        "p99": 8062.0,
+        "max": 8062.0,
+        "mean": 1393.9
+      },
+      "api.identities": {
+        "count": 95,
+        "errors": 2,
+        "error_rate": 0.0211,
+        "p50": 1215.8,
+        "p95": 2784.7,
+        "p99": 7768.0,
+        "max": 7768.0,
+        "mean": 1326.2
+      },
+      "api.processes": {
+        "count": 112,
+        "errors": 1,
+        "error_rate": 0.0089,
+        "p50": 1090.4,
+        "p95": 2619.3,
+        "p99": 2838.6,
+        "max": 7561.2,
+        "mean": 1193.8
+      },
+      "api.events": {
+        "count": 81,
+        "errors": 1,
+        "error_rate": 0.0123,
+        "p50": 1164.4,
+        "p95": 2200.1,
+        "p99": 6785.5,
+        "max": 6785.5,
+        "mean": 1233.2
+      },
+      "api.escalations": {
+        "count": 128,
+        "errors": 8,
+        "error_rate": 0.0625,
+        "p50": 1167.9,
+        "p95": 7089.6,
+        "p99": 7814.8,
+        "max": 7887.8,
+        "mean": 1463.0
+      },
+      "api.goal_tree": {
+        "count": 132,
+        "errors": 8,
+        "error_rate": 0.0606,
+        "p50": 1407.7,
+        "p95": 7560.2,
+        "p99": 7907.5,
+        "max": 8004.0,
+        "mean": 1679.8
+      },
+      "api.documents": {
+        "count": 44,
+        "errors": 2,
+        "error_rate": 0.0455,
+        "p50": 1441.5,
+        "p95": 3191.1,
+        "p99": 8065.8,
+        "max": 8065.8,
+        "mean": 1658.7
+      },
+      "api.notifications": {
+        "count": 43,
+        "errors": 1,
+        "error_rate": 0.0233,
+        "p50": 1462.2,
+        "p95": 2768.5,
+        "p99": 8109.5,
+        "max": 8109.5,
+        "mean": 1649.0
+      },
+      "crud.goals": {
+        "count": 3,
+        "errors": 0,
+        "error_rate": 0.0,
+        "p50": 3864.2,
+        "p95": 5266.2,
+        "p99": 5266.2,
+        "max": 5266.2,
+        "mean": 4209.4
+      }
+    }
+  },
+  "backend_resources": {
+    "cpu_pct_max": 183.9,
+    "rss_mb_max": 176
+  }
+}
