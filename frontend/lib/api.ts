@@ -1061,6 +1061,8 @@ export interface KernelEvent {
   process_id: string;
   detail: Record<string, unknown>;
   ts: number;
+  prev_hash?: string;
+  hash?: string;
 }
 
 export async function getKernelProcesses(): Promise<{
