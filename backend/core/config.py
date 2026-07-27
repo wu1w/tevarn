@@ -188,6 +188,8 @@ class Settings(BaseSettings):
     # 已向模型承诺并发；此前实现是串行 for 循环）。整批含写类工具时自动退回串行。
     agent_tool_parallel: bool = True
     agent_tool_parallel_max: int = 5
+    # 研究任务收敛刹车：同 run 内同查询重复搜索，第 2 次提醒、第 3 次拦截
+    agent_search_repeat_guard: bool = True
     # 用户单条输入硬上限（字符），超出截断并提示
     agent_max_user_input_chars: int = 100_000
     # 大输入 soft 策略：超过则保留头尾，中间省略（仍受硬上限约束）

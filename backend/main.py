@@ -509,7 +509,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Takton",
     description="个人专属异步 Agent 终端后端",
-    version="0.3.2",
+    version="0.3.3",
     lifespan=lifespan,
 )
 

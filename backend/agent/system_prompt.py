@@ -81,6 +81,25 @@ PARALLEL_TOOL_CALLS = (
     "in doubt and the calls are independent, batch them."
 )
 
+SEARCH_CONVERGENCE = (
+    "# Search & research convergence\n"
+    "Search is a means, not the goal — the deliverable is a synthesized "
+    "answer. Rules for search/research tasks:\n"
+    "1. BUDGET: a typical research task needs 3-6 searches. If you have done "
+    "more than 8, stop searching and summarize what you have.\n"
+    "2. MARGINAL VALUE: when the latest search returns facts you already "
+    "have (same entities, same dates, same claims rephrased), searching "
+    "further adds nothing — stop and synthesize.\n"
+    "3. NO REPEATED QUERIES: never re-run the same or near-identical query "
+    "(same keywords reordered, trivial synonym swaps). Reformulate only when "
+    "you are targeting a genuinely different angle.\n"
+    "4. 80% RULE: if the information already gathered answers the core "
+    "question, deliver the summary now and note the gaps explicitly "
+    "('not covered: X') instead of chasing completeness.\n"
+    "5. SYNTHESIZE, DON'T STACK: after gathering, your next turn produces "
+    "the structured answer — not another round of 'let me also check'."
+)
+
 MEMORY_GUIDANCE = (
     "# Memory\n"
     "You have persistent memory across sessions. Save durable facts to memory: "
@@ -284,6 +303,7 @@ def build_system_prompt(
         stable_parts.append(TOOL_USE_ENFORCEMENT)
         stable_parts.append(TASK_COMPLETION)
         stable_parts.append(PARALLEL_TOOL_CALLS)
+        stable_parts.append(SEARCH_CONVERGENCE)
 
         if "memory" in tool_set or "memory_pref" in tool_set:
             stable_parts.append(MEMORY_GUIDANCE)
