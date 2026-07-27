@@ -216,6 +216,8 @@ class Settings(BaseSettings):
     agent_inbox_max_pending: int = 200  # 有界红线：超限丢弃最旧 pending
     agent_inbox_item_timeout: float = 600.0  # 单工单执行超时（秒）
     agent_tool_parallel_max: int = 5
+    # 研究任务收敛刹车：同 run 内同查询重复搜索，第 2 次提醒、第 3 次拦截
+    agent_search_repeat_guard: bool = True
     # 用户单条输入硬上限（字符），超出截断并提示
     agent_max_user_input_chars: int = 100_000
     # 大输入 soft 策略：超过则保留头尾，中间省略（仍受硬上限约束）

@@ -241,12 +241,68 @@ class NexusAgentLoop(AgentLoopBase):
                     except ValueError:
                         pass  # 兼容模式/进程终态/能力已在集内——无需申请
                 return f"Error: Kernel 权限拒绝——{e}{esc_note}"
+        # ── 重复搜索软干预（0.4.4：研究任务收敛刹车）──
+        # 同 run 内同查询重复：第 2 次结果前附提醒；第 3 次起直接拒绝执行，
+        # 强制模型基于已有信息总结（prompt 层刹车之外的工程层兜底）。
+        repeat_verdict = self._search_repeat_verdict(name, arguments)
+        if repeat_verdict == "block":
+            logger.info("重复搜索拦截 tool=%s query=%s", name, str(arguments)[:120])
+            return (
+                "Error: 检测到同一查询已执行 3 次以上——继续重复搜索不会带来新信息。"
+                "请立即基于已收集的内容总结交付；如有未覆盖的缺口，在答案中显式注明，"
+                "或改用**角度不同**的新查询（而非同义改写）。"
+            )
+        repeat_prefix = (
+            "[提醒] 该查询此前已执行过，结果大概率相同。若本次结果无新增事实，"
+            "请停止继续搜索并进入总结阶段。\n\n" if repeat_verdict == "warn" else ""
+        )
         ex = getattr(self, "tool_executor", None)
         if ex is not None:
-            return await ex.execute(name, arguments)
+            result = await ex.execute(name, arguments)
+            return repeat_prefix + result if repeat_prefix and isinstance(result, str) else result
         from backend.tools.registry import ToolRegistry as UnifiedToolRegistry
 
-        return await UnifiedToolRegistry.execute(name, arguments)
+        result = await UnifiedToolRegistry.execute(name, arguments)
+        return repeat_prefix + result if repeat_prefix and isinstance(result, str) else result
+
+    # ── 重复搜索检测（0.4.4 收敛刹车）────────────────────────────
+
+    _SEARCH_TOOL_NAMES = frozenset({
+        "web_search", "x_search", "search", "websearch",
+        "web_extract", "web_fetch", "fetch_url",
+    })
+
+    def _search_repeat_verdict(self, name: str, arguments: dict[str, Any]) -> str | None:
+        """返回 None（首次/非搜索）/ "warn"（第 2 次）/ "block"（第 3 次起）。
+
+        归一化：query/q 参数小写 + 词序排序——"A B" 与 "B A"、纯同义
+        改写之外的词序变体视为同一查询。只对搜索类工具生效，
+        非搜索工具的合法重复（重读文件等）不受影响。
+        """
+        if not bool(getattr(settings, "agent_search_repeat_guard", True)):
+            return None
+        if name not in self._SEARCH_TOOL_NAMES:
+            return None
+        query = str(
+            arguments.get("query") or arguments.get("q") or arguments.get("url") or ""
+        ).strip().lower()
+        if not query:
+            return None
+        import hashlib
+
+        normalized = " ".join(sorted(query.split()))
+        fp = hashlib.sha1(f"{name}:{normalized}".encode("utf-8")).hexdigest()[:12]
+        counter = getattr(self, "_search_fp_counter", None)
+        if counter is None:
+            counter = {}
+            self._search_fp_counter = counter
+        count = counter.get(fp, 0) + 1
+        counter[fp] = count
+        if count >= 3:
+            return "block"
+        if count == 2:
+            return "warn"
+        return None
 
     async def _contract_tool_block_reason(
         self, name: str, arguments: dict[str, Any]
