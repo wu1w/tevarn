@@ -224,7 +224,23 @@ class NexusAgentLoop(AgentLoopBase):
                 logger.warning(
                     "kernel 拦截工具调用 tool=%s proc=%s: %s", name, kernel_proc.id, e
                 )
-                return f"Error: Kernel 权限拒绝——{e}"
+                # 0.4.1 提权交互：自动发起申请，用户批准后能力并入进程集。
+                # 拦截文本反馈给模型——模型应告知用户「等待批准」而非反复重试。
+                esc_note = ""
+                if bool(getattr(settings, "agent_kernel_auto_escalate", True)):
+                    try:
+                        req = await get_kernel().request_escalation(
+                            kernel_proc.id,
+                            [name],
+                            reason=f"工具调用被能力集拦截：{name}",
+                        )
+                        esc_note = (
+                            f"（已自动发起权限申请 {req.id}，"
+                            "用户在权限控制台批准后即可重试；请勿重复调用本工具）"
+                        )
+                    except ValueError:
+                        pass  # 兼容模式/进程终态/能力已在集内——无需申请
+                return f"Error: Kernel 权限拒绝——{e}{esc_note}"
         ex = getattr(self, "tool_executor", None)
         if ex is not None:
             return await ex.execute(name, arguments)

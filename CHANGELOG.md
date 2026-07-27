@@ -2,6 +2,33 @@
 
 本项目版本记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [0.4.1-alpha] - 2026-07-26
+
+审计缺口修复 + 提权交互地基：用户授权成为唯一合法的能力扩大通道。
+
+### Added
+
+- **提权交互（Escalation）**：agent 被能力集拦截时自动发起权限申请，
+  `/security` 权限控制台实时展示待批准列表（5s 轮询），批准/拒绝一键处理；
+  批准后能力并入进程能力集（持令牌进程自动重签令牌），
+  申请去重防模型重试刷屏；三段事件（requested/approved/denied）全部进哈希链审计
+- **观测 API**：`GET /api/kernel/escalations`、`POST .../approve|deny`
+- **Token HMAC-SHA256 签名**：`to_dict` 默认签名、`from_dict` 默认验签，
+  伪造/无签名一律 `TokenSignatureError`（密钥 HKDF 派生自 jwt_secret）；
+  `verify=False` 保留历史数据兼容窗口
+- **subagent 父进程链**：`delegate_task → run_subagent → child loop`
+  按父能力集 narrow——修复 parent_id 误传 run 记录 id 导致父链落空的潜藏 bug
+- **测试**：kernel 测试 58 → 70（escalation 全生命周期/令牌重签/去重/边界/父子隔离）
+
+### Changed
+
+- **`agent_kernel_explicit_capabilities` 默认 True**：主进程挂注册表全集快照，
+  等效放行但使 subagent 继承/narrow 真实生效；新装 dynamic skill 首次使用
+  将触发提权申请（批准后并入）；设 False 回退全放行兼容模式
+- **并发假设文档化**：kernel 方法内部零 await（asyncio 单线程无竞态），
+  模块 docstring 立维护红线——引入 await 前必先加锁
+- **README**：Agent Kernel 章节 + 架构图叠加控制平面层
+
 ## [0.4.0-alpha] - 2026-07-26
 
 Agent Kernel 控制平面正式引入：进程抽象、能力令牌、全路径执行中介、

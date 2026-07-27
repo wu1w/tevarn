@@ -101,6 +101,38 @@ class BudgetExceededError(RuntimeError):
     """进程预算耗尽。"""
 
 
+@dataclass(frozen=True)
+class EscalationRequest:
+    """提权申请（0.4.1 地基：「劳动合同补充条款」的签署流程）。
+
+    与能力单调递减红线的关系：narrowing 约束的是**父子派生**
+    （子不能超父，数据结构级）；escalation 是**控制面授权**——
+    kernel 作为 trusted 根，代表用户把能力并入进程能力集。
+    用户显式批准是唯一合法的能力扩大通道，全程哈希链留痕。
+    """
+
+    id: str
+    process_id: str
+    capabilities: tuple[str, ...]
+    reason: str = ""
+    status: str = "pending"  # pending / approved / denied
+    created_at: float = 0.0
+    resolved_at: float | None = None
+    resolved_by: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "process_id": self.process_id,
+            "capabilities": list(self.capabilities),
+            "reason": self.reason,
+            "status": self.status,
+            "created_at": self.created_at,
+            "resolved_at": self.resolved_at,
+            "resolved_by": self.resolved_by,
+        }
+
+
 _EVENT_BUFFER_MAX = 5000
 
 
@@ -108,6 +140,7 @@ class AgentKernel:
     def __init__(self, audit_store: Any | None = None) -> None:
         self._processes: dict[str, AgentProcess] = {}
         self._events: list[KernelEvent] = []
+        self._escalations: dict[str, EscalationRequest] = {}
         # 阶段 3：审计落盘。挂载后每条事件追加 JSONL；
         # 内存缓冲为空时从文件链尾续 prev_hash（跨重启链连续）。
         self._audit_store = audit_store
@@ -334,6 +367,107 @@ class AgentKernel:
                 )
         proc.token = token  # 挂载后 mediate 以令牌为准（含过期强制）
         return token
+
+    # ── 提权交互（0.4.1：用户授权是唯一合法的能力扩大通道）──────────────
+
+    async def request_escalation(
+        self,
+        process_id: str,
+        capabilities: list[str] | set[str],
+        *,
+        reason: str = "",
+    ) -> EscalationRequest:
+        """进程申请扩大能力集。pending 状态等待用户批准/拒绝。
+
+        兼容模式进程（capabilities=None）本就全放行，申请无意义——拒绝。"""
+        proc = self._processes.get(process_id)
+        if proc is None:
+            raise ValueError(f"未知进程 {process_id}")
+        if proc.is_terminal:
+            raise ValueError(f"进程已终止（{proc.state}），无法提权")
+        if proc.capabilities is None:
+            raise ValueError("兼容模式进程（无显式能力集）无需提权")
+        caps = tuple(sorted(set(capabilities) - set(proc.capabilities)))
+        if not caps:
+            raise ValueError("申请的能力均已在进程能力集内")
+        # 去重：同进程已有 pending 申请覆盖这些能力时直接复用——
+        # 模型被拦截后可能重试，不能每次拦截都刷一条新申请
+        pending_caps = set(caps)
+        for existing in self._escalations.values():
+            if (
+                existing.process_id == process_id
+                and existing.status == "pending"
+                and pending_caps <= set(existing.capabilities)
+            ):
+                return existing
+        req = EscalationRequest(
+            id=uuid.uuid4().hex[:16],
+            process_id=process_id,
+            capabilities=caps,
+            reason=reason,
+            created_at=time.time(),
+        )
+        self._escalations[req.id] = req
+        self._emit("escalation_requested", process_id, {
+            "escalation_id": req.id,
+            "capabilities": list(caps),
+            "reason": reason,
+        })
+        return req
+
+    async def approve_escalation(self, request_id: str, *, by: str = "user") -> EscalationRequest:
+        """批准提权：能力并入进程能力集；若进程持有令牌则重新签发（含新能力）。"""
+        req = self._escalations.get(request_id)
+        if req is None:
+            raise ValueError(f"未知提权申请 {request_id}")
+        if req.status != "pending":
+            raise ValueError(f"申请已处理（{req.status}）")
+        proc = self._processes.get(req.process_id)
+        if proc is None or proc.is_terminal:
+            raise ValueError("进程已不存在或已终止")
+        req = EscalationRequest(
+            id=req.id, process_id=req.process_id, capabilities=req.capabilities,
+            reason=req.reason, status="approved", created_at=req.created_at,
+            resolved_at=time.time(), resolved_by=by,
+        )
+        self._escalations[req.id] = req
+        # 控制面授权：kernel 代表用户并入能力（非父子派生，不受 narrowing 约束）
+        merged = sorted(set(proc.capabilities or []) | set(req.capabilities))
+        proc.capabilities = merged
+        if proc.token is not None:
+            self.issue_token(req.process_id, merged)  # 重签令牌使扩大生效
+        self._emit("escalation_approved", req.process_id, {
+            "escalation_id": req.id,
+            "capabilities": list(req.capabilities),
+            "resolved_by": by,
+            "capabilities_after": merged,
+        })
+        return req
+
+    async def deny_escalation(self, request_id: str, *, by: str = "user") -> EscalationRequest:
+        req = self._escalations.get(request_id)
+        if req is None:
+            raise ValueError(f"未知提权申请 {request_id}")
+        if req.status != "pending":
+            raise ValueError(f"申请已处理（{req.status}）")
+        req = EscalationRequest(
+            id=req.id, process_id=req.process_id, capabilities=req.capabilities,
+            reason=req.reason, status="denied", created_at=req.created_at,
+            resolved_at=time.time(), resolved_by=by,
+        )
+        self._escalations[req.id] = req
+        self._emit("escalation_denied", req.process_id, {
+            "escalation_id": req.id,
+            "capabilities": list(req.capabilities),
+            "resolved_by": by,
+        })
+        return req
+
+    def list_escalations(self, *, status: str | None = None) -> list[EscalationRequest]:
+        out = list(self._escalations.values())
+        if status is not None:
+            out = [r for r in out if r.status == status]
+        return sorted(out, key=lambda r: r.created_at, reverse=True)
 
     # ── 审计 ──────────────────────────────────────────────
 

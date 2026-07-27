@@ -2,6 +2,9 @@
 
 Security Console 数据源：当前进程树（能力/预算/状态）+ 中介审计事件。
 只读接口——进程生命周期由 loop 驱动，不接受外部写操作。
+
+0.4.1：新增提权交互端点（escalations）——这是控制台唯一的写入口，
+对应「用户授权是唯一合法的能力扩大通道」。
 """
 
 from __future__ import annotations
@@ -59,3 +62,45 @@ async def list_events(
         "events": [e.to_dict() for e in events],
         "total": len(events),
     }
+
+
+# ── 提权交互（0.4.1）──────────────────────────────────────────
+
+
+@router.get("/escalations")
+async def list_escalations(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+    status: str | None = Query(None),
+):
+    kernel = get_kernel()
+    reqs = kernel.list_escalations(status=status)
+    return {
+        "escalations": [r.to_dict() for r in reqs],
+        "total": len(reqs),
+    }
+
+
+@router.post("/escalations/{request_id}/approve")
+async def approve_escalation(
+    request_id: str,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    kernel = get_kernel()
+    try:
+        req = await kernel.approve_escalation(request_id, by=str(current_user.id))
+    except ValueError as e:
+        return {"error": str(e), "request_id": request_id}
+    return req.to_dict()
+
+
+@router.post("/escalations/{request_id}/deny")
+async def deny_escalation(
+    request_id: str,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    kernel = get_kernel()
+    try:
+        req = await kernel.deny_escalation(request_id, by=str(current_user.id))
+    except ValueError as e:
+        return {"error": str(e), "request_id": request_id}
+    return req.to_dict()

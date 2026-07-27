@@ -1080,6 +1080,39 @@ export async function getKernelEvents(limit = 50): Promise<{
   return res.data;
 }
 
+// ── 提权交互（0.4.1）：用户授权是唯一合法的能力扩大通道 ──
+
+export interface KernelEscalation {
+  id: string;
+  process_id: string;
+  capabilities: string[];
+  reason: string;
+  status: 'pending' | 'approved' | 'denied';
+  created_at: number;
+  resolved_at: number | null;
+  resolved_by: string | null;
+}
+
+export async function getKernelEscalations(status?: string): Promise<{
+  escalations: KernelEscalation[];
+  total: number;
+}> {
+  const res = await api.get('/kernel/escalations', {
+    params: status ? { status } : {},
+  });
+  return res.data;
+}
+
+export async function approveKernelEscalation(id: string): Promise<KernelEscalation> {
+  const res = await api.post(`/kernel/escalations/${id}/approve`);
+  return res.data;
+}
+
+export async function denyKernelEscalation(id: string): Promise<KernelEscalation> {
+  const res = await api.post(`/kernel/escalations/${id}/deny`);
+  return res.data;
+}
+
 export interface ProviderPreset {
   id: string;
   name: string;

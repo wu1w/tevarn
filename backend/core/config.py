@@ -200,8 +200,12 @@ class Settings(BaseSettings):
     # 空 = 默认 ~/.takton/kernel_events.jsonl
     agent_kernel_audit_path: str = ""
     # 主进程能力显式化：开启后挂注册表全集快照（等效放行，
-    # 但使 subagent 继承/narrow 生效）；Intent 最小权限落地的前置
-    agent_kernel_explicit_capabilities: bool = False
+    # 但使 subagent 继承/narrow 生效）；Intent 最小权限落地的前置。
+    # 0.4.1 起默认开启——新装 dynamic skill 首次使用将触发提权申请
+    # （权限控制台批准后并入进程能力集）；设为 False 回退全放行兼容模式
+    agent_kernel_explicit_capabilities: bool = True
+    # 工具被能力集拦截时自动发起提权申请（用户在 /security 批准）
+    agent_kernel_auto_escalate: bool = True
     agent_tool_parallel_max: int = 5
     # 用户单条输入硬上限（字符），超出截断并提示
     agent_max_user_input_chars: int = 100_000

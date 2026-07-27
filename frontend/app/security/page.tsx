@@ -17,12 +17,16 @@ import {
   getCommandPolicy,
   getKernelEvents,
   getKernelProcesses,
+  getKernelEscalations,
+  approveKernelEscalation,
+  denyKernelEscalation,
   getWorkingMode,
   saveCommandPolicy,
   saveWorkingMode,
   type CommandPolicyCategory,
   type KernelEvent,
   type KernelProcess,
+  type KernelEscalation,
   type WorkingModeOption,
   type WorkingModePayload,
 } from '@/lib/api';
@@ -318,6 +322,9 @@ export default function SecurityPage() {
         {/* Agent Kernel：进程能力/预算 + 中介审计 */}
         <KernelSection />
 
+        {/* 提权申请：agent 被拦截时自动发起，用户批准/拒绝 */}
+        <EscalationSection />
+
         {/* 访问与凭证 + 安全自检（复用设置页安全组件） */}
         <section>
           <div className="mb-2 text-sm font-medium text-foreground">{t('security.access')}</div>
@@ -435,6 +442,105 @@ function KernelSection() {
         ))}
         {events.length === 0 && (
           <div className="text-xs text-foreground-muted">{t('security.kernelEventsEmpty')}</div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/** 提权申请区块（0.4.1）：pending 申请 5s 轮询，批准后能力并入进程。
+ *  用户授权是唯一合法的能力扩大通道——批准/拒绝全部进哈希链审计。 */
+function EscalationSection() {
+  const t = useT();
+  const [items, setItems] = useState<KernelEscalation[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const refresh = async () => {
+    try {
+      const r = await getKernelEscalations('pending');
+      setItems(r.escalations);
+    } catch {
+      setItems([]);
+    }
+  };
+
+  useEffect(() => {
+    let alive = true;
+    const tick = async () => {
+      if (!alive) return;
+      await refresh();
+    };
+    void tick();
+    const timer = setInterval(() => void tick(), 5000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, []);
+
+  const resolve = async (id: string, action: 'approve' | 'deny') => {
+    setBusy(id);
+    try {
+      if (action === 'approve') {
+        await approveKernelEscalation(id);
+      } else {
+        await denyKernelEscalation(id);
+      }
+      await refresh();
+    } catch {
+      // 处理失败时下一轮轮询会自愈
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <section>
+      <div className="mb-2">
+        <div className="text-sm font-medium text-foreground">{t('security.escalations')}</div>
+        <div className="mt-0.5 text-xs text-foreground-muted">{t('security.escalationsHint')}</div>
+      </div>
+      <div className="space-y-2">
+        {items.map((r) => (
+          <div key={r.id} className="tk-card rounded-2xl/60 px-4 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-sm font-medium text-foreground">
+                <span className="font-mono text-[11px] text-foreground-dim">
+                  {String(r.process_id).slice(0, 8)}
+                </span>
+                <span className="ml-2 font-mono text-[11px] text-amber-200/90">
+                  +[{r.capabilities.join(', ')}]
+                </span>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={busy === r.id}
+                  onClick={() => void resolve(r.id, 'approve')}
+                  className="rounded-md border border-emerald-400/60 bg-emerald-400/15 px-2.5 py-1 text-[11px] text-emerald-300 hover:bg-emerald-400/25 disabled:opacity-50"
+                >
+                  {t('security.escalationApprove')}
+                </button>
+                <button
+                  type="button"
+                  disabled={busy === r.id}
+                  onClick={() => void resolve(r.id, 'deny')}
+                  className="rounded-md border border-red-400/60 bg-red-400/10 px-2.5 py-1 text-[11px] text-red-300 hover:bg-red-400/20 disabled:opacity-50"
+                >
+                  {t('security.escalationDeny')}
+                </button>
+              </div>
+            </div>
+            {r.reason && (
+              <div className="mt-1 font-mono text-[11px] text-foreground-dim">{r.reason}</div>
+            )}
+            <div className="mt-0.5 font-mono text-[10px] text-foreground-dim">
+              {new Date(r.created_at * 1000).toLocaleString()}
+            </div>
+          </div>
+        ))}
+        {items.length === 0 && (
+          <div className="text-xs text-foreground-muted">{t('security.escalationsEmpty')}</div>
         )}
       </div>
     </section>
