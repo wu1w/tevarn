@@ -65,7 +65,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (!isAuthenticated && !isLoginPage) {
       router.push('/login');
     } else if (isAuthenticated && isLoginPage) {
-      router.push('/');
+      // 尊重登录页的 redirect 参数（与 login 页 goHome 同一目标，消除两处
+      // push 竞态——否则 storeLogin 后本 effect 的 push('/') 会盖掉
+      // goHome 的 push('/kernel')，登录后总回首页）
+      const params = new URLSearchParams(window.location.search);
+      const target = params.get('redirect') || '/';
+      router.push(target.startsWith('/') ? target : '/');
     }
   }, [hasHydrated, isAuthenticated, isLoginPage, router]);
 
