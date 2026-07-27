@@ -71,6 +71,21 @@ class WorkforceDispatcher:
     async def stop(self) -> None:
         self._running = False
 
+    def _effective_budget(self, ident: Any) -> int | None:
+        """有效预算：身份默认预算优先；未设置时给兜底——
+        异步无人值守场景的最后防线（刹车全失灵时 budget 硬顶中断，
+        防止研究型工单无限烧 token）。PLAN 红线：异步入口不得绕过
+        权限与预算——「无预算」本身就是一种绕过。0 = 显式不限。"""
+        if ident.default_token_budget is not None:
+            return ident.default_token_budget
+        try:
+            from backend.core.config import settings
+
+            fallback = int(getattr(settings, "agent_workforce_fallback_budget", 50000))
+        except Exception:
+            fallback = 50000
+        return fallback if fallback > 0 else None
+
     async def tick(self, *, wait: bool = False) -> int:
         """扫描一轮，派发所有可派工单。返回派发数。
         wait=True 时等待本轮派发的工单全部完成（测试/同步场景）。"""
@@ -118,7 +133,7 @@ class WorkforceDispatcher:
                 f"wf:{ident.name}",
                 session_id=None,
                 capabilities=list(ident.capabilities) if ident.capabilities is not None else None,
-                token_budget=ident.default_token_budget,
+                token_budget=self._effective_budget(ident),
                 meta={"inbox_item_id": str(item.id), "identity_id": str(ident.id),
                       "source": item.source},
             )
@@ -183,7 +198,7 @@ class WorkforceDispatcher:
         # 编制内权限/预算注入进程创建（loop._run_inner 读取）
         loop._kernel_process_options = {
             "capabilities": list(ident.capabilities) if ident.capabilities is not None else None,
-            "token_budget": ident.default_token_budget,
+            "token_budget": self._effective_budget(ident),
         }
         result = await loop.run(session_id, prompt, attachments=None, mode="workforce")
         proc = getattr(loop, "_kernel_process", None)

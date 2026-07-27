@@ -225,3 +225,35 @@ def test_daily_report_aggregation(wf) -> None:
         assert report["kernel"]["event_kinds"].get("inbox_done", 0) >= 1
 
     _run(go())
+
+
+def test_fallback_budget_applied_when_identity_has_none(wf) -> None:
+    """异步兜底预算：身份未设默认预算 → 进程挂 fallback 硬顶（最后防线）。"""
+    async def go():
+        reg, inbox, kernel = wf["registry"], wf["inbox"], wf["kernel"]
+        ident = await reg.create("无预算员工", capabilities=["file_read"])
+        assert ident.default_token_budget is None
+        item = await inbox.enqueue(ident.id, "研究型工单")
+
+        async def executor(identity, it, proc_id, k):
+            return "done"
+
+        disp = WorkforceDispatcher(kernel, inbox, reg, wf["SessionLocal"], executor=executor)
+        await disp.tick(wait=True)
+
+        done = await inbox.list_items(status="done")
+        proc = kernel.get_process(done[0].process_id)
+        assert proc.token_budget == 50000  # fallback 生效（config 默认）
+        assert proc.budget_remaining == 50000
+
+        # 身份显式设预算时优先用身份的
+        ident2 = await reg.create(
+            "有预算员工", capabilities=["file_read"], default_token_budget=8000
+        )
+        await inbox.enqueue(ident2.id, "另一单")
+        await disp.tick(wait=True)
+        dones = await inbox.list_items(status="done")
+        proc2 = kernel.get_process(dones[0].process_id)
+        assert proc2.token_budget == 8000  # 身份预算优先于 fallback
+
+    _run(go())

@@ -215,6 +215,8 @@ class Settings(BaseSettings):
     agent_dispatcher_poll_seconds: float = 10.0
     agent_inbox_max_pending: int = 200  # 有界红线：超限丢弃最旧 pending
     agent_inbox_item_timeout: float = 600.0  # 单工单执行超时（秒）
+    # 异步兜底预算：身份未设默认预算时按此硬顶（0 = 显式不限，不推荐）
+    agent_workforce_fallback_budget: int = 50000
     agent_tool_parallel_max: int = 5
     # 研究任务收敛刹车：同 run 内同查询重复搜索，第 2 次提醒、第 3 次拦截
     agent_search_repeat_guard: bool = True
