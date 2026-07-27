@@ -21,6 +21,8 @@ import time
 import uuid
 from typing import Any
 
+from backend.core.config import settings
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_ITEM_TIMEOUT = 600.0
@@ -51,6 +53,8 @@ class WorkforceDispatcher:
         self._executor = executor
         self._busy: set[str] = set()  # 在手单的身份 id（编制内串行）
         self._running = False
+        # Worker 池（Alpha Review #2）：identity_id → 长生命周期 loop 实例
+        self._workers: dict[str, Any] = {}
 
     async def run_forever(self) -> None:
         """后台主循环（lifespan _spawn_bg 拉起）。"""
@@ -71,6 +75,46 @@ class WorkforceDispatcher:
     async def stop(self) -> None:
         self._running = False
 
+    async def _worker_for(self, ident: Any) -> Any:
+        """WorkforceWorker 池（Alpha Review #2）：per-identity 长生命周期
+        loop 实例——repo 引用 / RAG 懒加载缓存 / context_manager 跨工单复用，
+        不再每单重新装配。
+
+        安全性：dispatcher 以 busy_identity_ids 保证同身份同时只派一单
+        （tick 内串行），故 per-identity 单实例无并发冲突；
+        run 级状态由 _reset_run_state() 在每次派发前显式归零。
+        身份归档/能力大改后调用 evict_worker 释放。"""
+        key = str(ident.id)
+        loop = self._workers.get(key)
+        if loop is None:
+            from backend.agent import NexusAgentLoop
+            from backend.api.dependencies import (
+                get_context_flow_repo,
+                get_ctx_item_repo,
+                get_message_repo,
+                get_notification_repo,
+                get_session_repo,
+                get_task_repo,
+            )
+
+            loop = NexusAgentLoop(
+                session_repo=await get_session_repo(),
+                message_repo=await get_message_repo(),
+                task_repo=await get_task_repo(),
+                ctx_item_repo=await get_ctx_item_repo(),
+                context_flow_repo=await get_context_flow_repo(),
+                ws_manager=None,
+                user_id=ident.user_id,
+                notification_repo=await get_notification_repo(),
+            )
+            self._workers[key] = loop
+            logger.info("workforce worker 上岗 ident=%s name=%s", key[:8], ident.name)
+        return loop
+
+    def evict_worker(self, identity_id: Any) -> None:
+        """身份归档/能力大改后释放其 worker（下次派发重新装配）。"""
+        self._workers.pop(str(identity_id), None)
+
     def _effective_budget(self, ident: Any) -> int | None:
         """有效预算：身份默认预算优先；未设置时给兜底——
         异步无人值守场景的最后防线（刹车全失灵时 budget 硬顶中断，
@@ -79,12 +123,65 @@ class WorkforceDispatcher:
         if ident.default_token_budget is not None:
             return ident.default_token_budget
         try:
-            from backend.core.config import settings
-
             fallback = int(getattr(settings, "agent_workforce_fallback_budget", 50000))
         except Exception:
             fallback = 50000
         return fallback if fallback > 0 else None
+
+    async def _build_memory_block(
+        self, ident: Any, instruction: str, memory_entries: list[Any]
+    ) -> tuple[str, str]:
+        """身份记忆注入块构造（Alpha Review #4）。返回 (标题, 正文)。
+
+        条目 ≤ 阈值：全量硬注入（人格/职责需常驻）。
+        条目 > 阈值：按工单相关性检索 top-k；检索不可用回落全量截断。
+        """
+        full_max = int(getattr(settings, "agent_identity_memory_full_inject_max", 8) or 8)
+        header = "## 你的身份记忆（长期人格/职责/方法论）"
+        if len(memory_entries) <= full_max:
+            text = "\n".join(
+                f"- [{m.kind}] {m.content}" for m in memory_entries
+            ) or "（暂无身份记忆）"
+            return header, text
+        retrieved = await self._retrieve_identity_memory(
+            ident, instruction, top_k=full_max
+        )
+        if retrieved:
+            n = retrieved.count("\n") + 1
+            return (
+                f"## 你的相关身份记忆（共 {len(memory_entries)} 条，"
+                f"按本工单相关性召回 {n} 条）"
+            ), retrieved
+        # 检索不可用：回落全量截断（保头——人格/职责通常在前）
+        text = "\n".join(
+            f"- [{m.kind}] {m.content}" for m in memory_entries
+        )[:4000]
+        return header, text
+
+    async def _retrieve_identity_memory(
+        self, ident: Any, query: str, *, top_k: int = 8
+    ) -> str | None:
+        """检索式身份记忆召回（Alpha Review #4）：向量模式可用时按
+        工单相关性 top-k；不可用/无结果返回 None（调用方回落全量截断）。"""
+        try:
+            from backend.services.rag.capability import use_vector_rag
+
+            if not use_vector_rag():
+                return None
+            from backend.services.rag.factory import RAGServiceFactory
+
+            rag = RAGServiceFactory.get_service()
+            docs = await rag.search_identity_memory(
+                query, str(ident.id), top_k=top_k
+            )
+            if not docs:
+                return None
+            return "\n".join(
+                f"- [{(d.payload or {}).get('kind', 'memory')}] {d.text}" for d in docs
+            )
+        except Exception as e:
+            logger.debug("身份记忆检索跳过: %s", e)
+            return None
 
     async def tick(self, *, wait: bool = False) -> int:
         """扫描一轮，派发所有可派工单。返回派发数。
@@ -153,16 +250,18 @@ class WorkforceDispatcher:
     async def _execute_with_loop(self, ident: Any, item: Any) -> tuple[str, str | None]:
         """构造 prompt（身份记忆注入）+ 跑一轮 loop（复用身份的专属 session 续作）。
         返回 (结果文本, kernel 进程 id)——进程由 loop 创建（带编制选项）。"""
-        # Identity Memory：人格/职责/方法论常驻 prompt 侧
+        # Identity Memory（Alpha Review #4）：条目少 → 全量硬注入（人格/职责
+        # 需要常驻）；条目超阈值 → 按工单相关性检索 top-k 注入（防 prompt 膨胀），
+        # 检索不可用回落全量截断
         memory_entries = await self._registry.current_memory(ident.id)
-        memory_text = "\n".join(
-            f"- [{m.kind}] {m.content}" for m in memory_entries
-        ) or "（暂无身份记忆）"
+        memory_header, memory_text = await self._build_memory_block(
+            ident, item.instruction, memory_entries
+        )
 
         prompt = (
             f"【工作任务】你是 «{ident.name}»"
             + (f"——{ident.role}" if ident.role else "")
-            + f"\n\n## 你的身份记忆（长期人格/职责/方法论）\n{memory_text}\n"
+            + f"\n\n{memory_header}\n{memory_text}\n"
             + f"\n## 本次工单（来源：{item.source}）\n{item.instruction.strip()}\n"
         )
         if item.payload:
@@ -173,26 +272,10 @@ class WorkforceDispatcher:
 
         session_id = await self._workforce_session_id(ident)
 
-        from backend.agent import NexusAgentLoop
-        from backend.api.dependencies import (
-            get_context_flow_repo,
-            get_ctx_item_repo,
-            get_message_repo,
-            get_notification_repo,
-            get_session_repo,
-            get_task_repo,
-        )
-
-        loop = NexusAgentLoop(
-            session_repo=await get_session_repo(),
-            message_repo=await get_message_repo(),
-            task_repo=await get_task_repo(),
-            ctx_item_repo=await get_ctx_item_repo(),
-            context_flow_repo=await get_context_flow_repo(),
-            ws_manager=None,
-            user_id=ident.user_id,
-            notification_repo=await get_notification_repo(),
-        )
+        # Worker 池复用（Alpha Review #2）：同身份跨工单共享 loop 实例，
+        # run 级状态显式归零后再上岗（防跨工单泄漏红线）
+        loop = await self._worker_for(ident)
+        loop._reset_run_state()
         loop._agent_key = f"wf:{ident.id}"
         loop._agent_label = ident.name
         # 编制内权限/预算注入进程创建（loop._run_inner 读取）

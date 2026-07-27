@@ -363,6 +363,121 @@ class QdrantRAGService(RAGService):
 
     # ─── Reranker ───
 
+    # ── Identity Memory 向量化（Alpha Review #4）──────────────────
+
+    async def upsert_identity_memory(
+        self,
+        *,
+        entry_id: str,
+        identity_id: str,
+        kind: str,
+        content: str,
+        version: int,
+    ) -> bool:
+        """身份记忆条目向量入库。失败仅告警返回 False（不阻塞记忆写入）。"""
+        from backend.services.rag.interface import IDENTITY_MEMORY_COLLECTION
+
+        try:
+            vector = await self.embed(content)
+            if not vector:
+                return False
+            await self._ensure_collection(IDENTITY_MEMORY_COLLECTION)
+            import aiohttp
+
+            point = {
+                "id": entry_id,  # UUID 字符串，Qdrant 原生支持
+                "vector": vector,
+                "payload": {
+                    "text": content,
+                    "entry_id": entry_id,
+                    "identity_id": identity_id,
+                    "kind": kind,
+                    "version": version,
+                },
+            }
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=15)
+            ) as session:
+                async with session.put(
+                    f"{self.qdrant_url}/collections/{IDENTITY_MEMORY_COLLECTION}/points?wait=true",
+                    json={"points": [point]},
+                ) as resp:
+                    if resp.status != 200:
+                        body = await resp.text()
+                        logger.warning(
+                            "identity memory upsert 失败: %s %s", resp.status, body[:200]
+                        )
+                        return False
+            return True
+        except Exception as e:
+            logger.debug("identity memory upsert 跳过: %s", e)
+            return False
+
+    async def delete_identity_memory(self, entry_id: str) -> bool:
+        """删除身份记忆向量（supersede 旧版本清理）。"""
+        from backend.services.rag.interface import IDENTITY_MEMORY_COLLECTION
+
+        try:
+            import aiohttp
+
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=15)
+            ) as session:
+                async with session.post(
+                    f"{self.qdrant_url}/collections/{IDENTITY_MEMORY_COLLECTION}/points/delete?wait=true",
+                    json={"points": [entry_id]},
+                ) as resp:
+                    return resp.status == 200
+        except Exception as e:
+            logger.debug("identity memory delete 跳过: %s", e)
+            return False
+
+    async def search_identity_memory(
+        self, query: str, identity_id: str, top_k: int = 8
+    ) -> list[Document]:
+        """按工单/输入检索某身份的相关记忆（向量 + identity_id 过滤）。"""
+        from backend.services.rag.interface import IDENTITY_MEMORY_COLLECTION
+
+        try:
+            vector = await self.embed(query)
+            if not vector:
+                return []
+            await self._ensure_collection(IDENTITY_MEMORY_COLLECTION)
+            import aiohttp
+
+            payload = {
+                "query": vector,
+                "limit": max(1, top_k),
+                "with_payload": True,
+                "filter": {
+                    "must": [
+                        {"key": "identity_id", "match": {"value": str(identity_id)}}
+                    ]
+                },
+            }
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=15)
+            ) as session:
+                async with session.post(
+                    f"{self.qdrant_url}/collections/{IDENTITY_MEMORY_COLLECTION}/points/search",
+                    json=payload,
+                ) as resp:
+                    if resp.status != 200:
+                        return []
+                    data = await resp.json()
+            return [
+                Document(
+                    id=str(item.get("id", "")),
+                    text=(item.get("payload") or {}).get("text", ""),
+                    score=item.get("score", 0.0),
+                    payload=item.get("payload") or {},
+                )
+                for item in data.get("result", [])
+            ]
+        except Exception as e:
+            logger.debug("identity memory search 跳过: %s", e)
+            return []
+
     async def rerank(
         self,
         query: str,

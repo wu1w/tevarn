@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -45,6 +46,43 @@ class AgentProcess:
     # W2：进程持有的能力令牌（可选）。挂载后 mediate 以令牌为准（含过期强制），
     # capabilities 列表退化为展示/继承语义。
     token: Any = None  # CapabilityToken，避免循环 import 用 Any
+    # Phase 2（Alpha Review #1b）：suspend/resume 同步原语（lazy Event，
+    # 初始 set = 非挂起；suspend 清空使 wait 阻塞，resume 置位放行）
+    _resume_event: Any = field(default=None, repr=False, compare=False)
+
+    def _event(self) -> asyncio.Event:
+        if self._resume_event is None:
+            self._resume_event = asyncio.Event()
+            self._resume_event.set()
+        return self._resume_event
+
+    def suspend(self) -> None:
+        """挂起：终态不可挂起；重复挂起幂等。"""
+        if self.is_terminal:
+            raise ValueError(f"进程 {self.id} 已终止（{self.state}），不可挂起")
+        if self.state != "suspended":
+            self.state = "suspended"
+            self._event().clear()
+
+    def resume(self) -> None:
+        """恢复：仅 suspended → running；其他状态幂等无操作。"""
+        if self.state == "suspended":
+            self.state = "running"
+            self._event().set()
+
+    async def wait_if_suspended(
+        self, *, poll: float = 0.5, should_stop: Any = None
+    ) -> bool:
+        """挂起则阻塞等待恢复（轮询以便响应 stop/终态）。
+        返回 False = 等待被打断（stop 请求或进程已终态），调用方应中止。"""
+        while self.state == "suspended":
+            if should_stop is not None and should_stop():
+                return False
+            try:
+                await asyncio.wait_for(self._event().wait(), timeout=poll)
+            except asyncio.TimeoutError:
+                pass
+        return not self.is_terminal
 
     @property
     def is_terminal(self) -> bool:

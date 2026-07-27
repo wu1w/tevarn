@@ -257,3 +257,61 @@ def test_fallback_budget_applied_when_identity_has_none(wf) -> None:
         assert proc2.token_budget == 8000  # 身份预算优先于 fallback
 
     _run(go())
+
+
+# ── Alpha Review #2：WorkforceWorker 池 ────────────────────────
+
+
+def test_worker_pool_reuses_loop_per_identity(wf) -> None:
+    """同身份两单共享一个 loop 实例；不同身份各自独立。"""
+    async def go():
+        reg, inbox, kernel = wf["registry"], wf["inbox"], wf["kernel"]
+        ident = await reg.create("池化员工", capabilities=["file_read"])
+
+        disp = WorkforceDispatcher(kernel, inbox, reg, wf["SessionLocal"])
+        loop1 = await disp._worker_for(ident)
+        loop2 = await disp._worker_for(ident)
+        assert loop1 is loop2  # 复用，不重建
+
+        ident2 = await reg.create("另一员工", capabilities=["file_read"])
+        loop3 = await disp._worker_for(ident2)
+        assert loop3 is not loop1  # 不同身份不同 worker
+
+        # evict 后重建
+        disp.evict_worker(ident.id)
+        loop4 = await disp._worker_for(ident)
+        assert loop4 is not loop1
+
+    _run(go())
+
+
+def test_reset_run_state_clears_run_level_state(wf) -> None:
+    """run 级状态归零：停止信号/搜索计数器/进程选项不得跨工单泄漏。"""
+    async def go():
+        reg, inbox, kernel = wf["registry"], wf["inbox"], wf["kernel"]
+        ident = await reg.create("状态员工", capabilities=["file_read"])
+        disp = WorkforceDispatcher(kernel, inbox, reg, wf["SessionLocal"])
+        loop = await disp._worker_for(ident)
+
+        # 模拟上一单跑完的脏状态
+        loop._should_stop = True
+        loop._search_fp_counter = {"abc": 3}
+        loop._kernel_process_options = {"token_budget": 12345}
+        loop._kernel_process = object()
+        loop._run_recorder = object()
+        loop._contract_wl_ready = True
+        loop._contract_whitelist = {"file_read"}
+        loop._llm_fail_streak = 7
+
+        loop._reset_run_state()
+
+        assert loop._should_stop is False
+        assert loop._search_fp_counter == {}
+        assert loop._kernel_process_options is None
+        assert loop._kernel_process is None
+        assert loop._run_recorder is None
+        assert loop._contract_wl_ready is False
+        assert loop._contract_whitelist is None
+        assert loop._llm_fail_streak == 0
+
+    _run(go())

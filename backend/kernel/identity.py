@@ -200,7 +200,29 @@ class IdentityRegistry:
             "entry_id": str(entry.id), "kind": kind, "source": source,
             "approved_by": approved_by,
         })
+        await self._index_memory_entry(entry)
         return entry
+
+    async def _index_memory_entry(self, entry: Any) -> None:
+        """Identity Memory 入 RAG（Alpha Review #4）：向量模式时同步索引，
+        best-effort——RAG 未配置（本地模式）/索引失败不阻塞记忆写入。"""
+        try:
+            from backend.services.rag.capability import use_vector_rag
+
+            if not use_vector_rag():
+                return
+            from backend.services.rag.factory import RAGServiceFactory
+
+            rag = RAGServiceFactory.get_service()
+            await rag.upsert_identity_memory(
+                entry_id=str(entry.id),
+                identity_id=str(entry.identity_id),
+                kind=entry.kind,
+                content=entry.content,
+                version=int(getattr(entry, "version", 1) or 1),
+            )
+        except Exception as e:
+            logger.debug("identity memory 向量索引跳过: %s", e)
 
     async def supersede_memory(
         self, entry_id: Any, new_content: str, *, approved_by: str
@@ -234,6 +256,19 @@ class IdentityRegistry:
             "old_entry_id": str(entry_id), "new_entry_id": str(new.id),
             "kind": old.kind, "version": new.version, "approved_by": approved_by,
         })
+        # 向量版本链同步（Alpha Review #4）：清旧版向量，索引新版——
+        # 检索命中旧版本 = 召回已被取代的记忆，必须清
+        try:
+            from backend.services.rag.capability import use_vector_rag
+
+            if use_vector_rag():
+                from backend.services.rag.factory import RAGServiceFactory
+
+                rag = RAGServiceFactory.get_service()
+                await rag.delete_identity_memory(str(entry_id))
+                await self._index_memory_entry(new)
+        except Exception as e:
+            logger.debug("identity memory supersede 向量同步跳过: %s", e)
         return new
 
     async def current_memory(self, identity_id: Any, *, kind: str | None = None) -> list[Any]:

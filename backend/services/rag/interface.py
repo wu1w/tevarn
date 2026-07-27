@@ -83,6 +83,31 @@ class RAGService(ABC):
         """
         raise NotImplementedError
 
+    # ── Identity Memory 检索（Alpha Review #4，可选实现）─────────
+    # 默认安全 no-op（NullRAG 直接继承）；QdrantRAGService 覆盖为真实实现。
+
+    async def upsert_identity_memory(
+        self,
+        *,
+        entry_id: str,
+        identity_id: str,
+        kind: str,
+        content: str,
+        version: int,
+    ) -> bool:
+        """身份记忆条目向量入库（identity_memory collection）。"""
+        return False
+
+    async def delete_identity_memory(self, entry_id: str) -> bool:
+        """删除身份记忆向量（supersede 时清旧版本）。"""
+        return False
+
+    async def search_identity_memory(
+        self, query: str, identity_id: str, top_k: int = 8
+    ) -> list[Document]:
+        """按工单/输入检索某身份的相关记忆条目。"""
+        return []
+
     def _format_context(self, results: list[RerankedResult]) -> str:
         """将精排结果格式化为 LLM 可用的上下文字符串"""
         if not results:
@@ -93,3 +118,8 @@ class RAGService(ABC):
             lines.append(r.text)
             lines.append("")
         return "\n".join(lines)
+
+
+# ── Identity Memory 检索（Alpha Review #4）────────────────────────
+# 身份记忆向量化的专用 collection（固定名，避免与知识库集合混淆）。
+IDENTITY_MEMORY_COLLECTION = "identity_memory"

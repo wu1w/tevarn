@@ -263,6 +263,34 @@ class AgentKernel:
             proc.started_at = time.time()
             self._persist_process(proc)
 
+    # ── 挂起 / 恢复（Phase 2：Alpha Review #1b）──────────────────
+
+    async def suspend_process(self, process_id: str, *, reason: str = "") -> AgentProcess:
+        """挂起运行中进程：loop 在下一轮 iteration gate 处阻塞等待恢复。
+        终态进程挂起抛错；重复挂起幂等。"""
+        proc = self._processes.get(process_id)
+        if proc is None:
+            raise ValueError(f"未知进程 {process_id}")
+        proc.suspend()  # 终态校验在 process 层
+        if reason:
+            proc.meta["suspend_reason"] = reason
+        self._persist_process(proc)
+        self._emit("process_suspended", process_id, {"reason": reason})
+        return proc
+
+    async def resume_process(self, process_id: str) -> AgentProcess:
+        """恢复挂起进程：仅 suspended → running；其他状态幂等。"""
+        proc = self._processes.get(process_id)
+        if proc is None:
+            raise ValueError(f"未知进程 {process_id}")
+        was = proc.state
+        proc.resume()
+        if was == "suspended":
+            proc.meta.pop("suspend_reason", None)
+            self._persist_process(proc)
+            self._emit("process_resumed", process_id, {})
+        return proc
+
     def get_process(self, process_id: str) -> AgentProcess | None:
         return self._processes.get(process_id)
 

@@ -228,6 +228,14 @@ class Settings(BaseSettings):
     agent_tool_parallel_max: int = 5
     # 研究任务收敛刹车：同 run 内同查询重复搜索，第 2 次提醒、第 3 次拦截
     agent_search_repeat_guard: bool = True
+    # Kernel 事前预算检查：LLM 调用前预估消耗，剩余不足即事前中断
+    #（llm_round 的事后 charge 是兜底，事前刹车防最后一次调用烧穿预算）
+    agent_kernel_budget_precheck: bool = True
+    # 事前预估的输出预留 token（输入按近期上下文 /3.4 粗估）
+    agent_kernel_precheck_reserve: int = 2000
+    # 身份记忆全量注入上限：条目数超此值改按工单相关性检索 top-k
+    #（Alpha Review #4：防 prompt 膨胀；检索不可用回落全量截断）
+    agent_identity_memory_full_inject_max: int = 8
     # 用户单条输入硬上限（字符），超出截断并提示
     agent_max_user_input_chars: int = 100_000
     # 大输入 soft 策略：超过则保留头尾，中间省略（仍受硬上限约束）

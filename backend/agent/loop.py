@@ -163,6 +163,28 @@ class NexusAgentLoop(AgentLoopBase):
         self._should_stop = True
         logger.info("Stop signal set for agent loop")
 
+    def _reset_run_state(self) -> None:
+        """Worker 池复用前重置 run 级状态（Alpha Review #2）。
+
+        WorkforceWorker 池让 loop 实例跨工单存活——init 重资源
+        （repo 引用、RAG 懒加载缓存、context_manager）复用是收益，
+        但 run 级状态泄漏是事故。每 run 前显式归零：
+        - _kernel_process/_kernel_process_options：进程归属每工单新建
+        - _run_recorder：durable run 记录器每 run 新建
+        - _search_fp_counter：重复搜索计数器跨工单累积会误拦截
+        - _contract_wl_*：身份能力可能已变更，契约白名单重载
+        - _should_stop：上一单的停止信号不能带进下一单
+        """
+        self._kernel_process = None
+        self._kernel_process_options = None
+        self._run_recorder = None
+        self._search_fp_counter = {}
+        self._contract_wl_ready = False
+        self._contract_whitelist = None
+        self._should_stop = False
+        self._llm_fail_streak = 0
+        self._reactive_compact_used = False
+
     # ── Batch3 port helpers（优先 message_store / tool_executor）─────────
     async def _save_message(
         self,
@@ -304,6 +326,76 @@ class NexusAgentLoop(AgentLoopBase):
             return "warn"
         return None
 
+    # ── Kernel iteration gate（Phase 2：Alpha Review #1 融合）──────────
+
+    async def _kernel_iteration_gate(
+        self, session_id: uuid.UUID, messages: list[dict[str, Any]]
+    ) -> str | None:
+        """每轮 iteration 的 kernel 仲裁点（搭桥 → 融合）。
+
+        三件事按序：
+        1) suspended：进程被挂起 → 阻塞等待恢复（轮询响应 stop），
+           被打断返回 "stop" 让 run 退出；
+        2) 事前预算检查：预估本次 LLM 调用消耗，剩余预算不足直接中断
+           （llm_round 的事后 charge 是兜底，这里是事前刹车——
+           防止最后一次调用一次性烧穿预算）；
+        3) 调度让出：asyncio.sleep(0)，多 run 并发时的公平性语义点
+           （session lock 管同会话互斥，这里管跨 run 的调度节奏）。
+        """
+        proc = getattr(self, "_kernel_process", None)
+        if proc is None:
+            return None
+        # 1) 挂起等待
+        if proc.state == "suspended":
+            reason = (proc.meta or {}).get("suspend_reason") or ""
+            await self._push_status(
+                session_id,
+                "thinking",
+                f"进程已挂起{('：' + reason) if reason else ''}，等待恢复…",
+            )
+            logger.info("kernel 进程挂起等待 proc=%s reason=%s", proc.id, reason)
+            ok = await proc.wait_if_suspended(
+                should_stop=lambda: self._should_stop
+            )
+            if not ok:
+                logger.info("挂起等待被打断 proc=%s（stop 或终态）", proc.id)
+                return "stop"
+            await self._push_status(session_id, "thinking", "进程已恢复，继续执行")
+        # 2) 事前预算检查
+        if (
+            bool(getattr(settings, "agent_kernel_budget_precheck", True))
+            and proc.token_budget is not None
+        ):
+            remaining = proc.budget_remaining
+            if remaining is not None:
+                estimated = self._estimate_next_call_tokens(messages)
+                if remaining < estimated:
+                    logger.warning(
+                        "事前预算检查不通过 proc=%s remaining=%s estimated=%s",
+                        proc.id, remaining, estimated,
+                    )
+                    return "budget"
+        # 3) 调度让出
+        await asyncio.sleep(0)
+        return None
+
+    def _estimate_next_call_tokens(self, messages: list[dict[str, Any]]) -> int:
+        """粗估下一次 LLM 调用消耗：近期上下文输入 + 输出预留。
+        字符 /3.4（与 token_meter 口径一致），只看近 20 条——
+        更早的上下文会被压缩，全量计入会高估导致误刹车。"""
+        reserve = int(getattr(settings, "agent_kernel_precheck_reserve", 2000) or 2000)
+        recent = messages[-20:] if len(messages) > 20 else messages
+        chars = 0
+        for m in recent:
+            c = m.get("content")
+            if isinstance(c, str):
+                chars += len(c)
+            elif isinstance(c, list):  # 多模态分块
+                chars += sum(
+                    len(str(p.get("text") or "")) for p in c if isinstance(p, dict)
+                )
+        return max(1, round(chars / 3.4)) + reserve
+
     async def _contract_tool_block_reason(
         self, name: str, arguments: dict[str, Any]
     ) -> str | None:
@@ -417,6 +509,29 @@ class NexusAgentLoop(AgentLoopBase):
                 self._append_to_system(messages, f"# 相关知识（RAG）\n{context}")
         except Exception as e:
             logger.warning(f"RAG context injection failed (degraded to local): {e}")
+
+        # ── Workforce 身份记忆召回（Alpha Review #4）──
+        # 工单执行中按当前输入检索身份记忆（prompt 硬注入之外的执行期召回：
+        # 中期任务上下文漂移后，相关经验/方法论仍能按当前输入浮现）
+        agent_key = getattr(self, "_agent_key", "") or ""
+        if agent_key.startswith("wf:"):
+            try:
+                identity_id = agent_key[3:]
+                mem_docs = await rag.search_identity_memory(
+                    user_input, identity_id, top_k=3
+                )
+                if mem_docs:
+                    block = "# 身份记忆召回（与当前输入相关）\n" + "\n".join(
+                        f"- [{(d.payload or {}).get('kind', 'memory')}] {d.text}"
+                        for d in mem_docs
+                    )
+                    self._append_to_system(messages, block)
+                    logger.info(
+                        "Injected identity memory recall (%d docs) for wf:%s",
+                        len(mem_docs), identity_id[:8],
+                    )
+            except Exception as e:
+                logger.debug("identity memory recall skipped: %s", e)
 
         return messages
 
@@ -1037,6 +1152,23 @@ class NexusAgentLoop(AgentLoopBase):
         _loop_exit_reason = ""
 
         for _global_iter in range(_total_iters + 1):  # +1 允许 grace 终答
+            # ── Kernel 仲裁点（Phase 2）：挂起等待 / 事前预算 / 调度让出。
+            # 放在预算 consume 之前——挂起等待不该消耗 iteration 配额。
+            _gate = await self._kernel_iteration_gate(session_id, messages)
+            if _gate == "stop":
+                _loop_exit_reason = "kernel_gate_stop"
+                break
+            if _gate == "budget":
+                _loop_exit_reason = "kernel_budget_precheck"
+                final_content = (
+                    "[Budget Exceeded] 进程 token 预算不足以支撑下一次 LLM 调用，"
+                    "运行已事前中断（避免一次性烧穿预算）。"
+                    "可提高预算或拆小任务后重试。"
+                )
+                await self._push_status(
+                    session_id, "thinking", "预算不足，运行已事前中断"
+                )
+                break
             # 迭代预算：耗尽后最多 1 次 grace（强制无工具终答）
             if _global_iter >= _total_iters:
                 if _budget_grace_call or _force_final_no_tools:
