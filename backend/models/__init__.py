@@ -32,6 +32,7 @@ from .task import Task
 from .tool import Tool
 from .trace import SessionTrace
 from .entity import Entity
+from .goal import Goal
 from .user import User
 from .webhook import Webhook, WebhookDeliveryLog
 from .wiki import WikiEntity, WikiRelation
@@ -73,4 +74,5 @@ __all__ = [
     "DesktopPermission",
     "SessionTrace",
     "Entity",
+    "Goal",
 ]

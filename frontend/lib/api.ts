@@ -1113,6 +1113,49 @@ export async function denyKernelEscalation(id: string): Promise<KernelEscalation
   return res.data;
 }
 
+// ── Goals（O-KR 目标树）：「我往哪儿走」──
+
+export interface Goal {
+  id: string;
+  title: string;
+  description: string;
+  kind: 'objective' | 'key_result';
+  parent_id: string | null;
+  status: 'active' | 'achieved' | 'dropped';
+  progress: number;
+  owner_identity_id: string | null;
+  due_date: string | null;
+  created_at: string;
+  updated_at: string;
+  key_results?: Goal[];
+}
+
+export async function getGoalTree(): Promise<{ objectives: Goal[]; total: number }> {
+  const res = await api.get('/goals/tree');
+  return res.data;
+}
+
+export async function createGoal(body: {
+  title: string; description?: string; kind?: string;
+  parent_id?: string; owner_identity_id?: string; due_date?: string; progress?: number;
+}): Promise<Goal> {
+  const res = await api.post('/goals', body);
+  return res.data;
+}
+
+export async function updateGoal(id: string, body: {
+  title?: string; description?: string; status?: string;
+  progress?: number; owner_identity_id?: string; due_date?: string;
+}): Promise<Goal> {
+  const res = await api.put(`/goals/${id}`, body);
+  return res.data;
+}
+
+export async function deleteGoal(id: string): Promise<{ deleted: boolean }> {
+  const res = await api.delete(`/goals/${id}`);
+  return res.data;
+}
+
 // ── Workforce 日报（0.6 自主运转）：「你不在的这段时间」──
 
 export interface WorkforceReport {
