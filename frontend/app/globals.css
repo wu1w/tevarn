@@ -33,6 +33,32 @@
     "Cascadia Code", Consolas, ui-monospace, monospace;
 }
 
+/* ── AIOS 水彩色板：Tailwind violet/purple 色阶 → sage 绿（P0 换肤，组件类零改动） ── */
+@theme {
+  --color-violet-50: #f2f5ee;
+  --color-violet-100: #e3ead9;
+  --color-violet-200: #c9d6b8;
+  --color-violet-300: #a8be8f;
+  --color-violet-400: #8aa872;
+  --color-violet-500: #6f8f5a;
+  --color-violet-600: #5f7550;
+  --color-violet-700: #4c5f42;
+  --color-violet-800: #3d4c36;
+  --color-violet-900: #323e2d;
+  --color-violet-950: #1a2116;
+  --color-purple-50: #f2f5ee;
+  --color-purple-100: #e3ead9;
+  --color-purple-200: #c9d6b8;
+  --color-purple-300: #a8be8f;
+  --color-purple-400: #8aa872;
+  --color-purple-500: #6f8f5a;
+  --color-purple-600: #5f7550;
+  --color-purple-700: #4c5f42;
+  --color-purple-800: #3d4c36;
+  --color-purple-900: #323e2d;
+  --color-purple-950: #1a2116;
+}
+
 /* ── 本地字体：Noto Sans SC ── */
 @font-face {
   font-family: "Noto Sans SC";
@@ -168,35 +194,35 @@ pre {
   font-feature-settings: "tnum";
 }
 
-/* Light Theme — Takton v2 liquid glass */
+/* Light Theme — Takton AIOS 暖纸水彩色板（demo v2 定稿） */
 [data-theme="light"] {
-  --page-bg: #f4f5fa;
-  --card-bg: rgba(255, 255, 255, 0.72);
-  --card-bg-hover: rgba(244, 245, 250, 0.9);
-  --elevated-bg: #ffffff;
-  --chrome: rgba(255, 255, 255, 0.82);
-  --sidebar: rgba(255, 255, 255, 0.78);
-  --foreground: #1a1a2e;
-  --foreground-muted: #5c5c72;
-  --foreground-dim: #9b9bb0;
-  --brand-purple: #7c5cff;
-  --brand-cyan: #1fb5a7;
-  --brand-gradient-start: #7c5cff;
-  --brand-gradient-end: #34d3c4;
-  --border-subtle: rgba(124, 92, 255, 0.08);
-  --border-default: rgba(124, 92, 255, 0.14);
-  --border-focus: rgba(124, 92, 255, 0.45);
-  --status-online: #1fb5a7;
-  --status-offline: #ff5c5c;
-  --error-bg: rgba(255, 92, 92, 0.08);
-  --error-text: #e03e3e;
-  --success-bg: rgba(52, 211, 196, 0.1);
-  --success-text: #1fb5a7;
-  --input-bg: rgba(244, 245, 250, 0.9);
-  --input-placeholder: #9b9bb0;
-  --glass-bg: rgba(255, 255, 255, 0.55);
-  --glass-border: color-mix(in srgb, rgba(124, 92, 255, 0.12) 65%, rgba(31, 181, 167, 0.1));
-  --glass-inner: inset 0 1px 0 rgba(255, 255, 255, 0.7), inset 0 -1px 0 rgba(31, 181, 167, 0.04);
+  --page-bg: #f6f2e8;
+  --card-bg: #fbf8ef;
+  --card-bg-hover: #f3edde;
+  --elevated-bg: #fdfbf4;
+  --chrome: rgba(246, 242, 232, 0.86);
+  --sidebar: rgba(239, 233, 218, 0.86);
+  --foreground: #33302a;
+  --foreground-muted: #6f6958;
+  --foreground-dim: #a29a84;
+  --brand-purple: #5f7550;
+  --brand-cyan: #4f7d6a;
+  --brand-gradient-start: #5f7550;
+  --brand-gradient-end: #4f7d6a;
+  --border-subtle: rgba(95, 117, 80, 0.1);
+  --border-default: rgba(95, 117, 80, 0.18);
+  --border-focus: rgba(95, 117, 80, 0.45);
+  --status-online: #5d8a4a;
+  --status-offline: #b04f38;
+  --error-bg: rgba(176, 79, 56, 0.08);
+  --error-text: #b04f38;
+  --success-bg: rgba(93, 138, 74, 0.1);
+  --success-text: #5d8a4a;
+  --input-bg: rgba(70, 62, 46, 0.05);
+  --input-placeholder: #a29a84;
+  --glass-bg: rgba(251, 248, 239, 0.6);
+  --glass-border: rgba(95, 117, 80, 0.16);
+  --glass-inner: inset 0 1px 0 rgba(255, 255, 255, 0.65);
   --ease-v2: cubic-bezier(0.4, 0, 0.2, 1);
   --dur-v2: 200ms;
   --r-sm: 6px;
@@ -205,35 +231,47 @@ pre {
   --r-xl: 18px;
 }
 
-/* Dark Theme — Takton v2 liquid glass */
+/* 暖纸颗粒纹理（仅浅色模式，水彩纸粗粝感） */
+[data-theme="light"] body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='260'%3E%3Cfilter id='p'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.28 0 0 0 0 0.24 0 0 0 0 0.16 0 0 0 0.5 0'/%3E%3C/filter%3E%3Crect width='260' height='260' filter='url(%23p)'/%3E%3C/svg%3E");
+  opacity: 0.16;
+  mix-blend-mode: multiply;
+}
+
+/* Dark Theme — Takton AIOS 暖炭水彩色板（demo v2 定稿） */
 [data-theme="dark"] {
-  --page-bg: #0c0c14;
-  --card-bg: rgba(24, 24, 36, 0.68);
-  --card-bg-hover: rgba(30, 30, 48, 0.55);
-  --elevated-bg: #181824;
-  --chrome: rgba(14, 14, 22, 0.82);
-  --sidebar: rgba(14, 14, 22, 0.82);
-  --foreground: #e6e6f0;
-  --foreground-muted: #9b9bb0;
-  --foreground-dim: #5c5c72;
-  --brand-purple: #7c5cff;
-  --brand-cyan: #34d3c4;
-  --brand-gradient-start: #7c5cff;
-  --brand-gradient-end: #34d3c4;
-  --border-subtle: rgba(124, 92, 255, 0.08);
-  --border-default: rgba(124, 92, 255, 0.14);
-  --border-focus: rgba(124, 92, 255, 0.45);
-  --status-online: #34d3c4;
-  --status-offline: #ff5c5c;
-  --error-bg: rgba(255, 92, 92, 0.12);
-  --error-text: #ff5c5c;
-  --success-bg: rgba(52, 211, 196, 0.12);
-  --success-text: #34d3c4;
-  --input-bg: rgba(10, 10, 16, 0.7);
-  --input-placeholder: #5c5c72;
-  --glass-bg: rgba(14, 14, 22, 0.55);
-  --glass-border: color-mix(in srgb, rgba(124, 92, 255, 0.1) 70%, rgba(52, 211, 196, 0.08));
-  --glass-inner: inset 0 1px 0 rgba(255, 255, 255, 0.04), inset 0 -1px 0 rgba(52, 211, 196, 0.03);
+  --page-bg: #171613;
+  --card-bg: rgba(255, 250, 238, 0.03);
+  --card-bg-hover: rgba(255, 250, 238, 0.055);
+  --elevated-bg: #1e1c17;
+  --chrome: rgba(23, 22, 19, 0.86);
+  --sidebar: rgba(30, 28, 23, 0.86);
+  --foreground: #ece7d9;
+  --foreground-muted: #a8a28f;
+  --foreground-dim: #6d6757;
+  --brand-purple: #a3bd8b;
+  --brand-cyan: #80b09b;
+  --brand-gradient-start: #a3bd8b;
+  --brand-gradient-end: #80b09b;
+  --border-subtle: rgba(163, 189, 139, 0.1);
+  --border-default: rgba(163, 189, 139, 0.18);
+  --border-focus: rgba(163, 189, 139, 0.45);
+  --status-online: #92b76c;
+  --status-offline: #d2795f;
+  --error-bg: rgba(210, 121, 95, 0.12);
+  --error-text: #d2795f;
+  --success-bg: rgba(146, 183, 108, 0.12);
+  --success-text: #92b76c;
+  --input-bg: rgba(255, 250, 238, 0.035);
+  --input-placeholder: #6d6757;
+  --glass-bg: rgba(30, 28, 23, 0.6);
+  --glass-border: rgba(163, 189, 139, 0.14);
+  --glass-inner: inset 0 1px 0 rgba(255, 250, 238, 0.05);
   --ease-v2: cubic-bezier(0.4, 0, 0.2, 1);
   --dur-v2: 200ms;
   --r-sm: 6px;
@@ -263,14 +301,14 @@ pre {
   }
 
   .gradient-brand-text {
-    background: linear-gradient(135deg, #A78BFA 0%, #22D3EE 100%);
+    background: linear-gradient(135deg, var(--brand-purple) 0%, var(--brand-cyan) 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
   }
 
   .glow-purple {
-    box-shadow: 0 0 20px rgba(124, 58, 237, 0.3), 0 0 40px rgba(124, 58, 237, 0.1);
+    box-shadow: 0 0 20px color-mix(in srgb, var(--brand-purple) 30%, transparent), 0 0 40px color-mix(in srgb, var(--brand-purple) 10%, transparent);
   }
 
   .glow-cyan {
@@ -278,7 +316,7 @@ pre {
   }
 
   .glow-brand {
-    box-shadow: 0 0 30px rgba(124, 58, 237, 0.15), 0 0 60px rgba(6, 182, 212, 0.08);
+    box-shadow: 0 0 30px color-mix(in srgb, var(--brand-purple) 15%, transparent), 0 0 60px color-mix(in srgb, var(--brand-cyan) 8%, transparent);
   }
 
   .shadow-inner-soft {
@@ -288,7 +326,7 @@ pre {
   }
 
   .text-glow {
-    text-shadow: 0 0 20px rgba(124, 58, 237, 0.5), 0 0 40px rgba(6, 182, 212, 0.3);
+    text-shadow: 0 0 20px color-mix(in srgb, var(--brand-purple) 50%, transparent), 0 0 40px color-mix(in srgb, var(--brand-cyan) 30%, transparent);
   }
 
   .animate-pulse-slow {
@@ -372,8 +410,8 @@ pre {
 }
 .logo-icon-sheen {
   box-shadow:
-    0 0 0 1px rgba(139, 92, 246, 0.15),
-    0 0 18px rgba(139, 92, 246, 0.22),
+    0 0 0 1px color-mix(in srgb, var(--brand-purple) 15%, transparent),
+    0 0 18px color-mix(in srgb, var(--brand-purple) 22%, transparent),
     0 0 28px rgba(34, 211, 238, 0.12);
 }
 
@@ -570,7 +608,7 @@ body {
 }
 
 ::selection {
-  background: rgba(139, 92, 246, 0.28);
+  background: color-mix(in srgb, var(--brand-purple) 28%, transparent);
   color: var(--foreground);
 }
 
@@ -628,7 +666,7 @@ button {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: linear-gradient(180deg, rgba(124, 92, 255, 0.03) 0%, transparent 40%, rgba(52, 211, 196, 0.02) 100%);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--brand-purple) 4%, transparent) 0%, transparent 40%, color-mix(in srgb, var(--brand-cyan) 3%, transparent) 100%);
 }
 .tk-rail-top-pad {
   height: 10px;
@@ -712,7 +750,7 @@ button {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: linear-gradient(180deg, rgba(124, 92, 255, 0.025) 0%, transparent 30%, rgba(52, 211, 196, 0.015) 100%);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--brand-purple) 3%, transparent) 0%, transparent 30%, color-mix(in srgb, var(--brand-cyan) 2%, transparent) 100%);
 }
 .tk-sidebar-inner {
   position: relative;
