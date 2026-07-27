@@ -2,6 +2,37 @@
 
 本项目版本记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [0.4.4-alpha] - 2026-07-27
+
+PLAN 阶段 0.7「成长与组织」落地：六大支柱全部立起——
+**员工可以写述职报告，升职决定权在老板手里**。
+
+### Added
+
+- **受控进化引擎**（`agent_evolution_proposals` 表 + `EvolutionEngine`）：
+  规则化分析器（无 LLM，机器可验证）从 Episodic 工作记录生成
+  **述职报告式建议**——四类规则：
+  SOP 沉淀（≥5 单且成功率 ≥80% → methodology 记忆）/
+  工具淘汰（mediation 拒绝率 ≥50% 且样本 ≥5 → 移出编制）/
+  能力入编（同能力 escalation 获批 ≥2 次 → 并入权限档案）/
+  planner 检讨（失败率 ≥30% → planner_prefs 调整）
+- **审批状态机**：pending → approved → applied / rejected / rolled_back；
+  **auto_apply=False 硬约束**——不存在配置项/环境变量/内部 API 形式的
+  自动应用后门（状态机守卫测试断言）；`payload.before` 回滚点，
+  回滚恢复应用前状态；全生命周期事件进哈希链
+- **汇报线观察**：`GET /api/kernel/workforce/org`——从 kernel_processes
+  parent 链聚合 reports_to 关系（谁派生谁=汇报线）+
+  组织预算层级汇总（只读视图，不改预算机制）
+- **进化 API**：`GET/POST /api/kernel/evolution/proposals`、
+  `POST .../analyze|approve|reject|rollback`
+- **测试**：+6（SOP 全生命周期含回滚/能力入编回滚/工具淘汰回滚/
+  无后门状态机守卫/planner 检讨/汇报线聚合），全量 712/0
+
+### Changed
+
+- 过程/战略文档移出公开库（本地留存），docs/ 只保留
+  TECHNICAL_MANUAL；gitignore 防回潮
+
 ## [0.4.3-alpha] - 2026-07-27
 
 PLAN 阶段 0.6「自主运转」落地：workforce 开始异步运转——

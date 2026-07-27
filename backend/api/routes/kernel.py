@@ -353,3 +353,117 @@ async def workforce_report(
     if inbox is None:
         return {"error": "workforce inbox 未启用"}
     return await build_daily_report(get_kernel(), inbox, hours=hours)
+
+
+# ── 受控进化（0.7）───────────────────────────────────────────
+
+
+def _proposal_dict(p) -> dict:
+    return {
+        "id": str(p.id),
+        "identity_id": str(p.identity_id),
+        "kind": p.kind,
+        "title": p.title,
+        "rationale": p.rationale,
+        "payload": p.payload or {},
+        "status": p.status,
+        "resolved_by": p.resolved_by,
+        "created_at": p.created_at.isoformat() if p.created_at else None,
+        "applied_at": p.applied_at,
+        "rolled_back_at": p.rolled_back_at,
+    }
+
+
+@router.get("/evolution/proposals")
+async def list_evolution_proposals(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+    identity_id: str | None = Query(None),
+    status: str | None = Query(None),
+):
+    from backend.kernel.workforce import get_evolution_engine
+
+    eng = get_evolution_engine()
+    if eng is None:
+        return {"error": "evolution engine 未启用", "proposals": [], "total": 0}
+    items = await eng.list_proposals(identity_id=identity_id, status=status)
+    return {"proposals": [_proposal_dict(p) for p in items], "total": len(items)}
+
+
+@router.post("/evolution/analyze")
+async def run_evolution_analyze(
+    body: dict,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """手动触发述职分析（生成 pending 建议，永不自动应用）。"""
+    from backend.kernel.workforce import get_evolution_engine
+
+    eng = get_evolution_engine()
+    if eng is None:
+        return {"error": "evolution engine 未启用"}
+    try:
+        proposals = await eng.analyze(str(body.get("identity_id") or ""))
+    except ValueError as e:
+        return {"error": str(e)}
+    return {"generated": len(proposals), "proposals": [_proposal_dict(p) for p in proposals]}
+
+
+@router.post("/evolution/proposals/{proposal_id}/approve")
+async def approve_evolution(
+    proposal_id: str,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    from backend.kernel.workforce import get_evolution_engine
+
+    eng = get_evolution_engine()
+    if eng is None:
+        return {"error": "evolution engine 未启用"}
+    try:
+        p = await eng.approve(proposal_id, by=str(current_user.id))
+    except ValueError as e:
+        return {"error": str(e)}
+    return _proposal_dict(p)
+
+
+@router.post("/evolution/proposals/{proposal_id}/reject")
+async def reject_evolution(
+    proposal_id: str,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    from backend.kernel.workforce import get_evolution_engine
+
+    eng = get_evolution_engine()
+    if eng is None:
+        return {"error": "evolution engine 未启用"}
+    try:
+        p = await eng.reject(proposal_id, by=str(current_user.id))
+    except ValueError as e:
+        return {"error": str(e)}
+    return _proposal_dict(p)
+
+
+@router.post("/evolution/proposals/{proposal_id}/rollback")
+async def rollback_evolution(
+    proposal_id: str,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    from backend.kernel.workforce import get_evolution_engine
+
+    eng = get_evolution_engine()
+    if eng is None:
+        return {"error": "evolution engine 未启用"}
+    try:
+        p = await eng.rollback(proposal_id, by=str(current_user.id))
+    except ValueError as e:
+        return {"error": str(e)}
+    return _proposal_dict(p)
+
+
+@router.get("/workforce/org")
+async def workforce_org(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """汇报线观察 + 组织预算聚合（从 parent 链涌现，只读视图）。"""
+    from backend.database import AsyncSessionLocal
+    from backend.kernel.workforce import build_org_view
+
+    return await build_org_view(AsyncSessionLocal)

@@ -1,5 +1,6 @@
 from .agent_profile import AgentProfile
 from .agent_identity import (
+    AgentEvolutionProposal,
     AgentIdentity,
     AgentInboxItem,
     IdentityMemoryEntry,

@@ -393,6 +393,11 @@ async def lifespan(app: FastAPI):
                 if dispatcher is not None:
                     _spawn_bg(dispatcher.run_forever(), name="workforce-dispatcher")
                     logger.info("workforce dispatcher 已启动（inbox 就绪）")
+                # 0.7：受控进化引擎装配（分析只产建议，应用必走人工审批）
+                from backend.kernel.workforce import init_evolution
+
+                if init_evolution(kernel, AsyncSessionLocal) is not None:
+                    logger.info("evolution engine 已装配（auto_apply=False 硬约束）")
     except Exception as e:
         logger.warning(f"workforce dispatcher startup skipped: {e}")
 

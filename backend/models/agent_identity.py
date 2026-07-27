@@ -167,3 +167,34 @@ class AgentInboxItem(Base, UUIDMixin, TimestampMixin):
 
     claimed_at: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     finished_at: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+
+class AgentEvolutionProposal(Base, UUIDMixin, TimestampMixin):
+    """Agent 进化建议（PLAN 阶段 0.7：受控进化——述职报告式建议）。
+
+    红线（PLAN §3.d）：
+    - auto_apply=False 不可绕过——状态机没有「自动应用」路径，
+      只能从 pending 经人工 approve/reject 流转；不存在配置项/
+      环境变量/内部 API 形式的后门
+    - payload.before 保存应用前状态 = 回滚点
+    - 全生命周期（proposed/approved/applied/rejected/rolled_back）进哈希链
+    """
+
+    __tablename__ = "agent_evolution_proposals"
+
+    identity_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("agent_identities.id", ondelete="CASCADE"), index=True
+    )
+    # memory_distill 方法论沉淀 / tool_deprecate 工具淘汰 /
+    # caps_adjust 能力调整 / planner_tune planner 自调
+    kind: Mapped[str] = mapped_column(String(32), index=True)
+    title: Mapped[str] = mapped_column(String(256))
+    rationale: Mapped[str] = mapped_column(Text)  # 述职报告：数据支撑的理由
+    payload: Mapped[Any] = mapped_column(JSON, default=dict)  # 含 before 回滚点
+
+    # pending / approved / applied / rejected / rolled_back
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    resolved_by: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    resolved_at: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    applied_at: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    rolled_back_at: Mapped[Optional[float]] = mapped_column(Float, nullable=True)

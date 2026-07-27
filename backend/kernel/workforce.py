@@ -53,9 +53,75 @@ def get_workforce_dispatcher() -> Any | None:
 
 
 def reset_workforce_for_tests() -> None:
-    global _inbox_singleton, _dispatcher_singleton
+    global _inbox_singleton, _dispatcher_singleton, _evolution_singleton
     _inbox_singleton = None
     _dispatcher_singleton = None
+    _evolution_singleton = None
+
+
+_evolution_singleton: Any | None = None
+
+
+def init_evolution(kernel: Any, session_factory: Any) -> Any:
+    """装配备受控进化引擎（幂等）。"""
+    global _evolution_singleton
+    if _evolution_singleton is None and kernel.identity_registry is not None:
+        from backend.kernel.evolution_engine import EvolutionEngine
+
+        _evolution_singleton = EvolutionEngine(
+            kernel, kernel.identity_registry, session_factory
+        )
+    return _evolution_singleton
+
+
+def get_evolution_engine() -> Any | None:
+    return _evolution_singleton
+
+
+async def build_org_view(session_factory: Any) -> dict[str, Any]:
+    """汇报线观察 + 组织预算聚合（PLAN 0.7：从真实使用归纳涌现的结构）。
+
+    数据源是 kernel_processes 的 parent 链——谁派生了谁，就是汇报线。
+    预算聚合 = 各 agent_key 的 token_budget/tokens_used 汇总（只读视图，
+    不改预算机制本身）。
+    """
+    from sqlalchemy import select
+
+    from backend.models.agent_identity import KernelProcessRecord
+
+    async with session_factory() as session:
+        procs = list((await session.execute(select(KernelProcessRecord))).scalars().all())
+
+    by_key: dict[str, dict[str, Any]] = {}
+    edges: dict[tuple[str, str], int] = {}
+    pid_to_key: dict[str, str] = {}
+    for p in procs:
+        pid_to_key[p.process_id] = p.identity_key
+    for p in procs:
+        entry = by_key.setdefault(
+            p.identity_key,
+            {"identity_key": p.identity_key, "runs": 0, "tokens_used": 0,
+             "token_budget": None, "children": {}},
+        )
+        entry["runs"] += 1
+        entry["tokens_used"] += int(p.tokens_used or 0)
+        if p.token_budget is not None:
+            entry["token_budget"] = (entry["token_budget"] or 0) + p.token_budget
+        if p.parent_process_id:
+            parent_key = pid_to_key.get(p.parent_process_id)
+            if parent_key:
+                edges[(parent_key, p.identity_key)] = edges.get((parent_key, p.identity_key), 0) + 1
+                entry["children"][parent_key] = entry["children"].get(parent_key, 0) + 1
+
+    reports_to = [
+        {"manager": parent, "worker": child, "delegations": count}
+        for (parent, child), count in sorted(edges.items(), key=lambda kv: -kv[1])
+    ]
+    return {
+        "agents": sorted(by_key.values(), key=lambda a: -a["tokens_used"]),
+        "reports_to": reports_to,
+        "total_processes": len(procs),
+    }
 
 
 async def build_daily_report(kernel: Any, inbox: Any, *, hours: int = 24) -> dict[str, Any]:
