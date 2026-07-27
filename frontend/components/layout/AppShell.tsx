@@ -4,7 +4,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/authStore';
 import { useWsStore } from '@/stores/wsStore';
-import { Sidebar } from './Sidebar';
+import { AgentSidebar } from './AgentSidebar';
 import { TitleBar } from './TitleBar';
 import { IconRail } from './IconRail';
 import { PageTransition } from './PageTransition';
@@ -215,10 +215,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         />
 
         <div className={`tk-app-body min-h-0 flex-1 ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
-          <IconRail onToggleSidebar={toggleSidebar} sidebarOpen={sidebarOpen} />
+          <IconRail />
           <div className="tk-sidebar" aria-hidden={!sidebarOpen}>
             <div className="tk-sidebar-inner">
-              <Sidebar />
+              <AgentSidebar />
             </div>
           </div>
           <main className="tk-main main-workbench relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">

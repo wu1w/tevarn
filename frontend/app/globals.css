@@ -212,6 +212,7 @@ pre {
   --border-subtle: rgba(95, 117, 80, 0.1);
   --border-default: rgba(95, 117, 80, 0.18);
   --border-focus: rgba(95, 117, 80, 0.45);
+  --on-acc: #f6f3ea;
   --status-online: #5d8a4a;
   --status-offline: #b04f38;
   --error-bg: rgba(176, 79, 56, 0.08);
@@ -261,6 +262,7 @@ pre {
   --border-subtle: rgba(163, 189, 139, 0.1);
   --border-default: rgba(163, 189, 139, 0.18);
   --border-focus: rgba(163, 189, 139, 0.45);
+  --on-acc: #1c2416;
   --status-online: #92b76c;
   --status-offline: #d2795f;
   --error-bg: rgba(210, 121, 95, 0.12);
@@ -674,7 +676,63 @@ button {
   flex-shrink: 0;
   z-index: 1;
 }
-.tk-rail-logo { display: none; }
+.tk-rail-logo {
+  width: 38px; height: 38px; border-radius: 50%; margin-bottom: 12px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; z-index: 1; overflow: hidden; flex-shrink: 0;
+  text-decoration: none;
+}
+.tk-rail-badge-count {
+  position: absolute; top: 2px; right: 2px; min-width: 16px; height: 16px;
+  padding: 0 4px; border-radius: 8px; background: var(--status-offline);
+  color: #fff; font-size: 9.5px; font-weight: 700; line-height: 16px;
+  text-align: center; z-index: 2; pointer-events: none;
+}
+
+/* ── AIOS AgentSidebar（demo v2） ── */
+.tk-sb { display: flex; flex-direction: column; height: 100%; padding: 14px 12px 10px; gap: 8px; overflow: hidden; }
+.tk-sb-head { padding: 0 4px 6px; }
+.tk-sb-title { font-size: 17px; font-weight: 700; letter-spacing: -0.01em; color: var(--foreground); }
+.tk-sb-sub { font-size: 11px; color: var(--foreground-dim); margin-top: 1px; }
+.tk-sb-search {
+  display: flex; align-items: center; gap: 7px; width: 100%;
+  padding: 7px 10px; border-radius: var(--r-md, 10px);
+  background: var(--input-bg); border: 1px solid var(--border-subtle);
+  color: var(--foreground-dim); font-size: 12px; cursor: pointer;
+  transition: border-color 180ms var(--ease-v2, ease);
+}
+.tk-sb-search:hover { border-color: var(--border-default); }
+.tk-sb-new {
+  display: flex; align-items: center; justify-content: center;
+  padding: 8px 0; border-radius: var(--r-md, 10px);
+  background: var(--brand-purple); color: var(--on-acc, #fff);
+  font-size: 12.5px; font-weight: 600; text-decoration: none;
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--brand-purple) 30%, transparent);
+  transition: filter 180ms var(--ease-v2, ease);
+}
+.tk-sb-new:hover { filter: brightness(1.06); }
+.tk-sb-section {
+  font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--foreground-dim);
+  padding: 10px 4px 4px;
+}
+.tk-sb-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; min-height: 0; }
+.tk-sb-agent {
+  display: flex; align-items: center; gap: 9px; padding: 7px 8px;
+  border-radius: var(--r-md, 10px); text-decoration: none;
+  transition: background 160ms var(--ease-v2, ease);
+}
+.tk-sb-agent:hover { background: var(--card-bg-hover); }
+.tk-sb-agent-meta { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.tk-sb-agent-name { font-size: 12.5px; font-weight: 600; color: var(--foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tk-sb-agent-sub { font-size: 10.5px; color: var(--foreground-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tk-sb-agent-star { font-size: 11px; color: var(--brand-cyan); }
+.tk-sb-avatar {
+  border-radius: 9px; display: inline-flex; align-items: center; justify-content: center;
+  color: #fff; font-weight: 700; flex-shrink: 0;
+}
+.tk-sb-empty { padding: 14px 8px; font-size: 11.5px; color: var(--foreground-dim); text-align: center; }
+.tk-sb-foot { border-top: 1px solid var(--border-subtle); padding-top: 4px; }
 .tk-rail-btn {
   width: 40px;
   height: 40px;
@@ -693,7 +751,7 @@ button {
 }
 .tk-rail-btn.active {
   background: linear-gradient(135deg, var(--brand-purple), color-mix(in srgb, var(--brand-cyan) 55%, var(--brand-purple)));
-  color: #fff;
+  color: var(--on-acc, #fff);
   box-shadow:
     0 2px 14px color-mix(in srgb, var(--brand-purple) 32%, transparent),
     0 0 18px color-mix(in srgb, var(--brand-cyan) 18%, transparent);
@@ -949,3 +1007,4 @@ button {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--brand-cyan) 45%, transparent), 0 0 14px color-mix(in srgb, var(--brand-cyan) 28%, transparent);
   transform: scale(1.04);
 }
+
