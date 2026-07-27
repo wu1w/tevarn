@@ -162,6 +162,46 @@ async def _migrate_workforce_columns(conn) -> None:
     await _add_column_if_missing(conn, "cron_jobs", "instruction", "TEXT")
 
 
+async def _create_index_if_missing(conn, name: str, table: str, columns: str) -> None:
+    """兼容迁移：为已有库补索引（create_all 不会改旧表索引）。"""
+    idx = _assert_sql_ident(name, "index")
+    tbl = _assert_sql_ident(table, "table")
+    # columns 如 "user_id, created_at" — 逐段校验
+    parts = [c.strip() for c in columns.split(",")]
+    for c in parts:
+        _assert_sql_ident(c, "column")
+    cols_sql = ", ".join(parts)
+    try:
+        async with conn.begin_nested():
+            if _is_sqlite:
+                await conn.execute(
+                    text(f"CREATE INDEX IF NOT EXISTS {idx} ON {tbl} ({cols_sql})")
+                )
+            else:
+                # Postgres / 通用
+                await conn.execute(
+                    text(f"CREATE INDEX IF NOT EXISTS {idx} ON {tbl} ({cols_sql})")
+                )
+    except (OperationalError, ProgrammingError):
+        pass
+
+
+async def _migrate_perf_indexes(conn) -> None:
+    """notifications 压测热点 + kernel_escalations 查询索引。"""
+    await _create_index_if_missing(
+        conn, "ix_notifications_user_created", "notifications", "user_id, created_at"
+    )
+    await _create_index_if_missing(
+        conn, "ix_notifications_user_read", "notifications", "user_id, is_read"
+    )
+    await _create_index_if_missing(
+        conn, "ix_kernel_escalations_status", "kernel_escalations", "status"
+    )
+    await _create_index_if_missing(
+        conn, "ix_kernel_escalations_process", "kernel_escalations", "process_id"
+    )
+
+
 async def init_db() -> None:
     """Initialize database tables"""
     async with engine.begin() as conn:
@@ -170,3 +210,4 @@ async def init_db() -> None:
         await _migrate_tenant_columns(conn)
         await _migrate_tool_columns(conn)
         await _migrate_workforce_columns(conn)
+        await _migrate_perf_indexes(conn)

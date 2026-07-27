@@ -1,10 +1,11 @@
 from .agent_profile import AgentProfile
-from .agent_identity import (
+from .agent_identity import (  # noqa: F401 — create_all 注册表
     AgentEvolutionProposal,
     AgentIdentity,
     AgentInboxItem,
     IdentityMemoryEntry,
     KernelCheckpoint,
+    KernelEscalationRecord,
     KernelProcessRecord,
 )
 from .agent_run import AgentRun, RunStep

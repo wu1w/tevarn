@@ -16,6 +16,27 @@ def _client() -> TestClient:
 
 def setup_function() -> None:
     reset_kernel_for_tests()
+    # kernel routes 会合并 DB 历史进程/提权档案——每测试清空 kernel 表，
+    # 否则断言被同进程内先前测试写入的记录污染。
+    asyncio.run(_clean_kernel_tables())
+
+
+async def _clean_kernel_tables() -> None:
+    from sqlalchemy import delete
+
+    from backend.database import AsyncSessionLocal
+    from backend.models.agent_identity import (
+        KernelEscalationRecord,
+        KernelProcessRecord,
+    )
+
+    try:
+        async with AsyncSessionLocal() as s:
+            await s.execute(delete(KernelEscalationRecord))
+            await s.execute(delete(KernelProcessRecord))
+            await s.commit()
+    except Exception:
+        pass  # 表尚未创建（首个测试 lifespan 建表前）时忽略
 
 
 def test_processes_endpoint_lists_active() -> None:

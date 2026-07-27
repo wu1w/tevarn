@@ -9,17 +9,23 @@
 import React, { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getKernelEvents, type KernelEvent } from '@/lib/api';
+import { useZh } from '@/hooks/useZh';
 
 const KIND_META: Record<string, { color: string; zh: string }> = {
   spawn: { color: 'var(--status-online)', zh: '进程启动' },
   exit: { color: 'var(--foreground-dim)', zh: '进程退出' },
   mediate: { color: 'var(--brand-purple)', zh: '能力裁决' },
+  mediation: { color: 'var(--brand-purple)', zh: '能力裁决' },
   charge: { color: '#c9a05e', zh: '预算扣费' },
   escalate: { color: '#c0785e', zh: '提权申请' },
   approve: { color: 'var(--status-online)', zh: '提权批准' },
   deny: { color: '#c0785e', zh: '提权拒绝' },
   memory_write: { color: '#7a98b0', zh: '记忆写入' },
   snapshot: { color: '#7a98b0', zh: '快照' },
+  evolution_propose: { color: '#80b09b', zh: '进化建议' },
+  evolution_apply: { color: 'var(--status-online)', zh: '进化应用' },
+  evolution_reject: { color: '#c0785e', zh: '进化拒绝' },
+  evolution_rollback: { color: '#c9a05e', zh: '进化回滚' },
 };
 
 function kindMeta(kind: string, zh: boolean) {
@@ -33,7 +39,7 @@ function fmtTime(ts: number): string {
 }
 
 export default function ActivityPage() {
-  const zh = (typeof document !== 'undefined' ? document.documentElement.lang : 'zh-CN') !== 'en';
+  const zh = useZh();
   const [filter, setFilter] = useState<string>('all');
   const [expanded, setExpanded] = useState<string | null>(null);
 
@@ -55,15 +61,52 @@ export default function ActivityPage() {
     return [...set];
   }, [data]);
 
+  const exportChain = () => {
+    const payload = {
+      exported_at: new Date().toISOString(),
+      total: events.length,
+      filter,
+      events: events.map((e) => ({
+        id: e.id,
+        kind: e.kind,
+        process_id: e.process_id,
+        ts: e.ts,
+        detail: e.detail,
+        prev_hash: e.prev_hash,
+        hash: e.hash,
+      })),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `takton-audit-chain-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div style={{ maxWidth: 860, margin: '0 auto', padding: '26px 28px 40px' }}>
-      <div style={{ marginBottom: 18 }}>
-        <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--foreground)' }}>
-          {zh ? '活动' : 'Activity'} <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--foreground-dim)' }}>{events.length} {zh ? '条内核事件' : 'kernel events'}</span>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 18 }}>
+        <div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--foreground)' }}>
+            {zh ? '活动' : 'Activity'} <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--foreground-dim)' }}>{events.length} {zh ? '条内核事件' : 'kernel events'}</span>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--foreground-dim)', marginTop: 3 }}>
+            {zh ? '每个动作都在哈希链上——可回放、可审计、不可抵赖' : 'Every action on the hash chain — replayable, auditable'}
+          </div>
         </div>
-        <div style={{ fontSize: 12, color: 'var(--foreground-dim)', marginTop: 3 }}>
-          {zh ? '每个动作都在哈希链上——可回放、可审计、不可抵赖' : 'Every action on the hash chain — replayable, auditable'}
-        </div>
+        <button
+          onClick={exportChain}
+          disabled={events.length === 0}
+          style={{
+            padding: '7px 14px', borderRadius: 9, border: '1px solid var(--border-subtle)',
+            background: 'transparent', color: 'var(--foreground-muted)', fontSize: 12, fontWeight: 500,
+            cursor: events.length ? 'pointer' : 'not-allowed', opacity: events.length ? 1 : 0.45,
+          }}
+        >
+          {zh ? '导出审计链' : 'Export chain'}
+        </button>
       </div>
 
       {/* 筛选 chips */}

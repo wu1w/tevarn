@@ -4,6 +4,7 @@ Test configuration and shared fixtures for backend tests.
 
 import os
 import sys
+import tempfile
 from typing import AsyncGenerator, Generator
 
 import pytest
@@ -19,7 +20,12 @@ sys.path.insert(0, repo_root)
 # Set strong secrets before importing settings to avoid validation errors
 os.environ.setdefault("JWT_SECRET", "test-jwt-secret-do-not-use-in-production")
 os.environ.setdefault("API_KEY", "test-api-key-do-not-use-in-production")
-os.environ.setdefault("DB_URL", "sqlite+aiosqlite:///:memory:")
+# 注意：Settings 的 env_prefix="TAKTON_"——裸 DB_URL 从不生效（历史潜伏 bug，
+# 在 kernel routes 引入 DB merge 后暴露为测试间数据污染）。
+# 测试库用进程级临时文件而非 :memory:——:memory: 下每个连接是独立库，
+# 引擎连接池会让「建表连接」和「查询连接」看到不同的库。
+_TEST_DB_PATH = os.path.join(tempfile.gettempdir(), f"takton_test_{os.getpid()}.db")
+os.environ.setdefault("TAKTON_DB_URL", f"sqlite+aiosqlite:///{_TEST_DB_PATH}")
 os.environ.setdefault("SINGLE_USER_MODE", "True")
 
 from backend.core.config import Settings
@@ -27,9 +33,8 @@ from backend.database import Base, get_db
 from backend.main import app
 from backend.schemas.user import UserRead
 
-
-# Use a fresh in-memory SQLite database for each test session.
-TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
+# Use the same per-process temp file DB as the app under test.
+TEST_DB_URL = os.environ["TAKTON_DB_URL"]
 engine = create_async_engine(TEST_DB_URL, poolclass=NullPool, future=True)
 TestingSessionLocal = async_sessionmaker(
     engine, class_=AsyncSession, expire_on_commit=False, autoflush=False

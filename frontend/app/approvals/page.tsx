@@ -1,18 +1,28 @@
 'use client';
 
 /**
- * AIOS 审批中心（demo v2）
- * 三类分色：决策类 / 权限类 / 高危类（按 capabilities 推断）
- * 操作：通过 / 拒绝 / 全部通过（高危二次确认）；已决列表；审批规则模态
- * 数据：/kernel/escalations（pending + 最近已决），approve/deny API
+ * AIOS 审批中心（demo v2 定稿）
+ * Tab 1：提权（escalations）— 决策/权限/高危分色
+ * Tab 2：AI 团队自我进化（evolution proposals）— 述职报告式建议，approve/reject/rollback
+ * 规则模态 + 批量通过；badge 由 IconRail 合计 pending
  */
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useToastStore } from '@/stores/toastStore';
-import { getKernelEscalations, type KernelEscalation } from '@/lib/api';
+import {
+  getKernelEscalations,
+  getEvolutionProposals,
+  getKernelIdentities,
+  approveEvolutionProposal,
+  rejectEvolutionProposal,
+  rollbackEvolutionProposal,
+  type KernelEscalation,
+  type EvolutionProposal,
+} from '@/lib/api';
 import api from '@/lib/api';
+import { useZh } from '@/hooks/useZh';
 
 /* ── 分类推断 ── */
 const DANGER_CAPS = ['command', 'shell', 'file_rw', 'rm', 'delete', 'write'];
@@ -31,50 +41,114 @@ const CLS_META: Record<Cls, { color: string; zh: string; en: string }> = {
   danger: { color: '#c0785e', zh: '高危类', en: 'High-risk' },
 };
 
+const KIND_META: Record<string, { color: string; zh: string; en: string }> = {
+  memory_distill: { color: '#80b09b', zh: 'SOP 沉淀', en: 'SOP distill' },
+  tool_deprecate: { color: '#c0785e', zh: '工具淘汰', en: 'Tool deprecate' },
+  caps_adjust: { color: '#c9a05e', zh: '能力入编', en: 'Cap adjust' },
+  planner_tune: { color: '#7a98b0', zh: 'Planner 检讨', en: 'Planner tune' },
+};
+
 function waitStr(createdAt: number, zh: boolean): string {
   const sec = Math.max(1, Math.floor(Date.now() / 1000 - createdAt));
-  if (sec < 3600) return zh ? `${Math.floor(sec / 60)}m` : `${Math.floor(sec / 60)}m`;
-  if (sec < 86400) return zh ? `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m` : `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
-  return zh ? `${Math.floor(sec / 86400)}d` : `${Math.floor(sec / 86400)}d`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}m`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
+  return `${Math.floor(sec / 86400)}d`;
 }
+
+function parseTs(iso: string | null | undefined): number {
+  if (!iso) return Date.now() / 1000;
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? t / 1000 : Date.now() / 1000;
+}
+
+type TabId = 'escalation' | 'evolution';
 
 export default function ApprovalsPage() {
   const qc = useQueryClient();
   const addToast = useToastStore((s) => s.addToast);
-  const zh = (typeof document !== 'undefined' ? document.documentElement.lang : 'zh-CN') !== 'en';
+  const zh = useZh();
+  const [tab, setTab] = useState<TabId>('escalation');
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirmAll, setConfirmAll] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
 
-  const pending = useQuery({
+  const pendingEsc = useQuery({
     queryKey: ['kernel-escalations', 'pending'],
     queryFn: () => getKernelEscalations('pending'),
     staleTime: 8_000,
+    refetchInterval: 12_000,
     retry: 1,
   });
-  const resolved = useQuery({
+  const resolvedEsc = useQuery({
     queryKey: ['kernel-escalations', 'resolved'],
     queryFn: async () => {
       const [a, d] = await Promise.all([getKernelEscalations('approved'), getKernelEscalations('denied')]);
-      return [...a.escalations, ...d.escalations].sort((x, y) => (y.resolved_at ?? 0) - (x.resolved_at ?? 0)).slice(0, 10);
+      return [...a.escalations, ...d.escalations]
+        .sort((x, y) => (y.resolved_at ?? 0) - (x.resolved_at ?? 0))
+        .slice(0, 10);
     },
     staleTime: 15_000,
     retry: 1,
   });
+  const pendingProp = useQuery({
+    queryKey: ['evolution-proposals', 'pending'],
+    queryFn: () => getEvolutionProposals({ status: 'pending' }),
+    staleTime: 8_000,
+    refetchInterval: 12_000,
+    retry: 1,
+  });
+  const appliedProp = useQuery({
+    queryKey: ['evolution-proposals', 'applied'],
+    queryFn: () => getEvolutionProposals({ status: 'applied' }),
+    staleTime: 15_000,
+    retry: 1,
+  });
+  const rejectedProp = useQuery({
+    queryKey: ['evolution-proposals', 'rejected'],
+    queryFn: () => getEvolutionProposals({ status: 'rejected' }),
+    staleTime: 15_000,
+    retry: 1,
+  });
+  const identities = useQuery({
+    queryKey: ['kernel-identities'],
+    queryFn: () => getKernelIdentities(),
+    staleTime: 60_000,
+    retry: 1,
+  });
 
-  const items = pending.data?.escalations ?? [];
-  const doneItems = resolved.data ?? [];
+  const items = pendingEsc.data?.escalations ?? [];
+  const doneItems = resolvedEsc.data ?? [];
+  const evoPending = pendingProp.data?.proposals ?? [];
+  const evoApplied = appliedProp.data?.proposals ?? [];
+  const evoRejected = rejectedProp.data?.proposals ?? [];
+  const evoDone = useMemo(
+    () =>
+      [...evoApplied, ...evoRejected]
+        .sort((a, b) => parseTs(b.created_at) - parseTs(a.created_at))
+        .slice(0, 10),
+    [evoApplied, evoRejected],
+  );
+  const idName = (id: string) =>
+    identities.data?.identities?.find((i) => i.id === id)?.name ?? id.slice(0, 8);
+
   const hasDanger = items.some((e) => classify(e) === 'danger');
   const oldest = items.length ? Math.max(...items.map((e) => Date.now() / 1000 - e.created_at)) : 0;
+  const totalPending = items.length + evoPending.length;
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ['kernel-escalations'] });
+    qc.invalidateQueries({ queryKey: ['evolution-proposals'] });
   };
 
-  const act = async (e: KernelEscalation, action: 'approve' | 'deny') => {
+  const actEsc = async (e: KernelEscalation, action: 'approve' | 'deny') => {
     setBusyId(e.id);
     try {
-      await api.post(`/kernel/escalations/${e.id}/${action}`);
+      const res = await api.post(`/kernel/escalations/${e.id}/${action}`);
+      // 兼容旧后端 200+error 体（已改为 4xx，双保险）
+      if (res.data?.error) {
+        addToast(String(res.data.error), 'error');
+        return;
+      }
       addToast(
         action === 'approve'
           ? (zh ? `已通过：${e.reason?.slice(0, 30) || e.id.slice(0, 8)}` : `Approved: ${e.reason?.slice(0, 30) || e.id.slice(0, 8)}`)
@@ -83,7 +157,37 @@ export default function ApprovalsPage() {
       );
       refresh();
     } catch (err) {
-      addToast(String(err), 'error');
+      // axios 拦截器已 toast 过 formatApiError；避免重复刷屏只记 busy
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const actEvo = async (p: EvolutionProposal, action: 'approve' | 'reject' | 'rollback') => {
+    setBusyId(p.id);
+    try {
+      const res =
+        action === 'approve'
+          ? await approveEvolutionProposal(p.id)
+          : action === 'reject'
+            ? await rejectEvolutionProposal(p.id)
+            : await rollbackEvolutionProposal(p.id);
+      if ((res as unknown as { error?: string })?.error) {
+        addToast(String((res as unknown as { error: string }).error), 'error');
+        return;
+      }
+      const msg =
+        action === 'approve'
+          ? (zh ? `已批准并应用：${p.title}` : `Approved & applied: ${p.title}`)
+          : action === 'reject'
+            ? (zh ? `已拒绝：${p.title}` : `Rejected: ${p.title}`)
+            : (zh ? `已回滚：${p.title}` : `Rolled back: ${p.title}`);
+      addToast(msg, 'success');
+      refresh();
+      qc.invalidateQueries({ queryKey: ['identity-memory'] });
+      qc.invalidateQueries({ queryKey: ['kernel-identities'] });
+    } catch {
+      /* axios interceptor already toasts */
     } finally {
       setBusyId(null);
     }
@@ -91,146 +195,329 @@ export default function ApprovalsPage() {
 
   const approveAll = async () => {
     setConfirmAll(false);
-    for (const e of items) {
-      try { await api.post(`/kernel/escalations/${e.id}/approve`); } catch { /* 单条失败不阻塞 */ }
+    let ok = 0;
+    let fail = 0;
+    if (tab === 'escalation') {
+      for (const e of items) {
+        try {
+          const res = await api.post(`/kernel/escalations/${e.id}/approve`);
+          if (res.data?.error) fail += 1;
+          else ok += 1;
+        } catch {
+          fail += 1;
+        }
+      }
+      addToast(
+        zh
+          ? `批量提权：成功 ${ok} · 失败 ${fail}${hasDanger && ok ? '（含高危）' : ''}`
+          : `Batch escalations: ${ok} ok · ${fail} failed`,
+        fail ? 'error' : 'success',
+      );
+    } else {
+      for (const p of evoPending) {
+        try {
+          await approveEvolutionProposal(p.id);
+          ok += 1;
+        } catch {
+          fail += 1;
+        }
+      }
+      addToast(
+        zh
+          ? `批量进化：成功 ${ok} · 失败 ${fail}`
+          : `Batch evolution: ${ok} ok · ${fail} failed`,
+        fail ? 'error' : 'success',
+      );
     }
-    addToast(zh ? `已批量通过 ${items.length} 项${hasDanger ? '（含高危，请知悉风险）' : ''}` : `Batch approved ${items.length} items${hasDanger ? ' (incl. high-risk)' : ''}`, 'success');
     refresh();
   };
+
+  const pendingCount = tab === 'escalation' ? items.length : evoPending.length;
 
   return (
     <div style={{ maxWidth: 900, margin: '0 auto', padding: '26px 28px 40px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 18 }}>
         <div>
           <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--foreground)' }}>
-            {zh ? '审批' : 'Approvals'} <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--foreground-dim)' }}>{items.length} {zh ? '项待决' : 'pending'}</span>
+            {zh ? '审批' : 'Approvals'}{' '}
+            <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--foreground-dim)' }}>
+              {totalPending} {zh ? '项待决' : 'pending'}
+            </span>
           </div>
           <div style={{ fontSize: 12, color: 'var(--foreground-dim)', marginTop: 3 }}>
             {zh ? '你的主要动作不是 Prompt，是审批' : 'Your main action is approval, not prompts'}
-            {items.length > 0 ? ` · ${zh ? '最早已等待' : 'oldest waiting'} ${waitStr(Date.now() / 1000 - oldest, zh)}` : ''}
+            {items.length > 0 && tab === 'escalation'
+              ? ` · ${zh ? '最早已等待' : 'oldest waiting'} ${waitStr(Date.now() / 1000 - oldest, zh)}`
+              : ''}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={() => setRulesOpen(true)} style={btnGhost}>{zh ? '审批规则' : 'Rules'}</button>
-          {items.length > 0 ? (
+          {pendingCount > 0 ? (
             <button onClick={() => setConfirmAll(true)} style={btnPrimary}>{zh ? '全部通过' : 'Approve all'}</button>
           ) : null}
         </div>
       </div>
 
-      {/* 待决卡片 */}
-      {items.length === 0 ? (
-        <div style={{ ...card, padding: '56px 20px', textAlign: 'center' }}>
-          <div style={{ fontSize: 28, marginBottom: 8 }}>🎉</div>
-          <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--foreground)' }}>
-            {zh ? '待决事项已清空' : 'Queue cleared'}
-          </div>
-        </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {items.map((e) => {
-            const cls = classify(e);
-            const meta = CLS_META[cls];
-            return (
-              <div key={e.id} style={{ ...card, borderLeft: `3px solid ${meta.color}` }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span style={{
-                    fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 7,
-                    background: `color-mix(in srgb, ${meta.color} 14%, transparent)`, color: meta.color,
-                  }}>{zh ? meta.zh : meta.en}</span>
-                  <span style={{ flex: 1, fontSize: 13.5, fontWeight: 650, color: 'var(--foreground)' }}>
-                    {e.reason || (zh ? '能力提权申请' : 'Capability escalation')}
-                  </span>
-                  <span style={{ fontSize: 10.5, color: 'var(--foreground-dim)' }}>
-                    {zh ? '等待' : 'waiting'} {waitStr(e.created_at, zh)}
-                  </span>
-                </div>
-                <div style={{ fontSize: 12, color: 'var(--foreground-muted)', marginTop: 8, lineHeight: 1.6 }}>
-                  {zh ? '进程' : 'Process'} <code style={codeStyle}>{e.process_id?.slice(0, 8)}</code>
-                  {' '}{zh ? '申请并入能力' : 'requests capabilities'}：
-                  {(e.capabilities ?? []).map((c) => (
-                    <span key={c} style={{ ...codeStyle, marginRight: 4 }}>{c}</span>
-                  ))}
-                </div>
-                <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center' }}>
-                  <button disabled={busyId === e.id} onClick={() => act(e, 'approve')} style={btnPrimary}>
-                    {zh ? '通过' : 'Approve'}
-                  </button>
-                  <button disabled={busyId === e.id} onClick={() => act(e, 'deny')} style={btnGhost}>
-                    {zh ? '拒绝' : 'Deny'}
-                  </button>
-                  <Link href="/kernel" style={{ ...btnGhost, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', marginLeft: 'auto' }}>
-                    {zh ? '查看 mediate 记录' : 'View mediate log'}
-                  </Link>
-                </div>
+      {/* Tabs — demo chip 风格 */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
+        <Chip active={tab === 'escalation'} onClick={() => setTab('escalation')}>
+          {zh ? '提权请示' : 'Escalations'}
+          {items.length > 0 ? ` · ${items.length}` : ''}
+        </Chip>
+        <Chip active={tab === 'evolution'} onClick={() => setTab('evolution')} color="#80b09b">
+          {zh ? 'AI 团队自我进化' : 'Self-evolution'}
+          {evoPending.length > 0 ? ` · ${evoPending.length}` : ''}
+        </Chip>
+      </div>
+
+      {tab === 'escalation' ? (
+        <>
+          {items.length === 0 ? (
+            <EmptyState zh={zh} emoji="🎉" title={zh ? '待决事项已清空' : 'Queue cleared'} />
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {items.map((e) => {
+                const cls = classify(e);
+                const meta = CLS_META[cls];
+                return (
+                  <div key={e.id} style={{ ...card, borderLeft: `3px solid ${meta.color}` }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={tagStyle(meta.color)}>{zh ? meta.zh : meta.en}</span>
+                      <span style={{ flex: 1, fontSize: 13.5, fontWeight: 650, color: 'var(--foreground)' }}>
+                        {e.reason || (zh ? '能力提权申请' : 'Capability escalation')}
+                      </span>
+                      <span style={{ fontSize: 10.5, color: 'var(--foreground-dim)' }}>
+                        {zh ? '等待' : 'waiting'} {waitStr(e.created_at, zh)}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--foreground-muted)', marginTop: 8, lineHeight: 1.6 }}>
+                      {zh ? '进程' : 'Process'} <code style={codeStyle}>{e.process_id?.slice(0, 8)}</code>
+                      {' '}{zh ? '申请并入能力' : 'requests capabilities'}：
+                      {(e.capabilities ?? []).map((c) => (
+                        <span key={c} style={{ ...codeStyle, marginRight: 4 }}>{c}</span>
+                      ))}
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center' }}>
+                      <button disabled={busyId === e.id} onClick={() => actEsc(e, 'approve')} style={btnPrimary}>
+                        {zh ? '通过' : 'Approve'}
+                      </button>
+                      <button disabled={busyId === e.id} onClick={() => actEsc(e, 'deny')} style={btnGhost}>
+                        {zh ? '拒绝' : 'Deny'}
+                      </button>
+                      <Link href="/kernel" style={{ ...btnGhost, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', marginLeft: 'auto' }}>
+                        {zh ? '查看 mediate 记录' : 'View mediate log'}
+                      </Link>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {doneItems.length > 0 ? (
+            <div style={{ marginTop: 22 }}>
+              <div style={{ fontSize: 13, fontWeight: 650, color: 'var(--foreground)', marginBottom: 8 }}>
+                {zh ? '已决' : 'Resolved'}{' '}
+                <span style={{ fontSize: 10.5, fontWeight: 500, color: 'var(--foreground-dim)' }}>
+                  {zh ? '近 10 条' : 'last 10'}
+                </span>
               </div>
-            );
-          })}
-        </div>
+              <div style={card}>
+                {doneItems.map((e) => (
+                  <div key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: '1px solid var(--border-subtle)' }}>
+                    <span style={{
+                      width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                      background: e.status === 'approved' ? 'var(--status-online)' : 'var(--status-offline)',
+                    }} />
+                    <span style={{ flex: 1, fontSize: 12, color: 'var(--foreground-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {e.reason || e.process_id?.slice(0, 8)}
+                    </span>
+                    <span style={{ fontSize: 10.5, color: 'var(--foreground-dim)' }}>
+                      {e.status === 'approved' ? (zh ? '已通过' : 'Approved') : (zh ? '已拒绝' : 'Denied')}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <>
+          <div style={{ fontSize: 12, color: 'var(--foreground-dim)', marginBottom: 14, lineHeight: 1.55 }}>
+            {zh
+              ? '员工写述职报告，升职决定权在你手里。建议永不自动应用——批准后写入档案，可回滚。'
+              : 'Agents write performance reviews; promotion is yours. Never auto-applied — approve to write, rollback anytime.'}
+          </div>
+
+          {evoPending.length === 0 ? (
+            <EmptyState
+              zh={zh}
+              emoji="🌱"
+              title={zh ? '暂无待批进化建议' : 'No pending evolution proposals'}
+              sub={zh ? 'Agent 积累足够工作记录后，会自动生成述职式建议' : 'Proposals appear after enough work history'}
+            />
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {evoPending.map((p) => {
+                const km = KIND_META[p.kind] ?? { color: 'var(--brand-purple)', zh: p.kind, en: p.kind };
+                return (
+                  <div key={p.id} style={{ ...card, borderLeft: `3px solid ${km.color}` }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={tagStyle(km.color)}>{zh ? km.zh : km.en}</span>
+                      <span style={{ flex: 1, fontSize: 13.5, fontWeight: 650, color: 'var(--foreground)' }}>
+                        {p.title}
+                      </span>
+                      <span style={{ fontSize: 10.5, color: 'var(--foreground-dim)' }}>
+                        {zh ? '等待' : 'waiting'} {waitStr(parseTs(p.created_at), zh)}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--foreground-muted)', marginTop: 8, lineHeight: 1.6 }}>
+                      <b style={{ fontWeight: 600, color: 'var(--foreground)' }}>{idName(p.identity_id)}</b>
+                      {' · '}{p.rationale}
+                    </div>
+                    {p.payload && Object.keys(p.payload).length > 0 ? (
+                      <pre style={{
+                        marginTop: 10, padding: '10px 12px', borderRadius: 8, background: 'var(--input-bg)',
+                        fontSize: 10.5, lineHeight: 1.55, overflow: 'auto', maxHeight: 120,
+                        color: 'var(--foreground-dim)', fontFamily: 'var(--font-mono)', whiteSpace: 'pre-wrap',
+                      }}>
+                        {JSON.stringify(p.payload, null, 2)}
+                      </pre>
+                    ) : null}
+                    <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center' }}>
+                      <button disabled={busyId === p.id} onClick={() => actEvo(p, 'approve')} style={btnPrimary}>
+                        {zh ? '批准并应用' : 'Approve & apply'}
+                      </button>
+                      <button disabled={busyId === p.id} onClick={() => actEvo(p, 'reject')} style={btnGhostRed}>
+                        {zh ? '拒绝' : 'Reject'}
+                      </button>
+                      <Link
+                        href={`/agents?id=${encodeURIComponent(p.identity_id)}`}
+                        style={{ ...btnGhost, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', marginLeft: 'auto' }}
+                      >
+                        {zh ? '看成长轨迹' : 'View growth'}
+                      </Link>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* 已应用（可回滚） */}
+          {evoApplied.length > 0 ? (
+            <div style={{ marginTop: 22 }}>
+              <div style={{ fontSize: 13, fontWeight: 650, color: 'var(--foreground)', marginBottom: 8 }}>
+                {zh ? '已应用 · 可回滚' : 'Applied · rollback ready'}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {evoApplied.slice(0, 8).map((p) => (
+                  <div key={p.id} style={{ ...card, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: 'var(--foreground)' }}>{p.title}</span>
+                      <span style={{ display: 'block', fontSize: 10.5, color: 'var(--foreground-dim)', marginTop: 2 }}>
+                        {idName(p.identity_id)} · {p.kind}
+                      </span>
+                    </span>
+                    <button disabled={busyId === p.id} onClick={() => actEvo(p, 'rollback')} style={btnGhostRed}>
+                      {zh ? '回滚' : 'Rollback'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {evoDone.length > 0 ? (
+            <div style={{ marginTop: 22 }}>
+              <div style={{ fontSize: 13, fontWeight: 650, color: 'var(--foreground)', marginBottom: 8 }}>
+                {zh ? '近期已决' : 'Recently resolved'}
+              </div>
+              <div style={card}>
+                {evoDone.map((p) => (
+                  <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: '1px solid var(--border-subtle)' }}>
+                    <span style={{
+                      width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                      background: p.status === 'applied' || p.status === 'approved' ? 'var(--status-online)' : 'var(--status-offline)',
+                    }} />
+                    <span style={{ flex: 1, fontSize: 12, color: 'var(--foreground-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {p.title}
+                    </span>
+                    <span style={{ fontSize: 10.5, color: 'var(--foreground-dim)' }}>{p.status}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </>
       )}
 
-      {/* 已决 */}
-      {doneItems.length > 0 ? (
-        <div style={{ marginTop: 22 }}>
-          <div style={{ fontSize: 13, fontWeight: 650, color: 'var(--foreground)', marginBottom: 8 }}>
-            {zh ? '已决' : 'Resolved'} <span style={{ fontSize: 10.5, fontWeight: 500, color: 'var(--foreground-dim)' }}>{zh ? '近 10 条' : 'last 10'}</span>
-          </div>
-          <div style={card}>
-            {doneItems.map((e) => (
-              <div key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: '1px solid var(--border-subtle)' }}>
-                <span style={{
-                  width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
-                  background: e.status === 'approved' ? 'var(--status-online)' : 'var(--status-offline)',
-                }} />
-                <span style={{ flex: 1, fontSize: 12, color: 'var(--foreground-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {e.reason || e.process_id?.slice(0, 8)}
-                </span>
-                <span style={{ fontSize: 10.5, color: 'var(--foreground-dim)' }}>
-                  {e.status === 'approved' ? (zh ? '已通过' : 'Approved') : (zh ? '已拒绝' : 'Denied')}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : null}
-
-      {/* 全部通过二次确认 */}
       {confirmAll ? (
         <Modal onClose={() => setConfirmAll(false)}>
-          <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--foreground)' }}>{zh ? '确认全部通过' : 'Approve all?'}</div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--foreground)' }}>
+            {zh ? '确认全部通过' : 'Approve all?'}
+          </div>
           <div style={{ fontSize: 12.5, color: 'var(--foreground-muted)', marginTop: 10, lineHeight: 1.6 }}>
-            {zh ? '将一次性通过' : 'Will approve'} <b>{items.length}</b> {zh ? '项待决' : 'pending items'}
-            {hasDanger ? (zh ? '（含 1+ 项高危类）。高危操作建议逐项确认——确定继续？' : ' (incl. high-risk). Confirm individually recommended — continue?') : '。'}
+            {zh ? '将一次性通过' : 'Will approve'} <b>{pendingCount}</b>{' '}
+            {tab === 'escalation'
+              ? (zh ? '项提权' : 'escalations')
+              : (zh ? '项进化建议（将立即应用）' : 'evolution proposals (applied immediately)')}
+            {tab === 'escalation' && hasDanger
+              ? (zh ? '（含高危）。高危操作建议逐项确认——确定继续？' : ' (incl. high-risk). Continue?')
+              : '。'}
           </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 18, justifyContent: 'flex-end' }}>
             <button onClick={() => setConfirmAll(false)} style={btnGhost}>{zh ? '再想想' : 'Cancel'}</button>
-            <button onClick={approveAll} style={{ ...btnPrimary, background: hasDanger ? 'var(--status-offline)' : 'var(--brand-purple)' }}>
-              {zh ? '确认全部通过' : 'Confirm approve all'}
+            <button onClick={approveAll} style={{ ...btnPrimary, background: hasDanger && tab === 'escalation' ? 'var(--status-offline)' : 'var(--brand-purple)' }}>
+              {zh ? '确认全部通过' : 'Confirm'}
             </button>
           </div>
         </Modal>
       ) : null}
 
-      {/* 审批规则模态 */}
-      {rulesOpen ? (
-        <RulesModal zh={zh} onClose={() => setRulesOpen(false)} />
-      ) : null}
+      {rulesOpen ? <RulesModal zh={zh} onClose={() => setRulesOpen(false)} /> : null}
     </div>
   );
 }
 
-/* ── 审批规则（持久化：settings KV「approval_rules」）── */
-
-interface ApprovalRule {
-  key: string;
-  enabled: boolean;
-  warn?: boolean;
+function EmptyState({ zh, emoji, title, sub }: { zh: boolean; emoji: string; title: string; sub?: string }) {
+  return (
+    <div style={{ ...card, padding: '56px 20px', textAlign: 'center' }}>
+      <div style={{ fontSize: 28, marginBottom: 8 }}>{emoji}</div>
+      <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--foreground)' }}>{title}</div>
+      {sub ? <div style={{ fontSize: 12, color: 'var(--foreground-dim)', marginTop: 6 }}>{sub}</div> : null}
+    </div>
+  );
 }
+
+function Chip({ active, onClick, color, children }: { active: boolean; onClick: () => void; color?: string; children: React.ReactNode }) {
+  const c = color ?? 'var(--brand-purple)';
+  return (
+    <button onClick={onClick} style={{
+      padding: '5px 14px', borderRadius: 999, fontSize: 12, fontWeight: active ? 700 : 500, cursor: 'pointer',
+      border: active ? `1px solid ${c}` : '1px solid var(--border-subtle)',
+      background: active ? `color-mix(in srgb, ${c} 12%, transparent)` : 'transparent',
+      color: active ? c : 'var(--foreground-dim)',
+    }}>{children}</button>
+  );
+}
+
+function tagStyle(color: string): React.CSSProperties {
+  return {
+    fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 7,
+    background: `color-mix(in srgb, ${color} 14%, transparent)`, color,
+  };
+}
+
+/* ── 审批规则 ── */
+interface ApprovalRule { key: string; enabled: boolean; warn?: boolean }
 
 const DEFAULT_RULES: ApprovalRule[] = [
   { key: 'auto_low_risk', enabled: true },
   { key: 'review_high_risk', enabled: true, warn: true },
   { key: 'review_capability_upgrade', enabled: true, warn: true },
+  { key: 'review_evolution', enabled: true, warn: true },
   { key: 'auto_tighten_2x', enabled: true },
 ];
 
@@ -246,6 +533,10 @@ const RULE_TEXT: Record<string, { zh: [string, string]; en: [string, string] }> 
   review_capability_upgrade: {
     zh: ['能力升级需审批', '新数据源 / 新工具 / 出站网络'],
     en: ['Capability upgrades need approval', 'New data sources / tools / egress'],
+  },
+  review_evolution: {
+    zh: ['进化建议必审（永不自动应用）', 'SOP 沉淀 / 能力入编 / 工具淘汰 / planner 检讨'],
+    en: ['Evolution proposals always require review', 'SOP / caps / deprecate / planner'],
   },
   auto_tighten_2x: {
     zh: ['超日均 2× 时自动收紧', '自动降额并通知你'],
@@ -265,8 +556,7 @@ function RulesModal({ zh, onClose }: { zh: boolean; onClose: () => void }) {
         const val = r.data?.value;
         setRules(Array.isArray(val) && val.length ? val : DEFAULT_RULES);
       } catch {
-        // 未初始化：写入默认值
-        try { await api.put('/settings/approval_rules', { value: DEFAULT_RULES }); } catch { /* 忽略 */ }
+        try { await api.put('/settings/approval_rules', { value: DEFAULT_RULES }); } catch { /* ignore */ }
         setRules(DEFAULT_RULES);
       }
     })();
@@ -275,17 +565,15 @@ function RulesModal({ zh, onClose }: { zh: boolean; onClose: () => void }) {
   const toggle = async (key: string) => {
     if (!rules || busy) return;
     const next = rules.map((r) => (r.key === key ? { ...r, enabled: !r.enabled } : r));
-    setRules(next);  // 乐观更新
+    setRules(next);
     setBusy(true);
     try {
       await api.put('/settings/approval_rules', { value: next });
       const rule = next.find((r) => r.key === key)!;
       const text = RULE_TEXT[key]?.[zh ? 'zh' : 'en'][0] ?? key;
-      addToast(rule.enabled
-        ? (zh ? `已开启：${text}` : `Enabled: ${text}`)
-        : (zh ? `已关闭：${text}` : `Disabled: ${text}`), 'success');
+      addToast(rule.enabled ? (zh ? `已开启：${text}` : `Enabled: ${text}`) : (zh ? `已关闭：${text}` : `Disabled: ${text}`), 'success');
     } catch (err) {
-      setRules(rules);  // 回滚
+      setRules(rules);
       addToast(String(err), 'error');
     } finally {
       setBusy(false);
@@ -299,21 +587,17 @@ function RulesModal({ zh, onClose }: { zh: boolean; onClose: () => void }) {
       </div>
       <div style={{ fontSize: 12, color: 'var(--foreground-dim)', marginTop: 6, lineHeight: 1.6 }}>
         {zh
-          ? '规则内的事 Agent 自己干，规则外才打扰你。每加一条规则 = 多一份信任，请谨慎。'
-          : 'Agents act freely within rules; only exceptions reach you. Each rule = more trust.'}
+          ? '规则写入 settings 并由内核消费：auto_low_risk 会自动批准纯低风险提权；高危/能力升级仍必审。进化建议永不自动应用。'
+          : 'Rules are persisted and enforced by the kernel: auto_low_risk auto-approves pure low-risk escalations; high-risk/upgrades always need you. Evolution never auto-applies.'}
       </div>
       <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
         {(rules ?? []).map((r) => {
           const text = RULE_TEXT[r.key]?.[zh ? 'zh' : 'en'] ?? [r.key, ''];
           return (
-            <RuleRow key={r.key} on={r.enabled} warn={r.warn} title={text[0]} sub={text[1]}
-              onToggle={() => toggle(r.key)} />
+            <RuleRow key={r.key} on={r.enabled} warn={r.warn} title={text[0]} sub={text[1]} onToggle={() => toggle(r.key)} />
           );
         })}
         {rules === null ? <div style={{ fontSize: 12, color: 'var(--foreground-dim)', padding: 12 }}>Loading…</div> : null}
-      </div>
-      <div style={{ fontSize: 10.5, color: 'var(--foreground-dim)', marginTop: 14 }}>
-        {zh ? '红线规则不建议关闭 · 已持久化（settings/approval_rules）' : 'Red-line rules should stay on · persisted (settings/approval_rules)'}
       </div>
     </Modal>
   );
@@ -365,6 +649,11 @@ const btnGhost: React.CSSProperties = {
   padding: '7px 12px', borderRadius: 9,
   border: '1px solid var(--border-subtle)', background: 'transparent',
   color: 'var(--foreground-muted)', fontSize: 12, fontWeight: 500, cursor: 'pointer',
+};
+const btnGhostRed: React.CSSProperties = {
+  ...btnGhost,
+  color: 'var(--status-offline)',
+  borderColor: 'color-mix(in srgb, var(--status-offline) 35%, transparent)',
 };
 const codeStyle: React.CSSProperties = {
   fontSize: 10.5, fontFamily: 'var(--font-mono)', padding: '1px 6px', borderRadius: 5,

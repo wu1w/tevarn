@@ -1,11 +1,14 @@
 """
 通知路由
 消息通知的查询、标记已读
+
+性能：list 走 repo.list_page 单 session（list+total+unread 合并），
+避免 c=100 下三次往返把 p95 抬到 ~1.9s。
 """
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.repositories import NotificationRepository
 from backend.schemas import NotificationList, NotificationRead
@@ -18,29 +21,27 @@ router = APIRouter(prefix="/notifications", tags=["Notifications"])
 @router.get("", response_model=NotificationList)
 async def list_notifications(
     unread_only: bool = False,
-    limit: int = 50,
-    offset: int = 0,
-    current_user = Depends(get_current_user),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    current_user=Depends(get_current_user),
     repo: NotificationRepository = Depends(get_notification_repo),
 ):
-    """获取当前用户的通知列表"""
-    items = await repo.list_by_user(
+    """获取当前用户的通知列表（单次 DB 会话聚合）。"""
+    page = await repo.list_page(
         current_user.id, unread_only=unread_only, limit=limit, offset=offset
     )
-    total = await repo.count_by_user(current_user.id, unread_only=unread_only)
-    unread = await repo.get_unread_count(current_user.id)
-
+    # items 已是 NotificationRead，不再二次 model_validate
     return NotificationList(
-        total=total,
-        unread=unread,
-        items=[NotificationRead.model_validate(i) for i in items],
+        total=page["total"],
+        unread=page["unread"],
+        items=page["items"],
     )
 
 
 @router.post("/{notification_id}/read")
 async def mark_read(
     notification_id: uuid.UUID,
-    current_user = Depends(get_current_user),
+    current_user=Depends(get_current_user),
     repo: NotificationRepository = Depends(get_notification_repo),
 ):
     """标记单条通知为已读（仅限本人通知，防止越权操作他人通知）"""
@@ -52,7 +53,7 @@ async def mark_read(
 
 @router.post("/read-all")
 async def mark_all_read(
-    current_user = Depends(get_current_user),
+    current_user=Depends(get_current_user),
     repo: NotificationRepository = Depends(get_notification_repo),
 ):
     """标记所有通知为已读"""

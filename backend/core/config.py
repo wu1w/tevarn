@@ -210,6 +210,12 @@ class Settings(BaseSettings):
     agent_kernel_persistence: bool = True
     # checkpoint 快照间隔（事件数）：恢复=快照+增量，禁止全量 replay
     agent_kernel_checkpoint_interval: int = 500
+    # 多 worker 前提：观测 API 合并 DB 进程/提权
+    agent_kernel_shared_state: bool = True
+    # 多 worker 执行面：Redis 共享 mediate / charge_tokens / 能力集 / 提权
+    # 需同时设置 redis_url；未装 redis 包或 ping 失败则静默回退内存
+    agent_kernel_redis_shared: bool = False
+    redis_url: str = ""  # 例 redis://127.0.0.1:6379/0
     # 0.6 自主运转：收件箱/派遣器
     agent_dispatcher_enabled: bool = True
     agent_dispatcher_poll_seconds: float = 10.0

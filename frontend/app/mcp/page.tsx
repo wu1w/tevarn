@@ -9,6 +9,7 @@ import {
 import { useToastStore } from '@/stores/toastStore';
 import MCPStorePanel, { type MCPPageTab } from '@/components/mcp/MCPStorePanel';
 import { t, useT } from '@/stores/localeStore';
+import { LegacyQuiet } from '@/components/layout/LegacyQuiet';
 
 
 const RISK_OPTIONS = [
@@ -110,6 +111,18 @@ export default function MCPPage() {
   ];
 
   return (
+    <LegacyQuiet
+      title="MCP 已并入扩展"
+      titleEn="MCP lives under Extensions"
+      hint="MCP 是工具供应链，主入口在扩展页第二 tab。此处保留高级手动配置。"
+      hintEn="MCP is the tool supply chain — primary UI is Extensions tab 2. Advanced config remains here."
+      primaryHref="/market"
+      primaryLabel="打开扩展"
+      primaryLabelEn="Open Extensions"
+      secondaryHref="/settings"
+      secondaryLabel="设置"
+      secondaryLabelEn="Settings"
+    >
     <main className="min-h-screen p-5 text-foreground">
       <div className="mx-auto flex max-w-6xl flex-col gap-4">
         <header className="flex flex-wrap items-end justify-between gap-3">
@@ -319,5 +332,6 @@ export default function MCPPage() {
         )}
       </div>
     </main>
+    </LegacyQuiet>
   );
 }

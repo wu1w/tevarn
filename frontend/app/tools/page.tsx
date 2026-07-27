@@ -13,6 +13,7 @@ import {
 import { useToastStore } from '@/stores/toastStore';
 import { useConfirm } from '@/components/desktop/ConfirmDialog';
 import { useT } from '@/stores/localeStore';
+import { LegacyQuiet } from '@/components/layout/LegacyQuiet';
 
 
 const TYPE_KEYS = [
@@ -61,7 +62,6 @@ function toolCategory(tool: { type: string; name: string }): ToolCategory {
   if (/sql|db|data|vector|embed/.test(n)) return 'data';
   return 'other';
 }
-
 
 export default function ToolsPage() {
   const { addToast } = useToastStore();
@@ -221,6 +221,18 @@ export default function ToolsPage() {
   }
 
   return (
+    <LegacyQuiet
+      title="工具仓库已静默"
+      titleEn="Tool warehouse is silent"
+      hint="工具出现在员工能力档案里，不再是独立仓库。请到 Agent 编辑配置。"
+      hintEn="Tools live on agent capability profiles. Edit them on Agents."
+      primaryHref="/agents"
+      primaryLabel="打开 Agent"
+      primaryLabelEn="Open Agents"
+      secondaryHref="/market"
+      secondaryLabel="扩展"
+      secondaryLabelEn="Extensions"
+    >
     <div className="mx-auto max-w-5xl p-6">
       <div className="mb-6 flex items-center justify-between">
         <div>
@@ -484,6 +496,7 @@ export default function ToolsPage() {
 
       {ConfirmDialogComponent}
     </div>
+    </LegacyQuiet>
   );
 }
 

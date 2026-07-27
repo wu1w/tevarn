@@ -85,6 +85,8 @@ class KernelPersistence:
             kind = op.get("op")
             if kind == "process_upsert":
                 await self._upsert_process(op["data"])
+            elif kind == "escalation_upsert":
+                await self._upsert_escalation(op["data"])
             elif kind == "event":
                 self._total_events += 1
                 self._events_since_checkpoint += 1
@@ -92,6 +94,42 @@ class KernelPersistence:
                     await self.write_checkpoint(tail_hash=str(op.get("data", {}).get("hash") or ""))
         except Exception as e:
             logger.warning("kernel 持久化失败（不阻断）op=%s: %s", op.get("op"), e)
+
+    async def _upsert_escalation(self, data: dict[str, Any]) -> None:
+        """提权申请外部化落盘（多 worker 可读 pending）。"""
+        if self._session_factory is None:
+            return
+        from backend.models.agent_identity import KernelEscalationRecord
+
+        eid = str(data.get("id") or data.get("escalation_id") or "")
+        if not eid:
+            return
+        async with self._session_factory() as session:
+            existing = (
+                await session.execute(
+                    select(KernelEscalationRecord).where(
+                        KernelEscalationRecord.escalation_id == eid
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing is None:
+                session.add(KernelEscalationRecord(
+                    escalation_id=eid,
+                    process_id=str(data.get("process_id") or ""),
+                    capabilities=list(data.get("capabilities") or []),
+                    reason=str(data.get("reason") or ""),
+                    status=str(data.get("status") or "pending"),
+                    created_at_ts=float(data.get("created_at") or 0),
+                    resolved_at=data.get("resolved_at"),
+                    resolved_by=data.get("resolved_by"),
+                ))
+            else:
+                existing.status = str(data.get("status") or existing.status)
+                existing.capabilities = list(data.get("capabilities") or existing.capabilities or [])
+                existing.reason = str(data.get("reason") or existing.reason or "")
+                existing.resolved_at = data.get("resolved_at")
+                existing.resolved_by = data.get("resolved_by")
+            await session.commit()
 
     # ── 进程档案 ─────────────────────────────────────────────
 
@@ -216,10 +254,11 @@ class KernelPersistence:
             "checkpoint_seq": None,
             "incremental_events": 0,
             "full_replay": False,
+            "escalations_hydrated": 0,
         }
         if self._session_factory is None:
             return summary
-        from backend.models.agent_identity import KernelProcessRecord
+        from backend.models.agent_identity import KernelEscalationRecord, KernelProcessRecord
 
         async with self._session_factory() as session:
             result = await session.execute(
@@ -230,6 +269,34 @@ class KernelPersistence:
             )
             summary["interrupted"] = result.rowcount or 0
             await session.commit()
+
+        # 提权外部化：把 DB pending 注回本进程内存（多 worker 重启后仍可见待批）
+        try:
+            from backend.kernel.kernel import get_kernel
+
+            kernel = get_kernel()
+            async with self._session_factory() as session:
+                rows = (
+                    await session.execute(
+                        select(KernelEscalationRecord).where(
+                            KernelEscalationRecord.status == "pending"
+                        )
+                    )
+                ).scalars().all()
+            for row in rows:
+                kernel.hydrate_escalation({
+                    "id": row.escalation_id,
+                    "process_id": row.process_id,
+                    "capabilities": row.capabilities or [],
+                    "reason": row.reason or "",
+                    "status": row.status,
+                    "created_at": row.created_at_ts or 0,
+                    "resolved_at": row.resolved_at,
+                    "resolved_by": row.resolved_by,
+                })
+            summary["escalations_hydrated"] = len(rows)
+        except Exception as e:
+            logger.warning("kernel escalation 恢复失败（不阻断）: %s", e)
 
         cp = await self.latest_checkpoint()
         if cp is not None:

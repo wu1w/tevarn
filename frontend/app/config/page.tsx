@@ -8,6 +8,7 @@ import { useSessionStore } from '@/stores/sessionStore';
 import { Skill } from '@/types';
 import { getSkills } from '@/lib/api';
 import { useT } from '@/stores/localeStore';
+import { LegacyQuiet } from '@/components/layout/LegacyQuiet';
 
 
 type TabKey = 'sys_prompt' | 'tools';
@@ -60,6 +61,18 @@ export default function ConfigPage() {
   };
 
   return (
+    <LegacyQuiet
+      title="会话配置已降级"
+      titleEn="Session config is demoted"
+      hint="Agent 行为参数由编制与进化自调。老板只在审批里否决，不在这里拧旋钮。"
+      hintEn="Behavior is tuned by roster & evolution. You veto in Approvals — not knobs here."
+      primaryHref="/agents"
+      primaryLabel="打开 Agent"
+      primaryLabelEn="Open Agents"
+      secondaryHref="/settings"
+      secondaryLabel="设置"
+      secondaryLabelEn="Settings"
+    >
     <div className="p-6">
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-xl font-bold text-foreground">{t('nav.config')}</h1>
@@ -118,5 +131,6 @@ export default function ConfigPage() {
         </div>
       </div>
     </div>
+    </LegacyQuiet>
   );
 }

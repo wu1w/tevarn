@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ..dependencies import get_current_user
 from backend.kernel import get_kernel
@@ -25,13 +25,69 @@ async def list_processes(
     current_user: Annotated[UserRead, Depends(get_current_user)],
     include_terminal: bool = Query(False),
 ):
+    """进程列表。
+
+    shared_state=True 时：内存进程 + DB 档案合并（多 worker 观测前提）。
+    本 worker 内存中的 live 进程优先（状态更鲜活）。
+    """
     kernel = get_kernel()
-    procs = kernel.list_processes(include_terminal=include_terminal)
-    return {
+    live = {p.id: p.to_dict() for p in kernel.list_processes(include_terminal=True)}
+    shared = True
+    try:
+        from backend.core.config import settings
+        shared = bool(getattr(settings, "agent_kernel_shared_state", True))
+    except Exception:
+        shared = True
+
+    db_error = None
+    if shared:
+        try:
+            from sqlalchemy import select
+            from backend.database import AsyncSessionLocal
+            from backend.models.agent_identity import KernelProcessRecord
+
+            async with AsyncSessionLocal() as session:
+                rows = (await session.execute(select(KernelProcessRecord))).scalars().all()
+            for r in rows:
+                if r.process_id in live:
+                    continue  # 内存优先
+                if not include_terminal and r.state in (
+                    "completed", "failed", "killed", "interrupted", "exited", "done",
+                ):
+                    continue
+                live[r.process_id] = {
+                    "id": r.process_id,
+                    "identity": r.identity_key,
+                    "session_id": r.session_id,
+                    "parent_id": r.parent_process_id,
+                    "capabilities": r.capabilities,
+                    "token_budget": r.token_budget,
+                    "tokens_used": r.tokens_used or 0,
+                    "state": r.state,
+                    "created_at": r.started_at or 0,
+                    "started_at": r.started_at,
+                    "ended_at": r.ended_at,
+                    "exit_reason": r.exit_reason,
+                    "source": "db",
+                }
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("list_processes DB merge failed: %s", e)
+            db_error = str(e)
+
+    procs = list(live.values())
+    if not include_terminal:
+        terminal = {"completed", "failed", "killed", "interrupted", "exited", "done", "error"}
+        procs = [p for p in procs if p.get("state") not in terminal]
+    out = {
         "enabled": True,
-        "processes": [p.to_dict() for p in procs],
+        "processes": procs,
         "total": len(procs),
+        "shared_state": shared,
     }
+    if db_error:
+        out["db_warning"] = db_error
+    return out
 
 
 @router.get("/processes/{process_id}")
@@ -42,10 +98,13 @@ async def get_process(
     kernel = get_kernel()
     proc = kernel.get_process(process_id)
     if proc is None:
-        return {"error": "process not found", "process_id": process_id}
+        raise HTTPException(status_code=404, detail=f"process not found: {process_id}")
     data = proc.to_dict()
+    # 不向客户端返回 HMAC signature（防离线伪造材料外泄）
     if proc.token is not None:
-        data["token"] = proc.token.to_dict()
+        tok = proc.token.to_dict(sign=False)
+        tok.pop("signature", None)
+        data["token"] = tok
     return data
 
 
@@ -72,12 +131,57 @@ async def list_escalations(
     current_user: Annotated[UserRead, Depends(get_current_user)],
     status: str | None = Query(None),
 ):
+    """提权列表。shared_state 时合并 DB 中的 pending（跨 worker 可见）。"""
     kernel = get_kernel()
-    reqs = kernel.list_escalations(status=status)
-    return {
-        "escalations": [r.to_dict() for r in reqs],
+    by_id = {r.id: r.to_dict() for r in kernel.list_escalations(status=None)}
+    shared = True
+    try:
+        from backend.core.config import settings
+        shared = bool(getattr(settings, "agent_kernel_shared_state", True))
+    except Exception:
+        shared = True
+    db_error = None
+    if shared:
+        try:
+            from sqlalchemy import select
+            from backend.database import AsyncSessionLocal
+            from backend.models.agent_identity import KernelEscalationRecord
+
+            async with AsyncSessionLocal() as session:
+                q = select(KernelEscalationRecord)
+                if status:
+                    q = q.where(KernelEscalationRecord.status == status)
+                rows = (await session.execute(q)).scalars().all()
+            for r in rows:
+                if r.escalation_id in by_id:
+                    continue
+                by_id[r.escalation_id] = {
+                    "id": r.escalation_id,
+                    "process_id": r.process_id,
+                    "capabilities": r.capabilities or [],
+                    "reason": r.reason or "",
+                    "status": r.status,
+                    "created_at": r.created_at_ts or 0,
+                    "resolved_at": r.resolved_at,
+                    "resolved_by": r.resolved_by,
+                    "source": "db",
+                }
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("list_escalations DB merge failed: %s", e)
+            db_error = str(e)
+    reqs = list(by_id.values())
+    if status is not None:
+        reqs = [r for r in reqs if r.get("status") == status]
+    reqs.sort(key=lambda r: float(r.get("created_at") or 0), reverse=True)
+    out = {
+        "escalations": reqs,
         "total": len(reqs),
+        "shared_state": shared,
     }
+    if db_error:
+        out["db_warning"] = db_error
+    return out
 
 
 @router.post("/escalations/{request_id}/approve")
@@ -86,10 +190,13 @@ async def approve_escalation(
     current_user: Annotated[UserRead, Depends(get_current_user)],
 ):
     kernel = get_kernel()
+    # 跨 worker：先把 DB 中的 pending 水合进本进程内存
+    await kernel.ensure_escalation_loaded(request_id)
     try:
         req = await kernel.approve_escalation(request_id, by=str(current_user.id))
     except ValueError as e:
-        return {"error": str(e), "request_id": request_id}
+        # 必须 4xx：前端 axios 只把非 2xx 当失败，200+error 会假成功
+        raise HTTPException(status_code=400, detail=str(e)) from e
     return req.to_dict()
 
 
@@ -99,10 +206,11 @@ async def deny_escalation(
     current_user: Annotated[UserRead, Depends(get_current_user)],
 ):
     kernel = get_kernel()
+    await kernel.ensure_escalation_loaded(request_id)
     try:
         req = await kernel.deny_escalation(request_id, by=str(current_user.id))
     except ValueError as e:
-        return {"error": str(e), "request_id": request_id}
+        raise HTTPException(status_code=400, detail=str(e)) from e
     return req.to_dict()
 
 
@@ -151,7 +259,7 @@ async def list_identities(
 ):
     reg = _identity_registry()
     if reg is None:
-        return {"error": "identity layer disabled", "identities": [], "total": 0}
+        raise HTTPException(status_code=503, detail="identity layer disabled")
     items = await reg.list(status=status)
     return {"identities": [_ident_dict(i) for i in items], "total": len(items)}
 
@@ -163,10 +271,10 @@ async def create_identity(
 ):
     reg = _identity_registry()
     if reg is None:
-        return {"error": "identity layer disabled"}
+        raise HTTPException(status_code=503, detail="identity layer disabled")
     name = str(body.get("name") or "").strip()
     if not name:
-        return {"error": "name is required"}
+        raise HTTPException(status_code=400, detail="name is required")
     ident = await reg.create(
         name,
         role=str(body.get("role") or ""),
@@ -187,7 +295,7 @@ async def transition_identity(
     """状态机：suspend / resume / archive（archived 终态不可逆）。"""
     reg = _identity_registry()
     if reg is None:
-        return {"error": "identity layer disabled"}
+        raise HTTPException(status_code=503, detail="identity layer disabled")
     action = str(body.get("action") or "")
     by = str(current_user.id)
     try:
@@ -198,9 +306,12 @@ async def transition_identity(
         elif action == "archive":
             ident = await reg.archive(identity_id, by=by)
         else:
-            return {"error": f"unknown action {action!r}（suspend/resume/archive）"}
+            raise HTTPException(
+                status_code=400,
+                detail=f"unknown action {action!r}（suspend/resume/archive）",
+            )
     except ValueError as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=400, detail=str(e)) from e
     return _ident_dict(ident)
 
 
@@ -213,13 +324,13 @@ async def set_identity_capabilities(
     """权限档案变更——全程审计（禁止静默改权）。"""
     reg = _identity_registry()
     if reg is None:
-        return {"error": "identity layer disabled"}
+        raise HTTPException(status_code=503, detail="identity layer disabled")
     try:
         ident = await reg.set_capabilities(
             identity_id, body.get("capabilities"), by=str(current_user.id)
         )
     except ValueError as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=400, detail=str(e)) from e
     return _ident_dict(ident)
 
 
@@ -231,7 +342,7 @@ async def get_identity_memory(
 ):
     reg = _identity_registry()
     if reg is None:
-        return {"error": "identity layer disabled", "memory": [], "total": 0}
+        raise HTTPException(status_code=503, detail="identity layer disabled")
     items = await reg.current_memory(identity_id, kind=kind)
     return {"memory": [_memory_dict(m) for m in items], "total": len(items)}
 
@@ -244,7 +355,7 @@ async def add_identity_memory(
 ):
     reg = _identity_registry()
     if reg is None:
-        return {"error": "identity layer disabled"}
+        raise HTTPException(status_code=503, detail="identity layer disabled")
     try:
         entry = await reg.add_memory(
             identity_id,
@@ -254,7 +365,7 @@ async def add_identity_memory(
             approved_by=body.get("approved_by"),
         )
     except ValueError as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=400, detail=str(e)) from e
     return _memory_dict(entry)
 
 
@@ -267,7 +378,7 @@ async def supersede_identity_memory(
 ):
     reg = _identity_registry()
     if reg is None:
-        return {"error": "identity layer disabled"}
+        raise HTTPException(status_code=503, detail="identity layer disabled")
     try:
         entry = await reg.supersede_memory(
             entry_id,
@@ -275,7 +386,7 @@ async def supersede_identity_memory(
             approved_by=str(body.get("approved_by") or current_user.id),
         )
     except ValueError as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=400, detail=str(e)) from e
     return _memory_dict(entry)
 
 
@@ -292,7 +403,7 @@ async def enqueue_inbox_item(
 
     inbox = get_workforce_inbox()
     if inbox is None:
-        return {"error": "workforce inbox 未启用"}
+        raise HTTPException(status_code=503, detail="workforce inbox 未启用")
     try:
         item = await inbox.enqueue(
             str(body.get("identity_id") or ""),
@@ -302,9 +413,9 @@ async def enqueue_inbox_item(
             priority=int(body.get("priority") or 0),
         )
     except ValueError as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=400, detail=str(e)) from e
     if item is None:
-        return {"error": "工单被拒收（身份停用或不存在）"}
+        raise HTTPException(status_code=400, detail="工单被拒收（身份停用或不存在）")
     return {"id": str(item.id), "status": item.status}
 
 
@@ -319,7 +430,7 @@ async def list_inbox_items(
 
     inbox = get_workforce_inbox()
     if inbox is None:
-        return {"error": "workforce inbox 未启用", "items": [], "total": 0}
+        raise HTTPException(status_code=503, detail="workforce inbox 未启用")
     items = await inbox.list_items(identity_id=identity_id, status=status, limit=limit)
     return {
         "items": [
@@ -351,7 +462,7 @@ async def workforce_report(
 
     inbox = get_workforce_inbox()
     if inbox is None:
-        return {"error": "workforce inbox 未启用"}
+        raise HTTPException(status_code=503, detail="workforce inbox 未启用")
     return await build_daily_report(get_kernel(), inbox, hours=hours)
 
 
@@ -384,7 +495,7 @@ async def list_evolution_proposals(
 
     eng = get_evolution_engine()
     if eng is None:
-        return {"error": "evolution engine 未启用", "proposals": [], "total": 0}
+        raise HTTPException(status_code=503, detail="evolution engine 未启用")
     items = await eng.list_proposals(identity_id=identity_id, status=status)
     return {"proposals": [_proposal_dict(p) for p in items], "total": len(items)}
 
@@ -399,11 +510,11 @@ async def run_evolution_analyze(
 
     eng = get_evolution_engine()
     if eng is None:
-        return {"error": "evolution engine 未启用"}
+        raise HTTPException(status_code=503, detail="evolution engine 未启用")
     try:
         proposals = await eng.analyze(str(body.get("identity_id") or ""))
     except ValueError as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=400, detail=str(e)) from e
     return {"generated": len(proposals), "proposals": [_proposal_dict(p) for p in proposals]}
 
 
@@ -416,11 +527,13 @@ async def approve_evolution(
 
     eng = get_evolution_engine()
     if eng is None:
-        return {"error": "evolution engine 未启用"}
+        raise HTTPException(status_code=503, detail="evolution engine 未启用")
     try:
         p = await eng.approve(proposal_id, by=str(current_user.id))
     except ValueError as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"apply failed: {e}") from e
     return _proposal_dict(p)
 
 
@@ -433,11 +546,11 @@ async def reject_evolution(
 
     eng = get_evolution_engine()
     if eng is None:
-        return {"error": "evolution engine 未启用"}
+        raise HTTPException(status_code=503, detail="evolution engine 未启用")
     try:
         p = await eng.reject(proposal_id, by=str(current_user.id))
     except ValueError as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=400, detail=str(e)) from e
     return _proposal_dict(p)
 
 
@@ -450,11 +563,11 @@ async def rollback_evolution(
 
     eng = get_evolution_engine()
     if eng is None:
-        return {"error": "evolution engine 未启用"}
+        raise HTTPException(status_code=503, detail="evolution engine 未启用")
     try:
         p = await eng.rollback(proposal_id, by=str(current_user.id))
     except ValueError as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=400, detail=str(e)) from e
     return _proposal_dict(p)
 
 
@@ -467,3 +580,14 @@ async def workforce_org(
     from backend.kernel.workforce import build_org_view
 
     return await build_org_view(AsyncSessionLocal)
+
+
+@router.get("/approval-rules")
+async def get_approval_rules_api(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """只读：当前生效的审批规则（与前端 settings/approval_rules 同源）。"""
+    from backend.kernel.approval_rules import load_approval_rules
+
+    rules = await load_approval_rules()
+    return {"rules": rules, "total": len(rules)}

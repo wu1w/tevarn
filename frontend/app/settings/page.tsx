@@ -24,6 +24,7 @@ import {
 } from '@/lib/api';
 import { useToastStore } from '@/stores/toastStore';
 import { useT } from '@/stores/localeStore';
+import { useZh } from '@/hooks/useZh';
 import { LanguageCard } from '@/components/ui/LanguageSwitcher';
 import { ModelSettingsPanel } from '@/components/settings/ModelSettingsPanel';
 
@@ -124,9 +125,12 @@ const btnPrimary =
 const btnGhost =
   'rounded-xl border border-border-default bg-card-bg px-4 py-2.5 text-sm text-foreground-muted hover:bg-card-bg-hover hover:text-foreground disabled:opacity-50';
 
+type SettingsPane = 'general' | 'llm' | 'channels' | 'backend' | 'about';
+
 export default function SettingsPage() {
   const addToast = useToastStore((s) => s.addToast);
   const t = useT();
+  const [pane, setPane] = useState<SettingsPane>('general');
   const [sftLogEnabled, setSftLogEnabled] = useState(false);
   const [sftLogPath, setSftLogPath] = useState('');
   const [sftLogHelp, setSftLogHelp] = useState('');
@@ -849,19 +853,48 @@ export default function SettingsPage() {
   const embedDot: Dot = embedConfigured ? (hasEmbedKey || embeddingProvider === 'ollama' ? 'ok' : 'warn') : 'idle';
   const ragDot: Dot = ragEnabled && embedConfigured && qdrantConfigured ? 'ok' : ragEnabled ? 'warn' : 'idle';
 
+  const zh = useZh();
+  const PANES: Array<{ id: SettingsPane; zh: string; en: string }> = [
+    { id: 'general', zh: '通用', en: 'General' },
+    { id: 'llm', zh: 'LLM（模型）', en: 'LLM' },
+    { id: 'channels', zh: '对外渠道', en: 'Channels' },
+    { id: 'backend', zh: '执行后端', en: 'Runtime' },
+    { id: 'about', zh: '关于', en: 'About' },
+  ];
+
   return (
     <div className="min-h-0 flex-1 overflow-y-auto p-6 pb-16">
-      <div className="mx-auto max-w-3xl space-y-8">
-        <div>
+      <div className="mx-auto max-w-5xl">
+        <div className="mb-6">
           <h1 className="text-lg font-semibold tracking-tight text-foreground">{t('settings.title')}</h1>
           <p className="mt-1 text-sm text-foreground-muted">
-            {t('settings.llmConfigHint')}
+            {zh ? '偏好 · 模型（LLM）· 对外渠道 · 运行环境' : 'Preferences · LLM · Channels · Runtime'}
           </p>
         </div>
 
-        {/* 语言切换 — 醒目位置 */}
-        <LanguageCard />
+        <div style={{ display: 'grid', gridTemplateColumns: '180px 1fr', gap: 20, alignItems: 'start' }}>
+          {/* demo v2 set-nav */}
+          <nav style={{ position: 'sticky', top: 0 }}>
+            {PANES.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => setPane(p.id)}
+                style={{
+                  display: 'block', width: '100%', textAlign: 'left',
+                  padding: '8px 12px', borderRadius: 8, fontSize: 13, marginBottom: 2,
+                  border: 'none', cursor: 'pointer',
+                  background: pane === p.id ? 'color-mix(in srgb, var(--brand-purple) 13%, transparent)' : 'transparent',
+                  color: pane === p.id ? 'var(--foreground)' : 'var(--foreground-dim)',
+                  fontWeight: pane === p.id ? 600 : 500,
+                }}
+              >
+                {zh ? p.zh : p.en}
+              </button>
+            ))}
+          </nav>
 
+          <div className="min-w-0 space-y-8">
         {loading || presetsLoading ? (
           <div className="py-16 text-center text-foreground-dim">
             <div className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-violet-500/30 border-t-violet-500" />
@@ -869,6 +902,32 @@ export default function SettingsPage() {
           </div>
         ) : (
           <>
+            {pane === 'general' ? (
+              <>
+                <LanguageCard />
+                <section className="rounded-2xl border border-border-subtle bg-card-bg p-5">
+                  <div className="mb-3 text-[13.5px] font-semibold text-foreground">
+                    {zh ? '通知' : 'Notifications'}
+                  </div>
+                  <div className="space-y-3 text-[12.5px] text-foreground-muted">
+                    <div className="flex items-center justify-between">
+                      <span>{zh ? '审批待决提醒' : 'Pending approval alerts'}</span>
+                      <span className="text-[10.5px] text-status-online">{zh ? '开启' : 'On'}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span>{zh ? 'Agent 异常（超支/失败）即时通知' : 'Agent anomalies (budget / failure)'}</span>
+                      <span className="text-[10.5px] text-status-online">{zh ? '开启' : 'On'}</span>
+                    </div>
+                    <div className="text-[11px] text-foreground-dim">
+                      {zh ? '通知通道与 badge 联动审批中心；细粒度开关后续接 settings KV。' : 'Tied to Approvals badge; fine-grained toggles via settings KV later.'}
+                    </div>
+                  </div>
+                </section>
+              </>
+            ) : null}
+
+            {pane === 'llm' ? (
+              <>
             {/* 状态总览 — 简洁条 */}
             <section className="tk-card/80 px-4 py-3">
               <div className="mb-2 flex items-center justify-between">
@@ -1293,8 +1352,54 @@ export default function SettingsPage() {
                                 </button>
                               </div>
                             </section>
+              </>
+            ) : null}
 
-                            
+            {pane === 'channels' ? (
+              <section className="rounded-2xl border border-border-subtle bg-card-bg p-5">
+                <div className="mb-2 text-[13.5px] font-semibold text-foreground">
+                  {zh ? '对外窗口' : 'Outbound channels'}
+                </div>
+                <p className="mb-4 text-xs text-foreground-dim leading-relaxed">
+                  {zh
+                    ? '外部消息 → 助理分拣 → 路由给对应 Agent。配置在渠道页完成。'
+                    : 'External messages → secretary triage → route to agents. Configure on Channels.'}
+                </p>
+                <a
+                  href="/channels"
+                  className="inline-flex rounded-lg bg-brand-purple px-4 py-2 text-sm font-semibold text-white"
+                >
+                  {zh ? '打开渠道配置' : 'Open channel settings'}
+                </a>
+              </section>
+            ) : null}
+
+            {pane === 'backend' ? (
+              <>
+                <section className="rounded-2xl border border-border-subtle bg-card-bg p-5">
+                  <div className="mb-3 text-[13.5px] font-semibold text-foreground">
+                    {zh ? '执行后端（Agent 的「手」）' : 'Execution backend'}
+                  </div>
+                  <div className="space-y-2 text-[12.5px] text-foreground-muted">
+                    <div className="flex justify-between">
+                      <span>{zh ? '沙箱 / 权限' : 'Sandbox / policy'}</span>
+                      <a href="/security" className="text-brand-purple text-xs font-medium">{zh ? '权限控制台' : 'Security'}</a>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>{zh ? '设备节点' : 'Devices'}</span>
+                      <a href="/devices" className="text-brand-purple text-xs font-medium">{zh ? '设备页' : 'Devices'}</a>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>MCP</span>
+                      <a href="/market" className="text-brand-purple text-xs font-medium">{zh ? '扩展' : 'Extensions'}</a>
+                    </div>
+                    <p className="text-[11px] text-foreground-dim pt-2">
+                      {zh
+                        ? 'Soft gate 决定「该不该」，Computer 后端决定「能不能」。'
+                        : 'Soft gate decides should; Computer decides can.'}
+                    </p>
+                  </div>
+                </section>
                             {/* 数据与隐私 · SFT 使用日志 */}
                             <section>
                               <SectionTitle title={t('settings.privacy')} hint={t('settings.privacyHint')} />
@@ -1399,9 +1504,36 @@ export default function SettingsPage() {
                                 )}
                               </div>
                             </section>
+              </>
+            ) : null}
+
+            {pane === 'about' ? (
+              <section className="rounded-2xl border border-border-subtle bg-card-bg p-5">
+                <div className="mb-3 text-[13.5px] font-semibold text-foreground">Takton AIOS</div>
+                <div className="space-y-2 text-[12.5px]">
+                  <div className="flex justify-between border-b border-border-subtle py-1.5">
+                    <span className="text-foreground-dim">{zh ? '版本' : 'Version'}</span>
+                    <span className="font-mono text-foreground">v0.4.4-alpha</span>
+                  </div>
+                  <div className="flex justify-between border-b border-border-subtle py-1.5">
+                    <span className="text-foreground-dim">{zh ? '内核' : 'Kernel'}</span>
+                    <span className="text-foreground">AgentKernel · mediate</span>
+                  </div>
+                  <div className="flex justify-between border-b border-border-subtle py-1.5">
+                    <span className="text-foreground-dim">{zh ? '设计' : 'Design'}</span>
+                    <span className="text-foreground">demo v2 · AIOS workbench</span>
+                  </div>
+                </div>
+                <p className="mt-4 text-[11px] text-foreground-dim">
+                  An OS where your agents keep working.
+                </p>
+              </section>
+            ) : null}
                           </>
                         )}
                       </div>
                     </div>
+                  </div>
+                </div>
                   );
                 }

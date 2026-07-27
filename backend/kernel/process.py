@@ -71,13 +71,24 @@ class AgentProcess:
             self._event().set()
 
     async def wait_if_suspended(
-        self, *, poll: float = 0.5, should_stop: Any = None
+        self, *, poll: float = 0.5, should_stop: Any = None, refresh_state: Any = None
     ) -> bool:
         """挂起则阻塞等待恢复（轮询以便响应 stop/终态）。
-        返回 False = 等待被打断（stop 请求或进程已终态），调用方应中止。"""
+
+        refresh_state: 可选回调，多 worker 时从 Redis 刷新 self.state
+        （他 worker 的 resume 写 Redis，本 worker Event 不会 set）。
+        返回 False = 等待被打断（stop 请求或进程已终态），调用方应中止。
+        """
         while self.state == "suspended":
             if should_stop is not None and should_stop():
                 return False
+            if refresh_state is not None:
+                try:
+                    refresh_state(self)
+                except Exception:
+                    pass
+                if self.state != "suspended":
+                    break
             try:
                 await asyncio.wait_for(self._event().wait(), timeout=poll)
             except asyncio.TimeoutError:
@@ -107,6 +118,12 @@ class AgentProcess:
         return self.budget_remaining
 
     def to_dict(self) -> dict[str, Any]:
+        token_payload = None
+        if self.token is not None and hasattr(self.token, "to_dict"):
+            try:
+                token_payload = self.token.to_dict(sign=False)
+            except TypeError:
+                token_payload = self.token.to_dict()
         return {
             "id": self.id,
             "identity": self.identity,
@@ -122,4 +139,33 @@ class AgentProcess:
             "ended_at": self.ended_at,
             "exit_reason": self.exit_reason,
             "meta": self.meta,
+            "token": token_payload,
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "AgentProcess":
+        """从 Redis/DB 字典水合（无 resume Event；跨 worker 挂起靠 state 轮询）。"""
+        proc = cls(
+            identity=str(data.get("identity") or "main"),
+            session_id=data.get("session_id"),
+            parent_id=data.get("parent_id"),
+            capabilities=data.get("capabilities"),
+            token_budget=data.get("token_budget"),
+            id=str(data.get("id") or uuid.uuid4().hex[:16]),
+            state=data.get("state") or "created",  # type: ignore[arg-type]
+            tokens_used=int(data.get("tokens_used") or 0),
+            created_at=float(data.get("created_at") or time.time()),
+            started_at=data.get("started_at"),
+            ended_at=data.get("ended_at"),
+            exit_reason=data.get("exit_reason"),
+            meta=dict(data.get("meta") or {}),
+        )
+        tok = data.get("token")
+        if isinstance(tok, dict) and tok.get("capabilities") is not None:
+            try:
+                from backend.kernel.capability import CapabilityToken
+
+                proc.token = CapabilityToken.from_dict(tok, verify=False)
+            except Exception:
+                proc.token = None
+        return proc

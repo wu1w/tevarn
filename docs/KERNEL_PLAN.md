@@ -53,6 +53,30 @@ identity memory 条目向量化纳入 RAG 检索（identity_memory collection）
   按当前输入检索身份记忆 top-3——中期任务上下文漂移后，
   相关经验/方法论仍能浮现
 
+## 多 worker 状态外部化（0.4.x 落地）
+
+### 观测面（DB，默认开）
+- **进程档案** `kernel_processes`：create/end 经 sink 落盘；`GET /kernel/processes` 在
+  `agent_kernel_shared_state=true` 时合并 DB + 本 worker 内存（内存优先）
+- **提权** `kernel_escalations`：request/approve/deny 经 sink 落盘；启动 recover 注回
+  pending；list API 合并 DB
+- **事件** 仍以 JSONL audit_store 为跨重启权威；内存环形缓冲是本进程热视图
+
+### 执行面（Redis，可选）
+配置：
+```
+agent_kernel_redis_shared=true
+redis_url=redis://127.0.0.1:6379/0
+```
+- 模块：`backend/kernel/shared_store.py`（**同步** redis-py，符合 mediate 零 await 红线）
+- `create_process` / 能力变更 / end → `HSET` 进程 Hash
+- `mediate` / `charge_tokens` / `get_process` → 本地缓存未命中时从 Redis 水合
+- `charge_tokens` → `HINCRBY` 原子扣减
+- 提权 pending → Redis Set + Hash；`ensure_escalation_loaded` 优先 Redis
+- 跨 worker suspend/resume：state 写 Redis；loop `wait_if_suspended` 轮询刷新
+
+未配置 / redis 包缺失 / ping 失败 → 静默回退单进程内存（与历史行为一致）。
+
 ## 打磨方向（不阻塞 alpha 试用）
 
 1. **三设备实机验证**：Mi310p Arch、Mac、Win Xeon——

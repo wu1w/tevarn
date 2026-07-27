@@ -23,3 +23,5 @@ jinja2==3.1.6
 qdrant-client==1.12.1
 mcp>=1.12.0
 croniter>=2.0.0
+# 多 worker kernel 共享态（可选；agent_kernel_redis_shared=true 时需要）
+redis>=5.0.0

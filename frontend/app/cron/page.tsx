@@ -13,6 +13,7 @@ import { useConfirm } from '@/components/desktop/ConfirmDialog';
 import { EmptyState } from '@/components/desktop/EmptyState';
 import { LoadingPage } from '@/components/ui/LoadingSpinner';
 import { t, useT } from '@/stores/localeStore';
+import { LegacyQuiet } from '@/components/layout/LegacyQuiet';
 
 
 type CronForm = {
@@ -132,6 +133,18 @@ export default function CronPage() {
   };
 
   return (
+    <LegacyQuiet
+      title="定时任务是员工的日程"
+      titleEn="Cron is the agent's schedule"
+      hint="告诉小秘「每周五发周报」，不必自己写 cron。执行记录在活动流可见。"
+      hintEn="Tell your secretary 'send a weekly report' — don't write cron yourself. Runs show in Activity."
+      primaryHref="/activity"
+      primaryLabel="打开活动"
+      primaryLabelEn="Open Activity"
+      secondaryHref="/agents"
+      secondaryLabel="Agent"
+      secondaryLabelEn="Agents"
+    >
     <div className="p-6">
       <div className="mb-6 flex items-center justify-between">
         <div>
@@ -295,5 +308,6 @@ export default function CronPage() {
 
       {ConfirmDialogComponent}
     </div>
+    </LegacyQuiet>
   );
 }

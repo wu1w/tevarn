@@ -14,6 +14,7 @@ import {
   getGoalTree, createGoal, updateGoal, deleteGoal,
   getKernelIdentities, type Goal,
 } from '@/lib/api';
+import { useZh } from '@/hooks/useZh';
 
 const statusMeta: Record<string, { color: string; zh: string; en: string }> = {
   active: { color: 'var(--status-online)', zh: '进行中', en: 'Active' },
@@ -24,7 +25,7 @@ const statusMeta: Record<string, { color: string; zh: string; en: string }> = {
 export default function GoalsPage() {
   const qc = useQueryClient();
   const addToast = useToastStore((s) => s.addToast);
-  const zh = (typeof document !== 'undefined' ? document.documentElement.lang : 'zh-CN') !== 'en';
+  const zh = useZh();
   const [newOpen, setNewOpen] = useState(false);
   const [krFor, setKrFor] = useState<string | null>(null);
 

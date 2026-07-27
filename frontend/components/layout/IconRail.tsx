@@ -12,7 +12,7 @@ import { usePathname } from 'next/navigation';
 import { useT } from '@/stores/localeStore';
 import { useThemeStore } from '@/stores/themeStore';
 import { useQuery } from '@tanstack/react-query';
-import { getKernelEscalations } from '@/lib/api';
+import { getKernelEscalations, getEvolutionProposals } from '@/lib/api';
 import { AppLogo } from '@/components/brand/AppLogo';
 
 type RailItem = {
@@ -37,14 +37,22 @@ export function IconRail() {
   const t = useT();
   const resolved = useThemeStore((s) => s.resolved);
   const setTheme = useThemeStore((s) => s.setTheme);
-  // 审批 badge = 真实待决 escalation 数（与审批中心同源）
+  // 审批 badge = 提权 pending + 进化 pending（与审批中心两 tab 同源）
   const { data: pendingApprovals } = useQuery({
     queryKey: ['kernel-escalations', 'pending'],
     queryFn: () => getKernelEscalations('pending'),
     staleTime: 10_000,
+    refetchInterval: 15_000,
     retry: 1,
   });
-  const unread = pendingApprovals?.escalations?.length ?? 0;
+  const { data: pendingEvo } = useQuery({
+    queryKey: ['evolution-proposals', 'pending'],
+    queryFn: () => getEvolutionProposals({ status: 'pending' }),
+    staleTime: 10_000,
+    refetchInterval: 15_000,
+    retry: 1,
+  });
+  const unread = (pendingApprovals?.escalations?.length ?? 0) + (pendingEvo?.proposals?.length ?? 0);
 
   const ITEMS: RailItem[] = [
     {

@@ -16,6 +16,7 @@ import { useConfirm } from '@/components/desktop/ConfirmDialog';
 import { Skeleton } from '@/components/desktop/Skeleton';
 import { EmptyState } from '@/components/desktop/EmptyState';
 import SkillStorePanel from '@/components/skills/SkillStorePanel';
+import { LegacyQuiet } from '@/components/layout/LegacyQuiet';
 import { useT } from '@/stores/localeStore';
 
 
@@ -310,6 +311,18 @@ export default function SkillsPage() {
     );
 
   return (
+    <LegacyQuiet
+      title="技能已并入扩展市场"
+      titleEn="Skills live in Extensions"
+      hint="手工装技能是操作员视角。请到扩展页浏览市场；员工成长走审批中心进化 tab。"
+      hintEn="Manual installs are operator-era. Browse the market; growth goes through Approvals → Evolution."
+      primaryHref="/market"
+      primaryLabel="打开扩展"
+      primaryLabelEn="Open Extensions"
+      secondaryHref="/approvals"
+      secondaryLabel="审批 / 进化"
+      secondaryLabelEn="Approvals"
+    >
     <div className="p-6">
       {ConfirmDialogComponent}
       <h1 className="mb-6 text-xl font-bold text-foreground">{t('skills.title')}</h1>
@@ -553,5 +566,6 @@ export default function SkillsPage() {
         </div>
       )}
     </div>
+    </LegacyQuiet>
   );
 }

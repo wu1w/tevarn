@@ -56,16 +56,20 @@ def test_escalation_deny_keeps_block() -> None:
 
 
 def test_escalation_approve_resigns_token() -> None:
-    """进程持令牌时批准 → 令牌重签含新能力（否则 mediate 以旧令牌为准仍拦截）。"""
+    """进程持令牌时批准 → 令牌重签含新能力（否则 mediate 以旧令牌为准仍拦截）。
+
+    注意：申请能力必须用高危项（terminal）——低风险能力（如 grep）会被
+    approval_rules 的 auto_low_risk 通道自动批准，走不到手动批准路径。
+    """
     async def go():
         k = AgentKernel()
         proc = await k.create_process("main", capabilities=["file_read"])
         k.issue_token(proc.id, ["file_read"])
-        req = await k.request_escalation(proc.id, ["grep"])
+        req = await k.request_escalation(proc.id, ["terminal"])
         await k.approve_escalation(req.id)
-        d = await k.mediate(proc.id, "tool_call", "grep")
+        d = await k.mediate(proc.id, "tool_call", "terminal")
         assert d.allowed
-        assert "grep" in k.get_process(proc.id).token.capabilities
+        assert "terminal" in k.get_process(proc.id).token.capabilities
 
     _run(go())
 

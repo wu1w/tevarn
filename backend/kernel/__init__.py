@@ -22,6 +22,7 @@ from backend.kernel.kernel import (
     KernelPermissionError,
     MediationDecision,
     get_kernel,
+    get_kernel_shared_store,
     reset_kernel_for_tests,
 )
 from backend.kernel.process import AgentProcess
@@ -42,6 +43,7 @@ __all__ = [
     "RISKY_CAPABILITIES",
     "ScheduledTask",
     "get_kernel",
+    "get_kernel_shared_store",
     "reset_kernel_for_tests",
     "synthesize_capabilities",
     "synthesize_token",

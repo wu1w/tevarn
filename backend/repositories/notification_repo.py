@@ -7,7 +7,7 @@ from abc import abstractmethod
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import func, select, update
+from sqlalchemy import case, func, select, update
 
 from backend.models.notification import Notification
 from backend.schemas.notification import NotificationRead
@@ -111,27 +111,59 @@ class AsyncNotificationRepository(AsyncBaseRepository, NotificationRepository):
         limit: int = 50,
         offset: int = 0,
     ) -> list[NotificationRead]:
+        page = await self.list_page(
+            user_id, unread_only=unread_only, limit=limit, offset=offset
+        )
+        return page["items"]
+
+    async def list_page(
+        self,
+        user_id: uuid.UUID,
+        *,
+        unread_only: bool = False,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """单 session 一次往返：列表 + total + unread（压测最慢端点优化）。
+
+        旧实现 = 3 次独立 session 查询（list + count + unread），
+        c=100 下 p95 ~1.9s；合并后避免重复建连与全表二次扫描。
+        """
         session = await self._get_session()
         try:
-            stmt = select(Notification).where(Notification.user_id == user_id)
+            base = Notification.user_id == user_id
+            # 聚合：total + unread 一条 SQL
+            counts = await session.execute(
+                select(
+                    func.count().label("total"),
+                    func.coalesce(
+                        func.sum(case((Notification.is_read.is_(False), 1), else_=0)),
+                        0,
+                    ).label("unread"),
+                ).where(base)
+            )
+            row = counts.one()
+            total_all = int(row.total or 0)
+            unread = int(row.unread or 0)
+            total = unread if unread_only else total_all
+
+            stmt = select(Notification).where(base)
             if unread_only:
                 stmt = stmt.where(Notification.is_read.is_(False))
-            stmt = stmt.order_by(Notification.created_at.desc()).limit(limit).offset(offset)
+            stmt = (
+                stmt.order_by(Notification.created_at.desc())
+                .limit(min(max(limit, 1), 100))
+                .offset(max(offset, 0))
+            )
             result = await session.execute(stmt)
-            return [NotificationRead.model_validate(n) for n in result.scalars().all()]
+            items = [NotificationRead.model_validate(n) for n in result.scalars().all()]
+            return {"items": items, "total": total, "unread": unread}
         finally:
             await self._close_session(session)
 
     async def count_by_user(self, user_id: uuid.UUID, unread_only: bool = False) -> int:
-        session = await self._get_session()
-        try:
-            stmt = select(func.count()).select_from(Notification).where(Notification.user_id == user_id)
-            if unread_only:
-                stmt = stmt.where(Notification.is_read.is_(False))
-            result = await session.execute(stmt)
-            return result.scalar() or 0
-        finally:
-            await self._close_session(session)
+        page = await self.list_page(user_id, unread_only=unread_only, limit=1, offset=0)
+        return int(page["total"])
 
     async def mark_as_read(
         self, notification_id: uuid.UUID, user_id: uuid.UUID | None = None

@@ -354,8 +354,27 @@ class NexusAgentLoop(AgentLoopBase):
                 f"进程已挂起{('：' + reason) if reason else ''}，等待恢复…",
             )
             logger.info("kernel 进程挂起等待 proc=%s reason=%s", proc.id, reason)
+            def _refresh_from_shared(p):
+                # 多 worker：他进程 resume 写 Redis，本机 Event 不会 set
+                try:
+                    from backend.kernel import get_kernel
+                    k = get_kernel()
+                    fresh = k.get_process(p.id)
+                    if fresh is not None and fresh is not p:
+                        p.state = fresh.state
+                        if fresh.state != "suspended":
+                            p.resume()
+                    elif fresh is p and k._shared is not None:
+                        data = k._shared.get_process(p.id)
+                        if data and data.get("state") != "suspended":
+                            p.state = data["state"]
+                            p.resume()
+                except Exception:
+                    pass
+
             ok = await proc.wait_if_suspended(
-                should_stop=lambda: self._should_stop
+                should_stop=lambda: self._should_stop,
+                refresh_state=_refresh_from_shared,
             )
             if not ok:
                 logger.info("挂起等待被打断 proc=%s（stop 或终态）", proc.id)

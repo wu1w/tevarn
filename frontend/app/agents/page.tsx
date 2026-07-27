@@ -10,7 +10,8 @@ import React, { Suspense, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useT } from '@/stores/localeStore';
-import { getKernelIdentities, getKernelProcesses, type KernelIdentity, type KernelProcess } from '@/lib/api';
+import { useZh } from '@/hooks/useZh';
+import { getKernelIdentities, getKernelProcesses, getWorkforceOrg, type KernelIdentity, type KernelProcess } from '@/lib/api';
 import { AgentDrawer } from '@/components/agents/AgentDrawer';
 import { HireWizard } from '@/components/agents/HireWizard';
 import { gradOf, ST_TEXT, stColor } from '@/components/agents/shared';
@@ -88,16 +89,18 @@ function AgentsInner() {
   const t = useT();
   const sp = useSearchParams();
   const qc = useQueryClient();
-  const zh = (typeof document !== 'undefined' ? document.documentElement.lang : 'zh-CN') !== 'en';
+  const zh = useZh();
   const [openId, setOpenId] = useState<string | null>(sp.get('id'));
   const [wizardOpen, setWizardOpen] = useState(sp.get('new') === '1');
 
   const identities = useQuery({ queryKey: ['kernel-identities'], queryFn: () => getKernelIdentities(), staleTime: 10_000, retry: 1 });
   const processes = useQuery({ queryKey: ['kernel-processes'], queryFn: () => getKernelProcesses(), staleTime: 10_000, retry: 1 });
+  const org = useQuery({ queryKey: ['workforce-org'], queryFn: getWorkforceOrg, staleTime: 30_000, retry: 1 });
 
   const ids = identities.data?.identities ?? [];
   const procs = processes.data?.processes ?? [];
   const openAgent = ids.find((a) => a.id === openId) ?? null;
+  const reportsTo = org.data?.reports_to ?? [];
 
   return (
     <div style={{ maxWidth: 1060, margin: '0 auto', padding: '26px 28px 40px' }}>
@@ -161,6 +164,46 @@ function AgentsInner() {
             qc.invalidateQueries({ queryKey: ['kernel-processes'] });
           }}
         />
+      ) : null}
+
+      {/* 协作关系 — demo v2 底部 org 卡 */}
+      {ids.length > 0 ? (
+        <div style={{
+          marginTop: 22, background: 'var(--card-bg)', border: '1px solid var(--border-subtle)',
+          borderRadius: 'var(--r-lg, 14px)', padding: '16px 18px', boxShadow: 'var(--glass-inner)',
+        }}>
+          <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--foreground)', marginBottom: 12 }}>
+            {zh ? '协作关系' : 'Org chart'}
+          </div>
+          {reportsTo.length === 0 ? (
+            <div style={{ fontSize: 12, color: 'var(--foreground-dim)', lineHeight: 1.55 }}>
+              {zh
+                ? '汇报线从进程 parent 链涌现。Agent 派生子任务后，这里会显示谁协调谁。'
+                : 'Reporting lines emerge from process parent chains after agents delegate.'}
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+              {reportsTo.slice(0, 12).map((e) => (
+                <div key={`${e.manager}-${e.worker}`} style={{
+                  display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px',
+                  borderRadius: 10, background: 'var(--card-bg)', border: '1px solid var(--border-subtle)',
+                }}>
+                  <span style={{
+                    width: 30, height: 30, borderRadius: 9, flexShrink: 0,
+                    background: gradOf(e.worker), display: 'inline-flex', alignItems: 'center',
+                    justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: 12,
+                  }}>{e.worker[0]}</span>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 650, color: 'var(--foreground)' }}>{e.worker}</div>
+                    <div style={{ fontSize: 10.5, color: 'var(--foreground-dim)' }}>
+                      {zh ? `由「${e.manager}」协调 · ${e.delegations} 次` : `via ${e.manager} · ×${e.delegations}`}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       ) : null}
 
       {wizardOpen ? (

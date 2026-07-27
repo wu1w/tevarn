@@ -12,7 +12,9 @@ import { useQuery } from '@tanstack/react-query';
 import { useToastStore } from '@/stores/toastStore';
 import {
   getIdentityMemory, transitionIdentity, setIdentityCapabilities,
-  type KernelIdentity, type KernelProcess,
+  getEvolutionProposals, analyzeEvolution,
+  approveEvolutionProposal, rejectEvolutionProposal, rollbackEvolutionProposal,
+  type KernelIdentity, type KernelProcess, type EvolutionProposal,
 } from '@/lib/api';
 import { gradOf, ST_TEXT, stColor, fmtTokens, CAP_POOL } from './shared';
 
@@ -42,6 +44,13 @@ export function AgentDrawer({ agent, processes, zh, onClose, onChanged }: {
     staleTime: 10_000,
     retry: 1,
   });
+  const proposals = useQuery({
+    queryKey: ['evolution-proposals', agent.id],
+    queryFn: () => getEvolutionProposals({ identity_id: agent.id }),
+    enabled: tab === 'growth',
+    staleTime: 10_000,
+    retry: 1,
+  });
 
   const doTransition = async (action: 'suspend' | 'resume') => {
     setBusy(true);
@@ -62,6 +71,46 @@ export function AgentDrawer({ agent, processes, zh, onClose, onChanged }: {
       await setIdentityCapabilities(agent.id, caps);
       addToast(zh ? '配置已更新 · 变更已写入审计链' : 'Config updated · written to audit chain', 'success');
       setEditCaps(false);
+      onChanged();
+    } catch (e) {
+      addToast(String(e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const runAnalyze = async () => {
+    setBusy(true);
+    try {
+      const r = await analyzeEvolution(agent.id);
+      if (r.error) addToast(r.error, 'error');
+      else {
+        addToast(zh ? `生成 ${r.generated ?? 0} 条述职建议` : `Generated ${r.generated ?? 0} proposals`, 'success');
+        proposals.refetch();
+      }
+    } catch (e) {
+      addToast(String(e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const actProposal = async (p: EvolutionProposal, action: 'approve' | 'reject' | 'rollback') => {
+    setBusy(true);
+    try {
+      if (action === 'approve') await approveEvolutionProposal(p.id);
+      else if (action === 'reject') await rejectEvolutionProposal(p.id);
+      else await rollbackEvolutionProposal(p.id);
+      addToast(
+        action === 'approve'
+          ? (zh ? `已批准：${p.title}` : `Approved: ${p.title}`)
+          : action === 'reject'
+            ? (zh ? `已拒绝：${p.title}` : `Rejected: ${p.title}`)
+            : (zh ? `已回滚：${p.title}` : `Rolled back: ${p.title}`),
+        'success',
+      );
+      proposals.refetch();
+      memory.refetch();
       onChanged();
     } catch (e) {
       addToast(String(e), 'error');
@@ -221,22 +270,69 @@ export function AgentDrawer({ agent, processes, zh, onClose, onChanged }: {
 
           {tab === 'growth' && (
             <div>
-              <SecTitle>{zh ? '成长轨迹' : 'Growth'}</SecTitle>
-              {(memory.data?.memory ?? []).filter((m) => m.kind === 'experience' || m.kind === 'methodology').length === 0 ? (
-                <Empty>{zh ? '暂无成长记录' : 'No growth records'}</Empty>
-              ) : (
-                (memory.data?.memory ?? [])
-                  .filter((m) => m.kind === 'experience' || m.kind === 'methodology')
-                  .map((m) => (
-                    <div key={m.id} style={{ display: 'flex', gap: 10, padding: '8px 0', borderBottom: '1px solid var(--border-subtle)' }}>
-                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--brand-cyan)', marginTop: 7, flexShrink: 0 }} />
-                      <div>
-                        <div style={{ fontSize: 12, color: 'var(--foreground)', lineHeight: 1.55 }}>{m.content}</div>
-                        <div style={{ fontSize: 10, color: 'var(--foreground-dim)', marginTop: 3 }}>{m.kind}{m.version ? ` · v${m.version}` : ''}</div>
-                      </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <div style={{ fontSize: 13, fontWeight: 650, color: 'var(--foreground)' }}>
+                  {zh ? '成长轨迹 · 述职建议' : 'Growth · proposals'}
+                </div>
+                <button disabled={busy} onClick={runAnalyze} style={btnGhost}>
+                  {zh ? '生成述职' : 'Analyze'}
+                </button>
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--foreground-dim)', marginBottom: 12, lineHeight: 1.5 }}>
+                {zh
+                  ? '建议永不自动应用。批准后写入档案，可回滚。'
+                  : 'Never auto-applied. Approve to write; rollback anytime.'}
+              </div>
+
+              {/* 进化 proposals */}
+              {(proposals.data?.proposals ?? []).length > 0 ? (
+                (proposals.data?.proposals ?? []).map((p) => (
+                  <div key={p.id} style={{ ...rowCard, borderLeft: `3px solid ${p.status === 'pending' ? '#c9a05e' : p.status === 'applied' ? 'var(--status-online)' : 'var(--border-subtle)'}` }}>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <span style={kindTag}>{p.kind}</span>
+                      <span style={{ fontSize: 10, color: 'var(--foreground-dim)' }}>{p.status}</span>
                     </div>
-                  ))
+                    <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--foreground)', marginTop: 6 }}>{p.title}</div>
+                    <div style={{ fontSize: 11.5, color: 'var(--foreground-muted)', marginTop: 4, lineHeight: 1.5 }}>{p.rationale}</div>
+                    <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+                      {p.status === 'pending' ? (
+                        <>
+                          <button disabled={busy} onClick={() => actProposal(p, 'approve')} style={btnPrimary}>{zh ? '批准' : 'Approve'}</button>
+                          <button disabled={busy} onClick={() => actProposal(p, 'reject')} style={btnGhost}>{zh ? '拒绝' : 'Reject'}</button>
+                        </>
+                      ) : null}
+                      {p.status === 'applied' ? (
+                        <button disabled={busy} onClick={() => actProposal(p, 'rollback')} style={btnGhost}>{zh ? '回滚' : 'Rollback'}</button>
+                      ) : null}
+                      <Link href="/approvals" style={{ ...btnGhost, textDecoration: 'none', marginLeft: 'auto' }}>
+                        {zh ? '审批中心' : 'Approvals'}
+                      </Link>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <Empty>{zh ? '暂无进化建议 · 点「生成述职」分析工作记录' : 'No proposals yet · click Analyze'}</Empty>
               )}
+
+              {/* 记忆中的成长条目 */}
+              <div style={{ marginTop: 18 }}>
+                <SecTitle>{zh ? '已沉淀记忆' : 'Distilled memory'}</SecTitle>
+                {(memory.data?.memory ?? []).filter((m) => m.kind === 'experience' || m.kind === 'methodology').length === 0 ? (
+                  <Empty>{zh ? '暂无成长记录' : 'No growth records'}</Empty>
+                ) : (
+                  (memory.data?.memory ?? [])
+                    .filter((m) => m.kind === 'experience' || m.kind === 'methodology')
+                    .map((m) => (
+                      <div key={m.id} style={{ display: 'flex', gap: 10, padding: '8px 0', borderBottom: '1px solid var(--border-subtle)' }}>
+                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--brand-cyan)', marginTop: 7, flexShrink: 0 }} />
+                        <div>
+                          <div style={{ fontSize: 12, color: 'var(--foreground)', lineHeight: 1.55 }}>{m.content}</div>
+                          <div style={{ fontSize: 10, color: 'var(--foreground-dim)', marginTop: 3 }}>{m.kind}{m.version ? ` · v${m.version}` : ''}</div>
+                        </div>
+                      </div>
+                    ))
+                )}
+              </div>
             </div>
           )}
 

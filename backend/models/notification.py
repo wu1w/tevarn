@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Optional
 
-from sqlalchemy import Boolean, ForeignKey, JSON, String, Text
+from sqlalchemy import Boolean, ForeignKey, Index, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TimestampMixin, UUIDMixin
@@ -24,6 +24,12 @@ class Notification(Base, UUIDMixin, TimestampMixin):
     """通知表"""
 
     __tablename__ = "notifications"
+    __table_args__ = (
+        # list_page 主查询：按用户 + 时间倒序翻页
+        Index("ix_notifications_user_created", "user_id", "created_at"),
+        # unread 过滤与聚合：user_id + is_read
+        Index("ix_notifications_user_read", "user_id", "is_read"),
+    )
 
     user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True

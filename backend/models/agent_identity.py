@@ -133,6 +133,25 @@ class KernelCheckpoint(Base, UUIDMixin, TimestampMixin):
     state_snapshot: Mapped[Any] = mapped_column(JSON)  # 身份/进程状态序列化
 
 
+class KernelEscalationRecord(Base, UUIDMixin, TimestampMixin):
+    """提权申请外部化（多 worker 前提：pending 不能只活在单进程内存）。
+
+    写路径：kernel request/approve/deny 经 persistence sink 同步 put_nowait。
+    读路径：list_escalations 优先内存，shared 模式合并 DB pending。
+    """
+
+    __tablename__ = "kernel_escalations"
+
+    escalation_id: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    process_id: Mapped[str] = mapped_column(String(32), index=True)
+    capabilities: Mapped[Any] = mapped_column(JSON, default=list)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    created_at_ts: Mapped[float] = mapped_column(Float, default=0.0)
+    resolved_at: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    resolved_by: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+
 class AgentInboxItem(Base, UUIDMixin, TimestampMixin):
     """Agent 收件箱工单（PLAN 阶段 0.6：cron/webhook/邮件/文件变更 → 工单）。
 

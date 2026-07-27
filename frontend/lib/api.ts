@@ -456,6 +456,35 @@ export async function installStoreSkill(source: SkillSource, skillId: string): P
   return res.data;
 }
 
+export interface UrlReviewReport {
+  ok: boolean;
+  url: string;
+  fetch_url?: string;
+  name?: string;
+  risk?: string;
+  findings?: Array<{ tag: string; severity: string; detail: string }>;
+  tools?: string[];
+  preview?: string;
+  size?: number;
+  looks_like_skill?: boolean;
+  installable?: boolean;
+  error?: string | null;
+}
+
+export async function reviewSkillUrl(url: string): Promise<UrlReviewReport> {
+  const res = await api.post('/skills/store/review-url', { url });
+  return res.data;
+}
+
+export async function installSkillFromUrl(
+  url: string,
+  name?: string,
+  force = false,
+): Promise<InstallResult & { review?: unknown }> {
+  const res = await api.post('/skills/store/install-url', { url, name, force });
+  return res.data;
+}
+
 export async function uninstallStoreSkill(source: SkillSource, skillId: string): Promise<InstallResult> {
   const res = await api.post('/skills/store/uninstall', { source, skill_id: skillId });
   return res.data;
@@ -1191,6 +1220,94 @@ export interface WorkforceReport {
 
 export async function getWorkforceReport(hours = 24): Promise<WorkforceReport> {
   const res = await api.get('/kernel/workforce/report', { params: { hours } });
+  return res.data;
+}
+
+// ── Workforce 汇报线（0.7）：从 parent 链涌现的组织视图 ──
+
+export interface WorkforceOrgAgent {
+  identity_key: string;
+  runs: number;
+  tokens_used: number;
+  token_budget: number | null;
+  children: Record<string, number>;
+}
+
+export interface WorkforceOrgEdge {
+  manager: string;
+  worker: string;
+  delegations: number;
+}
+
+export interface WorkforceOrgView {
+  agents: WorkforceOrgAgent[];
+  reports_to: WorkforceOrgEdge[];
+  total_processes: number;
+}
+
+export async function getWorkforceOrg(): Promise<WorkforceOrgView> {
+  const res = await api.get('/kernel/workforce/org');
+  return res.data;
+}
+
+// ── 受控进化（0.7）：述职报告式建议，永不自动应用 ──
+
+export type EvolutionProposalKind =
+  | 'memory_distill'
+  | 'tool_deprecate'
+  | 'caps_adjust'
+  | 'planner_tune';
+
+export type EvolutionProposalStatus =
+  | 'pending'
+  | 'approved'
+  | 'applied'
+  | 'rejected'
+  | 'rolled_back';
+
+export interface EvolutionProposal {
+  id: string;
+  identity_id: string;
+  kind: EvolutionProposalKind | string;
+  title: string;
+  rationale: string;
+  payload: Record<string, unknown>;
+  status: EvolutionProposalStatus | string;
+  resolved_by: string | null;
+  created_at: string | null;
+  applied_at: number | null;
+  rolled_back_at: number | null;
+}
+
+export async function getEvolutionProposals(params?: {
+  identity_id?: string;
+  status?: string;
+}): Promise<{ proposals: EvolutionProposal[]; total: number; error?: string }> {
+  const res = await api.get('/kernel/evolution/proposals', { params });
+  return res.data;
+}
+
+export async function analyzeEvolution(identityId: string): Promise<{
+  generated?: number;
+  proposals?: EvolutionProposal[];
+  error?: string;
+}> {
+  const res = await api.post('/kernel/evolution/analyze', { identity_id: identityId });
+  return res.data;
+}
+
+export async function approveEvolutionProposal(id: string): Promise<EvolutionProposal> {
+  const res = await api.post(`/kernel/evolution/proposals/${id}/approve`);
+  return res.data;
+}
+
+export async function rejectEvolutionProposal(id: string): Promise<EvolutionProposal> {
+  const res = await api.post(`/kernel/evolution/proposals/${id}/reject`);
+  return res.data;
+}
+
+export async function rollbackEvolutionProposal(id: string): Promise<EvolutionProposal> {
+  const res = await api.post(`/kernel/evolution/proposals/${id}/rollback`);
   return res.data;
 }
 

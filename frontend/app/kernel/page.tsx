@@ -12,6 +12,7 @@ import {
   getKernelProcesses, getKernelEvents, getKernelIdentities, getKernelEscalations,
   type KernelProcess, type KernelEvent,
 } from '@/lib/api';
+import { useZh } from '@/hooks/useZh';
 
 const STATE_COLOR: Record<string, string> = {
   running: 'var(--status-online)', idle: 'var(--status-online)',
@@ -26,8 +27,8 @@ function fmtTime(ts: number | null | undefined): string {
 }
 
 export default function KernelPage() {
-  const zh = (typeof document !== 'undefined' ? document.documentElement.lang : 'zh-CN') !== 'en';
-  const [tab, setTab] = useState<'processes' | 'mediate'>('processes');
+  const zh = useZh();
+  const [tab, setTab] = useState<'processes' | 'mediate' | 'governance'>('processes');
 
   const processes = useQuery({ queryKey: ['kernel-processes'], queryFn: getKernelProcesses, staleTime: 8_000, refetchInterval: 15_000, retry: 1 });
   const events = useQuery({ queryKey: ['kernel-events', 500], queryFn: () => getKernelEvents(500), staleTime: 8_000, retry: 1 });
@@ -77,9 +78,10 @@ export default function KernelPage() {
       </div>
 
       {/* tab */}
-      <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
         <TabBtn active={tab === 'processes'} onClick={() => setTab('processes')}>{zh ? `进程（${procs.length}）` : `Processes (${procs.length})`}</TabBtn>
         <TabBtn active={tab === 'mediate'} onClick={() => setTab('mediate')}>{zh ? `裁决记录（${mediateEvents.length}）` : `Mediation (${mediateEvents.length})`}</TabBtn>
+        <TabBtn active={tab === 'governance'} onClick={() => setTab('governance')}>{zh ? '治理' : 'Governance'}</TabBtn>
       </div>
 
       {tab === 'processes' ? (
@@ -95,7 +97,7 @@ export default function KernelPage() {
             {procs.map((p) => <ProcessRow key={p.id} p={p} zh={zh} />)}
           </div>
         )
-      ) : (
+      ) : tab === 'mediate' ? (
         mediateEvents.length === 0 ? (
           <div style={{ ...card, textAlign: 'center', padding: '48px 20px' }}>
             <div style={{ fontSize: 26, marginBottom: 8 }}>⚖️</div>
@@ -108,6 +110,45 @@ export default function KernelPage() {
             {mediateEvents.map((e) => <MediateRow key={e.id} e={e} zh={zh} />)}
           </div>
         )
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ ...card, padding: '16px 18px' }}>
+            <div style={{ fontSize: 13, fontWeight: 650, color: 'var(--foreground)', marginBottom: 10 }}>
+              {zh ? '制度红线' : 'Governance red lines'}
+            </div>
+            {[
+              [zh ? '蒸馏记忆 / 技能晋升必须审批' : 'Distilled memory / skill promotion needs approval', zh ? '强制' : 'Required'],
+              [zh ? '进化建议永不自动应用' : 'Evolution never auto-applies', 'auto_apply=False'],
+              [zh ? '能力只能单调收窄' : 'Capabilities only narrow', 'narrow'],
+              [zh ? '提权是唯一合法扩大通道' : 'Escalation is the only widen path', 'escalate'],
+            ].map(([k, v]) => (
+              <div key={String(k)} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: 12.5, borderBottom: '1px solid var(--border-subtle)' }}>
+                <span style={{ color: 'var(--foreground-dim)' }}>{k}</span>
+                <span style={{
+                  fontSize: 10.5, fontWeight: 600, padding: '2px 8px', borderRadius: 6,
+                  color: 'var(--status-online)',
+                  background: 'color-mix(in srgb, var(--status-online) 10%, transparent)',
+                }}>{v}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{ ...card, padding: '16px 18px' }}>
+            <div style={{ fontSize: 13, fontWeight: 650, color: 'var(--foreground)', marginBottom: 8 }}>
+              {zh ? '快捷入口' : 'Shortcuts'}
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <a href="/approvals" style={linkBtn}>{zh ? '审批中心' : 'Approvals'}</a>
+              <a href="/security" style={linkBtn}>{zh ? '权限控制台' : 'Security'}</a>
+              <a href="/devices" style={linkBtn}>{zh ? '节点 / 设备' : 'Devices'}</a>
+              <a href="/settings" style={linkBtn}>{zh ? '设置' : 'Settings'}</a>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--foreground-dim)', marginTop: 12, lineHeight: 1.55 }}>
+              {zh
+                ? '拦截不是事故，是制度在工作。升级为审批的项会出现在审批中心。'
+                : 'Blocks are policy working — escalations surface in Approvals.'}
+            </div>
+          </div>
+        </div>
       )}
 
       {chainStatus.head ? (
@@ -180,4 +221,9 @@ function TabBtn({ active, onClick, children }: { active: boolean; onClick: () =>
 const card: React.CSSProperties = {
   background: 'var(--card-bg)', border: '1px solid var(--border-subtle)',
   borderRadius: 'var(--r-lg, 14px)', boxShadow: 'var(--glass-inner)',
+};
+const linkBtn: React.CSSProperties = {
+  padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border-subtle)',
+  background: 'transparent', color: 'var(--foreground-muted)', fontSize: 12,
+  fontWeight: 500, textDecoration: 'none',
 };

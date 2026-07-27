@@ -21,6 +21,7 @@ import { useToastStore } from '@/stores/toastStore';
 import { useConfirm } from '@/components/desktop/ConfirmDialog';
 import { PromptDialog } from '@/components/desktop/PromptDialog';
 import { useT } from '@/stores/localeStore';
+import { LegacyQuiet } from '@/components/layout/LegacyQuiet';
 
 
 /* ─────────── 图标 ─────────── */
@@ -599,6 +600,18 @@ export default function WorkflowsPage() {
     ) : null;
 
   return (
+    <LegacyQuiet
+      title="工作流编辑已降级"
+      titleEn="Workflow editor is demoted"
+      hint="Agent 时代是「目标 → 自动规划」。DAG 可视化保留在集群计划展示；手工编排是高级模板，不再占主航。"
+      hintEn="Goal → auto-plan is the AIOS path. DAG viz lives in Cluster; manual edit is an advanced template."
+      primaryHref="/cluster"
+      primaryLabel="打开集群"
+      primaryLabelEn="Open Cluster"
+      secondaryHref="/goals"
+      secondaryLabel="目标"
+      secondaryLabelEn="Goals"
+    >
     <div className="flex h-full flex-col bg-elevated-bg">
       {/* ── 顶部工具栏 ── */}
       <header className="flex items-center justify-between border-b border-border-default bg-card-bg px-4 py-2.5">
@@ -821,5 +834,6 @@ export default function WorkflowsPage() {
         onCancel={() => setNameDialogMode(null)}
       />
     </div>
+    </LegacyQuiet>
   );
 }

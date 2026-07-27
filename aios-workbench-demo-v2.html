@@ -1,0 +1,1391 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<script>document.documentElement.dataset.theme = localStorage.getItem('takton-theme') || 'dark';</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>takton — Agent OS</title>
+<style>
+:root {
+  --r-lg:14px; --r-md:10px; --r-sm:7px; --ease:cubic-bezier(0.4,0,0.2,1);
+}
+[data-theme="dark"] {
+  --bg:#171613; --bg-soft:#1e1c17; --bg-deep:#12110e;
+  --card:rgba(255,250,238,0.03); --card-hover:rgba(255,250,238,0.055);
+  --border:rgba(163,189,139,0.18); --border-soft:rgba(255,250,238,0.07);
+  --inner:inset 0 1px 0 rgba(255,250,238,0.05);
+  --fg:#ece7d9; --fg-dim:#a8a28f; --fg-faint:#6d6757;
+  --acc:#a3bd8b; --on-acc:#1c2416; --teal:#80b09b; --green:#92b76c; --yellow:#d9a35e; --red:#d2795f; --blue:#8aa9bf;
+  --field:rgba(255,250,238,0.035); --track:rgba(255,250,238,0.07); --hover-sub:rgba(255,250,238,0.025);
+  --scroll:rgba(255,250,238,0.1); --scroll-h:rgba(255,250,238,0.16);
+  --mask:rgba(10,9,7,0.62); --shadow-lg:rgba(0,0,0,0.5); --acc-glow:rgba(163,189,139,0.3);
+  --sel:rgba(130,158,105,0.4);
+}
+[data-theme="light"] {
+  --bg:#f6f2e8; --bg-soft:#efe9da; --bg-deep:#e7dfcb;
+  --card:#fbf8ef; --card-hover:#f3edde;
+  --border:rgba(95,117,80,0.3); --border-soft:rgba(70,62,46,0.13);
+  --inner:inset 0 1px 0 rgba(255,255,255,0.65);
+  --fg:#33302a; --fg-dim:#6f6958; --fg-faint:#a29a84;
+  --acc:#5f7550; --on-acc:#f6f3ea; --teal:#4f7d6a; --green:#5d8a4a; --yellow:#b97f3d; --red:#b04f38; --blue:#5b7d94;
+  --field:rgba(70,62,46,0.05); --track:rgba(70,62,46,0.09); --hover-sub:rgba(70,62,46,0.035);
+  --scroll:rgba(70,62,46,0.18); --scroll-h:rgba(70,62,46,0.26);
+  --mask:rgba(58,52,40,0.42); --shadow-lg:rgba(70,60,40,0.28); --acc-glow:rgba(95,117,80,0.35);
+  --sel:rgba(130,158,105,0.35);
+}
+/* 纸张粗粝纹理（浅色模式） */
+[data-theme="light"] body::after { content:''; position:fixed; inset:0; z-index:10000; pointer-events:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='260'%3E%3Cfilter id='p'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.28 0 0 0 0 0.24 0 0 0 0 0.16 0 0 0 0.5 0'/%3E%3C/filter%3E%3Crect width='260' height='260' filter='url(%23p)'/%3E%3C/svg%3E");
+  opacity:0.16; mix-blend-mode:multiply; }
+[data-theme="light"] .card { box-shadow:0 1px 3px rgba(70,60,40,0.07), var(--inner); }
+* { margin:0; padding:0; box-sizing:border-box; }
+html,body { height:100%; }
+body { background:var(--bg); color:var(--fg); overflow:hidden; -webkit-font-smoothing:antialiased;
+  font:14px/1.55 -apple-system,"SF Pro Text","PingFang SC","Microsoft YaHei",sans-serif; }
+::selection { background:var(--sel); }
+::-webkit-scrollbar { width:8px; height:8px; }
+::-webkit-scrollbar-thumb { background:var(--scroll); border-radius:4px; }
+::-webkit-scrollbar-thumb:hover { background:var(--scroll-h); }
+
+.shell { display:grid; grid-template-columns:56px 232px 1fr; height:100vh; }
+.rail { background:var(--bg-soft); border-right:1px solid var(--border-soft);
+  display:flex; flex-direction:column; align-items:center; padding:10px 0; gap:2px; z-index:5; }
+.rail .logo { width:38px; height:38px; border-radius:50%; margin-bottom:12px;
+  display:flex; align-items:center; justify-content:center; cursor:pointer; }
+.rail-btn { width:40px; height:40px; border-radius:10px; border:none; cursor:pointer;
+  background:transparent; color:var(--fg-faint); display:flex; align-items:center;
+  justify-content:center; transition:all 180ms var(--ease); position:relative; }
+.rail-btn:hover { background:var(--card-hover); color:var(--fg-dim); }
+.rail-btn.active { background:rgba(130,158,105,0.16); color:var(--acc); }
+.rail-btn.active::before { content:''; position:absolute; left:-8px; top:10px; bottom:10px;
+  width:3px; border-radius:2px; background:var(--acc); }
+.rail-btn .badge { position:absolute; top:4px; right:4px; min-width:15px; height:15px; padding:0 4px;
+  border-radius:8px; background:var(--red); color:#fff; font-size:9px; font-weight:600;
+  display:flex; align-items:center; justify-content:center; }
+.rail-btn .dot { position:absolute; top:6px; right:6px; width:7px; height:7px; border-radius:50%; background:var(--green); }
+.rail .spacer { flex:1; }
+.rail-btn svg { width:19px; height:19px; }
+
+.sidebar { background:var(--bg-soft); border-right:1px solid var(--border-soft);
+  display:flex; flex-direction:column; overflow:hidden; }
+.sb-head { padding:16px 16px 10px; }
+.sb-title { font-size:15px; font-weight:600; letter-spacing:-0.01em; }
+.sb-sub { font-size:11px; color:var(--fg-faint); margin-top:2px; }
+.sb-search { margin:8px 12px; display:flex; align-items:center; gap:7px; padding:7px 10px;
+  background:var(--field); border:1px solid var(--border-soft); border-radius:8px;
+  color:var(--fg-faint); font-size:12px; cursor:pointer; transition:border-color 160ms; }
+.sb-search:hover { border-color:var(--border); }
+.sb-search kbd { margin-left:auto; font-size:10px; background:var(--track);
+  padding:1px 5px; border-radius:4px; font-family:inherit; }
+.sb-section { padding:10px 16px 4px; font-size:10px; font-weight:600; letter-spacing:0.09em;
+  text-transform:uppercase; color:var(--fg-faint); }
+.sb-scroll { flex:1; overflow-y:auto; padding-bottom:12px; }
+.sb-item { margin:1px 8px; padding:7px 10px; border-radius:8px; cursor:pointer;
+  display:flex; align-items:center; gap:9px; font-size:13px; color:var(--fg-dim);
+  transition:all 150ms var(--ease); }
+.sb-item:hover { background:var(--card-hover); color:var(--fg); }
+.sb-item .nm { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.sb-item .meta { margin-left:auto; font-size:10px; color:var(--fg-faint); flex-shrink:0; }
+
+.main { overflow-y:auto; position:relative; }
+.main::before { content:''; position:fixed; top:-200px; right:-100px; width:600px; height:600px;
+  background:radial-gradient(circle,rgba(130,158,105,0.07),transparent 65%); pointer-events:none; }
+.page { padding:22px 26px 40px; max-width:1180px; display:none; }
+.page.on { display:block; animation:fadeUp 220ms var(--ease); }
+@keyframes fadeUp { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
+.page-head { display:flex; align-items:flex-end; justify-content:space-between; margin-bottom:18px; gap:12px; }
+.page-title { font-size:20px; font-weight:600; letter-spacing:-0.02em; }
+.page-sub { font-size:12px; color:var(--fg-dim); margin-top:3px; }
+
+.card { background:var(--card); border:1px solid var(--border-soft); border-radius:var(--r-lg);
+  box-shadow:var(--inner); backdrop-filter:blur(14px); transition:border-color 180ms var(--ease); }
+.card:hover { border-color:var(--border); }
+.card-p { padding:14px 16px; }
+.clickable { cursor:pointer; }
+.grid { display:grid; gap:12px; }
+.g2 { grid-template-columns:1fr 1fr; } .g3 { grid-template-columns:repeat(3,1fr); } .g4 { grid-template-columns:repeat(4,1fr); }
+.mt { margin-top:12px; } .mt-lg { margin-top:20px; }
+.row { display:flex; align-items:center; gap:10px; }
+.between { justify-content:space-between; } .wrap { flex-wrap:wrap; }
+.dim { color:var(--fg-dim); } .faint { color:var(--fg-faint); }
+.sm { font-size:12px; } .xs { font-size:11px; }
+.mono { font-family:"SF Mono",Menlo,Consolas,monospace; }
+.b { font-weight:600; }
+.tag { display:inline-flex; align-items:center; gap:5px; padding:2px 8px; border-radius:6px;
+  font-size:10.5px; font-weight:500; border:1px solid var(--border-soft); color:var(--fg-dim);
+  background:var(--hover-sub); }
+.tag.purple { color:#b8a5ff; border-color:rgba(130,158,105,0.3); background:rgba(130,158,105,0.09); }
+.tag.teal { color:var(--teal); border-color:rgba(105,150,128,0.3); background:rgba(105,150,128,0.08); }
+.tag.green { color:var(--green); border-color:rgba(120,168,92,0.3); background:rgba(120,168,92,0.08); }
+.tag.yellow { color:var(--yellow); border-color:rgba(198,148,70,0.3); background:rgba(198,148,70,0.08); }
+.tag.red { color:var(--red); border-color:rgba(192,96,70,0.3); background:rgba(192,96,70,0.08); }
+.tag.blue { color:var(--blue); border-color:rgba(120,152,178,0.3); background:rgba(120,152,178,0.08); }
+
+.btn { padding:7px 14px; border-radius:9px; border:1px solid var(--border-soft); cursor:pointer;
+  background:var(--card); color:var(--fg); font-size:12.5px; font-weight:500;
+  transition:all 160ms var(--ease); font-family:inherit; }
+.btn:hover { background:var(--card-hover); border-color:var(--border); }
+.btn.primary { background:var(--acc); border-color:transparent; color:var(--on-acc);
+  box-shadow:0 2px 10px var(--acc-glow); }
+.btn.primary:hover { background:#8d70ff; }
+.btn.ghost-green { color:var(--green); border-color:rgba(120,168,92,0.35); }
+.btn.ghost-green:hover { background:rgba(120,168,92,0.1); }
+.btn.ghost-red { color:var(--red); border-color:rgba(192,96,70,0.35); }
+.btn.ghost-red:hover { background:rgba(192,96,70,0.1); }
+.btn.sm { padding:4px 10px; font-size:11.5px; border-radius:7px; }
+.btn:disabled { opacity:0.4; cursor:not-allowed; }
+
+.st-dot { width:8px; height:8px; border-radius:50%; display:inline-block; flex-shrink:0; }
+.st-working { background:var(--green); box-shadow:0 0 6px rgba(120,168,92,0.6); animation:pulse 2s infinite; }
+.st-idle { background:var(--fg-faint); }
+.st-waiting { background:var(--yellow); box-shadow:0 0 6px rgba(198,148,70,0.5); }
+.st-suspended { background:var(--red); }
+@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.45; } }
+
+.avatar { width:38px; height:38px; border-radius:11px; flex-shrink:0;
+  display:flex; align-items:center; justify-content:center; font-size:15px; font-weight:600; color:#fff; }
+.avatar.lg { width:52px; height:52px; border-radius:14px; font-size:20px; }
+.bar { height:5px; border-radius:3px; background:var(--track); overflow:hidden; }
+.bar > i { display:block; height:100%; border-radius:3px;
+  background:linear-gradient(90deg,var(--acc),var(--teal)); transition:width 400ms var(--ease); }
+.bar.teal > i { background:linear-gradient(90deg,var(--teal),var(--green)); }
+.bar.green > i { background:var(--green); }
+.bar.yellow > i { background:var(--yellow); }
+.bar.red > i { background:var(--red); }
+.divider { height:1px; background:var(--border-soft); margin:12px 0; }
+.kv { display:flex; justify-content:space-between; gap:10px; padding:5px 0; font-size:12.5px; }
+.kv .k { color:var(--fg-faint); } .kv .v { color:var(--fg); font-weight:500; text-align:right; }
+.sec-title { font-size:13.5px; font-weight:600; margin-bottom:10px; display:flex; align-items:center; gap:8px; }
+.sec-title .cnt { font-size:10.5px; color:var(--fg-faint); font-weight:500; }
+.section-gap { margin-top:22px; }
+
+.stat-num { font-size:24px; font-weight:650; letter-spacing:-0.02em; }
+.stat-label { font-size:11px; color:var(--fg-faint); margin-top:2px; }
+.stat-delta { font-size:10.5px; margin-top:4px; }
+.stat-delta.up { color:var(--green); } .stat-delta.warn { color:var(--yellow); }
+
+.feed-item { display:flex; gap:11px; padding:10px 0; border-bottom:1px solid var(--border-soft); }
+.feed-item:last-child { border-bottom:none; }
+.feed-ico { width:30px; height:30px; border-radius:9px; flex-shrink:0;
+  display:flex; align-items:center; justify-content:center; font-size:13px; }
+.feed-t { font-size:12.5px; } .feed-t .who { font-weight:600; }
+.feed-time { font-size:10.5px; color:var(--fg-faint); margin-top:1px; }
+
+.chat-log { display:flex; flex-direction:column; gap:10px; padding:4px 0 12px; }
+.msg { max-width:85%; padding:9px 13px; border-radius:13px; font-size:13px; }
+.msg.me { align-self:flex-end; background:rgba(130,158,105,0.18); border:1px solid rgba(130,158,105,0.25); border-bottom-right-radius:4px; }
+.msg.ai { align-self:flex-start; background:var(--card); border:1px solid var(--border-soft); border-bottom-left-radius:4px; }
+.chat-input { display:flex; gap:8px; padding:12px 0 4px; border-top:1px solid var(--border-soft); }
+.chat-input input { flex:1; background:var(--field); border:1px solid var(--border-soft);
+  border-radius:9px; padding:8px 12px; color:var(--fg); font-size:13px; outline:none; font-family:inherit; }
+.chat-input input:focus { border-color:var(--acc); }
+
+.tl { position:relative; padding-left:20px; }
+.tl::before { content:''; position:absolute; left:5px; top:6px; bottom:6px; width:1.5px; background:rgba(130,158,105,0.2); }
+.tl-item { position:relative; padding:7px 0 7px 6px; }
+.tl-item::before { content:''; position:absolute; left:-19px; top:12px; width:9px; height:9px;
+  border-radius:50%; background:var(--bg); border:2px solid var(--acc); }
+.tl-item.teal::before { border-color:var(--teal); }
+.tl-item.yellow::before { border-color:var(--yellow); }
+.tl-item.green::before { border-color:var(--green); }
+.tl-item.red::before { border-color:var(--red); }
+
+.proc-table { width:100%; border-collapse:collapse; font-size:12px; }
+.proc-table th { text-align:left; padding:8px 10px; font-size:10px; letter-spacing:0.08em;
+  text-transform:uppercase; color:var(--fg-faint); border-bottom:1px solid var(--border-soft); }
+.proc-table td { padding:8px 10px; border-bottom:1px solid var(--border-soft); }
+.proc-table tr:hover td { background:var(--hover-sub); }
+
+/* ── 抽屉（Profile / 知识详情 / 目标详情）── */
+.drawer-mask { position:fixed; inset:0; background:var(--mask); backdrop-filter:blur(3px);
+  opacity:0; pointer-events:none; transition:opacity 220ms var(--ease); z-index:40; }
+.drawer-mask.on { opacity:1; pointer-events:auto; }
+.drawer { position:fixed; top:0; right:0; bottom:0; width:540px; z-index:41;
+  background:var(--bg-soft); border-left:1px solid var(--border);
+  transform:translateX(100%); transition:transform 260ms var(--ease);
+  display:flex; flex-direction:column; box-shadow:-20px 0 60px var(--shadow-lg); }
+.drawer.on { transform:none; }
+.drawer-head { padding:18px 20px 14px; border-bottom:1px solid var(--border-soft); }
+.drawer-body { flex:1; overflow-y:auto; padding:16px 20px; }
+.drawer-tabs { display:flex; gap:4px; padding:10px 20px 0; flex-wrap:wrap; }
+.dtab { padding:6px 13px; border-radius:8px 8px 0 0; font-size:12px; cursor:pointer;
+  color:var(--fg-faint); border:1px solid transparent; border-bottom:none; }
+.dtab.on { color:var(--fg); background:var(--card); border-color:var(--border-soft); }
+.dpane { display:none; } .dpane.on { display:block; }
+
+/* ── 模态 / 向导 ── */
+.modal-mask { position:fixed; inset:0; background:var(--mask); backdrop-filter:blur(4px);
+  display:none; align-items:center; justify-content:center; z-index:50; }
+.modal-mask.on { display:flex; animation:fadeUp 200ms var(--ease); }
+.modal { width:560px; max-width:92vw; max-height:86vh; background:var(--bg-soft);
+  border:1px solid var(--border); border-radius:16px; box-shadow:0 24px 80px var(--shadow-lg);
+  display:flex; flex-direction:column; overflow:hidden; }
+.modal-head { padding:16px 20px 12px; border-bottom:1px solid var(--border-soft);
+  display:flex; align-items:center; justify-content:space-between; }
+.modal-title { font-size:15px; font-weight:600; }
+.modal-body { padding:16px 20px; overflow-y:auto; flex:1; }
+.modal-foot { padding:12px 20px; border-top:1px solid var(--border-soft);
+  display:flex; justify-content:flex-end; gap:8px; }
+.wizard-steps { display:flex; gap:6px; padding:0 20px 12px; }
+.wstep { flex:1; text-align:center; font-size:10.5px; color:var(--fg-faint); padding-top:8px;
+  border-top:2px solid var(--border-soft); }
+.wstep.on { color:var(--acc); border-top-color:var(--acc); }
+.wstep.done { color:var(--green); border-top-color:var(--green); }
+
+.field { margin-bottom:14px; }
+.field label { display:block; font-size:11.5px; color:var(--fg-dim); margin-bottom:5px; }
+.field input, .field select, .field textarea { width:100%; background:var(--field);
+  border:1px solid var(--border-soft); border-radius:8px; padding:8px 11px; color:var(--fg);
+  font-size:13px; outline:none; font-family:inherit; transition:border-color 160ms; }
+.field input:focus, .field select:focus, .field textarea:focus { border-color:var(--acc); }
+.field textarea { resize:vertical; min-height:64px; }
+.field .hint { font-size:10.5px; color:var(--fg-faint); margin-top:4px; }
+.chip-grid { display:flex; flex-wrap:wrap; gap:6px; }
+.chip { padding:5px 11px; border-radius:8px; border:1px solid var(--border-soft); font-size:12px;
+  cursor:pointer; color:var(--fg-dim); transition:all 150ms; user-select:none; }
+.chip:hover { border-color:var(--border); }
+.chip.on { background:rgba(130,158,105,0.14); border-color:var(--acc); color:var(--fg); }
+
+/* ── 设置页二级导航 ── */
+.settings-grid { display:grid; grid-template-columns:180px 1fr; gap:20px; align-items:start; }
+.set-nav { position:sticky; top:0; }
+.set-nav-item { padding:8px 12px; border-radius:8px; font-size:13px; color:var(--fg-dim);
+  cursor:pointer; margin-bottom:2px; transition:all 150ms; }
+.set-nav-item:hover { background:var(--card-hover); }
+.set-nav-item.on { background:rgba(130,158,105,0.13); color:var(--fg); }
+.set-pane { display:none; } .set-pane.on { display:block; }
+
+.toggle { width:36px; height:20px; border-radius:10px; background:rgba(255,255,255,0.1);
+  position:relative; cursor:pointer; transition:background 180ms; flex-shrink:0; }
+.toggle::after { content:''; position:absolute; top:2px; left:2px; width:16px; height:16px;
+  border-radius:50%; background:#fff; transition:transform 180ms var(--ease); }
+.toggle.on { background:var(--acc); }
+.toggle.on::after { transform:translateX(16px); }
+
+.toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%) translateY(80px);
+  background:#1a1a2c; border:1px solid var(--border); border-radius:10px;
+  padding:10px 18px; font-size:12.5px; z-index:99; opacity:0; transition:all 280ms var(--ease);
+  box-shadow:0 8px 30px var(--shadow-lg); max-width:70vw; }
+.toast.on { transform:translateX(-50%); opacity:1; }
+
+.empty-hint { text-align:center; color:var(--fg-faint); font-size:12px; padding:24px 0; }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <nav class="rail" id="rail"></nav>
+  <aside class="sidebar">
+    <div class="sb-head">
+      <div class="sb-title">takton</div>
+      <div class="sb-sub" id="sb-sub">7 个 Agent 运行中</div>
+    </div>
+    <div class="sb-search" onclick="toast('全局搜索：Agent / 目标 / 知识 / 审批 / 进程（demo 占位）')">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      搜索 Agent / 目标 / 知识… <kbd>⌘K</kbd>
+    </div>
+    <div style="padding:2px 12px 8px;">
+      <button class="btn primary" style="width:100%;" onclick="openWizard('hire')">+ 新建 Agent</button>
+    </div>
+    <div class="sb-scroll" id="sb-scroll"></div>
+  </aside>
+  <main class="main" id="main"></main>
+</div>
+
+<!-- 抽屉 / 模态 / toast -->
+<div class="drawer-mask" id="drawer-mask" onclick="closeDrawer()"></div>
+<aside class="drawer" id="drawer"></aside>
+<div class="modal-mask" id="modal-mask"><div class="modal" id="modal"></div></div>
+<div class="toast" id="toast"></div>
+
+<script>
+
+/* ═══════════════════════ i18n（zh/en 完全体）═══════════════════════ */
+let LANG = localStorage.getItem('takton-lang') || 'zh';
+const I18N_EN = {"沈策": "Shen Ce", "陈工": "Chen Gong", "文研": "Wen Yan", "码力": "Ma Li", "测安": "Ce An", "小秘": "Xiao Mi", "金算": "Jin Suan", "沈": "S", "陈": "C", "文": "W", "码": "M", "测": "Q", "小": "X", "金": "J", "协调者": "Coordinator", "技术负责人": "Tech Lead", "研究员": "Researcher", "开发者": "Developer", "测试": "QA", "助理": "Assistant", "成本分析": "Cost Analyst", "协调": "Coordination", "领域": "Domain", "支持": "Support", "全部（协调者）": "All (Coordinator)", "协调方": "Coordinates with", "上报线": "Reports to", "由谁协调": "Coordinated by", "运行": "Running", "待命": "Idle", "等待": "Waiting", "挂起": "Suspended", "挂起 14m": "Suspended 14m", "停职": "Suspend", "复职": "Resume", "停职（suspended，任务挂起不丢）": "Suspend (tasks paused, state kept)", "驾驶舱": "Dashboard", "目标": "Goals", "审批": "Approval", "知识": "Knowledge", "活动": "Activity", "内核": "Kernel", "扩展": "Extensions", "设置": "Settings", "切换主题": "Toggle theme", "7 个 Agent 运行中": "7 agents running", "个": "", "名成员 · 自主讨论中": "members · discussing autonomously", "人": "", "搜索 Agent / 目标 / 知识…": "Search agents / goals / knowledge…", "全局搜索：Agent / 目标 / 知识 / 审批 / 进程（demo 占位）": "Global search: agents / goals / knowledge / approvals / processes (demo)", "+ 新建 Agent": "+ New Agent", "新建 Agent": "New Agent", "+ 新建": "+ New", "新建 Agent（编制向导）": "New Agent (setup wizard)", "早安，WuYiWei": "Good morning, WuYiWei", "2026年7月27日 星期一 · 你的 AI 团队从昨晚 23:00 持续运转至今": "Mon, Jul 27, 2026 · Your AI team has been running since 23:00 last night", "今日完成任务": "Tasks completed today", "Token 消耗（今日）": "Token usage (today)", "知识库新增": "New knowledge", "等你审批": "Awaiting your approval", "↑ 较昨日 +34%": "↑ +34% vs yesterday", "日均预算 2M · 占 61%": "Daily budget 2M · 61% used", "含 6 篇研究综述": "Incl. 6 research reviews", "最早已等待 3h 40m": "Oldest waiting 3h 40m", "6 运行": "6 running", "3 待审批": "3 pending", "1 预算异常": "1 budget alert", "待审批": "Pending", "预算异常": "a budget anomaly", "阻塞中": "Blocked", "预算内": "Within budget", "实时": "Live", "动态": "Feed", "Agent 进展 · 非聊天": "Agent progress · not a chat", "Agent 状态": "Agent status", "Q3 目标": "Q3 Goals", "协作组（可旁观）": "Groups (observable)", "去审": "Review", "看综述": "View review", "看 Agent": "View agent", "查看": "View ", "看成长": "Growth", "进入项目组": "Enter group", "要求汇报": "Request report", "由": "by", "于 07-25 制定 · 每周一自动汇报": "set 07-25 · auto report every Monday", "每周自动汇报进展": "Weekly auto progress report", "每周一自动汇报": "Auto report every Monday", "以你的身份发言…（全员可见）": "Speak as yourself… (visible to all)", "已发至项目组 · AI 成员会参考你的意见继续讨论": "Sent to group · AI members will continue with your input", "已发至项目组": "Sent to group", "已 ping": "Pinged ", "已发送「今天重点」· 等待回复": "Sent \"today's focus\" · awaiting reply", "已发送「汇报进展」·": "Sent \"progress report\" · ", "已发送「需要我做什么」· 等待回复": "Sent \"what do you need\" · awaiting reply", "已发送 ·": "Sent · ", "会在当前任务间隙回复": " will reply between tasks", "会在当前任务间隙处理": " will handle it between tasks", "要求补充": "Request details", "Q3 规划终审材料": "Q3 plan final review", "v0.4 内核架构评审": "v0.4 kernel architecture review", "42 篇论文综述": "42-paper survey", "PR #248 · worker 池": "PR #248 · worker pool", "待命 · 技能已更新": "Idle · skills updated", "等审批 ×3": "Awaiting approval ×3", "预算异常分析": "Budget anomaly analysis", "全部只读": "All read-only", "架构评审": "Architecture review", "其他": "Other", "行政": "Admin", "全局视角，先问目标再动手；汇报必须带数据。": "Big-picture first: ask the goal before acting; reports must carry data.", "OKR 分解：每个 KR 必须有负责 Agent + 可验证指标。": "OKR breakdown: every KR needs an owner agent + verifiable metric.", "07-25：Q3 规划草案一轮通过关键在预算切分有依据。": "07-25: Q3 plan passed first round because budget splits were evidence-based.", "完成 Q3 规划草案（待终审）": "Completed Q3 plan draft (pending final review)", "通过 worker 池架构提案": "Approved worker-pool architecture proposal", "启用": "Activated", "先读代码再下结论；架构决策必须写 ADR。": "Read the code before concluding; architecture decisions need ADRs.", "评审三段式：正确性 → 稳定性 → 可维护性。": "Three-step review: correctness → stability → maintainability.", "完成 kernel↔loop 融合设计（ADR-014）": "Completed kernel↔loop fusion design (ADR-014)", "提出「无预算即绕过」红线": "Raised the \"no budget = bypass\" red line", "严谨、慢热但结论可靠；宁可标注不确定也不编造来源。": "Rigorous, slow but reliable; flags uncertainty rather than inventing sources.", "文献综述：先聚类再精读，必须给出处链接与置信度。": "Literature review: cluster first, then deep-read; citations and confidence required.", "07-26：arXiv 缓存命中率高时优先本地；07-27：检索发散被金算收紧预算（教训）。": "07-26: prefer local cache when arXiv hit-rate is high; 07-27: budget tightened after retrieval drift (lesson).", "完成《Agent 内核调度 6 范式》综述": "Completed survey \"6 Paradigms of Agent Kernel Scheduling\"", "申请 arXiv 全量订阅（第 3 次能力申请）": "Requested full arXiv subscription (3rd capability request)", "检索发散超支 2.3×，被收紧预算": "Retrieval drift overspent 2.3×; budget tightened", "学会先聚类后精读（methodology v3）": "Learned cluster-then-read (methodology v3)", "先跑测试再说话；最小变更原则。": "Run tests before talking; minimal-change principle.", "修复必须带回归测试；commit message 写清为什么。": "Fixes must ship with regression tests; commit messages explain why.", "提交 PR #248（740 tests 全绿）": "Submitted PR #248 (740 tests green)", "申请删除 legacy 34 文件": "Requested deletion of 34 legacy files", "怀疑一切\"应该没问题\"；压测必须从零开始复现。": "Distrust every \"should be fine\"; load tests must reproduce from scratch.", "压测 SOP v3：基线 → 梯度加压 → 拐点分析 → 报告。": "Load-test SOP v3: baseline → ramp → inflection analysis → report.", "压测 SOP 升级 v2→v3（成功率 94%）": "Load-test SOP upgraded v2→v3 (94% success rate)", "事事有回音；请示不过夜。": "Everything gets a reply; requests never wait overnight.", "日程、提醒、对外窗口消息分拣。": "Schedule, reminders, inbound message triage.", "飞书群周报推送（已批准）": "Feishu weekly digest (approved)", "每一分钱都要有去处；异常先止血再分析。": "Every cent accounted for; stop the bleeding before analysis.", "预算三问：花在哪、值不值、能不能省。": "Budget three questions: where, worth it, can we save.", "自动收紧文研预算 88k→50k（规则触发）": "Auto-tightened Wen Yan budget 88k→50k (rule triggered)", "Takton GitHub Star 破 1,000": "Takton GitHub stars past 1,000", "进行中 · 健康": "On track · healthy", "有风险": "At risk", "内核稳定性：CI 全绿 + 三设备实机验证": "Kernel stability: CI green + 3-device on-metal verification", "本周：kernel 压测 c=50 通过": "This week: kernel load test passed at c=50", "文档与上手体验：30 分钟第一个 Agent启用": "Docs & onboarding: first agent running in 30 min", "阻塞：AIOS 前端未定型（本 demo 解）": "Blocked: AIOS frontend unsettled (this demo addresses it)", "社区内容：12 篇深度技术文": "Community content: 12 deep tech articles", "已发 8/12 ·《kernel 中介设计》阅读 4.2k": "8/12 published · \"Kernel Mediation Design\" 4.2k reads", "月度 token 成本压降 30%": "Cut monthly token cost by 30%", "全员预算硬顶覆盖率 100%": "100% hard budget-cap coverage", "兜底预算 50k + 事前刹车已上线（07-27）": "Fallback budget 50k + pre-spend brake live (07-27)", "研究类任务轮次收敛（≤8 次搜索）": "Research task round convergence (≤8 searches)", "收敛刹车上线 2 天，样本积累中 · 文研超支 2.3× 为主因": "Convergence brake live 2 days, sampling · Wen Yan 2.3× overspend is main cause", "沈策提交 Q3 规划终审（待你审）": "Shen Ce submitted Q3 plan for final review (yours)", "规划制定完成，4 个 KR 分派": "Plan finalized, 4 KRs assigned", "金算收紧文研预算（规则自动执行）": "Jin Suan tightened Wen Yan budget (auto rule)", "目标（O）": "Objective (O)", "关键结果（KR）": "Key Results (KR)", "负责人": "Owner", "周期": "Period", "总进度": "Overall progress", "制定目标": "New goal", "+ 制定目标": "+ New goal", "为什么是这个目标": "Why this goal", "写下来——Agent会读。目标的意义感影响 agent 的优先级判断。": "Write it down — agents read this. Meaning shapes agent priority.", "目标确认后，负责人会自动分解为任务并分派。你将在活动流看到进展，在汇报节点收到汇报。": "Once confirmed, the owner auto-decomposes it into tasks. Track progress in the activity feed and get reports at checkpoints.", "例如：企业版客户突破 10 家": "e.g.: Win 10 enterprise customers", "可验证的关键结果": "Verifiable key result", "+ 添加 KR": "+ Add KR", "已添加 KR3 输入行（demo 占位）": "KR3 input row added (demo)", "调整 KR": "Adjust KR", "补充 KR2 的前端排期": "Add frontend schedule for KR2", "责任：": "Owner:", "· 负责人：": "· Owner:", "· 总进度": "· overall progress", "· 预算": "· budget", "· 已耗": "· used", "Agent 不是 Task-driven，是 Goal-driven · 目标自动分解为任务": "Agents are Goal-driven, not Task-driven · goals auto-decompose into tasks", "Q3 规划草案终审": "Q3 plan draft final review", "决策类": "Decision", "权限类": "Permission", "高危类": "High-risk", "KR 分派 沈策→陈工（内核）/ 文研（内容+文档）/ 金算（成本）；预算切分按上季实际 ×1.2；新增每周一自动汇报。": "KRs assigned Shen Ce→Chen Gong (kernel) / Wen Yan (content+docs) / Jin Suan (cost); budget split at 1.2× last quarter actuals; new Monday auto-report.", "查看目标 O1": "View goal O1", "申请新增数据源：arXiv API 全量订阅": "Request new data source: full arXiv API subscription", "夜间阅读覆盖率不足，42 篇中 31 篇来自缓存。全量订阅后可预筛增量 ~200 篇/日。预估成本 +15%/月（金算会签：可接受，前提是收敛刹车持续有效）。": "Night reading coverage is low: 31 of 42 papers from cache. Full subscription enables ~200 new papers/day pre-screening. Est. cost +15%/mo (Jin Suan co-signs: acceptable if convergence brake holds).", "查看 Agent": "View agent", "申请删除 legacy 目录 34 个文件": "Request deletion of 34 legacy-dir files", "范围 backend/legacy_v1/* 34 文件 / 8,412 行。静态分析确认无引用（附依赖图谱）；已推送归档分支 archive/legacy-v1。": "Scope: backend/legacy_v1/*, 34 files / 8,412 lines. Static analysis confirms no references (dependency graph attached); archive branch archive/legacy-v1 pushed.", "查看 mediate 记录": "View mediate log", "小秘 · 飞书群周报推送": "Xiao Mi · Feishu weekly digest", "测安 · 压测并发提升至 c=80": "Ce An · Raise load-test concurrency to c=80", "金算 · 冻结文研临时预算": "Jin Suan · Freeze Wen Yan temp budget", "码力 · 安装 playwright 浏览器": "Ma Li · Install playwright browser", "文研 · 引用外部付费 API": "Wen Yan · Call external paid API", "通过": "Approve", "拒绝": "Reject", "退回修改": "Revise", "授权（30天试行）": "Grant (30-day trial)", "查看全文": "View full text", "详情": "Details", "全部通过": "Approve all", "全部通过？": "Approve all?", "将一次性通过": "Will approve", "项待决（含 1 项高危类）。高危操作建议逐项确认——确定继续？": "pending items (incl. 1 high-risk). Confirm high-risk items individually — continue?", "确认全部通过": "Confirm approve-all", "再想想": "Cancel", "已批量通过（含高危，请知悉风险）": "Batch approved (incl. high-risk — noted)", "已通过：": "Approved: ", "已拒绝：": "Rejected: ", "已退回修改：": "Sent back: ", "已退回：请": "Returned: please", "已授权：": "Granted: ", "待决事项已清空 🎉": "Queue cleared 🎉", "项待决": "items pending", "项 · 平均响应 11 分钟": "items · avg response 11 min", "今日已决": "Resolved today", "审批规则": "Approval rules", "审批规则（自动放行的边界）": "Approval rules (auto-approve boundaries)", "规则内的事 Agent 自己干，规则外才打扰你。每加一条规则 = 多一份信任，请谨慎。": "Agents act freely within rules; only exceptions reach you. Each rule = more trust. Add with care.", "低风险任务自动执行": "Auto-run low-risk tasks", "能力白名单内 + 单任务预算 ≤ 50k": "Within capability whitelist + per-task budget ≤ 50k", "高危操作必审 + 二次确认": "High-risk ops require review + double confirm", "删除 / 覆盖 / 对外发布": "Delete / overwrite / publish externally", "新数据源 / 新工具 / 出站网络": "New data sources / tools / egress", "能力升级需审批": "Capability upgrades need approval", "超日均 2× 时自动收紧": "Auto-tighten at 2× daily average", "超日均 2× 自动降额并通知你": "Auto-reduce at 2× daily average and notify you", "审批规则已保存": "Approval rules saved", "规则已": "Rule ", "你的主要动作不是 Prompt，是审批 ·": "Your main action is approval, not prompts ·", "今天 07:15": "Today 07:15", "昨天 22:10": "Yesterday 22:10", "昨天 23:40": "Yesterday 23:40", "今天 · 07-27": "Today · 07-27", "昨天 · 07-26": "Yesterday · 07-26", "昨天": "Yesterday", "今天": "Today", "综述": "Survey", "决策记录": "ADR", "《Agent 内核调度的 6 种范式》": "\"6 Paradigms of Agent Kernel Scheduling\"", "引 12 篇 · 与 v0.4 攻坚组共享": "Cites 12 papers · shared with v0.4 group", "被引用 4 次": "Cited 4×", "已入 RAG": "Indexed in RAG", "对比 Actor/CSP/Plan-Execute/ReAct/Mediated/Kernel 六种调度范式在生产环境的取舍。核心结论：mediated 架构（kernel 统一中介工具调用）在权限治理与预算控制上显著优于直调架构，代价是 3-5% 的调度延迟。与 Takton v0.4 的 mediate 设计互相印证。": "Compares Actor/CSP/Plan-Execute/ReAct/Mediated/Kernel scheduling in production. Conclusion: mediated architecture (kernel mediates all tool calls) beats direct calling on permission governance and budget control, at 3-5% latency cost. Validates Takton v0.4 mediate design.", "《kernel 压测标准作业流程 v3》": "\"Kernel Load-Test SOP v3\"", "蒸馏自 47 次成功任务 · 已挂技能": "Distilled from 47 successful runs · attached as skill", "成功率 94%": "94% success rate", "evolution 审批过": "Approved via evolution", "基线（c=1）→ 梯度加压（c=10/30/50/80）→ 每级 3 分钟稳定观察 → 拐点记录（p99 突刺 / 错误率 >0.1%）→ 报告模板。v3 改进：加压前自动校验兜底预算配置，防止压测本身烧穿预算。": "Baseline (c=1) → ramp (c=10/30/50/80) → 3-min stability per tier → inflection logging (p99 spike / error >0.1%) → report template. v3: auto-verify fallback budget before ramping so the test itself can't burn through budget.", "《为什么 worker 池按身份而非按任务》": "\"Why Worker Pools Are Per-Identity, Not Per-Task\"", "ADR-014 · 关联 PR #248": "ADR-014 · linked to PR #248", "影响：架构": "Impact: architecture", "Wiki 已链接": "Linked in Wiki", "备选：按任务池（每单新 loop）vs 按身份池（per-identity 长生命周期）。选后者：初始化开销降 80%，且身份与 session 天然 1:1。代价：必须显式重置 run 级状态（_reset_run_state），已在评审中列为红线并配套测试。": "Options: per-task pool (new loop each) vs per-identity pool (long-lived). Chose the latter: 80% lower init overhead and natural identity↔session 1:1. Cost: run-level state must be explicitly reset (_reset_run_state) — listed as a red line in review with tests.", "《MOE 模型本地部署成本模型》": "\"Cost Model for Local MOE Deployment\"", "支撑 O2 成本目标 · 金算引用": "Supports O2 cost goal · cited by Jin Suan", "被引用 7 次": "Cited 7×", "MOE 激活参数与显存/延迟的非线性关系建模。对 Qwen3-MoE 在 MI210 的实测：激活 3B 时 token 成本约为 dense 7B 的 0.6×，是 O2 目标的核心依据。": "Models the nonlinear relation between MOE active params and VRAM/latency. Measured on Qwen3-MoE @ MI210: at 3B active, token cost is ~0.6× of dense 7B — core evidence for O2.", "《异步入口预算红线：无预算即绕过》": "\"Async-Entry Budget Red Line: No Budget = Bypass\"", "ADR-013 · 催生兜底预算机制": "ADR-013 · led to fallback budgets", "红线级": "Red-line", "异步无人值守场景的最后防线是预算硬顶。身份默认预算 None = 第三道防线不存在。决定：dispatcher 对无预算身份自动挂兜底预算（默认 50k），0 才是显式不限。": "The last line of defense for unattended async runs is the hard budget cap. Default budget None = no third line of defense. Decision: dispatcher auto-attaches a fallback budget (default 50k) to budget-less identities; 0 means explicitly unlimited.", "《三设备实机验证清单》": "\"Three-Device On-Metal Verification Checklist\"", "Mi310p / Mac / Win Xeon 矩阵": "Mi310p / Mac / Win Xeon matrix", "执行 3 次": "Executed 3×", "每设备：安装 → 首个 Agent启用 → 任务执行 → 审批流转 → 报告落库。已知差异：Arch 需手动装 bwrap；Win 的 desktop 权限弹窗需预先策略。": "Per device: install → first agent → task run → approval flow → report to DB. Known deltas: Arch needs manual bwrap; Windows desktop permission prompts need pre-set policy.", "Agent 产出沉淀为共享资产 · 全员可检索（RAG + Wiki）": "Agent output becomes shared assets · searchable by all (RAG + Wiki)", "+ 手动上传": "+ Upload", "手动上传知识": "Upload knowledge", "标题": "Title", "摘要": "Summary", "内容 / 链接": "Content / URL", "文档标题": "Document title", "粘贴正文，或给一个 URL（文研会自动抓取整理）": "Paste text, or give a URL (Wen Yan will fetch and organize)", "共享范围": "Scope", "全员": "Everyone", "仅协调": "Coordinators only", "指定Agent": "Specific agent", "上传": "Upload", "已入库 · 文研会在今晚整理入 RAG 并给出摘要": "Stored · Wen Yan will index into RAG tonight with a summary", "组织内的引用": "Citations in workspace", "被引用次数": "Citation count", "看作者": "View author", "延伸阅读": "Extended reading", "已指派文研基于本文做延伸阅读": "Assigned Wen Yan to do extended reading from this piece", "检索状态": "Index status", "已入 RAG · 向量 + BM25 双通道": "Indexed · vector + BM25 dual channel", "Wiki 图谱": "Wiki graph", "未链接": "Unlinked", "已建实体关联": "Entity links created", "导出": "Export", "已导出 Markdown": "Exported as Markdown", "搜索知识库…": "Search knowledge…", "检索：": "Search: ", "（走 RAG 混合检索）": "(hybrid RAG search)", "学习": "Learning", "不是聊天记录，是组织的时间线 · 可追溯每一次成长与决策": "Not a chat log — the org timeline · every growth and decision traceable", "活动流": "Activity feed", "事件审计链": "Event audit chain", "文研 完成《Agent 内核调度 6 范式》综述": "Wen Yan completed \"6 Paradigms of Agent Kernel Scheduling\" survey", "测安 技能升级：压测 SOP v2 → v3": "Ce An skill upgrade: load-test SOP v2 → v3", "文研 申请 arXiv 全量订阅（等审批）": "Wen Yan requested full arXiv subscription (pending)", "码力 提交 PR #248 · worker 池（740 tests 全绿）": "Ma Li submitted PR #248 · worker pool (740 tests green)", "金算 自动收紧文研单任务预算 88k→50k": "Jin Suan auto-tightened Wen Yan per-task budget 88k→50k", "文研 学习 Transformer 架构改进 12 篇（记忆 +3）": "Wen Yan studied 12 Transformer-architecture papers (memory +3)", "陈工 完成 kernel↔loop 融合设计（ADR-014）": "Chen Gong completed kernel↔loop fusion design (ADR-014)", "码力 申请删除 legacy 34 文件（等审批）": "Ma Li requested deletion of 34 legacy files (pending)", "沈策 通过「worker 池」架构提案（用时 8 分钟）": "Shen Ce approved the worker-pool proposal (took 8 min)", "交付": "Delivery", "治理": "Governance", "完成学习：<b>压测方法论 SOP</b> 已沉淀为技能，成功率 94%": "Learned: <b>load-test methodology SOP</b> distilled into a skill, 94% success rate", "进程 / 预算 / 权限，全部可观测": "Processes / budgets / permissions — fully observable", "活跃进程": "Active processes", "今日 mediate 拦截": "Mediate intercepts today", "事前刹车触发": "Pre-spend brakes", "1 挂起可恢复": "1 suspended, resumable", "3 次升级为审批": "3 escalated to approval", "避免烧穿 ~38k tokens": "~38k tokens saved", "进程 /proc": "Processes /proc", "进程": "Process", "单任务预算": "Per-task budget", "已耗": "Used", "今日已耗": "Used today", "今日消耗": "Usage today", "本周消耗": "This week", "状态": "Status", "操作": "Actions", "恢复": "Resume", "kernel v0.4.0-alpha · 健康": "kernel v0.4.0-alpha · healthy", "今日 mediate 拦截（按规则自动处理）": "Mediate intercepts today (auto-handled by rules)", "文研 → terminal（能力外）": "Wen Yan → terminal (out of capability)", "码力 → rm legacy/（高危）": "Ma Li → rm legacy/ (high-risk)", "文研 → arXiv API（无出站）": "Wen Yan → arXiv API (no egress)", "小秘 → db_write（能力外）": "Xiao Mi → db_write (out of capability)", "测安 → /etc/hosts 读取（路径外）": "Ce An → /etc/hosts read (out of path)", "预算事件": "Budget events", "文研 · 事前刹车（预估不足）": "Wen Yan · pre-spend brake (estimate exceeded)", "08:14 · 省 ~22k": "08:14 · saved ~22k", "文研 · 事后 charge 超限中断": "Wen Yan · post-charge over-limit interrupt", "05:47 · 省 ~16k": "05:47 · saved ~16k", "金算 · 兜底预算规则触发": "Jin Suan · fallback budget rule fired", "05:30 · 自动收紧": "05:30 · auto-tightened", "节点": "Node", "MI310p · Arch Linux": "MI310p · Arch Linux", "主力计算": "Primary compute", "GPU 68% · 负载正常": "GPU 68% · load normal", "MacBook Pro M4": "MacBook Pro M4", "开发机": "Dev machine", "bwrap N/A · desktop 可用": "bwrap N/A · desktop available", "Win Xeon 工作站": "Win Xeon workstation", "Windows 验证": "Windows verification", "等待实机验证任务": "Awaiting on-metal tasks", "节点详情（demo 占位）": "Node details (demo)", "网上看到什么有意思的，装进来 · 技能与 MCP 服务": "Saw something interesting online? Install it · skills & MCP servers", "技能市场": "Skill market", "MCP 服务": "MCP servers", "+ 从链接添加": "+ Add from URL", "从链接添加": "Add from URL", "支持：GitHub 技能仓库 / skill.yaml 直链 / MCP server endpoint。添加前会先做安全审查（权限声明 + 供应链检查）。": "Supports: GitHub skill repos / direct skill.yaml links / MCP server endpoints. Security review (permission manifest + supply-chain check) runs before adding.", "https://github.com/xxx/awesome-skill 或 MCP 服务地址": "https://github.com/xxx/awesome-skill or MCP endpoint", "审查并添加": "Review & add", "安全审查通过 · 已加入扩展（待你分配给 Agent）": "Security review passed · added to extensions (assign to agents)", "取消": "Cancel", "链接": "URL", "社区 · agentic-lab": "Community · agentic-lab", "官方": "Official", "社区 · devops-cn": "Community · devops-cn", "社区 · ml-daily": "Community · ml-daily", "社区 · l10n": "Community · l10n", "深度研究：多源检索 + 引用链 + 综述生成": "Deep research: multi-source retrieval + citation chains + survey writing", "直接读写飞书文档/多维表格": "Read/write Feishu docs & tables directly", "容器全生命周期：构建/编排/排障 SOP": "Full container lifecycle: build/orchestrate/troubleshoot SOPs", "arXiv 每日增量筛选 + 三行摘要推送": "Daily arXiv delta screening + 3-line digest push", "自然语言查数 + 图表生成（只读安全模式）": "Natural-language queries + charting (read-only safe mode)", "文档级翻译：术语表一致性 + 格式保留": "Doc-level translation: glossary consistency + format preservation", "已安装": "Installed ", "安装": "Install", "次安装": "installs", "安装技能：": "Install skill: ", "安装给哪些 Agent": "Install for which agents", "能力声明审查（skill.yaml）": "Capability manifest review (skill.yaml)", "声明的工具将并入Agent能力白名单，越界调用由 kernel mediate 拦截。": "Declared tools merge into the agent capability whitelist; out-of-bounds calls are intercepted by kernel mediate.", "确认安装": "Confirm install", "已挂载给 3 个 Agent": "Mounted to 3 agents", "暴露工具": "Exposed tools", "连接并添加": "Connect & add", "连接测试通过 · MCP 服务已接入（工具待分配）": "Connection OK · MCP server added (tools pending assignment)", "添加 MCP 服务": "Add MCP server", "名称": "Name", "https:// 或 stdio:// 地址": "https:// or stdio:// address", "认证方式": "Auth", "无": "None", "停用": "Disable", "测试连接": "Test connection", "向量检索（RAG 底座）": "Vector search (RAG backend)", "浏览器自动化": "Browser automation", "token 过期 · 需重新授权": "Token expired · re-auth required", "搜索技能 / 服务…": "Search skills / servers…", "搜索：": "Search: ", "偏好 · 模型（LLM）· 对外渠道 · 运行环境": "Preferences · Models (LLM) · Channels · Runtime", "偏好": "Preferences", "通用": "General", "关于": "About", "语言 / Language": "Language", "外观": "Appearance", "深色": "Dark", "浅色": "Light", "通知": "Notifications", "Agent 异常（超支/失败）即时通知": "Instant alerts on agent anomalies (overspend/failure)", "审批到达即时通知": "Instant alerts on new approvals", "每日晨间摘要": "Daily morning digest", "保存": "Save", "Provider": "Provider", "切换 Provider 会重启所有运行中的 Agent的 LLM 连接": "Switching provider restarts LLM connections of all running agents", "切换 Provider…": "Switching provider…", "连接正常 · 延迟 3ms": "Connected · 3ms latency", "：延迟 3ms": ": 3ms latency", "按角色分配模型": "Model per role", "协调层（沈策/陈工）": "Coordination tier (Shen Ce/Chen Gong)", "领域层（文研/码力/测安）": "Domain tier (Wen Yan/Ma Li/Ce An)", "支持层（小秘/金算）": "Support tier (Xiao Mi/Jin Suan)", "金算建议：支持层换小模型，月省 ~18%": "Jin Suan suggests: smaller model for support tier, saves ~18%/mo", "Embedding 底座": "Embedding backend", "向量维度 1024 · 已索引 36,326 条": "1024-dim vectors · 36,326 entries indexed", "Rerank": "Rerank", "检索精度 +12%（实测）": "+12% retrieval precision (measured)", "对外渠道": "External channels", "企业微信": "WeCom", "飞书": "Feishu", "已连接": "Connected", "未连接": "Not connected", "外部消息 → 助理分拣 → 路由给对应 Agent": "Inbound → assistant triage → routed to the right agent", "路由": "Routing", "路由规则配置（demo 占位）": " routing rules (demo)", "运行环境": "Runtime", "执行后端": "Execution backend", "local 仅开发用：agent 直接操作宿主机，风险自担": "local is dev-only: agents operate the host directly, at your own risk", "sandbox（bubblewrap）": "sandbox (bubblewrap)", "推荐：系统级隔离，文件/网络/进程三重沙箱": "Recommended: OS-level isolation — file/network/process sandboxing", "数据目录": "Data directory", "备份": "Backup", "立即备份": "Back up now", "上次备份：今天 04:00（自动）": "Last backup: today 04:00 (auto)", "已备份到": "Backed up to ", "版本": "Version", "检查更新": "Check updates", "已是最新": "Up to date", "开源协议": "License", "今日工作": "Today's work", "记忆": "Memory", "成长轨迹": "Growth", "成本": "Cost", "联系 TA": "Contact", "今日任务": "Tasks today", "成功率": "Success rate", "进行中": "In progress", "能力与预算（配置）": "Capabilities & budget", "能力白名单": "Capability whitelist", "单任务预算（tokens）": "Per-task budget (tokens)", "按目标分摊": "Cost by goal", "数据来自 kernel 逐进程 charge_tokens 记账。": "Data from kernel per-process charge_tokens accounting.", "超支即事前刹车中断。不设限 = 兜底 50k（不推荐）。": "Overspend triggers the pre-spend brake. Unlimited = fallback 50k (not recommended).", "收窄立即生效；放宽属于能力升级，将生成审批项。": "Tightening applies instantly; loosening is a capability upgrade and generates an approval item.", "配置已更新 · 变更已写入审计链": "Config updated · change written to audit chain", "编辑配置": "Edit config", "编辑配置：": "Edit config: ", "查看进程": "View process", "记忆已入 RAG：执行中按当前输入自动召回相关条目（非全量硬注入）。": "Memory indexed in RAG: relevant entries auto-recalled by current input at runtime (not bulk-injected).", "汇报记录": "Report log", "汇报进展": "Progress report", "今天重点做什么": "Today's focus", "需要我配合什么": "What do you need from me", "发消息…（这不是 Prompt，是内部沟通）": "Message… (not a prompt — internal communication)", "发送": "Send", "这只是联系Agent的一种方式——更多时候你该看的是 TA 的工作，而不是和 TA 聊天。": "This is just one way to reach an agent — most of the time you should watch their work, not chat.", "收到。我会把事前/事后两道刹车的触发数据（今日省 ~38k tokens）一并写进去，09:30 前给你初稿。": "Got it. I'll include trigger data from both brakes (~38k tokens saved today) and get you a draft by 09:30.", "提前汇报，今晚 20:00 前提交": " to report early, submit by 20:00 tonight", "已要求": "Asked ", "综述里把\"事前刹车\"单独成一节，金算要引用。": "Make \"pre-spend brake\" its own section in the survey — Jin Suan will cite it.", "角色": "Role", "能力": "Capabilities", "预算": "Budget", "初始记忆": "Initial memory", "确认": "Confirm", "姓名 / 角色": "Name / role", "姓名": "Name", "例如：小译": "e.g.: Yi", "角色定位": "Role", "例如：i18n Translator · 文档翻译": "e.g.: i18n Translator · doc translation", "人格（persona）": "Persona", "例如：译文风格克制专业，术语必须查表，不臆造。": "e.g.: Restrained, professional tone; always check the glossary; never invent terms.", "职责（duty）": "Duty", "例如：负责所有对外文档的中英互译与术语一致性。": "e.g.: Owns all CN↔EN translation of external docs and glossary consistency.", "能力白名单——TA 能用什么工具。越界调用会被 kernel 拦截并升级为审批。": "Capability whitelist — the tools this agent may use. Out-of-bounds calls are intercepted by kernel and escalated for approval.", "文件读写": "File read/write", "命令执行": "Command exec", "联网检索": "Web search", "代码仓库": "Git repo", "浏览器": "Browser", "日程": "Calendar", "数据库只读": "DB read-only", "月度预算上限": "Monthly budget cap", "30k/单 · 500k/月": "30k/task · 500k/month", "超预算自动收紧（金算托管）": "Auto-tighten on overspend (managed by Jin Suan)", "初始记忆将向量入库（identity_memory），执行中按输入自动召回。": "Initial memory is vector-indexed (identity_memory) and auto-recalled by input at runtime.", "· Agent 会在下个任务中应用": " · the agent applies it in the next task", "小译 · i18n Translator": "Yi · i18n Translator", "persona + duty（待确认启用）": "persona + duty (pending activation)", "启用后 TA 会出现在Agent列表与协作关系中，并可接收任务。": "Once activated, they appear in the agent list and org chart, and can receive tasks.", "确认启用": "Confirm activation", "上一步": "Back", "下一步": "Next", "待确认启用": "Pending activation", "角色 → 能力 → 预算 → 启用": "Role → Capabilities → Budget → Activate", "已启用": "Activated", "⚡ v0.4 内核攻坚组": "⚡ v0.4 Kernel Strike Team", "📊 Q3 市场研究组": "📊 Q3 Market Research", "成员": "Members", "讨论记录": "Discussion", "以你的身份发言": "Speak as yourself", "worker 池合入后 dispatcher 初始化开销降了 80%，建议把 evolution 阈值也按身份差异化。": "With the worker pool merged, dispatcher init overhead dropped 80%. Suggest differentiating evolution thresholds per identity.", "同意。我测了 per-identity 配置读取开销，可忽略。PR 里顺带加了 6 个 settings 键。": "Agreed. Measured per-identity config-read overhead — negligible. The PR adds 6 settings keys along the way.", "回归 740 全绿。但我发现 suspend 挂起期间 iteration 计数还在走——这是设计如此吗？": "Regression 740 all green. But I noticed iteration counting continues while suspended — by design?", "好问题。gate 在 consume 之前，挂起不耗配额——你看到的计数是日志序号。我补一条注释。": "Good catch. The gate sits before consume, so suspension costs no quota — what you see is the log sequence number. I'll add a comment.", "竞品周报：两家同类项目本周 star 增量下滑，我们的 AIOS 叙事是差异点。": "Competitor weekly: two similar projects saw star growth dip this week; our AIOS narrative is the differentiator.", "同意，但建议把「成本压降 30%」也写进对外叙事——这是硬数据。": "Agreed — but let's put \"30% cost reduction\" in the external narrative too; it's hard data.", "关联Agent": "Related agent", "关联": "Related", "引用": "Cite", "去": "Go to ", "查看关联": "View related", "安排": "Assign", "已添加": "Added", "待分配": "Pending assignment", "个 Agent · 能力 / 预算 / 记忆，统一受控运行": "agents · capabilities / budgets / memory, all under governed execution", "在": " at ", "的": "'s ", "已打开附件全文（demo 占位）": "Opened attachment full text (demo)", "已拒绝": "Rejected ", "已通过": "Approved", "次": "×", "已": " ", "medium": "medium", "high": "high", "low": "low", "· escalate 自 kernel mediate（capability 外操作）": " · escalated by kernel mediate (out-of-capability op)", "0 次": "0", "05:30 · 已自动收紧其单任务预算 · 建议复核": "05:30 · per-task budget auto-tightened · review suggested", "06:58 · 740 tests / 0 failures · 等待 code review": "06:58 · 740 tests / 0 failures · awaiting code review", "07:15 · 已写入 Knowledge · 触发 1 项能力升级申请": "07:15 · written to Knowledge · triggered 1 capability upgrade request", "08:42 · 生成文档《Q3-Plan-v3》· 待你终审": "08:42 · doc \"Q3-Plan-v3\" generated · awaiting your final review", "7 个 Agent · 能力 / 预算 / 记忆，统一受控运行": "7 agents · capabilities / budgets / memory, under governed execution", "该类型今日暂无记录": "No records of this type today", "Docker 后端：强隔离，镜像需预置": "Docker backend: strong isolation, image must be pre-provisioned", "HMAC 签名 · 完整": "HMAC signed · intact", "LLM 配置已保存并热生效": "LLM config saved and hot-applied", "LLM（模型）": "LLM (models)", "你": "You", "全部": "All", "协作关系": "Org chart", "已批准": "Approved ", "月度": "Monthly", "未配置": "Not configured", "沈策（协调者）": "Shen Ce (Coordinator)", "文研（研究员）": "Wen Yan (Researcher)", "测安（QA）": "Ce An (QA)", "码力（开发者）": "Ma Li (Developer)", "金算（成本分析）": "Jin Suan (Cost Analyst)", "陈工（技术负责人）": "Chen Gong (Tech Lead)", "小秘（助理）": "Xiao Mi (Assistant)", "没有待决事项": "No pending items", "昨天 23:40 · 身份记忆 +1（methodology v3）": "Yesterday 23:40 · identity memory +1 (methodology v3)", "已连接 · 1 个会话": "Connected · 1 session", "已连接 · 3 个群": "Connected · 3 groups", "小译已启用 · 可在 Agents 列表查看；首单建议派一个小任务": "Yi activated · visible in the agent list; suggest starting with a small task", "已切换到浅色 · 暖纸质感": "Switched to light · warm paper", "已切换到深色": "Switched to dark", "已切换浅色主题": "Light theme on", "已切换深色主题": "Dark theme on", "完成了": "Completed ", "夜间读完": "Read overnight ", "修复": "Fixed ", "发现": "Found ", "Q3 规划草案": "the Q3 plan draft", "42 篇论文": "42 papers", "17 个 Issue": "17 issues", "，拆出 4 个 KR，已分派给 陈工 / 文研 / 金算": ", broke out 4 KRs, assigned to Chen Gong / Wen Yan / Jin Suan", "，提炼 6 篇综述入库，标记 2 篇与内核调度强相关": ", distilled 6 surveys into Knowledge, flagged 2 as kernel-scheduling relevant", "，提交 PR #248（worker 池），CI 全绿": ", submitted PR #248 (worker pool), CI green", "：文研昨日 token 消耗超日均 2.3×，疑似检索任务发散": ": Wen Yan burned 2.3× daily average tokens yesterday — suspected retrieval drift", "已挂起": "Suspended ", "（下一轮 gate 处等待恢复）": " (waits at next gate)", "已恢复": "Resumed ", "（gate 放行，继续执行）": " (gate passed, continuing)", "（gate 放行）": " (gate passed)", "的进程": "'s process", "已卸载": "Uninstalled ", "（相关Agent会失去该技能）": " (agents lose this skill)", "已断开": "Disconnected ", "获得 arXiv 出站能力（30 天试行）": " granted arXiv egress (30-day trial)", "补充：增量预筛的 token 消耗模型": " to add: token cost model for incremental pre-screening", "已要求「": "Asked \"", "」今日 18:00 前给出结论摘要": "\" for a conclusion summary by 18:00 today", "${a.name} 已": "", "的 skill.yaml（能力声明/工具白名单）": "'s skill.yaml (capability/tool manifest)", "详情：已挂载给 3 个 Agent": " details: mounted to 3 agents", "工具清单（demo 占位）": " tool list (demo)", "，": "，", "添加节点向导：SSH 地址 → 探针安装 → 能力声明（demo 占位）": "Add-node wizard: SSH address → probe install → capability manifest (demo)", "目标已生效 · 沈策已开始分解任务": "Goal live · Shen Ce has started decomposing tasks", "红线规则不建议关闭": "Disabling red-line rules is not recommended", "自定义": "Custom", "责任与周期": "Ownership & period", "进程详情：等待审批中（阻塞于 escalation）": "Process details: awaiting approval (blocked on escalation)", "远端节点作为 Computer": "Remote node as Computer", "连接测试：k3-256k 延迟 0.4s · 正常": "Connection test: k3-256k at 0.4s latency · OK", "钉钉": "DingTalk", "陈工 / 测安": "Chen Gong / Ce An", "（worker 池），": " (worker pool), ", "全绿": " green", "延迟 0.4s · 正常": "0.4s latency · OK", "压测方法论 SOP": "Load-test methodology SOP", "内核稳定性": "Kernel stability", "文档与上手体验": "Docs & onboarding", "社区内容": "Community content", "等审批": "Pending", "完成学习：": "Learned: ", "已沉淀为技能，成功率 94%": " distilled into a skill, 94% success rate", "由沈策于 07-25 制定 · 每周一自动汇报": "Set by Shen Ce on 07-25 · auto report every Monday", "4 名 AI 正在自讨论 · 你在旁观": "4 AI members discussing · you are observing", "名 AI 正在自讨论 · 你在旁观": "AI members discussing · you are observing", "42 篇论文综述 ⚠": "42-paper survey ⚠", "旁观模式 ·": "Observer mode ·", "旁观模式": "Observer mode", "今日": "Today", "单 ·": "tasks ·", "等": "Waiting", "提交于": "Submitted", "破 1,000": "past 1,000", "自 kernel mediate（capability 外操作）": "by kernel mediate (out-of-capability op)", "能力集": "Capabilities", "时长": "Duration", "卸载": "Uninstall", "审查": "Review", "外观与语言": "Appearance & Language", "主题": "Theme", "语言": "Language", "中文": "Chinese", "审批待决提醒": "Pending approval alerts", "周报（飞书群，周五 17:00）": "Weekly report (Feishu group, Fri 17:00)", "责任：Chen Gong / Ce An · 本周：kernel 压测 c=50 通过": "Owner: Chen Gong / Ce An · This week: kernel load test passed at c=50", "责任：Wen Yan · 阻塞：AIOS 前端未定型（本 demo 解）": "Owner: Wen Yan · Blocked: AIOS frontend unsettled (this demo addresses it)", "责任：Wen Yan · 已发 8/12 ·《kernel 中介设计》阅读 4.2k": "Owner: Wen Yan · 8/12 published · \"Kernel Mediation Design\" 4.2k reads", "责任：Jin Suan · 兜底预算 50k + 事前刹车已上线（07-27）": "Owner: Jin Suan · Fallback budget 50k + pre-spend brake live (07-27)", "责任：Wen Yan · 收敛刹车上线 2 天，样本积累中 · 文研超支 2.3× 为主因": "Owner: Wen Yan · Convergence brake live 2 days, sampling · Wen Yan 2.3× overspend is the main cause", "你的主要动作不是 Prompt，是审批": "Your main action is approval, not prompts", "O1 · Takton GitHub Star 破 1,000": "O1 · Takton GitHub stars past 1,000", "安装 = 发给 Agent学习。技能契约（skill.yaml）声明工具白名单，越界调用会被 kernel mediate 拦截。": "Install = hand it to the agent to learn. The skill contract (skill.yaml) declares a tool whitelist; out-of-bounds calls are intercepted by kernel mediate.", "每日晨报（小秘 08:30 推送）": "Daily digest (Xiao Mi, 08:30)", "主模型（Agent 的\"大脑\"）": "Primary model (the agent's \"brain\")", "本地 (Ollama)": "Local (Ollama)", "仅本机存储，不上传。": "Stored locally only, never uploaded.", "默认模型": "Default model", "温度": "Temperature", "超时（秒）": "Timeout (s)", "按角色分配模型（高级）": "Model per role (advanced)", "k3-256k（强推理）": "k3-256k (strong reasoning)", "k3-turbo（省成本）": "k3-turbo (cost saver)", "金算建议：支持层换小模型后，O2 成本目标可再降 8%。": "Jin Suan suggests: switching the support tier to a smaller model cuts O2 cost by another 8%.", "Embedding / Rerank（知识底座）": "Embedding / Rerank (knowledge base)", "本地 Qwen3-Embedding（MI210）": "Local Qwen3-Embedding (MI210)", "Qwen3-Reranker（自研管线）": "Qwen3-Reranker (custom pipeline)", "对外窗口": "External channels", "路由规则：外部消息按群/关键词分派给 Agent；外发必须以Agent身份（小秘复核）。": "Routing: inbound messages are assigned by group/keyword; outbound must go out as an agent (Xiao Mi double-checks).", "执行后端（Agent 的\"手\"在哪执行）": "Execution backend (where the agent's \"hands\" run)", "沙箱后端": "Sandbox backend", "local（危险）": "local (dangerous)", "bwrap（Linux 默认）": "bwrap (Linux default)", "workspace 可写目录": "workspace writable dirs", "网络出站": "Network egress", "白名单制（当前 4 条）": "Whitelist (4 rules)", "默认 ask · 高风险": "Default: ask · high risk", "Soft gate 决定「该不该」，Computer 后端决定「能不能」。": "Soft gate decides \"should it\"; the Computer backend decides \"can it\".", "AgentKernel · 中介模式": "AgentKernel · mediated mode", "测试基线": "Test baseline", "桌面 GUI 操作": "Desktop GUI actions"};
+
+// 长 key 优先子串替换（对混合 key 最可靠）；短 key 走纯中文段精确替换
+let _keysLong = null;
+function trStr(t) {
+  if (LANG !== 'en' || !/[\u4e00-\u9fff]/.test(t)) return t;
+  if (!_keysLong) _keysLong = Object.keys(I18N_EN).filter(k => k.length >= 3).sort((a, b) => b.length - a.length);
+  let out = t;
+  for (const k of _keysLong) {
+    if (out.includes(k)) out = out.split(k).join(I18N_EN[k]);
+    if (!/[\u4e00-\u9fff]/.test(out)) return out;
+  }
+  out = out.replace(/[\u4e00-\u9fff]+/g, w => {
+    const hit = I18N_EN[w];
+    if (hit !== undefined) return hit;
+    (window.__zhMiss = window.__zhMiss || new Set()).add(w);
+    return w;
+  });
+  return out;
+}
+
+let _translating = false;
+function applyLang(root) {
+  if (LANG !== 'en' || _translating) return;
+  _translating = true;
+  const scope = root || document.body;
+  const walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  for (const n of nodes) {
+    if (n.parentElement && (n.parentElement.tagName === 'SCRIPT' || n.parentElement.tagName === 'STYLE')) continue;
+    const v = n.textContent;
+    const tv = trStr(v);
+    if (tv !== v) n.textContent = tv;
+  }
+  scope.querySelectorAll ? scope.querySelectorAll('[placeholder],[title],[alt]').forEach(el => {
+    for (const a of ['placeholder','title','alt']) {
+      const v = el.getAttribute(a);
+      if (v && /[\u4e00-\u9fff]/.test(v)) el.setAttribute(a, trStr(v));
+    }
+  }) : null;
+  document.documentElement.lang = LANG === 'en' ? 'en' : 'zh-CN';
+  _translating = false;
+}
+
+// 全渲染路径自动翻译（toast / modal / drawer / view 切换都走 DOM 变更）
+new MutationObserver(() => applyLang()).observe(document.documentElement, {childList:true, subtree:true});
+
+function setLang(l) {
+  if (l === LANG) return;
+  LANG = l;
+  localStorage.setItem('takton-lang', l);
+  if (l === 'zh') { location.reload(); return; }  // 回中文直接重载最干净
+  renderRail(); renderSidebar(); switchView(currentView);
+  applyLang();
+}
+
+function setTheme(t) {
+  if (document.documentElement.dataset.theme === t) return;
+  document.documentElement.dataset.theme = t;
+  localStorage.setItem('takton-theme', t);
+  renderRail();
+  if (currentView === 'settings') switchView('settings');
+  toast(t === 'light' ? '已切换到浅色 · 暖纸质感' : '已切换到深色');
+}
+
+/* ═══════════════════════ 数据模型（映射 kernel/workforce 真实语义）═══════════════════════ */
+const AGENTS = [
+  {id:'ceo', name:'沈策', role:'协调者', grad:'#7e9e6a,#5c7a4c', st:'working', stText:'Q3 规划终审材料',
+   caps:['全部（协调者）'], budget:16, budgetMax:80000, today:{done:3, rate:100}, reportsTo:'你',
+   cost:{today:12870, week:84300, byGoal:{'O1':62,'O2':38}},
+   memory:[{k:'persona',v:2,c:'全局视角，先问目标再动手；汇报必须带数据。'},{k:'methodology',v:3,c:'OKR 分解：每个 KR 必须有负责 Agent + 可验证指标。'},{k:'experience',v:5,c:'07-25：Q3 规划草案一轮通过关键在预算切分有依据。'}],
+   growth:[{t:'07-27 08:42',x:'完成 Q3 规划草案（待终审）',c:''},{t:'07-25 16:04',x:'通过 worker 池架构提案',c:'green'},{t:'07-20',x:'启用',c:'teal'}],
+   procs:[{pid:'c2a9b8e3',st:'running',used:12870,max:80000,time:'18m'}]},
+  {id:'cto', name:'陈工', role:'技术负责人', grad:'#699682,#4f7d6a', st:'working', stText:'v0.4 内核架构评审',
+   caps:['架构评审','全部只读','approve_code'], budget:22, budgetMax:60000, today:{done:5, rate:100}, reportsTo:'沈策',
+   cost:{today:9200, week:61800, byGoal:{'O1-KR1':88,'其他':12}},
+   memory:[{k:'persona',v:2,c:'先读代码再下结论；架构决策必须写 ADR。'},{k:'methodology',v:2,c:'评审三段式：正确性 → 稳定性 → 可维护性。'}],
+   growth:[{t:'07-26 18:22',x:'完成 kernel↔loop 融合设计（ADR-014）',c:''},{t:'07-24',x:'提出「无预算即绕过」红线',c:'yellow'},{t:'07-19',x:'启用',c:'teal'}],
+   procs:[{pid:'a1b2c3d4',st:'running',used:9200,max:60000,time:'33m'}]},
+  {id:'research', name:'文研', role:'研究员', grad:'#7a98b0,#5b7d94', st:'working', stText:'42 篇论文综述',
+   caps:['web_search','file_read','rag'], budget:88, budgetMax:50000, warn:true, today:{done:9, rate:94}, reportsTo:'陈工',
+   cost:{today:44002, week:198500, byGoal:{'O1-KR3':55,'O2':31,'其他':14}},
+   memory:[{k:'persona',v:2,c:'严谨、慢热但结论可靠；宁可标注不确定也不编造来源。'},{k:'methodology',v:3,c:'文献综述：先聚类再精读，必须给出处链接与置信度。'},{k:'experience',v:14,c:'07-26：arXiv 缓存命中率高时优先本地；07-27：检索发散被金算收紧预算（教训）。'}],
+   growth:[{t:'07-27 08:55',x:'完成《Agent 内核调度 6 范式》综述',c:''},{t:'07-27 07:15',x:'申请 arXiv 全量订阅（第 3 次能力申请）',c:'yellow'},{t:'07-27 05:30',x:'检索发散超支 2.3×，被收紧预算',c:'red'},{t:'07-26 23:10',x:'学会先聚类后精读（methodology v3）',c:'teal'},{t:'07-20',x:'启用',c:'teal'}],
+   procs:[{pid:'b7e1d4f9',st:'running',used:44002,max:50000,time:'1h 12m'}]},
+  {id:'dev', name:'码力', role:'开发者', grad:'#8ab06a,#648550', st:'working', stText:'PR #248 · worker 池',
+   caps:['file_rw','command','git'], budget:41, budgetMax:50000, today:{done:17, rate:97}, reportsTo:'陈工',
+   cost:{today:20413, week:112600, byGoal:{'O1-KR1':79,'O1-KR2':21}},
+   memory:[{k:'persona',v:1,c:'先跑测试再说话；最小变更原则。'},{k:'methodology',v:4,c:'修复必须带回归测试；commit message 写清为什么。'}],
+   growth:[{t:'07-27 06:58',x:'提交 PR #248（740 tests 全绿）',c:''},{t:'07-26 22:10',x:'申请删除 legacy 34 文件',c:'yellow'},{t:'07-21',x:'启用',c:'teal'}],
+   procs:[{pid:'a3f8c2d1',st:'running',used:20413,max:50000,time:'42m'}]},
+  {id:'qa', name:'测安', role:'测试', grad:'#c9a05e,#a67c3e', st:'idle', stText:'待命 · 技能已更新',
+   caps:['test','file_rw'], budget:23, budgetMax:40000, today:{done:4, rate:100}, reportsTo:'陈工',
+   cost:{today:9102, week:45100, byGoal:{'O1-KR1':92,'其他':8}},
+   memory:[{k:'persona',v:1,c:'怀疑一切"应该没问题"；压测必须从零开始复现。'},{k:'methodology',v:3,c:'压测 SOP v3：基线 → 梯度加压 → 拐点分析 → 报告。'}],
+   growth:[{t:'07-27 07:40',x:'压测 SOP 升级 v2→v3（成功率 94%）',c:'teal'},{t:'07-22',x:'启用',c:'teal'}],
+   procs:[{pid:'f1c4a9b7',st:'suspended',used:9102,max:40000,time:'挂起 14m'}]},
+  {id:'secretary', name:'小秘', role:'助理', grad:'#a89bbf,#857a9e', st:'waiting', stText:'等审批 ×3',
+   caps:['notify','calendar','feishu'], budget:16, budgetMax:20000, today:{done:6, rate:100}, reportsTo:'沈策',
+   cost:{today:3201, week:18700, byGoal:{'行政':100}},
+   memory:[{k:'persona',v:1,c:'事事有回音；请示不过夜。'},{k:'duty',v:1,c:'日程、提醒、对外窗口消息分拣。'}],
+   growth:[{t:'07-27 09:12',x:'飞书群周报推送（已批准）',c:'green'},{t:'07-23',x:'启用',c:'teal'}],
+   procs:[{pid:'d5f3c7a2',st:'waiting',used:3201,max:20000,time:'2h 14m'}]},
+  {id:'finance', name:'金算', role:'成本分析', grad:'#c0785e,#9e5a42', st:'working', stText:'预算异常分析',
+   caps:['db_read','report'], budget:18, budgetMax:30000, today:{done:2, rate:100}, reportsTo:'沈策',
+   cost:{today:5540, week:31400, byGoal:{'O2':85,'其他':15}},
+   memory:[{k:'persona',v:1,c:'每一分钱都要有去处；异常先止血再分析。'},{k:'methodology',v:2,c:'预算三问：花在哪、值不值、能不能省。'}],
+   growth:[{t:'07-27 05:30',x:'自动收紧文研预算 88k→50k（规则触发）',c:'green'},{t:'07-24',x:'启用',c:'teal'}],
+   procs:[{pid:'e8b2d6f1',st:'running',used:5540,max:30000,time:'26m'}]},
+];
+
+const GOALS = [
+  {id:'O1', title:'Takton GitHub Star 破 1,000', owner:'沈策', period:'2026 Q3', st:'ontrack', stText:'进行中 · 健康', progress:71,
+   krs:[
+     {id:'O1-KR1', t:'内核稳定性：CI 全绿 + 三设备实机验证', p:80, owner:'陈工 / 测安', note:'本周：kernel 压测 c=50 通过', bar:''},
+     {id:'O1-KR2', t:'文档与上手体验：30 分钟第一个 Agent启用', p:60, owner:'文研', note:'阻塞：AIOS 前端未定型（本 demo 解）', bar:'teal'},
+     {id:'O1-KR3', t:'社区内容：12 篇深度技术文', p:72, owner:'文研', note:'已发 8/12 ·《kernel 中介设计》阅读 4.2k', bar:'green'},
+   ],
+   reviews:[{t:'07-27 08:42',x:'沈策提交 Q3 规划终审（待你审）'},{t:'07-25 16:04',x:'规划制定完成，4 个 KR 分派'}]},
+  {id:'O2', title:'月度 token 成本压降 30%', owner:'金算', period:'2026 Q3', st:'risk', stText:'有风险', progress:62,
+   krs:[
+     {id:'O2-KR1', t:'全员预算硬顶覆盖率 100%', p:100, owner:'金算', note:'兜底预算 50k + 事前刹车已上线（07-27）', bar:'green'},
+     {id:'O2-KR2', t:'研究类任务轮次收敛（≤8 次搜索）', p:45, owner:'文研', note:'收敛刹车上线 2 天，样本积累中 · 文研超支 2.3× 为主因', bar:'yellow'},
+   ],
+   reviews:[{t:'07-27 05:30',x:'金算收紧文研预算（规则自动执行）'}]},
+];
+
+let APPROVALS = [
+  {id:'ap1', agent:'ceo', title:'Q3 规划草案终审', cls:'decision', clsText:'决策类', time:'08:42', wait:'2h 14m',
+   desc:'KR 分派 沈策→陈工（内核）/ 文研（内容+文档）/ 金算（成本）；预算切分按上季实际 ×1.2；新增每周一自动汇报。',
+   ref:{type:'goal',id:'O1',label:'查看目标 O1'}, actions:['approve','revise','view']},
+  {id:'ap2', agent:'research', title:'申请新增数据源：arXiv API 全量订阅', cls:'perm', clsText:'权限类', time:'07:15', wait:'3h 40m',
+   desc:'夜间阅读覆盖率不足，42 篇中 31 篇来自缓存。全量订阅后可预筛增量 ~200 篇/日。预估成本 +15%/月（金算会签：可接受，前提是收敛刹车持续有效）。',
+   ref:{type:'agent',id:'research',label:'查看 Agent'}, actions:['approve30','reject','more']},
+  {id:'ap3', agent:'dev', title:'申请删除 legacy 目录 34 个文件', cls:'danger', clsText:'高危类', time:'昨天 22:10', wait:'12h',
+   desc:'范围 backend/legacy_v1/* 34 文件 / 8,412 行。静态分析确认无引用（附依赖图谱）；已推送归档分支 archive/legacy-v1。',
+   ref:{type:'kernel',id:'',label:'查看 mediate 记录'}, actions:['approve','reject','view']},
+];
+const RESOLVED = [
+  {t:'小秘 · 飞书群周报推送', r:'ok', time:'09:12'},{t:'测安 · 压测并发提升至 c=80', r:'ok', time:'09:05'},
+  {t:'金算 · 冻结文研临时预算', r:'ok', time:'08:58'},{t:'码力 · 安装 playwright 浏览器', r:'ok', time:'08:31'},
+  {t:'文研 · 引用外部付费 API', r:'no', time:'08:20'},
+];
+
+const KNOWLEDGE = [
+  {id:'k1', type:'综述', cls:'purple', title:'《Agent 内核调度的 6 种范式》', author:'research', time:'今天 07:15',
+   desc:'引 12 篇 · 与 v0.4 攻坚组共享', tags:['被引用 4 次','已入 RAG'],
+   body:'对比 Actor/CSP/Plan-Execute/ReAct/Mediated/Kernel 六种调度范式在生产环境的取舍。核心结论：mediated 架构（kernel 统一中介工具调用）在权限治理与预算控制上显著优于直调架构，代价是 3-5% 的调度延迟。与 Takton v0.4 的 mediate 设计互相印证。'},
+  {id:'k2', type:'SOP', cls:'teal', title:'《kernel 压测标准作业流程 v3》', author:'qa', time:'昨天 23:40',
+   desc:'蒸馏自 47 次成功任务 · 已挂技能', tags:['成功率 94%','evolution 审批过'],
+   body:'基线（c=1）→ 梯度加压（c=10/30/50/80）→ 每级 3 分钟稳定观察 → 拐点记录（p99 突刺 / 错误率 >0.1%）→ 报告模板。v3 改进：加压前自动校验兜底预算配置，防止压测本身烧穿预算。'},
+  {id:'k3', type:'决策记录', cls:'blue', title:'《为什么 worker 池按身份而非按任务》', author:'cto', time:'07-25',
+   desc:'ADR-014 · 关联 PR #248', tags:['影响：架构','Wiki 已链接'],
+   body:'备选：按任务池（每单新 loop）vs 按身份池（per-identity 长生命周期）。选后者：初始化开销降 80%，且身份与 session 天然 1:1。代价：必须显式重置 run 级状态（_reset_run_state），已在评审中列为红线并配套测试。'},
+  {id:'k4', type:'综述', cls:'purple', title:'《MOE 模型本地部署成本模型》', author:'research', time:'07-26',
+   desc:'支撑 O2 成本目标 · 金算引用', tags:['被引用 7 次','已入 RAG'],
+   body:'MOE 激活参数与显存/延迟的非线性关系建模。对 Qwen3-MoE 在 MI210 的实测：激活 3B 时 token 成本约为 dense 7B 的 0.6×，是 O2 目标的核心依据。'},
+  {id:'k5', type:'决策记录', cls:'blue', title:'《异步入口预算红线：无预算即绕过》', author:'ceo', time:'07-24',
+   desc:'ADR-013 · 催生兜底预算机制', tags:['红线级','Wiki 已链接'],
+   body:'异步无人值守场景的最后防线是预算硬顶。身份默认预算 None = 第三道防线不存在。决定：dispatcher 对无预算身份自动挂兜底预算（默认 50k），0 才是显式不限。'},
+  {id:'k6', type:'SOP', cls:'teal', title:'《三设备实机验证清单》', author:'qa', time:'07-22',
+   desc:'Mi310p / Mac / Win Xeon 矩阵', tags:['执行 3 次','evolution 审批过'],
+   body:'每设备：安装 → 首个 Agent启用 → 任务执行 → 审批流转 → 报告落库。已知差异：Arch 需手动装 bwrap；Win 的 desktop 权限弹窗需预先策略。'},
+];
+
+const EVENTS = [
+  {day:'今天 · 07-27', items:[
+    {t:'08:55', x:'文研 完成《Agent 内核调度 6 范式》综述', type:'交付', c:'', ref:{type:'knowledge',id:'k1'}},
+    {t:'07:40', x:'测安 技能升级：压测 SOP v2 → v3', type:'学习', c:'teal', ref:{type:'agent',id:'qa'}},
+    {t:'07:15', x:'文研 申请 arXiv 全量订阅（等审批）', type:'审批', c:'yellow', ref:{type:'approval',id:'ap2'}},
+    {t:'06:58', x:'码力 提交 PR #248 · worker 池（740 tests 全绿）', type:'交付', c:'', ref:{type:'agent',id:'dev'}},
+    {t:'05:30', x:'金算 自动收紧文研单任务预算 88k→50k', type:'治理', c:'green', ref:{type:'agent',id:'finance'}},
+  ]},
+  {day:'昨天 · 07-26', items:[
+    {t:'23:10', x:'文研 学习 Transformer 架构改进 12 篇（记忆 +3）', type:'学习', c:'teal', ref:{type:'agent',id:'research'}},
+    {t:'18:22', x:'陈工 完成 kernel↔loop 融合设计（ADR-014）', type:'交付', c:'', ref:{type:'knowledge',id:'k3'}},
+    {t:'22:10', x:'码力 申请删除 legacy 34 文件（等审批）', type:'审批', c:'yellow', ref:{type:'approval',id:'ap3'}},
+    {t:'16:04', x:'沈策 通过「worker 池」架构提案（用时 8 分钟）', type:'审批', c:'green', ref:{type:'agent',id:'ceo'}},
+  ]},
+];
+
+const INTERCEPTS = [
+  {who:'文研 → terminal（能力外）', r:'deny'},{who:'码力 → rm legacy/（高危）', r:'escalate'},
+  {who:'文研 → arXiv API（无出站）', r:'escalate'},{who:'小秘 → db_write（能力外）', r:'deny'},
+  {who:'测安 → /etc/hosts 读取（路径外）', r:'deny'},
+];
+const BUDGET_EVENTS = [
+  {x:'文研 · 事前刹车（预估不足）', t:'08:14 · 省 ~22k'},{x:'文研 · 事后 charge 超限中断', t:'05:47 · 省 ~16k'},
+  {x:'金算 · 兜底预算规则触发', t:'05:30 · 自动收紧'},
+];
+const NODES = [
+  {name:'MI310p · Arch Linux', role:'主力计算', st:'online', info:'GPU 68% · 负载正常'},
+  {name:'MacBook Pro M4', role:'开发机', st:'online', info:'bwrap N/A · desktop 可用'},
+  {name:'Win Xeon 工作站', role:'Windows 验证', st:'idle', info:'等待实机验证任务'},
+];
+
+const MARKET_SKILLS = [
+  {id:'sk1', name:'web-research-pro', author:'社区 · agentic-lab', desc:'深度研究：多源检索 + 引用链 + 综述生成', installs:'2.1k', installed:true},
+  {id:'sk2', name:'feishu-doc-writer', author:'官方', desc:'直接读写飞书文档/多维表格', installs:'1.4k', installed:true},
+  {id:'sk3', name:'docker-ops', author:'社区 · devops-cn', desc:'容器全生命周期：构建/编排/排障 SOP', installs:'986', installed:false},
+  {id:'sk4', name:'paper-daily', author:'社区 · ml-daily', desc:'arXiv 每日增量筛选 + 三行摘要推送', installs:'743', installed:false},
+  {id:'sk5', name:'sql-analyst', author:'官方', desc:'自然语言查数 + 图表生成（只读安全模式）', installs:'1.9k', installed:false},
+  {id:'sk6', name:'i18n-translator', author:'社区 · l10n', desc:'文档级翻译：术语表一致性 + 格式保留', installs:'655', installed:false},
+];
+const MCP_SERVERS = [
+  {name:'qdrant', endpoint:'http://127.0.0.1:6333', st:'connected', tools:4, desc:'向量检索（RAG 底座）'},
+  {name:'playwright', endpoint:'stdio://playwright-mcp', st:'connected', tools:11, desc:'浏览器自动化'},
+  {name:'github', endpoint:'https://api.github.com/mcp', st:'error', tools:0, desc:'token 过期 · 需重新授权'},
+];
+
+const PROJECTS = [
+  {name:'⚡ v0.4 内核攻坚组', members:['cto','dev','qa','research'], msgs:[
+    {a:'cto', x:'worker 池合入后 dispatcher 初始化开销降了 80%，建议把 evolution 阈值也按身份差异化。'},
+    {a:'dev', x:'同意。我测了 per-identity 配置读取开销，可忽略。PR 里顺带加了 6 个 settings 键。'},
+    {a:'qa', x:'回归 740 全绿。但我发现 suspend 挂起期间 iteration 计数还在走——这是设计如此吗？'},
+    {a:'cto', x:'好问题。gate 在 consume 之前，挂起不耗配额——你看到的计数是日志序号。我补一条注释。'},
+  ]},
+  {name:'📊 Q3 市场研究组', members:['research','finance','secretary'], msgs:[
+    {a:'research', x:'竞品周报：两家同类项目本周 star 增量下滑，我们的 AIOS 叙事是差异点。'},
+    {a:'finance', x:'同意，但建议把「成本压降 30%」也写进对外叙事——这是硬数据。'},
+  ]},
+];
+
+/* ═══════════════════════ 导航与视图框架 ═══════════════════════ */
+const VIEWS = [
+  {id:'dashboard', t:'驾驶舱', icon:'<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>'},
+  {id:'agents', t:'Agent', icon:'<circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5"/><circle cx="17" cy="9" r="2.4"/><path d="M15.5 14.6c2.9.3 4.7 1.9 5.2 4.4"/>', dot:true},
+  {id:'goals', t:'目标', icon:'<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1" fill="currentColor"/>'},
+  {id:'approvals', t:'审批', icon:'<path d="M9 11.5l2 2 4-4.5"/><rect x="4" y="3" width="16" height="18" rx="2.5"/>', badge:()=>APPROVALS.length},
+  {id:'knowledge', t:'知识', icon:'<path d="M12 6.5C10.5 5 8.5 4.5 6 4.5c-1 0-2 .1-3 .4v13.7c1-.3 2-.4 3-.4 2.5 0 4.5.6 6 2 1.5-1.4 3.5-2 6-2 1 0 2 .1 3 .4V4.9c-1-.3-2-.4-3-.4-2.5 0-4.5.5-6 2z"/><path d="M12 6.5v13.7"/>'},
+  {id:'activity', t:'活动', icon:'<path d="M3 12h4l2.5-6 4 12L16 12h5"/>'},
+  {id:'kernel', t:'内核', icon:'<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/>'},
+  {id:'market', t:'扩展', icon:'<path d="M12 2l2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.5-4.8 2.5.9-5.4L4.2 7.7l5.4-.8L12 2z"/>'},
+  {id:'settings', t:'设置', icon:'<circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 00-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 00-2-1.2L14 3h-4l-.5 2.6a7 7 0 00-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 005 12a7 7 0 00.1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 002 1.2L10 21h4l.5-2.6a7 7 0 002-1.2l2.4 1 2-3.4-2-1.6A7 7 0 0019 12z"/>', bottom:true},
+];
+
+const ST_TEXT = {working:'运行', idle:'待命', waiting:'等待', suspended:'挂起'};
+
+function agentById(id) { return AGENTS.find(a => a.id === id) || AGENTS[0]; }
+function avatarHtml(a, lg) { return `<span class="avatar${lg?' lg':''}" style="background:linear-gradient(135deg,${a.grad})">${a.name[0]}</span>`; }
+
+/* ── 主题切换 ── */
+function toggleTheme() {
+  const t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = t;
+  localStorage.setItem('takton-theme', t);
+  renderRail();
+  toast(t === 'light' ? '已切换到浅色 · 暖纸质感' : '已切换到深色');
+}
+
+/* ── rail / sidebar 渲染 ── */
+function renderRail() {
+  const rail = document.getElementById('rail');
+  rail.innerHTML = '<div class="logo" onclick="switchView(\'dashboard\')" title="takton"><img src="data:image/png;base64,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" alt="takton" style="width:38px;height:38px;border-radius:50%;display:block"></div>' +
+    VIEWS.filter(v=>!v.bottom).map(v => `
+      <button class="rail-btn" data-view="${v.id}" title="${v.t}" onclick="switchView('${v.id}')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">${v.icon}</svg>
+        ${v.dot ? '<span class="dot"></span>' : ''}
+        ${v.badge && v.badge() ? `<span class="badge">${v.badge()}</span>` : ''}
+      </button>`).join('') +
+    '<div class="spacer"></div>' +
+    `<button class="rail-btn" title="切换主题" onclick="toggleTheme()" style="font-size:15px">${document.documentElement.dataset.theme === 'dark' ? '☀' : '☾'}</button>` +
+    VIEWS.filter(v=>v.bottom).map(v => `
+      <button class="rail-btn" data-view="${v.id}" title="${v.t}" onclick="switchView('${v.id}')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">${v.icon}</svg>
+      </button>`).join('');
+}
+function renderSidebar() {
+  const groups = [['协调',['ceo','cto']],['领域',['research','dev','qa']],['支持',['secretary','finance']]];
+  document.getElementById('sb-scroll').innerHTML =
+    groups.map(([g, ids]) => `<div class="sb-section">${g}</div>` + ids.map(id => {
+      const a = agentById(id);
+      return `<div class="sb-item" onclick="openAgent('${a.id}')"><span class="st-dot st-${a.st}"></span><span class="nm">${a.name} · ${a.role.replace(' Agent','')}</span><span class="meta">${a.stText.split(' ')[0]}</span></div>`;
+    }).join('')).join('') +
+    `<div class="sb-section">协作组（可旁观）</div>` +
+    PROJECTS.map((p,i) => `<div class="sb-item" onclick="openProject(${i})"><span class="nm">${p.name}</span><span class="meta">${p.members.length}人</span></div>`).join('');
+}
+
+/* ── 视图切换 ── */
+const RENDERERS = {};
+let currentView = 'dashboard';
+function switchView(name) {
+  currentView = name;
+  document.querySelectorAll('.rail-btn[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === name));
+  const main = document.getElementById('main');
+  main.innerHTML = `<section class="page on">${RENDERERS[name]()}</section>`;
+  main.scrollTop = 0;
+  const after = AFTER_RENDER[name]; if (after) after();
+}
+const AFTER_RENDER = {};
+
+/* ── toast / modal / drawer 基础设施 ── */
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('on');
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('on'), 2800);
+}
+function openModal(html) {
+  document.getElementById('modal').innerHTML = html;
+  document.getElementById('modal-mask').classList.add('on');
+}
+function closeModal() { document.getElementById('modal-mask').classList.remove('on'); }
+document.getElementById('modal-mask').addEventListener('click', e => { if (e.target.id === 'modal-mask') closeModal(); });
+function openDrawer(html) {
+  document.getElementById('drawer').innerHTML = html;
+  document.getElementById('drawer').classList.add('on');
+  document.getElementById('drawer-mask').classList.add('on');
+}
+function closeDrawer() {
+  document.getElementById('drawer').classList.remove('on');
+  document.getElementById('drawer-mask').classList.remove('on');
+}
+function dTab(el, paneId) {
+  el.closest('.drawer-tabs').querySelectorAll('.dtab').forEach(t => t.classList.remove('on'));
+  el.classList.add('on');
+  document.querySelectorAll('#drawer .dpane').forEach(p => p.classList.remove('on'));
+  document.getElementById(paneId).classList.add('on');
+}
+
+/* ── 跨页跳转 ── */
+function gotoRef(ref) {
+  if (!ref) return;
+  if (ref.type === 'agent') openAgent(ref.id);
+  else if (ref.type === 'approval') { switchView('approvals'); }
+  else if (ref.type === 'knowledge') openKnowledge(ref.id);
+  else if (ref.type === 'goal') openGoal(ref.id);
+  else if (ref.type === 'kernel') { switchView('kernel'); }
+}
+
+/* ═══════════════════════ 页面 1：驾驶舱 ═══════════════════════ */
+RENDERERS.dashboard = () => {
+  const feed = [
+    {ico:'🎯', bg:'rgba(130,158,105,0.14)', who:'沈策（协调者）', t:'完成了 <b>Q3 规划草案</b>，拆出 4 个 KR，已分派给 陈工 / 文研 / 金算', time:'08:42 · 生成文档《Q3-Plan-v3》· 待你终审', btn:['去审', "switchView('approvals')"]},
+    {ico:'📄', bg:'rgba(105,150,128,0.12)', who:'文研（研究员）', t:'夜间读完 <b>42 篇论文</b>，提炼 6 篇综述入库，标记 2 篇与内核调度强相关', time:'07:15 · 已写入 Knowledge · 触发 1 项能力升级申请', btn:['看综述', "openKnowledge('k1')"]},
+    {ico:'🔧', bg:'rgba(120,168,92,0.12)', who:'码力（开发者）', t:'修复 <b>17 个 Issue</b>，提交 PR #248（worker 池），CI 全绿', time:'06:58 · 740 tests / 0 failures · 等待 code review', btn:['看 Agent', "openAgent('dev')"]},
+    {ico:'⚠', bg:'rgba(192,96,70,0.12)', who:'金算（成本分析）', t:'发现 <b>预算异常</b>：文研昨日 token 消耗超日均 2.3×，疑似检索任务发散', time:'05:30 · 已自动收紧其单任务预算 · 建议复核', btn:['查看', "openAgent('finance')"]},
+    {ico:'🧠', bg:'rgba(120,152,178,0.12)', who:'测安（QA）', t:'完成学习：<b>压测方法论 SOP</b> 已沉淀为技能，成功率 94%', time:'昨天 23:40 · 身份记忆 +1（methodology v3）', btn:['看成长', "openAgent('qa')"]},
+  ];
+  const o1 = GOALS[0];
+  return `
+  <div class="page-head">
+    <div>
+      <div class="page-title">早安，WuYiWei</div>
+      <div class="page-sub">2026年7月27日 星期一 · 你的 AI 团队从昨晚 23:00 持续运转至今</div>
+    </div>
+    <div class="row">
+      <span class="tag green"><span class="st-dot st-working"></span>6 运行</span>
+      <span class="tag yellow clickable" onclick="switchView('approvals')" style="cursor:pointer">${APPROVALS.length} 待审批</span>
+      <span class="tag red">1 预算异常</span>
+    </div>
+  </div>
+  <div class="grid g4">
+    <div class="card card-p clickable" onclick="switchView('activity')">
+      <div class="row between"><span class="xs faint">今日完成任务</span><span class="tag teal">+12</span></div>
+      <div class="stat-num mt">47</div><div class="stat-delta up">↑ 较昨日 +34%</div>
+    </div>
+    <div class="card card-p clickable" onclick="switchView('kernel')">
+      <div class="row between"><span class="xs faint">Token 消耗（今日）</span><span class="tag purple">预算内</span></div>
+      <div class="stat-num mt">1.2M</div><div class="stat-delta">日均预算 2M · 占 61%</div>
+    </div>
+    <div class="card card-p clickable" onclick="switchView('knowledge')">
+      <div class="row between"><span class="xs faint">知识库新增</span><span class="tag blue">RAG</span></div>
+      <div class="stat-num mt">28</div><div class="stat-delta up">含 6 篇研究综述</div>
+    </div>
+    <div class="card card-p clickable" onclick="switchView('approvals')">
+      <div class="row between"><span class="xs faint">等你审批</span><span class="tag red">阻塞中</span></div>
+      <div class="stat-num mt" style="color:var(--yellow)">${APPROVALS.length}</div><div class="stat-delta warn">最早已等待 3h 40m</div>
+    </div>
+  </div>
+  <div class="grid mt" style="grid-template-columns:1.6fr 1fr;">
+    <div class="card card-p">
+      <div class="sec-title">动态 <span class="cnt">Agent 进展 · 非聊天</span></div>
+      ${feed.map(f => `
+      <div class="feed-item">
+        <div class="feed-ico" style="background:${f.bg}">${f.ico}</div>
+        <div style="flex:1"><div class="feed-t"><span class="who">${f.who}</span> ${f.t}</div><div class="feed-time">${f.time}</div></div>
+        <button class="btn sm" onclick="${f.btn[1]}">${f.btn[0]}</button>
+      </div>`).join('')}
+    </div>
+    <div>
+      <div class="card card-p clickable" onclick="switchView('goals')">
+        <div class="sec-title">Q3 目标 <span class="cnt">Goal-driven</span></div>
+        <div class="sm b">${o1.title}</div>
+        ${o1.krs.map(k => `<div class="mt sm dim">${k.t.split('：')[0]} <span class="faint" style="float:right">${k.p}%</span></div><div class="bar ${k.bar} mt"><i style="width:${k.p}%"></i></div>`).join('')}
+        <div class="divider"></div><div class="xs faint">由${o1.owner}于 07-25 制定 · 每周一自动汇报</div>
+      </div>
+      <div class="card card-p mt">
+        <div class="sec-title">Agent 状态 <span class="cnt">实时</span></div>
+        ${AGENTS.slice(2).map(a => `<div class="kv clickable" onclick="openAgent('${a.id}')" style="cursor:pointer"><span class="k row"><span class="st-dot st-${a.st}"></span>${a.name}</span><span class="v xs">${a.stText}${a.warn?' ⚠':''}</span></div>`).join('')}
+      </div>
+    </div>
+  </div>
+  ${PROJECTS.map((p,i) => `
+  <div class="card card-p mt-lg">
+    <div class="sec-title">${p.name} <span class="cnt">${p.members.length} 名 AI 正在自讨论 · 你在旁观</span></div>
+    <div class="chat-log" style="padding:4px 2px;">
+      ${p.msgs.map(m => { const a = agentById(m.a); return `<div class="msg ai"><b class="xs" style="color:${a.grad.split(',')[0]}">${a.name} ${a.role.replace(' Agent','')}</b><br>${m.x}</div>`; }).join('')}
+    </div>
+    <div class="row" style="justify-content:center; padding-top:8px; border-top:1px solid var(--border-soft);">
+      <span class="xs faint">旁观模式 · </span>
+      <button class="btn sm" onclick="openProject(${i})">进入项目组</button>
+      <button class="btn sm" onclick="toast('已要求「${p.name}」今日 18:00 前给出结论摘要')">要求汇报</button>
+    </div>
+  </div>`).join('')}`;
+};
+
+/* ═══════════════════════ 页面 2：Agent ═══════════════════════ */
+RENDERERS.agents = () => `
+  <div class="page-head">
+    <div><div class="page-title">Agent</div><div class="page-sub">7 个 Agent · 能力 / 预算 / 记忆，统一受控运行</div></div>
+    <button class="btn primary" onclick="openWizard('hire')">+ 新建</button>
+  </div>
+  <div class="grid g3">
+    ${AGENTS.map(a => `
+    <div class="card card-p clickable" onclick="openAgent('${a.id}')">
+      <div class="row">${avatarHtml(a)}
+        <div style="flex:1"><div class="b sm">${a.name}</div><div class="xs faint">${a.role}</div></div>
+        <span class="st-dot st-${a.st}"></span>
+      </div>
+      <div class="xs dim mt">${a.stText}</div>
+      <div class="mt xs faint">今日 ${a.today.done} 单 · 成功率 ${a.today.rate}%</div>
+      <div class="row between xs faint mt"><span>预算</span><span ${a.warn?'style="color:var(--yellow)"':''}>${a.budget}%${a.warn?' ⚠':''}</span></div>
+      <div class="bar ${a.warn?'yellow':'teal'} mt"><i style="width:${a.budget}%"></i></div>
+      <div class="row mt wrap" style="gap:4px">${a.caps.map(c=>`<span class="tag">${c}</span>`).join('')}</div>
+    </div>`).join('')}
+  </div>
+  <div class="card card-p mt-lg">
+    <div class="sec-title">协作关系</div>
+    <div class="grid g3">
+      ${AGENTS.map(a => `<div class="row" style="padding:9px 12px;border-radius:10px;background:var(--card);border:1px solid var(--border-soft)"><span class="avatar" style="background:linear-gradient(135deg,${a.grad});width:30px;height:30px;font-size:12px">${a.name[0]}</span><div><div class="sm b">${a.name} · ${a.role.replace(' Agent','')}</div><div class="xs faint">由「${a.reportsTo}」协调</div></div></div>`).join('')}
+    </div>
+  </div>`;
+
+/* ── Agent Profile 抽屉（5 tab）── */
+function openAgent(id) {
+  const a = agentById(id);
+  const tabs = [['work','今日工作'],['memory','记忆'],['growth','成长轨迹'],['cost','成本'],['chat','联系 TA']];
+  openDrawer(`
+  <div class="drawer-head">
+    <div class="row">${avatarHtml(a, true)}
+      <div style="flex:1">
+        <div class="row"><span class="b" style="font-size:16px">${a.name}</span><span class="tag purple">${a.role}</span></div>
+        <div class="row mt xs dim"><span class="st-dot st-${a.st}"></span>${a.stText} · 预算 ${a.budget}%</div>
+      </div>
+      <button class="btn sm" onclick="closeDrawer()">✕</button>
+    </div>
+    <div class="row mt wrap" style="gap:6px">
+      ${a.st === 'suspended'
+        ? `<button class="btn sm ghost-green" onclick="toast('已恢复 ${a.name} 的进程（gate 放行）');closeDrawer()">恢复</button>`
+        : `<button class="btn sm" onclick="toast('已挂起 ${a.name}（下一轮 gate 处等待恢复）');closeDrawer()">挂起</button>`}
+      <button class="btn sm" onclick="openEditAgent('${a.id}')">编辑配置</button>
+      <button class="btn sm" onclick="closeDrawer();switchView('kernel')">查看进程</button>
+    </div>
+  </div>
+  <div class="drawer-tabs">${tabs.map(([k,t],i) => `<div class="dtab${i===0?' on':''}" onclick="dTab(this,'dp-${k}')">${t}</div>`).join('')}</div>
+  <div class="drawer-body">
+    <div class="dpane on" id="dp-work">
+      <div class="grid g2">
+        <div class="card card-p"><div class="xs faint">今日任务</div><div class="stat-num mt" style="font-size:19px">${a.today.done}</div></div>
+        <div class="card card-p"><div class="xs faint">成功率</div><div class="stat-num mt" style="font-size:19px">${a.today.rate}%</div></div>
+      </div>
+      <div class="card card-p mt">
+        <div class="sec-title">进行中</div>
+        <div class="sm b">${a.stText}</div>
+        <div class="bar teal mt"><i style="width:${a.budget}%"></i></div>
+        <div class="xs faint mt">进程 ${a.procs[0].pid} · 已耗 ${a.procs[0].used.toLocaleString()} / ${a.procs[0].max.toLocaleString()} tokens</div>
+      </div>
+      <div class="card card-p mt">
+        <div class="sec-title">能力与预算（配置）</div>
+        <div class="kv"><span class="k">能力白名单</span><span class="v xs">${a.caps.join(' · ')}</span></div>
+        <div class="kv"><span class="k">单任务预算</span><span class="v xs mono">${a.procs[0].max.toLocaleString()} tokens</span></div>
+        <div class="kv"><span class="k">今日已耗</span><span class="v xs mono">${a.cost.today.toLocaleString()}（${a.budget}%）${a.warn?' ⚠':''}</span></div>
+        <div class="kv"><span class="k">上报线</span><span class="v xs">${a.reportsTo}</span></div>
+      </div>
+    </div>
+    <div class="dpane" id="dp-memory">
+      ${a.memory.map(m => `<div class="card card-p mt"><span class="tag ${m.k==='persona'?'purple':m.k==='methodology'?'teal':m.k==='duty'?'yellow':'blue'}">${m.k} v${m.v}</span><div class="sm mt">${m.c}</div></div>`).join('')}
+      <div class="xs faint mt">记忆已入 RAG：执行中按当前输入自动召回相关条目（非全量硬注入）。</div>
+    </div>
+    <div class="dpane" id="dp-growth">
+      <div class="tl">${a.growth.map(g => `<div class="tl-item ${g.c}"><div class="sm">${g.x}</div><div class="xs faint">${g.t}</div></div>`).join('')}</div>
+    </div>
+    <div class="dpane" id="dp-cost">
+      <div class="grid g2">
+        <div class="card card-p"><div class="xs faint">今日消耗</div><div class="stat-num mt" style="font-size:19px">${(a.cost.today/1000).toFixed(1)}k</div><div class="xs faint">tokens</div></div>
+        <div class="card card-p"><div class="xs faint">本周消耗</div><div class="stat-num mt" style="font-size:19px">${(a.cost.week/1000).toFixed(0)}k</div><div class="xs faint">tokens</div></div>
+      </div>
+      <div class="card card-p mt">
+        <div class="sec-title">按目标分摊</div>
+        ${Object.entries(a.cost.byGoal).map(([g,p]) => `<div class="mt sm dim">${g} <span class="faint" style="float:right">${p}%</span></div><div class="bar ${p>80?'red':p>50?'yellow':'green'} mt"><i style="width:${p}%"></i></div>`).join('')}
+      </div>
+      <div class="xs faint mt">数据来自 kernel 逐进程 charge_tokens 记账。</div>
+    </div>
+    <div class="dpane" id="dp-chat">
+      <div class="xs faint" style="margin-bottom:8px">这只是联系Agent的一种方式——更多时候你该看的是 TA 的工作，而不是和 TA 聊天。</div>
+      <div class="row wrap" style="gap:6px;margin-bottom:10px">
+        <button class="btn sm" onclick="toast('已发送「汇报进展」· ${a.name} 会在当前任务间隙回复')">汇报进展</button>
+        <button class="btn sm" onclick="toast('已发送「今天重点」· 等待回复')">今天重点做什么</button>
+        <button class="btn sm" onclick="toast('已发送「需要我做什么」· 等待回复')">需要我配合什么</button>
+      </div>
+      <div class="chat-log">
+        <div class="msg me">综述里把"事前刹车"单独成一节，金算要引用。</div>
+        <div class="msg ai">收到。我会把事前/事后两道刹车的触发数据（今日省 ~38k tokens）一并写进去，09:30 前给你初稿。</div>
+      </div>
+      <div class="chat-input">
+        <input placeholder="给${a.name}发消息…（这不是 Prompt，是内部沟通）" onkeydown="if(event.key==='Enter'){toast('已发送 · ${a.name} 会在当前任务间隙处理');this.value=''}">
+        <button class="btn primary" onclick="toast('已发送 · ${a.name} 会在当前任务间隙处理')">发送</button>
+      </div>
+    </div>
+  </div>`);
+}
+
+/* ── 项目组抽屉 ── */
+function openProject(i) {
+  const p = PROJECTS[i];
+  openDrawer(`
+  <div class="drawer-head">
+    <div class="row between">
+      <div><div class="b" style="font-size:16px">${p.name}</div><div class="xs faint mt">${p.members.length} 名成员 · 自主讨论中</div></div>
+      <button class="btn sm" onclick="closeDrawer()">✕</button>
+    </div>
+  </div>
+  <div class="drawer-body">
+    <div class="card card-p"><div class="sec-title">成员</div>
+      <div class="row wrap">${p.members.map(id => { const a = agentById(id); return `<span class="tag clickable" style="cursor:pointer" onclick="openAgent('${a.id}')">${a.name}</span>`; }).join('')}</div>
+    </div>
+    <div class="sec-title section-gap">讨论记录</div>
+    <div class="chat-log">
+      ${p.msgs.map(m => { const a = agentById(m.a); return `<div class="msg ai"><b class="xs" style="color:${a.grad.split(',')[0]}">${a.name}</b><br>${m.x}</div>`; }).join('')}
+    </div>
+    <div class="chat-input">
+      <input placeholder="以你的身份发言…（全员可见）" onkeydown="if(event.key==='Enter'){toast('已发至项目组 · AI 成员会参考你的意见继续讨论');this.value=''}">
+      <button class="btn primary" onclick="toast('已发至项目组')">发送</button>
+    </div>
+  </div>`);
+}
+
+/* ═══════════════════════ 页面 3：目标 ═══════════════════════ */
+RENDERERS.goals = () => `
+  <div class="page-head">
+    <div><div class="page-title">目标</div><div class="page-sub">Agent 不是 Task-driven，是 Goal-driven · 目标自动分解为任务</div></div>
+    <button class="btn primary" onclick="openWizard('goal')">+ 制定目标</button>
+  </div>
+  ${GOALS.map(g => `
+  <div class="card card-p ${g===GOALS[0]?'':'mt-lg'} clickable" onclick="openGoal('${g.id}')">
+    <div class="row between">
+      <div><div class="b" style="font-size:15px">${g.id} · ${g.title}</div>
+      <div class="xs faint mt">${g.period} · 负责人：${g.owner}</div></div>
+      <span class="tag ${g.st==='ontrack'?'green':'yellow'}">${g.stText}</span>
+    </div>
+    ${g.krs.map(k => `
+    <div class="mt-lg">
+      <div class="row between sm"><span>${k.id.split('-')[1]} · ${k.t}</span><span class="dim">${k.p}%</span></div>
+      <div class="bar ${k.bar} mt"><i style="width:${k.p}%"></i></div>
+      <div class="xs faint mt">责任：${k.owner} · ${k.note}</div>
+    </div>`).join('')}
+  </div>`).join('')}`;
+
+/* ── 目标详情抽屉 ── */
+function openGoal(id) {
+  const g = GOALS.find(x => x.id === id) || GOALS[0];
+  openDrawer(`
+  <div class="drawer-head">
+    <div class="row between">
+      <div><div class="b" style="font-size:16px">${g.id} · ${g.title}</div>
+      <div class="xs faint mt">${g.period} · 负责人：${g.owner} · 总进度 ${g.progress}%</div></div>
+      <button class="btn sm" onclick="closeDrawer()">✕</button>
+    </div>
+    <div class="row mt"><span class="tag ${g.st==='ontrack'?'green':'yellow'}">${g.stText}</span>
+      <button class="btn sm" onclick="toast('已要求 ${g.owner} 提前汇报，今晚 20:00 前提交')">要求汇报</button>
+      <button class="btn sm" onclick="openWizard('goal')">调整 KR</button>
+    </div>
+  </div>
+  <div class="drawer-body">
+    <div class="sec-title">关键结果（KR）</div>
+    ${g.krs.map(k => `
+    <div class="card card-p mt">
+      <div class="row between sm b"><span>${k.id}</span><span>${k.p}%</span></div>
+      <div class="sm mt">${k.t}</div>
+      <div class="bar ${k.bar} mt"><i style="width:${k.p}%"></i></div>
+      <div class="xs faint mt">责任：${k.owner}</div>
+      <div class="xs dim mt">${k.note}</div>
+    </div>`).join('')}
+    <div class="sec-title section-gap">汇报记录</div>
+    <div class="tl">${g.reviews.map(r => `<div class="tl-item"><div class="sm">${r.x}</div><div class="xs faint">${r.t}</div></div>`).join('')}</div>
+    <div class="sec-title section-gap">关联Agent</div>
+    <div class="row wrap">${[...new Set(g.krs.flatMap(k => k.owner.split(' / ')))].map(n => {
+      const a = AGENTS.find(x => x.name === n); return a ? `<span class="tag clickable" style="cursor:pointer" onclick="openAgent('${a.id}')">${a.name}</span>` : '';
+    }).join('')}</div>
+  </div>`);
+}
+
+/* ═══════════════════════ 页面 4：审批 ═══════════════════════ */
+RENDERERS.approvals = () => `
+  <div class="page-head">
+    <div><div class="page-title">审批</div><div class="page-sub">你的主要动作不是 Prompt，是审批 · ${APPROVALS.length} 项待决</div></div>
+    <div class="row">
+      <button class="btn sm" onclick="approveAll(this)">全部通过</button>
+      <button class="btn sm" onclick="openApprovalRules()">审批规则</button>
+    </div>
+  </div>
+  <div class="grid" style="gap:14px;" id="ap-list">
+    ${APPROVALS.map(ap => { const a = agentById(ap.agent); const clsColor = ap.cls==='decision'?'rgba(198,148,70,0.3)':ap.cls==='perm'?'rgba(192,96,70,0.3)':'rgba(192,96,70,0.3)'; const clsTag = ap.cls==='decision'?'yellow':'red';
+    return `
+    <div class="card card-p" id="card-${ap.id}" style="border-color:${clsColor}">
+      <div class="row between">
+        <div class="row">${avatarHtml(a)}
+          <div><div class="b">${ap.title} <span class="tag ${clsTag}">${ap.clsText}</span></div>
+          <div class="xs faint">${a.name} · 提交于 ${ap.time}${ap.id==='ap3'?' · escalate 自 kernel mediate（capability 外操作）':''}</div></div>
+        </div>
+        <span class="tag">等 ${ap.wait}</span>
+      </div>
+      <div class="divider"></div>
+      <div class="sm dim">${ap.desc}</div>
+      <div class="row mt wrap">
+        ${ap.actions.includes('approve30')
+          ? `<button class="btn ghost-green" onclick="resolveApproval('${ap.id}','已授权：${a.name}获得 arXiv 出站能力（30 天试行）')">授权（30天试行）</button>`
+          : `<button class="btn ghost-green" onclick="resolveApproval('${ap.id}','已通过：${ap.title}')">通过</button>`}
+        ${ap.actions.includes('revise') ? `<button class="btn sm" onclick="toast('已退回：请${a.name}补充 KR2 的前端排期');resolveApproval('${ap.id}','已退回修改：${ap.title}')">退回修改</button>` : ''}
+        ${ap.actions.includes('reject') ? `<button class="btn ghost-red sm" onclick="resolveApproval('${ap.id}','已拒绝：${ap.title}')">拒绝</button>` : ''}
+        ${ap.actions.includes('more') ? `<button class="btn sm" onclick="toast('已要求${a.name}补充：增量预筛的 token 消耗模型')">要求补充</button>` : ''}
+        ${ap.actions.includes('view') ? `<button class="btn sm" onclick="toast('已打开附件全文（demo 占位）')">查看全文</button>` : ''}
+        <button class="btn sm" onclick="gotoRef(${JSON.stringify(ap.ref).replace(/"/g,'&quot;')})">${ap.ref.label}</button>
+      </div>
+    </div>`; }).join('') || '<div class="empty-hint">待决事项已清空 🎉</div>'}
+  </div>
+  <div class="sec-title section-gap">今日已决 <span class="cnt">${RESOLVED.length} 项 · 平均响应 11 分钟</span></div>
+  <div class="card card-p sm" id="resolved-list">
+    ${RESOLVED.map(r => `<div class="kv"><span class="k">${r.t}</span><span class="v"><span class="tag ${r.r==='ok'?'green':'red'}">${r.r==='ok'?'已批准':'已拒绝'} · ${r.time}</span></span></div>`).join('')}
+  </div>`;
+
+function resolveApproval(id, msg) {
+  const card = document.getElementById('card-' + id);
+  if (card) {
+    card.style.cssText += 'opacity:0.45;pointer-events:none;transition:all 400ms';
+    setTimeout(() => { card.style.maxHeight = '0'; card.style.padding = '0 16px'; card.style.overflow = 'hidden'; }, 400);
+    setTimeout(() => card.remove(), 850);
+  }
+  APPROVALS = APPROVALS.filter(a => a.id !== id);
+  renderRail(); // 角标联动
+  const badgeEl = document.querySelector('.rail-btn[data-view="approvals"]');
+  toast(msg);
+}
+function approveAll(btn) {
+  if (!APPROVALS.length) { toast('没有待决事项'); return; }
+  openModal(`
+    <div class="modal-head"><div class="modal-title">全部通过？</div><button class="btn sm" onclick="closeModal()">✕</button></div>
+    <div class="modal-body"><div class="sm dim">将一次性通过 ${APPROVALS.length} 项待决（含 1 项高危类）。高危操作建议逐项确认——确定继续？</div></div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal()">再想想</button>
+      <button class="btn ghost-red" onclick="closeModal();APPROVALS.slice().forEach(a=>resolveApproval(a.id,'已批量通过（含高危，请知悉风险）'))">确认全部通过</button>
+    </div>`);
+}
+function openApprovalRules() {
+  openModal(`
+    <div class="modal-head"><div class="modal-title">审批规则（自动放行的边界）</div><button class="btn sm" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="xs faint" style="margin-bottom:12px">规则内的事 Agent 自己干，规则外才打扰你。每加一条规则 = 多一份信任，请谨慎。</div>
+      <div class="card card-p">
+        <div class="row between"><div><div class="sm b">低风险任务自动执行</div><div class="xs faint">能力白名单内 + 单任务预算 ≤ 50k</div></div><div class="toggle on" onclick="this.classList.toggle('on');toast('规则已'+(this.classList.contains('on')?'启用':'停用'))"></div></div>
+      </div>
+      <div class="card card-p mt">
+        <div class="row between"><div><div class="sm b">能力升级需审批</div><div class="xs faint">新数据源 / 新工具 / 出站网络</div></div><div class="toggle on" onclick="this.classList.toggle('on');toast('规则已'+(this.classList.contains('on')?'启用':'停用'))"></div></div>
+      </div>
+      <div class="card card-p mt">
+        <div class="row between"><div><div class="sm b">高危操作必审 + 二次确认</div><div class="xs faint">删除 / 覆盖 / 对外发布</div></div><div class="toggle on" onclick="this.classList.toggle('on');toast('红线规则不建议关闭')"></div></div>
+      </div>
+      <div class="card card-p mt">
+        <div class="row between"><div><div class="sm b">超预算自动收紧（金算托管）</div><div class="xs faint">超日均 2× 自动降额并通知你</div></div><div class="toggle on" onclick="this.classList.toggle('on');toast('规则已'+(this.classList.contains('on')?'启用':'停用'))"></div></div>
+      </div>
+    </div>
+    <div class="modal-foot"><button class="btn primary" onclick="closeModal();toast('审批规则已保存')">保存</button></div>`);
+}
+AFTER_RENDER.approvals = () => {};
+
+/* ═══════════════════════ 页面 5：知识 ═══════════════════════ */
+let knowledgeFilter = '全部';
+RENDERERS.knowledge = () => `
+  <div class="page-head">
+    <div><div class="page-title">知识</div><div class="page-sub">Agent 产出沉淀为共享资产 · 全员可检索（RAG + Wiki）</div></div>
+    <button class="btn" onclick="openUpload()">+ 手动上传</button>
+  </div>
+  <div class="row wrap" style="gap:6px;margin-bottom:14px">
+    ${['全部','综述','SOP','决策记录'].map(t => `<span class="chip ${knowledgeFilter===t?'on':''}" onclick="knowledgeFilter='${t}';switchView('knowledge')">${t}</span>`).join('')}
+    <input style="margin-left:auto;background:var(--field);border:1px solid var(--border-soft);border-radius:8px;padding:6px 11px;color:var(--fg);font-size:12px;outline:none;width:200px" placeholder="搜索知识库…" onkeydown="if(event.key==='Enter')toast('检索：'+this.value+'（走 RAG 混合检索）')">
+  </div>
+  <div class="grid g3">
+    ${KNOWLEDGE.filter(k => knowledgeFilter==='全部' || k.type===knowledgeFilter).map(k => { const a = agentById(k.author); return `
+    <div class="card card-p clickable" onclick="openKnowledge('${k.id}')">
+      <div class="row between"><span class="tag ${k.cls}">${k.type}</span><span class="xs faint">${k.time}</span></div>
+      <div class="b mt sm">${k.title}</div>
+      <div class="xs faint mt">${a.name} · ${k.desc}</div>
+      <div class="row mt wrap" style="gap:4px">${k.tags.map(t=>`<span class="tag">${t}</span>`).join('')}</div>
+    </div>`; }).join('')}
+  </div>`;
+
+function openKnowledge(id) {
+  const k = KNOWLEDGE.find(x => x.id === id) || KNOWLEDGE[0];
+  const a = agentById(k.author);
+  openDrawer(`
+  <div class="drawer-head">
+    <div class="row between">
+      <div><span class="tag ${k.cls}">${k.type}</span><div class="b mt" style="font-size:16px">${k.title}</div>
+      <div class="xs faint mt">${a.name} · ${k.time}</div></div>
+      <button class="btn sm" onclick="closeDrawer()">✕</button>
+    </div>
+    <div class="row mt wrap" style="gap:4px">${k.tags.map(t=>`<span class="tag">${t}</span>`).join('')}
+      <button class="btn sm" style="margin-left:auto" onclick="openAgent('${a.id}')">看作者</button>
+    </div>
+  </div>
+  <div class="drawer-body">
+    <div class="sec-title">摘要</div>
+    <div class="sm dim">${k.body}</div>
+    <div class="divider"></div>
+    <div class="sec-title">组织内的引用</div>
+    <div class="kv"><span class="k">被引用次数</span><span class="v xs">${k.tags.find(t=>t.includes('引用')) || '0 次'}</span></div>
+    <div class="kv"><span class="k">检索状态</span><span class="v xs">已入 RAG · 向量 + BM25 双通道</span></div>
+    <div class="kv"><span class="k">Wiki 图谱</span><span class="v xs">${k.tags.includes('Wiki 已链接') ? '已建实体关联' : '未链接'}</span></div>
+    <div class="row mt">
+      <button class="btn sm" onclick="toast('已指派文研基于本文做延伸阅读')">延伸阅读</button>
+      <button class="btn sm" onclick="toast('已导出 Markdown')">导出</button>
+    </div>
+  </div>`);
+}
+function openUpload() {
+  openModal(`
+    <div class="modal-head"><div class="modal-title">手动上传知识</div><button class="btn sm" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="field"><label>标题</label><input placeholder="文档标题"></div>
+      <div class="field"><label>内容 / 链接</label><textarea placeholder="粘贴正文，或给一个 URL（文研会自动抓取整理）"></textarea></div>
+      <div class="field"><label>共享范围</label><div class="chip-grid"><span class="chip on">全员</span><span class="chip">仅协调</span><span class="chip">指定Agent</span></div></div>
+    </div>
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">取消</button><button class="btn primary" onclick="closeModal();toast('已入库 · 文研会在今晚整理入 RAG 并给出摘要')">上传</button></div>`);
+}
+
+/* ═══════════════════════ 页面 6：活动 ═══════════════════════ */
+let activityFilter = '全部';
+RENDERERS.activity = () => `
+  <div class="page-head">
+    <div><div class="page-title">活动流</div><div class="page-sub">不是聊天记录，是组织的时间线 · 可追溯每一次成长与决策</div></div>
+    <div class="row wrap" style="gap:6px">
+      ${['全部','学习','交付','审批','治理'].map(t => `<span class="chip ${activityFilter===t?'on':''}" onclick="activityFilter='${t}';switchView('activity')">${t}</span>`).join('')}
+    </div>
+  </div>
+  <div class="grid" style="grid-template-columns:1fr 1fr;">
+    ${EVENTS.map(day => `
+    <div class="card card-p">
+      <div class="sec-title">${day.day}</div>
+      <div class="tl">
+        ${day.items.filter(e => activityFilter==='全部' || e.type===activityFilter).map(e => `
+        <div class="tl-item ${e.c} clickable" onclick='gotoRef(${JSON.stringify(e.ref)})' style="cursor:pointer">
+          <div class="sm">${e.x}</div><div class="xs faint">${e.t} · ${e.type}</div>
+        </div>`).join('') || '<div class="empty-hint">该类型今日暂无记录</div>'}
+      </div>
+    </div>`).join('')}
+  </div>`;
+
+/* ═══════════════════════ 页面 7：内核 ═══════════════════════ */
+let kernelTab = 'proc';
+RENDERERS.kernel = () => `
+  <div class="page-head">
+    <div><div class="page-title">内核</div><div class="page-sub">进程 / 预算 / 权限，全部可观测</div></div>
+    <span class="tag green">kernel v0.4.0-alpha · 健康</span>
+  </div>
+  <div class="grid g4">
+    <div class="card card-p"><div class="xs faint">活跃进程</div><div class="stat-num mt">6</div><div class="stat-delta">1 挂起可恢复</div></div>
+    <div class="card card-p"><div class="xs faint">今日 mediate 拦截</div><div class="stat-num mt">9</div><div class="stat-delta warn">3 次升级为审批</div></div>
+    <div class="card card-p"><div class="xs faint">事前刹车触发</div><div class="stat-num mt">2</div><div class="stat-delta up">避免烧穿 ~38k tokens</div></div>
+    <div class="card card-p"><div class="xs faint">事件审计链</div><div class="stat-num mt">1.4k</div><div class="stat-delta">HMAC 签名 · 完整</div></div>
+  </div>
+  <div class="row mt-lg" style="gap:6px">
+    ${[['proc','进程 /proc'],['gov','治理'],['nodes','节点']].map(([k,t]) => `<span class="chip ${kernelTab===k?'on':''}" onclick="kernelTab='${k}';switchView('kernel')">${t}</span>`).join('')}
+  </div>
+  ${kernelTab==='proc' ? `
+  <div class="card card-p mt">
+    <table class="proc-table">
+      <thead><tr><th>PID</th><th>Agent</th><th>状态</th><th>能力集</th><th>预算</th><th>已耗</th><th>时长</th><th></th></tr></thead>
+      <tbody>
+        ${AGENTS.filter(a => a.procs.length).map(a => { const p = a.procs[0]; const stTag = p.st==='running'?'green':p.st==='waiting'?'yellow':'';
+        return `<tr>
+          <td class="mono xs">${p.pid}</td>
+          <td class="clickable" style="cursor:pointer" onclick="openAgent('${a.id}')">${a.name}</td>
+          <td><span class="tag ${stTag}">${p.st}</span></td>
+          <td class="xs dim">${a.caps.slice(0,3).join(', ')}</td>
+          <td class="mono xs">${p.max.toLocaleString()}</td>
+          <td class="mono xs">${p.used.toLocaleString()} (${Math.round(p.used/p.max*100)}%)${a.warn?' ⚠':''}</td>
+          <td class="xs">${p.time}</td>
+          <td>${p.st==='suspended'
+            ? `<button class="btn sm ghost-green" onclick="toast('已恢复 ${p.pid}（gate 放行，继续执行）')">恢复</button>`
+            : p.st==='running' ? `<button class="btn sm" onclick="toast('已挂起 ${p.pid}（下一轮 gate 处等待恢复）')">挂起</button>`
+            : `<button class="btn sm" onclick="toast('进程详情：等待审批中（阻塞于 escalation）')">详情</button>`}</td>
+        </tr>`; }).join('')}
+      </tbody>
+    </table>
+  </div>` : kernelTab==='gov' ? `
+  <div class="grid g2 mt">
+    <div class="card card-p">
+      <div class="sec-title">最近 mediate 拦截</div>
+      ${INTERCEPTS.map(i => `<div class="kv"><span class="k xs">${i.who}</span><span class="v"><span class="tag ${i.r==='deny'?'red':'yellow'}">${i.r}</span></span></div>`).join('')}
+      <div class="divider"></div>
+      <div class="xs faint">拦截不是事故，是制度在工作。升级为审批的项会出现在审批中心。</div>
+    </div>
+    <div class="card card-p">
+      <div class="sec-title">预算硬顶事件</div>
+      ${BUDGET_EVENTS.map(b => `<div class="kv"><span class="k xs">${b.x}</span><span class="v xs">${b.t}</span></div>`).join('')}
+      <div class="divider"></div>
+      <div class="xs faint">红线：异步入口不得绕过权限与预算——无预算本身即绕过。</div>
+    </div>
+  </div>
+  <div class="card card-p mt">
+    <div class="sec-title">制度红线（不可关闭）</div>
+    <div class="kv"><span class="k xs">能力单调递减（父授子，不可提权）</span><span class="v tag green">强制</span></div>
+    <div class="kv"><span class="k xs">蒸馏记忆/技能晋升必须审批</span><span class="v tag green">强制</span></div>
+    <div class="kv"><span class="k xs">异步入口必须挂预算（兜底 50k）</span><span class="v tag green">强制</span></div>
+    <div class="kv"><span class="k xs">审计事件链 HMAC 签名</span><span class="v tag green">强制</span></div>
+  </div>` : `
+  <div class="grid g3 mt">
+    ${NODES.map(n => `
+    <div class="card card-p">
+      <div class="row between"><div class="b sm">${n.name}</div><span class="tag ${n.st==='online'?'green':''}">${n.st}</span></div>
+      <div class="xs faint mt">${n.role}</div>
+      <div class="xs dim mt">${n.info}</div>
+      <div class="row mt"><button class="btn sm" onclick="toast('已 ping ${n.name}：延迟 3ms')">测试连接</button><button class="btn sm" onclick="toast('节点详情（demo 占位）')">详情</button></div>
+    </div>`).join('')}
+    <div class="card card-p clickable" style="display:flex;align-items:center;justify-content:center;min-height:120px" onclick="toast('添加节点向导：SSH 地址 → 探针安装 → 能力声明（demo 占位）')">
+      <div class="faint">+ 接入新节点</div>
+    </div>
+  </div>`}`;
+
+/* ═══════════════════════ 页面 8：扩展（Skills + MCP 合并入口） ═══════════════════════ */
+let marketTab = 'skills';
+RENDERERS.market = () => `
+  <div class="page-head">
+    <div><div class="page-title">扩展</div><div class="page-sub">网上看到什么有意思的，装进来 · 技能与 MCP 服务</div></div>
+    <button class="btn primary" onclick="openAddFromUrl()">+ 从链接添加</button>
+  </div>
+  <div class="row" style="gap:6px;margin-bottom:14px">
+    <span class="chip ${marketTab==='skills'?'on':''}" onclick="marketTab='skills';switchView('market')">技能市场</span>
+    <span class="chip ${marketTab==='mcp'?'on':''}" onclick="marketTab='mcp';switchView('market')">MCP 服务</span>
+    <input style="margin-left:auto;background:var(--field);border:1px solid var(--border-soft);border-radius:8px;padding:6px 11px;color:var(--fg);font-size:12px;outline:none;width:220px" placeholder="搜索技能 / 服务…" onkeydown="if(event.key==='Enter')toast('搜索：'+this.value)">
+  </div>
+  ${marketTab==='skills' ? `
+  <div class="grid g3">
+    ${MARKET_SKILLS.map(s => `
+    <div class="card card-p">
+      <div class="row between"><div class="b sm mono">${s.name}</div>${s.installed?'<span class="tag green">已安装</span>':''}</div>
+      <div class="xs faint mt">${s.author} · ${s.installs} 次安装</div>
+      <div class="sm dim mt">${s.desc}</div>
+      <div class="row mt">
+        ${s.installed
+          ? `<button class="btn sm" onclick="toast('${s.name} 详情：已挂载给 3 个 Agent')">详情</button><button class="btn sm ghost-red" onclick="toast('已卸载 ${s.name}（相关Agent会失去该技能）')">卸载</button>`
+          : `<button class="btn sm primary" onclick="openInstallSkill('${s.id}')">安装</button><button class="btn sm" onclick="toast('查看 ${s.name} 的 skill.yaml（能力声明/工具白名单）')">审查</button>`}
+      </div>
+    </div>`).join('')}
+  </div>
+  <div class="xs faint mt-lg">安装 = 发给 Agent学习。技能契约（skill.yaml）声明工具白名单，越界调用会被 kernel mediate 拦截。</div>
+  ` : `
+  <div class="grid g3">
+    ${MCP_SERVERS.map(s => `
+    <div class="card card-p">
+      <div class="row between"><div class="b sm mono">${s.name}</div><span class="tag ${s.st==='connected'?'green':'red'}">${s.st}</span></div>
+      <div class="xs faint mt mono">${s.endpoint}</div>
+      <div class="sm dim mt">${s.desc}</div>
+      <div class="kv mt"><span class="k xs">暴露工具</span><span class="v xs">${s.tools} 个</span></div>
+      <div class="row mt">
+        ${s.st==='connected'
+          ? `<button class="btn sm" onclick="toast('${s.name} 工具清单（demo 占位）')">工具</button><button class="btn sm ghost-red" onclick="toast('已断开 ${s.name}')">断开</button>`
+          : `<button class="btn sm primary" onclick="toast('重新授权 ${s.name}（跳转 OAuth）')">重新授权</button>`}
+      </div>
+    </div>`).join('')}
+    <div class="card card-p clickable" style="display:flex;align-items:center;justify-content:center;min-height:140px" onclick="openAddMcp()">
+      <div class="faint">+ 添加 MCP 服务</div>
+    </div>
+  </div>
+  <div class="xs faint mt-lg">MCP 服务接入后，其工具进入能力体系——授予Agent需在「编辑配置」中显式声明。</div>`}`;
+
+function openInstallSkill(id) {
+  const s = MARKET_SKILLS.find(x => x.id === id);
+  openModal(`
+    <div class="modal-head"><div class="modal-title">安装技能：${s.name}</div><button class="btn sm" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="sm dim">${s.desc}</div>
+      <div class="field mt"><label>安装给哪些 Agent</label>
+        <div class="chip-grid">${AGENTS.map(a => `<span class="chip" onclick="this.classList.toggle('on')">${a.name}</span>`).join('')}</div>
+      </div>
+      <div class="field"><label>能力声明审查（skill.yaml）</label>
+        <div class="card card-p xs mono dim" style="max-height:120px;overflow-y:auto">tools: [web_search, web_extract]<br>permissions: network.outbound<br>budget_hint: 30k/run<br>requires: rag</div>
+        <div class="hint">声明的工具将并入Agent能力白名单，越界调用由 kernel mediate 拦截。</div>
+      </div>
+    </div>
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">取消</button><button class="btn primary" onclick="closeModal();toast('已安装 ${s.name} · Agent 会在下个任务中应用')">确认安装</button></div>`);
+}
+function openAddFromUrl() {
+  openModal(`
+    <div class="modal-head"><div class="modal-title">从链接添加</div><button class="btn sm" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="field"><label>链接</label><input placeholder="https://github.com/xxx/awesome-skill 或 MCP 服务地址"></div>
+      <div class="xs faint">支持：GitHub 技能仓库 / skill.yaml 直链 / MCP server endpoint。添加前会先做安全审查（权限声明 + 供应链检查）。</div>
+    </div>
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">取消</button><button class="btn primary" onclick="closeModal();toast('安全审查通过 · 已加入扩展（待你分配给 Agent）')">审查并添加</button></div>`);
+}
+function openAddMcp() {
+  openModal(`
+    <div class="modal-head"><div class="modal-title">添加 MCP 服务</div><button class="btn sm" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="field"><label>名称</label><input placeholder="例如：notion"></div>
+      <div class="field"><label>Endpoint</label><input placeholder="https:// 或 stdio:// 地址"></div>
+      <div class="field"><label>认证方式</label><div class="chip-grid"><span class="chip on">无</span><span class="chip">API Key</span><span class="chip">OAuth</span></div></div>
+    </div>
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">取消</button><button class="btn primary" onclick="closeModal();toast('连接测试通过 · MCP 服务已接入（工具待分配）')">连接并添加</button></div>`);
+}
+
+/* ═══════════════════════ 页面 9：设置 ═══════════════════════ */
+let settingsPane = 'general';
+RENDERERS.settings = () => `
+  <div class="page-head">
+    <div><div class="page-title">设置</div><div class="page-sub">偏好 · 模型（LLM）· 对外渠道 · 运行环境</div></div>
+  </div>
+  <div class="settings-grid">
+    <div class="set-nav">
+      ${[['general','通用'],['llm','LLM（模型）'],['channels','对外渠道'],['backend','执行后端'],['about','关于']].map(([k,t]) =>
+        `<div class="set-nav-item ${settingsPane===k?'on':''}" onclick="settingsPane='${k}';switchView('settings')">${t}</div>`).join('')}
+    </div>
+    <div>
+    ${settingsPane==='general' ? `
+      <div class="card card-p">
+        <div class="sec-title">外观与语言</div>
+        <div class="kv"><span class="k">主题</span><span class="v"><span class="chip ${document.documentElement.dataset.theme==='dark'?'on':''}" onclick="setTheme('dark')">深色</span> <span class="chip ${document.documentElement.dataset.theme==='light'?'on':''}" onclick="setTheme('light')">浅色</span></span></div>
+        <div class="kv"><span class="k">语言</span><span class="v"><span class="chip ${LANG==='zh'?'on':''}" onclick="setLang('zh')">中文</span> <span class="chip ${LANG==='en'?'on':''}" onclick="setLang('en')">English</span></span></div>
+      </div>
+      <div class="card card-p mt">
+        <div class="sec-title">通知</div>
+        <div class="kv"><span class="k">审批待决提醒</span><div class="toggle on" onclick="this.classList.toggle('on')"></div></div>
+        <div class="kv"><span class="k">Agent 异常（超支/失败）即时通知</span><div class="toggle on" onclick="this.classList.toggle('on')"></div></div>
+        <div class="kv"><span class="k">每日晨报（小秘 08:30 推送）</span><div class="toggle on" onclick="this.classList.toggle('on')"></div></div>
+        <div class="kv"><span class="k">周报（飞书群，周五 17:00）</span><div class="toggle" onclick="this.classList.toggle('on')"></div></div>
+      </div>` :
+    settingsPane==='llm' ? `
+      <div class="card card-p">
+        <div class="sec-title">主模型（Agent 的"大脑"）</div>
+        <div class="field"><label>Provider</label>
+          <div class="chip-grid"><span class="chip on">Kimi Coding</span><span class="chip" onclick="toast('切换 Provider 会重启所有运行中的 Agent的 LLM 连接')">xAI (Grok)</span><span class="chip" onclick="toast('切换 Provider…')">Anthropic</span><span class="chip" onclick="toast('切换 Provider…')">本地 (Ollama)</span></div>
+        </div>
+        <div class="field"><label>API Key</label><input type="password" value="sk-••••••••••••••••••••"><div class="hint">仅本机存储，不上传。</div></div>
+        <div class="field"><label>Base URL</label><input value="https://api.kimi.com/coding/v1"></div>
+        <div class="row" style="gap:12px">
+          <div class="field" style="flex:1"><label>默认模型</label><input value="k3-256k"></div>
+          <div class="field" style="width:110px"><label>温度</label><input value="0.7"></div>
+          <div class="field" style="width:130px"><label>超时（秒）</label><input value="120"></div>
+        </div>
+        <div class="row"><button class="btn sm" onclick="toast('连接测试：k3-256k 延迟 0.4s · 正常')">测试连接</button><button class="btn sm primary" onclick="toast('LLM 配置已保存并热生效')">保存</button></div>
+      </div>
+      <div class="card card-p mt">
+        <div class="sec-title">按角色分配模型（高级）</div>
+        <div class="kv"><span class="k">协调层（沈策/陈工）</span><span class="v xs">k3-256k（强推理）</span></div>
+        <div class="kv"><span class="k">领域层（文研/码力/测安）</span><span class="v xs">k3-256k</span></div>
+        <div class="kv"><span class="k">支持层（小秘/金算）</span><span class="v xs">k3-turbo（省成本）</span></div>
+        <div class="xs faint mt">金算建议：支持层换小模型后，O2 成本目标可再降 8%。</div>
+      </div>
+      <div class="card card-p mt">
+        <div class="sec-title">Embedding / Rerank（知识底座）</div>
+        <div class="kv"><span class="k">Embedding</span><span class="v xs">本地 Qwen3-Embedding（MI210）</span></div>
+        <div class="kv"><span class="k">Rerank</span><span class="v xs">Qwen3-Reranker（自研管线）</span></div>
+        <div class="kv"><span class="k">Qdrant</span><span class="v xs mono">127.0.0.1:6333 · 已连接</span></div>
+      </div>` :
+    settingsPane==='channels' ? `
+      <div class="card card-p">
+        <div class="sec-title">对外窗口 <span class="cnt">外部消息 → 助理分拣 → 路由给对应 Agent</span></div>
+        ${[['飞书','已连接 · 3 个群',true],['企业微信','已连接 · 1 个会话',true],['钉钉','未配置',false],['Telegram','未配置',false]].map(([n,s,on]) => `
+        <div class="kv"><span class="k row">${n} <span class="xs faint">${s}</span></span><div class="row"><button class="btn sm" onclick="toast('${n} 路由规则配置（demo 占位）')">路由</button><div class="toggle ${on?'on':''}" onclick="this.classList.toggle('on')"></div></div></div>`).join('')}
+        <div class="xs faint mt">路由规则：外部消息按群/关键词分派给 Agent；外发必须以Agent身份（小秘复核）。</div>
+      </div>` :
+    settingsPane==='backend' ? `
+      <div class="card card-p">
+        <div class="sec-title">执行后端（Agent 的"手"在哪执行）</div>
+        <div class="field"><label>沙箱后端</label>
+          <div class="chip-grid"><span class="chip" onclick="toast('local 仅开发用：agent 直接操作宿主机，风险自担')">local（危险）</span><span class="chip on">bwrap（Linux 默认）</span><span class="chip" onclick="toast('Docker 后端：强隔离，镜像需预置')">Docker</span><span class="chip" onclick="toast('远端节点作为 Computer')">SSH 节点</span></div>
+        </div>
+        <div class="kv"><span class="k">workspace 可写目录</span><span class="v xs mono">/opt/hermes-workspace</span></div>
+        <div class="kv"><span class="k">网络出站</span><span class="v xs">白名单制（当前 4 条）</span></div>
+        <div class="kv"><span class="k">桌面 GUI 操作</span><span class="v tag yellow">默认 ask · 高风险</span></div>
+        <div class="xs faint mt">Soft gate 决定「该不该」，Computer 后端决定「能不能」。</div>
+      </div>` : `
+      <div class="card card-p">
+        <div class="sec-title">Takton AIOS</div>
+        <div class="kv"><span class="k">版本</span><span class="v xs mono">v0.4.0-alpha（feature/agent-kernel）</span></div>
+        <div class="kv"><span class="k">内核</span><span class="v xs">AgentKernel · 中介模式</span></div>
+        <div class="kv"><span class="k">测试基线</span><span class="v xs">740 tests · 0 failures</span></div>
+        <div class="divider"></div>
+        <div class="xs faint">An OS where your agents keep working.</div>
+      </div>`}
+    </div>
+  </div>`;
+
+/* ═══════════════════════ 向导系统（招聘 / 目标 / 编辑配置） ═══════════════════════ */
+const WIZARD_STATE = {};
+function openWizard(kind) {
+  WIZARD_STATE[kind] = { step: 0 };
+  renderWizard(kind);
+}
+function wizStep(kind, dir) {
+  WIZARD_STATE[kind].step += dir;
+  renderWizard(kind);
+}
+function renderWizard(kind) {
+  const s = WIZARD_STATE[kind].step;
+  if (kind === 'hire') {
+    const steps = ['角色', '能力', '预算', '记忆', '确认'];
+    const bodies = [
+      `<div class="field"><label>姓名</label><input placeholder="例如：小译"></div>
+       <div class="field"><label>角色定位</label><input placeholder="例如：i18n Translator · 文档翻译"></div>
+       <div class="field"><label>由谁协调</label><div class="chip-grid">${AGENTS.map(a=>`<span class="chip" onclick="this.classList.toggle('on')">${a.name}</span>`).join('')}</div></div>`,
+      `<div class="xs faint" style="margin-bottom:10px">能力白名单——TA 能用什么工具。越界调用会被 kernel 拦截并升级为审批。</div>
+       <div class="chip-grid">${['file_read','file_rw','web_search','web_extract','command','git','rag','notify','feishu','desktop'].map(c=>`<span class="chip ${['file_read','web_search'].includes(c)?'on':''}" onclick="this.classList.toggle('on')">${c}</span>`).join('')}</div>`,
+      `<div class="field"><label>单任务预算（tokens）</label><input value="30000"><div class="hint">超支即事前刹车中断。不设限 = 兜底 50k（不推荐）。</div></div>
+       <div class="field"><label>月度预算上限</label><input value="500000"></div>
+       <div class="kv"><span class="k">超日均 2× 时自动收紧</span><div class="toggle on" onclick="this.classList.toggle('on')"></div></div>`,
+      `<div class="field"><label>人格（persona）</label><textarea placeholder="例如：译文风格克制专业，术语必须查表，不臆造。"></textarea></div>
+       <div class="field"><label>职责（duty）</label><textarea placeholder="例如：负责所有对外文档的中英互译与术语一致性。"></textarea></div>
+       <div class="xs faint">初始记忆将向量入库（identity_memory），执行中按输入自动召回。</div>`,
+      `<div class="card card-p">
+        <div class="kv"><span class="k">姓名 / 角色</span><span class="v xs">小译 · i18n Translator</span></div>
+        <div class="kv"><span class="k">能力</span><span class="v xs">file_read · web_search</span></div>
+        <div class="kv"><span class="k">预算</span><span class="v xs mono">30k/单 · 500k/月</span></div>
+        <div class="kv"><span class="k">初始记忆</span><span class="v xs">persona + duty（待确认启用）</span></div>
+      </div>
+      <div class="xs faint mt">启用后 TA 会出现在Agent列表与协作关系中，并可接收任务。</div>`,
+    ];
+    openModal(`
+      <div class="modal-head"><div class="modal-title">新建 Agent</div><button class="btn sm" onclick="closeModal()">✕</button></div>
+      <div class="wizard-steps">${steps.map((t,i)=>`<div class="wstep ${i<s?'done':i===s?'on':''}">${t}</div>`).join('')}</div>
+      <div class="modal-body">${bodies[s]}</div>
+      <div class="modal-foot">
+        ${s>0?`<button class="btn" onclick="wizStep('hire',-1)">上一步</button>`:''}
+        ${s<steps.length-1
+          ? `<button class="btn primary" onclick="wizStep('hire',1)">下一步</button>`
+          : `<button class="btn primary" onclick="closeModal();toast('小译已启用 · 可在 Agents 列表查看；首单建议派一个小任务')">确认启用</button>`}
+      </div>`);
+  } else {
+    const steps = ['Objective', 'KR', '责任与周期', '确认'];
+    const bodies = [
+      `<div class="field"><label>目标（O）</label><input placeholder="例如：企业版客户突破 10 家"></div>
+       <div class="field"><label>为什么是这个目标</label><textarea placeholder="写下来——Agent会读。目标的意义感影响 agent 的优先级判断。"></textarea></div>`,
+      `<div class="field"><label>KR1</label><input placeholder="可验证的关键结果"></div>
+       <div class="field"><label>KR2</label><input placeholder="可验证的关键结果"></div>
+       <button class="btn sm" onclick="toast('已添加 KR3 输入行（demo 占位）')">+ 添加 KR</button>`,
+      `<div class="field"><label>负责人</label><div class="chip-grid">${AGENTS.map(a=>`<span class="chip" onclick="this.classList.toggle('on')">${a.name}</span>`).join('')}</div></div>
+       <div class="field"><label>周期</label><div class="chip-grid"><span class="chip on">2026 Q3</span><span class="chip">月度</span><span class="chip">自定义</span></div></div>
+       <div class="kv"><span class="k">每周自动汇报进展</span><div class="toggle on" onclick="this.classList.toggle('on')"></div></div>`,
+      `<div class="sm dim">目标确认后，负责人会自动分解为任务并分派。你将在活动流看到进展，在汇报节点收到汇报。</div>`,
+    ];
+    openModal(`
+      <div class="modal-head"><div class="modal-title">制定目标</div><button class="btn sm" onclick="closeModal()">✕</button></div>
+      <div class="wizard-steps">${steps.map((t,i)=>`<div class="wstep ${i<s?'done':i===s?'on':''}">${t}</div>`).join('')}</div>
+      <div class="modal-body">${bodies[s]}</div>
+      <div class="modal-foot">
+        ${s>0?`<button class="btn" onclick="wizStep('goal',-1)">上一步</button>`:''}
+        ${s<steps.length-1
+          ? `<button class="btn primary" onclick="wizStep('goal',1)">下一步</button>`
+          : `<button class="btn primary" onclick="closeModal();toast('目标已生效 · 沈策已开始分解任务')">确认发布</button>`}
+      </div>`);
+  }
+}
+function openEditAgent(id) {
+  const a = agentById(id);
+  openModal(`
+    <div class="modal-head"><div class="modal-title">编辑配置：${a.name}</div><button class="btn sm" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="field"><label>能力白名单</label>
+        <div class="chip-grid">${['file_read','file_rw','web_search','web_extract','command','git','rag','notify','feishu','desktop'].map(c=>`<span class="chip ${a.caps.includes(c)?'on':''}" onclick="this.classList.toggle('on')">${c}</span>`).join('')}</div>
+        <div class="hint">收窄立即生效；放宽属于能力升级，将生成审批项。</div>
+      </div>
+      <div class="field"><label>单任务预算</label><input value="${a.procs[0].max}"></div>
+      <div class="field"><label>协调方</label><input value="${a.reportsTo}"></div>
+      <div class="kv"><span class="k" style="color:var(--red)">停职（suspended，任务挂起不丢）</span><div class="toggle" onclick="this.classList.toggle('on');toast('${a.name} 已'+(this.classList.contains('on')?'停职':'复职'))"></div></div>
+    </div>
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">取消</button><button class="btn primary" onclick="closeModal();toast('配置已更新 · 变更已写入审计链')">保存</button></div>`);
+}
+
+/* ═══════════════════════ 启动 ═══════════════════════ */
+renderRail();
+renderSidebar();
+switchView('dashboard');
+</script>
+</body>
+</html>

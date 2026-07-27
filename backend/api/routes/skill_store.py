@@ -48,6 +48,16 @@ class UninstallRequest(BaseModel):
     skill_id: str
 
 
+class UrlReviewRequest(BaseModel):
+    url: str
+
+
+class UrlInstallRequest(BaseModel):
+    url: str
+    name: str | None = None
+    force: bool = False
+
+
 class InstalledSkill(BaseModel):
     source: str
     name: str
@@ -112,6 +122,53 @@ async def get_skill_detail(
     if not skill:
         raise HTTPException(status_code=404, detail=f"Skill not found: {source}/{skill_id}")
     return skill
+
+
+# 简单滑动窗口限流：每用户每分钟最多 10 次 review/install-url
+_URL_RATE: dict[str, list[float]] = {}
+_URL_RATE_MAX = 10
+_URL_RATE_WINDOW = 60.0
+
+
+def _rate_limit_url_ops(user_id: str) -> None:
+    import time
+
+    now = time.time()
+    bucket = _URL_RATE.setdefault(user_id, [])
+    _URL_RATE[user_id] = [t for t in bucket if now - t < _URL_RATE_WINDOW]
+    if len(_URL_RATE[user_id]) >= _URL_RATE_MAX:
+        raise HTTPException(
+            status_code=429,
+            detail=f"rate limit: max {_URL_RATE_MAX} URL reviews/installs per {_URL_RATE_WINDOW:.0f}s",
+        )
+    _URL_RATE[user_id].append(now)
+
+
+@router.post("/review-url")
+async def review_skill_url(
+    payload: UrlReviewRequest,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """从链接安全审查（SSRF 防护 + 能力/高危模式扫描）。不安装。"""
+    _rate_limit_url_ops(str(current_user.id))
+    from backend.services.skill_store.url_review import review_extension_url
+
+    return await review_extension_url(payload.url)
+
+
+@router.post("/install-url")
+async def install_skill_from_url(
+    payload: UrlInstallRequest,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """审查通过后安装为 custom prompt-skill。仅 safe/low；同名需 force。"""
+    _rate_limit_url_ops(str(current_user.id))
+    from backend.services.skill_store.url_review import install_from_url
+
+    result = await install_from_url(payload.url, name=payload.name, force=bool(payload.force))
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error") or "install failed")
+    return result
 
 
 @router.post("/install", response_model=InstallResponse)
