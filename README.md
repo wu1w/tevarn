@@ -144,8 +144,8 @@ curl -fsSL https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.sh
 
 | Platform | Package | 下载 |
 |----------|---------|------|
-| Windows | Setup.exe | [Takton-Setup-0.3.2.exe](https://github.com/wu1w/takton/releases/download/v0.3.2/Takton-Setup-0.3.2.exe) |
-| Windows | Portable.zip | [Takton-0.3.2-win-x64-portable.zip](https://github.com/wu1w/takton/releases/download/v0.3.2/Takton-0.3.2-win-x64-portable.zip) |
+| Windows | Setup.exe | [Takton-Setup-0.3.3.exe](https://github.com/wu1w/takton/releases/download/v0.3.3/Takton-Setup-0.3.3.exe) |
+| Windows | Portable.zip | [Takton-0.3.3-win-x64-portable.zip](https://github.com/wu1w/takton/releases/download/v0.3.3/Takton-0.3.3-win-x64-portable.zip) |
 | Linux | AppImage | v0.3.2 随 release 发布 · 见 [Releases](https://github.com/wu1w/takton/releases) |
 | Linux | deb | v0.3.2 随 release 发布 · 见 [Releases](https://github.com/wu1w/takton/releases) |
 
