@@ -22,7 +22,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const isLoginPage = pathname === '/login' || pathname === '/login/';
-  const isChatHome = pathname === '/' || pathname === '' || pathname === null;
+  const isChatHome = pathname === '/chat' || pathname === '/chat/';
 
   const [backendReady, setBackendReady] = useState(false);
   const [startupStage, setStartupStage] = useState(t('layout._e108'));

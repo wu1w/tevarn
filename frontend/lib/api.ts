@@ -2126,3 +2126,24 @@ export async function getSftCorpusInfo(): Promise<{
 }
 
 export default api;
+
+// ====== Kernel / Workforce APIs（AIOS demo v2 数据源） ======
+
+export interface KernelIdentity {
+  id: string;
+  name: string;
+  role: string | null;
+  status: string;
+  capabilities: string[];
+  credit_score: number | null;
+  default_token_budget: number | null;
+  sub_agent_id: string | null;
+  created_at: string | null;
+  archived_at: string | null;
+  meta: Record<string, unknown>;
+}
+
+export async function getKernelIdentities(status?: string): Promise<{ identities: KernelIdentity[]; total: number }> {
+  const res = await api.get('/kernel/identities', { params: status ? { status } : {} });
+  return res.data;
+}

@@ -1,930 +1,275 @@
 'use client';
 
-import React, { useState, useCallback, useRef } from 'react';
-import { ChatWindow } from '@/components/chat/ChatWindow';
-import { MessageInput, Attachment, ChatMode, type MessageInputHandle } from '@/components/chat/MessageInput';
-import { FilePreviewHost } from '@/components/chat/FilePreviewHost';
-import { SessionArtifactsBar } from '@/components/chat/SessionArtifactsBar';
-import type { ChatArtifact } from '@/lib/artifacts';
-import { TerminalPanel, formatArgsText, formatResultText } from '@/components/chat/TerminalPanel';
-import { ActivityPanel } from '@/components/chat/ActivityPanel';
-import { TaskPanel } from '@/components/tasks/TaskPanel';
-import { TransparencyPanel } from '@/components/chat/TransparencyPanel';
-import { GlobalSearch } from '@/components/search/GlobalSearch';
-import { useSession } from '@/hooks/useSession';
-import { useWebSocket } from '@/hooks/useWebSocket';
-import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
-import { useTaskStore } from '@/stores/taskStore';
+/**
+ * AIOS 驾驶舱（demo v2 定稿版）
+ * 结构：问候 header → 4 状态卡 → 工作动态 feed → [目标卡 + Agent 状态] → 协作组
+ * 数据源：kernel /identities /processes /events /escalations + knowledge /documents
+ * chat 已迁至 /chat（rail 不再露出，P3 进 Profile 抽屉「联系 TA」）。
+ */
+
+import React from 'react';
+import Link from 'next/link';
+import { useQuery } from '@tanstack/react-query';
 import { useAuthStore } from '@/stores/authStore';
-import { useSessionStore } from '@/stores/sessionStore';
-import { Message, StatusUpdateMessage, StreamDeltaMessage, GoalUpdateMessage, GoalState, ToolEventMessage, RunEventMessage } from '@/types';
-import { useTerminalStore } from '@/stores/terminalStore';
-import { generateImage } from '@/lib/api';
-import { generateUUID } from '@/lib/uuid';
-import { useRouter } from 'next/navigation';
-import type { ToolCallData } from '@/components/chat/ToolCallPanel';
-import { useWorkspaceStore } from '@/stores/workspaceStore';
-import { WorkspaceDock } from '@/components/workspace/WorkspaceDock';
-import { OpenProjectModal } from '@/components/workspace/OpenProjectModal';
-import { DangerConfirmDialog } from '@/components/chat/DangerConfirmDialog';
-import { useToastStore } from '@/stores/toastStore';
 import { useT } from '@/stores/localeStore';
-import { useWsStore } from '@/stores/wsStore';
+import {
+  getKernelIdentities,
+  getKernelProcesses,
+  getKernelEvents,
+  getKernelEscalations,
+  type KernelEvent,
+} from '@/lib/api';
+import api from '@/lib/api';
 
+/* ── 工具 ── */
+const GRADS: Array<[string, string]> = [
+  ['#7e9e6a', '#5c7a4c'], ['#699682', '#4f7d6a'], ['#7a98b0', '#5b7d94'],
+  ['#8ab06a', '#648550'], ['#c9a05e', '#a67c3e'], ['#a89bbf', '#857a9e'], ['#c0785e', '#9e5a42'],
+];
+function gradOf(name: string): string {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  const [a, b] = GRADS[h % GRADS.length];
+  return `linear-gradient(135deg, ${a}, ${b})`;
+}
 
-export default function HomePage() {
-  const router = useRouter();
-  const { currentSession, messages, addMessage, updateMessage, createAndLoadSession, loadMessages, switchSession } = useSession();
-    const { tasks } = useTaskStore();
-    const token = useAuthStore((s) => s.token);
-    const starredSessionIds = useSessionStore((s) => s.starredSessionIds);
-    const toggleStarredSession = useSessionStore((s) => s.toggleStarredSession);
-    const {
-      uiMode,
-      setUiMode,
-      dockOpen,
-      setDockOpen,
-      toggleDock,
-      root: workspaceRoot,
-      name: workspaceName,
-      setForceProjectOpen,
-      appendAgentOutput,
-      appendAgentOutputTo,
-      unreadTerminal,
-      bindRoot,
-    } = useWorkspaceStore();
+function fmtTokens(n: number | null | undefined): string {
+  if (n == null) return '0';
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
 
-        // 恢复持久化的项目根到后端
-        React.useEffect(() => {
-          if (workspaceRoot) {
-            bindRoot(workspaceRoot).catch(() => null);
-          }
-          // eslint-disable-next-line react-hooks/exhaustive-deps
-        }, []);
+function timeAgo(ts: number | null | undefined, lang: string): string {
+  if (!ts) return '';
+  const sec = Math.max(1, Math.floor(Date.now() / 1000 - ts));
+  const zh = lang !== 'en';
+  if (sec < 60) return zh ? `${sec}s 前` : `${sec}s ago`;
+  if (sec < 3600) return zh ? `${Math.floor(sec / 60)}m 前` : `${Math.floor(sec / 60)}m ago`;
+  if (sec < 86400) return zh ? `${Math.floor(sec / 3600)}h 前` : `${Math.floor(sec / 3600)}h ago`;
+  return zh ? `${Math.floor(sec / 86400)}d 前` : `${Math.floor(sec / 86400)}d ago`;
+}
 
-        const [isTaskPanelOpen, setIsTaskPanelOpen] = useState(false);
-        const [isTransparencyOpen, setIsTransparencyOpen] = useState(false);
-        const [highlightMessageId, setHighlightMessageId] = useState<string | null>(null);
-        const [isStreaming, setIsStreaming] = useState(false);
-        const [streamingContent, setStreamingContent] = useState('');
-        // 流式正文 ref：idle/stop 时落地，避免在 setState updater 内同步写 sessionStore
-        const streamingContentRef = React.useRef('');
-        React.useEffect(() => {
-          streamingContentRef.current = streamingContent;
-        }, [streamingContent]);
-        const [liveToolCalls, setLiveToolCalls] = useState<ToolCallData[]>([]);
-                const [streamStatusDetail, setStreamStatusDetail] = useState<string | null>(null);
-        // 实时终端面板订阅（header 开关按钮的未读点）
-        const termPanelOpen = useTerminalStore((s) => s.panelOpen);
-        const termHasEntries = useTerminalStore((s) => s.entries.length > 0);
+/* ── 样式原子（复用 tk 变量体系） ── */
+const card: React.CSSProperties = {
+  background: 'var(--card-bg)',
+  border: '1px solid var(--border-subtle)',
+  borderRadius: 'var(--r-lg, 14px)',
+  padding: '16px 18px',
+  boxShadow: 'var(--glass-inner)',
+};
+const secTitle: React.CSSProperties = { fontSize: 13.5, fontWeight: 600, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 };
+const cnt: React.CSSProperties = { fontSize: 10.5, color: 'var(--foreground-dim)', fontWeight: 500 };
 
-            const [isGeneratingImage, setIsGeneratingImage] = useState(false);
-    const [searchOpen, setSearchOpen] = useState(false);
-    const [activeGoal, setActiveGoal] = useState<GoalState | null>(null);
-    const [isDragging, setIsDragging] = useState(false);
-    const composerRef = useRef<MessageInputHandle | null>(null);
-    const [previewArtifact, setPreviewArtifact] = useState<ChatArtifact | null>(null);
-
-    // 开发冒烟：允许 Playwright 注入消息 / 打开预览
-    React.useEffect(() => {
-      if (process.env.NODE_ENV === 'production') return;
-      const w = window as unknown as {
-        __taktonSmoke?: {
-          setPreview: (a: ChatArtifact | null) => void;
-          addMessage: typeof addMessage;
-          setMessages: (msgs: Message[]) => void;
-        };
-      };
-      w.__taktonSmoke = {
-        setPreview: setPreviewArtifact,
-        addMessage,
-        setMessages: useSessionStore.getState().setMessages,
-      };
-      return () => {
-        delete w.__taktonSmoke;
-      };
-    }, [addMessage]);
-
-    const [editingContent, setEditingContent] = useState<string | null>(null);
-  // 设备页「用此设备对话」带入的草稿
-  React.useEffect(() => {
-    try {
-      const d = sessionStorage.getItem('takton-compose-draft');
-      if (d) {
-        setEditingContent(d);
-        sessionStorage.removeItem('takton-compose-draft');
-      }
-    } catch { /* ignore */ }
-  }, []);
-
-    const [creatingSession, setCreatingSession] = useState(false);
-    const { addToast } = useToastStore();
-    const t = useT();
-
-
-  // session 切换 / 初始化：清流式、加载历史、恢复 Goal 面板
-    React.useEffect(() => {
-      let cancelled = false;
-      const sid = currentSession?.id;
-      (async () => {
-        if (cancelled) return;
-        setIsStreaming(false);
-                setStreamingContent('');
-                streamingContentRef.current = '';
-                setLiveToolCalls([]);
-                setStreamStatusDetail(null);
-        setEditingContent(null);
-        setActiveGoal(null);
-        if (!sid) return;
-        try {
-          await loadMessages(sid);
-        } catch (e) {
-          console.error(e);
-        }
-        if (cancelled) return;
-        try {
-          const { getSessionCheckpoint } = await import('@/lib/api');
-          const cp = await getSessionCheckpoint(sid);
-          if (cancelled) return;
-          if (cp?.goal) {
-            setActiveGoal(cp.goal);
-            if (
-              cp.goal.status === 'active' ||
-              (cp.goal.todos && cp.goal.todos.length > 0)
-            ) {
-              setIsTaskPanelOpen(true);
-            }
-          }
-        } catch (e) {
-          console.error('restore goal failed', e);
-        }
-      })();
-      return () => {
-        cancelled = true;
-      };
-    }, [currentSession?.id, loadMessages]);
-
-  const handleStreamDelta = useCallback((msg: StreamDeltaMessage) => {
-      setIsStreaming(true);
-      setStreamingContent((prev) => {
-        const next = prev + msg.content;
-        streamingContentRef.current = next;
-        return next;
-      });
-    }, []);
-
-    const handleToolEvent = useCallback((msg: ToolEventMessage) => {
-      setIsStreaming(true);
-      // 实时终端流：desktop/shell 等全部工具调用入流（截图推送已退役，纯命令流）
-      useTerminalStore.getState().upsert({
-        callId: msg.tool_call_id,
-        name: msg.name,
-        argsText: formatArgsText(msg.arguments || {}),
-        status: msg.phase === 'start' ? 'running' : msg.status === 'failed' ? 'failed' : 'completed',
-        resultText: msg.phase === 'start' ? '' : formatResultText(msg.result ?? undefined),
-      });
-      setLiveToolCalls((prev) => {
-            const idx = prev.findIndex(
-              (t) => t.id === msg.tool_call_id || (t.name === msg.name && t.status === 'running')
-            );
-            if (msg.phase === 'start') {
-              const next: ToolCallData = {
-                id: msg.tool_call_id,
-                name: msg.name,
-                arguments: msg.arguments || {},
-                status: 'running',
-              };
-              if (idx >= 0) {
-                const copy = [...prev];
-                copy[idx] = { ...copy[idx], ...next };
-                return copy;
-              }
-              return [...prev, next];
-            }
-            // end
-            const ended: ToolCallData = {
-              id: msg.tool_call_id,
-              name: msg.name,
-              arguments: msg.arguments || (idx >= 0 ? prev[idx].arguments : {}),
-              result: msg.result ?? undefined,
-              status: msg.status === 'failed' ? 'failed' : 'completed',
-            };
-            if (idx >= 0) {
-              const copy = [...prev];
-              copy[idx] = { ...copy[idx], ...ended };
-              return copy;
-            }
-            return [...prev, ended];
-          });
-          if (msg.phase === 'start') {
-            setStreamStatusDetail(`${t('chat.executing')} ${msg.name}…`);
-          } else {
-            setStreamStatusDetail(
-              msg.status === 'failed' ? `${msg.name} ${t('chat.failed')}` : `${msg.name} ${t('chat.completed')}`
-            );
-          }
-
-          // D10：命令类工具镜像到专业模式 Agent 终端
-          const termTools = new Set([
-            'command',
-            'bash',
-            'shell',
-            'run_command',
-            'CommandTool',
-            'execute_command',
-          ]);
-          if (termTools.has(msg.name) || /command|bash|shell/i.test(msg.name)) {
-            if (msg.phase === 'start') {
-              const args = msg.arguments || {};
-              const cmdline =
-                (args.command as string) ||
-                (args.cmd as string) ||
-                (args.script as string) ||
-                JSON.stringify(args);
-              appendAgentOutput(`$ ${cmdline}`, 'in');
-            } else if (msg.result) {
-              appendAgentOutput(
-                String(msg.result).slice(0, 12000),
-                msg.status === 'failed' ? 'err' : 'out'
-              );
-            }
-          }
-        }, [appendAgentOutput, t]);
-
-    const lastWsToastAtRef = React.useRef(0);
-    const toastWsError = useCallback(
-      (err: string, opts?: { force?: boolean }) => {
-        const msg = (err || '').trim() || t('chat.wsError');
-        console.error('WebSocket error:', msg);
-        const now = Date.now();
-        const soft = /connection error|not connected|reconnect/i.test(msg)
-          && !/limit reached|Invalid|creation failed|Unknown/i.test(msg);
-        if (!opts?.force && soft && now - lastWsToastAtRef.current < 4000) {
-          return;
-        }
-        lastWsToastAtRef.current = now;
-        addToast(msg, 'error');
-        setIsStreaming(false);
-      },
-      [addToast, t]
-    );
-
-    const handleStatusUpdate = useCallback((msg: StatusUpdateMessage) => {
-      if (msg.state === 'thinking' || msg.state === 'tool_executing' || msg.state === 'optimizing') {
-        setIsStreaming(true);
-        if (msg.detail) setStreamStatusDetail(msg.detail);
-      } else if (msg.state === 'error') {
-        setIsStreaming(false);
-        const detail = msg.detail || t('chat.error');
-        setStreamStatusDetail(detail);
-        addToast(detail, 'error');
-      } else if (msg.state === 'idle') {
-              setIsStreaming(false);
-              setStreamStatusDetail(null);
-              // 禁止在 setStreamingContent updater 内 addMessage（会触发 Sidebar 渲染期更新）
-              const leftover = streamingContentRef.current;
-              streamingContentRef.current = '';
-              setStreamingContent('');
-              setLiveToolCalls([]);
-              const sid = currentSession?.id || '';
-              if (leftover || sid) {
-                setTimeout(() => {
-                  if (leftover) {
-                    addMessage({
-                      id: generateUUID(),
-                      session_id: sid,
-                      role: 'assistant',
-                      content: leftover,
-                      tool_calls: null,
-                      token_count: null,
-                      created_at: new Date().toISOString(),
-                    });
-                  }
-                  if (sid) {
-                    loadMessages(sid).catch(console.error);
-                  }
-                }, 0);
-              }
-            }
-          }, [addMessage, addToast, currentSession, loadMessages, t]);
-
-  const handleGoalUpdate = useCallback((msg: GoalUpdateMessage) => {
-      if (msg.goal) {
-        setActiveGoal(msg.goal);
-        // Goal 进度改在任务看板，有更新时自动打开
-        if (msg.goal.status === 'active' || (msg.goal.todos && msg.goal.todos.length > 0)) {
-          setIsTaskPanelOpen(true);
-        }
-      }
-    }, []);
-
-  // Durable Run 生命周期事件 → 状态行（tool.* 已由 tool_event 覆盖，不重复显示）
-  const handleRunEvent = useCallback((msg: RunEventMessage) => {
-      const d = msg.data || {};
-      if (msg.topic === 'run.status_changed') {
-        const to = d.to || '';
-        const keyMap: Record<string, Parameters<typeof t>[0]> = {
-          planning: 'run.planning',
-          executing: 'chat.executing',
-          waiting: 'run.waiting',
-          verifying: 'run.verifying',
-        };
-        const key = keyMap[to];
-        if (key) setStreamStatusDetail(t(key));
-      } else if (msg.topic === 'approval.requested') {
-        setStreamStatusDetail(`${t('run.waiting')}: ${d.tool || ''}`.trim());
-      } else if (msg.topic === 'approval.resolved') {
-        setStreamStatusDetail(d.approved ? t('run.approved') : t('run.denied'));
-      } else if (msg.topic === 'run.completed') {
-        setStreamStatusDetail(t('run.done'));
-      } else if (msg.topic === 'run.failed') {
-        setStreamStatusDetail(t('run.runFailed'));
-      } else if (msg.topic === 'run.cancelled') {
-        setStreamStatusDetail(t('run.cancelled'));
-      } else if (msg.topic === 'computer.exec') {
-        // Agent Computer：按 agent_key 路由到对应终端 tab
-        const key = (d.agent_key as string) || 'main';
-        const label = (d.agent_label as string) || (key === 'main' ? 'Agent' : key);
-        if (d.phase === 'start') {
-          appendAgentOutputTo(key, label, `$ ${d.command || ''}`, 'in');
-        } else {
-          if (d.stdout_tail) appendAgentOutputTo(key, label, String(d.stdout_tail), 'out');
-          if (d.stderr_tail) appendAgentOutputTo(key, label, String(d.stderr_tail), 'err');
-          const tag = d.sandboxed ? ` · ${d.backend || 'sandbox'}` : '';
-          appendAgentOutputTo(
-            key, label,
-            `exit ${d.exit_code ?? '?'}${tag} · ${Math.round(Number(d.duration_ms) || 0)}ms`,
-            'sys'
-          );
-        }
-      }
-    }, [t, appendAgentOutputTo]);
-
-  const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, connect } = useWebSocket({
-        sessionId: currentSession?.id || '',
-        token,
-        onStreamDelta: handleStreamDelta,
-        onStatusUpdate: handleStatusUpdate,
-        onToolEvent: handleToolEvent,
-        onRunEvent: handleRunEvent,
-        onGoalUpdate: handleGoalUpdate,
-        onError: (err) => toastWsError(err),
-        onSettingsChanged: (keys) => {
-          // 通知全局模型目录刷新（被设置页同步、多标签页切换等场景复用）
-          if (typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent('takton:settings-changed', { detail: keys }));
-          }
-        },
-      });
-
-  // 使用 useSession hook 中的 switchSession 用于全局搜索
-  const { switchSession: switchSession_ } = useSession();
-
-  // 发送消息（乐观 UI：先出用户气泡 + streaming，session/WS 后台并行）
-  // 发送成功后会话将出现在「历史会话」中
-  const handleSend = useCallback(
-      async (
-        content: string,
-        attachments: Attachment[] = [],
-        mode: ChatMode = 'default',
-        subAgentIds?: string[]
-      ) => {
-        // D10 专业模式：强制项目文件夹
-        if (useWorkspaceStore.getState().uiMode === 'pro' && !useWorkspaceStore.getState().root) {
-          useWorkspaceStore.getState().setForceProjectOpen(true);
-          return;
-        }
-
-        if (mode === 'cluster' && (!subAgentIds || subAgentIds.length === 0)) {
-          addToast(t('chat.clusterNeedAgent'), 'error');
-          return;
-        }
-
-        let session = currentSession;
-        if (!session) {
-          setCreatingSession(true);
-          try {
-            session = await createAndLoadSession();
-          } catch (e) {
-            console.error(t('page._e1'), e);
-            addToast(t('chat.createSessionFailed'), 'error');
-            return;
-          } finally {
-            setCreatingSession(false);
-          }
-          if (!session) {
-            addToast(t('chat.createSessionFailed2'), 'error');
-            return;
-          }
-        }
-
-        let displayContent = content;
-        if (attachments.length > 0) {
-          const attNames = attachments.map((a) => `[${a.filename}]`).join(' ');
-          displayContent = `${attNames}\n${content}`;
-        }
-
-        // 乐观：先落用户消息 + 思考态，再等 WS（避免「卡死感」）
-        const userMsg: Message = {
-          id: generateUUID(),
-          session_id: session.id,
-          role: 'user',
-          content: displayContent,
-          tool_calls: null,
-          token_count: null,
-          created_at: new Date().toISOString(),
-        };
-        addMessage(userMsg);
-        setIsStreaming(true);
-        setStreamingContent('');
-        setLiveToolCalls([]);
-        setStreamStatusDetail(t('chat.connectingSend'));
-
-        const ready = await waitForConnection(session.id, 15000);
-        if (!ready) {
-          addToast(t('chat.channelNotConnected'), 'error');
-          setIsStreaming(false);
-          setStreamStatusDetail(null);
-          return;
-        }
-
-        setStreamStatusDetail(mode === 'cluster' ? t('chat.clusterWorking') : t('chat.thinking'));
-        const sent = sendMessage(content, attachments, mode, subAgentIds);
-        if (!sent) {
-          addToast(t('chat.sendFailedDisconnected'), 'error');
-          setIsStreaming(false);
-          setStreamStatusDetail(null);
-          return;
-        }
-      },
-      [currentSession, addMessage, addToast, sendMessage, createAndLoadSession, waitForConnection, t]
-    );
-
-  // 重新生成
-  const handleRegenerate = useCallback(
-    async (_message: Message) => {
-      if (!currentSession) return;
-      const msgs = useSessionStore.getState().messages;
-      const lastUserMsg = [...msgs].reverse().find((m) => m.role === 'user');
-      if (!lastUserMsg?.content) return;
-      setIsStreaming(true);
-      setStreamingContent('');
-      setLiveToolCalls([]);
-      setStreamStatusDetail(t('chat.connectingSend'));
-      const ready = await waitForConnection(currentSession.id, 15000);
-      if (!ready) {
-        addToast(t('chat.channelNotConnected2'), 'error');
-        setIsStreaming(false);
-        setStreamStatusDetail(null);
-        return;
-      }
-      setStreamStatusDetail(t('chat.thinking'));
-      if (sendMessage(lastUserMsg.content, [], 'default')) {
-        setIsStreaming(true);
-        setStreamingContent('');
-      } else {
-        addToast(t('chat.sendFailedDisconnected'), 'error');
-        setIsStreaming(false);
-        setStreamStatusDetail(null);
-      }
-    },
-    [currentSession, sendMessage, waitForConnection, addToast, t]
+function StatCard({ label, tag, tagColor, value, sub, href }: {
+  label: string; tag?: string; tagColor?: string; value: string; sub?: string; href: string;
+}) {
+  return (
+    <Link href={href} style={{ ...card, display: 'block', textDecoration: 'none', transition: 'border-color 180ms' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ fontSize: 11, color: 'var(--foreground-dim)' }}>{label}</span>
+        {tag ? (
+          <span style={{
+            fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 8,
+            background: `color-mix(in srgb, ${tagColor || 'var(--brand-purple)'} 12%, transparent)`,
+            color: tagColor || 'var(--brand-purple)',
+          }}>{tag}</span>
+        ) : null}
+      </div>
+      <div style={{ fontSize: 24, fontWeight: 650, letterSpacing: '-0.02em', marginTop: 6, color: 'var(--foreground)' }}>{value}</div>
+      {sub ? <div style={{ fontSize: 10.5, color: 'var(--foreground-dim)', marginTop: 4 }}>{sub}</div> : null}
+    </Link>
   );
+}
 
-  // 编辑并重新发送
-  const handleEdit = useCallback(
-    (message: Message) => {
-      // 将内容回填到编辑状态（由 MessageInput 处理）
-      setEditingContent(message.content);
-    },
-    []
-  );
+/* ── 页面 ── */
+export default function DashboardPage() {
+  const t = useT();
+  const { user } = useAuthStore();
+  const lang = typeof document !== 'undefined' ? document.documentElement.lang : 'zh-CN';
+  const zh = lang !== 'en';
 
-  const handleGenerateImage = useCallback(
-    async (prompt: string) => {
-      if (!currentSession) return;
-      setIsGeneratingImage(true);
+  const identities = useQuery({ queryKey: ['kernel-identities'], queryFn: () => getKernelIdentities(), staleTime: 15_000, retry: 1 });
+  const processes = useQuery({ queryKey: ['kernel-processes'], queryFn: () => getKernelProcesses(), staleTime: 15_000, retry: 1 });
+  const events = useQuery({ queryKey: ['kernel-events'], queryFn: () => getKernelEvents(30), staleTime: 10_000, retry: 1 });
+  const escalations = useQuery({ queryKey: ['kernel-escalations', 'pending'], queryFn: () => getKernelEscalations('pending'), staleTime: 15_000, retry: 1 });
+  const docs = useQuery({
+    queryKey: ['knowledge-documents-count'],
+    queryFn: async () => (await api.get('/knowledge/documents', { params: { limit: 100 } })).data,
+    staleTime: 60_000,
+    retry: 1,
+  });
 
-      const userMsg: Message = {
-        id: generateUUID(),
-        session_id: currentSession.id,
-        role: 'user',
-        content: `[${t('chat.imageGenTag')}] ${prompt}`,
-        tool_calls: null,
-        token_count: null,
-        created_at: new Date().toISOString(),
-      };
-      addMessage(userMsg);
+  const ids = identities.data?.identities ?? [];
+  const procs = processes.data?.processes ?? [];
+  const evts = events.data?.events ?? [];
+  const pending = escalations.data?.escalations ?? [];
+  const docCount = Array.isArray(docs.data) ? docs.data.length : 0;
 
-      try {
-        const result = await generateImage(prompt, { width: 1024, height: 1024, n: 1 });
-        const imageUrls = (result.images || [])
-          .map((img) => {
-            if (img.url && /^https?:\/\//i.test(img.url)) {
-              return `![${t('chat.imageGenAlt')}](${img.url})`;
-            }
-            return '';
-          })
-          .filter(Boolean)
-          .join('\n');
+  const running = procs.filter((p) => p.state === 'running').length;
+  const tokensToday = procs.reduce((s, p) => s + (p.tokens_used || 0), 0);
+  const doneToday = procs.filter((p) => p.state === 'done' || p.state === 'completed' || p.exit_reason === 'done').length;
+  const userName = user?.display_name || user?.username || 'WuYiWei';
 
-        const assistantContent = imageUrls || t('chat.imageGenDone');
-        addMessage({
-          id: generateUUID(),
-          session_id: currentSession.id,
-          role: 'assistant',
-          content: assistantContent,
-          tool_calls: null,
-          token_count: null,
-          created_at: new Date().toISOString(),
-        });
-      } catch (err) {
-        console.error('Image generation failed:', err);
-        addMessage({
-          id: generateUUID(),
-          session_id: currentSession.id,
-          role: 'assistant',
-          content: `[Error] ${t('chat.imageGenFailed')}: ${err instanceof Error ? err.message : String(err)}`,
-          tool_calls: null,
-          token_count: null,
-          created_at: new Date().toISOString(),
-        });
-      } finally {
-        setIsGeneratingImage(false);
-      }
-    },
-    [currentSession, addMessage, t]
-  );
-
-  const handleStopStreaming = useCallback(() => {
-      sendStop();
-      setIsStreaming(false);
-      const leftover = streamingContentRef.current || streamingContent;
-      streamingContentRef.current = '';
-      setStreamingContent('');
-      if (leftover) {
-        // 下一 tick 写 store，避免与本组件 setState 同栈交叉更新 Sidebar
-        const sid = currentSession?.id || '';
-        setTimeout(() => {
-          addMessage({
-            id: generateUUID(),
-            session_id: sid,
-            role: 'assistant',
-            content: leftover,
-            tool_calls: null,
-            token_count: null,
-            created_at: new Date().toISOString(),
-          });
-        }, 0);
-      }
-    }, [sendStop, streamingContent, addMessage, currentSession]);
-
-  const handleTagClick = useCallback(
-    (tagKey: string) => {
-      if (tagKey === 'image') {
-        // 图片生成模式，提示输入
-        return;
-      }
-      // 其他模式——模式通过 MessageInput 的工具栏触发
-    },
-    []
-  );
-
-  // 全局搜索选择会话 → 直接进入该会话
-  const handleSearchSelect = useCallback(
-    async (sessionId: string) => {
-      setSearchOpen(false);
-      setIsStreaming(false);
-      setStreamingContent('');
-      if (switchSession) {
-        await switchSession(sessionId);
-      }
-    },
-    [switchSession]
-  );
-
-  // ====== Keyboard Shortcuts ======
-  useKeyboardShortcuts([
-    { key: 'k', meta: true, handler: () => setSearchOpen(true) },
-    { key: 'Escape', handler: () => setSearchOpen(false), preventDefault: false },
-    { key: 'n', meta: true, shift: true, handler: () => createAndLoadSession().catch(console.error) },
-    { key: ',', meta: true, handler: () => router.push('/settings') },
-    { key: '/', meta: true, handler: () => setSearchOpen(true) },
-    { key: 'b', ctrl: true, handler: () => toggleDock() },
-    { key: 'Enter', meta: true, handler: () => { const textarea = document.querySelector<HTMLTextAreaElement>('.chat-composer-textarea'); if (textarea && !textarea.disabled) { const form = textarea.closest('form'); form?.requestSubmit(); } }, preventDefault: true },
-  ]);
-
-  // ====== Drag & Drop ======
-  const handleDragEnter = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(true);
-  }, []);
-
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    // Only hide if leaving the main container
-    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
-    setIsDragging(false);
-  }, []);
-
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-  }, []);
-
-  const handleDrop = useCallback(
-    async (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setIsDragging(false);
-
-      const files = e.dataTransfer.files;
-      if (!files || files.length === 0) return;
-      // 与点「附件」完全一致：只挂发送栏上方 chip，绝不 addMessage / sendMessage
-      if (composerRef.current?.ingestFiles) {
-        await composerRef.current.ingestFiles(files);
-      } else {
-        addToast(t('chat.uploadFailed') + 'composer unavailable', 'error');
-      }
-    },
-    [addToast, t]
-  );
-
-  const displayMessages = [...messages];
-    // 实时气泡：文本 + tool call 边产生边展示（不要等 idle 整包刷）
-    if (isStreaming || streamingContent || liveToolCalls.length > 0) {
-      const liveToolCallsForMsg =
-        liveToolCalls.length > 0
-          ? liveToolCalls.map((tc) => ({
-              id: tc.id,
-              name: tc.name,
-              arguments: tc.arguments,
-              result: tc.result,
-              status: tc.status,
-            }))
-          : null;
-      let liveContent = streamingContent;
-      if (!liveContent && streamStatusDetail && liveToolCalls.length === 0) {
-        liveContent = '';
-      }
-      displayMessages.push({
-        id: 'streaming',
-        session_id: currentSession?.id || '',
-        role: 'assistant',
-        content: liveContent || (liveToolCalls.length ? '' : streamStatusDetail ? `_${streamStatusDetail}_` : ''),
-        tool_calls: liveToolCallsForMsg as Message['tool_calls'],
-        token_count: null,
-        created_at: new Date().toISOString(),
-      });
-    }
+  const now = new Date();
+  const dateStr = zh
+    ? `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日 ${['周日','周一','周二','周三','周四','周五','周六'][now.getDay()]}`
+    : now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+  const hour = now.getHours();
+  const greet = zh
+    ? (hour < 6 ? '夜深了' : hour < 12 ? '早安' : hour < 18 ? '午安' : '晚上好')
+    : (hour < 6 ? 'Up late' : hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening');
 
   return (
-    <div
-      className="chat-page-root relative flex h-full min-h-0 max-h-full w-full flex-1 flex-col overflow-hidden"
-      onDragEnter={handleDragEnter}
-      onDragLeave={handleDragLeave}
-      onDragOver={handleDragOver}
-      onDrop={handleDrop}
-    >
-      {/* Global Search Modal */}
-      <GlobalSearch
-        open={searchOpen}
-        onClose={() => setSearchOpen(false)}
-        onSelectSession={handleSearchSelect}
-      />
-
-      {/* Drag & Drop Overlay */}
-      {isDragging && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-page-bg/80 backdrop-blur-sm border-2 border-dashed border-brand-purple/40 rounded-lg">
-          <div className="text-center">
-            <svg className="mx-auto h-12 w-12 text-brand-purple/60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-            </svg>
-            <p className="mt-3 text-sm font-medium text-foreground-muted">{t('chat.dropToAttach')}</p>
+    <div style={{ maxWidth: 1060, margin: '0 auto', padding: '26px 28px 40px' }}>
+      {/* ── header ── */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 18 }}>
+        <div>
+          <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--foreground)' }}>
+            {greet}，{userName}
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--foreground-dim)', marginTop: 3 }}>
+            {dateStr} · {zh ? '你的 AI 团队持续运转中' : 'Your AI team keeps running'}
           </div>
         </div>
-      )}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <span className="tag green" style={tagStyle('var(--status-online)')}>
+            <span style={dotStyle('var(--status-online)')} />{running} {zh ? '运行' : 'running'}
+          </span>
+          <span style={tagStyle(pending.length ? 'var(--status-offline)' : 'var(--foreground-dim)')}>
+            {pending.length} {zh ? '待审批' : 'pending'}
+          </span>
+        </div>
+      </div>
 
-      {/* 顶部状态栏 */}
-            <header className="flex items-center justify-between border-b border-border-subtle/50 bg-page-bg/80 backdrop-blur-xl px-5 py-2.5 sticky top-0 z-10">
-              <div className="flex items-center gap-3">
-                <h1 className="text-[0.8125rem] font-semibold tracking-tight text-foreground">Chat</h1>
-                {currentSession && (
-                  <span className="chat-meta font-mono text-foreground-dim">
-                    {currentSession.id.slice(0, 8)}
-                  </span>
-                )}
-                {uiMode === 'pro' && (
-                  <button
-                    type="button"
-                    onClick={() => setForceProjectOpen(true)}
-                    className="max-w-[200px] truncate rounded-full border border-border-subtle bg-card-bg px-2.5 py-0.5 text-[11px] text-foreground-muted hover:border-brand-purple/40"
-                    title={workspaceRoot || t('chat.selectProjectTitle')}
-                  >
-                    {workspaceName || workspaceRoot || t('chat.selectProject')}
-                  </button>
-                )}
+      {/* ── 4 状态卡 ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
+        <StatCard
+          label={zh ? '今日完成任务' : 'Tasks completed today'} tag={zh ? '今日' : 'today'}
+          value={String(doneToday)} sub={zh ? `进程总数 ${procs.length}` : `${procs.length} processes`} href="/activity"
+        />
+        <StatCard
+          label={zh ? 'Token 消耗（今日）' : 'Token usage (today)'} tag={zh ? '预算内' : 'in budget'}
+          value={fmtTokens(tokensToday)} sub={zh ? 'kernel charge_tokens 记账' : 'kernel charge_tokens'} href="/kernel"
+        />
+        <StatCard
+          label={zh ? '知识库' : 'Knowledge'} tag="RAG" tagColor="var(--brand-cyan)"
+          value={String(docCount)} sub={zh ? '文档总数' : 'documents'} href="/knowledge"
+        />
+        <StatCard
+          label={zh ? '待审批' : 'Pending approvals'} tag={zh ? '等你' : 'you'} tagColor="var(--status-offline)"
+          value={String(pending.length)} sub={zh ? '点击查看' : 'click to review'} href="/approvals"
+        />
+      </div>
+
+      {/* ── feed + 右栏 ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: 12, alignItems: 'start' }}>
+        <div style={card}>
+          <div style={secTitle}>
+            {zh ? '动态' : 'Feed'} <span style={cnt}>{zh ? 'Agent 进展 · 非聊天' : 'Agent progress · not a chat'}</span>
+          </div>
+          {evts.length === 0 ? (
+            <div style={{ padding: '26px 0', textAlign: 'center', fontSize: 12, color: 'var(--foreground-dim)' }}>
+              {zh ? '暂无动态——后端 kernel 启动后此处显示事件流' : 'No events yet — kernel events will appear here'}
+            </div>
+          ) : (
+            evts.map((e) => <FeedItem key={e.id} e={e} zh={zh} ids={ids.map((i) => i.name)} />)
+          )}
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {/* Agent 状态 */}
+          <div style={card}>
+            <div style={secTitle}>
+              {zh ? 'Agent 状态' : 'Agent status'} <span style={cnt}>{zh ? '实时' : 'live'}</span>
+            </div>
+            {ids.length === 0 ? (
+              <div style={{ padding: '16px 0', textAlign: 'center', fontSize: 12, color: 'var(--foreground-dim)' }}>
+                {zh ? '暂无编制内 Agent' : 'No identities yet'}
               </div>
-              <div className="flex items-center gap-2">
-                              {/* 简洁 / 专业 */}
-                              <div className="flex rounded-lg border border-border-subtle p-0.5 text-[11px]">
-                                <button
-                                  type="button"
-                                  onClick={() => setUiMode('simple')}
-                                  className={`rounded-md px-2 py-1 ${
-                                    uiMode === 'simple'
-                                      ? 'bg-brand-purple/15 text-brand-cyan'
-                                      : 'text-foreground-dim hover:text-foreground'
-                                  }`}
-                                >
-                                  {t('chat.simple')}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setUiMode('pro')}
-                                  className={`rounded-md px-2 py-1 ${
-                                    uiMode === 'pro'
-                                      ? 'bg-brand-purple/15 text-brand-cyan'
-                                      : 'text-foreground-dim hover:text-foreground'
-                                  }`}
-                                >
-                                  {t('chat.pro')}
-                                </button>
-                              </div>
-                              {uiMode === 'pro' && (
-                                <button
-                                  type="button"
-                                  onClick={toggleDock}
-                                  className="relative rounded-lg border border-border-subtle px-2 py-1 text-[11px] text-foreground-muted hover:bg-card-bg-hover"
-                                  title={t('chat.dockTitle')}
-                                >
-                                  {dockOpen ? t('chat.hideDock') : t('chat.showDock')}
-                                  {unreadTerminal && !dockOpen && (
-                                    <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-brand-cyan" />
-                                  )}
-                                </button>
-                              )}
-                              {/* 仅在「有会话却未连上」时提示，避免与 TitleBar「服务就绪」重复 */}
-                              {!!currentSession && !isConnected && !isConnecting && (
-                                <button
-                                  type="button"
-                                  onClick={() => connect()}
-                                  className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-200 hover:bg-amber-500/15"
-                                  title={t('chat.reconnectTitle')}
-                                >
-                                  {t('chat.reconnect')}
-                                </button>
-                              )}
-                              {isConnecting && (
-                                <span className="text-[11px] text-foreground-dim">{t('chat.connecting')}</span>
-                              )}
-                              {isGeneratingImage && (
-                                <span className="flex items-center gap-1.5 text-xs text-brand-cyan">
-                                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand-cyan" />
-                                  {t('chat.generatingImage')}
-                                </span>
-                              )}
-                              <button
-                                onClick={() => useTerminalStore.getState().togglePanel()}
-                                className="relative rounded-lg border border-border-subtle bg-card-bg px-3.5 py-1.5 text-xs font-medium text-foreground-muted transition-all hover:border-border-default hover:bg-card-bg-hover"
-                                title={t('terminal.title')}
-                              >
-                                {t('terminal.toggle')}
-                                {termHasEntries && !termPanelOpen && (
-                                  <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-brand-cyan" />
-                                )}
-                              </button>
-                              <button
-                                onClick={() => setIsTransparencyOpen(true)}
-                                className="rounded-lg border border-border-subtle bg-card-bg px-3.5 py-1.5 text-xs font-medium text-foreground-muted transition-all hover:border-border-default hover:bg-card-bg-hover"
-                              >
-                                {t('chat.transparency')}
-                              </button>
-                              <button
-                                onClick={() => setIsTaskPanelOpen(true)}
-                                className="relative rounded-lg border border-border-subtle bg-card-bg px-3.5 py-1.5 text-xs font-medium text-foreground-muted transition-all hover:border-border-default hover:bg-card-bg-hover"
-                              >
-                                {t('chat.taskBoard')}
-                                {activeGoal &&
-                                  (activeGoal.status === 'active' ||
-                                    (activeGoal.todos && activeGoal.todos.length > 0)) && (
-                                    <span className="absolute -right-1 -top-1 flex h-2.5 w-2.5">
-                                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand-cyan opacity-60" />
-                                      <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-brand-cyan" />
-                                    </span>
-                                  )}
-                              </button>
-                            </div>
-            </header>
+            ) : (
+              ids.slice(0, 7).map((a) => {
+                const proc = procs.find((p) => p.identity === a.name);
+                const st = proc?.state ?? a.status ?? 'idle';
+                return (
+                  <Link key={a.id} href="/agents" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 0', textDecoration: 'none' }}>
+                    <span style={{
+                      width: 34, height: 34, borderRadius: 9, flexShrink: 0,
+                      background: gradOf(a.name), display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                      color: '#fff', fontWeight: 700, fontSize: 13,
+                    }}>{a.name[0]}</span>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: 'var(--foreground)' }}>{a.name}</span>
+                      <span style={{ display: 'block', fontSize: 10.5, color: 'var(--foreground-dim)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {a.role || a.capabilities?.slice(0, 2).join(' · ') || st}
+                      </span>
+                    </span>
+                    <span style={dotStyle(st === 'running' ? 'var(--status-online)' : st === 'suspended' ? 'var(--status-offline)' : 'var(--foreground-dim)')} />
+                  </Link>
+                );
+              })
+            )}
+          </div>
 
-            {/* 主内容区：消息可滚动 + 底部固定 composer（防输入框被盖住） */}
-                  <div className="relative flex min-h-0 flex-1 overflow-hidden">
-                    <main className="chat-main-column">
-                      <div className="chat-messages-pane">
-                                                <ChatWindow
-                          messages={displayMessages}
-                          isStreaming={isStreaming}
-                          onStopStreaming={handleStopStreaming}
-                          onTagClick={handleTagClick}
-                          onRegenerate={handleRegenerate}
-                          onEdit={handleEdit}
-                          onExampleSelect={(text) => setEditingContent(text)}
-                          onPreviewArtifact={setPreviewArtifact}
-                        />
-                      </div>
-                      {!isConnected && !isConnecting && !!currentSession && (
-                        <div className="mx-3 mb-2 flex items-center justify-between gap-2 rounded-lg border border-border-subtle bg-card-bg/60 px-3 py-1.5 text-[11px] text-foreground-dim">
-                          <span>{t('chat.channelIdle')}</span>
-                        </div>
-                      )}
-                      <SessionArtifactsBar
-                        messages={displayMessages}
-                        onPreview={setPreviewArtifact}
-                      />
-                      <ActivityPanel
-                        liveToolCalls={liveToolCalls}
-                        streamStatusDetail={streamStatusDetail}
-                        isStreaming={isStreaming}
-                      />
-                      <MessageInput
-                                              ref={composerRef}
-                                              key={editingContent ?? 'default'}
-                                              onSend={handleSend}
-                                              onGenerateImage={handleGenerateImage}
-                                              disabled={isStreaming || isGeneratingImage || creatingSession}
-                                              isStreaming={isStreaming}
-                                              sessionId={currentSession?.id}
-                                              onStopStreaming={handleStopStreaming}
-                                              placeholder={
-                                                creatingSession
-                                                  ? t('chat.creating')
-                                                  : isStreaming
-                                                    ? t('chat.aiReplying')
-                                                    : uiMode === 'pro' && !workspaceRoot
-                                                      ? t('chat.proSelectProject')
-                                                      : !currentSession
-                                                        ? t('chat.inputHint')
-                                                        : isConnecting
-                                                          ? t('chat.connectingCanSend')
-                                                          : !isConnected
-                                                            ? t('chat.sendAutoConnect')
-                                                            : t('chat.send')
-                                              }
-                                              initialContent={editingContent ?? undefined}
-                                              onClearEdit={() => setEditingContent(null)}
-                                            />
-                    </main>
+          {/* 目标卡（P5 接真数据） */}
+          <Link href="/goals" style={{ ...card, display: 'block', textDecoration: 'none' }}>
+            <div style={secTitle}>{zh ? '目标' : 'Goals'} <span style={cnt}>Goal-driven</span></div>
+            <div style={{ fontSize: 12, color: 'var(--foreground-dim)', padding: '8px 0 4px' }}>
+              {zh ? 'P5 · 目标体系接入后此处显示 O-KR 进度' : 'P5 · O-KR progress will appear here'}
+            </div>
+          </Link>
 
-                    {previewArtifact && (
-                      <FilePreviewHost
-                        artifact={previewArtifact}
-                        onClose={() => setPreviewArtifact(null)}
-                      />
-                    )}
-                    <WorkspaceDock />
+          {/* 协作组（占位） */}
+          <div style={card}>
+            <div style={secTitle}>{zh ? '协作组' : 'Groups'} <span style={cnt}>{zh ? '可旁观' : 'observable'}</span></div>
+            <div style={{ fontSize: 12, color: 'var(--foreground-dim)', padding: '8px 0 4px' }}>
+              {zh ? 'P3 · workforce/org 接入后此处显示项目组讨论' : 'P3 · workforce/org groups will appear here'}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
-                    {/* 实时终端面板：desktop/shell 工具调用命令流 */}
-                    <TerminalPanel />
+function tagStyle(color: string): React.CSSProperties {
+  return {
+    display: 'inline-flex', alignItems: 'center', gap: 6,
+    fontSize: 10.5, fontWeight: 600, padding: '3px 10px', borderRadius: 9,
+    background: `color-mix(in srgb, ${color} 12%, transparent)`, color,
+  };
+}
+function dotStyle(color: string): React.CSSProperties {
+  return { width: 6, height: 6, borderRadius: '50%', background: color, flexShrink: 0 };
+}
 
-                    {/* 任务面板抽屉：Goal + 已进行操作（可跳转会话） */}
-                                        <TaskPanel
-                                          messages={messages}
-                                          liveToolCalls={liveToolCalls}
-                                          isOpen={isTaskPanelOpen}
-                                          onClose={() => setIsTaskPanelOpen(false)}
-                                          goal={activeGoal}
-                                          onClearGoal={() => setActiveGoal(null)}
-                                          highlightedMessageId={highlightMessageId}
-                                          onJumpToMessage={(messageId) => {
-                                            if (messageId === 'streaming') {
-                                              const el = document.getElementById('msg-streaming');
-                                              el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                              return;
-                                            }
-                                            const el = document.getElementById(`msg-${messageId}`);
-                                            if (!el) return;
-                                            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                            setHighlightMessageId(messageId);
-                                            el.classList.remove('msg-flash');
-                                            void el.offsetWidth;
-                                            el.classList.add('msg-flash');
-                                            window.setTimeout(() => {
-                                              el.classList.remove('msg-flash');
-                                              setHighlightMessageId(null);
-                                            }, 1600);
-                                          }}
-                                        />
-                                        <TransparencyPanel
-                                          sessionId={currentSession?.id || ''}
-                                          visible={isTransparencyOpen}
-                                          onClose={() => setIsTransparencyOpen(false)}
-                                        />
-                                      </div>
+/* ── feed 条目 ── */
+const EVENT_ICON: Record<string, string> = {
+  spawn: '🌱', exit: '🏁', mediate: '🛡', charge: '⚡', escalate: '⚠',
+  memory: '🧠', message: '💬', goal: '🎯', budget: '💰', error: '❌',
+};
 
-                                      <OpenProjectModal />
-                                      <DangerConfirmDialog />
-                                    </div>
-                                  );
-                                }
+function FeedItem({ e, zh, ids }: { e: KernelEvent; zh: boolean; ids: string[] }) {
+  const detail = e.detail || {};
+  const kind = e.kind || 'event';
+  const who = (detail.identity as string) || (detail.name as string) || e.process_id?.slice(0, 8) || 'kernel';
+  const msg = (detail.message as string) || (detail.summary as string) || kind;
+  return (
+    <div style={{ display: 'flex', gap: 11, padding: '10px 0', borderBottom: '1px solid var(--border-subtle)' }}>
+      <span style={{
+        width: 30, height: 30, borderRadius: 9, flexShrink: 0, fontSize: 13,
+        background: 'color-mix(in srgb, var(--brand-purple) 10%, transparent)',
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+      }}>{EVENT_ICON[kind] || '📌'}</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 12.5, color: 'var(--foreground)' }}>
+          <b style={{ fontWeight: 600 }}>{who}</b>{' '}
+          <span style={{ color: 'var(--foreground-muted)' }}>{msg}</span>
+        </div>
+        <div style={{ fontSize: 10.5, color: 'var(--foreground-dim)', marginTop: 2 }}>
+          {timeAgo(e.ts, zh ? 'zh' : 'en')} · {kind}
+        </div>
+      </div>
+    </div>
+  );
+}
