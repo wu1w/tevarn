@@ -12,8 +12,7 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { useT } from '@/stores/localeStore';
 import { useToastStore } from '@/stores/toastStore';
-import { getAgentProfiles } from '@/lib/api';
-import type { AgentProfile } from '@/types';
+import { getKernelIdentities, type KernelIdentity } from '@/lib/api';
 
 /** 头像底色：按名字 hash 取水彩色板渐变（与 demo 一致的气质） */
 const GRADS: Array<[string, string]> = [
@@ -49,8 +48,8 @@ function Avatar({ name, size = 34 }: { name: string; size?: number }) {
   );
 }
 
-function AgentRow({ profile }: { profile: AgentProfile }) {
-  const sub = profile.description?.split('\n')[0]?.trim() || (profile.is_default ? 'default' : '');
+function AgentRow({ profile }: { profile: KernelIdentity }) {
+  const sub = profile.role || (profile.capabilities?.length ? profile.capabilities[0] : '');
   return (
     <Link href={`/agents?id=${profile.id}`} className="tk-sb-agent">
       <Avatar name={profile.name} />
@@ -58,7 +57,6 @@ function AgentRow({ profile }: { profile: AgentProfile }) {
         <span className="tk-sb-agent-name">{profile.name}</span>
         {sub ? <span className="tk-sb-agent-sub">{sub}</span> : null}
       </span>
-      {profile.is_default && <span className="tk-sb-agent-star" title="default">★</span>}
     </Link>
   );
 }
@@ -66,14 +64,14 @@ function AgentRow({ profile }: { profile: AgentProfile }) {
 export function AgentSidebar() {
   const t = useT();
   const addToast = useToastStore((s) => s.addToast);
-  const { data: profiles } = useQuery({
-    queryKey: ['agent-profiles'],
-    queryFn: getAgentProfiles,
+  const { data } = useQuery({
+    queryKey: ['kernel-identities'],
+    queryFn: () => getKernelIdentities(),
     staleTime: 30_000,
     retry: 1,
   });
 
-  const list = profiles ?? [];
+  const list = data?.identities ?? [];
 
   return (
     <div className="tk-sb">

@@ -2147,3 +2147,45 @@ export async function getKernelIdentities(status?: string): Promise<{ identities
   const res = await api.get('/kernel/identities', { params: status ? { status } : {} });
   return res.data;
 }
+
+export interface IdentityMemoryEntry {
+  id: string;
+  identity_id: string;
+  kind: string;
+  content: string;
+  version?: number;
+  source?: string;
+  created_at?: string;
+  [key: string]: unknown;
+}
+
+export async function createIdentity(data: {
+  name: string;
+  role?: string;
+  capabilities?: string[];
+  default_token_budget?: number;
+  meta?: Record<string, unknown>;
+}): Promise<KernelIdentity> {
+  const res = await api.post('/kernel/identities', data);
+  return res.data;
+}
+
+export async function transitionIdentity(identityId: string, action: 'suspend' | 'resume' | 'archive'): Promise<KernelIdentity> {
+  const res = await api.post(`/kernel/identities/${identityId}/transition`, { action });
+  return res.data;
+}
+
+export async function setIdentityCapabilities(identityId: string, capabilities: string[]): Promise<KernelIdentity> {
+  const res = await api.post(`/kernel/identities/${identityId}/capabilities`, { capabilities });
+  return res.data;
+}
+
+export async function getIdentityMemory(identityId: string, kind?: string): Promise<{ memory: IdentityMemoryEntry[]; total: number }> {
+  const res = await api.get(`/kernel/identities/${identityId}/memory`, { params: kind ? { kind } : {} });
+  return res.data;
+}
+
+export async function addIdentityMemory(identityId: string, kind: string, content: string, source = 'manual'): Promise<IdentityMemoryEntry> {
+  const res = await api.post(`/kernel/identities/${identityId}/memory`, { kind, content, source });
+  return res.data;
+}
