@@ -2,6 +2,32 @@
 
 本项目版本记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [0.4.5-alpha] - 2026-07-27
+
+多 worker Kernel 执行面正确性加固：计数权威、提权去重、挂起恢复、事件观测。
+
+### Fixed
+
+- **tokens_used 回滚**：`put_process` 更新时不再 HSET 覆盖计数；权威仅在
+  `charge_tokens` / Lua `HINCRBY`；`set_process_fields` 显式拒绝写 `tokens_used`
+- **跨 worker 双 pending 提权**：`try_claim_escalation` SETNX 占坑
+  （`esc:claim:{process}:{caps_fp}`），后到者复用 owner id；
+  `find_covering_pending` 二次去重
+- **跨 worker 挂起恢复**：`resume_process` 写 Redis + `publish_resume`；
+  loop `wait_if_suspended` 经 `refresh_state` 轮询 Redis state
+- **事件多 worker 不可见**：`_emit` → Redis LPUSH 热缓冲；
+  `events()` 合并本机缓冲与 Redis 列表
+- **批准目标不透明**：`EscalationRequest.target` = `process|identity`，
+  API/前端 toast 区分「并入当前进程」与「写入编制档案」
+- **身份重名歧义**：`AgentIdentity.name` unique + create 前置查重（409）
+
+### Added
+
+- **auto_tighten_2x 真正生效**：日均 charge/run 统计 + charge 路径同步收紧
+  `token_budget`（settings 规则缓存 `rule_enabled_sync`）
+- 共享态测试：claim SETNX / 事件缓冲 / daily_avg / put 不回滚 /
+  提权去重 / approve target / auto_tighten / events 合并
+
 ## [0.4.4-alpha] - 2026-07-27
 
 PLAN 阶段 0.7「成长与组织」落地：六大支柱全部立起——

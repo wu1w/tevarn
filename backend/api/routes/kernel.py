@@ -275,14 +275,17 @@ async def create_identity(
     name = str(body.get("name") or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="name is required")
-    ident = await reg.create(
-        name,
-        role=str(body.get("role") or ""),
-        capabilities=body.get("capabilities"),
-        default_token_budget=body.get("default_token_budget"),
-        user_id=current_user.id,
-        meta=body.get("meta"),
-    )
+    try:
+        ident = await reg.create(
+            name,
+            role=str(body.get("role") or ""),
+            capabilities=body.get("capabilities"),
+            default_token_budget=body.get("default_token_budget"),
+            user_id=current_user.id,
+            meta=body.get("meta"),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     return _ident_dict(ident)
 
 

@@ -15,6 +15,9 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# 最近一次成功加载的规则（sync 路径 / charge_tokens 用）
+_RULES_CACHE: list[dict[str, Any]] | None = None
+
 # 默认与前端 DEFAULT_RULES 对齐
 DEFAULT_RULES: list[dict[str, Any]] = [
     {"key": "auto_low_risk", "enabled": True},
@@ -48,6 +51,7 @@ def _rule_enabled(rules: list[dict[str, Any]], key: str, default: bool = True) -
 
 async def load_approval_rules() -> list[dict[str, Any]]:
     """从 settings 表读 approval_rules；失败回落默认。"""
+    global _RULES_CACHE
     try:
         from sqlalchemy import select
         from backend.database import AsyncSessionLocal
@@ -60,16 +64,25 @@ async def load_approval_rules() -> list[dict[str, Any]]:
                 )
             ).scalar_one_or_none()
         if row is None or row.value is None:
-            return list(DEFAULT_RULES)
+            _RULES_CACHE = list(DEFAULT_RULES)
+            return _RULES_CACHE
         val = row.value
         if isinstance(val, str):
             import json
             val = json.loads(val)
         if isinstance(val, list) and val:
+            _RULES_CACHE = val
             return val
     except Exception as e:
         logger.debug("load approval_rules failed: %s", e)
-    return list(DEFAULT_RULES)
+    _RULES_CACHE = list(DEFAULT_RULES)
+    return _RULES_CACHE
+
+
+def rule_enabled_sync(key: str, default: bool = True) -> bool:
+    """同步读缓存规则（charge_tokens 等零 await 路径）。"""
+    rules = _RULES_CACHE if _RULES_CACHE is not None else DEFAULT_RULES
+    return _rule_enabled(rules, key, default)
 
 
 def classify_caps(capabilities: list[str] | tuple[str, ...] | set[str]) -> str:

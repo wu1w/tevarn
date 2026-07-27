@@ -149,12 +149,19 @@ export default function ApprovalsPage() {
         addToast(String(res.data.error), 'error');
         return;
       }
-      addToast(
-        action === 'approve'
-          ? (zh ? `已通过：${e.reason?.slice(0, 30) || e.id.slice(0, 8)}` : `Approved: ${e.reason?.slice(0, 30) || e.id.slice(0, 8)}`)
-          : (zh ? `已拒绝：${e.reason?.slice(0, 30) || e.id.slice(0, 8)}` : `Denied: ${e.reason?.slice(0, 30) || e.id.slice(0, 8)}`),
-        'success',
-      );
+      const label = e.reason?.slice(0, 30) || e.id.slice(0, 8);
+      if (action === 'approve') {
+        const target = (res.data as KernelEscalation)?.target;
+        const where =
+          target === 'identity'
+            ? (zh ? '（已写入身份编制，下次派活生效）' : ' (applied to identity profile for next run)')
+            : target === 'process'
+              ? (zh ? '（已并入当前进程）' : ' (applied to live process)')
+              : '';
+        addToast(zh ? `已通过：${label}${where}` : `Approved: ${label}${where}`, 'success');
+      } else {
+        addToast(zh ? `已拒绝：${label}` : `Denied: ${label}`, 'success');
+      }
       refresh();
     } catch (err) {
       // axios 拦截器已 toast 过 formatApiError；避免重复刷屏只记 busy

@@ -61,7 +61,18 @@ class IdentityRegistry:
     ) -> Any:
         from backend.models.agent_identity import AgentIdentity
 
+        name = (name or "").strip()
+        if not name:
+            raise ValueError("身份名称不能为空")
         async with self._session_factory() as session:
+            # 名称唯一（同名档案会让提权/派活解析歧义）
+            existing = (
+                await session.execute(
+                    select(AgentIdentity).where(AgentIdentity.name == name)
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                raise ValueError(f"身份名称已存在：{name}")
             ident = AgentIdentity(
                 name=name,
                 role=role,
@@ -72,7 +83,15 @@ class IdentityRegistry:
                 meta=dict(meta or {}),
             )
             session.add(ident)
-            await session.commit()
+            try:
+                await session.commit()
+            except Exception as e:
+                await session.rollback()
+                # 并发竞态：DB 层若有 unique 约束也会落到这里
+                msg = str(e).lower()
+                if "unique" in msg or "duplicate" in msg:
+                    raise ValueError(f"身份名称已存在：{name}") from e
+                raise
             await session.refresh(ident)
         self._emit("identity_created", ident.id, {
             "name": name, "role": role, "capabilities": capabilities,

@@ -1122,6 +1122,9 @@ export interface KernelEscalation {
   created_at: number;
   resolved_at: number | null;
   resolved_by: string | null;
+  /** 批准后：process=并入 live 进程；identity=并入编制档案 */
+  target?: 'process' | 'identity' | null;
+  identity_id?: string | null;
 }
 
 export async function getKernelEscalations(status?: string): Promise<{

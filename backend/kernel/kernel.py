@@ -119,9 +119,12 @@ class EscalationRequest:
     created_at: float = 0.0
     resolved_at: float | None = None
     resolved_by: str | None = None
+    # 批准后写入：process = 并入 live 进程；identity = 并入编制档案
+    target: str | None = None  # "process" | "identity" | None
+    identity_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "id": self.id,
             "process_id": self.process_id,
             "capabilities": list(self.capabilities),
@@ -131,6 +134,11 @@ class EscalationRequest:
             "resolved_at": self.resolved_at,
             "resolved_by": self.resolved_by,
         }
+        if self.target is not None:
+            d["target"] = self.target
+        if self.identity_id is not None:
+            d["identity_id"] = self.identity_id
+        return d
 
 
 _EVENT_BUFFER_MAX = 5000
@@ -188,7 +196,12 @@ class AgentKernel:
             logger.warning("kernel Redis put_process 失败（不阻断）: %s", e)
 
     def _resolve_process(self, process_id: str) -> AgentProcess | None:
-        """本地缓存 + Redis 权威合并（多 worker mediate 入口）。"""
+        """本地缓存 + Redis 权威合并（多 worker mediate 入口）。
+
+        - tokens_used：永远取 max(local, redis)（计数权威在 Redis HINCRBY）
+        - 其它字段：仅当 redis.updated_at >= local._sync_at 时覆盖，
+          避免刚写本地、尚未 put 完时被旧 Redis 快照盖掉
+        """
         if self._shared is not None:
             try:
                 data = self._shared.get_process(process_id)
@@ -197,24 +210,33 @@ class AgentKernel:
                 data = None
             if data is not None:
                 local = self._processes.get(process_id)
+                remote_ts = float(data.get("updated_at") or 0)
                 if local is None:
                     local = AgentProcess.from_dict(data)
+                    local.meta = dict(local.meta or {})
+                    local.meta["_sync_at"] = remote_ts or time.time()
                     self._processes[process_id] = local
                 else:
-                    # 刷新跨 worker 可变字段
-                    local.capabilities = data.get("capabilities")
-                    local.tokens_used = int(data.get("tokens_used") or 0)
-                    local.token_budget = data.get("token_budget")
-                    st = data.get("state")
-                    if st and st != local.state:
-                        local.state = st  # type: ignore[assignment]
-                    local.exit_reason = data.get("exit_reason")
-                    tok = data.get("token")
-                    if isinstance(tok, dict) and tok.get("capabilities") is not None:
-                        try:
-                            local.token = CapabilityToken.from_dict(tok, verify=False)
-                        except Exception:
-                            pass
+                    local_ts = float((local.meta or {}).get("_sync_at") or 0)
+                    # 计数永远向 Redis 看齐（单调）
+                    remote_used = int(data.get("tokens_used") or 0)
+                    if remote_used > local.tokens_used:
+                        local.tokens_used = remote_used
+                    if remote_ts >= local_ts:
+                        local.capabilities = data.get("capabilities")
+                        local.token_budget = data.get("token_budget")
+                        st = data.get("state")
+                        if st and st != local.state:
+                            local.state = st  # type: ignore[assignment]
+                        local.exit_reason = data.get("exit_reason")
+                        tok = data.get("token")
+                        if isinstance(tok, dict) and tok.get("capabilities") is not None:
+                            try:
+                                local.token = CapabilityToken.from_dict(tok, verify=False)
+                            except Exception:
+                                pass
+                        local.meta = dict(local.meta or {})
+                        local.meta["_sync_at"] = remote_ts
                 return local
         return self._processes.get(process_id)
 
@@ -269,6 +291,8 @@ class AgentKernel:
             meta=dict(meta or {}),
         )
         self._processes[proc.id] = proc
+        proc.meta = dict(proc.meta or {})
+        proc.meta["_sync_at"] = time.time()
         self._emit("process_created", proc.id, {
             "identity": identity,
             "session_id": session_id,
@@ -277,6 +301,11 @@ class AgentKernel:
             "token_budget": effective_budget,
         })
         self._persist_process(proc)
+        if self._shared is not None:
+            try:
+                self._shared.record_daily_run()
+            except Exception:
+                pass
         return proc
 
     async def end_process(
@@ -337,6 +366,11 @@ class AgentKernel:
             proc.meta.pop("suspend_reason", None)
             self._persist_process(proc)
             self._emit("process_resumed", process_id, {})
+            if self._shared is not None:
+                try:
+                    self._shared.publish_resume(process_id)
+                except Exception:
+                    pass
         return proc
 
     def get_process(self, process_id: str) -> AgentProcess | None:
@@ -443,16 +477,24 @@ class AgentKernel:
                         "token_budget": proc.token_budget,
                         "tokens_used": proc.tokens_used,
                     })
-                    self._share_process(proc)
+                    # 不 put 全量 tokens_used；仅同步 state 类字段
+                    try:
+                        self._shared.set_process_fields(
+                            process_id, state=proc.state, token_budget=proc.token_budget
+                        )
+                    except Exception:
+                        pass
                     raise BudgetExceededError(
                         f"进程 {process_id} 预算耗尽（{proc.tokens_used}/{proc.token_budget}）"
                     )
+                self._maybe_auto_tighten(proc)
                 return remaining
             except BudgetExceededError:
                 raise
             except Exception as e:
                 logger.warning("redis charge_tokens 失败，回退本地: %s", e)
         remaining = proc.charge_tokens(amount)
+        # 回退路径：本地扣完后 put（新建 tokens 或 max 语义已在 store 处理）
         self._share_process(proc)
         if remaining is not None and remaining <= 0:
             self._emit("budget_exceeded", proc.id, {
@@ -462,7 +504,50 @@ class AgentKernel:
             raise BudgetExceededError(
                 f"进程 {process_id} 预算耗尽（{proc.tokens_used}/{proc.token_budget}）"
             )
+        self._maybe_auto_tighten(proc)
         return remaining
+
+    def _maybe_auto_tighten(self, proc: AgentProcess) -> None:
+        """auto_tighten_2x：单进程用量 > 2× 他进程日均/run 时收紧 token_budget。
+
+        日均排除本进程已用量，避免刚 charge 抬高均值导致阈值永不触发。
+        """
+        try:
+            from backend.kernel.approval_rules import rule_enabled_sync
+
+            if not rule_enabled_sync("auto_tighten_2x", True):
+                return
+            if proc.token_budget is None or proc.tokens_used <= 0:
+                return
+            avg = 0.0
+            if self._shared is not None:
+                avg = float(
+                    self._shared.daily_avg_per_run(exclude_tokens=proc.tokens_used) or 0
+                )
+            if avg <= 0:
+                return
+            if proc.tokens_used <= 2.0 * avg:
+                return
+            # 收紧到「当前已用 + 5% 余量」，且不得放宽
+            tightened = max(proc.tokens_used + 500, int(proc.tokens_used * 1.05))
+            if tightened >= proc.token_budget:
+                return
+            old = proc.token_budget
+            proc.token_budget = tightened
+            if self._shared is not None:
+                self._shared.set_process_fields(proc.id, token_budget=tightened)
+            # 同步本地 meta 时间戳，避免下次 resolve 被旧 Redis 盖回宽预算
+            proc.meta = dict(proc.meta or {})
+            proc.meta["_sync_at"] = time.time()
+            self._emit("budget_tightened", proc.id, {
+                "from": old,
+                "to": tightened,
+                "tokens_used": proc.tokens_used,
+                "daily_avg_per_run": avg,
+                "rule": "auto_tighten_2x",
+            })
+        except Exception as e:
+            logger.debug("auto_tighten skip: %s", e)
 
     # ── 能力令牌 ──────────────────────────────────────────────
 
@@ -504,7 +589,9 @@ class AgentKernel:
     ) -> EscalationRequest:
         """进程申请扩大能力集。pending 状态等待用户批准/拒绝。
 
-        兼容模式进程（capabilities=None）本就全放行，申请无意义——拒绝。"""
+        兼容模式进程（capabilities=None）本就全放行，申请无意义——拒绝。
+        多 worker：Redis SETNX claim 防并发双 pending（同 process+caps 指纹）。
+        """
         proc = self._resolve_process(process_id)
         if proc is None:
             raise ValueError(f"未知进程 {process_id}")
@@ -525,8 +612,52 @@ class AgentKernel:
                 and pending_caps <= set(existing.capabilities)
             ):
                 return existing
+        # 跨 worker：查 Redis pending（他 worker 已申请）
+        if self._shared is not None:
+            try:
+                remote = self._shared.find_covering_pending(process_id, caps)
+                if remote:
+                    self.hydrate_escalation(remote)
+                    hit = self._escalations.get(str(remote.get("id") or ""))
+                    if hit is not None:
+                        return hit
+            except Exception as e:
+                logger.debug("redis escalation dedup skip: %s", e)
+        candidate_id = uuid.uuid4().hex[:16]
+        # SETNX 原子占坑：并发 request 只允许一个 owner 创建 pending
+        if self._shared is not None:
+            try:
+                owner = self._shared.try_claim_escalation(
+                    process_id, caps, candidate_id
+                )
+                if owner != candidate_id:
+                    # 他 worker 已占坑：水合已有申请并复用
+                    data = self._shared.get_escalation(owner)
+                    if data:
+                        self.hydrate_escalation(data)
+                        hit = self._escalations.get(owner)
+                        if hit is not None:
+                            return hit
+                    remote = self._shared.find_covering_pending(process_id, caps)
+                    if remote:
+                        self.hydrate_escalation(remote)
+                        hit = self._escalations.get(str(remote.get("id") or ""))
+                        if hit is not None:
+                            return hit
+                    # claim 已有但 record 尚未 put：返回 stub 指向 owner id
+                    stub = EscalationRequest(
+                        id=owner,
+                        process_id=process_id,
+                        capabilities=caps,
+                        reason=reason,
+                        created_at=time.time(),
+                    )
+                    self._escalations[stub.id] = stub
+                    return stub
+            except Exception as e:
+                logger.debug("redis escalation claim skip: %s", e)
         req = EscalationRequest(
-            id=uuid.uuid4().hex[:16],
+            id=candidate_id,
             process_id=process_id,
             capabilities=caps,
             reason=reason,
@@ -560,13 +691,13 @@ class AgentKernel:
             raise ValueError(f"未知提权申请 {request_id}")
         if req.status != "pending":
             raise ValueError(f"申请已处理（{req.status}）")
-        proc = self._processes.get(req.process_id)
         proc = self._resolve_process(req.process_id)
         if proc is not None and not proc.is_terminal:
             req = EscalationRequest(
                 id=req.id, process_id=req.process_id, capabilities=req.capabilities,
                 reason=req.reason, status="approved", created_at=req.created_at,
                 resolved_at=time.time(), resolved_by=by,
+                target="process",
             )
             self._escalations[req.id] = req
             self._persist_escalation(req)
@@ -581,6 +712,7 @@ class AgentKernel:
                 "resolved_by": by,
                 "capabilities_after": merged,
                 "target": "process",
+                "message": "能力已并入当前进程",
             })
             return req
         # 进程已死：并入 identity 编制档案
@@ -610,6 +742,8 @@ class AgentKernel:
             id=req.id, process_id=req.process_id, capabilities=req.capabilities,
             reason=req.reason, status="approved", created_at=req.created_at,
             resolved_at=time.time(), resolved_by=by,
+            target="identity",
+            identity_id=str(identity_id),
         )
         self._escalations[done.id] = done
         self._persist_escalation(done)
@@ -620,12 +754,13 @@ class AgentKernel:
             "capabilities_after": merged,
             "target": "identity",
             "identity_id": str(identity_id),
+            "message": "能力已并入身份编制档案，下次派活生效",
         })
         return done
 
     async def _resolve_identity_for_process(self, process_id: str) -> Any | None:
-        """从内存进程或 DB 档案解析 identity id。"""
-        proc = self._processes.get(process_id)
+        """从内存/Redis 进程或 DB 档案解析 identity id。"""
+        proc = self._resolve_process(process_id)
         name = None
         if proc is not None:
             name = getattr(proc, "identity", None) or (proc.to_dict() or {}).get("identity")
@@ -767,6 +902,8 @@ class AgentKernel:
             created_at=float(data.get("created_at") or data.get("created_at_ts") or 0),
             resolved_at=data.get("resolved_at"),
             resolved_by=data.get("resolved_by"),
+            target=data.get("target") or None,
+            identity_id=str(data["identity_id"]) if data.get("identity_id") else None,
         )
 
     # ── 审计 ──────────────────────────────────────────────
@@ -800,6 +937,12 @@ class AgentKernel:
                 self._persistence_sink({"op": "event", "data": {"hash": event.hash}})
             except Exception as e:
                 logger.warning("kernel 持久化 sink 失败（不阻断）: %s", e)
+        # 多 worker 热缓冲：他 worker 的 GET /events 能看到本机 emit
+        if self._shared is not None:
+            try:
+                self._shared.push_event(event.to_dict())
+            except Exception as e:
+                logger.debug("kernel Redis push_event 失败: %s", e)
         logger.debug("kernel event %s proc=%s %s", kind, process_id, detail)
         return event
 
@@ -824,11 +967,35 @@ class AgentKernel:
         kind: str | None = None,
         limit: int = 200,
     ) -> list[KernelEvent]:
-        out = self._events
+        """本地缓冲 + Redis 热缓冲合并（多 worker 观测）。
+
+        Redis 侧事件不参与本机哈希链校验（他 worker 独立成链），
+        仅按 id 去重后按 ts 排序返回。
+        """
+        by_id: dict[str, KernelEvent] = {e.id: e for e in self._events}
+        if self._shared is not None:
+            try:
+                for d in self._shared.list_events(limit=max(limit * 2, 200)):
+                    eid = str(d.get("id") or "")
+                    if not eid or eid in by_id:
+                        continue
+                    by_id[eid] = KernelEvent(
+                        kind=str(d.get("kind") or ""),
+                        process_id=str(d.get("process_id") or ""),
+                        detail=dict(d.get("detail") or {}),
+                        id=eid,
+                        ts=float(d.get("ts") or 0),
+                        prev_hash=str(d.get("prev_hash") or _GENESIS_HASH),
+                        hash=str(d.get("hash") or ""),
+                    )
+            except Exception as e:
+                logger.debug("events redis merge skip: %s", e)
+        out = list(by_id.values())
         if process_id is not None:
             out = [e for e in out if e.process_id == process_id]
         if kind is not None:
             out = [e for e in out if e.kind == kind]
+        out.sort(key=lambda e: e.ts)
         return out[-limit:]
 
     def gc_terminal(self, *, older_than_seconds: float = 3600.0) -> int:

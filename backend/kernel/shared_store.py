@@ -4,23 +4,27 @@
 A 上 create 的进程 B 上 mediate 会「未知进程」。
 
 设计：
-- **同步** redis-py 客户端（符合 kernel 零 await 红线；不在 mediate 路径里 await）
-- 进程 / 提权 以 Redis Hash 为权威；本进程内存作缓存
-- charge_tokens 用 Lua 脚本原子扣减（EXISTS+HINCRBY+HGET+EXPIRE 单脚本，
-  避免 HINCRBY 与 budget 读取两步之间的并发窗口）
-- 进程 id 索引 Set 在读路径惰性 GC（hash TTL 过期后死 id 随 list 剔除，
-  防长期运行 Set 无限膨胀——与 Redis 自身惰性过期同构）
-- 未配置 redis_url 或 redis 包缺失 → 返回 None，行为与单 worker 一致
+- **同步** redis-py 客户端（符合 kernel 零 await 红线）
+- 进程元数据 HSET；**tokens_used 仅 HINCRBY 权威**，put 更新不写回计数
+- charge_tokens Lua 原子扣减
+- 提权 SETNX 占坑防并发双 pending
+- 事件 LPUSH 热缓冲（多 worker 观测）
+- 未配置 redis → None
 
-Key 约定：
-  takton:kernel:v1:proc:{id}   Hash 进程档案
-  takton:kernel:v1:procs       Set  进程 id 索引
-  takton:kernel:v1:esc:{id}    Hash 提权
-  takton:kernel:v1:esc:pending Set  pending 提权 id
+Key：
+  takton:kernel:v1:proc:{id}
+  takton:kernel:v1:procs
+  takton:kernel:v1:esc:{id}
+  takton:kernel:v1:esc:pending
+  takton:kernel:v1:esc:claim:{process}:{fp}
+  takton:kernel:v1:events
+  takton:kernel:v1:daily:{YYYY-MM-DD}
+  takton:kernel:v1:daily_runs:{YYYY-MM-DD}
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -29,11 +33,12 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _PREFIX = "takton:kernel:v1"
-_PROC_TTL = 86400 * 2  # 进程档案 2 天过期（终态后仍可观测一阵）
+_PROC_TTL = 86400 * 2
 _ESC_TTL = 86400 * 7
+_CLAIM_TTL = 120
+_EVENT_MAX = 1000
+_EVENT_TTL = 86400
 
-# charge_tokens 原子脚本：存在性检查、扣减、budget 读取、TTL 续期单脚本完成。
-# 返回 false → 进程不存在；否则返回 {tokens_used, token_budget}（budget 空串 = 不限）。
 _CHARGE_LUA = """
 if redis.call('EXISTS', KEYS[1]) == 0 then
     return false
@@ -59,8 +64,13 @@ def _esc_key(eid: str) -> str:
     return f"{_PREFIX}:esc:{eid}"
 
 
+def caps_fingerprint(capabilities: list[str] | tuple[str, ...] | set[str]) -> str:
+    raw = ",".join(sorted({str(c) for c in capabilities}))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
+
+
 class KernelSharedStore:
-    """Redis 共享进程/提权。所有 public 方法同步、无 await。"""
+    """Redis 共享进程/提权/事件。所有 public 方法同步、无 await。"""
 
     def __init__(self, client: Any, *, prefix: str = _PREFIX) -> None:
         self._r = client
@@ -68,18 +78,25 @@ class KernelSharedStore:
 
     # ── 进程 ────────────────────────────────────────────────
 
-    def put_process(self, data: dict[str, Any]) -> None:
+    def put_process(self, data: dict[str, Any], *, force_tokens_used: bool = False) -> None:
+        """写入进程元数据。
+
+        **默认不覆盖 tokens_used**（已存在 key 时省略该 field）——
+        计数只由 charge_tokens / HINCRBY 维护，杜绝 put 回滚。
+        新建进程或 force_tokens_used=True 时才写入 tokens_used。
+        """
         pid = str(data.get("id") or "")
         if not pid:
             return
-        payload = {
+        key = _proc_key(pid)
+        exists = bool(self._r.exists(key))
+        payload: dict[str, str] = {
             "id": pid,
             "identity": str(data.get("identity") or ""),
             "session_id": data.get("session_id") or "",
             "parent_id": data.get("parent_id") or "",
             "capabilities": json.dumps(data.get("capabilities"), ensure_ascii=False),
             "token_budget": "" if data.get("token_budget") is None else str(data["token_budget"]),
-            "tokens_used": str(int(data.get("tokens_used") or 0)),
             "state": str(data.get("state") or "created"),
             "created_at": str(float(data.get("created_at") or time.time())),
             "started_at": "" if data.get("started_at") is None else str(data["started_at"]),
@@ -89,7 +106,8 @@ class KernelSharedStore:
             "token_json": json.dumps(data.get("token") or None, ensure_ascii=False),
             "updated_at": str(time.time()),
         }
-        key = _proc_key(pid)
+        if not exists or force_tokens_used:
+            payload["tokens_used"] = str(int(data.get("tokens_used") or 0))
         pipe = self._r.pipeline()
         pipe.hset(key, mapping=payload)
         pipe.expire(key, _PROC_TTL)
@@ -107,8 +125,6 @@ class KernelSharedStore:
         members = [self._s(m) for m in (self._r.smembers(key) or set())]
         if not members:
             return []
-        # 惰性 GC：hash 已 TTL 过期的死 id 随读路径从索引剔除。
-        # 不清理的话 Set 成员比 hash 活得久，长期运行索引无限膨胀。
         pipe = self._r.pipeline(transaction=False)
         for pid in members:
             pipe.exists(_proc_key(pid))
@@ -120,28 +136,33 @@ class KernelSharedStore:
         return alive
 
     def charge_tokens(self, process_id: str, amount: int) -> tuple[int | None, int | None]:
-        """Lua 单脚本原子扣减。返回 (tokens_used, budget_remaining)。
-
-        budget_remaining None = 不限；超限时仍返回 used，调用方抛 BudgetExceeded。
-        单脚本消除「HINCRBY 与 budget 读取」两步之间的并发窗口。
-        """
+        """Lua 原子扣减。返回 (tokens_used, budget_remaining)。"""
         key = _proc_key(process_id)
         res = self._r.eval(_CHARGE_LUA, 1, key, int(amount), _PROC_TTL)
-        if res is None:  # Lua return false → 进程不存在
+        if res is None:
             return None, None
         used = int(res[0])
         budget_s = self._s(res[1])
         if budget_s == "" or budget_s is None:
             return used, None
         budget = int(budget_s)
+        # 日用量（auto_tighten 用）
+        if amount > 0:
+            try:
+                self.record_daily_charge(amount)
+            except Exception:
+                pass
         return used, max(0, budget - used)
 
     def set_process_fields(self, process_id: str, **fields: Any) -> None:
+        """更新元数据字段；默认**拒绝**写 tokens_used（请用 charge_tokens）。"""
         key = _proc_key(process_id)
         if not self._r.exists(key):
             return
         mapping: dict[str, str] = {"updated_at": str(time.time())}
         for k, v in fields.items():
+            if k == "tokens_used":
+                continue  # 计数权威只在 HINCRBY
             if k == "capabilities":
                 mapping[k] = json.dumps(v, ensure_ascii=False)
             elif k == "meta":
@@ -154,6 +175,46 @@ class KernelSharedStore:
                 mapping[k] = str(v)
         self._r.hset(key, mapping=mapping)
         self._r.expire(key, _PROC_TTL)
+
+    def publish_resume(self, process_id: str) -> None:
+        """通知其他 worker：进程已恢复（best-effort）。"""
+        try:
+            self._r.publish(f"{self._prefix}:resume", process_id)
+        except Exception:
+            pass
+
+    # ── 日用量（auto_tighten_2x）────────────────────────────
+
+    def record_daily_charge(self, amount: int) -> None:
+        day = time.strftime("%Y-%m-%d")
+        k = f"{self._prefix}:daily:{day}"
+        self._r.incrby(k, max(0, int(amount)))
+        self._r.expire(k, 86400 * 4)
+
+    def record_daily_run(self) -> None:
+        day = time.strftime("%Y-%m-%d")
+        k = f"{self._prefix}:daily_runs:{day}"
+        self._r.incr(k)
+        self._r.expire(k, 86400 * 4)
+
+    def daily_stats(self) -> tuple[int, int]:
+        """返回 (今日累计 charge tokens, 今日进程创建次数)。"""
+        day = time.strftime("%Y-%m-%d")
+        total = int(self._s(self._r.get(f"{self._prefix}:daily:{day}")) or 0)
+        runs = int(self._s(self._r.get(f"{self._prefix}:daily_runs:{day}")) or 0)
+        return total, runs
+
+    def daily_avg_per_run(self, *, exclude_tokens: int = 0) -> float:
+        """今日累计 charge / 今日进程创建次数。
+
+        exclude_tokens：排除当前进程已用量，避免「刚 charge 抬高日均」
+        导致 auto_tighten 永远触发不了。
+        """
+        total, runs = self.daily_stats()
+        base = max(0, total - max(0, int(exclude_tokens)))
+        # 有其他 run 时用 runs-1 更贴近「他进程均值」；仅 1 run 时用 1
+        denom = max(runs - 1, 1) if runs > 1 and exclude_tokens > 0 else max(runs, 1)
+        return float(base) / float(denom)
 
     # ── 提权 ────────────────────────────────────────────────
 
@@ -170,6 +231,8 @@ class KernelSharedStore:
             "created_at": str(float(data.get("created_at") or 0)),
             "resolved_at": "" if data.get("resolved_at") is None else str(data["resolved_at"]),
             "resolved_by": data.get("resolved_by") or "",
+            "target": data.get("target") or "",
+            "identity_id": data.get("identity_id") or "",
         }
         key = _esc_key(eid)
         pipe = self._r.pipeline()
@@ -179,7 +242,35 @@ class KernelSharedStore:
             pipe.sadd(f"{self._prefix}:esc:pending", eid)
         else:
             pipe.srem(f"{self._prefix}:esc:pending", eid)
+            # 释放 claim
+            pid = payload["process_id"]
+            try:
+                caps = json.loads(payload["capabilities"])
+                fp = caps_fingerprint(caps)
+                pipe.delete(f"{self._prefix}:esc:claim:{pid}:{fp}")
+            except Exception:
+                pass
         pipe.execute()
+
+    def try_claim_escalation(
+        self,
+        process_id: str,
+        capabilities: list[str] | tuple[str, ...] | set[str],
+        escalation_id: str,
+        *,
+        ttl: int = _CLAIM_TTL,
+    ) -> str:
+        """SETNX 占坑。返回我们拥有的 id，或已有 claim 的 id。
+
+        调用方：若返回值 != escalation_id，应水合并复用已有申请。
+        """
+        fp = caps_fingerprint(capabilities)
+        key = f"{self._prefix}:esc:claim:{process_id}:{fp}"
+        ok = self._r.set(key, escalation_id, nx=True, ex=int(ttl))
+        if ok:
+            return escalation_id
+        owner = self._s(self._r.get(key))
+        return owner or escalation_id
 
     def get_escalation(self, escalation_id: str) -> dict[str, Any] | None:
         raw = self._r.hgetall(_esc_key(escalation_id))
@@ -190,10 +281,59 @@ class KernelSharedStore:
     def list_pending_escalations(self) -> list[dict[str, Any]]:
         ids = self._r.smembers(f"{self._prefix}:esc:pending") or set()
         out: list[dict[str, Any]] = []
+        dead: list[str] = []
         for eid in ids:
-            d = self.get_escalation(self._s(eid))
+            sid = self._s(eid)
+            d = self.get_escalation(sid)
             if d and d.get("status") == "pending":
                 out.append(d)
+            else:
+                dead.append(sid)
+        if dead:
+            try:
+                self._r.srem(f"{self._prefix}:esc:pending", *dead)
+            except Exception:
+                pass
+        return out
+
+    def find_covering_pending(
+        self, process_id: str, capabilities: list[str] | tuple[str, ...] | set[str]
+    ) -> dict[str, Any] | None:
+        want = set(capabilities)
+        for d in self.list_pending_escalations():
+            if d.get("process_id") != process_id:
+                continue
+            have = set(d.get("capabilities") or [])
+            if want <= have:
+                return d
+        return None
+
+    # ── 事件热缓冲 ──────────────────────────────────────────
+
+    def push_event(self, event: dict[str, Any]) -> None:
+        key = f"{self._prefix}:events"
+        try:
+            line = json.dumps(event, ensure_ascii=False, default=str)
+            pipe = self._r.pipeline()
+            pipe.lpush(key, line)
+            pipe.ltrim(key, 0, _EVENT_MAX - 1)
+            pipe.expire(key, _EVENT_TTL)
+            pipe.execute()
+        except Exception as e:
+            logger.debug("push_event failed: %s", e)
+
+    def list_events(self, *, limit: int = 200) -> list[dict[str, Any]]:
+        key = f"{self._prefix}:events"
+        try:
+            raw = self._r.lrange(key, 0, max(0, int(limit) - 1)) or []
+        except Exception:
+            return []
+        out: list[dict[str, Any]] = []
+        for item in raw:
+            try:
+                out.append(json.loads(self._s(item)))
+            except json.JSONDecodeError:
+                continue
         return out
 
     def ping(self) -> bool:
@@ -214,7 +354,6 @@ class KernelSharedStore:
 
     def _decode_process(self, raw: dict[Any, Any]) -> dict[str, Any]:
         def g(k: str) -> str:
-            # redis-py may return bytes keys
             for kk, vv in raw.items():
                 if self._s(kk) == k:
                     return self._s(vv)
@@ -240,6 +379,7 @@ class KernelSharedStore:
             except json.JSONDecodeError:
                 token = None
         sa, ea = g("started_at"), g("ended_at")
+        ua = g("updated_at")
         return {
             "id": g("id"),
             "identity": g("identity"),
@@ -255,6 +395,7 @@ class KernelSharedStore:
             "exit_reason": g("exit_reason") or None,
             "meta": meta,
             "token": token,
+            "updated_at": float(ua) if ua else 0.0,
         }
 
     def _decode_escalation(self, raw: dict[Any, Any]) -> dict[str, Any]:
@@ -269,6 +410,8 @@ class KernelSharedStore:
         except json.JSONDecodeError:
             caps = []
         ra = g("resolved_at")
+        target = g("target") or None
+        identity_id = g("identity_id") or None
         return {
             "id": g("id"),
             "process_id": g("process_id"),
@@ -278,11 +421,12 @@ class KernelSharedStore:
             "created_at": float(g("created_at") or 0),
             "resolved_at": float(ra) if ra else None,
             "resolved_by": g("resolved_by") or None,
+            "target": target or None,
+            "identity_id": identity_id or None,
         }
 
 
 def create_shared_store_from_settings() -> KernelSharedStore | None:
-    """读配置；失败/未配置返回 None（单 worker 内存态）。"""
     try:
         from backend.core.config import settings
 

@@ -39,7 +39,8 @@ class AgentIdentity(Base, UUIDMixin, TimestampMixin):
         ForeignKey("sub_agents.id", ondelete="SET NULL"), nullable=True
     )
 
-    name: Mapped[str] = mapped_column(String(64), index=True)
+    # unique：提权/派活按 name 解析身份，重名会导致歧义
+    name: Mapped[str] = mapped_column(String(64), index=True, unique=True)
     role: Mapped[str] = mapped_column(String(256), default="")  # 职责描述
 
     # 状态机：active / suspended / archived
