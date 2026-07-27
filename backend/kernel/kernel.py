@@ -137,10 +137,15 @@ _EVENT_BUFFER_MAX = 5000
 
 
 class AgentKernel:
-    def __init__(self, audit_store: Any | None = None) -> None:
+    def __init__(self, audit_store: Any | None = None, persistence_sink: Any | None = None) -> None:
         self._processes: dict[str, AgentProcess] = {}
         self._events: list[KernelEvent] = []
         self._escalations: dict[str, EscalationRequest] = {}
+        # 0.5：持久化 sink（kernel/persistence.py）。同步 put_nowait 零 await，
+        # 符合单线程红线；异步消费者落盘（进程档案 + checkpoint 计数）。
+        self._persistence_sink = persistence_sink
+        # 0.5：身份注册表（kernel/identity.py，外部装配，None = 身份层关闭）
+        self.identity_registry: Any | None = None
         # 阶段 3：审计落盘。挂载后每条事件追加 JSONL；
         # 内存缓冲为空时从文件链尾续 prev_hash（跨重启链连续）。
         self._audit_store = audit_store
@@ -155,6 +160,15 @@ class AgentKernel:
     @property
     def scheduler(self) -> Any:
         return self._scheduler
+
+    # ── 持久化挂钩（0.5：同步 sink，零 await）────────────────
+
+    def _persist_process(self, proc: "AgentProcess") -> None:
+        if self._persistence_sink is not None:
+            try:
+                self._persistence_sink({"op": "process_upsert", "data": proc.to_dict()})
+            except Exception as e:
+                logger.warning("kernel 持久化 sink 失败（不阻断）: %s", e)
 
     # ── 进程管理 ──────────────────────────────────────────────
 
@@ -214,6 +228,7 @@ class AgentKernel:
             "capabilities": effective_caps,
             "token_budget": effective_budget,
         })
+        self._persist_process(proc)
         return proc
 
     async def end_process(
@@ -238,6 +253,7 @@ class AgentKernel:
             "tokens_used": proc.tokens_used,
             "duration_ms": int((proc.ended_at - (proc.started_at or proc.created_at)) * 1000),
         })
+        self._persist_process(proc)
         return proc
 
     async def mark_running(self, process_id: str) -> None:
@@ -245,6 +261,7 @@ class AgentKernel:
         if proc is not None and proc.state == "created":
             proc.state = "running"
             proc.started_at = time.time()
+            self._persist_process(proc)
 
     def get_process(self, process_id: str) -> AgentProcess | None:
         return self._processes.get(process_id)
@@ -436,6 +453,7 @@ class AgentKernel:
         proc.capabilities = merged
         if proc.token is not None:
             self.issue_token(req.process_id, merged)  # 重签令牌使扩大生效
+        self._persist_process(proc)  # 权限档案变更落盘
         self._emit("escalation_approved", req.process_id, {
             "escalation_id": req.id,
             "capabilities": list(req.capabilities),
@@ -494,6 +512,12 @@ class AgentKernel:
             del self._events[: len(self._events) - _EVENT_BUFFER_MAX]
         if self._audit_store is not None:
             self._audit_store.append(event.to_dict())
+        if self._persistence_sink is not None:
+            try:
+                # checkpoint 计数用（事件本体已由 audit_store JSONL 落盘）
+                self._persistence_sink({"op": "event", "data": {"hash": event.hash}})
+            except Exception as e:
+                logger.warning("kernel 持久化 sink 失败（不阻断）: %s", e)
         logger.debug("kernel event %s proc=%s %s", kind, process_id, detail)
         return event
 
@@ -539,6 +563,7 @@ class AgentKernel:
 
 
 _kernel_singleton: AgentKernel | None = None
+_kernel_persistence_singleton: Any | None = None
 
 
 def get_kernel() -> AgentKernel:
@@ -546,10 +571,12 @@ def get_kernel() -> AgentKernel:
 
     默认挂载审计落盘（~/.takton/kernel_events.jsonl）；
     agent_kernel_audit_persist=false 可关（仅内存缓冲）。
+    0.5：默认装配持久化 sink + 身份注册表（agent_kernel_persistence=false 可关）。
     """
-    global _kernel_singleton
+    global _kernel_singleton, _kernel_persistence_singleton
     if _kernel_singleton is None:
         store = None
+        persistence = None
         try:
             from backend.core.config import settings
 
@@ -560,10 +587,46 @@ def get_kernel() -> AgentKernel:
                 store = AuditEventStore(path)
         except Exception as e:
             logger.warning("kernel 审计落盘初始化失败（仅内存缓冲）: %s", e)
-        _kernel_singleton = AgentKernel(audit_store=store)
+        try:
+            from backend.core.config import settings as _s
+
+            if bool(getattr(_s, "agent_kernel_persistence", True)):
+                from backend.database import AsyncSessionLocal
+                from backend.kernel.persistence import KernelPersistence
+
+                persistence = KernelPersistence(
+                    AsyncSessionLocal,
+                    store,
+                    checkpoint_interval=int(getattr(_s, "agent_kernel_checkpoint_interval", 500)),
+                )
+        except Exception as e:
+            logger.warning("kernel 持久化初始化失败（仅内存态）: %s", e)
+            persistence = None
+        _kernel_persistence_singleton = persistence
+        _kernel_singleton = AgentKernel(
+            audit_store=store,
+            persistence_sink=persistence.sink() if persistence is not None else None,
+        )
+        if persistence is not None:
+            try:
+                from backend.database import AsyncSessionLocal
+                from backend.kernel.identity import IdentityRegistry
+
+                _kernel_singleton.identity_registry = IdentityRegistry(
+                    _kernel_singleton, AsyncSessionLocal
+                )
+            except Exception as e:
+                logger.warning("kernel 身份注册表初始化失败: %s", e)
     return _kernel_singleton
 
 
+def get_kernel_persistence() -> Any | None:
+    """0.5 持久化协调器（lifespan 用它 recover + 拉 worker）。"""
+    get_kernel()  # 确保已装配
+    return _kernel_persistence_singleton
+
+
 def reset_kernel_for_tests() -> None:
-    global _kernel_singleton
+    global _kernel_singleton, _kernel_persistence_singleton
     _kernel_singleton = None
+    _kernel_persistence_singleton = None

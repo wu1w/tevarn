@@ -206,6 +206,10 @@ class Settings(BaseSettings):
     agent_kernel_explicit_capabilities: bool = True
     # 工具被能力集拦截时自动发起提权申请（用户在 /security 批准）
     agent_kernel_auto_escalate: bool = True
+    # 0.5 编制与档案：进程档案/身份/checkpoint 持久化（sink 模式，失败不阻断）
+    agent_kernel_persistence: bool = True
+    # checkpoint 快照间隔（事件数）：恢复=快照+增量，禁止全量 replay
+    agent_kernel_checkpoint_interval: int = 500
     agent_tool_parallel_max: int = 5
     # 用户单条输入硬上限（字符），超出截断并提示
     agent_max_user_input_chars: int = 100_000

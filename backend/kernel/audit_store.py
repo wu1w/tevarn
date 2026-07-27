@@ -66,6 +66,44 @@ class AuditEventStore:
         except OSError:
             return None
 
+    def read_after(self, after_hash: str | None, *, limit: int = 10000) -> list[dict[str, Any]]:
+        """增量读取：返回 after_hash 之后的事件（按文件顺序）。
+
+        0.5 checkpoint 恢复路径用：恢复 = 最新快照 + 快照 tail_hash 之后的
+        增量事件——禁止全量 replay（PLAN §3.b 红线）。
+        after_hash=None 表示从头读（仅限无快照的首次启动）。
+        找不到 after_hash（文件被截断/篡改）时返回空列表并告警——
+        调用方应触发链验证定位问题，而不是默默从头读。
+        """
+        out: list[dict[str, Any]] = []
+        found_anchor = after_hash is None
+        try:
+            if not os.path.isfile(self._path):
+                return out
+            with open(self._path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        e = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not found_anchor:
+                        if e.get("hash") == after_hash:
+                            found_anchor = True
+                        continue
+                    out.append(e)
+                    if len(out) >= limit:
+                        break
+        except OSError:
+            return []
+        if not found_anchor and after_hash is not None:
+            logger.warning(
+                "checkpoint tail_hash 在事件文件中未找到（截断/篡改？），增量恢复为空"
+            )
+        return out
+
     def verify_file_chain(self) -> tuple[bool, int]:
         """全量验证落盘文件哈希链。返回 (是否完整, 断链行号或 -1)。"""
         from backend.kernel.kernel import _event_hash

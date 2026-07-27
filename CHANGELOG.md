@@ -2,6 +2,40 @@
 
 本项目版本记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [0.5.0-alpha] - 2026-07-27
+
+0.5「编制与档案」落地（PLAN_AI_WORKFORCE 第一阶段）：Agent 从运行时对象
+变为持久实体——**进程可以死，Agent 不死**。
+
+### Added
+
+- **Agent Identity 系统**：`agent_identities` 表 + `IdentityRegistry`——
+  持久身份（名称/职责/权限档案/信用分），状态机
+  active → suspended ⇄ active → archived（**archived 终态不可逆，身份不可销毁**）；
+  权限变更全程审计事件（禁止静默改权），所有身份事件进哈希链
+  （`identity:<uuid>` 前缀，与进程事件同链）
+- **Identity Memory（四层记忆第四层）**：`identity_memory` 表——
+  persona/duty/experience/preference/methodology 五类；
+  **修改不覆盖**（版本链 supersede），distilled 来源必须带审批人
+  （进化审批不可绕过的红线在数据结构层强制）
+- **进程档案持久化**：`kernel_processes` 表——kernel 进程 create/running/
+  end/权限变更经 **sink 模式**落盘（同步 put_nowait 零 await，符合单线程红线，
+  后台 worker 异步消费）；重启恢复时 created/running → **interrupted**
+  （诚实中断标记，不伪造存活）
+- **Checkpoint 快照**：`kernel_checkpoints` 表，每 N 事件自动快照
+  （`agent_kernel_checkpoint_interval` 默认 500）；**恢复 = 快照 + tail_hash
+  后增量事件，禁止全量 replay**（快照锚点丢失时宁可空增量也不默默从头读）
+- **身份 API**：`GET/POST /api/kernel/identities`、
+  `POST .../transition|capabilities`、`GET/POST .../memory[/{id}/supersede]`
+- **测试**：+7（身份生命周期/改权审计/记忆版本链/蒸馏审批/进程落盘重启/
+  checkpoint 增量恢复断言非全量/锚点篡改安全），全量 699/0
+
+### Changed
+
+- `get_kernel()` 默认装配持久化 + 身份注册表
+  （`agent_kernel_persistence=false` 回退纯内存态）
+- lifespan 启动时执行 kernel 恢复 + 拉起持久化 worker
+
 ## [0.4.1-alpha] - 2026-07-26
 
 审计缺口修复 + 提权交互地基：用户授权成为唯一合法的能力扩大通道。

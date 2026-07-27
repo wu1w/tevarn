@@ -367,6 +367,19 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Cluster run startup sweep skipped: {e}")
 
+    # 0.5 编制与档案：kernel 持久化恢复（interrupted 标记 + checkpoint+增量）+
+    # 后台消费 worker（sink 队列落盘）
+    try:
+        from backend.kernel.kernel import get_kernel_persistence
+
+        kp = get_kernel_persistence()
+        if kp is not None:
+            summary = await kp.recover()
+            logger.info("kernel 持久化恢复: %s", summary)
+            _spawn_bg(kp.worker(), name="kernel-persistence")
+    except Exception as e:
+        logger.warning(f"kernel persistence startup skipped: {e}")
+
     # EventBus → WS 活动流桥（Phase 0.5.2 W2-3）
     try:
         from backend.api.websocket import manager as ws_manager
