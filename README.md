@@ -146,8 +146,8 @@ curl -fsSL https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.sh
 |----------|---------|------|
 | Windows | Setup.exe | [Takton-Setup-0.3.4.exe](https://github.com/wu1w/takton/releases/download/v0.3.4/Takton-Setup-0.3.4.exe) |
 | Windows | Portable.zip | [Takton-0.3.4-win-x64-portable.zip](https://github.com/wu1w/takton/releases/download/v0.3.4/Takton-0.3.4-win-x64-portable.zip) |
-| Linux | AppImage | [Takton-0.3.4.AppImage](https://github.com/wu1w/takton/releases/download/v0.3.4/Takton-0.3.4.AppImage) |
-| Linux | deb | [takton_0.3.4_amd64.deb](https://github.com/wu1w/takton/releases/download/v0.3.4/takton_0.3.4_amd64.deb) |
+| Linux | AppImage | [Takton-0.3.4.AppImage](https://github.com/wu1w/takton/releases/download/v0.3.3/Takton-0.3.3.AppImage) |
+| Linux | deb | [takton_0.3.4_amd64.deb](https://github.com/wu1w/takton/releases/download/v0.3.3/takton_0.3.3_amd64.deb) |
 
 > 一键脚本会自动解析 [最新 Release](https://github.com/wu1w/takton/releases/latest) 资产；上表为固定直链备份。
 
