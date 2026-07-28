@@ -112,6 +112,13 @@ interface UseWebSocketOptions {
   onError?: (error: string) => void;
   onConnect?: () => void;
   onDisconnect?: () => void;
+  onSyncResponse?: (payload: {
+    messages: Array<{ id: string; role: string; content: string; created_at?: string | null }>;
+    agent_running?: boolean;
+    state?: string;
+  }) => void;
+  /** 连接成功后自动 sync 时使用的 last message id */
+  getLastMessageId?: () => string | undefined;
 }
 
 export function useWebSocket(options: UseWebSocketOptions) {
@@ -246,13 +253,21 @@ export function useWebSocket(options: UseWebSocketOptions) {
       try { useWsStore.getState().setConnected(true); } catch (e) { console.error(e); }
       optionsRef.current.onConnect?.();
 
-      const t = tokenRef.current;
-      if (t) {
+      const tok = tokenRef.current;
+      if (tok) {
         try {
-          ws.send(JSON.stringify({ type: 'auth', token: t }));
+          ws.send(JSON.stringify({ type: 'auth', token: tok }));
         } catch {
           /* ignore */
         }
+      }
+
+      // 回页/重连：主动 sync，拿 agent_running + 漏消息
+      try {
+        const lastId = optionsRef.current.getLastMessageId?.();
+        ws.send(JSON.stringify({ type: 'sync', last_message_id: lastId || undefined }));
+      } catch {
+        /* ignore */
       }
 
       clearPing();
@@ -333,6 +348,17 @@ export function useWebSocket(options: UseWebSocketOptions) {
         } else if (msg.type === 'settings_changed') {
           const keys = (msg as unknown as { keys?: string[] }).keys || [];
           optionsRef.current.onSettingsChanged?.(keys);
+        } else if (msg.type === 'sync_response') {
+          const m = msg as unknown as {
+            messages?: Array<{ id: string; role: string; content: string; created_at?: string | null }>;
+            agent_running?: boolean;
+            state?: string;
+          };
+          optionsRef.current.onSyncResponse?.({
+            messages: m.messages || [],
+            agent_running: Boolean(m.agent_running),
+            state: m.state,
+          });
         } else if (msg.type === 'error') {
           optionsRef.current.onError?.(
             (msg as unknown as { detail: string }).detail || 'Unknown error'

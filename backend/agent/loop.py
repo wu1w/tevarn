@@ -214,10 +214,18 @@ class NexusAgentLoop(AgentLoopBase):
         repeat_verdict = self._search_repeat_verdict(name, arguments)
         if repeat_verdict == "block":
             logger.info("重复搜索拦截 tool=%s query=%s", name, str(arguments)[:120])
+            total = int(getattr(self, "_search_total_calls", 0) or 0)
+            max_run = int(getattr(settings, "agent_search_max_per_run", 8) or 8)
+            if max_run > 0 and total > max_run:
+                return (
+                    f"Error: 本轮研究已累计搜索 {total} 次（上限 {max_run}）。"
+                    "继续搜索收益极低——请立即基于已收集内容总结交付；"
+                    "缺口请在答案中显式列出，勿再调用搜索类工具。"
+                )
             return (
-                "Error: 检测到同一查询已执行 3 次以上——继续重复搜索不会带来新信息。"
+                "Error: 检测到同一/近似查询已执行 3 次以上——继续重复搜索不会带来新信息。"
                 "请立即基于已收集的内容总结交付；如有未覆盖的缺口，在答案中显式注明，"
-                "或改用**角度不同**的新查询（而非同义改写）。"
+                "或改用**角度完全不同**的新查询（而非同义改写）。"
             )
         repeat_prefix = (
             "[提醒] 该查询此前已执行过，结果大概率相同。若本次结果无新增事实，"
@@ -232,42 +240,84 @@ class NexusAgentLoop(AgentLoopBase):
         result = await UnifiedToolRegistry.execute(name, arguments)
         return repeat_prefix + result if repeat_prefix and isinstance(result, str) else result
 
-    # ── 重复搜索检测（0.3.3 收敛刹车）────────────────────────────
+    # ── 重复搜索检测（收敛刹车 + 全局预算 + 近似同义）──────────
 
     _SEARCH_TOOL_NAMES = frozenset({
         "web_search", "x_search", "search", "websearch",
-        "web_extract", "web_fetch", "fetch_url",
+        "web_extract", "web_fetch", "fetch_url", "fetch_webpage",
+        "browse_page", "open_page", "tavily_search", "duckduckgo_search",
     })
 
     def _search_repeat_verdict(self, name: str, arguments: dict[str, Any]) -> str | None:
-        """返回 None（首次/非搜索）/ "warn"（第 2 次）/ "block"（第 3 次起）。
+        """返回 None（放行）/ "warn" / "block"。
 
-        归一化：query/q 参数小写 + 词序排序——"A B" 与 "B A"、纯同义
-        改写之外的词序变体视为同一查询。只对搜索类工具生效，
-        非搜索工具的合法重复（重读文件等）不受影响。
+        1) 单 run 搜索总次数 ≥ agent_search_max_per_run → block
+        2) 精确/词序归一指纹：第 2 次 warn，第 3 次起 block
+        3) 与历史 query 词集 Jaccard ≥ 阈值 → 同一桶
         """
         if not bool(getattr(settings, "agent_search_repeat_guard", True)):
             return None
         if name not in self._SEARCH_TOOL_NAMES:
             return None
         query = str(
-            arguments.get("query") or arguments.get("q") or arguments.get("url") or ""
+            arguments.get("query")
+            or arguments.get("q")
+            or arguments.get("url")
+            or arguments.get("search_term")
+            or ""
         ).strip().lower()
-        if not query:
-            return None
-        import hashlib
 
-        normalized = " ".join(sorted(query.split()))
+        import hashlib
+        import re
+
+        max_run = int(getattr(settings, "agent_search_max_per_run", 8) or 8)
+
+        if not query:
+            total = int(getattr(self, "_search_total_calls", 0) or 0) + 1
+            self._search_total_calls = total
+            if max_run > 0 and total > max_run:
+                return "block"
+            return None
+
+        tokens = [t for t in query.replace(",", " ").replace("，", " ").replace("、", " ").split() if t]
+        normalized = " ".join(sorted(tokens))
         fp = hashlib.sha1(f"{name}:{normalized}".encode("utf-8")).hexdigest()[:12]
+
+        jaccard_thr = float(getattr(settings, "agent_search_similar_jaccard", 0.72) or 0.72)
+        token_set = set(tokens)
+        seen_sets: list = getattr(self, "_search_token_sets", None) or []
+        matched_fp = None
+        if token_set and jaccard_thr > 0:
+            for old_fp, old_set in seen_sets:
+                if not old_set:
+                    continue
+                inter = len(token_set & old_set)
+                union = len(token_set | old_set) or 1
+                if inter / union >= jaccard_thr:
+                    matched_fp = old_fp
+                    break
+        if matched_fp is None:
+            seen_sets.append((fp, token_set))
+            self._search_token_sets = seen_sets[-40:]
+            use_fp = fp
+        else:
+            use_fp = matched_fp
+
         counter = getattr(self, "_search_fp_counter", None)
         if counter is None:
             counter = {}
             self._search_fp_counter = counter
-        count = counter.get(fp, 0) + 1
-        counter[fp] = count
+        count = counter.get(use_fp, 0) + 1
+        counter[use_fp] = count
+
+        total = int(getattr(self, "_search_total_calls", 0) or 0) + 1
+        self._search_total_calls = total
+
+        if max_run > 0 and total > max_run:
+            return "block"
         if count >= 3:
             return "block"
-        if count == 2:
+        if count == 2 or (max_run > 0 and total >= max(3, max_run - 2)):
             return "warn"
         return None
 

@@ -437,6 +437,21 @@ async def websocket_endpoint(
 
     await manager.connect(session_id, websocket, user_id=user_id)
 
+    # 重连恢复：若该 session 后台 agent 仍在跑，立刻推 status，避免前端误以为已断
+    if manager.has_running_agent(session_id):
+        try:
+            await manager.broadcast(
+                session_id,
+                {
+                    "type": "status",
+                    "state": "thinking",
+                    "detail": "Resumed — agent still running",
+                    "agent_running": True,
+                },
+            )
+        except Exception:
+            pass
+
     # 初始化 Agent Loop
     agent = NexusAgentLoop(
         session_repo=session_repo,
@@ -522,33 +537,51 @@ async def websocket_endpoint(
                 confirm_manager.resolve_confirmation(confirm_id, approved)
 
             elif msg_type == "sync":
-                last_id = data.get("last_message_id")
-                if last_id:
-                    try:
-                        last_uuid = uuid.UUID(last_id)
+                # 断线重连：补发 missed messages + agent_running，避免「切页回来会话假死」
+                running = manager.has_running_agent(session_id)
+                msgs_out: list[dict] = []
+                try:
+                    last_id = data.get("last_message_id")
+                    if last_id:
+                        last_uuid = uuid.UUID(str(last_id))
                         messages = await message_repo.get_messages_after(
                             session_id, last_uuid
                         )
+                        msgs_out = [
+                            {
+                                "id": str(m.id),
+                                "role": m.role,
+                                "content": m.content,
+                                "created_at": m.created_at.isoformat()
+                                if getattr(m, "created_at", None)
+                                else None,
+                            }
+                            for m in messages
+                        ]
+                    await manager.broadcast(
+                        session_id,
+                        {
+                            "type": "sync_response",
+                            "messages": msgs_out,
+                            "agent_running": running,
+                            "state": "thinking" if running else "idle",
+                        },
+                    )
+                    if running:
                         await manager.broadcast(
                             session_id,
                             {
-                                "type": "sync_response",
-                                "messages": [
-                                    {
-                                        "id": str(m.id),
-                                        "role": m.role,
-                                        "content": m.content,
-                                        "created_at": m.created_at.isoformat(),
-                                    }
-                                    for m in messages
-                                ],
+                                "type": "status",
+                                "state": "thinking",
+                                "detail": "Resumed — agent still running",
+                                "agent_running": True,
                             },
                         )
-                    except Exception as e:
-                        logger.error(f"Sync error: {e}")
-                        await manager.broadcast(
-                            session_id, {"type": "error", "detail": f"Sync failed: {e}"}
-                        )
+                except Exception as e:
+                    logger.error(f"Sync error: {e}")
+                    await manager.broadcast(
+                        session_id, {"type": "error", "detail": f"Sync failed: {e}"}
+                    )
 
             elif msg_type == "auth":
                 # 支持在连接后通过消息进行认证

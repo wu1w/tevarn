@@ -122,19 +122,26 @@ export default function HomePage() {
     const t = useT();
 
 
-  // session 切换 / 初始化：清流式、加载历史、恢复 Goal 面板
+  // session 切换：仅在 id 变化时清流式；同会话回页由 WS sync 恢复 agent_running
+  const prevSessionIdRef = React.useRef<string | null | undefined>(undefined);
     React.useEffect(() => {
       let cancelled = false;
       const sid = currentSession?.id;
+      const prev = prevSessionIdRef.current;
+      const sessionChanged = prev !== undefined && prev !== sid;
+      prevSessionIdRef.current = sid;
       (async () => {
         if (cancelled) return;
-        setIsStreaming(false);
-                setStreamingContent('');
-                streamingContentRef.current = '';
-                setLiveToolCalls([]);
-                setStreamStatusDetail(null);
-        setEditingContent(null);
-        setActiveGoal(null);
+        // 切到另一个会话才清空；首次挂载/同会话 remount 保留，交给 sync 判定
+        if (sessionChanged || !sid) {
+          setIsStreaming(false);
+          setStreamingContent('');
+          streamingContentRef.current = '';
+          setLiveToolCalls([]);
+          setStreamStatusDetail(null);
+          setEditingContent(null);
+          setActiveGoal(null);
+        }
         if (!sid) return;
         try {
           await loadMessages(sid);
@@ -360,6 +367,42 @@ export default function HomePage() {
       }
     }, [t, appendAgentOutputTo]);
 
+  const handleSyncResponse = useCallback((payload: {
+        messages: Array<{ id: string; role: string; content: string; created_at?: string | null }>;
+        agent_running?: boolean;
+        state?: string;
+      }) => {
+        const sid = currentSession?.id || '';
+        if (payload.agent_running) {
+          setIsStreaming(true);
+          setStreamStatusDetail((d) => d || 'Resuming…');
+        } else {
+          // 后台已结束：以 DB 为准刷新，避免停留在半截流式 UI
+          setIsStreaming(false);
+          setStreamStatusDetail(null);
+          if (sid) {
+            loadMessages(sid).catch(console.error);
+          }
+        }
+        // 合并漏掉的消息（按 id 去重）
+        if (payload.messages?.length && sid) {
+          const st = useSessionStore.getState();
+          const have = new Set((st.messages || []).map((m) => m.id));
+          for (const m of payload.messages) {
+            if (!m?.id || have.has(m.id)) continue;
+            addMessage({
+              id: m.id,
+              session_id: sid,
+              role: (m.role as 'user' | 'assistant' | 'system') || 'assistant',
+              content: m.content || '',
+              tool_calls: null,
+              token_count: null,
+              created_at: m.created_at || new Date().toISOString(),
+            });
+          }
+        }
+      }, [addMessage, currentSession?.id, loadMessages]);
+
   const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, connect } = useWebSocket({
         sessionId: currentSession?.id || '',
         token,
@@ -368,6 +411,15 @@ export default function HomePage() {
         onToolEvent: handleToolEvent,
         onRunEvent: handleRunEvent,
         onGoalUpdate: handleGoalUpdate,
+        onSyncResponse: handleSyncResponse,
+        getLastMessageId: () => {
+          const msgs = useSessionStore.getState().messages || [];
+          for (let i = msgs.length - 1; i >= 0; i--) {
+            const id = msgs[i]?.id;
+            if (id && !String(id).startsWith('streaming') && id !== 'streaming') return id;
+          }
+          return undefined;
+        },
         onError: (err) => toastWsError(err),
         onSettingsChanged: (keys) => {
           // 通知全局模型目录刷新（被设置页同步、多标签页切换等场景复用）

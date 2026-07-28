@@ -2,6 +2,25 @@
 
 本项目版本记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [0.3.4] - 2026-07-28
+
+会话切页不断流 + 搜索收敛加固。
+
+### Fixed
+
+- **思考中切面板再回来会话断流**：回页清空流式状态且不 sync，后台结束时的 idle 丢失导致假死
+  - WS 重连若 agent 仍在跑立即推 `status: thinking`；`sync` 回包带 `agent_running` + 漏消息
+  - 前端连上自动 sync、处理 `sync_response`；仅 session id 变化才清流式 UI
+  - 空白会话清理前查 `/sessions/active-ids`，避免运行中误删
+- **搜索连环十几轮**：原刹车只挡完全相同/词序颠倒 query，换词继续搜
+  - 单 run 搜索总预算 `agent_search_max_per_run=8`（可配）触顶强制总结
+  - 词集 Jaccard 近似同义同桶（默认 0.72）
+  - 扩大搜索类工具名集合
+
+### Tests
+
+- `test_search_convergence`：精确/词序/预算/Jaccard/非搜索豁免
+
 ## [0.3.3] - 2026-07-27
 
 研究任务收敛修复：搜索/研究类任务不再无限轮搜索。

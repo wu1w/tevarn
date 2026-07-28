@@ -190,6 +190,10 @@ class Settings(BaseSettings):
     agent_tool_parallel_max: int = 5
     # 研究任务收敛刹车：同 run 内同查询重复搜索，第 2 次提醒、第 3 次拦截
     agent_search_repeat_guard: bool = True
+    # 单次 agent.run 内搜索类工具总调用上限（含近似同义查询）；触顶后强制总结
+    agent_search_max_per_run: int = 8
+    # 词集合 Jaccard ≥ 此值视为近似同查询（抑制「改几个词再搜」连环）
+    agent_search_similar_jaccard: float = 0.72
     # 用户单条输入硬上限（字符），超出截断并提示
     agent_max_user_input_chars: int = 100_000
     # 大输入 soft 策略：超过则保留头尾，中间省略（仍受硬上限约束）

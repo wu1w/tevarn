@@ -9,6 +9,7 @@
 import { useCallback } from 'react';
 import { useSessionStore } from '@/stores/sessionStore';
 import * as api from '@/lib/api';
+// active 会话（WS/agent 运行中）禁止当空白删
 
 /** 判断会话是否无有效内容（无用户/助手消息视为空白） */
 function hasChatContent(
@@ -47,6 +48,13 @@ export function useSession() {
     ): Promise<boolean> => {
       if (!sessionId) return false;
       try {
+        // 运行中 / 仍连着 WS 的会话绝不能当空白删（切页未落库时的误杀）
+        try {
+          const active = await api.getActiveSessionIds();
+          if (active?.includes(sessionId)) return false;
+        } catch {
+          /* ignore — 接口失败时仍走内容判断 */
+        }
         let empty = options?.knownEmpty;
         if (empty === undefined) {
           const msgs = await api.getMessages(sessionId, 5, 0);
