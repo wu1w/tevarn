@@ -30,6 +30,7 @@ import { DangerConfirmDialog } from '@/components/chat/DangerConfirmDialog';
 import { useToastStore } from '@/stores/toastStore';
 import { useT } from '@/stores/localeStore';
 import { useWsStore } from '@/stores/wsStore';
+import { streamSessionApi } from '@/stores/streamSessionStore';
 
 
 export default function HomePage() {
@@ -122,18 +123,29 @@ export default function HomePage() {
     const t = useT();
 
 
-  // session 切换：仅在 id 变化时清流式；同会话回页由 WS sync 恢复 agent_running
+  // session 切换：保存/恢复 per-session 流式态；运行中任务不因切页而停（后端不 cancel agent）
   const prevSessionIdRef = React.useRef<string | null | undefined>(undefined);
     React.useEffect(() => {
       let cancelled = false;
       const sid = currentSession?.id;
       const prev = prevSessionIdRef.current;
       const sessionChanged = prev !== undefined && prev !== sid;
+
+      // 离开上一会话：把本地流式态写入 store（任务仍在后台跑）
+      if (sessionChanged && prev) {
+        streamSessionApi().save(prev, {
+          isStreaming,
+          agentRunning: isStreaming,
+          content: streamingContentRef.current || streamingContent,
+          tools: liveToolCalls,
+          statusDetail: streamStatusDetail,
+        });
+      }
       prevSessionIdRef.current = sid;
+
       (async () => {
         if (cancelled) return;
-        // 切到另一个会话才清空；首次挂载/同会话 remount 保留，交给 sync 判定
-        if (sessionChanged || !sid) {
+        if (!sid) {
           setIsStreaming(false);
           setStreamingContent('');
           streamingContentRef.current = '';
@@ -141,8 +153,30 @@ export default function HomePage() {
           setStreamStatusDetail(null);
           setEditingContent(null);
           setActiveGoal(null);
+          return;
         }
-        if (!sid) return;
+
+        if (sessionChanged) {
+          setEditingContent(null);
+          setActiveGoal(null);
+          // 切到目标会话：先用本地缓存恢复，再等 WS sync 用服务端快照校正
+          const cached = streamSessionApi().get(sid);
+          if (cached.agentRunning || cached.isStreaming || cached.content || cached.tools.length) {
+            setIsStreaming(true);
+            setStreamingContent(cached.content || '');
+            streamingContentRef.current = cached.content || '';
+            setLiveToolCalls(cached.tools || []);
+            setStreamStatusDetail(cached.statusDetail || 'Resuming…');
+          } else {
+            setIsStreaming(false);
+            setStreamingContent('');
+            streamingContentRef.current = '';
+            setLiveToolCalls([]);
+            setStreamStatusDetail(null);
+          }
+        }
+        // 同会话 remount（从别的路由回来）：不硬清流式，交给 cache + sync
+
         try {
           await loadMessages(sid);
         } catch (e) {
@@ -169,20 +203,53 @@ export default function HomePage() {
       return () => {
         cancelled = true;
       };
+      // 仅 session id 驱动；避免 isStreaming 等入 deps 导致切会话时反复写 store
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [currentSession?.id, loadMessages]);
+
+  // 当前会话流式态持续写入 store，跳页卸载后仍可恢复
+  React.useEffect(() => {
+    const sid = currentSession?.id;
+    if (!sid) return;
+    if (!isStreaming && !streamingContent && liveToolCalls.length === 0) return;
+    streamSessionApi().save(sid, {
+      isStreaming,
+      agentRunning: isStreaming,
+      content: streamingContent,
+      tools: liveToolCalls,
+      statusDetail: streamStatusDetail,
+    });
+  }, [currentSession?.id, isStreaming, streamingContent, liveToolCalls, streamStatusDetail]);
 
   const handleStreamDelta = useCallback((msg: StreamDeltaMessage) => {
       setIsStreaming(true);
       setStreamingContent((prev) => {
-        const next = prev + msg.content;
+        // 新 message_id：替换缓冲，避免 epilogue 整段重推导致重复
+        const mid = msg.message_id || '';
+        const store = streamSessionApi();
+        const sid = currentSession?.id || '';
+        const prevMid = sid ? store.get(sid).streamMessageId : null;
+        let next: string;
+        if (mid && prevMid && mid !== prevMid && (msg.content || '').length > 0) {
+          next = msg.content || '';
+        } else {
+          next = prev + (msg.content || '');
+        }
         streamingContentRef.current = next;
+        if (sid) {
+          store.patch(sid, {
+            isStreaming: true,
+            agentRunning: true,
+            content: next,
+            streamMessageId: mid || prevMid,
+          });
+        }
         return next;
       });
-    }, []);
+    }, [currentSession?.id]);
 
     const handleToolEvent = useCallback((msg: ToolEventMessage) => {
       setIsStreaming(true);
-      // 实时终端流：desktop/shell 等全部工具调用入流（截图推送已退役，纯命令流）
       useTerminalStore.getState().upsert({
         callId: msg.tool_call_id,
         name: msg.name,
@@ -191,72 +258,83 @@ export default function HomePage() {
         resultText: msg.phase === 'start' ? '' : formatResultText(msg.result ?? undefined),
       });
       setLiveToolCalls((prev) => {
-            const idx = prev.findIndex(
-              (t) => t.id === msg.tool_call_id || (t.name === msg.name && t.status === 'running')
-            );
-            if (msg.phase === 'start') {
-              const next: ToolCallData = {
-                id: msg.tool_call_id,
-                name: msg.name,
-                arguments: msg.arguments || {},
-                status: 'running',
-              };
-              if (idx >= 0) {
-                const copy = [...prev];
-                copy[idx] = { ...copy[idx], ...next };
-                return copy;
-              }
-              return [...prev, next];
-            }
-            // end
-            const ended: ToolCallData = {
-              id: msg.tool_call_id,
-              name: msg.name,
-              arguments: msg.arguments || (idx >= 0 ? prev[idx].arguments : {}),
-              result: msg.result ?? undefined,
-              status: msg.status === 'failed' ? 'failed' : 'completed',
-            };
-            if (idx >= 0) {
-              const copy = [...prev];
-              copy[idx] = { ...copy[idx], ...ended };
-              return copy;
-            }
-            return [...prev, ended];
-          });
-          if (msg.phase === 'start') {
-            setStreamStatusDetail(`${t('chat.executing')} ${msg.name}…`);
+        const idx = prev.findIndex(
+          (t) => t.id === msg.tool_call_id || (t.name === msg.name && t.status === 'running')
+        );
+        let nextList: ToolCallData[];
+        if (msg.phase === 'start') {
+          const next: ToolCallData = {
+            id: msg.tool_call_id,
+            name: msg.name,
+            arguments: msg.arguments || {},
+            status: 'running',
+          };
+          if (idx >= 0) {
+            const copy = [...prev];
+            copy[idx] = { ...copy[idx], ...next };
+            nextList = copy;
           } else {
-            setStreamStatusDetail(
-              msg.status === 'failed' ? `${msg.name} ${t('chat.failed')}` : `${msg.name} ${t('chat.completed')}`
-            );
+            nextList = [...prev, next];
           }
+        } else {
+          const ended: ToolCallData = {
+            id: msg.tool_call_id,
+            name: msg.name,
+            arguments: msg.arguments || (idx >= 0 ? prev[idx].arguments : {}),
+            result: msg.result ?? undefined,
+            status: msg.status === 'failed' ? 'failed' : 'completed',
+          };
+          if (idx >= 0) {
+            const copy = [...prev];
+            copy[idx] = { ...copy[idx], ...ended };
+            nextList = copy;
+          } else {
+            nextList = [...prev, ended];
+          }
+        }
+        const sid = currentSession?.id || '';
+        if (sid) {
+          streamSessionApi().patch(sid, {
+            isStreaming: true,
+            agentRunning: true,
+            tools: nextList,
+          });
+        }
+        return nextList;
+      });
+      if (msg.phase === 'start') {
+        setStreamStatusDetail(`${t('chat.executing')} ${msg.name}…`);
+      } else {
+        setStreamStatusDetail(
+          msg.status === 'failed' ? `${msg.name} ${t('chat.failed')}` : `${msg.name} ${t('chat.completed')}`
+        );
+      }
 
-          // D10：命令类工具镜像到专业模式 Agent 终端
-          const termTools = new Set([
-            'command',
-            'bash',
-            'shell',
-            'run_command',
-            'CommandTool',
-            'execute_command',
-          ]);
-          if (termTools.has(msg.name) || /command|bash|shell/i.test(msg.name)) {
-            if (msg.phase === 'start') {
-              const args = msg.arguments || {};
-              const cmdline =
-                (args.command as string) ||
-                (args.cmd as string) ||
-                (args.script as string) ||
-                JSON.stringify(args);
-              appendAgentOutput(`$ ${cmdline}`, 'in');
-            } else if (msg.result) {
-              appendAgentOutput(
-                String(msg.result).slice(0, 12000),
-                msg.status === 'failed' ? 'err' : 'out'
-              );
-            }
-          }
-        }, [appendAgentOutput, t]);
+      const termTools = new Set([
+        'command',
+        'bash',
+        'shell',
+        'run_command',
+        'CommandTool',
+        'execute_command',
+      ]);
+      if (termTools.has(msg.name) || /command|bash|shell/i.test(msg.name)) {
+        if (msg.phase === 'start') {
+          const args = msg.arguments || {};
+          const cmdline =
+            (args.command as string) ||
+            (args.cmd as string) ||
+            (args.script as string) ||
+            JSON.stringify(args);
+          appendAgentOutput(`$ ${cmdline}`, 'in');
+        } else if (msg.result) {
+          appendAgentOutput(
+            String(msg.result).slice(0, 12000),
+            msg.status === 'failed' ? 'err' : 'out'
+          );
+        }
+      }
+    }, [appendAgentOutput, t, currentSession?.id]);
 
     const lastWsToastAtRef = React.useRef(0);
     const toastWsError = useCallback(
@@ -270,21 +348,31 @@ export default function HomePage() {
           return;
         }
         lastWsToastAtRef.current = now;
-        addToast(msg, 'error');
-        setIsStreaming(false);
+        addToast(msg, soft ? 'info' : 'error');
+        // 软断线：Agent 可能仍在后台跑，禁止把 isStreaming 打成 false（否则输入解锁/假 idle）
+        if (!soft || opts?.force) {
+          const sid = currentSession?.id || '';
+          const still = sid ? streamSessionApi().get(sid).agentRunning : false;
+          if (!still) setIsStreaming(false);
+        }
       },
-      [addToast, t]
+      [addToast, t, currentSession?.id]
     );
 
     const handleStatusUpdate = useCallback((msg: StatusUpdateMessage) => {
+      const sid = currentSession?.id || '';
       if (msg.state === 'thinking' || msg.state === 'tool_executing' || msg.state === 'optimizing') {
         setIsStreaming(true);
         if (msg.detail) setStreamStatusDetail(msg.detail);
+        if (sid) {
+          streamSessionApi().markRunning(sid, msg.detail || null);
+        }
       } else if (msg.state === 'error') {
         setIsStreaming(false);
         const detail = msg.detail || t('chat.error');
         setStreamStatusDetail(detail);
         addToast(detail, 'error');
+        if (sid) streamSessionApi().markIdle(sid);
       } else if (msg.state === 'idle') {
               setIsStreaming(false);
               setStreamStatusDetail(null);
@@ -293,7 +381,7 @@ export default function HomePage() {
               streamingContentRef.current = '';
               setStreamingContent('');
               setLiveToolCalls([]);
-              const sid = currentSession?.id || '';
+              if (sid) streamSessionApi().markIdle(sid);
               if (leftover || sid) {
                 setTimeout(() => {
                   if (leftover) {
@@ -371,16 +459,70 @@ export default function HomePage() {
         messages: Array<{ id: string; role: string; content: string; created_at?: string | null }>;
         agent_running?: boolean;
         state?: string;
+        partial_content?: string;
+        stream_status?: string | null;
+        stream_message_id?: string | null;
+        live_tools?: Array<{
+          id?: string;
+          name?: string;
+          arguments?: Record<string, unknown>;
+          status?: string;
+          result?: string | null;
+        }>;
       }) => {
         const sid = currentSession?.id || '';
         if (payload.agent_running) {
           setIsStreaming(true);
-          setStreamStatusDetail((d) => d || 'Resuming…');
+          const partial = payload.partial_content ?? '';
+          // 服务端快照优先；本地更长则保留本地（可能刚收到更多 delta）
+          const local = streamingContentRef.current || '';
+          const content = partial.length >= local.length ? partial : local || partial;
+          if (content) {
+            streamingContentRef.current = content;
+            setStreamingContent(content);
+          }
+          if (payload.stream_status) {
+            setStreamStatusDetail(payload.stream_status);
+          } else {
+            setStreamStatusDetail((d) => d || 'Resuming…');
+          }
+          if (payload.live_tools?.length) {
+            const tools: ToolCallData[] = payload.live_tools.map((t) => ({
+              id: String(t.id || ''),
+              name: String(t.name || 'tool'),
+              arguments: (t.arguments && typeof t.arguments === 'object' ? t.arguments : {}) as Record<string, unknown>,
+              status: (t.status === 'failed' ? 'failed' : t.status === 'running' ? 'running' : 'completed') as ToolCallData['status'],
+              result: t.result ?? undefined,
+            }));
+            setLiveToolCalls(tools);
+          }
+          if (sid) {
+            streamSessionApi().save(sid, {
+              isStreaming: true,
+              agentRunning: true,
+              content: content || streamingContentRef.current,
+              tools: payload.live_tools?.length
+                ? payload.live_tools.map((t) => ({
+                    id: String(t.id || ''),
+                    name: String(t.name || 'tool'),
+                    arguments: (t.arguments as Record<string, unknown>) || {},
+                    status: (t.status === 'failed' ? 'failed' : t.status === 'running' ? 'running' : 'completed') as ToolCallData['status'],
+                    result: t.result ?? undefined,
+                  }))
+                : streamSessionApi().get(sid).tools,
+              statusDetail: payload.stream_status || 'Resuming…',
+              streamMessageId: payload.stream_message_id || null,
+            });
+          }
         } else {
           // 后台已结束：以 DB 为准刷新，避免停留在半截流式 UI
           setIsStreaming(false);
           setStreamStatusDetail(null);
+          streamingContentRef.current = '';
+          setStreamingContent('');
+          setLiveToolCalls([]);
           if (sid) {
+            streamSessionApi().markIdle(sid);
             loadMessages(sid).catch(console.error);
           }
         }
@@ -611,12 +753,15 @@ export default function HomePage() {
   const handleStopStreaming = useCallback(() => {
       sendStop();
       setIsStreaming(false);
+      setStreamStatusDetail(null);
+      setLiveToolCalls([]);
       const leftover = streamingContentRef.current || streamingContent;
       streamingContentRef.current = '';
       setStreamingContent('');
+      const sid = currentSession?.id || '';
+      if (sid) streamSessionApi().markIdle(sid);
       if (leftover) {
         // 下一 tick 写 store，避免与本组件 setState 同栈交叉更新 Sidebar
-        const sid = currentSession?.id || '';
         setTimeout(() => {
           addMessage({
             id: generateUUID(),
@@ -627,9 +772,10 @@ export default function HomePage() {
             token_count: null,
             created_at: new Date().toISOString(),
           });
+          if (sid) loadMessages(sid).catch(console.error);
         }, 0);
       }
-    }, [sendStop, streamingContent, addMessage, currentSession]);
+    }, [sendStop, streamingContent, addMessage, currentSession, loadMessages]);
 
   const handleTagClick = useCallback(
     (tagKey: string) => {

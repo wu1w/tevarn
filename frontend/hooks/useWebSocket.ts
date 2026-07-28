@@ -116,6 +116,17 @@ interface UseWebSocketOptions {
     messages: Array<{ id: string; role: string; content: string; created_at?: string | null }>;
     agent_running?: boolean;
     state?: string;
+    /** 服务端 in-flight 快照：跳页/断线后恢复正文与 tools */
+    partial_content?: string;
+    stream_status?: string | null;
+    stream_message_id?: string | null;
+    live_tools?: Array<{
+      id?: string;
+      name?: string;
+      arguments?: Record<string, unknown>;
+      status?: string;
+      result?: string | null;
+    }>;
   }) => void;
   /** 连接成功后自动 sync 时使用的 last message id */
   getLastMessageId?: () => string | undefined;
@@ -186,6 +197,10 @@ export function useWebSocket(options: UseWebSocketOptions) {
       return;
     }
 
+    // 手动 connect(override) 时重置计数（用户点「重连」）
+    if (overrideSessionId) {
+      reconnectAttempts.current = 0;
+    }
     if (reconnectAttempts.current >= MAX_RECONNECT_ATTEMPTS) {
       optionsRef.current.onError?.('WebSocket reconnect limit reached — refresh or click reconnect');
       return;
@@ -353,11 +368,25 @@ export function useWebSocket(options: UseWebSocketOptions) {
             messages?: Array<{ id: string; role: string; content: string; created_at?: string | null }>;
             agent_running?: boolean;
             state?: string;
+            partial_content?: string;
+            stream_status?: string | null;
+            stream_message_id?: string | null;
+            live_tools?: Array<{
+              id?: string;
+              name?: string;
+              arguments?: Record<string, unknown>;
+              status?: string;
+              result?: string | null;
+            }>;
           };
           optionsRef.current.onSyncResponse?.({
             messages: m.messages || [],
             agent_running: Boolean(m.agent_running),
             state: m.state,
+            partial_content: m.partial_content,
+            stream_status: m.stream_status,
+            stream_message_id: m.stream_message_id,
+            live_tools: m.live_tools,
           });
         } else if (msg.type === 'error') {
           optionsRef.current.onError?.(
