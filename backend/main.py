@@ -1,4 +1,4 @@
-"""
+﻿"""
 Project Nexus - FastAPI 应用入口
 """
 
@@ -509,7 +509,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Takton",
     description="个人专属异步 Agent 终端后端",
-    version="0.3.4",
+    version="0.3.5",
     lifespan=lifespan,
 )
 

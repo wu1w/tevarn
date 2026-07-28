@@ -63,9 +63,9 @@ $setupMeta = $null
 try {
   $setupMeta = Get-LatestSetup -Repository $Repo -Tag $TagOverride -AssetName $AssetOverride
 } catch {
-  Write-Info "API resolve failed ($($_.Exception.Message)); falling back to v0.3.4 asset names"
-  $fallbackTag = if ($TagOverride) { $TagOverride } else { "v0.3.4" }
-  $fallbackAsset = if ($AssetOverride) { $AssetOverride } else { "Takton-Setup-0.3.4.exe" }
+  Write-Info "API resolve failed ($($_.Exception.Message)); falling back to v0.3.5 asset names"
+  $fallbackTag = if ($TagOverride) { $TagOverride } else { "v0.3.5" }
+  $fallbackAsset = if ($AssetOverride) { $AssetOverride } else { "Takton-Setup-0.3.5.exe" }
   $setupMeta = [pscustomobject]@{
     Tag  = $fallbackTag
     Name = $fallbackAsset

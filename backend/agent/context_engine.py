@@ -39,8 +39,13 @@ class ContextEngine(ABC):
         current_tokens: int | None = None,
         focus_topic: str | None = None,
         session_id: Any = None,
+        allow_l5: bool = True,
+        micro_only: bool = False,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        """Return (possibly shorter) messages + meta."""
+        """Return (possibly shorter) messages + meta.
+
+        allow_l5/micro_only: mid-loop tool rounds should disable L5 full summary.
+        """
         ...
 
     def should_compress_preflight(self, messages: list[dict[str, Any]]) -> bool:

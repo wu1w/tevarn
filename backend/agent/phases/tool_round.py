@@ -681,7 +681,9 @@ async def run_tool_round(
                 ),
             }
         )
-    # 工具轮后：L1 周期性截断 + 超阈值 pipeline + checkpoint
+    # 工具轮后：仅 L1/L3 micro（Claude Code：mid-loop 不跑 full auto-compact/L5）
+    # 全量 L5 摘要只在用户回合边界 / 413 reactiveCompact 触发，避免同轮长任务被
+    # 「只答最新一句」类指令打断成一拨一动。
     try:
         from backend.agent.context_engine import get_context_engine
         from backend.agent.context_compress import compress_history_if_needed
@@ -691,20 +693,24 @@ async def run_tool_round(
         if do_l1 and hasattr(eng, "_l1_budget"):
             state.messages, _n = eng._l1_budget(messages)  # type: ignore[attr-defined]
             messages = state.messages
-        if eng.should_compress_preflight(messages) or eng.should_compress():
+        # 用当前 messages 估 token，避免全局 last_prompt_tokens 跨 session 污染
+        need_micro = eng.should_compress_preflight(messages)
+        if need_micro:
             state.messages, mid_meta = await compress_history_if_needed(
                 messages,
                 session_id=session_id,
                 threshold=float(
                     getattr(settings, "context_threshold_percent", 0.72) or 0.72
                 ),
+                allow_l5=False,
+                micro_only=True,
             )
             messages = state.messages
             if mid_meta.get("compressed"):
                 await loop._push_status(
                     session_id,
                     "optimizing",
-                    f"工具轮后上下文压缩 layers={mid_meta.get('layers')}",
+                    f"工具轮后 micro 压缩 layers={mid_meta.get('layers')}",
                 )
     except Exception as e:
         logger.debug("mid-loop context pipeline skipped: %s", e)

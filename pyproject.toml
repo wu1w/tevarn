@@ -1,10 +1,10 @@
-[build-system]
+﻿[build-system]
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "takton"
-version = "0.3.4"
+version = "0.3.5"
 description = "Takton - 个人专属 AI Agent 终端（前后端一体）"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -1,8 +1,10 @@
 """
 会话上下文压缩：兼容入口。
 
-实现已迁移到 ContextPipeline (L1/L3/L5)。本模块保留
-`compress_history_if_needed` 与 `estimate_msgs_tokens` 给旧调用方。
+实现已迁移到 ContextPipeline (L1/L3/L5)，语义对齐 Claude Code：
+  - L5 注入「续跑」指令（非 reference-only 禁令）
+  - mid-loop 传 allow_l5=False，只做 micro
+本模块保留 `compress_history_if_needed` 与 `estimate_msgs_tokens` 给旧调用方。
 """
 
 from __future__ import annotations
@@ -30,9 +32,15 @@ async def compress_history_if_needed(
     *,
     session_id: uuid.UUID | None = None,
     threshold: float = 0.75,
+    allow_l5: bool = True,
+    micro_only: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """
     若估算 token 超过阈值预算，运行 pipeline (L1/L3/L5)。
+
+    allow_l5 / micro_only:
+      工具轮 mid-loop 应传 allow_l5=False（或 micro_only=True），
+      只做 L1/L3，避免 Claude Code 风格的「全量摘要」打断同轮长任务。
     """
     engine = get_context_engine()
     # allow caller threshold override for this call
@@ -68,7 +76,11 @@ async def compress_history_if_needed(
             return messages, meta_base
 
         out, meta = await engine.compress(
-            messages, current_tokens=tokens, session_id=session_id
+            messages,
+            current_tokens=tokens,
+            session_id=session_id,
+            allow_l5=allow_l5,
+            micro_only=micro_only,
         )
         meta_base.update(meta)
         return out, meta_base

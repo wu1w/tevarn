@@ -186,14 +186,18 @@ def _make_l3_messages(tool_count: int = 6):
 
 
 def test_l3_no_orphan_tool_after_compact():
-    """L3 压缩后，序列中不得存在孤儿 tool 消息。"""
+    """L3 microcompact 后：保留 tool 配对，不得产生孤儿 tool 消息。"""
     engine = PipelineContextEngine()
     engine.protect_first_n = 3
     engine.protect_last_n = 12
     messages = _make_l3_messages(tool_count=6)
+    # 加长 tool body 以触发 clear
+    for m in messages:
+        if m.get("role") == "tool" and isinstance(m.get("content"), str):
+            m["content"] = (m["content"] or "") + ("Y" * 200)
     out, dropped = engine._l3_microcompact(messages)
-    # 确认 L3 真的触发了压缩
-    assert dropped >= 3, f"L3 应触发压缩（dropped>=3），实际 dropped={dropped}"
+    # 确认 L3 真的触发了压缩（cleared count）
+    assert dropped >= 3, f"L3 应触发压缩（cleared>=3），实际 dropped={dropped}"
 
     # 收集 out 中所有声明的 tool_call_id
     declared = set()
@@ -211,6 +215,8 @@ def test_l3_no_orphan_tool_after_compact():
         and str(m["tool_call_id"]) not in declared
     ]
     assert orphans == [], f"L3 压缩后仍存在孤儿 tool 消息: {orphans}"
+    # assistant tool_calls 必须仍在（CC 风格不剥 calls）
+    assert declared, "L3 不应剥掉 assistant.tool_calls"
 
 
 # ── L5 源头 ────────────────────────────────────────────────────────────────

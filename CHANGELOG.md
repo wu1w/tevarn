@@ -2,6 +2,24 @@
 
 本项目版本记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [0.3.5] - 2026-07-28
+
+上下文压缩对齐 Claude Code：长会话不再「一拨一动」。
+
+### Fixed
+
+- **长会话多轮工具后 Agent 退化为一拨一动 / 长任务一句话停下**：
+  - L5 摘要注入从「REFERENCE ONLY / 禁止续做历史任务」改为 Claude Code 式
+    **会话续写 + 直接接着上次任务干完**（`Pick up the last task…`）
+  - 摘要模板改为 9 段工程状态（Intent / Files / Errors / Pending / Current Work / Next Step）
+  - L3 microcompact 只清空旧 tool 正文、**保留 tool_use/tool_result 配对**，不再剥 tool_calls
+  - 工具轮 mid-loop **禁止 L5 全量摘要**（仅 L1/L3 micro），避免同轮长任务被压缩指令打断
+- 回归测试：`test_context_compact_cc` 锁定续跑语义与 mid-loop 禁 L5
+
+### Packaging
+
+- Windows 完整包（嵌入式 Python + 预装依赖）：Setup.exe + portable zip
+
 ## [0.3.4] - 2026-07-28
 
 会话切页不断流 + 搜索收敛加固。
