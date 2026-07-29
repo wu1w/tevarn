@@ -239,6 +239,11 @@ class Settings(BaseSettings):
     agent_evolution_distill_min_done: int = 5
     agent_evolution_distill_min_success: float = 0.8
     agent_evolution_planner_tune_fail_rate: float = 0.3
+    # P1（2026-07-29）：轨迹蒸馏 + 技能计分/回滚（evolution/distiller.py, scoreboard.py）
+    agent_evolution_distill_enabled: bool = True
+    agent_evolution_score_window: int = 50
+    agent_evolution_score_min_samples: int = 8
+    agent_evolution_regression_delta: float = 0.15
     agent_tool_parallel_max: int = 5
     # 研究任务收敛刹车：同 run 内同查询重复搜索，第 2 次提醒、第 3 次拦截
     agent_search_repeat_guard: bool = True
@@ -363,10 +368,15 @@ class Settings(BaseSettings):
     agent_computer_enabled: bool = True
     # bwrap=Linux 沙箱（推荐，需 bubblewrap）；local=现状直跑
     # 沙箱后端：auto = 按平台自动选最强（linux→bwrap / darwin→seatbelt / win32→wsl|job）；
-    # 也可显式指定 bwrap | seatbelt | job | wsl | local
+    # 也可显式指定 bwrap | seatbelt | job | wsl | docker | ssh | local
     agent_computer_backend: str = "auto"
     # 沙箱内是否放开网络（默认断网 --unshare-net）
     agent_computer_network: bool = False
+    # P2a（2026-07-29）：docker/ssh 执行后端配置
+    agent_computer_docker_image: str = "python:3.12-slim"
+    agent_computer_ssh_host: str = ""      # user@host；空 = 未配置
+    agent_computer_ssh_port: int = 22
+    agent_computer_ssh_workdir: str = "~/takton-ws"
     # 沙箱档位：off | workspace | read_only | strict（见 computer/profiles.py）
     agent_sandbox_profile: str = "workspace"
     # Grok-style allow/ask/deny 规则（字符串列表或 JSON）

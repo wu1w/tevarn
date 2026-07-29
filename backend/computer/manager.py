@@ -108,6 +108,27 @@ class ComputerManager:
 
             return JobBackend(ws, agent_key)
 
+        # P2a（2026-07-29）：远程/容器执行后端 —— agent 可以「活在」容器或 VPS 里
+        if backend_name == "docker":
+            from backend.computer.docker_backend import DockerBackend, docker_available
+
+            if not docker_available():
+                raise RuntimeError(
+                    "docker 未安装或不在 PATH，或设 agent_computer_backend=local"
+                )
+            return DockerBackend(ws, agent_key, network=network)
+
+        if backend_name == "ssh":
+            from backend.computer.ssh_backend import SshBackend, ssh_available
+
+            if not ssh_available():
+                raise RuntimeError("ssh 客户端不可用，或设 agent_computer_backend=local")
+            if not str(getattr(s, "agent_computer_ssh_host", "") or ""):
+                raise RuntimeError(
+                    "agent_computer_ssh_host 未配置（格式 user@host，需免密 key 认证）"
+                )
+            return SshBackend(ws, agent_key)
+
         from backend.computer.local_backend import LocalBackend
 
         return LocalBackend(ws)

@@ -51,6 +51,23 @@ class MCPToolAdapter(BaseTool):
         return self._client_manager.get_client(self.server_name)
 
     async def execute(self, **kwargs) -> Any:
+        # P1c（2026-07-29）：MCP 调用经 kernel.mediate 收口（action=mcp_call）。
+        # loop 会向 arguments 注入 _kernel_process_id；无进程上下文（单测/脚本）时走兼容路径放行。
+        proc_id = kwargs.get("_kernel_process_id")
+        if proc_id:
+            from backend.kernel import KernelPermissionError, get_kernel
+
+            try:
+                await get_kernel().mediate(
+                    str(proc_id), "mcp_call", self.name,
+                    args={"server": self.server_name},
+                )
+            except KernelPermissionError as e:
+                return (
+                    f"[Error] Kernel 拦截 MCP 调用 {self.name}（server={self.server_name}）：{e}。"
+                    "请在权限看板为该进程添加能力后重试。"
+                )
+
         client = self._get_client()
         if client is None:
             return f"[Error] MCP server '{self.server_name}' not connected"

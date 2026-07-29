@@ -1,0 +1,39 @@
+# Takton — AI Agent Operating System (alpha)
+
+> Takton is a self-hosted AIOS: a governed multi-agent runtime with a real control-plane
+> kernel (process model, capability mediation, token budgets, hash-chained audit),
+> a workforce of persistent agent identities, RAG memory, self-evolution with
+> approval/rollback governance, and multi-channel gateways (Telegram/Discord/Slack/
+> Feishu/DingTalk/WeCom/QQ/Signal). Backend: Python/FastAPI. Frontend: Next.js/Electron.
+
+## Architecture
+
+- docs/TECHNICAL_MANUAL.md: Full technical manual (architecture, modules, flows)
+- docs/KERNEL_PLAN.md: Kernel design/roadmap — process model, mediate(), budgets, suspend/resume, Redis multi-worker
+- ALPHA_AUTHORITY.md: Canonical decisions and constraints of the alpha line
+- AGENTS.md: Instructions for coding agents working on this repo
+
+## Core modules (backend/)
+
+- backend/kernel/: control plane — kernel.py (mediate/budget/audit hash chain), dispatcher.py (workforce worker pool), identity.py, inbox.py, crew_memory.py, llm_scheduler.py
+- backend/agent/: execution loop — loop.py (main), phases/ (prologue/llm_round/tool_round/epilogue), context_pipeline.py, tool_policy.py, permissions
+- backend/evolution/: governed self-improvement — distiller.py (trajectory→SKILL.md, agentskills.io compatible), scoreboard.py (skill outcome scoring + auto-rollback), manager.py, store.py, gates.py
+- backend/computer/: execution backends — local/bwrap/seatbelt/wsl/job/docker/ssh (protocol.py is the contract)
+- backend/services/: llm/ (anthropic, openai-compatible, ollama, vllm), rag/ (qdrant), embedding/, reranker/, channel_adapters/, skill_store/ (SKILL.md install from ClawHub/GitHub), tools/
+- backend/mcp_hub/: MCP client — tools register into ToolRegistry, calls mediated by kernel (action=mcp_call)
+- backend/api/: FastAPI routes; backend/models/ + backend/repositories/: SQLAlchemy async persistence
+- backend/migrations/: alembic (baseline 0001; config backend/alembic.ini)
+
+## Conventions
+
+- All tool/skill/MCP executions go through kernel.mediate(); capability escalation via approval queue
+- Evolution assets enter as status=draft and require approval; auto-rollback on regression is audited
+- Tests: pytest backend/tests tests (CI: .github/workflows/backend-ci.yml)
+- Schema changes MUST use alembic revisions, not create_all
+
+## Optional
+
+- ROADMAP_0.4.5_to_0.6.md: near-term roadmap
+- reports/: internal audit reports (Chinese)
+- takton-code/: standalone code-agent subproject
+- e2e/, frontend/e2e/: Playwright end-to-end suites

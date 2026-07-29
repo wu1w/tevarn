@@ -123,6 +123,18 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             skill_created TEXT,
             updated_at TEXT NOT NULL
         );
+
+        -- P1b（2026-07-29）：技能使用效果计分（scoreboard 读写）
+        CREATE TABLE IF NOT EXISTS evo_skill_outcomes (
+            id TEXT PRIMARY KEY,
+            skill_name TEXT NOT NULL,
+            gen INTEGER NOT NULL DEFAULT 0,
+            success INTEGER NOT NULL,
+            tokens INTEGER,
+            session_id TEXT,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_evo_outcomes_name ON evo_skill_outcomes(skill_name, gen);
         """
     )
 
@@ -646,4 +658,62 @@ def list_clusters(limit: int = 50) -> list[dict[str, Any]]:
             }
             for r in rows
         ]
+
+
+# ── P1b（2026-07-29）：技能效果计分 ──
+
+
+def add_skill_outcome(
+    *,
+    skill_name: str,
+    gen: int,
+    success: bool,
+    tokens: int | None = None,
+    session_id: str | None = None,
+) -> None:
+    with _db() as conn:
+        conn.execute(
+            """INSERT INTO evo_skill_outcomes (id, skill_name, gen, success, tokens, session_id, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (str(uuid.uuid4()), skill_name, gen, 1 if success else 0, tokens, session_id, _utc()),
+        )
+
+
+def skill_outcome_stats(skill_name: str, gen: int, *, window: int = 50) -> dict[str, Any]:
+    """最近 window 次使用的成功率/样本数/平均 token。"""
+    with _db() as conn:
+        rows = conn.execute(
+            """SELECT success, tokens FROM evo_skill_outcomes
+               WHERE skill_name=? AND gen=? ORDER BY created_at DESC LIMIT ?""",
+            (skill_name, gen, window),
+        ).fetchall()
+    n = len(rows)
+    if n == 0:
+        return {"samples": 0, "success_rate": None, "avg_tokens": None}
+    wins = sum(1 for r in rows if r["success"])
+    toks = [r["tokens"] for r in rows if r["tokens"] is not None]
+    return {
+        "samples": n,
+        "success_rate": wins / n,
+        "avg_tokens": (sum(toks) / len(toks)) if toks else None,
+    }
+
+
+def latest_asset_by_name(kind: str, name: str) -> dict[str, Any] | None:
+    """同名资产最高 gen 的一条。"""
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT * FROM evo_assets WHERE kind=? AND name=? ORDER BY gen DESC LIMIT 1",
+            (kind, name),
+        ).fetchone()
+        return _asset_row(row) if row else None
+
+
+def asset_by_name_gen(kind: str, name: str, gen: int) -> dict[str, Any] | None:
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT * FROM evo_assets WHERE kind=? AND name=? AND gen=? LIMIT 1",
+            (kind, name, gen),
+        ).fetchone()
+        return _asset_row(row) if row else None
 

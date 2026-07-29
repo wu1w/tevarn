@@ -113,6 +113,46 @@ async def run_epilogue(
     except Exception as e:
         logger.warning("evolution turn hook skipped: %s", e)
 
+    # 7.65 轨迹蒸馏 + 技能计分（P1 2026-07-29）：成功经验也沉淀；
+    # 产物只进 draft 审批链，进化技能被用到则记 outcome + 退化检查
+    try:
+        from backend.evolution.config import get_evolution_config as _gec
+
+        if _gec().enabled and not loop._should_stop:
+            _success = bool(final_content)
+            _trace = [tc for tc in (trace_tool_calls or []) if isinstance(tc, dict)]
+
+            from backend.evolution.distiller import distill_from_trajectory
+
+            await distill_from_trajectory(
+                user_input=user_input or "",
+                tool_trace=_trace,
+                final_content=final_content or "",
+                success=_success,
+                session_id=str(session_id),
+            )
+
+            # 本轮用到的进化技能：记分 + 退化自动回滚检查
+            from backend.evolution.scoreboard import maybe_rollback, record_outcome
+            from backend.tools.registry import ToolRegistry as _TR
+            from backend.tools.base import ToolSource as _TS
+
+            _seen: set[str] = set()
+            for tc in _trace:
+                _n = str(tc.get("name") or "")
+                if not _n or _n in _seen:
+                    continue
+                _seen.add(_n)
+                _t = _TR.get(_n)
+                if _t is None or getattr(_t, "source", None) != _TS.DYNAMIC:
+                    continue
+                record_outcome(
+                    skill_name=_n, success=_success, session_id=str(session_id)
+                )
+                await maybe_rollback(_n)
+    except Exception as e:
+        logger.debug("distill/scoreboard hook skipped: %s", e)
+
     # 7.7 SFT / 使用日志（设置里开关，默认关）
     try:
         from backend.services.sft_collector import collect_if_enabled
