@@ -1,0 +1,248 @@
+"""Per-job token budget lift for workforce runs.
+
+Identity default budgets (often 30k) are too tight for audit/research with
+multi-file reads. Lift at *process* creation time without mutating the
+identity row — identity default remains the floor, task class raises the
+ceiling for this job only.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+from typing import Any
+
+# Floor by primary task kind (tokens). Tunable via env multipliers later.
+_KIND_FLOOR: dict[str, int] = {
+    "audit": 150_000,
+    "health_check": 180_000,
+    "diagnose": 120_000,
+    "research": 100_000,
+    "data_stats": 100_000,
+    "compare": 100_000,
+    "doc_qa": 80_000,
+    "fix": 100_000,
+    "build": 100_000,
+    "cite_fact": 80_000,
+    "math": 40_000,
+    "inventory": 60_000,
+    "find": 50_000,
+}
+
+# Role/name hints when instruction classify is weak
+_AUDIT_ROLE = re.compile(r"(审计|audit|security\s*review|核验|巡检|体检|健康检查)", re.I)
+_HEALTH_INSTR = re.compile(
+    r"(健康检查|系统体检|全量巡检|health\s*check|full\s*scan|"
+    r"前端.*检查|后端.*检查|kernel.*检查|测试套件|集成健康)",
+    re.I,
+)
+_MULTI_SECTION = re.compile(r"(###\s*任务|##\s*任务|\n\s*\d+[\.、]\s)", re.M)
+
+_HARD_CAP = 500_000
+_DEFAULT_FALLBACK = 100_000
+# 单条 instruction 过大 → 建议拆单（仍允许执行但抬预算 + 提示）
+_OVERSIZE_CHARS = 2_500
+_OVERSIZE_SECTIONS = 3
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        v = int(os.environ.get(name) or default)
+        return v if v > 0 else default
+    except Exception:
+        return default
+
+
+def kind_budget_floor(kind: str | None) -> int:
+    if not kind:
+        return 0
+    base = _KIND_FLOOR.get(kind, 0)
+    mult = float(os.environ.get("TAKTON_BUDGET_LIFT_MULT") or "1")
+    try:
+        mult = max(0.5, min(mult, 3.0))
+    except Exception:
+        mult = 1.0
+    return int(base * mult)
+
+
+def role_budget_floor(role: str | None, name: str | None = None) -> int:
+    blob = f"{role or ''} {name or ''}"
+    if _AUDIT_ROLE.search(blob):
+        return kind_budget_floor("audit")
+    return 0
+
+
+def is_budget_exceeded_result(text: str | None) -> bool:
+    t = text or ""
+    if "[Budget Exceeded]" in t:
+        return True
+    if "预算耗尽" in t or "预算不足" in t:
+        return True
+    if "token 预算" in t and ("中断" in t or "拒绝" in t):
+        return True
+    return False
+
+
+def budget_fail_system_summary(
+    *,
+    instruction: str = "",
+    raw: str = "",
+    process_id: str | None = None,
+) -> str:
+    """Budget 中断后的固定短摘要 — 禁止保留模型写的长「报告框架」。"""
+    instr = (instruction or "").replace("\n", " ").strip()[:160]
+    pid = (process_id or "")[:12]
+    # 从 raw 里抠已用/预算数字（若有）
+    usage = ""
+    m = re.search(r"已用\s*(\d+)\s*/\s*(\d+)", raw or "")
+    if m:
+        usage = f" 已用 {m.group(1)}/{m.group(2)}。"
+    elif re.search(r"token_budget|tokens_used", raw or "", re.I):
+        usage = " " + (raw or "")[:120]
+    return (
+        "[Budget Exceeded] 本工单因进程 token 预算中断，**未完成实质检查**。\n"
+        f"任务摘要：{instr or '（无）'}\n"
+        f"process={pid or '—'}。{usage}\n"
+        "系统说明：下列不得当作「已完成报告」；请提高预算、收窄范围或拆成多张工单后重派。\n"
+        "禁止模型用「报告框架/预期结果」冒充检查结论。"
+    )
+
+
+def instruction_size_signals(instruction: str) -> dict[str, Any]:
+    """Detect oversized multi-section health/audit jobs."""
+    instr = instruction or ""
+    sections = len(_MULTI_SECTION.findall(instr))
+    health = bool(_HEALTH_INSTR.search(instr))
+    oversize = len(instr) >= _OVERSIZE_CHARS or sections >= _OVERSIZE_SECTIONS
+    return {
+        "chars": len(instr),
+        "sections": sections,
+        "health_like": health,
+        "oversize": oversize,
+        "should_split": oversize and (health or sections >= _OVERSIZE_SECTIONS),
+    }
+
+
+def split_hint_for_instruction(instruction: str) -> str | None:
+    """If instruction should be split, return steward-facing hint (or None)."""
+    sig = instruction_size_signals(instruction)
+    if not sig["should_split"]:
+        return None
+    return (
+        f"[budget/split] 本 instruction 过长（{sig['chars']} 字，"
+        f"约 {sig['sections']} 个任务段）。建议拆成多张工单（每单一个模块/目录），"
+        "或只要求「列文件+要点」禁止通读全仓。已自动抬高本单预算上限。"
+    )
+
+
+def suggested_token_budget(
+    *,
+    base: int | None,
+    instruction: str = "",
+    role: str | None = None,
+    name: str | None = None,
+) -> int | None:
+    """Return process token_budget for this job.
+
+    - base None → use workforce fallback then lift
+    - base 0 → unlimited (preserve explicit 0)
+    - else max(base, kind_floor, role_floor, health/oversize lift)
+    """
+    if base == 0:
+        return 0  # explicit unlimited
+
+    fallback = _env_int("TAKTON_WORKFORCE_FALLBACK_BUDGET", _DEFAULT_FALLBACK)
+    hard_cap = _env_int("TAKTON_WORKFORCE_BUDGET_HARD_CAP", _HARD_CAP)
+
+    floor = int(base) if base is not None else fallback
+
+    kind = None
+    try:
+        from backend.agent.task_grounding import classify_task
+
+        kind = classify_task(instruction or "")
+    except Exception:
+        kind = None
+
+    instr = instruction or ""
+    sig = instruction_size_signals(instr)
+    if sig["health_like"] and kind not in ("audit", "health_check"):
+        kind = "health_check"
+
+    lift = max(kind_budget_floor(kind), role_budget_floor(role, name))
+    # Multi-label / long instruction
+    if len(instr) > 600 and lift < 100_000:
+        lift = max(lift, 100_000)
+    if len(instr) > 1200:
+        lift = max(lift, 150_000)
+    if sig["should_split"]:
+        lift = max(lift, 200_000)
+    if sig["health_like"]:
+        lift = max(lift, kind_budget_floor("health_check") or 180_000)
+
+    out = max(floor, lift) if lift else floor
+    if out <= 0:
+        return fallback
+    return min(out, hard_cap)
+
+
+def budget_for_identity(
+    ident: Any,
+    instruction: str = "",
+) -> int | None:
+    base = getattr(ident, "default_token_budget", None)
+    return suggested_token_budget(
+        base=base if base is None else int(base),
+        instruction=instruction or "",
+        role=getattr(ident, "role", None),
+        name=getattr(ident, "name", None),
+    )
+
+
+def hard_cap() -> int:
+    return _env_int("TAKTON_WORKFORCE_BUDGET_HARD_CAP", _HARD_CAP)
+
+
+def clamp_ceo_budget(value: int) -> int:
+    """CEO 显式预算：0=不限；>0 夹到 [1000, hard_cap]。"""
+    if value == 0:
+        return 0
+    if value < 0:
+        raise ValueError("token_budget 不能为负（0=不限，正整数=硬顶）")
+    return max(1_000, min(int(value), hard_cap()))
+
+
+def parse_payload_token_budget(payload: Any) -> int | None:
+    """从工单 payload 读 CEO 指定预算。None=未指定。"""
+    if not isinstance(payload, dict):
+        return None
+    if "token_budget" not in payload and "budget" not in payload:
+        return None
+    raw = payload.get("token_budget", payload.get("budget"))
+    if raw is None or raw == "":
+        return None
+    try:
+        return clamp_ceo_budget(int(raw))
+    except (TypeError, ValueError):
+        return None
+
+
+def resolve_job_budget(
+    ident: Any,
+    instruction: str = "",
+    *,
+    payload: Any = None,
+    ceo_token_budget: int | None = None,
+) -> tuple[int | None, str]:
+    """工单有效预算 + 来源说明。
+
+    优先级：CEO 显式（payload / 参数）> 自动抬升(档案+任务类)。
+    返回 (budget, source) source 如 ceo_assign / auto_lift。
+    """
+    explicit = ceo_token_budget
+    if explicit is None:
+        explicit = parse_payload_token_budget(payload)
+    if explicit is not None:
+        return explicit, "ceo"
+    auto = budget_for_identity(ident, instruction or "")
+    return auto, "auto"

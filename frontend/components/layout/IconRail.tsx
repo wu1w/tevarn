@@ -1,9 +1,9 @@
 'use client';
 
 /**
- * AIOS IconRail（demo v2 定稿版）
- * 结构：takton 圆形 logo → 9 项导航（审批带 badge）→ spacer → 主题切换 → 设置
- * 旧版 20+ 项导航已按 demo 收敛；旧路由保留 URL 直达，不再占用导航位。
+ * AIOS IconRail（0.4.6 Product Spine）
+ * 主路径：驾驶舱 / 员工 / 审批 / 内核(高级) → 主题 → 设置
+ * Goals / Knowledge / Activity / Market 降级：URL 仍可直达，不占主轨。
  */
 
 import React from 'react';
@@ -54,6 +54,7 @@ export function IconRail() {
   });
   const unread = (pendingApprovals?.escalations?.length ?? 0) + (pendingEvo?.proposals?.length ?? 0);
 
+  // P1 AI 公司：工作台 → 员工 → 审批 → 联系员工 → 内核
   const ITEMS: RailItem[] = [
     {
       href: '/',
@@ -81,46 +82,21 @@ export function IconRail() {
       ),
     },
     {
-      href: '/goals',
-      titleKey: 'nav.goals',
-      icon: (
-        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-          <circle cx="12" cy="12" r="8.5" />
-          <circle cx="12" cy="12" r="4.5" />
-          <circle cx="12" cy="12" r="1" fill="currentColor" />
-        </svg>
-      ),
-    },
-    {
       href: '/approvals',
       titleKey: 'nav.approvals',
       icon: ic('M9 11.5l2 2 4-4.5', <rect x="4" y="3" width="16" height="18" rx="2.5" />),
       badge: () => unread,
     },
     {
-      href: '/knowledge',
-      titleKey: 'nav.knowledge',
-      icon: (
-        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-          <path d="M12 6.5C10.5 5 8.5 4.5 6 4.5c-1 0-2 .1-3 .4v13.7c1-.3 2-.4 3-.4 2.5 0 4.5.6 6 2 1.5-1.4 3.5-2 6-2 1 0 2 .1 3 .4V4.9c-1-.3-2-.4-3-.4-2.5 0-4.5.5-6 2z" />
-          <path d="M12 6.5v13.7" />
-        </svg>
-      ),
-    },
-    {
-      href: '/activity',
-      titleKey: 'nav.activity',
-      icon: ic('M3 12h4l2.5-6 4 12L16 12h5'),
+      href: '/chat',
+      titleKey: 'nav.chatContact',
+      icon: ic('M8 10h8M8 14h5', <path d="M21 11.5a8.4 8.4 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.4 8.4 0 01-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.4 8.4 0 013.8-.9h.5a8.5 8.5 0 018 8v.5z" />),
+      match: (p) => p === '/chat' || p.startsWith('/chat/'),
     },
     {
       href: '/kernel',
       titleKey: 'nav.kernel',
       icon: ic('M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3', <rect x="6" y="6" width="12" height="12" rx="2" />),
-    },
-    {
-      href: '/market',
-      titleKey: 'nav.market',
-      icon: ic('M12 2l2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.5-4.8 2.5.9-5.4L4.2 7.7l5.4-.8L12 2z'),
     },
   ];
 
@@ -142,6 +118,7 @@ export function IconRail() {
           <Link
             key={item.href}
             href={item.href}
+            scroll={false}
             title={t(item.titleKey as never)}
             className={`tk-rail-btn ${isActive(item) ? 'active' : ''}`}
           >
@@ -174,6 +151,7 @@ export function IconRail() {
 
       <Link
         href="/settings"
+        scroll={false}
         title={t('nav.settings')}
         className={`tk-rail-btn ${pathname.startsWith('/settings') ? 'active' : ''}`}
       >

@@ -595,10 +595,57 @@ body {
   letter-spacing: -0.01em;
 }
 
-/* 页面级内容区通用精致感 */
+/* 页面级内容区：占满主栏可用宽度，随屏宽自适应（不再卡 1400px 窄栏） */
 .page-shell {
-  padding: 1.25rem 1.5rem;
-  max-width: 1400px;
+  width: 100%;
+  max-width: none;
+  margin-left: 0;
+  margin-right: 0;
+  padding: 1rem clamp(0.75rem, 1.5vw, 1.75rem) 1.5rem;
+  box-sizing: border-box;
+}
+
+/* 主内容流体壳：替代 mx-auto max-w-3xl/4xl/5xl 等固定收窄 */
+.tk-page-fluid {
+  width: 100%;
+  max-width: none;
+  margin-left: 0;
+  margin-right: 0;
+  box-sizing: border-box;
+}
+
+/* 可选阅读宽：仅用于长文/表单阅读舒适，仍随大屏放宽 */
+.tk-page-readable {
+  width: 100%;
+  max-width: min(100%, 72rem); /* ~1152px，大屏不再卡死 48rem */
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* 主栏内页面默认横向吃满 */
+.tk-main .tk-page,
+main.tk-main > div > * {
+  max-width: 100%;
+}
+
+/* 超宽屏：内容区内边距略增，避免贴边 */
+@media (min-width: 1536px) {
+  .page-shell,
+  .tk-page-fluid {
+    padding-left: clamp(1rem, 2vw, 2.5rem);
+    padding-right: clamp(1rem, 2vw, 2.5rem);
+  }
+}
+
+/* 窄屏：保证主区可缩，不横向溢出 */
+@media (max-width: 900px) {
+  .tk-app-body {
+    /* rail 保留；会话侧栏宽度由 collapsed 状态控制 */
+    min-width: 0;
+  }
+  .tk-main {
+    min-width: 0;
+  }
 }
 
 /* 卡片统一 */
@@ -900,9 +947,15 @@ button {
   .tk-app-body,
   .tk-sidebar,
   .tk-rail-btn,
-  .tk-nav-items {
+  .tk-nav-items,
+  .tk-sb-agent {
     transition: none !important;
   }
+}
+
+/* 主区内容层：避免子树 absolute/fixed 时出现合成层闪烁 */
+.tk-main > div {
+  transform: translateZ(0);
 }
 
 

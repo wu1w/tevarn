@@ -18,6 +18,7 @@ class _FakeRedis:
         self._s: dict[str, set[bytes]] = {}
         self._kv: dict[str, bytes] = {}
         self._l: dict[str, list[bytes]] = {}
+        self._ttl: dict[str, int] = {}  # key -> ttl seconds last set
         self._published: list[tuple[str, Any]] = []
 
     def pipeline(self, **_kwargs: Any) -> "_FakePipe":
@@ -51,7 +52,13 @@ class _FakeRedis:
         return 1 if (key in self._h or key in self._kv or key in self._l or key in self._s) else 0
 
     def expire(self, key: str, ttl: int) -> None:
+        self._ttl[key] = int(ttl)
         return None
+
+    def ttl(self, key: str) -> int:
+        if key not in self._kv and key not in self._h and key not in self._s and key not in self._l:
+            return -2
+        return int(self._ttl.get(key, -1))
 
     def sadd(self, key: str, *members: str) -> None:
         s = self._s.setdefault(key, set())
@@ -70,6 +77,8 @@ class _FakeRedis:
         if nx and key in self._kv:
             return False
         self._kv[key] = value if isinstance(value, bytes) else str(value).encode()
+        if ex is not None:
+            self._ttl[key] = int(ex)
         return True
 
     def get(self, key: str) -> bytes | None:
@@ -87,6 +96,7 @@ class _FakeRedis:
             if k in self._l:
                 del self._l[k]
                 n += 1
+            self._ttl.pop(k, None)
         return n
 
     def incr(self, key: str) -> int:
@@ -386,6 +396,36 @@ def test_try_claim_escalation_setnx():
     # 不同能力指纹互不干扰
     owner3 = store.try_claim_escalation("p1", ["network"], "esc-c")
     assert owner3 == "esc-c"
+
+
+def test_claim_ttl_aligned_with_esc_pending():
+    """claim TTL 与 pending 提权同寿，put_escalation 会续期 claim。"""
+    from backend.kernel import shared_store as ss
+
+    assert ss._CLAIM_TTL == ss._ESC_TTL
+    assert ss._CLAIM_TTL >= 86400  # 至少按天级，不再是 120s
+
+    r = _FakeRedis()
+    store = KernelSharedStore(r)
+    owner = store.try_claim_escalation("p1", ["shell"], "esc-a")
+    assert owner == "esc-a"
+    claim_key = f"{store._prefix}:esc:claim:p1:{ss.caps_fingerprint(['shell'])}"
+    assert r.ttl(claim_key) == ss._CLAIM_TTL
+
+    store.put_escalation(
+        {
+            "id": "esc-a",
+            "process_id": "p1",
+            "capabilities": ["shell"],
+            "reason": "need",
+            "status": "pending",
+            "created_at": 1.0,
+        }
+    )
+    # 续期后仍为 ESC_TTL
+    assert r.ttl(claim_key) == ss._ESC_TTL
+    # 短 TTL 不会再出现
+    assert r.ttl(claim_key) != 120
 
 
 def test_push_list_events_hot_buffer():

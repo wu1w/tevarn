@@ -3,6 +3,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useT } from '@/stores/localeStore';
 import { useConfirm } from '@/components/desktop/ConfirmDialog';
+import { LegacyQuiet } from '@/components/layout/LegacyQuiet';
+import { CrewMemoryHub } from '@/components/memory/CrewMemoryHub';
 
 
 interface Entity {
@@ -109,7 +111,20 @@ export default function MemoryPage() {
   }, {});
 
   return (
+    <LegacyQuiet
+      title="实体库是高级视图"
+      titleEn="Entity graph is advanced"
+      hint="员工「记得什么」请用上方编制记忆。实体库仅作补充投影。"
+      hintEn="Primary memory is employee Identity memory above. Entity graph is secondary."
+      primaryHref="/agents"
+      primaryLabel="去员工"
+      primaryLabelEn="Employees"
+      secondaryHref="/"
+      secondaryLabel="驾驶舱"
+      secondaryLabelEn="Cockpit"
+    >
     <div className="flex h-full flex-col p-6">
+      <CrewMemoryHub />
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">
         <div>
@@ -197,6 +212,7 @@ export default function MemoryPage() {
       )}
       {ConfirmDialogComponent}
     </div>
+    </LegacyQuiet>
   );
 }
 

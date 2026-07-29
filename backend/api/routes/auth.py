@@ -6,7 +6,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.exc import IntegrityError
 
 from backend.core.config import settings
@@ -20,7 +20,12 @@ from backend.core.unit_of_work import UnitOfWork
 from backend.repositories import UserRepository
 from backend.schemas import PasswordChange, TokenResponse, UserLogin, UserRead, UserRegister, UserUpdate
 
-from ..dependencies import get_current_user, get_user_repo
+from ..dependencies import (
+    assert_local_single_user,
+    get_current_user,
+    get_user_repo,
+    resolve_default_admin_password,
+)
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
@@ -76,11 +81,16 @@ async def register(
 
 @router.post("/auto-login", response_model=TokenResponse)
 async def auto_login(
+    request: Request,
     repo: UserRepository = Depends(get_user_repo),
 ):
-    """单用户模式：自动登录/创建默认用户"""
-    if not settings.single_user_mode:
-        raise HTTPException(status_code=403, detail="Single user mode is disabled")
+    """单用户模式：自动登录/创建默认用户（仅本机）。
+
+    这个端点直接签发 7 天有效的 admin JWT，因此必须和 get_current_user 里的
+    免登录放行走同一道 loopback 闸门 —— 否则绑 0.0.0.0 时任何人发一个空 POST
+    就能拿到管理员令牌，那道闸门等于白设。
+    """
+    assert_local_single_user(request)
 
     # 查找或创建默认用户
     async with UnitOfWork() as uow:
@@ -88,12 +98,7 @@ async def auto_login(
         if existing:
             user = existing
         else:
-            import os
-            default_pw = (
-                (settings.default_admin_password or "").strip()
-                or os.environ.get("TAKTON_DEFAULT_ADMIN_PASSWORD", "").strip()
-                or "admin"
-            )
+            default_pw = resolve_default_admin_password()
             user_data = {
                 "email": "admin@takton.dev",
                 "username": "admin",

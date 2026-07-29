@@ -349,7 +349,7 @@ export default function ContextDashboard() {
 
       {/* 筛选栏 */}
       <div className="flex items-center gap-3">
-        <div className="relative flex-1 max-w-xs">
+        <div className="relative min-w-[12rem] max-w-md flex-1 sm:max-w-xl">
           <input
             type="text"value={search}
             onChange={(e) => setSearch(e.target.value)}

@@ -68,11 +68,20 @@ def _get_fernet() -> Fernet:
             "Set a dedicated SETTINGS_ENCRYPTION_KEY for stronger isolation."
         )
         _fernet_cache = Fernet(_derive_key_from_jwt_secret())
-    elif len(raw_key) == 44:  # 标准 Fernet key 长度
-        _fernet_cache = Fernet(raw_key)
     else:
-        # 安全修复：使用与 _derive_key_from_jwt_secret 一致的 salt，不再硬编码
-        _fernet_cache = Fernet(_derive_key_from_jwt_secret())
+        try:
+            _fernet_cache = Fernet(raw_key)
+        except Exception as e:
+            # 此前这里只按 len == 44 判断，长度不对就**静默**回落到 JWT 派生密钥：
+            # 用户以为自己配了独立加密密钥，实际根本没生效，而且毫无提示。
+            logger.error(
+                "SETTINGS_ENCRYPTION_KEY is set but invalid (%s); falling back to the "
+                "key derived from JWT_SECRET. Generate a proper one with: "
+                "python -c \"from cryptography.fernet import Fernet; "
+                "print(Fernet.generate_key().decode())\"",
+                e,
+            )
+            _fernet_cache = Fernet(_derive_key_from_jwt_secret())
 
     return _fernet_cache
 

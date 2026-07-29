@@ -940,8 +940,17 @@ class WorkflowEngine:
         try:
             result = self._eval_condition(condition_expr, input_val, ctx.globals if ctx else {})
             return {"true": input_val if result else None, "false": input_val if not result else None}
-        except Exception:
-            # 默认走 false
+        except Exception as e:
+            # 兜底走 false 分支，但**必须留痕**：此前是静默的，条件表达式里一个
+            # 拼写错误会让整条工作流永远走 false，日志里什么都看不到，
+            # 用户只能怀疑自己的业务逻辑。
+            msg = f"条件表达式求值失败，已走 false 分支: {type(e).__name__}: {e} — 表达式: {condition_expr!r}"
+            logger.warning("condition node: %s", msg)
+            if ctx is not None:
+                try:
+                    ctx.log("condition", "error", msg)
+                except Exception:
+                    pass
             return {"true": None, "false": input_val}
 
     # 条件表达式只允许出现的 AST 节点（不含 Call/Attribute/Subscript，杜绝沙箱逃逸）
@@ -989,6 +998,16 @@ class WorkflowEngine:
         for node in ast.walk(tree):
             if not isinstance(node, cls._CONDITION_ALLOWED_NODES):
                 raise WorkflowExecutionError(f"条件表达式包含不安全的语法: {type(node).__name__}")
+        # 序列乘法可以在允许的节点内造出内存炸弹（[0]*10**10），而这段是在
+        # 事件循环里同步 eval 的 —— 一条表达式就能拖垮整个后端。
+        for node in ast.walk(tree):
+            if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mult):
+                for side in (node.left, node.right):
+                    if isinstance(side, ast.Constant) and isinstance(side.value, int):
+                        if abs(side.value) > 10_000:
+                            raise WorkflowExecutionError(
+                                f"条件表达式中的乘法因子过大（{side.value}），已拒绝求值"
+                            )
         code = compile(tree, "<condition>", "eval")
         return bool(eval(code, {"__builtins__": {}}, {"input": input_val, "context": context}))  # noqa: S307
 

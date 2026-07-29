@@ -9,6 +9,7 @@
 import { useCallback } from 'react';
 import { useSessionStore } from '@/stores/sessionStore';
 import * as api from '@/lib/api';
+import type { SessionConfig } from '@/types';
 
 /** 判断会话是否无有效内容（无用户/助手消息视为空白） */
 function hasChatContent(
@@ -47,6 +48,12 @@ export function useSession() {
     ): Promise<boolean> => {
       if (!sessionId) return false;
       try {
+        try {
+          const active = await api.getActiveSessionIds();
+          if (active?.includes(sessionId)) return false;
+        } catch {
+          /* ignore */
+        }
         let empty = options?.knownEmpty;
         if (empty === undefined) {
           const msgs = await api.getMessages(sessionId, 5, 0);
@@ -80,16 +87,52 @@ export function useSession() {
   }, [discardEmptySession]);
 
   const createAndLoadSession = useCallback(
-    async (userId?: string) => {
+    async (userId?: string, config?: Partial<SessionConfig>) => {
       // 切走空白会话
       await discardCurrentIfEmpty();
-      const session = await api.createSession(userId);
+      // AIOS：从 Agent Profile「联系 TA」写入 contact_agent + 人设文案
+      const session = await api.createSession(
+        userId,
+        config ? (config as SessionConfig) : undefined,
+      );
       setCurrentSession(session);
       clearMessages();
       setError(null);
+      const titleFrom = config?.contact_agent || null;
+      if (titleFrom) {
+        useSessionStore.getState().setSessionTitle(session.id, `→ ${titleFrom}`);
+      }
       return session;
     },
     [setCurrentSession, clearMessages, setError, discardCurrentIfEmpty]
+  );
+
+  /**
+   * 企业 IM：点联系人 → 一人一会话（服务端 find-or-create）。
+   * 连点同一人不会堆出多个 session。
+   */
+  const openContactSession = useCallback(
+    async (name: string) => {
+      const n = (name || '').trim();
+      if (!n) throw new Error('contact name required');
+      const st = useSessionStore.getState();
+      const cur = st.currentSession;
+      const curContact = (cur?.config as { contact_agent?: string } | undefined)?.contact_agent;
+      // 已在该联系人会话：只确保消息在
+      if (cur && curContact === n) {
+        await loadMessages(cur.id);
+        return cur;
+      }
+      await discardCurrentIfEmpty();
+      const session = await api.openContactSession(n);
+      setCurrentSession(session);
+      clearMessages();
+      setError(null);
+      useSessionStore.getState().setSessionTitle(session.id, `→ ${n}`);
+      await loadMessages(session.id);
+      return session;
+    },
+    [discardCurrentIfEmpty, setCurrentSession, clearMessages, setError, loadMessages]
   );
 
   const switchSession = useCallback(
@@ -115,6 +158,7 @@ export function useSession() {
     isLoading,
     error,
     createAndLoadSession,
+    openContactSession,
     switchSession,
     discardEmptySession,
     discardCurrentIfEmpty,

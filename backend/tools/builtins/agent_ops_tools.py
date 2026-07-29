@@ -250,9 +250,10 @@ class DelegateTaskTool(BaseTool):
         super().__init__(
             name="delegate_task",
             description=(
-                "把子任务委派给子代理执行带工具的迷你 Run（独立沙箱 computer）。"
-                "action=list_agents|run。run 需要 goal；可选 agent_id/name、context。"
-                "用于拆分编码/调研等工作；子代理可用工具，结果精炼返回。"
+                "把活派给编制员工（优先）或列出可用员工。"
+                "action 只能是 list_agents 或 run。"
+                "run：若 name 匹配编制员工，则写入收件箱工单（推荐）；"
+                "不要用 create_agent。招人用 crew_steward.hire。"
             ),
             parameters={
                 "type": "object",
@@ -274,78 +275,64 @@ class DelegateTaskTool(BaseTool):
 
     async def execute(self, **kwargs: Any) -> Any:
         action = str(kwargs.get("action") or "run").lower()
-        try:
-            from backend.repositories.sub_agent_repo import AsyncSubAgentRepository
-        except Exception:
-            try:
-                from backend.repositories.sub_agent_repo import SubAgentRepository as AsyncSubAgentRepository
-            except Exception as e:
-                return f"[Error] subagent repo unavailable: {e}"
 
-        repo = AsyncSubAgentRepository()
-        agents = []
+        # ── 编制优先：list / run 都先走 Identity ──
         try:
-            if hasattr(repo, "list_enabled"):
-                agents = await repo.list_enabled()  # type: ignore
-            elif hasattr(repo, "list_all"):
-                agents = await repo.list_all()  # type: ignore
-            elif hasattr(repo, "list"):
-                agents = await repo.list()  # type: ignore
-        except Exception as e:
-            return f"[Error] list agents failed: {e}"
+            from backend.kernel import get_kernel
+
+            reg = getattr(get_kernel(), "identity_registry", None)
+            crew = await reg.list(status="active") if reg is not None else []
+        except Exception:
+            crew = []
 
         if action == "list_agents":
-            if not agents:
-                return "No sub-agents configured. Create at /profiles."
-            lines = []
-            for a in agents:
-                lines.append(
-                    f"- id={getattr(a,'id', '?')} name={getattr(a,'name','?')} "
-                    f"enabled={getattr(a,'enabled', True)} model={getattr(a,'model_ref', getattr(a,'model',''))}"
+            if crew:
+                lines = [
+                    f"- [员工] {i.name} id={i.id} role={i.role or '-'} caps={i.capabilities or []}"
+                    for i in crew
+                ]
+                return (
+                    "编制员工（派活用 run + agent_name=姓名，会进收件箱）：\n"
+                    + "\n".join(lines)
+                    + "\n\n请用 crew_steward.assign 或本工具 action=run 派活；不要起临时子代理闷跑。"
                 )
-            return "Sub-agents:\n" + "\n".join(lines)
+            return (
+                "编制为空。请先 crew_steward action=hire 招人，"
+                "不要 manage_sub_agent create 假装有团队。"
+            )
 
         goal = (kwargs.get("goal") or "").strip()
         if not goal:
             return "[Error] goal required for run"
 
-        # pick agent
-        target = None
         aid = (kwargs.get("agent_id") or "").strip()
         aname = (kwargs.get("agent_name") or "").strip()
-        for a in agents or []:
-            if aid and str(getattr(a, "id", "")) == aid:
-                target = a
-                break
-            if aname and str(getattr(a, "name", "")).lower() == aname.lower():
-                target = a
-                break
-        if target is None and agents:
-            target = agents[0]
-        if target is None:
-            return "[Error] no sub-agent available. Create one in /profiles first."
+        who = aname or aid
+        # 有编制员工时：强制收件箱派活，禁止 subagent 闷跑
+        if crew:
+            if not who:
+                names = ", ".join(i.name for i in crew[:12])
+                return (
+                    f"[Error] 请指定 agent_name（编制员工）。可用：{names}。"
+                    f"示例：action=run agent_name=kernel-engineer goal=..."
+                )
+            from backend.agent.workforce_dispatch import assign_to_employee
 
-        # 真 Sub-Agent（Phase 1）：带工具的迷你 Run（替换原纯 LLM 一次性补全）
-        ctx = (kwargs.get("context") or "").strip()
-        try:
-            from backend.agent.subagent_runner import run_subagent
-
-            _uid = kwargs.get("user_id") or kwargs.get("_user_id")
-            _recorder = kwargs.get("_run_recorder")
-            return await run_subagent(
-                session_id=str(kwargs.get("_session_id") or ""),
-                sub_agent=target,
-                goal=goal,
-                context=ctx,
-                user_id=uuid.UUID(str(_uid)) if _uid else None,
-                ws_manager=kwargs.get("_ws_manager"),
-                parent_run_id=getattr(_recorder, "run_id", None),
-                depth=int(kwargs.get("_subagent_depth") or 0),
-                # Kernel：父进程 id（W3 由 loop 注入），子进程能力按父集 narrow
-                parent_kernel_process_id=kwargs.get("_kernel_process_id"),
+            ctx = (kwargs.get("context") or "").strip()
+            instruction = goal if not ctx else f"{goal}\n\n上下文：{ctx}"
+            steward_sid = str(kwargs.get("_session_id") or "").strip() or None
+            return await assign_to_employee(
+                who,
+                instruction,
+                priority=5,
+                via="delegate_task",
+                steward_session_id=steward_sid,
             )
-        except Exception as e:
-            return f"[Error] delegate_task subagent run failed: {e}"
+
+        return (
+            "[Error] 编制中尚无员工。请先 crew_steward action=hire 入编，"
+            "再 delegate_task/assign 派活。已禁用「无编制时的临时子代理闷跑」。"
+        )
 
 
 class ClarifyTool(BaseTool):
@@ -387,7 +374,7 @@ class ClarifyTool(BaseTool):
             cmd = f"{q}\nOptions:\n{opt_txt}"
         else:
             cmd = q
-        approved = await confirm_manager.request_confirmation(
+        outcome = await confirm_manager.request_confirmation(
             kwargs.get("_ws_manager"),
             kwargs.get("_session_id"),
             title="需要你的确认",
@@ -395,8 +382,11 @@ class ClarifyTool(BaseTool):
             reason="clarify",
             timeout=float(kwargs.get("timeout") or 60),
         )
-        # resolve_confirmation only returns bool; map to yes/no
-        return "User approved." if approved else "User denied or timed out."
+        if outcome:
+            return "User approved."
+        # 没送达时明确告诉模型「问不到人」，否则它会把环境故障当成用户否决，
+        # 进而擅自替用户做决定继续往下跑。
+        return f"Could not get an answer: {outcome.describe()}"
 
 
 class SessionSearchTool(BaseTool):

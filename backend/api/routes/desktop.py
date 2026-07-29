@@ -234,18 +234,21 @@ async def clear_permission(
     app_name: str | None = None,
 ):
     """
-    清除权限
+    清除权限（会话缓存 + 数据库持久化）
     
     如果不指定 operation，则清除所有权限
     """
     try:
-        service.clear_session_permissions(current_user.id)
-        
-        # TODO: 清除数据库中的权限
-        
+        op = operation.value if operation is not None else None
+        stats = await service.clear_permissions(
+            current_user.id,
+            operation=op,
+            app_name=app_name,
+        )
         return {
             "success": True,
-            "message": "权限已清除",
+            "message": "权限已清除（会话+数据库）",
+            "removed": stats,
         }
         
     except Exception as e:

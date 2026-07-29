@@ -17,21 +17,39 @@ import { ChildProcess, spawn, execSync } from 'child_process';
 import * as crypto from 'crypto';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as http from 'http';
-import { autoUpdater, UpdateInfo } from 'electron-updater';
+// 可选依赖：打包遗漏时不应导致主进程直接崩溃
+type UpdateInfo = { version: string; releaseDate?: string; releaseNotes?: string | null };
+type AutoUpdaterLike = {
+  autoDownload: boolean;
+  autoInstallOnAppQuit: boolean;
+  checkForUpdates: () => Promise<unknown>;
+  downloadUpdate: () => Promise<unknown>;
+  quitAndInstall: () => void;
+  on: (event: string, listener: (...args: any[]) => void) => void;
+};
+let autoUpdater: AutoUpdaterLike | null = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  autoUpdater = require('electron-updater').autoUpdater as AutoUpdaterLike;
+} catch (e) {
+  console.warn('[Takton] electron-updater not available:', (e as Error).message);
+}
 
 // ---- 环境检测 ----
 const isDev = !app.isPackaged;
 const platform = process.platform; // 'win32' | 'darwin' | 'linux'
 
 // ---- 路径 / 端口 ----
-// 后端端口运行时选择：优先 8000；若被旧服务占用且不是带 /api 的 Takton，则换端口
-const DEFAULT_BACKEND_PORT = 8000;
-const CANDIDATE_BACKEND_PORTS = [8000, 8001, 8002, 8003, 8010, 18000];
+// 后端端口：与 CLI/手册统一默认 8090；候选含历史 8000 以便发现孤儿 Host
+const DEFAULT_BACKEND_PORT = 8090;
+const CANDIDATE_BACKEND_PORTS = [8090, 8000, 8001, 8002, 8010, 18090];
 let activeBackendPort = DEFAULT_BACKEND_PORT;
 const FRONTEND_PORT = 3000;
+// Canonical path: <repo>/electron/dist → 上两级即仓库根（勿用三级，那是 frontend/electron 旧布局）
 const ROOT_DIR = isDev
-  ? path.resolve(__dirname, '..', '..', '..')
+  ? path.resolve(__dirname, '..', '..')
   : path.join(process.resourcesPath, 'app');
 
 const BACKEND_DIR = isDev
@@ -51,6 +69,9 @@ const SECRETS_FILE = path.join(USER_DATA_DIR, 'secrets.json');
 const WINDOW_STATE_FILE = path.join(USER_DATA_DIR, 'window-state.json');
 
 let backendProcess: ChildProcess | null = null;
+/** OS: full quit kills Kernel only when true. Default false = detach runtime. */
+let stopRuntimeOnQuit = false;
+let trayBadgeTimer: ReturnType<typeof setInterval> | null = null;
 let frontendServer: http.Server | null = null;
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -192,9 +213,9 @@ function isPortFree(port: number): Promise<boolean> {
 
 /**
  * 选择后端端口：
- * - 仅复用本进程拉起的 backendProcess（保证 DB/密钥环境一致）
- * - 绝不复用「别人」占用的健康后端：对方可能指向另一份 takton.db，
- *   会导致设置页保存了供应商，对话页目录却是空的
+ * - 复用本进程拉起的 backendProcess
+ * - OS 化：复用已在跑的 Kernel Host（/api/runtime/status）
+ * - 非 Takton 占用端口跳过
  */
 async function resolveBackendPort(): Promise<{ port: number; reuse: boolean }> {
   if (backendProcess && !backendProcess.killed && activeBackendPort) {
@@ -204,14 +225,43 @@ async function resolveBackendPort(): Promise<{ port: number; reuse: boolean }> {
     }
   }
   for (const port of CANDIDATE_BACKEND_PORTS) {
+    if (await isTaktonRuntimeHost(port)) {
+      console.log(`[Takton] Reusing detached Kernel Host on port ${port}`);
+      activeBackendPort = port;
+      return { port, reuse: true };
+    }
+  }
+  for (const port of CANDIDATE_BACKEND_PORTS) {
     if (await isPortFree(port)) {
       console.log(`[Takton] Selected free backend port ${port}`);
       return { port, reuse: false };
     }
-    console.warn(`[Takton] Port ${port} busy, skipping (will not reuse foreign backend)`);
+    console.warn(`[Takton] Port ${port} busy, not a Takton Host — skip`);
   }
-  // 最后手段：仍用 8000，让后续启动失败有明确日志
   return { port: DEFAULT_BACKEND_PORT, reuse: false };
+}
+
+function isTaktonRuntimeHost(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const req = http.get(`http://127.0.0.1:${port}/api/runtime/status`, (res) => {
+      let data = '';
+      res.on('data', (c) => (data += c));
+      res.on('end', () => {
+        try {
+          if (res.statusCode !== 200) return resolve(false);
+          const j = JSON.parse(data);
+          resolve(j?.ok === true && (j?.product === 'takton-aios' || j?.role === 'kernel_host'));
+        } catch {
+          resolve(false);
+        }
+      });
+    });
+    req.on('error', () => resolve(false));
+    req.setTimeout(800, () => {
+      req.destroy();
+      resolve(false);
+    });
+  });
 }
 
 function waitForBackend(url: string, timeoutMs = 60000): Promise<void> {
@@ -324,12 +374,19 @@ async function ensureDependencies(python: string): Promise<string | undefined> {
     return USER_SITE_PACKAGES;
   }
 
-  const reqPath = isDev
-    ? path.join(ROOT_DIR, 'backend', 'requirements.txt')
-    : path.join(process.resourcesPath, 'backend', 'requirements.txt');
+  const reqCandidates = isDev
+    ? [
+        path.join(ROOT_DIR, 'backend', 'requirements-prod.txt'),
+        path.join(ROOT_DIR, 'backend', 'requirements.txt'),
+      ]
+    : [
+        path.join(process.resourcesPath, 'backend', 'requirements-prod.txt'),
+        path.join(process.resourcesPath, 'backend', 'requirements.txt'),
+      ];
+  const reqPath = reqCandidates.find((p) => fs.existsSync(p));
 
-  if (!fs.existsSync(reqPath)) {
-    console.error('[Takton] requirements.txt not found, backend may fail to start');
+  if (!reqPath) {
+    console.error('[Takton] requirements-prod/requirements.txt not found, backend may fail to start');
     return USER_SITE_PACKAGES;
   }
 
@@ -559,7 +616,7 @@ function startFrontend(): Promise<void> {
           console.error(`[Takton] API proxy error: ${err.message}`);
           res.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8' });
           res.end(JSON.stringify({
-            detail: `后端不可用 (${err.message})。请确认后端已在端口 ${backendPort} 启动。`,
+            detail: `Backend unavailable (${err.message})。Ensure backend is running on port ${backendPort} `,
           }));
         });
         req.pipe(proxyReq);
@@ -714,7 +771,7 @@ function createTray(): void {
 
   // 与应用内 Logo 同源：tray-icon.png / public/icon.png
   const prodIconPath = isDev ? null : path.join(process.resourcesPath, 'tray-icon.png');
-  const devIconPath = path.join(__dirname, '..', 'public', 'icon.png');
+  const devIconPath = path.join(ROOT_DIR, 'frontend', 'public', 'icon.png');
   const iconPath = (prodIconPath && fs.existsSync(prodIconPath))
     ? prodIconPath
     : (fs.existsSync(devIconPath) ? devIconPath : null);
@@ -726,28 +783,39 @@ function createTray(): void {
   }
 
   tray = new Tray(trayIcon);
-  tray.setToolTip('Takton - Agent Terminal');
+  tray.setToolTip('Takton · AI Runtime Console');
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: '显示 Takton',
+      label: 'Show Console',
       click: () => {
         if (mainWindow) {
           mainWindow.show();
           mainWindow.focus();
+        } else {
+          createWindow();
         }
       },
     },
     {
-      label: '隐藏 Takton',
+      label: 'Hide Console',
       click: () => {
         mainWindow?.hide();
       },
     },
     { type: 'separator' },
     {
-      label: '退出',
+      label: 'Quit Console (keep AI running)',
       click: () => {
+        stopRuntimeOnQuit = false;
+        isQuitting = true;
+        app.quit();
+      },
+    },
+    {
+      label: 'Stop AI Runtime & Quit',
+      click: () => {
+        stopRuntimeOnQuit = true;
         isQuitting = true;
         app.quit();
       },
@@ -763,8 +831,42 @@ function createTray(): void {
         mainWindow.show();
         mainWindow.focus();
       }
+    } else {
+      createWindow();
     }
   });
+
+  if (trayBadgeTimer) clearInterval(trayBadgeTimer);
+  trayBadgeTimer = setInterval(() => {
+    void refreshTrayBadge();
+  }, 12_000);
+  void refreshTrayBadge();
+}
+
+async function refreshTrayBadge(): Promise<void> {
+  if (!tray || !activeBackendPort) return;
+  try {
+    const res = await fetch(`http://127.0.0.1:${activeBackendPort}/api/runtime/status`).catch(() => null);
+    if (!res || !res.ok) {
+      tray.setToolTip('Takton · runtime not ready');
+      return;
+    }
+    const data = (await res.json()) as {
+      badge?: number;
+      jobs_claimed?: number;
+      approvals_pending?: number;
+      processes_live?: number;
+    };
+    const badge = data.badge ?? 0;
+    tray.setToolTip(
+      `Takton · :${activeBackendPort} · running ${data.jobs_claimed ?? data.processes_live ?? 0} · pending ${data.approvals_pending ?? 0} · close≠stop`,
+    );
+    if (process.platform === 'darwin') {
+      tray.setTitle(badge > 0 ? String(badge > 99 ? '99+' : badge) : '');
+    }
+  } catch {
+    /* ignore */
+  }
 }
 
 function registerGlobalShortcuts(): void {
@@ -788,6 +890,10 @@ function setupAutoUpdater(): void {
     console.log('[Takton] Dev mode: auto-updater disabled');
     return;
   }
+  if (!autoUpdater) {
+    console.warn('[Takton] auto-updater module missing; skip update checks');
+    return;
+  }
 
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
@@ -807,8 +913,8 @@ function setupAutoUpdater(): void {
     }
     if (Notification.isSupported()) {
       new Notification({
-        title: 'Takton 更新可用',
-        body: `版本 ${info.version} 已可用，正在下载...`,
+        title: 'Takton update available',
+        body: `Version ${info.version} available, downloading...`,
       }).show();
     }
     autoUpdater.downloadUpdate().catch((err) => {
@@ -831,8 +937,8 @@ function setupAutoUpdater(): void {
     console.log(`[Takton] Update downloaded: ${info.version}`);
     if (Notification.isSupported()) {
       new Notification({
-        title: 'Takton 更新已下载',
-        body: `版本 ${info.version} 已下载，重启应用以安装更新。`,
+        title: 'Takton update downloaded',
+        body: `Version ${info.version} Downloaded. Restart to install.`,
       }).show();
     }
     if (mainWindow) {
@@ -870,7 +976,9 @@ function createWindow(): void {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      // preload 仅用 contextBridge + ipcRenderer（sandbox 白名单内），
+      // 可安全开启 OS 级渲染进程沙箱（安全加固 P2）
+      sandbox: true,
     },
   });
 
@@ -903,10 +1011,10 @@ function createWindow(): void {
       .c{max-width:420px;padding:24px;border:1px solid rgba(255,255,255,.1);border-radius:16px;background:#12141c}
       h1{font-size:16px;margin:0 0 8px}p{font-size:13px;color:#a1a1aa;line-height:1.5}
       code{font-size:12px;color:#22d3ee}button{margin-top:14px;padding:8px 14px;border-radius:10px;border:0;background:linear-gradient(90deg,#8b5cf6,#22d3ee);color:#fff;cursor:pointer}</style></head>
-      <body><div class="c"><h1>前端未能加载</h1>
-      <p>静态服务或页面加载失败（${code}: ${desc}）。</p>
-      <p>请确认端口 <code>${FRONTEND_PORT}</code> 未被占用，然后点击重试。</p>
-      <button onclick="location.href='${frontendUrl}'">重新加载</button></div></body></html>`;
+      <body><div class="c"><h1>Frontend failed to load</h1>
+      <p>Static serving or page load failed（${code}: ${desc}）。</p>
+      <p>Ensure port <code>${FRONTEND_PORT}</code> is not in use, then click retry.</p>
+      <button onclick="location.href='${frontendUrl}'">Reload</button></div></body></html>`;
     mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
     if (!mainWindow.isVisible()) mainWindow.show();
   });
@@ -982,6 +1090,23 @@ ipcMain.handle('open-external', async (_event, url: string) => {
     await shell.openExternal(url);
   }
 });
+
+/** 用系统默认应用打开本地文件路径；成功返回空串，失败返回错误信息（与 shell.openPath 一致） */
+ipcMain.handle('open-path', async (_event, filePath: string) => {
+  if (typeof filePath !== 'string' || !filePath.trim()) {
+    return 'invalid path';
+  }
+  // 仅允许绝对路径，避免被注入相对恶意路径
+  if (!path.isAbsolute(filePath)) {
+    return 'path must be absolute';
+  }
+  try {
+    return await shell.openPath(filePath);
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  }
+});
+
 // preload 同步注入用（避免渲染进程模块加载竞态）
 ipcMain.on('get-backend-url-sync', (event) => {
   event.returnValue = getApiBase();
@@ -998,99 +1123,6 @@ ipcMain.handle('maximize-window', () => {
   }
 });
 ipcMain.handle('close-window', () => mainWindow?.close());
-
-// ---- Takton Code 集成 ----
-// 在系统终端里拉起 takton-code（TUI，textual 无法内嵌渲染进程），
-// 通过 TAKTON_CODE_BRIDGE_URL 桥接到当前 backend，复用 LLM/skills/tools/MCP/RAG。
-
-/** 探测 takton-code 可执行入口：PATH → bundle venv → 打包 resources。返回 null 表示未安装。 */
-function resolveTaktonCodeCmd(): string | null {
-  const candidates: string[] = [];
-  if (platform === 'win32') {
-    candidates.push('takton-code.exe', 'tkc.exe');
-  } else {
-    candidates.push('takton-code', 'tkc');
-  }
-  // 1) 已在 PATH
-  for (const c of candidates) {
-    try {
-      execSync(platform === 'win32' ? `where ${c}` : `command -v ${c}`, { stdio: 'pipe' });
-      return c;
-    } catch {
-      /* not in PATH, try next */
-    }
-  }
-  // 2) 开发环境：monorepo 内的 bundle venv
-  const bundleBin = platform === 'win32'
-    ? path.join(__dirname, '..', 'takton-code-bundle', 'takton-code-0.1.0-bundle-20260721', '.venv', 'Scripts', 'takton-code.exe')
-    : path.join(__dirname, '..', 'takton-code-bundle', 'takton-code-0.1.0-bundle-20260721', '.venv', 'bin', 'takton-code');
-  if (fs.existsSync(bundleBin)) return bundleBin;
-  // 3) 打包：resources/takton-code/
-  if (!isDev) {
-    const packedBin = platform === 'win32'
-      ? path.join(process.resourcesPath, 'takton-code', 'takton-code.exe')
-      : path.join(process.resourcesPath, 'takton-code', 'takton-code');
-    if (fs.existsSync(packedBin)) return packedBin;
-  }
-  return null;
-}
-
-/** 按平台在系统终端中启动命令（新窗口，不阻塞主进程）。 */
-function spawnInTerminal(cmd: string, env: NodeJS.ProcessEnv): boolean {
-  try {
-    if (platform === 'win32') {
-      // cmd /c start 开新控制台窗口
-      spawn('cmd.exe', ['/c', 'start', 'cmd.exe', '/k', cmd], { env, detached: true, stdio: 'ignore' }).unref();
-      return true;
-    }
-    if (platform === 'darwin') {
-      // Terminal.app via osascript
-      const script = `tell application "Terminal" to do script "${cmd.replace(/"/g, '\\"')}"`;
-      spawn('osascript', ['-e', script], { env, detached: true, stdio: 'ignore' }).unref();
-      return true;
-    }
-    // linux：探测常见终端模拟器
-    const terms: [string, string[]][] = [
-      ['x-terminal-emulator', ['-e', cmd]],
-      ['gnome-terminal', ['--', 'bash', '-c', `${cmd}; exec bash`]],
-      ['konsole', ['-e', cmd]],
-      ['xfce4-terminal', ['-e', cmd]],
-      ['xterm', ['-e', cmd]],
-    ];
-    for (const [term, args] of terms) {
-      try {
-        execSync(`command -v ${term}`, { stdio: 'pipe' });
-        spawn(term, args, { env, detached: true, stdio: 'ignore' }).unref();
-        return true;
-      } catch {
-        /* try next terminal */
-      }
-    }
-    return false;
-  } catch {
-    return false;
-  }
-}
-
-ipcMain.handle('open-takton-code', async () => {
-  const codeCmd = resolveTaktonCodeCmd();
-  if (!codeCmd) {
-    return { ok: false, error: 'takton-code 未安装（PATH / bundle venv / resources 均未找到）' };
-  }
-  const bridgeUrl = getApiBase();
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    TAKTON_CODE_BRIDGE_ENABLED: 'true',
-    TAKTON_CODE_BRIDGE_URL: bridgeUrl,
-  };
-  // 引号包裹路径防空格；--bridge 强制走 Desktop bridge
-  const quoted = platform === 'win32' ? `"${codeCmd}"` : `'${codeCmd}'`;
-  const ok = spawnInTerminal(`${quoted} --bridge`, env);
-  if (!ok) {
-    return { ok: false, error: '未找到可用的系统终端模拟器' };
-  }
-  return { ok: true, bridge: bridgeUrl };
-});
 
 ipcMain.handle('show-notification', (_event, { title, body }: { title: string; body: string }) => {
   if (Notification.isSupported()) {
@@ -1110,7 +1142,7 @@ ipcMain.handle('get-dropped-files', (_event, filePaths: string[]) => filePaths);
 ipcMain.handle('select-directory', async () => {
   const opts: Electron.OpenDialogOptions = {
     properties: ['openDirectory', 'createDirectory'],
-    title: '选择项目文件夹',
+    title: 'Select project folder',
   };
   const result = mainWindow
     ? await dialog.showOpenDialog(mainWindow, opts)
@@ -1119,9 +1151,145 @@ ipcMain.handle('select-directory', async () => {
   return result.filePaths[0];
 });
 
+/**
+ * Launch Takton Code CLI in an external terminal.
+ * Desktop is entry-only; Code is a separate process sharing backend via /api/bridge/v1.
+ */
+ipcMain.handle(
+  'open-takton-code',
+  async (
+    _event,
+    opts?: { path?: string; mode?: string },
+  ): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      const projectPath =
+        (opts?.path && String(opts.path).trim()) ||
+        process.env.TAKTON_CODE_DEFAULT_PATH ||
+        app.getPath('home');
+      const mode = (opts?.mode || 'build').replace(/[^a-z]/gi, '') || 'build';
+      const bridgeUrl = getApiBase(); // e.g. http://127.0.0.1:8000/api
+      const env = {
+        ...process.env,
+        TAKTON_CODE_BRIDGE_URL: bridgeUrl,
+        TAKTON_CODE_BRIDGE_ENABLED: 'true',
+      };
+
+      // Prefer `takton-code` / `tkc` on PATH; fall back to python -m
+      const candidates: { cmd: string; args: string[]; shell?: boolean }[] = [
+        {
+          cmd: 'takton-code',
+          args: ['--path', projectPath, '--mode', mode, '--bridge'],
+          shell: true,
+        },
+        {
+          cmd: 'tkc',
+          args: ['--path', projectPath, '--mode', mode, '--bridge'],
+          shell: true,
+        },
+        {
+          cmd: process.platform === 'win32' ? 'python' : 'python3',
+          args: ['-m', 'takton_code', '--path', projectPath, '--mode', mode, '--bridge'],
+          shell: true,
+        },
+      ];
+
+      const launchUnix = (bin: string, args: string[]) => {
+        const term = process.env.TERMINAL || process.env.TERM_PROGRAM || 'x-terminal-emulator';
+        const full = `${bin} ${args.map((a) => `"${a}"`).join(' ')}`;
+        const p = spawn(term, ['-e', 'bash', '-lc', full], {
+          env,
+          detached: true,
+          stdio: 'ignore',
+        });
+        p.on('error', () => {
+          /* ignore spawn failure */
+        });
+        p.unref();
+      };
+
+      if (process.platform === 'win32') {
+        // Prefer bundled embedded Python (takton_code installed into its site-packages)
+        const bundledPython = isDev
+          ? null
+          : path.join(process.resourcesPath, 'python', 'python.exe');
+        const hasBundled = bundledPython ? fs.existsSync(bundledPython) : false;
+        const argStr = `--path "${projectPath}" --mode ${mode} --bridge`;
+        const primary = hasBundled
+          ? `"${bundledPython}" -m takton_code ${argStr}`
+          : `takton-code ${argStr}`;
+        const fallbacks = hasBundled
+          ? `takton-code ${argStr} || tkc ${argStr} || python -m takton_code ${argStr}`
+          : `tkc ${argStr} || python -m takton_code ${argStr}`;
+
+        // Write the launch command to a temp .bat so we never pass a quoted path
+        // through multiple layers of `cmd /c start ... cmd /k` parsing (which was
+        // mangling `--path "C:\..."` into a relative path resolved against the
+        // install dir). The bat runs inside projectPath via `cd /d`.
+        const batPath = path.join(
+          os.tmpdir(),
+          `takton-code-launch-${Date.now()}.bat`,
+        );
+        const batLines = [
+          '@echo off',
+          `cd /d "${projectPath}"`,
+          'set TAKTON_CODE_BRIDGE_ENABLED=true',
+          `set TAKTON_CODE_BRIDGE_URL=${bridgeUrl}`,
+          `${primary} || ${fallbacks}`,
+        ];
+        try {
+          fs.writeFileSync(batPath, batLines.join('\r\n'), 'utf8');
+        } catch (writeErr) {
+          return { ok: false, error: `无法写入启动脚本: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}` };
+        }
+
+        // Prefer Windows Terminal if present; fall back to cmd start on spawn error.
+        // Use shell:true + a hand-built command string so cmd.exe (not Node's arg
+        // escaping) parses the quotes around batPath. Node's non-shell spawn escapes
+        // quotes as \" which leaked into the command line and broke `start`.
+        const launchViaCmdStart = () => {
+          const p = spawn(`start "Takton Code" cmd /k "${batPath}"`, {
+            env,
+            detached: true,
+            stdio: 'ignore',
+            windowsHide: false,
+            shell: true,
+          });
+          p.on('error', () => {
+            /* ignore spawn failure */
+          });
+          p.unref();
+        };
+        try {
+          const wt = spawn(
+            'wt.exe',
+            ['new-tab', '--title', 'Takton Code', '-d', projectPath, 'cmd', '/k', batPath],
+            { env, detached: true, stdio: 'ignore' },
+          );
+          // wt.exe missing -> async 'error' event; must listen or it crashes main process
+          wt.on('error', () => {
+            try {
+              launchViaCmdStart();
+            } catch {
+              /* ignore */
+            }
+          });
+          wt.unref();
+        } catch {
+          launchViaCmdStart();
+        }
+      } else {
+        launchUnix(candidates[0].cmd, candidates[0].args);
+      }
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  },
+);
+
 ipcMain.handle('install-update', () => {
   isQuitting = true;
-  autoUpdater.quitAndInstall();
+  autoUpdater?.quitAndInstall();
 });
 
 // ---- App Lifecycle ----
@@ -1184,9 +1352,13 @@ app.on('window-all-closed', () => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+  if (trayBadgeTimer) {
+    clearInterval(trayBadgeTimer);
+    trayBadgeTimer = null;
+  }
 
-  if (backendProcess && !backendProcess.killed) {
-    console.log('[Takton] Stopping backend...');
+  if (stopRuntimeOnQuit && backendProcess && !backendProcess.killed) {
+    console.log('[Takton] Stopping Kernel Host (user requested)...');
     if (platform === 'win32') {
       backendProcess.kill();
     } else {
@@ -1197,6 +1369,10 @@ app.on('will-quit', () => {
         backendProcess.kill('SIGKILL');
       }
     }, 3000);
+  } else if (backendProcess && !backendProcess.killed) {
+    console.log('[Takton] Detaching Kernel Host — keeps running on', activeBackendPort);
+    backendProcess.unref?.();
+    backendProcess = null;
   }
 
   if (frontendServer) {

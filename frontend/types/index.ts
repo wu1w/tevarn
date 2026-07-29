@@ -36,6 +36,7 @@ export interface Session {
 }
 
 export interface SessionConfig {
+  /** LLM 人设文案（system identity 层） */
   identity: string;
   sys_prompt: string;
   agent_md: string;
@@ -43,6 +44,16 @@ export interface SessionConfig {
   tools: string[];
   auto_optimize?: boolean;
   optimize_threshold?: number;
+  /** AIOS：联系的员工编制名（AgentIdentity.name），与 identity 人设分离 */
+  contact_agent?: string | null;
+  /**
+   * 会话来源：
+   * - workforce = 员工工单执行会话（dispatcher 创建）→ 不进「最近对话」
+   * - 缺省 = 主人对话
+   */
+  source?: string | null;
+  workforce?: boolean;
+  workforce_identity_id?: string | null;
 }
 
 // ====== Message ======

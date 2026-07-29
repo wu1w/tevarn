@@ -1,0 +1,239 @@
+"""运行时授权记忆：危险确认的「本会话 / 本员工」放行。
+
+PermissionGate 每次 check 都是新实例，session_allows 不能跨调用。
+本模块用进程内字典保存授权，供 tool_hooks 在弹窗前短路。
+
+scope:
+  - once    —— 仅当前这次（不写入本 store）
+  - session —— 本会话内等价操作（按 tool 签名）
+  - agent   —— 写入员工 Identity.capabilities（持久）
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# session_id -> set of allow signatures (e.g. "command:rm", "file_write")
+_session_grants: dict[str, set[str]] = {}
+
+# tool name / permission key -> identity capability id (CAP_POOL)
+TOOL_TO_CREW_CAP: dict[str, str] = {
+    "command": "command",
+    "bash": "command",
+    "shell": "command",
+    "python": "command",
+    "process": "command",
+    "remote_exec": "command",
+    "file_read": "file_rw",
+    "file_write": "file_rw",
+    "edit": "file_rw",
+    "apply_patch": "file_rw",
+    "read": "file_rw",
+    "write": "file_rw",
+    # 编码巡检常用：读目录/搜代码 → 归 file_rw
+    "glob": "file_rw",
+    "grep": "file_rw",
+    "doc_read": "file_rw",
+    "web_search": "web_search",
+    "search": "web_search",
+    "web_fetch": "web_search",
+    "fetch_webpage": "web_search",
+    "http": "web_search",
+    "http_get": "web_search",
+    "browser": "browser",
+    "git": "git",
+    "manage_git": "git",
+    "calendar": "calendar",
+    "calendar_read": "calendar",
+    "notify": "notify",
+    "send_email": "notify",
+    "current_time": "web_search",  # 无害只读，挂 web 档便于巡检
+}
+
+
+def tool_matches_crew_caps(tool: str, capabilities: list[str] | set[str] | frozenset[str] | None) -> bool:
+    """工具名是否被编制能力集覆盖（抽象 cap 如 file_rw 可覆盖 file_read/glob/grep）。"""
+    if capabilities is None:
+        return True
+    caps = set(capabilities)
+    if "*" in caps or tool in caps:
+        return True
+    abstract = TOOL_TO_CREW_CAP.get(tool)
+    if abstract and abstract in caps:
+        return True
+    return False
+
+
+
+def allow_signature(tool: str, arguments: dict[str, Any] | None = None) -> str:
+    """与 PermissionGate._allow_signature 对齐：shell 按命令首词细分。"""
+    args = arguments or {}
+    raw = str(args.get("command") or args.get("cmd") or "").strip()
+    if tool in ("command", "bash", "shell", "python", "process") and raw:
+        head = raw.split()[0]
+        head = head.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+        if head:
+            return f"{tool}:{head}"
+    return tool
+
+
+def has_session_grant(session_id: str | None, tool: str, arguments: dict[str, Any] | None = None) -> bool:
+    if not session_id:
+        return False
+    grants = _session_grants.get(str(session_id))
+    if not grants:
+        return False
+    # 细粒度签名（command:rm）或整工具名（本员工/本会话放行 command）
+    if allow_signature(tool, arguments) in grants:
+        return True
+    if tool in grants:
+        return True
+    return False
+
+
+def add_session_grant(
+    session_id: str | None,
+    tool: str,
+    arguments: dict[str, Any] | None = None,
+    *,
+    whole_tool: bool = False,
+) -> None:
+    """记录本会话放行。
+
+    whole_tool=True：放行该工具全部调用（「本员工允许」后的会话缓存，避免同轮再问）。
+    默认 False：shell 仍按命令首词细分（「本会话允许」粒度）。
+    """
+    if not session_id:
+        return
+    sid = str(session_id)
+    bucket = _session_grants.setdefault(sid, set())
+    sig = allow_signature(tool, arguments)
+    bucket.add(sig)
+    if whole_tool:
+        bucket.add(tool)
+    logger.info(
+        "grant session allow session=%s sig=%s whole=%s",
+        sid[:8],
+        sig,
+        whole_tool,
+    )
+
+
+async def resolve_identity_id(
+    arguments: dict[str, Any] | None = None,
+    *,
+    identity_id: str | None = None,
+    contact_name: str | None = None,
+) -> str | None:
+    """从工具参数 / 联系人名字解析员工 Identity id。"""
+    args = arguments or {}
+    iid = (identity_id or str(args.get("_identity_id") or args.get("identity_id") or "")).strip()
+    if iid:
+        return iid
+    name = (contact_name or str(args.get("_contact_agent") or args.get("_identity_name") or "")).strip()
+    if not name:
+        return None
+    try:
+        from backend.kernel import get_kernel
+
+        reg = getattr(get_kernel(), "identity_registry", None)
+        if reg is None:
+            return None
+        for ident in await reg.list(status="active"):
+            if str(getattr(ident, "name", "") or "") == name:
+                return str(ident.id)
+        # 宽松：忽略大小写
+        low = name.lower()
+        for ident in await reg.list(status="active"):
+            if str(getattr(ident, "name", "") or "").lower() == low:
+                return str(ident.id)
+    except Exception as e:
+        logger.debug("resolve_identity_id skip: %s", e)
+    return None
+
+
+async def has_identity_tool_grant(
+    tool: str,
+    *,
+    identity_id: str | None = None,
+    arguments: dict[str, Any] | None = None,
+    capabilities: list[str] | None = None,
+) -> bool:
+    """员工编制能力是否已覆盖该工具（「本员工允许」写入后应短路弹窗）。"""
+    caps = capabilities
+    if caps is None and isinstance((arguments or {}).get("_identity_capabilities"), list):
+        caps = list((arguments or {}).get("_identity_capabilities") or [])
+    if caps is None:
+        iid = identity_id or await resolve_identity_id(arguments)
+        if not iid:
+            return False
+        try:
+            from backend.agent.steward_permission import load_identity_capabilities
+
+            caps = await load_identity_capabilities(iid)
+        except Exception:
+            caps = None
+    if not caps:
+        return False
+    return tool_matches_crew_caps(tool, caps)
+
+
+def clear_session_grants(session_id: str | None) -> None:
+    if not session_id:
+        return
+    _session_grants.pop(str(session_id), None)
+
+
+def crew_cap_for_tool(tool: str) -> str | None:
+    return TOOL_TO_CREW_CAP.get(tool) or TOOL_TO_CREW_CAP.get(tool.split(":")[0])
+
+
+async def grant_agent_capability(
+    identity_id: str | None,
+    tool: str,
+    *,
+    by: str = "user_confirm",
+) -> tuple[bool, str]:
+    """把工具对应能力并入员工编制（持久）。返回 (ok, message)。"""
+    if not identity_id:
+        return False, "当前操作未绑定员工 Identity，无法「允许本员工」"
+    cap = crew_cap_for_tool(tool)
+    if not cap:
+        return False, f"工具 {tool} 没有对应的员工能力槽，已改为仅本会话放行"
+    try:
+        from backend.kernel import get_kernel
+
+        kernel = get_kernel()
+        reg = getattr(kernel, "identity_registry", None)
+        if reg is None:
+            return False, "编制层未启用"
+        ident = await reg.get(identity_id)
+        if ident is None:
+            return False, f"员工不存在: {identity_id}"
+        caps = list(ident.capabilities or [])
+        if cap in caps:
+            logger.info(
+                "grant_agent_capability already has cap=%s identity=%s",
+                cap,
+                str(identity_id)[:8],
+            )
+            return True, f"员工「{ident.name}」已具备能力 {cap}"
+        caps.append(cap)
+        await reg.set_capabilities(identity_id, caps, by=by)
+        logger.info(
+            "grant_agent_capability wrote cap=%s identity=%s by=%s",
+            cap,
+            str(identity_id)[:8],
+            by,
+        )
+        return True, f"已写入员工「{ident.name}」能力：{cap}"
+    except Exception as e:
+        logger.warning("grant_agent_capability failed: %s", e)
+        return False, f"写入员工能力失败: {e}"
+
+
+def reset_for_tests() -> None:
+    _session_grants.clear()

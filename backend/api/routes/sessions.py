@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from backend.core.unit_of_work import UnitOfWork
 from backend.schemas.session import (
+    ContactSessionOpen,
     SessionConfig,
     SessionConfigUpdate,
     SessionCreate,
@@ -23,13 +24,55 @@ from backend.repositories import SessionRepository, SettingRepository
 router = APIRouter(prefix="/sessions", tags=["Sessions"])
 
 
+def _is_workforce_config(cfg: dict | None) -> bool:
+    if not isinstance(cfg, dict):
+        return False
+    if cfg.get("source") == "workforce":
+        return True
+    if cfg.get("workforce") is True:
+        return True
+    if cfg.get("workforce_identity_id"):
+        return True
+    return False
+
+
+def _default_contact_identity(name: str) -> str:
+    low = name.lower()
+    is_steward = (
+        any(h in name for h in ("CEO", "CTO", "管家", "总裁", "小白"))
+        or low in ("ceo", "cto", "steward")
+        or "steward" in low
+        or "chief" in low
+    )
+    if is_steward:
+        return (
+            f"You are {name}, the company steward (大管家/CEO). The user is your boss. "
+            "When given work: (1) analyze and break it down, (2) use crew_steward "
+            "list/hire/assign to hand tasks to real employees (inbox work orders), "
+            "(3) do NOT spawn temporary subagents. You orchestrate; employees execute. "
+            "Be concise; report who got which ticket. Multi-person work may open a project group."
+        )
+    return (
+        f"You are {name}, a member of this company's AI workforce. "
+        "Speak and act in character. The user is your boss — be concise, "
+        "report progress, and escalate risks."
+    )
+
+
 @router.get("/my", response_model=list[SessionRead])
 async def list_my_sessions(
     current_user: Annotated[UserRead, Depends(get_current_user)],
     repo: Annotated[SessionRepository, Depends(get_session_repo)],
+    kind: str | None = None,
 ):
-    """获取当前用户的所有会话"""
+    """获取当前用户会话。kind=human 排除 workforce 工单会话（IM 聊天列表）。"""
     sessions = await repo.list_by_user(current_user.id)
+    if (kind or "").strip().lower() == "human":
+        sessions = [
+            s
+            for s in sessions
+            if not _is_workforce_config(s.config if isinstance(s.config, dict) else {})
+        ]
     return sessions
 
 
@@ -46,6 +89,41 @@ async def list_active_session_ids(
     from backend.api.websocket import manager as ws_manager
 
     return sorted(ws_manager.active_session_ids())
+
+
+@router.post("/contact", response_model=SessionRead)
+async def open_contact_session(
+    data: ContactSessionOpen,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+    repo: Annotated[SessionRepository, Depends(get_session_repo)],
+    setting_repo: Annotated[SettingRepository, Depends(get_setting_repo)],
+):
+    """企业 IM：一人一会话。按 contact_agent 名 find-or-create，不复用 workforce。"""
+    name = (data.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name required")
+
+    existing = await repo.list_by_user(current_user.id)
+    candidates = []
+    for s in existing:
+        cfg = s.config if isinstance(s.config, dict) else {}
+        if _is_workforce_config(cfg):
+            continue
+        if str(cfg.get("contact_agent") or "").strip() == name:
+            candidates.append(s)
+    if candidates:
+        candidates.sort(key=lambda x: x.updated_at or x.created_at, reverse=True)
+        return candidates[0]
+
+    identity_text = (data.identity_text or "").strip() or _default_contact_identity(name)
+    create_body = SessionCreate(
+        config=SessionConfig(
+            contact_agent=name,
+            identity=identity_text,
+            source="human_dm",
+        )
+    )
+    return await create_session(create_body, current_user, repo, setting_repo)
 
 
 @router.post("", response_model=SessionRead)

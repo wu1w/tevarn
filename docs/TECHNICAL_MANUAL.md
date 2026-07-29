@@ -1,7 +1,13 @@
 # Takton 技术手册
 
-版本：0.3.2  
+版本：0.4.6-alpha  
 更新：2026-07-26
+
+> **⚠️ 部分过期（2026-07-29）**  
+> 默认 API 端口请以 **8090** 为准（CLI / DEV_HANDBOOK / Electron）。  
+> 文中若写 `8000`、旧 WS 路径，仅作历史参考。  
+> **现行架构**请优先阅读：  
+> `docs/internal/ARCHITECTURE.md` · `TOPOLOGY.md` · `DEV_HANDBOOK.md` · `PROTOCOL.md`
 
 ---
 

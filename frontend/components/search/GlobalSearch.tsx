@@ -5,6 +5,7 @@ import { useSessionStore } from '@/stores/sessionStore';
 import { getMySessions } from '@/lib/api';
 import { Session } from '@/types';
 import { useT } from '@/stores/localeStore';
+import { humanChatSessions } from '@/lib/sessionUtils';
 
 interface GlobalSearchProps {
   open: boolean;
@@ -25,8 +26,8 @@ export function GlobalSearch({ open, onClose, onSelectSession }: GlobalSearchPro
       setQuery('');
       setSelectedIndex(0);
       // 加载会话列表用于搜索
-      getMySessions()
-        .then((data) => setSessions(Array.isArray(data) ? data : []))
+      getMySessions('human')
+        .then((data) => setSessions(humanChatSessions(Array.isArray(data) ? data : [])))
         .catch(console.error);
       // 自动聚焦
       setTimeout(() => inputRef.current?.focus(), 50);

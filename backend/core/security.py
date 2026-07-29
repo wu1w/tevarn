@@ -24,6 +24,36 @@ def _truncate_password(password: str) -> str:
         return password
     return raw[:72].decode("utf-8", errors="ignore")
 
+
+def _assert_password_backend_usable() -> None:
+    """启动自检：passlib + bcrypt 的组合能不能正常工作。
+
+    passlib 1.7.4 是 2020 年的最后一版、已停止维护，它通过 `bcrypt.__about__`
+    读版本号 —— 而 bcrypt 4.1 起移除了这个属性。组合坏掉时的表现极具迷惑性：
+    **任何**密码（哪怕 5 个字符）都会抛
+    `ValueError: password cannot be longer than 72 bytes`，
+    于是登录、注册、单用户初始化全部 500，而错误信息把人往「密码太长」上带。
+
+    对一个用户自己装依赖的开源项目，一次 `pip install -U bcrypt` 就会踩中。
+    与其等到用户登录时才炸，不如启动时说清楚。
+    """
+    try:
+        pwd_context.hash("takton-startup-selfcheck")
+    except Exception as e:
+        try:
+            import bcrypt as _b
+
+            ver = getattr(_b, "__version__", "unknown")
+        except Exception:
+            ver = "not installed"
+        raise RuntimeError(
+            f"Password hashing backend is broken (bcrypt=={ver}): {e}\n"
+            f"passlib 1.7.4 is unmaintained and incompatible with bcrypt >= 4.1 "
+            f"(it reads the removed `bcrypt.__about__`). Symptom: every password, "
+            f"however short, fails with 'password cannot be longer than 72 bytes'.\n"
+            f"Fix:  pip install 'bcrypt>=4.0.1,<4.1'"
+        ) from e
+
 # JWT configuration
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_DAYS = 7

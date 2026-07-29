@@ -69,6 +69,33 @@ class EvolutionEngine:
     def _emit(self, kind: str, identity_id: Any, detail: dict[str, Any]) -> None:
         self._kernel._emit(kind, f"identity:{identity_id}", detail)
 
+    def _event_belongs_to_identity(self, event: Any, identity_id: Any) -> bool:
+        """事件是否归属该身份（防跨身份污染分析）。
+
+        判定顺序：
+        1. detail.identity_id
+        2. process_id 形如 identity:<uuid>
+        3. 进程 meta.identity_id
+        均无则 **不计入** 身份级规则（caps_adjust / tool_deprecate）——
+        宁可漏报，不可串味。
+        """
+        want = str(identity_id)
+        detail = getattr(event, "detail", None) or {}
+        if detail.get("identity_id"):
+            return str(detail["identity_id"]) == want
+        pid = str(getattr(event, "process_id", "") or "")
+        if pid.startswith("identity:"):
+            return pid.split(":", 1)[1] == want
+        try:
+            proc = self._kernel.get_process(pid)
+        except Exception:
+            proc = None
+        if proc is not None:
+            meta = proc.meta or {}
+            if meta.get("identity_id"):
+                return str(meta["identity_id"]) == want
+        return False
+
     # ── 分析器（规则化述职报告）────────────────────────────────
 
     async def analyze(self, identity_id: Any) -> list[Any]:
@@ -145,9 +172,11 @@ class EvolutionEngine:
                 proposals.append(p)
 
         # 规则 3：escalation 获批模式（caps_adjust）——反复获批的能力该入编制。
-        # escalation 事件挂在进程上（非身份），从 kernel 全量事件按 detail 聚合
+        # 必须按 identity 过滤，禁止跨身份串统计
         approved_caps: dict[str, int] = {}
         for e in self._kernel.events(kind="escalation_approved", limit=1000):
+            if not self._event_belongs_to_identity(e, iid):
+                continue
             for cap in (e.detail.get("capabilities") or []):
                 approved_caps[cap] = approved_caps.get(cap, 0) + 1
         for cap, count in approved_caps.items():
@@ -172,6 +201,8 @@ class EvolutionEngine:
         denials: dict[str, int] = {}
         attempts: dict[str, int] = {}
         for e in self._kernel.events(kind="mediation", limit=1000):
+            if not self._event_belongs_to_identity(e, iid):
+                continue
             target = str(e.detail.get("target") or "")
             if not target:
                 continue
@@ -283,7 +314,7 @@ class EvolutionEngine:
             raise ValueError(f"建议状态 {p.status}，仅 applied 可回滚")
         before = (p.payload or {}).get("before") or {}
         if p.kind == "memory_distill":
-            # 记忆回滚：supersede 掉应用时写入的条目（版本链回退）
+            # 记忆回滚：正规 supersede 到 tombstone（禁止 self-supersede 脏链）
             entry_id = (p.payload or {}).get("applied_entry_id")
             if entry_id:
                 from backend.models.agent_identity import IdentityMemoryEntry
@@ -297,8 +328,31 @@ class EvolutionEngine:
                         )
                     ).scalar_one_or_none()
                     if entry is not None and entry.superseded_by is None:
-                        entry.superseded_by = entry.id  # 自标记失效（保留历史）
+                        tomb = IdentityMemoryEntry(
+                            identity_id=entry.identity_id,
+                            kind=entry.kind,
+                            content="[rolled_back]",
+                            source="system",
+                            approved_by=f"rollback:{by}",
+                            version=int(entry.version or 1) + 1,
+                        )
+                        session.add(tomb)
+                        await session.flush()
+                        entry.superseded_by = tomb.id
+                        # tombstone 自身立即被标记为失效（不进入 current_memory）
+                        tomb.superseded_by = tomb.id
                         await session.commit()
+                # RAG 清旧版
+                try:
+                    from backend.services.rag.capability import use_vector_rag
+
+                    if use_vector_rag():
+                        from backend.services.rag.factory import RAGServiceFactory
+
+                        rag = RAGServiceFactory.get_service()
+                        await rag.delete_identity_memory(str(entry_id))
+                except Exception as e:
+                    logger.debug("evolution rollback RAG delete skip: %s", e)
         elif p.kind in ("caps_adjust", "tool_deprecate"):
             await self._registry.set_capabilities(
                 p.identity_id, before.get("capabilities"), by=f"rollback:{by}"

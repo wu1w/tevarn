@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from backend.tools.builtins.core_tools import BUILTIN_TOOL_CLASSES
 from backend.tools.builtins.memory_tools import MemoryGraphTool
+from backend.tools.builtins.crew_steward_tools import CrewStewardTool
 
-# Phase 1 Memory Graph：长期记忆图工具并入内建工具集
-BUILTIN_TOOL_CLASSES = [*BUILTIN_TOOL_CLASSES, MemoryGraphTool]
+# Phase 1 Memory Graph + CEO 大管家编制工具
+BUILTIN_TOOL_CLASSES = [*BUILTIN_TOOL_CLASSES, MemoryGraphTool, CrewStewardTool]
 from backend.tools.builtins.manage_tools import (
     ListTasks,
     ManageChannel,

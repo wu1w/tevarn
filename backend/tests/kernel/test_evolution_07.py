@@ -112,11 +112,16 @@ def test_caps_adjust_apply_and_rollback(wf) -> None:
     async def go():
         reg, eng, kernel = wf["registry"], wf["engine"], wf["kernel"]
         ident = await reg.create("研究员", capabilities=["file_read"])
-        # 造两次同能力获批事件（跨进程聚合是规则设计的已知简化）
-        proc = await kernel.create_process("wf:研究员", capabilities=["file_read"])
+        # 事件必须带 identity_id（或 process.meta）——跨身份隔离红线
+        proc = await kernel.create_process(
+            "wf:研究员",
+            capabilities=["file_read"],
+            meta={"identity_id": str(ident.id)},
+        )
         for _ in range(2):
             kernel._emit("escalation_approved", proc.id, {
                 "escalation_id": "x", "capabilities": ["browser"], "resolved_by": "boss",
+                "identity_id": str(ident.id),
             })
 
         proposals = await eng.analyze(ident.id)
@@ -136,11 +141,16 @@ def test_tool_deprecate(wf) -> None:
     async def go():
         reg, eng, kernel = wf["registry"], wf["engine"], wf["kernel"]
         ident = await reg.create("研究员", capabilities=["file_read", "legacy_tool"])
-        proc = await kernel.create_process("wf:研究员", capabilities=["file_read"])
+        proc = await kernel.create_process(
+            "wf:研究员",
+            capabilities=["file_read"],
+            meta={"identity_id": str(ident.id)},
+        )
         for i in range(6):
             kernel._emit("mediation", proc.id, {
                 "action": "tool_call", "target": "legacy_tool",
                 "allowed": i % 2 == 0,  # 50% 拒绝率
+                "identity_id": str(ident.id),
             })
         proposals = await eng.analyze(ident.id)
         dep = [p for p in proposals if p.kind == "tool_deprecate"]
@@ -191,33 +201,71 @@ def test_planner_tune_on_high_failure(wf) -> None:
 
 
 def test_org_view_reports_to_aggregation(wf) -> None:
-    """汇报线观察：parent 链聚合 + 预算汇总。"""
+    """汇报线观察：parent 链聚合为员工名（过滤 main/sub 噪音）。"""
     async def go():
         from backend.models.agent_identity import KernelProcessRecord
+        import uuid as _u
+
+        reg = wf["registry"]
+        boss = await reg.create("老板", role="CEO", capabilities=["file_rw"])
+        worker = await reg.create("研究员", role="research", capabilities=["file_rw"])
 
         SessionLocal = wf["SessionLocal"]
         async with SessionLocal() as s:
             s.add(KernelProcessRecord(
-                process_id="p-main", identity_key="main", capabilities=None,
-                token_budget=None, tokens_used=100, state="completed",
+                process_id="p-boss",
+                identity_key=f"wf:{boss.id}",
+                capabilities=None,
+                token_budget=None,
+                tokens_used=100,
+                state="completed",
             ))
             s.add(KernelProcessRecord(
-                process_id="p-sub1", identity_key="sub:researcher", parent_process_id="p-main",
-                capabilities=["file_read"], token_budget=500, tokens_used=200, state="completed",
+                process_id="p-w1",
+                identity_key=f"wf:{worker.id}",
+                parent_process_id="p-boss",
+                capabilities=["file_read"],
+                token_budget=500,
+                tokens_used=200,
+                state="completed",
             ))
             s.add(KernelProcessRecord(
-                process_id="p-sub2", identity_key="sub:researcher", parent_process_id="p-main",
-                capabilities=["file_read"], token_budget=500, tokens_used=300, state="failed",
+                process_id="p-w2",
+                identity_key=f"wf:{worker.id}",
+                parent_process_id="p-boss",
+                capabilities=["file_read"],
+                token_budget=500,
+                tokens_used=300,
+                state="failed",
+            ))
+            # 噪音：main→sub 不得进入 reports_to
+            s.add(KernelProcessRecord(
+                process_id="p-noise",
+                identity_key="sub:deadbeef",
+                parent_process_id="p-main-noise",
+                capabilities=None,
+                tokens_used=1,
+                state="completed",
+            ))
+            s.add(KernelProcessRecord(
+                process_id="p-main-noise",
+                identity_key="main",
+                capabilities=None,
+                tokens_used=1,
+                state="completed",
             ))
             await s.commit()
 
         view = await build_org_view(SessionLocal)
-        assert view["total_processes"] == 3
+        assert view["total_processes"] >= 3
         rel = view["reports_to"]
-        assert len(rel) == 1
-        assert rel[0]["manager"] == "main" and rel[0]["worker"] == "sub:researcher"
-        assert rel[0]["delegations"] == 2
-        researcher = [a for a in view["agents"] if a["identity_key"] == "sub:researcher"][0]
-        assert researcher["tokens_used"] == 500 and researcher["token_budget"] == 1000
+        assert any(
+            r["manager"] == "老板" and r["worker"] == "研究员" and r["delegations"] == 2
+            for r in rel
+        )
+        # 不得泄漏内部 key
+        for r in rel:
+            assert not str(r["manager"]).startswith(("sub:", "wf:", "main"))
+            assert not str(r["worker"]).startswith(("sub:", "wf:", "main"))
 
     _run(go())

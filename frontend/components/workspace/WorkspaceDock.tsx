@@ -1,20 +1,30 @@
 'use client';
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
+/**
+ * 专业模式工作区侧栏：文件树 + Agent/Shell 终端 tab
+ * 由 workspaceStore 驱动；Ctrl+B / 顶栏「显示侧栏」切换
+ */
+
+import React, { useEffect, useRef, useState } from 'react';
+import { FolderOpen, Plus, RefreshCw, ChevronRight, X } from 'lucide-react';
 import { FileTree } from '@/components/filetree/FileTree';
-import { useWorkspaceStore } from '@/stores/workspaceStore';
 import type { FileTreeItem } from '@/types';
+import { useWorkspaceStore, type TerminalLine } from '@/stores/workspaceStore';
 import { useT } from '@/stores/localeStore';
 
-/** 将 workspace tree 转为 FileTree 组件结构 */
 function toFileTreeItems(
-  nodes: WorkspaceTreeNode[]
+  nodes: Array<{
+    name: string;
+    path: string;
+    type: string;
+    children?: WorkspaceTreeNode[];
+    size?: number;
+  }>
 ): FileTreeItem[] {
   return nodes.map((n) => ({
     name: n.name,
     path: n.path,
-    type: n.type === 'directory' ? 'directory' : 'file',
+    type: n.type === 'directory' || n.type === 'dir' ? 'directory' : 'file',
     size: n.size,
     children: n.children ? toFileTreeItems(n.children) : undefined,
   }));
@@ -28,252 +38,214 @@ type WorkspaceTreeNode = {
   size?: number;
 };
 
+function lineClass(type: TerminalLine['type']): string {
+  switch (type) {
+    case 'in':
+      return 'text-cyan-300';
+    case 'err':
+      return 'text-red-300/90';
+    case 'sys':
+      return 'text-zinc-500 italic';
+    default:
+      return 'text-zinc-300';
+  }
+}
+
 export function WorkspaceDock() {
   const t = useT();
-  const {
-    uiMode,
-    dockOpen,
-    setDockOpen,
-    root,
-    name,
-    tree,
-    treeLoading,
-    selectedPath,
-    selectPath,
-    refreshTree,
-    tabs,
-    activeTabId,
-    setActiveTab,
-    addShellTab,
-    closeTab,
-    runCommand,
-    unreadTerminal,
-    clearUnread,
-    setForceProjectOpen,
-  } = useWorkspaceStore();
+  const uiMode = useWorkspaceStore((s) => s.uiMode);
+  const dockOpen = useWorkspaceStore((s) => s.dockOpen);
+  const setDockOpen = useWorkspaceStore((s) => s.setDockOpen);
+  const root = useWorkspaceStore((s) => s.root);
+  const name = useWorkspaceStore((s) => s.name);
+  const tree = useWorkspaceStore((s) => s.tree);
+  const treeLoading = useWorkspaceStore((s) => s.treeLoading);
+  const selectedPath = useWorkspaceStore((s) => s.selectedPath);
+  const selectPath = useWorkspaceStore((s) => s.selectPath);
+  const refreshTree = useWorkspaceStore((s) => s.refreshTree);
+  const setForceProjectOpen = useWorkspaceStore((s) => s.setForceProjectOpen);
+  const tabs = useWorkspaceStore((s) => s.tabs);
+  const activeTabId = useWorkspaceStore((s) => s.activeTabId);
+  const setActiveTab = useWorkspaceStore((s) => s.setActiveTab);
+  const addShellTab = useWorkspaceStore((s) => s.addShellTab);
+  const closeTab = useWorkspaceStore((s) => s.closeTab);
+  const runCommand = useWorkspaceStore((s) => s.runCommand);
+  const clearUnread = useWorkspaceStore((s) => s.clearUnread);
 
-  const [split, setSplit] = useState(48); // % height for file tree
   const [cmd, setCmd] = useState('');
-  const termEndRef = useRef<HTMLDivElement>(null);
-  const dragging = useRef(false);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const activeTab = tabs.find((tab) => tab.id === activeTabId) || tabs[0];
+  const lines = activeTab?.lines ?? [];
 
   useEffect(() => {
     if (uiMode === 'pro' && root) {
-      refreshTree().catch(() => null);
+      void refreshTree();
     }
-  }, [uiMode, root, refreshTree]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uiMode, root]);
 
   useEffect(() => {
-    termEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [tabs, activeTabId]);
-
-  const onSplitterDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    dragging.current = true;
-    const startY = e.clientY;
-    const startSplit = split;
-    const onMove = (ev: MouseEvent) => {
-      if (!dragging.current) return;
-      const panel = document.getElementById('takton-workspace-dock');
-      if (!panel) return;
-      const rect = panel.getBoundingClientRect();
-      const dy = ev.clientY - startY;
-      const pct = startSplit + (dy / rect.height) * 100;
-      setSplit(Math.min(75, Math.max(25, pct)));
-    };
-    const onUp = () => {
-      dragging.current = false;
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-  }, [split]);
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [lines.length, activeTabId]);
 
   if (uiMode !== 'pro' || !dockOpen) return null;
 
-  const active = tabs.find((t) => t.id === activeTabId) || tabs[0];
-  const items = toFileTreeItems(tree as WorkspaceTreeNode[]);
+  const treeItems = toFileTreeItems(tree as WorkspaceTreeNode[]);
+  const shellActive = activeTab?.kind === 'shell';
+
+  const submitCmd = async () => {
+    const c = cmd.trim();
+    if (!c || !shellActive) return;
+    setCmd('');
+    await runCommand(c, activeTabId);
+  };
 
   return (
-    <aside
-      id="takton-workspace-dock"
-      className="flex h-full w-[min(100%,380px)] shrink-0 flex-col border-l border-border-subtle bg-card-bg/95"
-    >
-      {/* 顶栏 */}
-      <div className="flex items-center gap-2 border-b border-border-subtle px-3 py-2">
-        <span className="min-w-0 flex-1 truncate text-xs font-semibold text-foreground">
-          {name || root || t('workspace._e163')}
-        </span>
+    <aside className="flex w-[min(380px,42vw)] min-w-[280px] max-w-[480px] shrink-0 flex-col border-l border-border-subtle bg-zinc-950/95">
+      {/* 项目头 */}
+      <div className="flex items-center gap-1.5 border-b border-zinc-800 px-2.5 py-2">
         <button
           type="button"
           onClick={() => setForceProjectOpen(true)}
-          className="rounded-md border border-border-subtle px-2 py-0.5 text-[10px] text-foreground-muted hover:bg-card-bg-hover"
-          title={t('workspace._e32')}
+          className="flex min-w-0 flex-1 items-center gap-1.5 rounded-lg px-1.5 py-1 text-left hover:bg-zinc-900"
+          title={root || t('workspace._e32')}
         >
-          切换
+          <FolderOpen className="h-3.5 w-3.5 shrink-0 text-brand-cyan" />
+          <span className="min-w-0 truncate text-[11px] font-medium text-zinc-200">
+            {name || root || t('workspace._e163')}
+          </span>
         </button>
         <button
           type="button"
-          onClick={() => refreshTree()}
-          className="rounded-md px-1.5 py-0.5 text-[10px] text-foreground-dim hover:text-foreground"
+          onClick={() => void refreshTree()}
+          disabled={!root || treeLoading}
+          className="rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 disabled:opacity-40"
           title={t('workspace._e33')}
         >
-          ↻
+          <RefreshCw className={`h-3.5 w-3.5 ${treeLoading ? 'animate-spin' : ''}`} />
         </button>
         <button
           type="button"
           onClick={() => setDockOpen(false)}
-          className="rounded-md px-1.5 py-0.5 text-[10px] text-foreground-dim hover:text-foreground"
+          className="rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
           title={t('workspace._e34')}
         >
-          ⟩
+          <ChevronRight className="h-3.5 w-3.5" />
         </button>
       </div>
 
-      {/* 上：文件树 */}
-      <div className="min-h-[100px] min-h-0 overflow-auto" style={{ height: `${split}%` }}>
-        <div className="px-2 py-1.5 text-[10px] font-medium uppercase tracking-wider text-foreground-dim">
-          项目文件
-        </div>
+      {/* 文件树 */}
+      <div className="min-h-0 flex-1 overflow-y-auto border-b border-zinc-800">
         {!root ? (
-          <p className="px-3 py-6 text-center text-[11px] text-foreground-dim">
-            请先选择项目文件夹
-          </p>
-        ) : treeLoading ? (
-          <p className="px-3 py-4 text-[11px] text-foreground-dim">加载中…</p>
+          <div className="flex h-full flex-col items-center justify-center gap-2 px-4 py-8 text-center">
+            <p className="text-[11px] text-zinc-500">{t('workspace._e163')}</p>
+            <button
+              type="button"
+              onClick={() => setForceProjectOpen(true)}
+              className="rounded-lg border border-brand-purple/40 bg-brand-purple/10 px-3 py-1.5 text-[11px] font-medium text-brand-cyan hover:bg-brand-purple/15"
+            >
+              {t('chat.selectProject') === 'chat.selectProject'
+                ? '选择项目'
+                : t('chat.selectProject')}
+            </button>
+          </div>
+        ) : treeLoading && treeItems.length === 0 ? (
+          <div className="px-3 py-6 text-center text-[11px] text-zinc-600">…</div>
         ) : (
           <FileTree
-            items={items}
+            items={treeItems}
             selectedPath={selectedPath || undefined}
             onSelectFile={(p) => selectPath(p)}
           />
         )}
       </div>
 
-      {/* 分割条 */}
-      <div
-        role="separator"
-        onMouseDown={onSplitterDown}
-        className="h-1.5 shrink-0 cursor-row-resize border-y border-border-subtle bg-page-bg hover:bg-brand-purple/20"
-      />
-
-      {/* 下：终端 */}
-      <div className="flex min-h-0 flex-1 flex-col" style={{ height: `${100 - split}%` }}>
-        <div className="flex items-center gap-0.5 overflow-x-auto border-b border-border-subtle bg-page-bg/80 px-1 py-1">
-          {tabs.map((t) => (
-            <motion.button
-              layout
-              key={t.id}
-              type="button"
-              initial={{ opacity: 0, scale: 0.92 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.16, ease: 'easeOut' }}
-              onClick={() => {
-                setActiveTab(t.id);
-                clearUnread();
-              }}
-              className={`group flex max-w-[120px] items-center gap-1 rounded-md px-2 py-1 text-[11px] ${
-                activeTabId === t.id
-                  ? 'bg-brand-purple/15 text-brand-cyan'
-                  : 'text-foreground-dim hover:bg-card-bg-hover'
+      {/* 终端 tabs */}
+      <div className="flex h-[42%] min-h-[160px] max-h-[280px] flex-col">
+        <div className="flex items-center gap-0.5 overflow-x-auto border-b border-zinc-800 px-1 py-1">
+          {tabs.map((tab) => (
+            <div
+              key={tab.id}
+              className={`group flex shrink-0 items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[10px] ${
+                tab.id === activeTabId
+                  ? 'bg-zinc-800 text-zinc-100'
+                  : 'text-zinc-500 hover:bg-zinc-900 hover:text-zinc-300'
               }`}
             >
-              <span className="truncate">{t.title}</span>
-              {t.kind === 'shell' && (
-                <span
-                  role="button"
-                  tabIndex={0}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    closeTab(t.id);
-                  }}
-                  className="ml-0.5 hidden text-[10px] group-hover:inline"
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab(tab.id);
+                  clearUnread();
+                }}
+                className="max-w-[96px] truncate"
+              >
+                {tab.title}
+                {tab.status === 'running' ? ' ·' : ''}
+              </button>
+              {tab.id !== 'agent' ? (
+                <button
+                  type="button"
+                  onClick={() => closeTab(tab.id)}
+                  className="rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-zinc-700"
+                  aria-label="Close tab"
                 >
-                  ×
-                </span>
-              )}
-            </motion.button>
+                  <X className="h-2.5 w-2.5" />
+                </button>
+              ) : null}
+            </div>
           ))}
           <button
             type="button"
             onClick={addShellTab}
-            className="rounded-md px-2 py-1 text-[11px] text-foreground-dim hover:bg-card-bg-hover"
+            className="ml-0.5 rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
             title={t('workspace._e35')}
           >
-            +
+            <Plus className="h-3 w-3" />
           </button>
-          {unreadTerminal && (
-            <span className="ml-auto mr-1 h-1.5 w-1.5 rounded-full bg-brand-cyan" />
+        </div>
+
+        <div
+          ref={scrollRef}
+          className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 py-1.5 font-mono text-[10.5px] leading-relaxed"
+        >
+          {lines.length === 0 ? (
+            <div className="py-4 text-center text-zinc-600">
+              {shellActive ? t('workspace._e164') : 'Agent'}
+            </div>
+          ) : (
+            lines.map((line) => (
+              <div
+                key={line.id}
+                className={`whitespace-pre-wrap break-all ${lineClass(line.type)}`}
+              >
+                {line.text}
+              </div>
+            ))
           )}
         </div>
 
-        <div className="min-h-0 flex-1 overflow-auto bg-[#0d1117] px-2 py-1.5 font-mono text-[11px] leading-relaxed text-zinc-300">
-          <AnimatePresence mode="wait" initial={false}>
-            <motion.div
-              key={activeTabId}
-              initial={{ opacity: 0, x: 10 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -10 }}
-              transition={{ duration: 0.15, ease: 'easeOut' }}
-            >
-              {active?.lines.map((line) => (
-                <motion.div
-                  key={line.id}
-                  initial={{ opacity: 0, y: 4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.14, ease: 'easeOut' }}
-                  className={
-                    line.type === 'in'
-                      ? 'text-brand-cyan'
-                      : line.type === 'err'
-                        ? 'text-red-400'
-                        : line.type === 'sys'
-                          ? 'text-zinc-500'
-                          : 'text-zinc-300'
-                  }
-                >
-                  <pre className="whitespace-pre-wrap break-words font-mono">{line.text}</pre>
-                </motion.div>
-              ))}
-            </motion.div>
-          </AnimatePresence>
-          <div ref={termEndRef} />
-        </div>
-
-        {active?.kind === 'shell' && (
+        {shellActive ? (
           <form
-            className="flex items-center gap-1 border-t border-white/5 bg-[#0d1117] px-2 py-1.5"
+            className="flex items-center gap-1 border-t border-zinc-800 px-2 py-1.5"
             onSubmit={(e) => {
               e.preventDefault();
-              const c = cmd.trim();
-              if (!c || active.status === 'running') return;
-              setCmd('');
-              runCommand(c, active.id);
+              void submitCmd();
             }}
           >
-            <span className="text-[11px] text-brand-cyan">$</span>
+            <span className="select-none text-[11px] text-emerald-500">$</span>
             <input
               value={cmd}
               onChange={(e) => setCmd(e.target.value)}
-              disabled={!root || active.status === 'running'}
+              disabled={!root || activeTab?.status === 'running'}
               placeholder={root ? t('workspace._e164') : t('workspace._e165')}
-              className="min-w-0 flex-1 bg-transparent font-mono text-[11px] text-zinc-200 outline-none placeholder:text-zinc-600"
-              spellCheck={false}
+              className="min-w-0 flex-1 bg-transparent font-mono text-[11px] text-zinc-200 outline-none placeholder:text-zinc-600 disabled:opacity-50"
               autoComplete="off"
+              spellCheck={false}
             />
-            {active.status === 'running' && (
-              <span className="text-[10px] text-amber-400">运行中…</span>
-            )}
           </form>
-        )}
-        {active?.kind === 'agent' && (
-          <div className="border-t border-white/5 bg-[#0d1117] px-2 py-1 text-[10px] text-zinc-600">
-            {active.id === 'agent'
-              ? 'Agent 工具输出（只读）· 新建 shell 页可手动执行命令'
-              : `${active.title} 沙箱输出（只读）`}
-          </div>
-        )}
+        ) : null}
       </div>
     </aside>
   );

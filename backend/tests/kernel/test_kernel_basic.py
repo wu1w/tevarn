@@ -80,10 +80,15 @@ def test_k4_mediation_audit_events(kernel: AgentKernel) -> None:
 
     proc = asyncio.run(go())
     kinds = [e.kind for e in kernel.events()]
-    assert kinds == ["process_created", "mediation"]
+    assert "process_created" in kinds
+    assert "mediation" in kinds
+    assert "policy.decision" in kinds  # 0.5.2 权限一张网
     med = kernel.events(kind="mediation")[0]
     assert med.detail["allowed"] is True
     assert med.detail["capability_checked"] is False  # 兼容模式
+    pol = kernel.events(kind="policy.decision")[0]
+    assert pol.detail.get("outcome") == "allow"
+    assert pol.detail.get("target") == "file_read"
 
 
 def test_mediation_explicit_capability_enforced(kernel: AgentKernel) -> None:

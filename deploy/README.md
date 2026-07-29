@@ -22,19 +22,20 @@ unit 文件默认加固项：`NoNewPrivileges` / `ProtectSystem=full` /
 方式一：NSSM（推荐，成熟稳定）
 
 ```powershell
-nssm install TaktonBackend "C:\path\to\.venv\Scripts\python.exe" "-m uvicorn backend.main:app --host 127.0.0.1 --port 8000"
+nssm install TaktonBackend "C:\path\to\.venv\Scripts\python.exe" "-m uvicorn backend.main:app --host 127.0.0.1 --port 8090"
+# 或: python -m backend.runtime --port 8090
 nssm set TaktonBackend AppDirectory "C:\path\to\takton"
 nssm start TaktonBackend
 ```
 
 方式二：任务计划程序（免第三方工具）——登录时触发，运行
-`python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000`。
+`python -m backend.runtime --port 8090`（或 uvicorn `backend.main:app` 同端口）。
 
 ## 服务化后的访问形态
 
-- 前端：`backend/static` 已内嵌，浏览器直开 `http://127.0.0.1:8000`
-- 桌面端（Electron）：连接远端 backend（设置页改后端地址即可）
-- 多设备：同局域网设备访问主机 8000 端口（建议仅绑内网网卡 + 关闭 single_user_mode 并设密码）
+- 前端：`backend/static` 已内嵌，浏览器直开 `http://127.0.0.1:8090`
+- 桌面端（Electron）：连接本机 Kernel Host（默认 8090；设置页可改）
+- 多设备：同局域网设备访问主机 **8090** 端口（建议仅绑内网网卡 + 关闭 single_user_mode 并设密码）
 
 ## 与 Agent Kernel 的关系
 

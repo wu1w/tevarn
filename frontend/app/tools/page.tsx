@@ -233,7 +233,7 @@ export default function ToolsPage() {
       secondaryLabel="扩展"
       secondaryLabelEn="Extensions"
     >
-    <div className="mx-auto max-w-5xl p-6">
+    <div className="tk-page-fluid w-full p-4 sm:p-6">
       <div className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Tools</h1>

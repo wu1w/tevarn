@@ -897,7 +897,7 @@ export default function KnowledgeCenter() {
 
       {/* 搜索栏 + 去重 */}
       <div className="flex flex-wrap items-center gap-3">
-        <div className="relative max-w-sm flex-1 min-w-[200px]">
+        <div className="relative min-w-[200px] max-w-xl flex-1 sm:max-w-2xl">
           <input
             type="text"value={search}
             onChange={(e) => setSearch(e.target.value)}

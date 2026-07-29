@@ -10,8 +10,10 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
+
+from backend.api.dependencies import get_current_user
 
 from backend.agent.cluster_executor import (
     AggregationStrategy,
@@ -30,7 +32,18 @@ from backend.agent.cluster_protocol import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["cluster"])
+# 全部 cluster HTTP 端点统一要求登录。
+#
+# 此前这个 router 是全项目唯一没有任何鉴权的业务路由（health 除外）：
+# POST /api/cluster/execute 接受任意 prompt 并后台跑 LLM，/cluster/list
+# 直接吐出全部历史。任何能连到端口的人都能烧光你的 API 额度并读走任务内容。
+# 加鉴权对本地使用零成本 —— single_user_mode 下本机请求本来就免 token。
+#
+# 注意 router 级 dependencies 会同时套到 WebSocket 路由上，而 get_current_user
+# 需要 Request，在 WS 上会 TypeError 直接把连接打死。所以 WS 单独放在
+# ws_router 里，用自己的鉴权（见 cluster_websocket）。
+router = APIRouter(tags=["cluster"], dependencies=[Depends(get_current_user)])
+ws_router = APIRouter(tags=["cluster"])
 
 
 # ─────────── 请求/响应模型 ───────────
@@ -177,6 +190,10 @@ async def _run_cluster_background(
             aggregation_strategy=strategy,
             progress_callback=_on_progress,
         )
+        # 若执行中被 cancel，状态可能已是 cancelled
+        if _running_clusters.get(task_id, {}).get("cancel_requested"):
+            result.status = TaskStatus.CANCELLED
+            result.error = result.error or "cancelled by user"
         _active_clusters[task_id] = result
         try:
             await repo.finish_run(
@@ -194,6 +211,22 @@ async def _run_cluster_background(
         await broadcast_progress(
             task_id, 100, "done", event="completed", status=result.status.value
         )
+    except asyncio.CancelledError:
+        logger.info("Background cluster %s cancelled", task_id)
+        failed = ClusterResult(
+            task_id=task_id,
+            status=TaskStatus.CANCELLED,
+            sub_tasks=[],
+            error="cancelled by user",
+        )
+        failed.completed_at = datetime.now(timezone.utc)
+        _active_clusters[task_id] = failed
+        try:
+            await repo.finish_run(task_id, status="cancelled", error="cancelled by user")
+        except Exception as pe:
+            logger.warning("cluster run persist (cancel) skipped: %s", pe)
+        await broadcast_progress(task_id, 100, "cancelled", event="cancelled", status="cancelled")
+        raise
     except Exception as e:
         logger.error(f"Background cluster execution failed: {e}")
         failed = ClusterResult(
@@ -244,6 +277,8 @@ def _start_cluster_background(
     _running_clusters[task_id] = {
         "status": "running",
         "started_at": datetime.now(timezone.utc).isoformat(),
+        "task": None,  # filled below with asyncio.Task
+        "cancel_requested": False,
     }
     bg = asyncio.create_task(
         _run_cluster_background(
@@ -256,6 +291,7 @@ def _start_cluster_background(
             name=name,
         )
     )
+    _running_clusters[task_id]["task"] = bg
     _bg_tasks.add(bg)
     bg.add_done_callback(_bg_tasks.discard)
     return task_id
@@ -504,22 +540,96 @@ async def list_clusters():
 
 @router.delete("/cluster/{task_id}")
 async def cancel_cluster(task_id: str):
-    """取消集群任务"""
+    """取消集群任务：取消后台 asyncio.Task，并落库 cancelled。"""
+    from backend.repositories.cluster_run_repo import AsyncClusterRunRepository
+
+    running = _running_clusters.get(task_id)
     result = _active_clusters.get(task_id)
+
+    if running is None and result is None:
+        # 尝试 DB 中仍 running 的记录
+        try:
+            repo = AsyncClusterRunRepository()
+            row = await repo.get_by_task_id(task_id) if hasattr(repo, "get_by_task_id") else None
+            if row is None:
+                raise HTTPException(status_code=404, detail="Task not found")
+            if getattr(row, "status", None) not in ("running", "pending"):
+                return {"task_id": task_id, "status": row.status, "message": "already finished"}
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+    # 1) 请求取消标志 + cancel 后台 task
+    if running is not None:
+        running["cancel_requested"] = True
+        bg = running.get("task")
+        if isinstance(bg, asyncio.Task) and not bg.done():
+            bg.cancel()
+            try:
+                await asyncio.wait_for(bg, timeout=3.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+                pass
+        _running_clusters.pop(task_id, None)
+
+    # 2) 内存结果标记
     if result is None:
-        raise HTTPException(status_code=404, detail="Task not found")
-    
-    # TODO: 实现取消逻辑
-    result.status = TaskStatus.CANCELLED
-    
+        result = ClusterResult(
+            task_id=task_id,
+            status=TaskStatus.CANCELLED,
+            sub_tasks=[],
+            error="cancelled by user",
+        )
+        result.completed_at = datetime.now(timezone.utc)
+        _active_clusters[task_id] = result
+    else:
+        result.status = TaskStatus.CANCELLED
+        result.error = (result.error or "") + ("; cancelled by user" if result.error else "cancelled by user")
+        result.completed_at = datetime.now(timezone.utc)
+
+    # 3) 落库
+    try:
+        repo = AsyncClusterRunRepository()
+        await repo.finish_run(
+            task_id,
+            status="cancelled",
+            error="cancelled by user",
+        )
+    except Exception as e:
+        logger.warning("cluster cancel persist skipped: %s", e)
+
+    try:
+        await broadcast_progress(task_id, 100, "cancelled", event="cancelled", status="cancelled")
+    except Exception:
+        pass
+
     return {"task_id": task_id, "status": "cancelled"}
 
 
-@router.websocket("/cluster/ws/{task_id}")
-async def cluster_websocket(websocket: WebSocket, task_id: str):
-    """集群任务 WebSocket（实时进度）"""
+@ws_router.websocket("/cluster/ws/{task_id}")
+async def cluster_websocket(websocket: WebSocket, task_id: str, token: str = Query("")):
+    """集群任务 WebSocket（实时进度）。
+
+    鉴权与 HTTP 侧同口径：有 token 就验 token；无 token 时仅 loopback 放行
+    （single_user_mode）。此前完全无鉴权，任何人都能订阅别人的任务进度。
+    """
+    from backend.api.websocket import _ws_client_is_loopback
+    from backend.core.config import settings
+    from backend.core.security import decode_access_token
+
+    authorized = False
+    if token.strip():
+        payload = decode_access_token(token.strip())
+        authorized = bool(payload and "sub" in payload)
+    elif settings.single_user_mode and _ws_client_is_loopback(websocket):
+        authorized = True
+
+    if not authorized:
+        await websocket.close(code=1008, reason="Authentication required")
+        return
+
     await websocket.accept()
-    
+
     if task_id not in _cluster_websockets:
         _cluster_websockets[task_id] = []
     _cluster_websockets[task_id].append(websocket)

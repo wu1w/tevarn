@@ -1,50 +1,40 @@
 'use client';
 
 /**
- * 旧 TEE 进化页已收敛：受控进化（0.7）走审批中心第二 tab + Agent Profile 成长轨迹。
- * 保留路由以免书签失效，引导到正确入口。
+ * /evolution：TEE 运维面板 + 引导到审批中心（受控编制进化）
  */
 
 import React from 'react';
 import Link from 'next/link';
+import { EvolutionOpsPanel } from '@/components/evolution/EvolutionOpsPanel';
+import { useZh } from '@/hooks/useZh';
+import { AdvancedShell } from '@/components/layout/AdvancedShell';
 
-export default function EvolutionRedirectPage() {
-  const zh = (typeof document !== 'undefined' ? document.documentElement.lang : 'zh-CN') !== 'en';
+export default function EvolutionPage() {
+  const zh = useZh();
 
   return (
-    <div style={{ maxWidth: 560, margin: '0 auto', padding: '80px 28px', textAlign: 'center' }}>
-      <div style={{ fontSize: 32, marginBottom: 12 }}>📈</div>
-      <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--foreground)' }}>
-        {zh ? '进化已并入审批与成长轨迹' : 'Evolution lives in Approvals & Growth'}
+    <AdvancedShell
+      titleZh="进化运维是高级能力"
+      titleEn="Evolution ops is advanced"
+      hintZh="日常批进化请用审批中心。本页为 TEE/运维面板。"
+      hintEn="Approve evolution in Approvals. This page is TEE/ops panel."
+    >
+      <div
+        style={{
+          width: '100%',
+          maxWidth: 'none',
+          margin: 0,
+          padding: 'clamp(16px, 2.2vw, 28px) clamp(12px, 2vw, 32px) clamp(24px, 3vw, 40px)',
+        }}
+      >
+        <div style={{ marginBottom: 16, fontSize: 13, color: 'var(--foreground-dim)' }}>
+          <Link href="/approvals" style={{ color: 'var(--brand-purple)', fontWeight: 600 }}>
+            {zh ? '→ 审批中心批进化提案' : '→ Approvals for evolution proposals'}
+          </Link>
+        </div>
+        <EvolutionOpsPanel />
       </div>
-      <div style={{ fontSize: 13, color: 'var(--foreground-muted)', marginTop: 10, lineHeight: 1.6 }}>
-        {zh
-          ? '员工写述职报告，升职决定权在你手里。建议永不自动应用——请到审批中心「AI 团队自我进化」处理，或在 Agent Profile → 成长轨迹查看。'
-          : 'Agents write reviews; you decide. Never auto-applied — use Approvals → Self-evolution, or Agent Profile → Growth.'}
-      </div>
-      <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginTop: 24 }}>
-        <Link
-          href="/approvals"
-          style={{
-            padding: '9px 18px', borderRadius: 9, border: 'none', textDecoration: 'none',
-            background: 'var(--brand-purple)', color: 'var(--on-acc, #fff)',
-            fontSize: 13, fontWeight: 600,
-            boxShadow: '0 2px 10px color-mix(in srgb, var(--brand-purple) 30%, transparent)',
-          }}
-        >
-          {zh ? '打开审批中心' : 'Open Approvals'}
-        </Link>
-        <Link
-          href="/agents"
-          style={{
-            padding: '9px 18px', borderRadius: 9, textDecoration: 'none',
-            border: '1px solid var(--border-subtle)', color: 'var(--foreground-muted)',
-            fontSize: 13, fontWeight: 500,
-          }}
-        >
-          {zh ? 'Agent 花名册' : 'Agents'}
-        </Link>
-      </div>
-    </div>
+    </AdvancedShell>
   );
 }

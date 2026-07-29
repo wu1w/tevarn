@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from backend.agent.goal_state import apply_manage_goal
+from backend.agent.goal_state import apply_manage_goal_async
 from backend.skills.base import BaseSkill
 
 
@@ -79,7 +79,8 @@ class ManageGoalSkill(BaseSkill):
                 {"ok": False, "message": "session_id missing"}, ensure_ascii=False
             )
 
-        result = apply_manage_goal(
+        # 读强制 DB 刷新 + 写强制落库（见 apply_manage_goal_async）
+        result = await apply_manage_goal_async(
             session_id,
             action=str(kwargs.get("action") or ""),
             title=str(kwargs.get("title") or ""),
@@ -91,11 +92,4 @@ class ManageGoalSkill(BaseSkill):
             note=str(kwargs.get("note") or ""),
             completion_summary=str(kwargs.get("completion_summary") or ""),
         )
-        # 持久化到 session.config，重启可恢复
-        try:
-            from backend.agent.goal_state import save_goal_to_db
-
-            await save_goal_to_db(session_id)
-        except Exception:
-            pass
         return json.dumps(result, ensure_ascii=False, indent=2)

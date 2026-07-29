@@ -150,6 +150,9 @@ CODE_QUALITY = (
     "Do not take a full turn per single exploratory read."
 )
 
+# multi-category block is built by task_grounding.grounding_prompt_block()
+AUDIT_GROUNDING = ""  # kept for import compatibility; filled at build time
+
 PROFESSIONAL_OBJECTIVITY = (
     "# Professional objectivity\n"
     "Prioritize technical accuracy and truthfulness over being agreeable. "
@@ -325,6 +328,13 @@ def build_system_prompt(
                 stable_parts.append(decisive_coding_guidance())
             except Exception:
                 pass
+        # 多类目落地纪律：审计/检索/数据/统计/文档/清单/排查/对比/计算…
+        try:
+            from backend.agent.task_grounding import grounding_prompt_block
+
+            stable_parts.append(grounding_prompt_block())
+        except Exception:
+            pass
 
     # 3. 思考指导（始终注入，轻量）
     stable_parts.append(THINKING_GUIDANCE)

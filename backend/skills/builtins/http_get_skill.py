@@ -2,9 +2,13 @@
 HTTP GET Skill - 发送 HTTP GET 请求
 """
 
-from backend.core.net_safety import UnsafeURLError, validate_public_url
+import logging
+
+from backend.core.net_safety import check_agent_url
 
 from ..base import BaseSkill
+
+logger = logging.getLogger(__name__)
 
 
 class HttpGetSkill(BaseSkill):
@@ -32,12 +36,18 @@ class HttpGetSkill(BaseSkill):
     }
 
     async def execute(self, url: str, headers: dict | None = None, **kwargs) -> str:
-        """发送 HTTP GET 请求"""
+        """发送 HTTP GET 请求。
+
+        与 http/browser 工具同口径：分层网络策略（硬拦云元数据，
+        私网/回环默认放行并记审计）。此前用 validate_public_url 会
+        把 localhost/LAN 全拦死，和本地优先产品定位冲突。
+        """
         # 兼容 Agent Loop 注入的 user_id / _session_id 等元数据，忽略即可
-        try:
-            validate_public_url(url)
-        except UnsafeURLError as e:
-            return f"[Security Blocked] {e}"
+        allowed, note = check_agent_url(url)
+        if not allowed:
+            return f"[Security Blocked] {note}"
+        if note:
+            logger.info("http_get audit: %s url=%s", note, url[:200])
 
         try:
             import aiohttp

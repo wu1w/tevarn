@@ -863,8 +863,8 @@ export default function SettingsPage() {
   ];
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto p-6 pb-16">
-      <div className="mx-auto max-w-5xl">
+    <div className="min-h-0 flex-1 overflow-y-auto p-4 pb-16 sm:p-6 lg:px-8">
+      <div className="tk-page-fluid w-full">
         <div className="mb-6">
           <h1 className="text-lg font-semibold tracking-tight text-foreground">{t('settings.title')}</h1>
           <p className="mt-1 text-sm text-foreground-muted">

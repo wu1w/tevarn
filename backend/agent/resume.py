@@ -45,14 +45,14 @@ async def resume_session_agent(
     """构造 NexusAgentLoop 并续跑。供 cron / 管理 API 使用。"""
     from backend.agent import NexusAgentLoop
     from backend.agent.checkpoint import load_checkpoint
-    from backend.api.dependencies import (
-        get_context_flow_repo,
-        get_ctx_item_repo,
-        get_message_repo,
-        get_notification_repo,
-        get_session_repo,
-        get_task_repo,
+    from backend.repositories.context_repo import (
+        AsyncContextFlowRepository,
+        AsyncCtxItemRepository,
     )
+    from backend.repositories.message_repo import AsyncMessageRepository
+    from backend.repositories.notification_repo import AsyncNotificationRepository
+    from backend.repositories.session_repo import AsyncSessionRepository
+    from backend.repositories.task_repo import AsyncTaskRepository
 
     sid = uuid.UUID(str(session_id)) if not isinstance(session_id, uuid.UUID) else session_id
     resume_prompt = prompt or await build_resume_prompt(sid)
@@ -67,14 +67,14 @@ async def resume_session_agent(
         uid = uuid.UUID(str(user_id)) if not isinstance(user_id, uuid.UUID) else user_id
 
     agent = NexusAgentLoop(
-        session_repo=await get_session_repo(),
-        message_repo=await get_message_repo(),
-        task_repo=await get_task_repo(),
-        ctx_item_repo=await get_ctx_item_repo(),
-        context_flow_repo=await get_context_flow_repo(),
+        session_repo=AsyncSessionRepository(),
+        message_repo=AsyncMessageRepository(),
+        task_repo=AsyncTaskRepository(),
+        ctx_item_repo=AsyncCtxItemRepository(),
+        context_flow_repo=AsyncContextFlowRepository(),
         ws_manager=None,
         user_id=uid,
-        notification_repo=await get_notification_repo(),
+        notification_repo=AsyncNotificationRepository(),
     )
     logger.info("resume_session_agent session=%s mode=%s", str(sid)[:8], run_mode)
     return await agent.run(sid, resume_prompt, attachments=None, mode=run_mode)

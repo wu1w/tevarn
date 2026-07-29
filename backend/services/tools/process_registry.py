@@ -46,10 +46,10 @@ async def start_background(
 
     async def _run() -> None:
         try:
-            proc = await asyncio.create_subprocess_shell(
+            from backend.core.safe_subprocess import create_process
+
+            proc = await create_process(
                 command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
                 cwd=cwd if cwd else None,
                 env=env,
             )

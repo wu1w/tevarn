@@ -43,8 +43,11 @@ class BwrapBackend:
         self.network = network
         self.bwrap_path = bwrap_path
         # per-agent HOME：沙箱内可见且可写，agent 之间互不干扰
+        from backend.computer.pathutil import sanitize_agent_key_for_path
+
+        safe_key = sanitize_agent_key_for_path(agent_key)
         self.agent_home = os.path.join(
-            self.workspace_root, ".computers", agent_key, "home"
+            self.workspace_root, ".computers", safe_key, "home"
         )
 
     def _ensure_dirs(self) -> None:

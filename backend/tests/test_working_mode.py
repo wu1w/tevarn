@@ -11,6 +11,7 @@ import pytest
 
 from backend.agent import working_mode as wm
 from backend.agent.tool_hooks import builtin_permission_before
+from backend.services.confirm_manager import ConfirmOutcome
 from backend.core.config import settings
 
 
@@ -21,7 +22,7 @@ def _reset(monkeypatch):
     monkeypatch.setattr(settings, "agent_execution_mode", "auto", raising=False)
     monkeypatch.setattr(settings, "agent_permission_profile", "auto", raising=False)
     monkeypatch.setattr(settings, "agent_permission_ask_mode", "auto", raising=False)
-    monkeypatch.setattr(settings, "agent_permission_headless", "allow", raising=False)
+    monkeypatch.setattr(settings, "agent_permission_headless", "safe", raising=False)
     monkeypatch.setattr(settings, "agent_permission_enabled", True, raising=False)
     monkeypatch.setattr(settings, "agent_computer_enabled", False, raising=False)
 
@@ -149,7 +150,7 @@ async def test_ask_prompts_when_approval_channel_exists(monkeypatch):
 
     async def _fake(ws, session_id, **kw):
         seen["asked"] = True
-        return False  # 用户拒绝
+        return ConfirmOutcome(False, "denied")  # 用户拒绝
 
     monkeypatch.setattr(
         "backend.services.confirm_manager.request_confirmation", _fake
@@ -163,16 +164,51 @@ async def test_ask_prompts_when_approval_channel_exists(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_headless_falls_back_to_allow_by_default(monkeypatch):
-    """无确认通道（cron / 渠道机器人）默认放行，否则定时任务会集体卡死。"""
+async def test_headless_default_blocks_shell_but_not_file_work(monkeypatch):
+    """无人值守兜底默认 safe：读写照常，能跑任意代码的一类拒绝。
+
+    这条路径没人可问，而它正是外部内容（邮件 / 群消息 / webhook）进入本机的
+    入口 —— 提示词注入走的就是这里。旧默认 allow 等于权限规则在这条路上不存在；
+    一刀切 deny 又会静默弄坏「整理笔记 / 汇总报告」这类正常定时任务。
+    """
+    shell = await builtin_permission_before("command", {"command": "pytest -q"})
+    assert shell.block is True, "无人值守下 shell 必须拒绝"
+
+    write = await builtin_permission_before(
+        "file_write", {"filepath": "notes/daily.md", "content": "x"}
+    )
+    assert write.block is False, "写文件是定时任务的常规操作，不该被拦"
+
+    read = await builtin_permission_before("file_read", {"filepath": "notes/daily.md"})
+    assert read.block is False
+
+
+@pytest.mark.asyncio
+async def test_headless_can_be_loosened_to_allow(monkeypatch):
+    """完全信任所有触发源的人可以显式退回旧行为。"""
+    monkeypatch.setattr(settings, "agent_permission_headless", "allow", raising=False)
     res = await builtin_permission_before("command", {"command": "pytest -q"})
     assert res.block is False
 
 
 @pytest.mark.asyncio
 async def test_headless_can_be_tightened_to_deny(monkeypatch):
+    """deny = 规则说「问用户」而无人可问时一律拒绝。
+
+    注意它只作用于 ask 分支：规则直接判 allow 的操作（cautious 下的 file_write）
+    仍然放行。要连写也禁掉，应该换工作方式（readonly），而不是调这个兜底 ——
+    两者是正交的，混在一起会让「工作方式」失去意义。
+    """
     monkeypatch.setattr(settings, "agent_permission_headless", "deny", raising=False)
     res = await builtin_permission_before("command", {"command": "pytest -q"})
+    assert res.block is True
+
+    res = await builtin_permission_before("file_write", {"filepath": "a", "content": "x"})
+    assert res.block is False, "cautious 规则本就允许工作区编辑，与 headless 兜底无关"
+
+    # 想连写一起禁：改工作方式
+    monkeypatch.setattr(settings, "agent_working_mode", "readonly", raising=False)
+    res = await builtin_permission_before("file_write", {"filepath": "a", "content": "x"})
     assert res.block is True
 
 
@@ -191,7 +227,7 @@ async def test_auto_edit_lets_edits_through_without_asking(monkeypatch):
 
     async def _fake(*a, **kw):
         asked["n"] += 1
-        return True
+        return ConfirmOutcome(True, "approved")
 
     monkeypatch.setattr(
         "backend.services.confirm_manager.request_confirmation", _fake
@@ -234,7 +270,7 @@ async def test_custom_tool_self_declared_confirmation_is_honoured(monkeypatch):
 
     async def _fake(*a, **kw):
         asked["n"] += 1
-        return False
+        return ConfirmOutcome(False, "denied")
 
     monkeypatch.setattr(
         "backend.services.confirm_manager.request_confirmation", _fake
@@ -254,7 +290,7 @@ async def test_self_declaration_cannot_override_profile_intent(monkeypatch):
 
     async def _fake(*a, **kw):
         asked["n"] += 1
-        return True
+        return ConfirmOutcome(True, "approved")
 
     monkeypatch.setattr(
         "backend.services.confirm_manager.request_confirmation", _fake

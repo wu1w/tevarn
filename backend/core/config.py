@@ -146,7 +146,8 @@ class Settings(BaseSettings):
         populate_by_name=True,  # 允许代码级 Settings(jwt_secret=...) 传参（alias 不屏蔽字段名）
     )
 
-    # Database
+    # Database —— alpha 权威存储默认 SQLite（可离家 / 备份 / 工单状态机）
+    # Redis 不是主库；见 docs/internal/STORAGE.md
     db_url: str = "sqlite+aiosqlite:///./takton.db"
 
     # Security
@@ -212,17 +213,24 @@ class Settings(BaseSettings):
     agent_kernel_checkpoint_interval: int = 500
     # 多 worker 前提：观测 API 合并 DB 进程/提权
     agent_kernel_shared_state: bool = True
-    # 多 worker 执行面：Redis 共享 mediate / charge_tokens / 能力集 / 提权
-    # 需同时设置 redis_url；未装 redis 包或 ping 失败则静默回退内存
+    # 多 worker 热共享（可选）：Redis 共享 mediate / charge_tokens / 能力集 / 提权
+    # 默认 False —— 个人单进程 AIOS 只靠 SQLite 即可 durable。
+    # 开启时需同时设置 redis_url；未装 redis 包或 ping 失败则静默回退内存
+    #（业务表仍在 SQLite，不丢工单权威）。接口：shared_store.create_shared_store_from_settings
     agent_kernel_redis_shared: bool = False
     redis_url: str = ""  # 例 redis://127.0.0.1:6379/0
+    # 开发剖面：aios-dev 时建议 dispatcher/kernel 全开（见 apply_aios_dev_profile）
+    aios_profile: str = ""  # "" | "aios-dev"
     # 0.6 自主运转：收件箱/派遣器
     agent_dispatcher_enabled: bool = True
     agent_dispatcher_poll_seconds: float = 10.0
     agent_inbox_max_pending: int = 200  # 有界红线：超限丢弃最旧 pending
     agent_inbox_item_timeout: float = 600.0  # 单工单执行超时（秒）
+    # F2 并发上限：全局同时在跑工单数；单身份默认串行（1）
+    agent_dispatcher_max_global_concurrent: int = 8
+    agent_dispatcher_max_identity_concurrent: int = 1
     # 异步兜底预算：身份未设默认预算时按此硬顶（0 = 显式不限，不推荐）
-    agent_workforce_fallback_budget: int = 50000
+    agent_workforce_fallback_budget: int = 100_000
     # 演化分析阈值（Alpha Review #3：参数化——研发型/运营型身份工作模式
     # 不同，阈值应可调而非统一硬编码；默认值与 alpha 常量一致）
     agent_evolution_min_samples: int = 5
@@ -234,6 +242,10 @@ class Settings(BaseSettings):
     agent_tool_parallel_max: int = 5
     # 研究任务收敛刹车：同 run 内同查询重复搜索，第 2 次提醒、第 3 次拦截
     agent_search_repeat_guard: bool = True
+    # 单次 agent.run 内搜索类工具总调用上限；触顶后强制总结
+    agent_search_max_per_run: int = 8
+    # 词集合 Jaccard ≥ 此值视为近似同查询
+    agent_search_similar_jaccard: float = 0.72
     # Kernel 事前预算检查：LLM 调用前预估消耗，剩余不足即事前中断
     #（llm_round 的事后 charge 是兜底，事前刹车防最后一次调用烧穿预算）
     agent_kernel_budget_precheck: bool = True
@@ -242,6 +254,27 @@ class Settings(BaseSettings):
     # 身份记忆全量注入上限：条目数超此值改按工单相关性检索 top-k
     #（Alpha Review #4：防 prompt 膨胀；检索不可用回落全量截断）
     agent_identity_memory_full_inject_max: int = 8
+    # ── LLM 公平调度（LlmAdmissionController）────────────────
+    # 全局同时在飞的 LLM HTTP 请求数（≠ 工单并发）
+    llm_max_in_flight: int = 4
+    llm_max_in_flight_per_identity: int = 1
+    # 从全局槽位中预留给主人对话（后台工单不得占满）
+    llm_owner_reserve_slots: int = 1
+    llm_queue_max: int = 64
+    # 等待时间加权，防低优先级饿死
+    llm_fairness_wait_weight: float = 1.0
+    # 日 token 硬顶；0 = 不限制
+    llm_daily_token_budget_global: int = 0
+    llm_daily_token_budget_per_identity: int = 0
+    # ── 编制记忆（CrewMemoryAssembler / Writer）──────────────
+    crew_memory_experience_max_inject: int = 2
+    crew_memory_experience_max_inject_chat: int = 1
+    crew_memory_experience_max_chars: int = 800
+    # 完工自动沉淀默认关（可信）；手动 distill-from-item 仍可用
+    crew_memory_auto_distill: bool = False
+    crew_memory_auto_distill_min_chars: int = 200
+    # 自动沉淀若开：无 approved_by 则跳过（不静默写 distilled）
+    crew_memory_require_approve_distill: bool = True
     # 用户单条输入硬上限（字符），超出截断并提示
     agent_max_user_input_chars: int = 100_000
     # 大输入 soft 策略：超过则保留头尾，中间省略（仍受硬上限约束）
@@ -299,9 +332,18 @@ class Settings(BaseSettings):
     # ask 决策：auto（有确认通道则弹窗，否则走 headless 兜底）|interactive|local_allow|deny
     # 此前默认 local_allow —— 把所有 ask 静默降级为放行，使整套权限规则形同虚设。
     agent_permission_ask_mode: str = "auto"
-    # 无确认通道（cron / 渠道机器人 / headless）时的兜底：allow | deny
-    # 保持 allow 以免定时任务集体卡死；要更严就设 deny。
-    agent_permission_headless: str = "allow"
+    # 无确认通道（cron / 渠道机器人 / webhook）时的兜底：allow | safe | deny
+    #
+    # 这条路径上没人可问，而它恰恰是**外部内容进入本机**的入口 ——
+    # 邮件、群消息、网页里的提示词注入走的就是这里。旧默认 "allow" 等于
+    # 整套权限规则在无人值守场景下完全不存在。
+    #
+    #   allow —— 全放行（0.3.x 旧行为；仅在你完全信任所有触发源时选）
+    #   safe  —— 默认：读文件 / 写文件 / 搜索照常，
+    #            但 shell·python·remote_exec·http·browser·desktop 一律拒绝。
+    #            绝大多数定时任务（整理笔记、汇总报告）不受影响。
+    #   deny  —— 全拒绝（最严；无人值守只做只读也不行）
+    agent_permission_headless: str = "safe"
     agent_permission_enabled: bool = True
     # T4 prompt caching：Volatile 层（秒级时间戳/记忆）不并入 messages[0] 的 system 块，
     # 改挂 messages 尾部，保住可缓存的稳定前缀。设 False 回到旧的三层合并行为。
@@ -316,22 +358,48 @@ class Settings(BaseSettings):
     # git worktree helpers available (opt-in tools later)
     agent_worktree_enabled: bool = True
     # Agent Computer（Phase 0.5.3）：command/python 走隔离执行后端
-    # 兼容键：真正的开关是 agent_execution_mode。设为 True 等价于 execution_mode=sandbox，
-    # 保留是为了旧配置/旧前端不炸；新代码一律走 working_mode.decide_sandbox()。
-    agent_computer_enabled: bool = False
+    # 兼容键：真正的开关是 agent_execution_mode。设为 True 时 auto 模式会优先尝试沙箱。
+    # 默认 True：有能力就隔离；无能力时 auto 降级本机并在 UI/日志标明 degraded。
+    agent_computer_enabled: bool = True
     # bwrap=Linux 沙箱（推荐，需 bubblewrap）；local=现状直跑
     # 沙箱后端：auto = 按平台自动选最强（linux→bwrap / darwin→seatbelt / win32→wsl|job）；
     # 也可显式指定 bwrap | seatbelt | job | wsl | local
     agent_computer_backend: str = "auto"
     # 沙箱内是否放开网络（默认断网 --unshare-net）
     agent_computer_network: bool = False
+    # 沙箱档位：off | workspace | read_only | strict（见 computer/profiles.py）
+    agent_sandbox_profile: str = "workspace"
+    # Grok-style allow/ask/deny 规则（字符串列表或 JSON）
+    agent_permission_allow: list | str = ""
+    agent_permission_ask: list | str = ""
+    agent_permission_deny: list | str = ""
+    agent_permission_rules_json: str = ""
+    # 显式关闭密钥路径硬拒绝（不推荐）
+    agent_permission_relax_secrets: bool = False
+    # 工作流默认 agent 调用预算
+    agent_workflow_budget: int = 8
     # 真 Sub-Agent（Phase 1）：嵌套深度 / 总超时防失控
     agent_subagent_max_depth: int = 1
     agent_subagent_timeout_seconds: int = 300
+
+    # SMTP（send_email skill）
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_use_tls: bool = True
     # 写文件工具前自动快照到 .takton/checkpoints/
     agent_file_checkpoint: bool = True
     # 搜索：有 Key 时 web_search/search 优先 Tavily
     tavily_api_key: str = ""
+    # Agent 的 http / browser 工具是否禁止访问私网与回环。
+    # 默认 False —— 本地优先产品里「让 Agent 看一眼我跑在 localhost:3000 的项目」
+    # 「读一下 NAS 上的文件」是核心用法，照搬服务端 SSRF 防护会把它拦死。
+    # 云厂商元数据端点（169.254.169.254 等）无论此开关如何都硬拦，
+    # 那些地址在个人设备上没有任何正当用途。
+    # 把 Takton 跑在服务器/共享主机上时建议设为 True。
+    agent_block_private_network: bool = False
 
     # Context engine (Claude Code–style pipeline + Hermes meter)
     context_threshold_percent: float = 0.72
@@ -361,6 +429,8 @@ class Settings(BaseSettings):
     embedding_base_url: str = ""
     embedding_model: str = ""
     embedding_api_key: Optional[str] = None
+    # Qdrant collection 向量维；0=创建时按首次 embed 探测（推荐 Qwen3-Embedding-4B=2560）
+    embedding_dimensions: int = 0
 
     # Reranker — 默认空，可选
     reranker_provider: Literal["local", "cohere", "openai-compatible", ""] = ""
@@ -435,6 +505,13 @@ class Settings(BaseSettings):
     default_admin_password: str = ""
     # 单用户模式（个人部署时无需登录）
     single_user_mode: bool = True
+    # 允许的跨源 Origin（空格/逗号分隔）。默认空 = 只放行 loopback，
+    # 覆盖 Electron 与 next dev，零配置即可用。
+    # 把 Takton 开给局域网或自建域名时在这里加，例如：
+    #   TAKTON_CORS_ALLOWED_ORIGINS="https://takton.mylan.home http://192.168.1.9:3000"
+    # 设为 "*" 等于关闭跨源保护 —— 配合 single_user_mode 会让任意网页拿到 admin，
+    # 只在你清楚后果时使用。
+    cors_allowed_origins: str = ""
 
     @model_validator(mode="before")
     @classmethod
@@ -457,6 +534,20 @@ class Settings(BaseSettings):
                 f"(e.g. TAKTON_{info.field_name.upper()})."
             )
         return v
+
+    @model_validator(mode="after")
+    def _apply_aios_dev_profile(self):
+        """TAKTON_AIOS_PROFILE=aios-dev：打开编制/派活相关开关（Redis 仍默认关）。"""
+        profile = (self.aios_profile or "").strip().lower()
+        if profile != "aios-dev":
+            return self
+        object.__setattr__(self, "agent_kernel_enabled", True)
+        object.__setattr__(self, "agent_kernel_persistence", True)
+        object.__setattr__(self, "agent_kernel_shared_state", True)
+        object.__setattr__(self, "agent_dispatcher_enabled", True)
+        object.__setattr__(self, "agent_kernel_auto_escalate", True)
+        # 明确不强制 Redis：aios-dev 默认仍走 SQLite 权威
+        return self
 
     def get_llm_config(self) -> LLMConfig:
         """根据 llm_provider 返回对应的 LLM 配置实例"""

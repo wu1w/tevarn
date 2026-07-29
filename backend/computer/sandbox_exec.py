@@ -46,7 +46,10 @@ def wrap_python_argv_sandboxed(
     （/tmp 会被 tmpfs 遮蔽，临时脚本必须显式 bind）。
     """
     workspace_root = os.path.abspath(workspace_root)
-    agent_home = os.path.join(workspace_root, ".computers", agent_key, "home")
+    from backend.computer.pathutil import sanitize_agent_key_for_path
+
+    safe_key = sanitize_agent_key_for_path(agent_key)
+    agent_home = os.path.join(workspace_root, ".computers", safe_key, "home")
     os.makedirs(agent_home, exist_ok=True)
 
     out = [bwrap_path, "--die-with-parent", "--new-session", "--unshare-net"]

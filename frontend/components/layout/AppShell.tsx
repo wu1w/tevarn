@@ -12,6 +12,8 @@ import { StartupOverlay } from '@/components/desktop/StartupOverlay';
 import { ErrorBoundary } from '@/components/desktop/ErrorBoundary';
 import { ConnectionState } from '@/components/desktop/ConnectionIndicator';
 import { AppLogo } from '@/components/brand/AppLogo';
+import { DangerConfirmDialog } from '@/components/chat/DangerConfirmDialog';
+import { DomainEventBridge } from '@/components/layout/DomainEventBridge';
 import { useT } from '@/stores/localeStore';
 
 const SIDEBAR_KEY = 'takton-sidebar-open';
@@ -77,20 +79,34 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
+    // 轮询定时器必须能被 effect 的 cleanup 清掉。
+    // 此前两条分支的 setInterval 都是在 .then() 回调里创建的：非 Electron 分支
+    // 把 clearInterval 作为 .then 回调的返回值（React 拿不到，形同虚设），
+    // Electron 分支干脆没有清理。后端起不来时定时器就永远转下去，
+    // 而且这个 effect 依赖 [t] —— 每切一次语言就再泄漏一个。
+    let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const stop = () => {
+      if (timer !== null) {
+        clearInterval(timer);
+        timer = null;
+      }
+    };
+
     const checkHealth = async () => {
       try {
         const res = await fetch('/api/health', { cache: 'no-store' });
         if (res.ok) {
           const data = await res.json().catch(() => null);
           if (data?.service === 'takton-backend' || data?.status === 'ok') {
-            setBackendReady(true);
+            if (!cancelled) setBackendReady(true);
             return true;
           }
         }
         try {
           const r2 = await fetch('http://127.0.0.1:8000/api/health', { cache: 'no-store' });
           if (r2.ok) {
-            setBackendReady(true);
+            if (!cancelled) setBackendReady(true);
             return true;
           }
         } catch {
@@ -99,40 +115,29 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       } catch {
         // not ready
       }
-      setBackendReady(false);
+      if (!cancelled) setBackendReady(false);
       return false;
     };
 
-    if (!window.electronAPI) {
-      setStartupStage(t('layout._e109'));
-      checkHealth().then((ok) => {
-        if (!ok) {
-          const interval = setInterval(async () => {
-            const ready = await checkHealth();
-            if (ready) clearInterval(interval);
-            else setRetryCount((c) => c + 1);
-          }, 1500);
-          return () => clearInterval(interval);
-        }
-      });
-      return;
-    }
+    const isDesktop = Boolean(window.electronAPI);
+    const pollMs = isDesktop ? 500 : 1500;
+    setStartupStage(isDesktop ? t('desktop._e107') : t('layout._e109'));
 
-    setStartupStage(t('desktop._e107'));
-
-    checkHealth().then((ready) => {
-      if (!ready) {
-        setStartupStage(t('layout._e110'));
-        const interval = setInterval(async () => {
-          const ok = await checkHealth();
-          if (ok) {
-            clearInterval(interval);
-          } else {
-            setRetryCount((c) => c + 1);
-          }
-        }, 500);
-      }
+    void checkHealth().then((ok) => {
+      if (cancelled || ok) return;
+      if (isDesktop) setStartupStage(t('layout._e110'));
+      timer = setInterval(async () => {
+        if (cancelled) return stop();
+        const ready = await checkHealth();
+        if (ready) stop();
+        else setRetryCount((c) => c + 1);
+      }, pollMs);
     });
+
+    return () => {
+      cancelled = true;
+      stop();
+    };
   }, [t]);
 
   const handleReconnect = useCallback(() => {
@@ -236,6 +241,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </div>
           </main>
         </div>
+        {/* 全局危险确认：任意页可弹（含 once/session/agent 作用域） */}
+        <DangerConfirmDialog />
+        {/* OS：领域事件单例订阅 → 刷新员工/工单/审批查询 */}
+        <DomainEventBridge />
       </div>
     </ErrorBoundary>
   );

@@ -1,6 +1,6 @@
 """
 基于用户ID的分布式滑动窗口速率限制中间件
-- 支持用户ID + IP 双重维度
+- 按客户端 IP 滑动窗口（只信 socket 对端，不信 XFF）
 - 可配置每个维度的阈值
 - 内存存储，服务重启后计数清零
 - 支持豁免路径和豁免用户
@@ -21,9 +21,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     """
     速率限制中间件
 
-    基于用户ID（优先）和客户端 IP（fallback）的双维度滑动窗口限流：
+    基于客户端 IP 的滑动窗口限流：
     - 默认每分钟最多 60 个请求（构造时可覆盖）
-    - 认证用户使用 user_id 限流，未认证用户使用 IP 限流
     - 单用户模式 / 本机回环地址大幅放宽，适配 Electron SPA
     - 超过限制返回 429 Too Many Requests
     """
@@ -46,7 +45,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     def _is_local_client(self, request: Request) -> bool:
         host = self._get_client_ip(request)
-        return host in {"127.0.0.1", "::1", "localhost", "unknown"}
+        # "unknown"（拿不到对端）不再当作本机 —— 那是「不知道」，不是「安全」
+        return host in {"127.0.0.1", "::1", "localhost"}
 
     def _single_user_mode(self) -> bool:
         try:
@@ -59,10 +59,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # 桌面单用户 / 本机：给足配额，避免 React Query 并行请求 429
         if self._single_user_mode() or self._is_local_client(request):
             return max(self.max_requests * 50, 5000)
-
-        # 已认证用户给更高配额
-        if hasattr(request.state, "user") and request.state.user:
-            return max(self.max_requests * 5, 300)
         return self.max_requests
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
@@ -109,22 +105,25 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
     def _get_rate_limit_key(self, request: Request) -> str:
-        """获取限流 key：优先 user_id，fallback 到 IP"""
-        if hasattr(request.state, "user") and request.state.user:
-            user_id = getattr(request.state.user, "id", None) or getattr(request.state.user, "user_id", None)
-            if user_id:
-                return f"user:{user_id}"
+        """限流 key = 客户端 IP。
 
+        此前这里先看 request.state.user 想按用户限流，但**全项目没有任何地方
+        给 request.state.user 赋过值**（鉴权走的是 Depends(get_current_user)，
+        不写 request.state），所以那段分支从未执行过。删掉，别留看起来有效
+        实则永远不走的代码。真要按用户限流，得先加一个写 request.state 的中间件。
+        """
         return f"ip:{self._get_client_ip(request)}"
 
     def _get_client_ip(self, request: Request) -> str:
-        """获取客户端真实 IP（支持 X-Forwarded-For）"""
-        forwarded = request.headers.get("x-forwarded-for")
-        if forwarded:
-            return forwarded.split(",")[0].strip()
-        real_ip = request.headers.get("x-real-ip")
-        if real_ip:
-            return real_ip.strip()
+        """获取客户端 IP。
+
+        **不信任 X-Forwarded-For / X-Real-IP**：这两个头由客户端随便填，
+        每次请求换一个值就能完全绕过限流。此前优先采信它们，等于限流形同虚设。
+        与 api/dependencies._is_loopback_host 同一口径：只信 socket 对端。
+
+        反代后面部署时，请让反代自己做限流，或用 uvicorn --proxy-headers
+        （由 ASGI 层校验后写入 request.client）。
+        """
         if request.client and request.client.host:
             return request.client.host
         return "unknown"

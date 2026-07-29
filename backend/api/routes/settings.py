@@ -2336,17 +2336,68 @@ async def get_sft_corpus_info(
 
 
 
+# ⚠️ 以下所有单段静态路径必须声明在 /{key} 通配之前 —— FastAPI 按声明顺序匹配。
+# /rag-status 此前排在 /{key} 后面，被通配吞掉，恒定返回 404「Setting not found」，
+# 而且要求 require_admin 而非本意的 get_current_user。
+# （两段路径如 /security/* 不受影响：路径参数默认不匹配 '/'。）
+
+@router.get("/rag-status")
+async def rag_capability_status(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """向量 RAG 能力状态：local（默认）/ full。Reranker 仅作增强项展示。"""
+    from backend.services.rag.capability import get_rag_status
+    from backend.services.rag.factory import RAGServiceFactory
+
+    # 设置变更后调用方可 force；此处读缓存
+    st = get_rag_status(force=True)
+    RAGServiceFactory.reset()  # 下次 get_service 按新能力重建
+    return st.to_dict()
+
+
 @router.get("/{key}", response_model=SettingRead)
 async def get_setting(
     key: str,
     current_user: Annotated[UserRead, Depends(require_admin)],
     repo: Annotated[SettingRepository, Depends(get_setting_repo)],
 ):
-    """获取单个配置（仅管理员）"""
+    """获取单个配置（仅管理员）
+
+    DB 无记录时：若 key 属于运行时映射（如 single_user_mode），
+    回落内存 Settings 默认值，避免设置页首启 404。
+    """
     setting = await repo.get_by_key(key)
-    if setting is None:
-        raise HTTPException(status_code=404, detail="Setting not found")
-    return setting
+    if setting is not None:
+        return setting
+
+    from backend.core.runtime_settings import is_runtime_mapped_key, peek_runtime_setting
+
+    if is_runtime_mapped_key(key):
+        raw = peek_runtime_setting(key)
+        # 与 updateSetting 写入形态对齐：bool → "true"/"false" 字符串，便于前端 parseBool
+        if isinstance(raw, bool):
+            value: Any = "true" if raw else "false"
+        else:
+            value = raw
+        security_keys = {
+            "single_user_mode",
+            "agent_computer_enabled",
+            "bridge_token",
+            "agent_working_mode",
+            "agent_execution_mode",
+            "agent_permission_headless",
+            "agent_permission_profile",
+            "agent_permission_ask_mode",
+        }
+        return SettingRead(
+            key=key,
+            value=value,
+            category="security" if key in security_keys else "general",
+            description=f"Runtime default ({key})",
+            updated_at=datetime.now(timezone.utc),
+        )
+
+    raise HTTPException(status_code=404, detail="Setting not found")
 
 
 @router.put("/{key}", response_model=SettingRead)
@@ -2420,20 +2471,6 @@ async def delete_setting(
 
     clear_setting_value(key)
     return {"deleted": True}
-
-@router.get("/rag-status")
-async def rag_capability_status(
-    current_user: Annotated[UserRead, Depends(get_current_user)],
-):
-    """向量 RAG 能力状态：local（默认）/ full。Reranker 仅作增强项展示。"""
-    from backend.services.rag.capability import get_rag_status
-    from backend.services.rag.factory import RAGServiceFactory
-
-    # 设置变更后调用方可 force；此处读缓存
-    st = get_rag_status(force=True)
-    RAGServiceFactory.reset()  # 下次 get_service 按新能力重建
-    return st.to_dict()
-
 
 # ---- 安全加固（2026-07-26）：自检报告 + 桥接令牌生成 ----
 # 注意路径均为两段（/security/*），不会被上方 /{key} 通配吞掉。

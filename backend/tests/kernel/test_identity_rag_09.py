@@ -135,7 +135,7 @@ def test_build_memory_block_small_full_inject(wfx) -> None:
 
 
 def test_build_memory_block_large_falls_back_truncated(wfx) -> None:
-    """条目 > 阈值 + 检索不可用（本地模式）：回落全量截断（≤4000）。"""
+    """条目 > 阈值：CrewMemoryAssembler 限 experience 条数 + 总长截断。"""
     async def go():
         reg, inbox, kernel = wfx["registry"], wfx["inbox"], wfx["kernel"]
         ident = await reg.create("大记忆员工", capabilities=["file_read"])
@@ -146,9 +146,11 @@ def test_build_memory_block_large_falls_back_truncated(wfx) -> None:
 
         disp = WorkforceDispatcher(kernel, inbox, reg, wfx["SessionLocal"])
         header, text = await disp._build_memory_block(ident, "做点什么", entries)
-        assert header == "## 你的身份记忆（长期人格/职责/方法论）"  # 回落=全量标题
-        assert len(text) <= 4000  # 截断保护
-        assert "[experience]" in text  # 保头——前面的条目在
+        assert "身份记忆" in header
+        assert len(text) <= 1600  # workforce 总长 cap ~1500
+        assert "[experience]" in text
+        # experience 注入条数受 crew_memory_experience_max_inject 约束
+        assert text.count("[experience]") <= 2
 
     _run(go())
 

@@ -15,6 +15,7 @@ import {
   getKernelIdentities, type Goal,
 } from '@/lib/api';
 import { useZh } from '@/hooks/useZh';
+import { LegacyQuiet } from '@/components/layout/LegacyQuiet';
 
 const statusMeta: Record<string, { color: string; zh: string; en: string }> = {
   active: { color: 'var(--status-online)', zh: '进行中', en: 'Active' },
@@ -56,7 +57,19 @@ export default function GoalsPage() {
   };
 
   return (
-    <div style={{ maxWidth: 900, margin: '0 auto', padding: '26px 28px 40px' }}>
+    <LegacyQuiet
+      title="目标是高级视图"
+      titleEn="Goals are advanced"
+      hint="日常请用「员工 / 工单 / 审批」。目标页可选，不占主路径。"
+      hintEn="Daily path is Employee · Job · Approval. Goals are optional."
+      primaryHref="/agents"
+      primaryLabel="去员工"
+      primaryLabelEn="Employees"
+      secondaryHref="/approvals"
+      secondaryLabel="审批"
+      secondaryLabelEn="Approvals"
+    >
+    <div style={{ width: '100%', maxWidth: 'none', margin: 0, padding: 'clamp(16px, 2.2vw, 28px) clamp(12px, 2vw, 32px) clamp(24px, 3vw, 40px)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 18 }}>
         <div>
           <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--foreground)' }}>
@@ -96,6 +109,7 @@ export default function GoalsPage() {
           onSubmit={async (b) => { await createGoal({ ...b, kind: 'key_result', parent_id: krFor }); addToast(zh ? 'KR 已加入' : 'KR added'); setKrFor(null); refresh(); }} />
       ) : null}
     </div>
+    </LegacyQuiet>
   );
 }
 

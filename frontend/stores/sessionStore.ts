@@ -90,6 +90,12 @@ export const useSessionStore = create<SessionState>()(
           const session = await api.getSession(sessionId);
           set({ currentSession: session, isLoading: false });
         } catch (err) {
+          const status = (err as { response?: { status?: number } })?.response?.status;
+          // 本地持久化了已删/换库的 session id → 清掉，别反复 404
+          if (status === 404 && get().currentSession?.id === sessionId) {
+            set({ currentSession: null, messages: [], isLoading: false, error: null });
+            return;
+          }
           set({ error: (err as Error).message, isLoading: false });
         }
       },
@@ -118,6 +124,11 @@ export const useSessionStore = create<SessionState>()(
           }
           set({ messages, isLoading: false });
         } catch (err) {
+          const status = (err as { response?: { status?: number } })?.response?.status;
+          if (status === 404 && get().currentSession?.id === sessionId) {
+            set({ currentSession: null, messages: [], isLoading: false, error: null });
+            return;
+          }
           set({ error: (err as Error).message, isLoading: false });
         }
       },
@@ -145,7 +156,8 @@ export const useSessionStore = create<SessionState>()(
       getSessionTitle: (sessionId) => {
         const t = get().sessionTitles[sessionId];
         if (t && t.trim()) return t;
-        return 'Untitled session';
+        // 无首条用户消息时不返回硬编码英文——调用方用日期 fallback 更可读
+        return '';
       },
 
       // 星标

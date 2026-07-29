@@ -83,3 +83,99 @@ def validate_public_url(url: str) -> None:
             raise UnsafeURLError(
                 f"Host '{hostname}' resolves to private/internal address '{ip_str}', access blocked"
             )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Agent 工具（http / browser）的分层策略
+#
+# validate_public_url 拦掉一切私网+回环，这对「服务端代用户拉外链」是对的，
+# 但**本地优先场景下直接套用会立刻惹恼用户**：让 Agent 看一眼自己跑在
+# localhost:3000 的项目、读一下 NAS 上的文件、调一下路由器接口，都是完全正当
+# 的日常需求，而且是这类产品的核心价值。
+#
+# 所以对 Agent 工具分两层：
+#   硬拦：云厂商元数据端点 —— 这些地址在个人电脑上永远没有正当用途，
+#         一旦 Agent 被提示词注入诱导去读，泄露的是云凭证。
+#   放行 + 记审计：私网 / 回环 —— 正常用法，但记下来以便事后追溯。
+#
+# 想要服务器级严格度的人：设 agent_block_private_network=true。
+# ─────────────────────────────────────────────────────────────────────
+
+# 云厂商实例元数据服务（IMDS）。个人机器上访问这些只可能是被骗了。
+_METADATA_HOSTS = frozenset(
+    {
+        "169.254.169.254",  # AWS / Azure / GCP / OpenStack / DigitalOcean
+        "fd00:ec2::254",  # AWS IMDSv2 over IPv6
+        "metadata.google.internal",
+        "metadata.goog",
+        "instance-data",  # AWS 传统别名
+        "100.100.100.200",  # 阿里云
+        "169.254.169.253",  # AWS DNS
+    }
+)
+
+
+def _resolved_ips(hostname: str) -> list[str]:
+    try:
+        return [info[4][0] for info in socket.getaddrinfo(hostname, None)]
+    except socket.gaierror:
+        return []
+
+
+def check_agent_url(url: str) -> tuple[bool, str]:
+    """Agent 的 http / browser 工具专用的分层准入。
+
+    Returns:
+        (allowed, note) —— note 非空时是拒绝理由，或需要记审计的说明。
+    """
+    if not url:
+        return False, "URL is required"
+
+    parsed = urlparse(url)
+    if parsed.scheme not in _ALLOWED_SCHEMES:
+        return False, f"Unsupported scheme: {parsed.scheme or '(empty)'}"
+
+    hostname = (parsed.hostname or "").strip()
+    if not hostname:
+        return False, "URL must include a hostname"
+
+    lowered = hostname.lower()
+
+    # 第 1 层：云元数据端点，无条件拦。别名和解析后的 IP 都要查，
+    # 免得用一个指向 169.254.169.254 的自有域名绕过去。
+    candidates = {lowered}
+    try:
+        ipaddress.ip_address(lowered)
+    except ValueError:
+        candidates.update(ip.lower() for ip in _resolved_ips(lowered))
+    if candidates & _METADATA_HOSTS:
+        return False, (
+            f"Blocked: '{hostname}' is a cloud instance metadata endpoint. "
+            f"这类地址在个人设备上没有正当用途，访问它通常意味着 Agent 正被"
+            f"提示词注入诱导去读取云凭证。"
+        )
+
+    # 第 2 层：私网 / 回环 —— 默认放行（本地优先的核心用法），可选收紧
+    is_internal = False
+    try:
+        ipaddress.ip_address(lowered)
+        is_internal = _is_private_ip(lowered)
+    except ValueError:
+        ips = _resolved_ips(lowered)
+        is_internal = bool(ips) and any(_is_private_ip(ip) for ip in ips)
+
+    if is_internal:
+        try:
+            from backend.core.config import settings
+
+            strict = bool(getattr(settings, "agent_block_private_network", False))
+        except Exception:
+            strict = False
+        if strict:
+            return False, (
+                f"Blocked: '{hostname}' is on a private/loopback network and "
+                f"agent_block_private_network is enabled."
+            )
+        return True, f"internal-network access: {hostname}"
+
+    return True, ""

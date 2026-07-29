@@ -107,6 +107,14 @@ async def _prefetch_readonly_calls(
                 args["_session_id"] = str(session_id)
                 args["_chat_mode"] = str(mode or "default")
                 args["_ws_manager"] = loop.ws_manager
+                _contact = str(getattr(loop, "_contact_agent", "") or "").strip()
+                if _contact:
+                    args.setdefault("_contact_agent", _contact)
+                    args.setdefault("_identity_name", _contact)
+                if getattr(loop, "_identity_id", None):
+                    args.setdefault("_identity_id", str(loop._identity_id))
+                if getattr(loop, "_inbox_item_id", None):
+                    args.setdefault("_inbox_item_id", str(loop._inbox_item_id))
                 if timeout > 0:
                     return (
                         await asyncio.wait_for(
@@ -243,6 +251,30 @@ async def run_tool_round(
                 validated_args["_session_id"] = str(session_id)
                 validated_args["_chat_mode"] = str(mode or "default")
                 validated_args["_ws_manager"] = loop.ws_manager
+                # 联系员工：危险确认「本员工允许」需要 identity
+                _contact = str(getattr(loop, "_contact_agent", "") or "").strip()
+                if _contact:
+                    validated_args.setdefault("_contact_agent", _contact)
+                    validated_args.setdefault("_identity_name", _contact)
+                if getattr(loop, "_identity_id", None):
+                    validated_args.setdefault("_identity_id", str(loop._identity_id))
+                if getattr(loop, "_identity_name", None):
+                    validated_args.setdefault("_identity_name", str(loop._identity_name))
+                # 编制员工上下文（dispatcher 写入 loop 属性）→ steward 裁决，不弹主人
+                if getattr(loop, "_workforce", False) or str(
+                    getattr(loop, "_agent_key", "") or ""
+                ).startswith("wf:"):
+                    validated_args["_workforce"] = True
+                    validated_args["_agent_key"] = getattr(loop, "_agent_key", "wf:")
+                    if getattr(loop, "_identity_id", None):
+                        validated_args["_identity_id"] = str(loop._identity_id)
+                    if getattr(loop, "_identity_name", None):
+                        validated_args["_identity_name"] = str(loop._identity_name)
+                    caps = getattr(loop, "_identity_capabilities", None)
+                    if caps is not None:
+                        validated_args["_identity_capabilities"] = list(caps)
+                    # 员工无前端确认通道：禁止误走 interactive 弹窗
+                    validated_args["_ws_manager"] = None
                 _tool_timeout = float(
                     getattr(settings, "agent_tool_timeout_seconds", 180) or 0
                 )
@@ -396,12 +428,13 @@ async def run_tool_round(
             except Exception:
                 pass
 
-            # manage_goal 结果推送到前端 Goal 面板
+            # manage_goal 结果推送到前端 Goal 面板（落库已在 skill 内完成）
             if tc.name == "manage_goal":
                 await loop._push_goal_update(session_id)
                 try:
                     from backend.agent.goal_state import save_goal_to_db as _save_goal
 
+                    # 双保险：skill 已写穿；此处幂等再刷一次防旁路调用
                     await _save_goal(session_id)
                 except Exception as e:
                     logger.debug("save_goal_to_db skipped: %s", e)
@@ -681,7 +714,9 @@ async def run_tool_round(
                 ),
             }
         )
-    # 工具轮后：L1 周期性截断 + 超阈值 pipeline + checkpoint
+    # 工具轮后：仅 L1/L3 micro（Claude Code：mid-loop 不跑 full auto-compact/L5）
+    # 全量 L5 摘要只在用户回合边界 / 413 reactiveCompact 触发，避免同轮长任务被
+    # 「只答最新一句」类指令打断成一拨一动。
     try:
         from backend.agent.context_engine import get_context_engine
         from backend.agent.context_compress import compress_history_if_needed
@@ -691,20 +726,24 @@ async def run_tool_round(
         if do_l1 and hasattr(eng, "_l1_budget"):
             state.messages, _n = eng._l1_budget(messages)  # type: ignore[attr-defined]
             messages = state.messages
-        if eng.should_compress_preflight(messages) or eng.should_compress():
+        # 用当前 messages 估 token，避免全局 last_prompt_tokens 跨 session 污染
+        need_micro = eng.should_compress_preflight(messages)
+        if need_micro:
             state.messages, mid_meta = await compress_history_if_needed(
                 messages,
                 session_id=session_id,
                 threshold=float(
                     getattr(settings, "context_threshold_percent", 0.72) or 0.72
                 ),
+                allow_l5=False,
+                micro_only=True,
             )
             messages = state.messages
             if mid_meta.get("compressed"):
                 await loop._push_status(
                     session_id,
                     "optimizing",
-                    f"工具轮后上下文压缩 layers={mid_meta.get('layers')}",
+                    f"工具轮后 micro 压缩 layers={mid_meta.get('layers')}",
                 )
     except Exception as e:
         logger.debug("mid-loop context pipeline skipped: %s", e)

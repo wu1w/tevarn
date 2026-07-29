@@ -112,6 +112,24 @@ interface UseWebSocketOptions {
   onError?: (error: string) => void;
   onConnect?: () => void;
   onDisconnect?: () => void;
+  onSyncResponse?: (payload: {
+    messages: Array<{ id: string; role: string; content: string; created_at?: string | null }>;
+    agent_running?: boolean;
+    state?: string;
+    /** 服务端 in-flight 快照：跳页/断线后恢复正文与 tools */
+    partial_content?: string;
+    stream_status?: string | null;
+    stream_message_id?: string | null;
+    live_tools?: Array<{
+      id?: string;
+      name?: string;
+      arguments?: Record<string, unknown>;
+      status?: string;
+      result?: string | null;
+    }>;
+  }) => void;
+  /** 连接成功后自动 sync 时使用的 last message id */
+  getLastMessageId?: () => string | undefined;
 }
 
 export function useWebSocket(options: UseWebSocketOptions) {
@@ -179,6 +197,10 @@ export function useWebSocket(options: UseWebSocketOptions) {
       return;
     }
 
+    // 手动 connect(override) 时重置计数（用户点「重连」）
+    if (overrideSessionId) {
+      reconnectAttempts.current = 0;
+    }
     if (reconnectAttempts.current >= MAX_RECONNECT_ATTEMPTS) {
       optionsRef.current.onError?.('WebSocket reconnect limit reached — refresh or click reconnect');
       return;
@@ -246,13 +268,21 @@ export function useWebSocket(options: UseWebSocketOptions) {
       try { useWsStore.getState().setConnected(true); } catch (e) { console.error(e); }
       optionsRef.current.onConnect?.();
 
-      const t = tokenRef.current;
+      const tok = tokenRef.current;
       if (t) {
         try {
-          ws.send(JSON.stringify({ type: 'auth', token: t }));
+          ws.send(JSON.stringify({ type: 'auth', token: tok }));
         } catch {
           /* ignore */
         }
+      }
+
+      // 回页/重连：主动 sync
+      try {
+        const lastId = optionsRef.current.getLastMessageId?.();
+        ws.send(JSON.stringify({ type: 'sync', last_message_id: lastId || undefined }));
+      } catch {
+        /* ignore */
       }
 
       clearPing();
@@ -333,17 +363,46 @@ export function useWebSocket(options: UseWebSocketOptions) {
         } else if (msg.type === 'settings_changed') {
           const keys = (msg as unknown as { keys?: string[] }).keys || [];
           optionsRef.current.onSettingsChanged?.(keys);
+        } else if (msg.type === 'sync_response') {
+          const m = msg as unknown as {
+            messages?: Array<{ id: string; role: string; content: string; created_at?: string | null }>;
+            agent_running?: boolean;
+            state?: string;
+            partial_content?: string;
+            stream_status?: string | null;
+            stream_message_id?: string | null;
+            live_tools?: Array<{
+              id?: string;
+              name?: string;
+              arguments?: Record<string, unknown>;
+              status?: string;
+              result?: string | null;
+            }>;
+          };
+          optionsRef.current.onSyncResponse?.({
+            messages: m.messages || [],
+            agent_running: Boolean(m.agent_running),
+            state: m.state,
+            partial_content: m.partial_content,
+            stream_status: m.stream_status,
+            stream_message_id: m.stream_message_id,
+            live_tools: m.live_tools,
+          });
         } else if (msg.type === 'error') {
           optionsRef.current.onError?.(
             (msg as unknown as { detail: string }).detail || 'Unknown error'
           );
         } else if (msg.type === 'confirm_request') {
-          // 危险操作确认请求 → 写入 store，触发前端弹窗
+          // 危险操作确认请求 → 写入 store，触发前端弹窗（支持 once/session/agent）
           const m = msg as unknown as {
             confirm_id: string;
             title: string;
             command: string;
             reason?: string;
+            tool?: string;
+            agent_id?: string;
+            agent_name?: string;
+            timeout?: number;
           };
           import('@/stores/confirmStore').then((mod) => {
             mod.useConfirmStore.getState().showConfirm({
@@ -351,6 +410,10 @@ export function useWebSocket(options: UseWebSocketOptions) {
               title: m.title || t('useWebSocket._e2'),
               command: m.command || '',
               reason: m.reason || '',
+              tool: m.tool,
+              agentId: m.agent_id || undefined,
+              agentName: m.agent_name || undefined,
+              timeout: m.timeout,
             });
           });
         }
@@ -361,12 +424,17 @@ export function useWebSocket(options: UseWebSocketOptions) {
 
     wsRef.current = ws;
 
-    // 注册危险操作确认的发送函数：弹窗组件经 store 调用
+    // 注册危险操作确认的发送函数：弹窗组件经 store 调用（含 scope）
     import('@/stores/confirmStore').then((mod) => {
-      mod.useConfirmStore.getState().registerSender((confirmId, approved) => {
+      mod.useConfirmStore.getState().registerSender((confirmId, approved, scope) => {
         if (wsRef.current?.readyState === WebSocket.OPEN) {
           wsRef.current.send(
-            JSON.stringify({ type: 'confirm_response', confirm_id: confirmId, approved })
+            JSON.stringify({
+              type: 'confirm_response',
+              confirm_id: confirmId,
+              approved,
+              scope: approved ? scope : 'deny',
+            }),
           );
         }
       });

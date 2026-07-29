@@ -1,48 +1,49 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { usePathname } from 'next/navigation';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { MOTION, pageVariants } from '@/lib/motion';
 
-/** 主区路由切换：列表页淡入；chat 主页无位移，保证 composer 贴底 */
+/**
+ * 主区路由切换动效（统一）。
+ *
+ * 注意：
+ * - 不用 mode="wait"（先卸后装会「整页闪白」）
+ * - 不用 y 位移（transform 会牵动 sticky/overflow，chat 底部会裂）
+ * - chat 等 fill 页直接渲染，零动画
+ * - 仅 pathname 作 key；query（如 ?id=）变化不重播，避免 Agent 抽屉打开时闪屏
+ */
 export function PageTransition({
   children,
   fill = false,
 }: {
   children: React.ReactNode;
-  /** chat 主页填满高度，避免底部空隙 */
+  /** chat 主页填满高度，跳过动效 */
   fill?: boolean;
 }) {
   const pathname = usePathname() || '/';
-  const [reduce, setReduce] = useState(false);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-    setReduce(mq.matches);
-    const fn = () => setReduce(mq.matches);
-    mq.addEventListener?.('change', fn);
-    return () => mq.removeEventListener?.('change', fn);
-  }, []);
+  const reduce = useReducedMotion();
 
   const box = fill
     ? 'flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden'
     : 'flex min-h-0 w-full flex-1 flex-col';
 
-  // chat：不用 framer 位移，避免 transform 造成底部空隙
   if (fill || reduce) {
     return <div className={box}>{children}</div>;
   }
 
   return (
-    <AnimatePresence mode="wait" initial={false}>
+    <AnimatePresence mode="sync" initial={false}>
       <motion.div
         key={pathname}
         className={box}
-        initial={{ opacity: 0, y: 6 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: -4 }}
-        transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+        variants={pageVariants}
+        initial="initial"
+        animate="animate"
+        exit="exit"
+        transition={MOTION.page}
+        style={{ willChange: 'opacity' }}
       >
         {children}
       </motion.div>

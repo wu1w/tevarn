@@ -91,6 +91,45 @@ def _is_loopback_host(host: str | None) -> bool:
         return False
 
 
+def resolve_default_admin_password() -> str:
+    """默认 admin 账号的初始密码 —— 唯一事实源。
+
+    此前 auth.auto_login、websocket、dependencies 各写了一份，其中两份用
+    `or "admin"` 兜底，把 config.get_or_create_initial_admin_password() 那套
+    随机密码机制架空了：哪条路径先创建用户就用哪个密码，而实际部署里
+    WS / auto-login 往往先触发，于是 admin@takton.dev 的密码就是 "admin"。
+    """
+    import os
+
+    return (
+        (settings.default_admin_password or "").strip()
+        or os.environ.get("TAKTON_DEFAULT_ADMIN_PASSWORD", "").strip()
+        or get_or_create_initial_admin_password()
+    )
+
+
+def assert_local_single_user(request: Request) -> None:
+    """single_user_mode 的免登录放行只对本机开放。
+
+    绑 0.0.0.0（docker-compose 部署很常见）时，非本机请求必须走真实登录。
+    只信 socket 对端，不信可伪造的 X-Forwarded-For。
+    """
+    if not settings.single_user_mode:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Single user mode is disabled",
+        )
+    client_host = request.client.host if request.client else None
+    if not _is_loopback_host(client_host):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "single_user_mode allows loopback access only; "
+                "set TAKTON_SINGLE_USER_MODE=false for non-local deployments"
+            ),
+        )
+
+
 async def get_current_user(
     request: Request,
     authorization: str | None = Header(default=None, alias="Authorization"),
@@ -148,13 +187,8 @@ async def get_current_user(
         # 数据库尚未初始化用户，创建默认用户（密码可由 TAKTON_DEFAULT_ADMIN_PASSWORD 注入）
         from backend.core.security import get_password_hash
         from sqlalchemy.exc import IntegrityError
-        import os
 
-        default_pw = (
-            (settings.default_admin_password or "").strip()
-            or os.environ.get("TAKTON_DEFAULT_ADMIN_PASSWORD", "").strip()
-            or get_or_create_initial_admin_password()
-        )
+        default_pw = resolve_default_admin_password()
         try:
             user = await user_repo.create(
                 {

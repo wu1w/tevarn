@@ -1,204 +1,158 @@
-"""Workspace 绑定：项目根目录 + 树浏览 + 命令执行（专业模式终端）。"""
+"""Workspace 绑定服务：用户级项目根、目录树、在根下执行命令。"""
+
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
 import os
-import re
-import uuid
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# 进程内缓存：user_id -> workspace root
-_USER_ROOTS: dict[str, str] = {}
+# user_id -> absolute root path
+_ROOTS: dict[str, Path] = {}
 
-# 持久化文件路径（SQLite 之外的最轻量方案）
-_PERSIST_PATH = os.environ.get(
-    "TAKTON_WORKSPACE_STATE",
-    os.path.join(os.path.dirname(__file__), "..", "workspace_state.json"),
+_STATE_FILE = Path(
+    os.environ.get("TAKTON_WORKSPACE_STATE", "")
+    or str(Path.home() / ".takton" / "workspace_roots.json")
 )
 
 
-def _load_persisted() -> dict[str, str]:
-    """从磁盘加载持久化的 workspace 绑定"""
+def _load_state() -> None:
+    global _ROOTS
+    if _ROOTS:
+        return
     try:
-        p = Path(_PERSIST_PATH).expanduser().resolve()
-        if p.is_file():
-            with open(p, "r", encoding="utf-8") as f:
-                data = json.load(f)
+        if _STATE_FILE.is_file():
+            data = json.loads(_STATE_FILE.read_text(encoding="utf-8"))
             if isinstance(data, dict):
-                return data
+                for k, v in data.items():
+                    p = Path(str(v)).expanduser().resolve()
+                    if p.is_dir():
+                        _ROOTS[str(k)] = p
     except Exception as e:
-        logger.debug(f"Failed to load workspace state: {e}")
-    return {}
+        logger.debug("workspace state load: %s", e)
 
 
-def _persist(roots: dict[str, str]) -> None:
-    """将 workspace 绑定持久化到磁盘"""
+def _save_state() -> None:
     try:
-        p = Path(_PERSIST_PATH).expanduser().resolve()
-        p.parent.mkdir(parents=True, exist_ok=True)
-        with open(p, "w", encoding="utf-8") as f:
-            json.dump(roots, f, ensure_ascii=False, indent=2)
+        _STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        payload = {k: str(v) for k, v in _ROOTS.items()}
+        _STATE_FILE.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
     except Exception as e:
-        logger.warning(f"Failed to persist workspace state: {e}")
+        logger.debug("workspace state save: %s", e)
 
 
-# 启动时加载持久化数据
-_USER_ROOTS.update(_load_persisted())
-
-# 危险命令粗检（仍允许用户执行，但标记）
-_DANGEROUS = re.compile(
-    r"\b(rm\s+-rf\s+/|format\s+|mkfs\.|del\s+/f\s+/s\s+|Remove-Item\s+-Recurse\s+-Force\s+[A-Z]:\\)\b",
-    re.I,
-)
-
-
-def get_root(user_id: str | None) -> Path | None:
-    if not user_id:
-        return None
-    raw = _USER_ROOTS.get(str(user_id))
-    if not raw:
-        return None
-    p = Path(raw).expanduser()
-    try:
-        p = p.resolve()
-    except OSError:
-        return None
-    return p if p.is_dir() else None
+def get_root(user_id: str) -> Path | None:
+    _load_state()
+    return _ROOTS.get(str(user_id))
 
 
 def set_root(user_id: str, root: str) -> Path:
+    _load_state()
     p = Path(root).expanduser().resolve()
+    if not p.exists():
+        raise FileNotFoundError(f"path not found: {p}")
     if not p.is_dir():
-        raise FileNotFoundError(f"Not a directory: {root}")
-    _USER_ROOTS[str(user_id)] = str(p)
-    _persist(_USER_ROOTS)
+        raise FileNotFoundError(f"not a directory: {p}")
+    _ROOTS[str(user_id)] = p
+    _save_state()
     return p
 
 
 def clear_root(user_id: str) -> None:
-    _USER_ROOTS.pop(str(user_id), None)
-    _persist(_USER_ROOTS)
+    _load_state()
+    _ROOTS.pop(str(user_id), None)
+    _save_state()
 
 
-def resolve_under_root(root: Path, rel: str = "") -> Path:
+def resolve_under_root(root: Path, rel: str) -> Path:
+    """解析相对路径，禁止逃逸出 root。"""
+    root = root.resolve()
     rel = (rel or "").replace("\\", "/").lstrip("/")
-    target = (root / rel).resolve() if rel else root
+    if not rel or rel in (".", "./"):
+        return root
+    target = (root / rel).resolve()
     try:
         target.relative_to(root)
     except ValueError as e:
-        raise PermissionError("Path escapes workspace root") from e
+        raise PermissionError(f"path escapes workspace root: {rel}") from e
     return target
 
 
-def build_tree(dir_path: Path, root: Path, max_depth: int = 1, depth: int = 0) -> list[dict[str, Any]]:
-    items: list[dict[str, Any]] = []
-    if depth > max_depth:
-        return items
+def build_tree(
+    target: Path,
+    root: Path,
+    *,
+    max_depth: int = 2,
+    _depth: int = 0,
+) -> list[dict[str, Any]]:
+    """浅目录树，供 FE 文件浏览器。"""
+    if _depth >= max_depth:
+        return []
+    out: list[dict[str, Any]] = []
     try:
-        entries = sorted(dir_path.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower()))
-    except PermissionError:
-        return items
-
-    skip = {".git", "node_modules", "__pycache__", "venv", ".venv", "dist", ".next", "win-unpacked"}
-    for entry in entries:
-        if entry.name.startswith(".") and entry.name not in {".env.example"}:
-            if entry.name not in {".gitignore", ".env.example"}:
-                # 仍显示常见配置；隐藏 .git 内容等
-                if entry.name in {".git"} or entry.name.startswith(".git"):
+        entries = sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+    except OSError:
+        return []
+    skip = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", ".next"}
+    for ent in entries[:200]:
+        if ent.name.startswith(".") and ent.name not in (".env.example",):
+            if ent.name in skip or ent.name.startswith("."):
+                if ent.name in skip:
                     continue
-        if entry.name in skip:
+                # hide most dotfiles
+                if ent.name not in (".env.example",):
+                    continue
+        if ent.name in skip:
             continue
-        is_dir = entry.is_dir()
         try:
-            rel = str(entry.relative_to(root)).replace("\\", "/")
+            rel = str(ent.relative_to(root)).replace("\\", "/")
         except ValueError:
             continue
-        item: dict[str, Any] = {
-            "name": entry.name,
+        node: dict[str, Any] = {
+            "name": ent.name,
             "path": rel,
-            "type": "directory" if is_dir else "file",
+            "type": "dir" if ent.is_dir() else "file",
         }
-        if is_dir and depth < max_depth:
-            item["children"] = build_tree(entry, root, max_depth, depth + 1)
-        if not is_dir:
+        if ent.is_file():
             try:
-                item["size"] = entry.stat().st_size
+                node["size"] = ent.stat().st_size
             except OSError:
-                item["size"] = 0
-        items.append(item)
-    return items
+                node["size"] = None
+        if ent.is_dir() and _depth + 1 < max_depth:
+            node["children"] = build_tree(ent, root, max_depth=max_depth, _depth=_depth + 1)
+        out.append(node)
+    return out
 
 
 async def exec_command(
-    root: Path,
-    command: str,
-    timeout: float = 120.0,
+    root: Path, command: str, *, timeout: float = 120.0
 ) -> dict[str, Any]:
+    """在 workspace root 下执行命令（优先 list/exec，避免 shell 注入）。"""
     command = (command or "").strip()
     if not command:
-        return {"ok": False, "exit_code": -1, "stdout": "", "stderr": "empty command"}
-
-    dangerous = bool(_DANGEROUS.search(command))
-    env = os.environ.copy()
-    env["TAKTON_WORKSPACE"] = str(root)
-
-    if os.name == "nt":
-        # Windows：用 cmd /c，cwd 为项目根
-        proc = await asyncio.create_subprocess_shell(
-            command,
-            cwd=str(root),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=env,
-            shell=True,
-        )
-    else:
-        proc = await asyncio.create_subprocess_shell(
-            command,
-            cwd=str(root),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=env,
-            executable="/bin/bash",
-        )
-
+        return {"ok": False, "stdout": "", "stderr": "empty command", "code": -1}
     try:
-        stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except asyncio.TimeoutError:
-        try:
-            proc.kill()
-        except ProcessLookupError:
-            pass
+        from backend.core.safe_subprocess import run_capture
+
+        r = await run_capture(
+            command,
+            cwd=str(root),
+            timeout=max(1.0, float(timeout)),
+            max_output=200_000,
+        )
         return {
-            "ok": False,
-            "exit_code": -1,
-            "stdout": "",
-            "stderr": f"timeout after {timeout}s",
-            "dangerous": dangerous,
+            "ok": bool(r.get("ok")),
+            "stdout": (r.get("stdout") or "")[-200_000:],
+            "stderr": (r.get("stderr") or "")[-50_000:],
+            "code": int(r.get("code") if r.get("code") is not None else -1),
             "cwd": str(root),
+            "mode": r.get("mode"),
         }
-
-    stdout = (stdout_b or b"").decode("utf-8", errors="replace")
-    stderr = (stderr_b or b"").decode("utf-8", errors="replace")
-    # 截断过大输出
-    max_len = 80_000
-    if len(stdout) > max_len:
-        stdout = stdout[:max_len] + "\n…[truncated]"
-    if len(stderr) > max_len:
-        stderr = stderr[:max_len] + "\n…[truncated]"
-
-    code = proc.returncode if proc.returncode is not None else -1
-    return {
-        "ok": code == 0,
-        "exit_code": code,
-        "stdout": stdout,
-        "stderr": stderr,
-        "dangerous": dangerous,
-        "cwd": str(root),
-        "command_id": str(uuid.uuid4()),
-    }
+    except Exception as e:
+        return {"ok": False, "stdout": "", "stderr": str(e), "code": -1}

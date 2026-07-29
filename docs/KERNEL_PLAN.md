@@ -1,6 +1,6 @@
 # Agent Kernel 规划与路线
 
-> feature/agent-kernel 分支 · v0.4.0-alpha
+> alpha 私有线 · v0.4.6-alpha
 > 本文档随 kernel 演进持续更新。
 
 ## 现状（Alpha）

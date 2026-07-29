@@ -150,13 +150,20 @@ class WindowsAdapter:
             )
     
     async def open_app(self, app_name: str, **kwargs) -> DesktopOperationResult:
-        """打开应用"""
+        """打开应用（fallback 禁用 shell 字符串拼接，防注入）"""
         try:
             if self._use_fallback:
-                # 使用 subprocess 打开
-                import subprocess
-                subprocess.Popen(f"start {app_name}", shell=True)
-                result = {"status": "launched", "mode": "fallback"}
+                from backend.core.safe_subprocess import launch_app_windows, validate_app_name
+
+                bad = validate_app_name(app_name or "")
+                if bad:
+                    return DesktopOperationResult(
+                        success=False,
+                        message=f"非法应用名: {bad}",
+                        error=bad,
+                    )
+                launch_app_windows(str(app_name).strip())
+                result = {"status": "launched", "mode": "fallback_safe"}
             else:
                 result = await self._mcp_client.call_tool("open_app", {"name": app_name})
                 result = self._parse_mcp_result(result)

@@ -292,6 +292,28 @@ class OpenAICompatibleService(LLMService):
                 )
             pending_tool_ids.clear()
 
+        # llama.cpp / 多数 chat template：system 只能出现在开头且通常只能一条。
+        # Takton 会注入多段 system（主 prompt + 工具说明 + 运行时注记）→ 400
+        # 「System message must be at the beginning」。合并为单条置顶。
+        system_parts: list[str] = []
+        non_system: list[dict[str, Any]] = []
+        for m in out:
+            if m.get("role") == "system":
+                c = m.get("content")
+                if c is None:
+                    continue
+                if isinstance(c, str):
+                    if c.strip():
+                        system_parts.append(c)
+                else:
+                    system_parts.append(str(c))
+            else:
+                non_system.append(m)
+        if system_parts:
+            out = [{"role": "system", "content": "\n\n".join(system_parts)}, *non_system]
+        else:
+            out = non_system
+
         return out
 
     async def chat(
@@ -374,7 +396,6 @@ class OpenAICompatibleService(LLMService):
                     )
             except aiohttp.ClientResponseError as e:
                 logger.error(f"OpenAI-compatible chat error: status={e.status}, message='{e.message}', url='{e.request_info.url}'")
-
                 body = ""
                 try:
                     body = await e.response.text()

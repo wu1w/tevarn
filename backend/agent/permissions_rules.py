@@ -163,6 +163,20 @@ def rules_for_profile(profile: str) -> list[PermissionRule]:
     return _default_cautious()
 
 
+# deny > ask > allow：越界、多重规则叠加时一律取更严的那个
+_STRICTNESS: dict[str, int] = {"allow": 0, "ask": 1, "deny": 2}
+
+
+def _strictest(*decisions: "Decision | None") -> "Decision":
+    best: Decision = "allow"
+    for d in decisions:
+        if d is None:
+            continue
+        if _STRICTNESS.get(d, 0) > _STRICTNESS.get(best, 0):
+            best = d
+    return best
+
+
 def _match_name(name: str, pattern: str) -> bool:
     if pattern == "*":
         return True
@@ -192,10 +206,33 @@ class PermissionGate:
             # keep profile but overlay plan deny semantics via check()
             pass
 
-    def add_session_allow(self, tool: str) -> None:
-        self.session_allows.add(tool)
-        key = TOOL_TO_KEY.get(tool, tool)
-        self.session_allows.add(key)
+    def _allow_signature(self, tool: str, arguments: dict[str, Any] | None) -> str:
+        """「本会话始终允许」的授权粒度。
+
+        此前这里同时把 tool 名和它的**权限 key** 加进白名单。而 TOOL_TO_KEY 把
+        command / python / process / remote_exec / http / browser 全映射到 "bash"
+        —— 用户对一条 `rm -rf build/` 点「始终允许」，实际放开的是整个会话的
+        远程执行和任意 HTTP。授权粒度必须贴近用户当时看到的那个操作。
+
+        对 shell 类工具按「命令首个 token」区分（批准 npm 不等于批准 curl）；
+        其余工具按工具名。
+        """
+        args = arguments or {}
+        if TOOL_TO_KEY.get(tool) == PERM_BASH:
+            raw = str(args.get("command") or args.get("cmd") or "").strip()
+            head = raw.split()[0] if raw else ""
+            # 去掉路径前缀，/usr/bin/rm 与 rm 视作同一条
+            head = head.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+            if head:
+                return f"{tool}:{head}"
+        return tool
+
+    def add_session_allow(self, tool: str, arguments: dict[str, Any] | None = None) -> None:
+        """记录一次「本会话始终允许」。只放行等价的操作，不放行整个权限类别。"""
+        self.session_allows.add(self._allow_signature(tool, arguments))
+
+    def _has_session_allow(self, tool: str, arguments: dict[str, Any] | None) -> bool:
+        return self._allow_signature(tool, arguments) in self.session_allows
 
     def _extract_path(self, tool: str, arguments: dict[str, Any] | None) -> str | None:
         args = arguments or {}
@@ -239,48 +276,43 @@ class PermissionGate:
             if tool in ("run_shell", "command", "process", "python", "shell_session") or key == PERM_BASH:
                 return "deny"
 
-        if tool in self.session_allows or key in self.session_allows or self.turn_allow_all:
+        if self._has_session_allow(tool, args) or self.turn_allow_all:
             return "allow"
 
-        matched: Decision | None = None
+        # 工具/权限键的 last-match 结果（不受 external 影响）
+        tool_decision: Decision | None = None
         for rule in self.rules:
-            applies = False
             if rule.key == PERM_EXTERNAL:
-                # only when path escapes project root
-                applies = external and (
-                    rule.pattern == "*" or _match_path(path, rule.pattern)
-                )
-            elif rule.key == "*":
+                continue
+            applies = False
+            if rule.key == "*":
                 applies = True
             elif rule.key in (tool, key) or _match_name(tool, rule.key) or _match_name(key, rule.key):
-                # inside-repo path patterns (*.env etc.)
-                if external:
-                    # outside repo: do not let in-repo read/edit allows shadow external_directory
-                    # (OpenCode treats external_directory as its own gate)
-                    applies = False
-                elif rule.pattern == "*" or _match_path(path, rule.pattern):
+                if rule.pattern == "*" or _match_path(path, rule.pattern):
                     applies = True
             if applies:
-                matched = rule.decision
+                tool_decision = rule.decision
 
-        # if external and never hit an external rule, default ask (OpenCode-ish safe)
-        if external and matched is None:
-            return "ask"
-        if external:
-            # re-walk only * + external so last external/default wins cleanly
-            matched = None
-            for rule in self.rules:
-                if rule.key == "*":
-                    matched = rule.decision
-                elif rule.key == PERM_EXTERNAL and (
-                    rule.pattern == "*" or _match_path(path, rule.pattern)
-                ):
-                    matched = rule.decision
-            base_ext = matched or "ask"
-            return self._maybe_auto(base_ext, tool, args)
+        if not external:
+            return self._maybe_auto(tool_decision or "allow", tool, args)
 
-        base = matched or "allow"
-        return self._maybe_auto(base, tool, args)
+        # 路径逃出项目根：external_directory 是**额外**的一道门，不是替代品。
+        #
+        # 此前的实现在 external 时丢掉整个 tool_decision，只按 * + external 重走一遍。
+        # 后果：readonly（profile=plan，规则里 edit=deny）下，往项目**内**写正确地
+        # 返回 deny，往项目**外**写反而降级成 ask —— 用户点一下「允许」就写出去了。
+        # 越界只该让判定更严，绝不该更松。取两者中更严格的那个。
+        external_decision: Decision | None = None
+        for rule in self.rules:
+            if rule.key == "*":
+                external_decision = rule.decision
+            elif rule.key == PERM_EXTERNAL and (
+                rule.pattern == "*" or _match_path(path, rule.pattern)
+            ):
+                external_decision = rule.decision
+
+        combined = _strictest(tool_decision, external_decision or "ask")
+        return self._maybe_auto(combined, tool, args)
 
     def _maybe_auto(self, base: Decision, tool: str, args: dict[str, Any]) -> Decision:
         p = (self.profile or "").lower().replace("-", "").replace("_", "")
@@ -370,7 +402,8 @@ class PermissionBroker:
 
         request_id = f"perm_{uuid.uuid4().hex[:12]}"
         summary = self.gate.summarize(tool, args)
-        loop = asyncio.get_event_loop()
+        # get_event_loop() 在 3.12+ 无运行循环时会告警/报错；这里必然在协程中
+        loop = asyncio.get_running_loop()
         fut: asyncio.Future[Reply] = loop.create_future()
         self.pending[request_id] = PendingPermission(
             request_id=request_id,
@@ -401,7 +434,9 @@ class PermissionBroker:
             self.pending.pop(request_id, None)
 
         if reply == "always":
-            self.gate.add_session_allow(tool)
+            # 传入 args：授权粒度贴近用户当时看到的那条操作，
+            # 而不是放开整个 bash 权限类别
+            self.gate.add_session_allow(tool, args)
             reply_eff: Reply = "allow"
         else:
             reply_eff = reply

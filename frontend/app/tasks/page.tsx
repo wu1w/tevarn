@@ -6,6 +6,7 @@ import { useTaskStore } from '@/stores/taskStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { getTasks } from '@/lib/api';
 import { useT } from '@/stores/localeStore';
+import { AdvancedShell } from '@/components/layout/AdvancedShell';
 
 
 export default function TasksPage() {
@@ -45,6 +46,12 @@ export default function TasksPage() {
   }
 
   return (
+    <AdvancedShell
+      titleZh="会话任务板是高级视图"
+      titleEn="Session task board is advanced"
+      hintZh="编制工单请用员工页收件箱。本页为会话内 Task 列表。"
+      hintEn="Crew jobs live on Employees inbox. This is session Task list."
+    >
     <div className="p-6">
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-xl font-bold text-foreground">{t('chat.taskBoard')}</h1>
@@ -54,7 +61,7 @@ export default function TasksPage() {
       </div>
 
       {/* 统计卡片 */}
-      <div className="mb-6 grid grid-cols-4 gap-4">
+      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-4">
         {loading ? (
           <>
             {[1, 2, 3, 4].map((i) => (
@@ -89,7 +96,7 @@ export default function TasksPage() {
       </div>
 
       {loading ? (
-        <div className="grid grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <div>
             <h2 className="mb-4 text-base font-semibold text-foreground">{t('tasks._e7')}</h2>
             <div className="space-y-3">
@@ -105,7 +112,7 @@ export default function TasksPage() {
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           {/* 活跃任务 */}
           <div>
             <h2 className="mb-4 text-base font-semibold text-foreground">{t('tasks._e7')}</h2>
@@ -138,5 +145,6 @@ export default function TasksPage() {
         </div>
       )}
     </div>
+    </AdvancedShell>
   );
 }

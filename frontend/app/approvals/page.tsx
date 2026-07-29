@@ -23,6 +23,7 @@ import {
 } from '@/lib/api';
 import api from '@/lib/api';
 import { useZh } from '@/hooks/useZh';
+import { ProductConceptsBar } from '@/components/layout/ProductConceptsBar';
 
 /* ── 分类推断 ── */
 const DANGER_CAPS = ['command', 'shell', 'file_rw', 'rm', 'delete', 'write'];
@@ -158,13 +159,23 @@ export default function ApprovalsPage() {
             : target === 'process'
               ? (zh ? '（已并入当前进程）' : ' (applied to live process)')
               : '';
-        addToast(zh ? `已通过：${label}${where}` : `Approved: ${label}${where}`, 'success');
+        addToast(
+          zh
+            ? `已通过：${label}${where}。若工具仍被拦，请让员工重试该步或重新派工单。`
+            : `Approved: ${label}${where}. Retry the tool step or re-dispatch if still blocked.`,
+          'success',
+        );
       } else {
         addToast(zh ? `已拒绝：${label}` : `Denied: ${label}`, 'success');
       }
       refresh();
+      qc.invalidateQueries({ queryKey: ['kernel-processes'] });
+      qc.invalidateQueries({ queryKey: ['workforce-report'] });
     } catch (err) {
       // axios 拦截器已 toast 过 formatApiError；避免重复刷屏只记 busy
+      const e = err as { response?: { data?: { detail?: string } }; message?: string };
+      const d = e?.response?.data?.detail;
+      if (typeof d === 'string' && d) addToast(d, 'error');
     } finally {
       setBusyId(null);
     }
@@ -242,20 +253,34 @@ export default function ApprovalsPage() {
   const pendingCount = tab === 'escalation' ? items.length : evoPending.length;
 
   return (
-    <div style={{ maxWidth: 900, margin: '0 auto', padding: '26px 28px 40px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 18 }}>
+    <div style={{ width: '100%', maxWidth: 'none', margin: 0, padding: 'clamp(16px, 2.2vw, 28px) clamp(12px, 2vw, 32px) clamp(24px, 3vw, 40px)' }}>
+      <ProductConceptsBar compact showProtocolLink={false} />
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 18, gap: 12, flexWrap: 'wrap' }}>
         <div>
-          <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--foreground)' }}>
-            {zh ? '审批' : 'Approvals'}{' '}
-            <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--foreground-dim)' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.05em', color: 'var(--brand-purple)', textTransform: 'uppercase' }}>
+            {zh ? 'AI 公司 · 老板桌' : 'AI Company · Boss desk'}
+          </div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--foreground)', marginTop: 4 }}>
+            {zh ? '等你拍板' : 'Your call'}{' '}
+            <span style={{ fontSize: 12, fontWeight: 500, color: totalPending ? '#c9a05e' : 'var(--foreground-dim)' }}>
               {totalPending} {zh ? '项待决' : 'pending'}
             </span>
           </div>
-          <div style={{ fontSize: 12, color: 'var(--foreground-dim)', marginTop: 3 }}>
-            {zh ? '你的主要动作不是 Prompt，是审批' : 'Your main action is approval, not prompts'}
+          <div style={{ fontSize: 12, color: 'var(--foreground-dim)', marginTop: 3, lineHeight: 1.5, maxWidth: 560 }}>
+            {zh
+              ? '这里只处理「扩权」与「进化」——日常干活按员工权限自动裁决，不会在此刷屏。批完回工作台看班子产出。'
+              : 'Only capability grants & evolution. Routine tools follow employee caps — no spam. Then back to Workspace.'}
             {items.length > 0 && tab === 'escalation'
               ? ` · ${zh ? '最早已等待' : 'oldest waiting'} ${waitStr(Date.now() / 1000 - oldest, zh)}`
               : ''}
+          </div>
+          <div style={{ display: 'flex', gap: 12, marginTop: 8, fontSize: 11.5 }}>
+            <a href="/" style={{ color: 'var(--brand-purple)', fontWeight: 600, textDecoration: 'none' }}>
+              {zh ? '← 工作台晨报' : '← Workspace'}
+            </a>
+            <a href="/agents" style={{ color: 'var(--foreground-dim)', fontWeight: 600, textDecoration: 'none' }}>
+              {zh ? '管理员工' : 'Manage crew'}
+            </a>
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -266,14 +291,38 @@ export default function ApprovalsPage() {
         </div>
       </div>
 
+      {totalPending === 0 ? (
+        <div style={{
+          marginBottom: 14, padding: '10px 14px', borderRadius: 10, fontSize: 12,
+          border: '1px solid color-mix(in srgb, var(--status-online) 30%, var(--border-subtle))',
+          background: 'color-mix(in srgb, var(--status-online) 8%, var(--card-bg))',
+          color: 'var(--foreground-muted)',
+        }}>
+          {zh
+            ? '桌面已清空。组织在按编制权限自动干活；有提权或进化时会出现在这里。'
+            : 'Desk is clear. Crew works under roster policy; escalations & evolution land here.'}
+        </div>
+      ) : (
+        <div style={{
+          marginBottom: 14, padding: '10px 14px', borderRadius: 10, fontSize: 12, fontWeight: 600,
+          border: '1px solid color-mix(in srgb, #c9a05e 35%, var(--border-subtle))',
+          background: 'color-mix(in srgb, #c9a05e 10%, var(--card-bg))',
+          color: 'var(--foreground)',
+        }}>
+          {zh
+            ? `有 ${totalPending} 项卡在老板桌——扩权 ${items.length} · 进化 ${evoPending.length}。处理完班子才能继续部分高危能力。`
+            : `${totalPending} items on your desk — ${items.length} grants · ${evoPending.length} evolution. Some capabilities wait on you.`}
+        </div>
+      )}
+
       {/* Tabs — demo chip 风格 */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
         <Chip active={tab === 'escalation'} onClick={() => setTab('escalation')}>
-          {zh ? '提权请示' : 'Escalations'}
+          {zh ? '员工扩权' : 'Capability grants'}
           {items.length > 0 ? ` · ${items.length}` : ''}
         </Chip>
         <Chip active={tab === 'evolution'} onClick={() => setTab('evolution')} color="#80b09b">
-          {zh ? 'AI 团队自我进化' : 'Self-evolution'}
+          {zh ? '进化提案' : 'Evolution'}
           {evoPending.length > 0 ? ` · ${evoPending.length}` : ''}
         </Chip>
       </div>

@@ -53,6 +53,13 @@ class ComputerManager:
         s = self._settings()
         backend_name = str(getattr(s, "agent_computer_backend", "auto") or "auto").lower()
         network = bool(getattr(s, "agent_computer_network", False))
+        # P2-10: sandbox profile adjusts backend/network
+        try:
+            from backend.computer.profiles import apply_profile_to_backend_choice
+
+            backend_name, network = apply_profile_to_backend_choice(backend_name, network)
+        except Exception:
+            pass
         ws = self._workspace_root()
 
         # auto：按平台能力自动分派（detect 是唯一事实源）

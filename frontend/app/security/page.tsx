@@ -1,4 +1,6 @@
-'use client';
+﻿'use client';
+
+import { AdvancedShell } from '@/components/layout/AdvancedShell';
 
 /**
  * 权限控制台（独立页）
@@ -13,6 +15,7 @@
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import {
   getCommandPolicy,
   getKernelEvents,
@@ -31,6 +34,8 @@ import {
   type WorkingModePayload,
 } from '@/lib/api';
 import SecuritySettingsPanel from '@/components/settings/SecuritySettingsPanel';
+import { CrewPermissionBoard } from '@/components/security/CrewPermissionBoard';
+import { HarnessPanel } from '@/components/security/HarnessPanel';
 import { useLocaleStore, useT } from '@/stores/localeStore';
 import { useToastStore } from '@/stores/toastStore';
 
@@ -115,6 +120,7 @@ export default function SecurityPage() {
   const [wm, setWm] = useState<WorkingModePayload | null>(null);
   const [categories, setCategories] = useState<CommandPolicyCategory[]>([]);
   const [saving, setSaving] = useState<string | null>(null);
+  // 提权列表已升为一等「审批中心」——本页保留工作方式/命令策略，审批只给入口
 
   // 后端同时给了中英文案；不走 i18n 字典是因为选项目录由后端定义，
   // 前端硬编码副本必然与后端漂移。
@@ -176,13 +182,33 @@ export default function SecurityPage() {
   };
 
   return (
+    <AdvancedShell
+      titleZh="权限细项是高级设置"
+      titleEn="Security detail is advanced"
+      hintZh="日常批权用审批中心。"
+      hintEn="Day-to-day grants live in Approvals."
+    >
     <div className="flex h-full flex-col overflow-y-auto p-6">
-      <div className="mx-auto w-full max-w-3xl space-y-6">
+      <div className="tk-page-fluid w-full space-y-6">
         {/* Header */}
         <div>
           <h1 className="text-xl font-semibold text-foreground">{t('security.title')}</h1>
           <p className="mt-1 text-sm text-foreground-muted">{t('security.subtitle')}</p>
+          {/* AIOS：审批升为一等公民，本页只管「怎么干活 / 命令策略」 */}
+          <Link
+            href="/approvals"
+            className="mt-2 inline-flex text-xs font-medium text-brand-purple hover:underline"
+          >
+            {locale === 'en'
+              ? 'Pending escalations & evolution → Approvals center'
+              : '待办提权 / 进化审批 → 去审批中心'}
+          </Link>
         </div>
+
+        {/* 员工权限看板：与对话「本员工允许」同源 */}
+        <CrewPermissionBoard />
+
+        <HarnessPanel zh={locale !== 'en'} />
 
         {/* 工作方式：agent 动作要不要经我同意 */}
         <section>
@@ -332,6 +358,7 @@ export default function SecurityPage() {
         </section>
       </div>
     </div>
+    </AdvancedShell>
   );
 }
 

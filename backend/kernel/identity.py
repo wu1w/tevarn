@@ -137,6 +137,83 @@ class IdentityRegistry:
     async def archive(self, identity_id: Any, *, by: str = "user") -> Any:
         return await self._transition(identity_id, "archived", by=by)
 
+    async def update_profile(
+        self,
+        identity_id: Any,
+        *,
+        name: str | None = None,
+        role: str | None = None,
+        default_token_budget: int | None = ...,  # type: ignore[assignment]
+        by: str = "user",
+    ) -> Any:
+        """改名 / 职位(role) / 默认预算。全程审计；已归档禁止改。
+
+        default_token_budget: 省略(Ellipsis)=不改；传 None=清空为不限；传 int=设置。
+        """
+        from backend.models.agent_identity import AgentIdentity
+
+        identity_id = _to_uuid(identity_id)
+        new_name = (name or "").strip() if name is not None else None
+        new_role = role.strip() if isinstance(role, str) else role
+
+        async with self._session_factory() as session:
+            ident = (
+                await session.execute(
+                    select(AgentIdentity).where(AgentIdentity.id == identity_id)
+                )
+            ).scalar_one_or_none()
+            if ident is None:
+                raise ValueError(f"未知身份 {identity_id}")
+            if ident.status == "archived":
+                raise ValueError("身份已解雇/归档，禁止改档案")
+
+            changes: dict[str, Any] = {}
+            if new_name is not None and new_name != ident.name:
+                if not new_name:
+                    raise ValueError("名称不能为空")
+                clash = (
+                    await session.execute(
+                        select(AgentIdentity).where(
+                            AgentIdentity.name == new_name,
+                            AgentIdentity.id != identity_id,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if clash is not None:
+                    raise ValueError(f"名称已被占用：{new_name}")
+                changes["name"] = {"from": ident.name, "to": new_name}
+                ident.name = new_name
+
+            if new_role is not None and new_role != (ident.role or ""):
+                changes["role"] = {"from": ident.role or "", "to": new_role}
+                ident.role = new_role
+
+            if default_token_budget is not ...:
+                old_b = ident.default_token_budget
+                if default_token_budget is None:
+                    if old_b is not None:
+                        changes["default_token_budget"] = {"from": old_b, "to": None}
+                        ident.default_token_budget = None
+                else:
+                    try:
+                        nb = int(default_token_budget)
+                    except (TypeError, ValueError) as e:
+                        raise ValueError("default_token_budget 须为整数") from e
+                    if nb < 0:
+                        raise ValueError("default_token_budget 不能为负")
+                    if old_b != nb:
+                        changes["default_token_budget"] = {"from": old_b, "to": nb}
+                        ident.default_token_budget = nb
+
+            if not changes:
+                return ident
+
+            await session.commit()
+            await session.refresh(ident)
+
+        self._emit("identity_profile_updated", identity_id, {"by": by, "changes": changes})
+        return ident
+
     async def set_capabilities(
         self, identity_id: Any, capabilities: list[str] | None, *, by: str = "user"
     ) -> Any:
@@ -176,13 +253,33 @@ class IdentityRegistry:
                 )
             ).scalar_one_or_none()
 
-    async def list(self, *, status: str | None = None) -> list[Any]:
+    async def list(
+        self,
+        *,
+        status: str | None = None,
+        user_id: Any | None = None,
+        include_orphan: bool = False,
+    ) -> list[Any]:
+        """列出身份。user_id 非空时按归属过滤（多租户隔离）。
+
+        include_orphan=True：额外包含 user_id IS NULL 的历史行（单用户迁移窗口）。
+        """
+        from sqlalchemy import or_
+
         from backend.models.agent_identity import AgentIdentity
 
         async with self._session_factory() as session:
             q = select(AgentIdentity).order_by(AgentIdentity.created_at)
             if status is not None:
                 q = q.where(AgentIdentity.status == status)
+            if user_id is not None:
+                uid = _to_uuid(user_id)
+                if include_orphan:
+                    q = q.where(
+                        or_(AgentIdentity.user_id == uid, AgentIdentity.user_id.is_(None))
+                    )
+                else:
+                    q = q.where(AgentIdentity.user_id == uid)
             return list((await session.execute(q)).scalars().all())
 
     # ── Identity Memory（版本链，修改可追溯）────────────────────
@@ -222,26 +319,75 @@ class IdentityRegistry:
         await self._index_memory_entry(entry)
         return entry
 
+    async def append_memory(
+        self,
+        identity_id: Any,
+        kind: str,
+        content: str,
+        *,
+        source: str = "manual",
+        approved_by: str | None = None,
+    ) -> Any:
+        """add_memory 别名（seed / 外部脚本兼容）。"""
+        return await self.add_memory(
+            identity_id, kind, content, source=source, approved_by=approved_by
+        )
+
     async def _index_memory_entry(self, entry: Any) -> None:
-        """Identity Memory 入 RAG（Alpha Review #4）：向量模式时同步索引，
-        best-effort——RAG 未配置（本地模式）/索引失败不阻塞记忆写入。"""
+        """Identity Memory 入 RAG：向量模式 best-effort；失败入重试队列。
+
+        DB 已是权威源，索引失败不阻塞写入。本地无 RAG 时直接返回。
+        每次写入前顺带 flush 一小批 pending，降低「库有、检索没有」窗口。
+        """
         try:
             from backend.services.rag.capability import use_vector_rag
+            from backend.services.rag.identity_index_queue import (
+                enqueue as _enqueue_index,
+                flush_pending as _flush_index,
+            )
 
             if not use_vector_rag():
                 return
+            # 补偿此前失败项（限量，不阻塞主路径过久）
+            try:
+                await _flush_index(limit=5)
+            except Exception:
+                pass
+
             from backend.services.rag.factory import RAGServiceFactory
 
             rag = RAGServiceFactory.get_service()
-            await rag.upsert_identity_memory(
+            ok = await rag.upsert_identity_memory(
                 entry_id=str(entry.id),
                 identity_id=str(entry.identity_id),
                 kind=entry.kind,
                 content=entry.content,
                 version=int(getattr(entry, "version", 1) or 1),
             )
+            if not ok:
+                _enqueue_index(
+                    entry_id=str(entry.id),
+                    identity_id=str(entry.identity_id),
+                    kind=str(entry.kind),
+                    content=str(entry.content or ""),
+                    version=int(getattr(entry, "version", 1) or 1),
+                    op="upsert",
+                )
         except Exception as e:
             logger.debug("identity memory 向量索引跳过: %s", e)
+            try:
+                from backend.services.rag.identity_index_queue import enqueue as _enqueue_index
+
+                _enqueue_index(
+                    entry_id=str(entry.id),
+                    identity_id=str(entry.identity_id),
+                    kind=str(getattr(entry, "kind", "experience")),
+                    content=str(getattr(entry, "content", "") or ""),
+                    version=int(getattr(entry, "version", 1) or 1),
+                    op="upsert",
+                )
+            except Exception:
+                pass
 
     async def supersede_memory(
         self, entry_id: Any, new_content: str, *, approved_by: str
@@ -275,19 +421,42 @@ class IdentityRegistry:
             "old_entry_id": str(entry_id), "new_entry_id": str(new.id),
             "kind": old.kind, "version": new.version, "approved_by": approved_by,
         })
-        # 向量版本链同步（Alpha Review #4）：清旧版向量，索引新版——
-        # 检索命中旧版本 = 召回已被取代的记忆，必须清
+        # 向量版本链同步：清旧版 + 索引新版；失败入重试队列
         try:
             from backend.services.rag.capability import use_vector_rag
 
             if use_vector_rag():
                 from backend.services.rag.factory import RAGServiceFactory
+                from backend.services.rag.identity_index_queue import enqueue as _enqueue_index
 
                 rag = RAGServiceFactory.get_service()
-                await rag.delete_identity_memory(str(entry_id))
+                deleted = await rag.delete_identity_memory(str(entry_id))
+                if not deleted:
+                    _enqueue_index(
+                        entry_id=str(entry_id),
+                        identity_id=str(old.identity_id),
+                        kind=str(old.kind),
+                        content="",
+                        version=int(old.version or 1),
+                        op="delete",
+                    )
                 await self._index_memory_entry(new)
         except Exception as e:
             logger.debug("identity memory supersede 向量同步跳过: %s", e)
+            try:
+                from backend.services.rag.identity_index_queue import enqueue as _enqueue_index
+
+                _enqueue_index(
+                    entry_id=str(entry_id),
+                    identity_id=str(old.identity_id),
+                    kind=str(old.kind),
+                    content="",
+                    version=int(getattr(old, "version", 1) or 1),
+                    op="delete",
+                )
+                await self._index_memory_entry(new)
+            except Exception:
+                pass
         return new
 
     async def current_memory(self, identity_id: Any, *, kind: str | None = None) -> list[Any]:

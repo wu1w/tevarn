@@ -90,7 +90,7 @@ export default function ConfigPage() {
         </div>
       </div>
 
-      <div className="mx-auto max-w-4xl">
+      <div className="tk-page-fluid w-full">
         {/* Tab 切换 */}
         <div className="mb-6 border-b border-border-default">
           <nav className="flex gap-1">

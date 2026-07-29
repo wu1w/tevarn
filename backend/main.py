@@ -325,6 +325,11 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理（替代已弃用的 on_event）"""
     # ---- Startup ----
     _validate_secrets()
+    # 密码后端自检：passlib+bcrypt 版本组合坏掉时，启动就说清楚，
+    # 而不是等用户登录时抛「密码超过 72 字节」这种完全误导的错误
+    from backend.core.security import _assert_password_backend_usable
+
+    _assert_password_backend_usable()
     # 统一安全自检：fail 级（如非 loopback + single_user_mode）直接拒绝启动
     from backend.core.security_check import run_startup_security_check
 
@@ -380,32 +385,28 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"kernel persistence startup skipped: {e}")
 
-    # 0.6 自主运转：装配 inbox + dispatcher（定时/外部事件给员工派活）
+    # 存储剖面日志：SQLite 权威 + Redis 可选（docs/internal/STORAGE.md）
     try:
-        if bool(getattr(settings, "agent_dispatcher_enabled", True)):
-            from backend.database import AsyncSessionLocal
-            from backend.kernel.kernel import get_kernel
-            from backend.kernel.workforce import init_workforce
-
-            kernel = get_kernel()
-            if bool(getattr(settings, "agent_kernel_persistence", True)):
-                inbox, dispatcher = init_workforce(kernel, AsyncSessionLocal, settings)
-                if dispatcher is not None:
-                    _spawn_bg(dispatcher.run_forever(), name="workforce-dispatcher")
-                    logger.info("workforce dispatcher 已启动（inbox 就绪）")
-                # 0.7：受控进化引擎装配（分析只产建议，应用必走人工审批）
-                from backend.kernel.workforce import init_evolution
-
-                if init_evolution(kernel, AsyncSessionLocal) is not None:
-                    logger.info("evolution engine 已装配（auto_apply=False 硬约束）")
-    except Exception as e:
-        logger.warning(f"workforce dispatcher startup skipped: {e}")
+        redis_on = bool(getattr(settings, "agent_kernel_redis_shared", False)) and bool(
+            str(getattr(settings, "redis_url", "") or "").strip()
+        )
+        logger.info(
+            "storage profile: db=%s redis_shared=%s aios_profile=%s",
+            (getattr(settings, "db_url", "") or "")[:48],
+            redis_on,
+            getattr(settings, "aios_profile", "") or "(none)",
+        )
+    except Exception:
+        pass
 
     # EventBus → WS 活动流桥（Phase 0.5.2 W2-3）
+    # Kernel ports：注册 WS manager，避免 kernel 反向 import api
     try:
         from backend.api.websocket import manager as ws_manager
         from backend.integrations.event_bus_bridge import start_bridge
+        from backend.kernel.ports import set_ws_manager
 
+        set_ws_manager(ws_manager)
         start_bridge(ws_manager)
     except Exception as e:
         logger.warning(f"event_bus WS bridge start skipped: {e}")
@@ -456,21 +457,45 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Skills seeding skipped: {e}")
 
-    # v3.0: 加载统一工具注册表（后台，不挡就绪）
+    # v3.0: 统一工具注册表 —— 必须在 workforce dispatcher 之前完成
+    # （否则首轮工单 Loaded 0 tools，员工只能空口编 tool_call XML）
     try:
         from backend.tools.loader import load_all_tools
 
-        _spawn_bg(load_all_tools(), "load_all_tools")
+        await load_all_tools()
+        logger.info("Unified tool registry ready (awaited before workforce)")
     except Exception as e:
         logger.warning(f"Unified tool registry loading skipped: {e}")
 
-    # v3.0: 连接 MCP Servers 并注册 MCP 工具（后台）
+    # v3.0: 连接 MCP Servers 并注册 MCP 工具（后台；非工单硬依赖）
     try:
         from backend.mcp_hub.service import load_mcp_tools
 
         _spawn_bg(load_mcp_tools(), "load_mcp_tools")
     except Exception as e:
         logger.warning(f"MCP tools loading skipped: {e}")
+
+    # 0.6 自主运转：工具就绪后再拉 dispatcher，避免抢跑空注册表
+    # Inbox 权威在 SQLite；dispatcher.tick 内 reclaim_stale_claims
+    try:
+        if bool(getattr(settings, "agent_dispatcher_enabled", True)):
+            from backend.database import AsyncSessionLocal
+            from backend.kernel.kernel import get_kernel
+            from backend.kernel.workforce import init_workforce
+
+            kernel = get_kernel()
+            if bool(getattr(settings, "agent_kernel_persistence", True)):
+                inbox, dispatcher = init_workforce(kernel, AsyncSessionLocal, settings)
+                if dispatcher is not None:
+                    _spawn_bg(dispatcher.run_forever(), name="workforce-dispatcher")
+                    logger.info("workforce dispatcher 已启动（inbox 就绪，SQLite durable）")
+                # 0.7：受控进化引擎装配（分析只产建议，应用必走人工审批）
+                from backend.kernel.workforce import init_evolution
+
+                if init_evolution(kernel, AsyncSessionLocal) is not None:
+                    logger.info("evolution engine 已装配（auto_apply=False 硬约束）")
+    except Exception as e:
+        logger.warning(f"workforce dispatcher startup skipped: {e}")
 
     # Start cron scheduler
     try:
@@ -543,7 +568,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Takton",
     description="个人专属异步 Agent 终端后端",
-    version="0.4.0-alpha",
+    version="0.4.6-alpha",
     lifespan=lifespan,
 )
 

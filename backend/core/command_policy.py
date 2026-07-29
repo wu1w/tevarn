@@ -17,6 +17,18 @@ logger = logging.getLogger(__name__)
 POLICY_SETTING_KEY = "command_security_policy"
 VALID_ACTIONS = ("allow", "confirm", "deny")
 DEFAULT_ACTION = "confirm"
+# 本机直跑时不能只靠弹窗：高危类默认 deny，用户可在权限控制台改为 confirm/allow
+_DEFAULT_DENY_CATEGORIES = frozenset(
+    {
+        "delete",
+        "privilege",
+        "power",
+        "disk",
+        "remote_pipe",
+        "exfiltration",
+        "system_write",
+    }
+)
 
 _policy_cache: dict[str, str] | None = None
 
@@ -24,7 +36,10 @@ _policy_cache: dict[str, str] | None = None
 def _default_policy() -> dict[str, str]:
     from backend.services.tools.executors import COMMAND_CATEGORIES
 
-    return {cat: DEFAULT_ACTION for cat in COMMAND_CATEGORIES}
+    return {
+        cat: ("deny" if cat in _DEFAULT_DENY_CATEGORIES else DEFAULT_ACTION)
+        for cat in COMMAND_CATEGORIES
+    }
 
 
 def _sanitize(raw: Any) -> dict[str, str]:

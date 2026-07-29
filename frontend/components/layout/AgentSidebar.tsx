@@ -5,18 +5,22 @@
  * 结构：品牌区 → 全局搜索 → + 新建 Agent → Agent 列表 → 协作关系（workforce/org）
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { useT } from '@/stores/localeStore';
 import { useZh } from '@/hooks/useZh';
+import { useSession } from '@/hooks/useSession';
+import { useSessionStore } from '@/stores/sessionStore';
 import {
   getKernelIdentities,
+  getKernelProcesses,
   getWorkforceOrg,
   getGoalTree,
   getKernelEscalations,
   getEvolutionProposals,
+  listProjectGroups,
   type KernelIdentity,
 } from '@/lib/api';
 
@@ -53,32 +57,151 @@ function Avatar({ name, size = 34 }: { name: string; size?: number }) {
   );
 }
 
-function AgentRow({ profile }: { profile: KernelIdentity }) {
+function AgentRow({
+  profile,
+  state,
+  onOpenChat,
+  onOpenProfile,
+}: {
+  profile: KernelIdentity;
+  state?: string;
+  onOpenChat: (name: string) => void;
+  onOpenProfile: (id: string) => void;
+}) {
   const sub = profile.role || (profile.capabilities?.length ? profile.capabilities[0] : '');
+  const st = state || profile.status || 'idle';
+  const live = st === 'running' || st === 'suspended';
+  const color =
+    st === 'running'
+      ? 'var(--status-online)'
+      : st === 'suspended'
+        ? 'var(--status-offline)'
+        : profile.status === 'suspended'
+          ? 'var(--status-offline)'
+          : 'var(--border-default)';
   return (
-    <Link href={`/agents?id=${profile.id}`} className="tk-sb-agent">
-      <Avatar name={profile.name} />
-      <span className="tk-sb-agent-meta">
+    <div className="tk-sb-agent" style={{ cursor: 'pointer' }}>
+      <button
+        type="button"
+        title="资料 / 权限"
+        onClick={(e) => {
+          e.stopPropagation();
+          onOpenProfile(profile.id);
+        }}
+        style={{
+          position: 'relative',
+          display: 'inline-flex',
+          border: 'none',
+          background: 'none',
+          padding: 0,
+          cursor: 'pointer',
+        }}
+      >
+        <Avatar name={profile.name} />
+        <span
+          title={st}
+          style={{
+            position: 'absolute',
+            right: -1,
+            bottom: -1,
+            width: 8,
+            height: 8,
+            borderRadius: '50%',
+            background: color,
+            boxShadow: live ? `0 0 0 2px var(--elevated-bg, #1a1916)` : undefined,
+          }}
+        />
+      </button>
+      <button
+        type="button"
+        className="tk-sb-agent-meta"
+        onClick={() => onOpenChat(profile.name)}
+        style={{
+          flex: 1,
+          minWidth: 0,
+          border: 'none',
+          background: 'none',
+          textAlign: 'left',
+          cursor: 'pointer',
+          padding: 0,
+        }}
+      >
         <span className="tk-sb-agent-name">{profile.name}</span>
         {sub ? <span className="tk-sb-agent-sub">{sub}</span> : null}
-      </span>
-    </Link>
+      </button>
+    </div>
   );
 }
 
-type SearchHit = { kind: string; label: string; sub?: string; href: string };
+type SearchHit = {
+  kind: string;
+  label: string;
+  sub?: string;
+  href: string;
+  /** 会话命中时带 sessionId，点击走 switchSession 而非仅 push URL */
+  sessionId?: string;
+};
 
 export function AgentSidebar() {
   const t = useT();
   const router = useRouter();
   const zh = useZh();
+  const { switchSession, openContactSession } = useSession();
   const [searchOpen, setSearchOpen] = useState(false);
   const [q, setQ] = useState('');
+  const sessionTitles = useSessionStore((s) => s.sessionTitles);
+  const getSessionTitle = useSessionStore((s) => s.getSessionTitle);
+
+  const openContact = useCallback(
+    async (name: string) => {
+      try {
+        router.push(`/chat?identity=${encodeURIComponent(name)}`);
+        await openContactSession(name);
+      } catch (e) {
+        console.error(e);
+        router.push(`/chat?identity=${encodeURIComponent(name)}`);
+      }
+    },
+    [router, openContactSession],
+  );
+
+  const openProfile = useCallback(
+    (id: string) => {
+      router.push(`/agents?id=${encodeURIComponent(id)}`);
+    },
+    [router],
+  );
+
+  const openHit = useCallback(
+    async (h: SearchHit) => {
+      setSearchOpen(false);
+      setQ('');
+      if (h.sessionId) {
+        try {
+          router.push('/chat');
+          await switchSession(h.sessionId);
+        } catch (e) {
+          console.error(e);
+        }
+        return;
+      }
+      router.push(h.href);
+    },
+    [router, switchSession],
+  );
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['kernel-identities'],
     queryFn: () => getKernelIdentities(),
     staleTime: 30_000,
+    retry: 1,
+  });
+  // 进程态 → 侧栏状态点（与驾驶舱 /agents 同源）
+  const processes = useQuery({
+    queryKey: ['kernel-processes'],
+    queryFn: () => getKernelProcesses(),
+    staleTime: 12_000,
+    refetchInterval: 15_000,
     retry: 1,
   });
   const org = useQuery({
@@ -106,8 +229,69 @@ export function AgentSidebar() {
     staleTime: 15_000,
     enabled: searchOpen,
   });
+  const projectGroups = useQuery({
+    queryKey: ['project-groups'],
+    queryFn: () => listProjectGroups(),
+    staleTime: 10_000,
+    refetchInterval: 15_000,
+    retry: 1,
+  });
 
-  const list = data?.identities ?? [];
+  const list = (data?.identities ?? []).filter((a) => a.status !== 'archived');
+  // 项目组默认折叠，避免挤占同事列表
+  const [projectsOpen, setProjectsOpen] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      return localStorage.getItem('takton-sb-projects-open') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggleProjects = useCallback(() => {
+    setProjectsOpen((v) => {
+      const next = !v;
+      try {
+        localStorage.setItem('takton-sb-projects-open', next ? '1' : '0');
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }, []);
+
+  // 运行中优先；CEO/管家置顶
+  const sortedAgents = useMemo(() => {
+    const procByKey = processes.data?.processes ?? [];
+    const stateFor = (a: KernelIdentity) => {
+      const key = `wf:${a.id}`;
+      const p =
+        procByKey.find((x) => x.identity === key || x.identity === a.name) ||
+        procByKey.find((x) => (x.identity || '').includes(String(a.id).slice(0, 8)));
+      return p?.state || a.status || '';
+    };
+    const rank = (a: KernelIdentity) => {
+      const st = stateFor(a);
+      const isCeo =
+        /ceo|cto|管家|小白|steward/i.test(a.name) || /ceo|cto/i.test(a.role || '');
+      if (isCeo) return -1;
+      if (st === 'running') return 0;
+      if (st === 'suspended' || a.status === 'suspended') return 2;
+      if (a.status === 'archived') return 3;
+      return 1;
+    };
+    return [...list].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+  }, [list, processes.data]);
+  const stateOf = useCallback(
+    (a: KernelIdentity) => {
+      const procs = processes.data?.processes ?? [];
+      const key = `wf:${a.id}`;
+      return (
+        procs.find((p) => p.identity === key || p.identity === a.name)?.state ||
+        a.status
+      );
+    },
+    [processes.data],
+  );
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -126,7 +310,22 @@ export function AgentSidebar() {
     const out: SearchHit[] = [];
     for (const a of list) {
       if (a.name.toLowerCase().includes(term) || (a.role || '').toLowerCase().includes(term)) {
-        out.push({ kind: zh ? 'Agent' : 'Agent', label: a.name, sub: a.role || undefined, href: `/agents?id=${a.id}` });
+        out.push({
+          kind: zh ? '同事' : 'Contact',
+          label: a.name,
+          sub: a.role || undefined,
+          href: `/chat?identity=${encodeURIComponent(a.name)}`,
+        });
+      }
+    }
+    for (const g of projectGroups.data?.groups ?? []) {
+      if (g.title.toLowerCase().includes(term)) {
+        out.push({
+          kind: zh ? '项目组' : 'Project',
+          label: g.title,
+          sub: `${g.member_count} · ${g.task_count}`,
+          href: `/chat?group=${g.id}`,
+        });
       }
     }
     for (const o of goals.data?.objectives ?? []) {
@@ -151,10 +350,15 @@ export function AgentSidebar() {
     }
     // 固定导航命中
     const nav: Array<[string, string, string]> = [
-      [zh ? '内核' : 'kernel', '/kernel', zh ? '进程' : 'processes'],
-      [zh ? '知识' : 'knowledge', '/knowledge', 'RAG'],
-      [zh ? '活动' : 'activity', '/activity', zh ? '审计' : 'audit'],
+      [zh ? '员工' : 'employees', '/agents', zh ? '编制' : 'crew'],
+      [zh ? '审批' : 'approvals', '/approvals', zh ? '提权' : 'grants'],
+      [zh ? '内核' : 'kernel', '/kernel', zh ? '进程/协议' : 'process/protocol'],
+      [zh ? '知识' : 'knowledge', '/knowledge', zh ? '高级·RAG' : 'advanced·RAG'],
+      [zh ? '目标' : 'goals', '/goals', zh ? '高级' : 'advanced'],
+      [zh ? '活动' : 'activity', '/activity', zh ? '运行' : 'runs'],
+      [zh ? '审计' : 'audit', '/audit', zh ? '只读日志' : 'logs'],
       [zh ? '扩展' : 'market', '/market', zh ? '技能' : 'skills'],
+      [zh ? '对话' : 'chat', '/chat', zh ? '会话' : 'sessions'],
     ];
     for (const [label, href, sub] of nav) {
       if (label.toLowerCase().includes(term) || sub.toLowerCase().includes(term)) {
@@ -162,9 +366,21 @@ export function AgentSidebar() {
       }
     }
     return out.slice(0, 12);
-  }, [q, list, goals.data, esc.data, evo.data, zh]);
+  }, [q, list, goals.data, esc.data, evo.data, projectGroups.data, zh]);
 
-  const orgEdges = (org.data?.reports_to ?? []).slice(0, 5);
+  // 协作关系：只展示人名边；过滤 sub:/wf: 等内部进程 key（工程噪音）
+  const orgEdges = useMemo(() => {
+    const raw = org.data?.reports_to ?? [];
+    const isNoise = (s: string) =>
+      !s ||
+      s === 'main' ||
+      s.startsWith('sub:') ||
+      s.startsWith('wf:') ||
+      /^[0-9a-f-]{16,}$/i.test(s);
+    return raw
+      .filter((e) => !isNoise(e.manager) && !isNoise(e.worker))
+      .slice(0, 6);
+  }, [org.data]);
 
   return (
     <div className="tk-sb">
@@ -195,7 +411,7 @@ export function AgentSidebar() {
         + {t('nav.newAgent' as never)}
       </Link>
 
-      <div className="tk-sb-section">{t('nav.sidebarAgents' as never)}</div>
+      <div className="tk-sb-section">{zh ? '同事' : 'Contacts'}</div>
       <div className="tk-sb-list">
         {isError ? (
           <button type="button" className="tk-sb-empty" style={{ cursor: 'pointer', color: 'var(--status-offline)' }} onClick={() => refetch()}>
@@ -203,21 +419,107 @@ export function AgentSidebar() {
           </button>
         ) : isLoading ? (
           <div className="tk-sb-empty">{zh ? '加载中…' : 'Loading…'}</div>
-        ) : list.length === 0 ? (
+        ) : sortedAgents.length === 0 ? (
           <div className="tk-sb-empty">{t('nav.noAgents' as never)}</div>
         ) : (
-          list.map((p) => <AgentRow key={p.id} profile={p} />)
+          sortedAgents.map((p) => (
+            <AgentRow
+              key={p.id}
+              profile={p}
+              state={stateOf(p)}
+              onOpenChat={(name) => void openContact(name)}
+              onOpenProfile={openProfile}
+            />
+          ))
         )}
       </div>
 
-      {/* 协作关系 — workforce/org 真数据 */}
-      <div className="tk-sb-foot">
-        <div className="tk-sb-section">{t('nav.orgChart' as never)}</div>
-        {orgEdges.length === 0 ? (
-          <div className="tk-sb-empty" style={{ padding: '8px 4px', fontSize: 11 }}>
-            {zh ? '暂无汇报线 · 委派后自动涌现' : 'No reporting lines yet'}
+      {/* 项目组 — 默认可折叠，避免挤占同事列表 */}
+      <div style={{ padding: '4px 0 8px', flexShrink: 0 }}>
+        <button
+          type="button"
+          className="tk-sb-section"
+          onClick={toggleProjects}
+          style={{
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            border: 'none',
+            background: 'transparent',
+            cursor: 'pointer',
+            padding: '4px 2px',
+            color: 'inherit',
+            font: 'inherit',
+            textAlign: 'left',
+          }}
+          aria-expanded={projectsOpen}
+        >
+          <span style={{ fontSize: 10, width: 12, opacity: 0.7 }}>{projectsOpen ? '▾' : '▸'}</span>
+          <span style={{ flex: 1 }}>{zh ? '项目组' : 'Projects'}</span>
+          <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--foreground-dim)' }}>
+            {(projectGroups.data?.groups ?? []).length}
+          </span>
+        </button>
+        {projectsOpen ? (
+          <div className="tk-sb-list" style={{ maxHeight: 180, overflowY: 'auto' }}>
+            {(projectGroups.data?.groups ?? []).length === 0 ? (
+              <div className="tk-sb-empty" style={{ fontSize: 11, padding: '6px 4px' }}>
+                {zh ? '派多人任务后会出现项目组' : 'Multi-assign creates a project group'}
+              </div>
+            ) : (
+              (projectGroups.data?.groups ?? []).map((g) => (
+                <button
+                  key={g.id}
+                  type="button"
+                  className="tk-sb-agent"
+                  onClick={() => router.push(`/chat?group=${g.id}`)}
+                  style={{
+                    width: '100%',
+                    border: 'none',
+                    background: 'transparent',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                  }}
+                >
+                  <span
+                    className="tk-sb-avatar"
+                    style={{
+                      width: 34,
+                      height: 34,
+                      fontSize: 14,
+                      background: 'linear-gradient(135deg, #6a8caf, #4a6a88)',
+                    }}
+                  >
+                    📁
+                  </span>
+                  <span className="tk-sb-agent-meta" style={{ minWidth: 0 }}>
+                    <span className="tk-sb-agent-name" style={{ fontSize: 12 }}>
+                      {g.title}
+                    </span>
+                    <span className="tk-sb-agent-sub">
+                      {g.member_count} {zh ? '人' : ''} · {g.task_count} {zh ? '单' : 'tasks'}
+                      {g.status === 'open' ? '' : ` · ${g.status}`}
+                    </span>
+                  </span>
+                </button>
+              ))
+            )}
           </div>
         ) : (
+          <div
+            className="tk-sb-empty"
+            style={{ fontSize: 10.5, padding: '2px 4px 4px 18px', color: 'var(--foreground-dim)' }}
+          >
+            {zh ? '已收起 · 点击展开' : 'Collapsed · click to expand'}
+          </div>
+        )}
+      </div>
+
+      {/* 协作关系：员工之间的派生活动；无数据则不占位（避免 sub:uuid 吓人） */}
+      {orgEdges.length > 0 ? (
+      <div className="tk-sb-foot">
+        <div className="tk-sb-section">{zh ? '协作' : 'Collab'}</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '0 2px 6px' }}>
             {orgEdges.map((e) => (
               <div
@@ -226,16 +528,17 @@ export function AgentSidebar() {
                   display: 'flex', alignItems: 'center', gap: 6, padding: '5px 6px',
                   borderRadius: 8, fontSize: 11, color: 'var(--foreground-muted)',
                 }}
+                title={zh ? '谁曾给谁派过活 / 派生过任务' : 'Who delegated to whom'}
               >
                 <span style={{ fontWeight: 600, color: 'var(--foreground)' }}>{e.worker}</span>
-                <span style={{ color: 'var(--foreground-dim)' }}>→</span>
+                <span style={{ color: 'var(--foreground-dim)' }}>←</span>
                 <span>{e.manager}</span>
                 <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--foreground-dim)' }}>×{e.delegations}</span>
               </div>
             ))}
           </div>
-        )}
       </div>
+      ) : null}
 
       {/* 全局搜索模态 */}
       {searchOpen ? (
@@ -259,7 +562,7 @@ export function AgentSidebar() {
                 autoFocus
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                placeholder={zh ? '搜索 Agent / 目标 / 审批 / 页面…' : 'Search agents / goals / approvals…'}
+                placeholder={zh ? '搜索会话标题 / Agent / 目标 / 审批…' : 'Search chat titles / agents / goals…'}
                 style={{
                   flex: 1, background: 'transparent', border: 'none', outline: 'none',
                   color: 'var(--foreground)', fontSize: 14,
@@ -267,9 +570,7 @@ export function AgentSidebar() {
                 onKeyDown={(e) => {
                   if (e.key === 'Escape') { setSearchOpen(false); setQ(''); }
                   if (e.key === 'Enter' && hits[0]) {
-                    router.push(hits[0].href);
-                    setSearchOpen(false);
-                    setQ('');
+                    void openHit(hits[0]);
                   }
                 }}
               />
@@ -282,7 +583,7 @@ export function AgentSidebar() {
             <div style={{ maxHeight: 360, overflowY: 'auto', padding: '6px 0' }}>
               {!q.trim() ? (
                 <div style={{ padding: '20px 16px', fontSize: 12, color: 'var(--foreground-dim)', textAlign: 'center' }}>
-                  {zh ? '输入关键字搜索 Agent、目标、待审批与页面' : 'Type to search agents, goals, approvals, pages'}
+                  {zh ? '输入关键字搜索会话标题、Agent、目标、待审批' : 'Type to search chat titles, agents, goals, approvals'}
                 </div>
               ) : hits.length === 0 ? (
                 <div style={{ padding: '20px 16px', fontSize: 12, color: 'var(--foreground-dim)', textAlign: 'center' }}>
@@ -291,9 +592,9 @@ export function AgentSidebar() {
               ) : (
                 hits.map((h, i) => (
                   <button
-                    key={`${h.href}-${h.label}-${i}`}
+                    key={`${h.href}-${h.label}-${h.sessionId || ''}-${i}`}
                     type="button"
-                    onClick={() => { router.push(h.href); setSearchOpen(false); setQ(''); }}
+                    onClick={() => { void openHit(h); }}
                     style={{
                       display: 'flex', alignItems: 'center', gap: 10, width: '100%',
                       padding: '10px 16px', border: 'none', background: 'transparent',

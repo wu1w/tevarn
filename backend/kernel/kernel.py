@@ -281,6 +281,15 @@ class AgentKernel:
                     raise BudgetExceededError(
                         f"子进程预算 {token_budget} 超过父进程剩余预算 {parent.budget_remaining}"
                     )
+                # 预留：从父进程扣减等额额度，防止多子进程双花同一份 remaining
+                try:
+                    self.charge_tokens(parent.id, int(token_budget))
+                except BudgetExceededError as e:
+                    raise BudgetExceededError(
+                        f"父进程预算预留失败（子要 {token_budget}）：{e}"
+                    ) from e
+                # charge 后刷新 parent 引用
+                parent = self._resolve_process(parent_id) or parent
 
         proc = AgentProcess(
             identity=identity,
@@ -390,6 +399,37 @@ class AgentKernel:
 
     # ── 执行中介 ──────────────────────────────────────────────
 
+    def _emit_policy_decision(
+        self,
+        process_id: str,
+        *,
+        action: Any,
+        target: str,
+        outcome: str,
+        reason: str,
+        source: str = "kernel",
+        identity: str | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        """0.5.2 权限一张网：统一 policy.decision 事件（who/what/allow|deny|escalate）。
+
+        与历史 mediation 事件并存——Security Console / 审计页优先消费本事件。
+        outcome: allow | deny | escalate
+        """
+        detail: dict[str, Any] = {
+            "who": identity or process_id,
+            "what": f"{action}:{target}",
+            "action": str(action),
+            "target": target,
+            "outcome": outcome,
+            "allowed": outcome == "allow",
+            "reason": reason,
+            "source": source,
+        }
+        if extra:
+            detail.update(extra)
+        self._emit("policy.decision", process_id, detail)
+
     async def mediate(
         self,
         process_id: str,
@@ -408,9 +448,14 @@ class AgentKernel:
         proc = self._resolve_process(process_id)
         if proc is None:
             decision = MediationDecision(False, f"未知进程 {process_id}", capability_checked=True)
-            self._emit("mediation", process_id, {
+            detail = {
                 "action": action, "target": target, "allowed": False, "reason": decision.reason,
-            })
+            }
+            self._emit("mediation", process_id, detail)
+            self._emit_policy_decision(
+                process_id, action=action, target=target, outcome="deny",
+                reason=decision.reason, source="kernel",
+            )
             raise KernelPermissionError(decision.reason, decision)
 
         if proc.is_terminal:
@@ -418,7 +463,14 @@ class AgentKernel:
             self._emit("mediation", proc.id, {
                 "action": action, "target": target, "allowed": False, "reason": decision.reason,
             })
+            self._emit_policy_decision(
+                proc.id, action=action, target=target, outcome="deny",
+                reason=decision.reason, source="kernel",
+                identity=getattr(proc, "identity", None) or getattr(proc, "identity_key", None),
+            )
             raise KernelPermissionError(decision.reason, decision)
+
+        ident = getattr(proc, "identity", None) or getattr(proc, "identity_key", None)
 
         # W2：进程持有令牌时以令牌为准——过期 / 范围外一律拒绝
         if proc.token is not None:
@@ -428,6 +480,11 @@ class AgentKernel:
                     "action": action, "target": target, "allowed": False,
                     "reason": decision.reason, "token_id": proc.token.id,
                 })
+                self._emit_policy_decision(
+                    proc.id, action=action, target=target, outcome="deny",
+                    reason=decision.reason, source="kernel", identity=ident,
+                    extra={"token_id": proc.token.id},
+                )
                 raise KernelPermissionError(decision.reason, decision)
             if not proc.token.allows(target):
                 decision = MediationDecision(
@@ -437,6 +494,11 @@ class AgentKernel:
                     "action": action, "target": target, "allowed": False,
                     "reason": decision.reason, "token_id": proc.token.id,
                 })
+                self._emit_policy_decision(
+                    proc.id, action=action, target=target, outcome="deny",
+                    reason=decision.reason, source="kernel", identity=ident,
+                    extra={"token_id": proc.token.id},
+                )
                 raise KernelPermissionError(decision.reason, decision)
         elif proc.capabilities is not None and not proc.has_capability(target):
             decision = MediationDecision(
@@ -445,6 +507,10 @@ class AgentKernel:
             self._emit("mediation", proc.id, {
                 "action": action, "target": target, "allowed": False, "reason": decision.reason,
             })
+            self._emit_policy_decision(
+                proc.id, action=action, target=target, outcome="deny",
+                reason=decision.reason, source="kernel", identity=ident,
+            )
             raise KernelPermissionError(decision.reason, decision)
 
         decision = MediationDecision(True, capability_checked=proc.capabilities is not None)
@@ -455,6 +521,11 @@ class AgentKernel:
             "capability_checked": decision.capability_checked,
             "args_keys": sorted((args or {}).keys()),
         })
+        self._emit_policy_decision(
+            proc.id, action=action, target=target, outcome="allow",
+            reason="mediated", source="kernel", identity=ident,
+            extra={"capability_checked": decision.capability_checked},
+        )
         return decision
 
     # ── 预算治理 ──────────────────────────────────────────────
@@ -463,47 +534,65 @@ class AgentKernel:
         """扣减进程预算，返回剩余。超限抛 BudgetExceededError（调用方决定中断策略）。
 
         多 worker：Redis HINCRBY 原子扣减，再同步本地缓存。
+        硬顶：单次 charge 不得把 tokens_used 顶穿 budget（拒绝写入）。
         """
         proc = self._resolve_process(process_id)
         if proc is None:
             return None
+        if amount > 0 and proc.token_budget is not None:
+            if proc.tokens_used + amount > proc.token_budget:
+                self._emit("budget_exceeded", proc.id, {
+                    "token_budget": proc.token_budget,
+                    "tokens_used": proc.tokens_used,
+                    "rejected_charge": amount,
+                })
+                raise BudgetExceededError(
+                    f"进程 {process_id} 预算不足（已用 {proc.tokens_used}/{proc.token_budget}，拒绝 +{amount}）"
+                )
         if self._shared is not None and amount > 0:
             try:
                 used, remaining = self._shared.charge_tokens(process_id, amount)
                 if used is not None:
                     proc.tokens_used = used
-                if remaining is not None and remaining <= 0:
-                    self._emit("budget_exceeded", proc.id, {
+                # 成功扣到 0 = 预算用尽但本刀合法，不抛；下一刀由硬顶拒绝
+                if remaining is not None and remaining == 0:
+                    self._emit("budget_exhausted", proc.id, {
                         "token_budget": proc.token_budget,
                         "tokens_used": proc.tokens_used,
                     })
-                    # 不 put 全量 tokens_used；仅同步 state 类字段
-                    try:
-                        self._shared.set_process_fields(
-                            process_id, state=proc.state, token_budget=proc.token_budget
-                        )
-                    except Exception:
-                        pass
-                    raise BudgetExceededError(
-                        f"进程 {process_id} 预算耗尽（{proc.tokens_used}/{proc.token_budget}）"
-                    )
+                # 写入 DB 档案，否则 UI/org 聚合 tokens_used 永远为 0
+                self._persist_process(proc)
                 self._maybe_auto_tighten(proc)
                 return remaining
             except BudgetExceededError:
                 raise
+            except RuntimeError as e:
+                if "budget exceeded" in str(e).lower():
+                    self._emit("budget_exceeded", proc.id, {
+                        "token_budget": proc.token_budget,
+                        "tokens_used": proc.tokens_used,
+                        "rejected_charge": amount,
+                    })
+                    raise BudgetExceededError(str(e)) from e
+                logger.warning("redis charge_tokens RuntimeError，回退本地: %s", e)
             except Exception as e:
                 logger.warning("redis charge_tokens 失败，回退本地: %s", e)
-        remaining = proc.charge_tokens(amount)
-        # 回退路径：本地扣完后 put（新建 tokens 或 max 语义已在 store 处理）
-        self._share_process(proc)
-        if remaining is not None and remaining <= 0:
+        try:
+            remaining = proc.charge_tokens(amount)
+        except ValueError as e:
             self._emit("budget_exceeded", proc.id, {
                 "token_budget": proc.token_budget,
                 "tokens_used": proc.tokens_used,
+                "rejected_charge": amount,
             })
-            raise BudgetExceededError(
-                f"进程 {process_id} 预算耗尽（{proc.tokens_used}/{proc.token_budget}）"
-            )
+            raise BudgetExceededError(str(e)) from e
+        # 回退路径：本地扣完后 put + DB 档案（UI 成本/预算条依赖）
+        self._persist_process(proc)
+        if remaining is not None and remaining == 0:
+            self._emit("budget_exhausted", proc.id, {
+                "token_budget": proc.token_budget,
+                "tokens_used": proc.tokens_used,
+            })
         self._maybe_auto_tighten(proc)
         return remaining
 
@@ -670,6 +759,17 @@ class AgentKernel:
             "capabilities": list(caps),
             "reason": reason,
         })
+        ident = getattr(proc, "identity", None) or getattr(proc, "identity_key", None)
+        self._emit_policy_decision(
+            process_id,
+            action="escalation",
+            target=",".join(caps),
+            outcome="escalate",
+            reason=reason or "capability_escalation",
+            source="kernel",
+            identity=ident,
+            extra={"escalation_id": req.id, "capabilities": list(caps)},
+        )
         # 审批规则：低风险 + auto_low_risk 开启 → 自动批准（不打扰老板）
         try:
             from backend.kernel.approval_rules import should_auto_approve_escalation
@@ -678,7 +778,39 @@ class AgentKernel:
                 return await self.approve_escalation(req.id, by="auto:approval_rules")
         except Exception as e:
             logger.debug("auto-approve check skipped: %s", e)
+        # 仍 pending：通知主人去审批中心（扩权，非工具洪水）
+        try:
+            await self._notify_escalation_pending(req, identity=ident)
+        except Exception as e:
+            logger.debug("escalation notify skip: %s", e)
         return req
+
+    async def _notify_escalation_pending(self, req: EscalationRequest, *, identity: str | None) -> None:
+        """待批扩权 → 系统通知（单用户取 admin）。"""
+        from backend.repositories.notification_repo import AsyncNotificationRepository
+        from backend.repositories.user_repo import AsyncUserRepository
+
+        u = await AsyncUserRepository().get_by_email("admin@takton.dev")
+        if u is None:
+            return
+        caps = ", ".join(req.capabilities[:8])
+        await AsyncNotificationRepository().create(
+            {
+                "user_id": u.id,
+                "type": "system",
+                "title": f"待批员工扩权 · {caps}"[:256],
+                "content": (req.reason or f"进程 {req.process_id} 申请能力 {caps}")[:4000],
+                "is_read": False,
+                "data": {
+                    "escalation_id": req.id,
+                    "process_id": req.process_id,
+                    "capabilities": list(req.capabilities),
+                    "identity": identity or "",
+                    "source": "kernel_escalation",
+                },
+                "source_id": str(req.id)[:64],
+            }
+        )
 
     async def approve_escalation(self, request_id: str, *, by: str = "user") -> EscalationRequest:
         """批准提权：优先并入 live 进程能力集；进程已死则并入 identity 档案。
@@ -815,9 +947,11 @@ class AgentKernel:
         return req
 
     async def ensure_escalation_loaded(self, request_id: str) -> EscalationRequest | None:
-        """跨 worker：Redis → DB 水合到内存。"""
-        if request_id in self._escalations:
-            return self._escalations[request_id]
+        """跨 worker：Redis → DB 水合到内存。
+
+        **总是**尝试远端刷新（禁止「内存已有就短路」——否则他 worker
+        已批准/拒绝后本机仍卡在陈旧 pending）。
+        """
         # Redis 优先（低延迟）
         if self._shared is not None:
             try:
@@ -841,7 +975,7 @@ class AgentKernel:
                     )
                 ).scalar_one_or_none()
             if row is None:
-                return None
+                return self._escalations.get(request_id)
             self.hydrate_escalation({
                 "id": row.escalation_id,
                 "process_id": row.process_id,
@@ -855,7 +989,7 @@ class AgentKernel:
             return self._escalations.get(request_id)
         except Exception as e:
             logger.warning("load escalation from DB failed: %s", e)
-            return None
+            return self._escalations.get(request_id)
 
     def list_escalations(self, *, status: str | None = None) -> list[EscalationRequest]:
         if self._shared is not None:
@@ -886,9 +1020,9 @@ class AgentKernel:
                 logger.warning("kernel Redis put_escalation 失败（不阻断）: %s", e)
 
     def hydrate_escalation(self, data: dict[str, Any]) -> None:
-        """从 DB 恢复一条提权到内存（recover 用；不重复 emit）。"""
+        """从 DB/Redis 恢复或**刷新**一条提权到内存（upsert，覆盖陈旧 status）。"""
         eid = str(data.get("id") or data.get("escalation_id") or "")
-        if not eid or eid in self._escalations:
+        if not eid:
             return
         caps = data.get("capabilities") or []
         if isinstance(caps, str):
@@ -943,6 +1077,13 @@ class AgentKernel:
                 self._shared.push_event(event.to_dict())
             except Exception as e:
                 logger.debug("kernel Redis push_event 失败: %s", e)
+        # 领域事件 → UI/CLI 订阅（失败不阻断审计）
+        try:
+            from backend.kernel.domain_events import publish_from_kernel_event
+
+            publish_from_kernel_event(kind, process_id, detail if isinstance(detail, dict) else {})
+        except Exception as e:
+            logger.debug("domain_events hook: %s", e)
         logger.debug("kernel event %s proc=%s %s", kind, process_id, detail)
         return event
 

@@ -6,7 +6,9 @@ WebSocket 通信层
 import asyncio
 import json
 import logging
+import time
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
@@ -32,6 +34,34 @@ from .dependencies import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# 单 session 流式快照：用户乱切页 / 断线后仍保留 in-flight 状态，回连 sync 可恢复
+_MAX_PARTIAL_CHARS = 120_000
+_MAX_LIVE_TOOLS = 48
+
+
+@dataclass
+class SessionRunSnapshot:
+    """进程内 per-session 运行快照（不落库）。"""
+
+    agent_running: bool = False
+    state: str = "idle"
+    detail: str = ""
+    partial_content: str = ""
+    stream_message_id: str | None = None
+    live_tools: list[dict[str, Any]] = field(default_factory=list)
+    updated_at: float = 0.0
+
+    def to_sync_fields(self) -> dict[str, Any]:
+        return {
+            "agent_running": self.agent_running,
+            "state": self.state if self.agent_running else "idle",
+            "stream_status": self.detail or None,
+            "partial_content": self.partial_content if self.agent_running else "",
+            "stream_message_id": self.stream_message_id if self.agent_running else None,
+            "live_tools": list(self.live_tools) if self.agent_running else [],
+            "snapshot_updated_at": self.updated_at or None,
+        }
+
 
 async def safe_close_ws(
     websocket: WebSocket, code: int = 1000, reason: str = ""
@@ -51,6 +81,15 @@ async def safe_close_ws(
         raise
     except Exception:
         pass
+
+
+def _ws_client_is_loopback(websocket: WebSocket) -> bool:
+    """WS 对端是否本机。与 dependencies._is_loopback_host 同一口径：
+    只信 socket 对端，不信可伪造的 X-Forwarded-For。"""
+    from backend.api.dependencies import _is_loopback_host
+
+    client = getattr(websocket, "client", None)
+    return _is_loopback_host(getattr(client, "host", None) if client else None)
 
 
 class ConnectionManager:
@@ -73,8 +112,135 @@ class ConnectionManager:
         self._tasks: dict[uuid.UUID, set[asyncio.Task]] = {}
         # session_id -> 当前 agent 主任务（可 stop/cancel）
         self._agent_tasks: dict[uuid.UUID, asyncio.Task] = {}
+        # session_id -> 运行中流式快照（断线/跳页后仍可 sync 恢复）
+        self._run_snapshots: dict[uuid.UUID, SessionRunSnapshot] = {}
         # 保护 WebSocket 并发发送（后台任务与主循环可能同时 send）
         self._send_lock = asyncio.Lock()
+
+    # ── run snapshot (navigate-away safe) ───────────────────────────
+
+    def begin_run_snapshot(self, session_id: uuid.UUID) -> None:
+        """新 user turn 开始：标记 running，清空上一轮残留。"""
+        self._run_snapshots[session_id] = SessionRunSnapshot(
+            agent_running=True,
+            state="thinking",
+            detail="Starting…",
+            updated_at=time.time(),
+        )
+
+    def end_run_snapshot(self, session_id: uuid.UUID) -> None:
+        """Agent 主任务结束：释放快照，避免假 running。"""
+        self._run_snapshots.pop(session_id, None)
+
+    def get_run_snapshot(self, session_id: uuid.UUID) -> SessionRunSnapshot | None:
+        return self._run_snapshots.get(session_id)
+
+    def _touch_snapshot(self, session_id: uuid.UUID) -> SessionRunSnapshot:
+        snap = self._run_snapshots.get(session_id)
+        if snap is None:
+            snap = SessionRunSnapshot(agent_running=self.has_running_agent(session_id))
+            self._run_snapshots[session_id] = snap
+        snap.updated_at = time.time()
+        return snap
+
+    def _ingest_run_event(self, session_id: uuid.UUID, message: dict[str, Any]) -> None:
+        """从广播消息维护快照。无 WS 连接时也要更新（用户在别的页面）。"""
+        msg_type = message.get("type")
+        if msg_type not in ("stream_delta", "status", "tool_event", "error"):
+            return
+
+        running = self.has_running_agent(session_id)
+        snap = self._touch_snapshot(session_id)
+        if running:
+            snap.agent_running = True
+
+        if msg_type == "stream_delta":
+            content = message.get("content") or ""
+            mid = message.get("message_id")
+            mid_s = str(mid) if mid else None
+            done = bool(message.get("done"))
+            # 新 message_id：若上一轮已有较长正文且本段像整段重推，则替换；否则重置缓冲
+            if mid_s and snap.stream_message_id and mid_s != snap.stream_message_id:
+                if done or (len(content) > 80 and len(content) >= len(snap.partial_content)):
+                    snap.partial_content = content
+                else:
+                    snap.partial_content = content
+                snap.stream_message_id = mid_s
+            else:
+                if mid_s:
+                    snap.stream_message_id = mid_s
+                if done and content and len(content) >= len(snap.partial_content):
+                    snap.partial_content = content
+                else:
+                    snap.partial_content = (snap.partial_content + content)[:_MAX_PARTIAL_CHARS]
+            if snap.state in ("idle", ""):
+                snap.state = "thinking"
+            return
+
+        if msg_type == "status":
+            state = str(message.get("state") or "")
+            detail = message.get("detail")
+            if state:
+                snap.state = state
+            if detail is not None:
+                snap.detail = str(detail)
+            if state == "idle":
+                # 终态：若 agent 任务已结束则清快照；否则保留到 task done
+                if not running:
+                    self._run_snapshots.pop(session_id, None)
+                else:
+                    snap.agent_running = True
+            elif state == "error":
+                if not running:
+                    self._run_snapshots.pop(session_id, None)
+            return
+
+        if msg_type == "error":
+            detail = message.get("detail")
+            if detail:
+                snap.detail = str(detail)
+            snap.state = "error"
+            if not running:
+                self._run_snapshots.pop(session_id, None)
+            return
+
+        if msg_type == "tool_event":
+            tid = str(message.get("tool_call_id") or "")
+            if not tid:
+                return
+            name = str(message.get("name") or "tool")
+            phase = message.get("phase") or "start"
+            status = message.get("status") or ("running" if phase == "start" else "completed")
+            args = message.get("arguments") if isinstance(message.get("arguments"), dict) else {}
+            result = message.get("result")
+            # upsert
+            found = False
+            for i, t in enumerate(snap.live_tools):
+                if str(t.get("id") or t.get("tool_call_id") or "") == tid:
+                    snap.live_tools[i] = {
+                        "id": tid,
+                        "name": name or t.get("name") or "tool",
+                        "arguments": args if args else (t.get("arguments") or {}),
+                        "status": status,
+                        "result": result if result is not None else t.get("result"),
+                    }
+                    found = True
+                    break
+            if not found:
+                snap.live_tools.append(
+                    {
+                        "id": tid,
+                        "name": name,
+                        "arguments": args or {},
+                        "status": status,
+                        "result": result,
+                    }
+                )
+            if len(snap.live_tools) > _MAX_LIVE_TOOLS:
+                snap.live_tools = snap.live_tools[-_MAX_LIVE_TOOLS:]
+            if snap.state in ("idle", ""):
+                snap.state = "tool_executing"
+            return
 
     async def _safe_close(self, websocket: WebSocket, code: int = 1000, reason: str = "") -> None:
         """安全关闭 WebSocket，避免重复 close 导致 RuntimeError"""
@@ -121,12 +287,21 @@ class ConnectionManager:
         if old is not None and not old.done() and old is not task:
             old.cancel()
         self._agent_tasks[session_id] = task
+        # 新主任务：确保快照为 running（begin 可能已在 user_input 调用）
+        snap = self._run_snapshots.get(session_id)
+        if snap is None:
+            self.begin_run_snapshot(session_id)
+        else:
+            snap.agent_running = True
+            snap.updated_at = time.time()
         # 不把 agent 放进 _tasks：disconnect 只清附属任务，保留推理
 
         def _cleanup(t: asyncio.Task, sid: uuid.UUID = session_id) -> None:
             cur = self._agent_tasks.get(sid)
             if cur is t:
                 self._agent_tasks.pop(sid, None)
+                # 任务结束后释放快照，防止 UI 永久 Resuming
+                self.end_run_snapshot(sid)
 
         task.add_done_callback(_cleanup)
 
@@ -146,18 +321,30 @@ class ConnectionManager:
                 ids.add(str(sid))
         return ids
 
-    async def cancel_agent(self, session_id: uuid.UUID) -> None:
-        """取消正在运行的 agent（配合 agent.stop() 使用）。"""
+    async def cancel_agent(self, session_id: uuid.UUID, *, wait: float = 2.0) -> None:
+        """取消正在运行的 agent（配合 agent.stop() 使用）。
+
+        wait: 尽量等旧 task 退出，避免立刻清 _should_stop 导致叠跑。
+        """
         t = self._agent_tasks.get(session_id)
         if t is None or t.done():
             return
         t.cancel()
         try:
-            await asyncio.wait_for(asyncio.shield(t), timeout=0.05)
+            await asyncio.wait_for(asyncio.shield(t), timeout=max(0.05, float(wait)))
         except (asyncio.TimeoutError, asyncio.CancelledError):
             pass
         except Exception:
             pass
+
+    async def wait_agent_idle(self, session_id: uuid.UUID, *, timeout: float = 2.0) -> bool:
+        """轮询直到无运行中 agent 或超时。返回是否已 idle。"""
+        deadline = time.monotonic() + max(0.05, float(timeout))
+        while time.monotonic() < deadline:
+            if not self.has_running_agent(session_id):
+                return True
+            await asyncio.sleep(0.05)
+        return not self.has_running_agent(session_id)
 
     async def connect(
         self,
@@ -216,7 +403,16 @@ class ConnectionManager:
     async def broadcast(
         self, session_id: uuid.UUID, message: dict[str, Any]
     ) -> None:
-        """向指定 session 的 WebSocket 发送消息（连接不存在时静默忽略）"""
+        """向指定 session 的 WebSocket 发送消息（连接不存在时静默忽略）。
+
+        无论是否有连接，都先更新 run snapshot——用户跳页断线后 agent 仍在跑，
+        回连 sync 才能恢复 partial 正文与 live tools。
+        """
+        try:
+            self._ingest_run_event(session_id, message)
+        except Exception as e:
+            logger.debug("run snapshot ingest skipped: %s", e)
+
         ws = self._connections.get(session_id)
         if ws is None:
             return
@@ -253,8 +449,25 @@ class ConnectionManager:
             logger.error(f"Failed to send text to session {session_id}: {e}")
             self.disconnect(session_id)
 
-    def is_connected(self, session_id: uuid.UUID) -> bool:
-        return session_id in self._connections
+    def is_connected(self, session_id) -> bool:
+        """该 session 是否有处于 CONNECTED 状态的 WS 连接。
+
+        confirm_manager 用它判断确认弹窗能否送达——broadcast 对未知 session 静默 return。
+        """
+        if session_id is None:
+            return False
+        sid = session_id
+        if isinstance(session_id, str):
+            try:
+                sid = uuid.UUID(session_id)
+            except (ValueError, AttributeError):
+                return False
+        ws = self._connections.get(sid)
+        if ws is None:
+            return False
+        state = getattr(ws, "client_state", None)
+        # Starlette WebSocketState.CONNECTED.value == 1
+        return bool(state is not None and getattr(state, "value", state) == 1)
 
 
 # 全局连接管理器单例
@@ -358,15 +571,22 @@ async def websocket_endpoint(
                     logger.info(
                         f"Single-user fallback: token sub not found, using default user {user_id}"
                     )
-    elif settings.single_user_mode:
-        # 单用户免认证直连：本机无 token 时回落默认 admin
+    elif settings.single_user_mode and _ws_client_is_loopback(websocket):
+        # 单用户免认证直连：**仅本机** 无 token 时回落默认 admin。
+        #
+        # 这条闸门此前不存在，而 WS 是驱动 Agent Loop 的主通道 —— 绑 0.0.0.0 时
+        # 等于把 command 工具的执行权无鉴权暴露出去。HTTP 侧的
+        # dependencies.get_current_user 一直有这道门，两边口径必须一致。
+        from backend.api.dependencies import resolve_default_admin_password
         from backend.repositories.user_repo import AsyncUserRepository
+
         user_repo_check = AsyncUserRepository()
         default_user = await user_repo_check.get_by_email("admin@takton.dev")
         if default_user:
             user_id = default_user.id
         else:
             from backend.core.security import get_password_hash
+
             user_id = uuid.uuid4()
             try:
                 await user_repo_check.create(
@@ -375,7 +595,7 @@ async def websocket_endpoint(
                         "email": "admin@takton.dev",
                         "username": "admin",
                         "hashed_password": get_password_hash(
-                            (settings.default_admin_password or "").strip() or "admin"
+                            resolve_default_admin_password()
                         ),
                         "is_superuser": True,
                         "is_active": True,
@@ -437,6 +657,21 @@ async def websocket_endpoint(
 
     await manager.connect(session_id, websocket, user_id=user_id)
 
+    # 重连恢复：若该 session 后台 agent 仍在跑，立刻推 status
+    if manager.has_running_agent(session_id):
+        try:
+            await manager.broadcast(
+                session_id,
+                {
+                    "type": "status",
+                    "state": "thinking",
+                    "detail": "Resumed — agent still running",
+                    "agent_running": True,
+                },
+            )
+        except Exception:
+            pass
+
     # 初始化 Agent Loop
     agent = NexusAgentLoop(
         session_repo=session_repo,
@@ -480,10 +715,11 @@ async def websocket_endpoint(
                     sub_agent_ids = []
                 sub_agent_ids = [str(x) for x in sub_agent_ids if x]
 
-                # 若上一轮仍在跑：先请求停止，避免叠跑
+                # 若上一轮仍在跑：先请求停止并尽量等退出，再清 stop 标志，避免叠跑竞态
                 if manager.has_running_agent(session_id):
                     agent.stop()
-                    await manager.cancel_agent(session_id)
+                    await manager.cancel_agent(session_id, wait=2.0)
+                    await manager.wait_agent_idle(session_id, timeout=2.0)
                     await manager.broadcast(
                         session_id,
                         {
@@ -494,6 +730,7 @@ async def websocket_endpoint(
                     )
 
                 agent._should_stop = False
+                manager.begin_run_snapshot(session_id)
 
                 # 后台跑 Agent，保持收包循环可响应 stop/ping
                 task = asyncio.create_task(
@@ -507,7 +744,8 @@ async def websocket_endpoint(
             elif msg_type == "stop":
                 logger.info(f"Stop signal received for session {session_id}")
                 agent.stop()
-                await manager.cancel_agent(session_id)
+                await manager.cancel_agent(session_id, wait=2.0)
+                manager.end_run_snapshot(session_id)
                 await manager.broadcast(
                     session_id,
                     {"type": "status", "state": "idle", "detail": "Generation stopped by user"},
@@ -515,40 +753,101 @@ async def websocket_endpoint(
 
             elif msg_type == "confirm_response":
                 # 危险操作确认结果：唤醒等待的工具执行协程
+                # scope: once | session | agent | deny
                 from backend.services import confirm_manager
 
                 confirm_id = str(data.get("confirm_id", ""))
                 approved = bool(data.get("approved", False))
-                confirm_manager.resolve_confirmation(confirm_id, approved)
+                scope = data.get("scope")
+                if scope is None and approved:
+                    scope = "once"
+                confirm_manager.resolve_confirmation(
+                    confirm_id, approved, scope=str(scope) if scope is not None else None
+                )
 
             elif msg_type == "sync":
-                last_id = data.get("last_message_id")
-                if last_id:
-                    try:
-                        last_uuid = uuid.UUID(last_id)
+                # 断线/跳页回连：漏消息 + agent_running + 流式快照（正文/tools）
+                running = manager.has_running_agent(session_id)
+                snap = manager.get_run_snapshot(session_id)
+                # 快照与 task 对齐：task 在跑但快照丢失时建轻量占位（勿用 begin 抹掉假设数据）
+                if running and snap is None:
+                    manager._run_snapshots[session_id] = SessionRunSnapshot(
+                        agent_running=True,
+                        state="thinking",
+                        detail="Resuming…",
+                        updated_at=time.time(),
+                    )
+                    snap = manager.get_run_snapshot(session_id)
+                if not running:
+                    # task 已结束：清快照，避免假 Resuming
+                    if snap is not None:
+                        manager.end_run_snapshot(session_id)
+                    snap = None
+                msgs_out: list[dict] = []
+                try:
+                    last_id = data.get("last_message_id")
+                    if last_id:
+                        last_uuid = uuid.UUID(str(last_id))
                         messages = await message_repo.get_messages_after(
                             session_id, last_uuid
                         )
+                        msgs_out = [
+                            {
+                                "id": str(m.id),
+                                "role": m.role,
+                                "content": m.content,
+                                "created_at": m.created_at.isoformat()
+                                if getattr(m, "created_at", None)
+                                else None,
+                            }
+                            for m in messages
+                        ]
+                    snap_fields = (
+                        snap.to_sync_fields()
+                        if snap is not None
+                        else {
+                            "agent_running": running,
+                            "state": "thinking" if running else "idle",
+                            "stream_status": None,
+                            "partial_content": "",
+                            "stream_message_id": None,
+                            "live_tools": [],
+                            "snapshot_updated_at": None,
+                        }
+                    )
+                    # 以 task 存活为准
+                    snap_fields["agent_running"] = running
+                    if not running:
+                        snap_fields["state"] = "idle"
+                        snap_fields["partial_content"] = ""
+                        snap_fields["live_tools"] = []
+                    elif not snap_fields.get("state") or snap_fields["state"] == "idle":
+                        snap_fields["state"] = "thinking"
+
+                    await manager.broadcast(
+                        session_id,
+                        {
+                            "type": "sync_response",
+                            "messages": msgs_out,
+                            **snap_fields,
+                        },
+                    )
+                    if running:
+                        detail = (snap.detail if snap else None) or "Resumed — agent still running"
                         await manager.broadcast(
                             session_id,
                             {
-                                "type": "sync_response",
-                                "messages": [
-                                    {
-                                        "id": str(m.id),
-                                        "role": m.role,
-                                        "content": m.content,
-                                        "created_at": m.created_at.isoformat(),
-                                    }
-                                    for m in messages
-                                ],
+                                "type": "status",
+                                "state": (snap.state if snap and snap.state not in ("idle", "") else "thinking"),
+                                "detail": detail,
+                                "agent_running": True,
                             },
                         )
-                    except Exception as e:
-                        logger.error(f"Sync error: {e}")
-                        await manager.broadcast(
-                            session_id, {"type": "error", "detail": f"Sync failed: {e}"}
-                        )
+                except Exception as e:
+                    logger.error(f"Sync error: {e}")
+                    await manager.broadcast(
+                        session_id, {"type": "error", "detail": f"Sync failed: {e}"}
+                    )
 
             elif msg_type == "auth":
                 # 支持在连接后通过消息进行认证
@@ -601,9 +900,13 @@ async def _run_agent_safe(
             mode=mode,
             sub_agent_ids=sub_agent_ids or [],
         )
+        # 正常结束：若 epilogue 已推 idle，快照会在 ingest 时清理；双保险
+        if not manager.has_running_agent(session_id):
+            manager.end_run_snapshot(session_id)
     except asyncio.CancelledError:
         logger.info(f"Agent loop cancelled for session {session_id}")
         try:
+            manager.end_run_snapshot(session_id)
             await manager.broadcast(
                 session_id,
                 {"type": "status", "state": "idle", "detail": "Generation stopped"},
@@ -613,6 +916,10 @@ async def _run_agent_safe(
         raise
     except Exception as e:
         logger.exception(f"Agent loop failed for session {session_id}: {e}")
+        try:
+            manager.end_run_snapshot(session_id)
+        except Exception:
+            pass
         await manager.broadcast(
             session_id,
             {

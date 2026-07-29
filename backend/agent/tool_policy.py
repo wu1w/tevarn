@@ -109,7 +109,10 @@ TOOL_PACKS: dict[str, tuple[str, ...]] = {
         "calendar_read",
     ),
     "goal": ("manage_goal", "autopilot"),
-    "cluster": ("manage_sub_agent", "delegate_task", "agent_call"),
+    # 编制派活（产品脊柱）：收件箱工单，不是临时子代理闷跑
+    "crew": ("crew_steward", "delegate_task", "agent_call"),
+    # cluster 保留 manage_sub_agent 作技能包维护；派活优先走 crew
+    "cluster": ("crew_steward", "manage_sub_agent", "delegate_task", "agent_call"),
     "data": ("sqlite_query", "http"),
     "github": ("github", "manage_git"),
 }
@@ -126,13 +129,15 @@ PROFILE_BASE_PACKS: dict[str, tuple[str, ...]] = {
 
 # assistant 额外单工具（不在 pack 内）
 PROFILE_EXTRA_TOOLS: dict[str, tuple[str, ...]] = {
-    "coding": ("current_time", "clarify", "use_tool_pack"),
+    # crew_steward：对话主路径招人/派活（即使 coding profile 也始终可点）
+    "coding": ("current_time", "clarify", "use_tool_pack", "crew_steward"),
     "assistant": (
         "current_time",
         "clarify",
         "session_search",
         "doc_read",
         "use_tool_pack",
+        "crew_steward",
     ),
     "ops": (
         "current_time",
@@ -142,9 +147,10 @@ PROFILE_EXTRA_TOOLS: dict[str, tuple[str, ...]] = {
         "use_tool_pack",
         "get_system_status",
         "capability_status",
+        "crew_steward",
     ),
-    "dynamic": ("use_tool_pack",),
-    "core": ("use_tool_pack",),
+    "dynamic": ("use_tool_pack", "crew_steward"),
+    "core": ("use_tool_pack", "crew_steward"),
 }
 
 MODE_TOOL_EXTRAS: dict[str, tuple[str, ...]] = {
@@ -263,6 +269,24 @@ _PACK_KEYWORDS: dict[str, tuple[str, ...]] = {
         "commit",
     ),
     "goal": ("长期任务", "拆解目标", "autopilot", "里程碑"),
+    "crew": (
+        "派活",
+        "派给",
+        "招人",
+        "入编",
+        "员工",
+        "编制",
+        "班子",
+        "工单",
+        "巡检",
+        "管家",
+        "ceo",
+        "hire",
+        "assign",
+        "workforce",
+        "团队",
+        "分工",
+    ),
     "cluster": ("多代理", "子代理", "并行分工", "cluster"),
 }
 
@@ -492,6 +516,7 @@ def resolve_enabled_tool_names(
         if skills is not None and len(skills) > 0:
             if not (len(skills) == 1 and skills[0].lower() in {"*", "all"}):
                 base.update(skills)
+        plan.packs = list(dict.fromkeys(packs))
 
     mode_key = (mode or "default").strip().lower()
     base.update(MODE_TOOL_EXTRAS.get(mode_key, ()))
@@ -543,6 +568,12 @@ def compact_capability_brief(
         "Prefer file_write/edit over heredoc; batch independent reads."
     )
     lines.append("Prefer tools over speculation; finish the task.")
+    # 编制派活纪律：有 crew_steward 时强制提示，避免闷头起子代理
+    if tool_names is None or "crew_steward" in set(tool_names or []):
+        lines.append(
+            "Workforce: analyze → crew_steward list/hire/assign to employees (inbox). "
+            "Do NOT spawn temp subagents for team work."
+        )
     return "\n".join(lines)
 
 
@@ -557,6 +588,7 @@ SCENE_SKILL_HINTS: dict[str, tuple[str, ...]] = {
     "devices": ("device", "remote", "ssh", "agent", "设备", "远程"),
     "github": ("github", "pr", "ci", "gh"),
     "goal": ("goal", "plan", "autopilot", "目标", "里程碑"),
+    "crew": ("crew", "hire", "assign", "员工", "派活", "编制", "管家", "工单"),
     "cluster": ("cluster", "delegate", "subagent", "多代理", "子代理"),
     "data": ("sql", "sqlite", "database", "数据"),
 }

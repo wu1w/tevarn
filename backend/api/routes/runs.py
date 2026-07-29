@@ -66,6 +66,17 @@ async def list_session_runs(
     return await repo.list_runs(session_id, limit=limit, offset=offset)
 
 
+@router.get("/recent", response_model=list[RunSummary])
+async def list_recent_runs(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+    limit: int = Query(40, ge=1, le=100),
+    status: str | None = Query(None),
+) -> list[Any]:
+    """0.5.3 I1：全局 Runs 入口，不依赖先开 chat。"""
+    repo = AsyncAgentRunRepository()
+    return await repo.list_recent(limit=limit, status=status)
+
+
 @router.get("/{run_id}", response_model=RunDetail)
 async def get_run(
     run_id: uuid.UUID,

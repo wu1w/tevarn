@@ -1,4 +1,6 @@
-'use client';
+﻿'use client';
+
+import { AdvancedShell } from '@/components/layout/AdvancedShell';
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -249,6 +251,12 @@ export default function DevicesPage() {
     s === 'online' ? 'text-success-text' : s === 'busy' ? 'text-amber-400' : 'text-foreground-dim';
 
   return (
+    <AdvancedShell
+      titleZh="设备节点是高级能力"
+      titleEn="Devices are advanced"
+      hintZh="远程节点/配对；日常本机即可。"
+      hintEn="Remote nodes/pairing; local-only for daily use."
+    >
     <div className="tk-page flex h-full min-h-0 flex-col p-6">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -534,5 +542,6 @@ export default function DevicesPage() {
 
       {ConfirmDialogComponent}
     </div>
+    </AdvancedShell>
   );
 }

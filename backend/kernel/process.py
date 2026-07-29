@@ -106,14 +106,35 @@ class AgentProcess:
         return max(0, self.token_budget - self.tokens_used)
 
     def has_capability(self, cap: str) -> bool:
-        """None = 兼容模式全放行；显式能力集必须包含目标能力。"""
+        """None = 兼容模式全放行；显式能力集必须包含目标能力。
+
+        编制层存抽象 cap（file_rw / command / web_search），
+        mediate 传入的是工具名（file_read / glob / grep）——经 TOOL_TO_CREW_CAP 映射。
+        """
         if self.capabilities is None:
             return True
-        return cap in self.capabilities or "*" in self.capabilities
+        if cap in self.capabilities or "*" in self.capabilities:
+            return True
+        try:
+            from backend.agent.grant_store import tool_matches_crew_caps
+
+            return tool_matches_crew_caps(cap, self.capabilities)
+        except Exception:
+            return False
 
     def charge_tokens(self, amount: int) -> int | None:
-        """扣减预算，返回剩余（None = 不限）。调用方负责判断是否超限。"""
+        """扣减预算，返回剩余（None = 不限）。
+
+        硬顶：若 amount 会把 tokens_used 顶穿 token_budget，则**不写入**并返回
+        负哨兵语义由调用方（kernel.charge_tokens）转 BudgetExceededError。
+        返回值仍为扣减后的 remaining；超支拒绝时抛 ValueError（kernel 捕获转换）。
+        """
         if amount > 0:
+            if self.token_budget is not None and self.tokens_used + amount > self.token_budget:
+                raise ValueError(
+                    f"charge {amount} would exceed budget "
+                    f"({self.tokens_used}/{self.token_budget})"
+                )
             self.tokens_used += amount
         return self.budget_remaining
 

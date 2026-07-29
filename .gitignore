@@ -141,3 +141,12 @@ Thumbs.db
 
 # 本地工作锚点（会话连续性用，不入库）
 CURRENT_TASK.md
+
+# 本地开发运行时产物（2026-07-29 止血补充）
+.dev-logs/
+.computers/
+data/
+backend/workspace_state.json
+tmp_*.py
+_stats.py
+_count.py

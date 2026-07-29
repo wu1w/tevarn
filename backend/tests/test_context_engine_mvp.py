@@ -42,23 +42,50 @@ def test_l1_truncates_tool_output():
     assert "L1" in out[2]["content"] or "truncated" in out[2]["content"]
 
 
-def test_l3_drops_mid_tools():
+def test_l3_clears_mid_tool_bodies_keeps_pairs():
+    """L3 microcompact (CC-style): clear mid tool content, keep tool_calls + tool rows."""
+    from backend.agent.context_pipeline import CLEARED_TOOL_PLACEHOLDER
+
     eng = PipelineContextEngine()
     eng.protect_first_n = 1
     eng.protect_last_n = 2
     msgs = [{"role": "system", "content": "s"}]
     msgs.append({"role": "user", "content": "start"})
     for i in range(8):
-        msgs.append({"role": "assistant", "content": f"a{i}", "tool_calls": [{"id": str(i), "function": {"name": "t", "arguments": "{}"}}]})
-        msgs.append({"role": "tool", "content": f"tool{i}" * 20, "tool_call_id": str(i)})
+        msgs.append(
+            {
+                "role": "assistant",
+                "content": f"a{i}",
+                "tool_calls": [
+                    {
+                        "id": str(i),
+                        "function": {"name": "file_read", "arguments": "{}"},
+                    }
+                ],
+            }
+        )
+        msgs.append(
+            {
+                "role": "tool",
+                "content": f"tool{i}_" + ("X" * 200),
+                "tool_call_id": str(i),
+            }
+        )
     msgs.append({"role": "user", "content": "latest"})
     msgs.append({"role": "assistant", "content": "end"})
     out, n = eng._l3_microcompact(msgs)
     assert n >= 3
     mid_tools = [m for m in out if m.get("role") == "tool"]
-    # tail may keep some tools; overall tool count should drop
     orig_tools = sum(1 for m in msgs if m.get("role") == "tool")
-    assert len(mid_tools) < orig_tools
+    assert len(mid_tools) == orig_tools
+    asst_with_tc = [
+        m for m in out if m.get("role") == "assistant" and m.get("tool_calls")
+    ]
+    assert len(asst_with_tc) >= 3
+    cleared = [
+        m for m in out if m.get("role") == "tool" and CLEARED_TOOL_PLACEHOLDER in str(m.get("content") or "")
+    ]
+    assert len(cleared) >= 3
 
 
 def test_pipeline_compress_l1_only_when_under_threshold():

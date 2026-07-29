@@ -27,6 +27,7 @@ import {
 import { useToastStore } from '@/stores/toastStore';
 import { useZh } from '@/hooks/useZh';
 import type { MCPServer, MCPServerStatus } from '@/types';
+import { AdvancedShell } from '@/components/layout/AdvancedShell';
 
 type Tab = 'skills' | 'mcp';
 
@@ -198,7 +199,13 @@ export default function MarketPage() {
   };
 
   return (
-    <div style={{ maxWidth: 1060, margin: '0 auto', padding: '26px 28px 40px' }}>
+    <AdvancedShell
+      titleZh="扩展市场是高级能力"
+      titleEn="Extensions marketplace is advanced"
+      hintZh="主路径不依赖装扩展。技能/MCP 在此安装。"
+      hintEn="Spine does not require the market. Install skills/MCP here."
+    >
+    <div style={{ width: '100%', maxWidth: 'none', margin: 0, padding: 'clamp(16px, 2.2vw, 28px) clamp(12px, 2vw, 32px) clamp(24px, 3vw, 40px)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 18 }}>
         <div>
           <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--foreground)' }}>
@@ -239,7 +246,7 @@ export default function MarketPage() {
               </div>
             </div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 12 }}>
               {skills.map((s) => {
                 const key = `${s.source}/${s.id || s.name}`;
                 const installed = installedSet.has(`${s.source}/${s.name}`) || installedSet.has(key);
@@ -299,7 +306,7 @@ export default function MarketPage() {
                 {zh ? '已接入' : 'Connected'}{' '}
                 <span style={{ fontSize: 10.5, fontWeight: 500, color: 'var(--foreground-dim)' }}>{mcpServers.length}</span>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 12 }}>
                 {mcpServers.map((s: MCPServer) => {
                   const st = statusMap.get(s.name);
                   const ok = st?.connected === true || s.enabled;
@@ -332,7 +339,7 @@ export default function MarketPage() {
           {mcpStoreQ.isLoading ? (
             <div style={{ ...card, textAlign: 'center', padding: 40, color: 'var(--foreground-dim)', fontSize: 12.5 }}>Loading…</div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 12 }}>
               {mcpStoreItems.map((item) => {
                 const already = mcpServers.some((s) => s.name === item.name);
                 return (
@@ -512,6 +519,7 @@ export default function MarketPage() {
         </Modal>
       ) : null}
     </div>
+    </AdvancedShell>
   );
 }
 

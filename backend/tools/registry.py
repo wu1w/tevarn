@@ -119,22 +119,33 @@ class ToolRegistry:
 
         args = dict(arguments or {})
 
-        # L3 hooks
+        # L3 hooks —— 权限体系就挂在这里，因此必须 fail-closed。
+        # 此前这个 try 捕获后没有 return，继续往下执行工具：任何 import 错误
+        # 都能让整套权限规则被静默跳过，而日志只有一行 warning。
         try:
             from backend.agent.tool_hooks import (
                 ensure_builtin_hooks_registered,
-                run_after_tool_call,
                 run_before_tool_call,
             )
 
             ensure_builtin_hooks_registered()
             before = await run_before_tool_call(name, args)
-            if before.block:
-                return f"[Hook Blocked] {before.reason or 'blocked'}"
-            if before.arguments is not None:
-                args = dict(before.arguments)
         except Exception as e:
-            logger.warning("before_tool_call failed: %s", e)
+            logger.error(
+                "before_tool_call machinery failed for tool=%s; refusing the call "
+                "(fail-closed)",
+                name,
+                exc_info=True,
+            )
+            return (
+                f"[Security Blocked] 权限检查未能执行（{type(e).__name__}: {e}），"
+                f"已拒绝调用 '{name}'。这是 Takton 内部错误，请查看后端日志。"
+            )
+
+        if before.block:
+            return f"[Hook Blocked] {before.reason or 'blocked'}"
+        if before.arguments is not None:
+            args = dict(before.arguments)
 
         # 权限检查（hook 可改参后）
         from backend.tools.permissions import ToolPermissionManager
@@ -144,8 +155,16 @@ class ToolRegistry:
         if not allowed:
             return f"[Security Blocked] {reason}"
 
-        # 内部 meta 不传给工具实现
-        _DROP_META = {"_session_id", "_chat_mode", "_history_point", "_checkpoint_path"}
+        # 内部 meta：只剥离「hook 自用、执行器用不上」的键。
+        #
+        # 注意 _session_id 必须穿透到执行器 —— executors.execute_command /
+        # execute_python 的危险操作确认走 confirm_manager.request_confirmation(
+        # ws_manager, session_id)，session_id 为 None 时 ConnectionManager.broadcast
+        # 查不到连接会静默 return，确认请求永远推不到前端，协程干等 30s 超时后
+        # 返回「用户已拒绝」——用户根本没被问过。（此前 _session_id 在这里被剥掉，
+        # 使 COMMAND_CATEGORIES 八类默认的 confirm 动作全部失效。）
+        # _ws_manager 一直是穿透的，两者必须同进同出。
+        _DROP_META = {"_chat_mode", "_history_point", "_checkpoint_path"}
         exec_args = {
             k: v
             for k, v in args.items()

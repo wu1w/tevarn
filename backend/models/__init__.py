@@ -8,6 +8,7 @@ from .agent_identity import (  # noqa: F401 — create_all 注册表
     KernelEscalationRecord,
     KernelProcessRecord,
 )
+from .project_group import ProjectGroup  # noqa: F401
 from .agent_run import AgentRun, RunStep
 from .audit_log import AuditLog
 from .base import Base

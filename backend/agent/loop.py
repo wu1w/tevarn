@@ -177,6 +177,9 @@ class NexusAgentLoop(AgentLoopBase):
         """
         self._kernel_process = None
         self._kernel_process_options = None
+        self._last_kernel_process_id = None
+        # 编制字段由 dispatcher 在派工时重设，此处不清 _workforce/_identity_*
+        # （worker 池复用同一员工；跨工单身份不变）
         self._run_recorder = None
         self._search_fp_counter = {}
         self._contract_wl_ready = False
@@ -224,6 +227,33 @@ class NexusAgentLoop(AgentLoopBase):
         # Agent Computer：agent 身份（主 Agent=main；子代理 loop 实例可自带 key/label）
         arguments.setdefault("_agent_key", getattr(self, "_agent_key", "main"))
         arguments.setdefault("_agent_label", getattr(self, "_agent_label", ""))
+        # 联系员工会话：注入 contact 名 + identity id/caps（本员工允许后短路弹窗）
+        contact = str(getattr(self, "_contact_agent", "") or "").strip()
+        if contact:
+            arguments.setdefault("_contact_agent", contact)
+            arguments.setdefault("_identity_name", contact)
+        if getattr(self, "_identity_id", None):
+            arguments.setdefault("_identity_id", str(self._identity_id))
+        if getattr(self, "_identity_name", None):
+            arguments.setdefault("_identity_name", str(self._identity_name))
+        caps = getattr(self, "_identity_capabilities", None)
+        if caps is not None:
+            arguments.setdefault("_identity_capabilities", list(caps))
+        # 编制员工：贯穿工具权限 / 危险命令 / 提权路径
+        if getattr(self, "_workforce", False) or str(
+            getattr(self, "_agent_key", "") or ""
+        ).startswith("wf:"):
+            arguments["_workforce"] = True
+            if getattr(self, "_identity_id", None):
+                arguments.setdefault("_identity_id", str(self._identity_id))
+            if getattr(self, "_identity_name", None):
+                arguments.setdefault("_identity_name", str(self._identity_name))
+            if caps is not None:
+                arguments.setdefault("_identity_capabilities", list(caps))
+            if getattr(self, "_inbox_item_id", None):
+                arguments.setdefault("_inbox_item_id", str(self._inbox_item_id))
+            # 员工不走主人确认通道
+            arguments["_ws_manager"] = None
         # 真 Sub-Agent：嵌套深度（delegate_task 防失控）
         arguments.setdefault("_subagent_depth", getattr(self, "_subagent_depth", 0))
         # Skill 契约：已挂载包声明 tools 白名单时的执行边界拦截
@@ -246,33 +276,103 @@ class NexusAgentLoop(AgentLoopBase):
                 logger.warning(
                     "kernel 拦截工具调用 tool=%s proc=%s: %s", name, kernel_proc.id, e
                 )
-                # 0.4.1 提权交互：自动发起申请，用户批准后能力并入进程集。
-                # 拦截文本反馈给模型——模型应告知用户「等待批准」而非反复重试。
-                esc_note = ""
-                if bool(getattr(settings, "agent_kernel_auto_escalate", True)):
+                # 员工工单：不向主人刷提权单。编制内 → 静默并入进程能力；
+                # 编制外 → 直接拒，提示改权限看板（CEO 策略），不弹审批队列。
+                agent_key = str(getattr(self, "_agent_key", "") or "")
+                is_wf = agent_key.startswith("wf:") or bool(
+                    getattr(self, "_workforce", False)
+                )
+                if is_wf:
                     try:
-                        req = await get_kernel().request_escalation(
-                            kernel_proc.id,
-                            [name],
-                            reason=f"工具调用被能力集拦截：{name}",
+                        from backend.agent.grant_store import tool_matches_crew_caps
+                        from backend.agent.steward_permission import (
+                            load_identity_capabilities,
                         )
-                        esc_note = (
-                            f"（已自动发起权限申请 {req.id}，"
-                            "用户在权限控制台批准后即可重试；请勿重复调用本工具）"
+
+                        caps = list(getattr(self, "_identity_capabilities", None) or [])
+                        if not caps:
+                            caps = (
+                                await load_identity_capabilities(
+                                    str(getattr(self, "_identity_id", "") or "") or None
+                                )
+                            ) or []
+                        if tool_matches_crew_caps(name, caps):
+                            # 抽象 cap 已覆盖工具；静默把工具名并入进程集（不建提权单）
+                            try:
+                                k = get_kernel()
+                                proc = k._resolve_process(kernel_proc.id)
+                                if proc is not None and proc.capabilities is not None:
+                                    if name not in proc.capabilities:
+                                        proc.capabilities = sorted(
+                                            set(proc.capabilities) | {name}
+                                        )
+                                        if hasattr(k, "_persist_process"):
+                                            k._persist_process(proc)
+                                        if hasattr(k, "_share_process"):
+                                            k._share_process(proc)
+                                        logger.info(
+                                            "steward silent expand tool=%s proc=%s",
+                                            name,
+                                            kernel_proc.id,
+                                        )
+                            except Exception as se:
+                                logger.debug("steward silent expand skip: %s", se)
+                            try:
+                                await get_kernel().mediate(
+                                    kernel_proc.id, "tool_call", name, args=arguments
+                                )
+                            except KernelPermissionError as e2:
+                                return (
+                                    f"Error: Kernel 权限拒绝——{e2}。"
+                                    "（编制策略已尝试扩权仍失败；请 CEO 在权限看板检查该员工能力）"
+                                )
+                            # mediate 过了则继续往下执行工具（fall through）
+                        else:
+                            return (
+                                f"Error: 编制策略拒绝工具 «{name}»（不在员工能力档案内）。"
+                                "请主人让 CEO 在权限看板扩权，不要对每一次工具点「允许」。"
+                            )
+                    except Exception as se:
+                        logger.debug("workforce steward escalate path: %s", se)
+                        return (
+                            f"Error: Kernel 权限拒绝——{e}。"
+                            "员工路径不向主人发起提权审批。"
                         )
-                    except ValueError:
-                        pass  # 兼容模式/进程终态/能力已在集内——无需申请
-                return f"Error: Kernel 权限拒绝——{e}{esc_note}"
+                else:
+                    # 主人主会话：可自动发起提权进审批台
+                    esc_note = ""
+                    if bool(getattr(settings, "agent_kernel_auto_escalate", True)):
+                        try:
+                            req = await get_kernel().request_escalation(
+                                kernel_proc.id,
+                                [name],
+                                reason=f"工具调用被能力集拦截：{name}",
+                            )
+                            esc_note = (
+                                f"（已自动发起权限申请 {req.id}，"
+                                "用户在权限控制台批准后即可重试；请勿重复调用本工具）"
+                            )
+                        except ValueError:
+                            pass
+                    return f"Error: Kernel 权限拒绝——{e}{esc_note}"
         # ── 重复搜索软干预（0.4.4：研究任务收敛刹车）──
         # 同 run 内同查询重复：第 2 次结果前附提醒；第 3 次起直接拒绝执行，
         # 强制模型基于已有信息总结（prompt 层刹车之外的工程层兜底）。
         repeat_verdict = self._search_repeat_verdict(name, arguments)
         if repeat_verdict == "block":
             logger.info("重复搜索拦截 tool=%s query=%s", name, str(arguments)[:120])
+            total = int(getattr(self, "_search_total_calls", 0) or 0)
+            max_run = int(getattr(settings, "agent_search_max_per_run", 8) or 8)
+            if max_run > 0 and total > max_run:
+                return (
+                    f"Error: 本轮研究已累计搜索 {total} 次（上限 {max_run}）。"
+                    "继续搜索收益极低——请立即基于已收集内容总结交付；"
+                    "缺口请在答案中显式列出，勿再调用搜索类工具。"
+                )
             return (
-                "Error: 检测到同一查询已执行 3 次以上——继续重复搜索不会带来新信息。"
+                "Error: 检测到同一/近似查询已执行 3 次以上——继续重复搜索不会带来新信息。"
                 "请立即基于已收集的内容总结交付；如有未覆盖的缺口，在答案中显式注明，"
-                "或改用**角度不同**的新查询（而非同义改写）。"
+                "或改用**角度完全不同**的新查询（而非同义改写）。"
             )
         repeat_prefix = (
             "[提醒] 该查询此前已执行过，结果大概率相同。若本次结果无新增事实，"
@@ -287,42 +387,87 @@ class NexusAgentLoop(AgentLoopBase):
         result = await UnifiedToolRegistry.execute(name, arguments)
         return repeat_prefix + result if repeat_prefix and isinstance(result, str) else result
 
-    # ── 重复搜索检测（0.4.4 收敛刹车）────────────────────────────
+    # ── 重复搜索检测（收敛刹车 + 全局预算 + 近似同义）──────────
 
     _SEARCH_TOOL_NAMES = frozenset({
         "web_search", "x_search", "search", "websearch",
-        "web_extract", "web_fetch", "fetch_url",
+        "web_extract", "web_fetch", "fetch_url", "fetch_webpage",
+        "browse_page", "open_page", "tavily_search", "duckduckgo_search",
     })
 
     def _search_repeat_verdict(self, name: str, arguments: dict[str, Any]) -> str | None:
-        """返回 None（首次/非搜索）/ "warn"（第 2 次）/ "block"（第 3 次起）。
+        """返回 None（放行）/ "warn" / "block"。
 
-        归一化：query/q 参数小写 + 词序排序——"A B" 与 "B A"、纯同义
-        改写之外的词序变体视为同一查询。只对搜索类工具生效，
-        非搜索工具的合法重复（重读文件等）不受影响。
+        1) 单 run 搜索总次数 > agent_search_max_per_run → block
+        2) 精确/词序归一指纹：第 2 次 warn，第 3 次起 block
+        3) 与历史 query 词集 Jaccard ≥ 阈值 → 同一桶
         """
         if not bool(getattr(settings, "agent_search_repeat_guard", True)):
             return None
         if name not in self._SEARCH_TOOL_NAMES:
             return None
         query = str(
-            arguments.get("query") or arguments.get("q") or arguments.get("url") or ""
+            arguments.get("query")
+            or arguments.get("q")
+            or arguments.get("url")
+            or arguments.get("search_term")
+            or ""
         ).strip().lower()
-        if not query:
-            return None
+
         import hashlib
 
-        normalized = " ".join(sorted(query.split()))
+        max_run = int(getattr(settings, "agent_search_max_per_run", 8) or 8)
+
+        if not query:
+            total = int(getattr(self, "_search_total_calls", 0) or 0) + 1
+            self._search_total_calls = total
+            if max_run > 0 and total > max_run:
+                return "block"
+            return None
+
+        tokens = [
+            tok
+            for tok in query.replace(",", " ").replace("，", " ").replace("、", " ").split()
+            if tok
+        ]
+        normalized = " ".join(sorted(tokens))
         fp = hashlib.sha1(f"{name}:{normalized}".encode("utf-8")).hexdigest()[:12]
+
+        jaccard_thr = float(getattr(settings, "agent_search_similar_jaccard", 0.72) or 0.72)
+        token_set = set(tokens)
+        seen_sets: list = getattr(self, "_search_token_sets", None) or []
+        matched_fp = None
+        if token_set and jaccard_thr > 0:
+            for old_fp, old_set in seen_sets:
+                if not old_set:
+                    continue
+                inter = len(token_set & old_set)
+                union = len(token_set | old_set) or 1
+                if inter / union >= jaccard_thr:
+                    matched_fp = old_fp
+                    break
+        if matched_fp is None:
+            seen_sets.append((fp, token_set))
+            self._search_token_sets = seen_sets[-40:]
+            use_fp = fp
+        else:
+            use_fp = matched_fp
+
         counter = getattr(self, "_search_fp_counter", None)
         if counter is None:
             counter = {}
             self._search_fp_counter = counter
-        count = counter.get(fp, 0) + 1
-        counter[fp] = count
+        count = counter.get(use_fp, 0) + 1
+        counter[use_fp] = count
+
+        total = int(getattr(self, "_search_total_calls", 0) or 0) + 1
+        self._search_total_calls = total
+
+        if max_run > 0 and total > max_run:
+            return "block"
         if count >= 3:
             return "block"
-        if count == 2:
+        if count == 2 or (max_run > 0 and total >= max(3, max_run - 2)):
             return "warn"
         return None
 
@@ -704,13 +849,19 @@ class NexusAgentLoop(AgentLoopBase):
                     except Exception as e:
                         logger.debug("能力快照失败，降级兼容模式: %s", e)
                         caps = None
+                _meta = {
+                    "mode": mode,
+                    "parent_run_id": str(parent_run_id) if parent_run_id else None,
+                }
+                if isinstance(proc_opts.get("meta"), dict):
+                    _meta.update(proc_opts["meta"])
                 kernel_proc = await kernel.create_process(
                     agent_key or "main",
                     session_id=str(session_id),
                     parent_id=parent_pid,
                     capabilities=caps,
                     token_budget=proc_opts.get("token_budget"),
-                    meta={"mode": mode, "parent_run_id": str(parent_run_id) if parent_run_id else None},
+                    meta=_meta,
                 )
                 await kernel.mark_running(kernel_proc.id)
                 self._kernel_process = kernel_proc
@@ -741,6 +892,11 @@ class NexusAgentLoop(AgentLoopBase):
             raise
         finally:
             self._run_recorder = None
+            # 供 workforce dispatcher 在 run() 返回后取进程 id（_kernel_process 会清空）
+            if kernel_proc is not None:
+                self._last_kernel_process_id = getattr(kernel_proc, "id", None) or getattr(
+                    kernel_proc, "process_id", None
+                )
             self._kernel_process = None
 
     async def _run_locked(
@@ -834,10 +990,27 @@ class NexusAgentLoop(AgentLoopBase):
         # 动态 limit：按 context_window 估算最大消息数，避免只加载 100 条导致压缩无法触发
         _ctx_win = int(getattr(settings, "context_window", 128_000) or 128_000)
         _est_limit = max(200, _ctx_win // 50)  # 每 50 tokens 一条消息的保守估计
-        history = await self._load_history(
-            session_id, limit=_est_limit
+        # 编制工单：跳过历史，避免跨单上下文膨胀导致首包打穿 token 预算
+        _skip_hist = bool(
+            getattr(self, "_workforce_skip_history", False)
+            or mode == "workforce"
         )
-        logger.info("Loaded %d history messages for session %s (limit=%d)", len(history), session_id, _est_limit)
+        if _skip_hist:
+            history = []
+            logger.info(
+                "Skip history for workforce session %s (fresh job context)",
+                session_id,
+            )
+        else:
+            history = await self._load_history(
+                session_id, limit=_est_limit
+            )
+            logger.info(
+                "Loaded %d history messages for session %s (limit=%d)",
+                len(history),
+                session_id,
+                _est_limit,
+            )
         history_dicts: list[dict[str, Any]] = []
         for h in history:
             if h.role not in ("user", "assistant", "tool"):
@@ -940,7 +1113,52 @@ class NexusAgentLoop(AgentLoopBase):
         if mode == "goal":
             mode_extra.extend(["manage_goal", "autopilot"])
         if mode == "cluster":
-            mode_extra.extend(["manage_sub_agent", "delegate_task", "agent_call"])
+            mode_extra.extend(
+                ["crew_steward", "manage_sub_agent", "delegate_task", "agent_call"]
+            )
+
+        # 联系 CEO/管家：强制编制工具面（分析→assign 员工，不起子代理闷跑）
+        _contact_agent = ""
+        _is_steward_session = False
+        try:
+            from backend.agent.workforce_dispatch import (
+                STEWARD_FORCE_TOOLS,
+                is_steward_contact,
+            )
+
+            if isinstance(config, dict):
+                _contact_agent = str(config.get("contact_agent") or "").strip()
+            # 供 tool_hooks / 危险确认「本员工允许」使用（写入 loop 后注入工具参数）
+            self._contact_agent = _contact_agent
+            # 联系 TA：解析 Identity，后续 command 用编制能力短路（不再反复弹窗）
+            if _contact_agent and not getattr(self, "_identity_id", None):
+                try:
+                    from backend.agent.grant_store import resolve_identity_id
+                    from backend.agent.steward_permission import load_identity_capabilities
+
+                    _iid = await resolve_identity_id(contact_name=_contact_agent)
+                    if _iid:
+                        self._identity_id = _iid
+                        self._identity_name = _contact_agent
+                        _caps = await load_identity_capabilities(_iid)
+                        if _caps is not None:
+                            self._identity_capabilities = list(_caps)
+                except Exception as _id_e:
+                    logger.debug("contact identity resolve skip: %s", _id_e)
+            _is_steward_session = is_steward_contact(_contact_agent)
+            # 无 contact 时：identity 文案里带 CEO/管家也按管家编排
+            if not _is_steward_session and isinstance(config, dict):
+                _id_txt = str(config.get("identity") or "")
+                if is_steward_contact(_id_txt) or is_steward_contact(
+                    str(config.get("role") or "")
+                ):
+                    _is_steward_session = True
+                    if not _contact_agent:
+                        _contact_agent = "大管家"
+            if _is_steward_session:
+                mode_extra.extend(STEWARD_FORCE_TOOLS)
+        except Exception as _st_e:
+            logger.debug("steward session detect skipped: %s", _st_e)
 
         enabled_tools_filter, scene_plan = resolve_enabled_tool_names(
             mode=mode or "default",
@@ -950,6 +1168,7 @@ class NexusAgentLoop(AgentLoopBase):
             extra=mode_extra,
             user_input=enriched_input or user_input or "",
             scene=scene_plan,
+            extra_packs=["crew"] if _is_steward_session else None,
         )
         inject_opts = injection_knobs(scene_plan.injection_tier)
         if mode_extra and enabled_skills is not None:
@@ -1000,6 +1219,27 @@ class NexusAgentLoop(AgentLoopBase):
             messages.append({"role": "system", "content": brief})
         except Exception as e:
             logger.debug("capability inject skipped: %s", e)
+
+        # CEO/管家编排纪律：分析需求 → crew_steward.assign 给编制员工
+        if _is_steward_session:
+            try:
+                from backend.agent.workforce_dispatch import steward_orchestration_prompt
+
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": steward_orchestration_prompt(
+                            contact_name=_contact_agent or "大管家"
+                        ),
+                    }
+                )
+                logger.info(
+                    "steward orchestration injected session=%s contact=%s",
+                    session_id,
+                    _contact_agent,
+                )
+            except Exception as e:
+                logger.warning("steward orchestration inject failed: %s", e)
 
         # Goal 模式：更高轮次 + 初始化 goal 状态
         goal_mode = mode == "goal"
@@ -1182,7 +1422,8 @@ class NexusAgentLoop(AgentLoopBase):
                 final_content = (
                     "[Budget Exceeded] 进程 token 预算不足以支撑下一次 LLM 调用，"
                     "运行已事前中断（避免一次性烧穿预算）。"
-                    "可提高预算或拆小任务后重试。"
+                    "本工单未完成实质检查；可提高预算、收窄范围或拆小任务后重试。"
+                    "禁止用报告框架/预期结果冒充结论。"
                 )
                 await self._push_status(
                     session_id, "thinking", "预算不足，运行已事前中断"
@@ -1504,9 +1745,34 @@ class NexusAgentLoop(AgentLoopBase):
 
     # ─────────── P0 helpers ───────────
 
+    def _looks_like_structured_report(self, text: str) -> bool:
+        """已是完整报表/审计稿（Markdown 结构），不应再被「多信源合并」压成短摘要。"""
+        if not text or len(text) < 350:
+            return False
+        score = 0
+        headers = text.count("\n## ") + text.count("\n### ") + text.count("## ")
+        if headers >= 2:
+            score += 2
+        if text.count("\n- ") + text.count("\n* ") + text.count("\n1.") >= 6:
+            score += 1
+        if text.count("|") >= 6 and text.count("\n") >= 6:
+            score += 1
+        report_kw = (
+            "审计", "报告", "严重", "风险", "建议", "结论", "发现",
+            "Critical", "High", "Medium", "Low", "汇总", "报表",
+        )
+        if sum(1 for k in report_kw if k in text) >= 2:
+            score += 2
+        if len(text) >= 1200 and headers >= 1:
+            score += 1
+        return score >= 3
+
     def _looks_like_multi_answer(self, text: str) -> bool:
-        """启发式：模型把多个信源原样并列。"""
+        """启发式：模型把多个信源原样并列（非结构化报表）。"""
         if not text or len(text) < 80:
+            return False
+        # 完整报表常有多级 ##，不能再当「答案1/2/3」
+        if self._looks_like_structured_report(text):
             return False
         markers = [
             "答案1", "答案 1", "答案一", "【答案", "来源1", "来源 1",
@@ -1518,8 +1784,6 @@ class NexusAgentLoop(AgentLoopBase):
         if hits >= 1:
             return True
         if text.count("根据") >= 3 and text.count("\n\n") >= 3:
-            return True
-        if text.count("## ") >= 3:
             return True
         return False
 
@@ -1534,18 +1798,29 @@ class NexusAgentLoop(AgentLoopBase):
         last_tool_count: int,
         multi_pending: bool,
     ) -> str:
-        """多工具/多信源场景下再调用一次 LLM（无 tools）聚合成单一用户可读答复。"""
+        """多工具/多信源场景下再调用一次 LLM（无 tools）聚合成单一用户可读答复。
+
+        注意：CEO/审计等「已经写好的长报表」禁止再压缩——历史上 last_tool_count>=2
+        会把流式 3k 字报表收成几百字干巴摘要。
+        """
         if not draft or not str(draft).strip():
             return draft
 
-        need = bool(multi_pending) or last_tool_count >= 2 or (
-            tool_rounds >= 1 and self._looks_like_multi_answer(draft)
-        )
-        if not need and self._looks_like_multi_answer(draft):
-            need = True
+        # 已是结构化交付物：直接落库，保留用户看到的流式报表
+        if self._looks_like_structured_report(draft) and not multi_pending:
+            logger.info(
+                "multi-source skip structured report session=%s draft=%s",
+                session_id,
+                len(draft),
+            )
+            return draft
+
+        # 仅在「真·多答案并列」或显式 multi_pending 时合并
+        # 不再因 last_tool_count>=2 无脑触发（拉 tools 再写报告是常态）
+        need = bool(multi_pending) or self._looks_like_multi_answer(draft)
         if not need:
             return draft
-        if len(draft) < 120 and last_tool_count < 2 and not multi_pending:
+        if len(draft) < 120 and not multi_pending:
             return draft
 
         await self._push_status(session_id, "thinking", "正在合并多信源结果…")
@@ -1561,10 +1836,13 @@ class NexusAgentLoop(AgentLoopBase):
             "你是结果编辑器。用户只应看到一份连贯答复。\n"
             "任务：把「草稿」改写为单一最终答案。\n"
             "规则：\n"
-            "- 保留关键事实（气温、天气、时间等），去掉重复；\n"
-            "- 禁止答案1/2/3 并列；\n"
+            "- 若草稿已是完整报告/审计/Markdown 结构（多级标题、列表、表格），"
+            "  **原样保留结构与要点**，只去明显重复，禁止压成两三段摘要；\n"
+            "- 仅当草稿是「答案1/答案2」式并列时才合并；\n"
+            "- 保留关键事实，去掉重复；\n"
+            "- 禁止答案1/2/3 并列输出；\n"
             "- 冲突时选更具体、更新、更一致的说法，可一句说明；\n"
-            "- 不要提及内部工具名堆砌；可用「综合公开气象数据」一句带过；\n"
+            "- 不要提及内部工具名堆砌；\n"
             "- 使用用户语言（通常为中文）；\n"
             "- 只输出最终正文，不要前言。"
         )
@@ -1593,6 +1871,15 @@ class NexusAgentLoop(AgentLoopBase):
 
         out = (out or "").strip()
         if len(out) < 8:
+            return draft
+        # 防收缩：聚合后明显变短则丢弃（流式长文被收成干巴摘要）
+        if len(draft) >= 400 and len(out) < max(120, int(len(draft) * 0.5)):
+            logger.info(
+                "multi-source rejected shrink session=%s draft=%s -> out=%s (keep draft)",
+                session_id,
+                len(draft),
+                len(out),
+            )
             return draft
         logger.info(
             "multi-source aggregated for session %s: draft=%s -> out=%s",

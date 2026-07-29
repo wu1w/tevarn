@@ -33,6 +33,46 @@ export function fmtTokens(n: number | null | undefined): string {
   return String(n);
 }
 
+/** 进程 identity 常见为 wf:{uuid}，卡片/抽屉不能只比 name */
+export function processBelongsToAgent(
+  p: { identity?: string | null },
+  agent: { id: string; name: string },
+): boolean {
+  const id = String(p.identity || '');
+  if (!id) return false;
+  if (id === agent.name) return true;
+  const aid = String(agent.id || '');
+  if (!aid) return false;
+  if (id === `wf:${aid}`) return true;
+  // 兼容短前缀 / 无连字符
+  const compact = aid.replace(/-/g, '');
+  if (id === `wf:${compact}`) return true;
+  if (id.startsWith(`wf:${aid}`) || id.startsWith(`wf:${aid.slice(0, 8)}`)) return true;
+  if (id.includes(aid) || (compact.length > 8 && id.includes(compact))) return true;
+  return false;
+}
+
+export function sumAgentTokens(
+  processes: Array<{ identity?: string | null; tokens_used?: number | null }>,
+  agent: { id: string; name: string },
+): number {
+  return processes
+    .filter((p) => processBelongsToAgent(p, agent))
+    .reduce((s, p) => s + (Number(p.tokens_used) || 0), 0);
+}
+
+export function pickAgentProcess<T extends { identity?: string | null; state?: string; tokens_used?: number | null }>(
+  processes: T[],
+  agent: { id: string; name: string },
+): T | undefined {
+  const mine = processes.filter((p) => processBelongsToAgent(p, agent));
+  if (!mine.length) return undefined;
+  const live = mine.find((p) => p.state === 'running' || p.state === 'waiting' || p.state === 'suspended');
+  if (live) return live;
+  // 取用量最大的终态，避免卡片永远 0
+  return [...mine].sort((a, b) => (Number(b.tokens_used) || 0) - (Number(a.tokens_used) || 0))[0];
+}
+
 /** 可勾选能力池（对应 kernel mediate 的工具白名单语义） */
 export const CAP_POOL: Array<{ id: string; zh: string; en: string }> = [
   { id: 'file_rw', zh: '文件读写', en: 'File read/write' },

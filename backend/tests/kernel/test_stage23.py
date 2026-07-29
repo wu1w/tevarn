@@ -73,7 +73,13 @@ def test_audit_store_append_and_verify(tmp_path) -> None:
     asyncio.run(go())
     assert os.path.isfile(store.path)
     lines = open(store.path, encoding="utf-8").read().strip().split("\n")
-    assert len(lines) == 3
+    # process_created + mediation + policy.decision + process_ended
+    assert len(lines) >= 3
+    kinds = [__import__("json").loads(ln).get("kind") for ln in lines if ln.strip()]
+    assert "process_created" in kinds
+    assert "mediation" in kinds
+    assert "policy.decision" in kinds
+    assert "process_ended" in kinds
     ok, bad = store.verify_file_chain()
     assert ok and bad == -1
 
@@ -112,8 +118,10 @@ def test_audit_store_write_failure_nonfatal(tmp_path) -> None:
     store = AuditEventStore(str(tmp_path / "nonexistent_dir_ok" / "e.jsonl"))
     # 正常路径：自动建目录成功
     assert store.append({"hash": "x"}) is True
-    # 非法路径：告警但不抛
-    store2 = AuditEventStore("/proc/forbidden/e.jsonl")
+    # 非法路径：父路径是文件而非目录 → 无法 makedirs/open，告警但不抛
+    blocker = tmp_path / "not_a_dir"
+    blocker.write_text("file-not-dir", encoding="utf-8")
+    store2 = AuditEventStore(str(blocker / "e.jsonl"))
     assert store2.append({"hash": "x"}) is False
 
 

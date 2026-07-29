@@ -206,12 +206,16 @@ api.interceptors.response.use(
       return Promise.reject(error);
     }
 
-    // 侧栏附属接口失败不刷全局 toast（如 git 非仓库环境）
+    // 侧栏附属 / 预期可空接口失败不刷全局 toast
     const silent =
       requestUrl.includes('/git/') ||
       requestUrl.includes('/files/info') ||
       requestUrl.includes('git/status') ||
-      requestUrl.includes('git/branches');
+      requestUrl.includes('git/branches') ||
+      // 本地持久化会话已删、checkpoint 尚无：调用方自行处理
+      (status === 404 &&
+        (requestUrl.includes('/sessions/') ||
+          requestUrl.includes('/checkpoint')));
 
     if (typeof window !== 'undefined' && !isAuthEndpoint && !silent) {
       useToastStore.getState().addToast(formatApiError(error), 'error');
@@ -261,8 +265,19 @@ export async function createSession(userId?: string, config?: SessionConfig): Pr
   return res.data;
 }
 
-export async function getMySessions(): Promise<Session[]> {
-  const res = await api.get('/sessions/my');
+/** 企业 IM：一人一会话 find-or-create（不复用 workforce） */
+export async function openContactSession(name: string, identityText?: string): Promise<Session> {
+  const res = await api.post('/sessions/contact', {
+    name,
+    identity_text: identityText || undefined,
+  });
+  return res.data;
+}
+
+export async function getMySessions(kind?: 'human' | 'all'): Promise<Session[]> {
+  const res = await api.get('/sessions/my', {
+    params: kind && kind !== 'all' ? { kind } : undefined,
+  });
   return res.data;
 }
 
@@ -1094,12 +1109,16 @@ export interface KernelEvent {
   hash?: string;
 }
 
-export async function getKernelProcesses(): Promise<{
+export async function getKernelProcesses(opts?: {
+  include_terminal?: boolean;
+}): Promise<{
   enabled: boolean;
   processes: KernelProcess[];
   total: number;
 }> {
-  const res = await api.get('/kernel/processes');
+  const res = await api.get('/kernel/processes', {
+    params: opts?.include_terminal ? { include_terminal: true } : undefined,
+  });
   return res.data;
 }
 
@@ -1195,12 +1214,19 @@ export async function deleteGoal(id: string): Promise<{ deleted: boolean }> {
 export interface WorkforceReport {
   hours: number;
   since_ts: number;
+  identity_id?: string | null;
+  identity_name?: string | null;
+  /** 日报最后已读 unix 时间戳 */
+  marked_read_at?: number | null;
+  /** 是否有未读产出 */
+  has_unread?: boolean;
   inbox: {
     stats: Record<string, number>;
     total: number;
     recent_done: Array<{
       id: string;
       identity_id: string;
+      identity_name?: string;
       source: string;
       instruction: string;
       result: string;
@@ -1209,11 +1235,15 @@ export interface WorkforceReport {
     recent_failed: Array<{
       id: string;
       identity_id: string;
+      identity_name?: string;
       instruction: string;
       error: string;
     }>;
   };
-  by_identity: Record<string, { done: number; failed?: number; latest_results: string[] }>;
+  by_identity: Record<
+    string,
+    { done: number; failed?: number; latest_results: string[]; name?: string }
+  >;
   kernel: {
     event_kinds: Record<string, number>;
     mediation_denials: number;
@@ -1221,8 +1251,17 @@ export interface WorkforceReport {
   };
 }
 
-export async function getWorkforceReport(hours = 24): Promise<WorkforceReport> {
-  const res = await api.get('/kernel/workforce/report', { params: { hours } });
+export async function getWorkforceReport(
+  hours = 24,
+  opts?: { identityId?: string; identityName?: string },
+): Promise<WorkforceReport> {
+  const res = await api.get('/kernel/workforce/report', {
+    params: {
+      hours,
+      identity_id: opts?.identityId || undefined,
+      identity_name: opts?.identityName || undefined,
+    },
+  });
   return res.data;
 }
 
@@ -1250,6 +1289,535 @@ export interface WorkforceOrgView {
 
 export async function getWorkforceOrg(): Promise<WorkforceOrgView> {
   const res = await api.get('/kernel/workforce/org');
+  return res.data;
+}
+
+// ── Workforce 收件箱派活（0.6）────────────────────────────────
+
+export interface KernelInboxItem {
+  id: string;
+  identity_id: string;
+  source: string;
+  instruction: string;
+  status: string;
+  attempts: number;
+  result: string;
+  error: string;
+  created_at: string | null;
+  finished_at: number | null;
+}
+
+export async function listKernelInbox(params?: {
+  identity_id?: string;
+  status?: string;
+  limit?: number;
+}): Promise<{ items: KernelInboxItem[]; total: number }> {
+  const res = await api.get('/kernel/inbox', { params });
+  return res.data;
+}
+
+// ── Harness (Grok-inspired: plan / rules / sandbox / headless) ──
+
+export async function getHarnessPermissionRules(): Promise<{
+  rules: { allow: string[]; ask: string[]; deny: string[] };
+  secrets_enforced: boolean;
+}> {
+  const res = await api.get('/kernel/harness/permission-rules');
+  return res.data;
+}
+
+export async function putHarnessPermissionRules(body: {
+  allow: string[];
+  ask: string[];
+  deny: string[];
+}): Promise<{ ok: boolean; rules: { allow: string[]; ask: string[]; deny: string[] } }> {
+  const res = await api.put('/kernel/harness/permission-rules', body);
+  return res.data;
+}
+
+export async function getSandboxProfiles(): Promise<{
+  profiles: Array<{ id: string; label: string; description: string; network: boolean }>;
+  current: string;
+}> {
+  const res = await api.get('/kernel/harness/sandbox-profiles');
+  return res.data;
+}
+
+export async function setSandboxProfile(profile: string): Promise<{ ok: boolean; profile: string }> {
+  const res = await api.put('/kernel/harness/sandbox-profiles', { profile });
+  return res.data;
+}
+
+export async function getHarnessPlan(params?: {
+  session_id?: string;
+  job_id?: string;
+}): Promise<Record<string, unknown>> {
+  const res = await api.get('/kernel/harness/plan', { params });
+  return res.data;
+}
+
+export async function approveHarnessPlan(body: {
+  session_id?: string;
+  job_id?: string;
+}): Promise<Record<string, unknown>> {
+  const res = await api.post('/kernel/harness/plan/approve', body);
+  return res.data;
+}
+
+export async function submitHarnessPlan(body: {
+  markdown: string;
+  session_id?: string;
+  job_id?: string;
+}): Promise<Record<string, unknown>> {
+  const res = await api.post('/kernel/harness/plan', body);
+  return res.data;
+}
+
+export async function headlessHarnessRun(body: {
+  prompt: string;
+  always_approve?: boolean;
+  max_iterations?: number;
+  identity_id?: string;
+}): Promise<{ ok: boolean; text?: string; error?: string; session_id?: string }> {
+  const res = await api.post('/kernel/harness/headless', body);
+  return res.data;
+}
+
+export async function rewindJob(inboxItemId: string, force = true): Promise<Record<string, unknown>> {
+  const res = await api.post('/kernel/harness/rewind', { inbox_item_id: inboxItemId, force });
+  return res.data;
+}
+
+export async function runHarnessWorkflow(workflow: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const res = await api.post('/kernel/harness/workflow', { workflow });
+  return res.data;
+}
+
+export async function listDeadLetters(limit = 50): Promise<{
+  items: KernelInboxItem[];
+  total: number;
+}> {
+  const res = await api.get('/kernel/inbox/dead', { params: { limit } });
+  return res.data;
+}
+
+export async function requeueInboxItem(itemId: string): Promise<{
+  id: string;
+  status: string;
+  message?: string;
+}> {
+  const res = await api.post(`/kernel/inbox/${itemId}/requeue`);
+  return res.data;
+}
+
+export async function discardInboxItem(itemId: string): Promise<{ discarded: boolean }> {
+  const res = await api.post(`/kernel/inbox/${itemId}/discard`);
+  return res.data;
+}
+
+export async function listRunningJobs(): Promise<{
+  inbox_claimed: Array<Record<string, unknown>>;
+  processes: Array<Record<string, unknown>>;
+  total: number;
+}> {
+  const res = await api.get('/kernel/jobs/running');
+  return res.data;
+}
+
+/** E4 统一停止：工单 + process + agent loop */
+export async function stopRunningJob(body: {
+  inbox_item_id?: string;
+  process_id?: string;
+  reason?: string;
+}): Promise<{
+  ok: boolean;
+  inbox_item_id?: string | null;
+  process_id?: string | null;
+  loop_stopped?: boolean;
+  task_cancelled?: boolean;
+  process_killed?: boolean;
+  inbox_cancelled?: boolean;
+  reason?: string;
+  error?: string;
+}> {
+  const res = await api.post('/kernel/jobs/stop', body);
+  return res.data;
+}
+
+/** 日报一键已读 */
+export async function markWorkforceReportRead(): Promise<{
+  ok: boolean;
+  marked_read_at: number;
+}> {
+  const res = await api.post('/kernel/workforce/report/read');
+  return res.data;
+}
+
+/** 空编制时预置模板员工（幂等） */
+export async function seedTemplateCrew(): Promise<{
+  ok: boolean;
+  created: Array<{ name: string; id: string; role: string }>;
+  skipped: string[];
+  total_after: number;
+  message?: string;
+}> {
+  const res = await api.post('/kernel/workforce/seed-template-crew');
+  return res.data;
+}
+
+/** 审计日志只读（管理员） */
+export async function listAuditLogs(params?: {
+  limit?: number;
+  offset?: number;
+}): Promise<{
+  items: Array<{
+    id: string;
+    user_id?: string | null;
+    action: string;
+    resource_type?: string | null;
+    resource_id?: string | null;
+    details?: Record<string, unknown> | null;
+    success?: boolean;
+    created_at?: string;
+  }>;
+  total: number;
+}> {
+  const res = await api.get('/audit/logs', { params });
+  return res.data;
+}
+
+// ── 协议 / 互操作 / 治理（0.1）────────────────────────────────
+
+export async function getProtocolManifest(): Promise<Record<string, unknown>> {
+  const res = await api.get('/kernel/protocol/manifest');
+  return res.data;
+}
+
+export async function getProductConcepts(): Promise<{
+  concepts: Record<string, Record<string, string>>;
+  legacy_term_map: Record<string, string>;
+  spine: string[];
+  primary_path_zh?: string;
+  primary_path_en?: string;
+}> {
+  const res = await api.get('/kernel/protocol/concepts');
+  return res.data;
+}
+
+export async function getGovernanceManifest(includeLiveRules = false): Promise<Record<string, unknown>> {
+  const res = await api.get('/kernel/protocol/governance', {
+    params: { include_live_rules: includeLiveRules },
+  });
+  return res.data;
+}
+
+export async function getKernelSurface(): Promise<Record<string, unknown>> {
+  const res = await api.get('/kernel/protocol/surface');
+  return res.data;
+}
+
+export async function listAgentCards(status = 'active'): Promise<{
+  total: number;
+  cards: Array<Record<string, unknown>>;
+}> {
+  const res = await api.get('/kernel/protocol/agent-cards', { params: { status } });
+  return res.data;
+}
+
+export async function getAgentCard(identityId: string): Promise<Record<string, unknown>> {
+  const res = await api.get(`/kernel/protocol/agent-cards/${encodeURIComponent(identityId)}`);
+  return res.data;
+}
+
+/** AI 公司晨报聚合 */
+export async function getWorkspaceBrief(hours = 24): Promise<{
+  kind: string;
+  hours: number;
+  ts: number;
+  headline: {
+    crew_active: number;
+    jobs_done: number;
+    jobs_failed: number;
+    jobs_pending: number;
+    jobs_running: number;
+    approvals_pending: number;
+    escalations_pending: number;
+    evolution_pending: number;
+  };
+  running_employees: string[];
+  recent_done: Array<{
+    id: string;
+    identity_id: string;
+    identity_name?: string;
+    instruction: string;
+    result?: string;
+    finished_at?: number | null;
+  }>;
+  recent_failed: Array<{
+    id: string;
+    identity_id: string;
+    identity_name?: string;
+    instruction: string;
+    error?: string;
+  }>;
+  crew: Array<{ id: string; name: string; role?: string; status?: string }>;
+  narrative: { zh: string; en: string };
+}> {
+  const res = await api.get('/kernel/workspace/brief', { params: { hours } });
+  return res.data;
+}
+
+/** 领域事件快照（WS 前可用） */
+export async function listDomainEvents(params?: {
+  limit?: number;
+  prefix?: string;
+}): Promise<{ events: Array<{ topic: string; ts: number; data?: Record<string, unknown> }>; total: number }> {
+  const res = await api.get('/kernel/events/domain', { params });
+  return res.data;
+}
+
+/** Kernel Host 心跳（托盘/CLI；loopback 含 badge） */
+export async function getRuntimeStatus(): Promise<{
+  ok: boolean;
+  badge?: number;
+  jobs_claimed?: number;
+  jobs_pending?: number;
+  approvals_pending?: number;
+  processes_live?: number;
+}> {
+  const res = await api.get('/runtime/status');
+  return res.data;
+}
+
+/** A2A-lite → Inbox 工单 */
+export async function submitA2ATask(body: {
+  instruction?: string;
+  text?: string;
+  parts?: Array<{ type?: string; text?: string }>;
+  identity_id?: string;
+  identity_name?: string;
+  priority?: number;
+  metadata?: Record<string, unknown>;
+}): Promise<{
+  ok: boolean;
+  inbox_item_id: string;
+  identity_id: string;
+  status: string;
+  message_id?: string;
+}> {
+  const res = await api.post('/kernel/protocol/a2a/tasks', body);
+  return res.data;
+}
+
+/** 0.5.2 权限一张网：policy.decision 只读 */
+export async function listPolicyDecisions(params?: {
+  limit?: number;
+  outcome?: 'allow' | 'deny' | 'escalate';
+}): Promise<{
+  decisions: Array<{
+    ts?: number;
+    process_id?: string;
+    who?: string;
+    what?: string;
+    outcome?: string;
+    reason?: string;
+    source?: string;
+  }>;
+  total: number;
+}> {
+  const res = await api.get('/kernel/policy/decisions', { params });
+  return res.data;
+}
+
+/** 0.6 L4：一键导出编制/工单/记忆/审计摘要 */
+export async function exportAiosBackup(): Promise<Record<string, unknown>> {
+  const res = await api.post('/kernel/backup/export');
+  return res.data;
+}
+
+export async function enqueueKernelInbox(body: {
+  identity_id: string;
+  instruction: string;
+  source?: string;
+  priority?: number;
+  payload?: Record<string, unknown>;
+}): Promise<{
+  id: string;
+  status: string;
+  identity_id?: string;
+  identity_name?: string;
+  message?: string;
+}> {
+  const res = await api.post('/kernel/inbox', body);
+  return res.data;
+}
+
+// ── 项目组（企业 IM 群进度）────────────────────────────────
+
+export interface ProjectGroupSummary {
+  id: string;
+  title: string;
+  status: string;
+  created_by?: string;
+  member_count: number;
+  task_count: number;
+  summary?: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ProjectGroupTaskView {
+  inbox_item_id: string;
+  identity_id: string;
+  identity_name: string;
+  status: string;
+  instruction: string;
+  result: string;
+  error: string;
+  finished_at: number | null;
+}
+
+export interface ProjectGroupDetail extends ProjectGroupSummary {
+  members: Array<{ identity_id: string; name: string }>;
+  tasks: Array<{ inbox_item_id: string; identity_id: string; identity_name?: string }>;
+  task_views?: ProjectGroupTaskView[];
+  progress?: Record<string, number>;
+  meta?: Record<string, unknown>;
+}
+
+export async function listProjectGroups(status?: string): Promise<{
+  groups: ProjectGroupSummary[];
+  total: number;
+}> {
+  const res = await api.get('/kernel/project-groups', {
+    params: status ? { status } : undefined,
+  });
+  return res.data;
+}
+
+export async function getProjectGroup(id: string): Promise<ProjectGroupDetail> {
+  const res = await api.get(`/kernel/project-groups/${id}`);
+  return res.data;
+}
+
+export async function createProjectGroup(body: {
+  title: string;
+  members?: Array<{ identity_id: string; name: string }>;
+  tasks?: Array<{ inbox_item_id: string; identity_id: string; identity_name?: string }>;
+  summary?: string;
+  created_by?: string;
+}): Promise<ProjectGroupDetail> {
+  const res = await api.post('/kernel/project-groups', body);
+  return res.data;
+}
+
+// ── Agent Runs（只读）────────────────────────────────────────
+
+export interface AgentRunSummary {
+  id: string;
+  session_id: string;
+  status: string;
+  mode: string;
+  input_summary: string;
+  total_iterations: number;
+  total_tool_calls: number;
+  error: string | null;
+  started_at: string | null;
+  ended_at: string | null;
+  created_at: string;
+}
+
+export interface AgentRunStep {
+  id: string;
+  seq: number;
+  kind: string;
+  name: string;
+  status: string;
+  payload: Record<string, unknown> | null;
+  duration_ms: number;
+  created_at: string;
+}
+
+export interface AgentRunDetail extends AgentRunSummary {
+  final_summary: string;
+  meta: Record<string, unknown> | null;
+  steps: AgentRunStep[];
+}
+
+export async function listSessionRuns(
+  sessionId: string,
+  params?: { limit?: number; offset?: number },
+): Promise<AgentRunSummary[]> {
+  const res = await api.get(`/runs/session/${sessionId}`, { params });
+  return res.data;
+}
+
+/** 0.5.3 全局 Runs：不依赖先开 chat */
+export async function listRecentRuns(params?: {
+  limit?: number;
+  status?: string;
+}): Promise<AgentRunSummary[]> {
+  const res = await api.get('/runs/recent', { params });
+  return res.data;
+}
+
+export async function getRunDetail(runId: string): Promise<AgentRunDetail> {
+  const res = await api.get(`/runs/${runId}`);
+  return res.data;
+}
+
+// ── TEE Evolution 扩展（策展 / 草稿 / from_task）──────────────
+
+export async function listEvolutionTasks(): Promise<Array<Record<string, unknown>>> {
+  const res = await api.get('/evolution/tasks');
+  return res.data;
+}
+
+export async function listEvolutionClusters(): Promise<Array<Record<string, unknown>>> {
+  const res = await api.get('/evolution/clusters');
+  return res.data;
+}
+
+export async function runEvolutionCurator(dryRun = false): Promise<Record<string, unknown>> {
+  const res = await api.post('/evolution/curator/run', null, { params: { dry_run: dryRun } });
+  return res.data;
+}
+
+export async function applyEvolutionDraft(assetId: string): Promise<Record<string, unknown>> {
+  const res = await api.post(`/evolution/drafts/${assetId}/apply`);
+  return res.data;
+}
+
+export async function rejectEvolutionDraft(assetId: string): Promise<Record<string, unknown>> {
+  const res = await api.post(`/evolution/drafts/${assetId}/reject`);
+  return res.data;
+}
+
+export async function evolutionFromTask(body: {
+  task_name: string;
+  success?: boolean;
+  detail?: string;
+  failure_codes?: string[];
+  source?: string;
+}): Promise<Record<string, unknown>> {
+  const res = await api.post('/evolution/from_task', body);
+  return res.data;
+}
+
+export async function setDesktopPermission(body: {
+  operation: string;
+  level: string;
+  app_name?: string | null;
+}): Promise<{ success: boolean; message?: string }> {
+  const res = await api.post('/desktop/permission', body);
+  return res.data;
+}
+
+export async function clearDesktopPermissions(params?: {
+  operation?: string;
+  app_name?: string;
+}): Promise<{ success: boolean; removed?: { session: number; db: number } }> {
+  const res = await api.delete('/desktop/permission', { params });
   return res.data;
 }
 
@@ -2330,18 +2898,67 @@ export async function createIdentity(data: {
   capabilities?: string[];
   default_token_budget?: number;
   meta?: Record<string, unknown>;
-}): Promise<KernelIdentity> {
+  /** 招聘向导：自动创建 SubAgent 技能包并 1:1 挂到员工 */
+  create_skill_pack?: boolean;
+  sub_agent_id?: string;
+  persona?: string;
+  duty?: string;
+  initial_memory?: string;
+  model_ref?: string;
+}): Promise<KernelIdentity & { skill_pack_linked?: boolean }> {
   const res = await api.post('/kernel/identities', data);
   return res.data;
 }
 
-export async function transitionIdentity(identityId: string, action: 'suspend' | 'resume' | 'archive'): Promise<KernelIdentity> {
+export async function transitionIdentity(
+  identityId: string,
+  action: 'suspend' | 'resume' | 'archive' | 'fire' | 'dismiss',
+): Promise<KernelIdentity> {
   const res = await api.post(`/kernel/identities/${identityId}/transition`, { action });
   return res.data;
 }
 
-export async function setIdentityCapabilities(identityId: string, capabilities: string[]): Promise<KernelIdentity> {
-  const res = await api.post(`/kernel/identities/${identityId}/capabilities`, { capabilities });
+/** 改名 / 职位 / 预算 / 人格·职责记忆 */
+export async function updateIdentityProfile(
+  identityId: string,
+  body: {
+    name?: string;
+    role?: string | null;
+    default_token_budget?: number | null;
+    persona?: string;
+    duty?: string;
+  },
+): Promise<KernelIdentity> {
+  const res = await api.patch(`/kernel/identities/${identityId}`, body);
+  return res.data;
+}
+
+export async function setIdentityCapabilities(
+  identityId: string,
+  capabilities: string[],
+  opts?: { mode?: 'replace' | 'grant' | 'revoke'; tools?: string[] },
+): Promise<KernelIdentity> {
+  const res = await api.post(`/kernel/identities/${identityId}/capabilities`, {
+    capabilities,
+    mode: opts?.mode || 'replace',
+    tools: opts?.tools,
+  });
+  return res.data;
+}
+
+export async function grantIdentityCapabilities(
+  identityId: string,
+  capabilities: string[],
+  tools?: string[],
+): Promise<KernelIdentity> {
+  return setIdentityCapabilities(identityId, capabilities, { mode: 'grant', tools });
+}
+
+export async function listCapRequests(params?: {
+  identity_id?: string;
+  limit?: number;
+}): Promise<{ items: Array<Record<string, unknown>>; total: number }> {
+  const res = await api.get('/kernel/cap-requests', { params });
   return res.data;
 }
 
@@ -2352,5 +2969,69 @@ export async function getIdentityMemory(identityId: string, kind?: string): Prom
 
 export async function addIdentityMemory(identityId: string, kind: string, content: string, source = 'manual'): Promise<IdentityMemoryEntry> {
   const res = await api.post(`/kernel/identities/${identityId}/memory`, { kind, content, source });
+  return res.data;
+}
+
+export async function supersedeIdentityMemory(
+  identityId: string,
+  entryId: string,
+  content: string,
+): Promise<IdentityMemoryEntry> {
+  const res = await api.post(`/kernel/identities/${identityId}/memory/${entryId}/supersede`, { content });
+  return res.data;
+}
+
+export async function retireIdentityMemory(
+  identityId: string,
+  entryId: string,
+): Promise<IdentityMemoryEntry> {
+  const res = await api.post(`/kernel/identities/${identityId}/memory/${entryId}/retire`, {});
+  return res.data;
+}
+
+export interface MemoryPreviewResult {
+  header: string;
+  body: string;
+  text: string;
+  entries_used: Array<{ id: string; kind: string; version?: number; chars?: number }>;
+  truncated: boolean;
+  token_estimate: number;
+  mode: string;
+}
+
+export async function previewIdentityMemory(
+  identityId: string,
+  instruction: string,
+  mode: 'workforce' | 'chat' | 'preview' | 'compact' = 'preview',
+): Promise<MemoryPreviewResult> {
+  const res = await api.post(`/kernel/identities/${identityId}/memory/preview`, { instruction, mode });
+  return res.data;
+}
+
+export async function distillMemoryFromItem(
+  identityId: string,
+  inboxItemId: string,
+): Promise<IdentityMemoryEntry> {
+  const res = await api.post(`/kernel/identities/${identityId}/memory/distill-from-item`, {
+    inbox_item_id: inboxItemId,
+  });
+  return res.data;
+}
+
+export interface SchedulerStatus {
+  in_flight: Array<Record<string, unknown>>;
+  queued: Array<Record<string, unknown>>;
+  config: Record<string, unknown>;
+  quota: {
+    day?: string;
+    global_used_today?: number;
+    global_limit?: number | null;
+    by_identity?: Array<{ identity_id: string; used: number; limit?: number | null }>;
+  };
+  counts: { in_flight: number; queued: number };
+}
+
+export async function getSchedulerStatus(): Promise<SchedulerStatus> {
+  const res = await api.get('/kernel/scheduler/status');
   return res.data;
 }

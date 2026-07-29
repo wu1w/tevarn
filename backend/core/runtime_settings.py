@@ -173,6 +173,25 @@ def _coerce(attr: str, value: Any) -> Any:
     return value
 
 
+def peek_runtime_setting(key: str) -> Any | None:
+    """读取内存 Settings 中已映射 key 的当前值。
+
+    DB 尚未写入该 key 时，GET /settings/{key} 可回落此值，避免前端 404。
+    未映射的 key 返回 None（与「值为 null」区分：调用方应先查 _KEY_MAP）。
+    """
+    attr = _KEY_MAP.get(key)
+    if not attr or not hasattr(settings, attr):
+        return None
+    with _settings_lock:
+        return getattr(settings, attr)
+
+
+def is_runtime_mapped_key(key: str) -> bool:
+    """key 是否属于可从内存 Settings 回落的运行时配置。"""
+    attr = _KEY_MAP.get(key)
+    return bool(attr and hasattr(settings, attr))
+
+
 def apply_setting_value(key: str, value: Any) -> bool:
     """应用单个配置到内存 settings。返回是否识别并写入。"""
     attr = _KEY_MAP.get(key)

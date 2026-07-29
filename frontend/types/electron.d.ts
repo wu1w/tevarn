@@ -32,6 +32,9 @@ export interface ElectronAPI {
   // 文件拖拽
   getDroppedFiles: (filePaths: string[]) => Promise<string[]>;
 
+  /** 系统文件夹选择器（专业模式绑定项目根） */
+  selectDirectory?: () => Promise<string | null>;
+
   // 自动更新
   installUpdate: () => Promise<void>;
   onUpdateAvailable: (callback: (info: { version: string; releaseDate: string }) => void) => void;

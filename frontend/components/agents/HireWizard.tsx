@@ -1,14 +1,16 @@
 'use client';
 
 /**
- * AIOS 新建 Agent 向导（demo v2）
+ * AIOS 新建员工向导（0.4.6 Product Spine）
  * 5 步：角色 → 能力 → 预算 → 初始记忆 → 确认
- * 提交：POST /kernel/identities + 初始记忆入库
+ * 提交：POST /kernel/identities（create_skill_pack + persona/duty/memory）
+ * → 必落 Identity；SubAgent 作为技能包 1:1 挂 sub_agent_id
  */
 
 import React, { useState } from 'react';
 import { useToastStore } from '@/stores/toastStore';
-import { createIdentity, addIdentityMemory } from '@/lib/api';
+import { createIdentity } from '@/lib/api';
+import { ModalShell } from '@/components/ui/OverlayShell';
 import { CAP_POOL, fmtTokens } from './shared';
 
 const STEPS = [
@@ -19,10 +21,11 @@ const STEPS = [
   { zh: '确认', en: 'Confirm' },
 ];
 
-export function HireWizard({ zh, onClose, onHired }: {
+export function HireWizard({ zh, onClose, onHired, open = true }: {
   zh: boolean;
   onClose: () => void;
   onHired: () => void;
+  open?: boolean;
 }) {
   const addToast = useToastStore((s) => s.addToast);
   const [step, setStep] = useState(0);
@@ -44,17 +47,29 @@ export function HireWizard({ zh, onClose, onHired }: {
   const submit = async () => {
     setBusy(true);
     try {
+      // B1：招聘结果必落 Identity；技能包 1:1 由后端 create_skill_pack 写死
       const ident = await createIdentity({
         name: name.trim(),
         role: role.trim(),
         capabilities: caps,
         default_token_budget: budget,
-        meta: { persona: persona.trim(), duty: duty.trim() },
+        create_skill_pack: true,
+        persona: persona.trim() || undefined,
+        duty: duty.trim() || undefined,
+        initial_memory: initMemory.trim() || undefined,
+        meta: {
+          source: 'hire_wizard',
+          persona: persona.trim(),
+          duty: duty.trim(),
+        },
       });
-      if (ident.id && initMemory.trim()) {
-        await addIdentityMemory(ident.id, 'persona', initMemory.trim(), 'hire-wizard').catch(() => null);
-      }
-      addToast(zh ? `${name} 已启用 · 可在 Agent 列表查看` : `${name} activated · visible in the agent list`, 'success');
+      const linked = ident.skill_pack_linked || Boolean(ident.sub_agent_id);
+      addToast(
+        zh
+          ? `${name} 已入编${linked ? '（技能包已挂接）' : ''} · 可在员工列表派活`
+          : `${name} hired${linked ? ' · skill pack linked' : ''} · ready for inbox tasks`,
+        'success',
+      );
       onHired();
     } catch (e) {
       addToast(String(e), 'error');
@@ -64,18 +79,11 @@ export function HireWizard({ zh, onClose, onHired }: {
   };
 
   return (
-    <>
-      <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 96, background: 'var(--mask, rgba(10,9,7,0.6))', backdropFilter: 'blur(4px)' }} />
-      <div style={{
-        position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
-        width: 560, maxWidth: '94vw', maxHeight: '86vh', zIndex: 99, overflowY: 'auto',
-        background: 'var(--elevated-bg)', border: '1px solid var(--border-default)',
-        borderRadius: 16, boxShadow: '0 24px 80px var(--shadow-lg, rgba(0,0,0,0.6))',
-        padding: '22px 24px',
-      }}>
+    <ModalShell open={open} onClose={onClose} width={560}>
+      <div style={{ padding: '22px 24px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--foreground)' }}>
-            {zh ? '新建 Agent' : 'New Agent'}
+            {zh ? '新建员工' : 'Hire employee'}
           </div>
           <button onClick={onClose} style={{ border: 'none', background: 'none', color: 'var(--foreground-dim)', cursor: 'pointer', fontSize: 14 }}>✕</button>
         </div>
@@ -199,8 +207,8 @@ export function HireWizard({ zh, onClose, onHired }: {
             </div>
             <div style={{ fontSize: 11, color: 'var(--foreground-dim)', marginTop: 10, lineHeight: 1.6 }}>
               {zh
-                ? '启用后 TA 会出现在 Agent 列表与协作关系中，并可接收任务。'
-                : 'Once activated, they appear in the agent list and org chart, and can receive tasks.'}
+                ? '确认后写入编制（员工 Identity），并自动生成技能包挂接。可在下方收件箱派工单。'
+                : 'Creates a workforce Identity and links a skill pack 1:1. Dispatch tasks via Inbox below.'}
             </div>
           </div>
         )}
@@ -216,12 +224,12 @@ export function HireWizard({ zh, onClose, onHired }: {
             </button>
           ) : (
             <button disabled={busy} onClick={submit} style={btnPrimary}>
-              {busy ? (zh ? '启用中…' : 'Activating…') : (zh ? '确认启用' : 'Confirm activation')}
+              {busy ? (zh ? '入编中…' : 'Hiring…') : (zh ? '确认入编' : 'Confirm hire')}
             </button>
           )}
         </div>
       </div>
-    </>
+    </ModalShell>
   );
 }
 

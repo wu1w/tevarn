@@ -167,3 +167,30 @@ class AsyncDesktopPermissionRepository(AsyncBaseRepository, DesktopPermissionRep
         if existing:
             return await self.delete(existing.id)
         return False
+
+    async def delete_all_for_user(
+        self,
+        user_id: uuid.UUID,
+        operation: str | None = None,
+        app_name: str | None = None,
+    ) -> int:
+        """清除用户持久化权限。operation/app_name 可选过滤。返回删除条数。"""
+        session = await self._get_session()
+        try:
+            q = select(DesktopPermission).where(DesktopPermission.user_id == user_id)
+            if operation:
+                q = q.where(DesktopPermission.operation == operation)
+            if app_name is not None:
+                if app_name:
+                    q = q.where(DesktopPermission.app_name == app_name)
+                else:
+                    q = q.where(DesktopPermission.app_name.is_(None))
+            result = await session.execute(q)
+            rows = list(result.scalars().all())
+            for obj in rows:
+                await session.delete(obj)
+            if rows:
+                await self._maybe_commit(session)
+            return len(rows)
+        finally:
+            await self._close_session(session)

@@ -118,12 +118,21 @@ class GoalState:
         return "\n".join(lines)
 
 
-# session_id -> GoalState（进程内缓存；DB 为权威源）
+# session_id -> GoalState（进程内热缓存；session.config._goal 为权威源）
 _goals: dict[str, GoalState] = {}
+# 同进程内写穿串行，避免两轮 tool 交错覆盖 config
+_save_locks: dict[str, Any] = {}
 
 
 def get_goal(session_id: str | uuid.UUID) -> GoalState | None:
     return _goals.get(str(session_id))
+
+
+def put_goal_cache(goal: GoalState) -> GoalState:
+    """写入/覆盖进程内缓存（load 或跨 worker 刷新后调用）。"""
+    key = str(goal.session_id)
+    _goals[key] = goal
+    return goal
 
 
 def ensure_goal(session_id: str | uuid.UUID, title: str = "", description: str = "") -> GoalState:
@@ -144,7 +153,9 @@ def ensure_goal(session_id: str | uuid.UUID, title: str = "", description: str =
 
 
 def clear_goal(session_id: str | uuid.UUID) -> None:
-    _goals.pop(str(session_id), None)
+    key = str(session_id)
+    _goals.pop(key, None)
+    _save_locks.pop(key, None)
 
 
 def goal_from_dict(data: dict[str, Any]) -> GoalState:
@@ -176,10 +187,18 @@ def goal_from_dict(data: dict[str, Any]) -> GoalState:
     )
 
 
-async def load_goal_from_db(session_id: str | uuid.UUID) -> GoalState | None:
-    """从 session.config['_goal'] 恢复；成功则写入内存缓存。"""
+async def load_goal_from_db(
+    session_id: str | uuid.UUID,
+    *,
+    force: bool = False,
+) -> GoalState | None:
+    """从 session.config['_goal'] 恢复。
+
+    force=False：缓存命中直接返回（同进程热路径）。
+    force=True：以 DB 为准覆盖缓存（get / 跨 worker 防陈旧）。
+    """
     key = str(session_id)
-    if key in _goals:
+    if not force and key in _goals:
         return _goals[key]
     try:
         from backend.repositories.session_repo import AsyncSessionRepository
@@ -189,35 +208,78 @@ async def load_goal_from_db(session_id: str | uuid.UUID) -> GoalState | None:
         cfg = await repo.get_config(sid)
         raw = (cfg or {}).get("_goal")
         if not isinstance(raw, dict):
-            return None
+            if force:
+                # DB 无 goal：清掉可能陈旧的内存，避免幽灵状态
+                _goals.pop(key, None)
+            return _goals.get(key) if not force else None
         g = goal_from_dict({**raw, "session_id": key})
         _goals[key] = g
-        logger.info("Loaded goal from DB for session %s (%s todos)", key[:8], len(g.todos))
+        logger.info(
+            "Loaded goal from DB for session %s (%s todos, force=%s)",
+            key[:8],
+            len(g.todos),
+            force,
+        )
         return g
     except Exception as e:
         logger.warning("load_goal_from_db failed for %s: %s", key[:8], e)
-        return None
+        return _goals.get(key)
+
+
+def _save_lock_for(key: str) -> Any:
+    import asyncio
+
+    lock = _save_locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _save_locks[key] = lock
+    return lock
 
 
 async def save_goal_to_db(session_id: str | uuid.UUID) -> None:
-    """将内存 goal 写入 session.config['_goal']。"""
+    """将内存 goal 写穿到 session.config['_goal']（同 session 串行）。"""
     key = str(session_id)
     g = _goals.get(key)
     if g is None:
         return
-    try:
-        from backend.repositories.session_repo import AsyncSessionRepository
+    lock = _save_lock_for(key)
+    async with lock:
+        g = _goals.get(key)
+        if g is None:
+            return
+        try:
+            from backend.repositories.session_repo import AsyncSessionRepository
 
-        repo = AsyncSessionRepository()
-        sid = uuid.UUID(key) if not isinstance(session_id, uuid.UUID) else session_id
-        cfg = await repo.get_config(sid) or {}
-        if not isinstance(cfg, dict):
-            cfg = {}
-        cfg = dict(cfg)
-        cfg["_goal"] = g.to_dict()
-        await repo.update_config(sid, cfg)
-    except Exception as e:
-        logger.warning("save_goal_to_db failed for %s: %s", key[:8], e)
+            repo = AsyncSessionRepository()
+            sid = uuid.UUID(key) if not isinstance(session_id, uuid.UUID) else session_id
+            cfg = await repo.get_config(sid) or {}
+            if not isinstance(cfg, dict):
+                cfg = {}
+            cfg = dict(cfg)
+            cfg["_goal"] = g.to_dict()
+            await repo.update_config(sid, cfg)
+        except Exception as e:
+            logger.warning("save_goal_to_db failed for %s: %s", key[:8], e)
+
+
+async def apply_manage_goal_async(
+    session_id: str | uuid.UUID,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """DB 对齐后的 manage_goal：读路径 force 刷新，写路径强制落库。"""
+    action = str(kwargs.get("action") or "").strip().lower()
+    key = str(session_id)
+    # get：永远以 DB 为准，避免跨 worker / 重启后读到陈旧缓存
+    # 其它变更：缓存未命中时先 hydrate，避免在空壳上 mutate
+    if action == "get":
+        await load_goal_from_db(session_id, force=True)
+    elif action != "create" and key not in _goals:
+        await load_goal_from_db(session_id, force=False)
+
+    result = apply_manage_goal(session_id, **kwargs)
+    if action != "get" and result.get("ok"):
+        await save_goal_to_db(session_id)
+    return result
 
 
 def apply_manage_goal(

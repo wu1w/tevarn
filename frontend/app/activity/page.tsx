@@ -8,24 +8,39 @@
 
 import React, { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { getKernelEvents, type KernelEvent } from '@/lib/api';
+import { getKernelEvents, listRecentRuns, listRunningJobs, type KernelEvent } from '@/lib/api';
 import { useZh } from '@/hooks/useZh';
+import Link from 'next/link';
+import { AdvancedShell } from '@/components/layout/AdvancedShell';
 
 const KIND_META: Record<string, { color: string; zh: string }> = {
   spawn: { color: 'var(--status-online)', zh: '进程启动' },
+  process_created: { color: 'var(--status-online)', zh: '进程启动' },
+  process_ended: { color: 'var(--foreground-dim)', zh: '进程退出' },
   exit: { color: 'var(--foreground-dim)', zh: '进程退出' },
   mediate: { color: 'var(--brand-purple)', zh: '能力裁决' },
   mediation: { color: 'var(--brand-purple)', zh: '能力裁决' },
+  'policy.decision': { color: '#7a98b0', zh: '权限网裁决' },
   charge: { color: '#c9a05e', zh: '预算扣费' },
+  budget_exceeded: { color: '#c0785e', zh: '预算超限' },
   escalate: { color: '#c0785e', zh: '提权申请' },
+  escalation_requested: { color: '#c0785e', zh: '提权申请' },
   approve: { color: 'var(--status-online)', zh: '提权批准' },
   deny: { color: '#c0785e', zh: '提权拒绝' },
   memory_write: { color: '#7a98b0', zh: '记忆写入' },
+  identity_memory_added: { color: '#7a98b0', zh: '记忆写入' },
   snapshot: { color: '#7a98b0', zh: '快照' },
+  inbox_enqueued: { color: '#80b09b', zh: '工单入队' },
+  inbox_done: { color: 'var(--status-online)', zh: '工单完成' },
+  inbox_failed: { color: '#c0785e', zh: '工单失败' },
   evolution_propose: { color: '#80b09b', zh: '进化建议' },
+  evolution_proposed: { color: '#80b09b', zh: '进化建议' },
   evolution_apply: { color: 'var(--status-online)', zh: '进化应用' },
+  evolution_applied: { color: 'var(--status-online)', zh: '进化应用' },
   evolution_reject: { color: '#c0785e', zh: '进化拒绝' },
+  evolution_rejected: { color: '#c0785e', zh: '进化拒绝' },
   evolution_rollback: { color: '#c9a05e', zh: '进化回滚' },
+  evolution_rolled_back: { color: '#c9a05e', zh: '进化回滚' },
 };
 
 function kindMeta(kind: string, zh: boolean) {
@@ -48,6 +63,20 @@ export default function ActivityPage() {
     queryFn: () => getKernelEvents(200),
     staleTime: 8_000,
     refetchInterval: 15_000,
+  });
+  const recentRuns = useQuery({
+    queryKey: ['runs-recent'],
+    queryFn: () => listRecentRuns({ limit: 12 }),
+    staleTime: 8_000,
+    refetchInterval: 12_000,
+    retry: 1,
+  });
+  const liveJobs = useQuery({
+    queryKey: ['jobs-running'],
+    queryFn: listRunningJobs,
+    staleTime: 5_000,
+    refetchInterval: 8_000,
+    retry: 1,
   });
 
   const events = useMemo(() => {
@@ -86,7 +115,13 @@ export default function ActivityPage() {
   };
 
   return (
-    <div style={{ maxWidth: 860, margin: '0 auto', padding: '26px 28px 40px' }}>
+    <AdvancedShell
+      titleZh="活动页是高级观测"
+      titleEn="Activity is advanced observability"
+      hintZh="日常看驾驶舱与员工页即可。本页为内核事件/全局 Runs 深挖。"
+      hintEn="Day-to-day: cockpit & employees. This page is deep kernel event / runs."
+    >
+    <div style={{ width: '100%', maxWidth: 'none', margin: 0, padding: 'clamp(16px, 2.2vw, 28px) clamp(12px, 2vw, 32px) clamp(24px, 3vw, 40px)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 18 }}>
         <div>
           <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--foreground)' }}>
@@ -107,6 +142,58 @@ export default function ActivityPage() {
         >
           {zh ? '导出审计链' : 'Export chain'}
         </button>
+      </div>
+
+      {/* 0.5.3 全局 Runs：不依赖先开 chat */}
+      <div style={{ ...card, padding: 14, marginBottom: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+          <div style={{ fontWeight: 650, fontSize: 13 }}>
+            {zh ? '全局运行' : 'Global runs'}
+            {(liveJobs.data?.total ?? 0) > 0 ? (
+              <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--status-offline)', fontWeight: 600 }}>
+                {zh ? '在跑' : 'live'} {liveJobs.data?.total}
+              </span>
+            ) : null}
+          </div>
+          <Link href="/kernel" style={{ fontSize: 11.5, color: 'var(--brand-purple)', textDecoration: 'none' }}>
+            {zh ? '内核 / 备份 →' : 'Kernel / backup →'}
+          </Link>
+        </div>
+        {(recentRuns.data ?? []).length === 0 ? (
+          <div style={{ fontSize: 12, color: 'var(--foreground-dim)' }}>
+            {zh ? '暂无 Agent Run。对话或派活后会出现在这里。' : 'No agent runs yet.'}
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {(recentRuns.data ?? []).map((r) => (
+              <div
+                key={r.id}
+                style={{
+                  display: 'flex', gap: 10, alignItems: 'center', fontSize: 12,
+                  padding: '6px 0', borderBottom: '1px solid var(--border-subtle)',
+                }}
+              >
+                <span
+                  style={{
+                    width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                    background: ['running', 'active', 'executing'].includes((r.status || '').toLowerCase())
+                      ? 'var(--status-online)'
+                      : (r.status || '').toLowerCase() === 'failed'
+                        ? 'var(--status-offline)'
+                        : 'var(--foreground-dim)',
+                  }}
+                />
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--foreground)' }}>
+                  {(r.input_summary || r.mode || r.id).slice(0, 80)}
+                </span>
+                <span style={{ color: 'var(--foreground-dim)', fontSize: 10.5 }}>{r.status}</span>
+                <span style={{ color: 'var(--foreground-dim)', fontSize: 10.5 }}>
+                  {r.total_tool_calls ?? 0} tools
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* 筛选 chips */}
@@ -141,6 +228,7 @@ export default function ActivityPage() {
         </div>
       )}
     </div>
+    </AdvancedShell>
   );
 }
 

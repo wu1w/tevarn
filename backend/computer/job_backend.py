@@ -131,8 +131,11 @@ class JobBackend:
         self.agent_key = agent_key
         self.memory_limit = memory_limit
         self.process_limit = process_limit
+        from backend.computer.pathutil import sanitize_agent_key_for_path
+
+        safe_key = sanitize_agent_key_for_path(agent_key)
         self.agent_home = ntpath.join(
-            self.workspace_root, ".computers", agent_key, "home"
+            self.workspace_root, ".computers", safe_key, "home"
         )
 
     def _ensure_dirs(self) -> None:

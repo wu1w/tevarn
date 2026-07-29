@@ -73,6 +73,32 @@ async def run_epilogue(
     except Exception as e:
         logger.warning("multi-source aggregate skipped: %s", e)
 
+    # 7.55 多类目落地校验脚注（审计路径 / 检索无来源 / 统计无计算工具…）
+    try:
+        if final_content and not loop._should_stop:
+            from backend.agent.task_grounding import maybe_annotate_report
+
+            tools_for_gate: list[str] = []
+            for tc in trace_tool_calls or []:
+                if isinstance(tc, dict) and tc.get("name"):
+                    tools_for_gate.append(str(tc["name"]))
+            for st in sft_tools or []:
+                if isinstance(st, dict) and st.get("name"):
+                    tools_for_gate.append(str(st["name"]))
+            annotated = maybe_annotate_report(
+                user_input or "",
+                final_content,
+                tools_for_gate,
+            )
+            if annotated and annotated != final_content:
+                final_content = annotated
+                logger.info(
+                    "task grounding footer attached session=%s",
+                    str(session_id)[:8],
+                )
+    except Exception as e:
+        logger.debug("task grounding annotate skipped: %s", e)
+
     # 7.6 TEE 自主进化：验收/归因/过门后 auto_apply（默认关总开关）
     try:
         from backend.evolution.config import get_evolution_config

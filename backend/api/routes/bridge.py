@@ -116,7 +116,7 @@ async def bridge_health(
     return {
         "ok": True,
         "enabled": True,
-        "version": getattr(settings, "version", None) or "0.3.0",
+        "version": getattr(settings, "version", None) or "0.4.6-alpha",
         "product": "takton",
         "user": str(current_user.id),
         "capabilities": ["models", "skills", "tools", "mcp", "rag", "sessions", "settings", "agent_turn"],

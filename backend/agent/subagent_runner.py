@@ -86,26 +86,26 @@ async def run_subagent(
         prompt += f"\n上下文：\n{context.strip()}\n"
     prompt += "\n要求：使用可用工具直接完成任务；最终回复给出精炼、可验证的结果。"
 
-    # 构造子 loop（repos 走依赖注入单例，与父 run 同一套存储）
+    # 构造子 loop：直接 repo（不依赖 FastAPI dependencies，保持 L2 无 Adapter）
     from backend.agent import NexusAgentLoop
-    from backend.api.dependencies import (
-        get_context_flow_repo,
-        get_ctx_item_repo,
-        get_message_repo,
-        get_notification_repo,
-        get_session_repo,
-        get_task_repo,
+    from backend.repositories.context_repo import (
+        AsyncContextFlowRepository,
+        AsyncCtxItemRepository,
     )
+    from backend.repositories.message_repo import AsyncMessageRepository
+    from backend.repositories.notification_repo import AsyncNotificationRepository
+    from backend.repositories.session_repo import AsyncSessionRepository
+    from backend.repositories.task_repo import AsyncTaskRepository
 
     child = NexusAgentLoop(
-        session_repo=await get_session_repo(),
-        message_repo=await get_message_repo(),
-        task_repo=await get_task_repo(),
-        ctx_item_repo=await get_ctx_item_repo(),
-        context_flow_repo=await get_context_flow_repo(),
+        session_repo=AsyncSessionRepository(),
+        message_repo=AsyncMessageRepository(),
+        task_repo=AsyncTaskRepository(),
+        ctx_item_repo=AsyncCtxItemRepository(),
+        context_flow_repo=AsyncContextFlowRepository(),
         ws_manager=ws_manager,
         user_id=user_id,
-        notification_repo=await get_notification_repo(),
+        notification_repo=AsyncNotificationRepository(),
     )
     # Agent Computer：子代理自己的沙箱身份
     child._agent_key = f"sub:{agent_id}"

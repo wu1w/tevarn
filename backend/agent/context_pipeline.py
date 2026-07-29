@@ -1,18 +1,24 @@
 """
-Claude Code–inspired context pipeline (MVP layers):
+Claude Code–inspired context pipeline:
 
   L1 Budget reduction — cap oversized tool / content blobs
-  L3 Microcompact     — collapse consecutive tool noise
-  L5 Auto-compact     — LLM structured summary (default main model;
-                        optional settings.context_compress_model)
+  L3 Microcompact     — clear old tool *content*, keep tool_use/tool_result pairs
+  L5 Auto-compact     — LLM structured summary for *continuing work*
+                        (optional settings.context_compress_model)
 
-Hermes influences: protect head/tail, historical-only summary prefix,
-TokenMeter usage feedback.
+Aligned with Claude Code leaked compact design (2026-03):
+  - Compact inject message says CONTINUE, not "reference only / do not resume"
+  - 9-section summary template (intent, files, errors, pending, current work, next step)
+  - Microcompact preserves API tool pairs; only clears stale tool bodies
+  - Mid-loop callers should pass allow_l5=False (L1/L3 only)
+
+Hermes influences: protect head/tail, TokenMeter usage feedback.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 import time
 import uuid
 from typing import Any
@@ -23,20 +29,91 @@ from backend.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Claude Code style: session continued — pick up the last task.
+# Intentionally the OPPOSITE of "reference only / do not resume".
 SUMMARY_PREFIX = (
-    "[CONTEXT COMPACTION — REFERENCE ONLY] Earlier turns were compacted "
-    "into the summary below. Treat as background, NOT active instructions. "
-    "Respond ONLY to the latest user message AFTER this summary. "
-    "Do not resume Historical Remaining Work unless the latest message asks."
+    "This session is being continued from a previous conversation that ran out "
+    "of context. The summary below covers the earlier portion of the conversation."
 )
 
-_SUMMARY_END = (
-    "--- END OF CONTEXT SUMMARY — respond to the message below, not the summary above ---"
+SUMMARY_CONTINUE = (
+    "Continue the conversation from where it left off without asking the user any "
+    "further questions. Resume directly — do not acknowledge the summary, do not "
+    "recap what was happening, do not preface with \"I'll continue\" or similar. "
+    "Pick up the last task as if the break never happened. Keep using tools until "
+    "the work is actually complete."
 )
+
+# Back-compat alias used by tests / status probes
+_SUMMARY_END = (
+    "--- END OF CONTEXT SUMMARY — continue the work below from Current Work / Next Step ---"
+)
+
+CLEARED_TOOL_PLACEHOLDER = "[Old tool result content cleared]"
+
+# Tools whose results are high-volume and usually re-fetchable (CC COMPACTABLE_TOOLS).
+_COMPACTABLE_TOOL_HINTS = frozenset(
+    {
+        "file_read",
+        "read",
+        "read_file",
+        "command",
+        "bash",
+        "shell",
+        "python",
+        "process",
+        "grep",
+        "glob",
+        "search",
+        "web_search",
+        "web_fetch",
+        "http",
+        "browser",
+        "doc_read",
+        "file_write",
+        "edit",
+        "apply_patch",
+        "write",
+        "session_search",
+    }
+)
+
+_MIN_CLEAR_CHARS = 120  # don't bother clearing tiny tool blobs
 
 
 def _cfg(name: str, default: Any) -> Any:
     return getattr(settings, name, default)
+
+
+def format_compact_summary(raw: str) -> str:
+    """Strip <analysis> scratchpad; unwrap <summary> (Claude Code formatCompactSummary)."""
+    text = raw or ""
+    text = re.sub(r"<analysis>[\s\S]*?</analysis>", "", text, flags=re.I)
+    m = re.search(r"<summary>([\s\S]*?)</summary>", text, flags=re.I)
+    if m:
+        text = f"Summary:\n{(m.group(1) or '').strip()}"
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def build_compact_continuation_message(
+    summary_text: str,
+    *,
+    recent_messages_preserved: bool = True,
+) -> str:
+    """User-role body after L5 — mirrors Claude Code getCompactUserSummaryMessage."""
+    formatted = format_compact_summary(summary_text)
+    parts = [
+        SUMMARY_PREFIX,
+        "",
+        formatted,
+        "",
+        SUMMARY_CONTINUE,
+    ]
+    if recent_messages_preserved:
+        parts.insert(-2, "Recent messages after this summary are preserved verbatim.")
+        parts.insert(-2, "")
+    return "\n".join(parts).strip()
 
 
 class PipelineContextEngine(ContextEngine):
@@ -131,6 +208,8 @@ class PipelineContextEngine(ContextEngine):
         current_tokens: int | None = None,
         focus_topic: str | None = None,
         session_id: Any = None,
+        allow_l5: bool = True,
+        micro_only: bool = False,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         # 同步 meter 参数，确保使用最新的 runtime settings
         self.meter.context_window = int(
@@ -146,6 +225,7 @@ class PipelineContextEngine(ContextEngine):
             "tokens_before": before,
             "layers": layers,
             "engine": self.name,
+            "allow_l5": allow_l5 and not micro_only,
         }
 
         out = [dict(m) for m in messages]
@@ -162,8 +242,11 @@ class PipelineContextEngine(ContextEngine):
 
         mid_tokens = self.meter.estimate_messages(out)
         thrashing = self._thrash_active()
-        need_l5 = self.enable_l5 and (
-            mid_tokens >= self.meter.threshold_tokens or self.should_compress(mid_tokens)
+        need_l5 = (
+            self.enable_l5
+            and allow_l5
+            and not micro_only
+            and (mid_tokens >= self.meter.threshold_tokens or self.should_compress(mid_tokens))
         )
         if thrashing and need_l5:
             # 熔断冷却期：禁止 L5 砍对话，只保留 L1/L3 micro，等冷却或手动干预
@@ -173,6 +256,8 @@ class PipelineContextEngine(ContextEngine):
             )
             meta["thrash_suppressed_l5"] = True
             need_l5 = False
+        if not allow_l5 or micro_only:
+            meta["l5_skipped_midloop"] = not allow_l5 or micro_only
 
         if need_l5 and len(out) >= 4:
             self._record_l5_and_maybe_trip()
@@ -193,10 +278,11 @@ class PipelineContextEngine(ContextEngine):
         self.last_prompt_tokens = after
         self.meter.last_prompt_tokens = after
         logger.info(
-            "Context pipeline: %s → %s tokens layers=%s",
+            "Context pipeline: %s → %s tokens layers=%s allow_l5=%s",
             before,
             after,
             layers,
+            allow_l5 and not micro_only,
         )
         return out, meta
 
@@ -241,12 +327,43 @@ class PipelineContextEngine(ContextEngine):
             out.append(m)
         return out, changed
 
-    # ── L3 ──────────────────────────────────────────────────────────
+    # ── L3 (Claude Code microcompact) ───────────────────────────────
+
+    @staticmethod
+    def _tool_name_for_result(
+        messages: list[dict[str, Any]], tool_call_id: str | None
+    ) -> str:
+        if not tool_call_id:
+            return ""
+        tid = str(tool_call_id)
+        for m in messages:
+            if m.get("role") != "assistant":
+                continue
+            for tc in m.get("tool_calls") or []:
+                if not isinstance(tc, dict):
+                    continue
+                if str(tc.get("id") or "") != tid:
+                    continue
+                return str((tc.get("function") or {}).get("name") or "").lower()
+        return ""
+
+    def _is_compactable_tool(self, name: str) -> bool:
+        if not name:
+            return True  # unknown → still clear large bodies in mid zone
+        n = name.lower().strip()
+        if n in _COMPACTABLE_TOOL_HINTS:
+            return True
+        # partial match e.g. mcp__xxx__file_read
+        return any(h in n for h in _COMPACTABLE_TOOL_HINTS)
 
     def _l3_microcompact(
         self, messages: list[dict[str, Any]]
     ) -> tuple[list[dict[str, Any]], int]:
-        """Collapse runs of tool results beyond protect window into one note."""
+        """Clear old mid-window tool *bodies*; keep assistant tool_calls + tool rows.
+
+        Claude Code microCompact: replace content with a short cleared marker so
+        token cost drops without breaking OpenAI tool pairing invariants.
+        """
         systems = [m for m in messages if m.get("role") == "system"]
         rest = [m for m in messages if m.get("role") != "system"]
         if len(rest) <= self.protect_first_n + self.protect_last_n + 2:
@@ -262,57 +379,75 @@ class PipelineContextEngine(ContextEngine):
         if tool_n < 4:
             return messages, 0
 
-        # Keep non-tool structure lightly: drop pure tool rows in mid, keep user/assistant
+        cleared = 0
         kept_mid: list[dict[str, Any]] = []
-        dropped_tools = 0
-        # 记录被剥掉 tool_calls 的 tool_call_id：它们的 tool 结果消息若落在
-        # head/tail 保护区，会变成孤儿（assistant.tool_calls 已丢失），必须一并剔除，
-        # 否则严格 OpenAI 兼容网关（如 Kimi）会以 400 拒绝。
-        stripped_tc_ids: set[str] = set()
-        for m in mid:
-            if m.get("role") == "tool":
-                dropped_tools += 1
-                continue
-            # strip heavy tool_calls from mid assistants (keep text)
-            if m.get("role") == "assistant" and m.get("tool_calls"):
-                for tc in m["tool_calls"]:
-                    if isinstance(tc, dict) and tc.get("id"):
-                        stripped_tc_ids.add(str(tc["id"]))
-                content = m.get("content") or f"[tool calls omitted x{len(m['tool_calls'])}]"
-                kept_mid.append({"role": "assistant", "content": content})
-            else:
-                kept_mid.append(m)
+        full_for_lookup = rest  # name resolution across head/mid/tail
 
-        if dropped_tools < 3:
+        for m in mid:
+            if m.get("role") != "tool":
+                kept_mid.append(m)
+                continue
+
+            content = m.get("content")
+            if not isinstance(content, str):
+                kept_mid.append(m)
+                continue
+            if CLEARED_TOOL_PLACEHOLDER in content and len(content) < 200:
+                kept_mid.append(m)
+                continue
+            if len(content) < _MIN_CLEAR_CHARS:
+                kept_mid.append(m)
+                continue
+
+            # Prefer compactable tools; still clear large mid-zone blobs of any tool
+            # (mid is already outside protect head/tail — safe to reclaim tokens).
+            tname = self._tool_name_for_result(full_for_lookup, m.get("tool_call_id"))
+            if not self._is_compactable_tool(tname) and len(content) < 500:
+                kept_mid.append(m)
+                continue
+
+            preview = content[:80].replace("\n", " ").strip()
+            new_content = CLEARED_TOOL_PLACEHOLDER
+            if preview:
+                new_content += f" (was ~{len(content)} chars; preview: {preview}…)"
+            kept_mid.append({**m, "content": new_content})
+            cleared += 1
+
+        if cleared < 3:
             return messages, 0
 
-        # 从保护区中剔除已成为孤儿的 tool 消息（其 tool_call_id 已被剥掉）
-        def _drop_orphan_tools(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-            if not stripped_tc_ids:
-                return rows
-            return [
-                r
-                for r in rows
-                if not (
-                    r.get("role") == "tool"
-                    and r.get("tool_call_id")
-                    and str(r["tool_call_id"]) in stripped_tc_ids
-                )
-            ]
-
-        head = _drop_orphan_tools(head)
-        tail = _drop_orphan_tools(tail)
-
-        note = {
-            "role": "system",
-            "content": (
-                f"[L3 microcompact] Omitted {dropped_tools} intermediate tool outputs "
-                f"from older turns; recent tool results are kept in the tail."
-            ),
-        }
-        return systems + head + [note] + kept_mid + tail, dropped_tools
+        # Structure intact → no orphan stripping needed (pairs preserved).
+        return systems + head + kept_mid + tail, cleared
 
     # ── L5 ──────────────────────────────────────────────────────────
+
+    def _build_transcript(self, head: list[dict[str, Any]]) -> str:
+        """Richer transcript for summarizer: include tool names, args peek, result peek."""
+        lines: list[str] = []
+        for m in head:
+            role = m.get("role", "?")
+            content = m.get("content") or ""
+            if isinstance(content, str) and content.strip():
+                # tool bodies: keep more signal for errors/paths
+                cap = 1500 if role == "tool" else 2500
+                body = content if len(content) <= cap else content[:cap] + "…[truncated]"
+                lines.append(f"{role}: {body}")
+            tcs = m.get("tool_calls")
+            if tcs:
+                for tc in tcs:
+                    if not isinstance(tc, dict):
+                        continue
+                    fn = tc.get("function") or {}
+                    name = fn.get("name") or "tool"
+                    args = fn.get("arguments") or ""
+                    if not isinstance(args, str):
+                        args = str(args)
+                    args_peek = args[:400] + ("…" if len(args) > 400 else "")
+                    lines.append(f"{role}: [tool_call {name} id={tc.get('id')}] {args_peek}")
+        transcript = "\n".join(lines)
+        if len(transcript) > 60_000:
+            transcript = transcript[:60_000] + "\n…[truncated]"
+        return transcript
 
     async def _l5_auto_compact(
         self,
@@ -336,29 +471,28 @@ class PipelineContextEngine(ContextEngine):
         if not head:
             return messages, {"applied": False}
 
-        lines: list[str] = []
-        for m in head:
-            role = m.get("role", "?")
-            content = m.get("content") or ""
-            if isinstance(content, str) and content.strip():
-                lines.append(f"{role}: {content[:2000]}")
-            tcs = m.get("tool_calls")
-            if tcs:
-                names = []
-                for tc in tcs:
-                    if isinstance(tc, dict):
-                        names.append((tc.get("function") or {}).get("name") or "tool")
-                if names:
-                    lines.append(f"{role}: [tool_calls: {', '.join(names)}]")
-        transcript = "\n".join(lines)
-        if len(transcript) > 40_000:
-            transcript = transcript[:40_000] + "\n…[truncated]"
-
+        transcript = self._build_transcript(head)
         focus_line = f"\nFocus topic: {focus_topic}" if focus_topic else ""
         summary_text = await self._llm_summarize(transcript, focus_line)
 
         if not summary_text:
-            summary_text = f"[历史已压缩：省略较早 {len(head)} 条消息]"
+            # Heuristic fallback — still orientation for continuation, not a ban.
+            user_bits = [
+                (m.get("content") or "")[:200]
+                for m in head
+                if m.get("role") == "user" and isinstance(m.get("content"), str)
+            ]
+            summary_text = (
+                "1. Primary Request and Intent:\n"
+                f"   {user_bits[0] if user_bits else '(unknown)'}\n\n"
+                f"7. Pending Tasks:\n   Continue unfinished work from earlier turns "
+                f"(compressed {len(head)} messages).\n\n"
+                "8. Current Work:\n   Context was compacted due to length; "
+                "use recent messages after this summary as ground truth.\n\n"
+                "9. Optional Next Step:\n   Resume the last incomplete task with tools."
+            )
+
+        summary_text = format_compact_summary(summary_text)
 
         # optional CtxItem
         if session_id is not None:
@@ -382,13 +516,13 @@ class PipelineContextEngine(ContextEngine):
             except Exception as e:
                 logger.debug("save summary ctx failed: %s", e)
 
-        body = (
-            f"{SUMMARY_PREFIX}\n\n"
-            f"## Historical Task Snapshot\n{summary_text}\n\n"
-            f"{_SUMMARY_END}"
+        body = build_compact_continuation_message(
+            summary_text, recent_messages_preserved=True
         )
+        # Claude Code injects compact summary as a *user* message so the model
+        # treats it as session continuation, not a system "stop working" ban.
         summary_msg = {
-            "role": "system",
+            "role": "user",
             "content": body,
             "_compressed_summary": True,
         }
@@ -412,26 +546,76 @@ class PipelineContextEngine(ContextEngine):
                 and str(m["tool_call_id"]) not in live_tc_ids
             )
         ]
+        # Also strip orphan tool_calls on assistant rows in tail (no matching tool)
+        live_tool_result_ids = {
+            str(m.get("tool_call_id"))
+            for m in new_messages
+            if m.get("role") == "tool" and m.get("tool_call_id")
+        }
+        fixed: list[dict[str, Any]] = []
+        for m in new_messages:
+            if m.get("role") == "assistant" and m.get("tool_calls"):
+                kept_tc = [
+                    tc
+                    for tc in m["tool_calls"]
+                    if isinstance(tc, dict)
+                    and str(tc.get("id") or "") in live_tool_result_ids
+                ]
+                if len(kept_tc) != len(m["tool_calls"]):
+                    mm = dict(m)
+                    if kept_tc:
+                        mm["tool_calls"] = kept_tc
+                    else:
+                        mm.pop("tool_calls", None)
+                        if not (mm.get("content") or "").strip():
+                            mm["content"] = "[tool calls compacted with history]"
+                    fixed.append(mm)
+                    continue
+            fixed.append(m)
+        new_messages = fixed
+
         return new_messages, {
             "applied": True,
             "dropped_messages": len(head),
             "summary_chars": len(summary_text),
+            "continuation": True,
         }
 
     async def _llm_summarize(self, transcript: str, focus_line: str) -> str:
         try:
             llm = _get_compress_llm()
+            # Claude Code BASE_COMPACT_PROMPT (9 sections) — bilingual OK, Chinese preferred.
+            system = f"""CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.
+You are a conversation compaction assistant. Create a detailed summary so the agent can CONTINUE development work without losing context. Do not invent facts.
+{focus_line}
+
+Your summary MUST include these sections (use Chinese if the conversation is Chinese):
+
+1. Primary Request and Intent: Capture the user's explicit requests and intents in detail.
+2. Key Technical Concepts: Important technologies, frameworks, patterns discussed.
+3. Files and Code Sections: Specific files examined/modified/created; include important paths and short snippets when present; note why each matters.
+4. Errors and Fixes: Errors encountered and how they were fixed; include user corrections.
+5. Problem Solving: Solved problems and ongoing troubleshooting.
+6. All User Messages: List ALL non-tool user messages (critical for intent tracking).
+7. Pending Tasks: Explicit unfinished tasks still requested by the user.
+8. Current Work: Precisely what was being worked on immediately before compaction (files, commands, last tool outcomes).
+9. Optional Next Step: The next concrete step that is DIRECTLY in line with the user's most recent explicit requests and the work in progress. If the last task was concluded, only list next steps if the user asked. Include short verbatim quotes of where you left off.
+
+Use this shape (optional tags):
+<analysis>
+brief private checklist
+</analysis>
+<summary>
+1. Primary Request and Intent:
+   ...
+9. Optional Next Step:
+   ...
+</summary>
+
+Be thorough on technical detail needed to continue coding (paths, errors, decisions). Prefer 800–4000 Chinese characters over a vague short blurb. Never say "do not resume" or "reference only"."""
+
             prompt = [
-                {
-                    "role": "system",
-                    "content": (
-                        "你是会话压缩助手。将历史对话压缩为简洁中文要点。"
-                        "使用小节：目标、已完成、关键事实、决策、未决问题、约束。"
-                        "标注这些是历史状态，不是当前指令。不要编造。"
-                        "输出纯文本，200-800 字。"
-                        f"{focus_line}"
-                    ),
-                },
+                {"role": "system", "content": system},
                 {"role": "user", "content": transcript},
             ]
             parts: list[str] = []

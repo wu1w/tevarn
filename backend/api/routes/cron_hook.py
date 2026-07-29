@@ -207,14 +207,84 @@ async def trigger_hook(
                     raise Exception(f"Webhook returned {resp.status_code}")
 
         elif obj.target_type == "agent":
-            # 触发子代理
+            # 触发子代理：接入 run_subagent 真·迷你 Run
+            from backend.agent.subagent_runner import run_subagent
+            from backend.repositories.session_repo import SessionRepository
             from backend.repositories.sub_agent_repo import AsyncSubAgentRepository
+
             agent_repo = AsyncSubAgentRepository()
             agent = await agent_repo.get_by_id(obj.target_id)
             if not agent:
                 raise Exception(f"SubAgent {obj.target_id} not found")
-            # TODO(cron-hook): 接入 SubAgent 实际执行路径（当前仅记录触发日志）
-            logger.info("Hook triggered sub-agent: %s (execution not yet wired)", agent.name)
+
+            payload = obj.payload_template if isinstance(obj.payload_template, dict) else {}
+            goal = (
+                str(payload.get("goal") or payload.get("task") or payload.get("prompt") or "").strip()
+                or f"CronHook «{obj.name}» 定时触发，请按角色设定执行例行任务并给出简要结果。"
+            )
+            context = str(payload.get("context") or "").strip()
+            if payload:
+                # 附带 hook 负载便于子代理引用
+                extra = {k: v for k, v in payload.items() if k not in {"goal", "task", "prompt", "context"}}
+                if extra:
+                    import json as _json
+
+                    context = (context + "\n\n" if context else "") + "hook_payload=" + _json.dumps(
+                        extra, ensure_ascii=False, default=str
+                    )[:2000]
+
+            # 解析用户 + 会话（优先 payload.session_id，否则为用户建/取 cron 会话）
+            uid = obj.user_id or getattr(current_user, "id", None)
+            user_uuid = None
+            if uid:
+                user_uuid = uuid.UUID(str(uid)) if not isinstance(uid, uuid.UUID) else uid
+
+            session_id = payload.get("session_id")
+            if session_id:
+                try:
+                    sid = uuid.UUID(str(session_id))
+                except ValueError as e:
+                    raise Exception(f"invalid session_id in payload: {e}") from e
+            else:
+                if not user_uuid:
+                    raise Exception("CronHook agent 触发需要 user_id 或 payload.session_id")
+                session_repo = SessionRepository()
+                # 专用会话：标题带 hook，避免污染用户主对话
+                sess = await session_repo.create(
+                    {
+                        "user_id": user_uuid,
+                        "title": f"[cron-hook] {obj.name}"[:120],
+                        "config": {"source": "cron_hook", "hook_id": str(obj.id)},
+                    }
+                )
+                sid = sess.id
+
+            result_text = await run_subagent(
+                session_id=sid,
+                sub_agent=agent,
+                goal=goal,
+                context=context,
+                user_id=user_uuid,
+                ws_manager=None,
+                parent_run_id=None,
+                depth=0,
+            )
+            if isinstance(result_text, str) and result_text.startswith("[Error]"):
+                raise Exception(result_text)
+            logger.info(
+                "Hook triggered sub-agent: %s ok chars=%s",
+                agent.name,
+                len(result_text or ""),
+            )
+            # 把摘要写入 error_msg 字段旁路：成功时 error 为空，结果进 log 需扩展；
+            # 这里塞进 duration 后的返回体；execution log 仅有 error_message——
+            # 成功摘要截断写入 last 用 hook 更新字段不够，附到 error_message 仅失败。
+            # 成功时把短摘要存在 error_message 会语义错；改为 status success 即可。
+            # 结果已由 subagent 写入 session messages
+            logger.debug("subagent result preview: %s", (result_text or "")[:200])
+
+        else:
+            raise Exception(f"未知 target_type: {obj.target_type}")
 
     except Exception as e:
         status = "failed"

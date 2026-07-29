@@ -66,12 +66,89 @@ async def run_llm_round(
     """执行一轮流式 LLM 调用（含重试/应急压缩/空工具名处理）"""
     from backend.agent.robust import is_transient_llm_error
     from backend.agent.turn_retry import RetryKind
+    from backend.kernel.llm_scheduler import (
+        LlmAdmissionRejected,
+        get_llm_admission,
+        infer_request_from_loop,
+    )
 
     result = LLMRoundResult(messages=messages)
     accumulated_content = ""
     accumulated_reasoning = ""
     tool_calls: list[Any] = []
     stream_usage: dict[str, int] = {}
+
+    # ── LLM 公平调度准入（全局槽位 · 主人优先 · 日配额）────────
+    _admission = get_llm_admission()
+    _lease = None
+    try:
+        _lease = await _admission.acquire(infer_request_from_loop(loop))
+    except LlmAdmissionRejected as e:
+        logger.warning("LLM admission rejected: %s", e)
+        result.action = "break"
+        result.final_content = (
+            f"[Scheduler] 未能获得模型槽位：{e.reason}。"
+            "请稍后重试，或在内核「调度」面板查看排队与配额。"
+        )
+        return result
+    except Exception as e:
+        # 调度器故障不阻断主路径（可观测日志）
+        logger.debug("LLM admission skip: %s", e)
+        _lease = None
+
+    try:
+        return await _run_llm_round_body(
+            loop,
+            session_id=session_id,
+            iteration=iteration,
+            messages=messages,
+            tools=tools,
+            llm_service=llm_service,
+            message_id=message_id,
+            force_final_no_tools=force_final_no_tools,
+            suppress_content_stream=suppress_content_stream,
+            final_content=final_content,
+            turn_retry=turn_retry,
+            trace_thinking_steps=trace_thinking_steps,
+            result=result,
+            stream_usage=stream_usage,
+            lease=_lease,
+            admission=_admission,
+        )
+    finally:
+        if _lease is not None:
+            try:
+                await _admission.release(_lease)
+            except Exception as e:
+                logger.debug("LLM lease release: %s", e)
+
+
+async def _run_llm_round_body(
+    loop: Any,
+    *,
+    session_id: uuid.UUID,
+    iteration: int,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None,
+    llm_service: Any,
+    message_id: uuid.UUID,
+    force_final_no_tools: bool,
+    suppress_content_stream: bool,
+    final_content: str | None,
+    turn_retry: Any,
+    trace_thinking_steps: list[dict[str, Any]],
+    result: LLMRoundResult,
+    stream_usage: dict[str, int],
+    lease: Any,
+    admission: Any,
+) -> LLMRoundResult:
+    """准入获槽后的实际 LLM 轮逻辑。"""
+    from backend.agent.robust import is_transient_llm_error
+    from backend.agent.turn_retry import RetryKind
+
+    accumulated_content = ""
+    accumulated_reasoning = ""
+    tool_calls: list[Any] = []
 
     try:
         logger.info(
@@ -220,24 +297,53 @@ async def run_llm_round(
         pass
 
     # ── Agent Kernel 预算强制（TC-B2）：进程级 token 预算扣减，超限中断 run ──
+    # 多数流式 provider 不回填 usage → 用粗估，避免 tokens_used 永远 0、预算条假 0%
+    spent = int(stream_usage.get("prompt_tokens") or 0) + int(
+        stream_usage.get("completion_tokens") or 0
+    )
+    if spent <= 0:
+        try:
+            from backend.agent.token_meter import TokenMeter
+
+            _pt = TokenMeter(
+                context_window=int(
+                    getattr(settings, "context_window", 128_000) or 128_000
+                )
+            ).estimate_messages(messages)
+            _ct = max(8, round(len(accumulated_content or "") / 3.4))
+            spent = int(_pt) + int(_ct)
+        except Exception:
+            spent = max(8, round(len(accumulated_content or "") / 3.4))
+
+    # 日配额记账（全局/员工）
+    if spent > 0 and admission is not None:
+        try:
+            _iid = getattr(lease, "identity_id", None) if lease else None
+            if not _iid:
+                _iid = getattr(loop, "_identity_id", None)
+            admission.charge_quota(_iid, spent)
+        except Exception as e:
+            logger.debug("llm daily quota charge skip: %s", e)
+
     kernel_proc = getattr(loop, "_kernel_process", None)
     if kernel_proc is not None and kernel_proc.token_budget is not None:
         from backend.kernel import BudgetExceededError, get_kernel
 
         try:
-            spent = int(stream_usage.get("prompt_tokens") or 0) + int(
-                stream_usage.get("completion_tokens") or 0
-            )
             if spent > 0:
                 get_kernel().charge_tokens(kernel_proc.id, spent)
         except BudgetExceededError as e:
             logger.warning("kernel 预算耗尽，中断 run proc=%s: %s", kernel_proc.id, e)
             loop._should_stop = True
             result.action = "break"
+            # 固定短文：禁止本轮再让模型续写「报告框架」
             result.final_content = (
                 f"[Budget Exceeded] 进程 token 预算耗尽，运行已中断（{e}）。"
-                "可在创建进程时提高预算或拆小任务。"
+                "本工单未完成实质检查；请提高预算、收窄范围或拆小任务后重试。"
+                "禁止用报告框架/预期结果冒充结论。"
             )
+            result.accumulated_content = ""
+            result.tool_calls = []
             return result
         except Exception as e:
             logger.debug("kernel charge_tokens 跳过: %s", e)

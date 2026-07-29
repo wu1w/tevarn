@@ -5,7 +5,6 @@ PIPE 收集、超时 kill、max_output 截断、继承宿主环境。
 """
 from __future__ import annotations
 
-import asyncio
 import time
 
 from backend.computer.protocol import ExecResult
@@ -28,43 +27,41 @@ class LocalBackend:
     ) -> ExecResult:
         t0 = time.monotonic()
         try:
-            proc = await asyncio.create_subprocess_shell(
+            from backend.core.safe_subprocess import run_capture
+
+            r = await run_capture(
                 command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
                 cwd=cwd or None,
+                timeout=float(timeout),
+                max_output=int(max_output),
             )
-            stdout_b, stderr_b = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
-            )
-            out = stdout_b.decode("utf-8", errors="replace")
-            err = stderr_b.decode("utf-8", errors="replace")
-            if len(out) > max_output:
-                out = out[:max_output] + f"\n...[stdout truncated {len(stdout_b)} bytes]"
-            if len(err) > max_output // 2:
-                err = err[: max_output // 2] + f"\n...[stderr truncated {len(stderr_b)} bytes]"
+            if r.get("code") == 124:
+                return ExecResult(
+                    stdout="",
+                    stderr=r.get("stderr") or f"command exceeded {timeout}s and was terminated",
+                    exit_code=124,
+                    duration_ms=(time.monotonic() - t0) * 1000,
+                    backend=self.backend_id,
+                    sandboxed=False,
+                    error="timeout",
+                )
+            if str(r.get("stderr") or "").startswith("[Security Blocked]"):
+                return ExecResult(
+                    stdout="",
+                    stderr=str(r.get("stderr") or ""),
+                    exit_code=int(r.get("code") or -1),
+                    duration_ms=(time.monotonic() - t0) * 1000,
+                    backend=self.backend_id,
+                    sandboxed=False,
+                    error="security",
+                )
             return ExecResult(
-                stdout=out.strip(),
-                stderr=err.strip(),
-                exit_code=proc.returncode or 0,
+                stdout=(r.get("stdout") or "").strip(),
+                stderr=(r.get("stderr") or "").strip(),
+                exit_code=int(r.get("code") if r.get("code") is not None else 0),
                 duration_ms=(time.monotonic() - t0) * 1000,
                 backend=self.backend_id,
                 sandboxed=False,
-            )
-        except asyncio.TimeoutError:
-            try:
-                proc.kill()  # type: ignore[union-attr]
-                await proc.wait()  # type: ignore[union-attr]
-            except Exception:
-                pass
-            return ExecResult(
-                stdout="",
-                stderr=f"command exceeded {timeout}s and was terminated",
-                exit_code=124,
-                duration_ms=(time.monotonic() - t0) * 1000,
-                backend=self.backend_id,
-                sandboxed=False,
-                error="timeout",
             )
         except FileNotFoundError:
             return ExecResult(

@@ -19,6 +19,9 @@ interface ChatWindowProps {
   /** 点击示例/设备快捷句 → 填入并可选直接发送由父级处理 */
   onExampleSelect?: (text: string) => void;
   onPreviewArtifact?: (art: ChatArtifact) => void;
+  /** 当前 1:1 联系人（员工名）→ 汇报只显示该员工 */
+  contactName?: string | null;
+  contactIdentityId?: string | null;
 }
 
 const TAG_KEYS = ['goal', 'cluster', 'code', 'research', 'writing', 'debug', 'data', 'devops', 'other'] as const;
@@ -34,6 +37,8 @@ export function ChatWindow({
   onEdit,
   onExampleSelect,
   onPreviewArtifact,
+  contactName,
+  contactIdentityId,
 }: ChatWindowProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const t = useT();
@@ -94,14 +99,22 @@ export function ChatWindow({
       {isEmpty ? (
         <div className="flex flex-1 flex-col items-center justify-center text-center">
           <AppLogo className="mb-5 h-14 w-14 text-foreground-dim/30" />
-          <h2 className="mb-1 text-xl font-semibold text-foreground">Takton</h2>
+          <h2 className="mb-1 text-xl font-semibold text-foreground">
+            {contactName || 'Takton'}
+          </h2>
           <p className="mb-6 max-w-md text-sm text-foreground-dim">
-            {t('chat.tagline')}
+            {contactName
+              ? `与 ${contactName} 的对话 · 下方是 TA 近 24h 工作摘要`
+              : t('chat.tagline')}
           </p>
 
-          {/* 「你不在的这段时间」——workforce 工作汇报（0.6 自主运转）*/}
-          <WorkforceReportCard />
+          {/* 「你不在的这段时间」——按当前联系人过滤，避免每个 agent 显示同一份全队日报 */}
+          <WorkforceReportCard
+            contactName={contactName}
+            identityId={contactIdentityId}
+          />
 
+          {!contactName ? (
           <div className="mb-6 grid w-full max-w-lg gap-2 sm:grid-cols-1">
             {EXAMPLE_KEYS.map((n) => (
                           <button
@@ -115,6 +128,7 @@ export function ChatWindow({
                           </button>
                         ))}
           </div>
+          ) : null}
 
           {onlineDevices.length > 0 && (
             <div className="mb-6 w-full max-w-lg">

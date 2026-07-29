@@ -21,6 +21,7 @@ from . import (
     files,
     git,
     goals,
+    harness,
     images,
     kernel,
     knowledge,
@@ -30,6 +31,9 @@ from . import (
     messages,
     notifications,
     packages,
+    domain_stream,
+    protocol,
+    runtime_status,
     runs,
     sessions,
     settings,
@@ -86,6 +90,10 @@ def register_routes(app, prefix: str = "") -> None:
     app.include_router(agent_profiles.router, prefix=p)
     app.include_router(audit.router, prefix=p)
     app.include_router(kernel.router, prefix=p)
+    app.include_router(harness.router, prefix=p)
+    app.include_router(protocol.router, prefix=p)
+    app.include_router(domain_stream.router, prefix=p)
+    app.include_router(runtime_status.router, prefix=p)
     app.include_router(goals.router, prefix=p)
     app.include_router(notifications.router, prefix=p)
     app.include_router(files.router, prefix=p)
@@ -96,6 +104,8 @@ def register_routes(app, prefix: str = "") -> None:
     app.include_router(mcp_store.router, prefix=p)
     app.include_router(desktop.router, prefix=p)
     app.include_router(cluster.router, prefix=p)
+    # WS 单独注册：router 级 auth 依赖挂不到 WebSocket 上（需要 Request）
+    app.include_router(cluster.ws_router, prefix=p)
     app.include_router(workspace.router, prefix=p)
     app.include_router(webhook.router, prefix=p)
     app.include_router(workflow_templates.router, prefix=p)

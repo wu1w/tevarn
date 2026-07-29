@@ -13,6 +13,18 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 
+# cluster 路由已加鉴权；这些用例不测鉴权，用一个固定假用户绕开
+class _FakeUser:
+    id = uuid.UUID("00000000-0000-0000-0000-0000000000ff")
+    email = "test@takton.dev"
+    username = "test"
+    is_superuser = True
+    is_active = True
+
+
+_FAKE_USER = _FakeUser()
+
+
 @pytest.fixture()
 def repo_db(tmp_path):
     """真 sqlite + 全表创建，patch 到 repo 基类的 session 工厂"""
@@ -182,8 +194,16 @@ def list_client(repo_db):
 
     app = FastAPI()
     app.include_router(cluster_mod.router)
+    # cluster router 现在要求登录（此前是全项目唯一无鉴权的业务路由）。
+    # 本文件测的是历史缓存回落，不是鉴权；而且用例会全局 patch 掉 DB session
+    # 来模拟读库失败——那会连带打死 get_current_user 的用户查询。
+    # 覆盖依赖，让这些用例专注在它们真正要验证的东西上。
+    from backend.api.dependencies import get_current_user
+
+    app.dependency_overrides[get_current_user] = lambda: _FAKE_USER
     with TestClient(app) as client:
         yield client, cluster_mod
+    app.dependency_overrides.clear()
     cluster_mod._cluster_history_cache["ts"] = 0.0
     cluster_mod._cluster_history_cache["rows"] = []
 

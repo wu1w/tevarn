@@ -135,8 +135,16 @@ class QdrantRAGService(RAGService):
                     if resp.status == 200:
                         self._ensured_collections.add(collection)
                         return
-                # 不存在则创建（默认 1024 维 cosine，与主流 embedding 兼容）
-                dim = getattr(settings, "embedding_dimensions", 1024) or 1024
+                # 不存在则创建：优先配置维；0 则探测一次 embed 维（Qwen3-4B=2560）
+                dim = int(getattr(settings, "embedding_dimensions", 0) or 0)
+                if dim <= 0:
+                    try:
+                        probe = await self.embed("dimension probe")
+                        dim = len(probe) if probe else 0
+                    except Exception:
+                        dim = 0
+                if dim <= 0:
+                    dim = 1024
                 payload = {
                     "vectors": {"size": dim, "distance": "Cosine"},
                     "optimizers_config": {"default_segment_number": 2},
@@ -438,6 +446,14 @@ class QdrantRAGService(RAGService):
         """按工单/输入检索某身份的相关记忆（向量 + identity_id 过滤）。"""
         from backend.services.rag.interface import IDENTITY_MEMORY_COLLECTION
 
+        # 检索前冲一小批 pending，减少「库有向量无」窗口
+        try:
+            from backend.services.rag.identity_index_queue import flush_pending
+
+            await flush_pending(limit=3)
+        except Exception:
+            pass
+
         try:
             vector = await self.embed(query)
             if not vector:
@@ -445,8 +461,9 @@ class QdrantRAGService(RAGService):
             await self._ensure_collection(IDENTITY_MEMORY_COLLECTION)
             import aiohttp
 
+            # 经典 REST：vector；部分新版也接受 query — 优先 vector
             payload = {
-                "query": vector,
+                "vector": vector,
                 "limit": max(1, top_k),
                 "with_payload": True,
                 "filter": {
@@ -463,6 +480,12 @@ class QdrantRAGService(RAGService):
                     json=payload,
                 ) as resp:
                     if resp.status != 200:
+                        body = await resp.text()
+                        logger.debug(
+                            "identity memory search HTTP %s: %s",
+                            resp.status,
+                            body[:200],
+                        )
                         return []
                     data = await resp.json()
             return [

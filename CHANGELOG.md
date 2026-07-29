@@ -2,7 +2,208 @@
 
 本项目版本记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
-## [0.4.5-alpha] - 2026-07-27
+## [1.0.0-alpha] - 2026-07-29
+
+**Agent Runtime 叙事成立（alpha 内测）**：对齐 `ROADMAP_AIOS_OS_FULL` 0.7→1.0 DoD 切片。  
+产品文件版本升至 `1.0.0-alpha`；协议 **0.2.0**。
+
+### Added / Hardened（0.7 Kernel-first）
+
+- `python -m backend.runtime` Kernel Host；`--headless` 无 UI 跑 dispatcher
+- Electron：关窗默认不杀 Runtime；托盘「Stop AI Runtime & Quit」
+- 领域事件：`domain_events` + WS / REST 续订；`DomainEventBridge` 全站失效查询
+- **kernel 去 FastAPI 依赖**：`kernel/ports.set_ws_manager`；dispatcher 不再 import `backend.api`
+
+### Added / Hardened（0.8 Console）
+
+- 托盘角标轮询 jobs/running + 审批
+- 主路径事件刷新为主、REST 兜底
+
+### Added / Hardened（0.9 多客户端）
+
+- CLI：`status` / `jobs` / `job-stop` / `approve` / `events` / `login`
+- 协议 manifest `client_guide` + `domain_events` 互操作索引
+
+### Added（1.0 叙事）
+
+- 版本号全系 `1.0.0-alpha`
+- 协议 `PROTOCOL_VERSION=0.2.0`
+- FE E2E：`frontend/e2e/aios_os_spine.spec.ts`
+- 测试：`test_kernel_no_fastapi.py`
+
+### Added（LLM 公平调度 + 编制记忆 · 2026-07-29）
+
+- **`LlmAdmissionController`**（`kernel/llm_scheduler.py`）：全局 in-flight 槽位、主人预留、加权公平排队、日配额；挂接 `llm_round`
+- **`CrewMemoryAssembler` / `CrewMemoryWriter`**（`kernel/crew_memory.py`）：注入收口、失败不沉淀、默认不自动 distill
+- API：`GET /kernel/scheduler/status`；`POST .../memory/preview` · `retire` · `distill-from-item`
+- UI：内核页「调度」Tab；资料卡记忆废止 / 预览注入 / 工单沉淀
+- 配置：`llm_max_in_flight*`、`crew_memory_*`；单测 `test_llm_scheduler` / `test_crew_memory`
+- 方案：`docs/internal/PLAN_LLM_SCHED_AND_CREW_MEMORY.md`
+- **编制记忆 × 向量 RAG**：`CrewMemoryAssembler` experience 超 cap 时 `search_identity_memory` top-k，对齐 SQLite current / 废止过滤；联调 `python -m backend.scripts.smoke_vector_crew_memory`
+
+## [0.4.6-alpha] - 2026-07-28
+
+Product Spine：对话式管家 + 多级危险授权 + 员工权限看板。  
+**0.5 Durable / 0.6 预览**（同版本增量；完整 0.6.0 见 `docs/internal/ROADMAP_0.4.5_to_0.6.md`）。
+
+### Added（AIOS 终点路线图 + **P1 整包** · 2026-07-29）
+
+- **路线图** `docs/internal/ROADMAP_TO_AIOS.md`：四核护城河 · P0→P5 到 AIOS 终点
+- **晨报 API** `GET /kernel/workspace/brief` + CLI `takton brief`
+- **工作台** `OrgMorningBrief`：组织晨报主叙事
+- **P1.3 员工页**：编制/管理员工文案 · 联系 TA · 链回工作台
+- **P1.4 审批页**：老板桌文案 · 待决/清空横幅 · 链回晨报
+- **P1.5 Chat 降权**：导轨「联系员工」排在审批后 · 空态引导 · 标题联系人语义
+- **nav**：驾驶舱→工作台（中/英 Workspace）
+
+### Fixed（工程收口 · 七项卫生 · 2026-07-29）
+
+- **默认端口统一 8090**（Electron / package scripts / deploy；候选仍含 8000）
+- **Electron 唯一真源** `electron/`；`frontend/electron` 改为 stub + README
+- **`backend/adapters` + `runtime.facade`** 拓扑占位与门面
+- **`useDomainEvents` 只读 store**；Owner 仅 AppShell
+- **`scripts/_patch_*.py` → `scripts/archive/patches/`**
+- **agent resume/subagent、evolution evaluator** 去掉 `api.dependencies`
+- **高级页** 统一 `AdvancedShell`/`LegacyQuiet`（activity/market/tasks/cluster/…）
+- **TECHNICAL_MANUAL** 顶部过期声明
+
+### Added（代码 DoD 收口 · 事件全站 / CLI / Run 关联 · 2026-07-29）
+
+- **全局 DomainEventBridge**：AppShell 订 WS，按 topic 失效 jobs/identities/approvals 查询
+- **事件续订**：`seq` / `after_seq` / `since_ts` / `head_seq` / cursor
+- **CLI**：`login` / `logout` / `follow`；token `~/.takton/cli_token`
+- **Run 关联**：`jobs/running` 含 `run_ref`（job_id/process_id/session_id/identity_id）
+- **记忆主入口**：`/memory` 顶部 CrewMemoryHub + LegacyQuiet
+- **Electron**：复用 detached Kernel Host（`/runtime/status` 探测）
+
+### Added（OS 化落地 · Kernel-first / 事件 / CLI · 2026-07-29）
+
+- **Kernel Host 入口**：`python -m backend.runtime`（`--headless` 可选）；`scripts/start-kernel-host.ps1`
+- **领域事件**：`kernel/domain_events.py`；`_emit` 挂钩；
+  `GET /kernel/events/domain` · `WS /ws/domain`；驾驶舱实时条
+- **Runtime 心跳**：`GET /runtime/status`（loopback badge）
+- **Electron 退出语义**：关窗隐藏；「退出控制台」不杀 AI；「停止 AI 并退出」才杀进程；托盘 tooltip
+- **CLI**：`takton status|jobs|job-stop|approve|events|runtime`
+- **dispatcher** 不再 import `api.dependencies`（Kernel 层去 FastAPI 依赖）
+- **测试** `test_domain_events.py`
+
+### Added（开发手册 / 架构 / 拓扑 · 2026-07-29）
+
+- **内部文档集** `docs/internal/`：
+  - `DEV_HANDBOOK.md` — 环境、分层改码、API 速查、测试、反模式
+  - `ARCHITECTURE.md` — 逻辑分层、目录映射、通信/数据/治理
+  - `TOPOLOGY.md` — 部署/进程/主路径/工单序列/事件/存储拓扑
+  - `README.md` — 文档索引
+  - `ROADMAP_AIOS_OS_FULL.md` — Kernel-first OS 化路线（既有）
+
+### Added（协议 / 治理 / 心智 · 2026-07-29）
+
+- **互操作协议 0.1** `takton-aios-protocol`：
+  `GET /kernel/protocol/manifest|concepts|governance|surface|agent-cards`；
+  `POST /kernel/protocol/a2a/tasks`（A2A-lite → Inbox 工单）
+- **Agent Card**：员工可移植描述（skills=capabilities + takton 扩展）
+- **治理骨架**：红线清单、relaxed_visible/locked 预设、可研究 kernel surface
+- **产品心智**：`ProductConceptsBar`（员工/工单/审批）挂驾驶舱/员工/审批；
+  Goals/Knowledge 套 `LegacyQuiet` 降级；内核页「协议」Tab
+- **文档** `docs/internal/PROTOCOL.md`；测试 `test_protocol_governance.py`
+
+### Added（0.5/0.6 缺口续开发 · 2026-07-29）
+
+- **E4 统一停止**：`POST /kernel/jobs/stop`（inbox_item_id / process_id）→
+  agent `loop.stop` + task cancel + `end_process(killed)` + 工单 `cancelled`；
+  内核页 Live jobs「停止」按钮
+- **F2 并发上限**：`agent_dispatcher_max_global_concurrent`（默认 8）/
+  `agent_dispatcher_max_identity_concurrent`（默认 1 串行）
+- **日报一键已读**：`POST /kernel/workforce/report/read`；report 含 `marked_read_at` /
+  `has_unread`；员工页「标记已读」
+- **审计只读页** `/audit`：系统 audit_logs + 内核事件 + policy.decision
+- **空编制 seed**：`POST /kernel/workforce/seed-template-crew` + 员工页空态 CTA
+- **测试** `backend/tests/kernel/test_stop_concurrency_report.py`
+- **缺口报告** `reports/AIOS_0.5_0.6_GAP_CONTINUATION_2026-07-29.md`
+
+### Added（0.5.x / 0.6 预览 · 夜冲刺）
+
+- **工单完成/失败通知**：dispatcher 终态写 `notifications`（`task_complete` / `task_failed`）
+- **待批扩权通知**：`request_escalation` 仍 pending 时系统通知主人
+- **policy.decision 权限网**：mediate / escalate 统一 who/what/allow|deny|escalate；
+  `GET /kernel/policy/decisions`；内核页「权限网」Tab
+- **一键备份**：`POST /kernel/backup/export` 导出编制/记忆/工单/会话摘要/审计尾；内核页按钮
+- **操作手册** `docs/internal/AIOS_OPERATOR.md`；**进化叙事** `EVOLUTION_NARRATIVE.md`
+- **模板员工 seed** `backend/scripts/seed_template_crew.py`（小白/研究员/工程师）
+- **测试** `test_policy_and_notify.py` / `test_memory_authority.py`
+
+### Added（0.5 Durable 预览）
+
+- **死信台**：工单达最大重试 → `dead`；`GET /kernel/inbox/dead`、重放/丢弃；员工页 DeadLetterPanel
+- **现在在跑**：`GET /kernel/jobs/running`；内核页摘要
+- **崩溃预期** `docs/internal/CRASH_RECOVERY.md`；**记忆权威** `docs/internal/MEMORY_AUTHORITY.md`
+- **运行记录收起**：SessionRunsPanel 默认折叠，展开看列表/步骤
+- **测试** `test_inbox_dead_letter.py`：dead → requeue / discard
+
+### Added（管家与权限）
+
+- **危险确认四级授权**：拒绝 / 允许一次 / 本会话允许 / 本员工允许（写入 Identity.capabilities）
+- **grant_store**：会话级授权短路；本员工允许持久化编制能力
+- **员工权限看板**（`/security` 顶部）：实时人数 + 分员工能力开关
+- **crew_steward 工具**：CEO 对话 hire/list/assign/status（编制真源）
+
+### Added
+
+- **存储决策文档** `docs/internal/STORAGE.md`：默认 SQLite 权威；Redis 接口保留、默认关
+- **概念表** `docs/internal/concepts.md`：员工 / 工单 / 审批
+- **Hire→Identity 写死**：`POST /kernel/identities` 支持 `create_skill_pack` + persona/duty/memory；
+  自动创建 SubAgent 技能包并 1:1 挂 `sub_agent_id`
+- **配置** `TAKTON_AIOS_PROFILE=aios-dev`：打开 kernel/dispatcher（不强制 Redis）
+- **派活人话错误**：inbox 503/404/400 返回可操作说明；FE 空选/空指令前置校验
+- **员工页日报条**：近 24h 完成/失败/待处理/提权待批（与驾驶舱同源）
+- **C1 主路径测试**：`backend/tests/kernel/test_product_spine_046.py`
+  （hire + skill pack + mock dispatcher 闭环 + HTTP 人话错误）
+- **C1 Playwright 骨架**：`e2e/product-spine-hire-dispatch.spec.ts`
+  （API 招人派活 + UI 员工页 CTA；后端不可达则 skip）
+
+### Changed
+
+- **版本全系 0.4.6-alpha**：package.json / frontend / appVersion / VERSION / pyproject / FastAPI
+- **IconRail 主路径**：驾驶舱 / 对话 / 员工 / 审批 / 内核；Goals/Knowledge/Activity/Market 降级
+- 招聘向导文案改为「新建员工 / 入编」；空态 CTA 串到招聘
+- 审批通过 toast 提示「可重试工具步 / 重派工单」
+- **CEO 编排脊柱**：联系 CEO/管家会话注入 `steward_orchestration_prompt`；强制 `crew` 工具包
+  （`crew_steward` / `delegate_task` / `agent_call`）；coding profile 默认带 `crew_steward`
+- **派活改走编制**：`delegate_task` / `agent_call` 有员工时写 Inbox，禁止临时子代理闷跑
+- **联系 TA 人设**：CEO/小白等用大管家 identity 文案（分析→assign），普通员工仍用执行者人设
+
+### Fixed
+
+- **Dispatcher 建会话**：`AsyncSessionRepository.create` 改为传 `data` dict；
+  员工无 `user_id` 时回落默认 admin；修复工单 claim 后立刻 failed
+  （`unexpected keyword argument 'user_id'`）
+- **工单抢跑空工具表**：`load_all_tools` 改为 await 后再启动 workforce dispatcher；
+  避免首轮 `Loaded 0 tools` 只吐假 tool_call XML
+- **工单 process_id 回写**：`loop.run` 结束后保留 `_last_kernel_process_id` 给 dispatcher
+- **编制能力映射**：`file_rw` 覆盖 glob/grep/file_read 等；mediate 不再因工具名≠抽象 cap 误拦
+- **员工工具不弹主人**：workforce 权限走 `steward_permission`（编制能力裁决）；
+  禁止危险确认窗 / 提权洪水；主人只批策略与节点（clarify/goal）
+
+### Changed（企业 IM 心智）
+
+- **一人一会话**：`POST /sessions/contact` find-or-create；侧栏点同事进聊天，不堆 session
+- **侧栏通讯录**：点名字聊天、点头像进资料；项目组列表；去掉工单会话占「最近对话」
+- **今日任务**：员工资料卡绑 inbox 工单（可展开结果），不再只看 process.identity 名
+- **项目组群**：`project_groups` 表 + API；`crew_steward open_project` / assign 挂 `project_title`；
+  `/chat?group=` 进度看板
+
+## [0.4.5-alpha] - 2026-07-28
+
+### Fixed（合入 0.3.5 聊天稳定性补丁）
+
+- **长会话一拨一动**：L5 注入改为 Claude Code 式续跑（`Pick up the last task…`），
+  去掉 `REFERENCE ONLY / Do not resume`；9 段工程摘要；L3 只清 tool 正文保配对；
+  工具轮 mid-loop **禁止 L5**（`allow_l5=False, micro_only=True`）
+- **乱切页面/会话状态稳定**：`SessionRunSnapshot` 断线仍累积 partial + live tools；
+  `sync_response` 恢复 in-flight；前端 `streamSessionStore`；软断线不假 idle；
+  Stop 清 tools；叠跑等待旧 task
+
+### Kernel（既有 0.4.5 条目）
 
 多 worker Kernel 执行面正确性加固：计数权威、提权去重、挂起恢复、事件观测。
 
@@ -13,6 +214,10 @@
 - **跨 worker 双 pending 提权**：`try_claim_escalation` SETNX 占坑
   （`esc:claim:{process}:{caps_fp}`），后到者复用 owner id；
   `find_covering_pending` 二次去重
+- **claim TTL 与 pending 同寿**：`_CLAIM_TTL = _ESC_TTL`（7d），`put_escalation`
+  pending 时对指向本单的 claim 续期，避免 120s 过期后同 caps 再开第二单
+- **产品版本号对齐**：`package.json` / `frontend` / `appVersion` / `VERSION` /
+  `pyproject` 统一为 **0.4.5-alpha**（与 CHANGELOG 顶栏一致）
 - **跨 worker 挂起恢复**：`resume_process` 写 Redis + `publish_resume`；
   loop `wait_if_suspended` 经 `refresh_state` 轮询 Redis state
 - **事件多 worker 不可见**：`_emit` → Redis LPUSH 热缓冲；

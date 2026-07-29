@@ -1,4 +1,6 @@
-'use client';
+﻿'use client';
+
+import { AdvancedShell } from '@/components/layout/AdvancedShell';
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -270,7 +272,7 @@ function ChannelEditPanel({
   const metaLabel = platformLabel(channel.platform, t);
 
   return (
-    <div className="mx-auto max-w-md space-y-4">
+    <div className="tk-page-fluid w-full space-y-4">
       {/* 顶部：平台 + 状态 */}
       <div className="flex items-center gap-3">
         <PlatformBadge platform={channel.platform} />
@@ -388,6 +390,12 @@ export default function ChannelsPage() {
   if (loading) return <div className="flex h-full items-center justify-center text-xs text-foreground-dim">{t('channels.loading')}</div>;
 
   return (
+    <AdvancedShell
+      titleZh="通道是高级集成"
+      titleEn="Channels are advanced"
+      hintZh="外部 IM 通道；主路径不依赖。"
+      hintEn="External IM channels; not on the spine."
+    >
     <div className="flex h-full flex-col">
       {/* 顶栏 */}
       <div className="flex items-center justify-between border-b border-border-subtle px-5 py-3">
@@ -477,5 +485,6 @@ export default function ChannelsPage() {
         />
       )}
     </div>
+    </AdvancedShell>
   );
 }

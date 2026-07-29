@@ -29,7 +29,14 @@ class CapabilityToken:
     def allows(self, capability: str) -> bool:
         if self.is_expired:
             return False
-        return capability in self.capabilities or "*" in self.capabilities
+        if capability in self.capabilities or "*" in self.capabilities:
+            return True
+        try:
+            from backend.agent.grant_store import tool_matches_crew_caps
+
+            return tool_matches_crew_caps(capability, self.capabilities)
+        except Exception:
+            return False
 
     @property
     def is_expired(self) -> bool:

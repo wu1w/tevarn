@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "takton"
-version = "0.3.1"
+version = "0.4.6-alpha"
 description = "Takton - 个人专属 AI Agent 终端（前后端一体）"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -17,10 +17,13 @@ dependencies = [
   "email-validator>=2.2.0",
   "sqlalchemy[asyncio]==2.0.36",
   "aiosqlite==0.21.0",
-  "python-jose[cryptography]==3.3.0",
   "cryptography>=42.0.0",
+  # core/security.py 直接 import jwt —— 必须显式声明，不能靠传递依赖
+  "PyJWT>=2.8,<3",
   "passlib[bcrypt]==1.7.4",
-  "bcrypt==4.2.0",
+  # 上界是硬约束：bcrypt>=4.1 移除了 passlib 1.7.4 依赖的 __about__，
+  # 组合坏掉时任何密码都会报「longer than 72 bytes」，登录全挂。
+  "bcrypt>=4.0,<5",
   "python-multipart==0.0.20",
   "httpx==0.28.1",
   "aiohttp==3.14.1",

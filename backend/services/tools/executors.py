@@ -4,6 +4,7 @@ Tool 执行器
 """
 
 import asyncio
+import contextlib
 import glob
 import json
 import logging
@@ -50,12 +51,24 @@ def _resolve_workspace_path(base_path: str, filepath: str) -> tuple[str, str]:
     return full_path, base_abs
 
 
-# 安全命令白名单（仅允许这些命令名，不是前缀匹配）
-_SAFE_COMMANDS: set[str] = {
-    "ls", "cat", "head", "tail", "grep", "find", "pwd", "echo",
-    "ps", "df", "du", "whoami", "uname", "date", "wc", "sort",
-    "mkdir", "touch", "cp", "mv", "rm", "rmdir",
-}
+def _is_within(path: str, base: str) -> bool:
+    """path 是否在 base 之内（含 base 本身）。
+
+    不能用 `path.startswith(base)`：base=/home/u/workspace 时
+    /home/u/workspace-backup/secrets 会通过。必须按路径分量比较，
+    并且 resolve() 掉符号链接，否则 workspace 里一个指向 / 的软链就破功。
+    """
+    try:
+        p = Path(path).resolve()
+        b = Path(base).resolve()
+    except OSError:
+        p, b = Path(os.path.abspath(path)), Path(os.path.abspath(base))
+    try:
+        p.relative_to(b)
+        return True
+    except ValueError:
+        return False
+
 
 # 危险命令模式：命中则需前端弹窗确认后才执行。
 # 设计：默认放开（python/pip/npm/git 等开发命令直接跑），仅真正危险的拦截确认。
@@ -145,11 +158,9 @@ CONTENT_SEVERE_PATTERNS = [
     }
 ]
 
-# 硬禁止：空字节。换行已放开（支持 cat <<EOF heredoc）；反引号放开（与 Hermes 对齐）。
-# 危险操作仍走 _DANGEROUS_PATTERNS + 前端确认。
+# 硬禁止：空字节（见 execute_command）。换行已放开（支持 cat <<EOF heredoc）；
+# 反引号放开（与 Hermes 对齐）。危险操作仍走 _DANGEROUS_PATTERNS + 前端确认。
 AGENT_COMMAND_AUTO_BG_SECONDS = 15
-
-_FORBIDDEN_SUBSTR = ["\x00"]
 
 
 async def execute_browser(config: dict[str, Any], arguments: dict[str, Any]) -> str:
@@ -198,7 +209,32 @@ def _playwright_available() -> bool:
         return False
 
 
+def _guard_agent_url(url: str, *, tool: str) -> str | None:
+    """Agent 联网工具的准入检查。返回 None = 放行，字符串 = 拒绝理由。
+
+    分层策略见 core/net_safety.check_agent_url：只硬拦云元数据端点，
+    私网/回环放行但记审计 —— 让 Agent 看 localhost:3000 或 NAS 是本地优先
+    产品的核心用法，照搬服务端 SSRF 防护会把它拦死。
+    """
+    try:
+        from backend.core.net_safety import check_agent_url
+    except Exception:  # 防护模块不可用时不静默放行
+        return "[Security Blocked] 网络准入模块不可用，已拒绝出站请求"
+
+    allowed, note = check_agent_url(url)
+    if not allowed:
+        logger.warning("%s blocked: %s", tool, note)
+        return f"[Security Blocked] {note}"
+    if note:
+        # 私网访问留痕，便于事后追溯「Agent 那天到底摸了内网的什么」
+        logger.info("%s %s", tool, note)
+    return None
+
+
 async def _browser_fetch(url: str, *, timeout: int = 30) -> str:
+    blocked = _guard_agent_url(url, tool="browser")
+    if blocked:
+        return blocked
     user_agent = (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -266,12 +302,18 @@ async def _browser_playwright(
     if action in ("navigate", "open", "goto"):
         if not url:
             return "[Error] url required"
+        blocked = _guard_agent_url(url, tool="browser")
+        if blocked:
+            return blocked
         await page.goto(url, wait_until="domcontentloaded")
         title = await page.title()
         return f"[navigated] {page.url}\ntitle: {title}\nsession={session_key}"
 
     if action in ("snapshot", "content", "text"):
         if url:
+            blocked = _guard_agent_url(url, tool="browser")
+            if blocked:
+                return blocked
             await page.goto(url, wait_until="domcontentloaded")
         title = await page.title()
         body = await page.inner_text("body")
@@ -461,16 +503,24 @@ async def execute_remote_exec(config: dict[str, Any], arguments: dict[str, Any])
 
     if not device_name:
         return "[Error] device name required"
+
+    # 转发给其它执行器时必须带上内部 meta（_ws_manager / _session_id），
+    # 否则下游的危险操作确认推不到前端，只会静默超时后报「用户已拒绝」。
+    _meta = {k: v for k, v in arguments.items() if str(k).startswith("_")}
+
     if device_name.lower() in ("local", "localhost", "self", "本机"):
-        # 本机走 command
+        # 本机走 command（execute_command 内部已过 enforce_command_policy）
         if action in ("list", "ls"):
-            return await execute_command(
-                config,
-                {"command": f'ls -la "{path or "."}"' if os.name != "nt" else f'dir "{path or "."}"'},
+            listing = (
+                f'ls -la "{path or "."}"' if os.name != "nt" else f'dir "{path or "."}"'
             )
+            return await execute_command(config, {**_meta, "command": listing})
         if action == "read":
-            return await execute_file_read(config, {"filepath": path or "."})
-        return await execute_command(config, {"command": command, "timeout": arguments.get("timeout", 45)})
+            return await execute_file_read(config, {**_meta, "filepath": path or "."})
+        return await execute_command(
+            config,
+            {**_meta, "command": command, "timeout": arguments.get("timeout", 45)},
+        )
 
     if not user_id:
         return "[Error] user context missing for remote device lookup"
@@ -505,6 +555,13 @@ async def execute_remote_exec(config: dict[str, Any], arguments: dict[str, Any])
             return content or json.dumps(result, ensure_ascii=False)
         if not command:
             return "[Error] command required for exec"
+        # 远程执行同样要过权限控制台的三态策略 —— 命令跑在别人的机器上不代表
+        # 危险性变低，而用户配置的规则本就该覆盖「Agent 能发起的所有执行」。
+        blocked = await enforce_command_policy(
+            command, arguments, where=f"@{device.name}"
+        )
+        if blocked:
+            return blocked
         result = await tr.call("exec.run", {"command": command})
         code = result.get("exit_code")
         out = (result.get("stdout") or "").strip()
@@ -522,26 +579,27 @@ async def execute_remote_exec(config: dict[str, Any], arguments: dict[str, Any])
 
 
 
-import re
-
-
 def should_use_sandbox() -> bool:
     """本次命令是否走隔离后端。
 
-    单一事实源在 working_mode.decide_sandbox()；这里额外兼容旧的
-    agent_computer_enabled=True（等价于强制沙箱），以免旧配置升级后静默失去隔离。
+    单一事实源：working_mode.decide_sandbox()。
+    agent_computer_enabled=True 表示「优先隔离」（默认开启）；execution_mode=local 仍可显式本机。
+    无可用沙箱且 mode=auto 时返回 False（本机 + degraded），不再无脑 True 导致必失败。
     """
     try:
+        from backend.agent.working_mode import decide_sandbox, resolve_execution_mode
         from backend.core.config import settings as _cs
 
-        if bool(getattr(_cs, "agent_computer_enabled", False)):
+        mode = resolve_execution_mode()
+        if mode == "local":
+            return False
+        decision = decide_sandbox()
+        if mode == "sandbox":
             return True
-    except Exception:
-        pass
-    try:
-        from backend.agent.working_mode import decide_sandbox
-
-        return decide_sandbox().use_sandbox
+        # auto：有能力才用；computer_enabled 只影响「愿不愿意尝试」
+        if bool(getattr(_cs, "agent_computer_enabled", True)):
+            return bool(decision.use_sandbox)
+        return False
     except Exception:
         return False
 
@@ -568,6 +626,141 @@ def _match_dangerous_full(command: str) -> tuple[str, str] | None:
     return reason, _LABEL_TO_CATEGORY.get(reason, "system")
 
 
+async def enforce_command_policy(
+    command: str,
+    arguments: dict[str, Any],
+    *,
+    where: str = "",
+) -> str | None:
+    """高危命令的三态策略闸门。返回 None = 放行，返回字符串 = 拒绝理由。
+
+    **所有会执行 shell 命令的路径都必须过这里**，否则用户在权限控制台配的规则
+    就是骗人的。此前 remote_exec 直接把命令透传给配对设备，`_DANGEROUS_PATTERNS`、
+    八类三态配置、确认弹窗全都不适用 —— 换个 device 参数就能绕开整个 /security 面板。
+
+    Args:
+        where: 执行位置描述（如 "@nas"），只用于给用户的提示文案。
+    """
+    danger_reason = _match_dangerous(command)
+    if not danger_reason:
+        return None
+
+    from backend.core.command_policy import get_category_action
+
+    category = _LABEL_TO_CATEGORY.get(danger_reason, "system")
+    action = await get_category_action(category)
+    scope = f"（执行位置：{where}）" if where else ""
+
+    if action == "deny":
+        return (
+            f"[Policy Blocked] 该命令属于「{category}」高危类别{scope}，"
+            f"已在权限控制台被设为禁止（原因：{danger_reason}）。"
+            f"如需执行，请在权限控制台将该类别改为「每次确认」或「放行」: {command}"
+        )
+    if action == "allow":
+        return None
+
+    # 员工工单：危险命令由编制策略裁决，绝不弹主人确认窗
+    try:
+        from backend.agent.steward_permission import (
+            is_workforce_context,
+            steward_decide_tool,
+        )
+
+        if is_workforce_context(arguments):
+            decision, why = await steward_decide_tool("command", arguments)
+            if decision == "allow":
+                logger = __import__("logging").getLogger(__name__)
+                logger.info(
+                    "workforce dangerous cmd steward-allow reason=%s cmd=%s",
+                    danger_reason,
+                    command[:120],
+                )
+                return None
+            return (
+                f"[steward deny] 危险命令未执行（{danger_reason}）{scope}：{why}。"
+                f"命令：{command}"
+            )
+    except Exception:
+        pass
+
+    # 本轮 tool_hooks 已确认过（含 once）→ 不再二次弹窗
+    if arguments.get("_confirm_ok"):
+        return None
+
+    # 「本会话允许」短路：与 tool_hooks / grant_store 对齐
+    try:
+        from backend.agent.grant_store import has_session_grant
+
+        sid = str(arguments.get("_session_id") or "")
+        if sid and has_session_grant(sid, "command", arguments):
+            return None
+    except Exception:
+        pass
+
+    # 「本员工允许」短路：编制能力已含 command → 危险类别也不再弹
+    try:
+        from backend.agent.grant_store import has_identity_tool_grant
+
+        if await has_identity_tool_grant("command", arguments=arguments):
+            logger = __import__("logging").getLogger(__name__)
+            logger.info(
+                "command policy identity_cap skip confirm reason=%s cmd=%s",
+                danger_reason,
+                command[:120],
+            )
+            arguments["_confirm_ok"] = True
+            return None
+    except Exception:
+        pass
+
+    # confirm（默认）：主人主会话走前端确认（once / session / agent）
+    from backend.agent.grant_store import (
+        add_session_grant,
+        grant_agent_capability,
+        resolve_identity_id,
+    )
+    from backend.services import confirm_manager
+
+    agent_id = await resolve_identity_id(arguments)
+    agent_name = (
+        str(arguments.get("_identity_name") or arguments.get("agent_name") or arguments.get("_contact_agent") or "").strip()
+        or None
+    )
+
+    outcome = await confirm_manager.request_confirmation(
+        arguments.get("_ws_manager"),
+        arguments.get("_session_id"),
+        title="危险操作确认",
+        command=f"{where} $ {command}" if where else command,
+        reason=danger_reason,
+        tool="command",
+        agent_id=agent_id,
+        agent_name=agent_name,
+    )
+    if outcome:
+        conf_scope = getattr(outcome, "scope", "once") or "once"
+        sid = str(arguments.get("_session_id") or "") or None
+        if conf_scope == "session":
+            add_session_grant(sid, "command", arguments)
+        elif conf_scope == "agent":
+            if not agent_id:
+                agent_id = await resolve_identity_id(arguments, contact_name=agent_name)
+            await grant_agent_capability(agent_id, "command")
+            # 整工具会话缓存，避免只记住 command:rm
+            add_session_grant(sid, "command", arguments, whole_tool=True)
+        arguments["_confirm_ok"] = True
+        return None
+
+    # 诚实口径：没问到人 ≠ 用户拒绝。前者要让模型知道是环境问题，
+    # 别把「确认通道不通」当成用户意图去改写策略或反复重试。
+    label = "Denied" if outcome.reason == "denied" else "Blocked"
+    return (
+        f"[{label}] 危险命令未执行（{danger_reason}）{scope}："
+        f"{outcome.describe()}。命令：{command}"
+    )
+
+
 async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> str:
     """
     命令行工具：执行 shell 命令（P0 增强：cwd / 更长超时 / 输出截断 / 后台）。
@@ -585,37 +778,9 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
     if "\x00" in command:
         return "[Security Blocked] NUL bytes are not allowed in command"
 
-    danger_reason = _match_dangerous(command)
-    if danger_reason:
-        # 权限策略三态：allow（放行）/ confirm（弹窗）/ deny（硬禁止）
-        from backend.core.command_policy import get_category_action
-
-        category = _LABEL_TO_CATEGORY.get(danger_reason, "system")
-        action = await get_category_action(category)
-        if action == "deny":
-            return (
-                f"[Policy Blocked] 该命令属于「{category}」高危类别，"
-                f"已在权限控制台被设为禁止（原因：{danger_reason}）。"
-                f"如需执行，请在权限控制台将该类别改为「每次确认」或「放行」: {command}"
-            )
-        if action != "allow":
-            # confirm（默认）：走前端确认流程
-            from backend.services import confirm_manager
-
-            ws_manager = arguments.get("_ws_manager")
-            session_id = arguments.get("_session_id")
-            approved = await confirm_manager.request_confirmation(
-                ws_manager,
-                session_id,
-                title="危险操作确认",
-                command=command,
-                reason=danger_reason,
-            )
-            if not approved:
-                return (
-                    f"[Denied] Dangerous command was rejected by user "
-                    f"({danger_reason}): {command}"
-                )
+    blocked = await enforce_command_policy(command, arguments)
+    if blocked:
+        return blocked
 
     timeout = int(arguments.get("timeout") or config.get("timeout") or 120)
     timeout = max(1, min(timeout, 600))
@@ -694,31 +859,29 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
             )
 
     try:
-        proc = await asyncio.create_subprocess_shell(
+        from backend.core.safe_subprocess import run_capture
+
+        r = await run_capture(
             command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
             cwd=cwd if cwd else None,
+            timeout=float(timeout),
+            max_output=int(max_output),
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        out = stdout.decode("utf-8", errors="replace")
-        err = stderr.decode("utf-8", errors="replace")
-        if len(out) > max_output:
-            out = out[:max_output] + f"\n...[stdout truncated {len(stdout)} bytes]"
-        if len(err) > max_output // 2:
-            err = err[: max_output // 2] + f"\n...[stderr truncated {len(stderr)} bytes]"
-        out, err = out.strip(), err.strip()
-        header = f"[Exit {proc.returncode}" + (f" cwd={cwd}" if cwd else "") + "]"
+        if str(r.get("stderr") or "").startswith("[Security Blocked]"):
+            return str(r.get("stderr"))
+        if r.get("code") == 124:
+            return f"[Timeout] Command exceeded {timeout}s and was terminated"
+        out = (r.get("stdout") or "").strip()
+        err = (r.get("stderr") or "").strip()
+        header = (
+            f"[Exit {r.get('code')}"
+            + (f" cwd={cwd}" if cwd else "")
+            + (f" mode={r.get('mode')}" if r.get("mode") else "")
+            + "]"
+        )
         if err:
             return f"{header}\nstdout:\n{out or '(empty)'}\n\nstderr:\n{err}"
         return out or f"{header}\n[No output]"
-    except asyncio.TimeoutError:
-        try:
-            proc.kill()
-            await proc.wait()
-        except Exception:
-            pass
-        return f"[Timeout] Command exceeded {timeout}s and was terminated"
     except FileNotFoundError:
         return f"[Error] Command not found: {command.split()[0] if command else ''}"
     except Exception as e:
@@ -845,11 +1008,8 @@ async def execute_file_read(config: dict[str, Any], arguments: dict[str, Any]) -
     full_path, base_abs = _resolve_workspace_path(base_path, filepath)
 
     # 路径安全检查：防止目录遍历
-    try:
-        Path(full_path).resolve().relative_to(Path(base_abs).resolve())
-    except Exception:
-        if not (full_path == base_abs or full_path.startswith(base_abs + os.sep)):
-            return f"[Security Blocked] Path '{filepath}' is outside the allowed directory"
+    if not _is_within(full_path, base_abs):
+        return f"[Security Blocked] Path '{filepath}' is outside the allowed directory"
 
     if not os.path.exists(full_path):
         return f"[Error] File not found: {filepath}"
@@ -883,11 +1043,8 @@ async def execute_file_write(config: dict[str, Any], arguments: dict[str, Any]) 
     full_path, base_abs = _resolve_workspace_path(base_path, filepath)
 
     # 路径安全检查
-    try:
-        Path(full_path).resolve().relative_to(Path(base_abs).resolve())
-    except Exception:
-        if not (full_path == base_abs or full_path.startswith(base_abs + os.sep)):
-            return f"[Security Blocked] Path '{filepath}' is outside the allowed directory"
+    if not _is_within(full_path, base_abs):
+        return f"[Security Blocked] Path '{filepath}' is outside the allowed directory"
 
     # 确保目录存在
     os.makedirs(os.path.dirname(full_path), exist_ok=True)
@@ -912,6 +1069,10 @@ async def execute_http(config: dict[str, Any], arguments: dict[str, Any]) -> str
         url = config.get("url", "")
     if not url:
         return "[Error] url is required"
+
+    blocked = _guard_agent_url(url, tool="http")
+    if blocked:
+        return blocked
 
     timeout = config.get("timeout", 30)
     headers = {**(config.get("headers") or {}), **(arguments.get("headers") or {})}
@@ -966,17 +1127,66 @@ async def execute_python(config: dict[str, Any], arguments: dict[str, Any]) -> s
             break
 
     if danger_reason:
-        from backend.services import confirm_manager
+        # tool_hooks 已确认 / 本会话授权 / 本员工能力 → 不再二次弹窗
+        if arguments.get("_confirm_ok"):
+            pass
+        else:
+            try:
+                from backend.agent.grant_store import has_session_grant
 
-        approved = await confirm_manager.request_confirmation(
-            arguments.get("_ws_manager"),
-            arguments.get("_session_id"),
-            title="危险操作确认",
-            command=code[:300],
-            reason=danger_reason,
-        )
-        if not approved:
-            return f"[Denied] Dangerous python code was rejected by user ({danger_reason})"
+                sid = str(arguments.get("_session_id") or "")
+                if sid and has_session_grant(sid, "python", arguments):
+                    arguments["_confirm_ok"] = True
+            except Exception:
+                pass
+            if not arguments.get("_confirm_ok"):
+                try:
+                    from backend.agent.grant_store import has_identity_tool_grant
+
+                    if await has_identity_tool_grant("python", arguments=arguments):
+                        arguments["_confirm_ok"] = True
+                except Exception:
+                    pass
+
+        if not arguments.get("_confirm_ok"):
+            from backend.agent.grant_store import (
+                add_session_grant,
+                grant_agent_capability,
+                resolve_identity_id,
+            )
+            from backend.services import confirm_manager
+
+            agent_id = await resolve_identity_id(arguments)
+            agent_name = (
+                str(arguments.get("_identity_name") or arguments.get("_contact_agent") or "").strip()
+                or None
+            )
+            outcome = await confirm_manager.request_confirmation(
+                arguments.get("_ws_manager"),
+                arguments.get("_session_id"),
+                title="危险操作确认",
+                command=code[:300],
+                reason=danger_reason,
+                tool="python",
+                agent_id=agent_id,
+                agent_name=agent_name,
+            )
+            if not outcome:
+                label = "Denied" if outcome.reason == "denied" else "Blocked"
+                return (
+                    f"[{label}] 危险 Python 代码未执行（{danger_reason}）："
+                    f"{outcome.describe()}"
+                )
+            scope = getattr(outcome, "scope", "once") or "once"
+            sid = str(arguments.get("_session_id") or "") or None
+            if scope == "session":
+                add_session_grant(sid, "python", arguments)
+            if scope == "agent":
+                if not agent_id:
+                    agent_id = await resolve_identity_id(arguments, contact_name=agent_name)
+                await grant_agent_capability(agent_id, "python")
+                add_session_grant(sid, "python", arguments, whole_tool=True)
+            arguments["_confirm_ok"] = True
 
     # Prefer current interpreter (Windows rarely has python3 on PATH)
     py = sys.executable or "python3"
@@ -1183,8 +1393,8 @@ async def execute_edit(config: dict[str, Any], arguments: dict[str, Any]) -> str
     base_path = config.get("base_path", "./workspace")
     full_path, base_abs = _resolve_workspace_path(base_path, filepath)
 
-    # 路径安全检查
-    if not full_path.startswith(base_abs):
+    # 路径安全检查（按路径分量比较 + resolve 符号链接，见 _is_within）
+    if not _is_within(full_path, base_abs):
         return (
             f"[Security Blocked] Path '{filepath}' is outside the allowed directory"
         )
@@ -1241,6 +1451,39 @@ async def execute_edit(config: dict[str, Any], arguments: dict[str, Any]) -> str
         return f"[Error] {e}"
 
 
+# glob/grep 默认跳过的目录（防 node_modules 把上下文与预算打穿）
+_GLOB_SKIP_DIR_NAMES = frozenset({
+    "node_modules",
+    ".git",
+    ".hg",
+    ".svn",
+    "dist",
+    "build",
+    ".next",
+    ".nuxt",
+    "coverage",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".tox",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".computers",
+    "win-python",
+    ".cache",
+})
+_GLOB_MAX_FILES = 80
+_GLOB_MAX_CHARS = 12_000
+_GREP_MAX_MATCHES = 80
+_GREP_MAX_CHARS = 12_000
+_GREP_MAX_FILES_SCAN = 2_000
+
+
+def _path_has_skipped_segment(path: str) -> bool:
+    parts = path.replace("\\", "/").split("/")
+    return any(p in _GLOB_SKIP_DIR_NAMES for p in parts)
+
+
 async def execute_glob(config: dict[str, Any], arguments: dict[str, Any]) -> str:
     """
     文件搜索工具：使用通配符模式匹配文件
@@ -1258,20 +1501,47 @@ async def execute_glob(config: dict[str, Any], arguments: dict[str, Any]) -> str
         return "[Security Blocked] Pattern cannot contain '..'"
 
     search_path = os.path.join(base_abs, pattern)
+    include_heavy = bool(arguments.get("include_heavy") or arguments.get("all"))
 
     def _scan() -> str:
         matches = glob.glob(search_path, recursive=True)
-        rel_matches = []
+        rel_matches: list[str] = []
+        skipped_heavy = 0
         for m in sorted(matches):
             m_abs = os.path.abspath(m)
-            if not m_abs.startswith(base_abs):
+            if not _is_within(m_abs, base_abs):
                 continue
-            if os.path.isfile(m):
-                rel_matches.append(os.path.relpath(m, base_abs))
+            if not os.path.isfile(m):
+                continue
+            rel = os.path.relpath(m, base_abs)
+            if not include_heavy and _path_has_skipped_segment(rel):
+                skipped_heavy += 1
+                continue
+            rel_matches.append(rel)
 
-        if not rel_matches:
+        total = len(rel_matches)
+        if total == 0:
+            if skipped_heavy:
+                return (
+                    f"No files matched (excluded {skipped_heavy} under "
+                    f"node_modules/.git/dist/…; pass include_heavy=true to force)."
+                )
             return "No files matched."
-        return f"Matched {len(rel_matches)} file(s):\n" + "\n".join(rel_matches)
+
+        shown = rel_matches[:_GLOB_MAX_FILES]
+        body = "\n".join(shown)
+        truncated_files = total > _GLOB_MAX_FILES
+        if len(body) > _GLOB_MAX_CHARS:
+            body = body[: _GLOB_MAX_CHARS - 1] + "…"
+            truncated_files = True
+
+        header = f"Matched {total} file(s)"
+        if truncated_files:
+            header += f" (showing ≤{_GLOB_MAX_FILES} paths / ≤{_GLOB_MAX_CHARS} chars — narrow pattern)"
+        if skipped_heavy:
+            header += f"; skipped {skipped_heavy} heavy-dir paths"
+        header += ":\n"
+        return header + body
 
     try:
         # 阻塞的目录遍历丢进线程，同轮并发的 tool call 才能真正重叠（T1b）
@@ -1295,8 +1565,8 @@ async def execute_grep(config: dict[str, Any], arguments: dict[str, Any]) -> str
     base_path = config.get("base_path", "./workspace")
     target_path, base_abs = _resolve_workspace_path(base_path, path)
 
-    # 路径安全检查
-    if not target_path.startswith(base_abs):
+    # 路径安全检查（按路径分量比较 + resolve 符号链接，见 _is_within）
+    if not _is_within(target_path, base_abs):
         return (
             f"[Security Blocked] Path '{path}' is outside the allowed directory"
         )
@@ -1309,37 +1579,69 @@ async def execute_grep(config: dict[str, Any], arguments: dict[str, Any]) -> str
     except re.error as e:
         return f"[Error] Invalid regex pattern: {e}"
 
+    include_heavy = bool(arguments.get("include_heavy") or arguments.get("all"))
+
     def _scan() -> str:
         matches: list[str] = []
+        files_scanned = 0
+        skipped_heavy = 0
 
         if os.path.isfile(target_path):
             files = [target_path]
         elif os.path.isdir(target_path) and recursive:
             files = []
-            for root, _, filenames in os.walk(target_path):
+            for root, dirnames, filenames in os.walk(target_path):
+                if not include_heavy:
+                    dirnames[:] = [
+                        d for d in dirnames if d not in _GLOB_SKIP_DIR_NAMES
+                    ]
                 for filename in filenames:
                     files.append(os.path.join(root, filename))
+                    if len(files) >= _GREP_MAX_FILES_SCAN:
+                        break
+                if len(files) >= _GREP_MAX_FILES_SCAN:
+                    break
         else:
             return f"[Error] {path} is not a file or directory"
 
         for filepath in files:
+            rel_path = os.path.relpath(filepath, base_abs)
+            if not include_heavy and _path_has_skipped_segment(rel_path):
+                skipped_heavy += 1
+                continue
+            files_scanned += 1
             try:
                 with open(filepath, "r", encoding="utf-8", errors="replace") as f:
                     for i, line in enumerate(f, 1):
                         if regex.search(line):
-                            rel_path = os.path.relpath(filepath, base_abs)
-                            matches.append(f"{rel_path}:{i}: {line.rstrip()}")
-                            if len(matches) >= 100:
+                            matches.append(f"{rel_path}:{i}: {line.rstrip()[:240]}")
+                            if len(matches) >= _GREP_MAX_MATCHES:
                                 break
-                if len(matches) >= 100:
+                if len(matches) >= _GREP_MAX_MATCHES:
                     break
-            except (UnicodeDecodeError, IsADirectoryError, PermissionError):
+            except (UnicodeDecodeError, IsADirectoryError, PermissionError, OSError):
                 continue
 
         if not matches:
-            return "No matches found."
-        header = f"Found {len(matches)} match(es) (showing up to 100):\n"
-        return header + "\n".join(matches)
+            extra = f" (scanned {files_scanned} files"
+            if skipped_heavy:
+                extra += f", skipped {skipped_heavy} heavy-dir"
+            extra += ")"
+            return f"No matches found.{extra}"
+
+        body = "\n".join(matches)
+        truncated = len(matches) >= _GREP_MAX_MATCHES
+        if len(body) > _GREP_MAX_CHARS:
+            body = body[: _GREP_MAX_CHARS - 1] + "…"
+            truncated = True
+        header = f"Found {len(matches)} match(es)"
+        if truncated:
+            header += f" (cap {_GREP_MAX_MATCHES} lines / {_GREP_MAX_CHARS} chars — narrow path/pattern)"
+        header += f"; scanned ≤{files_scanned} files"
+        if skipped_heavy:
+            header += f"; skipped {skipped_heavy} heavy-dir"
+        header += ":\n"
+        return header + body
 
     try:
         # 阻塞的 os.walk + 逐文件读丢进线程（T1b）
@@ -1364,41 +1666,37 @@ async def execute_sqlite_query(
     base_path = config.get("base_path", "./workspace")
     db_path, base_abs = _resolve_workspace_path(base_path, database)
 
-    # 路径安全检查
-    if not db_path.startswith(base_abs):
+    # 路径安全检查（按路径分量比较 + resolve 符号链接，见 _is_within）
+    if not _is_within(db_path, base_abs):
         return (
             f"[Security Blocked] Database path '{database}' "
             f"is outside the allowed directory"
         )
 
     def _run_query() -> str:
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute(query)
+        # with 保证异常路径也关连接（此前 cursor.execute 抛错就泄漏一个连接）
+        with contextlib.closing(sqlite3.connect(db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(query)
 
-        upper = query.split(None, 1)[0].upper()
-        if upper in ("SELECT", "PRAGMA", "WITH", "EXPLAIN"):
-            rows = cursor.fetchall()
-            if not rows:
-                conn.close()
-                return "Query executed successfully. No rows returned."
+            upper = query.split(None, 1)[0].upper()
+            if upper in ("SELECT", "PRAGMA", "WITH", "EXPLAIN"):
+                rows = cursor.fetchall()
+                if not rows:
+                    return "Query executed successfully. No rows returned."
 
-            headers = rows[0].keys()
-            lines = []
-            lines.append(" | ".join(headers))
-            lines.append("-" * len(lines[0]))
-            for row in rows[:50]:
-                lines.append(" | ".join(str(v) if v is not None else "NULL" for v in row))
-            if len(rows) > 50:
-                lines.append(f"... ({len(rows) - 50} more rows)")
-            conn.close()
-            return "\n".join(lines)
-        else:
+                headers = rows[0].keys()
+                lines = [" | ".join(headers)]
+                lines.append("-" * len(lines[0]))
+                for row in rows[:50]:
+                    lines.append(" | ".join(str(v) if v is not None else "NULL" for v in row))
+                if len(rows) > 50:
+                    lines.append(f"... ({len(rows) - 50} more rows)")
+                return "\n".join(lines)
+
             conn.commit()
-            affected = cursor.rowcount
-            conn.close()
-            return f"Query executed successfully. Rows affected: {affected}"
+            return f"Query executed successfully. Rows affected: {cursor.rowcount}"
 
     try:
         return await asyncio.to_thread(_run_query)

@@ -1,6 +1,7 @@
-"""Kernel 多 worker 共享态（Redis）。
+"""Kernel 多 worker 共享态（Redis）——**可选热层，非业务权威**。
 
-解决：多 uvicorn worker 时 mediate / charge_tokens / 能力集 只活在本进程内存，
+权威数据（Identity / Inbox / 进程档案 / 审批）在 **SQLite**（见 docs/internal/STORAGE.md）。
+本模块只解决：多 uvicorn worker 时 mediate / charge_tokens / 能力集 只活在本进程内存，
 A 上 create 的进程 B 上 mediate 会「未知进程」。
 
 设计：
@@ -9,7 +10,7 @@ A 上 create 的进程 B 上 mediate 会「未知进程」。
 - charge_tokens Lua 原子扣减
 - 提权 SETNX 占坑防并发双 pending
 - 事件 LPUSH 热缓冲（多 worker 观测）
-- 未配置 redis → None
+- 未配置 / 默认关闭 → ``create_shared_store_from_settings()`` 返回 **None**（单进程）
 
 Key：
   takton:kernel:v1:proc:{id}
@@ -35,7 +36,8 @@ logger = logging.getLogger(__name__)
 _PREFIX = "takton:kernel:v1"
 _PROC_TTL = 86400 * 2
 _ESC_TTL = 86400 * 7
-_CLAIM_TTL = 120
+# claim 与 pending 提权同寿：120s 过期会在人审窗口内释放，同 caps 可再开第二单
+_CLAIM_TTL = _ESC_TTL
 _EVENT_MAX = 1000
 _EVENT_TTL = 86400
 
@@ -44,8 +46,15 @@ if redis.call('EXISTS', KEYS[1]) == 0 then
     return false
 end
 local amount = tonumber(ARGV[1])
-local used
+local used = tonumber(redis.call('HGET', KEYS[1], 'tokens_used') or '0')
+local budget_s = redis.call('HGET', KEYS[1], 'token_budget') or ''
 if amount > 0 then
+    if budget_s ~= '' and budget_s ~= false then
+        local budget = tonumber(budget_s)
+        if budget ~= nil and (used + amount) > budget then
+            return {'exceeded', used, budget_s}
+        end
+    end
     used = redis.call('HINCRBY', KEYS[1], 'tokens_used', amount)
 else
     used = tonumber(redis.call('HGET', KEYS[1], 'tokens_used') or '0')
@@ -136,17 +145,31 @@ class KernelSharedStore:
         return alive
 
     def charge_tokens(self, process_id: str, amount: int) -> tuple[int | None, int | None]:
-        """Lua 原子扣减。返回 (tokens_used, budget_remaining)。"""
+        """Lua 原子扣减。返回 (tokens_used, budget_remaining)。
+
+        超预算拒绝写入时返回 used=None 且 remaining 语义由调用方识别——
+        实际用 raising via special: 若 res[0]=='exceeded' 则抛给上层。
+        """
         key = _proc_key(process_id)
         res = self._r.eval(_CHARGE_LUA, 1, key, int(amount), _PROC_TTL)
-        if res is None:
+        if res is None or res is False:
             return None, None
+        # redis 可能返回 bytes
+        head = self._s(res[0]) if isinstance(res, (list, tuple)) else self._s(res)
+        if head == "exceeded":
+            raise RuntimeError(
+                f"budget exceeded for {process_id}: used={self._s(res[1])} budget={self._s(res[2])}"
+            )
         used = int(res[0])
         budget_s = self._s(res[1])
         if budget_s == "" or budget_s is None:
+            if amount > 0:
+                try:
+                    self.record_daily_charge(amount)
+                except Exception:
+                    pass
             return used, None
         budget = int(budget_s)
-        # 日用量（auto_tighten 用）
         if amount > 0:
             try:
                 self.record_daily_charge(amount)
@@ -240,6 +263,18 @@ class KernelSharedStore:
         pipe.expire(key, _ESC_TTL)
         if payload["status"] == "pending":
             pipe.sadd(f"{self._prefix}:esc:pending", eid)
+            # claim 续期与 pending 同寿，防止人审窗口内 claim 先过期
+            pid = payload["process_id"]
+            if pid:
+                try:
+                    caps = json.loads(payload["capabilities"] or "[]")
+                    fp = caps_fingerprint(caps)
+                    claim_key = f"{self._prefix}:esc:claim:{pid}:{fp}"
+                    cur = self._s(self._r.get(claim_key))
+                    if cur == eid:
+                        pipe.expire(claim_key, _ESC_TTL)
+                except Exception:
+                    pass
         else:
             pipe.srem(f"{self._prefix}:esc:pending", eid)
             # 释放 claim

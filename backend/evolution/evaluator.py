@@ -226,11 +226,11 @@ async def _eval_remote(
 
 async def _resolve_device(name: str, user_id: Any) -> Any | None:
     try:
-        from backend.api.dependencies import get_device_repo
         from backend.api.routes.devices import resolve_device_by_name
+        from backend.repositories.device_repo import AsyncDeviceRepository
         import uuid
 
-        repo = await get_device_repo()
+        repo = AsyncDeviceRepository()
         uid = user_id
         if uid is None:
             # single-user: try list all devices for any user via raw query if available

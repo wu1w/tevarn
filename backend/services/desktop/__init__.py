@@ -363,13 +363,62 @@ class DesktopAgentService:
             )
     
     def clear_session_permissions(self, user_id: uuid.UUID) -> None:
-        """清除用户会话权限"""
+        """清除用户会话权限（内存）"""
         keys_to_remove = [
             k for k in self._session_permissions.keys()
             if k.startswith(f"{user_id}:")
         ]
         for key in keys_to_remove:
             del self._session_permissions[key]
+
+    async def clear_permissions(
+        self,
+        user_id: uuid.UUID,
+        operation: str | None = None,
+        app_name: str | None = None,
+    ) -> dict[str, int]:
+        """清除会话缓存 + 数据库持久权限。"""
+        # 会话：按前缀 / 可选过滤
+        removed_session = 0
+        keys_to_remove = []
+        prefix = f"{user_id}:"
+        for k in list(self._session_permissions.keys()):
+            if not k.startswith(prefix):
+                continue
+            # key 格式 user:operation:app_or_*
+            parts = k.split(":", 2)
+            op = parts[1] if len(parts) > 1 else ""
+            app = parts[2] if len(parts) > 2 else "*"
+            if operation and op != operation:
+                continue
+            if app_name is not None:
+                want = app_name or "*"
+                if app != want and not (app_name == "" and app == "*"):
+                    # app_name=None means all apps; app_name="" means global (*)
+                    if app_name:
+                        if app != app_name:
+                            continue
+                    else:
+                        if app != "*":
+                            continue
+            keys_to_remove.append(k)
+        for key in keys_to_remove:
+            del self._session_permissions[key]
+            removed_session += 1
+
+        removed_db = 0
+        try:
+            from backend.repositories.desktop_permission_repo import AsyncDesktopPermissionRepository
+
+            repo = AsyncDesktopPermissionRepository()
+            removed_db = await repo.delete_all_for_user(
+                user_id,
+                operation=operation,
+                app_name=app_name if app_name else None,
+            )
+        except Exception as e:
+            logger.error(f"Failed to clear db permissions: {e}")
+        return {"session": removed_session, "db": removed_db}
 
 
 # 全局服务实例

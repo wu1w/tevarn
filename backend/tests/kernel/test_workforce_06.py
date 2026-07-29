@@ -153,7 +153,7 @@ def test_dispatcher_full_cycle_with_mediation(wf) -> None:
 
 
 def test_dispatcher_retry_then_failed(wf) -> None:
-    """executor 持续失败：attempts 到上限 → failed（不无限重试）。"""
+    """executor 持续失败：attempts 到上限 → dead 死信（不无限重试）。"""
     async def go():
         reg, inbox, kernel = wf["registry"], wf["inbox"], wf["kernel"]
         ident = await reg.create("倒霉蛋", capabilities=["file_read"])
@@ -165,10 +165,10 @@ def test_dispatcher_retry_then_failed(wf) -> None:
         disp = WorkforceDispatcher(kernel, inbox, reg, wf["SessionLocal"], executor=bad_executor)
         for _ in range(3):  # MAX_ATTEMPTS=3：每轮 claim→fail→放回
             await disp.tick(wait=True)
-        failed = await inbox.list_items(status="failed")
-        assert len(failed) == 1
-        assert "爆炸了" in failed[0].error
-        assert failed[0].attempts == 3
+        dead = await inbox.list_items(status="dead")
+        assert len(dead) == 1
+        assert "爆炸了" in dead[0].error
+        assert dead[0].attempts == 3
 
     _run(go())
 
@@ -246,15 +246,33 @@ def test_fallback_budget_applied_when_identity_has_none(wf) -> None:
         assert proc.token_budget == 50000  # fallback 生效（config 默认）
         assert proc.budget_remaining == 50000
 
-        # 身份显式设预算时优先用身份的
+        # 身份显式设预算：普通工单保持身份预算
         ident2 = await reg.create(
             "有预算员工", capabilities=["file_read"], default_token_budget=8000
         )
-        await inbox.enqueue(ident2.id, "另一单")
+        await inbox.enqueue(ident2.id, "另一单说你好")
         await disp.tick(wait=True)
         dones = await inbox.list_items(status="done")
         proc2 = kernel.get_process(dones[0].process_id)
         assert proc2.token_budget == 8000  # 身份预算优先于 fallback
+
+        # 审计类工单：自动抬预算（不改写 identity 默认值）
+        ident3 = await reg.create(
+            "审计员甲",
+            role="安全审计员",
+            capabilities=["file_read"],
+            default_token_budget=30_000,
+        )
+        await inbox.enqueue(ident3.id, "请对 backend 做安全审计并 file_read 核实")
+        await disp.tick(wait=True)
+        dones3 = await inbox.list_items(status="done")
+        # 取该身份最近完成
+        item3 = next(i for i in dones3 if str(i.identity_id) == str(ident3.id))
+        proc3 = kernel.get_process(item3.process_id)
+        assert proc3.token_budget is not None and proc3.token_budget >= 120_000
+        # identity 默认仍为 30k
+        refreshed = await reg.get(ident3.id)
+        assert refreshed.default_token_budget == 30_000
 
     _run(go())
 

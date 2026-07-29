@@ -84,8 +84,11 @@ class WslBwrapBackend:
         self.agent_key = agent_key
         self.network = network
         self.wsl_path = wsl_path or find_wsl() or "wsl.exe"
+        from backend.computer.pathutil import sanitize_agent_key_for_path
+
+        safe_key = sanitize_agent_key_for_path(agent_key)
         self.agent_home = os.path.join(
-            self.workspace_root, ".computers", agent_key, "home"
+            self.workspace_root, ".computers", safe_key, "home"
         )
 
     def _ensure_dirs(self) -> None:

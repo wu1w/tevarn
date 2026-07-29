@@ -26,6 +26,101 @@ def _iso(v: Any) -> str | None:
     return v.isoformat() if v else None
 
 
+def _toolsets_to_caps(tools: list[str] | None) -> list[str]:
+    """子代理 toolset 名 → 编制 Identity capabilities。"""
+    mapping = {
+        "file": "file_rw",
+        "file_rw": "file_rw",
+        "terminal": "command",
+        "command": "command",
+        "bash": "command",
+        "shell": "command",
+        "git": "git",
+        "web": "web_search",
+        "web_search": "web_search",
+        "search": "web_search",
+        "browser": "browser",
+        "calendar": "calendar",
+        "notify": "notify",
+        "db": "db_read",
+        "db_read": "db_read",
+    }
+    caps: list[str] = []
+    for t in tools or []:
+        c = mapping.get(str(t).strip().lower())
+        if c and c not in caps:
+            caps.append(c)
+    if not caps:
+        caps = ["file_rw", "web_search"]
+    return caps
+
+
+async def _enroll_identity_for_subagent(obj: Any, *, role: str = "") -> tuple[Any | None, str]:
+    """SubAgent 创建后同步写入编制 Identity（员工列表真源）。
+
+    返回 (identity|None, note)。名称冲突时尝试挂到已有同名身份。
+    """
+    try:
+        from backend.kernel import get_kernel
+
+        kernel = get_kernel()
+        reg = getattr(kernel, "identity_registry", None)
+        if reg is None:
+            return None, "编制层未启用，仅创建了技能包/子代理"
+        name = str(getattr(obj, "name", "") or "").strip()
+        if not name:
+            return None, "子代理无名称，跳过入编"
+        caps = _toolsets_to_caps(getattr(obj, "enabled_toolsets", None))
+        role_s = (role or str(getattr(obj, "description", "") or "")).strip() or name
+        # 已有同名：挂 sub_agent_id
+        existing = None
+        try:
+            for i in await reg.list(status=None):
+                if i.name == name:
+                    existing = i
+                    break
+        except Exception:
+            existing = None
+        if existing is not None:
+            # 尽量补 sub_agent_id / caps
+            try:
+                async with reg._session_factory() as session:  # type: ignore[attr-defined]
+                    from backend.models.agent_identity import AgentIdentity
+                    from sqlalchemy import select
+
+                    row = (
+                        await session.execute(
+                            select(AgentIdentity).where(AgentIdentity.id == existing.id)
+                        )
+                    ).scalar_one_or_none()
+                    if row is not None:
+                        if not row.sub_agent_id:
+                            row.sub_agent_id = obj.id
+                        if not row.role and role_s:
+                            row.role = role_s
+                        await session.commit()
+                        await session.refresh(row)
+                        return row, f"已关联已有员工「{name}」"
+            except Exception as e:
+                logger.warning("link existing identity failed: %s", e)
+            return existing, f"员工「{name}」已存在，已关联"
+        ident = await reg.create(
+            name,
+            role=role_s,
+            capabilities=caps,
+            default_token_budget=100_000,
+            sub_agent_id=getattr(obj, "id", None),
+            meta={"source": "manage_sub_agent", "skill_pack": "sub_agent"},
+        )
+        return ident, f"已入编员工「{name}」id={ident.id}"
+    except ValueError as e:
+        # 名称冲突等
+        return None, f"入编跳过: {e}"
+    except Exception as e:
+        logger.warning("enroll identity for subagent failed: %s", e)
+        return None, f"入编失败: {e}"
+
+
 # ── 子代理 ──
 
 class ManageSubAgent(BaseTool):
@@ -35,9 +130,10 @@ class ManageSubAgent(BaseTool):
         super().__init__(
             name="manage_sub_agent",
             description=(
-                "管理子代理（SubAgent）。action: list/get/create/update/delete。"
-                "create 需要 name 和 model_ref（格式 provider_id/model_name）；"
-                "tools 为启用的工具集列表（如 ['file','terminal','git']）"
+                "管理子代理技能包，并同步入编员工（Identity）。"
+                "action: list/get/create/update/delete。"
+                "create 会同时写入员工列表（编制真源）；招人优先用 crew_steward.hire。"
+                "create 需要 name 和 model_ref；tools 如 ['file','terminal','git']"
             ),
             parameters={
                 "type": "object",
@@ -145,7 +241,20 @@ class ManageSubAgent(BaseTool):
                 patch = self._collect_patch(kwargs)
                 patch.update({"name": name, "model_ref": model_ref, "user_id": None, "is_builtin": False})
                 obj = await repo.create(patch)
-                return ToolResult(success=True, data=self._to_dict(obj), message=f"✅ 子代理 `{name}` 已创建")
+                # 双写编制：员工列表只认 Identity，不能只建 SubAgent
+                role = str(kwargs.get("description") or kwargs.get("role") or name).strip()
+                ident, note = await _enroll_identity_for_subagent(obj, role=role)
+                data = self._to_dict(obj)
+                if ident is not None:
+                    data["identity_id"] = str(ident.id)
+                    data["identity_enrolled"] = True
+                else:
+                    data["identity_enrolled"] = False
+                return ToolResult(
+                    success=True,
+                    data=data,
+                    message=f"✅ 子代理 `{name}` 已创建；{note}（员工列表应可见）",
+                )
             except ValueError as e:
                 return ToolResult(success=False, data={}, message=f"❌ {e}")
             except Exception as e:

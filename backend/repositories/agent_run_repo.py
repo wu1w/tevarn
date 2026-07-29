@@ -83,6 +83,23 @@ class AsyncAgentRunRepository(AsyncBaseRepository):
         finally:
             await self._close_session(session)
 
+    async def list_recent(
+        self,
+        *,
+        limit: int = 40,
+        status: str | None = None,
+    ) -> list[AgentRun]:
+        """跨会话最近 runs（0.5.3 全局 Runs 入口，不依赖先开 chat）。"""
+        session = await self._get_session()
+        try:
+            q = select(AgentRun).order_by(desc(AgentRun.created_at)).limit(limit)
+            if status:
+                q = q.where(AgentRun.status == status)
+            result = await session.execute(q)
+            return list(result.scalars().all())
+        finally:
+            await self._close_session(session)
+
     # ─────────── Step ───────────
 
     async def add_step(self, data: dict[str, Any]) -> RunStep:

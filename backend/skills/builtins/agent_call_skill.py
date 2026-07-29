@@ -1,15 +1,19 @@
 """
 Agent Call Skill - 调用其他 Agent
-当前为桩实现，用于多 Agent 协作场景
+接入 run_subagent 真·迷你 Run（与 delegate_task 同源）。
 
-⚠️ 重要：本 Skill 预留了防止无限递归调用的安全骨架
-（禁止调用自身 / 禁止调用环 / 限制最大调用深度）。
-未来实现真实的子 Agent 调度逻辑时，必须保留并正确传递
-`_caller_agent` / `_call_chain` 参数，否则会导致 Agent 相互调用
-造成无限递归、资源耗尽（栈溢出/内存耗尽/无限 LLM 调用费用）。
+保留递归防护：禁止调用自身 / 禁止调用环 / 限制最大调用深度。
 """
 
+from __future__ import annotations
+
+import logging
+import uuid
+from typing import Any
+
 from ..base import BaseSkill
+
+logger = logging.getLogger(__name__)
 
 MAX_CALL_DEPTH = 3
 
@@ -19,19 +23,20 @@ class AgentCallSkill(BaseSkill):
 
     name = "agent_call"
     description = (
-        "当当前 Agent 无法处理某类任务时，"
-        "调用此工具将任务转交给其他专业 Agent（如 Coder、Researcher、Writer 等）。"
+        "把任务交给编制中的员工（收件箱工单）。"
+        "agent=员工姓名，task=工单内容。"
+        "不要用来起临时子代理闷跑；招人请用 crew_steward.hire。"
     )
     parameters = {
         "type": "object",
         "properties": {
             "agent": {
                 "type": "string",
-                "description": "目标 Agent 名称，如 Coder / Researcher / Writer / PM",
+                "description": "目标员工姓名或 Identity id",
             },
             "task": {
                 "type": "string",
-                "description": "要分配给目标 Agent 的任务描述",
+                "description": "要分配的任务/工单描述",
             },
             "context": {
                 "type": "string",
@@ -49,26 +54,25 @@ class AgentCallSkill(BaseSkill):
         context: str = "",
         _caller_agent: str | None = None,
         _call_chain: list[str] | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> str:
-        """调用其他 Agent（桩实现，含递归防护骨架）"""
-        # 兼容 Agent Loop 注入的 user_id / _session_id 等元数据，忽略即可
-        call_chain = list(_call_chain or [])
+        """编制派活：写入员工 Inbox（不再起 subagent 闷跑）。"""
+        target = (agent or "").strip()
+        goal = (task or "").strip()
+        if not target or not goal:
+            return "[Error] agent 与 task 均为必填"
 
-        # 1. 禁止调用自身
-        if _caller_agent and agent == _caller_agent:
-            return f"[Error] Agent '{agent}' 不能调用自身，已阻止潜在的无限递归。"
+        if _caller_agent and target == _caller_agent:
+            return f"[Error] 「{target}」不能把活派给自己。"
 
-        # 2. 禁止调用链中出现环
-        if agent in call_chain:
-            return f"[Error] 检测到调用环：{' -> '.join(call_chain + [agent])}，已阻止。"
+        from backend.agent.workforce_dispatch import assign_to_employee
 
-        # 3. 限制最大调用深度
-        if len(call_chain) >= MAX_CALL_DEPTH:
-            return f"[Error] 已达到最大 Agent 调用深度 {MAX_CALL_DEPTH}，已阻止继续递归。"
-
-        return (
-            f"[Agent Call Stub]\nTarget: {agent}\nTask: {task}\n"
-            f"Context: {context[:200] if context else 'None'}\n"
-            f"⚠️ 这是桩实现。多 Agent 协作需要额外的消息队列或内部 API 机制。"
+        instruction = goal if not (context or "").strip() else f"{goal}\n\n上下文：{context.strip()}"
+        steward_sid = str(kwargs.get("_session_id") or "").strip() or None
+        return await assign_to_employee(
+            target,
+            instruction,
+            priority=5,
+            via="agent_call",
+            steward_session_id=steward_sid,
         )
