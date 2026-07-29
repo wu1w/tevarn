@@ -19,7 +19,7 @@
     "dist:linux": "cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder --linux",
     "dist:win": "npm run prepare:win-python && cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder --win",
     "dist:mac": "cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder --mac",
-    "prepare:win-python": "node ../scripts/prepare-win-python.js",
+    "prepare:win-python": "node ./scripts/prepare-win-python.js",
     "lint": "eslint"
   },
   "dependencies": {

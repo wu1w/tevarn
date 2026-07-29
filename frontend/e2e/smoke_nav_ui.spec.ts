@@ -14,13 +14,27 @@ async function apiLogin(): Promise<{
   expires_in?: number;
   user?: unknown;
 }> {
-  const r = await fetch(`${API}/auth/login`, {
+  // Prefer auto-login (single-user); fallback password
+  let r = await fetch(`${API}/auth/auto-login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: 'admin@takton.dev', password: 'admin' }),
+    body: JSON.stringify({}),
   });
-  const d = (await r.json()) as { access_token?: string; expires_in?: number; user?: unknown };
-  if (!d.access_token) throw new Error('login failed ' + JSON.stringify(d));
+  if (!r.ok) {
+    r = await fetch(`${API}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'admin@takton.dev', password: 'admin' }),
+    });
+  }
+  const text = await r.text();
+  let d: { access_token?: string; expires_in?: number; user?: unknown } = {};
+  try {
+    d = JSON.parse(text) as typeof d;
+  } catch {
+    throw new Error(`login failed ${r.status}: ${text.slice(0, 200)}`);
+  }
+  if (!d.access_token) throw new Error('login failed ' + text.slice(0, 300));
   return d as { access_token: string; expires_in?: number; user?: unknown };
 }
 

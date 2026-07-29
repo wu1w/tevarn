@@ -1,8 +1,11 @@
 import { test, expect, Page, BrowserContext } from '@playwright/test';
 import * as path from 'path';
 
-const BASE_URL = process.env.SMOKE_BASE_URL || 'http://localhost:3002';
-const API_URL = process.env.SMOKE_API_URL || 'http://localhost:8090';
+const BASE_URL = process.env.SMOKE_BASE_URL || process.env.FE || 'http://127.0.0.1:3000';
+const API_URL = (process.env.SMOKE_API_URL || process.env.API || 'http://127.0.0.1:8090').replace(
+  /\/api\/?$/,
+  '',
+);
 const SCREENSHOT_DIR = process.env.SCREENSHOT_DIR || path.join(__dirname, 'screenshots');
 
 let sharedToken: string | null = null;
@@ -10,15 +13,24 @@ let sharedUser: unknown | null = null;
 
 async function ensureToken() {
   if (sharedToken) return { token: sharedToken, user: sharedUser };
-  const response = await fetch(`${API_URL}/api/auth/auto-login`, {
+  let response = await fetch(`${API_URL}/api/auth/auto-login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({}),
   });
   if (!response.ok) {
+    response = await fetch(`${API_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'admin@takton.dev', password: 'admin' }),
+    });
+  }
+  if (!response.ok) {
     throw new Error(`Login failed: ${response.status}`);
   }
-  const body = await response.json();
+  const text = await response.text();
+  const body = JSON.parse(text) as { access_token?: string; user?: unknown };
+  if (!body.access_token) throw new Error(`Login failed: ${text.slice(0, 200)}`);
   sharedToken = body.access_token;
   sharedUser = body.user;
   return { token: sharedToken, user: sharedUser };

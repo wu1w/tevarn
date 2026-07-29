@@ -244,7 +244,7 @@ def evaluate_completion(
                 ),
             )
 
-    # Find-needle
+    # Find-needle：soft 下仅拦「零工具」；空报告在 soft 放行（强模型常极短回复）
     if _FIND_RE.search(text):
         if not tools and max_followups_done < pol.max_hard_followups:
             return CompletionVerdict(
@@ -252,7 +252,12 @@ def evaluate_completion(
                 reason="find_no_tools",
                 nudge="【补充取证】请用 grep/file_read 实际查找后再报告 SECRET/checksum/needle。",
             )
-        if final and len(final) < 8 and max_followups_done < pol.max_hard_followups:
+        if (
+            pol.mode != "soft"
+            and final
+            and len(final) < 8
+            and max_followups_done < pol.max_hard_followups
+        ):
             return CompletionVerdict(
                 ok=False,
                 reason="find_empty_report",

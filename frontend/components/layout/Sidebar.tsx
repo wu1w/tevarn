@@ -131,8 +131,25 @@ export function Sidebar() {
     setSessionTitle,
     toggleStarredSession,
   } = useSessionStore();
-  // 默认折叠：历史会话 / Agent 记忆不抢主导航空间，需要时再点开
-  const [sessionsOpen, setSessionsOpen] = useState(true);
+  // 默认折叠：历史会话不抢主导航；localStorage 记忆用户选择
+  const [sessionsOpen, setSessionsOpen] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      const v = localStorage.getItem('takton-sb-sessions-open');
+      if (v === '1') return true;
+      if (v === '0') return false;
+    } catch { /* ignore */ }
+    return false;
+  });
+  const toggleSessionsOpen = useCallback(() => {
+    setSessionsOpen((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('takton-sb-sessions-open', next ? '1' : '0');
+      } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
   const [mySessions, setMySessions] = useState<Session[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [switchingId, setSwitchingId] = useState<string | null>(null);
@@ -141,14 +158,29 @@ export function Sidebar() {
   const [editValue, setEditValue] = useState('');
   // Agent MD 记忆文件（侧栏）— 默认折叠
   const [filesOpen, setFilesOpen] = useState(false);
-    // 侧栏分组：工作区常开；Agent/记忆/系统默认折叠，减认知噪音（key 用固定 id，不随语言变）
-    const [openNavGroups, setOpenNavGroups] = useState<Record<string, boolean>>({
-      workspace: true,
-      agent: true,
-      memory: false,
-      system: false,
+  // 侧栏分组：仅工作区默认展开；Agent/记忆/系统默认折叠（persist）
+  const [openNavGroups, setOpenNavGroups] = useState<Record<string, boolean>>(() => {
+    const defaults = { workspace: true, agent: false, memory: false, system: false };
+    if (typeof window === 'undefined') return defaults;
+    try {
+      const raw = localStorage.getItem('takton-sb-nav-groups');
+      if (!raw) return defaults;
+      const parsed = JSON.parse(raw) as Record<string, boolean>;
+      return { ...defaults, ...parsed };
+    } catch {
+      return defaults;
+    }
+  });
+  const setNavGroupOpen = useCallback((id: string, open: boolean) => {
+    setOpenNavGroups((prev) => {
+      const next = { ...prev, [id]: open };
+      try {
+        localStorage.setItem('takton-sb-nav-groups', JSON.stringify(next));
+      } catch { /* ignore */ }
+      return next;
     });
-    const [agentMdItems, setAgentMdItems] = useState<AgentMdItem[]>([]);
+  }, []);
+  const [agentMdItems, setAgentMdItems] = useState<AgentMdItem[]>([]);
   const [agentMdRoot, setAgentMdRoot] = useState('');
   const [agentMdLoading, setAgentMdLoading] = useState(false);
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
@@ -503,20 +535,18 @@ export function Sidebar() {
                 </button>
       </div>
 
-      {/* Session
-
-      {/* Session 列表 */}
+      {/* Session 列表 — 默认折叠，避免挤占导航 */}
       {isAuthenticated && (
         <div className="px-3 py-2">
           <div className="mb-1.5 flex items-center justify-between px-1">
             <div
               role="button"
               tabIndex={0}
-              onClick={() => setSessionsOpen((v) => !v)}
+              onClick={toggleSessionsOpen}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault();
-                  setSessionsOpen((v) => !v);
+                  toggleSessionsOpen();
                 }
               }}
               className="flex cursor-pointer items-center gap-1.5"
@@ -558,7 +588,7 @@ export function Sidebar() {
                 />
               </div>
 
-              <div className="mt-1 max-h-[280px] space-y-0.5 overflow-y-auto scrollbar-thin">
+              <div className="mt-1 max-h-[200px] space-y-0.5 overflow-y-auto scrollbar-thin">
                 {sessionsLoading && filteredSessions.length === 0 ? (
                   <div className="px-3 py-3 text-xs text-foreground-dim animate-pulse">{t('nav.loadingSessions2')}</div>
                 ) : filteredSessions.length === 0 ? (
@@ -818,12 +848,7 @@ export function Sidebar() {
                   <div key={group.id} className="mb-2">
                     <button
                       type="button"
-                      onClick={() =>
-                        setOpenNavGroups((prev) => ({
-                          ...prev,
-                          [group.id]: !expanded,
-                        }))
-                      }
+                      onClick={() => setNavGroupOpen(group.id, !expanded)}
                       className="flex w-full items-center justify-between px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground-dim/80 hover:text-foreground-muted"
                     >
                       <span>{t(group.titleKey as never)}</span>

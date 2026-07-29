@@ -45,13 +45,14 @@ function ToolCallCard({
   const hasResult = toolCall.result !== undefined && toolCall.result !== null;
   const hasArgs =
     toolCall.arguments && Object.keys(toolCall.arguments).length > 0;
-  // 默认全部折叠，仅运行中时展开参数（完成后自动收起由用户点开）
+  // 默认全部折叠；运行中也只显示一行摘要，点开再看参数/结果（0.3.6 回落：运行记录不占版面）
   const [expanded, setExpanded] = useState(false);
   const [resultOpen, setResultOpen] = useState(false);
 
-  // 运行中→完成时收起
+  // 状态切换时保持折叠，避免一串工具把对话顶飞
   useEffect(() => {
-    if (status === 'running') setExpanded(false);
+    setExpanded(false);
+    setResultOpen(false);
   }, [status]);
 
   const summary = useMemo(() => {

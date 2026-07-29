@@ -24,9 +24,16 @@
 
 - `test_completion_gate`：soft only_glob 放行、balanced 轻提示、强模型降档
 
+### Fixed / UX（0.3.6 同版本补丁 · alpha 轻量回落）
+
+- **E2E**：auto-login 优先；默认 `127.0.0.1:3000`；登录响应只读一次 body
+- **侧栏**：历史会话默认折叠（localStorage）；Agent/记忆/系统导航组默认折叠并持久化
+- **工具运行记录**：ToolCall 参数/结果默认折叠，状态变化不自动撑开
+- **soft 完成门**：查找类任务短回复不再硬拦（仅 balanced/strict 拦空报告）
+
 ### Notes
 
-- **暂缓** Windows/Linux 安装包与 electron 打包；源码与 GitHub 版本先升至 0.3.6
+- 版本号保持 **0.3.6**；本补丁含 Windows 一键包（`npm run dist:win`）
 
 ## [0.3.5] - 2026-07-28
 
