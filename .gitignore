@@ -153,3 +153,6 @@ _count.py
 
 # 本地测试输出
 pytest_*.txt
+
+# 本地打包产物
+*.zip
