@@ -1,3 +1,5 @@
 # Default requirements (production runtime)
 # Install dev extras: pip install -r requirements-dev.txt
 -r requirements-prod.txt
+
+alembic>=1.13  # schema วจาฦฃจ0.4.6-alpha าýศ๋ฃฉ

@@ -150,3 +150,6 @@ backend/workspace_state.json
 tmp_*.py
 _stats.py
 _count.py
+
+# ±¾µØ²âÊÔÊä³ö
+pytest_*.txt
