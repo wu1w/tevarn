@@ -2,6 +2,32 @@
 
 本项目版本记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [0.3.6] - 2026-07-29
+
+完成门 soft 治理（从 alpha 运行时经验回落，**不含**编制 OS / kernel）。
+
+### Added
+
+- **`TAKTON_GROUNDING_MODE`**：`soft`（默认）/ `balanced` / `strict`
+  - soft：仅硬拦「动手任务零工具」与「fix/build 无写入」
+  - 仅 glob 列举在 soft 下不硬打断（避免绑死强模型）
+  - 强模型族自动降一档（strict→balanced→soft）
+- 系统提示短 **Evidence** 块（`grounding_prompt_block`）
+- 终答 **落地脚注**：引用了当前工程中不存在的 `backend/...` 等路径时附加提示
+
+### Changed
+
+- 完成校验文案由「完成校验」改为「补充取证」
+- `evaluate_completion(..., model_name=)` 可选，供策略分层
+
+### Tests
+
+- `test_completion_gate`：soft only_glob 放行、balanced 轻提示、强模型降档
+
+### Notes
+
+- **暂缓** Windows/Linux 安装包与 electron 打包；源码与 GitHub 版本先升至 0.3.6
+
 ## [0.3.5] - 2026-07-28
 
 上下文压缩对齐 Claude Code：长会话不再「一拨一动」。

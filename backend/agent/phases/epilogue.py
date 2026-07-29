@@ -101,6 +101,17 @@ async def run_epilogue(
     except Exception as e:
         logger.debug("sft collect skipped: %s", e)
 
+    # 7.8 落地脚注：终答引用了不存在的工程路径时轻量标注（不打断流程）
+    try:
+        if final_content and not loop._should_stop:
+            from backend.agent.completion_gate import maybe_annotate_report
+
+            annotated = maybe_annotate_report(final_content, user_input or "")
+            if annotated and annotated != final_content:
+                final_content = annotated
+    except Exception as e:
+        logger.debug("report annotate skipped: %s", e)
+
     # 8. 保存最终回复 + 同步 CtxItem + 状态 + 通知（同一事务）
     try:
         await loop._persist_final_response(session_id, final_content)

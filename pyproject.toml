@@ -1,11 +1,11 @@
-ï»¿[build-system]
+[build-system]
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "takton"
-version = "0.3.5"
-description = "Takton - ä¸ªäººä¸“å±ž AI Agent ç»ˆç«¯ï¼ˆå‰åŽç«¯ä¸€ä½“ï¼‰"
+version = "0.3.6"
+description = "Takton - ¸öÈË×¨Êô AI Agent ÖÕ¶Ë£¨Ç°ºó¶ËÒ»Ìå£©"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "developer", email = "developer@takton.dev" }]

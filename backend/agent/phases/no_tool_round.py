@@ -164,18 +164,26 @@ async def run_no_tool_round(
                 except Exception:
                     pass
 
+            _model = None
+            try:
+                _model = getattr(loop, "_llm_model_name", None) or getattr(
+                    loop, "model_name", None
+                )
+            except Exception:
+                _model = None
             _ver = evaluate_completion(
                 user_input or enriched_input or "",
                 tools_used_run,
                 accumulated_content or "",
                 max_followups_done=completion_followups,
+                model_name=str(_model) if _model else None,
             )
             if not _ver.ok and _ver.nudge:
                 result.completion_followups += 1
                 await loop._push_status(
                     session_id,
                     "thinking",
-                    f"完成校验未过（{_ver.reason}），继续…",
+                    f"补充取证（{_ver.reason}）…",
                 )
                 messages.append(
                     {"role": "system", "content": _ver.nudge}

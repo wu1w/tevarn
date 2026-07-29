@@ -302,6 +302,13 @@ def build_system_prompt(
     if has_tools:
         stable_parts.append(TOOL_USE_ENFORCEMENT)
         stable_parts.append(TASK_COMPLETION)
+        # 0.3.6：短 Evidence 块（soft 默认，不绑死强模型）
+        try:
+            from backend.agent.completion_gate import grounding_prompt_block
+
+            stable_parts.append(grounding_prompt_block(model))
+        except Exception:
+            pass
         stable_parts.append(PARALLEL_TOOL_CALLS)
         stable_parts.append(SEARCH_CONVERGENCE)
 
