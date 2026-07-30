@@ -226,8 +226,11 @@ def test_parent_budget_reserved_on_child_create(wf) -> None:
     _run(go())
 
 
-def test_charge_tokens_does_not_overshoot_budget(wf) -> None:
+def test_charge_tokens_does_not_overshoot_budget(wf, monkeypatch) -> None:
     """P1-9：单次 charge 不得超过预算硬顶。"""
+    monkeypatch.setattr(
+        "backend.core.config.settings.agent_budget_soft_renew_enabled", False, raising=False
+    )
 
     async def go():
         kernel = wf["kernel"]

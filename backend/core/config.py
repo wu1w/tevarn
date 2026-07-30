@@ -375,6 +375,13 @@ class Settings(BaseSettings):
     agent_prompt_cache_friendly: bool = True
     # 向 Anthropic 请求写入 cache_control 断点（system / tools / 历史前缀）
     agent_prompt_cache_anthropic: bool = True
+    # Qwen / MiniMax 显式 cache_control（默认关，避免兼容网关 400；命中后可开）
+    agent_prompt_cache_qwen_explicit: bool = False
+    agent_prompt_cache_minimax_explicit: bool = False
+    # OpenAI 官方 prompt_cache_key（会话稳定 hash）
+    agent_prompt_cache_openai_key: bool = True
+    # Kernel 扣费优先 billable（cache miss + output），否则 raw prompt+completion
+    agent_budget_prefer_billable: bool = True
     # file history after writes
     agent_file_history: bool = True
     # plan mode auto-detect complex tasks (soft; does not force mode alone)

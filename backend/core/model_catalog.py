@@ -277,6 +277,8 @@ def _guess_provider_identity(provider_type: str, base: str) -> tuple[str, str]:
         return "MiniMax", "minimax"
     if "minimaxi.com" in b:
         return "MiniMax 国内", "minimax-cn"
+    if "xiaomimimo" in b or "mimo.mi" in b or "platform.xiaomimimo" in b:
+        return "小米 MiMo", "mimo"
     if "opencode.ai/zen/go" in b:
         return "OpenCode Go", "opencode-go"
     if "opencode.ai/zen" in b:

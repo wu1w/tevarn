@@ -38,6 +38,13 @@ class LLMServiceFactory:
         provider = settings.llm_provider
         config = settings.get_llm_config()
 
+        from .provider_profiles import resolve_profile
+
+        profile = resolve_profile(
+            base_url=getattr(config, "base_url", None),
+            model=getattr(config, "model", None),
+            llm_provider=provider,
+        )
         if provider == "ollama":
             logger.info(f"Using Ollama backend: {config.base_url}/{config.model}")
             return OllamaService(config)
@@ -46,13 +53,13 @@ class LLMServiceFactory:
             return VLLMService(config)
         elif provider == "openai":
             logger.info(f"Using OpenAI backend: {config.base_url}/{config.model}")
-            return OpenAIService(config)
+            return OpenAIService(config, profile=profile, provider_id="openai")
         elif provider == "anthropic":
             logger.info(f"Using Anthropic backend: {config.base_url}/{config.model}")
-            return AnthropicService(config)
+            return AnthropicService(config, profile=profile, provider_id="anthropic")
         elif provider == "openai-compatible":
             logger.info(f"Using OpenAI-Compatible backend: {config.base_url}/{config.model}")
-            return OpenAICompatibleService(config)
+            return OpenAICompatibleService(config, profile=profile)
         else:
             raise ValueError(f"Unsupported LLM provider: {provider}")
 
@@ -110,6 +117,7 @@ class LLMServiceFactory:
             base_url=base_url,
             model=model,
             api_key=api_key,
+            provider_id=provider_id,
             max_tokens=sanitize_max_tokens(
                 _pick("max_tokens", getattr(base_cfg, "max_tokens", 4096)),
                 model=model,
@@ -119,16 +127,33 @@ class LLMServiceFactory:
                 _pick("temperature", getattr(base_cfg, "temperature", 0.7))
             ),
         )
+        from .provider_profiles import resolve_profile
+
+        profile = resolve_profile(
+            provider_id=provider_id or None,
+            base_url=base_url,
+            model=model,
+            llm_provider=provider,
+        )
+        cache_key = str(snapshot.get("prompt_cache_key") or snapshot.get("session_id") or provider_id or "")[:64] or None
         if provider == "ollama":
             return OllamaService(config)
         elif provider == "vllm":
             return VLLMService(config)
         elif provider == "openai":
-            return OpenAIService(config)
+            return OpenAIService(
+                config, profile=profile, provider_id=provider_id or "openai",
+                prompt_cache_key=cache_key,
+            )
         elif provider == "anthropic":
-            return AnthropicService(config)
+            return AnthropicService(
+                config, profile=profile, provider_id=provider_id or "anthropic",
+            )
         elif provider == "openai-compatible":
-            return OpenAICompatibleService(config)
+            return OpenAICompatibleService(
+                config, profile=profile, provider_id=provider_id or None,
+                prompt_cache_key=cache_key,
+            )
         else:
             logger.warning("Unknown snapshot provider %r, fallback to global", provider)
             return cls.get_service()

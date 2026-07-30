@@ -62,26 +62,61 @@ class TokenMeter:
     """Token 估算器。
 
     使用简单启发式规则估算 token 数量：
-    - 英文约 1 token ≈ 4 字符
+    - 英文约 1 token ≈ 4 字符（可按 family 调整）
     - 中文约 1 token ≈ 1.5 字符
     - 代码/JSON 按保守估计
+    - 支持 cache hit / billable 字段回写
     """
 
-    def __init__(self, context_window: int = 128_000, threshold_percent: float | None = None) -> None:
+    def __init__(
+        self,
+        context_window: int = 128_000,
+        threshold_percent: float | None = None,
+        *,
+        family: str | None = None,
+        chars_per_token_latin: float | None = None,
+        chars_per_token_cjk: float | None = None,
+    ) -> None:
         """初始化 TokenMeter。
 
         Args:
             context_window: 上下文窗口大小（token 数），异常值会被钳制到合理区间
             threshold_percent: 可选的实例级默认压缩阈值（0~1）。
                 若提供，调用 ``should_compress`` 未显式传 threshold_ratio 时使用该值。
+            family: provider family（deepseek/qwen/…）用于系数与日志
+            chars_per_token_latin / chars_per_token_cjk: 覆盖默认启发式
         """
         self.context_window = _clamp_context_window(context_window)
         self.threshold_percent = _clamp_threshold(threshold_percent)
+        self.family = (family or "generic").strip() or "generic"
+
+        # family defaults from ProviderProfile when available
+        latin, cjk = 4.0, 1.5
+        if family:
+            try:
+                from backend.services.llm.provider_profiles import resolve_profile
+
+                prof = resolve_profile(provider_id=family, model=family)
+                latin = float(prof.chars_per_token_latin)
+                cjk = float(prof.chars_per_token_cjk)
+            except Exception:
+                pass
+        self.chars_per_token_latin = float(chars_per_token_latin if chars_per_token_latin is not None else latin)
+        self.chars_per_token_cjk = float(chars_per_token_cjk if chars_per_token_cjk is not None else cjk)
+        if self.chars_per_token_latin <= 0:
+            self.chars_per_token_latin = 4.0
+        if self.chars_per_token_cjk <= 0:
+            self.chars_per_token_cjk = 1.5
 
         # 使用量追踪（由 update_from_response 回写）
         self.last_prompt_tokens: int = 0
         self.last_completion_tokens: int = 0
         self.last_total_tokens: int = 0
+        self.last_cache_read_tokens: int = 0
+        self.last_cache_write_tokens: int = 0
+        self.last_billable_tokens: int = 0
+        # EMA 校准：estimate / actual
+        self._calib_ratio: float = 1.0
 
     # ──────────────────────────────────────────────────────────
     # 阈值
@@ -134,6 +169,9 @@ class TokenMeter:
         p = _as_int(usage.get("prompt_tokens"))
         c = _as_int(usage.get("completion_tokens"))
         t = _as_int(usage.get("total_tokens"))
+        cr = _as_int(usage.get("cache_read_input_tokens"))
+        cw = _as_int(usage.get("cache_creation_input_tokens"))
+        bill = _as_int(usage.get("billable_tokens"))
 
         if p is not None:
             self.last_prompt_tokens = p
@@ -146,6 +184,16 @@ class TokenMeter:
             self.last_total_tokens = (p or self.last_prompt_tokens) + (
                 c or self.last_completion_tokens
             )
+        if cr is not None:
+            self.last_cache_read_tokens = cr
+        if cw is not None:
+            self.last_cache_write_tokens = cw
+        if bill is not None and bill > 0:
+            self.last_billable_tokens = bill
+        elif p is not None or c is not None:
+            # fallback billable ≈ uncached prompt + completion
+            uncached = max(0, (p or self.last_prompt_tokens) - (cr or self.last_cache_read_tokens))
+            self.last_billable_tokens = uncached + (c or self.last_completion_tokens)
 
     # ──────────────────────────────────────────────────────────
     # 状态
@@ -159,6 +207,10 @@ class TokenMeter:
             "last_prompt_tokens": self.last_prompt_tokens,
             "last_completion_tokens": self.last_completion_tokens,
             "last_total_tokens": self.last_total_tokens,
+            "last_cache_read_tokens": self.last_cache_read_tokens,
+            "last_cache_write_tokens": self.last_cache_write_tokens,
+            "last_billable_tokens": self.last_billable_tokens,
+            "family": self.family,
             "remaining": self.remaining(),
         }
 
@@ -182,8 +234,13 @@ class TokenMeter:
         # 统计其他字符数
         other_chars = len(text) - chinese_chars
 
-        # 中文按 1.5 字符/token，其他按 4 字符/token
-        tokens = (chinese_chars / 1.5) + (other_chars / 4.0)
+        cjk = self.chars_per_token_cjk if getattr(self, "chars_per_token_cjk", 0) else 1.5
+        latin = self.chars_per_token_latin if getattr(self, "chars_per_token_latin", 0) else 4.0
+        tokens = (chinese_chars / cjk) + (other_chars / latin)
+        # 可选 EMA 校准
+        ratio = float(getattr(self, "_calib_ratio", 1.0) or 1.0)
+        if 0.5 <= ratio <= 2.0:
+            tokens *= ratio
 
         # 保守估计，向上取整
         return max(1, int(tokens) + 1)

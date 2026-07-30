@@ -99,7 +99,7 @@ class AgentCard:
     token_budget: int | None = None
     credit_score: float | None = None
     url: str = ""
-    version: str = "0.4.10-alpha"
+    version: str = "0.4.11-alpha"
     memory_kinds: list[str] = field(default_factory=list)
     meta: dict[str, Any] = field(default_factory=dict)
 
@@ -155,7 +155,7 @@ def identity_to_agent_card(
 
             version = product_version()
         except Exception:
-            version = "0.4.10-alpha"
+            version = "0.4.11-alpha"
     caps = list(getattr(ident, "capabilities", None) or [])
     skills = [capability_to_skill(str(c)) for c in caps]
     duty = ""

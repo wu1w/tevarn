@@ -116,7 +116,7 @@ def cmd_version(_: argparse.Namespace) -> int:
 
         ver = product_version()
     except Exception:
-        ver = "0.4.10-alpha"
+        ver = "0.4.11-alpha"
         try:
             vpath = Path(__file__).resolve().parent / "VERSION"
             if vpath.is_file():

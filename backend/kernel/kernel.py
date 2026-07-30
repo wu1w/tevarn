@@ -726,6 +726,10 @@ class AgentKernel:
         if amount > 0:
             proc.meta = dict(proc.meta or {})
             proc.meta["last_charge_at"] = time.time()
+            # billable 累计（与 tokens_used 同口径写入时由 charge 传入；兼容仅 amount）
+            proc.meta["billable_tokens_used"] = int(
+                proc.meta.get("billable_tokens_used") or 0
+            ) + int(amount)
         if self._shared is not None and amount > 0:
             try:
                 used, remaining = self._shared.charge_tokens(process_id, amount)

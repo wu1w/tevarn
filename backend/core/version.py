@@ -5,7 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-_FALLBACK = "0.4.10-alpha"
+_FALLBACK = "0.4.11-alpha"
 
 
 @lru_cache(maxsize=1)

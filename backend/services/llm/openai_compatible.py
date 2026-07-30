@@ -23,7 +23,8 @@ logger = logging.getLogger(__name__)
 class OpenAICompatibleService(LLMService):
     """通用 OpenAI 兼容 LLM 服务"""
 
-    def __init__(self, config=None):
+    def __init__(self, config=None, *, profile=None, provider_id: str | None = None,
+                 prompt_cache_key: str | None = None):
         self.config = config or settings.get_llm_config()
         base = (self.config.base_url or "").strip().strip("\"'")
         self.base_url = base.rstrip("/")
@@ -37,6 +38,27 @@ class OpenAICompatibleService(LLMService):
         )
         self.temperature = sanitize_temperature(getattr(self.config, "temperature", 0.7))
         self.api_key = getattr(self.config, "api_key", None)
+        self.provider_id = (provider_id or getattr(config, "provider_id", None) or "").strip()
+        self.prompt_cache_key = prompt_cache_key or getattr(config, "prompt_cache_key", None)
+
+        # Provider family profile (cache / limits / meter)
+        if profile is not None:
+            self.profile = profile
+        else:
+            from .provider_profiles import resolve_profile
+            self.profile = resolve_profile(
+                provider_id=self.provider_id or None,
+                base_url=self.base_url,
+                model=self.model,
+                llm_provider="openai-compatible",
+            )
+        self._max_tool_arg_chars = int(
+            getattr(self.profile, "max_tool_arg_chars", self._MAX_TOOL_ARG_CHARS)
+        )
+        self._max_tool_result_chars = int(
+            getattr(self.profile, "max_tool_result_chars", self._MAX_TOOL_RESULT_CHARS)
+        )
+
         # Kimi Code 仅接受 temperature=1：会话快照/ephemeral snapshot 可能带 0.7
         # 等其它值，经 get_service_for_snapshot 锁进实例后直接 400。在此强制钳制，
         # 覆盖主路径与 bridge 等所有调用入口（与 _normalize_model_id 同一判定）。
@@ -46,11 +68,72 @@ class OpenAICompatibleService(LLMService):
                 self.temperature,
             )
             self.temperature = 1.0
+        elif (
+            getattr(self.profile, "force_temperature", None) is not None
+            and self.temperature != float(self.profile.force_temperature)
+        ):
+            self.temperature = float(self.profile.force_temperature)
 
     def _is_kimi_coding(self) -> bool:
         """与 _normalize_model_id 同一 Kimi Code 判定。"""
         b = (self.base_url or "").lower()
         return "kimi.com/coding" in b or "api.kimi.com/coding" in b
+
+    def _family(self) -> str:
+        return str(getattr(self.profile, "family", "generic") or "generic")
+
+    def _normalize_usage(self, raw: dict[str, Any] | None) -> dict[str, int]:
+        from .usage_normalize import log_cache_usage, normalize_usage
+
+        usage = normalize_usage(raw, family=self._family())
+        if usage:
+            log_cache_usage(self.model, usage, family=self._family())
+        return usage
+
+    def _apply_profile_payload_hooks(self, payload: dict[str, Any], messages: list[dict[str, Any]]) -> None:
+        """stream_options / prompt_cache_key / optional explicit cache_control."""
+        from .cache_protocol import (
+            apply_anthropic_style_cache,
+            apply_openai_prompt_cache_key,
+            reorder_tools_before_system_messages,
+        )
+        from .provider_profiles import explicit_cache_enabled
+
+        prof = self.profile
+        if getattr(prof, "stream_include_usage", True) and payload.get("stream"):
+            # OpenAI + many compat gateways; harmless if ignored
+            so = payload.get("stream_options")
+            if not isinstance(so, dict):
+                so = {}
+            so = {**so, "include_usage": True}
+            payload["stream_options"] = so
+
+        # OpenAI official cache key
+        try:
+            key_on = bool(getattr(settings, "agent_prompt_cache_openai_key", True))
+        except Exception:
+            key_on = True
+        if getattr(prof, "openai_prompt_cache_key", False) and key_on:
+            apply_openai_prompt_cache_key(
+                payload,
+                cache_key=str(self.prompt_cache_key or "") or None,
+                enabled=True,
+            )
+
+        if explicit_cache_enabled(prof):
+            # OpenAI-shaped tools must not get cache_control (400 on many gateways).
+            # Only mark system + penultimate message content blocks.
+            apply_anthropic_style_cache(
+                payload,
+                messages,
+                max_breakpoints=int(getattr(prof, "cache_max_breakpoints", 4) or 4),
+                enabled=True,
+                mark_tools=False,
+            )
+            payload["_takton_explicit_cache"] = True
+
+        if getattr(prof, "tools_before_system", False):
+            reorder_tools_before_system_messages(payload)
 
     @staticmethod
     def _normalize_model_id(model: str, base_url: str) -> str:
@@ -104,8 +187,7 @@ class OpenAICompatibleService(LLMService):
     _MAX_TOOL_ARG_CHARS = 6000
     _MAX_TOOL_RESULT_CHARS = 12000
 
-    @classmethod
-    def _sanitize_messages_for_api(cls, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _sanitize_messages_for_api(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Normalize message list for strict OpenAI-compatible gateways.
 
         Critical: function.arguments MUST remain valid JSON after any truncation
@@ -126,6 +208,17 @@ class OpenAICompatibleService(LLMService):
                     for tc in tcs:
                         if isinstance(tc, dict) and tc.get("id"):
                             declared_tool_ids.add(str(tc["id"]))
+
+        arg_limit = int(
+            getattr(self, "_max_tool_arg_chars", None)
+            or getattr(self, "_MAX_TOOL_ARG_CHARS", 6000)
+            or 6000
+        )
+        result_limit = int(
+            getattr(self, "_max_tool_result_chars", None)
+            or getattr(self, "_MAX_TOOL_RESULT_CHARS", 12000)
+            or 12000
+        )
 
         def _trim_text(s: str, limit: int) -> str:
             if len(s) <= limit:
@@ -152,12 +245,12 @@ class OpenAICompatibleService(LLMService):
                     raw = json.dumps({"value": str(args)}, ensure_ascii=False)
                     parsed = {"value": str(args)}
 
-            if len(raw) <= cls._MAX_TOOL_ARG_CHARS and parsed is not None:
+            if len(raw) <= arg_limit and parsed is not None:
                 # re-dump to guarantee compact valid JSON
                 try:
                     return json.dumps(parsed, ensure_ascii=False)
                 except Exception:
-                    return raw if len(raw) <= cls._MAX_TOOL_ARG_CHARS else json.dumps(
+                    return raw if len(raw) <= arg_limit else json.dumps(
                         {"_truncated": True, "preview": raw[:800]}, ensure_ascii=False
                     )
 
@@ -238,8 +331,8 @@ class OpenAICompatibleService(LLMService):
                     m["content"] = ""
                 elif not isinstance(content, str):
                     m["content"] = str(content)
-                if len(m["content"]) > cls._MAX_TOOL_RESULT_CHARS:
-                    m["content"] = _trim_text(m["content"], cls._MAX_TOOL_RESULT_CHARS)
+                if len(m["content"]) > result_limit:
+                    m["content"] = _trim_text(m["content"], result_limit)
                 if tid:
                     pending_tool_ids.discard(str(tid))
                 elif pending_tool_ids:
@@ -325,7 +418,7 @@ class OpenAICompatibleService(LLMService):
         """调用 OpenAI 兼容 /v1/chat/completions，支持流式和非流式"""
         url = self._chat_completions_url()
         safe_messages = self._sanitize_messages_for_api(messages)
-        payload = {
+        payload: dict[str, Any] = {
             "model": self.model,
             "messages": safe_messages,
             "stream": stream,
@@ -335,6 +428,9 @@ class OpenAICompatibleService(LLMService):
         if tools:
             payload["tools"] = self._normalize_tools(tools)
             payload["tool_choice"] = "auto"
+        self._apply_profile_payload_hooks(payload, safe_messages)
+        # Do not send internal flags to provider
+        payload.pop("_takton_explicit_cache", None)
 
         message_id = uuid.uuid4()
 
@@ -389,10 +485,12 @@ class OpenAICompatibleService(LLMService):
                             delta="",
                             reasoning_delta=str(reasoning),
                         )
+                    _usage = self._normalize_usage(data.get("usage") if isinstance(data, dict) else None)
                     yield LLMChunk(
                         message_id=message_id,
                         delta=content or "",
                         finish_reason=finish_reason,
+                        usage=_usage,
                     )
             except aiohttp.ClientResponseError as e:
                 logger.error(f"OpenAI-compatible chat error: status={e.status}, message='{e.message}', url='{e.request_info.url}'")
@@ -437,6 +535,7 @@ class OpenAICompatibleService(LLMService):
 
         accumulated_tool_calls: dict[int, dict[str, Any]] = {}
         last_finish_reason: str | None = None
+        stream_usage: dict[str, int] = {}
 
         def _merge_tool_delta(tc: dict[str, Any]) -> None:
             """合并流式 tool_call 增量（后续 chunk 可能补全 id/name）。"""
@@ -505,8 +604,17 @@ class OpenAICompatibleService(LLMService):
                     except json.JSONDecodeError:
                         continue
 
-                    choice = data.get("choices", [{}])[0]
-                    delta = choice.get("delta", {})
+                    # Stream usage (OpenAI stream_options.include_usage / DeepSeek etc.)
+                    raw_usage = data.get("usage")
+                    if isinstance(raw_usage, dict) and raw_usage:
+                        stream_usage.update(self._normalize_usage(raw_usage))
+
+                    choices = data.get("choices") or []
+                    if not choices:
+                        # final usage-only chunk
+                        continue
+                    choice = choices[0] if isinstance(choices[0], dict) else {}
+                    delta = choice.get("delta", {}) or {}
 
                     content = delta.get("content", "") or ""
                     if content:
@@ -545,7 +653,10 @@ class OpenAICompatibleService(LLMService):
                             yield chunk
                         effective = "tool_calls" if emitted else finish_reason
                         yield LLMChunk(
-                            message_id=message_id, delta="", finish_reason=effective
+                            message_id=message_id,
+                            delta="",
+                            finish_reason=effective,
+                            usage=dict(stream_usage) if stream_usage else {},
                         )
                         break
                 else:
@@ -557,10 +668,14 @@ class OpenAICompatibleService(LLMService):
                             message_id=message_id,
                             delta="",
                             finish_reason="tool_calls",
+                            usage=dict(stream_usage) if stream_usage else {},
                         )
                     elif last_finish_reason is None:
                         yield LLMChunk(
-                            message_id=message_id, delta="", finish_reason="stop"
+                            message_id=message_id,
+                            delta="",
+                            finish_reason="stop",
+                            usage=dict(stream_usage) if stream_usage else {},
                         )
 
         except aiohttp.ClientResponseError as e:
@@ -624,9 +739,15 @@ class OpenAICompatibleService(LLMService):
         content = "".join(c.delta for c in chunks)
         tool_calls = [c.tool_call for c in chunks if c.tool_call is not None]
         finish_reason = chunks[-1].finish_reason if chunks else "stop"
+        usage: dict[str, int] = {}
+        for c in chunks:
+            u = getattr(c, "usage", None)
+            if isinstance(u, dict) and u:
+                usage.update(u)
 
         return LLMResponse(
             content=content,
             tool_calls=tool_calls,
             finish_reason=finish_reason,
+            usage=usage,
         )

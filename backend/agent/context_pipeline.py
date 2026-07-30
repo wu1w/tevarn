@@ -117,19 +117,35 @@ def build_compact_continuation_message(
 
 
 class PipelineContextEngine(ContextEngine):
-    def __init__(self) -> None:
-        self.context_length = int(_cfg("context_window", 128_000) or 128_000)
-        self.threshold_percent = float(_cfg("context_threshold_percent", 0.72) or 0.72)
+    def __init__(self, *, profile: Any | None = None) -> None:
+        self.profile = profile
+        family = None
+        l1_default = 12_000
+        thr_default = 0.72
+        l5_default = True
+        if profile is not None:
+            family = getattr(profile, "family", None)
+            l1_default = int(getattr(profile, "l1_tool_chars", l1_default) or l1_default)
+            thr_default = float(getattr(profile, "l3_threshold_ratio", thr_default) or thr_default)
+            l5_default = bool(getattr(profile, "l5_enabled_default", True))
+            cw = int(getattr(profile, "default_context_window", 0) or 0)
+        else:
+            cw = 0
+
+        self.context_length = int(_cfg("context_window", cw or 128_000) or (cw or 128_000))
+        self.threshold_percent = float(
+            _cfg("context_threshold_percent", thr_default) or thr_default
+        )
         self.protect_first_n = int(_cfg("context_protect_first_n", 3) or 3)
         self.protect_last_n = int(_cfg("context_protect_last_n", 12) or 12)
         self.max_tool_output_chars = int(
             _cfg("context_max_tool_output_chars", None)
-            or _cfg("max_tool_result_length", 12_000)
-            or 12_000
+            or _cfg("max_tool_result_length", l1_default)
+            or l1_default
         )
         self.enable_l1 = bool(_cfg("context_enable_l1", True))
         self.enable_l3 = bool(_cfg("context_enable_l3", True))
-        self.enable_l5 = bool(_cfg("context_enable_l5", True))
+        self.enable_l5 = bool(_cfg("context_enable_l5", l5_default))
         # Thrashing guard：180s 内 L5(hard compact) 触发 >= max_events 次 → 熔断，
         # 冷却期内只跑 L1/L3 micro，禁止再砍对话，防止压缩风暴把上下文打到不可用。
         self.thrash_max_events = int(_cfg("context_thrash_max_events", 3) or 3)
@@ -143,9 +159,37 @@ class PipelineContextEngine(ContextEngine):
         self.meter = TokenMeter(
             context_window=self.context_length,
             threshold_percent=self.threshold_percent,
+            family=family,
+            chars_per_token_latin=getattr(profile, "chars_per_token_latin", None) if profile else None,
+            chars_per_token_cjk=getattr(profile, "chars_per_token_cjk", None) if profile else None,
         )
         self.compression_count = 0
         self.last_layers: list[str] = []
+
+    def apply_profile(self, profile: Any) -> None:
+        """Hot-swap provider profile (e.g. when session model changes)."""
+        if profile is None:
+            return
+        self.profile = profile
+        self.meter.family = getattr(profile, "family", self.meter.family)
+        self.meter.chars_per_token_latin = float(
+            getattr(profile, "chars_per_token_latin", self.meter.chars_per_token_latin)
+        )
+        self.meter.chars_per_token_cjk = float(
+            getattr(profile, "chars_per_token_cjk", self.meter.chars_per_token_cjk)
+        )
+        # Prefer larger of settings vs profile for tool chars only if settings default
+        try:
+            if not _cfg("context_max_tool_output_chars", None):
+                self.max_tool_output_chars = int(
+                    getattr(profile, "l1_tool_chars", self.max_tool_output_chars)
+                )
+        except Exception:
+            pass
+        cw = int(getattr(profile, "default_context_window", 0) or 0)
+        if cw > 0 and not _cfg("context_window", None):
+            self.context_length = cw
+            self.meter.context_window = cw
 
     @property
     def name(self) -> str:
@@ -676,7 +720,10 @@ Be thorough on technical detail needed to continue coding (paths, errors, decisi
 
 
 def _get_compress_llm():
-    """Main model by default; optional override via settings.context_compress_model."""
+    """Main model by default; optional override via settings.context_compress_model.
+
+    Never use reasoning/think models for L5 (completion cost explosion).
+    """
     from backend.core.config import (
         AnthropicConfig,
         OllamaConfig,
@@ -690,18 +737,51 @@ def _get_compress_llm():
     from backend.services.llm.ollama import OllamaService
     from backend.services.llm.openai_cloud import OpenAIService
     from backend.services.llm.openai_compatible import OpenAICompatibleService
+    from backend.services.llm.provider_profiles import resolve_profile
     from backend.services.llm.vllm import VLLMService
 
     override = (getattr(settings, "context_compress_model", None) or "").strip()
-    if not override or override == (settings.llm_model or "").strip():
-        return LLMServiceFactory.get_service()
-
+    main_model = (settings.llm_model or "").strip()
     provider = settings.llm_provider
     base = settings.get_llm_config()
-    # clone-ish config with model override
+    profile = resolve_profile(
+        base_url=getattr(base, "base_url", None),
+        model=override or main_model,
+        llm_provider=provider,
+    )
+
+    def _pick_model() -> str:
+        cand = override or main_model
+        if cand and profile.is_reasoning_model(cand):
+            hint = (profile.recommended_compress_model_hint or "").strip()
+            if hint and not profile.is_reasoning_model(hint):
+                logger.info(
+                    "L5 compress: skipping reasoning model %r → %r", cand, hint
+                )
+                return hint
+            # last resort: strip common reasoner suffixes
+            for bad in ("-reasoner", "-thinking", "-r1"):
+                if cand.lower().endswith(bad):
+                    alt = cand[: -len(bad)]
+                    if alt:
+                        return alt
+            logger.warning(
+                "L5 compress using reasoning model %r (no non-reasoner override)",
+                cand,
+            )
+        return cand or main_model
+
+    model = _pick_model()
+    if not override or override == main_model:
+        if model == main_model and not profile.is_reasoning_model(main_model):
+            return LLMServiceFactory.get_service()
+        # need override path even when settings.context_compress_model empty
+        if model == main_model:
+            return LLMServiceFactory.get_service()
+
     data = {
         "base_url": base.base_url,
-        "model": override,
+        "model": model,
         "max_tokens": min(getattr(base, "max_tokens", 4096) or 4096, 4096),
         "temperature": 0.2,
         "api_key": getattr(base, "api_key", None),
@@ -711,7 +791,7 @@ def _get_compress_llm():
     if provider == "vllm":
         return VLLMService(VLLMConfig(**data))
     if provider == "openai":
-        return OpenAIService(OpenAIConfig(**data))
+        return OpenAIService(OpenAIConfig(**data), profile=profile)
     if provider == "anthropic":
-        return AnthropicService(AnthropicConfig(**data))
-    return OpenAICompatibleService(OpenAICompatibleConfig(**data))
+        return AnthropicService(AnthropicConfig(**data), profile=profile)
+    return OpenAICompatibleService(OpenAICompatibleConfig(**data), profile=profile)

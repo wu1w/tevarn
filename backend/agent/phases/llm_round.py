@@ -292,10 +292,20 @@ async def _run_llm_round_body(
         pass
 
     # ── Agent Kernel 预算强制（TC-B2）：进程级 token 预算扣减，超限中断 run ──
-    # 多数流式 provider 不回填 usage → 用粗估，避免 tokens_used 永远 0、预算条假 0%
-    spent = int(stream_usage.get("prompt_tokens") or 0) + int(
-        stream_usage.get("completion_tokens") or 0
-    )
+    # 优先 billable（cache miss + output）；多数流式 provider 不回填 usage → 粗估
+    try:
+        from backend.services.llm.usage_normalize import charge_amount_from_usage
+
+        prefer_billable = bool(getattr(settings, "agent_budget_prefer_billable", True))
+        spent = charge_amount_from_usage(
+            stream_usage if stream_usage else None,
+            prefer_billable=prefer_billable,
+            fallback=0,
+        )
+    except Exception:
+        spent = int(stream_usage.get("prompt_tokens") or 0) + int(
+            stream_usage.get("completion_tokens") or 0
+        )
     if spent <= 0:
         try:
             from backend.agent.token_meter import TokenMeter

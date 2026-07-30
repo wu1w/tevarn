@@ -18,7 +18,18 @@ from backend.services.llm.openai_compatible import OpenAICompatibleService
 
 
 def _sanitize(messages):
-    return OpenAICompatibleService._sanitize_messages_for_api(messages)
+    from types import SimpleNamespace
+
+    svc = OpenAICompatibleService(
+        SimpleNamespace(
+            base_url="https://api.example.com/v1",
+            model="test",
+            api_key="k",
+            max_tokens=1024,
+            temperature=0.7,
+        )
+    )
+    return svc._sanitize_messages_for_api(messages)
 
 
 # ── sanitize 兜底 ──────────────────────────────────────────────────────────

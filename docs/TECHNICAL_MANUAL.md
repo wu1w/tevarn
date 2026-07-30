@@ -1,6 +1,6 @@
 # Takton 技术手册
 
-版本：**0.4.10-alpha**  
+版本：**0.4.11-alpha**  
 更新：2026-07-30（Phase 5 对齐）
 
 > **执行模型（现行）**  
@@ -14,7 +14,22 @@
 > - 硬顶默认 **200 万** token/进程（`agent_workforce_budget_hard_cap` / `TAKTON_WORKFORCE_BUDGET_HARD_CAP`）  
 > - **软续航**：用尽前自动 top_up（`agent_budget_soft_renew_*`，默认开，最多 12 次）  
 > - CEO：`crew_steward top_up` / `set_budget` / `budgets` 仍可人工治理  
-> - 长 instruction / 马拉松类任务自动抬高开局预算
+> - 长 instruction / 马拉松类任务自动抬高开局预算  
+> - 扣费优先 **billable tokens**（cache miss + output；`agent_budget_prefer_billable`）
+
+### Provider 缓存与 Token 优化（S1–S4）
+
+多供应商通过 `backend/services/llm/provider_profiles.py` 解析 **family**（anthropic / openai / xai / kimi / deepseek / qwen / glm / minimax / mimo …）：
+
+| 能力 | 说明 |
+|------|------|
+| 隐式缓存 | DeepSeek / GLM / MiMo / xAI 等：稳定 system+tools 前缀即可命中 |
+| 显式断点 | Anthropic 默认开；Qwen/MiniMax 可选（`agent_prompt_cache_qwen_explicit` / `minimax_explicit`） |
+| Usage 归一 | `usage_normalize.py` → `cache_read_*` / `billable_tokens` |
+| 上下文 | L1/L3/L5 可按 profile 调阈值；L5 **不用** reasoner/R1 模型 |
+| 压测 | `python scripts/bench_provider_cache.py` |
+
+设置 → 模型预设含 **小米 MiMo**；帮助文案提示稳定前缀可降本。
 
 ---
 

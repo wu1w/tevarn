@@ -86,7 +86,10 @@ def test_t5_child_process_narrowed_token(kernel: AgentKernel) -> None:
 
 # ── TC-B2：预算耗尽中断 ──
 
-def test_b2_budget_exhaustion_semantics(kernel: AgentKernel) -> None:
+def test_b2_budget_exhaustion_semantics(kernel: AgentKernel, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "backend.core.config.settings.agent_budget_soft_renew_enabled", False, raising=False
+    )
     async def go():
         proc = await kernel.create_process("main", token_budget=1000)
         kernel.charge_tokens(proc.id, 600)
