@@ -7,7 +7,8 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
+# backend/tests/<file> → repo root is parents[2]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def _read(rel: str) -> str:

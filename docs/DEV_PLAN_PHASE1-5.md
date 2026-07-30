@@ -114,7 +114,7 @@
 - [ ] 配置开关：`agent_run_auto_recover`（默认 true）
 - [ ] **验收（本 Phase 核心）**：启动一个 ≥20 轮的长任务，中途 kill 后端进程，
       重启后任务自动续跑且不重复已完成步骤。写成集成测试
-      `tests/test_durable_run_recovery.py`（已有 test_durable_run.py 作基础扩展）
+      `backend/tests/test_durable_run_recovery.py`（已有 backend/tests/test_durable_run.py 作基础扩展）
 
 ### 2.4 收敛双轨心智（第 6 周）
 

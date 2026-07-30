@@ -85,6 +85,7 @@ extend-exclude = [
     "backend/migrations/versions",
     "takton-code",
     "takton-agent",
+    "tests",  # 已归档：权威测试树为 backend/tests
 ]
 
 [tool.ruff.lint]
@@ -101,7 +102,6 @@ ignore = [
 "**/__init__.py" = ["F401"]
 # 测试里允许 assert-raises-Exception / 未用变量等便利写法
 "backend/tests/**" = ["B017", "B011", "F841"]
-"tests/**" = ["B017", "B011", "F841"]
 
 # ── mypy：“类型化核心”门禁（逐步扩面）──────────────────────────────
 # 全量 mypy 当前有 402 处历史欠账，无法一步 gate。策略：只对下方

@@ -28,7 +28,7 @@
 
 - All tool/skill/MCP executions go through kernel.mediate(); capability escalation via approval queue
 - Evolution assets enter as status=draft and require approval; auto-rollback on regression is audited
-- Tests: pytest backend/tests tests (CI: .github/workflows/backend-ci.yml)
+- Tests: pytest backend/tests only (CI: .github/workflows/backend-ci.yml); root tests/ is archived
 - Schema changes MUST use alembic revisions, not create_all
 
 ## Optional

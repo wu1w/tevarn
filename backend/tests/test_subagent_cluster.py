@@ -13,7 +13,8 @@ import pytest
 from backend.agent.loop import NexusAgentLoop
 from backend.api.routes import sub_agents as sub_agents_mod
 
-ROOT = Path(__file__).resolve().parents[1]
+# backend/tests/<file> → repo root is parents[2]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_backend_sources_parse():

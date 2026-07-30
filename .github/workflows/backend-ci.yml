@@ -5,7 +5,6 @@ on:
     branches: [main, feature/agent-kernel]
     paths:
       - "backend/**"
-      - "tests/**"
       - "requirements*.txt"
       - "pyproject.toml"
       - ".github/workflows/backend-ci.yml"
@@ -30,7 +29,7 @@ jobs:
           pip install -r requirements.txt -r backend/requirements-dev.txt
 
       - name: Ruff lint (gate)
-        run: python -m ruff check backend tests
+        run: python -m ruff check backend
 
       - name: Mypy type-check (gate, typed core only)
         run: python -m mypy
@@ -39,7 +38,7 @@ jobs:
         run: python scripts/sync_version.py --check
 
       - name: Pytest collection sanity (fail fast on import/collect errors)
-        run: python -m pytest backend/tests tests --co -q
+        run: python -m pytest backend/tests --co -q
 
       - name: Security regression suite (Phase 1.1)
         env:
@@ -51,6 +50,7 @@ jobs:
           TAKTON_API_KEY: "ci-api-key-not-for-production-use-32bxxxx"
         run: python -m pytest backend/tests/security -q
 
+      # 唯一权威测试树：backend/tests（根 tests/ 已归档，见 tests/README.md）
       - name: Run tests (backend/tests)
         env:
           TAKTON_DB_URL: "sqlite+aiosqlite:///./ci-test.db"
@@ -60,19 +60,6 @@ jobs:
           TAKTON_JWT_SECRET: "ci-jwt-secret-not-for-production-use-32b"
           TAKTON_API_KEY: "ci-api-key-not-for-production-use-32bxxxx"
         run: python -m pytest backend/tests -q --tb=line
-
-      # 根 tests/ 与 backend/tests 有历史漂移；Phase 1 关账门禁以 backend/tests + security 为准。
-      # 本步 continue-on-error：暴露失败但不阻断合并，后续 Phase 再清零。
-      - name: Run tests (repo tests/, non-blocking)
-        continue-on-error: true
-        env:
-          TAKTON_DB_URL: "sqlite+aiosqlite:///./ci-test-root.db"
-          TAKTON_TEST_MODE: "1"
-          TAKTON_AGENT_DISPATCHER_ENABLED: "false"
-          TAKTON_AGENT_KERNEL_PERSISTENCE: "false"
-          TAKTON_JWT_SECRET: "ci-jwt-secret-not-for-production-use-32b"
-          TAKTON_API_KEY: "ci-api-key-not-for-production-use-32bxxxx"
-        run: python -m pytest tests -q --tb=line
 
       - name: Alembic sanity (env.py loads, baseline resolvable)
         run: |
