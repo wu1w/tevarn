@@ -109,10 +109,6 @@ class CrewStewardTool(BaseTool):
                         "type": "integer",
                         "description": "top_up：追加 token 数量（正整数，建议 200000–500000）",
                     },
-                    "reason": {
-                        "type": "string",
-                        "description": "top_up / set_budget：原因备注",
-                    },
                     "process_id": {
                         "type": "string",
                         "description": "top_up：可选，指定 kernel 进程 id；默认抬该员工全部在跑进程",
@@ -156,7 +152,7 @@ class CrewStewardTool(BaseTool):
                     },
                     "reason": {
                         "type": "string",
-                        "description": "grant/revoke：改权原因（写入审计）",
+                        "description": "grant/revoke/top_up/set_budget：原因备注（写入审计）",
                     },
                     "limit": {
                         "type": "integer",
