@@ -52,6 +52,32 @@ def _risk_name(tool: Any) -> str:
     return str(getattr(rl, "value", rl) or "").lower()
 
 
+async def _await_with_timeout_cleanup(coro: Any, timeout: float) -> Any:
+    """wait_for 超时后显式 cancel + await 清理（L2-H1）。
+
+    裸 wait_for 在超时路径上可能留下仍在跑的子任务回调；重试/下一工具调用
+    前必须等取消完成，避免竞态写共享状态。
+    """
+    task = asyncio.ensure_future(coro)
+    try:
+        return await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+    except asyncio.TimeoutError:
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+        raise
+    except BaseException:
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+        raise
+
+
 async def _prefetch_readonly_calls(
     loop: Any,
     *,
@@ -117,9 +143,9 @@ async def _prefetch_readonly_calls(
                     args.setdefault("_inbox_item_id", str(loop._inbox_item_id))
                 if timeout > 0:
                     return (
-                        await asyncio.wait_for(
+                        await _await_with_timeout_cleanup(
                             loop._execute_registered_tool(tc.name, args),
-                            timeout=timeout,
+                            timeout,
                         ),
                         None,
                     )
@@ -279,9 +305,9 @@ async def run_tool_round(
                     getattr(settings, "agent_tool_timeout_seconds", 180) or 0
                 )
                 if _tool_timeout > 0:
-                    tool_result = await asyncio.wait_for(
+                    tool_result = await _await_with_timeout_cleanup(
                         loop._execute_registered_tool(tc.name, validated_args),
-                        timeout=_tool_timeout,
+                        _tool_timeout,
                     )
                 else:
                     tool_result = await loop._execute_registered_tool(tc.name, validated_args)

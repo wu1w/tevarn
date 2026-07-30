@@ -137,6 +137,9 @@ class PipelineContextEngine(ContextEngine):
         self.thrash_cooldown_sec = float(_cfg("context_thrash_cooldown_sec", 300) or 300)
         self._l5_events: list[float] = []  # L5 触发时间戳（滑动窗口）
         self._thrash_until: float = 0.0    # 熔断截止 monotonic 时间
+        # L2-H2：单次 compress 调用内 L5 上限 + 超限硬截断，防止压缩递归/风暴
+        self.max_l5_retries = int(_cfg("context_max_l5_retries", 3) or 3)
+        self._l5_attempts_run = 0
         self.meter = TokenMeter(
             context_window=self.context_length,
             threshold_percent=self.threshold_percent,
@@ -260,15 +263,39 @@ class PipelineContextEngine(ContextEngine):
             meta["l5_skipped_midloop"] = not allow_l5 or micro_only
 
         if need_l5 and len(out) >= 4:
-            self._record_l5_and_maybe_trip()
-            out, l5_meta = await self._l5_auto_compact(
-                out, focus_topic=focus_topic, session_id=session_id
-            )
-            if l5_meta.get("applied"):
-                layers.append("L5")
-                meta.update(l5_meta)
+            if self._l5_attempts_run >= self.max_l5_retries:
+                logger.warning(
+                    "L5 skipped: max_l5_retries=%s exhausted — hard truncate",
+                    self.max_l5_retries,
+                )
+                meta["l5_retries_exhausted"] = True
+            else:
+                self._l5_attempts_run += 1
+                self._record_l5_and_maybe_trip()
+                out, l5_meta = await self._l5_auto_compact(
+                    out, focus_topic=focus_topic, session_id=session_id
+                )
+                if l5_meta.get("applied"):
+                    layers.append("L5")
+                    meta.update(l5_meta)
 
         after = self.meter.estimate_messages(out)
+        # 压缩后仍超阈值：硬截断 head/tail（L2-H2 关账路径）
+        if after >= self.meter.threshold_tokens and len(out) > (
+            self.protect_first_n + self.protect_last_n + 1
+        ):
+            out, n_drop = self._hard_truncate(out)
+            if n_drop:
+                layers.append(f"HARD:{n_drop}")
+                after = self.meter.estimate_messages(out)
+                meta["hard_truncated"] = n_drop
+                logger.warning(
+                    "Context hard-truncated dropped %s mid messages (tokens %s → %s)",
+                    n_drop,
+                    meta.get("tokens_before", before),
+                    after,
+                )
+
         meta["tokens_after"] = after
         meta["layers"] = layers
         meta["compressed"] = after < before or bool(layers)
@@ -285,6 +312,26 @@ class PipelineContextEngine(ContextEngine):
             allow_l5 and not micro_only,
         )
         return out, meta
+
+    def _hard_truncate(
+        self, messages: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], int]:
+        """保留头/尾，丢弃中间（不可再递归压缩时的最后手段）。"""
+        head_n = max(1, self.protect_first_n)
+        tail_n = max(1, self.protect_last_n)
+        if len(messages) <= head_n + tail_n:
+            return messages, 0
+        head = messages[:head_n]
+        tail = messages[-tail_n:]
+        dropped = len(messages) - head_n - tail_n
+        marker = {
+            "role": "system",
+            "content": (
+                f"[context hard-truncated: dropped {dropped} messages "
+                f"after max_l5_retries={self.max_l5_retries}]"
+            ),
+        }
+        return head + [marker] + tail, dropped
 
     # ── L1 ──────────────────────────────────────────────────────────
 

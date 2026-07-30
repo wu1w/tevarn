@@ -10,7 +10,7 @@
 
 - docs/TECHNICAL_MANUAL.md: Full technical manual (architecture, modules, flows)
 - docs/KERNEL_PLAN.md: Kernel design/roadmap — process model, mediate(), budgets, suspend/resume, Redis multi-worker
-- ALPHA_AUTHORITY.md: Canonical decisions and constraints of the alpha line
+- docs/ALPHA_AUTHORITY.md: Canonical decisions and constraints of the alpha line
 - AGENTS.md: Instructions for coding agents working on this repo
 
 ## Core modules (backend/)
@@ -33,7 +33,8 @@
 
 ## Optional
 
-- ROADMAP_0.4.5_to_0.6.md: near-term roadmap
-- reports/: internal audit reports (Chinese)
+- docs/internal/ROADMAP_0.4.5_to_0.6.md: near-term roadmap
+- docs/archive/2026-07/: archived root reports / audit notes
+- reports/: internal sprint reports (Chinese)
 - takton-code/: standalone code-agent subproject
 - e2e/, frontend/e2e/: Playwright end-to-end suites

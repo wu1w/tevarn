@@ -475,10 +475,18 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"MCP tools loading skipped: {e}")
 
+    # 测试模式：不拉常驻后台（dispatcher/cron/gateway），避免 pytest 多次
+    # LifespanManager 启停互锁。生产/开发路径不变。
+    _test_mode = str(os.environ.get("TAKTON_TEST_MODE", "") or "").strip() in {
+        "1",
+        "true",
+        "yes",
+    }
+
     # 0.6 自主运转：工具就绪后再拉 dispatcher，避免抢跑空注册表
     # Inbox 权威在 SQLite；dispatcher.tick 内 reclaim_stale_claims
     try:
-        if bool(getattr(settings, "agent_dispatcher_enabled", True)):
+        if (not _test_mode) and bool(getattr(settings, "agent_dispatcher_enabled", True)):
             from backend.database import AsyncSessionLocal
             from backend.kernel.kernel import get_kernel
             from backend.kernel.workforce import init_workforce
@@ -498,26 +506,33 @@ async def lifespan(app: FastAPI):
         logger.warning(f"workforce dispatcher startup skipped: {e}")
 
     # Start cron scheduler
-    try:
-        from backend.services.cron_scheduler import scheduler as cron_scheduler
-        _spawn_bg(cron_scheduler.start(), "cron_scheduler")
-        logger.info("Cron scheduler started")
-    except Exception as e:
-        logger.warning(f"Cron scheduler start skipped: {e}")
+    if not _test_mode:
+        try:
+            from backend.services.cron_scheduler import scheduler as cron_scheduler
+            _spawn_bg(cron_scheduler.start(), "cron_scheduler")
+            logger.info("Cron scheduler started")
+        except Exception as e:
+            logger.warning(f"Cron scheduler start skipped: {e}")
+    else:
+        logger.info("Cron scheduler skipped (TAKTON_TEST_MODE)")
 
     # Seed Wiki Graph 基础通识数据（仅空库时，后台）
-    try:
-        from backend.api.routes.wiki import ensure_wiki_seed
-        _spawn_bg(ensure_wiki_seed(), "wiki_seed")
-    except Exception as e:
-        logger.warning(f"Wiki seeding skipped: {e}")
+    if not _test_mode:
+        try:
+            from backend.api.routes.wiki import ensure_wiki_seed
+            _spawn_bg(ensure_wiki_seed(), "wiki_seed")
+        except Exception as e:
+            logger.warning(f"Wiki seeding skipped: {e}")
 
     # Start channel gateway (消息通道长连接，后台)
-    try:
-        from backend.services.channel_gateway import start_channel_gateway
-        _spawn_bg(start_channel_gateway(), "channel_gateway")
-    except Exception as e:
-        logger.warning(f"Channel gateway start skipped: {e}")
+    if not _test_mode:
+        try:
+            from backend.services.channel_gateway import start_channel_gateway
+            _spawn_bg(start_channel_gateway(), "channel_gateway")
+        except Exception as e:
+            logger.warning(f"Channel gateway start skipped: {e}")
+    else:
+        logger.info("Channel gateway skipped (TAKTON_TEST_MODE)")
 
     yield  # 应用运行中
 

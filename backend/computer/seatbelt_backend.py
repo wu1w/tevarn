@@ -45,6 +45,20 @@ def _sb_escape(path: str) -> str:
     return path.replace("\\", "\\\\").replace('"', '\\"')
 
 
+def _sb_path(path: str) -> str:
+    """规范化 seatbelt 路径：保留 POSIX 语义，避免 Windows abspath 改写 /Users/…。
+
+    profile 只在 macOS sandbox-exec 上消费；生成逻辑须在 Win/Linux CI 上可测。
+    """
+    p = (path or "").strip()
+    if not p:
+        return p
+    # 已是 POSIX 绝对路径（含 macOS /Users /tmp）——勿走宿主 abspath
+    if p.startswith("/") and not p.startswith("//"):
+        return os.path.normpath(p).replace("\\", "/")
+    return os.path.abspath(p)
+
+
 def build_seatbelt_profile(
     workspace_root: str,
     agent_home: str,
@@ -52,8 +66,8 @@ def build_seatbelt_profile(
     network: bool = False,
 ) -> str:
     """生成 seatbelt profile（deny default + 白名单写）。"""
-    ws = _sb_escape(os.path.abspath(workspace_root))
-    home = _sb_escape(os.path.abspath(agent_home))
+    ws = _sb_escape(_sb_path(workspace_root))
+    home = _sb_escape(_sb_path(agent_home))
     lines = [
         "(version 1)",
         "(deny default)",

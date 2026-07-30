@@ -23,15 +23,17 @@ _engine = create_async_engine(
 _Session = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
 
 
-@pytest_asyncio.fixture(autouse=True, scope="module")
+@pytest_asyncio.fixture(autouse=True)
 async def _isolate_db():
+    """function 级（与默认 event loop 对齐）；StaticPool 内存库跨测复用。"""
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     orig = repo_base.AsyncSessionLocal
     repo_base.AsyncSessionLocal = _Session
-    yield
-    repo_base.AsyncSessionLocal = orig
-    await _engine.dispose()
+    try:
+        yield
+    finally:
+        repo_base.AsyncSessionLocal = orig
 
 
 def test_create_objective_and_tree(client):

@@ -46,8 +46,16 @@ class TestSeatbeltProfile:
         assert "-p" in argv
         joined = " ".join(argv)
         assert "env" in joined and "-i" in argv  # 最小环境
-        assert "HOME=/tmp/ws/.computers/main/home" in argv
-        assert "cd /tmp/ws && echo hi" in argv  # cwd 包装
+        # HOME 可能经宿主 abspath 归一化（Windows 开发机），只断言后缀语义
+        assert any(
+            isinstance(x, str) and x.startswith("HOME=") and x.replace("\\", "/").endswith(
+                "/.computers/main/home"
+            )
+            for x in argv
+        ), argv
+        assert any(
+            isinstance(x, str) and "echo hi" in x and "cd " in x for x in argv
+        ), argv
 
     def test_cwd_outside_workspace_rejected(self):
         b = SeatbeltBackend("/tmp/ws", "main")
@@ -117,8 +125,15 @@ class TestJobBackend:
         assert b._check_cwd("C:\\proj") is None
         assert b._check_cwd("C:\\other") is not None
 
-    async def test_run_on_non_windows_friendly_error(self, tmp_path):
-        """非 Windows：明确报错（执行层未触发 ctypes）。"""
+    async def test_run_on_non_windows_friendly_error(self, tmp_path, monkeypatch):
+        """非 Windows：明确报错（执行层未触发 ctypes）。
+
+        在真实 Windows 开发机上 JobBackend 会真跑——用 monkeypatch 强制 os.name，
+        保证本用例测的是错误路径而非宿主 OS。
+        """
+        import backend.computer.job_backend as jb
+
+        monkeypatch.setattr(jb.os, "name", "posix")
         b = JobBackend(str(tmp_path), "main")
         res = await b.run("echo hi", cwd=str(tmp_path))
         assert res.exit_code == 127

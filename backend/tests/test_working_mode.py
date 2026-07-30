@@ -87,12 +87,26 @@ def test_local_mode_is_explicit(monkeypatch):
     assert wm.decide_sandbox().use_sandbox is False
 
 
-def test_legacy_computer_enabled_still_forces_sandbox(monkeypatch):
-    """旧配置 agent_computer_enabled=True 升级后不得静默失去隔离。"""
+def test_local_mode_overrides_legacy_computer_enabled(monkeypatch):
+    """显式 execution_mode=local 优先于旧 agent_computer_enabled。
+
+    升级路径：旧 computer_enabled=True 应映射到 auto/sandbox，而不是
+    与 local 并存时再强行隔离——用户写 local 就是要本机。
+    """
     from backend.services.tools.executors import should_use_sandbox
 
     monkeypatch.setattr(settings, "agent_execution_mode", "local", raising=False)
     monkeypatch.setattr(settings, "agent_computer_enabled", True, raising=False)
+    assert should_use_sandbox() is False
+
+
+def test_legacy_computer_enabled_in_auto_prefers_sandbox(monkeypatch):
+    """auto + computer_enabled=True：有沙箱能力则使用（旧「优先隔离」语义）。"""
+    from backend.services.tools.executors import should_use_sandbox
+
+    monkeypatch.setattr(settings, "agent_execution_mode", "auto", raising=False)
+    monkeypatch.setattr(settings, "agent_computer_enabled", True, raising=False)
+    _patch_cap(monkeypatch, _cap("bwrap", True))
     assert should_use_sandbox() is True
 
 

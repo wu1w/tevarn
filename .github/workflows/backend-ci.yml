@@ -35,8 +35,16 @@ jobs:
       - name: Mypy type-check (gate, typed core only)
         run: python -m mypy
 
+      - name: Version sync check (backend/VERSION authority)
+        run: python scripts/sync_version.py --check
+
       - name: Pytest collection sanity (fail fast on import/collect errors)
         run: python -m pytest backend/tests tests --co -q
+
+      - name: Security regression suite (Phase 1.1)
+        env:
+          TAKTON_DB_URL: "sqlite+aiosqlite:///./ci-test.db"
+        run: python -m pytest backend/tests/security -q
 
       - name: Run tests
         env:

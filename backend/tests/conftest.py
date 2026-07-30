@@ -27,6 +27,11 @@ os.environ.setdefault("API_KEY", "test-api-key-do-not-use-in-production")
 _TEST_DB_PATH = os.path.join(tempfile.gettempdir(), f"takton_test_{os.getpid()}.db")
 os.environ.setdefault("TAKTON_DB_URL", f"sqlite+aiosqlite:///{_TEST_DB_PATH}")
 os.environ.setdefault("SINGLE_USER_MODE", "True")
+# 测试模式：禁止 lifespan 拉起 dispatcher/cron/gateway 等常驻后台，
+# 否则多次 LifespanManager 启停会在 Windows/CI 上互锁超时。
+os.environ.setdefault("TAKTON_TEST_MODE", "1")
+os.environ.setdefault("TAKTON_AGENT_DISPATCHER_ENABLED", "false")
+os.environ.setdefault("TAKTON_AGENT_KERNEL_PERSISTENCE", "false")
 
 from backend.core.config import Settings
 from backend.database import Base, get_db
@@ -41,15 +46,24 @@ TestingSessionLocal = async_sessionmaker(
 )
 
 
-@pytest_asyncio.fixture(scope="session", autouse=True)
+_TABLES_READY = False
+
+
+@pytest_asyncio.fixture(autouse=True)
 async def prepare_test_database() -> AsyncGenerator[None, None]:
-    """Create all tables once at the start of the test session."""
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    """Ensure schema exists (once per process; file DB survives loop turnover).
+
+    不用 session-scoped async fixture：pytest-asyncio session loop 与
+    LifespanManager 在部分平台会互锁超时。表建在磁盘临时库上，create_all
+    幂等；进程退出时由 OS 回收临时文件，不再 drop/dispose 触发
+    “Event loop is closed”。
+    """
+    global _TABLES_READY
+    if not _TABLES_READY:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        _TABLES_READY = True
     yield
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-    await engine.dispose()
 
 
 @pytest_asyncio.fixture

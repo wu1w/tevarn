@@ -83,9 +83,11 @@ async def test_readonly_batch_runs_concurrently(registry):
     loop = _Loop(delay=0.1)
 
     calls = [_Call("a", "file_read"), _Call("b", "grep"), _Call("c", "glob")]
-    t0 = asyncio.get_event_loop().time()
+    import time as _time
+
+    t0 = _time.monotonic()
     out = await _prefetch(loop, calls)
-    elapsed = asyncio.get_event_loop().time() - t0
+    elapsed = _time.monotonic() - t0
 
     assert set(out) == {"a", "b", "c"}
     assert out["a"] == ("result::file_read", None)

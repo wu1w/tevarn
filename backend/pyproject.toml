@@ -15,10 +15,15 @@ package-dir = {"" = "."}
 [tool.pytest.ini_options]
 pythonpath = [".."]
 asyncio_mode = "auto"
-asyncio_default_fixture_loop_scope = "session"
+# 与根 pyproject 对齐：function 级 loop，避免 LifespanManager 互锁
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 addopts = "-ra -q"
 # CI 不得因单个测试挂死（等网络/子进程）而无限阻塞；
 # Windows 上只能用 thread 方法（signal 方法仅 POSIX）。
 timeout = 120
 timeout_method = "thread"
+filterwarnings = [
+    "ignore::pytest.PytestUnhandledThreadExceptionWarning",
+    "ignore::DeprecationWarning:fastapi.*",
+]

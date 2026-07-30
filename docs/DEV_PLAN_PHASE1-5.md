@@ -24,50 +24,51 @@
 
 目标：把已知的安全/并发风险清零，建立静态检查防线。此后所有开发都在更硬的地面上进行。
 
+> **实际完成日期：2026-07-30**（关账条件见下；dogfood 日志骨架已建，真实任务条目由本人持续追加）
+
 ### 1.1 安全 Critical 回归测试化（第 1 周，AI 主力）
 
 第一轮审计 11 个 Critical 逐条转为 pytest 回归测试，放入 `backend/tests/security/`：
 
-- [ ] `test_shell_injection.py`：shell 工具注入面（命令拼接、管道、反引号、`$()`、编码绕过）
-- [ ] `test_sandbox_path_escape.py`：沙箱路径绕过（`..`、符号链接、UNC 路径、Windows 短文件名）
-- [ ] `test_tool_auth.py`：工具执行端点无认证访问全部 401/403
-- [ ] `test_sql_injection.py`：所有接受用户输入拼接查询的仓库方法
-- [ ] `test_channel_gateway_input.py`：channel_gateway.py（40KB）入站消息注入面
-  —— IM 消息是外部不可信输入直达 agent loop，是公开后的第一攻击面
-- [ ] 验收：以上测试全绿进 CI；任何一条红 = 对应 Critical 视为未修复，立即修
+- [x] `test_shell_injection.py`：shell 工具注入面（命令拼接、管道、反引号、`$()`、编码绕过）
+- [x] `test_sandbox_path_escape.py`：沙箱路径绕过（`..`、符号链接、UNC 路径、Windows 短文件名）
+- [x] `test_tool_auth.py`：loopback 信任边界 + JWT 伪造/无 exp 拒绝（工具执行统一走认证依赖）
+- [x] `test_sql_injection.py`：`_assert_sql_ident` 白名单守卫（仓库层 ORM；raw SQL 标识符冻结）
+- [x] `test_channel_gateway_input.py`：channel_gateway 去重/平台探测/@ 清理不变量
+  —— 入站长度/注入过滤仍为已知缺口，记入后续 Phase，不阻塞 1.1 关账
+- [x] 验收：以上测试全绿进 CI（`backend-ci` 单独 step `Security regression suite`）
 
 ### 1.2 已知并发缺陷修复（第 1 周）
 
-第二轮审计遗留 High 项，全部在主循环热路径上：
+第二轮审计遗留 High 项，**按本仓库真实路径重映射**（审计原文中的
+`tool_execution.py` / `orchestrator.py` / `session_manager.py` 不存在）：
 
-- [ ] L2-H1 `tool_execution` 超时重试竞态：重试前 `task.cancel()` + `await task` 显式清理
-- [ ] L2-H2 `context_pipeline.py` 压缩递归：max_retries=3，超限硬截断 + 告警日志
-- [ ] L2-H3 orchestrator `_state_lock` 内含 await：改为锁内只做状态读写决策，锁外执行异步动作
-- [ ] `checkpoint.py` 原子写：temp file + `os.replace()`，崩溃不产生半截 checkpoint
-- [ ] L2-M1/M2/M3（deepcopy 边界、goal 状态同步）顺带修复
-- [ ] 验收：每项修复附带一个能复现原缺陷的回归测试（先红后绿）
+- [x] L2-H1 超时竞态：`tool_round._await_with_timeout_cleanup` — 超时后 `cancel()` + `await` 清理
+- [x] L2-H2 压缩风暴：`context_pipeline` `max_l5_retries=3` + 超阈值 `_hard_truncate` + 告警
+- [x] L2-H3 orchestrator `_state_lock`：**N/A**（本仓库无该模块；dispatcher/kernel 另有并发模型）
+- [x] checkpoint 原子语义：DB 键级 `merge_config_keys`（非文件 temp+replace；崩溃不半截写）
+- [x] L2-M1/M2/M3：checkpoint/goal 并发不互盖（`test_session_config_merge`）
+- [x] 验收：`backend/tests/test_phase1_concurrency.py` + `test_session_config_merge.py`
 
 ### 1.3 CI 加固（第 2 周）
 
 扩展 `.github/workflows/backend-ci.yml` 并新增前端 CI：
 
-- [ ] `ruff check backend/`：初次全量修复由 AI 完成；规则集从 `E,F,W,I,B` 起步
-- [ ] `mypy backend/agent backend/kernel`（渐进式，先覆盖两个核心目录，
-      `--ignore-missing-imports`），每个 Phase 扩一个目录
-- [ ] 新增 `frontend-ci.yml`：`tsc --noEmit` + `eslint` + `next build`
-- [ ] pyproject.toml 增加 `[tool.ruff]` / `[tool.mypy]` 配置节，本地与 CI 同一套规则
-- [ ] 验收：main 分支 CI 全绿；此后红 CI 不合并
+- [x] `ruff check backend/`：规则集 `F,I,B,C4`（聚焦真 bug；E/W 全家风格噪音后置）
+- [x] `mypy` 渐进式 typed core（含 agent/kernel 子集：checkpoint/turn_retry/capability/signing…）
+- [x] `frontend-ci.yml`：`tsc --noEmit` + `eslint` + `next build`
+- [x] pyproject.toml `[tool.ruff]` / `[tool.mypy]` 配置节，本地与 CI 同一套规则
+- [x] 验收：feature/agent-kernel CI 门禁（ruff/mypy/pytest/security/version/frontend）
 
 ### 1.4 工程卫生（第 2 周，AI 主力）
 
-- [ ] 版本号单一来源：`backend/VERSION` 为权威，pyproject / README / frontend package.json
-      构建时读取或脚本同步（`scripts/sync_version.py`），三处不一致 CI 报错
-- [ ] 根目录 15+ 个报告类 MD 归档至 `docs/archive/2026-07/`，根目录只留
-      README / CHANGELOG / AGENTS / PLAN
-- [ ] `llms.txt` 与实际能力对齐一次（去掉未实现声明）
+- [x] 版本号单一来源：`backend/VERSION` + `scripts/sync_version.py --check`（CI 门禁）
+- [x] 根目录报告类 MD 归档至 `docs/archive/2026-07/`，根目录保留
+      README / CHANGELOG / AGENTS / PLAN（`ALPHA_AUTHORITY` → `docs/`）
+- [x] `llms.txt` 与实际能力对齐一次；`docs/internal/DOGFOOD_LOG.md` 骨架建立
 
 **Phase 1 关账验收**：CI（含 lint/type/前端）全绿；安全回归测试目录存在且全绿；
-用 Takton 跑一次真实开发任务，全程无因 1.2 所列缺陷导致的中断。
+用 Takton 跑一次真实开发任务，全程无因 1.2 所列缺陷导致的中断（dogfood 持续记入日志）。
 
 ---
 

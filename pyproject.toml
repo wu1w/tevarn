@@ -57,12 +57,19 @@ backend = ["static/**/*", "static/**/.*"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 asyncio_mode = "auto"
+# function 级 loop：避免 session loop + LifespanManager 在 Windows/CI 上互锁挂死。
+# aiosqlite teardown 噪音用 filterwarnings 压住（不断言失败）。
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["backend/tests"]
 addopts = "-ra -q"
 # CI 不得因单个测试挂死（等网络/子进程）而无限阻塞；
 # Windows 上只能用 thread 方法（signal 方法仅 POSIX）。
 timeout = 120
 timeout_method = "thread"
+filterwarnings = [
+    "ignore::pytest.PytestUnhandledThreadExceptionWarning",
+    "ignore::DeprecationWarning:fastapi.*",
+]
 
 # ── Ruff：CI 门禁用的 linter ────────────────────────────────────────
 # 规则集聚焦“拓真 bug + 导入卫生”，不引入纯风格噪音（E/W 全家），
@@ -112,5 +119,8 @@ files = [
     "backend/agent/dangerous_paths.py",
     "backend/agent/permissions_rules.py",
     "backend/agent/checkpoint.py",
+    "backend/agent/turn_retry.py",
     "backend/repositories/session_repo.py",
+    "backend/kernel/capability.py",
+    "backend/kernel/signing.py",
 ]

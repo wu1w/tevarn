@@ -107,11 +107,13 @@ async def test_no_live_connection_returns_immediately_and_is_honest():
     """没人在听时立即返回，不占满超时；且 reason 不能是 denied。"""
     mgr = _FakeManager(connected_sid=None)
 
-    started = asyncio.get_event_loop().time()
+    import time as _time
+
+    started = _time.monotonic()
     outcome = await confirm_manager.request_confirmation(
         mgr, uuid.uuid4(), title="t", command="rm -rf /", timeout=30.0
     )
-    elapsed = asyncio.get_event_loop().time() - started
+    elapsed = _time.monotonic() - started
 
     assert outcome.approved is False
     assert outcome.reason == "not_connected"

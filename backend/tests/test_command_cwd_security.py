@@ -1,6 +1,7 @@
 """command heredoc allow + default cwd = workspace."""
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,12 @@ from backend.agent.turn_retry import RetryKind, classify_tool_result
 from backend.core.config import settings
 from backend.services.tools.executors import execute_command
 from backend.tools.permissions import resolve_agent_workspace_root
+
+# heredoc / 反引号 / pwd+test 依赖 POSIX shell；Windows cmd 语义不同 → 跳过真执行
+_POSIX_SHELL = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX shell heredoc/backtick/pwd semantics; covered on Linux CI",
+)
 
 
 @pytest.fixture(autouse=True)
@@ -23,6 +30,7 @@ def _local_execution(monkeypatch):
     monkeypatch.setattr(settings, "agent_computer_enabled", False, raising=False)
 
 
+@_POSIX_SHELL
 @pytest.mark.asyncio
 async def test_heredoc_not_blocked(tmp_path, monkeypatch):
     monkeypatch.setenv("TAKTON_FILE_BROWSER_ROOT", str(tmp_path))
@@ -34,6 +42,7 @@ async def test_heredoc_not_blocked(tmp_path, monkeypatch):
     assert target.read_text(encoding="utf-8") == "hello_heredoc\n"
 
 
+@_POSIX_SHELL
 @pytest.mark.asyncio
 async def test_backtick_not_blocked_simple(tmp_path, monkeypatch):
     monkeypatch.setenv("TAKTON_FILE_BROWSER_ROOT", str(tmp_path))
@@ -45,6 +54,7 @@ async def test_backtick_not_blocked_simple(tmp_path, monkeypatch):
     assert "hi_backtick" in res
 
 
+@_POSIX_SHELL
 @pytest.mark.asyncio
 async def test_default_cwd_is_workspace(tmp_path, monkeypatch):
     monkeypatch.setenv("TAKTON_FILE_BROWSER_ROOT", str(tmp_path))

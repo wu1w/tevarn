@@ -36,3 +36,9 @@ jobs:
 
       - name: TypeScript type-check (gate)
         run: npx tsc --noEmit
+
+      - name: Next.js production build (gate)
+        run: npm run build
+        env:
+          # CI 构建不依赖真实 API；占位即可
+          NEXT_PUBLIC_API_URL: "/api"

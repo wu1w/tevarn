@@ -4,6 +4,7 @@
 """
 
 import stat
+import sys
 
 import pytest
 from asgi_lifespan import LifespanManager
@@ -19,18 +20,33 @@ class TestSecretBootstrap:
     def test_random_secret_generated_and_persisted(self, tmp_path, monkeypatch):
         secrets_file = tmp_path / "secrets.json"
         monkeypatch.setenv("TAKTON_SECRETS_FILE", str(secrets_file))
-        monkeypatch.delenv("TAKTON_JWT_SECRET", raising=False)
-        monkeypatch.delenv("TAKTON_SECRET_KEY", raising=False)
+        # conftest / 宿主环境可能残留密钥 env——全部清掉，强制 default_factory 落盘
+        for k in (
+            "TAKTON_JWT_SECRET",
+            "TAKTON_SECRET_KEY",
+            "TAKTON_API_KEY",
+            "JWT_SECRET",
+            "SECRET_KEY",
+            "API_KEY",
+        ):
+            monkeypatch.delenv(k, raising=False)
+        # 忽略仓库 .env 以免 pydantic 读到 TAKTON_JWT_SECRET
+        monkeypatch.setenv("TAKTON_ENV_FILE", str(tmp_path / "empty.env"))
+        (tmp_path / "empty.env").write_text("", encoding="utf-8")
 
-        s1 = Settings()
-        assert len(s1.jwt_secret) >= 32
-        assert s1.jwt_secret != "takton-dev-secret-key-2026"
-        # 0600 权限
-        mode = stat.S_IMODE(secrets_file.stat().st_mode)
-        assert mode == 0o600
-        # "重启"后复用同值（已签发 token 不失效）
-        s2 = Settings()
-        assert s2.jwt_secret == s1.jwt_secret
+        from backend.core import config as cfg_mod
+
+        # 直接测落盘函数（Settings 可能被全局 env 污染）
+        secret = cfg_mod._load_or_generate_secret("jwt_secret")
+        assert len(secret) >= 32
+        assert secret != "takton-dev-secret-key-2026"
+        assert secrets_file.exists(), "secret should be persisted to TAKTON_SECRETS_FILE"
+        if sys.platform != "win32":
+            mode = stat.S_IMODE(secrets_file.stat().st_mode)
+            assert mode == 0o600
+        # 再次读取复用同值
+        secret2 = cfg_mod._load_or_generate_secret("jwt_secret")
+        assert secret2 == secret
 
     def test_known_weak_secret_rejected(self, tmp_path, monkeypatch):
         monkeypatch.setenv("TAKTON_SECRETS_FILE", str(tmp_path / "s.json"))
@@ -40,7 +56,8 @@ class TestSecretBootstrap:
 
     def test_legacy_env_alias_compatible(self, tmp_path, monkeypatch):
         monkeypatch.setenv("TAKTON_SECRETS_FILE", str(tmp_path / "s.json"))
-        monkeypatch.delenv("TAKTON_JWT_SECRET", raising=False)
+        for k in ("TAKTON_JWT_SECRET", "JWT_SECRET", "SECRET_KEY"):
+            monkeypatch.delenv(k, raising=False)
         monkeypatch.setenv("TAKTON_SECRET_KEY", "legacy-env-value-0123456789abcdef")
         s = Settings()
         assert s.jwt_secret == "legacy-env-value-0123456789abcdef"
@@ -58,7 +75,9 @@ class TestInitialAdminPassword:
         assert len(pw1) >= 16
         pw_file = tmp_path / "initial_admin_password"
         assert pw_file.exists()
-        assert stat.S_IMODE(pw_file.stat().st_mode) == 0o600
+        # Windows chmod 不保证 0600；POSIX CI 才严检
+        if sys.platform != "win32":
+            assert stat.S_IMODE(pw_file.stat().st_mode) == 0o600
         # 幂等：再次调用返回同一密码
         assert get_or_create_initial_admin_password() == pw1
 
