@@ -20,18 +20,14 @@
 **公开关账**：README 定位改完 + demo 三连可点播 + 版本/CHANGELOG 对齐。  
 **5.3 公开后节奏**：不阻塞 0.7 发版；发版后滚动。
 
-### 现状快照（开工前，2026-07-30）
+### 现状快照（关账后，2026-07-30）
 
-| 零件 | 现状 | 缺口 |
-|------|------|------|
-| `start.py` | 开发/prod/electron 启动脚本存在 | 缺「全新机 10 分钟」验收脚本与记录 |
-| `scripts/install.ps1` / `install.sh` | **Release 下载** Setup/AppImage | **不是**源码 venv 从零路径；且依赖已有 GitHub Release |
-| Electron | 根 `package.json` + `electron-builder` NSIS / AppImage / mac | 本机未强制冒烟；`frontend/release` 可能未产出 |
-| 默认依赖 | `db_url` SQLite；`agent_kernel_redis_shared=false`；`qdrant_url=""` | **缺降级矩阵自动化**（无 Redis/无 Qdrant 冒烟） |
-| JWT | `_load_or_generate_secret` + `_reject_default_secrets` + `security_check` | 公开终审清单未跑；channel 入站长度/注入仍空 |
-| README | badge 仍写 0.3.2；叙事偏「Agent 终端」 | 未对齐 AIOS / 治理内核 / Run·Kernel·Evolution |
-| VERSION / CHANGELOG | `1.0.0-alpha` 已有；DEV_PLAN 写 0.7 | **版本叙事需统一**（见 §2） |
-| demo 三连 | 机制齐（P2 recovery / P4 replay / P3 court） | **无录屏/脚本化演示路径** |
+| 零件 | 状态 |
+|------|------|
+| 版本 | **0.4.10-alpha** 全系对齐 |
+| 零依赖 / 安装 / 资源 / start.py | 脚本+文档+测试齐 |
+| 安全终审 + channel ingress | 报告 + 测试齐 |
+| README / demo / 手册 / checklist | 齐（NSIS 本机打包与录屏为软项） |
 
 ---
 

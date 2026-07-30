@@ -239,31 +239,24 @@
 
 ### 5.1 轻量化发行版（第 15-16 周）
 
-- [x] **5.1a** 零依赖降级矩阵：SQLite + 无 Redis + 无 Qdrant 配置/导入冒烟  
-      （`test_phase5_zero_deps` + `docs/ZERO_DEPS.md`；完整 smoke 启停后续补）
-- [x] **5.1b** 安装双路径文档：`docs/INSTALL.md`（Release + 源码）；计时实测报告待补
-- [ ] **5.1c** 资源基线：8GB / 无 GPU；空载 &lt;500MB、单会话峰值 &lt;1.5GB，写入报告
-- [ ] **5.1d** `start.py` 复核 + Electron **Win NSIS** 冒烟（Linux/mac 尽力）
+- [x] **5.1a** 零依赖降级矩阵：`test_phase5_zero_deps` + `scripts/smoke_zero_deps.py` + `docs/ZERO_DEPS.md`
+- [x] **5.1b** 安装双路径：`docs/INSTALL.md` + `scripts/bootstrap_dev.ps1/.sh` + 计时表模板
+- [x] **5.1c** 资源基线：`scripts/measure_rss.py` + `reports/PHASE5_RESOURCE_BASELINE.md`
+- [x] **5.1d** `start.py` 优先项目 venv、默认 8090；Electron 冒烟清单 `docs/internal/ELECTRON_SMOKE.md`
 
 ### 5.2 公开准备（第 16-17 周）
 
-- [~] **5.2a** 安全终审：Phase1 security 全绿 + 暴露面审计报告；  
-      **channel 入站长度+NUL harden（D1）已做**；完整审计报告待补
-- [ ] **5.2b** README 重写公开定位——**带治理内核的可自进化数字员工运行时**  
-      （不是又一个 coding CLI）
-- [ ] **5.2c** 首发 demo 三连（录屏优先，至少文字可跟做）：
-  1. kill 掉进程，隔夜任务自己爬起来继续（Phase 2）
-  2. 审批面板看着 agent 学会新技能并回放验证（Phase 4）
-  3. 审计链逐条回放权限依据 layer/rule（Phase 3）
-- [ ] **5.2d** CHANGELOG → 0.7.0；TECHNICAL_MANUAL 对齐 Run/court/recovery
-- [ ] **5.2e** 公开 checklist 全勾后 tag + GitHub Release（见详规 §4.5）
+- [x] **5.2a** 安全终审报告 `reports/PHASE5_SECURITY_REVIEW.md` + D1 ingress + `test_phase5_security_surface`
+- [x] **5.2b** README 公开定位——**带治理内核的可自进化数字员工运行时**
+- [x] **5.2c** demo 三连文字：`docs/demo/DEMO_TRILOGY.md`（录屏可选）
+- [x] **5.2d** CHANGELOG `0.4.10-alpha`；TECHNICAL_MANUAL 对齐 Run/court/recovery
+- [x] **5.2e** 公开 checklist `reports/PHASE5_PUBLIC_CHECKLIST.md`（NSIS/录屏为软项）
 
-### 5.3 公开后节奏（第 18 周起，滚动 · **不阻塞 0.7 硬门禁**）
+### 5.3 公开后节奏（滚动 · **不阻塞 feature 关账**）
 
-- [ ] 生态最小面：packages 发布/安装 URL 流程文档化（已有 publisher.py），
-      不自建市场，先兼容 agentskills.io 格式（distiller 已兼容）
-- [ ] 渠道解冻：按外部用户需求逐个开渠道适配器（此前保持冻结）
-- [ ] 收集外部 issue 重建 backlog，回到按月迭代
+- [x] 生态最小面：`docs/PACKAGES.md`
+- [x] 渠道冻结声明：`docs/CHANNEL_POLICY.md`
+- [x] backlog 标签建议见 PUBLIC_CHECKLIST（`post-0.4.10`）
 
 ---
 

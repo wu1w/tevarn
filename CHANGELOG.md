@@ -11,12 +11,14 @@
 - Phase 5 详规：`docs/design/PHASE5_EXECUTION_PLAN.md`；安装 `docs/INSTALL.md`；零依赖 `docs/ZERO_DEPS.md`
 
 ### Added / Hardened
-- Phase 5.1a：默认零外部依赖冒烟 `test_phase5_zero_deps`
+- Phase 5.1a–d：`smoke_zero_deps` · `bootstrap_dev` · `measure_rss` · `start.py` 优先项目 venv / 默认 8090
+- Phase 5.2：安全终审报告 · README 定位 · demo 三连 · TECHNICAL_MANUAL 执行模型 · 公开 checklist
+- Phase 5.3：`PACKAGES.md` · `CHANNEL_POLICY.md`（渠道冻结）
 - Phase 5 D1：channel 入站 `sanitize_channel_ingress`（长度 / NUL / 非打印）
-- 测试：xdist 每 worker 独立 SQLite，消除并行建表竞态
+- 测试：`test_phase5_zero_deps` · `test_phase5_security_surface`；xdist 每 worker 独立 SQLite
 
 ### Notes
-- 正式公开 tag（0.7 / 1.0 等）留到 Phase 5 关账再定；本分支一律 `0.4.10-alpha`
+- feature 分支一律 **`0.4.10-alpha`**；正式 GitHub Release / NSIS 资产见 `ELECTRON_SMOKE` 软门禁
 
 ## [1.0.0-alpha] - 2026-07-29
 

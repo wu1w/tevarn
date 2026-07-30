@@ -6,11 +6,11 @@
 
 # ⚡ Takton
 
-### Your Personal AI Agent Terminal · 你的专属 AI Agent 终端
+### Governed, self-evolving digital-employee runtime · 带治理内核的可自进化数字员工运行时
 
-**Local-first · Multi-Agent · Skill Auto-Generation · Workflow Orchestration**
+**Local-first · Unified Run · Permission Court · Replay-gated Evolution**
 
-**本地优先 · 多 Agent 协作 · 技能自动生成 · 工作流编排**
+**本地优先 · 统一 Run · 权限一张网 · 回放门禁进化**
 
 <br/>
 
@@ -23,7 +23,7 @@
 
 <br/>
 
-[English](#-features) · [中文](#-核心功能)
+[English](#-features) · [中文](#-核心功能) · [Install](docs/INSTALL.md) · [Demo 三连](docs/demo/DEMO_TRILOGY.md)
 
 </div>
 
@@ -31,9 +31,18 @@
 
 ## 🎯 Why Takton? · 为什么选择 Takton？
 
-> **Takton is not another chat wrapper.** It's a full-featured agent workstation that runs entirely on your machine — your data never leaves your disk. One agent handles simple questions; complex research can optionally fan out into parallel draft passes (no tool access) that get synthesized into one answer. Skills are not just installed — they're **auto-generated** when the agent encounters a new task type.
+> **Takton is not another coding CLI or chat wrapper.** It is a **governed, self-evolving digital-employee runtime** that runs on your machine. Every execution is a recoverable **Run**; tools go through a single **permission court** with explainable audit; skills only ship after **replay validation**. Defaults are light: **SQLite, no Redis, no Qdrant required**.
 >
-> **Takton 不是又一个聊天套壳。** 它是一个全功能 Agent 工作站，完全运行在你的本机——数据永远不离开你的磁盘。简单问题单 Agent 搞定；复杂调研可选「并行草稿扇出」（子任务无工具权限），多份草稿汇总成一份答案。技能不只是安装——遇到新任务类型时 Agent 会**自动编写新技能**。
+> **Takton 不是又一个 coding CLI / 聊天套壳。** 它是**带治理内核的可自进化数字员工运行时**，完全跑在你本机。一切执行都是可恢复的 **Run**；工具经统一 **权限法院** 可解释审计；技能须经 **回放验证** 才能上岗。默认很轻：**SQLite，不强制 Redis / Qdrant**。
+
+| Pillar · 支柱 | What · 是什么 |
+|---------------|----------------|
+| **Unified Run** | chat / inbox / cron / cluster share one run model + checkpoint recovery |
+| **Permission court** | one decision path · layer / rule / verdict on the Kernel page |
+| **Replay-gated evolution** | drafts cannot apply when replay fails |
+| **Crew / Identity** | hire employees, budgets, memory bus, growth profile |
+
+See also: [PUBLIC_POSITIONING](docs/design/PUBLIC_POSITIONING.md) · [EXECUTION_MODEL](docs/design/EXECUTION_MODEL.md) · [ZERO_DEPS](docs/ZERO_DEPS.md)
 
 <table>
 <tr>
@@ -151,25 +160,29 @@ curl -fsSL https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.sh
 
 > 一键脚本会自动解析 [最新 Release](https://github.com/wu1w/takton/releases/latest) 资产；上表为固定直链备份。
 
-### From Source · 源码运行
+### From Source · 源码运行（feature `0.4.10-alpha`）
 
-```bash
+完整步骤见 **[docs/INSTALL.md](docs/INSTALL.md)**。Windows 可先：
+
+```powershell
 git clone https://github.com/wu1w/takton.git
 cd takton
-
-# One-click start · 一键启动
-python start.py
-
-# Or separately · 或分别启动：
-# Backend · 后端
-pip install -r backend/requirements.txt
-python backend/main.py
-
-# Frontend · 前端
-cd frontend && npm install && npm run dev
+git checkout feature/agent-kernel
+powershell -ExecutionPolicy Bypass -File scripts/bootstrap_dev.ps1
+.\.venv\Scripts\python.exe start.py
 ```
 
-Open http://localhost:3000 · 访问 http://localhost:3000
+```bash
+# Linux / macOS
+git clone https://github.com/wu1w/takton.git && cd takton
+git checkout feature/agent-kernel
+bash scripts/bootstrap_dev.sh
+.venv/bin/python start.py
+```
+
+Open the printed URL (frontend usually http://127.0.0.1:3000 · backend default **8090**).
+
+**Demo trilogy** (kill-recover · evolution replay · permission audit): [docs/demo/DEMO_TRILOGY.md](docs/demo/DEMO_TRILOGY.md)
 
 ---
 

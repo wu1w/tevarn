@@ -1,13 +1,15 @@
 # Takton 技术手册
 
-版本：0.4.6-alpha  
-更新：2026-07-26
+版本：**0.4.10-alpha**  
+更新：2026-07-30（Phase 5 对齐）
 
-> **⚠️ 部分过期（2026-07-29）**  
-> 默认 API 端口请以 **8090** 为准（CLI / DEV_HANDBOOK / Electron）。  
-> 文中若写 `8000`、旧 WS 路径，仅作历史参考。  
-> **现行架构**请优先阅读：  
-> `docs/internal/ARCHITECTURE.md` · `TOPOLOGY.md` · `DEV_HANDBOOK.md` · `PROTOCOL.md`
+> **执行模型（现行）**  
+> **一切执行都是 Run**；Identity 是执行者；Cluster/SubAgent/Hire 是编排形态；Workflow 是 Run 模板。  
+> 详规一页纸：`docs/design/EXECUTION_MODEL.md` · Run 统一：`docs/design/RUN_UNIFICATION.md`  
+> 记忆总线：`docs/design/MEMORY_BUS.md` · 权限法院：`backend/kernel/permission_court.py`  
+> 默认端口 **8090**（`start.py` / CLI / Electron）。文中若写 `8000` 仅历史参考。  
+> 其它：`docs/internal/ARCHITECTURE.md` · `TOPOLOGY.md` · `DEV_HANDBOOK.md` · `PROTOCOL.md`  
+> 安装 / 零依赖：`docs/INSTALL.md` · `docs/ZERO_DEPS.md`
 
 ---
 
@@ -25,52 +27,32 @@
 
 ## 1. 系统架构
 
+### 1.0 执行模型（Phase 2+ 现行）
+
+```
+Trigger (chat|inbox|cron|cluster|subagent)
+        │
+        ▼
+   AgentRun  ◄── checkpoint / budget / origin / parent_run_id
+        │
+        ├── Kernel Process (mediate · charge · suspend)
+        ├── permission_court → policy.decision 审计链
+        └── memory_bus (remember/recall/supersede)
+```
+
+列表：`GET /api/runs` · 恢复：`run_recovery` · 进化：`replay_validator`。
+
 ### 1.1 整体架构
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                        用户层                                │
-│  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐        │
-│  │  Web    │  │ Desktop │  │   API   │  │ Webhook │        │
-│  │ Browser │  │ Electron│  │  Client │  │         │        │
-│  └────┬────┘  └────┬────┘  └────┬────┘  └────┬────┘        │
-│       └─────────────┴─────────────┴─────────────┘            │
-│                         │                                    │
-│                    HTTP / WebSocket                          │
-│                         │                                    │
-├─────────────────────────┼────────────────────────────────────┤
-│                      前端层 (Next.js 16)                     │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │  React 19 + Tailwind CSS 4 + Zustand + React Query  │    │
-│  │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐   │    │
-│  │  │  Chat   │ │  Tasks  │ │Knowledge│ │Workflows│   │    │
-│  │  │  UI     │ │  UI     │ │  UI     │ │  UI     │   │    │
-│  │  └─────────┘ └─────────┘ └─────────┘ └─────────┘   │    │
-│  └─────────────────────────────────────────────────────┘    │
-│                         │                                    │
-│              Next.js API Routes (BFF)                        │
-│                         │                                    │
-├─────────────────────────┼────────────────────────────────────┤
-│                      后端层 (FastAPI)                        │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐   │    │
-│  │  │  Auth   │ │  Chat   │ │  Cron   │ │Workflow │   │    │
-│  │  │ Service │ │ Service │ │Scheduler│ │ Engine  │   │    │
-│  │  └─────────┘ └─────────┘ └─────────┘ └─────────┘   │    │
-│  │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐   │    │
-│  │  │  Agent  │ │Knowledge│ │   MCP   │ │  Tools  │   │    │
-│  │  │  Loop   │ │  RAG    │ │  Hub    │ │ Registry│   │    │
-│  │  └─────────┘ └─────────┘ └─────────┘ └─────────┘   │    │
-│  └─────────────────────────────────────────────────────┘    │
-│                         │                                    │
-│              SQLAlchemy 2.0 (Async)                          │
-│                         │                                    │
-├─────────────────────────┼────────────────────────────────────┤
-│                      数据层                                  │
-│  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐        │
-│  │ SQLite  │  │ Qdrant  │  │  File   │  │  Cache  │        │
-│  │(默认)   │  │(向量)   │  │ Storage │  │         │        │
-│  └─────────┘  └─────────┘  └─────────┘  └─────────┘        │
+│  Web / Electron / CLI / Channel  ── HTTP+WS ──► Next.js BFF │
+├─────────────────────────────────────────────────────────────┤
+│  FastAPI：Auth · Chat · Runs · Kernel · Evolution · Crew    │
+│  Agent Loop + Kernel (court/budget) + Dispatcher/Inbox      │
+│  memory_bus · RAG(可选) · MCP · Tools · Workflow            │
+├─────────────────────────────────────────────────────────────┤
+│  SQLite(默认) · Redis(可选) · Qdrant(可选) · 文件存储         │
 └─────────────────────────────────────────────────────────────┘
 ```
 

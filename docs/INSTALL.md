@@ -46,23 +46,15 @@ git clone https://github.com/wu1w/takton.git
 cd takton
 git checkout feature/agent-kernel   # 或当前 feature 分支
 
-# 建议使用项目 venv，避免 PATH 上 hermes 等污染
-py -3.13 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -U pip
-pip install -e ".[dev]"   # 或按仓库 README 的 requirements
+# 一键 bootstrap（venv + deps + frontend npm）
+powershell -ExecutionPolicy Bypass -File scripts/bootstrap_dev.ps1
 
-cd frontend
-npm.cmd install
-cd ..
-
-# 配置密钥（示例）
-# 复制 .env.example → .env，填入 TAKTON_JWT 自动生成可由 start.py 处理
-# 以及 LLM 相关环境变量
-
-python start.py
-# 浏览器打开提示的地址（通常 http://127.0.0.1:3000）
+# 配置 LLM Key 等到 .env（start.py 可自动生成 JWT）
+.\.venv\Scripts\python.exe start.py
+# 浏览器打开提示地址（前端通常 :3000，后端默认 :8090）
 ```
+
+手动等价：`py -3 -m venv .venv` → `pip install -e ".[dev]"` → `frontend/npm install`。
 
 ### 成功标准
 

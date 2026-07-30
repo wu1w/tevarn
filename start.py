@@ -15,13 +15,13 @@ Takton 跨平台启动脚本
   python start.py --prod       # 生产模式（Next.js build + uvicorn）
 """
 
+import os
+import platform
+import secrets
+import signal
 import subprocess
 import sys
 import time
-import os
-import secrets
-import platform
-import signal
 import urllib.request
 from pathlib import Path
 
@@ -36,7 +36,21 @@ processes = []
 
 
 def find_python() -> str:
-    """查找可用的 Python 解释器"""
+    """查找可用的 Python 解释器。
+
+    Phase 5：优先项目 .venv，避免 PATH 上 hermes/其它 venv 污染。
+    """
+    venv_candidates = [
+        ROOT_DIR / ".venv" / "Scripts" / "python.exe",
+        ROOT_DIR / ".venv" / "bin" / "python",
+        ROOT_DIR / "venv" / "Scripts" / "python.exe",
+        ROOT_DIR / "venv" / "bin" / "python",
+    ]
+    for p in venv_candidates:
+        if p.is_file():
+            print(f"[Takton] Using project venv: {p}")
+            return str(p)
+
     candidates = ["python3", "python"]
     if platform.system() == "Windows":
         import shutil
@@ -62,6 +76,14 @@ def find_python() -> str:
     return "python3"
 
 
+def product_version_banner() -> str:
+    try:
+        v = (ROOT_DIR / "backend" / "VERSION").read_text(encoding="utf-8").strip()
+        return v or "unknown"
+    except Exception:
+        return "unknown"
+
+
 def find_npm() -> str:
     """查找可用的 npm"""
     if platform.system() == "Windows":
@@ -82,8 +104,9 @@ TAKTON_API_KEY={api_key}
 TAKTON_DB_URL=sqlite+aiosqlite:///{db_path}
 TAKTON_LOG_LEVEL=info
 TAKTON_APP_HOST=127.0.0.1
-TAKTON_APP_PORT=8000
+TAKTON_APP_PORT=8090
 TAKTON_SINGLE_USER_MODE=true
+# 默认零外部依赖：不设 REDIS / QDRANT 即可
 """
         ENV_FILE.write_text(content, encoding="utf-8")
         print(f"[Takton] .env created at {ENV_FILE}")
@@ -213,15 +236,18 @@ def main():
     args = sys.argv[1:]
     use_electron = "--electron" in args
     use_prod = "--prod" in args
-    backend_port = 8000
-    frontend_port = 3000
+    # 与 CLI / Electron / TECHNICAL_MANUAL 对齐：默认 8090（可用环境变量覆盖）
+    backend_port = int(os.environ.get("TAKTON_APP_PORT") or os.environ.get("PORT_BACKEND") or "8090")
+    frontend_port = int(os.environ.get("PORT") or "3000")
 
     print("=" * 50)
-    print("  Takton - 个人专属 Agent 终端")
+    print("  Takton — 带治理内核的数字员工运行时")
+    print(f"  version: {product_version_banner()}")
     print("=" * 50)
     print(f"  Platform: {platform.system()} {platform.machine()}")
     print(f"  Root: {ROOT_DIR}")
     print(f"  Mode: {'Electron Desktop' if use_electron else 'Production' if use_prod else 'Development'}")
+    print(f"  Backend: http://127.0.0.1:{backend_port}")
     print("=" * 50)
 
     # 1. 确保 .env 存在
@@ -232,7 +258,7 @@ def main():
     npm = find_npm()
 
     # 3. 启动后端
-    backend_proc = start_backend(python, port=backend_port)
+    start_backend(python, port=backend_port)
     if not wait_for_backend(f"http://127.0.0.1:{backend_port}/api/health"):
         print("[Takton] FATAL: Backend failed to start")
         cleanup()
