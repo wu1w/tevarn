@@ -156,3 +156,7 @@ pytest_*.txt
 
 # 本地打包产物
 *.zip
+
+# local pytest temp dbs
+ci-test*.db
+ci-test*.db-*
