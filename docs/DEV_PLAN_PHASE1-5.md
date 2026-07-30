@@ -77,22 +77,26 @@
 目标：消灭 G1（双轨心智）/G2（重启丢单）/G3（Run 不统一）。
 这是全项目最重要的一次重构，**本 Phase 期间新功能完全冻结**。
 
+> **2.1 切片开工：2026-07-30**（演进 `agent_runs`，不平行新建 `runs` 表）
+
 ### 2.1 统一 Run 实体（第 3 周，本人设计 + AI 实现）
 
-- [ ] 设计文档先行：`docs/design/RUN_UNIFICATION.md`，一页纸定义：
+- [x] 设计文档先行：`docs/design/RUN_UNIFICATION.md`，一页纸定义：
   ```
   Run {
-    id, origin: chat|inbox|cron|cluster|subagent,
-    status: pending|running|suspended|waiting_approval|done|failed|cancelled,
+    id, origin: chat|inbox|cron|cluster|subagent|headless,
+    status: 细粒度 phase SM（对外映射 pending|running|waiting_approval|…）,
     session_id, identity_id?, parent_run_id?,
     checkpoint (JSON), budget {token_limit, token_used},
-    created_at, updated_at, finished_at
+    created_at, updated_at, finished_at(=ended_at)
   }
   ```
-- [ ] `backend/models/run.py` + alembic 迁移 + `AsyncRunRepository`
-- [ ] 现有 run_state.py / run_recorder.py 收敛为该实体的读写层（权威在 DB，内存是缓存）
-- [ ] 状态机转换集中在一个模块（`backend/agent/run_lifecycle.py`），
-      禁止四处直接改 status 字段
+- [x] 演进 `agent_runs`（非新建 run.py 表）+ alembic `0002_run_unification` +
+      `AsyncAgentRunRepository`（别名 `AsyncRunRepository`）
+- [x] run_recorder 经 `build_create_payload` 写 origin/identity/parent/budget；
+      权威仍在 DB，recorder 内存为缓存
+- [x] 状态机门面 `backend/agent/run_lifecycle.py`（origin 推断 / public_status /
+      transition 校验入口）；细粒度合法表仍在 `run_state.py`
 
 ### 2.2 四条触发路径接入统一 Run（第 4 周）
 

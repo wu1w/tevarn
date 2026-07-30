@@ -88,13 +88,19 @@ class AsyncAgentRunRepository(AsyncBaseRepository):
         *,
         limit: int = 40,
         status: str | None = None,
+        origin: str | None = None,
+        identity_id: uuid.UUID | None = None,
     ) -> list[AgentRun]:
-        """跨会话最近 runs（0.5.3 全局 Runs 入口，不依赖先开 chat）。"""
+        """跨会话最近 runs（0.5.3 全局 Runs 入口；Phase 2.1 支持 origin/identity 过滤）。"""
         session = await self._get_session()
         try:
             q = select(AgentRun).order_by(desc(AgentRun.created_at)).limit(limit)
             if status:
                 q = q.where(AgentRun.status == status)
+            if origin:
+                q = q.where(AgentRun.origin == origin)
+            if identity_id is not None:
+                q = q.where(AgentRun.identity_id == identity_id)
             result = await session.execute(q)
             return list(result.scalars().all())
         finally:
@@ -128,6 +134,39 @@ class AsyncAgentRunRepository(AsyncBaseRepository):
             return list(result.scalars().all())
         finally:
             await self._close_session(session)
+
+    async def mark_interrupted_nonterminal(self) -> int:
+        """启动恢复预备（2.3）：非终态 Run → interrupted。
+
+        2.1 提供方法；默认不在 lifespan 调用，避免打断手动 resume 流程。
+        """
+        from backend.agent.run_state import TERMINAL_STATES
+
+        terminal = {s.value for s in TERMINAL_STATES}
+        session = await self._get_session()
+        try:
+            result = await session.execute(select(AgentRun))
+            rows = list(result.scalars().all())
+            n = 0
+            for obj in rows:
+                if obj.status in terminal:
+                    continue
+                if obj.status == "interrupted":
+                    continue
+                obj.status = "interrupted"
+                n += 1
+            if n:
+                await self._maybe_commit(session)
+            return n
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await self._close_session(session)
+
+
+# Phase 2 对外别名
+AsyncRunRepository = AsyncAgentRunRepository
 
 
 def utcnow() -> datetime:

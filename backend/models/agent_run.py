@@ -18,7 +18,10 @@ from .base import Base, TimestampMixin, UUIDMixin
 
 
 class AgentRun(Base, UUIDMixin, TimestampMixin):
-    """一次 Agent 运行的持久化记录"""
+    """一次 Agent 运行的持久化记录（Phase 2 对外即 Run；表名 agent_runs 保留）
+
+    见 docs/design/RUN_UNIFICATION.md
+    """
 
     __tablename__ = "agent_runs"
 
@@ -32,6 +35,24 @@ class AgentRun(Base, UUIDMixin, TimestampMixin):
     # 状态机：created/planning/executing/waiting/verifying/done/failed/cancelled
     status: Mapped[str] = mapped_column(String(20), default="created", index=True)
     mode: Mapped[str] = mapped_column(String(32), default="default")
+
+    # Phase 2.1：统一 Run 维度
+    # origin: chat|inbox|cron|cluster|subagent|headless
+    origin: Mapped[str] = mapped_column(String(20), default="chat", index=True)
+    identity_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("agent_identities.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    parent_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("agent_runs.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    # 2.3 权威 checkpoint；2.1 起可写镜像
+    checkpoint: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    token_limit: Mapped[int] = mapped_column(Integer, default=0)
+    token_used: Mapped[int] = mapped_column(Integer, default=0)
 
     # 输入/输出摘要（全文仍在 messages 表，这里只留可列表展示的摘要）
     input_summary: Mapped[str] = mapped_column(String(512), default="")

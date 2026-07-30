@@ -808,11 +808,33 @@ class NexusAgentLoop(AgentLoopBase):
             meta["agent_key"] = agent_key
             meta["agent_label"] = getattr(self, "_agent_label", "")
 
+        # Phase 2.1：origin / identity / parent 进 AgentRun 列（非仅 meta）
+        _identity_id = getattr(self, "_identity_id", None)
+        if _identity_id:
+            meta["identity_id"] = str(_identity_id)
+        _inbox_item = getattr(self, "_inbox_item_id", None)
+        if _inbox_item:
+            meta["inbox_item_id"] = str(_inbox_item)
+        _origin_hint = getattr(self, "_run_origin", None)
+        _token_limit = 0
+        try:
+            _token_limit = int(
+                (getattr(self, "_kernel_process_options", None) or {}).get("token_budget")
+                or getattr(self, "_token_budget", 0)
+                or 0
+            )
+        except (TypeError, ValueError):
+            _token_limit = 0
+
         recorder = RunRecorder(
             session_id,
             user_id=self.user_id,
             mode=mode,
             meta=meta or None,
+            origin=_origin_hint,
+            identity_id=_identity_id,
+            parent_run_id=parent_run_id,
+            token_limit=_token_limit,
         )
         self._run_recorder = recorder
         await recorder.start(input_summary=user_input or "")

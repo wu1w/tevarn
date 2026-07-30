@@ -12,6 +12,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from backend.agent.run_lifecycle import build_create_payload, public_status
 from backend.agent.run_state import (
     TERMINAL_STATES,
     IllegalTransitionError,
@@ -36,11 +37,19 @@ class RunRecorder:
         user_id: uuid.UUID | None = None,
         mode: str = "default",
         meta: dict[str, Any] | None = None,
+        origin: str | None = None,
+        identity_id: uuid.UUID | str | None = None,
+        parent_run_id: uuid.UUID | str | None = None,
+        token_limit: int = 0,
     ) -> None:
         self.session_id = session_id
         self.user_id = user_id
         self.mode = mode
         self.meta = dict(meta or {})
+        self.origin = origin
+        self.identity_id = identity_id
+        self.parent_run_id = parent_run_id
+        self.token_limit = int(token_limit or 0)
         self.run_id: uuid.UUID | None = None
         self._status: RunStatus | None = None
         self._seq = 0
@@ -78,19 +87,29 @@ class RunRecorder:
         """创建 run 记录（status=created）；失败返回 None，后续调用全部 no-op"""
         try:
             repo = await self._repo()
-            obj = await repo.create_run({
-                "session_id": self.session_id,
-                "user_id": self.user_id,
-                "status": RunStatus.CREATED.value,
-                "mode": self.mode,
-                "input_summary": (input_summary or "")[:512],
-                "started_at": _utcnow(),
-                "meta": self.meta or None,
-            })
+            payload = build_create_payload(
+                session_id=self.session_id,
+                user_id=self.user_id,
+                mode=self.mode,
+                input_summary=input_summary or "",
+                meta=self.meta,
+                origin=self.origin,
+                identity_id=self.identity_id,
+                parent_run_id=self.parent_run_id,
+                token_limit=self.token_limit,
+                status=RunStatus.CREATED.value,
+                started_at=_utcnow(),
+            )
+            # 同步 origin 到实例，便于事件载荷
+            self.origin = str(payload.get("origin") or self.origin or "chat")
+            self.meta = dict(payload.get("meta") or self.meta or {})
+            obj = await repo.create_run(payload)
             self.run_id = obj.id
             self._status = RunStatus.CREATED
             await self._publish("run.created", {
                 **self._base_payload(),
+                "origin": self.origin,
+                "public_status": public_status(RunStatus.CREATED),
                 "input_summary": (input_summary or "")[:200],
             })
             return self.run_id
@@ -99,7 +118,10 @@ class RunRecorder:
             return None
 
     async def transition(self, dst: RunStatus | str, note: str = "") -> bool:
-        """状态迁移 + phase step + run.status_changed 事件；非法迁移 warn 并跳过"""
+        """状态迁移 + phase step + run.status_changed 事件；非法迁移 warn 并跳过。
+
+        写库走 lifecycle 语义（validate_transition）；保持 recorder 内 seq/事件顺序。
+        """
         if self.run_id is None or self._status is None:
             return False
         try:
