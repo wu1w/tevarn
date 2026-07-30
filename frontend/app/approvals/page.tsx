@@ -275,12 +275,12 @@ export default function ApprovalsPage() {
               : ''}
           </div>
           <div style={{ display: 'flex', gap: 12, marginTop: 8, fontSize: 11.5 }}>
-            <a href="/" style={{ color: 'var(--brand-purple)', fontWeight: 600, textDecoration: 'none' }}>
+            <Link href="/" style={{ color: 'var(--brand-purple)', fontWeight: 600, textDecoration: 'none' }}>
               {zh ? '← 工作台晨报' : '← Workspace'}
-            </a>
-            <a href="/agents" style={{ color: 'var(--foreground-dim)', fontWeight: 600, textDecoration: 'none' }}>
+            </Link>
+            <Link href="/agents" style={{ color: 'var(--foreground-dim)', fontWeight: 600, textDecoration: 'none' }}>
               {zh ? '管理员工' : 'Manage crew'}
-            </a>
+            </Link>
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>

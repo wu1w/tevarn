@@ -55,6 +55,7 @@ export default function ProfilePage() {
       <div className="flex h-screen items-center justify-center">
         <div className="text-sm text-foreground-dim">{t('profile.loading')}</div>
       </div>
+    </AdvancedShell>
     );
   }
 
@@ -118,6 +119,12 @@ export default function ProfilePage() {
   ];
 
   return (
+    <AdvancedShell
+      titleZh="账号资料"
+      titleEn="Account profile"
+      hintZh="与编制主路径无关的账户设置。"
+      hintEn="Account settings off the crew spine."
+    >
     <div className="tk-page-fluid w-full px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
       <h1 className="mb-6 text-xl font-bold text-foreground">{t('profile.title')}</h1>
 

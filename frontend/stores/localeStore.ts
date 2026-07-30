@@ -382,6 +382,7 @@ const zh = {
 
   // 聊天主页
   'chat.simple': '简洁',
+  'chat.projectGroup': '项目组',
   'chat.pro': '专业',
   'chat.dockTitle': '文件与终端侧栏 (Ctrl+B)',
   'chat.hideDock': '隐藏侧栏',
@@ -2459,6 +2460,7 @@ const en: Record<keyof typeof zh, string> = {
 
   // Chat home
   'chat.simple': 'Simple',
+  'chat.projectGroup': 'Project group',
   'chat.pro': 'Pro',
   'chat.dockTitle': 'Files & Terminal sidebar (Ctrl+B)',
   'chat.hideDock': 'Hide sidebar',

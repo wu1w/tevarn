@@ -269,7 +269,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
       optionsRef.current.onConnect?.();
 
       const tok = tokenRef.current;
-      if (t) {
+      if (tok) {
         try {
           ws.send(JSON.stringify({ type: 'auth', token: tok }));
         } catch {

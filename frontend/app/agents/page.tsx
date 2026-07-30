@@ -7,6 +7,7 @@
  */
 
 import React, { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useT } from '@/stores/localeStore';
@@ -322,12 +323,12 @@ function AgentsInner() {
               : 'Long-lived digital employees — not one-shot agents. Hire → dispatch jobs → review; chat only when needed.'}
           </div>
           <div style={{ display: 'flex', gap: 12, marginTop: 8, flexWrap: 'wrap', fontSize: 11.5 }}>
-            <a href="/" style={{ color: 'var(--brand-purple)', fontWeight: 600, textDecoration: 'none' }}>
+            <Link href="/" style={{ color: 'var(--brand-purple)', fontWeight: 600, textDecoration: 'none' }}>
               {zh ? '← 工作台晨报' : '← Workspace brief'}
-            </a>
-            <a href="/approvals" style={{ color: 'var(--foreground-dim)', fontWeight: 600, textDecoration: 'none' }}>
+            </Link>
+            <Link href="/approvals" style={{ color: 'var(--foreground-dim)', fontWeight: 600, textDecoration: 'none' }}>
               {zh ? '老板审批桌' : 'Boss approvals'}
-            </a>
+            </Link>
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -522,9 +523,9 @@ function AgentsInner() {
                       ? '…'
                       : (zh ? '标记已读' : 'Mark read')}
                   </button>
-                  <a href="/" style={{ fontSize: 11, color: 'var(--brand-purple)', textDecoration: 'none', fontWeight: 600 }}>
+                  <Link href="/" style={{ fontSize: 11, color: 'var(--brand-purple)', textDecoration: 'none', fontWeight: 600 }}>
                     {zh ? '工作台晨报' : 'Workspace'}
-                  </a>
+                  </Link>
                 </div>
               </div>
               {report.isError ? (

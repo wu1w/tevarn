@@ -320,12 +320,6 @@ export default function WikiExplorer() {
     if (!selectedEntity) return null;
     const { outgoing, incoming } = entityRelations;
     return (
-    <AdvancedShell
-      titleZh="Wiki 是高级知识面"
-      titleEn="Wiki is advanced"
-      hintZh="员工记忆优先 Identity memory。"
-      hintEn="Prefer Identity memory for employees."
-    >
       <div className="rounded-xl border border-border-default bg-card-bg p-5 shadow-sm">
         <div className="flex items-start justify-between mb-4">
           <div>
@@ -406,6 +400,12 @@ export default function WikiExplorer() {
   };
 
   return (
+    <AdvancedShell
+      titleZh="Wiki 是高级知识面"
+      titleEn="Wiki is advanced"
+      hintZh="员工记忆优先 Identity memory。"
+      hintEn="Prefer Identity memory for employees."
+    >
     <div className="flex h-full flex-col">
       {toast && (
         <div className={`fixed right-4 top-4 z-50 rounded-lg px-4 py-2.5 text-sm font-medium shadow-lg ${

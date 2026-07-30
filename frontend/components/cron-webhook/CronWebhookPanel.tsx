@@ -422,7 +422,7 @@ export default function CronWebhookPanel() {
           </div>
 
           {webhooks.length === 0 ? (
-            <div className="text-center text-gray-400 py-8">暂无 Webhook，点击"新建"创建</div>
+            <div className="text-center text-gray-400 py-8">暂无 Webhook，点击&quot;新建&quot;创建</div>
           ) : (
             <div className="space-y-2">
               {webhooks.map((wh) => (

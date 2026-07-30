@@ -1,6 +1,7 @@
 'use client';
 
 import React, { Suspense, useState, useCallback, useRef } from 'react';
+import Link from 'next/link';
 import { ChatWindow } from '@/components/chat/ChatWindow';
 import { ProjectGroupView } from '@/components/chat/ProjectGroupView';
 import { MessageInput, Attachment, ChatMode, type MessageInputHandle } from '@/components/chat/MessageInput';
@@ -954,12 +955,12 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
               : 'Contact an employee from Crew · day-to-day work uses Jobs, not blank chat.'}
           </span>
           <span className="flex shrink-0 gap-3 font-semibold">
-            <a href="/agents" className="text-brand-purple no-underline">
+            <Link href="/agents" className="text-brand-purple no-underline">
               {t('nav.agents')}
-            </a>
-            <a href="/" className="text-foreground-dim no-underline">
+            </Link>
+            <Link href="/" className="text-foreground-dim no-underline">
               {t('nav.dashboard')}
-            </a>
+            </Link>
           </span>
         </div>
       ) : null}

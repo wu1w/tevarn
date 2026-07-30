@@ -57,7 +57,7 @@ export default function KernelPage() {
     }
   };
 
-  const processes = useQuery({ queryKey: ['kernel-processes'], queryFn: getKernelProcesses, staleTime: 8_000, refetchInterval: 15_000, retry: 1 });
+  const processes = useQuery({ queryKey: ['kernel-processes'], queryFn: () => getKernelProcesses(), staleTime: 8_000, refetchInterval: 15_000, retry: 1 });
   const events = useQuery({ queryKey: ['kernel-events', 500], queryFn: () => getKernelEvents(500), staleTime: 8_000, retry: 1 });
   const identities = useQuery({ queryKey: ['kernel-identities'], queryFn: () => getKernelIdentities(), staleTime: 30_000, retry: 1 });
   const escalations = useQuery({ queryKey: ['kernel-escalations', 'pending'], queryFn: () => getKernelEscalations('pending'), staleTime: 10_000, retry: 1 });

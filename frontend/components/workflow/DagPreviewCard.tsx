@@ -70,7 +70,7 @@ export default function DagPreviewCard({
   });
 
   // 拓扑分层
-  let currentLevel = 0;
+  const currentLevel = 0;
   const visited = new Set<string>();
   const queue: string[] = [];
 
