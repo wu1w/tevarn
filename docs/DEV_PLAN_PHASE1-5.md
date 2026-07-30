@@ -233,29 +233,33 @@
 
 目标：以差异化定位公开，吸取 OpenClaw"太重"的教训。
 
+> **详规：`docs/design/PHASE5_EXECUTION_PLAN.md`**（2026-07-30 起草）  
+> 原则：不发明新 OS 能力；**默认装得动 + 暴露面敢公开 + 定位一句话 + demo 三连**。  
+> 版本建议：公开 tag **0.7.0**（与本文一致）；当前产品文件 `1.0.0-alpha` 关账日对齐。
+
 ### 5.1 轻量化发行版（第 15-16 周）
 
-- [ ] 单命令安装路径复核：install.ps1（Windows 主力）/ install.sh，
-      全新机器 10 分钟内从零到可对话
-- [ ] 默认零外部依赖：SQLite + 无 Qdrant（RAG 降级本地检索）+ 无 Redis（单进程内存）
-      —— 三者全部已是可选，验证降级路径全绿即可
-- [ ] 资源基线：8GB 内存 / 无 GPU 机器空载 <500MB、单会话峰值 <1.5GB，实测记录
-- [ ] `start.py` 一键启动 + Electron 打包三平台冒烟（Win NSIS 优先）
+- [ ] **5.1a** 零依赖降级矩阵：SQLite + 无 Redis + 无 Qdrant 启动/冒烟全绿  
+      （`smoke_zero_deps` + 测试；见详规 §3.1a）
+- [ ] **5.1b** 安装双路径文档与实测：Release（install.ps1/sh）+ 源码（venv + `start.py`），  
+      全新机目标 10 分钟可对话（先关账源码路径亦可）
+- [ ] **5.1c** 资源基线：8GB / 无 GPU；空载 &lt;500MB、单会话峰值 &lt;1.5GB，写入报告
+- [ ] **5.1d** `start.py` 复核 + Electron **Win NSIS** 冒烟（Linux/mac 尽力）
 
 ### 5.2 公开准备（第 16-17 周）
 
-- [ ] 安全终审：Phase 1 的安全回归全绿 + 一轮针对公开暴露面的新审计
-      （认证、CORS、channel webhook 签名校验、默认凭据）；`TAKTON_JWT_SECRET`
-      无默认值强制生成
-- [ ] 版本对齐：README 重写为公开定位——**不是又一个 coding CLI，而是
-      "带治理内核的可自进化数字员工运行时"**
-- [ ] 首发 demo 三连（录屏 + 文档）：
-  1. kill 掉进程，隔夜任务自己爬起来继续（Phase 2 成果）
-  2. 审批面板看着 agent 学会新技能并回放验证（Phase 4 成果）
-  3. 审计链逐条回放 agent 做过的每件事及权限依据（Phase 3 成果）
-- [ ] CHANGELOG 从 0.4.6 → 0.7 补齐；docs/TECHNICAL_MANUAL.md 对齐新执行模型
+- [ ] **5.2a** 安全终审：Phase1 security 全绿 + 暴露面审计报告；  
+      认证/CORS/webhook/默认凭据；**channel 入站长度+注入 harden（D1）**
+- [ ] **5.2b** README 重写公开定位——**带治理内核的可自进化数字员工运行时**  
+      （不是又一个 coding CLI）
+- [ ] **5.2c** 首发 demo 三连（录屏优先，至少文字可跟做）：
+  1. kill 掉进程，隔夜任务自己爬起来继续（Phase 2）
+  2. 审批面板看着 agent 学会新技能并回放验证（Phase 4）
+  3. 审计链逐条回放权限依据 layer/rule（Phase 3）
+- [ ] **5.2d** CHANGELOG → 0.7.0；TECHNICAL_MANUAL 对齐 Run/court/recovery
+- [ ] **5.2e** 公开 checklist 全勾后 tag + GitHub Release（见详规 §4.5）
 
-### 5.3 公开后节奏（第 18 周起，滚动）
+### 5.3 公开后节奏（第 18 周起，滚动 · **不阻塞 0.7 硬门禁**）
 
 - [ ] 生态最小面：packages 发布/安装 URL 流程文档化（已有 publisher.py），
       不自建市场，先兼容 agentskills.io 格式（distiller 已兼容）
