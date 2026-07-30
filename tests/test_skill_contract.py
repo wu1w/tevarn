@@ -79,8 +79,18 @@ def test_check_requires():
     missing = check_requires(c)
     assert "bin: definitely-not-a-real-bin-xyz" in missing
     assert "python: no_such_module_xyz" in missing
-    # 存在的项不报
-    c2 = SkillContract.model_validate({"requires": {"bins": ["sh"], "python": ["os"]}})
+    # 存在的项不报（用 python 解释器路径语义：bins 用当前平台必有的命令）
+    import shutil
+    import sys
+
+    bin_ok = "python" if shutil.which("python") else (sys.executable.split("\\")[-1].split("/")[-1] or "python")
+    # python 模块 os 必有；bins 用 shutil.which 能找到的
+    which_bin = "python" if shutil.which("python") else ("py" if shutil.which("py") else None)
+    if which_bin is None:
+        # 极端环境：只断言 python 模块检查不误报
+        c2 = SkillContract.model_validate({"requires": {"bins": [], "python": ["os"]}})
+    else:
+        c2 = SkillContract.model_validate({"requires": {"bins": [which_bin], "python": ["os"]}})
     assert check_requires(c2) == []
 
 

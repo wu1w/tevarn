@@ -232,42 +232,46 @@ def test_nested_run_bypasses_session_lock():
 
 # ═══════════ 4. DelegateTaskTool 集成 ═══════════
 
-def test_delegate_task_routes_to_run_subagent():
+def test_delegate_task_routes_to_workforce_assign():
+    """有编制时 delegate_task 走收件箱派活（不再 subagent 闷跑）。"""
     from backend.tools.builtins.agent_ops_tools import DelegateTaskTool
 
-    agent = _fake_agent()
-    repo = SimpleNamespace()
-    repo.list_enabled = AsyncMock(return_value=[agent])
-
-    recorder = SimpleNamespace(run_id=uuid.uuid4())
+    emp = SimpleNamespace(
+        id="id-coder",
+        name="Coder",
+        role="dev",
+        capabilities=["code"],
+        status="active",
+    )
+    reg = SimpleNamespace(list=AsyncMock(return_value=[emp]))
+    kernel = SimpleNamespace(identity_registry=reg)
     captured: dict = {}
 
-    async def _fake_runner(**kwargs):
+    async def _fake_assign(who, instruction, **kwargs):
+        captured["who"] = who
+        captured["instruction"] = instruction
         captured.update(kwargs)
-        return "[delegate_task -> Coder]\nok"
+        return "[assigned] Coder inbox#1"
 
     async def _run():
         with patch(
-            "backend.repositories.sub_agent_repo.AsyncSubAgentRepository",
-            return_value=repo,
+            "backend.kernel.get_kernel",
+            return_value=kernel,
         ), patch(
-            "backend.agent.subagent_runner.run_subagent",
-            new=_fake_runner,
+            "backend.agent.workforce_dispatch.assign_to_employee",
+            new=_fake_assign,
         ):
             tool = DelegateTaskTool()
             return await tool.execute(
                 action="run",
+                agent_name="Coder",
                 goal="修 bug",
                 context="上下文X",
                 _session_id=str(uuid.uuid4()),
-                _subagent_depth=0,
-                _run_recorder=recorder,
             )
 
     out = asyncio.run(_run())
-    assert out == "[delegate_task -> Coder]\nok"
-    assert captured["goal"] == "修 bug"
-    assert captured["context"] == "上下文X"
-    assert captured["parent_run_id"] == recorder.run_id
-    assert captured["depth"] == 0
-    assert captured["sub_agent"] is agent
+    assert out == "[assigned] Coder inbox#1"
+    assert captured["who"] == "Coder"
+    assert "修 bug" in captured["instruction"]
+    assert "上下文X" in captured["instruction"]

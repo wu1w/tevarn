@@ -44,11 +44,21 @@ jobs:
       - name: Security regression suite (Phase 1.1)
         env:
           TAKTON_DB_URL: "sqlite+aiosqlite:///./ci-test.db"
+          TAKTON_TEST_MODE: "1"
+          TAKTON_AGENT_DISPATCHER_ENABLED: "false"
+          TAKTON_AGENT_KERNEL_PERSISTENCE: "false"
+          TAKTON_JWT_SECRET: "ci-jwt-secret-not-for-production-use-32b"
+          TAKTON_API_KEY: "ci-api-key-not-for-production-use-32bxxxx"
         run: python -m pytest backend/tests/security -q
 
       - name: Run tests
         env:
           TAKTON_DB_URL: "sqlite+aiosqlite:///./ci-test.db"
+          TAKTON_TEST_MODE: "1"
+          TAKTON_AGENT_DISPATCHER_ENABLED: "false"
+          TAKTON_AGENT_KERNEL_PERSISTENCE: "false"
+          TAKTON_JWT_SECRET: "ci-jwt-secret-not-for-production-use-32b"
+          TAKTON_API_KEY: "ci-api-key-not-for-production-use-32bxxxx"
         run: python -m pytest backend/tests tests -q
 
       - name: Alembic sanity (env.py loads, baseline resolvable)

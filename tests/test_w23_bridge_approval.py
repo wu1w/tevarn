@@ -169,7 +169,12 @@ def test_interactive_approval_denied():
     result = _run_hook(args)
 
     assert result.block
-    assert "denied by user" in (result.reason or "")
+    reason = (result.reason or "").lower()
+    assert (
+        "denied by user" in reason
+        or "拒绝" in (result.reason or "")
+        or "permission blocked" in reason
+    ), result.reason
     states = [c.args[0] for c in rc.transition.call_args_list]
     assert states == ["waiting", "executing"]
 

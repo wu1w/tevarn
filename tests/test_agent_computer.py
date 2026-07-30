@@ -34,26 +34,41 @@ def _reset_computer_manager():
 # ═══════════ 1. LocalBackend ═══════════
 
 def test_local_backend_echo(tmp_path):
+    import sys
+
     from backend.computer.local_backend import LocalBackend
 
     async def _run():
         be = LocalBackend(str(tmp_path))
-        r = await be.run("echo hello", cwd=str(tmp_path))
-        assert r.exit_code == 0 and r.stdout == "hello"
+        # 跨平台：用当前解释器，避免依赖 shell builtin / PATH
+        r = await be.run(
+            f'"{sys.executable}" -c "print(\'hello\')"',
+            cwd=str(tmp_path),
+        )
+        assert r.exit_code == 0 and "hello" in (r.stdout or "")
         assert r.backend == "local" and not r.sandboxed
 
-        r2 = await be.run("exit 3", cwd=str(tmp_path))
+        r2 = await be.run(
+            f'"{sys.executable}" -c "raise SystemExit(3)"',
+            cwd=str(tmp_path),
+        )
         assert r2.exit_code == 3
 
     asyncio.run(_run())
 
 
 def test_local_backend_timeout(tmp_path):
+    import sys
+
     from backend.computer.local_backend import LocalBackend
 
     async def _run():
         be = LocalBackend(str(tmp_path))
-        r = await be.run("sleep 5", cwd=str(tmp_path), timeout=1)
+        r = await be.run(
+            f'"{sys.executable}" -c "import time; time.sleep(5)"',
+            cwd=str(tmp_path),
+            timeout=1,
+        )
         assert r.error == "timeout" and r.exit_code == 124
 
     asyncio.run(_run())

@@ -21,29 +21,40 @@ os.environ.setdefault("JWT_SECRET", "test-jwt-secret-do-not-use-in-production")
 os.environ.setdefault("API_KEY", "test-api-key-do-not-use-in-production")
 os.environ.setdefault("DB_URL", "sqlite+aiosqlite:///:memory:")
 os.environ.setdefault("SINGLE_USER_MODE", "True")
+# 与 backend/tests/conftest 对齐：禁 lifespan 常驻后台
+os.environ.setdefault("TAKTON_TEST_MODE", "1")
+os.environ.setdefault("TAKTON_AGENT_DISPATCHER_ENABLED", "false")
+os.environ.setdefault("TAKTON_AGENT_KERNEL_PERSISTENCE", "false")
 
 from backend.core.config import Settings
 from backend.database import Base, get_db
 from backend.main import app
 from backend.schemas.user import UserRead
 
-# Use a fresh in-memory SQLite database for each test session.
-TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
+# 文件库 + NullPool：避免 :memory: 多连接各见空库；与 function-scoped loop 兼容
+import tempfile
+
+_TEST_DB_PATH = os.path.join(tempfile.gettempdir(), f"takton_root_test_{os.getpid()}.db")
+TEST_DB_URL = os.environ.setdefault(
+    "TAKTON_DB_URL", f"sqlite+aiosqlite:///{_TEST_DB_PATH}"
+)
 engine = create_async_engine(TEST_DB_URL, poolclass=NullPool, future=True)
 TestingSessionLocal = async_sessionmaker(
     engine, class_=AsyncSession, expire_on_commit=False, autoflush=False
 )
 
+_TABLES_READY = False
 
-@pytest_asyncio.fixture(scope="session", autouse=True)
+
+@pytest_asyncio.fixture(autouse=True)
 async def prepare_test_database() -> AsyncGenerator[None, None]:
-    """Create all tables once at the start of the test session."""
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    """function 级 loop 兼容：建表一次，不 drop/dispose。"""
+    global _TABLES_READY
+    if not _TABLES_READY:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        _TABLES_READY = True
     yield
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-    await engine.dispose()
 
 
 @pytest_asyncio.fixture
