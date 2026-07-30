@@ -68,8 +68,8 @@ def test_hard_truncate_helper_preserves_head_tail():
 @pytest.mark.asyncio
 async def test_hard_truncate_layer_applied(monkeypatch):
     # compress() 每轮从 settings 同步 meter——测试必须压低全局窗口/阈值
-    from backend.core import config as cfg
     from backend.agent import context_pipeline as cp
+    from backend.core import config as cfg
 
     monkeypatch.setattr(cfg.settings, "context_window", 512, raising=False)
     monkeypatch.setattr(cfg.settings, "context_threshold_percent", 0.05, raising=False)
