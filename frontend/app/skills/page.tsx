@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Skill } from '@/types';
 import {
   getSkills,
@@ -70,7 +70,7 @@ export default function SkillsPage() {
   const [selectedCommunity, setSelectedCommunity] = useState<Set<string>>(new Set());
   const [importing, setImporting] = useState(false);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const data = await getSkills();
@@ -81,11 +81,11 @@ export default function SkillsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [addToast, t]);
 
   useEffect(() => {
-    load();
-  }, []);
+    void load();
+  }, [load]);
 
   const builtinSkills = useMemo(
       () => skills.filter((s) => s.is_builtin),

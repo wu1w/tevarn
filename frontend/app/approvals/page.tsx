@@ -7,7 +7,7 @@
  * 规则模态 + 批量通过；badge 由 IconRail 合计 pending
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useToastStore } from '@/stores/toastStore';
@@ -49,17 +49,18 @@ const KIND_META: Record<string, { color: string; zh: string; en: string }> = {
   planner_tune: { color: '#7a98b0', zh: 'Planner 检讨', en: 'Planner tune' },
 };
 
-function waitStr(createdAt: number, _zh: boolean): string {
-  const sec = Math.max(1, Math.floor(Date.now() / 1000 - createdAt));
-  if (sec < 3600) return `${Math.floor(sec / 60)}m`;
-  if (sec < 86400) return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
-  return `${Math.floor(sec / 86400)}d`;
+/** 已等待秒数 → 简写（不在内部读 Date.now，避免 render 杂质） */
+function waitStr(sec: number, _zh: boolean): string {
+  const s = Math.max(1, Math.floor(sec));
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+  return `${Math.floor(s / 86400)}d`;
 }
 
 function parseTs(iso: string | null | undefined): number {
-  if (!iso) return Date.now() / 1000;
+  if (!iso) return 0;
   const t = Date.parse(iso);
-  return Number.isFinite(t) ? t / 1000 : Date.now() / 1000;
+  return Number.isFinite(t) ? t / 1000 : 0;
 }
 
 type TabId = 'escalation' | 'evolution';
@@ -120,20 +121,34 @@ export default function ApprovalsPage() {
   const items = pendingEsc.data?.escalations ?? [];
   const doneItems = resolvedEsc.data ?? [];
   const evoPending = pendingProp.data?.proposals ?? [];
-  const evoApplied = appliedProp.data?.proposals ?? [];
-  const evoRejected = rejectedProp.data?.proposals ?? [];
+  const evoApplied = useMemo(
+    () => appliedProp.data?.proposals ?? [],
+    [appliedProp.data?.proposals],
+  );
   const evoDone = useMemo(
     () =>
-      [...evoApplied, ...evoRejected]
+      [...(appliedProp.data?.proposals ?? []), ...(rejectedProp.data?.proposals ?? [])]
         .sort((a, b) => parseTs(b.created_at) - parseTs(a.created_at))
         .slice(0, 10),
-    [evoApplied, evoRejected],
+    [appliedProp.data?.proposals, rejectedProp.data?.proposals],
   );
   const idName = (id: string) =>
     identities.data?.identities?.find((i) => i.id === id)?.name ?? id.slice(0, 8);
 
   const hasDanger = items.some((e) => classify(e) === 'danger');
-  const oldest = items.length ? Math.max(...items.map((e) => Date.now() / 1000 - e.created_at)) : 0;
+  // 等待时长：用 created_at 最小值，避免 render 期 Date.now() 杂质性
+  const oldestCreatedAt = items.length
+    ? Math.min(...items.map((e) => Number(e.created_at) || 0))
+    : 0;
+  const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    if (!items.length && !evoPending.length && !evoDone.length) return;
+    const tick = () => setNowSec(Math.floor(Date.now() / 1000));
+    tick();
+    const id = window.setInterval(tick, 15_000);
+    return () => window.clearInterval(id);
+  }, [items.length, evoPending.length, evoDone.length]);
+  const oldestWaitSec = oldestCreatedAt > 0 ? Math.max(0, nowSec - oldestCreatedAt) : 0;
   const totalPending = items.length + evoPending.length;
 
   const refresh = () => {
@@ -271,7 +286,7 @@ export default function ApprovalsPage() {
               ? '这里只处理「扩权」与「进化」——日常干活按员工权限自动裁决，不会在此刷屏。批完回工作台看班子产出。'
               : 'Only capability grants & evolution. Routine tools follow employee caps — no spam. Then back to Workspace.'}
             {items.length > 0 && tab === 'escalation'
-              ? ` · ${zh ? '最早已等待' : 'oldest waiting'} ${waitStr(Date.now() / 1000 - oldest, zh)}`
+              ? ` · ${zh ? '最早已等待' : 'oldest waiting'} ${waitStr(oldestWaitSec, zh)}`
               : ''}
           </div>
           <div style={{ display: 'flex', gap: 12, marginTop: 8, fontSize: 11.5 }}>
@@ -344,7 +359,7 @@ export default function ApprovalsPage() {
                         {e.reason || (zh ? '能力提权申请' : 'Capability escalation')}
                       </span>
                       <span style={{ fontSize: 10.5, color: 'var(--foreground-dim)' }}>
-                        {zh ? '等待' : 'waiting'} {waitStr(e.created_at, zh)}
+                        {zh ? '等待' : 'waiting'} {waitStr(Math.max(0, nowSec - (Number(e.created_at) || 0)), zh)}
                       </span>
                     </div>
                     <div style={{ fontSize: 12, color: 'var(--foreground-muted)', marginTop: 8, lineHeight: 1.6 }}>
@@ -425,7 +440,7 @@ export default function ApprovalsPage() {
                         {p.title}
                       </span>
                       <span style={{ fontSize: 10.5, color: 'var(--foreground-dim)' }}>
-                        {zh ? '等待' : 'waiting'} {waitStr(parseTs(p.created_at), zh)}
+                        {zh ? '等待' : 'waiting'} {waitStr(Math.max(0, nowSec - parseTs(p.created_at)), zh)}
                       </span>
                     </div>
                     <div style={{ fontSize: 12, color: 'var(--foreground-muted)', marginTop: 8, lineHeight: 1.6 }}>

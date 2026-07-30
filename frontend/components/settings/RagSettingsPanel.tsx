@@ -87,7 +87,7 @@ export function RagSettingsPanel({ settings, onSaved }: Props) {
     } finally {
       setSaving(false);
     }
-  }, [selected, apiKey, baseUrlOverride, addToast, onSaved]);
+  }, [selected, apiKey, baseUrlOverride, addToast, onSaved, t]);
 
   const runTest = async (kind: 'embed' | 'qdrant' | 'rerank') => {
     setTesting(kind);

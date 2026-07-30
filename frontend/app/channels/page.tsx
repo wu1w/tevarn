@@ -379,7 +379,7 @@ export default function ChannelsPage() {
     } finally {
       setLoading(false);
     }
-  }, [addToast]);
+  }, [addToast, t]);
 
   useEffect(() => { loadData(); }, [loadData]);
 

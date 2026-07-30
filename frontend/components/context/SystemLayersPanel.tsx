@@ -87,7 +87,7 @@ export default function SystemLayersPanel({ sessionId }: { sessionId?: string | 
     } finally {
       setLoading(false);
     }
-  }, [sessionId, addToast]);
+  }, [sessionId, addToast, t]);
 
   useEffect(() => {
     void load();

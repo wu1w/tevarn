@@ -6,18 +6,12 @@ import { useSettings } from '@/lib/api-hooks';
 import {
   applySettingsBatch,
   getModelCatalog,
-  getProviderPresets,
   getRagPresets,
-  listRemoteModels,
-  selectCatalogModel,
   setCatalogFallback,
-  testLlmConnection,
   testEmbedding,
   testQdrant,
   testReranker,
   type ModelCatalog,
-  type CatalogProvider,
-  type ProviderPreset,
   type RagStackPreset,
   updateSetting,
   getSftCorpusInfo,
@@ -48,11 +42,6 @@ function normalizeCompatBase(url: string): string {
 function boolVal(settings: Setting[], key: string): boolean {
   const v = mapVal(settings, key);
   return v === 'True' || v === 'true' || v === '1';
-}
-
-function numVal(settings: Setting[], key: string, fallback: number): number {
-  const n = Number(mapVal(settings, key, String(fallback)));
-  return Number.isFinite(n) ? n : fallback;
 }
 
 type Dot = 'ok' | 'warn' | 'err' | 'idle';
@@ -138,35 +127,15 @@ export default function SettingsPage() {
   const [sftHelpOpen, setSftHelpOpen] = useState(false);
   const { data: settings = [], isLoading: loading, refetch } = useSettings();
 
-  const [presets, setPresets] = useState<ProviderPreset[]>([]);
   const [ragPresets, setRagPresets] = useState<RagStackPreset[]>([]);
   const [presetsLoading, setPresetsLoading] = useState(true);
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
-  const [catalogLoading, setCatalogLoading] = useState(true);
-  const [selectingModel, setSelectingModel] = useState<string | null>(null);
+  // catalogLoading 仅驱动刷新副作用，不在 UI 读
+  const [, setCatalogLoading] = useState(true);
 
-  /* LLM */
-  const [selectedId, setSelectedId] = useState('');
-  const [apiKey, setApiKey] = useState('');
-  const [model, setModel] = useState('');
-  const [customModel, setCustomModel] = useState('');
-  const [baseUrl, setBaseUrl] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [fetchingModels, setFetchingModels] = useState(false);
-  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
-  const [showKey, setShowKey] = useState(false);
-  const [liveModels, setLiveModels] = useState<string[]>([]);
-  const [modelsError, setModelsError] = useState<string | null>(null);
-
-  /* Generation */
-  const [temperature, setTemperature] = useState(0.7);
-  const [maxTokens, setMaxTokens] = useState(12288);
-  const [contextWindow, setContextWindow] = useState(128000);
+  /* 生成 / 备用 / 压缩（LLM 主配置已迁至 ModelSettingsPanel） */
   const [contextCompressModel, setContextCompressModel] = useState('');
-  const [systemName, setSystemName] = useState('Takton');
   const [defaultLlmModel, setDefaultLlmModel] = useState(''); // 新会话默认模型
-  const [genSaving, setGenSaving] = useState(false);
   const [fallbackRef, setFallbackRef] = useState(''); // providerId|||model
   const [fallbackSaving, setFallbackSaving] = useState(false);
   const [compressSaving, setCompressSaving] = useState(false);
@@ -209,64 +178,31 @@ export default function SettingsPage() {
   }, []);
 
   useEffect(() => {
-      let cancelled = false;
-      (async () => {
-        try {
-          const [p, rp] = await Promise.all([getProviderPresets(), getRagPresets()]);
-          if (!cancelled) {
-            setPresets(p);
-            setRagPresets(rp);
-          }
-        } catch {
-          if (!cancelled) {
-            setPresets([]);
-            setRagPresets([]);
-          }
-        } finally {
-          if (!cancelled) setPresetsLoading(false);
-        }
-        // 先快速用缓存回显，再后台实时刷新（成功会写回 cached_models）
-        if (!cancelled) await refreshCatalog(false);
-        if (!cancelled) await refreshCatalog(true);
-      })();
-      return () => {
-        cancelled = true;
-      };
-    }, [refreshCatalog]);
-
-
-  const applyGenParamsFromStore = React.useCallback(() => {
-    if (!settings.length) return;
-    const pid = (catalog?.active_provider_id || '').trim();
-    const mid = (catalog?.active_model || mapVal(settings, 'llm_model', '')).trim();
-    // per-model map
-    let map: Record<string, { temperature?: number; max_tokens?: number; context_window?: number }> = {};
-    try {
-      const raw = mapVal(settings, 'llm_model_gen_params', '');
-      if (raw) map = typeof raw === 'string' ? JSON.parse(raw) : (raw as any);
-    } catch { /* ignore */ }
-    const key = pid && mid ? `${pid}|||${mid}` : mid;
-    const slot = (key && map[key]) || (mid && map[mid]) || null;
-    if (slot) {
-      if (slot.temperature != null) setTemperature(Number(slot.temperature));
-      if (slot.max_tokens != null) setMaxTokens(Number(slot.max_tokens));
-      if (slot.context_window != null) setContextWindow(Number(slot.context_window));
-    } else {
-      // fallback flat globals (legacy)
-      setTemperature(numVal(settings, 'temperature', 0.7));
-      setMaxTokens(numVal(settings, 'max_tokens', 12288));
-      setContextWindow(numVal(settings, 'context_window', 128000));
-    }
-  }, [settings, catalog?.active_provider_id, catalog?.active_model]);
+    let cancelled = false;
+    (async () => {
+      try {
+        const rp = await getRagPresets();
+        if (!cancelled) setRagPresets(rp);
+      } catch {
+        if (!cancelled) setRagPresets([]);
+      } finally {
+        if (!cancelled) setPresetsLoading(false);
+      }
+      // 先快速用缓存回显，再后台实时刷新（成功会写回 cached_models）
+      if (!cancelled) await refreshCatalog(false);
+      if (!cancelled) await refreshCatalog(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshCatalog]);
 
   const formInited = React.useRef(false);
   useEffect(() => {
     if (!settings.length || formInited.current) return;
     formInited.current = true;
 
-    applyGenParamsFromStore();
     setContextCompressModel(mapVal(settings, 'context_compress_model', ''));
-    setSystemName(mapVal(settings, 'system_name', 'Takton'));
     setDefaultLlmModel(mapVal(settings, 'default_llm_model', ''));
     setSftLogEnabled(boolVal(settings, 'sft_usage_log_enabled'));
 
@@ -283,71 +219,7 @@ export default function SettingsPage() {
     setImageUrl(mapVal(settings, 'image_base_url'));
     setImageModel(mapVal(settings, 'image_model'));
   }, [settings]);
-  // 切换模型时加载该模型绑定的生成参数
-  useEffect(() => {
-    if (!formInited.current || !settings.length) return;
-    applyGenParamsFromStore();
-  }, [catalog?.active_provider_id, catalog?.active_model, applyGenParamsFromStore, settings.length]);
 
-
-
-  useEffect(() => {
-    if (!settings.length || !presets.length) return;
-    if (selectedId) return;
-
-    const savedProvider = mapVal(settings, 'llm_provider').toLowerCase();
-    const savedBase = mapVal(settings, 'llm_base_url').toLowerCase();
-    const savedModel = mapVal(settings, 'llm_model');
-
-    let id = presets.find((p) => p.id === 'custom')?.id || presets[0]?.id || 'custom';
-    const hints: [string, string][] = [
-      ['kimi.com/coding', 'kimi-plan'],
-      ['api.kimi.com', 'kimi-plan'],
-      ['moonshot.cn', 'moonshot'],
-      ['moonshot.ai', 'moonshot'],
-      ['openrouter', 'openrouter'],
-      ['deepseek', 'deepseek'],
-      ['dashscope', 'qwen'],
-      ['aliyun', 'qwen'],
-      ['bigmodel', 'zhipu'],
-      ['xf-yun', 'xfyun-astron'],
-      ['xfyun', 'xfyun-astron'],
-      ['volces.com', 'volcengine-ark'],
-      ['volcengine', 'volcengine-ark'],
-      ['minimax.io', 'minimax'],
-      ['minimaxi.com', 'minimax-cn'],
-      ['opencode.ai/zen/go', 'opencode-go'],
-      ['opencode.ai/zen', 'opencode-zen'],
-      ['api.x.ai', 'xai'],
-      ['siliconflow', 'custom'],
-    ];
-    for (const [hint, pid] of hints) {
-      if (savedBase.includes(hint) && presets.some((p) => p.id === pid)) {
-        id = pid;
-        break;
-      }
-    }
-    for (const p of presets) {
-      if (p.id === 'custom' || p.auth_mode === 'oauth_device_code') continue;
-      const pb = (p.llm.llm_base_url || '').toLowerCase();
-      if (pb && savedBase && (savedBase === pb || savedBase.startsWith(pb) || pb.startsWith(savedBase))) {
-        id = p.id;
-        break;
-      }
-    }
-    if (savedProvider === 'ollama') id = 'ollama';
-    if (savedProvider === 'openai') id = 'openai';
-    if (savedProvider === 'anthropic') id = 'anthropic';
-
-    setSelectedId(id);
-    const preset = presets.find((p) => p.id === id);
-    setModel(savedModel || preset?.llm.llm_model || '');
-    setCustomModel(savedModel || preset?.llm.llm_model || '');
-    setBaseUrl(savedBase || preset?.llm.llm_base_url || '');
-  }, [settings, presets, selectedId]);
-
-  const selected = useMemo(() => presets.find((p) => p.id === selectedId) || null, [presets, selectedId]);
-  const hasStoredKey = useMemo(() => Boolean(mapVal(settings, 'llm_api_key')), [settings]);
   const hasEmbedKey = useMemo(() => Boolean(mapVal(settings, 'embedding_api_key')), [settings]);
   const hasRerankKey = useMemo(() => Boolean(mapVal(settings, 'reranker_api_key')), [settings]);
 
@@ -390,37 +262,13 @@ export default function SettingsPage() {
       return opts;
     }, [configuredProviders]);
 
-    // 同步备用模型下拉
-    useEffect(() => {
-      if (!catalog) return;
-      const fp = (catalog.fallback_provider_id || '').trim();
-      const fm = (catalog.fallback_model || '').trim();
-      setFallbackRef(fp && fm ? `${fp}|||${fm}` : '');
-    }, [catalog]);
-
-    const effectiveModel = useMemo(
-      () => (model.trim() || customModel.trim() || selected?.llm.llm_model || '').trim(),
-      [model, customModel, selected]
-    );
-
-  const buildLlmPayload = useCallback((): Record<string, unknown> => {
-    if (!selected) return {};
-    const items: Record<string, unknown> = {
-      ...selected.llm,
-      llm_model: effectiveModel,
-      llm_base_url: (selected.custom || selected.id === 'ollama'? baseUrl
-        : selected.llm.llm_base_url || baseUrl
-      ).trim(),
-      provider_catalog_id: selected.id,
-      provider_catalog_name: selected.name,
-      provider_catalog_icon: selected.icon || selected.name?.charAt(0) || 'P',
-      credential_label: t('settings.defaultKeyLabel'),
-    };
-    if (selected.embedding) Object.assign(items, selected.embedding);
-    if (apiKey.trim()) items.llm_api_key = apiKey.trim();
-    else delete items.llm_api_key;
-    return items;
-  }, [selected, effectiveModel, baseUrl, apiKey]);
+  // 同步备用模型下拉
+  useEffect(() => {
+    if (!catalog) return;
+    const fp = (catalog.fallback_provider_id || '').trim();
+    const fm = (catalog.fallback_model || '').trim();
+    setFallbackRef(fp && fm ? `${fp}|||${fm}` : '');
+  }, [catalog]);
 
   const handleFallbackSelect = async (value: string) => {
       setFallbackRef(value);

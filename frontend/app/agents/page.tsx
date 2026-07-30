@@ -208,18 +208,20 @@ function AgentsInner() {
     retry: 1,
   });
 
-  const idsAll = identities.data?.identities ?? [];
   /** 在编：不占主网格；解雇归档另列 */
   const ids = useMemo(
-    () => idsAll.filter((a) => a.status !== 'archived'),
-    [idsAll],
+    () => (identities.data?.identities ?? []).filter((a) => a.status !== 'archived'),
+    [identities.data?.identities],
   );
   const dismissed = useMemo(
-    () => idsAll.filter((a) => a.status === 'archived'),
-    [idsAll],
+    () => (identities.data?.identities ?? []).filter((a) => a.status === 'archived'),
+    [identities.data?.identities],
   );
   const [dismissedOpen, setDismissedOpen] = useState(false);
-  const procs = processes.data?.processes ?? [];
+  const procs = useMemo(
+    () => processes.data?.processes ?? [],
+    [processes.data?.processes],
+  );
   const reportsTo = org.data?.reports_to ?? [];
 
   // URL ?id= ↔ 本地 openId 同步（侧栏 Link / 直链）

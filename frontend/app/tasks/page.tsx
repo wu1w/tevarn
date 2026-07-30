@@ -8,6 +8,15 @@ import { getTasks } from '@/lib/api';
 import { useT } from '@/stores/localeStore';
 import { AdvancedShell } from '@/components/layout/AdvancedShell';
 
+function SkeletonCard() {
+  return (
+    <div className="tk-card p-4 animate-pulse">
+      <div className="h-4 bg-card-bg-hover rounded w-3/4 mb-3" />
+      <div className="h-3 bg-card-bg-hover rounded w-1/2 mb-2" />
+      <div className="h-3 bg-card-bg-hover rounded w-2/3" />
+    </div>
+  );
+}
 
 export default function TasksPage() {
   const t = useT();
@@ -33,17 +42,6 @@ export default function TasksPage() {
   const completedTasks = tasks.filter((t) =>
     ['completed', 'failed', 'cancelled'].includes(t.status)
   );
-
-  // Skeleton component
-  function SkeletonCard() {
-    return (
-      <div className="tk-card p-4 animate-pulse">
-        <div className="h-4 bg-card-bg-hover rounded w-3/4 mb-3" />
-        <div className="h-3 bg-card-bg-hover rounded w-1/2 mb-2" />
-        <div className="h-3 bg-card-bg-hover rounded w-2/3" />
-      </div>
-    );
-  }
 
   return (
     <AdvancedShell

@@ -283,7 +283,7 @@ export default function MCPStorePanel({
     } finally {
       setLoading(false);
     }
-  }, [sourceFilter, search]);
+  }, [sourceFilter, search, t]);
 
   // 商店 tab 或筛选变化时拉目录（用 flag 避免在 effect 里直接 setState 串扰）
   useEffect(() => {
@@ -314,7 +314,7 @@ export default function MCPStorePanel({
     return () => {
       cancelled = true;
     };
-  }, [activeTab, sourceFilter, search]);
+  }, [activeTab, sourceFilter, search, t]);
 
   const statusMap = useMemo(() => {
     const m: Record<string, MCPServerStatus> = {};
@@ -352,7 +352,7 @@ export default function MCPStorePanel({
         setBusyId(null);
       }
     },
-    [installedNames, addToast, refetch, createMutation]
+    [installedNames, addToast, refetch, createMutation, t]
   );
 
   const handleUninstall = useCallback(
@@ -375,7 +375,7 @@ export default function MCPStorePanel({
         setBusyId(null);
       }
     },
-    [servers, confirm, deleteMutation, addToast, refetch]
+    [servers, confirm, deleteMutation, addToast, refetch, t]
   );
 
   const handleReload = async () => {

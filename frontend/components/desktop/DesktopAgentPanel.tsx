@@ -100,11 +100,11 @@ export function DesktopAgentPanel({ isOpen, onClose }: DesktopAgentPanelProps) {
       startScreenStream();
     }
     return () => {
-      if (isStreaming) {
-        stopScreenStream();
-      }
+      stopScreenStream();
     };
-  }, [isOpen]);
+    // 仅随 isOpen 启停；stream 函数引用稳定（useCallback []）
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- isStreaming 入依赖会启停抖动
+  }, [isOpen, startScreenStream, stopScreenStream]);
 
   if (!isOpen) return null;
 
@@ -159,8 +159,10 @@ export function DesktopAgentPanel({ isOpen, onClose }: DesktopAgentPanelProps) {
             {/* 屏幕预览 */}
             <div className={`relative overflow-hidden rounded-lg border bg-muted ${isExpanded ? 'aspect-video' : 'aspect-[4/3]'}`}>
               {screenFrame ? (
-                <img 
-                  src={`data:image/jpeg;base64,${screenFrame}`} 
+                // 实时 base64 帧：next/image 无收益且不适合 data URL 热更新
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={`data:image/jpeg;base64,${screenFrame}`}
                   alt="Screen"
                   className="h-full w-full object-contain"
                 />

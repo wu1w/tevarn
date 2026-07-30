@@ -106,11 +106,10 @@ export default function KernelPage() {
   });
 
   const procs = processes.data?.processes ?? [];
-  const evts = events.data?.events ?? [];
   // 兼容历史 kind=mediate 与当前 kind=mediation
   const mediateEvents = useMemo(
-    () => evts.filter((e) => e.kind === 'mediate' || e.kind === 'mediation'),
-    [evts],
+    () => (events.data?.events ?? []).filter((e) => e.kind === 'mediate' || e.kind === 'mediation'),
+    [events.data?.events],
   );
   const policyDecisions = policy.data?.decisions ?? [];
   const liveJobs = running.data;
@@ -142,7 +141,7 @@ export default function KernelPage() {
 
   // 哈希链完整性：按 ts 排序后逐条校验 prev_hash 衔接
   const chainStatus = useMemo(() => {
-    const withHash = evts.filter((e) => e.hash);
+    const withHash = (events.data?.events ?? []).filter((e) => e.hash);
     if (withHash.length === 0) return { ok: null as boolean | null, len: 0 };
     const sorted = [...withHash].sort((a, b) => a.ts - b.ts);
     let ok = true;
@@ -150,7 +149,7 @@ export default function KernelPage() {
       if (sorted[i].prev_hash && sorted[i - 1].hash && sorted[i].prev_hash !== sorted[i - 1].hash) { ok = false; break; }
     }
     return { ok, len: sorted.length, head: sorted[sorted.length - 1]?.hash?.slice(0, 12) };
-  }, [evts]);
+  }, [events.data?.events]);
 
   const stats = [
     { label: zh ? '编制' : 'Identities', value: identities.data?.total ?? 0 },

@@ -67,18 +67,21 @@ export function useDesktopAgent(options: UseDesktopAgentOptions = {}) {
       setError(null);
       options.onOperationStart?.(operation);
 
-      try {
+      const postOnce = async (perm: PermissionLevel) => {
         const response = await fetch('/api/desktop/operation', {
           method: 'POST',
           headers: authHeaders(),
           body: JSON.stringify({
             operation: operation.type,
             params: operation.params,
-            permission,
+            permission: perm,
           }),
         });
+        return (await response.json()) as DesktopOperationResult;
+      };
 
-        const result: DesktopOperationResult = await response.json();
+      try {
+        let result = await postOnce(permission);
         const needs =
           Boolean(result.requires_permission) ||
           Boolean(result.data && (result.data as { requires_permission?: boolean }).requires_permission);
@@ -93,9 +96,11 @@ export function useDesktopAgent(options: UseDesktopAgentOptions = {}) {
 
           if (level) {
             await persistPermission(operation.type, level, operation.params.app_name);
-            return executeOperation(operation, level);
+            // 非递归重试一次（避免 useCallback 自引用 immutability 报错）
+            result = await postOnce(level);
+          } else {
+            throw new Error('User denied permission');
           }
-          throw new Error('User denied permission');
         }
 
         setLastResult(result);
@@ -124,14 +129,17 @@ export function useDesktopAgent(options: UseDesktopAgentOptions = {}) {
       setIsExecuting(true);
       setError(null);
 
-      try {
+      const postOnce = async (perm: PermissionLevel) => {
         const response = await fetch('/api/desktop/execute', {
           method: 'POST',
           headers: authHeaders(),
-          body: JSON.stringify({ task, permission }),
+          body: JSON.stringify({ task, permission: perm }),
         });
+        return await response.json();
+      };
 
-        const result = await response.json();
+      try {
+        let result = await postOnce(permission);
         const needs =
           Boolean(result.requires_permission) ||
           Boolean(result.data && result.data.requires_permission);
@@ -148,9 +156,10 @@ export function useDesktopAgent(options: UseDesktopAgentOptions = {}) {
               level,
               result.data?.app_name,
             );
-            return executeTask(task, level);
+            result = await postOnce(level);
+          } else {
+            throw new Error('User denied permission');
           }
-          throw new Error('User denied permission');
         }
         setLastResult(result);
         return result;

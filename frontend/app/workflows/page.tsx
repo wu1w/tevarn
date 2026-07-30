@@ -300,7 +300,7 @@ export default function WorkflowsPage() {
       setEdges([]);
       setHasChanges(false);
     }
-  }, [selectedId]);
+  }, [selectedId, selected]);
 
   /* ── 新建/示例：经 PromptDialog 取名（Electron 不支持 window.prompt，原生调用会静默挂死） ── */
   const [nameDialogMode, setNameDialogMode] = useState<'create' | 'example' | 'basic' | null>(null);
@@ -501,9 +501,8 @@ export default function WorkflowsPage() {
     []
   );
 
-  /* ── 帮助弹窗 ── */
-  const HelpModal = () =>
-    showHelp ? (
+  /* ── 帮助弹窗（条件渲染，勿在 render 内声明子组件） ── */
+  const helpModal = showHelp ? (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
         <div className="max-h-[80vh] w-full max-w-2xl overflow-auto rounded-xl bg-card-bg p-6 shadow-xl">
           <div className="mb-4 flex items-center justify-between">
@@ -811,7 +810,7 @@ export default function WorkflowsPage() {
         )}
       </div>
 
-      <HelpModal />
+      {helpModal}
 
       {ConfirmDialogComponent}
 

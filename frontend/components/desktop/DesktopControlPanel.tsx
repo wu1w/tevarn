@@ -130,8 +130,10 @@ export function DesktopControlPanel({ onTaskComplete }: DesktopControlPanelProps
           {/* 屏幕预览 */}
           <div className="relative aspect-video overflow-hidden rounded-lg border bg-muted">
             {screenFrame ? (
-              <img 
-                src={`data:image/jpeg;base64,${screenFrame}`} 
+              // 实时 base64 帧：next/image 无收益且不适合 data URL 热更新
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={`data:image/jpeg;base64,${screenFrame}`}
                 alt="Screen preview"
                 className="h-full w-full object-contain"
               />

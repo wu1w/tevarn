@@ -299,7 +299,7 @@ function MermaidBlock({ code, streaming = false }: { code: string; streaming?: b
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [code, streaming, uid]);
+  }, [code, streaming, uid, t]);
 
   // 流式未完成：只显示代码块
   if (streaming) {

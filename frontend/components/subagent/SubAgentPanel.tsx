@@ -494,7 +494,7 @@ export default function SubAgentPanel() {
     } finally {
       setLoading(false);
     }
-  }, [addToast]);
+  }, [addToast, t]);
 
   useEffect(() => {
       loadData();

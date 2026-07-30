@@ -80,7 +80,7 @@ export function ModelPicker({ disabled = false, onChanged, sessionId }: ModelPic
     } finally {
       setLoading(false);
     }
-  }, [addToast]);
+  }, [addToast, t]);
 
   useEffect(() => {
     load(true);

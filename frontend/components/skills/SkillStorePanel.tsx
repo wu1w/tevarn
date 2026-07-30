@@ -295,7 +295,7 @@ export default function SkillStorePanel() {
     getStoreSources()
       .then(setSources)
       .catch((e) => addToast(t('store.loadSourcesFail').replace('{msg}', String(e?.message || e)), 'error'));
-  }, [addToast]);
+  }, [addToast, t]);
 
   const loadInstalled = useCallback(async () => {
     try {
@@ -369,7 +369,7 @@ export default function SkillStorePanel() {
         }
       }
     },
-    [sourceFilter, search, addToast]
+    [sourceFilter, search, addToast, t]
   );
 
   useEffect(() => {

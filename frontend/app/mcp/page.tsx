@@ -94,7 +94,7 @@ export default function MCPPage() {
         setSubmitting(false);
       }
     },
-    [form, editingId, addToast, updateMutation, createMutation, resetForm]
+    [form, editingId, addToast, updateMutation, createMutation, resetForm, t]
   );
 
   const fillFromStore = useCallback((data: MCPServerFormData, existingId?: string | null) => {
@@ -102,7 +102,7 @@ export default function MCPPage() {
     setForm({ ...emptyForm(), ...data });
     setTab('custom');
     addToast(existingId ? t('mcpPage.editingExisting') : t('mcpPage.filledForm'), 'info');
-  }, [addToast]);
+  }, [addToast, t]);
 
   const tabs: { id: MCPPageTab; label: string }[] = [
     { id: 'store', label: t('mcpPage.tabStore') },
