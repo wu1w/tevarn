@@ -27,3 +27,6 @@ filterwarnings = [
     "ignore::pytest.PytestUnhandledThreadExceptionWarning",
     "ignore::DeprecationWarning:fastapi.*",
 ]
+markers = [
+    "desktop: manual desktop integration (needs display; TAKTON_RUN_DESKTOP_TESTS=1)",
+]
