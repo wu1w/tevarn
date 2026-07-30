@@ -51,7 +51,7 @@ jobs:
           TAKTON_API_KEY: "ci-api-key-not-for-production-use-32bxxxx"
         run: python -m pytest backend/tests/security -q
 
-      - name: Run tests
+      - name: Run tests (backend/tests)
         env:
           TAKTON_DB_URL: "sqlite+aiosqlite:///./ci-test.db"
           TAKTON_TEST_MODE: "1"
@@ -59,7 +59,17 @@ jobs:
           TAKTON_AGENT_KERNEL_PERSISTENCE: "false"
           TAKTON_JWT_SECRET: "ci-jwt-secret-not-for-production-use-32b"
           TAKTON_API_KEY: "ci-api-key-not-for-production-use-32bxxxx"
-        run: python -m pytest backend/tests tests -q
+        run: python -m pytest backend/tests -q --tb=line
+
+      - name: Run tests (repo tests/)
+        env:
+          TAKTON_DB_URL: "sqlite+aiosqlite:///./ci-test-root.db"
+          TAKTON_TEST_MODE: "1"
+          TAKTON_AGENT_DISPATCHER_ENABLED: "false"
+          TAKTON_AGENT_KERNEL_PERSISTENCE: "false"
+          TAKTON_JWT_SECRET: "ci-jwt-secret-not-for-production-use-32b"
+          TAKTON_API_KEY: "ci-api-key-not-for-production-use-32bxxxx"
+        run: python -m pytest tests -q --tb=line
 
       - name: Alembic sanity (env.py loads, baseline resolvable)
         run: |

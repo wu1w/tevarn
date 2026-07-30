@@ -50,13 +50,31 @@ async def test_timeout_cleanup_does_not_leak_on_success():
     assert await _await_with_timeout_cleanup(fast(), 1.0) == 42
 
 
+def test_hard_truncate_helper_preserves_head_tail():
+    """直接测 _hard_truncate（不依赖 settings/LLM）。"""
+    eng = PipelineContextEngine()
+    eng.protect_first_n = 2
+    eng.protect_last_n = 2
+    eng.max_l5_retries = 3
+    messages = [{"role": "user", "content": f"m{i}"} for i in range(20)]
+    out, n = eng._hard_truncate(messages)
+    assert n == 16
+    assert len(out) == 5  # 2 head + marker + 2 tail
+    assert out[0]["content"] == "m0"
+    assert out[-1]["content"] == "m19"
+    assert "hard-truncated" in out[2]["content"]
+
+
 @pytest.mark.asyncio
 async def test_hard_truncate_layer_applied(monkeypatch):
     # compress() 每轮从 settings 同步 meter——测试必须压低全局窗口/阈值
     from backend.core import config as cfg
+    from backend.agent import context_pipeline as cp
 
     monkeypatch.setattr(cfg.settings, "context_window", 512, raising=False)
     monkeypatch.setattr(cfg.settings, "context_threshold_percent", 0.05, raising=False)
+    monkeypatch.setattr(cp.settings, "context_window", 512, raising=False)
+    monkeypatch.setattr(cp.settings, "context_threshold_percent", 0.05, raising=False)
 
     eng = PipelineContextEngine()
     eng.context_length = 512
