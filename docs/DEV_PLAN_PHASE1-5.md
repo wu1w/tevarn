@@ -1,4 +1,4 @@
-# Takton 开发总计划：Phase 1-5（0.4.6-alpha → 0.7 公开线）
+﻿# Takton 开发总计划：Phase 1-5（0.4.6-alpha → 0.7 公开线）
 
 > 制定日期：2026-07-30 · 周期约 15 周 · 单人 + AI 协作模式
 > 定位：带治理内核的可自进化数字员工运行时（下一代 Agent 形态）
@@ -97,16 +97,15 @@
       权威仍在 DB，recorder 内存为缓存
 - [x] 状态机门面 `backend/agent/run_lifecycle.py`（origin 推断 / public_status /
       transition 校验入口）；细粒度合法表仍在 `run_state.py`
+- [x] process.meta.run_id 回写；`test_run_unification` 绿（2.1 关账）
 
 ### 2.2 四条触发路径接入统一 Run（第 4 周）
 
-- [ ] chat（websocket → NexusAgentLoop）：进入 loop 前创建/恢复 Run
-- [ ] inbox（dispatcher.py）：工单派遣 = 创建 origin=inbox 的 Run；
-      kernel process 与 Run 一一关联（process.meta 记 run_id）
-- [ ] cron（cron_scheduler.py）：触发 = 创建 origin=cron 的 Run
-- [ ] cluster（cluster_executor.py）：父 Run + 子 Run（parent_run_id），
-      聚合状态由子 Run 状态推导
-- [ ] 验收：`GET /runs` 一个接口能看到全部四类执行的统一状态
+- [x] chat（websocket `_run_origin=chat` → loop 创建 Run）
+- [x] inbox（dispatcher `_run_origin=inbox|cron`；process.meta.run_id；`inbox.attach_run_id`）
+- [x] cron（enqueue source=cron + payload；经 dispatcher 落 origin=cron Run）
+- [x] cluster（父 AgentRun origin=cluster + 子 Run parent_run_id；与 ClusterRun 互链）
+- [x] 验收：`GET /runs` / `?origin=` 可列四类执行
 
 ### 2.3 Durable 化（第 5 周）
 

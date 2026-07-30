@@ -185,6 +185,44 @@ async def _run_cluster_background(
     except Exception as e:
         logger.warning("cluster run persist (start) skipped: %s", e)
 
+    # Phase 2.2：统一 Run 父节点（origin=cluster），与 ClusterRun 互链
+    parent_agent_run_id: uuid.UUID | None = None
+    try:
+        from backend.agent.run_lifecycle import (
+            build_create_payload,
+            ensure_bookkeeping_session,
+        )
+        from backend.agent.run_state import RunStatus
+        from backend.repositories.agent_run_repo import AsyncAgentRunRepository
+
+        book_sid = await ensure_bookkeeping_session(None, kind="cluster")
+        ar_repo = AsyncAgentRunRepository()
+        parent_row = await ar_repo.create_run(
+            build_create_payload(
+                session_id=book_sid,
+                mode="cluster",
+                origin="cluster",
+                input_summary=(name or task_description or "")[:512],
+                meta={
+                    "cluster_task_id": task_id,
+                    "cluster_run_id": task_id,
+                    "plan_id": plan_id,
+                    "sub_task_count": len(sub_tasks),
+                },
+                status=RunStatus.EXECUTING.value,
+                started_at=datetime.now(timezone.utc),
+            )
+        )
+        parent_agent_run_id = parent_row.id
+        # 挂到 executor，供子任务写 parent_run_id
+        try:
+            executor._unified_parent_run_id = parent_agent_run_id  # type: ignore[attr-defined]
+            executor._unified_session_id = book_sid  # type: ignore[attr-defined]
+        except Exception:
+            pass
+    except Exception as e:
+        logger.warning("cluster unified parent Run skipped: %s", e)
+
     try:
         result = await executor.execute(
             task_description=task_description,
@@ -210,6 +248,13 @@ async def _run_cluster_background(
             )
         except Exception as e:
             logger.warning("cluster run persist (finish) skipped: %s", e)
+        await _finish_unified_cluster_run(
+            parent_agent_run_id,
+            status=result.status.value,
+            error=result.error,
+            summary=str(result.aggregated_result or "")[:500],
+            sub_tasks=result.sub_tasks,
+        )
         await broadcast_progress(
             task_id, 100, "done", event="completed", status=result.status.value
         )
@@ -227,6 +272,9 @@ async def _run_cluster_background(
             await repo.finish_run(task_id, status="cancelled", error="cancelled by user")
         except Exception as pe:
             logger.warning("cluster run persist (cancel) skipped: %s", pe)
+        await _finish_unified_cluster_run(
+            parent_agent_run_id, status="cancelled", error="cancelled by user"
+        )
         await broadcast_progress(task_id, 100, "cancelled", event="cancelled", status="cancelled")
         raise
     except Exception as e:
@@ -243,9 +291,91 @@ async def _run_cluster_background(
             await repo.finish_run(task_id, status="failed", error=str(e))
         except Exception as pe:
             logger.warning("cluster run persist (fail) skipped: %s", pe)
+        await _finish_unified_cluster_run(
+            parent_agent_run_id, status="failed", error=str(e)
+        )
         await broadcast_progress(task_id, 100, str(e), event="failed")
     finally:
         _running_clusters.pop(task_id, None)
+
+
+async def _finish_unified_cluster_run(
+    parent_run_id: uuid.UUID | None,
+    *,
+    status: str,
+    error: str | None = None,
+    summary: str = "",
+    sub_tasks: list | None = None,
+) -> None:
+    """把 Cluster 结果同步到统一 AgentRun 父/子节点。"""
+    if parent_run_id is None:
+        return
+    try:
+        from backend.agent.run_state import RunStatus
+        from backend.repositories.agent_run_repo import AsyncAgentRunRepository
+
+        ar = AsyncAgentRunRepository()
+        st_map = {
+            "completed": RunStatus.DONE.value,
+            "failed": RunStatus.FAILED.value,
+            "cancelled": RunStatus.CANCELLED.value,
+            "running": RunStatus.EXECUTING.value,
+        }
+        final = st_map.get(str(status).lower(), RunStatus.DONE.value)
+        await ar.update_run(
+            parent_run_id,
+            {
+                "status": final,
+                "final_summary": (summary or error or "")[:2000],
+                "error": (error or None),
+                "ended_at": datetime.now(timezone.utc),
+            },
+        )
+        # 子任务各建一条 origin=cluster 子 Run（幂等尽力）
+        parent = await ar.get_run(parent_run_id)
+        if parent is None or not sub_tasks:
+            return
+        for st in sub_tasks:
+            try:
+                st_status = getattr(st, "status", None)
+                st_status_v = (
+                    st_status.value if hasattr(st_status, "value") else str(st_status or "done")
+                )
+                child_final = st_map.get(st_status_v.lower(), RunStatus.DONE.value)
+                if st_status_v.lower() in ("completed", "success"):
+                    child_final = RunStatus.DONE.value
+                name = str(getattr(st, "name", "") or getattr(st, "id", "sub"))
+                err = getattr(st, "error", None)
+                res = getattr(st, "result", None)
+                res_s = ""
+                if isinstance(res, dict):
+                    res_s = str(res.get("result") or res)[:500]
+                elif res is not None:
+                    res_s = str(res)[:500]
+                await ar.create_run(
+                    {
+                        "session_id": parent.session_id,
+                        "user_id": parent.user_id,
+                        "status": child_final,
+                        "mode": "cluster_sub",
+                        "origin": "cluster",
+                        "parent_run_id": parent_run_id,
+                        "input_summary": name[:512],
+                        "final_summary": res_s,
+                        "error": str(err) if err else None,
+                        "meta": {
+                            "cluster_task_id": (parent.meta or {}).get("cluster_task_id"),
+                            "sub_task_id": str(getattr(st, "id", "")),
+                        },
+                        "started_at": getattr(st, "started_at", None),
+                        "ended_at": getattr(st, "completed_at", None)
+                        or datetime.now(timezone.utc),
+                    }
+                )
+            except Exception as ce:
+                logger.debug("cluster child Run skipped: %s", ce)
+    except Exception as e:
+        logger.warning("unified cluster Run finish skipped: %s", e)
 
 
 def _check_cluster_admission() -> None:

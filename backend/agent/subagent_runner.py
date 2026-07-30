@@ -116,6 +116,7 @@ async def run_subagent(
         child._llm_snapshot_override = override
     child._subagent_depth = depth + 1
     child._parent_run_id = parent_run_id
+    child._run_origin = "subagent"  # Phase 2.2 显式 origin
     # Kernel（审计修复）：父 kernel 进程 id——子进程 create_process(parent_id=...)
     # 时按父能力集 narrow。注意 parent_run_id 是 run 记录 id，不是 kernel 进程 id，
     # 两者不可混用（此前混用导致 parent 查找落空、子进程实为无父顶级进程）。

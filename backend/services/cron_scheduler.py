@@ -237,7 +237,13 @@ class CronScheduler:
                         str(getattr(job, "instruction", "") or job_name),
                         source="cron",
                         source_ref=str(job_id),
-                        payload={"cron_job": job_name, "schedule": getattr(job, "schedule", "")},
+                        # Phase 2.2：source=cron → dispatcher 设 origin=cron；payload 可溯源
+                        payload={
+                            "cron_job": job_name,
+                            "schedule": getattr(job, "schedule", ""),
+                            "cron_job_id": str(job_id),
+                            "origin": "cron",
+                        },
                     )
                     if item is None:
                         raise RuntimeError("工单被拒收（身份停用或不存在）")

@@ -838,6 +838,8 @@ class NexusAgentLoop(AgentLoopBase):
         )
         self._run_recorder = recorder
         await recorder.start(input_summary=user_input or "")
+        # Phase 2.1/2.2：Run id 回写 loop，供 process.meta / inbox 关联
+        self._agent_run_id = getattr(recorder, "run_id", None)
 
         # ── Agent Kernel（阶段 1/W1）：本次 run 纳入进程生命周期管理 ──
         kernel = None
@@ -871,9 +873,14 @@ class NexusAgentLoop(AgentLoopBase):
                 _meta = {
                     "mode": mode,
                     "parent_run_id": str(parent_run_id) if parent_run_id else None,
+                    "run_id": str(self._agent_run_id) if self._agent_run_id else None,
+                    "origin": getattr(recorder, "origin", None),
                 }
                 if isinstance(proc_opts.get("meta"), dict):
                     _meta.update(proc_opts["meta"])
+                    # 确保 run_id 不被 proc_opts 冲掉
+                    if self._agent_run_id:
+                        _meta["run_id"] = str(self._agent_run_id)
                 kernel_proc = await kernel.create_process(
                     agent_key or "main",
                     session_id=str(session_id),

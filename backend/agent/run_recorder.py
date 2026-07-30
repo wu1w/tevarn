@@ -146,8 +146,10 @@ class RunRecorder:
             self._status = dst_s
             await self._publish("run.status_changed", {
                 **self._base_payload(),
+                "origin": getattr(self, "origin", None),
                 "from": src.value,
                 "to": dst_s.value,
+                "public_status": public_status(dst_s),
                 "note": note,
             })
             return True

@@ -99,19 +99,26 @@ created → planning → executing ⇄ waiting → verifying → done|failed|can
 
 ## 7. 切片与不做
 
-**2.1 本切片**：列 + 迁移 + lifecycle + recorder origin + GET /runs?origin= + 测试。
+**2.1 本切片**：列 + 迁移 + lifecycle + recorder origin + GET /runs?origin= + 测试。✅  
+**2.2 本切片**：四路径显式 origin + process/inbox 互链 + cluster 父/子 Run。✅  
 
 **明确延后**：
 - kill-9 自动续跑（2.3）
-- cluster/cron 强制建 Run（2.2）
 - checkpoint 权威单写 Run 列（2.3）
 - 状态词汇彻底改名（避免大爆炸）
+- cluster 子任务从「纯 LLM」升级为完整 loop Run（可选）
 
 ---
 
-## 8. 验收（2.1）
+## 8. 验收
 
+### 2.1
 1. 新 Run 必有 `origin`；旧行 backfill 合理默认。  
 2. `GET /runs?origin=inbox` 只返回 inbox。  
 3. recorder 创建路径带 identity_id / parent_run_id 时落列而非仅 meta。  
 4. 既有 `test_durable_run` 全绿。  
+
+### 2.2
+1. chat → origin=chat；inbox → origin=inbox；cron 投递 → origin=cron。  
+2. process.meta.run_id + inbox.payload.run_id 可互查。  
+3. cluster 启动建父 Run；结束写子 Run（parent_run_id）与父终态。  

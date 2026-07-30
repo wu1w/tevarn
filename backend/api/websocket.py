@@ -892,6 +892,8 @@ async def _run_agent_safe(
 ) -> None:
     """安全地运行 Agent Loop，捕获异常与取消"""
     try:
+        # Phase 2.2：chat 路径显式 origin（不靠 mode 默认猜）
+        agent._run_origin = "chat"
         await agent.run(
             session_id,
             user_input,

@@ -1042,6 +1042,9 @@ class WorkforceDispatcher:
         except Exception:
             pass
         # 编制内权限/预算注入进程创建（loop._run_inner 读取）
+        _item_payload = getattr(item, "payload", None) or {}
+        if not isinstance(_item_payload, dict):
+            _item_payload = {}
         loop._kernel_process_options = {
             "capabilities": list(ident.capabilities) if ident.capabilities is not None else None,
             "token_budget": _budget,
@@ -1050,6 +1053,8 @@ class WorkforceDispatcher:
                 "identity_id": str(ident.id),
                 "identity_name": str(ident.name),
                 "inbox_item_id": str(item.id),
+                "source": str(getattr(item, "source", "") or ""),
+                "cron_job_id": _item_payload.get("cron_job_id"),
                 "token_budget_applied": _budget,
                 "token_budget_source": _budget_src,
                 "llm_source": "workforce",
@@ -1060,6 +1065,9 @@ class WorkforceDispatcher:
         loop._llm_source = "workforce"
         loop._llm_priority = _llm_pri
         loop._inbox_item_id = str(item.id)
+        # Phase 2.2：inbox 路径 origin；cron 投递保留 source=cron → origin=cron
+        _src = str(getattr(item, "source", "") or "").strip().lower()
+        loop._run_origin = "cron" if _src == "cron" else "inbox"
         # 落地类工单（审计/检索/数据/…）提高迭代 + 轻提示
         try:
             from backend.agent.task_grounding import (
@@ -1091,6 +1099,15 @@ class WorkforceDispatcher:
             len(str(item.instruction or "")),
         )
         result = await loop.run(session_id, prompt, attachments=None, mode="workforce")
+        # Phase 2.2：工单 payload 记 run_id，便于 /runs 与 inbox 互查
+        try:
+            _rid = getattr(loop, "_agent_run_id", None)
+            if _rid and hasattr(self._inbox, "attach_run_id"):
+                await self._inbox.attach_run_id(
+                    item.id, _rid, origin=getattr(loop, "_run_origin", None)
+                )
+        except Exception as e:
+            logger.debug("inbox run_id link skipped: %s", e)
         # run() finally 会清空 _kernel_process；用 _last_kernel_process_id
         proc = getattr(loop, "_kernel_process", None)
         proc_id = None

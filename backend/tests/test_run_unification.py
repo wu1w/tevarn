@@ -15,9 +15,12 @@ def test_infer_origin_from_mode_and_meta():
     assert infer_origin(mode="workforce") == "inbox"
     assert infer_origin(mode="subagent") == "subagent"
     assert infer_origin(mode="headless") == "headless"
+    assert infer_origin(mode="cluster") == "cluster"
     assert infer_origin(meta={"inbox_item_id": "x"}) == "inbox"
     assert infer_origin(meta={"cluster_run_id": "c1"}) == "cluster"
     assert infer_origin(meta={"source": "cron"}) == "cron"
+    # cron 投递同时带 inbox_item_id 时仍算 cron
+    assert infer_origin(meta={"source": "cron", "inbox_item_id": "i1"}) == "cron"
     assert infer_origin(explicit="cron", mode="default") == "cron"
     assert infer_origin(parent_run_id=uuid.uuid4()) == "subagent"
 
@@ -143,3 +146,35 @@ async def test_recorder_writes_origin():
     assert row.origin == "inbox"
     assert row.token_limit == 12_000
     assert (row.meta or {}).get("inbox_item_id")
+
+
+def test_cron_beats_inbox_item_for_origin():
+    from backend.agent.run_lifecycle import infer_origin
+
+    assert (
+        infer_origin(
+            mode="workforce",
+            meta={"source": "cron", "inbox_item_id": "x", "cron_job_id": "j1"},
+            explicit="cron",
+        )
+        == "cron"
+    )
+
+
+@pytest.mark.asyncio
+async def test_ensure_bookkeeping_session_reuses():
+    from backend.agent.run_lifecycle import ensure_bookkeeping_session
+    from backend.repositories.user_repo import AsyncUserRepository
+
+    users = AsyncUserRepository()
+    uname = f"bk_{uuid.uuid4().hex[:8]}"
+    user = await users.create(
+        {
+            "email": f"{uname}@example.com",
+            "username": uname,
+            "hashed_password": "x",
+        }
+    )
+    s1 = await ensure_bookkeeping_session(user.id, kind="cluster")
+    s2 = await ensure_bookkeeping_session(user.id, kind="cluster")
+    assert s1 == s2

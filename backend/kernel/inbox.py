@@ -218,6 +218,25 @@ class InboxService:
                 await session.commit()
         return n
 
+    async def attach_run_id(self, item_id: Any, run_id: Any, *, origin: str | None = None) -> None:
+        """Phase 2.2：工单 payload 关联 AgentRun id（/runs 互查）。"""
+        from backend.models.agent_identity import AgentInboxItem
+
+        async with self._session_factory() as session:
+            item = (
+                await session.execute(
+                    select(AgentInboxItem).where(AgentInboxItem.id == _uuid.UUID(str(item_id)))
+                )
+            ).scalar_one_or_none()
+            if item is None:
+                return
+            payload = dict(item.payload or {}) if isinstance(item.payload, dict) else {}
+            payload["run_id"] = str(run_id)
+            if origin:
+                payload["origin"] = str(origin)
+            item.payload = payload
+            await session.commit()
+
     async def complete(self, item_id: Any, result: str, *, process_id: str | None = None) -> None:
         from backend.models.agent_identity import AgentInboxItem
 
