@@ -252,7 +252,10 @@ async def builtin_permission_before(name: str, arguments: dict[str, Any]) -> Bef
 
     from backend.agent.permission_overlay import build_effective_rules
     from backend.agent.permissions_rules import PermissionGate
-    from backend.agent.working_mode import effective_ask_mode, effective_permission_profile
+    from backend.agent.working_mode import (
+        effective_ask_mode,
+        effective_permission_profile,
+    )
 
     profile = str((court.extra or {}).get("profile") or effective_permission_profile())
     mode = str((court.extra or {}).get("mode") or "build")

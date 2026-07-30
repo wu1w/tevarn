@@ -322,8 +322,9 @@ async def decide_tool(
             profile = "plan"
 
     try:
-        from backend.tools.permissions import resolve_agent_workspace_root
         from pathlib import Path
+
+        from backend.tools.permissions import resolve_agent_workspace_root
 
         root = Path(resolve_agent_workspace_root())
     except Exception:
@@ -339,12 +340,13 @@ async def decide_tool(
     layer: Layer = "profile"
     matched = f"profile:{profile}:{decision}"
     if decision == "allow":
-        # 若 user allow 列表包含该工具
+        # 若 user allow 列表包含该工具名
         try:
             from backend.agent.permission_overlay import load_user_rules_payload
 
             payload = load_user_rules_payload()
-            if any(_pattern_hits(p, name, args) for p in payload.get("allow") or []):
+            allow_pats = [str(p) for p in (payload.get("allow") or [])]
+            if any(p == name or name in p for p in allow_pats):
                 layer = "user_allow"
                 matched = "user_allow"
         except Exception:

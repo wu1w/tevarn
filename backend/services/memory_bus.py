@@ -403,9 +403,10 @@ async def _supersede_graph(
 async def _supersede_entity(
     entity_id: str, new_content: str, *, approved_by: str
 ) -> MemoryWriteResult:
+    from sqlalchemy import select
+
     from backend.database import get_db_context
     from backend.models.entity import Entity
-    from sqlalchemy import select
 
     eid = uuid.UUID(str(entity_id))
     async with get_db_context() as session:
@@ -490,7 +491,10 @@ async def _recall_identity(
 async def _recall_graph(
     query: str, *, kinds: set[str], user_id: Any
 ) -> list[MemoryHit]:
-    from backend.repositories.memory_graph_repo import AsyncMemoryGraphRepository, VALID_KINDS
+    from backend.repositories.memory_graph_repo import (
+        VALID_KINDS,
+        AsyncMemoryGraphRepository,
+    )
 
     kind_filter = None
     if kinds:
@@ -540,9 +544,10 @@ async def _recall_graph(
 
 
 async def _recall_entity(query: str, *, user_id: Any) -> list[MemoryHit]:
+    from sqlalchemy import select
+
     from backend.database import get_db_context
     from backend.models.entity import Entity
-    from sqlalchemy import select
 
     try:
         async with get_db_context() as session:
