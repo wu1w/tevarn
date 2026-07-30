@@ -82,6 +82,82 @@ def test_top_up_rejects_non_positive(kernel: AgentKernel) -> None:
     asyncio.run(go())
 
 
+def test_soft_renew_on_charge_overflow(kernel: AgentKernel, monkeypatch) -> None:
+    """charge 超预算时自动 soft_renew，任务不硬死。"""
+    monkeypatch.setattr(
+        "backend.core.config.settings.agent_budget_soft_renew_enabled",
+        True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "backend.core.config.settings.agent_budget_soft_renew_max",
+        3,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "backend.core.config.settings.agent_budget_soft_renew_min_add",
+        5_000,
+        raising=False,
+    )
+
+    async def go():
+        p = await kernel.create_process("wf:ident-soft", token_budget=1_000)
+        await kernel.mark_running(p.id)
+        kernel.charge_tokens(p.id, 900)
+        # 下一刀会超 1000 → 应 soft_renew 后成功
+        rem = kernel.charge_tokens(p.id, 500)
+        fresh = kernel.get_process(p.id)
+        assert fresh is not None
+        assert fresh.token_budget is not None and fresh.token_budget > 1_000
+        assert (fresh.meta or {}).get("soft_renew_count", 0) >= 1
+        assert rem is not None and rem >= 0
+
+    asyncio.run(go())
+
+
+def test_soft_renew_respects_max(kernel: AgentKernel, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "backend.core.config.settings.agent_budget_soft_renew_enabled",
+        True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "backend.core.config.settings.agent_budget_soft_renew_max",
+        1,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "backend.core.config.settings.agent_budget_soft_renew_min_add",
+        100,
+        raising=False,
+    )
+    from backend.kernel import BudgetExceededError
+
+    async def go():
+        p = await kernel.create_process("wf:ident-max", token_budget=200)
+        await kernel.mark_running(p.id)
+        # 第一次 overflow → renew 成功
+        kernel.charge_tokens(p.id, 250)
+        # 耗尽续航额度后再超 → 应失败
+        fresh = kernel.get_process(p.id)
+        assert fresh is not None
+        # 强制把 soft_renew_count 顶满
+        fresh.meta = dict(fresh.meta or {})
+        fresh.meta["soft_renew_count"] = 99
+        with pytest.raises(BudgetExceededError):
+            kernel.charge_tokens(p.id, int(fresh.token_budget or 0) + 1)
+
+    asyncio.run(go())
+
+
+def test_hard_cap_allows_large_ceo_budget() -> None:
+    from backend.agent.workforce_budget import clamp_ceo_budget, hard_cap
+
+    assert hard_cap() >= 900_000
+    assert clamp_ceo_budget(900_000) == 900_000
+    assert clamp_ceo_budget(0) == 0
+
+
 @pytest.mark.asyncio
 async def test_claim_skips_identity_with_claimed_item():
     """同身份已有 claimed 工单时，pending 单不得再 claim。"""

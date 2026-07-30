@@ -233,6 +233,17 @@ class Settings(BaseSettings):
     agent_dispatcher_max_identity_concurrent: int = 1
     # 异步兜底预算：身份未设默认预算时按此硬顶（0 = 显式不限，不推荐）
     agent_workforce_fallback_budget: int = 100_000
+    # 编制预算硬顶（CEO 显式 / 自动抬升上限）；可用环境 TAKTON_WORKFORCE_BUDGET_HARD_CAP 覆盖
+    agent_workforce_budget_hard_cap: int = 2_000_000
+    # 弹性预算：用尽前自动 top_up，避免长任务硬撞死（CEO 仍可 budgets/top_up 治理）
+    agent_budget_soft_renew_enabled: bool = True
+    # 剩余不足预估 或 已用占比 ≥ 此阈值时尝试续航
+    agent_budget_soft_renew_threshold: float = 0.85
+    # 每次续航追加 = max(原预算 * factor, min_add, 缺口*2)
+    agent_budget_soft_renew_factor: float = 1.0
+    agent_budget_soft_renew_min_add: int = 200_000
+    # 单进程最多自动续航次数（防无限烧）
+    agent_budget_soft_renew_max: int = 12
     # 演化分析阈值（Alpha Review #3：参数化——研发型/运营型身份工作模式
     # 不同，阈值应可调而非统一硬编码；默认值与 alpha 常量一致）
     agent_evolution_min_samples: int = 5

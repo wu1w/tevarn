@@ -38,7 +38,8 @@ _HEALTH_INSTR = re.compile(
 )
 _MULTI_SECTION = re.compile(r"(###\s*任务|##\s*任务|\n\s*\d+[\.、]\s)", re.M)
 
-_HARD_CAP = 500_000
+# 默认硬顶 200 万（原 50 万导致长审计/PPT 必撞墙）；环境可覆盖
+_HARD_CAP = 2_000_000
 _DEFAULT_FALLBACK = 100_000
 # 单条 instruction 过大 → 建议拆单（仍允许执行但抬预算 + 提示）
 _OVERSIZE_CHARS = 2_500
@@ -51,6 +52,18 @@ def _env_int(name: str, default: int) -> int:
         return v if v > 0 else default
     except Exception:
         return default
+
+
+def _settings_hard_cap() -> int:
+    try:
+        from backend.core.config import settings
+
+        cap = int(getattr(settings, "agent_workforce_budget_hard_cap", 0) or 0)
+        if cap > 0:
+            return cap
+    except Exception:
+        pass
+    return _env_int("TAKTON_WORKFORCE_BUDGET_HARD_CAP", _HARD_CAP)
 
 
 def kind_budget_floor(kind: str | None) -> int:
@@ -152,7 +165,7 @@ def suggested_token_budget(
         return 0  # explicit unlimited
 
     fallback = _env_int("TAKTON_WORKFORCE_FALLBACK_BUDGET", _DEFAULT_FALLBACK)
-    hard_cap = _env_int("TAKTON_WORKFORCE_BUDGET_HARD_CAP", _HARD_CAP)
+    cap = _settings_hard_cap()
 
     floor = int(base) if base is not None else fallback
 
@@ -170,20 +183,25 @@ def suggested_token_budget(
         kind = "health_check"
 
     lift = max(kind_budget_floor(kind), role_budget_floor(role, name))
-    # Multi-label / long instruction
+    # Multi-label / long instruction — 长工单自动抬高，减少开局就顶死
     if len(instr) > 600 and lift < 100_000:
         lift = max(lift, 100_000)
     if len(instr) > 1200:
-        lift = max(lift, 150_000)
-    if sig["should_split"]:
         lift = max(lift, 200_000)
+    if len(instr) > 2500:
+        lift = max(lift, 400_000)
+    if sig["should_split"]:
+        lift = max(lift, 500_000)
     if sig["health_like"]:
         lift = max(lift, kind_budget_floor("health_check") or 180_000)
+    # dogfood / 马拉松 / 多阶段关键词
+    if re.search(r"(马拉松|≥\s*2\s*小时|>=\s*2\s*h|多阶段|至少\s*\d+\s*阶段|dogfood)", instr, re.I):
+        lift = max(lift, 800_000)
 
     out = max(floor, lift) if lift else floor
     if out <= 0:
         return fallback
-    return min(out, hard_cap)
+    return min(out, cap)
 
 
 def budget_for_identity(
@@ -200,11 +218,14 @@ def budget_for_identity(
 
 
 def hard_cap() -> int:
-    return _env_int("TAKTON_WORKFORCE_BUDGET_HARD_CAP", _HARD_CAP)
+    return _settings_hard_cap()
 
 
 def clamp_ceo_budget(value: int) -> int:
-    """CEO 显式预算：0=不限；>0 夹到 [1000, hard_cap]。"""
+    """CEO 显式预算：0=不限；>0 夹到 [1000, hard_cap]。
+
+    hard_cap 默认 200 万（原 50 万导致 90 万 payload 被夹死）。
+    """
     if value == 0:
         return 0
     if value < 0:

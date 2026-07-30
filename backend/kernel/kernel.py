@@ -605,25 +605,123 @@ class AgentKernel:
 
     # ── 预算治理 ──────────────────────────────────────────────
 
+    def try_soft_renew_budget(
+        self,
+        process_id: str,
+        *,
+        need: int = 0,
+        reason: str = "soft_renew",
+    ) -> dict[str, Any] | None:
+        """弹性续航：在硬撞墙前自动 top_up（可配置次数/幅度）。
+
+        返回 None = 未续航（关闭/达上限/不限预算/终态）；
+        返回 dict = 已追加（含 amount / token_budget / renew_count）。
+        """
+        try:
+            from backend.core.config import settings as _st
+
+            enabled = bool(getattr(_st, "agent_budget_soft_renew_enabled", True))
+            max_n = int(getattr(_st, "agent_budget_soft_renew_max", 12) or 12)
+            factor = float(getattr(_st, "agent_budget_soft_renew_factor", 1.0) or 1.0)
+            min_add = int(getattr(_st, "agent_budget_soft_renew_min_add", 200_000) or 200_000)
+            hard = int(getattr(_st, "agent_workforce_budget_hard_cap", 2_000_000) or 2_000_000)
+        except Exception:
+            enabled, max_n, factor, min_add, hard = True, 12, 1.0, 200_000, 2_000_000
+        if not enabled:
+            return None
+        proc = self._resolve_process(process_id)
+        if proc is None or proc.is_terminal or proc.token_budget is None:
+            return None
+        meta = dict(proc.meta or {})
+        count = int(meta.get("soft_renew_count") or 0)
+        if count >= max_n:
+            return None
+        base = int(meta.get("budget_base") or proc.token_budget or 0)
+        if base <= 0:
+            base = int(proc.token_budget or min_add)
+            meta["budget_base"] = base
+        # 追加：原预算 * factor、最小加码、当前缺口*2 取大
+        gap = max(0, int(need) - max(0, int(proc.token_budget) - int(proc.tokens_used)))
+        add = max(int(base * max(0.25, factor)), min_add, gap * 2, 50_000)
+        # 不超过 hard_cap 总预算（已用+剩余上限）
+        if hard > 0 and int(proc.token_budget) + add > hard:
+            add = max(0, hard - int(proc.token_budget))
+        if add <= 0:
+            return None
+        try:
+            r = self.top_up_budget(
+                process_id,
+                add,
+                by="system:soft_renew",
+                reason=f"{reason}#{count + 1}",
+            )
+        except Exception as e:
+            logger.warning("soft_renew top_up failed proc=%s: %s", process_id[:8], e)
+            return None
+        # top_up 后刷新 meta 计数
+        proc = self._resolve_process(process_id) or proc
+        proc.meta = dict(proc.meta or {})
+        proc.meta["soft_renew_count"] = count + 1
+        proc.meta["budget_base"] = base
+        proc.meta["last_soft_renew_at"] = time.time()
+        self._persist_process(proc)
+        self._emit(
+            "budget_soft_renew",
+            process_id,
+            {
+                "amount": add,
+                "renew_count": count + 1,
+                "token_budget": r.get("token_budget"),
+                "tokens_used": r.get("tokens_used"),
+                "reason": reason,
+            },
+        )
+        logger.info(
+            "budget soft_renew proc=%s +%s count=%s budget=%s used=%s",
+            process_id[:8],
+            add,
+            count + 1,
+            r.get("token_budget"),
+            r.get("tokens_used"),
+        )
+        return {
+            "ok": True,
+            "amount": add,
+            "renew_count": count + 1,
+            "token_budget": r.get("token_budget"),
+            "tokens_used": r.get("tokens_used"),
+            "budget_remaining": r.get("budget_remaining"),
+        }
+
     def charge_tokens(self, process_id: str, amount: int) -> int | None:
         """扣减进程预算，返回剩余。超限抛 BudgetExceededError（调用方决定中断策略）。
 
         多 worker：Redis HINCRBY 原子扣减，再同步本地缓存。
         硬顶：单次 charge 不得把 tokens_used 顶穿 budget（拒绝写入）。
+        弹性：超限前先 try_soft_renew_budget，续航成功则继续扣。
         """
         proc = self._resolve_process(process_id)
         if proc is None:
             return None
         if amount > 0 and proc.token_budget is not None:
             if proc.tokens_used + amount > proc.token_budget:
-                self._emit("budget_exceeded", proc.id, {
-                    "token_budget": proc.token_budget,
-                    "tokens_used": proc.tokens_used,
-                    "rejected_charge": amount,
-                })
-                raise BudgetExceededError(
-                    f"进程 {process_id} 预算不足（已用 {proc.tokens_used}/{proc.token_budget}，拒绝 +{amount}）"
+                renewed = self.try_soft_renew_budget(
+                    process_id, need=amount, reason="charge_overflow"
                 )
+                proc = self._resolve_process(process_id) or proc
+                if renewed is None or (
+                    proc.token_budget is not None
+                    and proc.tokens_used + amount > proc.token_budget
+                ):
+                    self._emit("budget_exceeded", proc.id, {
+                        "token_budget": proc.token_budget,
+                        "tokens_used": proc.tokens_used,
+                        "rejected_charge": amount,
+                        "soft_renew_attempted": renewed is not None,
+                    })
+                    raise BudgetExceededError(
+                        f"进程 {process_id} 预算不足（已用 {proc.tokens_used}/{proc.token_budget}，拒绝 +{amount}）"
+                    )
         # 活跃心跳：供 stalled 检测（P2）
         if amount > 0:
             proc.meta = dict(proc.meta or {})

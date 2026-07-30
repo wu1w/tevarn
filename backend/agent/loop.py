@@ -284,7 +284,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 logger.info("挂起等待被打断 proc=%s（stop 或终态）", proc.id)
                 return "stop"
             await self._push_status(session_id, "thinking", "进程已恢复，继续执行")
-        # 2) 事前预算检查
+        # 2) 事前预算检查（不足时先弹性续航，再失败才中断）
         if (
             bool(getattr(settings, "agent_kernel_budget_precheck", True))
             and proc.token_budget is not None
@@ -292,7 +292,38 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             remaining = proc.budget_remaining
             if remaining is not None:
                 estimated = self._estimate_next_call_tokens(messages)
-                if remaining < estimated:
+                thr = float(
+                    getattr(settings, "agent_budget_soft_renew_threshold", 0.85) or 0.85
+                )
+                used_ratio = 0.0
+                if proc.token_budget and proc.token_budget > 0:
+                    used_ratio = float(proc.tokens_used) / float(proc.token_budget)
+                need_renew = remaining < estimated or used_ratio >= thr
+                if need_renew and remaining < estimated:
+                    try:
+                        from backend.kernel import get_kernel
+
+                        renewed = get_kernel().try_soft_renew_budget(
+                            proc.id,
+                            need=estimated,
+                            reason="precheck",
+                        )
+                        if renewed:
+                            # 刷新本地 proc 引用
+                            fresh = get_kernel().get_process(proc.id)
+                            if fresh is not None:
+                                self._kernel_process = fresh
+                                proc = fresh
+                            remaining = proc.budget_remaining
+                            await self._push_status(
+                                session_id,
+                                "thinking",
+                                f"预算弹性续航 +{renewed.get('amount')} "
+                                f"（第 {renewed.get('renew_count')} 次），继续执行…",
+                            )
+                    except Exception as e:
+                        logger.debug("soft_renew at precheck: %s", e)
+                if remaining is not None and remaining < estimated:
                     logger.warning(
                         "事前预算检查不通过 proc=%s remaining=%s estimated=%s",
                         proc.id, remaining, estimated,

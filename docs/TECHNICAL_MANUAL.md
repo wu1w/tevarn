@@ -8,7 +8,13 @@
 > 记忆总线：`backend/services/memory_bus.py` · 权限法院：`backend/kernel/permission_court.py`  
 > Intent：`backend/kernel/intent.py` · 回放门禁：`backend/evolution/replay_validator.py`  
 > 默认端口 **8090**（`start.py` / CLI / Electron）。文中若写 `8000` 仅历史参考。  
-> 默认零外部依赖：SQLite；Redis / Qdrant 可选。
+> 默认零外部依赖：SQLite；Redis / Qdrant 可选。  
+>
+> **编制预算（弹性）**  
+> - 硬顶默认 **200 万** token/进程（`agent_workforce_budget_hard_cap` / `TAKTON_WORKFORCE_BUDGET_HARD_CAP`）  
+> - **软续航**：用尽前自动 top_up（`agent_budget_soft_renew_*`，默认开，最多 12 次）  
+> - CEO：`crew_steward top_up` / `set_budget` / `budgets` 仍可人工治理  
+> - 长 instruction / 马拉松类任务自动抬高开局预算
 
 ---
 
