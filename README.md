@@ -23,7 +23,7 @@
 
 <br/>
 
-[English](#-features) · [中文](#-核心功能) · [Install](docs/INSTALL.md) · [Demo 三连](docs/demo/DEMO_TRILOGY.md)
+[English](#-features) · [中文](#-核心功能) · [技术手册](docs/TECHNICAL_MANUAL.md)
 
 </div>
 
@@ -42,7 +42,7 @@
 | **Replay-gated evolution** | drafts cannot apply when replay fails |
 | **Crew / Identity** | hire employees, budgets, memory bus, growth profile |
 
-See also: [PUBLIC_POSITIONING](docs/design/PUBLIC_POSITIONING.md) · [EXECUTION_MODEL](docs/design/EXECUTION_MODEL.md) · [ZERO_DEPS](docs/ZERO_DEPS.md)
+See also: [Technical Manual · 技术手册](docs/TECHNICAL_MANUAL.md)
 
 <table>
 <tr>
@@ -160,29 +160,31 @@ curl -fsSL https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.sh
 
 > 一键脚本会自动解析 [最新 Release](https://github.com/wu1w/takton/releases/latest) 资产；上表为固定直链备份。
 
-### From Source · 源码运行（feature `0.4.10-alpha`）
-
-完整步骤见 **[docs/INSTALL.md](docs/INSTALL.md)**。Windows 可先：
+### From Source · 源码运行（`0.4.10-alpha`）
 
 ```powershell
 git clone https://github.com/wu1w/takton.git
 cd takton
 git checkout feature/agent-kernel
-powershell -ExecutionPolicy Bypass -File scripts/bootstrap_dev.ps1
+py -3 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -U pip
+pip install -e ".[dev]"
+cd frontend; npm.cmd install; cd ..
 .\.venv\Scripts\python.exe start.py
 ```
 
 ```bash
-# Linux / macOS
 git clone https://github.com/wu1w/takton.git && cd takton
 git checkout feature/agent-kernel
-bash scripts/bootstrap_dev.sh
+python3 -m venv .venv && source .venv/bin/activate
+pip install -U pip && pip install -e ".[dev]"
+(cd frontend && npm install)
 .venv/bin/python start.py
 ```
 
-Open the printed URL (frontend usually http://127.0.0.1:3000 · backend default **8090**).
-
-**Demo trilogy** (kill-recover · evolution replay · permission audit): [docs/demo/DEMO_TRILOGY.md](docs/demo/DEMO_TRILOGY.md)
+Open the printed URL (frontend usually http://127.0.0.1:3000 · backend default **8090**).  
+Details: [docs/TECHNICAL_MANUAL.md](docs/TECHNICAL_MANUAL.md).
 
 ---
 

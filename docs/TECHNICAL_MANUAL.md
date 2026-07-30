@@ -5,11 +5,10 @@
 
 > **执行模型（现行）**  
 > **一切执行都是 Run**；Identity 是执行者；Cluster/SubAgent/Hire 是编排形态；Workflow 是 Run 模板。  
-> 详规一页纸：`docs/design/EXECUTION_MODEL.md` · Run 统一：`docs/design/RUN_UNIFICATION.md`  
-> 记忆总线：`docs/design/MEMORY_BUS.md` · 权限法院：`backend/kernel/permission_court.py`  
+> 记忆总线：`backend/services/memory_bus.py` · 权限法院：`backend/kernel/permission_court.py`  
+> Intent：`backend/kernel/intent.py` · 回放门禁：`backend/evolution/replay_validator.py`  
 > 默认端口 **8090**（`start.py` / CLI / Electron）。文中若写 `8000` 仅历史参考。  
-> 其它：`docs/internal/ARCHITECTURE.md` · `TOPOLOGY.md` · `DEV_HANDBOOK.md` · `PROTOCOL.md`  
-> 安装 / 零依赖：`docs/INSTALL.md` · `docs/ZERO_DEPS.md`
+> 默认零外部依赖：SQLite；Redis / Qdrant 可选。
 
 ---
 

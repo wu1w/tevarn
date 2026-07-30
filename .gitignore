@@ -160,3 +160,29 @@ pytest_*.txt
 # local pytest temp dbs
 ci-test*.db
 ci-test*.db-*
+
+# Local process / dogfood / audit artifacts (not published)
+reports/
+docs/internal/
+docs/design/
+docs/demo/
+docs/archive/
+docs/DEV_PLAN*
+docs/INSTALL.md
+docs/ZERO_DEPS.md
+docs/CHANNEL_POLICY.md
+docs/PACKAGES.md
+docs/KERNEL_PLAN.md
+docs/ROADMAP*
+docs/ALPHA_AUTHORITY.md
+_check_*.py
+_find_*.py
+_list_*.py
+_import_*.py
+_audit_*.py
+_test_*.py
+scripts/_*.py
+scripts/dispatch_dogfood*
+scripts/dogfood_*
+scripts/*dogfood*
+*.exit
