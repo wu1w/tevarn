@@ -257,6 +257,36 @@ class InboxService:
             item.payload = payload
             await session.commit()
 
+    async def release_claim_to_pending(
+        self, item_id: Any, *, reason: str = "busy_race"
+    ) -> bool:
+        """将 claimed 工单退回 pending（Redis busy 抢占失败时用）。"""
+        from sqlalchemy import update
+
+        from backend.models.agent_identity import AgentInboxItem
+
+        async with self._session_factory() as session:
+            result = await session.execute(
+                update(AgentInboxItem)
+                .where(
+                    AgentInboxItem.id == _uuid.UUID(str(item_id)),
+                    AgentInboxItem.status == "claimed",
+                )
+                .values(status="pending", claimed_at=None)
+            )
+            await session.commit()
+            ok = int(result.rowcount or 0) == 1
+        if ok:
+            try:
+                self._emit(
+                    "inbox_requeued",
+                    item_id,
+                    {"item_id": str(item_id), "reason": reason[:120]},
+                )
+            except Exception:
+                pass
+        return ok
+
     async def complete(self, item_id: Any, result: str, *, process_id: str | None = None) -> None:
         from backend.models.agent_identity import AgentInboxItem
 

@@ -215,6 +215,68 @@ class WorkforceDispatcher:
         except Exception:
             return 1
 
+    def _shared_store(self) -> Any | None:
+        return getattr(self._kernel, "_shared", None)
+
+    def _busy_ttl_seconds(self) -> int:
+        """Redis busy TTL ≥ 工单超时 + 缓冲，避免长任务中途锁过期双派。"""
+        try:
+            base = float(
+                getattr(settings, "agent_inbox_item_timeout", self._item_timeout)
+                or self._item_timeout
+            )
+        except Exception:
+            base = self._item_timeout
+        return max(120, int(base) + 120)
+
+    def _merge_busy_identity_ids(self) -> set[str]:
+        """本地 _busy ∪ Redis 分布式 busy（多 worker）。"""
+        busy: set[str] = set(self._busy)
+        store = self._shared_store()
+        if store is None:
+            return busy
+        try:
+            busy |= set(store.list_busy_identity_ids() or set())
+        except Exception as e:
+            logger.debug("list_busy_identity_ids skip: %s", e)
+        return busy
+
+    def _try_acquire_redis_busy(self, identity_id: str, item_id: str) -> bool:
+        store = self._shared_store()
+        if store is None:
+            return True
+        try:
+            return bool(
+                store.try_acquire_identity_busy(
+                    str(identity_id),
+                    str(item_id),
+                    ttl=self._busy_ttl_seconds(),
+                )
+            )
+        except Exception as e:
+            logger.warning("redis busy acquire fail-open: %s", e)
+            return True
+
+    def _release_redis_busy(self, identity_id: str, item_id: str) -> None:
+        store = self._shared_store()
+        if store is None:
+            return
+        try:
+            store.release_identity_busy(str(identity_id), str(item_id))
+        except Exception as e:
+            logger.debug("redis busy release: %s", e)
+
+    def _refresh_redis_busy(self, identity_id: str, item_id: str) -> None:
+        store = self._shared_store()
+        if store is None:
+            return
+        try:
+            store.refresh_identity_busy(
+                str(identity_id), str(item_id), ttl=self._busy_ttl_seconds()
+            )
+        except Exception as e:
+            logger.debug("redis busy refresh: %s", e)
+
     async def tick(self, *, wait: bool = False) -> int:
         """扫描一轮，派发所有可派工单。返回派发数。
         wait=True 时等待本轮派发的工单全部完成（测试/同步场景）。"""
@@ -234,12 +296,30 @@ class WorkforceDispatcher:
                     "dispatcher global concurrency cap hit (%s)", max_global
                 )
                 break
-            item = await self._inbox.claim_next(busy_identity_ids=set(self._busy))
+            item = await self._inbox.claim_next(
+                busy_identity_ids=self._merge_busy_identity_ids()
+            )
             if item is None:
                 break
-            self._busy.add(str(item.identity_id))
+            iid = str(item.identity_id)
+            item_key = str(item.id)
+            # 多 worker：Redis SETNX 占坑；失败则退回 pending（防双派同身份）
+            if not self._try_acquire_redis_busy(iid, item_key):
+                logger.warning(
+                    "identity %s busy on another worker; requeue item %s",
+                    iid[:8],
+                    item_key[:8],
+                )
+                try:
+                    await self._inbox.release_claim_to_pending(
+                        item.id, reason="redis_identity_busy"
+                    )
+                except Exception as e:
+                    logger.warning("requeue after redis busy fail: %s", e)
+                continue
+            self._busy.add(iid)
             task = asyncio.create_task(self._run_item_guarded(item))
-            self._item_tasks[str(item.id)] = task
+            self._item_tasks[item_key] = task
             tasks.append(task)
             dispatched += 1
         if wait and tasks:
@@ -772,7 +852,32 @@ class WorkforceDispatcher:
                 ident = await self._registry.get(item.identity_id)
             except Exception:
                 ident = None
-            await asyncio.wait_for(self._run_item(item, proc_id_holder=proc_id_holder), timeout=self._item_timeout)
+            # 长任务续期 Redis busy，避免 TTL 中途过期被他 worker 双派
+            async def _run_with_busy_heartbeat() -> None:
+                hb_stop = asyncio.Event()
+
+                async def _hb() -> None:
+                    interval = max(30.0, min(120.0, self._busy_ttl_seconds() / 4))
+                    while not hb_stop.is_set():
+                        try:
+                            await asyncio.wait_for(hb_stop.wait(), timeout=interval)
+                            break
+                        except asyncio.TimeoutError:
+                            self._refresh_redis_busy(str(item.identity_id), item_key)
+
+                hb_task = asyncio.create_task(_hb())
+                try:
+                    await self._run_item(item, proc_id_holder=proc_id_holder)
+                finally:
+                    hb_stop.set()
+                    try:
+                        await hb_task
+                    except Exception:
+                        pass
+
+            await asyncio.wait_for(
+                _run_with_busy_heartbeat(), timeout=self._item_timeout
+            )
             # 尽量带上 result 摘要（完成正文在 DB；item 内存可能无 result）
             result_snip = await self._load_item_result_snip(item.id)
             await self._notify_owner(
@@ -838,6 +943,7 @@ class WorkforceDispatcher:
             )
         finally:
             self._busy.discard(str(item.identity_id))
+            self._release_redis_busy(str(item.identity_id), item_key)
             self._item_tasks.pop(item_key, None)
             self._item_loops.pop(item_key, None)
             old_pid = self._item_proc_ids.pop(item_key, None)

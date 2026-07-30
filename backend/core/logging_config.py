@@ -165,15 +165,15 @@ def setup_logging(
     root_logger.handlers.clear()
     stop_async_logging()
 
-    # Console handler
+    # ── 实际 I/O handlers：只交给 QueueListener，禁止再挂到 root ──
+    # 根因（双写）：此前 root 同时 addHandler(console/file) + QueueHandler，
+    # 且 listener 也写同一批 handlers → 每条日志落盘/控制台各两遍。
     console_handler = logging.StreamHandler(sys.stdout)
     if json_output:
         console_handler.setFormatter(JSONFormatter())
     else:
         console_handler.setFormatter(HumanFormatter())
-    root_logger.addHandler(console_handler)
 
-    # File handler with rotation
     file_handler = logging.handlers.RotatingFileHandler(
         filename=os.path.join(log_dir, "takton.log"),
         maxBytes=max_bytes,
@@ -181,9 +181,7 @@ def setup_logging(
         encoding="utf-8",
     )
     file_handler.setFormatter(JSONFormatter())
-    root_logger.addHandler(file_handler)
 
-    # Error-specific file handler
     error_handler = logging.handlers.RotatingFileHandler(
         filename=os.path.join(log_dir, "error.log"),
         maxBytes=max_bytes,
@@ -193,8 +191,7 @@ def setup_logging(
     error_handler.setLevel(logging.ERROR)
     error_handler.setFormatter(JSONFormatter())
 
-    # B3 日志异步化（压测病灶：每请求 JSON 序列化 + stdout/文件同步写阻塞事件循环）
-    # QueueHandler 只做入队（微秒级），QueueListener 后台线程承担序列化与 I/O。
+    # B3 日志异步化：root 只挂 QueueHandler；I/O 全在 listener 线程
     # respect_handler_level=True 保证 error_handler 只收 ERROR+。
     log_queue: queue.Queue = queue.Queue(-1)
     queue_handler = logging.handlers.QueueHandler(log_queue)

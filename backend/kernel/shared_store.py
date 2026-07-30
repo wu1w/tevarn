@@ -21,6 +21,7 @@ Key：
   takton:kernel:v1:events
   takton:kernel:v1:daily:{YYYY-MM-DD}
   takton:kernel:v1:daily_runs:{YYYY-MM-DD}
+  takton:kernel:v1:wf_busy:{identity_id}   # 编制分布式 busy（SETNX）
 """
 
 from __future__ import annotations
@@ -40,6 +41,8 @@ _ESC_TTL = 86400 * 7
 _CLAIM_TTL = _ESC_TTL
 _EVENT_MAX = 1000
 _EVENT_TTL = 86400
+# 编制 identity busy：默认 ≥ 工单超时，防止长任务中途锁过期被双派
+_WF_BUSY_TTL = 720
 
 _CHARGE_LUA = """
 if redis.call('EXISTS', KEYS[1]) == 0 then
@@ -205,6 +208,98 @@ class KernelSharedStore:
             self._r.publish(f"{self._prefix}:resume", process_id)
         except Exception:
             pass
+
+    # ── 编制 identity busy（多 worker 防双派）────────────────
+
+    def _wf_busy_key(self, identity_id: str) -> str:
+        return f"{self._prefix}:wf_busy:{identity_id}"
+
+    def try_acquire_identity_busy(
+        self,
+        identity_id: str,
+        item_id: str,
+        *,
+        ttl: int = _WF_BUSY_TTL,
+    ) -> bool:
+        """SETNX 占坑。True=本 worker 占有；False=他 worker 已占该身份。"""
+        iid = str(identity_id or "").strip()
+        oid = str(item_id or "").strip()
+        if not iid or not oid:
+            return False
+        try:
+            ok = self._r.set(self._wf_busy_key(iid), oid, nx=True, ex=max(60, int(ttl)))
+            return bool(ok)
+        except Exception as e:
+            logger.warning("try_acquire_identity_busy redis fail: %s", e)
+            return True  # fail-open 到单机路径（仍有 DB claimed 兜底）
+
+    def refresh_identity_busy(
+        self,
+        identity_id: str,
+        item_id: str,
+        *,
+        ttl: int = _WF_BUSY_TTL,
+    ) -> bool:
+        """续期：仅当 value==item_id 时 EXPIRE。"""
+        iid = str(identity_id or "").strip()
+        oid = str(item_id or "").strip()
+        if not iid or not oid:
+            return False
+        try:
+            key = self._wf_busy_key(iid)
+            cur = self._s(self._r.get(key))
+            if cur != oid:
+                return False
+            self._r.expire(key, max(60, int(ttl)))
+            return True
+        except Exception as e:
+            logger.debug("refresh_identity_busy: %s", e)
+            return False
+
+    def release_identity_busy(
+        self,
+        identity_id: str,
+        item_id: str | None = None,
+    ) -> None:
+        """释放 busy。若传 item_id，仅当持有者匹配时删除（防误删他 worker）。"""
+        iid = str(identity_id or "").strip()
+        if not iid:
+            return
+        try:
+            key = self._wf_busy_key(iid)
+            if item_id:
+                cur = self._s(self._r.get(key))
+                if cur and cur != str(item_id):
+                    return
+            self._r.delete(key)
+        except Exception as e:
+            logger.debug("release_identity_busy: %s", e)
+
+    def get_identity_busy_owner(self, identity_id: str) -> str | None:
+        """返回占有该身份的 item_id，无则 None。"""
+        try:
+            return self._s(self._r.get(self._wf_busy_key(str(identity_id)))) or None
+        except Exception:
+            return None
+
+    def list_busy_identity_ids(self) -> set[str]:
+        """扫描当前所有 busy 身份（best-effort，供 claim 合并 busy 集合）。"""
+        out: set[str] = set()
+        try:
+            pattern = f"{self._prefix}:wf_busy:*"
+            cursor = 0
+            prefix_len = len(f"{self._prefix}:wf_busy:")
+            while True:
+                cursor, keys = self._r.scan(cursor=cursor, match=pattern, count=100)
+                for k in keys or []:
+                    ks = self._s(k) if not isinstance(k, str) else k
+                    if ks and len(ks) > prefix_len:
+                        out.add(ks[prefix_len:])
+                if cursor == 0:
+                    break
+        except Exception as e:
+            logger.debug("list_busy_identity_ids: %s", e)
+        return out
 
     # ── 日用量（auto_tighten_2x）────────────────────────────
 

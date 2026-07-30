@@ -131,6 +131,16 @@ class _FakeRedis:
         self._published.append((channel, message))
         return 1
 
+    def scan(self, cursor: int = 0, match: str | None = None, count: int = 100) -> tuple[int, list]:
+        """Minimal SCAN for tests."""
+        import fnmatch
+
+        keys: list[str] = []
+        for k in list(self._kv.keys()) + list(self._h.keys()) + list(self._s.keys()):
+            if match is None or fnmatch.fnmatch(k, match):
+                keys.append(k)
+        return 0, keys
+
     def ping(self) -> bool:
         return True
 
@@ -586,3 +596,20 @@ async def test_auto_tighten_2x_reduces_budget():
     assert fresh.token_budget >= fresh.tokens_used
     ar._RULES_CACHE = None
     reset_kernel_for_tests()
+
+def test_identity_busy_setnx_and_release():
+    """Multi-worker workforce busy: SETNX mutex + owner-only release."""
+    store = KernelSharedStore(_FakeRedis())
+    assert store.try_acquire_identity_busy("ident-1", "item-a", ttl=60) is True
+    assert store.get_identity_busy_owner("ident-1") == "item-a"
+    assert store.try_acquire_identity_busy("ident-1", "item-b", ttl=60) is False
+    assert store.get_identity_busy_owner("ident-1") == "item-a"
+    store.release_identity_busy("ident-1", "item-b")
+    assert store.get_identity_busy_owner("ident-1") == "item-a"
+    store.release_identity_busy("ident-1", "item-a")
+    assert store.get_identity_busy_owner("ident-1") is None
+    assert store.try_acquire_identity_busy("ident-1", "item-b", ttl=60) is True
+    assert "ident-1" in store.list_busy_identity_ids()
+    store.refresh_identity_busy("ident-1", "item-b", ttl=120)
+    store.release_identity_busy("ident-1", "item-b")
+

@@ -68,12 +68,30 @@ def test_setup_twice_no_duplicate_queue_handlers(tmp_path, root_logger_guard):
     root = logging.getLogger()
     qhs = [h for h in root.handlers if isinstance(h, logging.handlers.QueueHandler)]
     assert len(qhs) == 1, f"QueueHandler 重复挂载: {len(qhs)}"
+    # root 不得再挂 FileHandler/StreamHandler（否则与 listener 双写）
+    non_q = [h for h in root.handlers if not isinstance(h, logging.handlers.QueueHandler)]
+    assert non_q == [], f"root 上不应有直写 handler: {non_q}"
     alive = [l for l in _ASYNC_LISTENERS if getattr(l, "_thread", None) and l._thread.is_alive()]
     assert len(alive) == 1, f"活跃 listener 应恰为 1: {len(alive)}"
 
     # 第二次 setup 的目录真实可用
     logging.getLogger("b3.test2").info("second-setup-works")
     assert _wait_file_contains(tmp_path / "b" / "takton.log", "second-setup-works")
+
+
+def test_no_duplicate_log_lines_in_file(tmp_path, root_logger_guard):
+    """根治双写：同一条 message 在 takton.log 中只出现一次。"""
+    from backend.core.logging_config import setup_logging
+
+    setup_logging(log_dir=str(tmp_path), log_level="INFO", json_output=True)
+    marker = "unique-log-line-dedupe-probe-xyz"
+    logging.getLogger("b3.dedupe").info(marker)
+    assert _wait_file_contains(tmp_path / "takton.log", marker)
+    # 等 listener 排空
+    time.sleep(0.15)
+    with open(tmp_path / "takton.log", encoding="utf-8") as f:
+        text = f.read()
+    assert text.count(marker) == 1, f"日志双写: count={text.count(marker)}"
 
 
 def test_stop_async_logging_drains_and_stops(tmp_path, root_logger_guard):
