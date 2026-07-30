@@ -22,6 +22,17 @@
 
 （按周追加，新条目在上）
 
+### 2026-07-30 · 马拉松真下发（3 路并行 · 目标 ≥2h）
+- 任务：对 live BE 并行 enqueue 三类大型 inbox（见 `reports/DOGFOOD_MARATHON_DISPATCH.json`）
+  1. **A 隔夜 Durable**：backend-engineer · 8 阶段全库审计落盘 `reports/dogfood_marathon/overnight_audit/` · item `af3e0346-…`
+  2. **B PPT 交付**：agent-engineer · 28+ 页风格偏好多轮修订 `…/ppt_delivery/` · item `651a5901-…`
+  3. **C Evolution QA**：qa-engineer · 回放上岗+真用+回归 `…/evolution_qa/` · item `34424523-…`
+  - 预步骤：draft `good_apply_9a7f42` replay pass → **apply → active**
+  - BE 以 `TAKTON_AGENT_INBOX_ITEM_TIMEOUT=10800`（3h）重启；身份 default_budget≈900k；进程 mid-run top-up +50 万
+- 卡点：初启进程 budget 显示 50 万（payload/档案取整）；已 top-up。**须观察 ≥2h 是否超时/爆预算**；产出目录是否持续落盘
+- 严重度：中（运行中）
+- 备注：派发脚本 `scripts/dispatch_dogfood_marathon.py`；前端可看 `/tasks` `/kernel` `/agents` 收件箱
+
 ### 2026-07-30 · 隔夜 Run（live smoke）
 - 任务：对运行中 Takton（FE `:3000` + BE `:8090`）冒烟 Durable/恢复路径——`GET /runs`（chat+inbox）、会话 checkpoint、`POST /sessions/{id}/resume`、`recover_stale_runs(auto_resume=False)`
 - 卡点：当前会话 `can_resume=false`（无中断 checkpoint 可续）；**非**真 kill 隔夜，而是 API + recovery 干跑。重启 BE 后 `marked_interrupted=5` 证明非终态清扫活着
