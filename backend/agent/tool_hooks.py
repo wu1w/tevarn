@@ -169,166 +169,103 @@ def _project_root_path():
 
 
 async def builtin_permission_before(name: str, arguments: dict[str, Any]) -> BeforeHookResult:
-    """Last-match permission gate (code permissions_rules).
+    """Phase 3.2：权限裁决经 permission_court，再处理 ask/交互通道。
 
-    fail-closed：这个函数是权限体系在工具层唯一的落点，任何未预期的异常都会
-    冒泡给 run_before_tool_call（本 handler 以 critical=True 注册），由那里
-    按「拒绝」处理。**不要**在这里加 catch-all 兜底 return —— 那正是此前
-    整套权限规则可以被一个 import 错误静默抹掉的原因。
-
-    唯一的例外是用户显式关掉了权限系统（agent_permission_enabled=False），
-    那是明确的意图表达，放行。
-
-    员工工单（workforce）：**绝不**弹主人确认窗；由 CEO 编制能力策略裁决
-    （见 steward_permission）。主人只批策略/节点，不批每一次工具。
+    fail-closed：critical handler。workforce 由 court.steward 层裁决，不弹主人窗。
     """
     from backend.core.config import settings
+    from backend.kernel.permission_court import decide_tool
 
     if not bool(getattr(settings, "agent_permission_enabled", True)):
         return BeforeHookResult(arguments=arguments)
 
-    # ── 编制员工路径：CEO 策略，不弹主人 ──
-    try:
-        from backend.agent.steward_permission import (
-            is_human_strategy_surface,
-            is_workforce_context,
-            load_identity_capabilities,
-            steward_decide_tool,
-        )
+    skill_contract = arguments.get("_skill_contract")
+    court = await decide_tool(name, arguments, skill_contract=skill_contract)
+    # 供审计 / 前端解释
+    args = dict(arguments or {})
+    args["_permission_court"] = court.to_audit()
+    decision = court.verdict
 
-        if is_workforce_context(arguments) and not is_human_strategy_surface(name):
-            # 始终从 DB 刷新编制能力：CEO 中途 grant_caps 后下一刀工具立即生效
-            iid = str(arguments.get("_identity_id") or "").strip() or None
-            caps = await load_identity_capabilities(iid)
-            if not isinstance(caps, list):
-                raw = arguments.get("_identity_capabilities")
-                caps = list(raw) if isinstance(raw, list) else None
-            args = dict(arguments)
-            if caps is not None:
-                args["_identity_capabilities"] = list(caps)
-            decision, why = await steward_decide_tool(
-                name, args, identity_capabilities=caps
-            )
-            if decision == "allow":
-                logger.info("permission workforce→steward allow tool=%s %s", name, why)
-                return BeforeHookResult(arguments=args)
-            logger.info("permission workforce→steward deny tool=%s %s", name, why)
-            return BeforeHookResult(
-                block=True,
-                reason=f"[steward deny] {why}",
-                arguments=args,
+    # 哈希链：若当前 run 挂了 kernel process，补一条 policy.decision
+    try:
+        pid = str(args.get("_kernel_process_id") or args.get("_process_id") or "")
+        if pid:
+            from backend.kernel import get_kernel
+
+            get_kernel()._emit_policy_decision(
+                pid,
+                action="tool_call",
+                target=name,
+                outcome=decision if decision in ("allow", "deny") else "escalate",
+                reason=court.reason or court.matched_rule,
+                source="permission_court",
+                identity=str(args.get("_identity_id") or args.get("_identity_name") or "")
+                or None,
+                extra=court.to_audit(),
             )
     except Exception as e:
-        # 编制路径自身故障：fail-closed，禁止回落成人弹窗刷屏
-        if str(arguments.get("_agent_key") or "").startswith("wf:") or arguments.get(
-            "_workforce"
-        ):
-            logger.warning("steward permission failed, deny workforce tool: %s", e)
-            return BeforeHookResult(
-                block=True,
-                reason=f"[steward error] 编制权限裁决失败，已拒绝: {e}",
-                arguments=arguments,
+        logger.debug("court policy emit skip: %s", e)
+
+    if court.extra.get("_confirm_ok"):
+        args["_confirm_ok"] = True
+
+    if decision == "allow":
+        logger.info(
+            "permission court allow tool=%s layer=%s rule=%s",
+            name,
+            court.layer,
+            court.matched_rule,
+        )
+        return BeforeHookResult(arguments=args)
+
+    if decision == "deny":
+        logger.info(
+            "permission court deny tool=%s layer=%s rule=%s",
+            name,
+            court.layer,
+            court.matched_rule,
+        )
+        return BeforeHookResult(
+            block=True,
+            reason=(
+                f"[permission deny] layer={court.layer} rule={court.matched_rule} "
+                f"{court.reason}"
+            ),
+            arguments=args,
+        )
+
+    # ── ask 分支（court 未给 session_grant）──
+    # 「本员工允许」短路
+    try:
+        from backend.agent.grant_store import has_identity_tool_grant
+
+        if await has_identity_tool_grant(name, arguments=args):
+            logger.info(
+                "permission ask→identity_cap tool=%s identity=%s",
+                name,
+                str(args.get("_identity_id") or args.get("_contact_agent") or "")[:16],
             )
+            args["_confirm_ok"] = True
+            return BeforeHookResult(arguments=args)
+    except Exception as e:
+        logger.debug("identity grant short-circuit skip: %s", e)
 
     from backend.agent.permission_overlay import build_effective_rules
     from backend.agent.permissions_rules import PermissionGate
-    from backend.agent.working_mode import (
-        effective_ask_mode,
-        effective_permission_profile,
-    )
+    from backend.agent.working_mode import effective_ask_mode, effective_permission_profile
 
-    # profile / ask_mode 由「工作方式」派生（高级用户可显式覆盖），见 working_mode.py
-    profile = effective_permission_profile()
-    # sandbox profile may force readonly (read_only profile)
-    try:
-        from backend.computer.profiles import resolve_profile
-
-        sprof = resolve_profile()
-        if sprof.force_working_mode == "readonly":
-            profile = "plan"
-    except Exception:
-        pass
-    # session mode overlay: if profile is plan OR chat mode plan OR unapproved plan gate
-    mode = "build"
-    chat_mode = str(arguments.get("_chat_mode") or getattr(settings, "_active_chat_mode", "") or "")
-    session_id = str(arguments.get("_session_id") or "") or None
-    job_id = str(arguments.get("_inbox_item_id") or arguments.get("_job_id") or "") or None
-    try:
-        from backend.agent.plan_session import requires_plan_approval
-
-        if requires_plan_approval(
-            session_id=session_id, job_id=job_id, chat_mode=chat_mode
-        ):
-            mode = "plan"
-            profile = "plan"
-    except Exception:
-        pass
-    if profile.lower() == "plan" or chat_mode.lower() in ("plan", "ask", "explore"):
-        mode = "plan"
-        if profile.lower() != "plan":
-            profile = "plan"
+    profile = str((court.extra or {}).get("profile") or effective_permission_profile())
+    mode = str((court.extra or {}).get("mode") or "build")
     gate = PermissionGate(
         profile=profile,
         mode=mode,
         project_root=_project_root_path(),
         rules=build_effective_rules(profile),
     )
-    decision = gate.check(name, arguments)
 
-    # 工具自声明 requires_confirmation：此前该标志全项目无人读取（死标志）。
-    # 现在把它接进唯一决策器 —— 仅用于**收紧**：规则说 allow 但工具自称高危时升级为 ask。
-    # 只对规则未覆盖的工具生效（自定义 / MCP 工具），避免和 profile 语义打架：
-    # 比如 acceptEdits 明确表达「工作区编辑不要问我」，就不该被 file_write 的声明推翻。
-    if decision == "allow" and _tool_self_declares_confirmation(name):
-        decision = "ask"
-
-    # 本会话授权短路（危险弹窗「本会话允许」写入 grant_store）
-    try:
-        from backend.agent.grant_store import has_session_grant
-
-        sid = str(arguments.get("_session_id") or "")
-        if decision == "ask" and has_session_grant(sid, name, arguments):
-            logger.info("permission ask→session_grant tool=%s", name)
-            decision = "allow"
-            # 同步标记，下游 executor 危险策略不再二次弹窗
-            args = dict(arguments)
-            args["_confirm_ok"] = True
-            return BeforeHookResult(arguments=args)
-    except Exception:
-        pass
-
-    # 「本员工允许」短路：Identity.capabilities 已含 command/file_rw 等 → 不再弹窗
-    # （此前只写了编制能力，联系 TA 会话仍按 profile 反复 ask —— 用户感知 bug）
-    if decision == "ask":
-        try:
-            from backend.agent.grant_store import has_identity_tool_grant
-
-            if await has_identity_tool_grant(name, arguments=arguments):
-                logger.info(
-                    "permission ask→identity_cap tool=%s identity=%s",
-                    name,
-                    str(arguments.get("_identity_id") or arguments.get("_contact_agent") or "")[:16],
-                )
-                args = dict(arguments)
-                args["_confirm_ok"] = True
-                return BeforeHookResult(arguments=args)
-        except Exception as e:
-            logger.debug("identity grant short-circuit skip: %s", e)
-
-    if decision == "allow":
-        return BeforeHookResult(arguments=arguments)
-    if decision == "deny":
-        return BeforeHookResult(
-            block=True,
-            reason=f"[permission deny] {gate.summarize(name, arguments)}",
-            arguments=arguments,
-        )
-
-    # ── ask 分支 ──
     ask_mode = effective_ask_mode()
     if ask_mode == "auto":
-        # 有确认通道就真弹窗；没有（cron / 渠道机器人 / webhook）走兜底策略。
-        has_channel = arguments.get("_ws_manager") is not None
+        has_channel = args.get("_ws_manager") is not None
         if has_channel:
             ask_mode = "interactive"
         else:
@@ -340,19 +277,23 @@ async def builtin_permission_before(name: str, arguments: dict[str, Any]) -> Bef
             )
 
     if ask_mode in ("local_allow", "allow", "auto_allow"):
-        logger.info("permission ask→local_allow tool=%s %s", name, gate.summarize(name, arguments))
-        return BeforeHookResult(arguments=arguments)
+        logger.info(
+            "permission ask→local_allow tool=%s layer=%s",
+            name,
+            court.layer,
+        )
+        return BeforeHookResult(arguments=args)
     if ask_mode == "interactive":
-        return await _interactive_approval(name, arguments, gate, profile)
+        return await _interactive_approval(name, args, gate, profile)
     return BeforeHookResult(
         block=True,
         reason=(
-            f"[permission ask] 需要确认但当前无人可问: {gate.summarize(name, arguments)}。"
-            f"这次调用来自无人值守路径（定时任务 / 渠道机器人 / Webhook），"
+            f"[permission ask] 需要确认但当前无人可问: layer={court.layer} "
+            f"rule={court.matched_rule}。这次调用来自无人值守路径（定时任务 / 渠道机器人 / Webhook），"
             f"已按拒绝处理。如需放行，请在权限控制台把「无人值守兜底」改为放行，"
             f"或把该工具加入白名单。"
         ),
-        arguments=arguments,
+        arguments=args,
     )
 
 

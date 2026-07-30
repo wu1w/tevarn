@@ -1717,14 +1717,19 @@ export interface AgentRunSummary {
   id: string;
   session_id: string;
   status: string;
+  public_status?: string;
   mode: string;
+  origin?: string;
   input_summary: string;
   total_iterations: number;
   total_tool_calls: number;
+  token_limit?: number;
+  token_used?: number;
   error: string | null;
   started_at: string | null;
   ended_at: string | null;
   created_at: string;
+  checkpoint?: Record<string, unknown> | null;
 }
 
 export interface AgentRunStep {
@@ -1752,17 +1757,41 @@ export async function listSessionRuns(
   return res.data;
 }
 
-/** 0.5.3 全局 Runs：不依赖先开 chat */
+/** Phase 2/3 全局 Runs：不依赖先开 chat；支持 origin 过滤 */
 export async function listRecentRuns(params?: {
   limit?: number;
   status?: string;
+  origin?: string;
 }): Promise<AgentRunSummary[]> {
-  const res = await api.get('/runs/recent', { params });
+  const res = await api.get('/runs', { params });
   return res.data;
 }
 
 export async function getRunDetail(runId: string): Promise<AgentRunDetail> {
   const res = await api.get(`/runs/${runId}`);
+  return res.data;
+}
+
+/** 会话 checkpoint 续跑（Phase 2.3 / 3.3） */
+export async function resumeSessionRun(sessionId: string): Promise<unknown> {
+  const res = await api.post(`/sessions/${sessionId}/resume`);
+  return res.data;
+}
+
+export async function suspendKernelProcess(
+  processId: string,
+  reason = '',
+): Promise<{ ok: boolean; process: KernelProcess }> {
+  const res = await api.post(`/kernel/processes/${processId}/suspend`, null, {
+    params: { reason },
+  });
+  return res.data;
+}
+
+export async function resumeKernelProcess(
+  processId: string,
+): Promise<{ ok: boolean; process: KernelProcess }> {
+  const res = await api.post(`/kernel/processes/${processId}/resume`);
   return res.data;
 }
 

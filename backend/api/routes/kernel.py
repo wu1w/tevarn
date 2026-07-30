@@ -125,6 +125,39 @@ async def get_process(
     return data
 
 
+@router.post("/processes/{process_id}/suspend")
+async def suspend_process(
+    process_id: str,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+    reason: str = Query("", description="挂起原因"),
+):
+    """Phase 3.3：挂起运行中进程（loop 下一轮 gate 阻塞）。"""
+    kernel = get_kernel()
+    try:
+        proc = await kernel.suspend_process(process_id, reason=reason or "")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True, "process": proc.to_dict()}
+
+
+@router.post("/processes/{process_id}/resume")
+async def resume_process(
+    process_id: str,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """Phase 3.3：恢复挂起进程。"""
+    kernel = get_kernel()
+    try:
+        proc = await kernel.resume_process(process_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True, "process": proc.to_dict()}
+
+
 @router.get("/events")
 async def list_events(
     current_user: Annotated[UserRead, Depends(get_current_user)],

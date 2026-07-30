@@ -15,6 +15,7 @@ import {
   rejectEvolutionDraft,
   runEvolutionCurator,
   runEvolutionTask,
+  setEvolutionAssetEnabled,
   type EvolutionAsset,
 } from '@/lib/api';
 
@@ -31,6 +32,7 @@ export function EvolutionOpsPanel({ zh = true }: { zh?: boolean }) {
   const [taskName, setTaskName] = useState('manual_outcome');
   const [detail, setDetail] = useState('');
   const [success, setSuccess] = useState(true);
+  const [preview, setPreview] = useState<EvolutionAsset | null>(null);
 
   const status = useQuery({ queryKey: ['evolution-status'], queryFn: getEvolutionStatus, staleTime: 15_000 });
   const drafts = useQuery({
@@ -129,24 +131,85 @@ export function EvolutionOpsPanel({ zh = true }: { zh?: boolean }) {
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 600, fontSize: 13 }}>{a.name}</div>
                     <div style={{ fontSize: 11, color: 'var(--foreground-dim)' }}>
-                      {a.kind} · score {a.last_score ?? '—'}
+                      {a.kind} · score {a.last_score ?? '—'} · {a.status}
                     </div>
                     <div style={{ fontSize: 11.5, marginTop: 4, color: 'var(--foreground-muted)' }}>
                       {(a.summary || '').slice(0, 120)}
                     </div>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <button
+                      type="button"
+                      style={btnGhost}
+                      onClick={() => setPreview(a)}
+                    >
+                      {zh ? '预览' : 'Preview'}
+                    </button>
                     <button type="button" style={btnPrimary} disabled={apply.isPending} onClick={() => apply.mutate(a.id)}>
                       {zh ? '应用' : 'Apply'}
                     </button>
                     <button type="button" style={btnGhost} disabled={reject.isPending} onClick={() => reject.mutate(a.id)}>
                       {zh ? '拒绝' : 'Reject'}
                     </button>
+                    <button
+                      type="button"
+                      style={btnGhost}
+                      onClick={async () => {
+                        try {
+                          await setEvolutionAssetEnabled(a.id, true);
+                          invalidate();
+                        } catch (e) {
+                          setLog(String(e));
+                        }
+                      }}
+                    >
+                      {zh ? '启用' : 'Enable'}
+                    </button>
                   </div>
                 </div>
               ))
             )}
           </div>
+          {preview ? (
+            <div
+              style={{
+                marginTop: 10,
+                borderTop: '1px solid var(--border-subtle)',
+                paddingTop: 10,
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                <div style={{ fontWeight: 600, fontSize: 12 }}>
+                  {zh ? 'Diff / 内容预览' : 'Content preview'} · {preview.name}
+                </div>
+                <button type="button" style={btnGhost} onClick={() => setPreview(null)}>
+                  {zh ? '关闭' : 'Close'}
+                </button>
+              </div>
+              <pre
+                style={{
+                  fontSize: 11,
+                  maxHeight: 220,
+                  overflow: 'auto',
+                  whiteSpace: 'pre-wrap',
+                  background: 'var(--elevated-bg, transparent)',
+                  padding: 10,
+                  borderRadius: 8,
+                  margin: 0,
+                }}
+              >
+                {preview.content ||
+                  preview.summary ||
+                  JSON.stringify(preview.meta || {}, null, 2) ||
+                  (zh ? '（无 content 字段，见 summary/meta）' : '(no content field)')}
+              </pre>
+              <div style={{ fontSize: 11, color: 'var(--foreground-dim)', marginTop: 6 }}>
+                {zh
+                  ? '受控编制进化的 approve/reject/rollback 在「审批中心」；此处为 TEE 草稿运维。'
+                  : 'Kernel evolution approve/rollback lives in Approvals; this is TEE draft ops.'}
+              </div>
+            </div>
+          ) : null}
         </div>
 
         <div style={card}>

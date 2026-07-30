@@ -533,6 +533,24 @@ class CrewMemoryWriter:
         approved_by: str,
         source: str = "manual",
     ) -> Any:
+        # Phase 3.1：编制手动沉淀走记忆总线
+        try:
+            from backend.services import memory_bus
+
+            result = await memory_bus.remember(
+                kind,
+                content,
+                identity_id=identity_id,
+                approved_by=approved_by,
+                source=source,
+                confidence=1.0,
+            )
+            if result.ok and result.raw is not None:
+                return result.raw
+            if not result.ok:
+                logger.warning("memory_bus.record_manual fallback: %s", result.message)
+        except Exception as e:
+            logger.debug("memory_bus record_manual skip: %s", e)
         return await self._reg().add_memory(
             identity_id, kind, content, source=source, approved_by=approved_by
         )
@@ -540,6 +558,18 @@ class CrewMemoryWriter:
     async def supersede(
         self, entry_id: Any, new_content: str, *, approved_by: str
     ) -> Any:
+        try:
+            from backend.services import memory_bus
+
+            result = await memory_bus.supersede(
+                f"identity:{entry_id}",
+                new_content,
+                approved_by=approved_by,
+            )
+            if result.ok and result.raw is not None:
+                return result.raw
+        except Exception as e:
+            logger.debug("memory_bus supersede skip: %s", e)
         return await self._reg().supersede_memory(
             entry_id, new_content, approved_by=approved_by
         )

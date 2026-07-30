@@ -13,6 +13,7 @@ import {
   listRunningJobs, listPolicyDecisions, exportAiosBackup, stopRunningJob,
   getGovernanceManifest, getProtocolManifest, listAgentCards,
   getSchedulerStatus,
+  suspendKernelProcess, resumeKernelProcess,
   type KernelProcess, type KernelEvent,
 } from '@/lib/api';
 import { useZh } from '@/hooks/useZh';
@@ -281,7 +282,14 @@ export default function KernelPage() {
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {procs.map((p) => <ProcessRow key={p.id} p={p} zh={zh} />)}
+            {procs.map((p) => (
+              <ProcessRow
+                key={p.id}
+                p={p}
+                zh={zh}
+                onChanged={() => void qc.invalidateQueries({ queryKey: ['kernel-processes'] })}
+              />
+            ))}
           </div>
         )
       ) : tab === 'mediate' ? (
@@ -522,9 +530,34 @@ GET  /api/kernel/protocol/surface`}
   );
 }
 
-function ProcessRow({ p }: { p: KernelProcess; zh: boolean }) {
+function ProcessRow({
+  p,
+  zh,
+  onChanged,
+}: {
+  p: KernelProcess;
+  zh: boolean;
+  onChanged?: () => void;
+}) {
   const color = STATE_COLOR[p.state] ?? 'var(--foreground-muted)';
   const pct = p.token_budget ? Math.min(100, (p.tokens_used / p.token_budget) * 100) : null;
+  const [busy, setBusy] = useState(false);
+  const canSuspend = ['running', 'idle', 'waiting'].includes(p.state);
+  const canResume = p.state === 'suspended';
+
+  const act = async (kind: 'suspend' | 'resume') => {
+    setBusy(true);
+    try {
+      if (kind === 'suspend') await suspendKernelProcess(p.id, 'ui');
+      else await resumeKernelProcess(p.id);
+      onChanged?.();
+    } catch {
+      /* interceptor */
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div style={{ ...card, display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px' }}>
       <span style={{ width: 9, height: 9, borderRadius: '50%', background: color, flexShrink: 0 }} />
@@ -533,7 +566,7 @@ function ProcessRow({ p }: { p: KernelProcess; zh: boolean }) {
           {p.identity} <span style={{ fontWeight: 400, color: 'var(--foreground-dim)', fontSize: 10.5 }}>· {p.state}</span>
         </div>
         <div style={{ fontSize: 10.5, color: 'var(--foreground-dim)', marginTop: 3, fontFamily: 'var(--font-mono)' }}>
-          {(p.capabilities ?? []).join(' ') || '—'}
+          {(p.capabilities ?? []).join(' ') || '—'} · {p.id.slice(0, 8)}
         </div>
       </div>
       {pct !== null ? (
@@ -546,6 +579,28 @@ function ProcessRow({ p }: { p: KernelProcess; zh: boolean }) {
           </div>
         </div>
       ) : null}
+      <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+        {canSuspend && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void act('suspend')}
+            style={{ fontSize: 10, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border-subtle)', background: 'transparent', color: 'var(--foreground-muted)', cursor: 'pointer' }}
+          >
+            {zh ? '挂起' : 'Suspend'}
+          </button>
+        )}
+        {canResume && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void act('resume')}
+            style={{ fontSize: 10, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--brand-purple)', background: 'color-mix(in srgb, var(--brand-purple) 12%, transparent)', color: 'var(--brand-purple)', cursor: 'pointer' }}
+          >
+            {zh ? '恢复' : 'Resume'}
+          </button>
+        )}
+      </div>
       <span style={{ fontSize: 10.5, color: 'var(--foreground-dim)', flexShrink: 0 }}>{fmtTime(p.created_at)}</span>
     </div>
   );
@@ -553,14 +608,20 @@ function ProcessRow({ p }: { p: KernelProcess; zh: boolean }) {
 
 function MediateRow({ e, zh }: { e: KernelEvent; zh: boolean }) {
   const d = e.detail ?? {};
-  const allowed = d.allowed !== false;
+  const allowed = d.allowed !== false && d.verdict !== 'deny';
+  const layer = d.layer ? String(d.layer) : '';
+  const rule = d.matched_rule ? String(d.matched_rule) : '';
+  const tool = String(d.tool || d.capability || d.target || '');
   return (
     <div style={{ ...card, padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 10, borderLeft: `3px solid ${allowed ? 'var(--status-online)' : 'var(--status-offline)'}` }}>
       <span style={{ fontSize: 11, fontWeight: 700, color: allowed ? 'var(--status-online)' : 'var(--status-offline)', flexShrink: 0 }}>
         {allowed ? (zh ? '放行' : 'ALLOW') : (zh ? '拒绝' : 'DENY')}
       </span>
       <span style={{ flex: 1, fontSize: 11.5, color: 'var(--foreground-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {String(d.capability ?? d.tool ?? '')} {d.reason ? `· ${String(d.reason)}` : ''}
+        {tool}
+        {layer ? ` · layer=${layer}` : ''}
+        {rule ? ` · rule=${rule}` : ''}
+        {d.reason ? ` · ${String(d.reason)}` : ''}
       </span>
       <span style={{ fontSize: 10, color: 'var(--foreground-dim)', fontFamily: 'var(--font-mono)', flexShrink: 0 }}>
         pid {e.process_id?.slice(0, 8)} · {fmtTime(e.ts)}

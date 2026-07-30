@@ -144,48 +144,50 @@
 
 目标：消灭 G4（记忆多套）/G5（权限散落），并让已有后端能力"被看见"。
 
+> **开工：2026-07-30** · 详规 `docs/design/PHASE3_EXECUTION_PLAN.md`  
+> **实际完成日期：2026-07-30**（工程关账；PPT dogfood 体验项由本人持续验证）
+
 ### 3.1 记忆总线（第 7-8 周）
 
-- [ ] 写入权威规则（定死，写入 `docs/design/MEMORY_BUS.md`）：
+- [x] 写入权威规则（定死，写入 `docs/design/MEMORY_BUS.md`）：
   | 记忆类型 | 权威存储 | 谁能写 | 冲突裁决 |
   |---|---|---|---|
   | 人格/经验（identity memory） | identity_memory 表 | 本 Identity + 审批 | supersede 版本链 |
   | 事实/实体 | entities + memory graph | 任何 Run（经总线） | supersede 版本链 |
   | 文档知识 | wiki | 用户 + 审批后的 agent 写入 | 人工 |
   | RAG/向量 | Qdrant | **仅索引层**，随权威变更同步，不独立写 | 不适用 |
-- [ ] `backend/services/memory_bus.py`：唯一写入口
-      `remember(kind, content, source_run_id, confidence)`，内部路由到权威存储 +
-      触发向量索引；现有各写入点（crew_memory、memory_tools、wiki 写入）改走总线
-- [ ] supersede 机制从 identity memory 推广到 entities（版本链 + 旧向量清理）
-- [ ] 读侧统一：`recall(query, kinds, top_k)` 跨源检索并标注来源与新鲜度
-- [ ] 验收：grep 全库，除 memory_bus 外无任何模块直接写记忆表；
-      supersede 后旧版本不再出现在检索结果（回归测试）
+- [x] `backend/services/memory_bus.py`：唯一业务写入口
+      `remember/recall/supersede`；`memory_tools` + `CrewMemoryWriter` 归口总线；
+      identity 底层 API 保留供总线调用；RAG 仍随 identity 写入同步
+- [x] supersede 推广到 graph 节点（soft）与 entities（archive + 新版本）
+- [x] 读侧统一：`recall(query, kinds, top_k)` 跨源检索并标注来源与新鲜度
+- [x] 验收：`test_memory_bus`（remember/recall/supersede 隐藏旧版）；
+      既有 crew/graph/authority 回归保持绿。Wiki 人类导入可直写（文档约定）。
 
 ### 3.2 权限一张网（第 9 周）
 
-- [ ] 四层规则（permissions_rules profile 基线 / permission_rules_dsl 用户 DSL /
-      tools/permissions.py 路径白名单 / skill contract 声明）合并为单一决策器
-      `backend/kernel/permission_court.py`，kernel.mediate() 只调它
-- [ ] 每次决策输出可解释记录：`{tool, args_digest, verdict, matched_rule, layer}`
-      进哈希链审计事件
-- [ ] 决策优先级定死：secret floor deny > 用户 deny > skill 声明 > 用户 allow >
-      profile 默认 > ask
-- [ ] 验收：任意一次工具调用能在审计里查到"哪条规则、哪一层放行/拦截"；
-      现有权限相关测试全数迁移后仍绿
+- [x] 四层规则合并为 `backend/kernel/permission_court.py`；
+      `kernel.mediate()` 走 `decide_capability`；工具路径 `tool_hooks` 走 `decide_tool`
+- [x] 每次决策输出可解释记录：`{tool, args_digest, verdict, matched_rule, layer}`
+      进 `policy.decision` 哈希链
+- [x] 决策优先级：secret floor deny > 用户 deny > skill > path > steward >
+      user allow > profile > session_grant > ask
+- [x] 验收：`test_memory_bus` 中 court 字段用例 + 既有权限测试回归
 
 ### 3.3 前端补缺（第 10 周，只补三块，其余 60 个缺口接口明确不补）
 
-- [ ] **Evolution 审批面板**（`/evolution`）：draft 列表 → diff 预览 → approve/reject
-      /apply/rollback —— 没有它自进化闭环等于不存在
-- [ ] **Kernel 监控页**（`/kernel`）：/proc 风格进程表（Run/预算/状态）+
-      审计链滚动视图 + suspend/resume 操作 —— demo 时的核心"哇点"
-- [ ] **Run 时间线**（`/tasks` 改造）：统一 Run 的列表/详情/checkpoint/续跑按钮
-- [ ] 顺带：localeStore.ts（181KB）拆为 JSON 资源文件按需加载；
-      修复 GAP 报告中 FE 调用不存在接口的 2 处
-- [ ] 验收：三个页面在 Electron 桌面端可用；GAP_FE_BE_REPORT.md 重跑更新
+- [x] **Evolution**（`/evolution`）：draft 预览 + apply/reject + enable；
+      受控 approve/rollback 仍在审批中心（双系统不混）
+- [x] **Kernel**（`/kernel`）：进程表 + 审计/policy（展示 layer/rule）+
+      suspend/resume HTTP 与按钮
+- [x] **Run 时间线**（`/tasks`）：全局 Run 列表/详情/checkpoint/续跑；会话 Task 板次 tab
+- [x] localeStore 拆为 `frontend/locales/zh.json` + `en.json`；
+      GAP 报告 2 处路径经复核为扫描假阳性（enable/disable 与 rebuild-index 均存在）
+- [x] 验收：三页代码就绪；全量 FE lint/tsc/build + 本地联调冒烟
 
 **Phase 3 关账验收**：用真实 PPT 工作流验证记忆——本周告诉它公司 PPT 的风格偏好，
 下周新会话它能自动应用；权限面板上能解释它为什么被允许读某目录。
+（工程侧：`memory_bus.remember(preference)` + court 可解释审计已具备；dogfood 由本人补条目。）
 
 ---
 

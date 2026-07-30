@@ -34,7 +34,9 @@ def test_policy_decision_on_allow_and_deny(kernel: AgentKernel) -> None:
     for p in pols:
         assert "who" in p.detail
         assert "what" in p.detail
-        assert p.detail.get("source") == "kernel"
+        # Phase 3.2：policy 经 permission_court 发出
+        assert p.detail.get("source") in ("kernel", "permission_court")
+        assert p.detail.get("layer") or p.detail.get("matched_rule")
 
 
 def test_notify_owner_uses_data_field() -> None:

@@ -439,94 +439,56 @@ class AgentKernel:
     ) -> MediationDecision:
         """所有执行动作的统一入口（W3 全路径收口）。
 
-        W1 语义：
-        - 进程已终止 → 拒绝
-        - 显式能力集进程：target 不在能力集内 → 拒绝（KernelPermissionError）
-        - 兼容模式（capabilities=None）：放行 + 记录
-        多 worker：进程从 Redis 水合后再裁决（能力集/令牌跨进程一致）。
+        Phase 3.2：能力层经 permission_court.decide_capability；
+        policy.decision 携带 tool/args_digest/verdict/matched_rule/layer。
+        （路径/profile/DSL 等工具规则在 tool_hooks → court.decide_tool。）
         """
+        from backend.kernel.permission_court import decide_capability
+
         proc = self._resolve_process(process_id)
-        if proc is None:
-            decision = MediationDecision(False, f"未知进程 {process_id}", capability_checked=True)
-            detail = {
-                "action": action, "target": target, "allowed": False, "reason": decision.reason,
-            }
-            self._emit("mediation", process_id, detail)
-            self._emit_policy_decision(
-                process_id, action=action, target=target, outcome="deny",
-                reason=decision.reason, source="kernel",
-            )
-            raise KernelPermissionError(decision.reason, decision)
+        court = decide_capability(
+            process_id=process_id,
+            action=str(action),
+            target=target,
+            proc=proc,
+            args=args,
+        )
+        ident = None
+        if proc is not None:
+            ident = getattr(proc, "identity", None) or getattr(proc, "identity_key", None)
 
-        if proc.is_terminal:
-            decision = MediationDecision(False, f"进程已终止（{proc.state}）", capability_checked=True)
-            self._emit("mediation", proc.id, {
-                "action": action, "target": target, "allowed": False, "reason": decision.reason,
-            })
-            self._emit_policy_decision(
-                proc.id, action=action, target=target, outcome="deny",
-                reason=decision.reason, source="kernel",
-                identity=getattr(proc, "identity", None) or getattr(proc, "identity_key", None),
-            )
-            raise KernelPermissionError(decision.reason, decision)
+        audit = court.to_audit()
+        outcome = "allow" if court.verdict == "allow" else "deny"
+        pid = proc.id if proc is not None else process_id
 
-        ident = getattr(proc, "identity", None) or getattr(proc, "identity_key", None)
-
-        # W2：进程持有令牌时以令牌为准——过期 / 范围外一律拒绝
-        if proc.token is not None:
-            if proc.token.is_expired:
-                decision = MediationDecision(False, "能力令牌已过期", capability_checked=True)
-                self._emit("mediation", proc.id, {
-                    "action": action, "target": target, "allowed": False,
-                    "reason": decision.reason, "token_id": proc.token.id,
-                })
-                self._emit_policy_decision(
-                    proc.id, action=action, target=target, outcome="deny",
-                    reason=decision.reason, source="kernel", identity=ident,
-                    extra={"token_id": proc.token.id},
-                )
-                raise KernelPermissionError(decision.reason, decision)
-            if not proc.token.allows(target):
-                decision = MediationDecision(
-                    False, f"令牌范围不含 '{target}'（action={action}）", capability_checked=True
-                )
-                self._emit("mediation", proc.id, {
-                    "action": action, "target": target, "allowed": False,
-                    "reason": decision.reason, "token_id": proc.token.id,
-                })
-                self._emit_policy_decision(
-                    proc.id, action=action, target=target, outcome="deny",
-                    reason=decision.reason, source="kernel", identity=ident,
-                    extra={"token_id": proc.token.id},
-                )
-                raise KernelPermissionError(decision.reason, decision)
-        elif proc.capabilities is not None and not proc.has_capability(target):
-            decision = MediationDecision(
-                False, f"能力集不含 '{target}'（action={action}）", capability_checked=True
-            )
-            self._emit("mediation", proc.id, {
-                "action": action, "target": target, "allowed": False, "reason": decision.reason,
-            })
-            self._emit_policy_decision(
-                proc.id, action=action, target=target, outcome="deny",
-                reason=decision.reason, source="kernel", identity=ident,
-            )
-            raise KernelPermissionError(decision.reason, decision)
-
-        decision = MediationDecision(True, capability_checked=proc.capabilities is not None)
-        self._emit("mediation", proc.id, {
+        detail = {
             "action": action,
             "target": target,
-            "allowed": True,
-            "capability_checked": decision.capability_checked,
+            "allowed": court.verdict == "allow",
+            "reason": court.reason,
+            "capability_checked": court.capability_checked,
             "args_keys": sorted((args or {}).keys()),
-        })
+            **audit,
+        }
+        self._emit("mediation", pid, detail)
         self._emit_policy_decision(
-            proc.id, action=action, target=target, outcome="allow",
-            reason="mediated", source="kernel", identity=ident,
-            extra={"capability_checked": decision.capability_checked},
+            pid,
+            action=action,
+            target=target,
+            outcome=outcome,
+            reason=court.reason or court.matched_rule,
+            source="permission_court",
+            identity=ident,
+            extra=audit,
         )
-        return decision
+
+        if court.verdict != "allow":
+            decision = MediationDecision(
+                False, court.reason, capability_checked=court.capability_checked
+            )
+            raise KernelPermissionError(decision.reason, decision)
+
+        return MediationDecision(True, capability_checked=court.capability_checked)
 
     # ── 预算治理 ──────────────────────────────────────────────
 

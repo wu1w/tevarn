@@ -81,6 +81,9 @@ class MemoryGraphTool(BaseTool):
                 user_id = None
 
         if action == "remember":
+            # Phase 3.1：业务写走 memory_bus
+            from backend.services import memory_bus
+
             kind = str(kwargs.get("kind") or "").strip()
             title = str(kwargs.get("title") or "").strip()
             if kind not in VALID_KINDS:
@@ -90,33 +93,36 @@ class MemoryGraphTool(BaseTool):
             tags = kwargs.get("tags") or []
             if not isinstance(tags, list):
                 tags = [str(tags)]
-            node = await repo.add_node({
-                "user_id": user_id,
-                "kind": kind,
-                "title": title[:200],
-                "content": str(kwargs.get("content") or ""),
-                "tags": [str(t) for t in tags][:20],
-                "source": "agent",
-                "source_session_id": str(kwargs.get("_session_id") or "") or None,
-            })
-            out = f"[remembered] {kind} #{node.id} {title}"
+            result = await memory_bus.remember(
+                kind,
+                str(kwargs.get("content") or ""),
+                title=title[:200],
+                tags=[str(t) for t in tags][:20],
+                user_id=user_id,
+                source_run_id=kwargs.get("_run_id") or kwargs.get("_agent_run_id"),
+                confidence=float(kwargs.get("confidence") or 1.0),
+                meta={"session_id": str(kwargs.get("_session_id") or "") or None},
+                source="agent",
+            )
+            if not result.ok:
+                return f"[Error] remember failed: {result.message}"
+            out = f"[remembered] {kind} #{result.id} {title}"
             link_to = str(kwargs.get("link_to") or "").strip()
-            if link_to:
+            if link_to and result.id:
                 try:
                     await repo.add_edge({
-                        "from_id": node.id,
+                        "from_id": uuid.UUID(str(result.id)),
                         "to_id": uuid.UUID(link_to),
                         "relation": "related_to",
                     })
                     out += f"（已关联到 {link_to}）"
                 except (ValueError, Exception) as e:
                     out += f"（关联失败: {e}）"
-            # 二期：自动写边（受 settings.memory_graph_auto_link 控制）
             try:
                 from backend.core.config import settings
 
-                if settings.memory_graph_auto_link:
-                    auto_edges = await repo.auto_link(node)
+                if settings.memory_graph_auto_link and result.raw is not None:
+                    auto_edges = await repo.auto_link(result.raw)
                     if auto_edges:
                         out += f"（自动关联 {len(auto_edges)} 条相似记忆）"
             except Exception as e:
@@ -124,24 +130,30 @@ class MemoryGraphTool(BaseTool):
             return out
 
         if action == "recall":
+            # Phase 3.1：跨源 recall（默认含 graph；有 identity 时一并查）
+            from backend.services import memory_bus
+
             kind = str(kwargs.get("kind") or "").strip() or None
             if kind and kind not in VALID_KINDS:
                 return f"[Error] kind 必须是 {VALID_KINDS}"
             limit = max(1, min(int(kwargs.get("limit") or 10), 50))
-            nodes = await repo.recall(
-                query=str(kwargs.get("query") or ""),
-                kind=kind,
-                limit=limit,
+            kinds = [kind] if kind else None
+            hits = await memory_bus.recall(
+                str(kwargs.get("query") or ""),
+                kinds=kinds,
+                top_k=limit,
+                identity_id=kwargs.get("_identity_id"),
+                user_id=user_id,
             )
-            if not nodes:
+            if not hits:
                 return "[recall] 无匹配记忆"
-            lines = [f"[recall] {len(nodes)} 条记忆："]
-            for n in nodes:
-                preview = (n.content or "").strip().replace("\n", " ")[:120]
+            lines = [f"[recall] {len(hits)} 条记忆："]
+            for h in hits:
+                preview = (h.content or "").strip().replace("\n", " ")[:120]
                 lines.append(
-                    f"- #{n.id} [{n.kind}] {n.title}"
+                    f"- #{h.id} [{h.source}/{h.kind}] {h.title or h.kind}"
                     + (f" — {preview}" if preview else "")
-                    + (f"（hits={n.hit_count}）" if n.hit_count else "")
+                    + (f"（score={h.score:.2f}）" if h.score else "")
                 )
             return "\n".join(lines)
 
