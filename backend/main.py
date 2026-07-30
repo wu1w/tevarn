@@ -601,10 +601,12 @@ async def lifespan(app: FastAPI):
 
 
 # 创建 FastAPI 应用
+from backend.core.version import product_version as _product_version
+
 app = FastAPI(
     title="Takton",
     description="个人专属异步 Agent 终端后端",
-    version="0.4.6-alpha",
+    version=_product_version(),
     lifespan=lifespan,
 )
 

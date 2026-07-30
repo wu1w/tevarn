@@ -27,6 +27,53 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class ChannelIngressRejected(Exception):
+    """入站文本未通过长度/安全门禁（Phase 5 D1）。"""
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
+def sanitize_channel_ingress(
+    text: str,
+    *,
+    max_chars: int | None = None,
+    strip_nul: bool | None = None,
+) -> str:
+    """规范化外部 IM 入站文本。超限抛 ChannelIngressRejected。
+
+    - 去 NUL（可关）
+    - 长度硬顶（默认 settings.channel_ingress_max_chars）
+    - 不在此做激进 prompt-injection 改写，避免误伤正常代码块
+    """
+    try:
+        from backend.core.config import settings
+
+        if max_chars is None:
+            max_chars = int(getattr(settings, "channel_ingress_max_chars", 32_000) or 0)
+        if strip_nul is None:
+            strip_nul = bool(getattr(settings, "channel_ingress_strip_nul", True))
+    except Exception:
+        if max_chars is None:
+            max_chars = 32_000
+        if strip_nul is None:
+            strip_nul = True
+
+    if text is None:
+        return ""
+    if not isinstance(text, str):
+        text = str(text)
+    if strip_nul and "\x00" in text:
+        text = text.replace("\x00", "")
+    # 拒绝「几乎全是 C0 控制字符」的垃圾包（保留 \\t\\n\\r）
+    if text and not any(ch.isprintable() or ch in "\t\n\r" for ch in text):
+        raise ChannelIngressRejected("non_printable_payload")
+    if max_chars and max_chars > 0 and len(text) > max_chars:
+        raise ChannelIngressRejected(f"too_long:{len(text)}>{max_chars}")
+    return text
+
+
 class ChannelProgressPublisher:
     """社交通道进度推送：
 
@@ -806,6 +853,29 @@ class ChannelGateway:
             content = data.get("content", data.get("text", ""))
             chat_id = data.get("chat_id", data.get("channel_id", ""))
             user_id = data.get("user_id", data.get("from", ""))
+
+        # Phase 5 D1：长度 / NUL 门禁（在进 loop 之前）
+        try:
+            content = sanitize_channel_ingress(content if isinstance(content, str) else str(content or ""))
+        except ChannelIngressRejected as e:
+            logger.warning(
+                "%s ingress rejected: %s chat=%s",
+                platform,
+                e.reason,
+                str(chat_id)[:16],
+            )
+            try:
+                await self._reply(
+                    platform,
+                    str(chat_id),
+                    f"⚠️ 消息被拒绝（{e.reason}）。请缩短内容后重试。",
+                    event_type,
+                    data,
+                    str(reply_to_id or ""),
+                )
+            except Exception:
+                pass
+            return
 
         logger.info(
             "%s message: type=%s, chat=%s, user=%s, content=%.60s",

@@ -235,21 +235,20 @@
 
 > **详规：`docs/design/PHASE5_EXECUTION_PLAN.md`**（2026-07-30 起草）  
 > 原则：不发明新 OS 能力；**默认装得动 + 暴露面敢公开 + 定位一句话 + demo 三连**。  
-> 版本建议：公开 tag **0.7.0**（与本文一致）；当前产品文件 `1.0.0-alpha` 关账日对齐。
+> **版本决议：feature 分支统一 `0.4.10-alpha`**（`backend/VERSION`）；正式公开 tag 关账日再定。
 
 ### 5.1 轻量化发行版（第 15-16 周）
 
-- [ ] **5.1a** 零依赖降级矩阵：SQLite + 无 Redis + 无 Qdrant 启动/冒烟全绿  
-      （`smoke_zero_deps` + 测试；见详规 §3.1a）
-- [ ] **5.1b** 安装双路径文档与实测：Release（install.ps1/sh）+ 源码（venv + `start.py`），  
-      全新机目标 10 分钟可对话（先关账源码路径亦可）
+- [x] **5.1a** 零依赖降级矩阵：SQLite + 无 Redis + 无 Qdrant 配置/导入冒烟  
+      （`test_phase5_zero_deps` + `docs/ZERO_DEPS.md`；完整 smoke 启停后续补）
+- [x] **5.1b** 安装双路径文档：`docs/INSTALL.md`（Release + 源码）；计时实测报告待补
 - [ ] **5.1c** 资源基线：8GB / 无 GPU；空载 &lt;500MB、单会话峰值 &lt;1.5GB，写入报告
 - [ ] **5.1d** `start.py` 复核 + Electron **Win NSIS** 冒烟（Linux/mac 尽力）
 
 ### 5.2 公开准备（第 16-17 周）
 
-- [ ] **5.2a** 安全终审：Phase1 security 全绿 + 暴露面审计报告；  
-      认证/CORS/webhook/默认凭据；**channel 入站长度+注入 harden（D1）**
+- [~] **5.2a** 安全终审：Phase1 security 全绿 + 暴露面审计报告；  
+      **channel 入站长度+NUL harden（D1）已做**；完整审计报告待补
 - [ ] **5.2b** README 重写公开定位——**带治理内核的可自进化数字员工运行时**  
       （不是又一个 coding CLI）
 - [ ] **5.2c** 首发 demo 三连（录屏优先，至少文字可跟做）：

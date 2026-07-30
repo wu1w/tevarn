@@ -99,7 +99,7 @@ class AgentCard:
     token_budget: int | None = None
     credit_score: float | None = None
     url: str = ""
-    version: str = "0.4.6-alpha"
+    version: str = "0.4.10-alpha"
     memory_kinds: list[str] = field(default_factory=list)
     meta: dict[str, Any] = field(default_factory=dict)
 
@@ -146,9 +146,16 @@ def identity_to_agent_card(
     ident: Any,
     *,
     memory_entries: list[Any] | None = None,
-    version: str = "0.4.6-alpha",
+    version: str | None = None,
 ) -> AgentCard:
     """从 Identity 行构造可移植 Agent Card。"""
+    if version is None:
+        try:
+            from backend.core.version import product_version
+
+            version = product_version()
+        except Exception:
+            version = "0.4.10-alpha"
     caps = list(getattr(ident, "capabilities", None) or [])
     skills = [capability_to_skill(str(c)) for c in caps]
     duty = ""

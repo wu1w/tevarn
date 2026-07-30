@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-EXPECTED = "1.0.0-alpha"
+EXPECTED = "0.4.10-alpha"
 
 
 def test_changelog_latest_is_expected() -> None:

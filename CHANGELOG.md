@@ -2,9 +2,26 @@
 
 本项目版本记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [0.4.10-alpha] - 2026-07-30
+
+**feature/agent-kernel 分支统一版本号**；Phase 5 开工（轻量化发行准备）。
+
+### Changed
+- 产品版本全系对齐 **`0.4.10-alpha`**（`backend/VERSION` + `scripts/sync_version.py`）
+- Phase 5 详规：`docs/design/PHASE5_EXECUTION_PLAN.md`；安装 `docs/INSTALL.md`；零依赖 `docs/ZERO_DEPS.md`
+
+### Added / Hardened
+- Phase 5.1a：默认零外部依赖冒烟 `test_phase5_zero_deps`
+- Phase 5 D1：channel 入站 `sanitize_channel_ingress`（长度 / NUL / 非打印）
+- 测试：xdist 每 worker 独立 SQLite，消除并行建表竞态
+
+### Notes
+- 正式公开 tag（0.7 / 1.0 等）留到 Phase 5 关账再定；本分支一律 `0.4.10-alpha`
+
 ## [1.0.0-alpha] - 2026-07-29
 
 **Agent Runtime 叙事成立（alpha 内测）**：对齐 `ROADMAP_AIOS_OS_FULL` 0.7→1.0 DoD 切片。  
+
 产品文件版本升至 `1.0.0-alpha`；协议 **0.2.0**。
 
 ### Added / Hardened（0.7 Kernel-first）

@@ -1,6 +1,7 @@
 # Phase 5 执行详规（轻量化发行与公开）
 
-> 目标版本叙事：**公开线 0.7 / 产品文件可对齐 `1.0.0-alpha` → 正式 tag 时再定 `0.7.0` 或 `1.0.0`**  
+> **版本决议（2026-07-30）**：feature 分支上传 GitHub 统一为 **`0.4.10-alpha`**  
+> （权威 `backend/VERSION` + `scripts/sync_version.py`）。公开正式 tag 叙事后续可再升，**本阶段不锁死 0.7/1.0**。  
 > 原则：**不重写产品，只验证默认路径 + 安全终审 + 定位文案 + 可演示**；吸取「太重装不动」教训。  
 > 上游：`docs/DEV_PLAN_PHASE1-5.md` §Phase 5 · 依赖 Phase 1–4 工程关账（已完成）。
 
@@ -71,17 +72,16 @@
 
 ## 2. 5.0 版本与范围冻结
 
-### 2.1 版本决议（开工日拍板，二选一）
+### 2.1 版本决议（已拍板）
 
-| 方案 | 含义 | 建议 |
-|------|------|------|
-| **A. 公开 tag = `0.7.0`** | 对齐 DEV_PLAN 原文；产品文件从 alpha 收口到 0.7 | **推荐**（计划一致） |
-| **B. 公开 tag = `1.0.0`** | 对齐当前 `1.0.0-alpha` 叙事升正式 | 若对外已喊 1.0 再用 |
+| 项 | 值 |
+|----|-----|
+| **feature 分支产品版本** | **`0.4.10-alpha`** |
+| 权威文件 | `backend/VERSION` |
+| 同步命令 | `python scripts/sync_version.py` / `--check` |
+| 覆盖 | package.json · frontend · pyproject · appVersion.ts · FastAPI · CLI |
 
-本详规默认 **方案 A**：  
-- 工程内继续可用 `1.0.0-alpha` 至关账日  
-- 关账动作：`scripts/sync_version.py` → `0.7.0`（或 `0.7.0-rc.1` → `0.7.0`）  
-- README badge / CHANGELOG / GitHub Release 同号  
+公开正式版号（0.7.0 / 1.0.0 等）**留到 5.2e Release 再议**；本分支一律 `0.4.10-alpha`。
 
 ### 2.2 明确不做（防 Phase 5 膨胀）
 

@@ -111,13 +111,18 @@ def cmd_build(_: argparse.Namespace) -> int:
 
 
 def cmd_version(_: argparse.Namespace) -> int:
-    ver = "0.4.6-alpha"
     try:
-        vpath = Path(__file__).resolve().parent / "VERSION"
-        if vpath.is_file():
-            ver = vpath.read_text(encoding="utf-8").strip() or ver
+        from backend.core.version import product_version
+
+        ver = product_version()
     except Exception:
-        pass
+        ver = "0.4.10-alpha"
+        try:
+            vpath = Path(__file__).resolve().parent / "VERSION"
+            if vpath.is_file():
+                ver = vpath.read_text(encoding="utf-8").strip() or ver
+        except Exception:
+            pass
     print(f"takton {ver}")
     print("role: kernel-host / cli-client")
     return 0

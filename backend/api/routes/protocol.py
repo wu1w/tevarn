@@ -42,15 +42,9 @@ def _identity_registry():
 
 
 def _product_version() -> str:
-    try:
-        from pathlib import Path
+    from backend.core.version import product_version
 
-        v = Path(__file__).resolve().parents[2] / "VERSION"
-        if v.is_file():
-            return v.read_text(encoding="utf-8").strip() or "0.4.6-alpha"
-    except Exception:
-        pass
-    return "0.4.6-alpha"
+    return product_version()
 
 
 @router.get("/manifest")

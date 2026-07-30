@@ -531,6 +531,10 @@ class Settings(BaseSettings):
     # 设为 "*" 等于关闭跨源保护 —— 配合 single_user_mode 会让任意网页拿到 admin，
     # 只在你清楚后果时使用。
     cors_allowed_origins: str = ""
+    # Phase 5 / D1：channel 入站文本上限（字符）；0 = 不限制（不推荐公开）
+    channel_ingress_max_chars: int = 32_000
+    # 入站剥离 NUL；拒绝全是控制字符的 payload
+    channel_ingress_strip_nul: bool = True
 
     @model_validator(mode="before")
     @classmethod
