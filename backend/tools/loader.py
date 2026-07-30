@@ -11,10 +11,10 @@ import logging
 from backend.repositories.skill_repo import AsyncSkillRepository
 from backend.repositories.tool_repo import AsyncToolRepository
 from backend.skills import SkillRegistry
-from backend.tools.builtins import BUILTIN_TOOL_CLASSES
 from backend.tools.adapters.db_tool_adapter import DbToolAdapter
 from backend.tools.adapters.dynamic_adapter import DynamicSkillAdapter
 from backend.tools.adapters.skill_adapter import SkillToolAdapter
+from backend.tools.builtins import BUILTIN_TOOL_CLASSES
 from backend.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -96,9 +96,9 @@ async def load_all_tools(include_db: bool = False) -> None:
     try:
         from backend.tools.builtins.workflow_tools import (
             GenerateWorkflow,
+            SaveWorkflow,
             UpdateDag,
             ValidateDag,
-            SaveWorkflow,
         )
 
         workflow_tool_classes = [GenerateWorkflow, UpdateDag, ValidateDag, SaveWorkflow]

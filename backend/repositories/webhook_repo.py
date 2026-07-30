@@ -3,10 +3,9 @@ Webhook Repository 接口与实现
 """
 
 import uuid
-from typing import Any, Optional
+from typing import Any
 
-from sqlalchemy import select, func
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from backend.models.webhook import Webhook, WebhookDeliveryLog
 from backend.repositories.base import AsyncBaseRepository, BaseRepository

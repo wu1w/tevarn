@@ -42,6 +42,9 @@ class SkillCreate(BaseModel):
 class SkillUpdate(BaseModel):
     """更新自定义 Skill"""
 
+    name: Optional[str] = Field(
+        None, min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_]+$"
+    )
     description: Optional[str] = None
     skill_schema: Optional[dict[str, Any]] = Field(default=None, alias="schema")
     enabled: Optional[bool] = None

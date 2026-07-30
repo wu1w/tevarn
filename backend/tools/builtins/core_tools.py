@@ -485,10 +485,10 @@ BUILTIN_TOOL_CLASSES = [
 try:
     from backend.tools.builtins.self_config import (
         GetSystemStatus,
-        UpdateConfig,
         ListAvailableModels,
-        ManageKnowledge,
         ManageCron,
+        ManageKnowledge,
+        UpdateConfig,
     )
 
     SELF_CONFIG_TOOLS = [

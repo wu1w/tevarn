@@ -21,7 +21,7 @@ import time
 import uuid as _uuid
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
 

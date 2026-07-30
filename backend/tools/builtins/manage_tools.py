@@ -6,7 +6,7 @@ import logging
 import uuid as uuid_mod
 from typing import Any
 
-from backend.tools.base import BaseTool, ToolSource, ToolRiskLevel
+from backend.tools.base import BaseTool, ToolRiskLevel, ToolSource
 from backend.tools.builtins.self_config import ToolResult
 
 logger = logging.getLogger(__name__)
@@ -19,7 +19,7 @@ def _parse_uuid(raw: str, field: str = "id") -> uuid_mod.UUID:
     try:
         return uuid_mod.UUID(str(raw).strip())
     except (ValueError, AttributeError):
-        raise ValueError(f"{field} 不是合法 UUID: {raw}")
+        raise ValueError(f"{field} 不是合法 UUID: {raw}") from None
 
 
 def _iso(v: Any) -> str | None:
@@ -85,8 +85,9 @@ async def _enroll_identity_for_subagent(obj: Any, *, role: str = "") -> tuple[An
             # 尽量补 sub_agent_id / caps
             try:
                 async with reg._session_factory() as session:  # type: ignore[attr-defined]
-                    from backend.models.agent_identity import AgentIdentity
                     from sqlalchemy import select
+
+                    from backend.models.agent_identity import AgentIdentity
 
                     row = (
                         await session.execute(
@@ -371,8 +372,9 @@ class ManageSkill(BaseTool):
 
         if action == "list":
             try:
-                from backend.database import get_db_context
                 from sqlalchemy import select
+
+                from backend.database import get_db_context
                 from backend.models.skill import Skill
 
                 async with get_db_context() as db:
@@ -1317,7 +1319,7 @@ class ManageProfile(BaseTool):
                 return ToolResult(
                     success=True,
                     data=self._to_dict(obj) if obj else {"is_default": True},
-                    message=f"✅ 画像已设为默认",
+                    message="✅ 画像已设为默认",
                 )
             except ValueError as e:
                 return ToolResult(success=False, data={}, message=str(e))
@@ -1584,7 +1586,10 @@ class QueryEvolution(BaseTool):
 
         elif action == "version":
             try:
-                from backend.evolution.config import ENGINE_VERSION, get_evolution_config
+                from backend.evolution.config import (
+                    ENGINE_VERSION,
+                    get_evolution_config,
+                )
 
                 cfg = get_evolution_config()
                 return ToolResult(

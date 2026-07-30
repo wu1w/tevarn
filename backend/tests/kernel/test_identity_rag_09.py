@@ -25,8 +25,8 @@ def wfx(tmp_path):
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/rag.db", future=True)
     SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-    from backend.models.base import Base
     import backend.models  # noqa: F401
+    from backend.models.base import Base
 
     async def _init():
         async with engine.begin() as conn:

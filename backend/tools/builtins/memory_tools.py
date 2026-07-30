@@ -65,9 +65,9 @@ class MemoryGraphTool(BaseTool):
 
     async def execute(self, **kwargs: Any) -> str:
         from backend.repositories.memory_graph_repo import (
-            AsyncMemoryGraphRepository,
             VALID_KINDS,
             VALID_RELATIONS,
+            AsyncMemoryGraphRepository,
         )
 
         repo = AsyncMemoryGraphRepository()

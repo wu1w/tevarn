@@ -49,6 +49,7 @@ class ToolCreate(BaseModel):
 class ToolUpdate(BaseModel):
     """更新工具"""
 
+    name: Optional[str] = Field(None, min_length=1, max_length=64)
     description: Optional[str] = None
     config: Optional[dict[str, Any]] = None
     tool_schema: Optional[dict[str, Any]] = None

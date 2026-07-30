@@ -10,9 +10,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from backend.schemas.user import UserRead
+from backend.services.image.factory import ImageGenerationServiceFactory
 
 from ..dependencies import get_current_user
-from backend.services.image.factory import ImageGenerationServiceFactory
 
 logger = logging.getLogger(__name__)
 

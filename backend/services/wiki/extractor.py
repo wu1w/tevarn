@@ -9,9 +9,9 @@ import logging
 from typing import Any
 
 from backend.services.wiki.schema import (
-    WikiExtraction,
     WikiExtractedEntity,
     WikiExtractedRelation,
+    WikiExtraction,
     WikiSchema,
 )
 

@@ -66,7 +66,7 @@ class SkillStoreService:
         errors: dict[str, str] = {}
         fetched_sources: list[SkillSource] = []
 
-        for src, result in zip(sources_to_fetch, results):
+        for src, result in zip(sources_to_fetch, results, strict=True):
             if isinstance(result, Exception):
                 errors[src] = f"{type(result).__name__}: {result}"
                 continue

@@ -5,9 +5,8 @@ Desktop Permission 数据模型
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, String, ForeignKey, Index
+from sqlalchemy import Column, DateTime, ForeignKey, Index, String
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import relationship
 
 from backend.models.base import Base
 

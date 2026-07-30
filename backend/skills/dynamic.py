@@ -49,13 +49,14 @@ class DynamicSkill(BaseSkill):
         # 如果处于异步上下文，应由上层调用 from_db 后的列表传入
         try:
             import asyncio
+
             from backend.repositories.skill_repo import AsyncSkillRepository
             repo = AsyncSkillRepository()
             loop = asyncio.get_event_loop()
             if loop.is_running():
                 # 异步上下文中不能同步运行，返回空列表，由上层处理
                 return []
-            skills = loop.run_until_complete(repo.get_all())
+            skills = loop.run_until_complete(repo.get_active_skills())
             return [cls.from_db(s) for s in skills if not getattr(s, "is_builtin", True)]
         except Exception as e:
             import logging

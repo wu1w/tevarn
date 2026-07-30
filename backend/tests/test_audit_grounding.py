@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from backend.agent.audit_grounding import (
     annotate_audit_report,
     extract_cited_paths,

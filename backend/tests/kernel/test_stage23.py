@@ -13,7 +13,6 @@ import pytest
 from backend.kernel import AgentKernel, AgentScheduler
 from backend.kernel.audit_store import AuditEventStore
 
-
 # ── 调度器（阶段 2）──
 
 def test_scheduler_priority_order() -> None:
@@ -165,8 +164,8 @@ def test_sandbox_exec_network_blocked() -> None:
 
 def test_skill_sandbox_required_rejects_without_bwrap() -> None:
     """sandbox=required 且 bwrap 不可用 → 拒绝执行（模拟不可用）。"""
-    from backend.services import workflow_engine as we
     from backend.computer import sandbox_exec
+    from backend.services import workflow_engine as we
 
     monkey = sandbox_exec.skill_sandbox_available
     sandbox_exec.skill_sandbox_available = lambda: False
@@ -186,8 +185,8 @@ def test_skill_sandbox_required_rejects_without_bwrap() -> None:
 
 def test_skill_sandboxed_execution_end_to_end() -> None:
     """真实 bwrap 下 skill 代码端到端执行（结果正确 + 已沙箱化）。"""
-    from backend.services import workflow_engine as we
     from backend.computer.sandbox_exec import skill_sandbox_available
+    from backend.services import workflow_engine as we
 
     if not skill_sandbox_available():
         pytest.skip("bwrap 不可用")

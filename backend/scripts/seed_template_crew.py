@@ -13,7 +13,6 @@ import os
 import sys
 from typing import Any
 
-
 TEMPLATES = [
     {
         "name": "小白",
@@ -95,8 +94,8 @@ async def main() -> None:
         sys.path.insert(0, root)
 
     from backend.database import AsyncSessionLocal, init_db
-    from backend.kernel.kernel import get_kernel
     from backend.kernel.identity import IdentityRegistry
+    from backend.kernel.kernel import get_kernel
 
     await init_db()
     kernel = get_kernel()

@@ -5,10 +5,10 @@ Linux 平台桌面适配器
 
 import asyncio
 import logging
+import os
 import shutil
 import subprocess
 import tempfile
-import os
 from typing import Any, AsyncGenerator
 
 from backend.services.desktop import DesktopOperationResult

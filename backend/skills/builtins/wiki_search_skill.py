@@ -4,7 +4,6 @@ wiki_search — 从 Wiki 知识图谱检索实体/关系，供 Agent 调用
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from backend.skills.base import BaseSkill

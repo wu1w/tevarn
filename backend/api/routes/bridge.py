@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field
@@ -301,7 +301,7 @@ async def bridge_list_skills(
         from backend.repositories.skill_repo import AsyncSkillRepository
 
         repo = AsyncSkillRepository()
-        rows = await repo.list_all() if hasattr(repo, "list_all") else await repo.list()
+        rows = await repo.get_active_skills()
         for s in rows or []:
             items.append(
                 {
@@ -351,7 +351,9 @@ async def bridge_list_skills(
 
     # prompt skills on disk
     try:
-        from backend.services.prompt_skill_loader import PromptSkillLoader  # type: ignore
+        from backend.services.prompt_skill_loader import (
+            PromptSkillLoader,  # type: ignore
+        )
 
         loader = PromptSkillLoader()
         for s in getattr(loader, "list_all", lambda: [])() or []:
@@ -493,15 +495,12 @@ async def bridge_list_mcp(
 ) -> dict[str, Any]:
     servers: list[dict[str, Any]] = []
     try:
-        from backend.repositories import mcp as mcp_mod  # type: ignore
-    except Exception:
-        mcp_mod = None
-    try:
         # common path: models via session
-        from backend.database import async_session_factory
         from sqlalchemy import text
 
-        async with async_session_factory() as session:
+        from backend.database import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
             try:
                 rows = (
                     await session.execute(
@@ -630,11 +629,14 @@ async def bridge_agent_turn(
 ) -> dict[str, Any]:
     """Run one user turn on Desktop NexusAgentLoop (tools + permissions + history)."""
     from backend.agent import NexusAgentLoop
+    from backend.repositories.context_repo import (
+        AsyncContextFlowRepository,
+        AsyncCtxItemRepository,
+    )
     from backend.repositories.message_repo import AsyncMessageRepository
+    from backend.repositories.notification_repo import AsyncNotificationRepository
     from backend.repositories.session_repo import AsyncSessionRepository
     from backend.repositories.task_repo import AsyncTaskRepository
-    from backend.repositories.context_repo import AsyncCtxItemRepository, AsyncContextFlowRepository
-    from backend.repositories.notification_repo import AsyncNotificationRepository
 
     text = (body.message or "").strip()
     if not text:

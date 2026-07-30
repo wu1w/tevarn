@@ -29,10 +29,10 @@ class WindowsAdapter:
         
         try:
             # 尝试连接 Windows-MCP
-            from backend.mcp_hub.client import MCPClient, MCPServerConfig
-            
             # Windows-MCP 配置（可通过环境变量覆盖）
             import os
+
+            from backend.mcp_hub.client import MCPClient, MCPServerConfig
             mcp_command = os.environ.get("WINDOWS_MCP_COMMAND", "windows-mcp")
             mcp_args = os.environ.get("WINDOWS_MCP_ARGS", "").split() if os.environ.get("WINDOWS_MCP_ARGS") else []
             
@@ -153,7 +153,10 @@ class WindowsAdapter:
         """打开应用（fallback 禁用 shell 字符串拼接，防注入）"""
         try:
             if self._use_fallback:
-                from backend.core.safe_subprocess import launch_app_windows, validate_app_name
+                from backend.core.safe_subprocess import (
+                    launch_app_windows,
+                    validate_app_name,
+                )
 
                 bad = validate_app_name(app_name or "")
                 if bad:
@@ -319,6 +322,66 @@ class WindowsAdapter:
                 success=False,
                 message=f"截图失败: {e}",
                 error=str(e)
+            )
+    
+    async def _fallback_click(self, x: int, y: int) -> DesktopOperationResult:
+        """降级点击方案（pyautogui 坐标点击；未安装则优雅失败，不崩进程）"""
+        try:
+            import pyautogui
+
+            await asyncio.to_thread(pyautogui.click, x, y)
+            return DesktopOperationResult(
+                success=True,
+                message=f"点击成功（降级模式）: ({x}, {y})",
+                data={"x": x, "y": y, "mode": "fallback"},
+            )
+        except Exception as e:
+            logger.error(f"Fallback click failed: {e}")
+            return DesktopOperationResult(
+                success=False,
+                message=f"点击失败: {e}",
+                error=str(e),
+            )
+
+    async def _fallback_type(self, text: str) -> DesktopOperationResult:
+        """降级输入方案（pyautogui 键入；纯 ASCII 走 write，非 ASCII 会被跳过）"""
+        try:
+            import pyautogui
+
+            await asyncio.to_thread(pyautogui.write, text, 0.01)
+            return DesktopOperationResult(
+                success=True,
+                message="输入成功（降级模式）",
+                data={"text_len": len(text), "mode": "fallback"},
+            )
+        except Exception as e:
+            logger.error(f"Fallback type failed: {e}")
+            return DesktopOperationResult(
+                success=False,
+                message=f"输入失败: {e}",
+                error=str(e),
+            )
+
+    async def _fallback_scroll(self, direction: str, amount: int) -> DesktopOperationResult:
+        """降级滚动方案（pyautogui 滚轮；down 为负、up 为正，每格约 100 单位）"""
+        try:
+            import pyautogui
+
+            clicks = int(amount) * 100
+            if str(direction).lower() in ("down", "下"):
+                clicks = -clicks
+            await asyncio.to_thread(pyautogui.scroll, clicks)
+            return DesktopOperationResult(
+                success=True,
+                message=f"滚动成功（降级模式）: {direction} x{amount}",
+                data={"direction": direction, "amount": amount, "mode": "fallback"},
+            )
+        except Exception as e:
+            logger.error(f"Fallback scroll failed: {e}")
+            return DesktopOperationResult(
+                success=False,
+                message=f"滚动失败: {e}",
+                error=str(e),
             )
     
     def _parse_mcp_result(self, result: str) -> dict[str, Any]:

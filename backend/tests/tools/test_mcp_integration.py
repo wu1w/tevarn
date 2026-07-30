@@ -13,14 +13,13 @@ MCP 集成测试（Week 2 Day 10）
 
 from __future__ import annotations
 
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from backend.mcp_hub.client import MCPClient, MCPClientManager
+from backend.mcp_hub.client import MCPClient
 from backend.tools.adapters.mcp_adapter import MCPToolAdapter, register_mcp_server_tools
-from backend.tools.base import ToolSource, ToolRiskLevel
+from backend.tools.base import ToolRiskLevel, ToolSource
 from backend.tools.registry import ToolRegistry
 
 

@@ -14,8 +14,7 @@ Or query string ?token= on connect (agent validates).
 
 from __future__ import annotations
 
-from typing import Any, Literal, TypedDict
-
+from typing import Any, TypedDict
 
 PROTOCOL_VERSION = 1
 DEFAULT_AGENT_PORT = 19876

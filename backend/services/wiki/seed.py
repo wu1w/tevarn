@@ -11,9 +11,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from backend.services.wiki.schema import WikiSchema
-
-
 WIKI_SEED_ENTITIES: list[dict[str, Any]] = [
     # 组织 / 项目
     {

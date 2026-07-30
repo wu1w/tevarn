@@ -1,8 +1,6 @@
 """续跑话术 / 瞬态错误 / 重试工具测试。"""
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
 from backend.agent.robust import (

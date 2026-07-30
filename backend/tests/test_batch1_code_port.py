@@ -3,12 +3,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from backend.agent.best_of_n import BonCandidate, pick_winner, score_candidate, summarize_bon
+from backend.agent.best_of_n import (
+    BonCandidate,
+    pick_winner,
+    score_candidate,
+    summarize_bon,
+)
 from backend.agent.doom_loop import DoomLoopGuard
 from backend.agent.hunks import apply_selected_hunks, parse_unified_hunks
 from backend.agent.multimodal_parts import build_user_content, find_image_paths
 from backend.agent.robust import ToolRepeatGuard
-from backend.tools.diff_engine import DiffEngine, FileChange
+from backend.tools.diff_engine import DiffEngine
 
 
 def test_doom_loop_trips_on_repeat():

@@ -5,20 +5,22 @@ Webhook 管理 API：CRUD + 触发 + 投递日志
 
 import logging
 import uuid
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from backend.models.webhook import Webhook, WebhookDeliveryLog
-from backend.repositories.webhook_repo import AsyncWebhookRepository, AsyncWebhookDeliveryLogRepository
-from backend.schemas.webhook import (
-    WebhookCreate,
-    WebhookRead,
-    WebhookUpdate,
-    WebhookDeliveryLogRead,
-    WebhookTriggerResult,
+from backend.repositories.webhook_repo import (
+    AsyncWebhookDeliveryLogRepository,
+    AsyncWebhookRepository,
 )
 from backend.schemas.user import UserRead
+from backend.schemas.webhook import (
+    WebhookCreate,
+    WebhookDeliveryLogRead,
+    WebhookRead,
+    WebhookTriggerResult,
+    WebhookUpdate,
+)
 
 from ..dependencies import get_current_user
 
@@ -120,6 +122,7 @@ async def test_webhook(
         raise HTTPException(status_code=404, detail="Webhook not found")
 
     import time
+
     import httpx
 
     start = time.time()

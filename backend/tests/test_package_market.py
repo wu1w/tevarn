@@ -66,7 +66,7 @@ def test_install_roundtrip_and_loader_discovers(installed_name):
     assert result.contract is not None
     assert result.contract["workflow"] == ["step one"]
 
-    from backend.packages.loader import load_workspace_packages, get_package_by_name
+    from backend.packages.loader import get_package_by_name, load_workspace_packages
 
     pkgs = load_workspace_packages()
     p = get_package_by_name(pkgs, installed_name)

@@ -4,12 +4,10 @@
 不走 WebSocket / SSE，直接返回完整结果 + 上下文压缩元数据 + RAG 信息。
 """
 
-import asyncio
-import json
 import logging
 import os
-import uuid
 import time
+import uuid
 from pathlib import Path
 from typing import Annotated, Optional
 
@@ -18,13 +16,13 @@ from pydantic import BaseModel, Field
 
 from backend.agent import NexusAgentLoop
 from backend.api.dependencies import (
-    get_current_user,
-    get_session_repo,
-    get_message_repo,
-    get_ctx_item_repo,
     get_context_flow_repo,
-    get_task_repo,
+    get_ctx_item_repo,
+    get_current_user,
+    get_message_repo,
     get_notification_repo,
+    get_session_repo,
+    get_task_repo,
 )
 from backend.schemas.user import UserRead
 
@@ -86,7 +84,7 @@ async def smoke_chat(
         try:
             sid = uuid.UUID(data.session_id)
         except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid session_id")
+            raise HTTPException(status_code=400, detail="Invalid session_id") from None
     else:
         session = await session_repo.create({"user_id": uid, "config": {}})
         sid = session.id
@@ -170,7 +168,7 @@ async def smoke_history(
     try:
         sid = uuid.UUID(session_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid session_id")
+        raise HTTPException(status_code=400, detail="Invalid session_id") from None
 
     messages = await message_repo.get_history_by_session(sid, limit=200)
     result = []
@@ -254,7 +252,7 @@ async def smoke_inject_messages(
     try:
         sid = uuid.UUID(data.session_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid session_id")
+        raise HTTPException(status_code=400, detail="Invalid session_id") from None
 
     created = []
     for msg in data.messages:

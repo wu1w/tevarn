@@ -13,7 +13,6 @@ from backend.kernel import (
     KernelPermissionError,
 )
 
-
 # ── subagent 父进程链（审计项 #1）──
 
 def test_subagent_child_narrowed_from_parent() -> None:

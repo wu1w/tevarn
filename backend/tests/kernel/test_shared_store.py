@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pytest
@@ -552,7 +551,6 @@ async def test_events_merge_from_shared():
 @pytest.mark.asyncio
 async def test_auto_tighten_2x_reduces_budget():
     """用量 > 2× 日均时收紧 token_budget。"""
-    from backend.kernel.approval_rules import _RULES_CACHE
     import backend.kernel.approval_rules as ar
     from backend.kernel.kernel import AgentKernel, reset_kernel_for_tests
     from backend.kernel.process import AgentProcess

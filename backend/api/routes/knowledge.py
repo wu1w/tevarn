@@ -8,13 +8,21 @@ import logging
 import uuid
 from typing import Annotated, Any, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, UploadFile, File as FileParam
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from pydantic import BaseModel, Field
 
+from backend.core.config import settings
 from backend.repositories import DocumentRepository
 from backend.schemas.knowledge import DocumentCreate, DocumentRead, DocumentUpdate
 from backend.schemas.user import UserRead
-from backend.core.config import settings
 
 from ..dependencies import get_current_user, get_document_repo
 
@@ -96,7 +104,7 @@ async def create_document(
         try:
             json_data = json.loads(body)
         except json.JSONDecodeError as e:
-            raise HTTPException(status_code=400, detail=f"JSON 解析失败: {e}")
+            raise HTTPException(status_code=400, detail=f"JSON 解析失败: {e}") from e
         title = str(json_data.get("title") or "")
         doc_content = str(json_data.get("content") or "").strip()
         status_val = str(json_data.get("status") or "pending")
@@ -407,13 +415,12 @@ async def rebuild_index(
                 old_exists = resp.status == 200
                 old_info = await resp.json() if old_exists else {}
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Qdrant 连接失败: {e}")
+        raise HTTPException(status_code=502, detail=f"Qdrant 连接失败: {e}") from e
 
     if not old_exists:
         raise HTTPException(status_code=404, detail=f"Collection '{col}' 不存在")
 
     # 2. Rename 旧 collection 为备份
-    backup_name = f"{col}_backup_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
             # Qdrant 不支持 rename，用 alias 方式：先创建别名指向旧 collection
@@ -436,6 +443,7 @@ async def rebuild_index(
 async def _bg_rebuild_index(collection: str, user_id: str) -> None:
     """后台重建索引：删除旧 collection → 重新索引所有文档"""
     import aiohttp
+
     from backend.repositories.knowledge_repo import AsyncDocumentRepository
     from backend.services.knowledge.indexer import index_document_text
 
@@ -497,7 +505,3 @@ async def _bg_rebuild_index(collection: str, user_id: str) -> None:
         logger.info(f"Rebuild complete: {success} success, {failed} failed, collection={collection}")
     except Exception as e:
         logger.error(f"Rebuild index failed: {e}")
-
-
-# 需要的额外 import
-from datetime import datetime, timezone  # noqa: E402 — used by rebuild_index

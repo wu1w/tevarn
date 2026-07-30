@@ -142,7 +142,6 @@ def _classify_single_no_pipe(seg: str) -> str:
 
     # python / node one-liners often read-only; pytest read-ish (doesn't mutate src)
     if cmd_name in ("python", "python3", "py"):
-        joined = " ".join(words[:4])
         if "-m" in words and "pytest" in words:
             return "read"
         if "-c" in words:

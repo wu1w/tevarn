@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Literal
 
 from backend.services.skill_store.skill_md_storage import get_skill_md_storage
 
@@ -233,7 +233,7 @@ class PromptSkillLoader:
                 hit = len(inter) / max(1, len(q_tokens))
                 score += hit * weight * 2.0
                 if hit >= 0.15 or len(inter) >= 2:
-                    reasons.append(f"{label}:{','.join(sorted(list(inter))[:5])}")
+                    reasons.append(f"{label}:{','.join(sorted(inter)[:5])}")
 
         # 3) 中英文关键子串（长度>=3 或中文>=2）直接加分
         needles = [

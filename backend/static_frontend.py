@@ -56,7 +56,7 @@ def mount_frontend_static(app: FastAPI) -> Path | None:
         app.mount("/_next", StaticFiles(directory=str(next_dir)), name="next_assets")
 
     # Common public assets exported next to index.html
-    for name in ("favicon.ico", "icon.png", "robots.txt"):
+    for _name in ("favicon.ico", "icon.png", "robots.txt"):
         pass  # served via catch-all FileResponse
 
     @app.get("/{full_path:path}")

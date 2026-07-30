@@ -2,14 +2,13 @@
 User 模型 - 用户管理
 """
 
-import uuid
 from datetime import datetime
-from typing import Any, Optional
+from typing import Optional
 
 from sqlalchemy import Boolean, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base, TimestampMixin, UUIDMixin, utc_now
+from .base import Base, TimestampMixin, UUIDMixin
 
 
 class User(Base, UUIDMixin, TimestampMixin):

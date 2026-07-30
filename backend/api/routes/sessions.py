@@ -9,6 +9,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 
 from backend.core.unit_of_work import UnitOfWork
+from backend.repositories import SessionRepository, SettingRepository
 from backend.schemas.session import (
     ContactSessionOpen,
     SessionConfig,
@@ -18,8 +19,12 @@ from backend.schemas.session import (
 )
 from backend.schemas.user import UserRead
 
-from ..dependencies import get_current_user, get_session_repo, get_setting_repo, assert_session_owner
-from backend.repositories import SessionRepository, SettingRepository
+from ..dependencies import (
+    assert_session_owner,
+    get_current_user,
+    get_session_repo,
+    get_setting_repo,
+)
 
 router = APIRouter(prefix="/sessions", tags=["Sessions"])
 
@@ -139,9 +144,9 @@ async def create_session(
     「新会话默认模型」从 catalog 反查真实供应商，禁止只改 model 名沿用错误 base_url，
     也禁止冒出空壳 custom。
     """
-    from backend.core.config import settings as app_settings
     from backend.core import model_catalog as model_catalog_mod
     from backend.core import model_gen_params as gen_params_mod
+    from backend.core.config import settings as app_settings
 
     config = data.config.model_dump() if data.config else {}
     if "llm" not in config:
@@ -213,7 +218,8 @@ async def update_session_config(
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
         assert_session_owner(getattr(session, "user_id", None), current_user)
-        return await uow.sessions.update_config(
+        # 键级合并：只覆盖用户提交的四维度键，保留 _goal/_agent_checkpoint/llm 等内部键
+        return await uow.sessions.merge_config_keys(
             session_id, data.config.model_dump()
         )
 

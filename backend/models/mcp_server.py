@@ -5,9 +5,8 @@ MCP Server 数据库模型
 from __future__ import annotations
 
 import uuid
-from typing import Any
 
-from sqlalchemy import Boolean, JSON, Float, String, Text
+from sqlalchemy import JSON, Boolean, Float, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.models.base import Base

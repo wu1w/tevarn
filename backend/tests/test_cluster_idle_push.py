@@ -13,8 +13,6 @@ import sys
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 from backend.agent.loop import NexusAgentLoop
 
 

@@ -11,9 +11,10 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
-from ..dependencies import get_current_user
 from backend.repositories.goal_repo import AsyncGoalRepository
 from backend.schemas.user import UserRead
+
+from ..dependencies import get_current_user
 
 router = APIRouter(prefix="/goals", tags=["goals"])
 

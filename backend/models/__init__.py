@@ -1,4 +1,3 @@
-from .agent_profile import AgentProfile
 from .agent_identity import (  # noqa: F401 — create_all 注册表
     AgentEvolutionProposal,
     AgentIdentity,
@@ -8,7 +7,7 @@ from .agent_identity import (  # noqa: F401 — create_all 注册表
     KernelEscalationRecord,
     KernelProcessRecord,
 )
-from .project_group import ProjectGroup  # noqa: F401
+from .agent_profile import AgentProfile
 from .agent_run import AgentRun, RunStep
 from .audit_log import AuditLog
 from .base import Base
@@ -16,16 +15,18 @@ from .channel import Channel
 from .cluster_run import ClusterRun
 from .context import ContextFlow, CtxItem
 from .cron import CronJob
-from .cron import CronJob
 from .cron_execution_log import CronExecutionLog
 from .cron_hook import CronHook, CronHookExecutionLog
-from .device import Device
 from .desktop_permission import DesktopPermission
+from .device import Device
+from .entity import Entity
+from .goal import Goal
 from .knowledge import Chunk, Document
 from .mcp_server import MCPServer
-from .message import Message
 from .memory_graph import MemoryEdge, MemoryNode
+from .message import Message
 from .notification import Notification
+from .project_group import ProjectGroup  # noqa: F401
 from .session import Session
 from .setting import Setting
 from .skill import Skill
@@ -33,8 +34,6 @@ from .sub_agent import SubAgent
 from .task import Task
 from .tool import Tool
 from .trace import SessionTrace
-from .entity import Entity
-from .goal import Goal
 from .user import User
 from .webhook import Webhook, WebhookDeliveryLog
 from .wiki import WikiEntity, WikiRelation

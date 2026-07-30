@@ -27,8 +27,8 @@ def wf(tmp_path):
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/wf.db", future=True)
     SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-    from backend.models.base import Base
     import backend.models  # noqa: F401
+    from backend.models.base import Base
 
     async def _init():
         async with engine.begin() as conn:
@@ -58,8 +58,9 @@ async def _make_done_items(inbox, identity_id, n: int, fail: int = 0) -> None:
     for i in range(fail):
         item = await inbox.enqueue(identity_id, f"失败任务 {i + 1}", source="cron")
         # 直接打到 failed（attempts 上限路径太长，测试用 DB 状态）
-        from backend.models.agent_identity import AgentInboxItem
         from sqlalchemy import select
+
+        from backend.models.agent_identity import AgentInboxItem
 
         async with inbox._session_factory() as s:
             row = (
@@ -203,8 +204,8 @@ def test_planner_tune_on_high_failure(wf) -> None:
 def test_org_view_reports_to_aggregation(wf) -> None:
     """汇报线观察：parent 链聚合为员工名（过滤 main/sub 噪音）。"""
     async def go():
+
         from backend.models.agent_identity import KernelProcessRecord
-        import uuid as _u
 
         reg = wf["registry"]
         boss = await reg.create("老板", role="CEO", capabilities=["file_rw"])

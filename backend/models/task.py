@@ -3,15 +3,13 @@ Task 模型 - 异步任务表
 """
 
 import uuid
-from datetime import datetime
 from enum import Enum as PyEnum
 from typing import Any, Optional
 
-from sqlalchemy import ForeignKey, Integer, String, Text
-from sqlalchemy import JSON
+from sqlalchemy import JSON, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base, TimestampMixin, UUIDMixin, utc_now
+from .base import Base, TimestampMixin, UUIDMixin
 
 
 class TaskStatus(str, PyEnum):

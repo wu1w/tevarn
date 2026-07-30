@@ -21,8 +21,8 @@ def wf(tmp_path):
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/bugfix.db", future=True)
     SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-    from backend.models.base import Base
     import backend.models  # noqa: F401
+    from backend.models.base import Base
 
     async def _init():
         async with engine.begin() as conn:
@@ -150,6 +150,7 @@ def test_reclaim_stale_claimed(wf) -> None:
         assert claimed is not None
         # 伪造超时
         from sqlalchemy import select
+
         from backend.models.agent_identity import AgentInboxItem
 
         async with inbox._session_factory() as s:
@@ -274,6 +275,7 @@ def test_memory_rollback_clears_current_without_self_loop_hack(wf) -> None:
         assert await reg.current_memory(ident.id, kind="methodology") == []
         # 查原条目不应 self-supersede
         from sqlalchemy import select
+
         from backend.models.agent_identity import IdentityMemoryEntry
 
         async with reg._session_factory() as s:

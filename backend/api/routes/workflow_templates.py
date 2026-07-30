@@ -9,17 +9,17 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from backend.repositories.workflow_template_repo import AsyncWorkflowTemplateRepository
 from backend.repositories.workflow_repo import WorkflowRepository
+from backend.repositories.workflow_template_repo import AsyncWorkflowTemplateRepository
+from backend.schemas.user import UserRead
 from backend.schemas.workflow_template import (
+    TemplateCategory,
+    TemplateCreateWorkflowRequest,
+    TemplateCreateWorkflowResult,
     WorkflowTemplateCreate,
     WorkflowTemplateRead,
     WorkflowTemplateUpdate,
-    TemplateCreateWorkflowRequest,
-    TemplateCreateWorkflowResult,
-    TemplateCategory,
 )
-from backend.schemas.user import UserRead
 
 from ..dependencies import get_current_user, get_workflow_repo
 
@@ -125,7 +125,6 @@ async def create_workflow_from_template(
     workflow_repo: WorkflowRepository = Depends(get_workflow_repo),
 ):
     """从模板创建工作流"""
-    import json
     import copy
 
     template = await template_repo.get_by_id(data.template_id)

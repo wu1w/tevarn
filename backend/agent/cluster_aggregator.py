@@ -229,14 +229,14 @@ class SynthesizeAggregator(BaseAggregator):
         try:
             if self.llm_service is None:
                 from backend.services.llm import LLMServiceFactory
-                self.llm_service = LLMServiceFactory.get_default_service()
+                self.llm_service = LLMServiceFactory.get_service()
             
-            response = await self.llm_service.chat([
+            response = await self.llm_service.chat_complete([
                 {"role": "user", "content": prompt}
             ])
             
             return {
-                "synthesized_result": response,
+                "synthesized_result": response.content,
                 "raw_results": [r.to_dict() for r in valid_results],
                 "method": "llm_synthesis",
             }

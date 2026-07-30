@@ -11,16 +11,25 @@ from typing import Annotated, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from backend.api.websocket import manager as ws_manager
+from backend.core import model_catalog as model_catalog_mod
 from backend.core.audit import AuditAction, log_action
 from backend.core.encryption import decrypt_setting
-from backend.core import model_catalog as model_catalog_mod
-from backend.core.runtime_settings import apply_setting_value, apply_settings_dict, reset_factories_for_keys
-from backend.api.websocket import manager as ws_manager
+from backend.core.runtime_settings import (
+    apply_setting_value,
+    apply_settings_dict,
+    reset_factories_for_keys,
+)
 from backend.repositories import SettingRepository
 from backend.schemas.setting import SettingRead, SettingUpdate
 from backend.schemas.user import UserRead
 
-from ..dependencies import get_current_user, get_setting_repo, get_session_repo, require_admin
+from ..dependencies import (
+    get_current_user,
+    get_session_repo,
+    get_setting_repo,
+    require_admin,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1091,6 +1100,7 @@ async def test_qdrant(
 ):
     """探测 Qdrant：尝试 /collections、/qdrant/collections 等路径。"""
     import aiohttp
+
     from backend.core.config import settings as app_settings
     from backend.core.runtime_settings import apply_settings_dict
     from backend.services.endpoint_probe import probe_qdrant
@@ -1590,10 +1600,8 @@ async def select_active_model(
                 max_tokens=slot.get("max_tokens"),
                 context_window=slot.get("context_window"),
             )
-            cfg = await session_repo.get_config(sid)
-            cfg = dict(cfg) if isinstance(cfg, dict) else {}
-            cfg["llm"] = new_snap
-            await session_repo.update_config(sid, cfg)
+            # 键级合并：只写 llm 快照键，不覆盖 _goal/_agent_checkpoint 等并发键
+            await session_repo.merge_config_keys(sid, {"llm": new_snap})
             logger.info(
                 "session %s llm snapshot updated on provider switch -> %s/%s",
                 sid,
@@ -2025,8 +2033,8 @@ async def apply_settings_batch(
     gen_keys = {"temperature", "max_tokens", "context_window"}
     if gen_keys & set(saved_keys):
         try:
-            from backend.core import model_gen_params as gen_params_mod
             from backend.core import model_catalog as model_catalog_mod
+            from backend.core import model_gen_params as gen_params_mod
 
             cat = await model_catalog_mod.load_catalog(repo)
             pid = str(cat.get("active_provider_id") or "").strip()
@@ -2370,7 +2378,10 @@ async def get_setting(
     if setting is not None:
         return setting
 
-    from backend.core.runtime_settings import is_runtime_mapped_key, peek_runtime_setting
+    from backend.core.runtime_settings import (
+        is_runtime_mapped_key,
+        peek_runtime_setting,
+    )
 
     if is_runtime_mapped_key(key):
         raw = peek_runtime_setting(key)

@@ -42,6 +42,7 @@ async def run_headless(
         # single-user / CI: first active user
         try:
             from sqlalchemy import select
+
             from backend.database import AsyncSessionLocal
             from backend.models.user import User
 
@@ -55,8 +56,8 @@ async def run_headless(
         return {"ok": False, "error": "user_id required (no users in DB)", "text": ""}
 
     if sid is None:
-        from backend.models.session import Session
         from backend.database import AsyncSessionLocal
+        from backend.models.session import Session
 
         async with AsyncSessionLocal() as db:
             row = Session(

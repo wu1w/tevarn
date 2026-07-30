@@ -26,8 +26,8 @@ def wf(tmp_path):
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/wf.db", future=True)
     SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-    from backend.models.base import Base
     import backend.models  # noqa: F401 注册全模型
+    from backend.models.base import Base
 
     async def _init():
         async with engine.begin() as conn:
@@ -84,7 +84,7 @@ def test_identity_caps_change_audited(wf) -> None:
         reg = wf["registry"]
         ident = await reg.create("编码员", capabilities=["file_read"])
         await reg.set_capabilities(ident.id, ["file_read", "terminal"], by="boss")
-        evts = [e for e in wf["kernel"].events(kind="identity_caps_changed")]
+        evts = list(wf["kernel"].events(kind="identity_caps_changed"))
         assert len(evts) == 1
         assert evts[0].detail["to"] == ["file_read", "terminal"]
         assert evts[0].detail["by"] == "boss"
@@ -139,8 +139,9 @@ def test_process_persisted_and_restart_marks_interrupted(wf) -> None:
         await k.mark_running(proc.id)
         await wf["persistence"].flush()
 
-        from backend.models.agent_identity import KernelProcessRecord
         from sqlalchemy import select
+
+        from backend.models.agent_identity import KernelProcessRecord
 
         async with wf["SessionLocal"]() as s:
             rec = (
@@ -175,7 +176,7 @@ def test_checkpoint_recovery_incremental_only(wf) -> None:
         k = wf["kernel"]
         proc = await k.create_process("main", capabilities=["file_read"])
         # create(1) + 5×mediate×2 = 11 事件 → 多个 interval=3 快照
-        for i in range(5):
+        for _i in range(5):
             await k.mediate(proc.id, "tool_call", "file_read")
         await wf["persistence"].flush()
 

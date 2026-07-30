@@ -9,18 +9,21 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from backend.repositories.cron_hook_repo import AsyncCronHookRepository, AsyncCronHookExecutionLogRepository
+from backend.repositories.cron_hook_repo import (
+    AsyncCronHookExecutionLogRepository,
+    AsyncCronHookRepository,
+)
 from backend.repositories.cron_repo import CronJobRepository
 from backend.schemas.cron_hook import (
     CronHookCreate,
+    CronHookExecutionLogRead,
     CronHookRead,
     CronHookUpdate,
-    CronHookExecutionLogRead,
     CronJobWithHooks,
 )
 from backend.schemas.user import UserRead
 
-from ..dependencies import get_current_user, get_cron_repo
+from ..dependencies import get_cron_repo, get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -153,8 +156,8 @@ async def trigger_hook(
     log_repo: AsyncCronHookExecutionLogRepository = Depends(get_execution_log_repo),
 ):
     """手动触发 Hook"""
-    import time
     import datetime
+    import time
 
     obj = await hook_repo.get_by_id(hook_id)
     if not obj:

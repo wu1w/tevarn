@@ -35,12 +35,6 @@ class RAGServiceFactory:
         return cls._instance
 
     @classmethod
-    def reset(cls) -> None:
-        """重置单例（测试 / smoke 配置切换后调用）。"""
-        cls._instance = None
-        cls._instance_kind = None
-
-    @classmethod
     def _create_service(cls, kind: str) -> RAGService:
         if kind != "vector":
             st = get_rag_status()

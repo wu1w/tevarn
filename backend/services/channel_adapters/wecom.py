@@ -71,8 +71,9 @@ class WeComCrypto:
     def encrypt(self, reply_msg: str) -> str:
         """加密回复消息"""
         import base64
-        from Crypto.Cipher import AES
         import os
+
+        from Crypto.Cipher import AES
         random_bytes = os.urandom(16)
         msg_bytes = reply_msg.encode("utf-8")
         corp_bytes = self._corp_id.encode("utf-8")
@@ -150,8 +151,9 @@ class WeComAdapter(BaseChannelAdapter):
     async def _register_callback_route(self):
         """在 FastAPI app 上注册 /api/channel/wecom/callback 路由"""
         try:
-            from backend.main import app
             from fastapi import Request, Response
+
+            from backend.main import app
 
             adapter = self
 

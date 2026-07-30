@@ -13,9 +13,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 from backend.agent.run_state import (
+    TERMINAL_STATES,
     IllegalTransitionError,
     RunStatus,
-    TERMINAL_STATES,
     validate_transition,
 )
 

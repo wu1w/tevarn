@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from backend.repositories import WorkflowRepository, AsyncWorkflowExecutionRepository
+from backend.repositories import AsyncWorkflowExecutionRepository, WorkflowRepository
 from backend.schemas.user import UserRead
 from backend.schemas.workflow import (
     WorkflowCreate,
@@ -24,7 +24,11 @@ from backend.schemas.workflow_execution import WorkflowExecutionRead
 from backend.schemas.workflow_node import get_all_node_type_definitions
 from backend.services.workflow_engine import WorkflowEngine, WorkflowExecutionError
 
-from ..dependencies import get_current_user, get_workflow_repo, get_workflow_execution_repo
+from ..dependencies import (
+    get_current_user,
+    get_workflow_execution_repo,
+    get_workflow_repo,
+)
 
 router = APIRouter(prefix="/workflows", tags=["Workflows"])
 

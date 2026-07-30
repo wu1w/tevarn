@@ -9,7 +9,6 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from backend.api.routes import register_routes
@@ -17,15 +16,15 @@ from backend.api.websocket import router as ws_router
 from backend.core.config import settings
 from backend.core.exceptions import register_exception_handlers
 from backend.core.logging_config import setup_logging
+from backend.core.rate_limit import RateLimitMiddleware
+from backend.core.security_headers import SecurityHeadersMiddleware
+from backend.core.simple_cors import SimpleCORSMiddleware
 from backend.database import init_db
 from backend.repositories.setting_repo import AsyncSettingRepository
 from backend.repositories.skill_repo import AsyncSkillRepository
 from backend.repositories.tool_repo import AsyncToolRepository
 from backend.repositories.user_repo import AsyncUserRepository
 from backend.services.tools import ToolRegistry
-from backend.core.rate_limit import RateLimitMiddleware
-from backend.core.security_headers import SecurityHeadersMiddleware
-from backend.core.simple_cors import SimpleCORSMiddleware
 from backend.skills import SkillRegistry
 from backend.skills.builtins import *  # noqa: F401 自动注册内置 Skill
 
@@ -88,9 +87,10 @@ async def _seed_default_user() -> None:
     if existing_uname:
         logger.info(f"Default user 'admin' already taken by {existing_uname.id}, skipping seed")
         return
-    from backend.core.security import get_password_hash
     import os
+
     from backend.core.config import get_or_create_initial_admin_password
+    from backend.core.security import get_password_hash
     default_pw = (
         (settings.default_admin_password or "").strip()
         or os.environ.get("TAKTON_DEFAULT_ADMIN_PASSWORD", "").strip()
@@ -205,10 +205,10 @@ async def _seed_beginner_knowledge() -> None:
 
     结束后在后台为 seed 文档建向量索引（skip_wiki，避免卡住）。
     """
-    from backend.repositories.user_repo import AsyncUserRepository
-    from backend.repositories.knowledge_repo import AsyncDocumentRepository
-    from backend.services.knowledge.beginner_seed import BEGINNER_KB_DOCS
     from backend.content.product_handbook import handbook_as_kb_docs
+    from backend.repositories.knowledge_repo import AsyncDocumentRepository
+    from backend.repositories.user_repo import AsyncUserRepository
+    from backend.services.knowledge.beginner_seed import BEGINNER_KB_DOCS
 
     users = AsyncUserRepository()
     docs = AsyncDocumentRepository()

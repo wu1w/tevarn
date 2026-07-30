@@ -4,13 +4,12 @@ Audit Log 模型 - 安全审计日志
 """
 
 import uuid
-from datetime import datetime
 from typing import Any, Optional
 
 from sqlalchemy import JSON, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base, TimestampMixin, UUIDMixin, utc_now
+from .base import Base, TimestampMixin, UUIDMixin
 
 
 class AuditLog(Base, UUIDMixin, TimestampMixin):

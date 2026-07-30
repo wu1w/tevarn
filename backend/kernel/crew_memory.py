@@ -119,10 +119,13 @@ class CrewMemoryAssembler:
             if reg is not None:
                 return reg
         except Exception:
-            pass
+            k = None
+        # 兜底：kernel 未挂 registry 时按标准方式自建（kernel + AsyncSessionLocal）。
+        # 不能无参构造——IdentityRegistry.__init__ 必填 kernel 与 session_factory。
+        from backend.database import AsyncSessionLocal
         from backend.kernel.identity import IdentityRegistry
 
-        return IdentityRegistry()
+        return IdentityRegistry(k, AsyncSessionLocal)
 
     async def _select_experiences(
         self,
@@ -393,10 +396,13 @@ class CrewMemoryWriter:
             if reg is not None:
                 return reg
         except Exception:
-            pass
+            k = None
+        # 兜底：kernel 未挂 registry 时按标准方式自建（kernel + AsyncSessionLocal）。
+        # 不能无参构造——IdentityRegistry.__init__ 必填 kernel 与 session_factory。
+        from backend.database import AsyncSessionLocal
         from backend.kernel.identity import IdentityRegistry
 
-        return IdentityRegistry()
+        return IdentityRegistry(k, AsyncSessionLocal)
 
     @staticmethod
     def should_skip_distill(

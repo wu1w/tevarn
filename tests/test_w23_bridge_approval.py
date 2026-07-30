@@ -12,9 +12,6 @@ import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-import pytest
-
-
 # ═══════════ 1. EventBusWSBridge ═══════════
 
 class _FakeWSManager:

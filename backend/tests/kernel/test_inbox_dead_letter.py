@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import uuid
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -11,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from backend.kernel import AgentKernel
 from backend.kernel.audit_store import AuditEventStore
 from backend.kernel.identity import IdentityRegistry
-from backend.kernel.inbox import InboxService, _MAX_ATTEMPTS
+from backend.kernel.inbox import _MAX_ATTEMPTS, InboxService
 
 
 @pytest.fixture()
@@ -19,8 +18,8 @@ def env(tmp_path):
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/dead.db", future=True)
     SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-    from backend.models.base import Base
     import backend.models  # noqa: F401
+    from backend.models.base import Base
 
     async def _init():
         async with engine.begin() as conn:

@@ -6,7 +6,7 @@ Wiki Graph 模型 - 知识图谱
 import uuid
 from typing import Any
 
-from sqlalchemy import ForeignKey, JSON, String, Text
+from sqlalchemy import JSON, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base, TimestampMixin, UUIDMixin

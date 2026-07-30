@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "takton"
-version = "0.4.6-alpha"
+version = "1.0.0-alpha"
 description = "Takton - 个人专属 AI Agent 终端（前后端一体）"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -59,3 +59,58 @@ pythonpath = ["."]
 asyncio_mode = "auto"
 testpaths = ["backend/tests"]
 addopts = "-ra -q"
+# CI 不得因单个测试挂死（等网络/子进程）而无限阻塞；
+# Windows 上只能用 thread 方法（signal 方法仅 POSIX）。
+timeout = 120
+timeout_method = "thread"
+
+# ── Ruff：CI 门禁用的 linter ────────────────────────────────────────
+# 规则集聚焦“拓真 bug + 导入卫生”，不引入纯风格噪音（E/W 全家），
+# 也不做大规模 pyupgrade 改写（UP）——那会制造巨大 diff 且非 bug。
+[tool.ruff]
+target-version = "py310"
+extend-exclude = [
+    ".venv",
+    "vendor",
+    "frontend",
+    "node_modules",
+    "backend/static",
+    "backend/migrations/versions",
+    "takton-code",
+    "takton-agent",
+]
+
+[tool.ruff.lint]
+select = ["F", "I", "B", "C4"]
+ignore = [
+    "B008",  # FastAPI Depends()/Header() 写在默认值里是惯用法，非缺陷
+    "F403",  # main.py 的 from ... import *（插件式加载，故意）
+]
+
+[tool.ruff.lint.per-file-ignores]
+# SQLAlchemy Mapped["User"] 跨文件前向引用：ruff 看不到注册表，属误报
+"backend/models/**" = ["F821"]
+# __init__.py 重导出的未使用导入是故意的（对外暴露 API）
+"**/__init__.py" = ["F401"]
+# 测试里允许 assert-raises-Exception / 未用变量等便利写法
+"backend/tests/**" = ["B017", "B011", "F841"]
+"tests/**" = ["B017", "B011", "F841"]
+
+# ── mypy：“类型化核心”门禁（逐步扩面）──────────────────────────────
+# 全量 mypy 当前有 402 处历史欠账，无法一步 gate。策略：只对下方
+# 已验证零错误的安全/并发核心模块开严格检查，日后逐步往 files 里添加。
+# follow_imports=silent：只报这些文件自身的错误，不被上游未类型化模块连累。
+[tool.mypy]
+python_version = "3.10"
+follow_imports = "silent"
+ignore_missing_imports = true
+warn_unused_ignores = false
+files = [
+    "backend/core/command_policy.py",
+    "backend/core/safe_subprocess.py",
+    "backend/core/security.py",
+    "backend/agent/dangerous_paths.py",
+    "backend/agent/permissions_rules.py",
+    "backend/agent/checkpoint.py",
+    "backend/repositories/session_repo.py",
+]

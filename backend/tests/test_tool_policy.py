@@ -109,7 +109,7 @@ def test_compact_brief_mentions_pack():
 
 
 def test_system_prompt_evolution_conditional():
-    from backend.agent.system_prompt import EVOLUTION_GUIDANCE, build_system_prompt
+    from backend.agent.system_prompt import build_system_prompt
 
     parts = build_system_prompt(tools_enabled=["file_read", "command"])
     stable = parts["stable"]

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Any
 
 from backend.evolution import store
-from backend.evolution.config import ENGINE_VERSION, get_evolution_config, set_evolution_config
+from backend.evolution.config import (
+    ENGINE_VERSION,
+    get_evolution_config,
+    set_evolution_config,
+)
 from backend.evolution.evaluator import evaluate_criteria
 from backend.evolution.gates import run_gates
 from backend.evolution.improver import (

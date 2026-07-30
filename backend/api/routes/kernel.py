@@ -16,9 +16,10 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from ..dependencies import get_current_user
 from backend.kernel import get_kernel
 from backend.schemas.user import UserRead
+
+from ..dependencies import get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,7 @@ async def list_processes(
     if shared:
         try:
             from sqlalchemy import select
+
             from backend.database import AsyncSessionLocal
             from backend.models.agent_identity import KernelProcessRecord
 
@@ -159,6 +161,7 @@ async def list_escalations(
     if shared:
         try:
             from sqlalchemy import select
+
             from backend.database import AsyncSessionLocal
             from backend.models.agent_identity import KernelEscalationRecord
 
@@ -1411,8 +1414,9 @@ async def export_aios_backup(
     import time as _time
 
     from sqlalchemy import select
-    from backend.database import AsyncSessionLocal
+
     from backend.core.config import settings
+    from backend.database import AsyncSessionLocal
 
     kernel = get_kernel()
     reg = _identity_registry()
@@ -1564,6 +1568,7 @@ async def list_project_groups(
     limit: int = Query(50, ge=1, le=200),
 ):
     from sqlalchemy import select
+
     from backend.database import AsyncSessionLocal
     from backend.models.project_group import ProjectGroup
 
@@ -1623,10 +1628,12 @@ async def get_project_group(
 ):
     """项目组详情：成员 + 各工单最新状态（从 inbox 实时拼）。"""
     import uuid as _u
+
     from sqlalchemy import select
+
     from backend.database import AsyncSessionLocal
-    from backend.models.project_group import ProjectGroup
     from backend.kernel.workforce import get_workforce_inbox
+    from backend.models.project_group import ProjectGroup
 
     try:
         gid = _u.UUID(str(group_id))
@@ -1698,7 +1705,9 @@ async def attach_project_group_tasks(
 ):
     """向项目组追加工单引用。"""
     import uuid as _u
+
     from sqlalchemy import select
+
     from backend.database import AsyncSessionLocal
     from backend.models.project_group import ProjectGroup
 

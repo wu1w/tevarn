@@ -3,8 +3,8 @@ Desktop Agent 完整集成测试
 """
 
 import asyncio
-import sys
 import os
+import sys
 import uuid
 
 # 添加项目路径
@@ -28,8 +28,9 @@ async def test_desktop_service():
     
     # 2. 测试截图
     print("\n[2] 测试截图功能...")
-    from backend.services.desktop import OperationType
     import uuid
+
+    from backend.services.desktop import OperationType
     
     result = await service.execute_operation(
         user_id=uuid.uuid4(),
@@ -65,7 +66,6 @@ async def test_desktop_service():
     
     # 5. 测试权限系统
     print("\n[5] 测试权限系统...")
-    from backend.services.desktop import PermissionLevel
     
     test_user = uuid.uuid4()
     allowed, record = await service.check_permission(
@@ -86,7 +86,7 @@ async def test_full_workflow():
     print("完整工作流测试（需要授权）")
     print("=" * 50)
     
-    from backend.services.desktop import get_desktop_service, PermissionLevel
+    from backend.services.desktop import PermissionLevel, get_desktop_service
     
     service = get_desktop_service()
     await service.initialize()

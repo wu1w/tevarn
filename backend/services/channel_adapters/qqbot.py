@@ -12,13 +12,13 @@ QQ Bot 适配器 — 轻量版
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 from typing import Any, Optional
 
-from .base import BaseChannelAdapter
 import aiohttp
+
+from .base import BaseChannelAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +131,7 @@ class QQBotAdapter(BaseChannelAdapter):
     async def test_connection(self) -> tuple[bool, str]:
         """测试连接：获取 token + gateway URL"""
         try:
-            token = await self.ensure_token()
+            await self.ensure_token()
             gateway_url = await self.get_gateway_url()
             return True, f"连接成功，Gateway: {gateway_url[:50]}..."
         except Exception as e:

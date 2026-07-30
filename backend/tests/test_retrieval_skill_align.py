@@ -3,12 +3,15 @@ from __future__ import annotations
 
 from backend.agent.tool_policy import (
     SCENE_SKILL_HINTS,
-    injection_knobs,
     infer_scene,
+    injection_knobs,
 )
 from backend.services.rag.context_assembler import ContextAssembler, RetrievalContract
 from backend.services.reranker.interface import RerankedResult
-from backend.services.skill_store.prompt_skill_loader import PromptSkill, PromptSkillLoader
+from backend.services.skill_store.prompt_skill_loader import (
+    PromptSkill,
+    PromptSkillLoader,
+)
 
 
 def test_injection_knobs_thresholds():

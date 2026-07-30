@@ -15,7 +15,6 @@ import asyncio
 
 import pytest
 
-
 # ─────────── fixtures ───────────
 
 
@@ -149,8 +148,7 @@ def test_scoreboard_insufficient_samples(evo_db):
 
 
 def test_scoreboard_regression_and_rollback(evo_db, monkeypatch):
-    from backend.evolution import store
-    from backend.evolution import scoreboard
+    from backend.evolution import scoreboard, store
 
     g0, g1 = _mk_two_gens(store)
     # gen0 高成功率，gen1 崩了

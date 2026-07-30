@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 
 from backend.kernel.approval_rules import (
-    classify_caps,
     DEFAULT_RULES,
+    classify_caps,
     evolution_requires_review,
 )
 

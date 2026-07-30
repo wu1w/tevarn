@@ -11,8 +11,13 @@ from pydantic import BaseModel
 
 from backend.agent import NexusAgentLoop
 from backend.api.dependencies import (
-    get_current_user, get_session_repo, get_message_repo,
-    get_ctx_item_repo, get_context_flow_repo, get_task_repo, get_notification_repo,
+    get_context_flow_repo,
+    get_ctx_item_repo,
+    get_current_user,
+    get_message_repo,
+    get_notification_repo,
+    get_session_repo,
+    get_task_repo,
 )
 from backend.schemas.user import UserRead
 
@@ -49,7 +54,7 @@ async def chat_completion(
         try:
             sid = uuid.UUID(data.session_id)
         except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid session_id")
+            raise HTTPException(status_code=400, detail="Invalid session_id") from None
     else:
         uid = uuid.UUID(current_user.id) if isinstance(current_user.id, str) else current_user.id
         session = await session_repo.create({"user_id": uid, "config": {}})

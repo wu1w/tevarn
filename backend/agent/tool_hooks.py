@@ -6,7 +6,7 @@ Built-ins: file write checkpoint (optional via settings).
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 logger = logging.getLogger(__name__)
@@ -230,8 +230,8 @@ async def builtin_permission_before(name: str, arguments: dict[str, Any]) -> Bef
                 arguments=arguments,
             )
 
-    from backend.agent.permissions_rules import PermissionGate
     from backend.agent.permission_overlay import build_effective_rules
+    from backend.agent.permissions_rules import PermissionGate
     from backend.agent.working_mode import (
         effective_ask_mode,
         effective_permission_profile,

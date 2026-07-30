@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Awaitable, Optional
+from typing import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 

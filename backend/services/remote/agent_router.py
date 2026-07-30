@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-
 # name: letters, digits, _.- and CJK
 _AT = re.compile(
     r"^\s*@(?P<name>[\w.\-一-鿿]+)\s+(?P<body>.+)$",

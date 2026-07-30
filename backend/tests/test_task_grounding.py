@@ -10,7 +10,6 @@ from backend.agent.task_grounding import (
     annotate_grounded_report,
     classify_all,
     classify_task,
-    evaluate_grounding,
     is_audit_like_task,
     maybe_annotate_report,
 )

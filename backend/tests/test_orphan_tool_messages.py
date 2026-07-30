@@ -13,8 +13,8 @@ assistant.tool_calls。严格 OpenAI 兼容网关会因 tool 配对错乱返回 
 
 import pytest
 
-from backend.services.llm.openai_compatible import OpenAICompatibleService
 from backend.agent.context_pipeline import PipelineContextEngine
+from backend.services.llm.openai_compatible import OpenAICompatibleService
 
 
 def _sanitize(messages):
@@ -191,9 +191,11 @@ def test_l3_no_orphan_tool_after_compact():
     engine.protect_first_n = 3
     engine.protect_last_n = 12
     messages = _make_l3_messages(tool_count=6)
+    # 让 mid 区 tool blob 超过「大块」阈值（非 compactable 工具需 >=500 字符
+    # 才会被 L3 清理，见 context_pipeline._l3_microcompact）；否则小结果会被保留。
     for m in messages:
         if m.get("role") == "tool" and isinstance(m.get("content"), str):
-            m["content"] = (m["content"] or "") + ("Y" * 200)
+            m["content"] = (m["content"] or "") + ("Y" * 600)
     out, dropped = engine._l3_microcompact(messages)
     assert dropped >= 3, f"L3 应触发压缩（cleared>=3），实际 dropped={dropped}"
 

@@ -15,10 +15,16 @@ Unit of Work（工作单元）
 
 from backend.database import get_db_context
 from backend.repositories.agent_profile_repo import AsyncAgentProfileRepository
-from backend.repositories.context_repo import AsyncContextFlowRepository, AsyncCtxItemRepository
+from backend.repositories.context_repo import (
+    AsyncContextFlowRepository,
+    AsyncCtxItemRepository,
+)
 from backend.repositories.cron_repo import AsyncCronJobRepository
 from backend.repositories.device_repo import AsyncDeviceRepository
-from backend.repositories.knowledge_repo import AsyncChunkRepository, AsyncDocumentRepository
+from backend.repositories.knowledge_repo import (
+    AsyncChunkRepository,
+    AsyncDocumentRepository,
+)
 from backend.repositories.message_repo import AsyncMessageRepository
 from backend.repositories.notification_repo import AsyncNotificationRepository
 from backend.repositories.session_repo import AsyncSessionRepository
@@ -27,7 +33,10 @@ from backend.repositories.skill_repo import AsyncSkillRepository
 from backend.repositories.task_repo import AsyncTaskRepository
 from backend.repositories.tool_repo import AsyncToolRepository
 from backend.repositories.user_repo import AsyncUserRepository
-from backend.repositories.wiki_repo import AsyncWikiEntityRepository, AsyncWikiRelationRepository
+from backend.repositories.wiki_repo import (
+    AsyncWikiEntityRepository,
+    AsyncWikiRelationRepository,
+)
 from backend.repositories.workflow_repo import AsyncWorkflowRepository
 
 

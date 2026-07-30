@@ -5,8 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from backend.tools.base import BaseTool, ToolSource, ToolRiskLevel
-
+from backend.tools.base import BaseTool, ToolRiskLevel, ToolSource
 
 # 端口默认映射：常见节点输出 → 下游输入
 _DEFAULT_OUT_PORT = {

@@ -14,9 +14,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.api.dependencies import get_current_user, require_admin
+from backend.api.dependencies import require_admin
 from backend.database import get_db_context
 from backend.models.channel import Channel
 
@@ -231,7 +230,7 @@ async def get_channel(
     try:
         cid = uuid.UUID(channel_id)
     except ValueError:
-        raise HTTPException(400, "Invalid channel ID")
+        raise HTTPException(400, "Invalid channel ID") from None
     async with get_db_context() as db:
         ch = await db.get(Channel, cid)
         if not ch:
@@ -274,7 +273,7 @@ async def update_channel(
     try:
         cid = uuid.UUID(channel_id)
     except ValueError:
-        raise HTTPException(400, "Invalid channel ID")
+        raise HTTPException(400, "Invalid channel ID") from None
     async with get_db_context() as db:
         ch = await db.get(Channel, cid)
         if not ch:
@@ -305,7 +304,7 @@ async def delete_channel(
     try:
         cid = uuid.UUID(channel_id)
     except ValueError:
-        raise HTTPException(400, "Invalid channel ID")
+        raise HTTPException(400, "Invalid channel ID") from None
     async with get_db_context() as db:
         ch = await db.get(Channel, cid)
         if not ch:
@@ -325,7 +324,7 @@ async def test_channel(
     try:
         cid = uuid.UUID(channel_id)
     except ValueError:
-        raise HTTPException(400, "Invalid channel ID")
+        raise HTTPException(400, "Invalid channel ID") from None
     async with get_db_context() as db:
         ch = await db.get(Channel, cid)
         if not ch:

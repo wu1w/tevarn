@@ -16,9 +16,13 @@ import re
 import time
 import uuid
 from collections import OrderedDict
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any
 
-from backend.services.slash_commands import resolve_command, build_help_text, CommandDef
+from backend.services.slash_commands import CommandDef, build_help_text, resolve_command
+
+if TYPE_CHECKING:
+    # 仅用于类型注解；运行时的实际导入在方法内做（规避循环导入）。
+    from backend.models.channel import Channel
 
 logger = logging.getLogger(__name__)
 
@@ -446,10 +450,9 @@ class ChannelGateway:
         try:
             from backend.agent.context_compress import compress_history_if_needed
             from backend.api.dependencies import get_message_repo
-            from backend.core.config import settings
 
             message_repo = await get_message_repo()
-            messages = await message_repo.list_by_session(sid, limit=500)
+            messages = await message_repo.get_history_by_session(sid, limit=500)
 
             if not messages:
                 return "⚠️ 当前会话没有消息历史"
@@ -458,8 +461,7 @@ class ChannelGateway:
             compressed, meta = await compress_history_if_needed(
                 messages=messages,
                 session_id=sid,
-                threshold_percent=0.0,  # 强制触发
-                context_window=int(getattr(settings, "context_window", 128000) or 128000),
+                threshold=0.0,  # 强制触发
             )
 
             if meta.get("compressed"):
@@ -500,7 +502,6 @@ class ChannelGateway:
 
     async def _cmd_tools(self, chat_key: str, args: str) -> str:
         """管理工具：查看/启用/禁用。"""
-        from backend.api.dependencies import get_session_repo
 
         parts = args.split(maxsplit=1)
         action = parts[0].lower() if parts else "list"
@@ -555,7 +556,10 @@ class ChannelGateway:
 
     async def _cmd_toolset(self, chat_key: str, args: str) -> str:
         """切换工具集预设。"""
-        from backend.services.slash_commands import TOOLSET_PRESETS, build_toolset_list_text
+        from backend.services.slash_commands import (
+            TOOLSET_PRESETS,
+            build_toolset_list_text,
+        )
 
         if not args or args == "list":
             return build_toolset_list_text()
@@ -694,7 +698,7 @@ class ChannelGateway:
             try:
                 from backend.api.dependencies import get_message_repo
                 message_repo = await get_message_repo()
-                messages = await message_repo.list_by_session(sid, limit=1000)
+                messages = await message_repo.get_history_by_session(sid, limit=1000)
                 lines.append(f"📝 消息数: {len(messages)}")
             except Exception as e:
                 logger.warning("status: list messages failed: %s", e)
@@ -853,11 +857,15 @@ class ChannelGateway:
 
         # ── 普通消息 → agent loop ──
         try:
-            from backend.api.dependencies import (
-                get_session_repo, get_message_repo, get_task_repo,
-                get_ctx_item_repo, get_context_flow_repo, get_notification_repo,
-            )
             from backend.agent import NexusAgentLoop
+            from backend.api.dependencies import (
+                get_context_flow_repo,
+                get_ctx_item_repo,
+                get_message_repo,
+                get_notification_repo,
+                get_session_repo,
+                get_task_repo,
+            )
             from backend.core.config import settings as app_settings
 
             sid = await self._get_or_create_session(chat_key, event_type, data)
@@ -958,9 +966,8 @@ class ChannelGateway:
 
     async def _reply(self, platform: str, chat_id: str, text: str, event_type: str, data: dict, reply_to_id: str = ""):
         """通用回复方法"""
-        from backend.services.channel_adapters import ADAPTER_MAP
 
-        for cid, adapter in self._adapters.items():
+        for _cid, adapter in self._adapters.items():
             if not adapter.connected:
                 continue
 

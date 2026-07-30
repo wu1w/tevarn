@@ -352,7 +352,7 @@ class QdrantRAGService(RAGService):
 
         # 过滤异常 + 打来源标签
         valid_results: list[list[Document]] = []
-        for col, result in zip(target_cols, results_list):
+        for col, result in zip(target_cols, results_list, strict=True):
             if isinstance(result, Exception):
                 logger.warning(f"Collection {col} search failed: {result}")
                 continue
@@ -597,8 +597,11 @@ class QdrantRAGService(RAGService):
 
             # 4. 上下文组装（使用 ContextAssembler）
             try:
-                from backend.services.rag.context_assembler import ContextAssembler, RetrievalContract
                 from backend.core.config import settings as _settings
+                from backend.services.rag.context_assembler import (
+                    ContextAssembler,
+                    RetrievalContract,
+                )
                 base_min = float(getattr(_settings, "rag_min_score", 0.5) or 0.5)
                 eff_min = float(min_score) if min_score is not None else base_min
                 # kwargs 也可传

@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select, desc
+from sqlalchemy import desc, select
 
 from backend.models.agent_run import AgentRun, RunStep
 from backend.repositories.base import AsyncBaseRepository

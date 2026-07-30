@@ -10,6 +10,13 @@ from .context import (
     CtxItemUpdate,
 )
 from .cron import CronJobCreate, CronJobRead, CronJobUpdate
+from .cron_hook import (
+    CronHookCreate,
+    CronHookExecutionLogRead,
+    CronHookRead,
+    CronHookUpdate,
+    CronJobWithHooks,
+)
 from .device import DeviceCreate, DeviceRead, DeviceUpdate
 from .knowledge import ChunkRead, DocumentCreate, DocumentRead, DocumentUpdate
 from .message import MessageCreate, MessageRead
@@ -17,6 +24,14 @@ from .notification import NotificationCreate, NotificationList, NotificationRead
 from .session import SessionConfigUpdate, SessionCreate, SessionRead
 from .setting import SettingCreate, SettingRead, SettingUpdate
 from .skill import SkillRead, SkillToggle
+from .sub_agent import (
+    LLMConfig,
+    ModelInventoryItem,
+    ModelInventoryResponse,
+    SubAgentCreate,
+    SubAgentRead,
+    SubAgentUpdate,
+)
 from .task import TaskCreate, TaskRead, TaskUpdate
 from .tool import (
     ToolCreate,
@@ -26,14 +41,39 @@ from .tool import (
     ToolToggle,
     ToolUpdate,
 )
-from .user import PasswordChange, TokenResponse, UserLogin, UserRead, UserRegister, UserUpdate
-from .wiki import WikiEntityCreate, WikiEntityRead, WikiEntityUpdate, WikiRelationCreate, WikiRelationRead
+from .user import (
+    PasswordChange,
+    TokenResponse,
+    UserLogin,
+    UserRead,
+    UserRegister,
+    UserUpdate,
+)
+from .webhook import (
+    WebhookCreate,
+    WebhookDeliveryLogRead,
+    WebhookRead,
+    WebhookTriggerResult,
+    WebhookUpdate,
+)
+from .wiki import (
+    WikiEntityCreate,
+    WikiEntityRead,
+    WikiEntityUpdate,
+    WikiRelationCreate,
+    WikiRelationRead,
+)
 from .workflow import WorkflowCreate, WorkflowRead, WorkflowUpdate
-from .ws import MemoryUpdated, StatusUpdate, StreamDelta, TaskUpdate, WSMessage
-from .webhook import WebhookCreate, WebhookRead, WebhookUpdate, WebhookDeliveryLogRead, WebhookTriggerResult
-from .workflow_template import WorkflowTemplateCreate, WorkflowTemplateRead, WorkflowTemplateUpdate, TemplateCreateWorkflowRequest, TemplateCreateWorkflowResult, TemplateCategory
-from .cron_hook import CronHookCreate, CronHookRead, CronHookUpdate, CronHookExecutionLogRead, CronJobWithHooks
-from .sub_agent import SubAgentCreate, SubAgentRead, SubAgentUpdate, LLMConfig, ModelInventoryResponse, ModelInventoryItem
+from .workflow_template import (
+    TemplateCategory,
+    TemplateCreateWorkflowRequest,
+    TemplateCreateWorkflowResult,
+    WorkflowTemplateCreate,
+    WorkflowTemplateRead,
+    WorkflowTemplateUpdate,
+)
+from .ws import MemoryUpdated, StatusUpdate, StreamDelta, WSMessage
+from .ws import TaskUpdate as TaskUpdateEvent  # 与 .task.TaskUpdate 重名，包级别名消歧
 
 __all__ = [
     "SessionCreate",
@@ -56,7 +96,7 @@ __all__ = [
     "StreamDelta",
     "StatusUpdate",
     "MemoryUpdated",
-    "TaskUpdate",
+    "TaskUpdateEvent",
     "CtxItemCreate",
     "CtxItemRead",
     "CtxItemUpdate",

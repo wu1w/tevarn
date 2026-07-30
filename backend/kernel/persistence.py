@@ -258,7 +258,10 @@ class KernelPersistence:
         }
         if self._session_factory is None:
             return summary
-        from backend.models.agent_identity import KernelEscalationRecord, KernelProcessRecord
+        from backend.models.agent_identity import (
+            KernelEscalationRecord,
+            KernelProcessRecord,
+        )
 
         async with self._session_factory() as session:
             result = await session.execute(

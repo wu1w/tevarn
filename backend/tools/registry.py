@@ -175,6 +175,7 @@ class ToolRegistry:
 
         try:
             import json as _json
+
             from backend.agent.tool_hooks import run_after_tool_call
             from backend.agent.tool_result_contract import normalize_tool_result
 

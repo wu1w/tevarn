@@ -6,10 +6,9 @@ Context 模型 - 上下文管理层
 import uuid
 from datetime import datetime
 from enum import Enum as PyEnum
-from typing import Any, Optional
+from typing import Optional
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
-from sqlalchemy import JSON
+from sqlalchemy import JSON, Boolean, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TimestampMixin, UUIDMixin, utc_now

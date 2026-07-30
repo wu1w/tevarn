@@ -19,7 +19,6 @@ from backend.core.config import settings
 from backend.core.security import decode_access_token
 from backend.database import get_db_context
 from backend.repositories.session_repo import AsyncSessionRepository
-from backend.schemas.ws import SyncRequest, UserInput
 
 from .dependencies import (
     get_context_flow_repo,

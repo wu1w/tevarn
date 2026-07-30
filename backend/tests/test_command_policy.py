@@ -10,6 +10,7 @@ from asgi_lifespan import LifespanManager
 from httpx import ASGITransport, AsyncClient
 
 from backend.core.command_policy import (
+    _DEFAULT_DENY_CATEGORIES,
     DEFAULT_ACTION,
     POLICY_SETTING_KEY,
     _sanitize,
@@ -18,12 +19,11 @@ from backend.core.command_policy import (
 )
 from backend.main import app
 from backend.services.tools.executors import (
-    COMMAND_CATEGORIES,
     _DANGEROUS_PATTERNS,
     _LABEL_TO_CATEGORY,
+    COMMAND_CATEGORIES,
     execute_command,
 )
-
 
 # ---------- 分类完整性 ----------
 
@@ -43,7 +43,8 @@ def test_sanitize_filters_invalid():
     )
     assert policy["delete"] == "deny"
     assert "bogus_cat" not in policy
-    assert policy["disk"] == DEFAULT_ACTION  # 非法动作回默认
+    # 非法动作回该分类默认值；disk 是高危类，默认 deny（deny-by-default 加固）
+    assert policy["disk"] == "deny"
     # 全部 8 类都有值
     assert set(policy) == set(COMMAND_CATEGORIES)
 
@@ -121,11 +122,13 @@ async def test_allow_category_passes_through(db_session, tmp_path):
 
 
 async def test_default_is_confirm(db_session):
-    """未配置任何策略时：所有分类默认 confirm。"""
+    """未配置任何策略时：高危类默认 deny，其余默认 confirm（deny-by-default 加固）。"""
     invalidate_command_policy_cache()
     policy = await load_command_policy(force=True)
     assert set(policy) == set(COMMAND_CATEGORIES)
-    assert all(v == "confirm" for v in policy.values())
+    for cat, action in policy.items():
+        expected = "deny" if cat in _DEFAULT_DENY_CATEGORIES else DEFAULT_ACTION
+        assert action == expected, f"{cat}: expected {expected}, got {action}"
 
 
 # ---------- 端点 ----------

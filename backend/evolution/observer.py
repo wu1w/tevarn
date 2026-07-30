@@ -8,7 +8,10 @@ from typing import Any
 
 from backend.evolution import store
 from backend.evolution.config import get_evolution_config
-from backend.evolution.improver import classify_failures, propose_skill_from_failure, text_similarity
+from backend.evolution.improver import (
+    classify_failures,
+    propose_skill_from_failure,
+)
 
 logger = logging.getLogger(__name__)
 

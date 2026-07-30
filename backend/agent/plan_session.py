@@ -10,7 +10,7 @@ import threading
 import time
 from typing import Any
 
-from backend.agent.plan_gate import PlanDocument, PlanGate, PlanState
+from backend.agent.plan_gate import PlanGate, PlanState
 
 _lock = threading.RLock()
 # key = session_id or job:{inbox_id}

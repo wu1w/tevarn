@@ -252,7 +252,9 @@ class CronScheduler:
 
                     # WorkflowRepository 可能是 sync 风格包装
                     try:
-                        from backend.repositories.workflow_repo import AsyncWorkflowRepository
+                        from backend.repositories.workflow_repo import (
+                            AsyncWorkflowRepository,
+                        )
 
                         wf_repo = AsyncWorkflowRepository()
                     except Exception:
@@ -321,7 +323,7 @@ class CronScheduler:
 
     async def stop(self) -> None:
         self._running = False
-        for job_id, task in list(self._tasks.items()):
+        for _job_id, task in list(self._tasks.items()):
             task.cancel()
         self._tasks.clear()
         logger.info("CronScheduler stopped")

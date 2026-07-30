@@ -270,7 +270,10 @@ async def remote_ping(
 ):
     device = await repo.get_by_id(device_id)
     _ensure_owner(device, current_user.id)
-    from backend.services.remote.transport import RemoteAgentError, transport_from_device_config
+    from backend.services.remote.transport import (
+        RemoteAgentError,
+        transport_from_device_config,
+    )
 
     try:
         tr = transport_from_device_config(device.config or {})
@@ -292,7 +295,10 @@ async def remote_fs_list(
 ):
     device = await repo.get_by_id(device_id)
     _ensure_owner(device, current_user.id)
-    from backend.services.remote.transport import RemoteAgentError, transport_from_device_config
+    from backend.services.remote.transport import (
+        RemoteAgentError,
+        transport_from_device_config,
+    )
 
     try:
         return await transport_from_device_config(device.config or {}).call(
@@ -311,7 +317,10 @@ async def remote_file_read(
 ):
     device = await repo.get_by_id(device_id)
     _ensure_owner(device, current_user.id)
-    from backend.services.remote.transport import RemoteAgentError, transport_from_device_config
+    from backend.services.remote.transport import (
+        RemoteAgentError,
+        transport_from_device_config,
+    )
 
     try:
         return await transport_from_device_config(device.config or {}).call(
@@ -330,7 +339,10 @@ async def remote_exec(
 ):
     device = await repo.get_by_id(device_id)
     _ensure_owner(device, current_user.id)
-    from backend.services.remote.transport import RemoteAgentError, transport_from_device_config
+    from backend.services.remote.transport import (
+        RemoteAgentError,
+        transport_from_device_config,
+    )
 
     try:
         tr = transport_from_device_config(device.config or {})

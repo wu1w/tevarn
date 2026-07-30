@@ -18,7 +18,6 @@ from backend.agent.agent_contract import (
     build_review_prompt,
     parse_deliverable,
     parse_review_verdicts,
-    sign_deliverable,
 )
 from backend.agent.cluster_executor import AggregationStrategy, ClusterExecutor
 

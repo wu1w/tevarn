@@ -252,12 +252,8 @@ async def save_goal_to_db(session_id: str | uuid.UUID) -> None:
 
             repo = AsyncSessionRepository()
             sid = uuid.UUID(key) if not isinstance(session_id, uuid.UUID) else session_id
-            cfg = await repo.get_config(sid) or {}
-            if not isinstance(cfg, dict):
-                cfg = {}
-            cfg = dict(cfg)
-            cfg["_goal"] = g.to_dict()
-            await repo.update_config(sid, cfg)
+            # 键级合并：只写 _goal 键，避免与 checkpoint 等并发写互相覆盖
+            await repo.merge_config_keys(sid, {"_goal": g.to_dict()})
         except Exception as e:
             logger.warning("save_goal_to_db failed for %s: %s", key[:8], e)
 

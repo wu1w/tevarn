@@ -3,10 +3,9 @@ Tool 模型 - 工具表
 Agent 可调用的工具定义，支持内置工具和用户自定义工具
 """
 
-import uuid
-from typing import Any, Optional
+from typing import Any
 
-from sqlalchemy import Boolean, JSON, String, Text
+from sqlalchemy import JSON, Boolean, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base, TimestampMixin, UUIDMixin

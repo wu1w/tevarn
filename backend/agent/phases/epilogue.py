@@ -134,8 +134,8 @@ async def run_epilogue(
 
             # 本轮用到的进化技能：记分 + 退化自动回滚检查
             from backend.evolution.scoreboard import maybe_rollback, record_outcome
-            from backend.tools.registry import ToolRegistry as _TR
             from backend.tools.base import ToolSource as _TS
+            from backend.tools.registry import ToolRegistry as _TR
 
             _seen: set[str] = set()
             for tc in _trace:
@@ -180,8 +180,8 @@ async def run_epilogue(
 
     # 8.5 透明化轨迹持久化
     try:
-        from backend.repositories.trace_repo import TraceRepository
         from backend.database import get_db_context
+        from backend.repositories.trace_repo import TraceRepository
 
         _trace_duration = (__import__("time").monotonic() - trace_start_time) * 1000
         _iter_count = 0

@@ -3,20 +3,19 @@ Database connection and session management
 SQLAlchemy async engine and session factory
 """
 
+import re
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
-import re
 
 from sqlalchemy import event, text
 from sqlalchemy.exc import OperationalError, ProgrammingError
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
-
-from backend.core.config import settings
-from backend.models.base import Base
 
 # 导入所有模型以注册到 Base.metadata（必须在 create_all 之前）
 import backend.models  # noqa: F401
+from backend.core.config import settings
+from backend.models.base import Base
 
 # 迁移标识符白名单，避免 f-string 拼接出危险标识
 _SQL_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")

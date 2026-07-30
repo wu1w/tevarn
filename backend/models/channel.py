@@ -7,10 +7,9 @@ Telegram、Discord、Slack、WeCom、QQ Bot、飞书、Signal 等。
 
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
-from sqlalchemy import Boolean, JSON, String, Text
+from sqlalchemy import JSON, Boolean, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.models.base import Base, TimestampMixin, UUIDMixin

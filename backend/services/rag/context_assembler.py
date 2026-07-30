@@ -79,7 +79,7 @@ class ContextAssembler:
 
         # 1. 阈值过滤
         filtered: list[tuple[RerankedResult, dict[str, Any]]] = []
-        for r, m in zip(results, metadata):
+        for r, m in zip(results, metadata, strict=False):
             if r.score >= self.contract.min_score:
                 filtered.append((r, m))
 

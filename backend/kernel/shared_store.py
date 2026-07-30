@@ -138,8 +138,8 @@ class KernelSharedStore:
         for pid in members:
             pipe.exists(_proc_key(pid))
         flags = pipe.execute()
-        alive = [pid for pid, ok in zip(members, flags) if ok]
-        dead = [pid for pid, ok in zip(members, flags) if not ok]
+        alive = [pid for pid, ok in zip(members, flags, strict=True) if ok]
+        dead = [pid for pid, ok in zip(members, flags, strict=True) if not ok]
         if dead:
             self._r.srem(key, *dead)
         return alive

@@ -6,7 +6,6 @@ import uuid
 from typing import Any
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.cron_hook import CronHook, CronHookExecutionLog
 from backend.repositories.base import AsyncBaseRepository, BaseRepository

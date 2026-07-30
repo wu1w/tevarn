@@ -5,16 +5,16 @@ Modes:
   - local: full server filesystem (requires FILE_BROWSER_LOCAL=1)
   - ssh: remote machine via SSH (future)
 """
-import os
 import logging
+import os
 from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from backend.api.dependencies import get_current_user
 from backend.core.config import settings
 from backend.schemas.user import UserRead
-from backend.api.dependencies import get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/files", tags=["Files"])
@@ -57,7 +57,7 @@ def _check_access(target: Path, base: Path):
     try:
         target.relative_to(base)
     except ValueError:
-        raise HTTPException(status_code=403, detail="Access denied")
+        raise HTTPException(status_code=403, detail="Access denied") from None
 
 
 @router.get("/tree")
@@ -158,7 +158,7 @@ async def read_file(
             "language": target.suffix.lstrip(".") or "text",
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read file: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to read file: {e}") from e
 
 
 @router.get("/download")
@@ -194,7 +194,6 @@ async def resolve_file_path(
     current_user: Annotated[UserRead, Depends(get_current_user)] = None,
 ):
     """解析工作区相对路径 → 绝对路径（Electron openPath / 本机打开用）。"""
-    import sys
 
     rel = (path or "").strip().lstrip("/").replace("\\", "/")
     if rel.startswith("workspace/"):
@@ -472,7 +471,6 @@ async def ensure_agent_md_file(
     current_user: Annotated[UserRead, Depends(get_current_user)] = None,
 ):
     """若不存在则创建空的 agent md 文件（带简短标题模板）。"""
-    root = _sandbox_root()
     # only allow .md under root
     raw = (path or "").strip().replace("\\", "/").lstrip("/")
     if ".." in raw.split("/") or not raw.lower().endswith(".md"):

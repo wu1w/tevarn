@@ -5,8 +5,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 _KERNEL = Path(__file__).resolve().parents[2] / "kernel"
 _FORBIDDEN_MODS = ("fastapi",)
 _FORBIDDEN_PREFIXES = ("backend.api", "backend.main")

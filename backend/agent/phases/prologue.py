@@ -59,8 +59,8 @@ async def expand_continue_phrase(
     if not is_continue_phrase(user_input):
         return user_input, mode
     try:
-        from backend.agent.resume import build_resume_prompt
         from backend.agent.goal_state import get_goal, load_goal_from_db
+        from backend.agent.resume import build_resume_prompt
 
         await load_goal_from_db(session_id)
         rp = await build_resume_prompt(session_id)

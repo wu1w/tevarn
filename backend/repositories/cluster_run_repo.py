@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select, desc, update
+from sqlalchemy import desc, select, update
 
 from backend.models.cluster_run import ClusterRun
 from backend.repositories.base import AsyncBaseRepository

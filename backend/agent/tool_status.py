@@ -1,7 +1,6 @@
 """Human-readable tool status lines for UI (while tools run)."""
 from __future__ import annotations
 
-import json
 from typing import Any
 
 

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from backend.agent.completion_gate import evaluate_completion
@@ -15,7 +13,10 @@ from backend.agent.dispatch_grounding import (
     worker_hygiene_block,
 )
 from backend.agent.grounding_policy import clear_policy_cache, get_policy
-from backend.agent.task_grounding import annotate_grounded_report, grounding_prompt_block
+from backend.agent.task_grounding import (
+    annotate_grounded_report,
+    grounding_prompt_block,
+)
 
 
 @pytest.fixture(autouse=True)

@@ -5,11 +5,12 @@ MCP Server 管理 API
 from __future__ import annotations
 
 import uuid
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.api.dependencies import get_current_user, require_admin
+from backend.mcp_hub.service import get_mcp_status, load_mcp_tools
 from backend.repositories.mcp_server_repo import AsyncMCPServerRepository
 from backend.schemas.mcp import (
     MCPServerConfig,
@@ -19,7 +20,6 @@ from backend.schemas.mcp import (
     MCPServerUpdate,
 )
 from backend.schemas.user import UserRead
-from backend.mcp_hub.service import get_mcp_status, load_mcp_tools
 
 router = APIRouter(prefix="/mcp", tags=["MCP"])
 

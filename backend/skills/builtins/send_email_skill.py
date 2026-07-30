@@ -37,7 +37,7 @@ def _smtp_config() -> dict[str, Any]:
         cfg["password"] = cfg["password"] or str(getattr(settings, "smtp_password", "") or "")
         cfg["from_addr"] = cfg["from_addr"] or str(getattr(settings, "smtp_from", "") or "")
         if hasattr(settings, "smtp_use_tls"):
-            cfg["use_tls"] = bool(getattr(settings, "smtp_use_tls"))
+            cfg["use_tls"] = bool(settings.smtp_use_tls)
     except Exception:
         pass
     # DB runtime settings（若有）

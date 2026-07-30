@@ -12,9 +12,6 @@ import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-import pytest
-
-
 # ─────────── 测试装置 ───────────
 
 def _chunk(delta=None, tool_call=None, finish=None):
@@ -122,7 +119,7 @@ def test_freeze_simple_chat():
     assert out == "你好，世界"
     assert len(llm.calls) == 1
     # 最终回复持久化
-    final_calls = [c for c in loop._persist_final_response.call_args_list]
+    final_calls = list(loop._persist_final_response.call_args_list)
     assert final_calls and final_calls[-1].args[1] == "你好，世界"
     # 用户输入先持久化
     assert loop._persist_user_input.called

@@ -7,7 +7,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import select, desc, or_
+from sqlalchemy import desc, or_, select
 
 from backend.models.memory_graph import MemoryEdge, MemoryNode
 from backend.repositories.base import AsyncBaseRepository

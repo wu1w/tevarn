@@ -57,12 +57,12 @@ async def main() -> int:
 
     # 必须在 import settings 之前设 env
     from backend.core.config import settings
+    from backend.services.embedding.factory import EmbeddingServiceFactory
     from backend.services.rag.capability import (
         get_rag_status,
         invalidate_rag_status_cache,
         use_vector_rag,
     )
-    from backend.services.embedding.factory import EmbeddingServiceFactory
     from backend.services.rag.factory import RAGServiceFactory
     from backend.services.reranker.factory import RerankerServiceFactory
 
@@ -107,14 +107,18 @@ async def main() -> int:
     print("rag class:", type(rag).__name__)
 
     # 临时 DB + Identity 写入 + 向量索引 + Assembler
-    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+    from sqlalchemy.ext.asyncio import (
+        AsyncSession,
+        async_sessionmaker,
+        create_async_engine,
+    )
 
+    import backend.models  # noqa: F401
     from backend.kernel import AgentKernel
     from backend.kernel.audit_store import AuditEventStore
     from backend.kernel.crew_memory import CrewMemoryAssembler
     from backend.kernel.identity import IdentityRegistry
     from backend.models.base import Base
-    import backend.models  # noqa: F401
 
     tmp = Path(tempfile.mkdtemp(prefix="takton-vec-smoke-"))
     db = tmp / "smoke.db"
@@ -191,7 +195,6 @@ async def main() -> int:
     print("experience used", len(exp_used), [e.id[:8] for e in exp_used])
     print(result.body[:800])
 
-    body_l = result.body.lower()
     db_signals = any(
         k in result.body
         for k in ("索引", "数据库", "PostgreSQL", "MySQL", "SQLite", "慢查询", "备份")

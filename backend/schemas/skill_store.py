@@ -12,7 +12,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-
 SkillSource = Literal["takton", "clawhub", "awesome-claude", "awesome-hermes", "custom"]
 
 

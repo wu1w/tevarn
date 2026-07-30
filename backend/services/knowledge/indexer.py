@@ -4,14 +4,16 @@
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import re
 import uuid
 from typing import Any
 
 from backend.core.config import settings
-from backend.repositories.knowledge_repo import AsyncChunkRepository, AsyncDocumentRepository
+from backend.repositories.knowledge_repo import (
+    AsyncChunkRepository,
+    AsyncDocumentRepository,
+)
 from backend.services.embedding.factory import EmbeddingServiceFactory
 
 logger = logging.getLogger(__name__)
@@ -215,7 +217,7 @@ async def index_document_text(
 
         points = []
         created = 0
-        for idx, (content, vec) in enumerate(zip(pieces, vectors)):
+        for idx, (content, vec) in enumerate(zip(pieces, vectors, strict=True)):
             pid = _point_id(str(document_id), idx)
             chunk = await chunk_repo.create(
                 {

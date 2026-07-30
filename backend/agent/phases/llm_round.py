@@ -64,8 +64,6 @@ async def run_llm_round(
     trace_thinking_steps: list[dict[str, Any]],
 ) -> LLMRoundResult:
     """执行一轮流式 LLM 调用（含重试/应急压缩/空工具名处理）"""
-    from backend.agent.robust import is_transient_llm_error
-    from backend.agent.turn_retry import RetryKind
     from backend.kernel.llm_scheduler import (
         LlmAdmissionRejected,
         get_llm_admission,
@@ -73,9 +71,6 @@ async def run_llm_round(
     )
 
     result = LLMRoundResult(messages=messages)
-    accumulated_content = ""
-    accumulated_reasoning = ""
-    tool_calls: list[Any] = []
     stream_usage: dict[str, int] = {}
 
     # ── LLM 公平调度准入（全局槽位 · 主人优先 · 日配额）────────

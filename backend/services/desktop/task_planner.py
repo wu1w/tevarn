@@ -162,7 +162,7 @@ class DesktopTaskPlanner:
         elements_desc = ""
         if elements:
             elements_desc = "\n检测到的界面元素：\n"
-            for i, elem in enumerate(elements[:20]):  # 限制数量
+            for _i, elem in enumerate(elements[:20]):  # 限制数量
                 elem_type = elem.get("type", "unknown")
                 elem_name = elem.get("name", "")
                 elem_id = elem.get("id", "")

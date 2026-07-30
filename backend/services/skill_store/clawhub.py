@@ -76,14 +76,12 @@ class ClawHubFetcher(SkillStoreFetcher):
         slug = item.get("slug", "")
         stats_raw = item.get("stats", {}) or {}
         latest = item.get("latestVersion", {}) or {}
-        metadata = item.get("metadata", {}) or {}
         
         # 从 tags dict 提取 tag 列表
         tags_dict = item.get("tags", {}) or {}
         tag_list = list(tags_dict.keys()) if isinstance(tags_dict, dict) else []
         
-        # setup 环境变量要求 → compatibility hints
-        setup = metadata.get("setup", []) or []
+        # compatibility hints
         compatibility = ["openclaw", "hermes", "claude-code"]  # SKILL.md 格式通用
         
         # 下载链接：ClawHub 无公开下载 API，标记为 None（前端禁用安装按钮）

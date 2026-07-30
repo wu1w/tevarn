@@ -140,7 +140,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
 
 
 def ensure_store() -> Path:
-    with _db() as conn:
+    with _db():
         return get_evolution_config().resolve_db_path()
 
 

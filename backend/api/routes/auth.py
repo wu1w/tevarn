@@ -3,22 +3,25 @@
 用户注册、登录、登出、获取当前用户信息
 """
 
-import uuid
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.exc import IntegrityError
 
-from backend.core.config import settings
 from backend.core.security import (
     create_access_token,
-    decode_access_token,
     get_password_hash,
     verify_password,
 )
 from backend.core.unit_of_work import UnitOfWork
 from backend.repositories import UserRepository
-from backend.schemas import PasswordChange, TokenResponse, UserLogin, UserRead, UserRegister, UserUpdate
+from backend.schemas import (
+    PasswordChange,
+    TokenResponse,
+    UserLogin,
+    UserRead,
+    UserRegister,
+    UserUpdate,
+)
 
 from ..dependencies import (
     assert_local_single_user,

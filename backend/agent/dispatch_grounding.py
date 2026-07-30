@@ -485,7 +485,13 @@ def evaluate_dispatcher_session(
     Returns (ok, reason, nudge).
     """
     from backend.agent.grounding_policy import get_policy
-    from backend.agent.task_grounding import CODE_READ, DEEP_CODE, WEB, KB, classify_task
+    from backend.agent.task_grounding import (
+        CODE_READ,
+        DEEP_CODE,
+        KB,
+        WEB,
+        classify_task,
+    )
 
     pol = get_policy(model_name)
     kind = classify_task(user_input)

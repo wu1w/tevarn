@@ -25,10 +25,6 @@ async def save_checkpoint(
         from backend.repositories.session_repo import AsyncSessionRepository
 
         repo = AsyncSessionRepository()
-        cfg = await repo.get_config(session_id) or {}
-        if not isinstance(cfg, dict):
-            cfg = {}
-        cfg = dict(cfg)
         payload = {
             "segment": segment,
             "iteration": iteration,
@@ -41,8 +37,8 @@ async def save_checkpoint(
             payload["run_id"] = run_id
         if extra:
             payload["extra"] = extra
-        cfg[CHECKPOINT_KEY] = payload
-        await repo.update_config(session_id, cfg)
+        # 键级合并：不再整体读改写 config，避免与 goal 等并发写互相覆盖
+        await repo.merge_config_keys(session_id, {CHECKPOINT_KEY: payload})
         logger.info(
             "Checkpoint saved session=%s segment=%s iter=%s",
             str(session_id)[:8],
@@ -71,10 +67,7 @@ async def clear_checkpoint(session_id: uuid.UUID) -> None:
         from backend.repositories.session_repo import AsyncSessionRepository
 
         repo = AsyncSessionRepository()
-        cfg = await repo.get_config(session_id) or {}
-        if isinstance(cfg, dict) and CHECKPOINT_KEY in cfg:
-            cfg = dict(cfg)
-            cfg.pop(CHECKPOINT_KEY, None)
-            await repo.update_config(session_id, cfg)
+        # 键级移除：只删 checkpoint 键，不碰其他调用方的键
+        await repo.merge_config_keys(session_id, remove=[CHECKPOINT_KEY])
     except Exception as e:
         logger.warning("clear_checkpoint failed: %s", e)

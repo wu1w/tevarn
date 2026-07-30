@@ -22,8 +22,8 @@ def env(tmp_path):
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/cm.db", future=True)
     SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-    from backend.models.base import Base
     import backend.models  # noqa: F401
+    from backend.models.base import Base
 
     async def _init():
         async with engine.begin() as conn:
@@ -294,7 +294,6 @@ def test_dispatcher_delegates_assembler(env):
         reg = env["registry"]
         kernel = env["kernel"]
         # minimal inbox with same session factory
-        from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
         # reuse registry session via create path
         ident = await reg.create("mem-h", role="dev", capabilities=["file_rw"])

@@ -255,7 +255,6 @@ class ClusterExecutor:
         """拓扑排序（分层）"""
         # 计算入度
         in_degree = {t.id: len(t.depends_on) for t in tasks}
-        task_map = {t.id: t for t in tasks}
         
         layers = []
         current_layer = [t for t in tasks if in_degree[t.id] == 0]
@@ -400,7 +399,6 @@ class ClusterExecutor:
             parse_deliverable,
             parse_review_verdicts,
         )
-        from backend.services.llm import LLMServiceFactory
 
         done = [
             t for t in tasks

@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
-
-from backend.agent.token_meter import TokenMeter
 from backend.agent.context_pipeline import PipelineContextEngine
-from backend.agent.file_context import load_memory_md, find_memory_md
+from backend.agent.file_context import load_memory_md
+from backend.agent.token_meter import TokenMeter
 
 
 def test_rough_estimate_scales_with_content():

@@ -78,7 +78,11 @@ def test_setup_twice_no_duplicate_queue_handlers(tmp_path, root_logger_guard):
 
 def test_stop_async_logging_drains_and_stops(tmp_path, root_logger_guard):
     """stop_async_logging：排空队列且线程终止（shutdown 语义）"""
-    from backend.core.logging_config import _ASYNC_LISTENERS, setup_logging, stop_async_logging
+    from backend.core.logging_config import (
+        _ASYNC_LISTENERS,
+        setup_logging,
+        stop_async_logging,
+    )
 
     setup_logging(log_dir=str(tmp_path), log_level="INFO")
     logging.getLogger("b3.test3").info("before-stop")

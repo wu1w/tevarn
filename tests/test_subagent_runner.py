@@ -14,9 +14,6 @@ import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-import pytest
-
-
 # ═══════════ 1. model_ref 快照 ═══════════
 
 def test_snapshot_for_model_ref():
@@ -34,14 +31,14 @@ def test_snapshot_for_model_ref():
 # ═══════════ 2. run_subagent ═══════════
 
 def _fake_agent(**over):
-    base = dict(
-        id="a1",
-        name="Coder",
-        description="写代码的",
-        system_prompt="你是资深工程师",
-        model_ref="prov-x/model-y",
-        max_iterations=7,
-    )
+    base = {
+        "id": "a1",
+        "name": "Coder",
+        "description": "写代码的",
+        "system_prompt": "你是资深工程师",
+        "model_ref": "prov-x/model-y",
+        "max_iterations": 7,
+    }
     base.update(over)
     return SimpleNamespace(**base)
 

@@ -6,7 +6,7 @@ Agent Profile 模型 - Agent 多角色配置
 import uuid
 from typing import Any, Optional
 
-from sqlalchemy import JSON, Boolean, ForeignKey, String, Text
+from sqlalchemy import JSON, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base, TimestampMixin, UUIDMixin

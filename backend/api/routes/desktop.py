@@ -5,21 +5,19 @@ Desktop Agent 路由
 
 from __future__ import annotations
 
-import base64
 import logging
-import uuid
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
+from backend.schemas.user import UserRead
 from backend.services.desktop import (
     DesktopAgentService,
     OperationType,
     PermissionLevel,
     get_desktop_service,
 )
-from backend.schemas.user import UserRead
 
 from ..dependencies import get_current_user
 
@@ -106,7 +104,7 @@ async def execute_desktop_task(
         
     except Exception as e:
         logger.error(f"Desktop task execution failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/operation", response_model=DesktopOperationResponse)
@@ -146,7 +144,7 @@ async def execute_operation(
         
     except Exception as e:
         logger.error(f"Desktop operation failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/screenshot")
@@ -188,7 +186,7 @@ async def get_screenshot(
         raise
     except Exception as e:
         logger.error(f"Screenshot failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/permission")
@@ -223,7 +221,7 @@ async def set_permission(
         
     except Exception as e:
         logger.error(f"Set permission failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.delete("/permission")
@@ -253,7 +251,7 @@ async def clear_permission(
         
     except Exception as e:
         logger.error(f"Clear permission failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.websocket("/stream")

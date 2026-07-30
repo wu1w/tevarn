@@ -3,8 +3,6 @@
 零 mock：真实 Settings 实例、真实 app、真实 tmp 文件。
 """
 
-import json
-import os
 import stat
 
 import pytest
@@ -13,7 +11,6 @@ from httpx import ASGITransport, AsyncClient
 
 from backend.core.config import Settings
 from backend.main import app
-
 
 # ---------- P0-2/3: jwt_secret 随机化 + 弱密钥拒绝 + alias 兼容 ----------
 
@@ -107,8 +104,8 @@ class TestExfiltrationPatterns:
     def test_g2_uses_severe_subset(self):
         """evolution G2 只共用高严重度子集：sudo 等文档常见词不误杀。"""
         from backend.services.tools.executors import (
-            CONTENT_SEVERE_PATTERNS,
             _DANGEROUS_PATTERNS,
+            CONTENT_SEVERE_PATTERNS,
         )
 
         assert len(CONTENT_SEVERE_PATTERNS) < len(_DANGEROUS_PATTERNS)

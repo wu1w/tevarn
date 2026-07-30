@@ -13,9 +13,11 @@ import tempfile
 from collections import deque
 from typing import Any
 
-from backend.core.net_safety import UnsafeURLError, validate_public_url
 from backend.core.config import settings
-from backend.repositories.workflow_execution_repo import AsyncWorkflowExecutionRepository
+from backend.core.net_safety import UnsafeURLError, validate_public_url
+from backend.repositories.workflow_execution_repo import (
+    AsyncWorkflowExecutionRepository,
+)
 from backend.services.llm import LLMService, LLMServiceFactory
 
 logger = logging.getLogger(__name__)
@@ -226,7 +228,7 @@ class WorkflowEngine:
             node_ids.add(n["id"])
 
         adjacency: dict[str, list[str]] = {nid: [] for nid in node_ids}
-        in_degree: dict[str, int] = {nid: 0 for nid in node_ids}
+        in_degree: dict[str, int] = dict.fromkeys(node_ids, 0)
 
         for edge in edges:
             fr = edge.get("from")
@@ -341,7 +343,7 @@ class WorkflowEngine:
             except Exception as e:
                 logger.exception(f"节点 {node_id}({node_type}) 执行失败")
                 ctx.log(node_id, "error", str(e))
-                raise WorkflowExecutionError(f"节点 {node_id}({node_type}) 执行失败: {e}")
+                raise WorkflowExecutionError(f"节点 {node_id}({node_type}) 执行失败: {e}") from e
 
         # 收集输出节点数据作为最终结果
         final_outputs: dict[str, Any] = {}
@@ -449,9 +451,9 @@ class WorkflowEngine:
         try:
             from backend.agent import NexusAgentLoop
             from backend.database import AsyncSessionLocal
-            from backend.repositories.session_repo import AsyncSessionRepository
-            from backend.repositories.message_repo import AsyncMessageRepository
             from backend.repositories.context_repo import AsyncCtxItemRepository
+            from backend.repositories.message_repo import AsyncMessageRepository
+            from backend.repositories.session_repo import AsyncSessionRepository
 
             # 本地执行 agent（简化版：创建临时会话）
             async with AsyncSessionLocal() as db:

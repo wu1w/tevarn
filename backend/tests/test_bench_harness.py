@@ -10,7 +10,6 @@ import shutil
 import sys
 from pathlib import Path
 
-import pytest
 import yaml
 
 BENCH = Path(__file__).resolve().parents[2] / "scripts" / "bench_agent"

@@ -114,9 +114,10 @@ async def run_typed_subagent(
 
     if want_wt and bool(getattr(settings, "agent_worktree_enabled", True)):
         try:
+            from pathlib import Path
+
             from backend.project.worktree import add_worktree, find_git_root
             from backend.tools.permissions import resolve_agent_workspace_root
-            from pathlib import Path
 
             root = find_git_root(Path(resolve_agent_workspace_root()))
             if root is not None:

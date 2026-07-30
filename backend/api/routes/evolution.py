@@ -155,7 +155,7 @@ async def bulk_delete(
 
     for a in to_purge:
         try:
-            r = await purge_asset(a)
+            await purge_asset(a)
             if a.get("name"):
                 skill_names.append(a["name"])
         except Exception:
@@ -326,7 +326,7 @@ async def curator_run(
 async def evolution_version(
     current_user: Annotated[UserRead, Depends(get_current_user)],
 ) -> dict[str, Any]:
-    from backend.evolution.config import ENGINE_VERSION, get_evolution_config
+    from backend.evolution.config import ENGINE_VERSION
 
     cfg = get_evolution_config()
     return {

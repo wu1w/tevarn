@@ -45,7 +45,7 @@ async def runtime_status(request: Request) -> dict[str, Any]:
         from backend.kernel.workforce import get_workforce_inbox
 
         kernel = get_kernel()
-        live = [p for p in kernel.list_processes(include_terminal=False)]
+        live = list(kernel.list_processes(include_terminal=False))
         out["processes_live"] = len(live)
         esc = kernel.list_escalations(status="pending")
         out["approvals_pending"] = len(esc)

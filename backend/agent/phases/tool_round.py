@@ -135,7 +135,7 @@ async def _prefetch_readonly_calls(
         ",".join(getattr(tc, "name", "?") for tc, _ in tools),
         (_time.monotonic() - t0) * 1000,
     )
-    return {tc.id: res for (tc, _), res in zip(tools, results)}
+    return {tc.id: res for (tc, _), res in zip(tools, results, strict=True)}
 
 
 async def run_tool_round(
@@ -157,13 +157,13 @@ async def run_tool_round(
     enabled_skills: Any,
 ) -> None:
     """执行一轮工具调用并做轮后处理（就地更新 state）"""
-    from backend.agent.run_state import RunStatus as _RS
     from backend.agent.robust import tool_call_signature
-    from backend.agent.turn_retry import RetryKind
+    from backend.agent.run_state import RunStatus as _RS
     from backend.agent.tool_result_contract import normalize_tool_result
+    from backend.agent.turn_retry import RetryKind
+    from backend.repositories.skill_repo import AsyncSkillRepository
     from backend.skills import SkillRegistry
     from backend.skills.dynamic import DynamicSkill
-    from backend.repositories.skill_repo import AsyncSkillRepository
 
     _rc = getattr(loop, "_run_recorder", None)
     messages = state.messages
@@ -321,7 +321,7 @@ async def run_tool_round(
                         tool_repo = AsyncToolRepository()
                         db_tool = await tool_repo.get_tool_by_name(tc.name)
                         if db_tool is not None and db_tool.enabled:
-                            tool_result = await UnifiedToolRegistry.execute_tool(db_tool, tc.arguments)
+                            tool_result = await UnifiedToolRegistry.execute(tc.name, tc.arguments)
                             query = ""
                         else:
                             tool_result = f"[Error] Tool '{tc.name}' not found or disabled"
@@ -344,7 +344,8 @@ async def run_tool_round(
                 tool_result = truncate_for_llm(_tname, tool_result, budget=_cap)
             # shell 安全拦截 / 127：记入重试分类，并提示改用 file_write 或修 cwd
             try:
-                from backend.agent.turn_retry import classify_tool_result, RetryKind as _RK
+                from backend.agent.turn_retry import RetryKind as _RK
+                from backend.agent.turn_retry import classify_tool_result
                 _ck = classify_tool_result(str(tool_result))
                 if _ck is not None:
                     _act = turn_retry.note_and_decide(
@@ -718,8 +719,8 @@ async def run_tool_round(
     # 全量 L5 摘要只在用户回合边界 / 413 reactiveCompact 触发，避免同轮长任务被
     # 「只答最新一句」类指令打断成一拨一动。
     try:
-        from backend.agent.context_engine import get_context_engine
         from backend.agent.context_compress import compress_history_if_needed
+        from backend.agent.context_engine import get_context_engine
 
         eng = get_context_engine()
         do_l1 = (l1_every > 0 and state.tool_rounds % l1_every == 0) or eng.should_compress_preflight(messages)

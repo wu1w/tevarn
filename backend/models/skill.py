@@ -2,15 +2,12 @@
 Skill 模型 - 技能表
 """
 
-import uuid
-from datetime import datetime
 from typing import Any, Optional
 
-from sqlalchemy import Boolean, String, Text
-from sqlalchemy import JSON
+from sqlalchemy import JSON, Boolean, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from .base import Base, TimestampMixin, UUIDMixin, utc_now
+from .base import Base, TimestampMixin, UUIDMixin
 
 
 class Skill(Base, UUIDMixin, TimestampMixin):

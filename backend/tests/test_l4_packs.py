@@ -1,8 +1,6 @@
 """L4 sidecar packs: devices / desktop / evolution DoD."""
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
 from backend.agent.pack_catalog import (

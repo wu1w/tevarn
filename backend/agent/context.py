@@ -9,12 +9,11 @@ import logging
 import uuid
 from typing import Any
 
-from backend.repositories import CtxItemRepository
 from backend.agent.system_prompt import (
     build_system_prompt,
     merge_prompt_parts,
-    DEFAULT_IDENTITY,
 )
+from backend.repositories import CtxItemRepository
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +163,9 @@ class ContextManager:
         # Memory Graph：按用户输入自动召回注入（二期）；无命中回退一期静态提示
         try:
             from backend.core.config import settings as _settings
-            from backend.repositories.memory_graph_repo import AsyncMemoryGraphRepository
+            from backend.repositories.memory_graph_repo import (
+                AsyncMemoryGraphRepository,
+            )
 
             _mg_repo = AsyncMemoryGraphRepository()
             _mg_count = await _mg_repo.count_nodes()
@@ -202,8 +203,8 @@ class ContextManager:
         # ── 组装系统提示词 ──
         package_snippets: list[dict[str, str]] = []
         try:
-            from backend.packages.session_packages import get_session_attached_packages
             from backend.packages.loader import resolve_attached_snippets
+            from backend.packages.session_packages import get_session_attached_packages
 
             attached = await get_session_attached_packages(session_id)
             package_snippets = await resolve_attached_snippets(attached)
@@ -273,7 +274,7 @@ class ContextManager:
                     plan.mode,
                     plan.full_skills,
                     plan.block_chars,
-                    {k: v for k, v in list(plan.scores.items())[:6]},
+                    dict(list(plan.scores.items())[:6]),
                 )
                 ctx = parts.get("context") or ""
                 parts["context"] = (
@@ -331,8 +332,8 @@ class ContextManager:
         try:
             from pathlib import Path as _Path
 
-            from backend.core.config import settings as _settings
             from backend.agent.multimodal_parts import build_user_content
+            from backend.core.config import settings as _settings
 
             if bool(getattr(_settings, "agent_multimodal_images", True)) and isinstance(
                 user_input, str

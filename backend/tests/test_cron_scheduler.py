@@ -3,8 +3,8 @@ Tests for Cron scheduler (EPIC-2B).
 """
 
 import pytest
-from httpx import AsyncClient, ASGITransport
 from asgi_lifespan import LifespanManager
+from httpx import ASGITransport, AsyncClient
 
 from backend.main import app
 from backend.services.cron_scheduler import CronScheduler

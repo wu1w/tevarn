@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from backend.core.config import settings
-from backend.tools.base import BaseTool, ToolSource, ToolRiskLevel
+from backend.tools.base import BaseTool, ToolRiskLevel, ToolSource
 
 logger = logging.getLogger(__name__)
 
@@ -179,8 +179,11 @@ class UpdateConfig(BaseTool):
         # 执行更新：走 SettingRepository（含加密）+ 立即应用到运行时单例
         # 注意：不要 import 不存在的 update_setting（会 ImportError 导致写入永远失败）
         try:
+            from backend.core.runtime_settings import (
+                apply_setting_value,
+                reset_factories_for_keys,
+            )
             from backend.repositories.setting_repo import AsyncSettingRepository
-            from backend.core.runtime_settings import apply_setting_value, reset_factories_for_keys
 
             # 避免把脱敏占位写回
             if key.endswith("_api_key") and isinstance(value, str):
@@ -382,8 +385,8 @@ class ManageKnowledge(BaseTool):
         )
 
     async def execute(self, action: str, **kwargs: Any) -> ToolResult:
-        from backend.services.rag.qdrant_impl import QdrantService
         from backend.services.rag.factory import RAGServiceFactory
+        from backend.services.rag.qdrant_impl import QdrantService
 
         if action == "upload":
             content = kwargs.get("content", "")
@@ -548,7 +551,7 @@ class ManageCron(BaseTool):
             try:
                 return uuid_mod.UUID(raw)
             except ValueError:
-                raise ValueError(f"workflow_id 不是合法 UUID: {raw}")
+                raise ValueError(f"workflow_id 不是合法 UUID: {raw}") from None
 
         name = (kwargs.get("workflow_name") or kwargs.get("command") or "").strip()
         # command 兼容旧参数：若看起来像 UUID 当 id，否则当 workflow 名

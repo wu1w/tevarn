@@ -11,7 +11,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.repositories import NotificationRepository
-from backend.schemas import NotificationList, NotificationRead
+from backend.schemas import NotificationList
 
 from ..dependencies import get_current_user, get_notification_repo
 

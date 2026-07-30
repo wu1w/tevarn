@@ -12,8 +12,7 @@ from backend.core.unit_of_work import UnitOfWork
 from backend.schemas.message import MessageRead
 from backend.schemas.user import UserRead
 
-from ..dependencies import get_current_user, assert_session_owner
-from backend.repositories import MessageRepository
+from ..dependencies import assert_session_owner, get_current_user
 
 router = APIRouter(prefix="/sessions", tags=["Messages"])
 

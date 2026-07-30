@@ -1,16 +1,11 @@
 """桩补齐回归：cron agent 接线、cluster cancel、desktop 清库、skills。"""
 from __future__ import annotations
 
-import asyncio
-import inspect
 import uuid
+from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-
-from pathlib import Path
 
 # .../backend/tests/kernel/this_file.py → backend/
 _BACKEND = Path(__file__).resolve().parents[2]

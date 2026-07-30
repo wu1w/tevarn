@@ -4,18 +4,22 @@ from __future__ import annotations
 
 import pytest
 
-from backend.agent.permission_rules_dsl import parse_rule_string, rules_from_payload
 from backend.agent.dangerous_paths import secret_deny_rules
-from backend.kernel.process_identity import process_belongs_to, sum_tokens_for_agent, workforce_key
+from backend.agent.permission_rules_dsl import parse_rule_string, rules_from_payload
 from backend.agent.plan_session import (
     approve_plan,
     requires_plan_approval,
     start_plan,
     submit_plan_markdown,
 )
-from backend.agent.subagent_types import resolve_type, SPECS
-from backend.computer.profiles import resolve_profile, list_profiles
-from backend.kernel.workflow_runner import WorkflowBudgetExceeded, WorkflowRunner
+from backend.agent.subagent_types import SPECS, resolve_type
+from backend.computer.profiles import list_profiles, resolve_profile
+from backend.kernel.process_identity import (
+    process_belongs_to,
+    sum_tokens_for_agent,
+    workforce_key,
+)
+from backend.kernel.workflow_runner import WorkflowRunner
 
 
 def test_parse_bash_deny():

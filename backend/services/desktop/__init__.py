@@ -84,7 +84,9 @@ class DesktopAgentService:
         
         try:
             if _CURRENT_PLATFORM == "windows":
-                from backend.services.desktop.adapters.windows_adapter import WindowsAdapter
+                from backend.services.desktop.adapters.windows_adapter import (
+                    WindowsAdapter,
+                )
                 self._platform_adapter = WindowsAdapter()
             elif _CURRENT_PLATFORM == "darwin":
                 from backend.services.desktop.adapters.mac_adapter import MacAdapter
@@ -122,7 +124,9 @@ class DesktopAgentService:
         
         # 2. 检查数据库持久化权限
         try:
-            from backend.repositories.desktop_permission_repo import AsyncDesktopPermissionRepository
+            from backend.repositories.desktop_permission_repo import (
+                AsyncDesktopPermissionRepository,
+            )
             repo = AsyncDesktopPermissionRepository()
             perm = await repo.get_permission(user_id, operation.value, app_name)
             if perm and perm.level == PermissionLevel.ALWAYS_ALLOW:
@@ -152,7 +156,9 @@ class DesktopAgentService:
         elif level == PermissionLevel.ALWAYS_ALLOW:
             # 持久化到数据库
             try:
-                from backend.repositories.desktop_permission_repo import AsyncDesktopPermissionRepository
+                from backend.repositories.desktop_permission_repo import (
+                    AsyncDesktopPermissionRepository,
+                )
                 repo = AsyncDesktopPermissionRepository()
                 await repo.save_permission(
                     user_id=user_id,
@@ -408,7 +414,9 @@ class DesktopAgentService:
 
         removed_db = 0
         try:
-            from backend.repositories.desktop_permission_repo import AsyncDesktopPermissionRepository
+            from backend.repositories.desktop_permission_repo import (
+                AsyncDesktopPermissionRepository,
+            )
 
             repo = AsyncDesktopPermissionRepository()
             removed_db = await repo.delete_all_for_user(

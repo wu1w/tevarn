@@ -29,8 +29,8 @@ def wf(tmp_path):
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/wf.db", future=True)
     SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-    from backend.models.base import Base
     import backend.models  # noqa: F401
+    from backend.models.base import Base
 
     async def _init():
         async with engine.begin() as conn:
@@ -243,8 +243,8 @@ def test_fallback_budget_applied_when_identity_has_none(wf) -> None:
 
         done = await inbox.list_items(status="done")
         proc = kernel.get_process(done[0].process_id)
-        assert proc.token_budget == 50000  # fallback 生效（config 默认）
-        assert proc.budget_remaining == 50000
+        assert proc.token_budget == 100000  # fallback 生效（config 默认 agent_workforce_fallback_budget）
+        assert proc.budget_remaining == 100000
 
         # 身份显式设预算：普通工单保持身份预算
         ident2 = await reg.create(

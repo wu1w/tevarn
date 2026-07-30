@@ -6,7 +6,7 @@ SubAgent 模型
 import uuid
 from typing import Any, Optional
 
-from sqlalchemy import ForeignKey, String, Integer, Float, Text, Boolean, JSON
+from sqlalchemy import JSON, Boolean, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base, TimestampMixin, UUIDMixin

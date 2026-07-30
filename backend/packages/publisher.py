@@ -24,9 +24,9 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from backend.packages.loader import (
+    _project_root,
     get_package_by_name,
     load_workspace_packages,
-    _project_root,
 )
 
 logger = logging.getLogger(__name__)
@@ -180,7 +180,11 @@ def install_package_zip(data: bytes, *, overwrite: bool = False) -> InstallResul
     result = InstallResult(ok=True, name=top, path=str(dest))
     # 契约解析 + requires 检测（透出，不阻断）
     try:
-        from backend.skills.contract import SkillContract, check_requires, load_contract_for_dir
+        from backend.skills.contract import (
+            SkillContract,
+            check_requires,
+            load_contract_for_dir,
+        )
 
         contract, errs = load_contract_for_dir(dest)
         if contract is not None:

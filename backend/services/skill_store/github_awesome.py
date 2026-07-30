@@ -12,7 +12,6 @@ GitHub Awesome-List 源适配器
 
 from __future__ import annotations
 
-import base64
 import logging
 import re
 from typing import Any

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from backend.agent.tool_policy import (
     PROFILE_EXTRA_TOOLS,
     TOOL_PACKS,

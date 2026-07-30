@@ -6,7 +6,6 @@ import json
 import logging
 import os
 import re
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -672,7 +671,8 @@ class VisionAnalyzeTool(BaseTool):
             messages = [{"role": "user", "content": content}]
             if hasattr(svc, "chat_complete"):
                 try:
-                    text = await svc.chat_complete(messages, temperature=0.2)
+                    resp = await svc.chat_complete(messages)
+                    text = getattr(resp, "content", None) or ""
                 except Exception as e:
                     return (
                         f"[Error] vision call failed: {e}\n"
@@ -726,7 +726,12 @@ class UseToolPackTool(BaseTool):
 
     async def execute(self, **kwargs: Any) -> Any:
         import json
-        from backend.agent.tool_policy import TOOL_PACKS, list_pack_catalog, tools_for_packs
+
+        from backend.agent.tool_policy import (
+            TOOL_PACKS,
+            list_pack_catalog,
+            tools_for_packs,
+        )
 
         action = (kwargs.get("action") or "list").strip().lower()
         packs = kwargs.get("packs") or []

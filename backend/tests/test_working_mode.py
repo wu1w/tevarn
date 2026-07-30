@@ -11,8 +11,8 @@ import pytest
 
 from backend.agent import working_mode as wm
 from backend.agent.tool_hooks import builtin_permission_before
-from backend.services.confirm_manager import ConfirmOutcome
 from backend.core.config import settings
+from backend.services.confirm_manager import ConfirmOutcome
 
 
 @pytest.fixture(autouse=True)

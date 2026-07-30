@@ -9,7 +9,7 @@ import logging
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from backend.kernel import get_kernel
 from backend.schemas.user import UserRead
@@ -68,7 +68,11 @@ async def get_product_concepts(
     current_user: Annotated[UserRead, Depends(get_current_user)],
 ):
     """产品心智（员工/工单/审批）机器可读 + 工程名映射。"""
-    from backend.kernel.protocol_spec import LEGACY_TERM_MAP, PRODUCT_CONCEPTS, PROTOCOL_VERSION
+    from backend.kernel.protocol_spec import (
+        LEGACY_TERM_MAP,
+        PRODUCT_CONCEPTS,
+        PROTOCOL_VERSION,
+    )
 
     return {
         "kind": "product_concepts",

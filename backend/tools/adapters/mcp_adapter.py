@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from backend.tools.base import BaseTool, ToolRiskLevel, ToolSource
 from backend.mcp_hub.client import MCPClient, MCPClientManager
+from backend.tools.base import BaseTool, ToolRiskLevel, ToolSource
 
 
 class MCPToolAdapter(BaseTool):

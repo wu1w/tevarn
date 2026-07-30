@@ -1,6 +1,8 @@
-# Takton backend — production / desktop packaging only
+# Takton backend - production / desktop packaging only
 # Pin versions for reproducible desktop packaging
 # Dev/test deps live in requirements-dev.txt
+# NOTE: comments must stay ASCII-only - pip decodes this file with the OS
+# locale encoding (GBK on zh-CN Windows), non-ASCII bytes can crash install.
 
 fastapi==0.139.0
 uvicorn[standard]==0.50.2
@@ -12,8 +14,9 @@ aiosqlite==0.21.0
 PyJWT==2.13.0
 cryptography>=42.0.0
 passlib[bcrypt]==1.7.4
-# 硬上界：bcrypt>=4.1 移除了 passlib 1.7.4 依赖的 __about__，
-# 会让「任意密码」都报 72 bytes 错，登录/注册/单用户初始化全挂。
+# Hard upper bound: bcrypt>=4.1 removed __about__ which passlib 1.7.4
+# depends on; broken combo makes ANY password fail with the 72-bytes error,
+# breaking login/register/single-user init entirely.
 bcrypt>=4.0.1,<4.1
 python-multipart==0.0.31
 httpx==0.28.1
@@ -25,5 +28,6 @@ jinja2==3.1.6
 qdrant-client==1.12.1
 mcp>=1.12.0
 croniter>=2.0.0
-# 多 worker kernel 共享态（可选；agent_kernel_redis_shared=true 时需要）
+# Multi-worker kernel shared state (optional; needed when
+# agent_kernel_redis_shared=true)
 redis>=5.0.0

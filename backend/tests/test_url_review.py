@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from backend.services.skill_store.url_review import _extract_tools, _score_risk, review_extension_url
+from backend.services.skill_store.url_review import (
+    _extract_tools,
+    _score_risk,
+    review_extension_url,
+)
 
 
 def test_extract_tools_from_yamlish():

@@ -3,9 +3,10 @@ Tests for SSE chat endpoint (EPIC-1A).
 """
 
 import json
+
 import pytest
-from httpx import AsyncClient, ASGITransport
 from asgi_lifespan import LifespanManager
+from httpx import ASGITransport, AsyncClient
 
 from backend.main import app
 

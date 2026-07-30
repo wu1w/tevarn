@@ -84,7 +84,10 @@ class ComputerManager:
             return BwrapBackend(ws, agent_key, network=network)
 
         if backend_name == "seatbelt":
-            from backend.computer.seatbelt_backend import SeatbeltBackend, find_sandbox_exec
+            from backend.computer.seatbelt_backend import (
+                SeatbeltBackend,
+                find_sandbox_exec,
+            )
 
             if find_sandbox_exec() is None:
                 raise RuntimeError(

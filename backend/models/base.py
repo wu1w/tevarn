@@ -1,8 +1,7 @@
 import uuid
 from datetime import datetime
-from typing import Any
 
-from sqlalchemy import DateTime, String, Uuid
+from sqlalchemy import DateTime, Uuid
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from backend.core.timezone import utc_now as _utc_now

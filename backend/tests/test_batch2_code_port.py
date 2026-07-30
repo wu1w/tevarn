@@ -6,17 +6,15 @@ from pathlib import Path
 import pytest
 
 from backend.agent.auto_classify import apply_auto_classifier, load_rules
-from backend.agent.file_history import FileHistory, get_file_history
-from backend.agent.permissions_rules import PermissionGate, rules_for_profile
+from backend.agent.file_history import FileHistory
+from backend.agent.permissions_rules import PermissionGate
 from backend.agent.plan_gate import PlanGate, PlanState, should_auto_plan
 from backend.agent.tool_hooks import (
-    BeforeHookResult,
-    builtin_permission_before,
     clear_tool_hooks,
     ensure_builtin_hooks_registered,
     run_before_tool_call,
 )
-from backend.project.worktree import find_git_root, list_worktrees, parse_worktree_list
+from backend.project.worktree import find_git_root, parse_worktree_list
 
 
 def test_permission_plan_denies_edit():

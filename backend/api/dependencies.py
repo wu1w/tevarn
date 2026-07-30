@@ -30,33 +30,49 @@ from backend.repositories import (
     WikiRelationRepository,
     WorkflowRepository,
 )
-from backend.repositories.user_repo import AsyncUserRepository
-from backend.repositories.session_repo import AsyncSessionRepository
-from backend.repositories.notification_repo import AsyncNotificationRepository
-from backend.repositories.message_repo import AsyncMessageRepository
-from backend.repositories.task_repo import AsyncTaskRepository
-from backend.repositories.context_repo import AsyncCtxItemRepository, AsyncContextFlowRepository
-from backend.repositories.skill_repo import AsyncSkillRepository
-from backend.repositories.device_repo import AsyncDeviceRepository
-from backend.repositories.workflow_repo import AsyncWorkflowRepository
-from backend.repositories.cron_repo import AsyncCronJobRepository
-from backend.repositories.cron_execution_log_repo import AsyncCronExecutionLogRepository
-from backend.repositories.workflow_execution_repo import AsyncWorkflowExecutionRepository
-from backend.repositories.knowledge_repo import AsyncDocumentRepository, AsyncChunkRepository
-from backend.repositories.wiki_repo import AsyncWikiEntityRepository, AsyncWikiRelationRepository
-from backend.repositories.setting_repo import AsyncSettingRepository
 from backend.repositories.agent_profile_repo import AsyncAgentProfileRepository
 from backend.repositories.audit_log_repo import AsyncAuditLogRepository
-from backend.repositories.tool_repo import AsyncToolRepository
-from backend.repositories.webhook_repo import AsyncWebhookRepository, AsyncWebhookDeliveryLogRepository
-from backend.repositories.workflow_template_repo import AsyncWorkflowTemplateRepository
-from backend.repositories.cron_hook_repo import AsyncCronHookRepository, AsyncCronHookExecutionLogRepository
+from backend.repositories.context_repo import (
+    AsyncContextFlowRepository,
+    AsyncCtxItemRepository,
+)
+from backend.repositories.cron_execution_log_repo import AsyncCronExecutionLogRepository
+from backend.repositories.cron_hook_repo import (
+    AsyncCronHookExecutionLogRepository,
+    AsyncCronHookRepository,
+)
+from backend.repositories.cron_repo import AsyncCronJobRepository
+from backend.repositories.device_repo import AsyncDeviceRepository
+from backend.repositories.knowledge_repo import (
+    AsyncChunkRepository,
+    AsyncDocumentRepository,
+)
+from backend.repositories.message_repo import AsyncMessageRepository
+from backend.repositories.notification_repo import AsyncNotificationRepository
+from backend.repositories.session_repo import AsyncSessionRepository
+from backend.repositories.setting_repo import AsyncSettingRepository
+from backend.repositories.skill_repo import AsyncSkillRepository
 from backend.repositories.sub_agent_repo import AsyncSubAgentRepository
+from backend.repositories.task_repo import AsyncTaskRepository
+from backend.repositories.tool_repo import AsyncToolRepository
+from backend.repositories.user_repo import AsyncUserRepository
+from backend.repositories.webhook_repo import (
+    AsyncWebhookDeliveryLogRepository,
+    AsyncWebhookRepository,
+)
+from backend.repositories.wiki_repo import (
+    AsyncWikiEntityRepository,
+    AsyncWikiRelationRepository,
+)
+from backend.repositories.workflow_execution_repo import (
+    AsyncWorkflowExecutionRepository,
+)
+from backend.repositories.workflow_repo import AsyncWorkflowRepository
+from backend.repositories.workflow_template_repo import AsyncWorkflowTemplateRepository
 from backend.schemas import UserRead
 from backend.services.llm import LLMService, LLMServiceFactory
 from backend.services.rag import RAGService, RAGServiceFactory
 from backend.skills import SkillRegistry
-
 
 # ---- Security ----
 
@@ -185,8 +201,9 @@ async def get_current_user(
         if default:
             return UserRead.model_validate(default)
         # 数据库尚未初始化用户，创建默认用户（密码可由 TAKTON_DEFAULT_ADMIN_PASSWORD 注入）
-        from backend.core.security import get_password_hash
         from sqlalchemy.exc import IntegrityError
+
+        from backend.core.security import get_password_hash
 
         default_pw = resolve_default_admin_password()
         try:

@@ -10,7 +10,6 @@ Takton 系统提示词组装
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
 
 from backend.core.timezone import local_now as tta_local_now
 from backend.core.timezone import utc_now as tta_utc_now

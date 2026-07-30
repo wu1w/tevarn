@@ -1,7 +1,12 @@
 """L4 capability pack catalog helpers (sidecar, not default brain)."""
 from __future__ import annotations
 
-from backend.agent.tool_policy import TOOL_PACKS, list_pack_catalog, merge_tools_with_packs, resolve_enabled_tool_names
+from backend.agent.tool_policy import (
+    TOOL_PACKS,
+    list_pack_catalog,
+    merge_tools_with_packs,
+    resolve_enabled_tool_names,
+)
 
 # 本阶段验收的主 sidecar packs
 L4_PRIMARY_PACKS: tuple[str, ...] = ("devices", "desktop", "evolution")

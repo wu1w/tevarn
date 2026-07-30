@@ -6,17 +6,10 @@ from datetime import datetime, timezone
 
 import pytest
 
-from backend.agent.checkpoint import (
-    CHECKPOINT_KEY,
-    clear_checkpoint,
-    load_checkpoint,
-    save_checkpoint,
-)
 from backend.agent.goal_state import (
     apply_manage_goal,
     clear_goal,
     ensure_goal,
-    get_goal,
 )
 from backend.agent.resume import build_resume_prompt
 from backend.services.cron_scheduler import compute_next_run

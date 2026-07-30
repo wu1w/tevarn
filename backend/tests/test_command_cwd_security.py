@@ -1,16 +1,14 @@
 """command heredoc allow + default cwd = workspace."""
 from __future__ import annotations
 
-import asyncio
-import os
 from pathlib import Path
 
 import pytest
 
+from backend.agent.turn_retry import RetryKind, classify_tool_result
 from backend.core.config import settings
 from backend.services.tools.executors import execute_command
 from backend.tools.permissions import resolve_agent_workspace_root
-from backend.agent.turn_retry import classify_tool_result, RetryKind
 
 
 @pytest.fixture(autouse=True)

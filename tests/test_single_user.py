@@ -3,13 +3,11 @@ Tests for single-user mode (EPIC-3A).
 """
 
 import pytest
-from fastapi.testclient import TestClient
-from httpx import AsyncClient, ASGITransport
 from asgi_lifespan import LifespanManager
+from httpx import ASGITransport, AsyncClient
 
-from backend.main import app
 from backend.core.config import settings
-from backend.schemas.user import UserRead
+from backend.main import app
 
 
 class TestSingleUserMode:

@@ -131,8 +131,9 @@ async def load_identity_capabilities(identity_id: str | None) -> list[str] | Non
     if not identity_id:
         return None
     try:
-        from backend.kernel import get_kernel
         import uuid as _u
+
+        from backend.kernel import get_kernel
 
         reg = getattr(get_kernel(), "identity_registry", None)
         if reg is None:

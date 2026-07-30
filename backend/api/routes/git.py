@@ -14,9 +14,9 @@ from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from backend.api.dependencies import get_current_user
 from backend.core.config import settings
 from backend.schemas.user import UserRead
-from backend.api.dependencies import get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/git", tags=["Git"])
@@ -181,7 +181,7 @@ async def get_git_branches(
     try:
         output = _run_git(["branch", "--list"], repo)
     except FileNotFoundError:
-        raise HTTPException(status_code=503, detail="Git not installed")
+        raise HTTPException(status_code=503, detail="Git not installed") from None
     branches = []
     if output:
         for line in output.split("\n"):
@@ -221,7 +221,7 @@ async def get_git_diff(
             staged_args.extend(["--", file.replace("\\", "/").lstrip("/")])
         staged_output = _run_git(staged_args, repo)
     except FileNotFoundError:
-        raise HTTPException(status_code=503, detail="Git not installed")
+        raise HTTPException(status_code=503, detail="Git not installed") from None
 
     return {
         "unstaged": diff_output,

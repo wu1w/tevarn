@@ -6,7 +6,10 @@ import uuid
 from typing import Any
 
 from backend.services.remote.agent_router import parse_device_command
-from backend.services.remote.transport import RemoteAgentError, transport_from_device_config
+from backend.services.remote.transport import (
+    RemoteAgentError,
+    transport_from_device_config,
+)
 
 
 async def try_handle_at_device(user_id: uuid.UUID, message: str) -> str | None:

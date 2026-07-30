@@ -1,4 +1,8 @@
-from backend.evolution.config import ENGINE_VERSION, get_evolution_config, set_evolution_config
+from backend.evolution.config import (
+    ENGINE_VERSION,
+    get_evolution_config,
+    set_evolution_config,
+)
 from backend.evolution.manager import EvolutionManager, get_evolution_manager
 
 __all__ = [

@@ -54,6 +54,7 @@ async def load_approval_rules() -> list[dict[str, Any]]:
     global _RULES_CACHE
     try:
         from sqlalchemy import select
+
         from backend.database import AsyncSessionLocal
         from backend.models.setting import Setting
 

@@ -16,9 +16,9 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+import backend.models  # noqa: F401  # 注册全部模型
 from backend.core.config import settings
 from backend.models.base import Base
-import backend.models  # noqa: F401  # 注册全部模型
 
 config = context.config
 

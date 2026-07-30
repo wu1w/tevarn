@@ -898,6 +898,7 @@ class AgentKernel:
             name = getattr(proc, "identity", None) or (proc.to_dict() or {}).get("identity")
         try:
             from sqlalchemy import select
+
             from backend.database import AsyncSessionLocal
             from backend.models.agent_identity import AgentIdentity, KernelProcessRecord
 
@@ -963,6 +964,7 @@ class AgentKernel:
                 logger.warning("load escalation from Redis failed: %s", e)
         try:
             from sqlalchemy import select
+
             from backend.database import AsyncSessionLocal
             from backend.models.agent_identity import KernelEscalationRecord
 

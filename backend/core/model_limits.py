@@ -8,7 +8,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-
 # (pattern, context_window) — 更具体的规则写在前面
 _MODEL_CONTEXT_RULES: list[tuple[re.Pattern[str], int]] = [
     (re.compile(r"grok-4|grok-3|grok-2|grok-beta", re.I), 131_072),

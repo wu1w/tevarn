@@ -1,18 +1,16 @@
 """工作区根解析与路径安全。"""
 from __future__ import annotations
 
-import asyncio
-import os
 from pathlib import Path
 
 import pytest
 
+from backend.services.tools.executors import _resolve_workspace_path, execute_file_read
 from backend.tools.permissions import (
     ToolPermissionManager,
     detect_project_root,
     resolve_agent_workspace_root,
 )
-from backend.services.tools.executors import _resolve_workspace_path, execute_file_read
 
 
 def test_detect_project_root_finds_takton():

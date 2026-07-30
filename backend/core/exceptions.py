@@ -8,7 +8,6 @@
 """
 
 import logging
-import traceback
 from typing import Any
 
 from fastapi import FastAPI, Request

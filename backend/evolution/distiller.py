@@ -177,7 +177,10 @@ def _distill_template_fallback(
 ) -> dict[str, Any] | None:
     """LLM 不可用时复用 improver 的失败驱动模板。"""
     try:
-        from backend.evolution.improver import classify_failures, propose_skill_from_failure
+        from backend.evolution.improver import (
+            classify_failures,
+            propose_skill_from_failure,
+        )
 
         codes = classify_failures(tool_trace=trace, final_content=final_content)
         if not codes:

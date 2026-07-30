@@ -13,7 +13,6 @@ from backend.schemas.task import TaskRead
 from backend.schemas.user import UserRead
 
 from ..dependencies import get_current_user
-from backend.repositories import TaskRepository
 
 router = APIRouter(prefix="/sessions", tags=["Tasks"])
 

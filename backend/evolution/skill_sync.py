@@ -71,7 +71,10 @@ async def upsert_skill_from_asset(
 
     # runtime playbook tool when enabled
     try:
-        from backend.evolution.runtime_tools import register_evolved_tool, unregister_evolved_tool
+        from backend.evolution.runtime_tools import (
+            register_evolved_tool,
+            unregister_evolved_tool,
+        )
 
         if enabled:
             register_evolved_tool(

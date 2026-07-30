@@ -150,8 +150,9 @@ async def headless_run(
     body: HeadlessBody,
     current_user: Annotated[UserRead, Depends(get_current_user)],
 ):
-    from backend.kernel.headless_run import run_headless
     import uuid as _uuid
+
+    from backend.kernel.headless_run import run_headless
 
     sid = None
     if body.session_id:
@@ -182,8 +183,9 @@ async def run_workflow(
     body: WorkflowBody,
     current_user: Annotated[UserRead, Depends(get_current_user)],
 ):
-    from backend.kernel.workflow_runner import WorkflowRunner
     import uuid as _uuid
+
+    from backend.kernel.workflow_runner import WorkflowRunner
 
     if body.session_id:
         try:
@@ -316,8 +318,9 @@ async def run_typed_subagent_api(
     body: TypedSubagentBody,
     current_user: Annotated[UserRead, Depends(get_current_user)],
 ):
-    from backend.agent.subagent_types import run_typed_subagent
     import uuid as _uuid
+
+    from backend.agent.subagent_types import run_typed_subagent
 
     if not body.session_id:
         raise HTTPException(status_code=400, detail="session_id required")

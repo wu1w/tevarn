@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -191,7 +191,10 @@ async def _eval_remote(
 
     user_id = c.get("user_id") or ctx.get("user_id")
     try:
-        from backend.services.remote.transport import RemoteAgentError, transport_from_device_config
+        from backend.services.remote.transport import (
+            RemoteAgentError,
+            transport_from_device_config,
+        )
 
         device = await _resolve_device(device_name, user_id)
         if device is None:
@@ -226,9 +229,10 @@ async def _eval_remote(
 
 async def _resolve_device(name: str, user_id: Any) -> Any | None:
     try:
+        import uuid
+
         from backend.api.routes.devices import resolve_device_by_name
         from backend.repositories.device_repo import AsyncDeviceRepository
-        import uuid
 
         repo = AsyncDeviceRepository()
         uid = user_id
@@ -293,7 +297,7 @@ async def _eval_llm_judge(
                 "content": f"## 评审标准\n{rubric}\n\n## 待评内容\n{str(subject)[:4000]}",
             },
         ]
-        resp = await llm.chat_complete(messages=messages, temperature=0.0, max_tokens=200)
+        resp = await llm.chat_complete(messages=messages)
         text = ""
         if hasattr(resp, "content"):
             text = resp.content or ""

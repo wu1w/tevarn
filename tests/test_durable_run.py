@@ -14,11 +14,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-
 # ═══════════ 1. 状态机 ═══════════
 
 def test_sm_happy_path():
-    from backend.agent.run_state import RunStatus as RS, validate_transition
+    from backend.agent.run_state import RunStatus as RS
+    from backend.agent.run_state import validate_transition
 
     cur = RS.CREATED
     for nxt in (RS.PLANNING, RS.EXECUTING, RS.VERIFYING, RS.DONE):
@@ -29,8 +29,10 @@ def test_sm_happy_path():
 def test_sm_illegal_transition_raises():
     from backend.agent.run_state import (
         IllegalTransitionError,
-        RunStatus as RS,
         validate_transition,
+    )
+    from backend.agent.run_state import (
+        RunStatus as RS,
     )
 
     with pytest.raises(IllegalTransitionError):
@@ -42,7 +44,8 @@ def test_sm_illegal_transition_raises():
 
 
 def test_sm_accepts_str_and_same_state_noop():
-    from backend.agent.run_state import RunStatus as RS, can_transition
+    from backend.agent.run_state import RunStatus as RS
+    from backend.agent.run_state import can_transition
 
     assert can_transition("created", "planning")
     assert can_transition(RS.EXECUTING, RS.EXECUTING)  # 同态 no-op
@@ -50,7 +53,8 @@ def test_sm_accepts_str_and_same_state_noop():
 
 
 def test_sm_terminal_absorbs_from_any_non_terminal():
-    from backend.agent.run_state import RunStatus as RS, can_transition
+    from backend.agent.run_state import RunStatus as RS
+    from backend.agent.run_state import can_transition
 
     for src in (RS.CREATED, RS.PLANNING, RS.EXECUTING, RS.WAITING, RS.VERIFYING):
         assert can_transition(src, RS.DONE)
@@ -122,10 +126,14 @@ def test_bus_subscriber_error_isolated():
 # ═══════════ 3. Repo（真实临时 sqlite） ═══════════
 
 def test_repo_crud_roundtrip(tmp_path):
-    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+    from sqlalchemy.ext.asyncio import (
+        AsyncSession,
+        async_sessionmaker,
+        create_async_engine,
+    )
 
-    from backend.models.base import Base
     from backend.models.agent_run import AgentRun, RunStep  # noqa: F401 注册表
+    from backend.models.base import Base
     from backend.repositories.agent_run_repo import AsyncAgentRunRepository
 
     db_file = tmp_path / "runs.db"
@@ -301,8 +309,9 @@ def test_checkpoint_carries_run_id():
 
     repo = SimpleNamespace()
     repo.get_config = AsyncMock(return_value={})
-    repo.update_config = AsyncMock(
-        side_effect=lambda sid, cfg: cfg_store.update(cfg)
+    # checkpoint 已改走键级合并 merge_config_keys（updates dict 直接并入 cfg_store）
+    repo.merge_config_keys = AsyncMock(
+        side_effect=lambda sid, updates=None, *, remove=None: cfg_store.update(updates or {})
     )
 
     async def _run():

@@ -11,7 +11,7 @@ import json
 import logging
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -205,9 +205,6 @@ class FileHistory:
                         restored.append(f"deleted {rel}")
                 else:
                     abs_p.parent.mkdir(parents=True, exist_ok=True)
-                    if abs_p.exists() and not force:
-                        cur = abs_p.read_text(encoding="utf-8", errors="replace")
-                        # allow overwrite always for restore of known checkpoint
                     abs_p.write_text(content, encoding="utf-8")
                     restored.append(f"restored {rel}")
             except OSError as e:

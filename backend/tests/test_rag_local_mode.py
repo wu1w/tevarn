@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
-import json
 from datetime import date
 
+from backend.agent.file_context import load_workspace_memory_bundle
 from backend.services.rag.capability import (
     compute_rag_status,
-    get_rag_status,
     invalidate_rag_status_cache,
 )
 from backend.services.rag.factory import RAGServiceFactory
 from backend.services.rag.null_impl import NullRAGService
-from backend.agent.file_context import load_workspace_memory_bundle
 
 
 def test_default_local_mode_without_emb_qdrant(monkeypatch):

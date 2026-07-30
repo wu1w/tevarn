@@ -11,7 +11,6 @@ import pytest
 
 from backend.core.simple_cors import is_origin_allowed
 
-
 # ── 必须放行：本地优先的全部正常入口 ─────────────────────────
 
 

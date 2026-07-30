@@ -12,7 +12,17 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from backend.agent.iteration_budget import IterationBudget
+from backend.agent.loop_base import AgentLoopBase
+from backend.agent.robust import (
+    ToolRepeatGuard,
+)
+from backend.agent.turn_retry import TurnRetryState
+from backend.core.config import settings
 from backend.database import get_db_context
+from backend.integrations.registry_tool_executor import RegistryToolExecutor
+from backend.integrations.sqlalchemy_message_store import SqlAlchemyMessageStore
+from backend.integrations.websocket_event_sink import WebSocketEventSink
 from backend.repositories import (
     ContextFlowRepository,
     CtxItemRepository,
@@ -21,32 +31,19 @@ from backend.repositories import (
     SessionRepository,
     TaskRepository,
 )
-from backend.schemas.ws import MemoryUpdated, StatusUpdate, StreamDelta
-from backend.repositories.context_repo import AsyncContextFlowRepository, AsyncCtxItemRepository
+from backend.repositories.context_repo import (
+    AsyncCtxItemRepository,
+)
 from backend.repositories.message_repo import AsyncMessageRepository
 from backend.repositories.notification_repo import AsyncNotificationRepository
 from backend.repositories.session_repo import AsyncSessionRepository
-from backend.repositories.task_repo import AsyncTaskRepository
 from backend.repositories.skill_repo import AsyncSkillRepository
+from backend.repositories.task_repo import AsyncTaskRepository
 from backend.repositories.tool_repo import AsyncToolRepository
+from backend.schemas.ws import MemoryUpdated, StatusUpdate, StreamDelta
 from backend.services.llm import LLMServiceFactory
 from backend.services.tools import ToolRegistry
 from backend.skills import SkillRegistry
-from backend.skills.dynamic import DynamicSkill
-from backend.core.config import settings
-from backend.agent.robust import (
-    is_empty_assistant_content,
-    is_transient_llm_error,
-    tool_call_signature,
-    ToolRepeatGuard,
-)
-from backend.agent.iteration_budget import IterationBudget
-from backend.agent.turn_retry import RetryKind, TurnRetryState
-from backend.agent.tool_result_contract import normalize_tool_result
-from backend.agent.loop_base import AgentLoopBase
-from backend.integrations.sqlalchemy_message_store import SqlAlchemyMessageStore
-from backend.integrations.registry_tool_executor import RegistryToolExecutor
-from backend.integrations.websocket_event_sink import WebSocketEventSink
 
 from .context import ContextManager
 
@@ -583,11 +580,11 @@ class NexusAgentLoop(AgentLoopBase):
                     try:
                         sid = arguments.get("_session_id")
                         if sid:
-                            from backend.packages.session_packages import (
-                                get_session_attached_packages,
-                            )
                             from backend.packages.loader import (
                                 resolve_attached_tool_whitelist,
+                            )
+                            from backend.packages.session_packages import (
+                                get_session_attached_packages,
                             )
 
                             attached = await get_session_attached_packages(str(sid))
@@ -1090,7 +1087,6 @@ class NexusAgentLoop(AgentLoopBase):
         # 6. 加载 Skills/Tools — 复用预判 scene_plan，避免二次漂移
         from backend.agent.tool_policy import (
             compact_capability_brief,
-            merge_tools_with_packs,
             resolve_enabled_tool_names,
         )
 
@@ -1134,7 +1130,9 @@ class NexusAgentLoop(AgentLoopBase):
             if _contact_agent and not getattr(self, "_identity_id", None):
                 try:
                     from backend.agent.grant_store import resolve_identity_id
-                    from backend.agent.steward_permission import load_identity_capabilities
+                    from backend.agent.steward_permission import (
+                        load_identity_capabilities,
+                    )
 
                     _iid = await resolve_identity_id(contact_name=_contact_agent)
                     if _iid:
@@ -1223,7 +1221,9 @@ class NexusAgentLoop(AgentLoopBase):
         # CEO/管家编排纪律：分析需求 → crew_steward.assign 给编制员工
         if _is_steward_session:
             try:
-                from backend.agent.workforce_dispatch import steward_orchestration_prompt
+                from backend.agent.workforce_dispatch import (
+                    steward_orchestration_prompt,
+                )
 
                 messages.append(
                     {
@@ -1244,7 +1244,12 @@ class NexusAgentLoop(AgentLoopBase):
         # Goal 模式：更高轮次 + 初始化 goal 状态
         goal_mode = mode == "goal"
         if goal_mode:
-            from backend.agent.goal_state import ensure_goal, get_goal, load_goal_from_db, save_goal_to_db
+            from backend.agent.goal_state import (
+                ensure_goal,
+                get_goal,
+                load_goal_from_db,
+                save_goal_to_db,
+            )
 
             goal_iters = int(getattr(settings, "agent_goal_max_iterations", 100) or 100)
             self.max_iterations = max(self.max_iterations, goal_iters)
@@ -1547,7 +1552,6 @@ class NexusAgentLoop(AgentLoopBase):
             )
             messages = _lr.messages
             accumulated_content = _lr.accumulated_content
-            accumulated_reasoning = _lr.accumulated_reasoning
             tool_calls = _lr.tool_calls
             if _lr.force_final_no_tools is not None:
                 _force_final_no_tools = _lr.force_final_no_tools
@@ -1599,7 +1603,10 @@ class NexusAgentLoop(AgentLoopBase):
                         logger.warning(f"Failed to persist assistant tool_calls message: {e}")
 
                 # 执行工具轮（phases/tool_round；行为冻结 tests/test_loop_freeze.py）
-                from backend.agent.phases.tool_round import ToolRoundState, run_tool_round
+                from backend.agent.phases.tool_round import (
+                    ToolRoundState,
+                    run_tool_round,
+                )
 
                 _tr_state = ToolRoundState(
                     messages=messages,
@@ -1932,13 +1939,13 @@ class NexusAgentLoop(AgentLoopBase):
         if not schema:
             return base
         try:
-            from jsonschema import validate, ValidationError
+            from jsonschema import ValidationError, validate
 
             validate(instance=base, schema=schema)
         except ImportError:
             pass  # jsonschema未安装时跳过校验
         except ValidationError as e:
-            raise ValueError(f"Invalid tool arguments: {e.message}")
+            raise ValueError(f"Invalid tool arguments: {e.message}") from e
         return base
 
     async def _load_tools(
@@ -2047,12 +2054,12 @@ class NexusAgentLoop(AgentLoopBase):
             filter_set = set(enabled_tools_filter) if enabled_tools_filter is not None else None
             if filter_set is None or any(n.startswith("desktop_") for n in filter_set):
                 from backend.services.desktop.tools import (
-                    DesktopScreenshotTool,
                     DesktopClickTool,
-                    DesktopTypeTool,
                     DesktopOpenAppTool,
-                    DesktopScrollTool,
                     DesktopReadFileTool,
+                    DesktopScreenshotTool,
+                    DesktopScrollTool,
+                    DesktopTypeTool,
                     DesktopWriteFileTool,
                 )
                 desktop_tools = [
@@ -2276,8 +2283,10 @@ class NexusAgentLoop(AgentLoopBase):
         await self._emit_progress("cluster_start", f"启动 {len(sub_agents)} 个角色并行生成草稿...")
         
         try:
+            from backend.agent.cluster_aggregator import (
+                AggregationStrategy,
+            )
             from backend.agent.cluster_executor import get_cluster_executor
-            from backend.agent.cluster_aggregator import SubTaskResult, AggregationStrategy
             
             # 构建子任务
             sub_tasks = []
@@ -2563,8 +2572,9 @@ class NexusAgentLoop(AgentLoopBase):
             if not b64 and not image_url:
                 return
 
-            from backend.schemas.ws import ScreenshotEvent
             from datetime import datetime, timezone
+
+            from backend.schemas.ws import ScreenshotEvent
 
             payload_b64 = ""
             if b64:

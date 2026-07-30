@@ -4,8 +4,6 @@
 比 fail-open 更隐蔽，因为控制台上显示的规则看起来完全正常。
 """
 
-import uuid
-from pathlib import Path
 
 import pytest
 

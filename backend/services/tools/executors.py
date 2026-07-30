@@ -10,9 +10,7 @@ import json
 import logging
 import os
 import re
-import shlex
 import sqlite3
-import subprocess
 import sys
 import urllib.parse
 from html import unescape
@@ -530,7 +528,10 @@ async def execute_remote_exec(config: dict[str, Any], arguments: dict[str, Any])
 
         from backend.api.routes.devices import resolve_device_by_name
         from backend.repositories.device_repo import AsyncDeviceRepository
-        from backend.services.remote.transport import RemoteAgentError, transport_from_device_config
+        from backend.services.remote.transport import (
+            RemoteAgentError,
+            transport_from_device_config,
+        )
 
         uid = user_id if isinstance(user_id, _uuid.UUID) else _uuid.UUID(str(user_id))
         repo = AsyncDeviceRepository()
@@ -822,7 +823,10 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
         logger.info("auto-background long command: %s", command[:120])
 
     if background:
-        from backend.services.tools.process_registry import start_background, format_process
+        from backend.services.tools.process_registry import (
+            format_process,
+            start_background,
+        )
 
         item = await start_background(command, cwd=cwd)
         await asyncio.sleep(0.15)
@@ -1324,7 +1328,10 @@ async def execute_search(config: dict[str, Any], arguments: dict[str, Any]) -> s
 
     if engine in ("auto", "tavily"):
         try:
-            from backend.services.tools.web_search_unified import web_search_unified, tavily_search
+            from backend.services.tools.web_search_unified import (
+                tavily_search,
+                web_search_unified,
+            )
             if engine == "tavily":
                 tv = await tavily_search(query, max_results, timeout=8.0)
                 return tv or "[Error] Tavily failed or TAVILY_API_KEY missing"
@@ -1335,13 +1342,13 @@ async def execute_search(config: dict[str, Any], arguments: dict[str, Any]) -> s
 
     try:
         from backend.services.tools.free_search import (
+            _fmt,
             free_web_search,
             search_bing_html,
             search_ddg_html,
             search_ddg_lite,
             search_ddgs,
             search_wikipedia,
-            _fmt,
         )
     except Exception as e:
         return f"[Error] free_search module unavailable: {e}"

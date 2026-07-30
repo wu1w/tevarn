@@ -27,8 +27,8 @@ def spine(tmp_path):
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/spine.db", future=True)
     SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-    from backend.models.base import Base
     import backend.models  # noqa: F401
+    from backend.models.base import Base
 
     async def _init():
         async with engine.begin() as conn:
@@ -203,7 +203,6 @@ def test_http_inbox_human_errors(spine, monkeypatch) -> None:
     """API 层：未选员工 / 空指令 / 服务未启 返回可理解 detail。"""
     from fastapi.testclient import TestClient
 
-    from backend.core.config import settings
     from backend.kernel import get_kernel, reset_kernel_for_tests
     from backend.kernel import workforce as wf_mod
     from backend.main import app

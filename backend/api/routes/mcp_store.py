@@ -9,7 +9,6 @@ MCP 商店 API：目录浏览 + 一键安装（写入 /mcp 配置）
 from __future__ import annotations
 
 from typing import Annotated, Any
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -17,7 +16,11 @@ from pydantic import BaseModel, Field
 from backend.api.dependencies import get_current_user
 from backend.repositories.mcp_server_repo import AsyncMCPServerRepository
 from backend.schemas.mcp import MCPServerCreate
-from backend.schemas.mcp_store import MCPStoreListResponse, MCPStoreSourceInfo, UnifiedMCP
+from backend.schemas.mcp_store import (
+    MCPStoreListResponse,
+    MCPStoreSourceInfo,
+    UnifiedMCP,
+)
 from backend.schemas.user import UserRead
 from backend.services.mcp_store import get_mcp_store_service
 

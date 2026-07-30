@@ -20,7 +20,7 @@ from backend.schemas.agent_profile import (
 )
 from backend.schemas.user import UserRead
 
-from ..dependencies import get_current_user, get_agent_profile_repo
+from ..dependencies import get_agent_profile_repo, get_current_user
 
 router = APIRouter(prefix="/agent-profiles", tags=["Agent Profiles"])
 

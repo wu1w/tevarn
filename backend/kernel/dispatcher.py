@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 import uuid
 from typing import Any
 
@@ -96,17 +95,19 @@ class WorkforceDispatcher:
         loop = self._workers.get(key)
         if loop is None:
             from backend.agent import NexusAgentLoop
+            from backend.kernel.ports import get_ws_manager
+
             # 直接用 repo，避免 kernel/dispatcher 依赖 FastAPI dependencies
             from backend.repositories.context_repo import (
                 AsyncContextFlowRepository,
                 AsyncCtxItemRepository,
             )
             from backend.repositories.message_repo import AsyncMessageRepository
-            from backend.repositories.notification_repo import AsyncNotificationRepository
+            from backend.repositories.notification_repo import (
+                AsyncNotificationRepository,
+            )
             from backend.repositories.session_repo import AsyncSessionRepository
             from backend.repositories.task_repo import AsyncTaskRepository
-
-            from backend.kernel.ports import get_ws_manager
 
             loop = NexusAgentLoop(
                 session_repo=AsyncSessionRepository(),
@@ -328,7 +329,9 @@ class WorkforceDispatcher:
     ) -> None:
         """工单完成/失败时通知主人（单用户取 identity.user_id 或默认 admin）。"""
         try:
-            from backend.repositories.notification_repo import AsyncNotificationRepository
+            from backend.repositories.notification_repo import (
+                AsyncNotificationRepository,
+            )
             from backend.repositories.user_repo import AsyncUserRepository
 
             uid = getattr(identity, "user_id", None) if identity is not None else None
@@ -421,6 +424,7 @@ class WorkforceDispatcher:
         # 1) 项目组
         try:
             from sqlalchemy import select
+
             from backend.database import AsyncSessionLocal
             from backend.models.project_group import ProjectGroup
 
@@ -509,7 +513,9 @@ class WorkforceDispatcher:
         pg_id = batch_key[3:]
         try:
             import time as _time
+
             from sqlalchemy import select
+
             from backend.database import AsyncSessionLocal
             from backend.models.project_group import ProjectGroup
 
@@ -549,9 +555,10 @@ class WorkforceDispatcher:
             return None
         try:
             from sqlalchemy import select
+
+            from backend.agent.workforce_dispatch import is_steward_contact
             from backend.database import AsyncSessionLocal
             from backend.models.session import Session
-            from backend.agent.workforce_dispatch import is_steward_contact
 
             async with AsyncSessionLocal() as session:
                 rows = list(
@@ -701,7 +708,9 @@ class WorkforceDispatcher:
                 AsyncCtxItemRepository,
             )
             from backend.repositories.message_repo import AsyncMessageRepository
-            from backend.repositories.notification_repo import AsyncNotificationRepository
+            from backend.repositories.notification_repo import (
+                AsyncNotificationRepository,
+            )
             from backend.repositories.session_repo import AsyncSessionRepository
             from backend.repositories.task_repo import AsyncTaskRepository
 
@@ -1119,8 +1128,9 @@ class WorkforceDispatcher:
     async def _workforce_session_id(self, ident: Any) -> uuid.UUID:
         """身份专属 session（续作载体）：首次创建，之后复用——
         同一身份的历史对话都在一个 session 里（Episodic 上下文）。"""
-        from backend.models.agent_identity import AgentIdentity
         from sqlalchemy import select
+
+        from backend.models.agent_identity import AgentIdentity
 
         existing = (ident.meta or {}).get("workforce_session_id")
         if existing:

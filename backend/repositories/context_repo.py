@@ -8,7 +8,7 @@ from abc import abstractmethod
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import and_, desc, func, or_, select
+from sqlalchemy import and_, desc, or_, select
 
 from backend.models.context import ContextFlow, CtxItem, ItemKind
 from backend.schemas.context import ContextFlowRead, CtxItemRead

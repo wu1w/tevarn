@@ -16,8 +16,8 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from httpx import ASGITransport, AsyncClient
 from asgi_lifespan import LifespanManager
+from httpx import ASGITransport, AsyncClient
 
 from backend.main import app
 

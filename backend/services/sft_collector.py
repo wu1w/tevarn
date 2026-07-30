@@ -172,7 +172,7 @@ def format_sample_md(
             ok = t.get("ok")
             lines.append(f"{i}. **tool** `{name}` ok={ok}")
             lines.append(f"   - args: `{args}`")
-            lines.append(f"   - result: ")
+            lines.append("   - result: ")
             lines.append("```")
             lines.append(result)
             lines.append("```")

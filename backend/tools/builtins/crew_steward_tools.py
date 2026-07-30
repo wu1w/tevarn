@@ -691,7 +691,7 @@ class CrewStewardTool(BaseTool):
                 warn_prefix = format_warn_message(risk)
             elif risk.severity == "block" and force:
                 warn_prefix = (
-                    f"（提示·已 force 跳过 block："
+                    "（提示·已 force 跳过 block："
                     + "; ".join(risk.reasons[:3])
                     + "）\n"
                 )
@@ -853,6 +853,7 @@ class CrewStewardTool(BaseTool):
     ) -> dict[str, Any]:
         """同名 open 组合并成员/任务；否则新建。"""
         from sqlalchemy import select
+
         from backend.database import AsyncSessionLocal
         from backend.models.project_group import ProjectGroup
 
@@ -1003,6 +1004,7 @@ class CrewStewardTool(BaseTool):
         if project_title:
             try:
                 from sqlalchemy import select
+
                 from backend.database import AsyncSessionLocal
                 from backend.models.project_group import ProjectGroup
 

@@ -11,9 +11,6 @@ import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-import pytest
-
-
 # ═══════════ 1. 契约解析 ═══════════
 
 def test_parse_contract_full():

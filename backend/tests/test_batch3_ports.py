@@ -82,7 +82,11 @@ def test_nexus_inherits_base():
 def test_takton_code_compat_import():
     # monorepo: backend available（takton-code 独立 repo，无 checkout 时 skip）
     pytest.importorskip("takton_code.compat.backend_core", reason="takton-code repo not checked out")
-    from takton_code.compat.backend_core import HAS_BACKEND, DoomLoopGuard, PermissionGate
+    from takton_code.compat.backend_core import (
+        HAS_BACKEND,
+        DoomLoopGuard,
+        PermissionGate,
+    )
 
     assert HAS_BACKEND is True
     g = DoomLoopGuard(threshold=2)

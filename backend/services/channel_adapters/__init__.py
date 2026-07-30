@@ -5,14 +5,14 @@
 """
 
 from .base import BaseChannelAdapter
-from .qqbot import QQBotAdapter
-from .telegram import TelegramAdapter
-from .discord import DiscordAdapter
-from .wecom import WeComAdapter
-from .slack import SlackAdapter
-from .feishu import FeishuAdapter
 from .dingtalk import DingTalkAdapter
+from .discord import DiscordAdapter
+from .feishu import FeishuAdapter
+from .qqbot import QQBotAdapter
 from .signal import SignalAdapter
+from .slack import SlackAdapter
+from .telegram import TelegramAdapter
+from .wecom import WeComAdapter
 
 # 平台 → 适配器类 映射
 ADAPTER_MAP = {

@@ -9,12 +9,9 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
-import aiohttp
-
-from .http_session import ensure_session, request_timeout, stream_timeout
-
 from backend.core.config import settings
 
+from .http_session import ensure_session, request_timeout, stream_timeout
 from .interface import LLMService
 from .schemas import LLMChunk, LLMResponse, ToolCall
 

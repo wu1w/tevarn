@@ -15,7 +15,6 @@ from backend.services.llm.param_sanitize import (
     sanitize_temperature,
 )
 
-
 # ── TokenMeter 构造健壮性 ────────────────────────────────────
 
 def test_meter_clamps_garbage_context_window():

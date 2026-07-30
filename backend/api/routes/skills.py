@@ -3,7 +3,6 @@ Skill 路由
 技能管理：内置 Skill、自定义 Skill、社区下载
 """
 
-import json
 import logging
 import uuid
 from typing import Annotated, Any
@@ -17,7 +16,6 @@ logger = logging.getLogger(__name__)
 from backend.core.config import settings
 from backend.core.net_safety import UnsafeURLError, validate_public_url
 from backend.repositories import SkillRepository
-from backend.repositories.skill_repo import AsyncSkillRepository
 from backend.schemas.skill import (
     CommunitySkillImport,
     SkillCreate,
@@ -45,15 +43,15 @@ async def list_skills(
     enabled_only: bool = Query(False, description="仅启用；默认列出全部以便管理进化草稿"),
 ):
     """列出 Skill（内置 + 自定义 + 进化；默认含未启用草稿）"""
-    session_repo = repo
     if enabled_only and hasattr(repo, "get_active_skills"):
         db_skills = await repo.get_active_skills()
     else:
         # all rows
         try:
             from sqlalchemy import select
-            from backend.models.skill import Skill
+
             from backend.database import get_db_context
+            from backend.models.skill import Skill
 
             async with get_db_context() as session:
                 result = await session.execute(select(Skill).order_by(Skill.name))
@@ -159,8 +157,10 @@ async def delete_skill(
     evo_deleted = 0
     if is_evolved:
         try:
-            from backend.evolution.skill_sync import remove_evolution_assets_for_skill_name
             from backend.evolution.runtime_tools import unregister_evolved_tool
+            from backend.evolution.skill_sync import (
+                remove_evolution_assets_for_skill_name,
+            )
 
             evo_deleted = await remove_evolution_assets_for_skill_name(skill_name)
             unregister_evolved_tool(skill_name)

@@ -6,14 +6,12 @@ import ast
 import inspect
 import uuid
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from backend.api.routes import sub_agents as sub_agents_mod
 from backend.agent.loop import NexusAgentLoop
-
+from backend.api.routes import sub_agents as sub_agents_mod
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -97,11 +95,15 @@ async def test_build_inventory_from_catalog_shape():
 
 
 def test_frontend_cluster_wiring_markers():
+    # Frontend was refactored: chat + cluster mode moved from app/page.tsx (now a
+    # dashboard) to app/chat/page.tsx; the old Sidebar.tsx was replaced by IconRail.tsx
+    # (primary nav), and sub-agent management merged into the /agents roster (/profiles
+    # is now a legacy notice page). These markers track the current locations.
     checks = {
         "frontend/components/chat/MessageInput.tsx": ["ClusterModePanel", "cluster", "subAgentIds"],
         "frontend/lib/ws.ts": ["sub_agent_ids"],
-        "frontend/app/page.tsx": ["subAgentIds", "cluster"],
-        "frontend/components/layout/Sidebar.tsx": ["/profiles"],
+        "frontend/app/chat/page.tsx": ["subAgentIds", "cluster"],
+        "frontend/components/layout/IconRail.tsx": ["/agents", "/chat"],
         "frontend/app/profiles/page.tsx": ["SubAgentPanel"],
         "frontend/components/subagent/SubAgentPanel.tsx": ["任务名称", "ClusterModePanel"],
     }

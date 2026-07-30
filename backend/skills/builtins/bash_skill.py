@@ -4,8 +4,8 @@
 仅真正危险的操作触发前端弹窗确认。危险检测复用 executors 的统一实现。
 """
 
-from ..base import BaseSkill
 from ...services.tools.executors import execute_command
+from ..base import BaseSkill
 
 
 class BashSkill(BaseSkill):

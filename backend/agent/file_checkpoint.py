@@ -5,7 +5,6 @@ Copies existing files into ``.takton/checkpoints/<timestamp>/...`` under project
 from __future__ import annotations
 
 import logging
-import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,7 +15,9 @@ logger = logging.getLogger(__name__)
 
 def _project_root() -> Path:
     try:
-        from backend.tools.permissions import detect_project_root, resolve_agent_workspace_root
+        from backend.tools.permissions import (
+            resolve_agent_workspace_root,
+        )
 
         return Path(resolve_agent_workspace_root())
     except Exception:

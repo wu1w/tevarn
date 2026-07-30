@@ -10,17 +10,20 @@ Context 路由
 """
 
 import uuid
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.core.unit_of_work import UnitOfWork
-from backend.repositories import CtxItemRepository, ContextFlowRepository, SessionRepository
+from backend.repositories import (
+    ContextFlowRepository,
+    CtxItemRepository,
+    SessionRepository,
+)
 from backend.schemas.context import (
     ContextFlowCreate,
     ContextFlowRead,
     ContextOptimizeResult,
-    ContextSearchQuery,
     ContextStats,
     CtxItemCreate,
     CtxItemPinToggle,
@@ -29,7 +32,12 @@ from backend.schemas.context import (
 )
 from backend.schemas.user import UserRead
 
-from ..dependencies import get_current_user, get_ctx_item_repo, get_context_flow_repo, get_session_repo, require_admin
+from ..dependencies import (
+    get_context_flow_repo,
+    get_ctx_item_repo,
+    get_current_user,
+    get_session_repo,
+)
 
 router = APIRouter(prefix="/context", tags=["Context"])
 

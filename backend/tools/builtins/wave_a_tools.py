@@ -13,7 +13,6 @@ import base64
 import json
 import logging
 import os
-import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -463,7 +462,7 @@ class ImageGenerateTool(BaseTool):
 
         # 3) Pillow placeholder
         try:
-            from PIL import Image, ImageDraw, ImageFont
+            from PIL import Image, ImageDraw
 
             img = Image.new("RGB", (w, h), color=(36, 28, 58))
             draw = ImageDraw.Draw(img)

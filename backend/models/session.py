@@ -7,10 +7,10 @@ from datetime import datetime
 from enum import Enum as PyEnum
 from typing import Any, Optional
 
-from sqlalchemy import JSON, ForeignKey, String, Text
+from sqlalchemy import JSON, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base, TimestampMixin, UUIDMixin, utc_now
+from .base import Base, TimestampMixin, UUIDMixin
 
 
 class SessionStatus(str, PyEnum):

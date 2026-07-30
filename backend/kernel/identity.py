@@ -14,7 +14,6 @@
 from __future__ import annotations
 
 import logging
-import time
 import uuid as _uuid
 from typing import Any
 
@@ -343,6 +342,8 @@ class IdentityRegistry:
             from backend.services.rag.capability import use_vector_rag
             from backend.services.rag.identity_index_queue import (
                 enqueue as _enqueue_index,
+            )
+            from backend.services.rag.identity_index_queue import (
                 flush_pending as _flush_index,
             )
 
@@ -376,7 +377,9 @@ class IdentityRegistry:
         except Exception as e:
             logger.debug("identity memory 向量索引跳过: %s", e)
             try:
-                from backend.services.rag.identity_index_queue import enqueue as _enqueue_index
+                from backend.services.rag.identity_index_queue import (
+                    enqueue as _enqueue_index,
+                )
 
                 _enqueue_index(
                     entry_id=str(entry.id),
@@ -427,7 +430,9 @@ class IdentityRegistry:
 
             if use_vector_rag():
                 from backend.services.rag.factory import RAGServiceFactory
-                from backend.services.rag.identity_index_queue import enqueue as _enqueue_index
+                from backend.services.rag.identity_index_queue import (
+                    enqueue as _enqueue_index,
+                )
 
                 rag = RAGServiceFactory.get_service()
                 deleted = await rag.delete_identity_memory(str(entry_id))
@@ -444,7 +449,9 @@ class IdentityRegistry:
         except Exception as e:
             logger.debug("identity memory supersede 向量同步跳过: %s", e)
             try:
-                from backend.services.rag.identity_index_queue import enqueue as _enqueue_index
+                from backend.services.rag.identity_index_queue import (
+                    enqueue as _enqueue_index,
+                )
 
                 _enqueue_index(
                     entry_id=str(entry_id),

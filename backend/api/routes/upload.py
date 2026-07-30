@@ -7,10 +7,11 @@ import os
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
 from backend.core.config import settings
 from backend.schemas.user import UserRead
+
 from ..dependencies import get_current_user
 
 router = APIRouter(prefix="/upload", tags=["Upload"])

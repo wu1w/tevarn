@@ -7,11 +7,16 @@ import uuid
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 
 from backend.core.unit_of_work import UnitOfWork
-from backend.repositories import CtxItemRepository, SessionRepository, WikiEntityRepository, WikiRelationRepository
+from backend.repositories import (
+    CtxItemRepository,
+    SessionRepository,
+    WikiEntityRepository,
+    WikiRelationRepository,
+)
 from backend.schemas.user import UserRead
 from backend.schemas.wiki import (
     WikiEntityCreate,
@@ -23,14 +28,14 @@ from backend.schemas.wiki import (
     WikiRelationCreate,
     WikiRelationRead,
 )
-from backend.services.llm import LLMService, LLMServiceFactory
+from backend.services.llm import LLMServiceFactory
 from backend.services.wiki.extractor import extract_and_merge
-from backend.services.wiki.schema import WikiExtraction, WikiSchema
+from backend.services.wiki.schema import WikiSchema
 from backend.services.wiki.seed import WIKI_SEED_ENTITIES, WIKI_SEED_RELATIONS
 
 from ..dependencies import (
-    get_current_user,
     get_ctx_item_repo,
+    get_current_user,
     get_session_repo,
     get_wiki_entity_repo,
     get_wiki_relation_repo,
@@ -364,7 +369,7 @@ async def import_wiki(
         try:
             extracted = json.loads(raw_material)
         except json.JSONDecodeError as e:
-            raise HTTPException(status_code=400, detail=f"Dry-run content is not valid JSON: {e}")
+            raise HTTPException(status_code=400, detail=f"Dry-run content is not valid JSON: {e}") from e
     else:
         llm = LLMServiceFactory.get_service()
         prompt = _build_extraction_prompt(raw_material, request.source)
@@ -375,9 +380,9 @@ async def import_wiki(
             ])
             extracted = _extract_llm_json(response.content)
         except json.JSONDecodeError as e:
-            raise HTTPException(status_code=502, detail=f"LLM returned invalid JSON: {e}")
+            raise HTTPException(status_code=502, detail=f"LLM returned invalid JSON: {e}") from e
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"LLM extraction failed: {e}")
+            raise HTTPException(status_code=502, detail=f"LLM extraction failed: {e}") from e
 
     raw_entities = extracted.get("entities", [])
     raw_relations = extracted.get("relations", [])

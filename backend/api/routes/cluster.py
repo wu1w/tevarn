@@ -4,16 +4,20 @@ Cluster API - 集群模式 API 路由
 """
 
 import asyncio
-import json
 import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from pydantic import BaseModel, Field
-
-from backend.api.dependencies import get_current_user
 
 from backend.agent.cluster_executor import (
     AggregationStrategy,
@@ -25,10 +29,8 @@ from backend.agent.cluster_executor import (
 from backend.agent.cluster_protocol import (
     ClusterPlan,
     ClusterProtocol,
-    TaskCard,
-    create_cluster_plan,
-    create_task_card,
 )
+from backend.api.dependencies import get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -325,8 +327,6 @@ async def execute_cluster(request: ClusterExecuteRequest):
     }
     ```
     """
-    task_id = str(uuid.uuid4())
-    
     # 转换请求为执行器格式
     sub_tasks = [
         {
@@ -414,7 +414,7 @@ async def decompose_task(request: TaskDecomposeRequest):
         raise
     except Exception as e:
         logger.error(f"Task decomposition failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/cluster/execute-plan", response_model=dict)
@@ -558,7 +558,7 @@ async def cancel_cluster(task_id: str):
         except HTTPException:
             raise
         except Exception:
-            raise HTTPException(status_code=404, detail="Task not found")
+            raise HTTPException(status_code=404, detail="Task not found") from None
 
     # 1) 请求取消标志 + cancel 后台 task
     if running is not None:

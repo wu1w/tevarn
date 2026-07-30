@@ -1,7 +1,7 @@
 """Workspace API — 项目文件夹绑定 / 树 / 终端执行。"""
 from __future__ import annotations
 
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -71,7 +71,7 @@ async def workspace_tree(
     try:
         target = ws.resolve_under_root(root, path)
     except PermissionError:
-        raise HTTPException(status_code=403, detail="Access denied")
+        raise HTTPException(status_code=403, detail="Access denied") from None
     if not target.is_dir():
         raise HTTPException(status_code=404, detail="Directory not found")
     return ws.build_tree(target, root, max_depth=depth)

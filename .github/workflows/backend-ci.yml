@@ -29,6 +29,12 @@ jobs:
           python -m pip install -U pip
           pip install -r requirements.txt -r backend/requirements-dev.txt
 
+      - name: Ruff lint (gate)
+        run: python -m ruff check backend tests
+
+      - name: Mypy type-check (gate, typed core only)
+        run: python -m mypy
+
       - name: Pytest collection sanity (fail fast on import/collect errors)
         run: python -m pytest backend/tests tests --co -q
 

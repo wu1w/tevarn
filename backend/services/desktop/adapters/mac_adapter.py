@@ -25,10 +25,25 @@ class MacAdapter:
             return
         
         try:
-            from backend.mcp_hub.client import MCPClient
-            
-            self._mcp_client = MCPClient()
-            await self._mcp_client.connect("macos-mcp")
+            import os
+
+            from backend.mcp_hub.client import MCPClient, MCPServerConfig
+
+            mcp_command = os.environ.get("MACOS_MCP_COMMAND", "macos-mcp")
+            mcp_args = (
+                os.environ.get("MACOS_MCP_ARGS", "").split()
+                if os.environ.get("MACOS_MCP_ARGS")
+                else []
+            )
+            config = MCPServerConfig(
+                name="macos-mcp",
+                transport="stdio",
+                command=mcp_command,
+                args=mcp_args,
+            )
+
+            self._mcp_client = MCPClient(config)
+            await self._mcp_client.connect()
             self._initialized = True
             logger.info("Mac adapter initialized with MCP")
             
@@ -248,10 +263,10 @@ class MacAdapter:
     async def _fallback_screenshot(self) -> DesktopOperationResult:
         """降级截图方案"""
         try:
-            import subprocess
             import base64
-            import tempfile
             import os
+            import subprocess
+            import tempfile
             
             # 使用 screencapture 命令
             with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:

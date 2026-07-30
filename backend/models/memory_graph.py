@@ -10,9 +10,9 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any, Optional
+from typing import Optional
 
-from sqlalchemy import ForeignKey, Integer, String, Text, JSON, Float
+from sqlalchemy import JSON, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base, TimestampMixin, UUIDMixin

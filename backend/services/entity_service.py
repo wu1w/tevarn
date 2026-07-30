@@ -11,8 +11,6 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select
-
 from backend.database import get_db_context
 from backend.repositories.entity_repo import EntityRepository
 
@@ -53,7 +51,7 @@ class EntityService:
                 entities.append({
                     "name": name,
                     "entity_type": "person",
-                    "description": f"在对话中被提及",
+                    "description": "在对话中被提及",
                     "confidence": 0.8,
                 })
 

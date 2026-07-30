@@ -7,8 +7,7 @@ HTTP 端点自适应：Embedding / Reranker / Qdrant 多主流路径探测。
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
-from urllib.parse import urlparse, urlunparse
+from typing import Any
 
 import aiohttp
 

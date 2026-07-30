@@ -64,7 +64,7 @@ def test_t2_skill_exec_action_mediated(kernel: AgentKernel) -> None:
         with pytest.raises(KernelPermissionError):
             await kernel.mediate(proc.id, "skill_exec", "rm_rf_world")
         # 事件带 action 语义
-        ev = [e for e in kernel.events(kind="mediation")]
+        ev = list(kernel.events(kind="mediation"))
         assert {e.detail["action"] for e in ev} == {"skill_exec"}
 
     asyncio.run(go())

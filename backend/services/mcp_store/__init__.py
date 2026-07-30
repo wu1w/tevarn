@@ -12,7 +12,11 @@ from typing import Any
 
 import httpx
 
-from backend.schemas.mcp_store import MCPStoreListResponse, MCPStoreSourceInfo, UnifiedMCP
+from backend.schemas.mcp_store import (
+    MCPStoreListResponse,
+    MCPStoreSourceInfo,
+    UnifiedMCP,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -404,7 +408,6 @@ class MCPStoreService:
         offset: int = 0,
     ) -> MCPStoreListResponse:
         search = (search or "").strip()
-        tasks = []
         want_curated = source in (None, "", "all", "curated")
         want_official = source in (None, "", "all", "official")
 
