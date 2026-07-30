@@ -5,7 +5,6 @@ import uuid
 
 import pytest
 
-
 # ── lifecycle 纯函数 ──────────────────────────────────────────
 
 
