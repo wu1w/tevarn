@@ -39,10 +39,12 @@ class CrewStewardTool(BaseTool):
                 "CEO 大管家工具（编制真源）。action：\n"
                 "list / hire / assign / status / results / open_project /\n"
                 "grant_caps / revoke_caps / set_caps / pending_grants /\n"
-                "set_budget（改员工档案默认预算）/ budgets（查看预算台账）。\n"
+                "set_budget（改员工档案默认预算）/ budgets（台账+在跑进程用量）/\n"
+                "top_up（运行中给在跑进程追加 token，动态加预算，不杀进程）。\n"
                 "预算：assign 可带 token_budget=本单硬顶（优先于自动抬升）；"
                 "0=本单不限；大体检建议 200000–300000 或拆单。"
-                "撞 Budget Exceeded 时：set_budget 抬档案 或 assign 时给更高 token_budget 再 requeue。"
+                "撞 Budget Exceeded 或用量>70%：优先 top_up name=… amount=300000；"
+                "并 set_budget 抬档案默认，避免下一单再顶死。"
             ),
             parameters={
                 "type": "object",
@@ -62,11 +64,12 @@ class CrewStewardTool(BaseTool):
                             "pending_grants",
                             "set_budget",
                             "budgets",
+                            "top_up",
                         ],
                         "description": (
                             "list|hire|assign|status|results|open_project|"
                             "grant_caps|revoke_caps|set_caps|pending_grants|"
-                            "set_budget|budgets"
+                            "set_budget|budgets|top_up"
                         ),
                     },
                     "name": {
@@ -98,8 +101,21 @@ class CrewStewardTool(BaseTool):
                         "description": (
                             "hire：档案默认预算（默认 100000）；"
                             "assign：本单预算硬顶（优先于自动抬升，0=本单不限）；"
-                            "set_budget：写入员工档案默认预算（0=档案不限）"
+                            "set_budget：写入员工档案默认预算（0=档案不限）；"
+                            "top_up：本轮追加额度（同 amount）"
                         ),
+                    },
+                    "amount": {
+                        "type": "integer",
+                        "description": "top_up：追加 token 数量（正整数，建议 200000–500000）",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "top_up / set_budget：原因备注",
+                    },
+                    "process_id": {
+                        "type": "string",
+                        "description": "top_up：可选，指定 kernel 进程 id；默认抬该员工全部在跑进程",
                     },
                     "instruction": {
                         "type": "string",
@@ -172,13 +188,14 @@ class CrewStewardTool(BaseTool):
             "pending_grants",
             "set_budget",
             "budgets",
+            "top_up",
         }
         if action not in allowed:
             return (
                 f"[Error] 非法 action={action!r}。"
                 "只允许 list|hire|assign|status|results|open_project|"
                 "grant_caps|revoke_caps|set_caps|pending_grants|"
-                "set_budget|budgets。"
+                "set_budget|budgets|top_up。"
             )
         try:
             if action == "list":
@@ -203,6 +220,8 @@ class CrewStewardTool(BaseTool):
                 return await self._set_budget(kwargs)
             if action == "budgets":
                 return await self._budgets(kwargs)
+            if action == "top_up":
+                return await self._top_up(kwargs)
             return await self._status(kwargs)
         except Exception as e:
             logger.exception("crew_steward failed")
@@ -349,12 +368,132 @@ class CrewStewardTool(BaseTool):
                                 f"instr={(it.instruction or '')[:50]!r}"
                             )
 
+        # 在跑进程实时用量（CEO 动态加预算依据）
+        try:
+            from backend.kernel import get_kernel
+
+            kernel = get_kernel()
+            live = list(kernel.list_processes(include_terminal=False) or [])
+            lines.append("在跑进程（live）：")
+            if not live:
+                lines.append("  （当前无非终态进程）")
+            for p in live:
+                used = int(getattr(p, "tokens_used", 0) or 0)
+                bud = getattr(p, "token_budget", None)
+                if bud is None:
+                    pct = "∞"
+                    btxt = "不限"
+                else:
+                    bud_i = int(bud)
+                    pct = f"{(100.0 * used / bud_i):.0f}%" if bud_i > 0 else "?"
+                    btxt = str(bud_i)
+                warn = ""
+                if bud is not None and int(bud) > 0 and used / int(bud) >= 0.7:
+                    warn = " ⚠≥70% 建议 top_up"
+                lines.append(
+                    f"  · {p.identity} pid={p.id[:8]} state={p.state} "
+                    f"used={used}/{btxt} ({pct}){warn}"
+                )
+        except Exception as e:
+            lines.append(f"  （live 进程读取失败: {e}）")
+
         lines.append(
             "用法：set_budget name=工程师 token_budget=250000；"
+            "top_up name=工程师 amount=300000 reason=长任务续航；"
             "assign name=… instruction=… token_budget=300000；"
             "Budget 失败后 requeue=true 并抬 token_budget。"
         )
         return "\n".join(lines)
+
+    async def _top_up(self, kwargs: dict[str, Any]) -> str:
+        """运行中给在跑进程追加预算（CEO 动态加预算，不杀进程）。"""
+        from backend.kernel import get_kernel
+
+        raw_amt = kwargs.get("amount", kwargs.get("token_budget"))
+        if raw_amt is None:
+            return "[Error] top_up 需要 amount（或 token_budget）正整数"
+        try:
+            from backend.agent.workforce_budget import clamp_ceo_budget
+
+            amount = clamp_ceo_budget(int(raw_amt))
+        except Exception as e:
+            return f"[Error] top_up amount 无效: {e}"
+        if amount is None or int(amount) <= 0:
+            return "[Error] top_up amount 必须为正整数（不可 0=不限，请用大数或多次 top_up）"
+        amount = int(amount)
+        reason = str(kwargs.get("reason") or "ceo dynamic top_up")[:200]
+        kernel = get_kernel()
+        pid = str(kwargs.get("process_id") or "").strip()
+        results: list[str] = []
+
+        if pid:
+            try:
+                r = kernel.top_up_budget(pid, amount, by="ceo:crew_steward", reason=reason)
+                results.append(
+                    f"pid={pid[:8]} budget={r.get('token_budget')} "
+                    f"used={r.get('tokens_used')} remaining={r.get('budget_remaining')}"
+                )
+            except Exception as e:
+                return f"[Error] top_up 进程 {pid[:8]}: {e}"
+            return f"✅ 已 top_up +{amount}：{'; '.join(results)}（reason={reason}）"
+
+        # 按员工：抬该 identity 下全部在跑进程
+        try:
+            ident = await self._resolve_identity(kwargs)
+        except Exception as e:
+            return (
+                f"[Error] top_up 需要 name=员工名 或 identity_id=… 或 process_id=…（{e}）"
+            )
+        keys = [f"wf:{ident.id}", str(ident.id), ident.name]
+        # 编制进程 identity 键一般为 wf:{uuid}
+        targets = []
+        for k in keys:
+            targets.extend(kernel.live_processes_for_identity(k))
+        # 去重
+        seen: set[str] = set()
+        uniq = []
+        for p in targets:
+            if p.id not in seen:
+                seen.add(p.id)
+                uniq.append(p)
+        if not uniq:
+            # 宽松匹配：identity 字符串包含 uuid
+            for p in kernel.list_processes(include_terminal=False):
+                if str(ident.id) in str(p.identity):
+                    if p.id not in seen:
+                        seen.add(p.id)
+                        uniq.append(p)
+        if not uniq:
+            return (
+                f"「{ident.name}」当前无在跑进程，无需 top_up。"
+                f"可用 budgets 查看；新工单请 set_budget / assign.token_budget。"
+            )
+        for p in uniq:
+            try:
+                r = kernel.top_up_budget(
+                    p.id, amount, by="ceo:crew_steward", reason=reason
+                )
+                results.append(
+                    f"{p.identity} pid={p.id[:8]} → budget={r.get('token_budget')} "
+                    f"used={r.get('tokens_used')} rem={r.get('budget_remaining')}"
+                )
+            except Exception as e:
+                results.append(f"{p.identity} pid={p.id[:8]} FAIL: {e}")
+        # 顺带抬档案默认，减少下一单再顶
+        try:
+            reg = self._registry()
+            cur = int(getattr(ident, "default_token_budget", 0) or 0)
+            if cur != 0:  # 0=不限则不动
+                raised = max(cur, cur + amount // 2)
+                await reg.update_profile(
+                    ident.id,
+                    default_token_budget=raised,
+                    by="ceo:top_up",
+                )
+                results.append(f"档案默认预算 {cur} → {raised}")
+        except Exception as e:
+            results.append(f"档案预算未改: {e}")
+        return f"✅ top_up +{amount}（{ident.name}）：\n" + "\n".join(f"  · {x}" for x in results)
 
     async def _hire(self, kwargs: dict[str, Any]) -> str:
         name = str(kwargs.get("name") or "").strip()
