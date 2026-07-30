@@ -59,7 +59,15 @@ jobs:
           TAKTON_AGENT_KERNEL_PERSISTENCE: "false"
           TAKTON_JWT_SECRET: "ci-jwt-secret-not-for-production-use-32b"
           TAKTON_API_KEY: "ci-api-key-not-for-production-use-32bxxxx"
-        run: python -m pytest backend/tests -q --tb=line
+        run: python -m pytest backend/tests -q --tb=short --junitxml=pytest-report.xml
+
+      - name: Upload pytest report (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-report
+          path: pytest-report.xml
+          if-no-files-found: ignore
 
       - name: Alembic sanity (env.py loads, baseline resolvable)
         run: |

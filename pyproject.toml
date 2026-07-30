@@ -70,6 +70,9 @@ filterwarnings = [
     "ignore::pytest.PytestUnhandledThreadExceptionWarning",
     "ignore::DeprecationWarning:fastapi.*",
 ]
+markers = [
+    "desktop: manual desktop integration (needs display; TAKTON_RUN_DESKTOP_TESTS=1)",
+]
 
 # ── Ruff：CI 门禁用的 linter ────────────────────────────────────────
 # 规则集聚焦“拓真 bug + 导入卫生”，不引入纯风格噪音（E/W 全家），
