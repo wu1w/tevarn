@@ -136,6 +136,24 @@ class InboxService:
 
         busy = {_uuid.UUID(str(x)) for x in (busy_identity_ids or set())}
         async with self._session_factory() as session:
+            # 防双派：DB 层已 claimed 的身份也不可再领新单（多 worker / busy 集合丢失兜底）
+            claimed_idents: set[_uuid.UUID] = set()
+            try:
+                claimed_rows = (
+                    (
+                        await session.execute(
+                            select(AgentInboxItem.identity_id).where(
+                                AgentInboxItem.status == "claimed"
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                claimed_idents = {x for x in claimed_rows if x is not None}
+            except Exception:
+                claimed_idents = set()
+
             candidates = (
                 (
                     await session.execute(
@@ -150,6 +168,8 @@ class InboxService:
             )
             for item in candidates:
                 if item.identity_id in busy:
+                    continue
+                if item.identity_id in claimed_idents:
                     continue
                 # 身份仍 active 才派发；suspended 的挂起等待（不丢）
                 ident = (

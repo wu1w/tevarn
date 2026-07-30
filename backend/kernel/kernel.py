@@ -397,6 +397,119 @@ class AgentKernel:
             return list(self._processes.values())
         return [p for p in self._processes.values() if not p.is_terminal]
 
+    def live_processes_for_identity(self, identity: str) -> list[AgentProcess]:
+        """非终态进程，按 identity 键精确匹配（如 wf:{uuid}）。"""
+        key = str(identity or "").strip()
+        if not key:
+            return []
+        return [p for p in self.list_processes(include_terminal=False) if p.identity == key]
+
+    async def retire_live_identity_processes(
+        self,
+        identity: str,
+        *,
+        reason: str = "superseded by new job",
+        except_process_id: str | None = None,
+    ) -> list[str]:
+        """编制防双跑：结束同 identity 下所有非终态进程。
+
+        返回被 kill 的 process_id 列表。
+        """
+        killed: list[str] = []
+        for p in self.live_processes_for_identity(identity):
+            if except_process_id and p.id == except_process_id:
+                continue
+            try:
+                await self.end_process(p.id, state="killed", reason=reason)
+                killed.append(p.id)
+                logger.warning(
+                    "retired stale process %s identity=%s reason=%s",
+                    p.id[:8],
+                    identity[:24],
+                    reason[:80],
+                )
+            except Exception as e:
+                logger.warning("retire process %s failed: %s", p.id[:8], e)
+        return killed
+
+    def top_up_budget(
+        self,
+        process_id: str,
+        amount: int,
+        *,
+        by: str = "ceo",
+        reason: str = "",
+    ) -> dict[str, Any]:
+        """运行中追加 token 预算（CEO 动态加预算）。
+
+        - token_budget is None（不限）→ 幂等返回 unlimited
+        - 终态进程 → 拒绝
+        - amount 必须为正
+        下一刀 charge_tokens 立即使用新上限。
+        """
+        amount = int(amount)
+        if amount <= 0:
+            raise ValueError("top_up amount 必须为正整数")
+        proc = self._resolve_process(process_id)
+        if proc is None:
+            raise ValueError(f"未知进程 {process_id}")
+        if proc.is_terminal:
+            raise ValueError(f"进程已终态（{proc.state}），不可追加预算")
+        if proc.token_budget is None:
+            return {
+                "ok": True,
+                "unlimited": True,
+                "process_id": proc.id,
+                "token_budget": None,
+                "tokens_used": proc.tokens_used,
+                "budget_remaining": None,
+            }
+        old = int(proc.token_budget)
+        new_b = old + amount
+        proc.token_budget = new_b
+        proc.meta = dict(proc.meta or {})
+        proc.meta["_sync_at"] = time.time()
+        tops = list(proc.meta.get("budget_top_ups") or [])
+        tops.append(
+            {
+                "amount": amount,
+                "by": by,
+                "reason": (reason or "")[:200],
+                "at": time.time(),
+                "from": old,
+                "to": new_b,
+            }
+        )
+        proc.meta["budget_top_ups"] = tops[-20:]
+        if self._shared is not None:
+            try:
+                self._shared.set_process_fields(proc.id, token_budget=new_b)
+            except Exception as e:
+                logger.debug("redis top_up budget: %s", e)
+        self._persist_process(proc)
+        self._emit(
+            "budget_top_up",
+            proc.id,
+            {
+                "from": old,
+                "to": new_b,
+                "amount": amount,
+                "by": by,
+                "reason": (reason or "")[:200],
+                "tokens_used": proc.tokens_used,
+            },
+        )
+        return {
+            "ok": True,
+            "unlimited": False,
+            "process_id": proc.id,
+            "token_budget": new_b,
+            "tokens_used": proc.tokens_used,
+            "budget_remaining": max(0, new_b - proc.tokens_used),
+            "added": amount,
+            "by": by,
+        }
+
     # ── 执行中介 ──────────────────────────────────────────────
 
     def _emit_policy_decision(

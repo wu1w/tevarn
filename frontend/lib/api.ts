@@ -1795,6 +1795,39 @@ export async function resumeKernelProcess(
   return res.data;
 }
 
+/** CEO 运行中追加进程 token 预算 */
+export async function topUpProcessBudget(
+  processId: string,
+  amount: number,
+  reason = '',
+): Promise<{
+  ok: boolean;
+  token_budget?: number;
+  tokens_used?: number;
+  budget_remaining?: number;
+  added?: number;
+}> {
+  const res = await api.post(`/kernel/processes/${processId}/budget/top-up`, {
+    amount,
+    reason,
+  });
+  return res.data;
+}
+
+/** CEO 给某员工所有运行中进程加预算 */
+export async function topUpIdentityRunningBudget(
+  identityId: string,
+  amount: number,
+  opts?: { reason?: string; also_default?: boolean },
+): Promise<{ ok: boolean; count: number; processes: unknown[] }> {
+  const res = await api.post(`/kernel/identities/${identityId}/budget/top-up-running`, {
+    amount,
+    reason: opts?.reason || '',
+    also_default: !!opts?.also_default,
+  });
+  return res.data;
+}
+
 // ── TEE Evolution 扩展（策展 / 草稿 / from_task）──────────────
 
 export async function listEvolutionTasks(): Promise<Array<Record<string, unknown>>> {

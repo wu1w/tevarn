@@ -491,8 +491,18 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     # 确保 run_id 不被 proc_opts 冲掉
                     if self._agent_run_id:
                         _meta["run_id"] = str(self._agent_run_id)
+                # 编制路径：创建前再清一次同 identity 残留进程（双保险）
+                _akey = agent_key or "main"
+                if str(_akey).startswith("wf:") or _meta.get("workforce"):
+                    try:
+                        await kernel.retire_live_identity_processes(
+                            str(_akey),
+                            reason="loop create_process preflight",
+                        )
+                    except Exception as _re:
+                        logger.debug("loop preflight retire: %s", _re)
                 kernel_proc = await kernel.create_process(
-                    agent_key or "main",
+                    _akey,
                     session_id=str(session_id),
                     parent_id=parent_pid,
                     capabilities=caps,
@@ -510,6 +520,14 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             result = await self._run_locked(
                 session_id, user_input, attachments, mode, sub_agent_ids
             )
+            # 回写迭代/token 到 Run（观测台不再假零）
+            try:
+                if getattr(self, "last_iterations", None):
+                    recorder._iterations = int(self.last_iterations)
+                if kernel_proc is not None:
+                    recorder.set_token_used(int(getattr(kernel_proc, "tokens_used", 0) or 0))
+            except Exception:
+                pass
             if self._should_stop:
                 await recorder.cancel("stopped by user")
             else:
@@ -522,6 +540,11 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 )
             return result
         except Exception as e:
+            try:
+                if kernel_proc is not None:
+                    recorder.set_token_used(int(getattr(kernel_proc, "tokens_used", 0) or 0))
+            except Exception:
+                pass
             await recorder.finish_fail(str(e))
             if kernel is not None and kernel_proc is not None:
                 await kernel.end_process(kernel_proc.id, state="failed", reason=str(e))
@@ -1166,6 +1189,12 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             logger.info(
                 f"Iteration {iteration + 1}/{_seg_size} (seg {_segment + 1}, global {_global_iter + 1}/{_total_iters}) for session {session_id}"
             )
+            try:
+                _rc = getattr(self, "_run_recorder", None)
+                if _rc is not None:
+                    _rc.bump_iteration(1)
+            except Exception:
+                pass
 
             # 更新状态：thinking
             await self._push_status(

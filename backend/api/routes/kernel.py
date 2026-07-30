@@ -158,6 +158,115 @@ async def resume_process(
     return {"ok": True, "process": proc.to_dict()}
 
 
+@router.post("/processes/{process_id}/budget/top-up")
+async def top_up_process_budget(
+    process_id: str,
+    body: dict,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """CEO 运行中动态追加 token 预算。
+
+    body: { amount: int (>0), reason?: str }
+    下一刀 charge_tokens 立即使用新上限；不重置已用额度。
+    """
+    kernel = get_kernel()
+    try:
+        amount = int(body.get("amount") or 0)
+    except (TypeError, ValueError) as e:
+        raise HTTPException(status_code=400, detail="amount 必须为整数") from e
+    reason = str(body.get("reason") or "").strip()
+    try:
+        result = kernel.top_up_budget(
+            process_id,
+            amount,
+            by=f"ceo:{getattr(current_user, 'id', current_user)}",
+            reason=reason,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    # 同步关联 AgentRun.token_limit（若 process.meta.run_id 存在）
+    try:
+        proc = kernel.get_process(process_id)
+        rid = (proc.meta or {}).get("run_id") if proc else None
+        if rid and result.get("token_budget") is not None:
+            import uuid as _uuid
+
+            from backend.repositories.agent_run_repo import AsyncAgentRunRepository
+
+            await AsyncAgentRunRepository().update_run(
+                _uuid.UUID(str(rid)),
+                {"token_limit": int(result["token_budget"])},
+            )
+    except Exception:
+        pass
+    return result
+
+
+@router.post("/identities/{identity_id}/budget/top-up-running")
+async def top_up_identity_running_budget(
+    identity_id: str,
+    body: dict,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """对某员工所有运行中进程追加预算（CEO 一键加钱）。
+
+    body: { amount: int, reason?: str, also_default?: bool }
+    also_default=true 时同时抬高 identity.default_token_budget（后续新工单生效）。
+    """
+    kernel = get_kernel()
+    try:
+        amount = int(body.get("amount") or 0)
+    except (TypeError, ValueError) as e:
+        raise HTTPException(status_code=400, detail="amount 必须为整数") from e
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="amount 必须为正")
+    reason = str(body.get("reason") or "").strip()
+    key = f"wf:{identity_id}"
+    live = kernel.live_processes_for_identity(key)
+    # 兼容非 wf 前缀
+    if not live:
+        live = kernel.live_processes_for_identity(str(identity_id))
+    results = []
+    for p in live:
+        try:
+            results.append(
+                kernel.top_up_budget(
+                    p.id,
+                    amount,
+                    by=f"ceo:{getattr(current_user, 'id', current_user)}",
+                    reason=reason or f"identity top-up {identity_id[:8]}",
+                )
+            )
+        except Exception as e:
+            results.append({"ok": False, "process_id": p.id, "error": str(e)[:200]})
+
+    default_updated = None
+    if body.get("also_default"):
+        reg = _identity_registry()
+        if reg is not None:
+            try:
+                ident = await reg.get(identity_id)
+                if ident is not None:
+                    cur = int(getattr(ident, "default_token_budget", 0) or 0)
+                    new_def = cur + amount if cur > 0 else amount
+                    await reg.update_profile(
+                        identity_id,
+                        default_token_budget=new_def,
+                    )
+                    default_updated = new_def
+            except Exception as e:
+                default_updated = f"error:{e}"
+
+    return {
+        "ok": True,
+        "identity_id": identity_id,
+        "amount": amount,
+        "processes": results,
+        "count": len(results),
+        "default_token_budget": default_updated,
+    }
+
+
 @router.get("/events")
 async def list_events(
     current_user: Annotated[UserRead, Depends(get_current_user)],

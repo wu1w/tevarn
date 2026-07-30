@@ -54,6 +54,8 @@ class RunRecorder:
         self._status: RunStatus | None = None
         self._seq = 0
         self._tool_calls = 0
+        self._iterations = 0
+        self._token_used = 0
 
     # ─────────── 内部工具 ───────────
 
@@ -212,6 +214,20 @@ class RunRecorder:
         except Exception as e:
             logger.warning("RunRecorder.note failed: %s", e)
 
+    def bump_iteration(self, n: int = 1) -> None:
+        """loop 每轮迭代调用（内存计数，finish 时落库）。"""
+        try:
+            self._iterations = max(0, int(self._iterations) + int(n or 1))
+        except (TypeError, ValueError):
+            self._iterations += 1
+
+    def set_token_used(self, used: int) -> None:
+        """同步 kernel 进程已用 token（finish 时落库）。"""
+        try:
+            self._token_used = max(0, int(used or 0))
+        except (TypeError, ValueError):
+            pass
+
     # ─────────── 终态 ───────────
 
     async def _finish(
@@ -236,7 +252,11 @@ class RunRecorder:
                 "status": dst.value,
                 "ended_at": _utcnow(),
                 "total_tool_calls": self._tool_calls,
+                "total_iterations": int(self._iterations or 0),
+                "token_used": int(self._token_used or 0),
             }
+            if self.token_limit:
+                data["token_limit"] = int(self.token_limit)
             if final_summary:
                 data["final_summary"] = final_summary[:2000]
             if error:

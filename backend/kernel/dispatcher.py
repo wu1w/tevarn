@@ -1004,6 +1004,22 @@ class WorkforceDispatcher:
 
         session_id = await self._workforce_session_id(ident)
 
+        # 防双 Run/双进程：开工前清理同 identity 残留非终态 kernel 进程
+        # （上一单未 end_process / verifying 悬挂 / 多 worker 竞态）
+        try:
+            killed = await self._kernel.retire_live_identity_processes(
+                f"wf:{ident.id}",
+                reason=f"new inbox job {str(item.id)[:8]} supersedes stale process",
+            )
+            if killed:
+                logger.warning(
+                    "workforce preflight retired %s stale process(es) for %s",
+                    len(killed),
+                    str(ident.id)[:8],
+                )
+        except Exception as e:
+            logger.warning("workforce preflight retire skipped: %s", e)
+
         # Worker 池复用（Alpha Review #2）：同身份跨工单共享 loop 实例，
         # run 级状态显式归零后再上岗（防跨工单泄漏红线）
         loop = await self._worker_for(ident)
