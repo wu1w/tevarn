@@ -1,7 +1,6 @@
 'use client';
 
 import React from 'react';
-import { useT } from '@/stores/localeStore';
 
 interface LoadingSpinnerProps {
   size?: 'sm' | 'md' | 'lg';
@@ -10,7 +9,6 @@ interface LoadingSpinnerProps {
 }
 
 export function LoadingSpinner({ size = 'md', text, className = '' }: LoadingSpinnerProps) {
-  const t = useT();
   const sizeClasses = {
     sm: 'h-4 w-4',
     md: 'h-8 w-8',

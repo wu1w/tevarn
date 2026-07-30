@@ -165,7 +165,7 @@ export default function SkillsPage() {
     try {
       schema = parseJson(formSchema);
       handlerConfig = parseJson(formConfig);
-    } catch (e) {
+    } catch {
       addToast(t('skills.toast.jsonError'), 'error');
       return;
     }

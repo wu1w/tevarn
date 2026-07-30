@@ -9,7 +9,6 @@ import {
   updateWorkflow,
   deleteWorkflow,
   executeWorkflow,
-  controlWorkflow,
   generateWorkflowFromNl,
   apiClient,
 } from '@/lib/api';

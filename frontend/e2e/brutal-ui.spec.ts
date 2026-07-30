@@ -324,7 +324,7 @@ test.describe('Brutal UI robustness', () => {
     const pageErrors: string[] = [];
     page.on('pageerror', (e) => pageErrors.push(String(e)));
 
-    const { token } = await loginViaApi(page);
+    await loginViaApi(page);
     await page.goto(`${BASE_URL}/`);
     await page.waitForLoadState('networkidle').catch(() => {});
     // 等连接态稳定

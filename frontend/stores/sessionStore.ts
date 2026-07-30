@@ -182,7 +182,7 @@ export const useSessionStore = create<SessionState>()(
         sessionTitles: state.sessionTitles,
         starredSessionIds: state.starredSessionIds,
       }),
-      onRehydrateStorage: () => (state) => {
+      onRehydrateStorage: () => () => {
         if (typeof window === 'undefined') return;
         window.addEventListener('storage', (e) => {
           if (e.key === 'takton-session' && e.newValue) {

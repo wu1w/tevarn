@@ -136,18 +136,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
   const {
     sessionId,
     token,
-    onStreamDelta,
-    onStatusUpdate,
-    onTaskUpdate,
-    onMemoryUpdated,
-    onGoalUpdate,
-    onToolEvent,
-    onScreenshot,
-    onNotification,
-    onSettingsChanged,
     onError,
-    onConnect,
-    onDisconnect,
   } = options;
 
   const [isConnected, setIsConnected] = useState(false);

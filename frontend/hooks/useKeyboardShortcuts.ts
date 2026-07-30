@@ -3,7 +3,7 @@
  * 提供 Cmd+K/Ctrl+K 搜索、Esc 关闭、Cmd+Enter 发送等快捷键
  */
 
-import { useEffect, useCallback } from 'react';
+import { useEffect } from 'react';
 
 type ShortcutHandler = () => void;
 
@@ -20,9 +20,7 @@ export function useKeyboardShortcuts(shortcuts: ShortcutDef[]) {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       for (const sc of shortcuts) {
-        const metaPressed = sc.ctrl ? e.ctrlKey : sc.meta ? e.metaKey : false;
         const shiftPressed = sc.shift ? e.shiftKey : false;
-        const bothMetaCtrl = (!sc.ctrl && !sc.meta) || e.ctrlKey || e.metaKey;
 
         // Support both Cmd (Mac) and Ctrl (Windows/Linux) for meta-like shortcuts
         const metaMatch = sc.ctrl

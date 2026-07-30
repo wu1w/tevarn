@@ -50,18 +50,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const toggleSidebar = useCallback(() => {
-    setSidebarOpen((v) => {
-      const next = !v;
-      try {
-        localStorage.setItem(SIDEBAR_KEY, next ? '1' : '0');
-      } catch {
-        /* ignore */
-      }
-      return next;
-    });
-  }, []);
-
   useEffect(() => {
     if (!hasHydrated) return;
     if (!isAuthenticated && !isLoginPage) {

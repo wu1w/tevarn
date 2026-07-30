@@ -6,11 +6,9 @@ import {
   Monitor, 
   Camera, 
   MousePointer, 
-  Keyboard, 
   AppWindow,
   Play,
   Square,
-  RefreshCw,
   AlertCircle,
   CheckCircle2,
   Loader2,
@@ -44,8 +42,6 @@ export function DesktopControlPanel({ onTaskComplete }: DesktopControlPanelProps
 
   const {
     isExecuting,
-    currentOperation,
-    lastResult,
     error,
     isStreaming,
     screenFrame,
@@ -80,7 +76,7 @@ export function DesktopControlPanel({ onTaskComplete }: DesktopControlPanelProps
     },
   });
 
-  const handlePermissionAllow = useCallback((level: PermissionLevel, rememberApp: boolean) => {
+  const handlePermissionAllow = useCallback((level: PermissionLevel, _rememberApp: boolean) => {
     permissionResolver?.(level);
     setPermissionDialogOpen(false);
     setCurrentPermissionRequest(null);

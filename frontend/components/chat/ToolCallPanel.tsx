@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { useT } from '@/stores/localeStore';
 import {
   formatToolResultForDisplay,
   summarizeToolResult,
@@ -23,7 +22,6 @@ interface ToolCallPanelProps {
 }
 
 export function ToolCallPanel({ toolCalls, pending = false }: ToolCallPanelProps) {
-  const t = useT();
   if (!toolCalls?.length) return null;
   return (
     <div className="space-y-1.5">

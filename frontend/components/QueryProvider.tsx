@@ -2,10 +2,8 @@
 
 import { ReactNode, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { useT } from '@/stores/localeStore';
 
 export function QueryProvider({ children }: { children: ReactNode }) {
-  const t = useT();
   const [client] = useState(
     () =>
       new QueryClient({

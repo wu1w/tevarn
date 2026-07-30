@@ -12,6 +12,15 @@ const eslintConfig = defineConfig([
     plugins: { "react-hooks": reactHooks },
     rules: {
       "@typescript-eslint/no-explicit-any": "warn",
+      // Honor the `_`-prefix convention for intentionally-unused vars/args/catch bindings.
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+        },
+      ],
       // React Compiler (react-hooks v6+) diagnostics — surfaced as warnings for now.
       "react-hooks/set-state-in-effect": "warn",
       "react-hooks/static-components": "warn",

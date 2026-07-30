@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { t, useT } from '@/stores/localeStore';
+import { t } from '@/stores/localeStore';
 
 function EmptyIcon() {
   return (
@@ -30,7 +30,6 @@ export function EmptyState({
   className = '',
   compact = false,
 }: EmptyStateProps) {
-  const t = useT();
   return (
     <div
       className={`flex flex-col items-center justify-center px-4 text-center ${

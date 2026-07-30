@@ -6,7 +6,6 @@ import {
   Monitor, 
   Camera, 
   MousePointer, 
-  Keyboard, 
   AppWindow,
   Play,
   Square,
@@ -31,7 +30,7 @@ interface DesktopAgentPanelProps {
   onTaskComplete?: (result: any) => void;
 }
 
-export function DesktopAgentPanel({ isOpen, onClose, onTaskComplete }: DesktopAgentPanelProps) {
+export function DesktopAgentPanel({ isOpen, onClose }: DesktopAgentPanelProps) {
   const t = useT();
   const [isExpanded, setIsExpanded] = useState(false);
   const [permissionDialogOpen, setPermissionDialogOpen] = useState(false);
@@ -48,12 +47,10 @@ export function DesktopAgentPanel({ isOpen, onClose, onTaskComplete }: DesktopAg
 
   const {
     isExecuting,
-    lastResult,
     error,
     isStreaming,
     screenFrame,
     executeOperation,
-    executeTask,
     startScreenStream,
     stopScreenStream,
   } = useDesktopAgent({
@@ -83,7 +80,7 @@ export function DesktopAgentPanel({ isOpen, onClose, onTaskComplete }: DesktopAg
     },
   });
 
-  const handlePermissionAllow = useCallback((level: PermissionLevel, rememberApp: boolean) => {
+  const handlePermissionAllow = useCallback((level: PermissionLevel, _rememberApp: boolean) => {
     permissionResolver?.(level);
     setPermissionDialogOpen(false);
     setCurrentPermissionRequest(null);

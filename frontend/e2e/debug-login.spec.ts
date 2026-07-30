@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test } from '@playwright/test';
 import * as path from 'path';
 
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';

@@ -2,7 +2,7 @@
  * Capture polished UI pages for review
  * SMOKE_BASE_URL=http://127.0.0.1:3015 SMOKE_API_URL=http://127.0.0.1:8095 npx playwright test e2e/ui_v2_pages_shot.spec.ts
  */
-import { test, expect, Page } from '@playwright/test';
+import { test, Page } from '@playwright/test';
 import * as fs from 'fs';
 import * as path from 'path';
 

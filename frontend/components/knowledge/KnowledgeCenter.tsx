@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { Document } from '@/types';
-import { getDocuments, createDocument, updateDocument, deleteDocument, indexDocument, uploadFile, uploadBatch, ragTest, getQdrantStatus, checkDimension, rebuildIndex, type RAGTestResult, type QdrantStatus, type DimensionCheckResult } from '@/lib/api';
+import { getDocuments, createDocument, updateDocument, deleteDocument, indexDocument, uploadFile, ragTest, getQdrantStatus, checkDimension, rebuildIndex, type RAGTestResult, type QdrantStatus, type DimensionCheckResult } from '@/lib/api';
 import { useConfirm } from '@/components/desktop/ConfirmDialog';
 import { useToastStore } from '@/stores/toastStore';
 import { useT } from '@/stores/localeStore';
@@ -740,7 +740,7 @@ export default function KnowledgeCenter() {
                   try {
                     const s = await getQdrantStatus();
                     setQdrantStatus(s);
-                  } catch (err) {
+                  } catch {
                     addToast(t('kb.qdrantStatusFailed'), 'error');
                   }
                 }}
@@ -757,7 +757,7 @@ export default function KnowledgeCenter() {
                     } else {
                       addToast(t('kb.dimMatch'), 'success');
                     }
-                  } catch (err) {
+                  } catch {
                     addToast(t('kb.dimCheckFailed'), 'error');
                   }
                 }}

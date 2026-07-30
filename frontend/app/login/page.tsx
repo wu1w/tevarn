@@ -10,7 +10,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/authStore';
-import { useLocaleStore, useT } from '@/stores/localeStore';
+import { useT } from '@/stores/localeStore';
 import { autoLogin, login, register } from '@/lib/api';
 import { AppLogo } from '@/components/brand/AppLogo';
 import { LanguageSwitcher } from '@/components/ui/LanguageSwitcher';

@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useState } from 'react';
-import { useT } from '@/stores/localeStore';
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -34,7 +33,6 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
-  const t = useT();
   if (!open) return null;
 
   return (

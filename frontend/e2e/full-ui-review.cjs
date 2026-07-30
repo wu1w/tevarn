@@ -31,7 +31,7 @@ function ensureDir(d) {
   fs.mkdirSync(d, { recursive: true });
 }
 
-async function setTheme(page, theme) {
+async function _setTheme(page, theme) {
   // themeStore: preference system|light|dark, storage key takton-theme
   await page.addInitScript((t) => {
     try {

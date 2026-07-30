@@ -31,7 +31,6 @@ const EXAMPLE_KEYS = [1, 2, 3, 4] as const;
 export function ChatWindow({
   messages,
   isStreaming = false,
-  onStopStreaming,
   onTagClick,
   onRegenerate,
   onEdit,

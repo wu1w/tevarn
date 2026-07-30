@@ -49,7 +49,7 @@ const KIND_META: Record<string, { color: string; zh: string; en: string }> = {
   planner_tune: { color: '#7a98b0', zh: 'Planner 检讨', en: 'Planner tune' },
 };
 
-function waitStr(createdAt: number, zh: boolean): string {
+function waitStr(createdAt: number, _zh: boolean): string {
   const sec = Math.max(1, Math.floor(Date.now() / 1000 - createdAt));
   if (sec < 3600) return `${Math.floor(sec / 60)}m`;
   if (sec < 86400) return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
@@ -537,7 +537,7 @@ export default function ApprovalsPage() {
   );
 }
 
-function EmptyState({ zh, emoji, title, sub }: { zh: boolean; emoji: string; title: string; sub?: string }) {
+function EmptyState({ emoji, title, sub }: { zh: boolean; emoji: string; title: string; sub?: string }) {
   return (
     <div style={{ ...card, padding: '56px 20px', textAlign: 'center' }}>
       <div style={{ fontSize: 28, marginBottom: 8 }}>{emoji}</div>

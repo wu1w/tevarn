@@ -9,13 +9,10 @@
  * 3. Hook 执行日志查看
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useActionLock } from '@/hooks/useActionLock';
 import {
   AlertCircle,
-  Check,
-  ChevronDown,
-  Copy,
   Edit3,
   ExternalLink,
   Globe,
@@ -37,8 +34,6 @@ import type {
   CronHook,
   CronHookCreate,
   CronHookUpdate,
-  CronHookExecutionLogRead,
-  CronJobWithHooks,
 } from '@/types/zero-code';
 import type { CronJob } from '@/types';
 import { t, useT } from '@/stores/localeStore';

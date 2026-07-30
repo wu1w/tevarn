@@ -235,7 +235,7 @@ function ThinkingStepCard({ step, index }: { step: ThinkingStep; index: number }
   );
 }
 
-function ToolCallTraceCard({ tc, index }: { tc: ToolCallTrace; index: number }) {
+function ToolCallTraceCard({ tc }: { tc: ToolCallTrace; index: number }) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const statusColor = tc.status === 'completed' ? 'text-emerald-400' : 'text-red-400';
@@ -279,8 +279,7 @@ function ToolCallTraceCard({ tc, index }: { tc: ToolCallTrace; index: number }) 
   );
 }
 
-function RagSourceCard({ source, index }: { source: RagSource; index: number }) {
-  const t = useT();
+function RagSourceCard({ source }: { source: RagSource; index: number }) {
   const [open, setOpen] = useState(false);
   const scoreColor = source.score >= 0.8 ? 'text-emerald-400' : source.score >= 0.5 ? 'text-amber-400' : 'text-red-400';
 

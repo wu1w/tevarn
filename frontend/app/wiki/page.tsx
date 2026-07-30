@@ -43,12 +43,6 @@ const RELATION_TYPES = [
   'alternative_to', 'belongs_to', 'participates_in', 'authored_by', 'presents',
 ];
 
-const TYPE_ICON_COLORS: Record<string, string> = {
-  person: '#22c55e', organization: '#ef4444', project: '#f97316', tech: '#06b6d4',
-  concept: '#3b82f6', docs: '#a855f7', event: '#eab308', location: '#14b8a6',
-  problem: '#f43f5e', solution: '#10b981',
-};
-
 /** 各实体类型的 emoji 图标（列表行内标识用） */
 const TYPE_EMOJI: Record<string, string> = {
   person: '', organization: '', project: '', tech: '', concept: '',

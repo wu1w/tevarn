@@ -285,7 +285,7 @@ export default function ContextDashboard() {
       setOptimizeResult(result);
       addToast(t('contextDash.optDone').replace('{n}', String(result.saved_tokens)), 'success');
       load();
-    } catch (err) {
+    } catch {
       addToast(t('contextDash.optimizeFailed'), 'error');
     } finally {
       setOptimizing(false);

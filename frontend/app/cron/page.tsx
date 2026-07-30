@@ -12,7 +12,7 @@ import {
 import { useConfirm } from '@/components/desktop/ConfirmDialog';
 import { EmptyState } from '@/components/desktop/EmptyState';
 import { LoadingPage } from '@/components/ui/LoadingSpinner';
-import { t, useT } from '@/stores/localeStore';
+import { useT } from '@/stores/localeStore';
 import { LegacyQuiet } from '@/components/layout/LegacyQuiet';
 
 

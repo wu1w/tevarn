@@ -268,7 +268,6 @@ function ChannelEditPanel({
     ...Object.entries(preset?.extra_schema || {}).map(([k, v]: any) => ({ key: k, ...v })),
   ], [preset]);
 
-  const meta = PLATFORM_META[channel.platform] || { icon: '', label: channel.platform };
   const metaLabel = platformLabel(channel.platform, t);
 
   return (

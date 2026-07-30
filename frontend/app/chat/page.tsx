@@ -17,7 +17,6 @@ import { GlobalSearch } from '@/components/search/GlobalSearch';
 import { useSession } from '@/hooks/useSession';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
-import { useTaskStore } from '@/stores/taskStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { Message, StatusUpdateMessage, StreamDeltaMessage, GoalUpdateMessage, GoalState, ToolEventMessage, RunEventMessage } from '@/types';
@@ -32,7 +31,6 @@ import { OpenProjectModal } from '@/components/workspace/OpenProjectModal';
 import { DangerConfirmDialog } from '@/components/chat/DangerConfirmDialog';
 import { useToastStore } from '@/stores/toastStore';
 import { useT } from '@/stores/localeStore';
-import { useWsStore } from '@/stores/wsStore';
 import { streamSessionApi } from '@/stores/streamSessionStore';
 
 
@@ -49,16 +47,12 @@ function ChatPageInner() {
   const searchParams = useSearchParams();
   const contactIdentity = (searchParams.get('identity') || '').trim();
   const projectGroupId = (searchParams.get('group') || '').trim();
-  const { currentSession, messages, addMessage, updateMessage, createAndLoadSession, openContactSession, loadMessages, switchSession } = useSession();
-    const { tasks } = useTaskStore();
+  const { currentSession, messages, addMessage, createAndLoadSession, openContactSession, loadMessages, switchSession } = useSession();
     const token = useAuthStore((s) => s.token);
-    const starredSessionIds = useSessionStore((s) => s.starredSessionIds);
-    const toggleStarredSession = useSessionStore((s) => s.toggleStarredSession);
     const {
       uiMode,
       setUiMode,
       dockOpen,
-      setDockOpen,
       toggleDock,
       root: workspaceRoot,
       name: workspaceName,
@@ -613,8 +607,6 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
         },
       });
 
-  // 使用 useSession hook 中的 switchSession 用于全局搜索
-  const { switchSession: switchSession_ } = useSession();
 
   // 发送消息（乐观 UI：先出用户气泡 + streaming，session/WS 后台并行）
   // 发送成功后会话将出现在「历史会话」中

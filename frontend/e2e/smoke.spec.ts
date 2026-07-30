@@ -1,4 +1,4 @@
-import { test, expect, Page, BrowserContext } from '@playwright/test';
+import { test, expect, Page } from '@playwright/test';
 import * as path from 'path';
 
 const BASE_URL = process.env.SMOKE_BASE_URL || 'http://localhost:3002';
@@ -59,11 +59,9 @@ async function capturePage(page: Page, name: string) {
 
 async function clickInteractiveElements(page: Page, name: string) {
   const buttons = await page.locator('button').all();
-  let clicked = 0;
   for (const btn of buttons.slice(0, 5)) {
     if (await btn.isVisible().catch(() => false) && await btn.isEnabled().catch(() => false)) {
       await btn.click({ force: true }).catch(() => {});
-      clicked += 1;
       await page.waitForTimeout(300);
     }
   }

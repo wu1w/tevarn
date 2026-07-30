@@ -8,7 +8,7 @@ import {
 } from '@/lib/api-hooks';
 import { useToastStore } from '@/stores/toastStore';
 import MCPStorePanel, { type MCPPageTab } from '@/components/mcp/MCPStorePanel';
-import { t, useT } from '@/stores/localeStore';
+import { useT } from '@/stores/localeStore';
 import { LegacyQuiet } from '@/components/layout/LegacyQuiet';
 
 

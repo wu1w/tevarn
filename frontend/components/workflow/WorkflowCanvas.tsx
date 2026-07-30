@@ -2,7 +2,6 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { WorkflowNode, WorkflowEdge, WorkflowNodeType } from '@/types';
-import { useT } from '@/stores/localeStore';
 
 /* ─────────── 常量 ─────────── */
 const NODE_WIDTH = 144;
@@ -58,10 +57,8 @@ export default function WorkflowCanvas({
   onNodesChange,
   onEdgesChange,
   onSelectNode,
-  onNodeConfigChange,
   readOnly = false,
 }: WorkflowCanvasProps) {
-  const t = useT();
   const svgRef = useRef<SVGSVGElement>(null);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);

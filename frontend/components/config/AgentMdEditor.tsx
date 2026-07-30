@@ -1,7 +1,6 @@
 'use client';
 
 import React from 'react';
-import { useT } from '@/stores/localeStore';
 
 interface AgentMdEditorProps {
   value: string;
@@ -9,7 +8,6 @@ interface AgentMdEditorProps {
 }
 
 export function AgentMdEditor({ value, onChange }: AgentMdEditorProps) {
-  const t = useT();
   return (
     <div className="space-y-4">
       <div>

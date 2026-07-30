@@ -68,8 +68,6 @@ const SOURCE_META: Record<
 
 const BTN_PRIMARY =
   'rounded-lg bg-brand-purple px-3 py-1.5 text-xs font-semibold text-white shadow-sm shadow-brand-purple/20 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50';
-const BTN_PRIMARY_LG =
-  'rounded-lg bg-brand-purple px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-brand-purple/20 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50';
 const BTN_SECONDARY =
   'rounded-lg border border-border-subtle bg-elevated-bg px-3 py-1.5 text-xs font-medium text-foreground-muted transition-colors hover:border-brand-purple/40 hover:text-foreground';
 const CHIP_ACTIVE =

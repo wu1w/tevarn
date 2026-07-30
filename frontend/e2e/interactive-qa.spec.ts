@@ -304,7 +304,6 @@ test.describe('interactive QA fast', () => {
       }
 
       if (route === '/skills') {
-        const sw = page.locator('button[class*="rounded-full"]').first();
         // just open custom tab if exists
         if (await safeClick(page, page.getByRole('button', { name: /自定义|内置|社区/ }), 'skills-tab', route))
           actions.push('tab');

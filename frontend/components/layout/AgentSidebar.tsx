@@ -12,7 +12,6 @@ import { useQuery } from '@tanstack/react-query';
 import { useT } from '@/stores/localeStore';
 import { useZh } from '@/hooks/useZh';
 import { useSession } from '@/hooks/useSession';
-import { useSessionStore } from '@/stores/sessionStore';
 import {
   getKernelIdentities,
   getKernelProcesses,
@@ -149,8 +148,6 @@ export function AgentSidebar() {
   const { switchSession, openContactSession } = useSession();
   const [searchOpen, setSearchOpen] = useState(false);
   const [q, setQ] = useState('');
-  const sessionTitles = useSessionStore((s) => s.sessionTitles);
-  const getSessionTitle = useSessionStore((s) => s.getSessionTitle);
 
   const openContact = useCallback(
     async (name: string) => {

@@ -523,7 +523,7 @@ GET  /api/kernel/protocol/surface`}
   );
 }
 
-function ProcessRow({ p, zh }: { p: KernelProcess; zh: boolean }) {
+function ProcessRow({ p }: { p: KernelProcess; zh: boolean }) {
   const color = STATE_COLOR[p.state] ?? 'var(--foreground-muted)';
   const pct = p.token_budget ? Math.min(100, (p.tokens_used / p.token_budget) * 100) : null;
   return (
