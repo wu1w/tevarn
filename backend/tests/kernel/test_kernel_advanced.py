@@ -166,6 +166,78 @@ def test_intent_token_ttl() -> None:
     assert token.expires_at - time.time() <= 60.5
 
 
+def test_intent_declare_synthesize_mediate_integration(kernel: AgentKernel) -> None:
+    """P2.2：声明 → 合成令牌 → 挂载进程 → mediate 放行/拒绝闭环。
+
+    注意：挂载 token 后 court 以令牌为准（见 permission_court.decide_capability）。
+    """
+
+    async def go():
+        intent = IntentDeclaration.from_dict({
+            "goal": "只读调研源码",
+            "capabilities": ["file_read", "grep", "terminal"],
+            "constraints": {"token_budget": 5000},
+        })
+        token, dropped = synthesize_token(intent, process_id="pending")
+        assert "terminal" in dropped  # 高危未 allow_risky
+        assert "file_read" in token.capabilities
+
+        # 进程能力可宽一些；真正边界由 intent 合成的令牌收窄
+        proc = await kernel.create_process(
+            "researcher",
+            capabilities=["file_read", "grep", "terminal", "file_write"],
+        )
+        token2, dropped2 = synthesize_token(intent, process_id=proc.id)
+        proc.token = token2
+        assert "terminal" in dropped2
+        assert "terminal" not in token2.capabilities
+
+        d = await kernel.mediate(proc.id, "tool_call", "file_read")
+        assert d.allowed is True
+        with pytest.raises(KernelPermissionError, match="令牌范围"):
+            await kernel.mediate(proc.id, "tool_call", "terminal")
+
+        # allow_risky 后重新合成 → terminal 进入令牌 → mediate 放行
+        intent_risk = IntentDeclaration.from_dict({
+            "goal": "需要终端排查",
+            "capabilities": ["file_read", "terminal"],
+            "constraints": {"allow_risky": True},
+        })
+        tok_risk, drop_risk = synthesize_token(intent_risk, process_id=proc.id)
+        assert "terminal" in tok_risk.capabilities
+        assert drop_risk == []
+        proc.token = tok_risk
+        d2 = await kernel.mediate(proc.id, "tool_call", "terminal")
+        assert d2.allowed is True
+
+        # 父令牌 further narrow：子意图不能越权
+        parent = tok_risk
+        child_intent = IntentDeclaration.from_dict({
+            "goal": "子任务只读",
+            "capabilities": ["file_read", "terminal"],
+            "constraints": {"allow_risky": True},
+        })
+        child_tok, child_drop = synthesize_token(
+            child_intent, parent_token=parent, process_id=proc.id
+        )
+        # parent 有 terminal+file_read，子声明两者 → 全保留
+        assert "file_read" in child_tok.capabilities
+        # 再用更窄父令牌
+        narrow_parent = CapabilityToken(
+            capabilities=frozenset({"file_read"}), process_id=proc.id
+        )
+        child2, drop2 = synthesize_token(
+            child_intent, parent_token=narrow_parent, process_id=proc.id
+        )
+        assert "terminal" in drop2
+        assert child2.capabilities == frozenset({"file_read"})
+        proc.token = child2
+        with pytest.raises(KernelPermissionError, match="令牌范围"):
+            await kernel.mediate(proc.id, "tool_call", "terminal")
+
+    asyncio.run(go())
+
+
 # ── 哈希链审计（阶段 3）──
 
 def test_hash_chain_integrity(kernel: AgentKernel) -> None:

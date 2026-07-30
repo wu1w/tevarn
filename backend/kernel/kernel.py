@@ -624,6 +624,10 @@ class AgentKernel:
                 raise BudgetExceededError(
                     f"进程 {process_id} 预算不足（已用 {proc.tokens_used}/{proc.token_budget}，拒绝 +{amount}）"
                 )
+        # 活跃心跳：供 stalled 检测（P2）
+        if amount > 0:
+            proc.meta = dict(proc.meta or {})
+            proc.meta["last_charge_at"] = time.time()
         if self._shared is not None and amount > 0:
             try:
                 used, remaining = self._shared.charge_tokens(process_id, amount)

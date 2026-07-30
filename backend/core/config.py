@@ -251,6 +251,8 @@ class Settings(BaseSettings):
     agent_evolution_replay_max_tool_error_rate: float = 0.4
     agent_evolution_replay_min_body_chars: int = 120
     agent_evolution_replay_require_sections: bool = True
+    # P2：进程无 charge 心跳超过该秒数 → list_processes 标 stalled
+    agent_process_stall_seconds: float = 300.0
     agent_tool_parallel_max: int = 5
     # 研究任务收敛刹车：同 run 内同查询重复搜索，第 2 次提醒、第 3 次拦截
     agent_search_repeat_guard: bool = True

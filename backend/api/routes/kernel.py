@@ -96,11 +96,37 @@ async def list_processes(
     if not include_terminal:
         terminal = {"completed", "failed", "killed", "interrupted", "exited", "done", "error"}
         procs = [p for p in procs if p.get("state") not in terminal]
+    # P2：stalled 检测 — running 且长时间无 charge 心跳
+    import time as _time
+
+    try:
+        from backend.core.config import settings as _st
+
+        stall_sec = float(getattr(_st, "agent_process_stall_seconds", 300) or 300)
+    except Exception:
+        stall_sec = 300.0
+    now = _time.time()
+    for p in procs:
+        st = str(p.get("state") or "")
+        if st not in ("running", "waiting", "suspended"):
+            p["stalled"] = False
+            continue
+        meta = p.get("meta") if isinstance(p.get("meta"), dict) else {}
+        last = meta.get("last_charge_at") if isinstance(meta, dict) else None
+        started = p.get("started_at") or p.get("created_at") or 0
+        try:
+            last_f = float(last) if last is not None else float(started or 0)
+        except (TypeError, ValueError):
+            last_f = float(started or 0)
+        idle = now - last_f if last_f > 0 else 0
+        p["stalled"] = bool(idle >= stall_sec and st == "running")
+        p["idle_seconds"] = int(idle)
     out = {
         "enabled": True,
         "processes": procs,
         "total": len(procs),
         "shared_state": shared,
+        "stall_threshold_seconds": stall_sec,
     }
     if db_error:
         out["db_warning"] = db_error

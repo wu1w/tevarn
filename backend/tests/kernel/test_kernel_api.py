@@ -51,8 +51,59 @@ def test_processes_endpoint_lists_active() -> None:
         assert p["id"] == proc.id
         assert p["capabilities"] == ["file_read"]
         assert p["state"] == "created"
+        assert "stalled" in p
+        assert "stall_threshold_seconds" in data
     finally:
         asyncio.run(kernel.end_process(proc.id, state="completed"))
+
+
+def test_processes_stalled_when_no_charge_heartbeat(monkeypatch) -> None:
+    """P2.3：running 且 last_charge 过久 → stalled=true。"""
+    import time
+
+    kernel = get_kernel()
+    monkeypatch.setattr(
+        "backend.core.config.settings.agent_process_stall_seconds",
+        30.0,
+        raising=False,
+    )
+
+    async def go():
+        p = await kernel.create_process("main", token_budget=50_000)
+        p.state = "running"
+        p.started_at = time.time() - 600
+        p.meta = {"last_charge_at": time.time() - 600}
+        return p
+
+    proc = asyncio.run(go())
+    try:
+        r = _client().get("/api/kernel/processes")
+        assert r.status_code == 200
+        rows = {x["id"]: x for x in r.json()["processes"]}
+        assert proc.id in rows
+        assert rows[proc.id]["stalled"] is True
+        assert rows[proc.id]["idle_seconds"] >= 30
+
+        # 心跳后应解除 stalled
+        kernel.charge_tokens(proc.id, 1)
+        r2 = _client().get("/api/kernel/processes")
+        rows2 = {x["id"]: x for x in r2.json()["processes"]}
+        assert rows2[proc.id]["stalled"] is False
+    finally:
+        asyncio.run(kernel.end_process(proc.id, state="completed"))
+
+
+def test_charge_tokens_sets_last_charge_at() -> None:
+    kernel = get_kernel()
+
+    async def go():
+        p = await kernel.create_process("main", token_budget=10_000)
+        assert not (p.meta or {}).get("last_charge_at")
+        kernel.charge_tokens(p.id, 5)
+        assert (p.meta or {}).get("last_charge_at")
+        await kernel.end_process(p.id, state="completed")
+
+    asyncio.run(go())
 
 
 def test_processes_excludes_terminal_by_default() -> None:

@@ -39,5 +39,6 @@ async def record_job_experience(
             approved_by=approved_by,
         )
     except Exception as e:
-        logger.debug("experience_sink skipped: %s", e)
+        # P1：失败需可观测（仍不向调用方抛，避免打断 inbox complete）
+        logger.warning("experience_sink skipped: %s", e)
         return None

@@ -779,6 +779,19 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
     if "\x00" in command:
         return "[Security Blocked] NUL bytes are not allowed in command"
 
+    # P0：编制/本机 command 中的 python 强制项目 venv（避免 PATH 上 hermes 等污染）
+    try:
+        from backend.core.project_python import rewrite_command_python
+
+        command, _rewrote = rewrite_command_python(command)
+        if _rewrote:
+            arguments = dict(arguments)
+            arguments["command"] = command
+    except Exception as _py_e:
+        __import__("logging").getLogger(__name__).debug(
+            "python rewrite skip: %s", _py_e
+        )
+
     blocked = await enforce_command_policy(command, arguments)
     if blocked:
         return blocked

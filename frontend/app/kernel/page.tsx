@@ -14,6 +14,7 @@ import {
   getGovernanceManifest, getProtocolManifest, listAgentCards,
   getSchedulerStatus,
   suspendKernelProcess, resumeKernelProcess,
+  topUpProcessBudget,
   type KernelProcess, type KernelEvent,
 } from '@/lib/api';
 import { useZh } from '@/hooks/useZh';
@@ -544,12 +545,15 @@ function ProcessRow({
   const [busy, setBusy] = useState(false);
   const canSuspend = ['running', 'idle', 'waiting'].includes(p.state);
   const canResume = p.state === 'suspended';
+  const stalled = !!(p as KernelProcess & { stalled?: boolean }).stalled;
+  const canTopUp = ['running', 'waiting', 'suspended'].includes(p.state) && p.token_budget != null;
 
-  const act = async (kind: 'suspend' | 'resume') => {
+  const act = async (kind: 'suspend' | 'resume' | 'topup') => {
     setBusy(true);
     try {
       if (kind === 'suspend') await suspendKernelProcess(p.id, 'ui');
-      else await resumeKernelProcess(p.id);
+      else if (kind === 'resume') await resumeKernelProcess(p.id);
+      else await topUpProcessBudget(p.id, 200_000, 'kernel-ui +200k');
       onChanged?.();
     } catch {
       /* interceptor */
@@ -559,11 +563,15 @@ function ProcessRow({
   };
 
   return (
-    <div style={{ ...card, display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px' }}>
-      <span style={{ width: 9, height: 9, borderRadius: '50%', background: color, flexShrink: 0 }} />
+    <div style={{ ...card, display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderColor: stalled ? 'var(--status-offline)' : undefined }}>
+      <span style={{ width: 9, height: 9, borderRadius: '50%', background: stalled ? 'var(--status-offline)' : color, flexShrink: 0 }} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 12.5, fontWeight: 650, color: 'var(--foreground)' }}>
-          {p.identity} <span style={{ fontWeight: 400, color: 'var(--foreground-dim)', fontSize: 10.5 }}>· {p.state}</span>
+          {p.identity}{' '}
+          <span style={{ fontWeight: 400, color: 'var(--foreground-dim)', fontSize: 10.5 }}>
+            · {p.state}
+            {stalled ? (zh ? ' · 疑似卡死' : ' · stalled') : ''}
+          </span>
         </div>
         <div style={{ fontSize: 10.5, color: 'var(--foreground-dim)', marginTop: 3, fontFamily: 'var(--font-mono)' }}>
           {(p.capabilities ?? []).join(' ') || '—'} · {p.id.slice(0, 8)}
@@ -579,7 +587,18 @@ function ProcessRow({
           </div>
         </div>
       ) : null}
-      <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+      <div style={{ display: 'flex', gap: 6, flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end', maxWidth: 200 }}>
+        {canTopUp && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void act('topup')}
+            title={zh ? '追加 20 万 token 预算' : 'Top up +200k tokens'}
+            style={{ fontSize: 10, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--brand-cyan)', background: 'transparent', color: 'var(--brand-cyan)', cursor: 'pointer' }}
+          >
+            {zh ? '+预算' : '+Budget'}
+          </button>
+        )}
         {canSuspend && (
           <button
             type="button"
