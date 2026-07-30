@@ -44,6 +44,8 @@ class GoalState:
     description: str = ""
     status: Literal["idle", "active", "completed", "blocked", "cancelled"] = "idle"
     todos: list[GoalTodo] = field(default_factory=list)
+    # Phase 2.4：Goal 挂在 Run 链上（可空，兼容旧会话）
+    run_id: str = ""
     created_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
@@ -64,6 +66,7 @@ class GoalState:
             "description": self.description,
             "status": self.status,
             "todos": [t.to_dict() for t in self.todos],
+            "run_id": self.run_id or "",
             "progress": {
                 "done": done,
                 "total": total,
@@ -158,6 +161,15 @@ def clear_goal(session_id: str | uuid.UUID) -> None:
     _save_locks.pop(key, None)
 
 
+def bind_goal_run_id(session_id: str | uuid.UUID, run_id: str | uuid.UUID | None) -> None:
+    """Phase 2.4：把当前 Goal 挂到 Run 链（内存；save_goal_to_db 时落盘）。"""
+    g = get_goal(session_id)
+    if g is None or not run_id:
+        return
+    g.run_id = str(run_id)
+    g.touch()
+
+
 def goal_from_dict(data: dict[str, Any]) -> GoalState:
     """从持久化 JSON 恢复 GoalState。"""
     todos: list[GoalTodo] = []
@@ -177,6 +189,7 @@ def goal_from_dict(data: dict[str, Any]) -> GoalState:
         status = "active"
     return GoalState(
         session_id=str(data.get("session_id") or ""),
+        run_id=str(data.get("run_id") or ""),
         title=str(data.get("title") or ""),
         description=str(data.get("description") or ""),
         status=status,  # type: ignore[arg-type]

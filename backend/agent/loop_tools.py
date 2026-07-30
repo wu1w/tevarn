@@ -1,0 +1,426 @@
+"""Loop tool/RAG mixin (Phase 2.4 split from loop.py)."""
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from backend.core.config import settings
+
+logger = logging.getLogger(__name__)
+
+
+class LoopToolsMixin:
+    async def _execute_registered_tool(self, name: str, arguments: dict[str, Any]):
+        """统一工具执行入口 → ToolExecutorPort（默认 RegistryToolExecutor）。"""
+        # Durable Run：注入 recorder，permission 交互确认可切 WAITING 状态
+        arguments = dict(arguments or {})
+        arguments.setdefault("_run_recorder", getattr(self, "_run_recorder", None))
+        # Agent Computer：agent 身份（主 Agent=main；子代理 loop 实例可自带 key/label）
+        arguments.setdefault("_agent_key", getattr(self, "_agent_key", "main"))
+        arguments.setdefault("_agent_label", getattr(self, "_agent_label", ""))
+        # 联系员工会话：注入 contact 名 + identity id/caps（本员工允许后短路弹窗）
+        contact = str(getattr(self, "_contact_agent", "") or "").strip()
+        if contact:
+            arguments.setdefault("_contact_agent", contact)
+            arguments.setdefault("_identity_name", contact)
+        if getattr(self, "_identity_id", None):
+            arguments.setdefault("_identity_id", str(self._identity_id))
+        if getattr(self, "_identity_name", None):
+            arguments.setdefault("_identity_name", str(self._identity_name))
+        caps = getattr(self, "_identity_capabilities", None)
+        if caps is not None:
+            arguments.setdefault("_identity_capabilities", list(caps))
+        # 编制员工：贯穿工具权限 / 危险命令 / 提权路径
+        if getattr(self, "_workforce", False) or str(
+            getattr(self, "_agent_key", "") or ""
+        ).startswith("wf:"):
+            arguments["_workforce"] = True
+            if getattr(self, "_identity_id", None):
+                arguments.setdefault("_identity_id", str(self._identity_id))
+            if getattr(self, "_identity_name", None):
+                arguments.setdefault("_identity_name", str(self._identity_name))
+            if caps is not None:
+                arguments.setdefault("_identity_capabilities", list(caps))
+            if getattr(self, "_inbox_item_id", None):
+                arguments.setdefault("_inbox_item_id", str(self._inbox_item_id))
+            # 员工不走主人确认通道
+            arguments["_ws_manager"] = None
+        # 真 Sub-Agent：嵌套深度（delegate_task 防失控）
+        arguments.setdefault("_subagent_depth", getattr(self, "_subagent_depth", 0))
+        # Skill 契约：已挂载包声明 tools 白名单时的执行边界拦截
+        blocked = await self._contract_tool_block_reason(name, arguments)
+        if blocked:
+            return blocked
+        # ── Agent Kernel（阶段 1/W3）：所有工具调用经 kernel.mediate 中介 ──
+        # 兼容模式进程（capabilities=None）放行+记录；显式能力集/令牌未授权 →
+        # 返回工具级权限错误（反馈给模型，不炸掉整个 run）。
+        kernel_proc = getattr(self, "_kernel_process", None)
+        if kernel_proc is not None:
+            arguments.setdefault("_kernel_process_id", kernel_proc.id)
+            from backend.kernel import KernelPermissionError, get_kernel
+
+            try:
+                await get_kernel().mediate(
+                    kernel_proc.id, "tool_call", name, args=arguments
+                )
+            except KernelPermissionError as e:
+                logger.warning(
+                    "kernel 拦截工具调用 tool=%s proc=%s: %s", name, kernel_proc.id, e
+                )
+                # 员工工单：不向主人刷提权单。编制内 → 静默并入进程能力；
+                # 编制外 → 直接拒，提示改权限看板（CEO 策略），不弹审批队列。
+                agent_key = str(getattr(self, "_agent_key", "") or "")
+                is_wf = agent_key.startswith("wf:") or bool(
+                    getattr(self, "_workforce", False)
+                )
+                if is_wf:
+                    try:
+                        from backend.agent.grant_store import tool_matches_crew_caps
+                        from backend.agent.steward_permission import (
+                            load_identity_capabilities,
+                        )
+
+                        caps = list(getattr(self, "_identity_capabilities", None) or [])
+                        if not caps:
+                            caps = (
+                                await load_identity_capabilities(
+                                    str(getattr(self, "_identity_id", "") or "") or None
+                                )
+                            ) or []
+                        if tool_matches_crew_caps(name, caps):
+                            # 抽象 cap 已覆盖工具；静默把工具名并入进程集（不建提权单）
+                            try:
+                                k = get_kernel()
+                                proc = k._resolve_process(kernel_proc.id)
+                                if proc is not None and proc.capabilities is not None:
+                                    if name not in proc.capabilities:
+                                        proc.capabilities = sorted(
+                                            set(proc.capabilities) | {name}
+                                        )
+                                        if hasattr(k, "_persist_process"):
+                                            k._persist_process(proc)
+                                        if hasattr(k, "_share_process"):
+                                            k._share_process(proc)
+                                        logger.info(
+                                            "steward silent expand tool=%s proc=%s",
+                                            name,
+                                            kernel_proc.id,
+                                        )
+                            except Exception as se:
+                                logger.debug("steward silent expand skip: %s", se)
+                            try:
+                                await get_kernel().mediate(
+                                    kernel_proc.id, "tool_call", name, args=arguments
+                                )
+                            except KernelPermissionError as e2:
+                                return (
+                                    f"Error: Kernel 权限拒绝——{e2}。"
+                                    "（编制策略已尝试扩权仍失败；请 CEO 在权限看板检查该员工能力）"
+                                )
+                            # mediate 过了则继续往下执行工具（fall through）
+                        else:
+                            return (
+                                f"Error: 编制策略拒绝工具 «{name}»（不在员工能力档案内）。"
+                                "请主人让 CEO 在权限看板扩权，不要对每一次工具点「允许」。"
+                            )
+                    except Exception as se:
+                        logger.debug("workforce steward escalate path: %s", se)
+                        return (
+                            f"Error: Kernel 权限拒绝——{e}。"
+                            "员工路径不向主人发起提权审批。"
+                        )
+                else:
+                    # 主人主会话：可自动发起提权进审批台
+                    esc_note = ""
+                    if bool(getattr(settings, "agent_kernel_auto_escalate", True)):
+                        try:
+                            req = await get_kernel().request_escalation(
+                                kernel_proc.id,
+                                [name],
+                                reason=f"工具调用被能力集拦截：{name}",
+                            )
+                            esc_note = (
+                                f"（已自动发起权限申请 {req.id}，"
+                                "用户在权限控制台批准后即可重试；请勿重复调用本工具）"
+                            )
+                        except ValueError:
+                            pass
+                    return f"Error: Kernel 权限拒绝——{e}{esc_note}"
+        # ── 重复搜索软干预（0.4.4：研究任务收敛刹车）──
+        # 同 run 内同查询重复：第 2 次结果前附提醒；第 3 次起直接拒绝执行，
+        # 强制模型基于已有信息总结（prompt 层刹车之外的工程层兜底）。
+        repeat_verdict = self._search_repeat_verdict(name, arguments)
+        if repeat_verdict == "block":
+            logger.info("重复搜索拦截 tool=%s query=%s", name, str(arguments)[:120])
+            total = int(getattr(self, "_search_total_calls", 0) or 0)
+            max_run = int(getattr(settings, "agent_search_max_per_run", 8) or 8)
+            if max_run > 0 and total > max_run:
+                return (
+                    f"Error: 本轮研究已累计搜索 {total} 次（上限 {max_run}）。"
+                    "继续搜索收益极低——请立即基于已收集内容总结交付；"
+                    "缺口请在答案中显式列出，勿再调用搜索类工具。"
+                )
+            return (
+                "Error: 检测到同一/近似查询已执行 3 次以上——继续重复搜索不会带来新信息。"
+                "请立即基于已收集的内容总结交付；如有未覆盖的缺口，在答案中显式注明，"
+                "或改用**角度完全不同**的新查询（而非同义改写）。"
+            )
+        repeat_prefix = (
+            "[提醒] 该查询此前已执行过，结果大概率相同。若本次结果无新增事实，"
+            "请停止继续搜索并进入总结阶段。\n\n" if repeat_verdict == "warn" else ""
+        )
+        ex = getattr(self, "tool_executor", None)
+        if ex is not None:
+            result = await ex.execute(name, arguments)
+            return repeat_prefix + result if repeat_prefix and isinstance(result, str) else result
+        from backend.tools.registry import ToolRegistry as UnifiedToolRegistry
+
+        result = await UnifiedToolRegistry.execute(name, arguments)
+        return repeat_prefix + result if repeat_prefix and isinstance(result, str) else result
+
+    # ── 重复搜索检测（收敛刹车 + 全局预算 + 近似同义）──────────
+
+    _SEARCH_TOOL_NAMES = frozenset({
+        "web_search", "x_search", "search", "websearch",
+        "web_extract", "web_fetch", "fetch_url", "fetch_webpage",
+        "browse_page", "open_page", "tavily_search", "duckduckgo_search",
+    })
+
+    def _search_repeat_verdict(self, name: str, arguments: dict[str, Any]) -> str | None:
+        """返回 None（放行）/ "warn" / "block"。
+
+        1) 单 run 搜索总次数 > agent_search_max_per_run → block
+        2) 精确/词序归一指纹：第 2 次 warn，第 3 次起 block
+        3) 与历史 query 词集 Jaccard ≥ 阈值 → 同一桶
+        """
+        if not bool(getattr(settings, "agent_search_repeat_guard", True)):
+            return None
+        if name not in self._SEARCH_TOOL_NAMES:
+            return None
+        query = str(
+            arguments.get("query")
+            or arguments.get("q")
+            or arguments.get("url")
+            or arguments.get("search_term")
+            or ""
+        ).strip().lower()
+
+        import hashlib
+
+        max_run = int(getattr(settings, "agent_search_max_per_run", 8) or 8)
+
+        if not query:
+            total = int(getattr(self, "_search_total_calls", 0) or 0) + 1
+            self._search_total_calls = total
+            if max_run > 0 and total > max_run:
+                return "block"
+            return None
+
+        tokens = [
+            tok
+            for tok in query.replace(",", " ").replace("，", " ").replace("、", " ").split()
+            if tok
+        ]
+        normalized = " ".join(sorted(tokens))
+        fp = hashlib.sha1(f"{name}:{normalized}".encode("utf-8")).hexdigest()[:12]
+
+        jaccard_thr = float(getattr(settings, "agent_search_similar_jaccard", 0.72) or 0.72)
+        token_set = set(tokens)
+        seen_sets: list = getattr(self, "_search_token_sets", None) or []
+        matched_fp = None
+        if token_set and jaccard_thr > 0:
+            for old_fp, old_set in seen_sets:
+                if not old_set:
+                    continue
+                inter = len(token_set & old_set)
+                union = len(token_set | old_set) or 1
+                if inter / union >= jaccard_thr:
+                    matched_fp = old_fp
+                    break
+        if matched_fp is None:
+            seen_sets.append((fp, token_set))
+            self._search_token_sets = seen_sets[-40:]
+            use_fp = fp
+        else:
+            use_fp = matched_fp
+
+        counter = getattr(self, "_search_fp_counter", None)
+        if counter is None:
+            counter = {}
+            self._search_fp_counter = counter
+        count = counter.get(use_fp, 0) + 1
+        counter[use_fp] = count
+
+        total = int(getattr(self, "_search_total_calls", 0) or 0) + 1
+        self._search_total_calls = total
+
+        if max_run > 0 and total > max_run:
+            return "block"
+        if count >= 3:
+            return "block"
+        if count == 2 or (max_run > 0 and total >= max(3, max_run - 2)):
+            return "warn"
+        return None
+
+    # ── Kernel iteration gate（Phase 2：Alpha Review #1 融合）──────────
+
+
+    async def _get_rag_service(self):
+        """懒加载 RAG 服务。未配 Embedding+Qdrant 时为 Null（本地模式）。"""
+        if self._rag_service is None:
+            try:
+                from backend.services.rag.capability import use_vector_rag
+                from backend.services.rag.factory import RAGServiceFactory
+
+                # 本地模式也返回 Null 实例，避免反复探测；向量模式返回 Qdrant
+                self._rag_service = RAGServiceFactory.get_service()
+                if not use_vector_rag():
+                    # 标记：自动注入路径会再检查 capability
+                    pass
+            except Exception as e:
+                logger.warning(f"RAG service unavailable: {e}")
+        return self._rag_service
+
+    def _append_to_system(self, messages: list[dict[str, Any]], block: str) -> None:
+        if not block or not block.strip():
+            return
+        found = False
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].get("role") == "system":
+                messages[i]["content"] = (messages[i].get("content") or "") + "\n\n" + block
+                found = True
+                break
+        if not found:
+            messages.insert(0, {"role": "system", "content": block})
+
+    async def _inject_rag_context(
+        self,
+        messages: list[dict[str, Any]],
+        user_input: str,
+        *,
+        top_k: int = 3,
+        strengthen: bool = False,
+        min_score: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """向量 RAG 自动注入：仅 Embedding+Qdrant 就绪时生效（默认本地模式跳过）。"""
+        from backend.services.rag.capability import get_rag_status
+
+        st = get_rag_status()
+        if not st.auto_inject:
+            logger.debug("RAG auto-inject skipped: %s", st.reason[:100])
+            return messages
+
+        rag = await self._get_rag_service()
+        if rag is None:
+            return messages
+
+        k = top_k * 2 if strengthen else top_k
+        try:
+            context = await rag.search_knowledge_base(
+                user_input,
+                top_k=k,
+                user_id=str(self.user_id) if self.user_id else None,
+                min_score=min_score,
+            )
+            # Null 实现会返回“不可用”文案 — 不应注入
+            if context and context.strip() and "知识库检索不可用" not in context:
+                logger.info(
+                    f"Injected RAG context ({len(context)} chars) top_k={k} for: {user_input[:50]}"
+                )
+                self._append_to_system(messages, f"# 相关知识（RAG）\n{context}")
+        except Exception as e:
+            logger.warning(f"RAG context injection failed (degraded to local): {e}")
+
+        # ── Workforce 身份记忆召回（Alpha Review #4）──
+        # 工单执行中按当前输入检索身份记忆（prompt 硬注入之外的执行期召回：
+        # 中期任务上下文漂移后，相关经验/方法论仍能按当前输入浮现）
+        agent_key = getattr(self, "_agent_key", "") or ""
+        if agent_key.startswith("wf:"):
+            try:
+                identity_id = agent_key[3:]
+                mem_docs = await rag.search_identity_memory(
+                    user_input, identity_id, top_k=3
+                )
+                if mem_docs:
+                    block = "# 身份记忆召回（与当前输入相关）\n" + "\n".join(
+                        f"- [{(d.payload or {}).get('kind', 'memory')}] {d.text}"
+                        for d in mem_docs
+                    )
+                    self._append_to_system(messages, block)
+                    logger.info(
+                        "Injected identity memory recall (%d docs) for wf:%s",
+                        len(mem_docs), identity_id[:8],
+                    )
+            except Exception as e:
+                logger.debug("identity memory recall skipped: %s", e)
+
+        return messages
+
+    async def _inject_wiki_context(
+        self,
+        messages: list[dict[str, Any]],
+        user_input: str,
+        *,
+        limit: int = 6,
+        min_score: float = 0.2,
+    ) -> list[dict[str, Any]]:
+        """把 Wiki 图谱中匹配的实体摘要拼进 system（简单相关度门槛）。"""
+        q = (user_input or "").strip()
+        if len(q) < 2:
+            return messages
+        try:
+            from backend.repositories.wiki_repo import AsyncWikiEntityRepository
+
+            repo = AsyncWikiEntityRepository()
+            ents = await repo.search(q) or []
+            if not ents:
+                return messages
+            lim = max(1, min(int(limit or 6), 12))
+            q_low = q.lower()
+            q_tokens = {t for t in q_low.replace("/", " ").replace("-", " ").split() if len(t) >= 2}
+
+            def _score(ent: object) -> float:
+                name = str(getattr(ent, "name", "") or "")
+                desc = str(getattr(ent, "description", "") or "")
+                hay = f"{name} {desc}".lower()
+                if not hay.strip():
+                    return 0.0
+                sc = 0.0
+                if name and name.lower() in q_low:
+                    sc += 0.7
+                if q_low and name.lower() and name.lower() in q_low:
+                    sc += 0.2
+                # token overlap
+                n_toks = {t for t in hay.replace(",", " ").split() if len(t) >= 2}
+                if q_tokens and n_toks:
+                    inter = q_tokens & n_toks
+                    sc += 0.5 * (len(inter) / max(1, len(q_tokens)))
+                # CJK bigram soft
+                for i in range(max(0, len(q) - 1)):
+                    bg = q[i : i + 2]
+                    if bg.strip() and bg in hay:
+                        sc += 0.08
+                return sc
+
+            ranked = sorted((( _score(e), e) for e in ents), key=lambda x: -x[0])
+            kept = [(s, e) for s, e in ranked if s >= float(min_score)][:lim]
+            if not kept:
+                logger.info(
+                    "Wiki inject skipped: all below min_score=%.2f (candidates=%s)",
+                    min_score,
+                    len(ents),
+                )
+                return messages
+            lines = ["# Wiki 图谱相关实体"]
+            for s, e in kept:
+                lines.append(
+                    f"- **{e.name}** ({getattr(e, 'entity_type', 'concept')})"
+                    + (f"：{e.description}" if e.description else "")
+                    + f" (rel={s:.2f})"
+                )
+            self._append_to_system(messages, "\n".join(lines))
+            logger.info("Injected %s wiki entities for query", len(kept))
+        except Exception as e:
+            logger.debug("Wiki inject skipped: %s", e)
+        return messages
+

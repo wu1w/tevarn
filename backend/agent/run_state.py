@@ -16,6 +16,8 @@ class RunStatus(str, PyEnum):
     EXECUTING = "executing"
     WAITING = "waiting"
     VERIFYING = "verifying"
+    # Phase 2.3：进程被 kill / 启动扫到的非终态 → interrupted（可续跑）
+    INTERRUPTED = "interrupted"
     DONE = "done"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -26,21 +28,74 @@ TERMINAL_STATES: frozenset[RunStatus] = frozenset(
 )
 
 # 合法迁移表：key → 可达状态集合（终态 DONE/FAILED/CANCELLED 从任意非终态可达）
+_NON_TERMINAL_EXITS = frozenset(
+    {
+        RunStatus.INTERRUPTED,
+        RunStatus.DONE,
+        RunStatus.FAILED,
+        RunStatus.CANCELLED,
+    }
+)
+
 TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
     RunStatus.CREATED: frozenset(
-        {RunStatus.PLANNING, RunStatus.EXECUTING, RunStatus.DONE, RunStatus.FAILED, RunStatus.CANCELLED}
+        {
+            RunStatus.PLANNING,
+            RunStatus.EXECUTING,
+            RunStatus.DONE,
+            RunStatus.FAILED,
+            RunStatus.CANCELLED,
+            RunStatus.INTERRUPTED,
+        }
     ),
     RunStatus.PLANNING: frozenset(
-        {RunStatus.EXECUTING, RunStatus.WAITING, RunStatus.VERIFYING, RunStatus.DONE, RunStatus.FAILED, RunStatus.CANCELLED}
+        {
+            RunStatus.EXECUTING,
+            RunStatus.WAITING,
+            RunStatus.VERIFYING,
+            RunStatus.DONE,
+            RunStatus.FAILED,
+            RunStatus.CANCELLED,
+            RunStatus.INTERRUPTED,
+        }
     ),
     RunStatus.EXECUTING: frozenset(
-        {RunStatus.WAITING, RunStatus.VERIFYING, RunStatus.DONE, RunStatus.FAILED, RunStatus.CANCELLED}
+        {
+            RunStatus.WAITING,
+            RunStatus.VERIFYING,
+            RunStatus.DONE,
+            RunStatus.FAILED,
+            RunStatus.CANCELLED,
+            RunStatus.INTERRUPTED,
+        }
     ),
     RunStatus.WAITING: frozenset(
-        {RunStatus.EXECUTING, RunStatus.DONE, RunStatus.FAILED, RunStatus.CANCELLED}
+        {
+            RunStatus.EXECUTING,
+            RunStatus.DONE,
+            RunStatus.FAILED,
+            RunStatus.CANCELLED,
+            RunStatus.INTERRUPTED,
+        }
     ),
     RunStatus.VERIFYING: frozenset(
-        {RunStatus.EXECUTING, RunStatus.DONE, RunStatus.FAILED, RunStatus.CANCELLED}
+        {
+            RunStatus.EXECUTING,
+            RunStatus.DONE,
+            RunStatus.FAILED,
+            RunStatus.CANCELLED,
+            RunStatus.INTERRUPTED,
+        }
+    ),
+    # interrupted → 续跑回 executing，或放弃
+    RunStatus.INTERRUPTED: frozenset(
+        {
+            RunStatus.EXECUTING,
+            RunStatus.PLANNING,
+            RunStatus.DONE,
+            RunStatus.FAILED,
+            RunStatus.CANCELLED,
+        }
     ),
     RunStatus.DONE: frozenset(),
     RunStatus.FAILED: frozenset(),

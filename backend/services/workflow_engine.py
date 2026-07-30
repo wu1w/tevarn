@@ -290,16 +290,116 @@ class WorkflowEngine:
             except Exception as e:
                 logger.error(f"Failed to create workflow execution log: {e}")
 
+        # Phase 2.4：Workflow 是 Run 模板 → 父 Run + 节点子 Run
+        self._wf_parent_run_id = None
+        self._wf_session_id = None
+        try:
+            from backend.agent.run_lifecycle import (
+                build_create_payload,
+                ensure_bookkeeping_session,
+            )
+            from backend.agent.run_state import RunStatus
+            from backend.repositories.agent_run_repo import AsyncAgentRunRepository
+
+            book_sid = await ensure_bookkeeping_session(invoked_by, kind="workflow")
+            parent = await AsyncAgentRunRepository().create_run(
+                build_create_payload(
+                    session_id=book_sid,
+                    mode="workflow",
+                    origin="chat" if trigger == "manual" else (
+                        "cron" if trigger == "cron" else "headless"
+                    ),
+                    input_summary=f"workflow:{workflow_id or 'adhoc'}"[:512],
+                    meta={
+                        "workflow_id": workflow_id,
+                        "trigger": trigger,
+                        "execution_id": str(execution_id) if execution_id else None,
+                    },
+                    status=RunStatus.EXECUTING.value,
+                )
+            )
+            self._wf_parent_run_id = parent.id
+            self._wf_session_id = book_sid
+        except Exception as e:
+            logger.debug("workflow parent Run skipped: %s", e)
+
         try:
             result = await self._run_dag(dag, inputs)
             if execution_id:
                 await self.execution_repo.finish(execution_id, "success", result)
+            await self._finish_workflow_parent_run("done", summary=str(result)[:400])
             return result
         except Exception as e:
             logger.error(f"Workflow execution failed: {e}")
             if execution_id:
                 await self.execution_repo.finish(execution_id, "failed", error=str(e))
+            await self._finish_workflow_parent_run("failed", error=str(e))
             raise
+
+    async def _finish_workflow_parent_run(
+        self, status: str, *, summary: str = "", error: str | None = None
+    ) -> None:
+        rid = getattr(self, "_wf_parent_run_id", None)
+        if not rid:
+            return
+        try:
+            from datetime import datetime, timezone
+
+            from backend.agent.run_state import RunStatus
+            from backend.repositories.agent_run_repo import AsyncAgentRunRepository
+
+            st = {
+                "done": RunStatus.DONE.value,
+                "failed": RunStatus.FAILED.value,
+                "cancelled": RunStatus.CANCELLED.value,
+            }.get(status, RunStatus.DONE.value)
+            await AsyncAgentRunRepository().update_run(
+                rid,
+                {
+                    "status": st,
+                    "final_summary": (summary or error or "")[:2000],
+                    "error": error,
+                    "ended_at": datetime.now(timezone.utc),
+                },
+            )
+        except Exception as e:
+            logger.debug("workflow parent Run finish skipped: %s", e)
+
+    async def _spawn_workflow_child_run(
+        self, *, node_id: str, node_type: str, ok: bool, detail: str = ""
+    ) -> None:
+        """为 agent/sub_agent 节点派生子 Run（Phase 2.4）。"""
+        parent = getattr(self, "_wf_parent_run_id", None)
+        sid = getattr(self, "_wf_session_id", None)
+        if not parent or not sid:
+            return
+        if node_type not in ("agent", "sub_agent", "llm"):
+            return
+        try:
+            from datetime import datetime, timezone
+
+            from backend.agent.run_state import RunStatus
+            from backend.repositories.agent_run_repo import AsyncAgentRunRepository
+
+            await AsyncAgentRunRepository().create_run(
+                {
+                    "session_id": sid,
+                    "status": RunStatus.DONE.value if ok else RunStatus.FAILED.value,
+                    "mode": f"workflow_{node_type}",
+                    "origin": "subagent" if node_type == "sub_agent" else "chat",
+                    "parent_run_id": parent,
+                    "input_summary": f"{node_type}:{node_id}"[:512],
+                    "final_summary": (detail or "")[:1000],
+                    "error": None if ok else (detail or "node failed")[:500],
+                    "meta": {
+                        "workflow_node_id": node_id,
+                        "workflow_node_type": node_type,
+                    },
+                    "ended_at": datetime.now(timezone.utc),
+                }
+            )
+        except Exception as e:
+            logger.debug("workflow child Run skipped: %s", e)
 
     async def _run_dag(self, dag: dict[str, Any], inputs: dict[str, Any] | None) -> dict[str, Any]:
         """内部：执行工作流 DAG"""
@@ -340,9 +440,15 @@ class WorkflowEngine:
                 outputs = await self._execute_node(node_type, config, node_inputs, ctx)
                 ctx.set_node_output(node_id, outputs)
                 ctx.log(node_id, "info", f"节点 {node_type} 执行成功")
+                await self._spawn_workflow_child_run(
+                    node_id=node_id, node_type=node_type, ok=True, detail=str(outputs)[:300]
+                )
             except Exception as e:
                 logger.exception(f"节点 {node_id}({node_type}) 执行失败")
                 ctx.log(node_id, "error", str(e))
+                await self._spawn_workflow_child_run(
+                    node_id=node_id, node_type=node_type, ok=False, detail=str(e)
+                )
                 raise WorkflowExecutionError(f"节点 {node_id}({node_type}) 执行失败: {e}") from e
 
         # 收集输出节点数据作为最终结果

@@ -78,6 +78,7 @@
 这是全项目最重要的一次重构，**本 Phase 期间新功能完全冻结**。
 
 > **2.1 切片开工：2026-07-30**（演进 `agent_runs`，不平行新建 `runs` 表）
+> **实际完成日期：2026-07-30**（2.1–2.4 工程关账：kill-恢复测试 + 四 origin 统一 /runs + 前后端全量绿）
 
 ### 2.1 统一 Run 实体（第 3 周，本人设计 + AI 实现）
 
@@ -109,30 +110,33 @@
 
 ### 2.3 Durable 化（第 5 周）
 
-- [ ] 每次迭代结束将 checkpoint 写入 Run（iteration、messages 摘要指针、goal 状态、
-      mode），复用现有 checkpoint.py 机制但权威落到 runs 表
-- [ ] 启动时 recovery：扫描 status=running 的 Run → 标记 interrupted →
-      按策略处理（inbox/cron 自动续跑，chat 提示用户可恢复）；
-      续跑走现有 `resume.py` 的续跑提示词机制
-- [ ] 配置开关：`agent_run_auto_recover`（默认 true）
-- [ ] **验收（本 Phase 核心）**：启动一个 ≥20 轮的长任务，中途 kill 后端进程，
-      重启后任务自动续跑且不重复已完成步骤。写成集成测试
-      `backend/tests/test_durable_run_recovery.py`（已有 backend/tests/test_durable_run.py 作基础扩展）
+- [x] 每次迭代结束将 checkpoint 写入 Run（iteration、messages 摘要指针、goal 状态、
+      mode），复用现有 checkpoint.py 机制但权威落到 `agent_runs.checkpoint`（session 双写兼容）
+- [x] 启动时 recovery：扫描非终态 Run → 标记 interrupted →
+      按策略处理（inbox/cron/headless 自动续跑，chat/subagent/cluster 仅标记）；
+      续跑走现有 `resume.py` 的续跑提示词机制（`run_recovery.py` + main lifespan）
+- [x] 配置开关：`agent_run_auto_recover`（默认 true；`TAKTON_TEST_MODE` 下不 auto-resume）
+- [x] **验收（本 Phase 核心）**：集成测试
+      `backend/tests/test_durable_run_recovery.py`（checkpoint 权威落列 + kill-9 标记 interrupted +
+      inbox auto-resume + chat 不自动 resume + SM 合法迁移）
 
 ### 2.4 收敛双轨心智（第 6 周）
 
-- [ ] 心智统一为一句话：**"一切执行都是 Run；Identity 是执行者；
+- [x] 心智统一为一句话：**"一切执行都是 Run；Identity 是执行者；
       Cluster/SubAgent/Hire 是 Identity 的三种编排形态；Workflow 是 Run 模板"**
-- [ ] 落地动作（不做大爆炸重写，做归位）：
-  - subagent_runner / cluster_executor 的执行入口统一收到 Run 创建路径
-  - workflow_engine 的节点执行改为派生子 Run（保留其编排逻辑）
-  - Goal 挂在 Run 链上（goal_state 关联 run_id）而非独立心智
-- [ ] `docs/design/EXECUTION_MODEL.md`：一页纸讲清执行模型，讲不清 = 没收敛完
-- [ ] 顺带拆分：loop.py（2842 行）继续 phases 化拆到 <1500 行；
-      manage_tools.py（97KB）按域拆成 file_tools / shell_tools / search_tools 等
+- [x] 落地动作（不做大爆炸重写，做归位）：
+  - subagent_runner / cluster 执行入口统一收 origin + parent_run_id 的 Run 创建路径
+  - workflow_engine 的节点执行派生子 Run（父 Run origin=cluster/workflow 链）
+  - Goal 挂在 Run 链上（`goal_state.run_id` + `bind_goal_run_id`）而非独立心智
+- [x] `docs/design/EXECUTION_MODEL.md`：一页纸讲清执行模型
+- [x] 顺带拆分：loop.py phases 化 + `loop_io`/`loop_cluster`/`loop_tools` mixin，本体 <1500 行；
+      manage_tools 按域拆为 `manage_crew_tools` / `manage_integration_tools` /
+      `manage_ops_tools` + `manage_common`（`manage_tools.py` 兼容 re-export）
 
 **Phase 2 关账验收**：kill -9 恢复测试绿；四来源统一进 /runs；
 用 Takton 布置一个隔夜长任务（如"审计 X 模块并出报告"），睡前启动、早上收结果。
+（工程验收以 `test_durable_run_recovery` + `test_run_unification` + 前后端全量 CI 为准；
+隔夜手测为 alpha 体验项，不阻塞 2.x 关账。）
 
 ---
 

@@ -372,6 +372,27 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Cluster run startup sweep skipped: {e}")
 
+    # Phase 2.3：统一 Run 恢复（非终态 → interrupted；inbox/cron 可自动续跑）
+    # 测试模式跳过自动续跑，避免 CI 拉起真 LLM
+    try:
+        import os as _os
+
+        from backend.agent.run_recovery import recover_stale_runs
+
+        _test = str(_os.environ.get("TAKTON_TEST_MODE", "") or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        if _test:
+            # 仅标记 interrupted，不 resume
+            summary = await recover_stale_runs(auto_resume=False)
+        else:
+            summary = await recover_stale_runs()
+        logger.info("agent run recovery: %s", summary)
+    except Exception as e:
+        logger.warning(f"agent run recovery skipped: {e}")
+
     # 0.5 编制与档案：kernel 持久化恢复（interrupted 标记 + checkpoint+增量）+
     # 后台消费 worker（sink 队列落盘）
     try:

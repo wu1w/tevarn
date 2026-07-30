@@ -192,6 +192,8 @@ class Settings(BaseSettings):
     # Kernel 控制平面：loop 运行纳入 AgentProcess 生命周期管理 + 中介审计。
     # 关闭后退回纯旧路径（不影响功能，仅失去 kernel 可观测性）。
     agent_kernel_enabled: bool = True
+    # Phase 2.3：启动时将非终态 Run 标 interrupted，并对 inbox/cron/headless 自动续跑
+    agent_run_auto_recover: bool = True
     # ── 动态 skill 隔离（阶段 2）──
     # python handler 的沙箱策略：off=仅 AST+子进程 / auto=bwrap 有则用（默认）/
     # required=bwrap 不可用即拒绝执行
