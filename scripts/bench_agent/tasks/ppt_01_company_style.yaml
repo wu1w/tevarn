@@ -1,0 +1,13 @@
+name: ppt_01_company_style
+category: ppt
+prompt: |
+  请用 generate_ppt 为「季度业务复盘」生成演示文稿。
+  风格要求：深蓝封面、少字多图、页脚含版本号（若记忆中有公司风格请优先应用）。
+  先写出大纲中间产物，再导出 pptx 或 markdown。
+budget:
+  max_iterations: 30
+assertions:
+  - type: max_iterations
+    value: 30
+notes: |
+  Phase 4.3 公司 PPT 骨架；完整 dogfood 需真实 LLM。

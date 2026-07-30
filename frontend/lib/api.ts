@@ -2996,6 +2996,41 @@ export async function getIdentityMemory(identityId: string, kind?: string): Prom
   return res.data;
 }
 
+/** Phase 4.2 身份成长档案聚合 */
+export interface IdentityGrowth {
+  identity: KernelIdentity;
+  memory_timeline: Array<IdentityMemoryEntry & { is_current?: boolean }>;
+  skills: Array<{
+    name: string;
+    gen: number;
+    status?: string;
+    last_score?: number | null;
+    series: Array<{ gen: number; samples: number; success_rate: number | null; avg_tokens?: number | null }>;
+    current: { samples: number; success_rate: number | null; avg_tokens?: number | null };
+  }>;
+  runs: {
+    total: number;
+    done: number;
+    failed: number;
+    avg_iterations: number;
+    token_used: number;
+  };
+}
+
+export async function getIdentityGrowth(identityId: string): Promise<IdentityGrowth> {
+  const res = await api.get(`/kernel/identities/${identityId}/growth`);
+  return res.data;
+}
+
+export async function runEvolutionReplay(assetId: string): Promise<{
+  ok: boolean;
+  replay: Record<string, unknown>;
+  asset_id: string;
+}> {
+  const res = await api.post(`/evolution/drafts/${assetId}/replay`);
+  return res.data;
+}
+
 export async function addIdentityMemory(identityId: string, kind: string, content: string, source = 'manual'): Promise<IdentityMemoryEntry> {
   const res = await api.post(`/kernel/identities/${identityId}/memory`, { kind, content, source });
   return res.data;

@@ -6,6 +6,7 @@ PPT 生成 Skill
 import json
 import logging
 import os
+import re
 import uuid
 from typing import Any
 
@@ -82,39 +83,70 @@ class GeneratePPTSkill(BaseSkill):
         pages: int = 10,
         audience: str = "通用受众",
         outline: str = "",
+        resume_from: str = "",
+        save_style: bool = True,
         **kwargs,
     ) -> str:
-        """生成PPT文件"""
-        # 兼容 Agent Loop 注入的 user_id / _session_id 等元数据，忽略即可
+        """生成PPT文件（Phase 4.3：风格记忆 + workspace 中间产物 + 可续跑）。"""
+        # 兼容 Agent Loop 注入的 user_id / _session_id 等元数据
         try:
             from backend.services.llm import LLMServiceFactory
 
-            # 构建提示词
-            prompt = f"请为以下主题生成PPT内容：\n\n主题：{topic}\n目标受众：{audience}\n期望页数：{pages}页\n"
-            if outline:
-                prompt += f"大纲要点：\n{outline}\n\n"
-            prompt += f"\n请严格按照以下系统提示生成PPT结构：\n{SYSTEM_PROMPT}"
+            style_hint = await self._recall_company_style(
+                user_id=kwargs.get("user_id") or kwargs.get("_user_id"),
+                identity_id=kwargs.get("_identity_id"),
+            )
+            # 续跑：从 workspace 中间 JSON 恢复
+            ppt_data = None
+            if resume_from:
+                ppt_data = self._load_intermediate(resume_from)
+            if ppt_data is None:
+                prompt = (
+                    f"请为以下主题生成PPT内容：\n\n主题：{topic}\n"
+                    f"目标受众：{audience}\n期望页数：{pages}页\n"
+                )
+                if outline:
+                    prompt += f"大纲要点：\n{outline}\n\n"
+                if style_hint:
+                    prompt += f"公司风格偏好（必须遵守）：\n{style_hint}\n\n"
+                prompt += f"\n请严格按照以下系统提示生成PPT结构：\n{SYSTEM_PROMPT}"
 
-            llm_service = LLMServiceFactory.get_service()
-            response = ""
-            async for chunk in llm_service.chat([{"role": "user", "content": prompt}], stream=False):
-                response += chunk.delta or ""
-                if chunk.finish_reason:
-                    break
+                llm_service = LLMServiceFactory.get_service()
+                response = ""
+                async for chunk in llm_service.chat(
+                    [{"role": "user", "content": prompt}], stream=False
+                ):
+                    response += chunk.delta or ""
+                    if chunk.finish_reason:
+                        break
 
-            # 提取JSON
-            ppt_data = self._extract_json(response)
-            if not ppt_data:
-                return f"[Error] 无法解析PPT结构。LLM响应：{response[:500]}"
+                ppt_data = self._extract_json(response)
+                if not ppt_data:
+                    return (
+                        f"[Error] 无法解析PPT结构。LLM响应：{response[:500]}。"
+                        f"下一步：简化主题后重试，或提供更明确的 outline。"
+                    )
 
-            # generate ppt file
+            # 中间产物落 workspace，失败可 resume_from
+            inter_path = self._save_intermediate(ppt_data, topic=topic)
+
+            if save_style and style_hint is None and outline:
+                await self._remember_style_hint(
+                    f"PPT 风格线索（来自任务）：{outline[:400]}",
+                    user_id=kwargs.get("user_id") or kwargs.get("_user_id"),
+                    identity_id=kwargs.get("_identity_id"),
+                    run_id=kwargs.get("_run_id") or kwargs.get("_agent_run_id"),
+                )
+
             file_path = self._generate_ppt_file(ppt_data)
             file_name = os.path.basename(file_path)
             is_pptx = str(file_path).lower().endswith(".pptx")
             fmt = "PowerPoint .pptx" if is_pptx else "Markdown fallback"
             warn = ""
             if not is_pptx:
-                warn = chr(10) + 'WARN: not pptx. pip install python-pptx && restart backend'
+                warn = (
+                    "\nWARN: not pptx. pip install python-pptx && restart backend"
+                )
             parts = [
                 "[Success] PPT generated!",
                 f"title={ppt_data.get('title', topic)}",
@@ -122,13 +154,91 @@ class GeneratePPTSkill(BaseSkill):
                 f"format={fmt}",
                 f"path={file_path}",
                 f"download=/uploads/ppt/{file_name}",
+                f"intermediate={inter_path}",
+                "hint=失败可用 resume_from=中间 JSON 路径续跑",
             ]
+            if style_hint:
+                parts.append("style=applied_from_memory")
             if warn:
                 parts.append(warn.strip())
-            return chr(10).join(parts)
+            return "\n".join(parts)
         except Exception as e:
             logger.error(f"PPT generation failed: {e}")
-            return f"[Error] PPT生成失败: {e}"
+            return (
+                f"[Error] PPT生成失败: {type(e).__name__}。"
+                f"下一步：检查 python-pptx / 中间 JSON 是否可 resume_from。"
+            )
+
+    async def _recall_company_style(
+        self, *, user_id=None, identity_id=None
+    ) -> str | None:
+        try:
+            from backend.services import memory_bus
+
+            hits = await memory_bus.recall(
+                "PPT 风格 封面 模板 公司",
+                kinds=["preference", "methodology", "graph"],
+                top_k=3,
+                identity_id=identity_id,
+                user_id=user_id,
+            )
+            if not hits:
+                return None
+            return "\n".join(
+                f"- {h.title or h.kind}: {(h.content or '')[:200]}" for h in hits
+            )
+        except Exception as e:
+            logger.debug("ppt style recall skip: %s", e)
+            return None
+
+    async def _remember_style_hint(
+        self, content: str, *, user_id=None, identity_id=None, run_id=None
+    ) -> None:
+        try:
+            from backend.services import memory_bus
+
+            await memory_bus.remember(
+                "preference" if identity_id else "preference",
+                content,
+                title="PPT 公司风格",
+                identity_id=identity_id,
+                user_id=user_id,
+                source_run_id=run_id,
+                source="agent",
+                tags=["ppt", "style"],
+            )
+        except Exception as e:
+            logger.debug("ppt style remember skip: %s", e)
+
+    def _workspace_ppt_dir(self) -> str:
+        try:
+            from backend.tools.permissions import resolve_agent_workspace_root
+
+            root = resolve_agent_workspace_root()
+        except Exception:
+            root = os.getcwd()
+        d = os.path.join(root, ".takton", "ppt_work")
+        os.makedirs(d, exist_ok=True)
+        return d
+
+    def _save_intermediate(self, ppt_data: dict[str, Any], *, topic: str) -> str:
+        d = self._workspace_ppt_dir()
+        safe = re.sub(r"[^\w\-]+", "_", (topic or "deck")[:40], flags=re.U)
+        path = os.path.join(d, f"{safe}_{uuid.uuid4().hex[:8]}.outline.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(ppt_data, f, ensure_ascii=False, indent=2)
+        return path
+
+    def _load_intermediate(self, path: str) -> dict[str, Any] | None:
+        try:
+            p = os.path.abspath(path)
+            if not os.path.isfile(p):
+                return None
+            with open(p, encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else None
+        except Exception:
+            return None
 
     def _extract_json(self, text: str) -> dict[str, Any] | None:
         """从LLM响应中提取JSON"""

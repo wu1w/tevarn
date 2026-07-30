@@ -58,6 +58,7 @@ export function AgentDrawer({ agent, processes, zh, onClose, onChanged, open = t
     () => processes.filter((p) => processBelongsToAgent(p, agent)),
     [processes, agent],
   );
+  // Phase 4.2：全页档案入口
   const procTokens = useMemo(() => sumAgentTokens(processes, agent), [processes, agent]);
   const suspended = agent.status === 'suspended';
 
@@ -237,7 +238,15 @@ export function AgentDrawer({ agent, processes, zh, onClose, onChanged, open = t
               color: '#fff', fontWeight: 700, fontSize: 20,
             }}>{agent.name[0]}</span>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--foreground)' }}>{agent.name}</div>
+              <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--foreground)' }}>
+                {agent.name}{' '}
+                <Link
+                  href={`/agents/${agent.id}`}
+                  style={{ fontSize: 11, fontWeight: 600, color: 'var(--brand-purple)', marginLeft: 6 }}
+                >
+                  {zh ? '成长档案 →' : 'Growth →'}
+                </Link>
+              </div>
               <div style={{ fontSize: 11.5, color: 'var(--foreground-dim)', marginTop: 2 }}>
                 {agent.role || '—'} · {ST_TEXT[agent.status] ?? agent.status}
               </div>

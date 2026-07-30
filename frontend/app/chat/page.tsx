@@ -21,7 +21,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { Message, StatusUpdateMessage, StreamDeltaMessage, GoalUpdateMessage, GoalState, ToolEventMessage, RunEventMessage } from '@/types';
 import { useTerminalStore } from '@/stores/terminalStore';
-import { generateImage } from '@/lib/api';
+import { generateImage, resumeSessionRun } from '@/lib/api';
 import { generateUUID } from '@/lib/uuid';
 import { useRouter, useSearchParams } from 'next/navigation';
 import type { ToolCallData } from '@/components/chat/ToolCallPanel';
@@ -1134,6 +1134,39 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
                       {currentSession?.id ? (
                         <div className="px-2 pb-2">
                           <SessionRunsPanel sessionId={currentSession.id} compact />
+                        </div>
+                      ) : null}
+                      {/* Phase 4.3：停止后一键续跑（干净 checkpoint → resume） */}
+                      {currentSession?.id && !isStreaming ? (
+                        <div className="mx-3 mb-2 flex items-center justify-between gap-2 rounded-lg border border-brand-purple/25 bg-brand-purple/5 px-3 py-1.5 text-[11px]">
+                          <span className="text-foreground-dim">
+                            {t('chat.resumeHint') || '任务中断？可从 checkpoint 一键续跑'}
+                          </span>
+                          <button
+                            type="button"
+                            className="rounded px-2 py-0.5 font-semibold text-brand-purple hover:bg-brand-purple/10"
+                            onClick={async () => {
+                              try {
+                                const r = (await resumeSessionRun(currentSession.id)) as {
+                                  resumed?: boolean;
+                                  detail?: string;
+                                };
+                                if (r?.resumed) {
+                                  addToast(t('chat.resumeOk') || '已触发续跑', 'success');
+                                  setIsStreaming(true);
+                                } else {
+                                  addToast(
+                                    r?.detail || t('chat.resumeEmpty') || '无可续跑内容',
+                                    'info',
+                                  );
+                                }
+                              } catch {
+                                /* interceptor */
+                              }
+                            }}
+                          >
+                            {t('chat.resumeBtn') || '一键续跑'}
+                          </button>
                         </div>
                       ) : null}
                       <MessageInput

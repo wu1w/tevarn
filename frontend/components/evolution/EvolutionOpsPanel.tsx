@@ -15,6 +15,7 @@ import {
   rejectEvolutionDraft,
   runEvolutionCurator,
   runEvolutionTask,
+  runEvolutionReplay,
   setEvolutionAssetEnabled,
   type EvolutionAsset,
 } from '@/lib/api';
@@ -132,6 +133,22 @@ export function EvolutionOpsPanel({ zh = true }: { zh?: boolean }) {
                     <div style={{ fontWeight: 600, fontSize: 13 }}>{a.name}</div>
                     <div style={{ fontSize: 11, color: 'var(--foreground-dim)' }}>
                       {a.kind} · score {a.last_score ?? '—'} · {a.status}
+                      {(() => {
+                        const rp = (a.meta as { replay?: { pass?: boolean; reason?: string } } | undefined)
+                          ?.replay;
+                        if (!rp) return null;
+                        return (
+                          <span
+                            style={{
+                              marginLeft: 6,
+                              color: rp.pass ? 'var(--status-online)' : 'var(--status-offline)',
+                              fontWeight: 600,
+                            }}
+                          >
+                            replay={rp.pass ? 'pass' : 'fail'}
+                          </span>
+                        );
+                      })()}
                     </div>
                     <div style={{ fontSize: 11.5, marginTop: 4, color: 'var(--foreground-muted)' }}>
                       {(a.summary || '').slice(0, 120)}
@@ -144,6 +161,21 @@ export function EvolutionOpsPanel({ zh = true }: { zh?: boolean }) {
                       onClick={() => setPreview(a)}
                     >
                       {zh ? '预览' : 'Preview'}
+                    </button>
+                    <button
+                      type="button"
+                      style={btnGhost}
+                      onClick={async () => {
+                        try {
+                          const r = await runEvolutionReplay(a.id);
+                          setLog(JSON.stringify(r.replay, null, 2).slice(0, 1200));
+                          invalidate();
+                        } catch (e) {
+                          setLog(String(e));
+                        }
+                      }}
+                    >
+                      {zh ? '回放验证' : 'Replay'}
                     </button>
                     <button type="button" style={btnPrimary} disabled={apply.isPending} onClick={() => apply.mutate(a.id)}>
                       {zh ? '应用' : 'Apply'}

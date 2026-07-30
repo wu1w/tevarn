@@ -224,6 +224,17 @@ def _store_draft(
         proposal["body"],
         meta={"distilled_from": "success_trajectory" if success else "failure_trajectory"},
     )
+    meta = {
+        "format": "skill_md_agentskills_v1",
+        "generator": proposal.get("generator", "llm"),
+        "from_success": success,
+    }
+    # Phase 4.1：保留轨迹摘要供回放验证
+    if proposal.get("tool_trace"):
+        meta["tool_trace"] = proposal["tool_trace"][:80]
+    if proposal.get("baseline_metrics"):
+        meta["baseline_metrics"] = proposal["baseline_metrics"]
+
     asset = store.create_asset(
         kind="skill",
         name=name,
@@ -232,11 +243,16 @@ def _store_draft(
         source="auto",
         status="draft",
         session_id=session_id,
-        meta={
-            "format": "skill_md_agentskills_v1",
-            "generator": proposal.get("generator", "llm"),
-            "from_success": success,
-        },
+        meta=meta,
     )
-    logger.info("distilled skill draft created: %s (gen=%s)", name, asset.get("gen"))
+    # 入库后立即跑回放验证，审批面板可直接看 pass/fail
+    try:
+        from backend.evolution.replay_validator import validate_and_attach
+
+        if asset and asset.get("id"):
+            validate_and_attach(str(asset["id"]))
+            asset = store.get_asset(str(asset["id"])) or asset
+    except Exception as e:
+        logger.debug("replay attach after distill skipped: %s", e)
+    logger.info("distilled skill draft created: %s (gen=%s)", name, asset.get("gen") if asset else "?")
     return asset

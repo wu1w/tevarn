@@ -645,6 +645,124 @@ async def get_identity_memory(
     return {"memory": [_memory_dict(m) for m in items], "total": len(items)}
 
 
+@router.get("/identities/{identity_id}/growth")
+async def get_identity_growth(
+    identity_id: str,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """Phase 4.2：身份成长档案聚合（记忆版本链 + 技能评分 + Run 统计）。"""
+    reg = _identity_registry()
+    if reg is None:
+        raise HTTPException(status_code=503, detail="identity layer disabled")
+    try:
+        ident = await reg.get(identity_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    if ident is None:
+        raise HTTPException(status_code=404, detail="identity not found")
+
+    # 记忆：当前生效 + 尽量拉历史（含已 superseded）做时间线
+    timeline: list[dict] = []
+    try:
+        current = await reg.current_memory(identity_id)
+        for m in current:
+            d = _memory_dict(m)
+            d["is_current"] = True
+            timeline.append(d)
+        # 若 registry 暴露 list 全量则补充链
+        list_all = getattr(reg, "list_memory_history", None) or getattr(
+            reg, "list_all_memory", None
+        )
+        if callable(list_all):
+            hist = await list_all(identity_id)
+            seen = {t["id"] for t in timeline}
+            for m in hist or []:
+                d = _memory_dict(m)
+                if d.get("id") in seen:
+                    continue
+                d["is_current"] = not bool(getattr(m, "superseded_by", None))
+                timeline.append(d)
+    except Exception:
+        pass
+    timeline.sort(key=lambda x: str(x.get("created_at") or ""), reverse=True)
+
+    # 技能评分曲线（evolution scoreboard）
+    skills_out: list[dict] = []
+    try:
+        from backend.evolution import store as evo_store
+
+        assets = evo_store.list_assets(kind="skill", limit=100)
+        names = sorted({a.get("name") for a in assets if a.get("name")})
+        for name in names[:40]:
+            latest = evo_store.latest_asset_by_name("skill", name)
+            if not latest:
+                continue
+            gen = int(latest.get("gen") or 0)
+            series = []
+            for g in range(max(0, gen - 4), gen + 1):
+                st = evo_store.skill_outcome_stats(name, g, window=50)
+                series.append({"gen": g, **st})
+            skills_out.append(
+                {
+                    "name": name,
+                    "gen": gen,
+                    "status": latest.get("status"),
+                    "last_score": latest.get("last_score"),
+                    "series": series,
+                    "current": evo_store.skill_outcome_stats(name, gen, window=50),
+                }
+            )
+    except Exception:
+        pass
+
+    # Run 统计：按 identity_id 列过滤
+    runs_summary = {
+        "total": 0,
+        "done": 0,
+        "failed": 0,
+        "avg_iterations": 0.0,
+        "token_used": 0,
+    }
+    try:
+        import uuid as _uuid
+
+        from backend.repositories.agent_run_repo import AsyncAgentRunRepository
+
+        rid = _uuid.UUID(str(identity_id))
+        rows = await AsyncAgentRunRepository().list_recent(
+            limit=100, identity_id=rid
+        )
+        runs_summary["total"] = len(rows)
+        iters = []
+        tokens = 0
+        for r in rows:
+            st = str(getattr(r, "status", "") or "")
+            if st in ("done", "completed"):
+                runs_summary["done"] += 1
+            elif st in ("failed", "error"):
+                runs_summary["failed"] += 1
+            try:
+                iters.append(int(getattr(r, "total_iterations", 0) or 0))
+            except (TypeError, ValueError):
+                pass
+            try:
+                tokens += int(getattr(r, "token_used", 0) or 0)
+            except (TypeError, ValueError):
+                pass
+        if iters:
+            runs_summary["avg_iterations"] = round(sum(iters) / len(iters), 2)
+        runs_summary["token_used"] = tokens
+    except Exception:
+        pass
+
+    return {
+        "identity": _ident_dict(ident),
+        "memory_timeline": timeline,
+        "skills": skills_out,
+        "runs": runs_summary,
+    }
+
+
 @router.post("/identities/{identity_id}/memory")
 async def add_identity_memory(
     identity_id: str,

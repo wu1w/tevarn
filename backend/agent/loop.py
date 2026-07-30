@@ -40,17 +40,44 @@ logger = logging.getLogger(__name__)
 
 
 def _sanitize_tool_error(tool_name: str, exc: Exception) -> str:
-    """工具错误脱敏：生产模式不回传 SQL/堆栈，调试模式带详情。"""
+    """工具错误脱敏 + 下一步建议（Phase 4.3）。
+
+    生产模式不回传 SQL/堆栈；调试模式带详情。
+    """
     import os
 
     if os.environ.get("TAKTON_DEBUG", "").lower() in ("1", "true", "yes"):
         return f"[Error] Failed to execute {tool_name}: {exc}"
-    # 提取异常类型名，不带内部细节
+
     exc_type = type(exc).__name__
+    msg = str(exc or "")[:200].lower()
+    hint = _tool_error_next_step(tool_name, exc_type, msg)
     return (
         f"[Error] 工具 {tool_name} 执行失败（{exc_type}）。"
-        f"请检查服务端日志获取详情，或设 TAKTON_DEBUG=1 查看完整错误。"
+        f"{hint}"
     )
+
+
+def _tool_error_next_step(tool_name: str, exc_type: str, msg_lower: str) -> str:
+    """面向用户的下一步建议（不泄内部路径细节）。"""
+    name = (tool_name or "").lower()
+    if "permission" in msg_lower or "denied" in msg_lower or "not allowed" in msg_lower:
+        return "下一步：检查权限规则/员工能力白名单，或在审批中心放行后重试。"
+    if "not found" in msg_lower or "no such file" in msg_lower or "filenotfound" in exc_type.lower():
+        return "下一步：用 glob/list 确认路径是否存在，或改用工作区内的相对路径。"
+    if "timeout" in msg_lower or "timed out" in msg_lower:
+        return "下一步：缩小命令范围、拆分长任务，或提高超时后重试。"
+    if "json" in msg_lower or "decode" in msg_lower or "parse" in msg_lower:
+        return "下一步：检查参数 JSON 是否合法，字段名是否与工具 schema 一致。"
+    if name in ("file_read", "file_write", "edit", "glob", "grep"):
+        return "下一步：确认路径在 workspace 内，必要时先 file_read/glob 再编辑。"
+    if name in ("command", "run_shell", "bash", "shell", "python"):
+        return "下一步：先用只读命令验证环境，避免一次执行过长管道；敏感操作需确认。"
+    if "ppt" in name or name == "generate_ppt":
+        return "下一步：确认已安装 python-pptx；可先生成大纲 JSON 再导出 pptx。"
+    if "network" in msg_lower or "connection" in msg_lower or "http" in name:
+        return "下一步：检查网络/URL 是否可达，或改用本地缓存内容。"
+    return "下一步：根据工具说明调整参数后重试；仍失败可设 TAKTON_DEBUG=1 查看服务端日志。"
 
 
 # 安全修复：按 session_id 的并发锁，防止同一 session 的 agent loop 竞态执行

@@ -220,6 +220,19 @@ async def apply_draft(
     if not a:
         raise HTTPException(404, "asset not found")
     from backend.evolution.gates import run_gates
+    from backend.evolution.replay_validator import assert_replay_allows_apply
+
+    # Phase 4.1：回放验证不通过不得 apply
+    replay_gate = assert_replay_allows_apply(a)
+    if not replay_gate.get("ok"):
+        raise HTTPException(
+            400,
+            detail={
+                "message": "回放验证未通过，技能无法进入 approved/active",
+                "replay": replay_gate.get("replay"),
+                "code": "replay_failed",
+            },
+        )
 
     gate = run_gates(
         name=a["name"],
@@ -245,7 +258,27 @@ async def apply_draft(
             )
         except Exception:
             pass
-    return {"ok": True, "asset": updated, "gate": gate}
+    return {
+        "ok": True,
+        "asset": updated,
+        "gate": gate,
+        "replay": replay_gate.get("replay"),
+    }
+
+
+@router.post("/drafts/{asset_id}/replay")
+async def run_replay_validation(
+    asset_id: str,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+) -> dict[str, Any]:
+    """Phase 4.1：手动触发回放验证并写回 meta.replay。"""
+    a = store.get_asset(asset_id)
+    if not a:
+        raise HTTPException(404, "asset not found")
+    from backend.evolution.replay_validator import validate_and_attach
+
+    replay = validate_and_attach(asset_id)
+    return {"ok": bool(replay.get("pass")), "replay": replay, "asset_id": asset_id}
 
 
 @router.post("/drafts/{asset_id}/reject")

@@ -22,7 +22,7 @@
 
 结果写到 `bench/results/<sha>-<model>-<ts>.{json,md}`（该目录不入库）。
 
-## 任务集（20 个）
+## 任务集
 
 | 类别 | 数量 | 考察点 |
 |---|---|---|
@@ -32,6 +32,15 @@
 | `long_task` | 3 | 压缩、续跑、自我验证 |
 | `honesty` | 2 | 做不到时如实报告，不编造输出 |
 | `safety` | 2 | 只读模式下写入必须被拦，且不谎称完成 |
+| `ppt` / `dogfood` | 4 | Phase 4：公司 PPT + 3 条 dogfood 开发任务骨架 |
+
+**改 `context_pipeline` 后必跑**（至少 dry-run + 固定子集）：
+
+```bash
+.venv/bin/python -m scripts.bench_agent.run_bench --dry-run
+# 有 LLM 时：
+.venv/bin/python -m scripts.bench_agent.run_bench --filter dogfood --filter ppt
+```
 
 ## 任务格式
 

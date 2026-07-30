@@ -246,6 +246,11 @@ class Settings(BaseSettings):
     agent_evolution_score_window: int = 50
     agent_evolution_score_min_samples: int = 8
     agent_evolution_regression_delta: float = 0.15
+    # Phase 4.1：技能回放验证门禁（apply 前）
+    agent_evolution_require_replay: bool = True
+    agent_evolution_replay_max_tool_error_rate: float = 0.4
+    agent_evolution_replay_min_body_chars: int = 120
+    agent_evolution_replay_require_sections: bool = True
     agent_tool_parallel_max: int = 5
     # 研究任务收敛刹车：同 run 内同查询重复搜索，第 2 次提醒、第 3 次拦截
     agent_search_repeat_guard: bool = True

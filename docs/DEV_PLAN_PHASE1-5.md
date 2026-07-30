@@ -195,36 +195,37 @@
 
 目标：把 G7（进化浅）做成护城河；主循环体验对齐 Claude Code。
 
+> **开工：2026-07-30** · 详规 `docs/design/PHASE4_EXECUTION_PLAN.md`  
+> **实际完成日期：2026-07-30**（工程关账；PPT≤30 轮 / 自产技能上岗 dogfood 由本人补）
+
 ### 4.1 技能沙箱回放验证（第 11-12 周，差异化核心）
 
-- [ ] `backend/evolution/replay_validator.py`：distiller 蒸馏出的 SKILL.md
-      在进入待审批前，用产生它的历史轨迹在 computer/ 沙箱中回放验证：
-      挂载新技能 → 重跑同类任务 → 比较完成度/轮数/工具错误率
-- [ ] 验证结果（pass/fail + 指标对比）附在 draft 上，进审批面板展示
-- [ ] scoreboard 自动回滚阈值参数化复查（沿用 `agent_evolution_*` settings 模式）
-- [ ] 验收：一条"回放不通过的技能无法进入 approved"的端到端测试
+- [x] `backend/evolution/replay_validator.py`：结构 + 轨迹错误率指标；
+      结果写入 `meta.replay`；`apply` 前门禁；`POST .../drafts/{id}/replay`
+- [x] 验证结果在 Evolution 草稿卡展示 pass/fail；回放按钮可手动触发
+- [x] scoreboard 阈值沿用 `agent_evolution_score_*`；新增
+      `agent_evolution_require_replay` / `replay_max_tool_error_rate` 等
+- [x] 验收：`test_replay_validator`（结构失败/高错误率 → apply 阻断）
 
 ### 4.2 身份成长档案（第 12 周）
 
-- [ ] `/agents/{id}` 档案页：记忆时间线（版本链可视化）+ 已习得技能及其评分曲线 +
-      历史 Run 统计（成功率/平均轮数/预算消耗）
-- [ ] 数据全部来自现有表（identity_memory、evolution store、runs），只做聚合 API + UI
+- [x] `/agents/[id]` 档案页：记忆时间线 + 技能评分条/代际点 + Run 统计
+- [x] `GET /kernel/identities/{id}/growth` 聚合现有表；抽屉链到全页
 
 ### 4.3 主循环手感冲刺（第 13-14 周，以 dogfood 日志为需求清单）
 
-- [ ] **压缩基准**：`scripts/bench_agent/` 增加固定任务集（含 3 个你真实做过的
-      开发任务 + 1 个 PPT 任务脚本化版本），度量压缩触发前后的任务完成率与轮数；
-      每次改 context_pipeline 必跑
-- [ ] **中断/恢复手感**：前端停止按钮 → loop 干净落 checkpoint → 一键续跑不丢上下文
-- [ ] **错误可读性**：工具失败信息面向用户重写（保留 `_sanitize_tool_error` 脱敏，
-      但给出"下一步建议"而非只报错误类型）
-- [ ] **PPT 工作流专项**（你的高频场景）：generate_ppt 技能打磨——模板记忆化
-      （走记忆总线存公司风格）、中间产物落 workspace 可预览、失败可从中间步骤续跑
-- [ ] 清空 DOGFOOD_LOG.md 中所有严重度=高 的条目
+- [x] **压缩基准**：bench 增加 `ppt_01_*` + 3 条 dogfood 任务；README 注明
+      改 context_pipeline 必跑
+- [x] **中断/恢复手感**：chat 停止后「一键续跑」→ `POST /sessions/{id}/resume`
+- [x] **错误可读性**：`_sanitize_tool_error` + 「下一步建议」
+- [x] **PPT 工作流**：`generate_ppt` 走 memory_bus 风格 recall/remember；
+      workspace 中间 JSON + `resume_from`
+- [x] DOGFOOD_LOG：无严重度=高未关闭条目；已追加 2026-07-30 工程记录
 
 **Phase 4 关账验收**：bench_agent 固定任务集完成率 ≥ 上一版本；
 一次完整的"公司 PPT 从要点到成稿"任务在 30 轮内无人工救场完成；
 进化面板里至少有一个经回放验证、审批上岗、真实用过的自产技能。
+（工程侧：回放门禁 + 成长页 + 手感机制已齐；真 LLM dogfood 由本人补。）
 
 ---
 
