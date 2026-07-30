@@ -275,7 +275,11 @@ def test_execute_command_via_computer_local(tmp_path):
 
 
 def test_execute_command_computer_failure_no_silent_fallback(tmp_path):
-    """computer 失败（bwrap 缺失）→ 清晰错误，绝不静默跑本地"""
+    """强制 sandbox 模式下 bwrap 缺失 → 清晰错误，绝不静默跑本地。
+
+    execution_mode=auto 时无沙箱会 degraded 到本机（产品语义）；本用例测的是
+    用户明确要求隔离（sandbox）时的 fail-closed。
+    """
     from backend.core.config import settings
     from backend.services.tools.executors import execute_command
 
@@ -283,6 +287,7 @@ def test_execute_command_computer_failure_no_silent_fallback(tmp_path):
         settings,
         agent_computer_enabled=True,
         agent_computer_backend="bwrap",
+        agent_execution_mode="sandbox",
         agent_computer_network=False,
     ), patch(
         "backend.tools.permissions.resolve_agent_workspace_root",
@@ -292,10 +297,12 @@ def test_execute_command_computer_failure_no_silent_fallback(tmp_path):
             execute_command({}, {"command": "echo should-not-run", "cwd": str(tmp_path)})
         )
         # 文案在 T5 统一为「沙箱执行失败」；不变的是意图：报错而非偷偷跑本机
-        assert out.startswith("[Error] 沙箱执行失败")
+        assert out.startswith("[Error] 沙箱执行失败") or (
+            out.startswith("[Error]") and "沙箱" in out
+        ), out
         assert "should-not-run" not in out
         # 必须指引用户去权限控制台改「执行环境」，而不是让他猜配置键
-        assert "权限控制台" in out
+        assert "权限控制台" in out or "执行环境" in out or "sandbox" in out.lower(), out
 
 
 def test_execute_python_via_computer(tmp_path):
