@@ -5,11 +5,13 @@ Test configuration and shared fixtures for backend tests.
 import os
 import sys
 import tempfile
+from pathlib import Path
 from typing import AsyncGenerator, Generator
 
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -24,8 +26,19 @@ os.environ.setdefault("API_KEY", "test-api-key-do-not-use-in-production")
 # 在 kernel routes 引入 DB merge 后暴露为测试间数据污染）。
 # 测试库用进程级临时文件而非 :memory:——:memory: 下每个连接是独立库，
 # 引擎连接池会让「建表连接」和「查询连接」看到不同的库。
-_TEST_DB_PATH = os.path.join(tempfile.gettempdir(), f"takton_test_{os.getpid()}.db")
-os.environ.setdefault("TAKTON_DB_URL", f"sqlite+aiosqlite:///{_TEST_DB_PATH}")
+#
+# xdist 注意：worker 会继承 controller 的环境。若用 setdefault，所有 gw*
+# 会共用 controller 的 TAKTON_DB_URL → 并发 create_all 竞态
+# （sqlite3.OperationalError: table … already exists）。
+# 必须按 worker+pid 强制隔离。
+_XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER", "") or "main"
+_TEST_DB_PATH = os.path.join(
+    tempfile.gettempdir(),
+    f"takton_test_{_XDIST_WORKER}_{os.getpid()}.db",
+)
+# Windows 路径用 as_posix，避免反斜杠被 URL 解析吃掉
+_TEST_DB_URI = Path(_TEST_DB_PATH).resolve().as_posix()
+os.environ["TAKTON_DB_URL"] = f"sqlite+aiosqlite:///{_TEST_DB_URI}"
 os.environ.setdefault("SINGLE_USER_MODE", "True")
 # 测试模式：禁止 lifespan 拉起 dispatcher/cron/gateway 等常驻后台，
 # 否则多次 LifespanManager 启停会在 Windows/CI 上互锁超时。
@@ -49,6 +62,16 @@ TestingSessionLocal = async_sessionmaker(
 _TABLES_READY = False
 
 
+def _create_all_safe(sync_conn) -> None:
+    """create_all with TOCTOU tolerance (multi-process / fixture+lifespan)."""
+    try:
+        Base.metadata.create_all(sync_conn, checkfirst=True)
+    except OperationalError as e:
+        msg = str(getattr(e, "orig", None) or e).lower()
+        if "already exists" not in msg:
+            raise
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def prepare_test_database() -> AsyncGenerator[None, None]:
     """Ensure schema exists (once per process; file DB survives loop turnover).
@@ -61,7 +84,7 @@ async def prepare_test_database() -> AsyncGenerator[None, None]:
     global _TABLES_READY
     if not _TABLES_READY:
         async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+            await conn.run_sync(_create_all_safe)
         _TABLES_READY = True
     yield
 

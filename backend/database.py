@@ -201,10 +201,24 @@ async def _migrate_perf_indexes(conn) -> None:
     )
 
 
+def _create_all_safe(sync_conn) -> None:
+    """MetaData.create_all with multi-process TOCTOU tolerance.
+
+    checkfirst=True 仍会在「检查→建表」窗口与其它进程撞车，SQLite 报
+    ``table … already exists``。测试 xdist / 多 worker 冷启动时可见。
+    """
+    try:
+        Base.metadata.create_all(sync_conn, checkfirst=True)
+    except OperationalError as e:
+        msg = str(getattr(e, "orig", None) or e).lower()
+        if "already exists" not in msg:
+            raise
+
+
 async def init_db() -> None:
     """Initialize database tables"""
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_create_all_safe)
         await _migrate_skill_columns(conn)
         await _migrate_tenant_columns(conn)
         await _migrate_tool_columns(conn)
