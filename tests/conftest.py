@@ -4,6 +4,7 @@ Test configuration and shared fixtures for backend tests.
 
 import os
 import sys
+import tempfile
 from typing import AsyncGenerator, Generator
 
 import pytest
@@ -32,8 +33,6 @@ from backend.main import app
 from backend.schemas.user import UserRead
 
 # 文件库 + NullPool：避免 :memory: 多连接各见空库；与 function-scoped loop 兼容
-import tempfile
-
 _TEST_DB_PATH = os.path.join(tempfile.gettempdir(), f"takton_root_test_{os.getpid()}.db")
 TEST_DB_URL = os.environ.setdefault(
     "TAKTON_DB_URL", f"sqlite+aiosqlite:///{_TEST_DB_PATH}"
