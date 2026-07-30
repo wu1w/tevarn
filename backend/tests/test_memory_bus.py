@@ -99,6 +99,39 @@ def test_court_capability_unknown_process():
 
 
 @pytest.mark.asyncio
+async def test_wiki_remember_and_recall():
+    """Phase 3.1 补全：wiki 经总线真写 wiki_entities。"""
+    from backend.services import memory_bus
+
+    title = f"wiki-bus-{uuid.uuid4().hex[:8]}"
+    content = "总线写入的 Wiki 概念：统一 Run 与权限法院"
+    wr = await memory_bus.remember(
+        "wiki",
+        content,
+        title=title,
+        meta={"entity_type": "concept"},
+        source="agent",
+    )
+    assert wr.ok, wr.message
+    assert wr.source == "wiki"
+    assert wr.id
+
+    hits = await memory_bus.recall(title, kinds=["wiki"], top_k=10)
+    assert any(h.source == "wiki" and title in (h.title or "") for h in hits)
+    assert any("权限法院" in h.content or "统一 Run" in h.content for h in hits)
+
+    # 同名再写 → version 递增
+    wr2 = await memory_bus.remember(
+        "wiki",
+        content + "（修订）",
+        title=title,
+        meta={"entity_type": "concept"},
+    )
+    assert wr2.ok
+    assert wr2.version >= 2
+
+
+@pytest.mark.asyncio
 async def test_court_decide_tool_disabled():
     from backend.core.config import settings
     from backend.kernel.permission_court import decide_tool

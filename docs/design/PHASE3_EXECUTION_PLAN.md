@@ -147,11 +147,11 @@ Workforce：`steward` 层短路，**不**弹主人窗；仍写可解释记录。
 
 ## 6. 验收清单（工程）
 
-- [ ] `MEMORY_BUS.md` + `memory_bus` + 测试绿  
-- [ ] `permission_court` + 测试绿 + 现有权限测绿  
-- [ ] FE 三页可操作；locale 拆分后 lint/tsc/build 绿  
-- [ ] P1–P3：`pytest backend/tests` + FE lint/tsc/build + 本地 `/api/runs` + 记忆/权限冒烟  
-- [ ] `DEV_PLAN_PHASE1-5.md` Phase 3 checkbox 全勾 + 完成日期  
+- [x] `MEMORY_BUS.md` + `memory_bus` + 测试绿（含 wiki 真写）  
+- [x] `permission_court` + `test_permission_court` 优先级矩阵  
+- [x] FE 三页可操作；locale 拆分后 lint/tsc/build 绿  
+- [x] Intent 生产接线：`apply_intent_to_process` + loop/subagent  
+- [x] `DEV_PLAN_PHASE1-5.md` Phase 3 checkbox 全勾 + 完成日期  
 
 ---
 

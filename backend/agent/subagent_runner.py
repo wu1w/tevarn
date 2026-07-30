@@ -122,6 +122,35 @@ async def run_subagent(
     # 两者不可混用（此前混用导致 parent 查找落空、子进程实为无父顶级进程）。
     if parent_kernel_process_id:
         child._parent_kernel_process_id = parent_kernel_process_id
+    # Intent：子代理默认最小只读能力；显式 capabilities / allow_risky 可放宽
+    try:
+        raw_caps = getattr(sub_agent, "capabilities", None)
+        cap_list = [str(c) for c in (raw_caps or [])] if raw_caps else []
+        allow_risky = bool(getattr(sub_agent, "allow_risky", False))
+        child._intent_declaration = {
+            "goal": (goal or f"subagent:{name}").strip()[:500] or f"subagent:{name}",
+            "capabilities": cap_list,
+            "constraints": {
+                "allow_risky": allow_risky,
+                "ttl_seconds": int(_subagent_timeout()),
+            },
+        }
+        # 预置进程能力为空列表时 create_process 会走 intent 挂载；
+        # 若 sub_agent 声明了 capabilities，同步进 process options
+        if cap_list:
+            child._kernel_process_options = {
+                **(getattr(child, "_kernel_process_options", None) or {}),
+                "capabilities": cap_list,
+                "intent": child._intent_declaration,
+            }
+        else:
+            child._kernel_process_options = {
+                **(getattr(child, "_kernel_process_options", None) or {}),
+                "capabilities": [],  # 显式空 → 再由 intent 填 grantable
+                "intent": child._intent_declaration,
+            }
+    except Exception as e:
+        logger.debug("subagent intent prep: %s", e)
     try:
         child.max_iterations = max(
             1, int(getattr(sub_agent, "max_iterations", 0) or 12)

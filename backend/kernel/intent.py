@@ -136,3 +136,70 @@ def synthesize_token(
         ),
         dropped,
     )
+
+
+def apply_intent_to_process(
+    kernel: Any,
+    process_id: str,
+    intent: IntentDeclaration | dict[str, Any],
+    *,
+    parent_token: CapabilityToken | None = None,
+    grantable: frozenset[str] = DEFAULT_GRANTABLE,
+    risky: frozenset[str] = RISKY_CAPABILITIES,
+) -> tuple[CapabilityToken, list[str]]:
+    """生产路径：声明 → 合成令牌 → 挂载进程（capabilities + token + meta）。
+
+    调用点：
+    - loop 在 create_process 后若设置了 ``_intent_declaration`` / process options.intent
+    - subagent_runner 为迷你 Run 注入默认只读意图
+    """
+    if isinstance(intent, dict):
+        decl = IntentDeclaration.from_dict(intent)
+    elif isinstance(intent, IntentDeclaration):
+        decl = intent
+    else:
+        raise TypeError("intent 须为 IntentDeclaration 或 dict")
+
+    resolve = getattr(kernel, "_resolve_process", None)
+    if resolve is None:
+        resolve = getattr(kernel, "get_process", None)
+    proc = resolve(process_id) if callable(resolve) else None
+    if proc is None and hasattr(kernel, "get_process"):
+        proc = kernel.get_process(process_id)
+    if proc is None:
+        raise ValueError(f"未知进程 {process_id}")
+
+    # 父令牌：显式传入优先，否则从父进程取
+    ptok = parent_token
+    if ptok is None and getattr(proc, "parent_id", None):
+        parent = None
+        if hasattr(kernel, "get_process"):
+            parent = kernel.get_process(proc.parent_id)
+        if parent is not None:
+            ptok = getattr(parent, "token", None)
+
+    token, dropped = synthesize_token(
+        decl,
+        parent_token=ptok,
+        process_id=process_id,
+        grantable=grantable,
+        risky=risky,
+    )
+    granted = sorted(token.capabilities)
+    # 显式能力集：与令牌对齐（便于 UI / has_capability）
+    if proc.capabilities is not None or granted:
+        proc.capabilities = granted
+    proc.token = token
+    proc.meta = dict(proc.meta or {})
+    proc.meta["intent"] = decl.to_dict()
+    proc.meta["intent_dropped"] = list(dropped)
+    share = getattr(kernel, "_share_process", None)
+    if callable(share):
+        share(proc)
+    persist = getattr(kernel, "_persist_process", None)
+    if callable(persist):
+        try:
+            persist(proc)
+        except Exception:
+            pass
+    return token, dropped

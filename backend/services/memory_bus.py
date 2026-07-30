@@ -143,10 +143,11 @@ async def remember(
                 meta=meta,
             )
         if route == "wiki":
-            return MemoryWriteResult(
-                ok=False,
-                source="wiki",
-                message="wiki 写入请走 wiki API / 人工导入；总线本期仅约定不直写 Qdrant",
+            return await _write_wiki(
+                body,
+                title=title,
+                meta=meta,
+                approved_by=approved_by,
             )
         # graph
         gkind = k if k in GRAPH_KINDS else "knowledge"
@@ -219,6 +220,7 @@ async def recall(
     want_identity = not kinds_set or bool(kinds_set & IDENTITY_KINDS) or "identity" in kinds_set
     want_graph = not kinds_set or bool(kinds_set & GRAPH_KINDS) or "graph" in kinds_set
     want_entity = not kinds_set or bool(kinds_set & ENTITY_KINDS) or "entity" in kinds_set
+    want_wiki = not kinds_set or bool(kinds_set & WIKI_KINDS) or "wiki" in kinds_set
 
     if want_identity and identity_id:
         hits.extend(await _recall_identity(query, identity_id=identity_id, kinds=kinds_set))
@@ -226,6 +228,8 @@ async def recall(
         hits.extend(await _recall_graph(query, kinds=kinds_set, user_id=user_id))
     if want_entity:
         hits.extend(await _recall_entity(query, user_id=user_id))
+    if want_wiki:
+        hits.extend(await _recall_wiki(query))
 
     hits.sort(key=lambda h: h.score, reverse=True)
     return hits[:top_k]
@@ -301,6 +305,110 @@ async def _write_graph(
         version=1,
         raw=node,
     )
+
+
+async def _write_wiki(
+    content: str,
+    *,
+    title: str | None,
+    meta: dict[str, Any],
+    approved_by: str | None = None,
+) -> MemoryWriteResult:
+    """Wiki 实体真写（wiki_entities 表）。同名则更新 description + version 链。"""
+    from backend.repositories.wiki_repo import AsyncWikiEntityRepository
+
+    name = (title or content[:64] or "wiki-note").strip()[:128]
+    if not name:
+        return MemoryWriteResult(ok=False, source="wiki", message="wiki name empty")
+    entity_type = str(meta.get("entity_type") or "concept")[:32]
+    aliases = meta.get("aliases") if isinstance(meta.get("aliases"), list) else []
+    repo = AsyncWikiEntityRepository()
+    existing = await repo.get_by_name(name)
+    if existing is not None:
+        old_meta = dict(getattr(existing, "meta", None) or {})
+        ver = int(old_meta.get("version", 1) or 1) + 1
+        new_meta = {
+            **old_meta,
+            **{k: v for k, v in meta.items() if k not in ("aliases",)},
+            "version": ver,
+            "previous_description": (getattr(existing, "description", None) or "")[:800],
+            "from_memory_bus": True,
+            "approved_by": approved_by or old_meta.get("approved_by"),
+        }
+        if meta.get("source_run_id"):
+            new_meta["source_run_id"] = meta["source_run_id"]
+        updated = await repo.update(
+            existing.id,
+            {
+                "description": content,
+                "entity_type": entity_type or existing.entity_type,
+                "aliases": list(aliases)[:20] if aliases else list(existing.aliases or []),
+                "meta": new_meta,
+            },
+        )
+        if updated is None:
+            return MemoryWriteResult(ok=False, source="wiki", message="wiki update failed")
+        return MemoryWriteResult(
+            ok=True,
+            source="wiki",
+            id=str(updated.id),
+            kind="wiki",
+            version=ver,
+            message="wiki updated",
+            raw=updated,
+        )
+    created = await repo.create(
+        {
+            "name": name,
+            "entity_type": entity_type,
+            "description": content,
+            "aliases": list(aliases)[:20],
+            "meta": {
+                **{k: v for k, v in meta.items() if k != "aliases"},
+                "version": 1,
+                "from_memory_bus": True,
+                "approved_by": approved_by,
+            },
+        }
+    )
+    return MemoryWriteResult(
+        ok=True,
+        source="wiki",
+        id=str(created.id),
+        kind="wiki",
+        version=1,
+        message="wiki created",
+        raw=created,
+    )
+
+
+async def _recall_wiki(query: str) -> list[MemoryHit]:
+    from backend.repositories.wiki_repo import AsyncWikiEntityRepository
+
+    try:
+        rows = await AsyncWikiEntityRepository().search(query, limit=20)
+    except Exception as e:
+        logger.debug("wiki recall: %s", e)
+        return []
+    hits: list[MemoryHit] = []
+    for ent in rows or []:
+        text = f"{getattr(ent, 'name', '')} {getattr(ent, 'description', '') or ''}"
+        score = _score_text(query, text) or 0.15
+        meta = dict(getattr(ent, "meta", None) or {})
+        hits.append(
+            MemoryHit(
+                source="wiki",
+                id=str(ent.id),
+                kind="wiki",
+                content=str(getattr(ent, "description", "") or ""),
+                title=str(getattr(ent, "name", "") or ""),
+                score=float(score),
+                freshness=_freshness_iso(ent),
+                version=int(meta.get("version", 1) or 1),
+                meta=meta,
+            )
+        )
+    return hits
 
 
 async def _write_entity(

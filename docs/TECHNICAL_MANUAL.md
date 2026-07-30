@@ -216,8 +216,10 @@ backend/kernel/
   必须人工确认）——Kernel 观测 → Evolution 分析 → 策略建议的闭环。
 - **接入点**：`agent/loop.py::_run_inner` 在 run 生命周期内创建/结束进程；
   配置开关 `agent_kernel_enabled`（默认开），装配失败显式降级并告警。
-- **演进路线**：阶段 2 后续——调度器与 loop 执行耦合（替换 session 锁）、
-  Intent Declaration 接入 subagent 派生路径；阶段 3 后续——
+- **Intent Declaration（已接线）**：`apply_intent_to_process`；loop 在
+  create_process 后读取 `_intent_declaration` / process options.intent；
+  subagent_runner 默认注入只读意图（可 `allow_risky` / 显式 capabilities）。
+- **演进路线**：调度器与 loop 执行耦合（替换 session 锁）；
   审计建议的人工确认 UI、多设备同步加固。
 
 ### 3.1 目录结构

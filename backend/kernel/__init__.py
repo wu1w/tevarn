@@ -12,6 +12,7 @@ from backend.kernel.intent import (
     DEFAULT_GRANTABLE,
     RISKY_CAPABILITIES,
     IntentDeclaration,
+    apply_intent_to_process,
     synthesize_capabilities,
     synthesize_token,
 )
@@ -45,6 +46,7 @@ __all__ = [
     "get_kernel",
     "get_kernel_shared_store",
     "reset_kernel_for_tests",
+    "apply_intent_to_process",
     "synthesize_capabilities",
     "synthesize_token",
 ]

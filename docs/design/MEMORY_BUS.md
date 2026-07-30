@@ -43,7 +43,7 @@ recall(query, kinds?=None, top_k=8, identity_id?, user_id?)
 | persona / duty / methodology / preference / experience | identity（需 `identity_id`） |
 | knowledge / decision | memory graph |
 | entity / fact | entities |
-| wiki | wiki（可选；人类导入可直写） |
+| wiki | wiki_entities 真写（同名更新 version；人类导入 API 仍可用） |
 | graph 别名 preference/experience 无 identity_id 时 | memory graph |
 
 ---

@@ -166,6 +166,40 @@ def test_intent_token_ttl() -> None:
     assert token.expires_at - time.time() <= 60.5
 
 
+def test_apply_intent_to_process_production_path(kernel: AgentKernel) -> None:
+    """生产路径 helper：apply_intent_to_process 挂载 token + capabilities。"""
+    from backend.kernel.intent import apply_intent_to_process
+
+    async def go():
+        proc = await kernel.create_process(
+            "worker",
+            capabilities=["file_read", "grep", "terminal"],
+        )
+        tok, dropped = apply_intent_to_process(
+            kernel,
+            proc.id,
+            {
+                "goal": "只读调研",
+                "capabilities": ["file_read", "terminal"],
+                "constraints": {},
+            },
+        )
+        assert "terminal" in dropped
+        assert "file_read" in tok.capabilities
+        fresh = kernel.get_process(proc.id)
+        assert fresh is not None
+        assert fresh.token is not None
+        assert "file_read" in (fresh.capabilities or [])
+        assert "terminal" not in (fresh.capabilities or [])
+        assert (fresh.meta or {}).get("intent", {}).get("goal") == "只读调研"
+        d = await kernel.mediate(proc.id, "tool_call", "file_read")
+        assert d.allowed
+        with pytest.raises(KernelPermissionError):
+            await kernel.mediate(proc.id, "tool_call", "terminal")
+
+    asyncio.run(go())
+
+
 def test_intent_declare_synthesize_mediate_integration(kernel: AgentKernel) -> None:
     """P2.2：声明 → 合成令牌 → 挂载进程 → mediate 放行/拒绝闭环。
 

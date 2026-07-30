@@ -510,6 +510,34 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     meta=_meta,
                 )
                 await kernel.mark_running(kernel_proc.id)
+                # Intent Declaration 接线：声明 → 合成令牌 → 挂载（subagent / 显式 options）
+                intent_raw = (
+                    getattr(self, "_intent_declaration", None)
+                    or proc_opts.get("intent")
+                )
+                if intent_raw:
+                    try:
+                        from backend.kernel.intent import apply_intent_to_process
+
+                        parent_tok = None
+                        if parent_pid:
+                            pp = kernel.get_process(parent_pid)
+                            if pp is not None:
+                                parent_tok = getattr(pp, "token", None)
+                        tok, dropped = apply_intent_to_process(
+                            kernel,
+                            kernel_proc.id,
+                            intent_raw,
+                            parent_token=parent_tok,
+                        )
+                        logger.info(
+                            "intent applied process=%s granted=%s dropped=%s",
+                            kernel_proc.id[:8],
+                            sorted(tok.capabilities)[:12],
+                            dropped[:8],
+                        )
+                    except Exception as _ie:
+                        logger.warning("intent apply skip: %s", _ie)
                 self._kernel_process = kernel_proc
             except Exception as e:
                 # Kernel 装配失败不阻断对话（显式降级并告警，非静默）
