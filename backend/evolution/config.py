@@ -29,7 +29,8 @@ class EvolutionConfig:
     mode: str = "on_failure"  # off | on_failure | always | manual
     max_iterations: int = 3
     llm_judge: bool = True
-    auto_apply_skills: bool = True
+    # P1-B G4 红线：永不自动改 live / 自动上线技能（必须 skill-gate + 人工）
+    auto_apply_skills: bool = False
     max_skill_bytes: int = 32000
     ban_patterns: Sequence[str] = field(
         default_factory=lambda: (
@@ -66,7 +67,8 @@ class EvolutionConfig:
             mode=(os.getenv("TAKTON_EVOLUTION_MODE") or "on_failure").strip(),
             max_iterations=int(os.getenv("TAKTON_EVOLUTION_MAX_ITERATIONS") or "3"),
             llm_judge=_truthy(os.getenv("TAKTON_EVOLUTION_LLM_JUDGE"), True),
-            auto_apply_skills=_truthy(os.getenv("TAKTON_EVOLUTION_AUTO_APPLY"), True),
+            # default false — only explicit env=1 enables (still cannot skip skill-gate)
+            auto_apply_skills=_truthy(os.getenv("TAKTON_EVOLUTION_AUTO_APPLY"), False),
             max_skill_bytes=int(os.getenv("TAKTON_EVOLUTION_MAX_SKILL_BYTES") or "32000"),
             defer=_truthy(os.getenv("TAKTON_EVOLUTION_DEFER"), True),
             db_path=os.getenv("TAKTON_EVOLUTION_DB") or None,
@@ -220,7 +222,12 @@ def get_evolution_config() -> EvolutionConfig:
         for k, v in _load_persisted().items():
             if k in _PERSIST_KEYS and hasattr(cfg, k) and v is not None:
                 setattr(cfg, k, v)
+        # P1-B G4 硬红线：永不自动 apply 技能到 live（skill-gate + 人工确认）
+        cfg.auto_apply_skills = False
         _config = cfg
+    else:
+        # 防御：运行时被改写也拉回 false
+        _config.auto_apply_skills = False
     return _config
 
 
@@ -229,7 +236,12 @@ def set_evolution_config(**kwargs) -> EvolutionConfig:
     cfg = get_evolution_config()
     for k, v in kwargs.items():
         if hasattr(cfg, k) and v is not None:
+            # 硬拒绝自动上线技能
+            if k == "auto_apply_skills":
+                setattr(cfg, k, False)
+                continue
             setattr(cfg, k, v)
+    cfg.auto_apply_skills = False
     _config = cfg
     _save_persisted(cfg)
     return cfg

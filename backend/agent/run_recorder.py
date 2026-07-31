@@ -51,6 +51,7 @@ class RunRecorder:
         self.parent_run_id = parent_run_id
         self.token_limit = int(token_limit or 0)
         self.run_id: uuid.UUID | None = None
+        self.kernel_process_id: str | None = None
         self._status: RunStatus | None = None
         self._seq = 0
         self._tool_calls = 0

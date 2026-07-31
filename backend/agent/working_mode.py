@@ -26,7 +26,9 @@ WorkingMode = Literal["readonly", "cautious", "auto_edit", "autonomous"]
 ExecutionMode = Literal["sandbox", "auto", "local"]
 
 DEFAULT_WORKING_MODE: WorkingMode = "cautious"
-DEFAULT_EXECUTION_MODE: ExecutionMode = "auto"
+# T4：默认更隔离——有沙箱能力时强制用；无沙箱时 sandbox 模式会明确报错（不静默 local）
+# 需要本机直跑请显式 agent_execution_mode=local
+DEFAULT_EXECUTION_MODE: ExecutionMode = "sandbox"
 
 
 @dataclass(frozen=True)
@@ -102,6 +104,7 @@ EXECUTION_MODES: tuple[ExecutionModeSpec, ...] = (
         label_en="Sandbox (required)",
         desc="命令只在隔离环境里跑。本机没有可用沙箱时直接报错，绝不偷偷退回本机。",
         desc_en="Commands only run isolated. If no sandbox is available it errors out instead of silently falling back.",
+        recommended=True,
     ),
     ExecutionModeSpec(
         id="auto",
@@ -109,7 +112,6 @@ EXECUTION_MODES: tuple[ExecutionModeSpec, ...] = (
         label_en="Auto",
         desc="有沙箱就用沙箱，没有就本机直跑并在这里明确告知你。",
         desc_en="Uses the sandbox when available, otherwise runs locally and says so here.",
-        recommended=True,
     ),
     ExecutionModeSpec(
         id="local",

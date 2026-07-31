@@ -19,6 +19,9 @@ import {
   installMCPFromStore,
   reviewSkillUrl,
   installSkillFromUrl,
+  getPackageMarket,
+  getPackageMarketTrust,
+  installPackageRemote,
   type UnifiedSkill,
   type SkillSource,
   type UnifiedMCPStoreItem,
@@ -29,7 +32,7 @@ import { useZh } from '@/hooks/useZh';
 import type { MCPServer, MCPServerStatus } from '@/types';
 import { AdvancedShell } from '@/components/layout/AdvancedShell';
 
-type Tab = 'skills' | 'mcp';
+type Tab = 'skills' | 'mcp' | 'packages';
 
 function formatCount(n: number): string {
   if (!n || n <= 0) return '0';
@@ -81,6 +84,20 @@ export default function MarketPage() {
     staleTime: 30_000,
     retry: 1,
     enabled: tab === 'mcp',
+  });
+  const pkgMarketQ = useQuery({
+    queryKey: ['package-market'],
+    queryFn: getPackageMarket,
+    staleTime: 20_000,
+    retry: 1,
+    enabled: tab === 'packages',
+  });
+  const pkgTrustQ = useQuery({
+    queryKey: ['package-market-trust'],
+    queryFn: getPackageMarketTrust,
+    staleTime: 30_000,
+    retry: 1,
+    enabled: tab === 'packages',
   });
 
   const installedSet = useMemo(() => {
@@ -223,6 +240,7 @@ export default function MarketPage() {
       <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
         <Chip active={tab === 'skills'} onClick={() => setTab('skills')}>{zh ? '技能市场' : 'Skill market'}</Chip>
         <Chip active={tab === 'mcp'} onClick={() => setTab('mcp')}>{zh ? 'MCP 服务' : 'MCP servers'}</Chip>
+        <Chip active={tab === 'packages'} onClick={() => setTab('packages')}>{zh ? '本地/远程包' : 'Packages'}</Chip>
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
@@ -234,7 +252,128 @@ export default function MarketPage() {
         />
       </div>
 
-      {tab === 'skills' ? (
+      {tab === 'packages' ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ fontSize: 12, color: 'var(--foreground-dim)', lineHeight: 1.5 }}>
+            {zh
+              ? `内核包市场 · ${pkgMarketQ.data?.market || 'local'} · 远程 ${pkgMarketQ.data?.remote_url || '未配置'}`
+              : `Kernel package market · ${pkgMarketQ.data?.market || 'local'}`}
+          </div>
+          {(() => {
+            const trust = pkgTrustQ.data as {
+              signing?: { key_source?: string; insecure_default_key?: boolean; warning?: string };
+              content_trust?: {
+                trusted_count?: number;
+                require_content_hash?: boolean;
+                configured?: boolean;
+              };
+              advice?: string;
+            } | undefined;
+            if (!trust && pkgTrustQ.isLoading) {
+              return (
+                <div style={{ ...card, fontSize: 12, color: 'var(--foreground-dim)' }}>
+                  {zh ? '加载信任根状态…' : 'Loading trust status…'}
+                </div>
+              );
+            }
+            if (!trust) return null;
+            const insecure = Boolean(trust.signing?.insecure_default_key);
+            const configured = Boolean(trust.content_trust?.configured);
+            return (
+              <div
+                style={{
+                  ...card,
+                  borderColor: insecure || !configured ? 'var(--warning, #c9a227)' : 'var(--border-subtle)',
+                  fontSize: 12,
+                  lineHeight: 1.55,
+                }}
+              >
+                <div style={{ fontWeight: 650, marginBottom: 6 }}>
+                  {zh ? '远程包信任根' : 'Remote package trust root'}
+                </div>
+                <div style={{ color: 'var(--foreground-dim)' }}>
+                  {zh ? '签名密钥' : 'Signing key'}:{' '}
+                  <code style={{ fontFamily: 'var(--font-mono)' }}>
+                    {String(trust.signing?.key_source || '—')}
+                  </code>
+                  {insecure
+                    ? (zh ? ' · ⚠️ 开发默认密钥（不可用于生产）' : ' · ⚠️ insecure default (dev only)')
+                    : ''}
+                </div>
+                <div style={{ color: 'var(--foreground-dim)', marginTop: 4 }}>
+                  {zh ? '内容哈希白名单' : 'Content hash allowlist'}:{' '}
+                  {Number(trust.content_trust?.trusted_count || 0)}
+                  {trust.content_trust?.require_content_hash
+                    ? (zh ? ' · 强制提供 sha256' : ' · require sha256')
+                    : ''}
+                  {!configured
+                    ? (zh
+                      ? ' · 未配置（生产请设 agent_package_trusted_content_hashes）'
+                      : ' · not configured (set agent_package_trusted_content_hashes)')
+                    : (zh ? ' · 已配置' : ' · configured')}
+                </div>
+                {trust.advice ? (
+                  <div style={{ marginTop: 6, color: 'var(--foreground-dim)', fontSize: 11 }}>
+                    {trust.advice}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })()}
+          {pkgMarketQ.isLoading ? (
+            <div style={{ ...card, textAlign: 'center', padding: 40, color: 'var(--foreground-dim)', fontSize: 12.5 }}>Loading…</div>
+          ) : (pkgMarketQ.data?.items ?? []).length === 0 ? (
+            <div style={{ ...card, textAlign: 'center', padding: 40, fontSize: 13 }}>
+              {zh ? '暂无包。配置 agent_package_market_url 或安装本地 zip。' : 'No packages. Set agent_package_market_url or install a zip.'}
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 12 }}>
+              {(pkgMarketQ.data?.items ?? []).map((item) => {
+                const name = String(item.name || '');
+                const market = String(item.market || '');
+                const canRemote = market === 'remote' || Boolean(item.download_url || (item.remote as { url?: string } | undefined)?.url);
+                const busy = busyKey === `pkg:${name}`;
+                return (
+                  <div key={name} style={card}>
+                    <div style={{ fontSize: 13, fontWeight: 650, fontFamily: 'var(--font-mono)' }}>{name}</div>
+                    <div style={{ fontSize: 11, color: 'var(--foreground-dim)', marginTop: 6 }}>
+                      {market} · v{String(item.version || '—')}
+                      {item.kernel_status ? ` · ${String(item.kernel_status)}` : ''}
+                    </div>
+                    <div style={{ marginTop: 12 }}>
+                      {canRemote ? (
+                        <button
+                          style={btnPrimarySm}
+                          disabled={busy}
+                          onClick={async () => {
+                            setBusyKey(`pkg:${name}`);
+                            try {
+                              await installPackageRemote({ name, overwrite: false });
+                              addToast(zh ? `已安装 ${name}` : `Installed ${name}`, 'success');
+                              void qc.invalidateQueries({ queryKey: ['package-market'] });
+                            } catch { /* toast */ } finally {
+                              setBusyKey(null);
+                            }
+                          }}
+                        >
+                          {busy ? '…' : (zh ? '远程安装' : 'Install remote')}
+                        </button>
+                      ) : (
+                        <span style={{ fontSize: 11, color: 'var(--foreground-dim)' }}>
+                          {zh ? '本地包（已在磁盘）' : 'Local package'}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div style={{ fontSize: 11, color: 'var(--foreground-dim)' }}>
+            GET /api/packages/market · GET …/market/trust · POST …/market/install-remote
+          </div>
+        </div>
+      ) : tab === 'skills' ? (
         <>
           {skillsQ.isLoading ? (
             <div style={{ ...card, textAlign: 'center', padding: 40, color: 'var(--foreground-dim)', fontSize: 12.5 }}>Loading…</div>

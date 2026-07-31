@@ -14,7 +14,7 @@ import asyncio
 import logging
 import time
 from collections import deque
-from typing import Any
+from typing import Any  # noqa: F401 — used in _rust return
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,18 @@ _KIND_MAP: dict[str, str] = {
 }
 
 
+def _rust() -> Any | None:
+    try:
+        from backend.kernel import get_kernel
+
+        k = get_kernel()
+        if hasattr(k, "_call"):
+            return k
+    except Exception:
+        pass
+    return None
+
+
 def map_kernel_kind(kind: str) -> str | None:
     if kind in _KIND_MAP:
         return _KIND_MAP[kind]
@@ -63,6 +75,13 @@ def map_kernel_kind(kind: str) -> str | None:
 
 
 def current_seq() -> int:
+    k = _rust()
+    if k is not None:
+        try:
+            r = k._call("domain_seq") or {}
+            return int(r.get("seq") or 0)
+        except Exception:
+            pass
     return _seq
 
 
@@ -73,6 +92,23 @@ def recent_events(
     since_ts: float | None = None,
     after_seq: int | None = None,
 ) -> list[dict[str, Any]]:
+    # R4: prefer Rust domain bus
+    k = _rust()
+    if k is not None:
+        try:
+            params: dict[str, Any] = {"limit": int(limit)}
+            if prefix:
+                params["prefix"] = prefix
+            if since_ts is not None:
+                params["since_ts"] = float(since_ts)
+            if after_seq is not None:
+                params["after_seq"] = int(after_seq)
+            r = k._call("domain_recent", params) or {}
+            evs = r.get("events") or []
+            if isinstance(evs, list):
+                return list(evs)
+        except Exception as e:
+            logger.debug("domain_recent rust skip: %s", e)
     items = list(_RECENT)
     if since_ts is not None:
         try:
@@ -126,6 +162,33 @@ def _fanout_queues(evt: dict[str, Any]) -> None:
 
 def _record(topic: str, payload: dict[str, Any]) -> dict[str, Any]:
     global _seq
+    # R4: prefer Rust domain bus as authority
+    k = _rust()
+    if k is not None:
+        try:
+            r = k._call(
+                "domain_publish",
+                {"topic": topic, "payload": payload or {}},
+            ) or {}
+            if r.get("seq") is not None:
+                _seq = max(_seq, int(r.get("seq") or 0))
+                evt = {
+                    "type": "domain_event",
+                    "topic": str(r.get("topic") or topic),
+                    "ts": float(r.get("ts") or time.time()),
+                    "seq": int(r.get("seq") or _seq),
+                    "data": r.get("payload")
+                    if isinstance(r.get("payload"), dict)
+                    else dict(payload or {}),
+                    "payload": r.get("payload")
+                    if isinstance(r.get("payload"), dict)
+                    else dict(payload or {}),
+                }
+                _RECENT.append(evt)
+                _fanout_queues(evt)
+                return evt
+        except Exception as e:
+            logger.debug("domain_publish rust skip: %s", e)
     _seq += 1
     evt = {
         "type": "domain_event",
@@ -133,6 +196,7 @@ def _record(topic: str, payload: dict[str, Any]) -> dict[str, Any]:
         "ts": time.time(),
         "seq": _seq,
         "data": dict(payload or {}),
+        "payload": dict(payload or {}),
     }
     _RECENT.append(evt)
     _fanout_queues(evt)

@@ -1,22 +1,17 @@
-"""AgentKernel —— 控制平面骨架（阶段 1 / W1）。
+"""AgentKernel —— 控制平面（Python fallback / 单测）。
 
-职责边界（对应计划的五大职能）：
-  1. 进程管理：create_process / end_process / 生命周期状态机
-  2. 能力模型：AgentProcess.capabilities + CapabilityToken（W2 全量）
-  3. 执行中介：mediate() —— W1 记录审计事件 + 显式能力集强制检查，
-     W3 所有 tool/skill/MCP 调用统一收口到这里
-  4. 预算治理：charge_tokens / 超限判定（强制中断在 W2-阶段2 完善）
-  5. 可观测性：每次中介/生命周期变迁都产生不可变审计事件（哈希链，阶段 3）
+.. deprecated:: P0-A (0.5)
+    **权威实现已迁移至 Rust** ``takton-kernel`` / ``takton-kernel-host``。
+    生产路径请使用 ``get_kernel()``（默认 ``TAKTON_KERNEL_BACKEND=rust``）。
 
-渐进原则：capabilities=None 的进程走兼容模式（放行 + 记录），
-现有 loop 行为不变；显式能力集才强制检查。
+    - 新功能 / 行为变更：**禁止**改本文件权威逻辑，改 ``crates/takton-kernel``。
+    - 本类仅保留：单元测试直接 ``AgentKernel()``、host 不可用时的 fallback。
+    - ABI：见 ``docs/kernel-abi-v1.md``。
 
-并发假设（审计项 #6，已文档化）：
-  本类所有 public async 方法内部**不含任何 await**——纯同步逻辑，
-  在 asyncio 单线程语义下不存在竞态窗口（事件循环不会在中途出让）。
-  ⚠ 维护红线：在 create_process / mediate / charge_tokens / _emit
-  内部引入任何 await 之前，必须先为 _processes / _events / scheduler
-  加 asyncio.Lock（参考 loop.py 契约白名单的竞态教训）。
+职责边界（五大职能）：
+  1. 进程管理  2. 能力模型  3. 执行中介  4. 预算治理  5. 哈希链审计
+
+并发假设：public 方法内无 await（asyncio 单线程）；引入 await 前必须加锁。
 """
 
 from __future__ import annotations
@@ -1335,78 +1330,156 @@ class AgentKernel:
         return len(dead)
 
 
-_kernel_singleton: AgentKernel | None = None
+_kernel_singleton: Any | None = None
 _kernel_persistence_singleton: Any | None = None
 _kernel_shared_singleton: Any | None = None
+_kernel_backend_active: str | None = None  # "rust" | "python"
 
 
-def get_kernel() -> AgentKernel:
+def _resolve_kernel_backend() -> str:
+    """rust | python. Default: rust when host available / auto-start succeeds, else python."""
+    import os
+
+    forced = (
+        os.environ.get("TAKTON_KERNEL_BACKEND")
+        or os.environ.get("agent_kernel_backend")
+        or ""
+    ).strip().lower()
+    if forced in ("rust", "python"):
+        return forced
+    try:
+        from backend.core.config import settings
+
+        s = str(getattr(settings, "agent_kernel_backend", "") or "").strip().lower()
+        if s in ("rust", "python"):
+            return s
+    except Exception:
+        pass
+    return "rust"
+
+
+def _build_python_kernel() -> AgentKernel:
+    store = None
+    persistence = None
+    shared = None
+    global _kernel_persistence_singleton, _kernel_shared_singleton
+    try:
+        from backend.core.config import settings
+
+        if bool(getattr(settings, "agent_kernel_audit_persist", True)):
+            from backend.kernel.audit_store import AuditEventStore
+
+            path = str(getattr(settings, "agent_kernel_audit_path", "") or "") or None
+            store = AuditEventStore(path)
+    except Exception as e:
+        logger.warning("kernel 审计落盘初始化失败（仅内存缓冲）: %s", e)
+    try:
+        from backend.core.config import settings as _s
+
+        if bool(getattr(_s, "agent_kernel_persistence", True)):
+            from backend.database import AsyncSessionLocal
+            from backend.kernel.persistence import KernelPersistence
+
+            persistence = KernelPersistence(
+                AsyncSessionLocal,
+                store,
+                checkpoint_interval=int(getattr(_s, "agent_kernel_checkpoint_interval", 500)),
+            )
+    except Exception as e:
+        logger.warning("kernel 持久化初始化失败（仅内存态）: %s", e)
+        persistence = None
+    try:
+        from backend.kernel.shared_store import create_shared_store_from_settings
+
+        shared = create_shared_store_from_settings()
+    except Exception as e:
+        logger.warning("kernel Redis 共享初始化失败: %s", e)
+        shared = None
+    _kernel_persistence_singleton = persistence
+    _kernel_shared_singleton = shared
+    kernel = AgentKernel(
+        audit_store=store,
+        persistence_sink=persistence.sink() if persistence is not None else None,
+        shared_store=shared,
+    )
+    if persistence is not None:
+        try:
+            from backend.database import AsyncSessionLocal
+            from backend.kernel.identity import IdentityRegistry
+
+            kernel.identity_registry = IdentityRegistry(kernel, AsyncSessionLocal)
+        except Exception as e:
+            logger.warning("kernel 身份注册表初始化失败: %s", e)
+    return kernel
+
+
+def get_kernel() -> Any:
     """进程级单例 Kernel。
 
-    默认挂载审计落盘（~/.takton/kernel_events.jsonl）；
-    agent_kernel_audit_persist=false 可关（仅内存缓冲）。
-    0.5：默认装配持久化 sink + 身份注册表（agent_kernel_persistence=false 可关）。
-    多 worker：agent_kernel_redis_shared + redis_url → Redis 共享 mediate/进程/提权。
+    默认优先 **Rust Kernel Host**（``TAKTON_KERNEL_BACKEND=rust``）：
+    进程表 / 能力 / mediate / 预算 / 审计链 / 资源账户在 ``takton-kernel`` 中。
+    若 host 不可用则回退 Python 实现（兼容测试与未编译场景）。
+
+    显式 ``TAKTON_KERNEL_BACKEND=python`` 强制旧路径。
     """
     global _kernel_singleton, _kernel_persistence_singleton, _kernel_shared_singleton
-    if _kernel_singleton is None:
-        store = None
-        persistence = None
-        shared = None
+    global _kernel_backend_active
+    if _kernel_singleton is not None:
+        return _kernel_singleton
+
+    backend = _resolve_kernel_backend()
+    if backend == "rust":
         try:
-            from backend.core.config import settings
+            from backend.kernel_rust import get_rust_kernel, is_rust_host_available, start_kernel_host
 
-            if bool(getattr(settings, "agent_kernel_audit_persist", True)):
-                from backend.kernel.audit_store import AuditEventStore
-
-                path = str(getattr(settings, "agent_kernel_audit_path", "") or "") or None
-                store = AuditEventStore(path)
+            if not is_rust_host_available():
+                started = start_kernel_host()
+                if not started:
+                    logger.error(
+                        "P0-A: Rust kernel host failed to start. "
+                        "Control plane will fall back to DEPRECATED Python AgentKernel. "
+                        "Fix: cargo build -p takton-kernel-host --release "
+                        "or set TAKTON_KERNEL_HOST_BIN. See docs/kernel-abi-v1.md"
+                    )
+            if is_rust_host_available():
+                _kernel_singleton = get_rust_kernel()
+                _kernel_backend_active = "rust"
+                _kernel_persistence_singleton = None  # Rust host owns process state
+                try:
+                    ver = _kernel_singleton.abi_version()
+                    logger.info(
+                        "AgentKernel backend=rust abi=%s kernel=%s",
+                        ver.get("abi"),
+                        ver.get("kernel"),
+                    )
+                except Exception:
+                    logger.info("AgentKernel backend=rust (takton-kernel-host)")
+                return _kernel_singleton
         except Exception as e:
-            logger.warning("kernel 审计落盘初始化失败（仅内存缓冲）: %s", e)
-        try:
-            from backend.core.config import settings as _s
+            logger.error(
+                "Rust kernel init failed, fallback to DEPRECATED Python AgentKernel: %s",
+                e,
+                exc_info=True,
+            )
 
-            if bool(getattr(_s, "agent_kernel_persistence", True)):
-                from backend.database import AsyncSessionLocal
-                from backend.kernel.persistence import KernelPersistence
-
-                persistence = KernelPersistence(
-                    AsyncSessionLocal,
-                    store,
-                    checkpoint_interval=int(getattr(_s, "agent_kernel_checkpoint_interval", 500)),
-                )
-        except Exception as e:
-            logger.warning("kernel 持久化初始化失败（仅内存态）: %s", e)
-            persistence = None
-        try:
-            from backend.kernel.shared_store import create_shared_store_from_settings
-
-            shared = create_shared_store_from_settings()
-        except Exception as e:
-            logger.warning("kernel Redis 共享初始化失败: %s", e)
-            shared = None
-        _kernel_persistence_singleton = persistence
-        _kernel_shared_singleton = shared
-        _kernel_singleton = AgentKernel(
-            audit_store=store,
-            persistence_sink=persistence.sink() if persistence is not None else None,
-            shared_store=shared,
-        )
-        if persistence is not None:
-            try:
-                from backend.database import AsyncSessionLocal
-                from backend.kernel.identity import IdentityRegistry
-
-                _kernel_singleton.identity_registry = IdentityRegistry(
-                    _kernel_singleton, AsyncSessionLocal
-                )
-            except Exception as e:
-                logger.warning("kernel 身份注册表初始化失败: %s", e)
+    _kernel_singleton = _build_python_kernel()
+    _kernel_backend_active = "python"
+    logger.warning(
+        "AgentKernel backend=python (DEPRECATED fallback). "
+        "Set TAKTON_KERNEL_BACKEND=rust and ensure host is running for production."
+    )
     return _kernel_singleton
 
 
+def get_kernel_backend() -> str:
+    """Active backend: rust | python | none."""
+    if _kernel_singleton is None:
+        return "none"
+    return _kernel_backend_active or "python"
+
+
 def get_kernel_persistence() -> Any | None:
-    """0.5 持久化协调器（lifespan 用它 recover + 拉 worker）。"""
+    """0.5 持久化协调器（lifespan 用它 recover + 拉 worker）。Rust 后端时为 None。"""
     get_kernel()  # 确保已装配
     return _kernel_persistence_singleton
 
@@ -1419,6 +1492,14 @@ def get_kernel_shared_store() -> Any | None:
 
 def reset_kernel_for_tests() -> None:
     global _kernel_singleton, _kernel_persistence_singleton, _kernel_shared_singleton
+    global _kernel_backend_active
+    try:
+        from backend.kernel_rust import reset_rust_kernel_for_tests
+
+        reset_rust_kernel_for_tests()
+    except Exception:
+        pass
     _kernel_singleton = None
     _kernel_persistence_singleton = None
     _kernel_shared_singleton = None
+    _kernel_backend_active = None

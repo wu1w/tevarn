@@ -1,3 +1,11 @@
+# Rust
+/target/
+**/target/
+Cargo.lock
+# Staged host binary (build with scripts/build-kernel-host.ps1)
+vendor/takton-kernel-host/takton-kernel-host
+vendor/takton-kernel-host/takton-kernel-host.exe
+
 # Python / envs
 .venv/
 venv/
@@ -151,10 +159,10 @@ tmp_*.py
 _stats.py
 _count.py
 
-# ±¾µØ²âÊÔÊä³ö
+# ï¿½ï¿½ï¿½Ø²ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 pytest_*.txt
 
-# ±¾µØ´ò°ü²úÎï
+# ï¿½ï¿½ï¿½Ø´ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 *.zip
 
 # local pytest temp dbs

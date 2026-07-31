@@ -28,10 +28,11 @@ logger = logging.getLogger(__name__)
 # Job Object 常量
 _JOB_OBJECT_LIMIT_ACTIVE_PROCESS = 0x00000008
 _JOB_OBJECT_LIMIT_PROCESS_MEMORY = 0x00000100
+_JOB_OBJECT_LIMIT_JOB_MEMORY = 0x00000200
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 _JobObjectExtendedLimitInformation = 9
 
-_DEFAULT_MEMORY_LIMIT = 4 * 1024 * 1024 * 1024  # 单进程 4GB
+_DEFAULT_MEMORY_LIMIT = 4 * 1024 * 1024 * 1024  # 单进程 / Job 合计 4GB
 _DEFAULT_ACTIVE_PROCESS_LIMIT = 128
 
 
@@ -85,12 +86,16 @@ class _JobHandle:
 
         info_cls = _job_structures(ctypes)
         info = info_cls()
+        # Hardening：进程内存 + Job 合计内存 + 活跃进程数 + 关闭时杀树
+        # memory/process 限额可由 ComputerManager 从 kernel resource_usage 注入
         info.BasicLimitInformation.LimitFlags = (
             _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
             | _JOB_OBJECT_LIMIT_PROCESS_MEMORY
+            | _JOB_OBJECT_LIMIT_JOB_MEMORY
             | _JOB_OBJECT_LIMIT_ACTIVE_PROCESS
         )
         info.ProcessMemoryLimit = memory_limit
+        info.JobMemoryLimit = memory_limit
         info.BasicLimitInformation.ActiveProcessLimit = process_limit
         ok = kernel32.SetInformationJobObject(
             self.handle,

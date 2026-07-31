@@ -13,6 +13,11 @@ import {
   listRunningJobs, listPolicyDecisions, exportAiosBackup, stopRunningJob,
   getGovernanceManifest, getProtocolManifest, listAgentCards,
   getSchedulerStatus,
+  getKernelDashboard,
+  getSandboxCoverage,
+  collabInterrupt,
+  collabResume,
+  sampleProcessRss,
   suspendKernelProcess, resumeKernelProcess,
   topUpProcessBudget,
   type KernelProcess, type KernelEvent,
@@ -36,9 +41,10 @@ export default function KernelPage() {
   const zh = useZh();
   const addToast = useToastStore((s) => s.addToast);
   const qc = useQueryClient();
-  const [tab, setTab] = useState<'processes' | 'mediate' | 'policy' | 'governance' | 'protocol' | 'sched'>('processes');
+  const [tab, setTab] = useState<'processes' | 'mediate' | 'policy' | 'governance' | 'protocol' | 'sched' | 'dash' | 'collab'>('processes');
   const [backupBusy, setBackupBusy] = useState(false);
   const [stoppingId, setStoppingId] = useState<string | null>(null);
+  const [collabBusy, setCollabBusy] = useState<string | null>(null);
 
   const handleStopJob = async (opts: { inbox_item_id?: string; process_id?: string }) => {
     const key = opts.inbox_item_id || opts.process_id || '';
@@ -105,6 +111,21 @@ export default function KernelPage() {
     refetchInterval: tab === 'sched' ? 5_000 : false,
     retry: 1,
     enabled: tab === 'sched',
+  });
+  const dash = useQuery({
+    queryKey: ['kernel-dashboard'],
+    queryFn: getKernelDashboard,
+    staleTime: 5_000,
+    refetchInterval: tab === 'dash' ? 8_000 : false,
+    retry: 1,
+    enabled: tab === 'dash',
+  });
+  const sandCov = useQuery({
+    queryKey: ['sandbox-coverage'],
+    queryFn: getSandboxCoverage,
+    staleTime: 10_000,
+    retry: 1,
+    enabled: tab === 'dash',
   });
 
   const procs = processes.data?.processes ?? [];
@@ -271,6 +292,8 @@ export default function KernelPage() {
             ? `调度${sched.data ? `（${sched.data.counts?.in_flight ?? 0}/${sched.data.counts?.queued ?? 0}）` : ''}`
             : `Sched${sched.data ? ` (${sched.data.counts?.in_flight ?? 0}/${sched.data.counts?.queued ?? 0})` : ''}`}
         </TabBtn>
+        <TabBtn active={tab === 'dash'} onClick={() => setTab('dash')}>{zh ? '仪表盘' : 'Dashboard'}</TabBtn>
+        <TabBtn active={tab === 'collab'} onClick={() => setTab('collab')}>{zh ? '协作' : 'Collab'}</TabBtn>
       </div>
 
       {tab === 'processes' ? (
@@ -461,6 +484,160 @@ export default function KernelPage() {
             {zh
               ? 'LLM 公平调度：主人对话优先 · 加权防饿死 · 日配额硬顶。API：GET /kernel/scheduler/status'
               : 'Fair LLM admission: owner priority · wait boost · daily quota. GET /kernel/scheduler/status'}
+          </div>
+        </div>
+      ) : tab === 'dash' ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
+            <div style={{ ...card, padding: '14px 16px', textAlign: 'center' }}>
+              <div style={{ fontSize: 18, fontWeight: 700 }}>{String((dash.data as { backend?: string } | undefined)?.backend ?? '—')}</div>
+              <div style={{ fontSize: 10.5, color: 'var(--foreground-dim)', marginTop: 4 }}>{zh ? 'Kernel 后端' : 'Backend'}</div>
+            </div>
+            <div style={{ ...card, padding: '14px 16px', textAlign: 'center' }}>
+              <div style={{ fontSize: 18, fontWeight: 700 }}>
+                {Number((sandCov.data as { score?: number } | undefined)?.score ?? 0).toFixed(2)}
+              </div>
+              <div style={{ fontSize: 10.5, color: 'var(--foreground-dim)', marginTop: 4 }}>{zh ? '沙箱覆盖率' : 'Sandbox coverage'}</div>
+            </div>
+            <div style={{ ...card, padding: '14px 16px', textAlign: 'center' }}>
+              <div style={{ fontSize: 16, fontWeight: 650 }}>
+                {String(((dash.data as { weekly?: { week?: string } } | undefined)?.weekly?.week) || '—')}
+              </div>
+              <div style={{ fontSize: 10.5, color: 'var(--foreground-dim)', marginTop: 4 }}>{zh ? '周报' : 'Weekly'}</div>
+            </div>
+            <div style={{ ...card, padding: '14px 16px', textAlign: 'center' }}>
+              <div style={{ fontSize: 16, fontWeight: 650 }}>
+                {String((dash.data as { live_processes?: number } | undefined)?.live_processes ?? '—')}
+              </div>
+              <div style={{ fontSize: 10.5, color: 'var(--foreground-dim)', marginTop: 4 }}>{zh ? '活进程' : 'Live procs'}</div>
+            </div>
+          </div>
+          <div style={{ ...card, padding: '14px 16px' }}>
+            <div style={{ fontSize: 13, fontWeight: 650, marginBottom: 8 }}>{zh ? '聚合快照' : 'Dashboard snapshot'}</div>
+            <pre style={{
+              margin: 0, fontSize: 10.5, fontFamily: 'var(--font-mono)', padding: 10, borderRadius: 8,
+              background: 'var(--input-bg)', color: 'var(--foreground-dim)', overflow: 'auto', maxHeight: 280,
+            }}>
+              {dash.isLoading
+                ? (zh ? '加载中…' : 'Loading…')
+                : JSON.stringify(
+                    {
+                      run_gate: (dash.data as { run_gate?: unknown })?.run_gate,
+                      sandbox: (dash.data as { sandbox?: unknown })?.sandbox,
+                      pkg: (dash.data as { pkg?: unknown })?.pkg,
+                      wasm: (dash.data as { wasm?: unknown })?.wasm,
+                      weekly: (dash.data as { weekly?: unknown })?.weekly,
+                      flags: {
+                        run_gate_required: (dash.data as { run_gate_required?: boolean })?.run_gate_required,
+                        court_rust_required: (dash.data as { court_rust_required?: boolean })?.court_rust_required,
+                      },
+                    },
+                    null,
+                    2,
+                  )}
+            </pre>
+            <div style={{ fontSize: 11, color: 'var(--foreground-dim)', marginTop: 8 }}>
+              GET /api/kernel/dashboard · GET /api/kernel/sandbox/coverage
+            </div>
+          </div>
+        </div>
+      ) : tab === 'collab' ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ ...card, padding: '14px 16px' }}>
+            <div style={{ fontSize: 13, fontWeight: 650, marginBottom: 8 }}>
+              {zh ? '人机协作（打断 / 恢复）' : 'Collab interrupt / resume'}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--foreground-dim)', marginBottom: 10, lineHeight: 1.5 }}>
+              {zh
+                ? '对当前 running 进程调用 collab_interrupt（并 suspend）或 collab_resume。'
+                : 'Call collab_interrupt (+suspend) or collab_resume on running processes.'}
+            </div>
+            {procs.filter((p) => p.state === 'running' || p.state === 'suspended' || String(p.state).includes('wait')).length === 0 ? (
+              <div style={{ fontSize: 12, color: 'var(--foreground-dim)' }}>
+                {zh ? '暂无合适进程' : 'No eligible processes'}
+              </div>
+            ) : (
+              procs
+                .filter((p) => p.state === 'running' || p.state === 'suspended' || String(p.state).includes('wait'))
+                .slice(0, 12)
+                .map((p) => {
+                  const busy = collabBusy === p.id;
+                  return (
+                    <div
+                      key={p.id}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0',
+                        borderBottom: '1px solid var(--border-subtle)', fontSize: 12,
+                      }}
+                    >
+                      <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {String(p.identity || p.id).slice(0, 28)} · {p.state}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={async () => {
+                          setCollabBusy(p.id);
+                          try {
+                            await collabInterrupt(p.id, 'ui', p.session_id || null);
+                            addToast(zh ? '已打断' : 'Interrupted', 'success');
+                            void qc.invalidateQueries({ queryKey: ['kernel-processes'] });
+                          } catch { /* toast */ } finally { setCollabBusy(null); }
+                        }}
+                        style={{
+                          fontSize: 11, padding: '4px 10px', borderRadius: 6, cursor: busy ? 'wait' : 'pointer',
+                          border: '1px solid var(--border-subtle)', background: 'var(--card-bg)',
+                        }}
+                      >
+                        {zh ? '打断' : 'Interrupt'}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={async () => {
+                          setCollabBusy(p.id);
+                          try {
+                            await collabResume(p.id, p.session_id || null);
+                            addToast(zh ? '已恢复' : 'Resumed', 'success');
+                            void qc.invalidateQueries({ queryKey: ['kernel-processes'] });
+                          } catch { /* toast */ } finally { setCollabBusy(null); }
+                        }}
+                        style={{
+                          fontSize: 11, padding: '4px 10px', borderRadius: 6, cursor: busy ? 'wait' : 'pointer',
+                          border: '1px solid var(--border-subtle)', background: 'var(--card-bg)',
+                        }}
+                      >
+                        {zh ? '恢复' : 'Resume'}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={async () => {
+                          setCollabBusy(p.id);
+                          try {
+                            const r = await sampleProcessRss(p.id, p.session_id || null);
+                            addToast(
+                              zh
+                                ? `RSS ${String((r as { rss_bytes?: number }).rss_bytes ?? '—')} · over=${String((r as { over_limit?: boolean }).over_limit)}`
+                                : `RSS sample done`,
+                              'info',
+                            );
+                          } catch { /* toast */ } finally { setCollabBusy(null); }
+                        }}
+                        style={{
+                          fontSize: 11, padding: '4px 10px', borderRadius: 6, cursor: busy ? 'wait' : 'pointer',
+                          border: '1px solid var(--border-subtle)', background: 'var(--card-bg)',
+                        }}
+                      >
+                        RSS
+                      </button>
+                    </div>
+                  );
+                })
+            )}
+            <div style={{ fontSize: 11, color: 'var(--foreground-dim)', marginTop: 10 }}>
+              POST /api/kernel/collab/interrupt · resume · POST …/resources/&#123;id&#125;/sample-rss
+            </div>
           </div>
         </div>
       ) : (

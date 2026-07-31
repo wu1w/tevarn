@@ -605,6 +605,58 @@ def should_use_sandbox() -> bool:
         return False
 
 
+def _kernel_process_id_from_args(arguments: dict[str, Any]) -> str | None:
+    """从工具参数 / recorder 取 kernel process id（隔离与 Court 共用）。"""
+    pid = str(
+        arguments.get("_kernel_process_id")
+        or arguments.get("_process_id")
+        or ""
+    ).strip()
+    if pid:
+        return pid
+    rec = arguments.get("_run_recorder")
+    if rec is not None:
+        pid = str(getattr(rec, "kernel_process_id", "") or "").strip()
+        if pid:
+            return pid
+    return None
+
+
+def _isolation_sandbox_required(process_id: str | None, agent_key: str = "") -> bool:
+    """Rust isolation profile 是否强制沙箱（workforce / untrusted）。"""
+    if not process_id:
+        return False
+    try:
+        from backend.kernel import get_kernel
+
+        k = get_kernel()
+        is_wf = str(agent_key or "").startswith("wf:")
+        if hasattr(k, "isolation_resolve"):
+            pol = k.isolation_resolve(process_id, is_workforce=is_wf) or {}
+        elif hasattr(k, "_call"):
+            pol = (
+                k._call(
+                    "isolation_resolve",
+                    {"process_id": process_id, "is_workforce": is_wf},
+                )
+                or {}
+            )
+        else:
+            return False
+        return bool(pol.get("sandbox_required"))
+    except Exception:
+        return False
+
+
+def _must_use_computer_path(arguments: dict[str, Any]) -> bool:
+    """P0 gap-fill：UI 选 local 时仍可被 isolation profile 强制走 ComputerManager。"""
+    if should_use_sandbox():
+        return True
+    pid = _kernel_process_id_from_args(arguments)
+    akey = str(arguments.get("_agent_key") or "main")
+    return _isolation_sandbox_required(pid, akey)
+
+
 def _match_dangerous(command: str) -> str | None:
     """检测命令是否命中危险模式，返回危险原因（None=安全）。
 
@@ -849,8 +901,10 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
             + format_process(item, tail=2000)
         )
 
-    # 执行环境裁决（T5）：sandbox=必须隔离 / auto=有则用无则本机 / local=显式本机
-    if should_use_sandbox():
+    # 执行环境裁决（T5）：sandbox / auto；P0：isolation profile 可强制 ComputerManager
+    # （即便 UI 设 local，workforce/untrusted 仍不得绕过沙箱账本与策略）
+    _kpid = _kernel_process_id_from_args(arguments)
+    if _must_use_computer_path(arguments):
         try:
             from backend.computer.manager import get_computer_manager
 
@@ -863,17 +917,56 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
                 cwd=cwd,
                 timeout=timeout,
                 max_output=max_output,
+                process_id=_kpid,
             )
         except Exception as _ce:
             # 安全口径：用户要的是隔离，静默降级到本机直跑会破坏预期。
-            # 给清晰错误，由用户在权限控制台改「执行环境」。
+            # 编制/强制沙箱：统一 workforce fail-closed 文案。
             __import__("logging").getLogger(__name__).warning(
                 "agent computer execute failed: %s", _ce
             )
+            akey = str(arguments.get("_agent_key") or "main")
+            if (
+                akey.startswith("wf:")
+                or bool(arguments.get("_workforce"))
+                or _isolation_sandbox_required(_kpid, akey)
+            ):
+                try:
+                    from backend.kernel.tool_gate import workforce_sandbox_fail_message
+
+                    return workforce_sandbox_fail_message(
+                        profile_id="workforce",
+                        detail=str(_ce),
+                    )
+                except Exception:
+                    pass
             return (
                 f"[Error] 沙箱执行失败: {_ce}"
                 "（未降级本机直跑。可在权限控制台把「执行环境」改为「自动」或「本机直跑」）"
             )
+
+    # 无强制隔离时仍尽量登记 isolation_spawn（local 账本），失败不阻断
+    if _kpid:
+        try:
+            from backend.kernel import get_kernel
+
+            k = get_kernel()
+            if hasattr(k, "_call"):
+                h = k._call(
+                    "isolation_spawn",
+                    {
+                        "process_id": _kpid,
+                        "command": command[:500],
+                        "backend": "local",
+                    },
+                )
+                # 若 profile 拒绝 local，fail closed
+                if isinstance(h, dict) and h.get("error"):
+                    return f"[Error] isolation denied: {h.get('error')}"
+        except Exception as _iso_e:
+            msg = str(_iso_e)
+            if "isolation" in msg.lower() or "sandbox" in msg.lower() or "local" in msg.lower():
+                return f"[Error] isolation denied: {_iso_e}"
 
     try:
         from backend.core.safe_subprocess import run_capture
@@ -1208,8 +1301,9 @@ async def execute_python(config: dict[str, Any], arguments: dict[str, Any]) -> s
     # Prefer current interpreter (Windows rarely has python3 on PATH)
     py = sys.executable or "python3"
 
-    # 执行环境裁决（T5）：python 与 command 走同一口径
-    if should_use_sandbox():
+    # 执行环境裁决（T5）：python 与 command 走同一口径；P0 isolation 强制 sandbox
+    _kpid = _kernel_process_id_from_args(arguments)
+    if _must_use_computer_path(arguments):
         try:
             import shlex
 
@@ -1223,6 +1317,7 @@ async def execute_python(config: dict[str, Any], arguments: dict[str, Any]) -> s
                 session_id=arguments.get("_session_id"),
                 recorder=arguments.get("_run_recorder"),
                 timeout=int(timeout or 30),
+                process_id=_kpid,
             )
         except Exception as _ce:
             __import__("logging").getLogger(__name__).warning(

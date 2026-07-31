@@ -109,7 +109,7 @@ class ToolRegistry:
 
     @classmethod
     async def execute(cls, name: str, arguments: dict[str, Any]) -> Any:
-        """执行指定工具（含 before/after hooks）。"""
+        """执行指定工具（含 Kernel 门控 + before/after hooks）。"""
         tool = cls._tools.get(name)
         if tool is None:
             return f"[Error] Tool '{name}' not found"
@@ -118,6 +118,26 @@ class ToolRegistry:
             return f"[Error] Tool '{name}' is disabled"
 
         args = dict(arguments or {})
+
+        # Hardening：所有经 Registry 的执行统一经 tool_gate（幂等；loop 已过则跳过）。
+        # Agent 上下文缺 process → fail-closed；单测无上下文仍可直接 execute。
+        try:
+            from backend.kernel.tool_gate import enforce_tool_gate
+
+            args, gate_err = await enforce_tool_gate(name, args)
+            if gate_err:
+                return gate_err
+        except Exception as e:
+            logger.error(
+                "tool_gate machinery failed for tool=%s; refusing the call "
+                "(fail-closed)",
+                name,
+                exc_info=True,
+            )
+            return (
+                f"Error: Kernel 门控未能执行（{type(e).__name__}: {e}），"
+                f"已拒绝调用 '{name}'。"
+            )
 
         # L3 hooks —— 权限体系就挂在这里，因此必须 fail-closed。
         # 此前这个 try 捕获后没有 return，继续往下执行工具：任何 import 错误
@@ -164,7 +184,15 @@ class ToolRegistry:
         # 返回「用户已拒绝」——用户根本没被问过。（此前 _session_id 在这里被剥掉，
         # 使 COMMAND_CATEGORIES 八类默认的 confirm 动作全部失效。）
         # _ws_manager 一直是穿透的，两者必须同进同出。
-        _DROP_META = {"_chat_mode", "_history_point", "_checkpoint_path"}
+        # _tool_gate_passed 仅门控幂等标记，执行器不需要
+        _DROP_META = {
+            "_chat_mode",
+            "_history_point",
+            "_checkpoint_path",
+            "_tool_gate_passed",
+            "_tool_gate_internal",
+            "_require_kernel_process",
+        }
         exec_args = {
             k: v
             for k, v in args.items()

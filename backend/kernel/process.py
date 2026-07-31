@@ -1,10 +1,9 @@
-"""AgentProcess —— Kernel 管理的执行实体（阶段 1 / W1）。
+"""AgentProcess —— Kernel 管理的执行实体。
 
-把「一次 agent 运行」抽象为进程：有身份、有能力集、有预算、有生命周期。
-父进程只能授予子进程自身能力的子集（能力单调递减，不可提权）。
-
-现有 loop 通过 kernel.create_process() 进入 Kernel 管理；
-未显式指定 capabilities 时为 None = 兼容旧路径（全量能力，由旧权限体系裁决）。
+.. deprecated:: P0-A / R3 去双轨
+    **生产权威**：Rust ``takton_kernel::process``（经 host RPC）。
+    本模块仅：单元测试直接构造、host 不可用时的 fallback。
+    禁止在此扩展生产状态机；变更请改 crates/takton-kernel。
 """
 
 from __future__ import annotations

@@ -404,9 +404,41 @@ class EvolutionManager:
             applied = False
             status = "draft"
             if gate["ok"]:
-                if kind == "skill" and cfg.auto_apply_skills:
-                    status = "active"
-                    applied = True
+                # P1-B G4 红线：技能永不 auto_apply 到 live；必须 skill-gate + 人工
+                # （cfg.auto_apply_skills 默认 false；即使 env 打开也只进 draft，
+                #  真正 active 走 kernel skill_verify/activate）
+                if kind == "skill":
+                    status = "draft"
+                    applied = False
+                    try:
+                        from backend.kernel import get_kernel
+
+                        k = get_kernel()
+                        content = str(proposal.get("content") or "")
+                        if hasattr(k, "_call") and content:
+                            pkg = k._call(
+                                "skill_register",
+                                {
+                                    "name": proposal["name"],
+                                    "version": f"evo-{ENGINE_VERSION}",
+                                    "content": content,
+                                    "permissions": list(
+                                        (proposal.get("meta") or {}).get("permissions")
+                                        or []
+                                    ),
+                                    "tests": list(
+                                        (proposal.get("meta") or {}).get("tests") or []
+                                    ),
+                                },
+                            ) or {}
+                            pid = pkg.get("id")
+                            if pid:
+                                try:
+                                    k._call("skill_verify", {"package_id": pid})
+                                except Exception:
+                                    pass  # stays draft; activate requires human
+                    except Exception:
+                        pass
                 elif kind == "tool" and cfg.auto_apply_tools:
                     status = "active"
                     applied = True

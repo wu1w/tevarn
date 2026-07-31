@@ -1,16 +1,8 @@
-"""多 Agent 调度器雏形（阶段 2：优先级队列 + 公平性）。
+"""多 Agent 调度器雏形。
 
-现状：NexusAgentLoop 按 session 锁串行执行，多 agent/多会话并发时
-没有调度语义——谁先抢到锁谁先跑，长任务能饿死短任务。
-
-本模块提供 Kernel 侧的调度原语（暂不与 loop 执行耦合，先在
-cluster/subagent fan-out 等 Kernel 原生场景使用，后续替换 session 锁）：
-
-- 优先级队列：priority 数值小者优先（0=最高）
-- 公平性：同优先级 FIFO；aging——等待超过 age_threshold 的任务
-  优先级自动提升一档，防饿死
-- 与 AgentProcess 绑定：submit 返回的 ScheduledTask 持有 process_id，
-  调度器只做排序，执行权仍在 loop
+.. deprecated:: P0-A / R3 去双轨
+    **生产权威**：Rust ``scheduler_*`` / ``run_gate_*`` RPC。
+    本文件仅 fallback / 历史测试；禁止扩展生产队列逻辑。
 """
 
 from __future__ import annotations

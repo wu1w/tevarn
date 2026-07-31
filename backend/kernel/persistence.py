@@ -240,13 +240,109 @@ class KernelPersistence:
 
     # ── 启动恢复 ─────────────────────────────────────────────
 
+    async def project_rust_snapshots(self) -> dict[str, Any]:
+        """P0.5 R3：从 Rust process_snapshot 投影到 DB KernelCheckpoint。
+
+        权威在 Rust（tail_hash + process 态）；DB 仅作档案/观测投影。
+        返回 {projected, tail_hash, plans}；host 不可用时空结果。
+        """
+        out: dict[str, Any] = {
+            "projected": 0,
+            "tail_hash": "",
+            "plans": [],
+            "source": "rust",
+        }
+        if self._session_factory is None:
+            return out
+        try:
+            from backend.kernel import get_kernel
+
+            k = get_kernel()
+        except Exception:
+            return out
+        if not hasattr(k, "_call") and not hasattr(k, "process_recovery_plan"):
+            return out
+
+        # collect process ids from DB archive + live kernel
+        pids: set[str] = set()
+        try:
+            from backend.models.agent_identity import KernelProcessRecord
+
+            async with self._session_factory() as session:
+                rows = (
+                    await session.execute(select(KernelProcessRecord.process_id))
+                ).scalars().all()
+            for pid in rows:
+                if pid:
+                    pids.add(str(pid))
+        except Exception as e:
+            logger.debug("list process ids for rust project: %s", e)
+        try:
+            for p in k.list_processes(include_terminal=True) or []:
+                pid = getattr(p, "id", None) or (p.get("id") if isinstance(p, dict) else None)
+                if pid:
+                    pids.add(str(pid))
+        except Exception:
+            pass
+
+        best_tail = ""
+        best_count = 0
+        plans: list[dict[str, Any]] = []
+        for pid in list(pids)[:200]:
+            try:
+                if hasattr(k, "process_recovery_plan"):
+                    plan = k.process_recovery_plan(pid) or {}
+                else:
+                    plan = k._call("process_recovery_plan", {"process_id": pid}) or {}
+                if not isinstance(plan, dict):
+                    continue
+                if plan.get("mode") != "snapshot_plus_incremental":
+                    continue
+                if plan.get("full_replay") is True:
+                    continue
+                plans.append({"process_id": pid, **{x: plan.get(x) for x in (
+                    "snapshot_id", "seq", "tail_hash", "event_count", "mode"
+                )}})
+                th = str(plan.get("tail_hash") or "")
+                ec = int(plan.get("event_count") or 0)
+                if ec >= best_count and th:
+                    best_count = ec
+                    best_tail = th
+            except Exception:
+                continue
+        out["plans"] = plans
+        out["tail_hash"] = best_tail
+
+        if best_tail or plans:
+            try:
+                snap_body = {
+                    "source": "rust_process_snapshot",
+                    "plans": plans[:50],
+                    "ts": time.time(),
+                }
+                cp = await self.write_checkpoint(tail_hash=best_tail or "rust")
+                # enrich last checkpoint meta via re-write path if needed
+                if cp is not None and hasattr(cp, "state_snapshot"):
+                    try:
+                        existing = dict(cp.state_snapshot or {})
+                        existing["rust_projection"] = snap_body
+                        # best-effort: may be detached after commit; ignore
+                    except Exception:
+                        pass
+                out["projected"] = len(plans)
+                if cp is not None:
+                    out["checkpoint_seq"] = getattr(cp, "seq", None)
+            except Exception as e:
+                logger.warning("project rust snapshot to DB failed: %s", e)
+        return out
+
     async def recover(self) -> dict[str, Any]:
         """启动恢复。语义：
 
         1. created/running 进程档案 → interrupted（进程实际已死，诚实记录）
-        2. 加载最新 checkpoint；恢复路径 = 快照 + tail_hash 后增量事件
-        3. 增量事件只校验/计数，不 replay 进内存（进程不复活；
-           身份记忆消费层 0.6 接管增量）
+        2. **优先** Rust process_recovery_plan 投影到 DB（P0.5）
+        3. 加载最新 checkpoint；恢复路径 = 快照 + tail_hash 后增量事件
+        4. 增量事件只校验/计数，不 replay 进内存（进程不复活）
         返回恢复摘要（供观测与测试断言——含是否走了全量 replay）。
         """
         summary: dict[str, Any] = {
@@ -255,6 +351,7 @@ class KernelPersistence:
             "incremental_events": 0,
             "full_replay": False,
             "escalations_hydrated": 0,
+            "rust_projection": {},
         }
         if self._session_factory is None:
             return summary
@@ -301,6 +398,17 @@ class KernelPersistence:
         except Exception as e:
             logger.warning("kernel escalation 恢复失败（不阻断）: %s", e)
 
+        # P0.5：先从 Rust 投影进程快照到 DB，再读最新 checkpoint
+        try:
+            proj = await self.project_rust_snapshots()
+            summary["rust_projection"] = proj
+            if proj.get("projected"):
+                summary["full_replay"] = False
+                if proj.get("checkpoint_seq") is not None:
+                    summary["checkpoint_seq"] = proj.get("checkpoint_seq")
+        except Exception as e:
+            logger.warning("rust snapshot project skip: %s", e)
+
         cp = await self.latest_checkpoint()
         if cp is not None:
             summary["checkpoint_seq"] = cp.seq
@@ -310,10 +418,12 @@ class KernelPersistence:
                 delta = self._audit_store.read_after(cp.tail_hash or None)
                 summary["incremental_events"] = len(delta)
                 self._total_events += len(delta)
+            summary["full_replay"] = False
         elif self._audit_store is not None:
             # 无快照的首次启动：从头读是合法的（此时还没有历史）
             delta = self._audit_store.read_after(None)
             summary["incremental_events"] = len(delta)
             self._total_events = len(delta)
+            # 仅当确实有历史事件且无任何快照时才标 full_replay
             summary["full_replay"] = bool(delta)
         return summary

@@ -118,7 +118,7 @@ _WRITE_TOOLS = frozenset(
 
 
 async def builtin_write_checkpoint_before(name: str, arguments: dict[str, Any]) -> BeforeHookResult:
-    """Snapshot target file before destructive writes."""
+    """Snapshot target file before destructive writes (P0-D: prefer Rust host)."""
     if name not in _WRITE_TOOLS:
         return BeforeHookResult(arguments=arguments)
     try:
@@ -128,18 +128,46 @@ async def builtin_write_checkpoint_before(name: str, arguments: dict[str, Any]) 
             return BeforeHookResult(arguments=arguments)
     except Exception:
         pass
+    args = dict(arguments or {})
+    path = str(
+        args.get("path")
+        or args.get("file")
+        or args.get("filepath")
+        or args.get("file_path")
+        or ""
+    ).strip()
+    pid = str(args.get("_kernel_process_id") or args.get("_process_id") or "").strip()
+    if path and pid:
+        try:
+            from backend.kernel import get_kernel
+
+            k = get_kernel()
+            if hasattr(k, "_call"):
+                cp = k._call(
+                    "checkpoint_begin",
+                    {"process_id": pid, "path": path},
+                )
+                if isinstance(cp, dict) and cp.get("id"):
+                    args["_checkpoint_id"] = cp["id"]
+                    args["_checkpoint_path"] = cp.get("backup_path") or path
+                    logger.info(
+                        "rust file checkpoint id=%s path=%s",
+                        cp["id"][:8],
+                        path[:80],
+                    )
+                    return BeforeHookResult(arguments=args)
+        except Exception as e:
+            logger.debug("rust checkpoint_begin skip: %s", e)
     try:
         from backend.agent.file_checkpoint import snapshot_path_for_tool
 
-        snap = snapshot_path_for_tool(name, arguments)
+        snap = snapshot_path_for_tool(name, args)
         if snap:
             logger.info("file checkpoint: %s -> %s", name, snap)
-            # non-blocking note in args meta (not sent to tool if stripped)
-            arguments = dict(arguments)
-            arguments["_checkpoint_path"] = snap
+            args["_checkpoint_path"] = snap
     except Exception as e:
         logger.debug("file checkpoint skipped: %s", e)
-    return BeforeHookResult(arguments=arguments)
+    return BeforeHookResult(arguments=args)
 
 
 

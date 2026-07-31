@@ -1,24 +1,8 @@
-"""Intent Declaration —— 意图声明 → 最小权限能力合成（阶段 2 雏形）。
+"""Intent Declaration —— 意图 → 最小权限（P0-B）。
 
-思想来源：agent 不该带着全量能力出发，而是先声明「我要干什么」，
-Kernel 按声明 + 策略合成**最小够用**的临时能力集。
-
-W1-W3 已有：进程能力集 / 令牌 narrowing / mediate 强制。
-本模块补上「声明 → 合成」这一环：
-
-    intent = IntentDeclaration.from_dict({
-        "goal": "读取源码并总结架构",
-        "capabilities": ["file_read", "grep", "glob"],
-        "constraints": {"token_budget": 20000, "ttl_seconds": 3600},
-    })
-    token, dropped = synthesize_token(intent, kernel=kernel, process_id=proc.id)
-    # dropped = 被策略剔除的能力（高危且未显式接受风险）
-
-安全语义：
-- 高危能力（默认 RISKY_CAPABILITIES）必须 constraints.allow_risky=True 才授予，
-  否则剔除并返回在 dropped 中（调用方可告知用户/agent 缺口）。
-- 有父令牌时自动 narrow（能力单调递减）。
-- TTL 生成过期令牌（W2 已强制过期检查）。
+.. deprecated:: P0-B
+    **权威合成在 Rust** ``takton_kernel::intent`` / host ``apply_intent``。
+    ``apply_intent_to_process`` 优先走 Rust RPC；失败才用本文件本地逻辑（fallback）。
 """
 
 from __future__ import annotations
@@ -147,18 +131,28 @@ def apply_intent_to_process(
     grantable: frozenset[str] = DEFAULT_GRANTABLE,
     risky: frozenset[str] = RISKY_CAPABILITIES,
 ) -> tuple[CapabilityToken, list[str]]:
-    """生产路径：声明 → 合成令牌 → 挂载进程（capabilities + token + meta）。
-
-    调用点：
-    - loop 在 create_process 后若设置了 ``_intent_declaration`` / process options.intent
-    - subagent_runner 为迷你 Run 注入默认只读意图
-    """
+    """生产路径：声明 → 合成令牌 → 挂载进程。优先 Rust host RPC。"""
     if isinstance(intent, dict):
         decl = IntentDeclaration.from_dict(intent)
     elif isinstance(intent, IntentDeclaration):
         decl = intent
     else:
         raise TypeError("intent 须为 IntentDeclaration 或 dict")
+
+    # Rust client path
+    apply_rpc = getattr(kernel, "apply_intent", None)
+    if callable(apply_rpc) and hasattr(kernel, "_call"):
+        try:
+            return apply_rpc(process_id, decl.to_dict(), parent_token=parent_token)
+        except TypeError:
+            # RustAgentKernel.apply_intent signature below
+            pass
+        try:
+            return kernel.apply_intent(  # type: ignore[misc]
+                process_id, decl.to_dict(), parent_token=parent_token
+            )
+        except Exception:
+            pass
 
     resolve = getattr(kernel, "_resolve_process", None)
     if resolve is None:
@@ -169,7 +163,6 @@ def apply_intent_to_process(
     if proc is None:
         raise ValueError(f"未知进程 {process_id}")
 
-    # 父令牌：显式传入优先，否则从父进程取
     ptok = parent_token
     if ptok is None and getattr(proc, "parent_id", None):
         parent = None
@@ -186,7 +179,6 @@ def apply_intent_to_process(
         risky=risky,
     )
     granted = sorted(token.capabilities)
-    # 显式能力集：与令牌对齐（便于 UI / has_capability）
     if proc.capabilities is not None or granted:
         proc.capabilities = granted
     proc.token = token

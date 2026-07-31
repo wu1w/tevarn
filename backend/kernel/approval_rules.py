@@ -87,7 +87,25 @@ def rule_enabled_sync(key: str, default: bool = True) -> bool:
 
 
 def classify_caps(capabilities: list[str] | tuple[str, ...] | set[str]) -> str:
-    """返回 low / high / upgrade。"""
+    """返回 low / high / upgrade。R4：优先 Rust approval_classify。"""
+    caps_list = [str(c) for c in capabilities]
+    try:
+        from backend.kernel import get_kernel
+
+        k = get_kernel()
+        if hasattr(k, "_call"):
+            # sync rules to rust best-effort
+            rules = _RULES_CACHE if _RULES_CACHE is not None else DEFAULT_RULES
+            try:
+                k._call("approval_set_rules", {"rules": rules})
+            except Exception:
+                pass
+            r = k._call("approval_classify", {"capabilities": caps_list}) or {}
+            kind = str(r.get("kind") or "")
+            if kind in ("low", "high", "upgrade"):
+                return kind
+    except Exception as e:
+        logger.debug("approval_classify rust skip: %s", e)
     caps = {c.lower() for c in capabilities}
     if any(
         any(d in c for d in _DANGER_CAPS) or c in _DANGER_CAPS
@@ -105,6 +123,21 @@ async def should_auto_approve_escalation(
 ) -> bool:
     """提权是否可自动批准（仅 auto_low_risk + 纯低风险能力）。"""
     rules = await load_approval_rules()
+    # push rules + ask rust
+    try:
+        from backend.kernel import get_kernel
+
+        k = get_kernel()
+        if hasattr(k, "_call"):
+            k._call("approval_set_rules", {"rules": rules})
+            r = k._call(
+                "approval_should_auto",
+                {"capabilities": [str(c) for c in capabilities]},
+            ) or {}
+            if "auto_approve" in r:
+                return bool(r.get("auto_approve"))
+    except Exception as e:
+        logger.debug("approval_should_auto rust skip: %s", e)
     if not _rule_enabled(rules, "auto_low_risk", True):
         return False
     kind = classify_caps(capabilities)

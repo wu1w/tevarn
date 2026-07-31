@@ -1,9 +1,8 @@
-"""CapabilityToken —— 能力令牌（阶段 1 / W1 雏形，W2 完善过期与序列化签名）。
+"""CapabilityToken —— 能力令牌。
 
-设计要点：
-- 可 narrowing：narrow(subset) 只能产生更严格的 Token，试图扩大能力抛异常。
-- 父进程授予子进程时自动 narrow 到父能力子集（单调递减，不可提权）。
-- W1 先落地数据模型与 narrowing 语义；签名/过期在 W2 补齐（接口已预留）。
+.. deprecated:: P0-A
+    权威实现：Rust ``takton_kernel::capability``。本模块供单测与反序列化兼容。
+    生产路径令牌由 host ``issue_token`` 签发。
 """
 
 from __future__ import annotations

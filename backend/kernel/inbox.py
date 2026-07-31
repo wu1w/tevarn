@@ -119,22 +119,156 @@ class InboxService:
             "source_ref": source_ref, "priority": priority,
             "instruction": instruction[:200],
         })
+        # R3: mirror to Rust claim queue (identity key + db id in meta)
+        try:
+            ident_name = str(getattr(ident, "name", "") or iid)
+        except Exception:
+            ident_name = str(iid)
+        self._rust_inbox_submit(
+            ident_name,
+            instruction,
+            priority=priority,
+            db_item_id=str(item.id),
+        )
         return item
 
     # ── 领取与完成（Dispatcher 用）────────────────────────────
+
+    def _rust_inbox_submit(
+        self,
+        identity_key: str,
+        instruction: str,
+        *,
+        priority: int,
+        db_item_id: str,
+    ) -> None:
+        """R3: mirror enqueue into Rust inbox for dual-worker claim coordination."""
+        try:
+            k = self._kernel
+            if not hasattr(k, "_call"):
+                return
+            k._call(
+                "inbox_submit",
+                {
+                    "identity": identity_key,
+                    "instruction": instruction,
+                    "priority": int(priority),
+                    "meta": {"db_item_id": db_item_id},
+                },
+            )
+        except Exception as e:
+            logger.debug("rust inbox_submit skip: %s", e)
+
+    def _rust_inbox_claim(self, worker_id: str = "dispatcher") -> dict | None:
+        """R3: atomic claim from Rust host; returns dict or None."""
+        try:
+            k = self._kernel
+            if not hasattr(k, "_call"):
+                return None
+            r = k._call("inbox_claim", {"worker_id": worker_id}) or {}
+            if r.get("claimed") and isinstance(r.get("item"), dict):
+                return r["item"]
+        except Exception as e:
+            logger.debug("rust inbox_claim skip: %s", e)
+        return None
+
+    def _rust_inbox_reclaim(self) -> int:
+        try:
+            k = self._kernel
+            if not hasattr(k, "_call"):
+                return 0
+            # Rust reclaim is internal to inbox reclaim_stale on claim; status only
+            st = k._call("inbox_status") or {}
+            return int((st.get("counts") or {}).get("claimed") or 0)
+        except Exception:
+            return 0
 
     async def claim_next(self, *, busy_identity_ids: set[str] | None = None) -> Any:
         """领取下一条工单（优先级降序 + FIFO）。同一身份同时在手一单
         （编制内串行——一个员工不能同时干两单活）。
 
-        原子 claim：`UPDATE … WHERE status='pending'` 行数=1 才算领到，
-        防止多 dispatcher/worker 双派同一单。
+        R3 去双轨：优先 Rust inbox_claim 协调 → 再原子 UPDATE DB；
+        host 不可用时回落纯 DB claim（DEPRECATED）。
         """
         from sqlalchemy import update
 
         from backend.models.agent_identity import AgentIdentity, AgentInboxItem
 
         busy = {_uuid.UUID(str(x)) for x in (busy_identity_ids or set())}
+
+        # ── Rust-first claim coordination ──
+        rust_item = self._rust_inbox_claim(worker_id=f"disp-{id(self) % 10000}")
+        if rust_item is not None:
+            meta = rust_item.get("meta") if isinstance(rust_item.get("meta"), dict) else {}
+            db_id = str(meta.get("db_item_id") or "")
+            claim_token = str(rust_item.get("claim_token") or "")
+            rust_qid = str(rust_item.get("id") or "")
+            item_uuid = None
+            if db_id:
+                try:
+                    item_uuid = _uuid.UUID(db_id)
+                except Exception:
+                    item_uuid = None
+            if item_uuid is not None:
+                async with self._session_factory() as session:
+                    item = (
+                        await session.execute(
+                            select(AgentInboxItem).where(AgentInboxItem.id == item_uuid)
+                        )
+                    ).scalar_one_or_none()
+                    if item is not None and item.status == "pending":
+                        if item.identity_id in busy:
+                            try:
+                                if hasattr(self._kernel, "_call") and claim_token:
+                                    self._kernel._call(
+                                        "inbox_release",
+                                        {
+                                            "item_id": rust_qid,
+                                            "claim_token": claim_token,
+                                        },
+                                    )
+                            except Exception:
+                                pass
+                        else:
+                            now = time.time()
+                            result = await session.execute(
+                                update(AgentInboxItem)
+                                .where(
+                                    AgentInboxItem.id == item.id,
+                                    AgentInboxItem.status == "pending",
+                                )
+                                .values(
+                                    status="claimed",
+                                    claimed_at=now,
+                                    attempts=AgentInboxItem.attempts + 1,
+                                )
+                            )
+                            if result.rowcount == 1:
+                                await session.commit()
+                                await session.refresh(item)
+                                self._emit(
+                                    "inbox_claimed",
+                                    item.identity_id,
+                                    {
+                                        "item_id": str(item.id),
+                                        "attempts": item.attempts,
+                                        "via": "rust",
+                                    },
+                                )
+                                return item
+                    # rust claimed but DB miss / already claimed → release rust lease
+                    try:
+                        if hasattr(self._kernel, "_call") and claim_token:
+                            self._kernel._call(
+                                "inbox_release",
+                                {
+                                    "item_id": rust_qid,
+                                    "claim_token": claim_token,
+                                },
+                            )
+                    except Exception:
+                        pass
+
         async with self._session_factory() as session:
             # 防双派：DB 层已 claimed 的身份也不可再领新单（多 worker / busy 集合丢失兜底）
             claimed_idents: set[_uuid.UUID] = set()

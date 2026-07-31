@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 _session_grants: dict[str, set[str]] = {}
 
 # tool name / permission key -> identity capability id (CAP_POOL)
+# P0-B：权威副本在 Rust tool_catalog；此处为 fallback / 无 host 时使用。
+# 启动后可通过 sync_catalog_from_kernel() 从 host 刷新。
 TOOL_TO_CREW_CAP: dict[str, str] = {
     "command": "command",
     "bash": "command",
@@ -27,19 +29,21 @@ TOOL_TO_CREW_CAP: dict[str, str] = {
     "python": "command",
     "process": "command",
     "remote_exec": "command",
+    "terminal": "command",
     "file_read": "file_rw",
     "file_write": "file_rw",
+    "file_edit": "file_rw",
     "edit": "file_rw",
     "apply_patch": "file_rw",
     "read": "file_rw",
     "write": "file_rw",
-    # 编码巡检常用：读目录/搜代码 → 归 file_rw
     "glob": "file_rw",
     "grep": "file_rw",
     "doc_read": "file_rw",
     "web_search": "web_search",
     "search": "web_search",
     "web_fetch": "web_search",
+    "web_extract": "web_search",
     "fetch_webpage": "web_search",
     "http": "web_search",
     "http_get": "web_search",
@@ -50,8 +54,45 @@ TOOL_TO_CREW_CAP: dict[str, str] = {
     "calendar_read": "calendar",
     "notify": "notify",
     "send_email": "notify",
-    "current_time": "web_search",  # 无害只读，挂 web 档便于巡检
+    "send_message": "notify",
+    "current_time": "web_search",
+    "session_search": "memory",
+    "memory": "memory",
+    "knowledge_search": "memory",
+    "wiki_search": "memory",
+    "delegate_task": "delegate_task",
+    "cronjob": "cronjob",
+    "computer": "computer",
 }
+
+
+def sync_catalog_from_kernel(kernel: Any | None = None) -> bool:
+    """Refresh TOOL_TO_CREW_CAP from Rust host tool_catalog RPC.
+
+    可传入已构造的 kernel，避免 get_rust_kernel → sync → get_kernel 重入
+    （init 期间 _kernel_singleton 尚未赋值会二次初始化）。
+    """
+    try:
+        k = kernel
+        if k is None:
+            from backend.kernel import get_kernel
+
+            k = get_kernel()
+        if not hasattr(k, "tool_catalog"):
+            return False
+        cat = k.tool_catalog() or {}
+        pairs = cat.get("tool_to_crew_cap") or []
+        if not pairs:
+            return False
+        TOOL_TO_CREW_CAP.clear()
+        for p in pairs:
+            if isinstance(p, dict) and p.get("tool") and p.get("cap"):
+                TOOL_TO_CREW_CAP[str(p["tool"])] = str(p["cap"])
+        logger.info("grant_store catalog synced from rust (%s entries)", len(TOOL_TO_CREW_CAP))
+        return True
+    except Exception as e:
+        logger.debug("sync_catalog_from_kernel: %s", e)
+        return False
 
 
 def tool_matches_crew_caps(tool: str, capabilities: list[str] | set[str] | frozenset[str] | None) -> bool:

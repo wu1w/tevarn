@@ -3132,3 +3132,87 @@ export async function getSchedulerStatus(): Promise<SchedulerStatus> {
   const res = await api.get('/kernel/scheduler/status');
   return res.data;
 }
+
+/** T6 加深：观测聚合（cost / run_gate / sandbox / weekly / wasm） */
+export async function getKernelDashboard(): Promise<Record<string, unknown>> {
+  const res = await api.get('/kernel/dashboard');
+  return res.data;
+}
+
+export async function getSandboxCoverage(): Promise<Record<string, unknown>> {
+  const res = await api.get('/kernel/sandbox/coverage');
+  return res.data;
+}
+
+export async function getKernelCollab(
+  processId: string,
+  sessionId?: string | null,
+): Promise<Record<string, unknown>> {
+  const res = await api.get(`/kernel/collab/${encodeURIComponent(processId)}`, {
+    params: sessionId ? { session_id: sessionId } : undefined,
+  });
+  return res.data;
+}
+
+export async function collabInterrupt(
+  processId: string,
+  reason = '',
+  sessionId?: string | null,
+): Promise<Record<string, unknown>> {
+  const res = await api.post('/kernel/collab/interrupt', {
+    process_id: processId,
+    reason,
+    session_id: sessionId || undefined,
+  });
+  return res.data;
+}
+
+export async function collabResume(
+  processId: string,
+  sessionId?: string | null,
+): Promise<Record<string, unknown>> {
+  const res = await api.post('/kernel/collab/resume', {
+    process_id: processId,
+    reason: '',
+    session_id: sessionId || undefined,
+  });
+  return res.data;
+}
+
+export async function sampleProcessRss(
+  processId: string,
+  sessionId?: string | null,
+): Promise<Record<string, unknown>> {
+  const res = await api.post(
+    `/kernel/resources/${encodeURIComponent(processId)}/sample-rss`,
+    null,
+    { params: sessionId ? { session_id: sessionId } : undefined },
+  );
+  return res.data;
+}
+
+/** 包市场：本地+远程 catalog */
+export async function getPackageMarket(): Promise<{
+  items: Array<Record<string, unknown>>;
+  count: number;
+  market?: string;
+  remote_url?: string | null;
+}> {
+  const res = await api.get('/packages/market');
+  return res.data;
+}
+
+export async function installPackageRemote(body: {
+  name?: string;
+  url?: string;
+  overwrite?: boolean;
+  content_sha256?: string;
+}): Promise<Record<string, unknown>> {
+  const res = await api.post('/packages/market/install-remote', body);
+  return res.data;
+}
+
+export async function getPackageMarketTrust(): Promise<Record<string, unknown>> {
+  const res = await api.get('/packages/market/trust');
+  return res.data;
+}

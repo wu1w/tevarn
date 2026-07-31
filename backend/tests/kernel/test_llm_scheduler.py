@@ -17,6 +17,11 @@ from backend.kernel.llm_scheduler import (
 
 @pytest.fixture()
 def ctrl(monkeypatch):
+    # 单测验证 Python 调度语义；避免 host 残留槽位导致 acquire/poll 挂起
+    monkeypatch.setenv("TAKTON_LLM_ALLOW_PY_FALLBACK", "1")
+    monkeypatch.setattr(
+        "backend.kernel.llm_admission._rust_kernel", lambda: None
+    )
     reset_llm_admission_for_tests()
     c = LlmAdmissionController()
     monkeypatch.setattr(

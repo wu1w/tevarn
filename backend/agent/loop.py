@@ -8,6 +8,7 @@ Nexus Agent Loop
 import asyncio
 import json
 import logging
+import time
 import uuid
 from typing import Any
 
@@ -231,6 +232,104 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         return await self._load_history(
             session_id, limit=limit, offset=offset
         )
+
+    async def _await_run_gate(
+        self,
+        kernel: Any,
+        process_id: str,
+        *,
+        priority_class: str = "workforce",
+        timeout: float = 300.0,
+    ) -> None:
+        """跨会话全局 RunGate — 拿到 lease 再继续执行（T2：可配置 fail-closed）。
+
+        session 锁只保证同 session 串行；本门闩保证全局并发上限 + 优先级排队。
+        """
+        from backend.core.config import settings as _rg_settings
+
+        required = bool(
+            getattr(_rg_settings, "agent_kernel_run_gate_required", True)
+        )
+        if not hasattr(kernel, "_call"):
+            if required:
+                raise RuntimeError(
+                    "run_gate required but kernel has no _call (host unavailable)"
+                )
+            return
+        try:
+            r = kernel._call(
+                "run_gate_try",
+                {
+                    "process_id": process_id,
+                    "priority_class": priority_class,
+                },
+            ) or {}
+        except Exception as e:
+            if required:
+                raise RuntimeError(f"run_gate_try failed (required): {e}") from e
+            logger.warning("run_gate_try skip (not required): %s", e)
+            return
+        status = r.get("status")
+        if status == "granted":
+            try:
+                kernel._call(
+                    "resource_charge",
+                    {
+                        "process_id": process_id,
+                        "kind": "concurrency_slots",
+                        "amount": 1,
+                    },
+                )
+            except Exception:
+                pass
+            logger.info(
+                "run_gate granted proc=%s class=%s",
+                process_id[:8],
+                priority_class,
+            )
+            return
+        if status == "rejected":
+            raise RuntimeError(
+                f"run gate rejected: {r.get('reason') or r.get('code')}"
+            )
+        # queued — poll
+        rid = str(r.get("request_id") or "")
+        logger.info(
+            "run_gate queued proc=%s request=%s qlen=%s",
+            process_id[:8],
+            rid[:8],
+            r.get("queue_len"),
+        )
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if getattr(self, "_should_stop", False):
+                raise RuntimeError("run gate wait aborted: stop requested")
+            await asyncio.sleep(0.05)
+            try:
+                polled = kernel._call("run_gate_poll", {"request_id": rid}) or {}
+            except Exception as e:
+                logger.debug("run_gate_poll: %s", e)
+                continue
+            st = polled.get("status")
+            if st == "granted":
+                try:
+                    kernel._call(
+                        "resource_charge",
+                        {
+                            "process_id": process_id,
+                            "kind": "concurrency_slots",
+                            "amount": 1,
+                        },
+                    )
+                except Exception:
+                    pass
+                logger.info("run_gate granted after wait proc=%s", process_id[:8])
+                return
+            if st == "rejected":
+                raise RuntimeError(
+                    f"run gate rejected: {polled.get('reason') or polled.get('code')}"
+                )
+        raise RuntimeError("run gate wait timeout")
 
     async def _kernel_iteration_gate(
         self, session_id: uuid.UUID, messages: list[dict[str, Any]]
@@ -498,12 +597,22 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 # 快照失败降级 None（兼容模式）。Intent 最小权限交互落地前
                 # 这是 narrowing 链路的正确前置。
                 caps: list[str] | None = None
-                # 0.6：workforce 派遣可显式指定进程选项（身份权限档案/默认预算）——
-                # 异步唤醒的 agent 以其「编制」内的权限与预算运行
+                # 0.6：workforce 派遣可显式指定进程选项（身份权限档案/默认预算）
                 proc_opts = getattr(self, "_kernel_process_options", None) or {}
+                require_intent = bool(
+                    getattr(settings, "agent_kernel_require_intent", True)
+                )
+                intent_raw = (
+                    getattr(self, "_intent_declaration", None)
+                    or proc_opts.get("intent")
+                )
                 if proc_opts.get("capabilities") is not None:
                     caps = list(proc_opts["capabilities"])
+                elif require_intent:
+                    # P0-B：禁止静默全开 — 无显式 caps 时交给 kernel 默认只读 intent
+                    caps = None
                 elif bool(getattr(settings, "agent_kernel_explicit_capabilities", False)):
+                    # 旧路径：注册表全集快照（仅 require_intent=false 时）
                     try:
                         from backend.tools.registry import ToolRegistry
 
@@ -511,6 +620,20 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     except Exception as e:
                         logger.debug("能力快照失败，降级兼容模式: %s", e)
                         caps = None
+                # 默认 intent（主会话）：只读探索
+                if intent_raw is None and require_intent and caps is None:
+                    intent_raw = {
+                        "goal": str(
+                            getattr(
+                                settings,
+                                "agent_kernel_default_intent_goal",
+                                "interactive chat (minimum privilege)",
+                            )
+                            or "interactive chat (minimum privilege)"
+                        ),
+                        "capabilities": [],
+                        "constraints": {},
+                    }
                 _meta = {
                     "mode": mode,
                     "parent_run_id": str(parent_run_id) if parent_run_id else None,
@@ -519,10 +642,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 }
                 if isinstance(proc_opts.get("meta"), dict):
                     _meta.update(proc_opts["meta"])
-                    # 确保 run_id 不被 proc_opts 冲掉
                     if self._agent_run_id:
                         _meta["run_id"] = str(self._agent_run_id)
-                # 编制路径：创建前再清一次同 identity 残留进程（双保险）
                 _akey = agent_key or "main"
                 if str(_akey).startswith("wf:") or _meta.get("workforce"):
                     try:
@@ -532,21 +653,40 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         )
                     except Exception as _re:
                         logger.debug("loop preflight retire: %s", _re)
-                kernel_proc = await kernel.create_process(
-                    _akey,
-                    session_id=str(session_id),
-                    parent_id=parent_pid,
-                    capabilities=caps,
-                    token_budget=proc_opts.get("token_budget"),
-                    meta=_meta,
-                )
+                create_kwargs: dict = {
+                    "session_id": str(session_id),
+                    "parent_id": parent_pid,
+                    "capabilities": caps,
+                    "token_budget": proc_opts.get("token_budget"),
+                    "meta": _meta,
+                }
+                # Rust host accepts intent= on create_process
+                if intent_raw is not None and hasattr(kernel, "_call"):
+                    try:
+                        from backend.kernel.intent import IntentDeclaration
+
+                        if isinstance(intent_raw, dict):
+                            create_kwargs["intent"] = IntentDeclaration.from_dict(
+                                intent_raw
+                            ).to_dict()
+                        else:
+                            create_kwargs["intent"] = intent_raw.to_dict()  # type: ignore[union-attr]
+                    except Exception:
+                        create_kwargs["intent"] = (
+                            intent_raw if isinstance(intent_raw, dict) else None
+                        )
+                try:
+                    kernel_proc = await kernel.create_process(_akey, **create_kwargs)
+                except TypeError:
+                    # Python fallback AgentKernel has no intent= kw
+                    create_kwargs.pop("intent", None)
+                    kernel_proc = await kernel.create_process(_akey, **create_kwargs)
                 await kernel.mark_running(kernel_proc.id)
-                # Intent Declaration 接线：声明 → 合成令牌 → 挂载（subagent / 显式 options）
-                intent_raw = (
-                    getattr(self, "_intent_declaration", None)
-                    or proc_opts.get("intent")
-                )
-                if intent_raw:
+                # Intent apply if not already applied at create (Python fallback / late intent)
+                if intent_raw and not (
+                    isinstance(getattr(kernel_proc, "meta", None), dict)
+                    and (kernel_proc.meta or {}).get("intent")
+                ):
                     try:
                         from backend.kernel.intent import apply_intent_to_process
 
@@ -567,9 +707,74 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                             sorted(tok.capabilities)[:12],
                             dropped[:8],
                         )
+                        # refresh process view
+                        fresh = kernel.get_process(kernel_proc.id)
+                        if fresh is not None:
+                            kernel_proc = fresh
                     except Exception as _ie:
                         logger.warning("intent apply skip: %s", _ie)
+                elif intent_raw:
+                    logger.info(
+                        "intent on create process=%s caps=%s",
+                        kernel_proc.id[:8],
+                        (kernel_proc.capabilities or [])[:12],
+                    )
+                # P0-C：run 级调度登记 + 并发槽
+                # P0-D：isolation profile
+                try:
+                    if hasattr(kernel, "_call"):
+                        is_wf = str(_akey).startswith("wf:") or bool(
+                            _meta.get("workforce")
+                        )
+                        pclass = "workforce" if is_wf else "foreground"
+                        kernel._call(
+                            "schedule_run",
+                            {
+                                "process_id": kernel_proc.id,
+                                "priority_class": pclass,
+                                "payload": {
+                                    "session_id": str(session_id),
+                                    "mode": mode,
+                                },
+                            },
+                        )
+                        iso_profile = (
+                            "workforce"
+                            if is_wf
+                            else (
+                                "read_only"
+                                if str(mode or "").lower()
+                                in ("plan", "ask", "explore")
+                                else "interactive"
+                            )
+                        )
+                        try:
+                            kernel._call(
+                                "isolation_set_profile",
+                                {
+                                    "process_id": kernel_proc.id,
+                                    "profile": iso_profile,
+                                },
+                            )
+                        except Exception:
+                            pass
+                        # 全局 RunGate：跨会话排队，拿到 lease 再继续（session 锁只保同会话）
+                        await self._await_run_gate(
+                            kernel,
+                            kernel_proc.id,
+                            priority_class=pclass,
+                        )
+                except Exception as _sch:
+                    # T2：run_gate 硬失败向上抛；其它调度错误可降级
+                    msg = str(_sch)
+                    if "run gate" in msg.lower() or "run_gate" in msg.lower():
+                        raise
+                    logger.warning("schedule_run/run_gate soft skip: %s", _sch)
                 self._kernel_process = kernel_proc
+                try:
+                    recorder.kernel_process_id = kernel_proc.id
+                except Exception:
+                    pass
             except Exception as e:
                 # Kernel 装配失败不阻断对话（显式降级并告警，非静默）
                 logger.warning("kernel create_process 失败，退回无 kernel 路径: %s", e)
@@ -592,6 +797,19 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             else:
                 await recorder.finish_ok(final_summary=result or "")
             if kernel is not None and kernel_proc is not None:
+                try:
+                    if hasattr(kernel, "_call"):
+                        kernel._call(
+                            "run_gate_release", {"process_id": kernel_proc.id}
+                        )
+                        try:
+                            kernel._call(
+                                "run_release", {"process_id": kernel_proc.id}
+                            )
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
                 await kernel.end_process(
                     kernel_proc.id,
                     state="killed" if self._should_stop else "completed",
@@ -606,6 +824,19 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 pass
             await recorder.finish_fail(str(e))
             if kernel is not None and kernel_proc is not None:
+                try:
+                    if hasattr(kernel, "_call"):
+                        kernel._call(
+                            "run_gate_release", {"process_id": kernel_proc.id}
+                        )
+                        try:
+                            kernel._call(
+                                "run_release", {"process_id": kernel_proc.id}
+                            )
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
                 await kernel.end_process(kernel_proc.id, state="failed", reason=str(e))
             raise
         finally:
@@ -896,6 +1127,48 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         tools = await self._load_tools(
             session_id, enabled_skills, enabled_tools_filter, user_input=user_input
         )
+        # P0-B：按 kernel 进程能力裁剪 LLM 可见 tools（模型看不到无权限工具）
+        try:
+            kproc = getattr(self, "_kernel_process", None)
+            if kproc is not None and getattr(kproc, "id", None):
+                from backend.kernel import get_kernel
+
+                k = get_kernel()
+                names = [
+                    (t.get("function") or {}).get("name")
+                    for t in tools
+                    if (t.get("function") or {}).get("name")
+                ]
+                names = [n for n in names if n]
+                filtered_names: list[str] | None = None
+                if hasattr(k, "filter_tools"):
+                    filtered_names = k.filter_tools(kproc.id, names)
+                elif getattr(kproc, "capabilities", None) is not None:
+                    from backend.agent.grant_store import tool_matches_crew_caps
+
+                    filtered_names = [
+                        n
+                        for n in names
+                        if tool_matches_crew_caps(n, kproc.capabilities)
+                    ]
+                if filtered_names is not None:
+                    allow = set(filtered_names)
+                    before = len(tools)
+                    tools = [
+                        t
+                        for t in tools
+                        if (t.get("function") or {}).get("name") in allow
+                    ]
+                    if before != len(tools):
+                        logger.info(
+                            "P0-B tool schema trim process=%s %s→%s caps=%s",
+                            str(kproc.id)[:8],
+                            before,
+                            len(tools),
+                            (kproc.capabilities or [])[:8],
+                        )
+        except Exception as _ft:
+            logger.debug("tool schema filter skip: %s", _ft)
         logger.info(
             "Loaded %s tools session=%s profile=%s scene=%s filter=%s",
             len(tools),
@@ -1132,9 +1405,28 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         )
         _force_final_no_tools = False
         _iter_budget = IterationBudget(_total_iters)
+        # P0.5：同步迭代预算到 Rust policy（权威侧可观测 / 跨重启策略）
+        _kpid_iter = str(getattr(getattr(self, "_kernel_process", None), "id", "") or "")
+        if _kpid_iter:
+            try:
+                from backend.kernel import get_kernel
+
+                _k_iter = get_kernel()
+                if hasattr(_k_iter, "iteration_set_budget"):
+                    _k_iter.iteration_set_budget(_kpid_iter, _total_iters)
+                elif hasattr(_k_iter, "_call"):
+                    _k_iter._call(
+                        "iteration_set_budget",
+                        {"process_id": _kpid_iter, "max_total": _total_iters},
+                    )
+            except Exception:
+                pass
         _turn_retry = TurnRetryState()
         _budget_grace_call = False
         _loop_exit_reason = ""
+        _snapshot_every = max(
+            1, int(getattr(settings, "agent_process_snapshot_every", 10) or 10)
+        )
 
         for _global_iter in range(_total_iters + 1):  # +1 允许 grace 终答
             # ── Kernel 仲裁点（Phase 2）：挂起等待 / 事前预算 / 调度让出。
@@ -1145,14 +1437,16 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 break
             if _gate == "budget":
                 _loop_exit_reason = "kernel_budget_precheck"
-                final_content = (
-                    "[Budget Exceeded] 进程 token 预算不足以支撑下一次 LLM 调用，"
-                    "运行已事前中断（避免一次性烧穿预算）。"
-                    "本工单未完成实质检查；可提高预算、收窄范围或拆小任务后重试。"
-                    "禁止用报告框架/预期结果冒充结论。"
+                from backend.agent.exit_reasons import format_exit_user_message
+
+                final_content = format_exit_user_message(
+                    "kernel_budget_precheck",
+                    process_id=_kpid_iter or None,
                 )
                 await self._push_status(
-                    session_id, "thinking", "预算不足，运行已事前中断"
+                    session_id,
+                    "thinking",
+                    "Token 预算不足，运行已事前中断（可 top_up / 缩小范围后重试）",
                 )
                 break
             # 迭代预算：耗尽后最多 1 次 grace（强制无工具终答）
@@ -1165,7 +1459,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 await self._push_status(
                     session_id,
                     "thinking",
-                    f"迭代预算已用尽 ({_iter_budget.used}/{_iter_budget.max_total})，生成最终回复…",
+                    f"迭代预算已用尽 ({_iter_budget.used}/{_iter_budget.max_total})，"
+                    "宽限终答中…（可调高 agent_max_iterations 或拆任务）",
                 )
                 logger.info(
                     "Iteration budget grace session=%s used=%s",
@@ -1175,6 +1470,62 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             elif not _iter_budget.consume():
                 _loop_exit_reason = "budget_exhausted"
                 break
+            # P0.5：Rust 侧同步 consume；耗尽则优雅退出文案
+            if _kpid_iter and not _budget_grace_call:
+                try:
+                    from backend.kernel import get_kernel
+
+                    _k_iter = get_kernel()
+                    if hasattr(_k_iter, "iteration_consume"):
+                        _ic = _k_iter.iteration_consume(_kpid_iter)
+                    elif hasattr(_k_iter, "_call"):
+                        _ic = _k_iter._call(
+                            "iteration_consume", {"process_id": _kpid_iter}
+                        )
+                    else:
+                        _ic = None
+                    if isinstance(_ic, dict) and _ic.get("status") == "exhausted":
+                        _loop_exit_reason = "kernel_iteration_exhausted"
+                        _budget_grace_call = True
+                        _force_final_no_tools = True
+                        await self._push_status(
+                            session_id,
+                            "thinking",
+                            "内核迭代预算已耗尽，宽限终答中…（见 /kernel/policy）",
+                        )
+                except Exception:
+                    pass
+            # P0.5：周期 process snapshot（恢复路径 = 快照 + tail_hash 增量）
+            if (
+                _kpid_iter
+                and _global_iter > 0
+                and _global_iter % _snapshot_every == 0
+            ):
+                try:
+                    from backend.kernel import get_kernel
+
+                    _k_snap = get_kernel()
+                    if hasattr(_k_snap, "process_snapshot"):
+                        _k_snap.process_snapshot(
+                            _kpid_iter,
+                            meta={
+                                "iter": _global_iter,
+                                "session_id": str(session_id),
+                            },
+                        )
+                    elif hasattr(_k_snap, "_call"):
+                        _k_snap._call(
+                            "process_snapshot",
+                            {
+                                "process_id": _kpid_iter,
+                                "meta": {
+                                    "iter": _global_iter,
+                                    "session_id": str(session_id),
+                                },
+                            },
+                        )
+                except Exception as _snap_e:
+                    logger.debug("process_snapshot skip: %s", _snap_e)
 
             iteration = _global_iter % _seg_size if _seg_size else _global_iter
             # 段边界（非首段）：checkpoint + 注入续跑提示
@@ -1474,7 +1825,42 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         # 不暴露就只能靠翻日志反推。
         self.last_iterations = _global_iter + 1
         self.last_tool_rounds = _tool_rounds
-        self.last_exit_reason = _loop_exit_reason
+        self.last_exit_reason = _loop_exit_reason or "completed"
+        # P0.5 R4：结构化退出说明挂到 loop，供 API / harness
+        try:
+            from backend.agent.exit_reasons import describe_exit_reason
+
+            self.last_exit_detail = describe_exit_reason(self.last_exit_reason)
+            self.last_exit_detail["process_id"] = _kpid_iter or None
+        except Exception:
+            self.last_exit_detail = {"code": self.last_exit_reason}
+        # 非正常完成时把恢复提示并入 final（避免静默）
+        if (
+            final_content
+            and self.last_exit_reason
+            and self.last_exit_reason
+            not in ("", "completed")
+            and "[Budget" not in (final_content or "")[:40]
+            and "迭代预算" not in (final_content or "")[:80]
+            and self.last_exit_reason
+            in (
+                "budget_grace",
+                "budget_exhausted",
+                "kernel_iteration_exhausted",
+                "kernel_budget_precheck",
+                "doom_loop",
+            )
+        ):
+            try:
+                from backend.agent.exit_reasons import format_exit_user_message
+
+                note = format_exit_user_message(
+                    self.last_exit_reason, process_id=_kpid_iter or None
+                )
+                if note and note not in final_content:
+                    final_content = f"{final_content.rstrip()}\n\n——\n{note}"
+            except Exception:
+                pass
         return final_content
 
     # ─────────── P0 helpers ───────────

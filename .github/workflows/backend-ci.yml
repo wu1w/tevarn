@@ -73,3 +73,9 @@ jobs:
         run: |
           pip install alembic
           alembic -c backend/alembic.ini heads
+
+      # T10：无 host 时软通过；有 artifact / 本地周报时检查阈值
+      - name: Eval weekly gate (soft without host)
+        env:
+          TAKTON_TEST_MODE: "1"
+        run: python scripts/ci_eval_gate.py

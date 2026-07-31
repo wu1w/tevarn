@@ -173,13 +173,117 @@ def decide_capability(
     )
 
 
+def _court_from_rust_dict(d: dict[str, Any]) -> CourtDecision:
+    return CourtDecision(
+        tool=str(d.get("tool") or ""),
+        args_digest=str(d.get("args_digest") or ""),
+        verdict=str(d.get("verdict") or "deny"),  # type: ignore[arg-type]
+        matched_rule=str(d.get("matched_rule") or ""),
+        layer=str(d.get("layer") or "default"),  # type: ignore[arg-type]
+        reason=str(d.get("reason") or ""),
+        capability_checked=bool(d.get("capability_checked")),
+        extra=dict(d.get("extra") or {}) if isinstance(d.get("extra"), dict) else {},
+    )
+
+
+def _try_rust_decide_tool(
+    name: str,
+    args: dict[str, Any],
+    *,
+    skill_contract: Any | None = None,
+) -> CourtDecision | None:
+    """P0-D：优先走 Rust court（secret/path/steward/capability/profile）。"""
+    try:
+        from backend.kernel import get_kernel
+
+        k = get_kernel()
+        if not hasattr(k, "_call"):
+            return None
+        # push workspace + light policy once best-effort
+        try:
+            from pathlib import Path
+
+            from backend.tools.permissions import resolve_agent_workspace_root
+
+            root = str(Path(resolve_agent_workspace_root()))
+        except Exception:
+            root = ""
+        skill_tools = None
+        skill_deny = None
+        if skill_contract is not None:
+            allowed = getattr(skill_contract, "tools", None) or getattr(
+                skill_contract, "allowed_tools", None
+            )
+            if allowed is not None:
+                skill_tools = [str(x) for x in allowed]
+            perms = getattr(skill_contract, "permissions", None) or {}
+            if isinstance(perms, dict) and perms.get("deny"):
+                skill_deny = [str(x) for x in perms["deny"]]
+        pid = str(args.get("_kernel_process_id") or args.get("_process_id") or "") or None
+        # sync identity caps for steward if present
+        payload = {
+            "name": name,
+            "args": args,
+            "process_id": pid,
+            "skill_tools": skill_tools,
+            "skill_deny": skill_deny,
+            "emit": True,
+        }
+        policy_payload: dict[str, Any] = {
+            "permission_enabled": bool(
+                getattr(_settings(), "agent_permission_enabled", True)
+            ),
+            "relax_secrets": bool(
+                getattr(_settings(), "agent_permission_relax_secrets", False)
+            ),
+        }
+        if root:
+            policy_payload["workspace_root"] = root
+        # push user deny/allow + active profile so Rust is not incomplete
+        try:
+            from backend.agent.permission_overlay import load_user_rules_payload
+            from backend.agent.working_mode import effective_permission_profile
+
+            payload_rules = load_user_rules_payload()
+            policy_payload["user_deny"] = [
+                str(p) for p in (payload_rules.get("deny") or [])
+            ]
+            policy_payload["user_allow"] = [
+                str(p) for p in (payload_rules.get("allow") or [])
+            ]
+            policy_payload["profile"] = str(
+                effective_permission_profile() or "build"
+            )
+            # sandbox profile may force plan/readonly
+            try:
+                from backend.computer.profiles import resolve_profile
+
+                sprof = resolve_profile()
+                if sprof.force_working_mode == "readonly":
+                    policy_payload["profile"] = "plan"
+            except Exception:
+                pass
+        except Exception:
+            pass
+        try:
+            k._call("set_court_policy", policy_payload)
+        except Exception:
+            pass
+        r = k._call("decide_tool", payload)
+        if isinstance(r, dict) and r.get("verdict"):
+            return _court_from_rust_dict(r)
+    except Exception as e:
+        logger.debug("rust decide_tool skip: %s", e)
+    return None
+
+
 async def decide_tool(
     name: str,
     arguments: dict[str, Any] | None,
     *,
     skill_contract: Any | None = None,
 ) -> CourtDecision:
-    """工具调用完整裁决（async：steward 可能读 DB）。"""
+    """工具调用完整裁决。P0-D：优先 Rust court，再 Python 完整 profile gate。"""
     args = dict(arguments or {})
     digest = args_digest(name, args)
     s = _settings()
@@ -194,7 +298,43 @@ async def decide_tool(
             reason="agent_permission_enabled=false",
         )
 
-    # 1) secret floor + user deny（显式扫描 deny 规则）
+    # T1：Rust court 为权威——有结果直接返回。
+    # host 可用且 agent_court_rust_required 时：Rust 失败 = deny（禁止静默放宽）。
+    rust_dec = _try_rust_decide_tool(name, args, skill_contract=skill_contract)
+    if rust_dec is not None:
+        return rust_dec
+
+    rust_required = bool(getattr(s, "agent_court_rust_required", True))
+    rust_backend = str(getattr(s, "agent_kernel_backend", "rust") or "rust").lower()
+    # 仅当 host **已在监听** 却未给出合法裁决时 fail-closed（避免单测无 host 全死）
+    if (
+        rust_required
+        and rust_backend == "rust"
+        and bool(getattr(s, "agent_kernel_enabled", True))
+    ):
+        host_up = False
+        try:
+            from backend.kernel_rust.client import is_rust_host_available
+
+            host_up = bool(is_rust_host_available())
+        except Exception:
+            host_up = False
+        if host_up:
+            return CourtDecision(
+                tool=name,
+                args_digest=digest,
+                verdict="deny",
+                matched_rule="court:rust_unavailable",
+                layer="secret_floor",
+                reason=(
+                    "Rust court 未返回裁决（host 在线但 decide_tool 失败）；"
+                    "agent_court_rust_required=true，已 fail-closed。"
+                    "可设 agent_court_rust_required=false 回退 Python。"
+                ),
+            )
+
+    # ── fallback：Python 完整 path（host 不可用 / rust 未要求）──
+    # 1) secret floor + user deny
     denied = _check_deny_layers(name, args)
     if denied is not None:
         return denied

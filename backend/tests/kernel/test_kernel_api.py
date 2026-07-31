@@ -58,8 +58,8 @@ def test_processes_endpoint_lists_active() -> None:
 
 
 def test_processes_stalled_when_no_charge_heartbeat(monkeypatch) -> None:
-    """P2.3：running 且 last_charge 过久 → stalled=true。"""
-    import time
+    """P2.3：running 且 last_charge 过久 → stalled=true（Rust host 真实状态）。"""
+    import time as time_mod
 
     kernel = get_kernel()
     monkeypatch.setattr(
@@ -70,12 +70,15 @@ def test_processes_stalled_when_no_charge_heartbeat(monkeypatch) -> None:
 
     async def go():
         p = await kernel.create_process("main", token_budget=50_000)
-        p.state = "running"
-        p.started_at = time.time() - 600
-        p.meta = {"last_charge_at": time.time() - 600}
+        # 必须 mark_running：本地改 p.state/meta 不会写回 Rust host
+        await kernel.mark_running(p.id)
         return p
 
     proc = asyncio.run(go())
+    base = time_mod.time()
+    # API 侧 now 往前拨，模拟长时间无心跳（host 墙钟不变）
+    offset = [600.0]
+    monkeypatch.setattr(time_mod, "time", lambda: base + offset[0])
     try:
         r = _client().get("/api/kernel/processes")
         assert r.status_code == 200
@@ -84,12 +87,14 @@ def test_processes_stalled_when_no_charge_heartbeat(monkeypatch) -> None:
         assert rows[proc.id]["stalled"] is True
         assert rows[proc.id]["idle_seconds"] >= 30
 
-        # 心跳后应解除 stalled
+        # 心跳写回 host last_charge_at；把 API 时钟拨回正常 → 解除 stalled
         kernel.charge_tokens(proc.id, 1)
+        offset[0] = 0.0
         r2 = _client().get("/api/kernel/processes")
         rows2 = {x["id"]: x for x in r2.json()["processes"]}
         assert rows2[proc.id]["stalled"] is False
     finally:
+        offset[0] = 0.0
         asyncio.run(kernel.end_process(proc.id, state="completed"))
 
 
@@ -100,7 +105,10 @@ def test_charge_tokens_sets_last_charge_at() -> None:
         p = await kernel.create_process("main", token_budget=10_000)
         assert not (p.meta or {}).get("last_charge_at")
         kernel.charge_tokens(p.id, 5)
-        assert (p.meta or {}).get("last_charge_at")
+        # Rust 进程视图是快照，需 get_process 再取 meta
+        fresh = kernel.get_process(p.id)
+        assert fresh is not None
+        assert (fresh.meta or {}).get("last_charge_at")
         await kernel.end_process(p.id, state="completed")
 
     asyncio.run(go())
@@ -111,13 +119,17 @@ def test_processes_excludes_terminal_by_default() -> None:
 
     async def go():
         p = await kernel.create_process("main")
-        await kernel.end_process(p.id, state="completed")
+        pid = p.id
+        await kernel.end_process(pid, state="completed")
+        return pid
 
-    asyncio.run(go())
+    pid = asyncio.run(go())
     r = _client().get("/api/kernel/processes")
-    assert r.json()["total"] == 0
+    live_ids = {x["id"] for x in r.json()["processes"]}
+    assert pid not in live_ids
     r2 = _client().get("/api/kernel/processes?include_terminal=true")
-    assert r2.json()["total"] == 1
+    term_ids = {x["id"] for x in r2.json()["processes"]}
+    assert pid in term_ids
 
 
 def test_events_endpoint_filters_by_kind() -> None:
@@ -126,12 +138,13 @@ def test_events_endpoint_filters_by_kind() -> None:
     async def go():
         p = await kernel.create_process("main", capabilities=["file_read"])
         await kernel.mediate(p.id, "tool_call", "file_read")
+        return p.id
 
-    asyncio.run(go())
-    r = _client().get("/api/kernel/events?kind=mediation")
+    pid = asyncio.run(go())
+    r = _client().get(f"/api/kernel/events?kind=mediation&process_id={pid}")
     assert r.status_code == 200
     events = r.json()["events"]
-    assert len(events) == 1
+    assert len(events) >= 1
     assert events[0]["detail"]["target"] == "file_read"
     assert events[0]["hash"]  # 哈希链字段透出
 
@@ -146,10 +159,11 @@ def test_events_denied_visible_for_console() -> None:
             await kernel.mediate(p.id, "tool_call", "terminal")
         except Exception:
             pass
+        return p.id
 
-    asyncio.run(go())
-    r = _client().get("/api/kernel/events?kind=mediation")
+    pid = asyncio.run(go())
+    r = _client().get(f"/api/kernel/events?kind=mediation&process_id={pid}")
     events = r.json()["events"]
-    assert len(events) == 1
-    assert events[0]["detail"]["allowed"] is False
-    assert "terminal" in events[0]["detail"]["target"]
+    denied = [e for e in events if e.get("detail", {}).get("allowed") is False]
+    assert len(denied) >= 1
+    assert "terminal" in str(denied[0]["detail"].get("target") or "")

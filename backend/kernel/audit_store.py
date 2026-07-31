@@ -1,11 +1,8 @@
-"""Kernel 审计事件落盘（阶段 3：审计可验证）。
+"""Kernel 审计事件落盘。
 
-内存环形缓冲（5000 条）解决「看得见」，落盘解决「丢不了、可验证」：
-- 每条事件追加一行 JSONL（含哈希链字段），跨重启可回放验证
-- 启动时加载尾部事件重建链尾（last_hash），保证链跨进程生命周期连续
-- 文件写入失败只告警不阻断（审计是增强，不是单点）
-
-文件位置：~/.takton/kernel_events.jsonl（可用 agent_kernel_audit_path 覆盖）。
+.. deprecated:: P0-A
+    Rust host 默认写 JSONL（``AuditEventStore`` in ``takton_kernel::audit``）。
+    Python 路径仅 fallback 使用；新逻辑改 crates/takton-kernel。
 """
 
 from __future__ import annotations

@@ -380,7 +380,10 @@ class CrewMemoryAssembler:
 
 
 class CrewMemoryWriter:
-    """身份记忆写入门禁：失败不沉淀、自动沉淀默关、distilled 需审批。"""
+    """身份记忆写入门禁：失败不沉淀、自动沉淀默关、distilled 需审批。
+
+    R3-P3：成功写入后镜像到 Rust Memory 服务 + memory_layers（控制平面权威）。
+    """
 
     def __init__(self, registry: Any | None = None) -> None:
         self._registry = registry
@@ -403,6 +406,54 @@ class CrewMemoryWriter:
         from backend.kernel.identity import IdentityRegistry
 
         return IdentityRegistry(k, AsyncSessionLocal)
+
+    @staticmethod
+    def _mirror_to_rust_memory(
+        identity_id: Any,
+        *,
+        kind: str,
+        content: str,
+        score: float = 0.8,
+    ) -> None:
+        """P3: write path goes through sys_memory + memory_layers."""
+        try:
+            from backend.kernel import get_kernel
+
+            k = get_kernel()
+            iid = str(identity_id)
+            key = f"crew.{kind}.{hash(content) & 0xFFFFFFFF:x}"
+            if hasattr(k, "sys_memory_put"):
+                k.sys_memory_put(iid, key, {"kind": kind, "content": content[:4000]})
+            elif hasattr(k, "_call"):
+                k._call(
+                    "sys_memory_put",
+                    {
+                        "identity": iid,
+                        "key": key,
+                        "value": {"kind": kind, "content": content[:4000]},
+                    },
+                )
+            layer = {
+                "persona": "semantic",
+                "duty": "semantic",
+                "experience": "episodic",
+                "preference": "working",
+                "methodology": "skill",
+            }.get(str(kind or ""), "working")
+            if hasattr(k, "memory_layer_put"):
+                k.memory_layer_put(iid, layer, content[:2000], score)
+            elif hasattr(k, "_call"):
+                k._call(
+                    "memory_layer_put",
+                    {
+                        "identity": iid,
+                        "layer": layer,
+                        "content": content[:2000],
+                        "score": float(score),
+                    },
+                )
+        except Exception as e:
+            logger.debug("crew_memory rust mirror skip: %s", e)
 
     @staticmethod
     def should_skip_distill(
@@ -513,6 +564,9 @@ class CrewMemoryWriter:
                 source=write_source,
                 approved_by=ab,
             )
+            self._mirror_to_rust_memory(
+                identity_id, kind="experience", content=content, score=0.85
+            )
             logger.info(
                 "crew_memory distilled identity=%s process=%s force=%s",
                 str(identity_id)[:8],
@@ -546,6 +600,9 @@ class CrewMemoryWriter:
                 confidence=1.0,
             )
             if result.ok and result.raw is not None:
+                self._mirror_to_rust_memory(
+                    identity_id, kind=kind, content=content, score=0.9
+                )
                 return result.raw
             if not result.ok:
                 logger.warning("memory_bus.record_manual fallback: %s", result.message)

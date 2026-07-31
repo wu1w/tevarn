@@ -45,6 +45,40 @@ class IdentityRegistry:
     def _emit(self, kind: str, identity_id: Any, detail: dict[str, Any]) -> None:
         self._kernel._emit(kind, f"identity:{identity_id}", detail)
 
+    def _push_identity_cache(self, ident: Any) -> None:
+        """R3-P2: push active identity into Rust identity_cache (no await)."""
+        try:
+            k = self._kernel
+            payload = {
+                "id": str(getattr(ident, "id", "")),
+                "name": str(getattr(ident, "name", "") or ""),
+                "role": str(getattr(ident, "role", "") or ""),
+                "status": str(getattr(ident, "status", "active") or "active"),
+                "capabilities": getattr(ident, "capabilities", None),
+                "credit_score": float(getattr(ident, "credit_score", 0) or 0),
+                "meta": dict(getattr(ident, "meta", None) or {}),
+            }
+            if hasattr(k, "identity_cache_put"):
+                k.identity_cache_put(payload)
+            elif hasattr(k, "_call"):
+                k._call("identity_cache_put", {"identity": payload})
+        except Exception as e:
+            logger.debug("identity_cache_put skip: %s", e)
+
+    def get_cached(self, id_or_name: str) -> dict[str, Any] | None:
+        """R3-P2: sync hot-path lookup without ORM."""
+        try:
+            k = self._kernel
+            if hasattr(k, "identity_cache_get"):
+                r = k.identity_cache_get(id_or_name)
+                return r if isinstance(r, dict) and r.get("id") else None
+            if hasattr(k, "_call"):
+                r = k._call("identity_cache_get", {"id": id_or_name})
+                return r if isinstance(r, dict) and r.get("id") else None
+        except Exception:
+            pass
+        return None
+
     # ── 身份生命周期 ─────────────────────────────────────────
 
     async def create(
@@ -95,6 +129,8 @@ class IdentityRegistry:
         self._emit("identity_created", ident.id, {
             "name": name, "role": role, "capabilities": capabilities,
         })
+        # R3-P2: hot cache so create_process / resolve 不 await ORM
+        self._push_identity_cache(ident)
         return ident
 
     async def _transition(self, identity_id: Any, to: str, *, by: str) -> Any:
@@ -246,11 +282,14 @@ class IdentityRegistry:
         identity_id = _to_uuid(identity_id)
 
         async with self._session_factory() as session:
-            return (
+            ident = (
                 await session.execute(
                     select(AgentIdentity).where(AgentIdentity.id == identity_id)
                 )
             ).scalar_one_or_none()
+        if ident is not None:
+            self._push_identity_cache(ident)
+        return ident
 
     async def list(
         self,

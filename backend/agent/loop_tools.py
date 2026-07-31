@@ -51,101 +51,128 @@ class LoopToolsMixin:
         blocked = await self._contract_tool_block_reason(name, arguments)
         if blocked:
             return blocked
-        # ── Agent Kernel（阶段 1/W3）：所有工具调用经 kernel.mediate 中介 ──
+        # ── Agent Kernel 门控（Hardening）：统一经 tool_gate mediate + charge ──
         # 兼容模式进程（capabilities=None）放行+记录；显式能力集/令牌未授权 →
         # 返回工具级权限错误（反馈给模型，不炸掉整个 run）。
+        # 编制路径在 gate deny 后可静默扩权再试；主人路径可 auto escalate。
+        from backend.kernel.tool_gate import enforce_tool_gate
+
         kernel_proc = getattr(self, "_kernel_process", None)
+        # 安全：process_id 只信任 loop 挂载的进程，禁止模型在 arguments 里覆盖
+        arguments.pop("_kernel_process_id", None)
+        arguments.pop("_process_id", None)
         if kernel_proc is not None:
-            arguments.setdefault("_kernel_process_id", kernel_proc.id)
+            arguments["_kernel_process_id"] = kernel_proc.id
+        elif getattr(self, "_workforce", False) or str(
+            getattr(self, "_agent_key", "") or ""
+        ).startswith("wf:"):
+            # 编制 run 必须有进程；缺进程直接 fail-closed（不落到无门控执行）
+            arguments["_require_kernel_process"] = True
+
+        arguments, gate_err = await enforce_tool_gate(
+            name,
+            arguments,
+            process_id=getattr(kernel_proc, "id", None) if kernel_proc else None,
+        )
+        if gate_err and "Kernel 权限拒绝" in gate_err and kernel_proc is not None:
+            # ── 编制 / 主人 提权回退（gate 只做裁决；扩权逻辑仍在 loop）──
             from backend.kernel import KernelPermissionError, get_kernel
 
-            try:
-                await get_kernel().mediate(
-                    kernel_proc.id, "tool_call", name, args=arguments
-                )
-            except KernelPermissionError as e:
-                logger.warning(
-                    "kernel 拦截工具调用 tool=%s proc=%s: %s", name, kernel_proc.id, e
-                )
-                # 员工工单：不向主人刷提权单。编制内 → 静默并入进程能力；
-                # 编制外 → 直接拒，提示改权限看板（CEO 策略），不弹审批队列。
-                agent_key = str(getattr(self, "_agent_key", "") or "")
-                is_wf = agent_key.startswith("wf:") or bool(
-                    getattr(self, "_workforce", False)
-                )
-                if is_wf:
-                    try:
-                        from backend.agent.grant_store import tool_matches_crew_caps
-                        from backend.agent.steward_permission import (
-                            load_identity_capabilities,
-                        )
+            e_msg = gate_err.replace("Error: Kernel 权限拒绝——", "", 1)
+            e = KernelPermissionError(e_msg)
+            logger.warning(
+                "kernel 拦截工具调用 tool=%s proc=%s: %s",
+                name,
+                kernel_proc.id,
+                e,
+            )
+            agent_key = str(getattr(self, "_agent_key", "") or "")
+            is_wf = agent_key.startswith("wf:") or bool(
+                getattr(self, "_workforce", False)
+            )
+            if is_wf:
+                try:
+                    from backend.agent.grant_store import tool_matches_crew_caps
+                    from backend.agent.steward_permission import (
+                        load_identity_capabilities,
+                    )
 
-                        caps = list(getattr(self, "_identity_capabilities", None) or [])
-                        if not caps:
-                            caps = (
-                                await load_identity_capabilities(
-                                    str(getattr(self, "_identity_id", "") or "") or None
-                                )
-                            ) or []
-                        if tool_matches_crew_caps(name, caps):
-                            # 抽象 cap 已覆盖工具；静默把工具名并入进程集（不建提权单）
-                            try:
-                                k = get_kernel()
-                                proc = k._resolve_process(kernel_proc.id)
-                                if proc is not None and proc.capabilities is not None:
-                                    if name not in proc.capabilities:
-                                        proc.capabilities = sorted(
-                                            set(proc.capabilities) | {name}
-                                        )
-                                        if hasattr(k, "_persist_process"):
-                                            k._persist_process(proc)
-                                        if hasattr(k, "_share_process"):
-                                            k._share_process(proc)
-                                        logger.info(
-                                            "steward silent expand tool=%s proc=%s",
-                                            name,
-                                            kernel_proc.id,
-                                        )
-                            except Exception as se:
-                                logger.debug("steward silent expand skip: %s", se)
-                            try:
-                                await get_kernel().mediate(
-                                    kernel_proc.id, "tool_call", name, args=arguments
-                                )
-                            except KernelPermissionError as e2:
-                                return (
-                                    f"Error: Kernel 权限拒绝——{e2}。"
-                                    "（编制策略已尝试扩权仍失败；请 CEO 在权限看板检查该员工能力）"
-                                )
-                            # mediate 过了则继续往下执行工具（fall through）
-                        else:
-                            return (
-                                f"Error: 编制策略拒绝工具 «{name}»（不在员工能力档案内）。"
-                                "请主人让 CEO 在权限看板扩权，不要对每一次工具点「允许」。"
+                    caps = list(getattr(self, "_identity_capabilities", None) or [])
+                    if not caps:
+                        caps = (
+                            await load_identity_capabilities(
+                                str(getattr(self, "_identity_id", "") or "") or None
                             )
-                    except Exception as se:
-                        logger.debug("workforce steward escalate path: %s", se)
-                        return (
-                            f"Error: Kernel 权限拒绝——{e}。"
-                            "员工路径不向主人发起提权审批。"
-                        )
-                else:
-                    # 主人主会话：可自动发起提权进审批台
-                    esc_note = ""
-                    if bool(getattr(settings, "agent_kernel_auto_escalate", True)):
+                        ) or []
+                    if tool_matches_crew_caps(name, caps):
                         try:
-                            req = await get_kernel().request_escalation(
-                                kernel_proc.id,
-                                [name],
-                                reason=f"工具调用被能力集拦截：{name}",
+                            k = get_kernel()
+                            proc = None
+                            if hasattr(k, "_resolve_process"):
+                                proc = k._resolve_process(kernel_proc.id)
+                            if proc is not None and getattr(proc, "capabilities", None) is not None:
+                                if name not in proc.capabilities:
+                                    proc.capabilities = sorted(
+                                        set(proc.capabilities) | {name}
+                                    )
+                                    if hasattr(k, "_persist_process"):
+                                        k._persist_process(proc)
+                                    if hasattr(k, "_share_process"):
+                                        k._share_process(proc)
+                                    logger.info(
+                                        "steward silent expand tool=%s proc=%s",
+                                        name,
+                                        kernel_proc.id,
+                                    )
+                        except Exception as se:
+                            logger.debug("steward silent expand skip: %s", se)
+                        # 清掉 passed/internal 标记后强制再 gate 一次（含 charge）
+                        arguments.pop("_tool_gate_passed", None)
+                        arguments.pop("_tool_gate_internal", None)
+                        arguments, gate_err2 = await enforce_tool_gate(
+                            name,
+                            arguments,
+                            process_id=kernel_proc.id,
+                        )
+                        if gate_err2:
+                            return (
+                                f"{gate_err2}"
+                                "（编制策略已尝试扩权仍失败；请 CEO 在权限看板检查该员工能力）"
+                                if "权限拒绝" in gate_err2
+                                else gate_err2
                             )
-                            esc_note = (
-                                f"（已自动发起权限申请 {req.id}，"
-                                "用户在权限控制台批准后即可重试；请勿重复调用本工具）"
-                            )
-                        except ValueError:
-                            pass
-                    return f"Error: Kernel 权限拒绝——{e}{esc_note}"
+                        # fall through
+                    else:
+                        return (
+                            f"Error: 编制策略拒绝工具 «{name}»（不在员工能力档案内）。"
+                            "请主人让 CEO 在权限看板扩权，不要对每一次工具点「允许」。"
+                        )
+                except Exception as se:
+                    logger.debug("workforce steward escalate path: %s", se)
+                    return (
+                        f"Error: Kernel 权限拒绝——{e}。"
+                        "员工路径不向主人发起提权审批。"
+                    )
+            else:
+                esc_note = ""
+                if bool(getattr(settings, "agent_kernel_auto_escalate", True)):
+                    try:
+                        req = await get_kernel().request_escalation(
+                            kernel_proc.id,
+                            [name],
+                            reason=f"工具调用被能力集拦截：{name}",
+                        )
+                        esc_note = (
+                            f"（已自动发起权限申请 {req.id}，"
+                            "用户在权限控制台批准后即可重试；请勿重复调用本工具）"
+                        )
+                    except ValueError:
+                        pass
+                    except Exception:
+                        pass
+                return f"Error: Kernel 权限拒绝——{e}{esc_note}"
+        elif gate_err:
+            return gate_err
         # ── 重复搜索软干预（0.4.4：研究任务收敛刹车）──
         # 同 run 内同查询重复：第 2 次结果前附提醒；第 3 次起直接拒绝执行，
         # 强制模型基于已有信息总结（prompt 层刹车之外的工程层兜底）。

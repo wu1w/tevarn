@@ -101,8 +101,12 @@ def normalize_tool_result(
     *,
     max_chars: int | None = None,
     tool_name: str = "",
+    process_id: str | None = None,
 ) -> str:
-    """Coerce to str, apply per-tool budget (or max_chars override)."""
+    """Coerce to str, apply per-tool budget (or max_chars override).
+
+    P0.5：超大结果优先经 Rust result_spill 外置，上下文只留句柄。
+    """
     if result is None:
         text = ""
     elif isinstance(result, str):
@@ -122,6 +126,31 @@ def normalize_tool_result(
 
     if not text:
         text = f"[Error] Tool '{tool_name or '?'}' returned empty result"
+
+    # P0.5 E2: spill large results to kernel store (handle stays in context)
+    pid = (process_id or "").strip()
+    if pid and len(text) >= 4_000:
+        try:
+            from backend.kernel import get_kernel
+
+            k = get_kernel()
+            if hasattr(k, "result_spill"):
+                r = k.result_spill(pid, tool_name or "tool", text)
+            elif hasattr(k, "_call"):
+                r = k._call(
+                    "result_spill",
+                    {
+                        "process_id": pid,
+                        "tool": tool_name or "tool",
+                        "content": text,
+                    },
+                )
+            else:
+                r = None
+            if isinstance(r, dict) and r.get("spilled") and r.get("context"):
+                return str(r["context"])
+        except Exception:
+            pass
 
     if max_chars is not None:
         # 写工具：max_chars 不得压到 2500 以下

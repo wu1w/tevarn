@@ -192,6 +192,30 @@ class Settings(BaseSettings):
     # Kernel 控制平面：loop 运行纳入 AgentProcess 生命周期管理 + 中介审计。
     # 关闭后退回纯旧路径（不影响功能，仅失去 kernel 可观测性）。
     agent_kernel_enabled: bool = True
+    # Kernel 实现：rust = takton-kernel-host（默认倾向）；python = 进程内旧实现
+    # 也可由环境变量 TAKTON_KERNEL_BACKEND 覆盖
+    agent_kernel_backend: str = "rust"
+    # P0-B：无显式 capabilities 时禁止静默全开——默认只读 Intent（grantable）
+    # 关闭则恢复兼容模式（capabilities=None 全放行）
+    agent_kernel_require_intent: bool = True
+    # T2：run_gate 不可用/超时是否 fail-closed（禁止静默跳过全局并发门）
+    agent_kernel_run_gate_required: bool = True
+    # T1：host 可用时 Court 必须以 Rust 为准；失败则 deny（不静默 Python 放宽）
+    agent_court_rust_required: bool = True
+    # T7：远程包市场 catalog JSON URL（空=仅本地）
+    agent_package_market_url: str = ""
+    # 包签名密钥（≥16 字符）；空则 host 从 JWT 派生或 insecure_default
+    agent_package_signing_key: str = ""
+    # 远程包信任根：允许的内容 sha256 列表（逗号/空白分隔）；非空时远程安装必须命中
+    agent_package_trusted_content_hashes: str = ""
+    # 远程安装是否强制提供 content_sha256 查询参数或 catalog 字段
+    agent_package_require_content_hash: bool = False
+    # 资源加深：Linux cgroup v2 可选硬限（失败不阻断）
+    agent_resource_cgroup_enabled: bool = False
+    # 每轮工具后采样 RSS 并上报 memory_bytes（需 process_id）
+    agent_resource_rss_sample: bool = True
+    # 主会话默认 intent goal（require_intent 且未传 _intent_declaration 时）
+    agent_kernel_default_intent_goal: str = "interactive chat (minimum privilege)"
     # Phase 2.3：启动时将非终态 Run 标 interrupted，并对 inbox/cron/headless 自动续跑
     agent_run_auto_recover: bool = True
     # ── 动态 skill 隔离（阶段 2）──

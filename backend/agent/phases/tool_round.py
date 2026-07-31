@@ -317,7 +317,8 @@ async def run_tool_round(
                     else ""
                 )
             else:
-                # 兼容旧方式：直接查 SkillRegistry 和 DB
+                # 兼容旧方式：SkillRegistry / DB skill —— 仍必须经 Kernel 门控。
+                # Hardening：禁止 skill.execute / Registry.execute 绕过 mediate。
                 skill = SkillRegistry.get_skill(tc.name)
                 if skill is not None:
                     validated_args = loop._validate_tool_args(skill.parameters, tc.arguments)
@@ -327,10 +328,28 @@ async def run_tool_round(
                     validated_args["_session_id"] = str(session_id)
                     validated_args["_chat_mode"] = str(mode or "default")
                     validated_args["_ws_manager"] = loop.ws_manager
-                    tool_result = await skill.execute(**validated_args)
+                    # 注入编制 / 身份 / process，与主路径一致
+                    if getattr(loop, "_workforce", False) or str(
+                        getattr(loop, "_agent_key", "") or ""
+                    ).startswith("wf:"):
+                        validated_args["_workforce"] = True
+                        validated_args["_agent_key"] = getattr(loop, "_agent_key", "wf:")
+                        validated_args["_ws_manager"] = None
+                    _kproc = getattr(loop, "_kernel_process", None)
+                    if _kproc is not None:
+                        validated_args["_kernel_process_id"] = _kproc.id
+                    from backend.kernel.tool_gate import enforce_tool_gate
+
+                    validated_args, _gate_err = await enforce_tool_gate(
+                        tc.name, validated_args
+                    )
+                    if _gate_err:
+                        tool_result = _gate_err
+                    else:
+                        tool_result = await skill.execute(**validated_args)
                     query = ""
                 else:
-                    # 尝试执行数据库中的自定义 Skill
+                    # 尝试执行数据库中的自定义 Skill / Tool
                     skill_repo = AsyncSkillRepository()
                     db_skill = await skill_repo.get_skill_by_name(tc.name)
                     if db_skill is not None and db_skill.enabled:
@@ -341,23 +360,54 @@ async def run_tool_round(
                             validated_args["_user_id"] = str(loop.user_id)
                         validated_args["_session_id"] = str(session_id)
                         validated_args["_ws_manager"] = loop.ws_manager
-                        # 修复遗留 NameError：原 loop.py 此处 tool_repo 未定义
+                        if getattr(loop, "_workforce", False) or str(
+                            getattr(loop, "_agent_key", "") or ""
+                        ).startswith("wf:"):
+                            validated_args["_workforce"] = True
+                            validated_args["_ws_manager"] = None
+                        _kproc = getattr(loop, "_kernel_process", None)
+                        if _kproc is not None:
+                            validated_args["_kernel_process_id"] = _kproc.id
                         from backend.repositories.tool_repo import AsyncToolRepository
 
                         tool_repo = AsyncToolRepository()
                         db_tool = await tool_repo.get_tool_by_name(tc.name)
                         if db_tool is not None and db_tool.enabled:
-                            tool_result = await UnifiedToolRegistry.execute(tc.name, tc.arguments)
+                            # 走 Registry（内含 tool_gate）；参数用 validated 而非裸 tc.arguments
+                            tool_result = await UnifiedToolRegistry.execute(
+                                tc.name, validated_args
+                            )
                             query = ""
                         else:
-                            tool_result = f"[Error] Tool '{tc.name}' not found or disabled"
-                            query = ""
+                            # 仅有 skill 元数据、无 Tool 行：门控后走 dynamic 执行
+                            # （仍不得绕过 mediate）
+                            from backend.kernel.tool_gate import enforce_tool_gate
 
-            # 工具结果契约：统一 str / 截断 / 空结果
+                            validated_args, _gate_err = await enforce_tool_gate(
+                                tc.name, validated_args
+                            )
+                            if _gate_err:
+                                tool_result = _gate_err
+                            else:
+                                try:
+                                    tool_result = await dynamic.execute(**validated_args)
+                                except Exception as _de:
+                                    tool_result = (
+                                        f"[Error] Tool '{tc.name}' not found or disabled "
+                                        f"({type(_de).__name__}: {_de})"
+                                    )
+                            query = ""
+                    else:
+                        tool_result = f"[Error] Tool '{tc.name}' not found or disabled"
+                        query = ""
+
+            # 工具结果契约：统一 str / 截断 / 空结果；P0.5 大结果外置句柄
             _max_tr = int(getattr(settings, "max_tool_result_length", 12_000) or 12_000)
             _tname = getattr(tc, "name", "") or ""
+            _kproc = getattr(loop, "_kernel_process", None)
+            _kpid = str(getattr(_kproc, "id", "") or "") or None
             tool_result = normalize_tool_result(
-                tool_result, tool_name=_tname
+                tool_result, tool_name=_tname, process_id=_kpid
             )
             # 全局硬顶（settings）仍生效；但 TOOL_RESULT_BUDGET 里显式给出的
             # 更高的 per-tool 预算优先（T3：file_read 已按行边界自分页并给出续读
@@ -677,7 +727,7 @@ async def run_tool_round(
     except Exception as e:
         logger.debug("use_tool_pack expand skipped: %s", e)
     state.tool_rounds += 1
-    # 重复工具/doom-loop 熔断（同名同参连续空转；Batch1 DoomLoopGuard）
+    # 重复工具/doom-loop 熔断（同名同参连续空转；P0.5 优先 Rust policy.doom_record）
     try:
         _calls = [
             (
@@ -690,11 +740,40 @@ async def run_tool_round(
             tool_call_signature(n, a) for n, a in _calls
         ]
         _doom_on = bool(getattr(settings, "agent_doom_loop_enabled", True))
-        _tripped = (
-            tool_repeat_guard.observe_calls(_calls)
-            if _doom_on and hasattr(tool_repeat_guard, "observe_calls")
-            else tool_repeat_guard.observe(_sigs)
-        )
+        _tripped = False
+        _kproc = getattr(loop, "_kernel_process", None)
+        _kpid = str(getattr(_kproc, "id", "") or "")
+        if _doom_on and _kpid:
+            try:
+                from backend.kernel import get_kernel
+
+                _kk = get_kernel()
+                for _n, _a in _calls:
+                    _args = _a if isinstance(_a, dict) else {"_raw": str(_a or "")}
+                    if hasattr(_kk, "doom_record"):
+                        _dr = _kk.doom_record(_kpid, _n or "tool", _args)
+                    elif hasattr(_kk, "_call"):
+                        _dr = _kk._call(
+                            "doom_record",
+                            {
+                                "process_id": _kpid,
+                                "tool": _n or "tool",
+                                "args": _args,
+                            },
+                        )
+                    else:
+                        _dr = None
+                    if isinstance(_dr, dict) and _dr.get("status") == "doom_loop":
+                        _tripped = True
+                        break
+            except Exception:
+                _tripped = False
+        if not _tripped:
+            _tripped = (
+                tool_repeat_guard.observe_calls(_calls)
+                if _doom_on and hasattr(tool_repeat_guard, "observe_calls")
+                else tool_repeat_guard.observe(_sigs)
+            ) if _doom_on else False
         if _tripped:
             turn_retry.note_and_decide(
                 RetryKind.THRASH, detail=",".join(_sigs)[:180]
@@ -705,17 +784,29 @@ async def run_tool_round(
                 _sigs,
                 turn_retry.snapshot(),
             )
-            await loop._push_status(
-                session_id,
-                "thinking",
-                "检测到重复工具调用，已熔断并改为直接作答…",
-            )
+            # P0.5 R4：结构化 doom 文案 + 恢复入口
+            try:
+                from backend.agent.exit_reasons import describe_exit_reason
+
+                _dx = describe_exit_reason("doom_loop")
+                loop.last_exit_reason = "doom_loop"
+                loop.last_exit_detail = {
+                    **_dx,
+                    "process_id": _kpid or None,
+                    "signatures": _sigs[:8],
+                }
+                _status = f"{_dx['title']} — {_dx['message'][:80]}"
+            except Exception:
+                _status = "检测到重复工具调用，已熔断并改为直接作答…"
+            await loop._push_status(session_id, "thinking", _status)
             messages.append(
                 {
                     "role": "system",
                     "content": (
-                        "【工具空转熔断】你连续多次调用了相同工具（参数几乎相同）。"
-                        "禁止再调用任何工具。请仅根据已有工具结果，用自然语言直接给出最终答复。"
+                        "【工具空转熔断 / doom loop】你连续多次调用了相同工具（参数几乎相同）。"
+                        "禁止再调用任何工具。请仅根据已有工具结果，用自然语言直接给出最终答复。\n"
+                        "用户侧恢复：换参数/换工具后重试；或控制台 resume 挂起进程；"
+                        "查看 /api/kernel/policy/{process_id} 与 decision_trail。"
                     ),
                 }
             )

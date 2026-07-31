@@ -69,6 +69,8 @@ const SECRETS_FILE = path.join(USER_DATA_DIR, 'secrets.json');
 const WINDOW_STATE_FILE = path.join(USER_DATA_DIR, 'window-state.json');
 
 let backendProcess: ChildProcess | null = null;
+/** Rust AIOS control plane (takton-kernel-host). */
+let kernelHostProcess: ChildProcess | null = null;
 /** OS: full quit kills Kernel only when true. Default false = detach runtime. */
 let stopRuntimeOnQuit = false;
 let trayBadgeTimer: ReturnType<typeof setInterval> | null = null;
@@ -492,11 +494,110 @@ function getWsBase(): string {
   return `ws://127.0.0.1:${activeBackendPort}/api`;
 }
 
+/** P0-A: locate takton-kernel-host binary (docs/kernel-abi-v1.md). */
+function findKernelHostBin(): string | null {
+  const fromEnv = process.env.TAKTON_KERNEL_HOST_BIN;
+  if (fromEnv && fs.existsSync(fromEnv)) return fromEnv;
+  const names =
+    platform === 'win32'
+      ? ['takton-kernel-host.exe', 'takton-kernel-host']
+      : ['takton-kernel-host'];
+  const roots = [
+    path.join(ROOT_DIR, 'vendor', 'takton-kernel-host'),
+    path.join(ROOT_DIR, 'target', 'release'),
+    path.join(ROOT_DIR, 'target', 'debug'),
+  ];
+  if (!isDev) {
+    roots.unshift(path.join(process.resourcesPath, 'vendor', 'takton-kernel-host'));
+    roots.unshift(path.join(process.resourcesPath, 'takton-kernel-host'));
+  }
+  for (const dir of roots) {
+    for (const name of names) {
+      const p = path.join(dir, name);
+      if (fs.existsSync(p)) return p;
+    }
+  }
+  return null;
+}
+
+function kernelHostListening(listen: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const i = listen.lastIndexOf(':');
+    const host = (i >= 0 ? listen.slice(0, i) : '127.0.0.1') || '127.0.0.1';
+    const port = parseInt((i >= 0 ? listen.slice(i + 1) : '17890') || '17890', 10);
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const net = require('net') as typeof import('net');
+      const sock = net.connect({ host, port }, () => {
+        sock.end();
+        resolve(true);
+      });
+      sock.on('error', () => resolve(false));
+      sock.setTimeout(400, () => {
+        sock.destroy();
+        resolve(false);
+      });
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+/** P0-A: start Rust kernel host before FastAPI. */
+async function startKernelHost(): Promise<void> {
+  const backend = (process.env.TAKTON_KERNEL_BACKEND || 'rust').toLowerCase();
+  if (backend === 'python') {
+    console.log('[Takton] TAKTON_KERNEL_BACKEND=python — skip kernel host');
+    return;
+  }
+  const listen = process.env.TAKTON_KERNEL_HOST || '127.0.0.1:17890';
+  if (await kernelHostListening(listen)) {
+    console.log(`[Takton] Kernel host already up at ${listen}`);
+    process.env.TAKTON_KERNEL_BACKEND = process.env.TAKTON_KERNEL_BACKEND || 'rust';
+    process.env.TAKTON_KERNEL_AUTO_START = '0';
+    return;
+  }
+  const bin = findKernelHostBin();
+  if (!bin) {
+    console.warn(
+      '[Takton] takton-kernel-host not found — Python kernel fallback. ' +
+        'Build: cargo build -p takton-kernel-host --release',
+    );
+    return;
+  }
+  console.log(`[Takton] Starting kernel host: ${bin} --listen ${listen}`);
+  kernelHostProcess = spawn(bin, ['--listen', listen], {
+    cwd: ROOT_DIR,
+    env: process.env,
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+  kernelHostProcess.stderr?.on('data', (data: Buffer) => {
+    console.error(`[KernelHost] ${data.toString().trim()}`);
+  });
+  kernelHostProcess.on('exit', (code, signal) => {
+    console.log(`[Takton] Kernel host exited code=${code} signal=${signal}`);
+    kernelHostProcess = null;
+  });
+  for (let i = 0; i < 50; i++) {
+    if (await kernelHostListening(listen)) {
+      console.log(`[Takton] Kernel host ready at ${listen}`);
+      process.env.TAKTON_KERNEL_BACKEND = process.env.TAKTON_KERNEL_BACKEND || 'rust';
+      process.env.TAKTON_KERNEL_AUTO_START = '0';
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  console.warn('[Takton] Kernel host did not become ready in time');
+}
+
 async function startBackend(): Promise<void> {
   ensureDataDirs();
   const secrets = loadOrCreateSecrets();
   const python = findPython();
   const sitePackages = await ensureDependencies(python);
+
+  // P0-A: control plane first
+  await startKernelHost();
 
   const { port, reuse } = await resolveBackendPort();
   activeBackendPort = port;
@@ -508,6 +609,10 @@ async function startBackend(): Promise<void> {
 
   const backendCwd = isDev ? ROOT_DIR : path.dirname(BACKEND_DIR);
   const env = buildBackendEnv(secrets, port, sitePackages);
+  env.TAKTON_KERNEL_BACKEND = env.TAKTON_KERNEL_BACKEND || process.env.TAKTON_KERNEL_BACKEND || 'rust';
+  if (process.env.TAKTON_KERNEL_AUTO_START === '0') {
+    env.TAKTON_KERNEL_AUTO_START = '0';
+  }
 
   console.log(`[Takton] Starting backend: ${python} -m uvicorn backend.main:app --host 127.0.0.1 --port ${port}`);
   console.log(`[Takton] DB: ${env.TAKTON_DB_URL}`);
@@ -1357,8 +1462,22 @@ app.on('will-quit', () => {
     trayBadgeTimer = null;
   }
 
+  if (stopRuntimeOnQuit && kernelHostProcess && !kernelHostProcess.killed) {
+    console.log('[Takton] Stopping Rust kernel host (user requested)...');
+    try {
+      kernelHostProcess.kill();
+    } catch {
+      /* ignore */
+    }
+    kernelHostProcess = null;
+  } else if (kernelHostProcess && !kernelHostProcess.killed) {
+    console.log('[Takton] Detaching Rust kernel host');
+    kernelHostProcess.unref?.();
+    kernelHostProcess = null;
+  }
+
   if (stopRuntimeOnQuit && backendProcess && !backendProcess.killed) {
-    console.log('[Takton] Stopping Kernel Host (user requested)...');
+    console.log('[Takton] Stopping FastAPI backend (user requested)...');
     if (platform === 'win32') {
       backendProcess.kill();
     } else {
@@ -1370,7 +1489,7 @@ app.on('will-quit', () => {
       }
     }, 3000);
   } else if (backendProcess && !backendProcess.killed) {
-    console.log('[Takton] Detaching Kernel Host — keeps running on', activeBackendPort);
+    console.log('[Takton] Detaching FastAPI backend — keeps running on', activeBackendPort);
     backendProcess.unref?.();
     backendProcess = null;
   }

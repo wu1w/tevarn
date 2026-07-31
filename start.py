@@ -33,6 +33,7 @@ ENV_FILE = ROOT_DIR / ".env"
 
 # ---- 全局 ----
 processes = []
+_kernel_host_started = False
 
 
 def find_python() -> str:
@@ -146,11 +147,103 @@ def wait_for_frontend(url: str, timeout: int = 30) -> bool:
     return False
 
 
+def find_kernel_host_bin() -> Path | None:
+    """Locate takton-kernel-host (same order as docs/kernel-abi-v1.md)."""
+    env = os.environ.get("TAKTON_KERNEL_HOST_BIN")
+    if env and Path(env).is_file():
+        return Path(env)
+    names = ("takton-kernel-host.exe", "takton-kernel-host")
+    dirs = [
+        ROOT_DIR / "vendor" / "takton-kernel-host",
+        ROOT_DIR / "target" / "release",
+        ROOT_DIR / "target" / "debug",
+    ]
+    for d in dirs:
+        for name in names:
+            p = d / name
+            if p.is_file():
+                return p
+    return None
+
+
+def start_kernel_host() -> subprocess.Popen | None:
+    """P0-A: start Rust kernel host before backend (control plane)."""
+    global _kernel_host_started
+    backend = (os.environ.get("TAKTON_KERNEL_BACKEND") or "rust").strip().lower()
+    if backend == "python":
+        print("[Takton] TAKTON_KERNEL_BACKEND=python — skip kernel host")
+        return None
+    listen = os.environ.get("TAKTON_KERNEL_HOST", "127.0.0.1:17890")
+    # Already up?
+    try:
+        import socket
+
+        h, _, p = listen.rpartition(":")
+        with socket.create_connection((h or "127.0.0.1", int(p or 17890)), timeout=0.4):
+            print(f"[Takton] Kernel host already listening on {listen}")
+            _kernel_host_started = True
+            os.environ.setdefault("TAKTON_KERNEL_BACKEND", "rust")
+            os.environ.setdefault("TAKTON_KERNEL_AUTO_START", "0")
+            return None
+    except OSError:
+        pass
+
+    bin_path = find_kernel_host_bin()
+    if bin_path is None:
+        print(
+            "[Takton] WARNING: takton-kernel-host not found — backend will use "
+            "DEPRECATED Python kernel fallback.\n"
+            "  Build: cargo build -p takton-kernel-host --release\n"
+            "  Or:    .\\scripts\\build-kernel-host.ps1 -Release"
+        )
+        return None
+
+    cmd = [str(bin_path), "--listen", listen]
+    print(f"[Takton] Starting kernel host: {' '.join(cmd)}")
+    env = os.environ.copy()
+    proc = subprocess.Popen(
+        cmd,
+        cwd=str(ROOT_DIR),
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+    processes.append(proc)
+    # Wait ready
+    import socket
+
+    h, _, p = listen.rpartition(":")
+    for i in range(50):
+        if proc.poll() is not None:
+            err = ""
+            try:
+                if proc.stderr:
+                    err = proc.stderr.read().decode("utf-8", errors="replace")[:400]
+            except Exception:
+                pass
+            print(f"[Takton] Kernel host exited early: {err}")
+            return None
+        try:
+            with socket.create_connection((h or "127.0.0.1", int(p or 17890)), timeout=0.3):
+                print(f"[Takton] Kernel host ready ({i + 1} checks) at {listen}")
+                _kernel_host_started = True
+                os.environ.setdefault("TAKTON_KERNEL_BACKEND", "rust")
+                os.environ.setdefault("TAKTON_KERNEL_AUTO_START", "0")
+                return proc
+        except OSError:
+            time.sleep(0.1)
+    print("[Takton] WARNING: Kernel host did not become ready in time")
+    return proc
+
+
 def start_backend(python: str, host: str = "127.0.0.1", port: int = 8000):
     """启动后端 uvicorn 子进程"""
     env = os.environ.copy()
     env["TAKTON_APP_HOST"] = host
     env["TAKTON_APP_PORT"] = str(port)
+    env.setdefault("TAKTON_KERNEL_BACKEND", "rust")
+    if _kernel_host_started:
+        env["TAKTON_KERNEL_AUTO_START"] = "0"
 
     cmd = [python, "-m", "uvicorn", "backend.main:app",
            "--host", host, "--port", str(port)]
@@ -256,6 +349,9 @@ def main():
     # 2. 查找工具链
     python = find_python()
     npm = find_npm()
+
+    # 2b. P0-A: Rust kernel host BEFORE backend
+    start_kernel_host()
 
     # 3. 启动后端
     start_backend(python, port=backend_port)

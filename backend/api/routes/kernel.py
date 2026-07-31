@@ -1084,10 +1084,669 @@ async def distill_memory_from_item(
 async def scheduler_status(
     current_user: Annotated[UserRead, Depends(get_current_user)],
 ):
-    """LLM 公平调度：在飞 / 排队 / 配额。"""
+    """LLM 公平调度：在飞 / 排队 / 配额（P0-C 优先 Rust host）。"""
     from backend.kernel.llm_scheduler import get_llm_admission
 
-    return get_llm_admission().status()
+    st = get_llm_admission().status()
+    # 附带 run 队列 stats
+    try:
+        from backend.kernel import get_kernel
+
+        k = get_kernel()
+        if hasattr(k, "scheduler") and hasattr(k.scheduler, "stats"):
+            st["run_queue"] = k.scheduler.stats()
+        elif hasattr(k, "_call"):
+            st["run_queue"] = k._call("scheduler_stats") or {}
+    except Exception:
+        pass
+    return st
+
+
+@router.get("/resources/{process_id}")
+async def process_resources(
+    process_id: str,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """P0-C：进程资源账户快照。"""
+    from backend.kernel import get_kernel
+
+    k = get_kernel()
+    if hasattr(k, "resource_usage"):
+        usage = k.resource_usage(process_id)
+    elif hasattr(k, "_call"):
+        usage = k._call("resource_usage", {"process_id": process_id}) or {}
+    else:
+        usage = {}
+    proc = k.get_process(process_id)
+    return {
+        "process_id": process_id,
+        "state": getattr(proc, "state", None) if proc else None,
+        "resources": usage,
+    }
+
+
+@router.get("/run_queue")
+async def run_queue_status(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """P0-C：Agent run 优先级队列。"""
+    from backend.kernel import get_kernel
+
+    k = get_kernel()
+    if hasattr(k, "_call"):
+        return {
+            "stats": k._call("scheduler_stats") or {},
+            "backend": "rust",
+        }
+    if hasattr(k, "scheduler"):
+        return {"stats": k.scheduler.stats(), "backend": "python"}
+    return {"stats": {}, "backend": "none"}
+
+
+@router.get("/decision_trail/{process_id}")
+async def decision_trail(
+    process_id: str,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+    limit: int = Query(500, ge=1, le=5000),
+):
+    """P0-D：导出进程决策轨迹（mediation / policy.decision / checkpoint）。"""
+    from backend.kernel import get_kernel
+
+    k = get_kernel()
+    if hasattr(k, "_call"):
+        return k._call(
+            "export_decision_trail",
+            {"process_id": process_id, "limit": limit},
+        ) or {"process_id": process_id, "events": [], "total": 0}
+    # python fallback
+    events = k.events(process_id=process_id, limit=limit)
+    trail = [
+        e.to_dict() if hasattr(e, "to_dict") else e
+        for e in events
+        if getattr(e, "kind", "")
+        in ("mediation", "policy.decision", "checkpoint.begin", "checkpoint.restore")
+    ]
+    return {"process_id": process_id, "events": trail, "total": len(trail)}
+
+
+# ── P0.5：策略 / 成本 / 马拉松 / 恢复说明 ─────────────────────
+
+
+@router.get("/policy/{process_id}")
+async def process_policy(
+    process_id: str,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """P0.5：iteration / doom 策略状态 + 恢复入口。"""
+    from backend.agent.exit_reasons import describe_exit_reason
+    from backend.kernel import get_kernel
+
+    k = get_kernel()
+    out: dict[str, Any] = {"process_id": process_id}
+    if hasattr(k, "_call"):
+        out["iteration"] = k._call("iteration_status", {"process_id": process_id}) or {}
+        out["doom"] = k._call("doom_status", {"process_id": process_id}) or {}
+        out["policy"] = k._call("policy_status") or {}
+        out["recovery"] = k._call(
+            "process_recovery_plan", {"process_id": process_id}
+        ) or {}
+    else:
+        out["iteration"] = {}
+        out["doom"] = {}
+        out["policy"] = {}
+        out["recovery"] = {}
+    out["resume"] = {
+        "method": "POST",
+        "path": f"/api/kernel/processes/{process_id}/resume",
+        "hint": describe_exit_reason("kernel_gate_stop")["recovery_hint"],
+    }
+    if out.get("doom", {}).get("tripped"):
+        out["exit"] = describe_exit_reason("doom_loop")
+    elif out.get("iteration", {}).get("exhausted"):
+        out["exit"] = describe_exit_reason("kernel_iteration_exhausted")
+    return out
+
+
+@router.get("/cost")
+async def cost_panel(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+    process_id: str | None = Query(None),
+):
+    """P0.5 R5：三维成本面板 — token / billable / resource + cache_hit_rate。"""
+    from backend.kernel import get_kernel
+
+    k = get_kernel()
+    panel: dict[str, Any] = {
+        "tokens_billable": {},
+        "cache": {},
+        "resources": {},
+        "marathon": {},
+        "backend": "none",
+    }
+    if hasattr(k, "_call"):
+        panel["backend"] = "rust"
+        panel["tokens_billable"] = k._call("cost_panel") or {}
+        panel["cache"] = k._call("cache_metrics") or {}
+        panel["marathon"] = k._call("marathon_metrics") or {}
+        if process_id:
+            panel["process_cost"] = (
+                k._call("cost_process", {"process_id": process_id}) or {}
+            )
+            panel["process_resources"] = (
+                k._call("resource_usage", {"process_id": process_id}) or {}
+            )
+        # live process token rollup
+        try:
+            procs = k.list_processes(include_terminal=False) or []
+            token_used = 0
+            token_budget = 0
+            for p in procs:
+                token_used += int(getattr(p, "tokens_used", 0) or 0)
+                b = getattr(p, "token_budget", None)
+                if b is not None:
+                    token_budget += int(b or 0)
+            panel["live_processes"] = {
+                "count": len(procs),
+                "tokens_used": token_used,
+                "token_budget_sum": token_budget,
+            }
+        except Exception:
+            panel["live_processes"] = {}
+    elif hasattr(k, "cost_panel"):
+        panel["backend"] = "python"
+        panel["tokens_billable"] = k.cost_panel()
+    # resource aggregate for live processes when rust
+    if process_id and hasattr(k, "resource_usage"):
+        try:
+            panel["resources"] = k.resource_usage(process_id) or {}
+        except Exception:
+            pass
+    return panel
+
+
+@router.get("/cache/metrics")
+async def cache_metrics_api(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """P0.5：provider family 级 cache_hit_rate。"""
+    from backend.kernel import get_kernel
+
+    k = get_kernel()
+    if hasattr(k, "cache_metrics"):
+        return k.cache_metrics()
+    if hasattr(k, "_call"):
+        return k._call("cache_metrics") or {}
+    return {"families": {}, "totals": {}}
+
+
+@router.get("/marathon/metrics")
+async def marathon_metrics_api(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """P0.5：marathon_resume_success 等长程指标。"""
+    from backend.kernel import get_kernel
+
+    k = get_kernel()
+    if hasattr(k, "marathon_metrics"):
+        return k.marathon_metrics()
+    if hasattr(k, "_call"):
+        return k._call("marathon_metrics") or {}
+    return {}
+
+
+@router.get("/weekly")
+async def weekly_report_api(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+    week: str | None = Query(None, description="ISO week e.g. 2026-W31；默认 latest"),
+    refresh: bool = Query(False, description="重新采集快照（不重跑 eval）"),
+):
+    """债 #2：观测 / Eval 周报（cost · cache · marathon · eval · pkg · wasm）。"""
+    from backend.services.weekly_report import (
+        collect_weekly_report,
+        load_weekly_report,
+    )
+
+    if week and not refresh:
+        rep = load_weekly_report(week)
+        if rep:
+            return rep
+        raise HTTPException(status_code=404, detail=f"no weekly report for {week}")
+    if not refresh:
+        rep = load_weekly_report(None)
+        if rep:
+            return rep
+    from backend.kernel import get_kernel
+
+    return collect_weekly_report(get_kernel(), run_eval=False, persist=True)
+
+
+@router.get("/dashboard")
+async def kernel_dashboard(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """T6：观测聚合 — 资源/调度/成本/沙箱/周报指针 一页。"""
+    from backend.core.config import settings
+    from backend.kernel import get_kernel
+
+    k = get_kernel()
+
+    def call(method: str, params: dict | None = None) -> Any:
+        try:
+            if hasattr(k, "_call"):
+                return k._call(method, params or {}) or {}
+            fn = getattr(k, method, None)
+            return fn() if callable(fn) and not params else {}
+        except Exception as e:
+            return {"error": str(e)}
+
+    sandbox = {}
+    try:
+        from backend.agent.working_mode import decide_sandbox, resolve_execution_mode
+        from backend.computer.detect import detect_sandbox_capability
+
+        cap = detect_sandbox_capability()
+        dec = decide_sandbox()
+        sandbox = {
+            "execution_mode": resolve_execution_mode(),
+            "use_sandbox": dec.use_sandbox,
+            "degraded": dec.degraded,
+            "capability": {
+                "mode": cap.mode,
+                "level": cap.level,
+                "label": cap.label,
+            },
+            "reason": dec.reason,
+            "coverage_hint": (
+                "full"
+                if dec.use_sandbox and cap.level == "full"
+                else ("restricted" if dec.use_sandbox else "none")
+            ),
+        }
+    except Exception as e:
+        sandbox = {"error": str(e)}
+
+    weekly_ptr = {}
+    try:
+        from backend.services.weekly_report import load_weekly_report
+
+        w = load_weekly_report(None)
+        if w:
+            weekly_ptr = {
+                "week": w.get("week"),
+                "health": (w.get("health") or {}).get("overall"),
+                "eval": (w.get("eval") or {}).get("overall")
+                if isinstance(w.get("eval"), dict)
+                else None,
+            }
+    except Exception:
+        pass
+
+    return {
+        "backend": getattr(settings, "agent_kernel_backend", "rust"),
+        "run_gate_required": bool(
+            getattr(settings, "agent_kernel_run_gate_required", True)
+        ),
+        "court_rust_required": bool(
+            getattr(settings, "agent_court_rust_required", True)
+        ),
+        "run_gate": call("run_gate_status"),
+        "scheduler": call("scheduler_stats"),
+        "cost": call("cost_panel"),
+        "cache": call("cache_metrics"),
+        "marathon": call("marathon_metrics"),
+        "pkg": call("pkg_status"),
+        "wasm": call("wasm_status"),
+        "sandbox": sandbox,
+        "weekly": weekly_ptr,
+        "live_processes": len(k.list_processes(include_terminal=False) or [])
+        if hasattr(k, "list_processes")
+        else 0,
+    }
+
+
+@router.post("/resources/{process_id}/sample-rss")
+async def sample_process_rss(
+    process_id: str,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+    os_pid: int | None = Query(None, description="可选 OS pid；默认采样本后端进程"),
+    session_id: str | None = Query(None, description="会话绑定（交互进程建议必填）"),
+):
+    """资源加深：采样 RSS（交互进程须 session 匹配）。"""
+    from backend.kernel import get_kernel
+    from backend.kernel.process_access import assert_process_accessible
+    from backend.kernel.resource_os import sample_and_report, status as ros_status
+
+    k = get_kernel()
+    try:
+        # 与 collab 一致：强制 session 绑定（wf: 编制进程可无 session 仅靠 identity）
+        assert_process_accessible(
+            k,
+            process_id,
+            session_id=session_id,
+            require_session=True,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=404 if "not found" in str(e).lower() else 403,
+            detail=str(e),
+        ) from e
+    r = sample_and_report(process_id, os_pid=os_pid)
+    r["os"] = ros_status()
+    if r.get("over_limit"):
+        r["action"] = "flag_over_limit"
+    return r
+
+
+@router.get("/resources/os-status")
+async def resource_os_status(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    from backend.kernel.resource_os import status as ros_status
+
+    return ros_status()
+
+
+@router.get("/sandbox/coverage")
+async def sandbox_coverage(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """T4：当前执行环境与平台沙箱能力覆盖率快照。"""
+    from backend.agent.working_mode import decide_sandbox, resolve_execution_mode
+    from backend.computer.detect import detect_sandbox_capability
+    from backend.core.config import settings
+
+    cap = detect_sandbox_capability()
+    dec = decide_sandbox()
+    mode = resolve_execution_mode()
+    # 简易覆盖率：sandbox 强制且有能力 → 1.0；auto 有能力 → 0.8；local → 0
+    if mode == "local":
+        score = 0.0
+    elif mode == "sandbox" and cap.available:
+        score = 1.0 if cap.level == "full" else 0.7
+    elif mode == "auto" and cap.available:
+        score = 0.8 if cap.level == "full" else 0.5
+    elif mode == "sandbox" and not cap.available:
+        score = 0.0  # fail-closed 将拒绝执行
+    else:
+        score = 0.0
+    return {
+        "score": score,
+        "execution_mode": mode,
+        "default_execution_mode": str(
+            getattr(settings, "agent_execution_mode", "") or "sandbox"
+        ),
+        "use_sandbox": dec.use_sandbox,
+        "degraded": dec.degraded,
+        "capability": {
+            "mode": cap.mode,
+            "level": cap.level,
+            "available": cap.available,
+            "label": cap.label,
+            "note": cap.note,
+        },
+        "metric": "sandbox_default_coverage",
+    }
+
+
+class CollabPlanBody(BaseModel):
+    process_id: str
+    steps: list[str] = Field(default_factory=list)
+    session_id: str | None = None
+
+
+class CollabInterruptBody(BaseModel):
+    process_id: str
+    reason: str = ""
+    session_id: str | None = None
+
+
+class CollabApprovalBody(BaseModel):
+    process_id: str
+    request_id: str | None = None
+    approve: bool = True
+    note: str = ""
+    session_id: str | None = None
+
+
+def _require_process(
+    k: Any,
+    process_id: str,
+    *,
+    session_id: str | None = None,
+    require_session: bool = True,
+) -> dict[str, Any]:
+    """默认强制 session 绑定（交互进程）。"""
+    from backend.kernel.process_access import assert_process_accessible
+
+    try:
+        return assert_process_accessible(
+            k,
+            process_id,
+            session_id=session_id,
+            require_session=require_session,
+        )
+    except ValueError as e:
+        code = 404 if "not found" in str(e).lower() else 403
+        raise HTTPException(status_code=code, detail=str(e)) from e
+
+
+@router.get("/collab/{process_id}")
+async def collab_get(
+    process_id: str,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+    session_id: str | None = Query(None, description="会话绑定（交互进程必填）"),
+):
+    """人机协作状态：交互进程必须带匹配 session_id。"""
+    from backend.kernel import get_kernel
+
+    k = get_kernel()
+    _require_process(k, process_id, session_id=session_id, require_session=True)
+    if hasattr(k, "_call"):
+        return k._call("collab_get", {"process_id": process_id}) or {}
+    return {}
+
+
+@router.post("/collab/plan")
+async def collab_set_plan(
+    body: CollabPlanBody,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    from backend.kernel import get_kernel
+
+    k = get_kernel()
+    if not hasattr(k, "_call"):
+        raise HTTPException(status_code=503, detail="kernel host unavailable")
+    _require_process(k, body.process_id, session_id=body.session_id, require_session=True)
+    return k._call(
+        "collab_set_plan",
+        {"process_id": body.process_id, "steps": body.steps},
+    ) or {}
+
+
+@router.post("/collab/interrupt")
+async def collab_interrupt(
+    body: CollabInterruptBody,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    from backend.kernel import get_kernel
+
+    k = get_kernel()
+    if not hasattr(k, "_call"):
+        raise HTTPException(status_code=503, detail="kernel host unavailable")
+    _require_process(k, body.process_id, session_id=body.session_id, require_session=True)
+    r = k._call(
+        "collab_interrupt",
+        {"process_id": body.process_id, "reason": body.reason},
+    ) or {}
+    try:
+        await k.suspend_process(body.process_id, reason=body.reason or "collab_interrupt")
+    except Exception:
+        pass
+    return r
+
+
+@router.post("/collab/resume")
+async def collab_resume(
+    body: CollabInterruptBody,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    from backend.kernel import get_kernel
+
+    k = get_kernel()
+    if not hasattr(k, "_call"):
+        raise HTTPException(status_code=503, detail="kernel host unavailable")
+    _require_process(k, body.process_id, session_id=body.session_id, require_session=True)
+    r = k._call("collab_resume", {"process_id": body.process_id}) or {}
+    try:
+        await k.resume_process(body.process_id)
+    except Exception:
+        pass
+    return r
+
+
+@router.post("/collab/approve")
+async def collab_approve(
+    body: CollabApprovalBody,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    from backend.kernel import get_kernel
+
+    k = get_kernel()
+    if not hasattr(k, "_call"):
+        raise HTTPException(status_code=503, detail="kernel host unavailable")
+    _require_process(k, body.process_id, session_id=body.session_id, require_session=True)
+    return k._call(
+        "collab_resolve_approval",
+        {
+            "process_id": body.process_id,
+            "request_id": body.request_id,
+            "approve": body.approve,
+            "note": body.note,
+        },
+    ) or {}
+
+
+@router.post("/eval/run")
+async def eval_run_api(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+    weekly: bool = Query(True, description="跑完后写入周报"),
+):
+    """债 #2：触发 Eval Harness 四套固定集并可选写周报。"""
+    from backend.services.weekly_report import collect_weekly_report, persist_eval_run
+
+    # 在线程中跑同步 eval，避免阻塞过久时可后续改后台任务
+    import asyncio
+
+    def _run():
+        from scripts.takton_eval import (
+            _connect,
+            suite_coding,
+            suite_long,
+            suite_research,
+            suite_safety,
+        )
+
+        k = _connect()
+        results = [
+            suite_coding(k),
+            suite_research(k),
+            suite_long(k),
+            suite_safety(k),
+        ]
+        overall = sum(r["score"] for r in results) / max(1, len(results))
+        import os
+
+        threshold = float(os.environ.get("TAKTON_EVAL_THRESHOLD", "0.75") or 0.75)
+        out = {
+            "overall": round(overall, 4),
+            "threshold": threshold,
+            "suites": results,
+            "pass": overall + 1e-9 >= threshold,
+        }
+        path = persist_eval_run(out)
+        out["persisted"] = str(path)
+        weekly_rep = None
+        if weekly:
+            weekly_rep = collect_weekly_report(k, eval_result=out, persist=True)
+        return {"eval": out, "weekly": weekly_rep}
+
+    return await asyncio.to_thread(_run)
+
+
+@router.get("/wasm/status")
+async def wasm_status_api(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """债 #4：WASM 运行时状态。"""
+    from backend.kernel import get_kernel
+
+    k = get_kernel()
+    if hasattr(k, "_call"):
+        return k._call("wasm_status") or {}
+    return {}
+
+
+@router.get("/packages/catalog")
+async def kernel_pkg_catalog(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """Kernel 侧包市场 catalog（签名扫描状态）。"""
+    from backend.kernel import get_kernel
+
+    k = get_kernel()
+    if hasattr(k, "_call"):
+        return k._call("pkg_catalog") or {}
+    return {"items": [], "count": 0}
+
+
+@router.get("/exit_reasons/{code}")
+async def exit_reason_help(
+    code: str,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """P0.5 R4：退出码 → 用户文案与恢复入口。"""
+    from backend.agent.exit_reasons import describe_exit_reason
+
+    return describe_exit_reason(code)
+
+
+@router.get("/recovery/{process_id}")
+async def process_recovery(
+    process_id: str,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """P0.5：恢复计划（snapshot + tail_hash，禁止 full_replay）。"""
+    from backend.kernel import get_kernel
+
+    k = get_kernel()
+    plan: dict[str, Any] = {}
+    if hasattr(k, "process_recovery_plan"):
+        plan = k.process_recovery_plan(process_id) or {}
+    elif hasattr(k, "_call"):
+        plan = k._call("process_recovery_plan", {"process_id": process_id}) or {}
+    return {
+        "process_id": process_id,
+        "plan": plan,
+        "resume": f"/api/kernel/processes/{process_id}/resume",
+        "full_replay_forbidden": True,
+    }
+
+
+@router.post("/checkpoints/{checkpoint_id}/restore")
+async def restore_checkpoint(
+    checkpoint_id: str,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """P0-D：回滚文件写前快照。"""
+    from backend.kernel import get_kernel
+
+    k = get_kernel()
+    if not hasattr(k, "_call"):
+        raise HTTPException(status_code=503, detail="Rust kernel host required for restore")
+    try:
+        return k._call("checkpoint_restore", {"checkpoint_id": checkpoint_id})
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 # ── 收件箱与日报（0.6 自主运转）─────────────────────────────────

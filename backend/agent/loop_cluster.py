@@ -197,12 +197,25 @@ class LoopClusterMixin:
         导致 WS ToolEvent.model_dump 无法序列化 ConnectionManager。
         """
         base = dict(arguments) if isinstance(arguments, dict) else {}
+        # 安全：剥离模型不可信的内部门控/进程字段（由 loop 再注入）
+        for k in (
+            "_tool_gate_passed",
+            "_tool_gate_internal",
+            "_kernel_process_id",
+            "_process_id",
+            "_require_kernel_process",
+            "_ws_manager",
+            "_run_recorder",
+        ):
+            base.pop(k, None)
         if not schema:
             return base
+        # validate only "public" args — strip underscore keys for schema check
+        public = {k: v for k, v in base.items() if not str(k).startswith("_")}
         try:
             from jsonschema import ValidationError, validate
 
-            validate(instance=base, schema=schema)
+            validate(instance=public, schema=schema)
         except ImportError:
             pass  # jsonschema未安装时跳过校验
         except ValidationError as e:

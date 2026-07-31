@@ -331,6 +331,33 @@ async def _run_llm_round_body(
             logger.debug("llm daily quota charge skip: %s", e)
 
     kernel_proc = getattr(loop, "_kernel_process", None)
+    # P0.5 R1/R5：cost ledger（token/billable）；cache_record 在 log_cache_usage
+    try:
+        from backend.services.llm.usage_normalize import report_cost_to_kernel
+
+        _bill = int(stream_usage.get("billable_tokens") or spent or 0)
+        _tok = int(stream_usage.get("total_tokens") or spent or 0)
+        _fam = "default"
+        if hasattr(llm_service, "_family") and callable(llm_service._family):
+            try:
+                _fam = str(llm_service._family() or "default")
+            except Exception:
+                _fam = "default"
+        else:
+            _fam = str(
+                getattr(llm_service, "provider", None)
+                or getattr(settings, "llm_provider", None)
+                or "default"
+            )
+        report_cost_to_kernel(
+            process_id=getattr(kernel_proc, "id", None) if kernel_proc else None,
+            family=_fam,
+            tokens=_tok,
+            billable=_bill if _bill > 0 else _tok,
+        )
+    except Exception as _cost_e:
+        logger.debug("cost_charge skip: %s", _cost_e)
+
     if kernel_proc is not None and kernel_proc.token_budget is not None:
         from backend.kernel import BudgetExceededError, get_kernel
 
