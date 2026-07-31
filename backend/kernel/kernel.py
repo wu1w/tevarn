@@ -325,14 +325,56 @@ class AgentKernel:
             return None
         if proc.is_terminal:
             return proc
+        # R-03：先级联终止子进程，再清能力/资源，防止上下文泄漏
+        try:
+            children = [
+                p
+                for p in self.list_processes(include_terminal=True)
+                if getattr(p, "parent_id", None) == process_id and not p.is_terminal
+            ]
+            for ch in children:
+                try:
+                    await self.end_process(
+                        ch.id, state=state, reason=f"parent_ended:{process_id[:8]}"
+                    )
+                except Exception as ce:
+                    logger.debug("end_process cascade child=%s: %s", ch.id[:8], ce)
+        except Exception as e:
+            logger.debug("end_process cascade skip: %s", e)
+
         proc.state = state
         proc.ended_at = time.time()
         proc.exit_reason = reason
+        # 能力清空（防残留 cap）
+        try:
+            if getattr(proc, "capabilities", None) is not None:
+                proc.capabilities = frozenset()
+            if hasattr(proc, "token") and proc.token is not None:
+                try:
+                    proc.token = type(proc.token)(
+                        capabilities=frozenset(),
+                        expires_at=getattr(proc.token, "expires_at", None),
+                    )
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        # 资源账户释放（若 Python 侧挂有 resource 管理器）
+        try:
+            rm = getattr(self, "resources", None) or getattr(self, "_resources", None)
+            if rm is not None and hasattr(rm, "drop_process"):
+                rm.drop_process(process_id)
+            elif hasattr(self, "resource_drop_process"):
+                self.resource_drop_process(process_id)  # type: ignore[attr-defined]
+        except Exception as re:
+            logger.debug("end_process resource drop: %s", re)
+
         self._emit("process_ended", proc.id, {
             "state": state,
             "reason": reason,
             "tokens_used": proc.tokens_used,
             "duration_ms": int((proc.ended_at - (proc.started_at or proc.created_at)) * 1000),
+            "caps_cleared": True,
         })
         self._persist_process(proc)
         return proc

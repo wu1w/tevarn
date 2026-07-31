@@ -3139,6 +3139,26 @@ export async function getKernelDashboard(): Promise<Record<string, unknown>> {
   return res.data;
 }
 
+/** R-05：三维成本面板 token / billable / resource + summary */
+export async function getKernelCost(processId?: string | null): Promise<Record<string, unknown>> {
+  const res = await api.get('/kernel/cost', {
+    params: processId ? { process_id: processId } : undefined,
+  });
+  return res.data;
+}
+
+/** R-04：provider family cache hit rate */
+export async function getKernelCacheMetrics(): Promise<Record<string, unknown>> {
+  const res = await api.get('/kernel/cache/metrics');
+  return res.data;
+}
+
+/** R-04/R-05：周报健康分（含 cache_hit_rate） */
+export async function getKernelWeekly(): Promise<Record<string, unknown>> {
+  const res = await api.get('/kernel/weekly');
+  return res.data;
+}
+
 export async function getSandboxCoverage(): Promise<Record<string, unknown>> {
   const res = await api.get('/kernel/sandbox/coverage');
   return res.data;

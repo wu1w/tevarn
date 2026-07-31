@@ -14,6 +14,9 @@ import {
   getGovernanceManifest, getProtocolManifest, listAgentCards,
   getSchedulerStatus,
   getKernelDashboard,
+  getKernelCost,
+  getKernelCacheMetrics,
+  getKernelWeekly,
   getSandboxCoverage,
   collabInterrupt,
   collabResume,
@@ -124,6 +127,29 @@ export default function KernelPage() {
     queryKey: ['sandbox-coverage'],
     queryFn: getSandboxCoverage,
     staleTime: 10_000,
+    retry: 1,
+    enabled: tab === 'dash',
+  });
+  const cost = useQuery({
+    queryKey: ['kernel-cost'],
+    queryFn: () => getKernelCost(),
+    staleTime: 5_000,
+    refetchInterval: tab === 'dash' ? 8_000 : false,
+    retry: 1,
+    enabled: tab === 'dash',
+  });
+  const cacheMet = useQuery({
+    queryKey: ['kernel-cache-metrics'],
+    queryFn: getKernelCacheMetrics,
+    staleTime: 5_000,
+    refetchInterval: tab === 'dash' ? 8_000 : false,
+    retry: 1,
+    enabled: tab === 'dash',
+  });
+  const weekly = useQuery({
+    queryKey: ['kernel-weekly'],
+    queryFn: getKernelWeekly,
+    staleTime: 15_000,
     retry: 1,
     enabled: tab === 'dash',
   });
@@ -512,6 +538,112 @@ export default function KernelPage() {
               <div style={{ fontSize: 10.5, color: 'var(--foreground-dim)', marginTop: 4 }}>{zh ? '活进程' : 'Live procs'}</div>
             </div>
           </div>
+          {/* R-05 三维成本 */}
+          <div style={{ ...card, padding: '14px 16px' }}>
+            <div style={{ fontSize: 13, fontWeight: 650, marginBottom: 10 }}>
+              {zh ? '成本三维（token / billable / 资源）' : '3D cost (token / billable / resources)'}
+            </div>
+            {(() => {
+              const sum = (cost.data as { summary?: Record<string, unknown> } | undefined)?.summary || {};
+              const tokens = Number(sum.tokens ?? 0);
+              const billable = Number(sum.billable ?? 0);
+              const hit = sum.cache_hit_rate;
+              const kinds = (sum.resource_kinds as string[] | undefined) || [];
+              const res = (cost.data as { resources?: Record<string, { used?: number; limit?: number }> } | undefined)?.resources || {};
+              return (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 20, fontWeight: 700 }}>{tokens.toLocaleString()}</div>
+                    <div style={{ fontSize: 10.5, color: 'var(--foreground-dim)' }}>tokens</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 20, fontWeight: 700 }}>{billable.toLocaleString()}</div>
+                    <div style={{ fontSize: 10.5, color: 'var(--foreground-dim)' }}>billable</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 20, fontWeight: 700 }}>
+                      {hit != null && hit !== '' ? `${(Number(hit) * 100).toFixed(1)}%` : '—'}
+                    </div>
+                    <div style={{ fontSize: 10.5, color: 'var(--foreground-dim)' }}>{zh ? '缓存命中' : 'cache hit'}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 650, color: 'var(--foreground-muted)' }}>
+                      {kinds.length ? kinds.slice(0, 4).join(', ') : '—'}
+                    </div>
+                    <div style={{ fontSize: 10.5, color: 'var(--foreground-dim)' }}>{zh ? '资源种类' : 'resource kinds'}</div>
+                  </div>
+                  {Object.keys(res).length > 0 ? (
+                    <div style={{ gridColumn: '1 / -1', fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--foreground-dim)' }}>
+                      {Object.entries(res).slice(0, 6).map(([k, v]) => (
+                        <span key={k} style={{ marginRight: 12 }}>
+                          {k}: {Number(v?.used ?? 0)}{v?.limit != null ? `/${v.limit}` : ''}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })()}
+            <div style={{ fontSize: 11, color: 'var(--foreground-dim)', marginTop: 8 }}>GET /api/kernel/cost</div>
+          </div>
+
+          {/* R-04 family cache */}
+          <div style={{ ...card, padding: '14px 16px' }}>
+            <div style={{ fontSize: 13, fontWeight: 650, marginBottom: 8 }}>
+              {zh ? 'Provider 缓存命中（family）' : 'Provider cache hit (by family)'}
+            </div>
+            {(() => {
+              const fam = (cacheMet.data as { families?: Record<string, { hits?: number; misses?: number; hit_rate?: number }> } | undefined)?.families || {};
+              const rows = Object.entries(fam);
+              if (cacheMet.isLoading) return <div style={{ fontSize: 12, color: 'var(--foreground-dim)' }}>{zh ? '加载中…' : 'Loading…'}</div>;
+              if (!rows.length) return <div style={{ fontSize: 12, color: 'var(--foreground-dim)' }}>{zh ? '暂无采样（需 LLM 回填 usage）' : 'No samples yet'}</div>;
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {rows.slice(0, 12).map(([name, m]) => {
+                    const hits = Number(m?.hits ?? 0);
+                    const misses = Number(m?.misses ?? 0);
+                    const rate = m?.hit_rate != null ? Number(m.hit_rate) : (hits + misses > 0 ? hits / (hits + misses) : 0);
+                    return (
+                      <div key={name} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontFamily: 'var(--font-mono)' }}>
+                        <span style={{ color: 'var(--foreground)' }}>{name}</span>
+                        <span style={{ color: 'var(--foreground-dim)' }}>
+                          {(rate * 100).toFixed(1)}% · h={hits} m={misses}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+            <div style={{ fontSize: 11, color: 'var(--foreground-dim)', marginTop: 8 }}>GET /api/kernel/cache/metrics</div>
+          </div>
+
+          {/* Weekly health */}
+          <div style={{ ...card, padding: '14px 16px' }}>
+            <div style={{ fontSize: 13, fontWeight: 650, marginBottom: 8 }}>{zh ? '周健康' : 'Weekly health'}</div>
+            {(() => {
+              const w = weekly.data as { week?: string; health?: { overall?: number; parts?: Record<string, number> } } | undefined;
+              const overall = w?.health?.overall;
+              const parts = w?.health?.parts || {};
+              return (
+                <div>
+                  <div style={{ fontSize: 18, fontWeight: 700 }}>
+                    {overall != null ? Number(overall).toFixed(3) : '—'}
+                    <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--foreground-dim)', marginLeft: 8 }}>
+                      {w?.week || ''}
+                    </span>
+                  </div>
+                  <div style={{ marginTop: 6, fontSize: 11, color: 'var(--foreground-dim)', fontFamily: 'var(--font-mono)' }}>
+                    {Object.entries(parts).slice(0, 8).map(([k, v]) => (
+                      <span key={k} style={{ marginRight: 10 }}>{k}={Number(v).toFixed(2)}</span>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+            <div style={{ fontSize: 11, color: 'var(--foreground-dim)', marginTop: 8 }}>GET /api/kernel/weekly</div>
+          </div>
+
           <div style={{ ...card, padding: '14px 16px' }}>
             <div style={{ fontSize: 13, fontWeight: 650, marginBottom: 8 }}>{zh ? '聚合快照' : 'Dashboard snapshot'}</div>
             <pre style={{
@@ -537,7 +669,7 @@ export default function KernelPage() {
                   )}
             </pre>
             <div style={{ fontSize: 11, color: 'var(--foreground-dim)', marginTop: 8 }}>
-              GET /api/kernel/dashboard · GET /api/kernel/sandbox/coverage
+              GET /api/kernel/dashboard · GET /api/kernel/sandbox/coverage · cost · cache · weekly
             </div>
           </div>
         </div>

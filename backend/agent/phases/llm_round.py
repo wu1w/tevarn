@@ -368,12 +368,23 @@ async def _run_llm_round_body(
             logger.warning("kernel 预算耗尽，中断 run proc=%s: %s", kernel_proc.id, e)
             loop._should_stop = True
             result.action = "break"
-            # 固定短文：禁止本轮再让模型续写「报告框架」
-            result.final_content = (
-                f"[Budget Exceeded] 进程 token 预算耗尽，运行已中断（{e}）。"
-                "本工单未完成实质检查；请提高预算、收窄范围或拆小任务后重试。"
-                "禁止用报告框架/预期结果冒充结论。"
-            )
+            # R-02：与 exit_reasons 统一恢复文案（禁止空报告冒充结论）
+            try:
+                from backend.agent.exit_reasons import format_exit_user_message
+
+                loop.last_exit_reason = "budget_exhausted"
+                result.final_content = (
+                    format_exit_user_message(
+                        "budget_exhausted", process_id=kernel_proc.id
+                    )
+                    + f"\n（{e}）\n禁止用报告框架/预期结果冒充结论。"
+                )
+            except Exception:
+                result.final_content = (
+                    f"[Budget Exceeded] 进程 token 预算耗尽，运行已中断（{e}）。"
+                    "本工单未完成实质检查；请提高预算、收窄范围或拆小任务后重试。"
+                    "禁止用报告框架/预期结果冒充结论。"
+                )
             result.accumulated_content = ""
             result.tool_calls = []
             return result

@@ -207,14 +207,25 @@ class ToolRegistry:
             from backend.agent.tool_hooks import run_after_tool_call
             from backend.agent.tool_result_contract import normalize_tool_result
 
+            # R-01：透传 process_id 以便大结果 spill（上下文只留句柄）
+            _pid = (
+                str(args.get("_kernel_process_id") or args.get("_process_id") or "")
+                .strip()
+                or None
+            )
             if isinstance(result, dict):
                 # drop huge unused image field if empty path present
                 data = result.get("data")
                 if isinstance(data, dict) and data.get("path") and not data.get("image"):
                     pass
                 text = _json.dumps(result, ensure_ascii=False, default=str)
+                text = normalize_tool_result(
+                    text, tool_name=name, process_id=_pid
+                )
             else:
-                text = normalize_tool_result(result, tool_name=name)
+                text = normalize_tool_result(
+                    result, tool_name=name, process_id=_pid
+                )
             text = await run_after_tool_call(name, exec_args, text)
             return text
         except Exception as e:

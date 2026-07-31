@@ -234,15 +234,23 @@ L0 Kernel（进程 / cap / 调度 / 隔离）████░░░░░░  ~45
 
 ## 6. 阶段 0.7 — 长程可靠与效率
 
-| ID | 工作项 | 说明 |
-|----|--------|------|
-| R-01 | Checkpoint + 工具结果落盘统一 | 大结果外置，上下文只留句柄 |
-| R-02 | Doom loop / 预算耗尽优雅退出与恢复 UX | 已有雏形，打通前后端文案 |
-| R-03 | 上下文泄漏控制 | 子进程结束回收 cap 与资源 |
-| R-04 | Provider 缓存命中率仪表 | family 级；进周报 |
-| R-05 | Token / billable / 资源三维成本面板 | 编制 + Kernel 统一口径 |
+> **产品版本仍为 `0.5.0-alpha`**；本节为路线图阶段名。
 
-**验收**：固定 marathon（≥2h 模拟）恢复成功率、中断可解释率写入 Eval 阈值。
+| ID | 工作项 | 说明 | 状态 |
+|----|--------|------|------|
+| R-01 | Checkpoint + 工具结果落盘统一 | Registry/loop 透传 process_id spill；`GET /kernel/results/{handle}` | ✅ |
+| R-02 | Doom loop / 预算耗尽优雅退出与恢复 UX | `exit_reasons` 统一预算文案；控制台 resume 入口 | ✅ 后端 / 🚧 会话页卡片 |
+| R-03 | 上下文泄漏控制 | Python `end_process` 级联子进程 + 清 cap；Rust 既有 drop | ✅ |
+| R-04 | Provider 缓存命中率仪表 | Kernel 仪表盘 family 表 + 周报 health | ✅ |
+| R-05 | Token / billable / 资源三维成本面板 | `/kernel/cost` summary + 资源聚合 + FE 卡片 | ✅ |
+
+**验收**
+
+- [x] 大工具结果可 spill，句柄可 `result_load` / HTTP 取回  
+- [x] 预算耗尽走统一恢复文案（`budget_exhausted`）  
+- [x] 父进程结束级联子进程并清能力  
+- [x] Kernel 页展示 cost / cache family / weekly  
+- [ ] marathon ≥2h 模拟进 Eval 硬阈值（继续加深，smoke 已有）
 
 ---
 
@@ -394,3 +402,4 @@ Week 11–12 R-01/H-11       结果落盘 + cache 仪表；0.6 验收清单打�
 | 2026-07-31 | **阶段 H 收口**：H-01…H-14 实现/单测/CI/文档勾选；H-07/H-09 标切片、0.6 加深 |
 | 2026-07-31 | **P0 里程碑收口**（产品版本维持 **0.5.0-alpha**）：cap_tools / resource_denied / tools API 门控 / 验收单测 |
 | 2026-07-31 | 明确：路线图阶段名与产品号解耦，不因 P0 升号 |
+| 2026-07-31 | **§6 0.7 推进**（产品仍 0.5.0-alpha）：spill 全路径、end_process 回收、cost/cache FE、result_load API |

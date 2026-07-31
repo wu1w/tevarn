@@ -1359,32 +1359,78 @@ async def cost_panel(
             panel["process_resources"] = (
                 k._call("resource_usage", {"process_id": process_id}) or {}
             )
-        # live process token rollup
+        # live process token rollup + resource aggregate (R-05)
         try:
             procs = k.list_processes(include_terminal=False) or []
             token_used = 0
             token_budget = 0
+            res_agg: dict[str, dict[str, int]] = {}
             for p in procs:
                 token_used += int(getattr(p, "tokens_used", 0) or 0)
                 b = getattr(p, "token_budget", None)
                 if b is not None:
                     token_budget += int(b or 0)
+                pid = str(getattr(p, "id", "") or "")
+                if pid and hasattr(k, "resource_usage"):
+                    try:
+                        u = k.resource_usage(pid) or {}
+                        if isinstance(u, dict):
+                            for kind, acct in u.items():
+                                if not isinstance(acct, dict):
+                                    continue
+                                bucket = res_agg.setdefault(
+                                    str(kind), {"used": 0, "limit": 0}
+                                )
+                                bucket["used"] += int(acct.get("used") or 0)
+                                lim = acct.get("limit")
+                                if lim is not None:
+                                    bucket["limit"] = max(
+                                        int(bucket["limit"] or 0), int(lim)
+                                    )
+                    except Exception:
+                        pass
             panel["live_processes"] = {
                 "count": len(procs),
                 "tokens_used": token_used,
                 "token_budget_sum": token_budget,
             }
+            if res_agg and not process_id:
+                panel["resources"] = res_agg
         except Exception:
             panel["live_processes"] = {}
     elif hasattr(k, "cost_panel"):
         panel["backend"] = "python"
         panel["tokens_billable"] = k.cost_panel()
-    # resource aggregate for live processes when rust
-    if process_id and hasattr(k, "resource_usage"):
         try:
-            panel["resources"] = k.resource_usage(process_id) or {}
+            if hasattr(k, "cache_metrics"):
+                panel["cache"] = k.cache_metrics() or {}
         except Exception:
             pass
+    # single-process resource detail
+    if process_id and hasattr(k, "resource_usage"):
+        try:
+            panel["resources"] = k.resource_usage(process_id) or panel.get("resources") or {}
+        except Exception:
+            pass
+    # R-05：统一摘要字段，前端/编制共用
+    tb = panel.get("tokens_billable") or {}
+    totals = tb.get("totals") if isinstance(tb, dict) else {}
+    if not isinstance(totals, dict):
+        totals = {}
+    cache = panel.get("cache") or {}
+    ctot = cache.get("totals") if isinstance(cache, dict) else {}
+    if not isinstance(ctot, dict):
+        ctot = {}
+    live = panel.get("live_processes") or {}
+    panel["summary"] = {
+        "tokens": int(totals.get("tokens") or live.get("tokens_used") or 0),
+        "billable": int(totals.get("billable") or 0),
+        "cache_hit_rate": ctot.get("hit_rate"),
+        "live_process_count": int(live.get("count") or 0),
+        "resource_kinds": list((panel.get("resources") or {}).keys())
+        if isinstance(panel.get("resources"), dict)
+        else [],
+    }
     return panel
 
 
@@ -1392,7 +1438,7 @@ async def cost_panel(
 async def cache_metrics_api(
     current_user: Annotated[UserRead, Depends(get_current_user)],
 ):
-    """P0.5：provider family 级 cache_hit_rate。"""
+    """P0.5 / R-04：provider family 级 cache_hit_rate。"""
     from backend.kernel import get_kernel
 
     k = get_kernel()
@@ -1401,6 +1447,41 @@ async def cache_metrics_api(
     if hasattr(k, "_call"):
         return k._call("cache_metrics") or {}
     return {"families": {}, "totals": {}}
+
+
+@router.get("/results/{handle_id}")
+async def result_load_api(
+    handle_id: str,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+    preview_only: bool = Query(False),
+):
+    """R-01：按 spill 句柄取回完整工具结果（或预览）。"""
+    from backend.kernel import get_kernel
+
+    k = get_kernel()
+    hid = str(handle_id or "").strip()
+    if not hid:
+        raise HTTPException(status_code=400, detail="handle_id required")
+    data: dict[str, Any] = {}
+    if hasattr(k, "result_load"):
+        data = k.result_load(hid) or {}
+    elif hasattr(k, "_call"):
+        data = k._call("result_load", {"handle_id": hid}) or {}
+    else:
+        raise HTTPException(status_code=501, detail="result_load requires Rust kernel host")
+    if not data or data.get("error"):
+        raise HTTPException(
+            status_code=404,
+            detail=str(data.get("error") or "handle not found"),
+        )
+    if preview_only and "content" in data:
+        content = str(data.get("content") or "")
+        data = {
+            **{kk: vv for kk, vv in data.items() if kk != "content"},
+            "preview": content[:800],
+            "bytes": len(content.encode("utf-8", errors="replace")),
+        }
+    return data
 
 
 @router.get("/marathon/metrics")
