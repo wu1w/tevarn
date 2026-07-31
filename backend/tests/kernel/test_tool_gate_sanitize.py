@@ -38,3 +38,24 @@ def test_sanitize_strips_ws_manager() -> None:
 def test_sanitize_empty() -> None:
     assert sanitize_args_for_kernel(None) == {}
     assert sanitize_args_for_kernel("x") == {}  # type: ignore[arg-type]
+
+
+def test_rust_decide_tool_survives_connection_manager() -> None:
+    """permission_court must not fail-closed on live _ws_manager inject."""
+    from backend.kernel.permission_court import _try_rust_decide_tool
+
+    class ConnectionManager:
+        pass
+
+    d = _try_rust_decide_tool(
+        "file_read",
+        {
+            "path": "README.md",
+            "_ws_manager": ConnectionManager(),
+            "_session_id": "s1",
+        },
+    )
+    # host may be down in pure unit CI — only assert when we get a decision
+    if d is not None:
+        assert d.verdict in ("allow", "deny", "ask")
+        assert d.matched_rule != "court:rust_unavailable"

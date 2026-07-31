@@ -195,6 +195,7 @@ def _try_rust_decide_tool(
     """P0-D：优先走 Rust court（secret/path/steward/capability/profile）。"""
     try:
         from backend.kernel import get_kernel
+        from backend.kernel.tool_gate import sanitize_args_for_kernel
 
         k = get_kernel()
         if not hasattr(k, "_call"):
@@ -220,10 +221,21 @@ def _try_rust_decide_tool(
             if isinstance(perms, dict) and perms.get("deny"):
                 skill_deny = [str(x) for x in perms["deny"]]
         pid = str(args.get("_kernel_process_id") or args.get("_process_id") or "") or None
+        # Never ship live objects (ConnectionManager / recorder) over JSON-RPC.
+        safe_args = sanitize_args_for_kernel(args)
+        # Keep identity caps for steward layer (strings only)
+        if isinstance(args.get("_identity_capabilities"), (list, tuple)):
+            safe_args["_identity_capabilities"] = [
+                str(x) for x in args["_identity_capabilities"]
+            ]
+        if args.get("_identity_id"):
+            safe_args["_identity_id"] = str(args["_identity_id"])
+        if args.get("_workforce") is True:
+            safe_args["_workforce"] = True
         # sync identity caps for steward if present
         payload = {
             "name": name,
-            "args": args,
+            "args": safe_args,
             "process_id": pid,
             "skill_tools": skill_tools,
             "skill_deny": skill_deny,
@@ -272,8 +284,19 @@ def _try_rust_decide_tool(
         r = k._call("decide_tool", payload)
         if isinstance(r, dict) and r.get("verdict"):
             return _court_from_rust_dict(r)
+        logger.warning(
+            "rust decide_tool empty/invalid response tool=%s r=%s",
+            name,
+            type(r).__name__,
+        )
     except Exception as e:
-        logger.debug("rust decide_tool skip: %s", e)
+        # Visible: fail-closed path depends on this; debug hides root cause
+        logger.warning(
+            "rust decide_tool failed tool=%s: %s: %s",
+            name,
+            type(e).__name__,
+            e,
+        )
     return None
 
 

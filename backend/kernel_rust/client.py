@@ -860,12 +860,34 @@ class RustAgentKernel:
         skill_deny: list[str] | None = None,
         emit: bool = True,
     ) -> dict[str, Any]:
+        # Defense: strip ConnectionManager / non-JSON before RPC (same as mediate).
+        safe_args: dict[str, Any] = {}
+        if isinstance(args, dict):
+            try:
+                from backend.kernel.tool_gate import sanitize_args_for_kernel
+
+                safe_args = sanitize_args_for_kernel(args)
+                if isinstance(args.get("_identity_capabilities"), (list, tuple)):
+                    safe_args["_identity_capabilities"] = [
+                        str(x) for x in args["_identity_capabilities"]
+                    ]
+                if args.get("_identity_id"):
+                    safe_args["_identity_id"] = str(args["_identity_id"])
+                if args.get("_workforce") is True:
+                    safe_args["_workforce"] = True
+            except Exception:
+                for k, v in args.items():
+                    try:
+                        json.dumps(v, default=str)
+                        safe_args[str(k)] = v
+                    except Exception:
+                        continue
         return (
             self._call(
                 "decide_tool",
                 {
                     "name": name,
-                    "args": args or {},
+                    "args": safe_args,
                     "process_id": process_id,
                     "skill_tools": skill_tools,
                     "skill_deny": skill_deny,
