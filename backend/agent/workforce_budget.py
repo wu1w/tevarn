@@ -217,6 +217,40 @@ def budget_for_identity(
     )
 
 
+def resolve_interactive_chat_budget(
+    *,
+    user_input: str = "",
+    is_steward: bool = False,
+    explicit: int | None = None,
+    history_tokens_est: int = 0,
+) -> int | None:
+    """Main-chat / CEO session process token_budget (auto-allocate).
+
+    Workforce jobs use ``resolve_job_budget``; interactive CEO chat used to
+    inherit coding profile 200k only — long history burns it in 3–5 LLM
+    rounds (~50–90k billable each). Steward/CEO gets a higher floor and
+    scales with instruction + rough history size.
+    """
+    if explicit is not None:
+        try:
+            return clamp_ceo_budget(int(explicit))
+        except Exception:
+            return explicit
+    # Floors: CEO/steward orchestration needs room; normal chat mid
+    base = 800_000 if is_steward else 400_000
+    # Long context sessions: each turn re-sends history
+    if history_tokens_est >= 40_000:
+        base = max(base, 1_000_000 if is_steward else 600_000)
+    if history_tokens_est >= 80_000:
+        base = max(base, 1_500_000 if is_steward else 900_000)
+    return suggested_token_budget(
+        base=base,
+        instruction=user_input or "",
+        role="CEO" if is_steward else None,
+        name="steward" if is_steward else None,
+    )
+
+
 def hard_cap() -> int:
     return _settings_hard_cap()
 

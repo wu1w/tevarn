@@ -674,11 +674,78 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         )
                     except Exception as _re:
                         logger.debug("loop preflight retire: %s", _re)
+                # Interactive / CEO chat budget: auto-allocate (not workforce job path).
+                # coding_profile engineering defaults to 200k only when budget is None —
+                # long steward sessions burn ~50–90k/LLM round and die after a few tools.
+                _token_budget = proc_opts.get("token_budget")
+                if (
+                    _token_budget is None
+                    and not str(_akey).startswith("wf:")
+                    and not _meta.get("workforce")
+                ):
+                    try:
+                        from backend.agent.workforce_budget import (
+                            resolve_interactive_chat_budget,
+                        )
+                        from backend.agent.workforce_dispatch import is_steward_contact
+
+                        _contact_early = str(
+                            getattr(self, "_contact_agent", "") or ""
+                        ).strip()
+                        _is_steward_early = is_steward_contact(_contact_early)
+                        if not _is_steward_early and self.session_repo is not None:
+                            try:
+                                _sess = await self.session_repo.get(session_id)
+                                _cfg = (
+                                    getattr(_sess, "config", None) or {}
+                                    if _sess is not None
+                                    else {}
+                                )
+                                if isinstance(_cfg, dict):
+                                    _contact_early = str(
+                                        _cfg.get("contact_agent") or _contact_early
+                                    ).strip()
+                                    _id_txt = str(_cfg.get("identity") or "")
+                                    _is_steward_early = is_steward_contact(
+                                        _contact_early
+                                    ) or is_steward_contact(_id_txt)
+                                    if _contact_early:
+                                        self._contact_agent = _contact_early
+                            except Exception:
+                                pass
+                        _hist_est = 0
+                        try:
+                            if self.message_repo is not None:
+                                _msgs = await self.message_repo.get_history_by_session(
+                                    session_id, limit=200
+                                )
+                                _hist_est = sum(
+                                    len(str(getattr(m, "content", "") or "")) // 3
+                                    for m in (_msgs or [])
+                                )
+                        except Exception:
+                            _hist_est = 0
+                        _token_budget = resolve_interactive_chat_budget(
+                            user_input=user_input or "",
+                            is_steward=_is_steward_early,
+                            history_tokens_est=_hist_est,
+                        )
+                        logger.info(
+                            "interactive chat budget auto process_key=%s "
+                            "steward=%s budget=%s hist_est=%s",
+                            str(_akey)[:16],
+                            _is_steward_early,
+                            _token_budget,
+                            _hist_est,
+                        )
+                    except Exception as _be:
+                        logger.debug("interactive budget skip: %s", _be)
+                        _token_budget = 500_000  # safer floor than profile 200k
                 create_kwargs: dict = {
                     "session_id": str(session_id),
                     "parent_id": parent_pid,
                     "capabilities": caps,
-                    "token_budget": proc_opts.get("token_budget"),
+                    "token_budget": _token_budget,
                     "meta": _meta,
                 }
                 # Rust host accepts intent= on create_process
