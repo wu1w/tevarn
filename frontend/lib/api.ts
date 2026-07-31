@@ -1177,8 +1177,30 @@ export async function getRuntimeHealth(): Promise<{
   }>;
   actions?: Array<{ id?: string; label?: string; path?: string; hint?: string }>;
   host?: Record<string, unknown>;
-  sandbox?: Record<string, unknown>;
-  budget?: Record<string, unknown>;
+  sandbox?: {
+    ok?: boolean | null;
+    level?: string;
+    mode?: string;
+    backend?: string;
+    label?: string;
+    note?: string;
+    full_isolation?: boolean;
+    [key: string]: unknown;
+  };
+  budget?: {
+    hard_cap_only?: boolean;
+    soft_renew_enabled?: boolean;
+    soft_renew_max?: number;
+    narrative?: string;
+    [key: string]: unknown;
+  };
+  court?: Record<string, unknown>;
+  degraded_modes?: Array<{
+    id?: string;
+    severity?: string;
+    title?: string;
+    message?: string;
+  }>;
   scenario?: Record<string, unknown>;
 }> {
   const res = await api.get('/kernel/runtime/health');

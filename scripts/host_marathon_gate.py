@@ -160,20 +160,38 @@ def main() -> int:
         pass
     st = k.host_runtime_status() if hasattr(k, "host_runtime_status") else {}
 
-    print(
-        {
-            "cycles": i,
-            "resume_ok": resume_ok,
-            "resume_fail": resume_fail,
-            "rate": round(rate, 4),
-            "min_resume": args.min_resume,
-            "inject_kill": injected,
-            "restart_count": st.get("restart_count"),
-            "metrics": metrics,
-        }
-    )
+    summary = {
+        "cycles": i,
+        "resume_ok": resume_ok,
+        "resume_fail": resume_fail,
+        "rate": round(rate, 4),
+        "min_resume": args.min_resume,
+        "inject_kill": injected,
+        "restart_count": st.get("restart_count"),
+        "metrics": metrics,
+        "product_version": "0.5.0-alpha",
+        "gate": "host_marathon",
+    }
+    print(summary)
+    # Evidence artifact for release dossier
+    try:
+        art = ROOT / "artifacts" / "release-gates"
+        art.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        out = art / f"{stamp}-host-marathon.txt"
+        out.write_text(
+            f"host_marathon_gate\n{summary}\n"
+            f"inject_kill_requested={args.inject_kill}\n"
+            f"hours={args.hours}\n",
+            encoding="utf-8",
+        )
+        ok(f"evidence written {out}")
+    except Exception as e:
+        print(f"  (evidence write skip: {e})")
     if rate + 1e-9 < args.min_resume:
         fail(f"resume rate {rate:.3f} < {args.min_resume}")
+    if args.inject_kill and not injected:
+        fail("inject-kill requested but never fired")
     if not st.get("abi", {}).get("ok", True) and "abi" in st:
         fail("ABI not ok after soak")
     ok("HOST MARATHON GATE PASSED")

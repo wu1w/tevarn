@@ -10,6 +10,30 @@ import os
 from typing import Any
 
 
+_DEV_UNSAFE_WARNED = False
+
+
+def warn_dev_unsafe_once() -> None:
+    """Loud startup banner when escape hatches are open (alpha release polish)."""
+    global _DEV_UNSAFE_WARNED
+    if _DEV_UNSAFE_WARNED:
+        return
+    if not is_dev_unsafe():
+        return
+    _DEV_UNSAFE_WARNED = True
+    import logging
+
+    logging.getLogger("takton.production_guard").warning(
+        "\n"
+        "╔══════════════════════════════════════════════════════════╗\n"
+        "║  TAKTON DEV_UNSAFE / development escape hatch ACTIVE     ║\n"
+        "║  Python kernel fallback & weak guards may be allowed.    ║\n"
+        "║  Do NOT ship this profile. Set TAKTON_FORCE_PRODUCTION   ║\n"
+        "║  _GUARD=1 and clear TAKTON_DEV_UNSAFE for production.    ║\n"
+        "╚══════════════════════════════════════════════════════════╝"
+    )
+
+
 def is_dev_unsafe() -> bool:
     """True only when operator explicitly accepts ungoverned / Python fallback."""
     v = (os.environ.get("TAKTON_DEV_UNSAFE") or "").strip().lower()

@@ -14,7 +14,7 @@
 >
 > **编制预算（弹性）**  
 > - 硬顶默认 **200 万** token/进程（`agent_workforce_budget_hard_cap` / `TAKTON_WORKFORCE_BUDGET_HARD_CAP`）  
-> - **软续航**：用尽前自动 top_up（`agent_budget_soft_renew_*`，默认开，最多 12 次）  
+> - **软续航**：默认 **关**（硬顶优先）；显式打开时 `max≤2`（`agent_budget_soft_renew_*` / host `--soft-renew`）  
 > - CEO：`crew_steward top_up` / `set_budget` / `budgets` 仍可人工治理  
 > - 长 instruction / 马拉松类任务自动抬高开局预算  
 > - 扣费优先 **billable tokens**（cache miss + output；`agent_budget_prefer_billable`）

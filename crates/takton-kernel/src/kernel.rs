@@ -118,12 +118,15 @@ pub struct SoftRenewConfig {
 }
 
 impl Default for SoftRenewConfig {
+    /// Product default (0.5.0-alpha polish): **hard-budget first**.
+    /// Soft renew is off unless host/operator explicitly enables it.
+    /// Marathon / long-job profiles may override with higher max_renew.
     fn default() -> Self {
         Self {
-            enabled: true,
-            max_renew: 12,
+            enabled: false,
+            max_renew: 2,
             factor: 1.0,
-            min_add: 200_000,
+            min_add: 50_000,
             hard_cap: 2_000_000,
         }
     }

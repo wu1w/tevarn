@@ -658,13 +658,13 @@ class AgentKernel:
             from backend.core.config import settings as _st
 
             hard_only = bool(getattr(_st, "agent_budget_hard_cap_only", False))
-            enabled = bool(getattr(_st, "agent_budget_soft_renew_enabled", True)) and not hard_only
-            max_n = int(getattr(_st, "agent_budget_soft_renew_max", 12) or 12)
+            enabled = bool(getattr(_st, "agent_budget_soft_renew_enabled", False)) and not hard_only
+            max_n = int(getattr(_st, "agent_budget_soft_renew_max", 2) or 2)
             factor = float(getattr(_st, "agent_budget_soft_renew_factor", 1.0) or 1.0)
-            min_add = int(getattr(_st, "agent_budget_soft_renew_min_add", 200_000) or 200_000)
+            min_add = int(getattr(_st, "agent_budget_soft_renew_min_add", 50_000) or 50_000)
             hard = int(getattr(_st, "agent_workforce_budget_hard_cap", 2_000_000) or 2_000_000)
         except Exception:
-            enabled, max_n, factor, min_add, hard = True, 12, 1.0, 200_000, 2_000_000
+            enabled, max_n, factor, min_add, hard = False, 2, 1.0, 50_000, 2_000_000
         if not enabled:
             return None
         proc = self._resolve_process(process_id)

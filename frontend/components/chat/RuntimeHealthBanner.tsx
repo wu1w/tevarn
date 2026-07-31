@@ -21,20 +21,42 @@ export function RuntimeHealthBanner({ zh = true }: { zh?: boolean }) {
   });
 
   const data = q.data;
-  if (!data || data.ok || data.severity === 'ok') {
-    // still show soft scenario chip when healthy
-    if (data?.ok && data.scenario) {
-      return (
-        <div
-          className="mx-3 mb-1 text-[10px] text-foreground-dim"
-          data-testid="runtime-health-ok"
-        >
+  if (!data) return null;
+
+  // Healthy path: still surface scenario + budget + sandbox honesty (main chat path)
+  if (data.ok || data.severity === 'ok') {
+    const softOn = Boolean(data.budget?.soft_renew_enabled);
+    const softMax = data.budget?.soft_renew_max ?? 2;
+    const sandLevel = String(data.sandbox?.level || data.sandbox?.backend || '—');
+    const fullIso = data.sandbox?.full_isolation === true;
+    return (
+      <div
+        className="mx-3 mb-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-foreground-dim"
+        data-testid="runtime-health-ok"
+      >
+        <span>
           {zh ? '运行时' : 'Runtime'} · host OK · scenario=
-          {String(data.scenario.id || 'coding_research')}
-        </div>
-      );
-    }
-    return null;
+          {String(data.scenario?.id || 'coding_research')}
+        </span>
+        <span>
+          {zh ? '预算' : 'budget'}:
+          {softOn
+            ? ` soft≤${softMax}`
+            : zh
+              ? ' 硬顶'
+              : ' hard'}
+        </span>
+        <span
+          style={{
+            color: fullIso ? undefined : 'var(--status-warn, #c9a05e)',
+          }}
+          title={String(data.sandbox?.note || data.sandbox?.label || '')}
+        >
+          {zh ? '沙箱' : 'sandbox'}: {sandLevel}
+          {!fullIso && sandLevel !== '—' ? (zh ? '（非完整隔离）' : ' (not full)') : ''}
+        </span>
+      </div>
+    );
   }
 
   const issue = (data.issues && data.issues[0]) || null;

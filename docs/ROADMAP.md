@@ -184,6 +184,9 @@ L0 Kernel（进程 / cap / 调度 / 隔离）████░░░░░░  ~45
 | H4-3 | Scheduler 全局 cap + per-session fair share（解耦 session 锁） | ✅ |
 | H4-4 | Isolation **真 OS 接入**：`spawn_os`/`Child`/`poll`/`kill` + reap；local/os/auto 真进程 | ✅ |
 | H4-5 | Dispatcher：Rust `inbox_claim/reclaim/complete_by_db` + identity_admit；host 在线禁纯 SQL claim | ✅ |
+| H5-1 | Soft renew **硬顶优先**：默认 off / max≤2；host `--soft-renew` 才开 | ✅ |
+| H5-2 | runtime-health：degraded_modes + 沙箱 full/restricted 诚实文案；Chat 主路径可见 | ✅ |
+| H5-3 | 发布前 20 条故障注入清单 + marathon gate 证据落盘 | ✅ 清单；**`--cycles 30 --inject-kill` 已绿**（rate=1.0）；2h soak 待夜间 |
 
 **Host 长稳验收（写死）**
 

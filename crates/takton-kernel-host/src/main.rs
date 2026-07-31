@@ -44,9 +44,17 @@ struct Args {
     #[arg(long, env = "TAKTON_KERNEL_AUDIT_PATH")]
     audit_path: Option<PathBuf>,
 
-    /// Disable soft budget renew.
+    /// Disable soft budget renew (default is already off — hard-budget first).
     #[arg(long)]
     no_soft_renew: bool,
+
+    /// Enable soft budget renew (coding path usually leaves this off).
+    #[arg(long, env = "TAKTON_KERNEL_SOFT_RENEW")]
+    soft_renew: bool,
+
+    /// Soft renew max times when enabled (product cap for day-use: 2).
+    #[arg(long, env = "TAKTON_KERNEL_SOFT_RENEW_MAX", default_value = "2")]
+    soft_renew_max: i32,
 
     /// P0-B: require intent/default readonly when caps omitted (`true`/`false`).
     #[arg(long, env = "TAKTON_KERNEL_REQUIRE_INTENT", default_value = "true")]
@@ -57,8 +65,11 @@ struct Args {
 }
 
 fn build_runtime(args: &Args) -> Arc<Runtime> {
+    // Hard-budget first: soft renew only if --soft-renew / env, and never if --no-soft-renew.
+    let soft_enabled = args.soft_renew && !args.no_soft_renew;
     let soft = SoftRenewConfig {
-        enabled: !args.no_soft_renew,
+        enabled: soft_enabled,
+        max_renew: args.soft_renew_max.clamp(0, 12),
         ..Default::default()
     };
     // Default require_intent=true (P0-B).

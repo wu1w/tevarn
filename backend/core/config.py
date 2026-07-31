@@ -267,17 +267,18 @@ class Settings(BaseSettings):
     agent_workforce_fallback_budget: int = 100_000
     # 编制预算硬顶（CEO 显式 / 自动抬升上限）；可用环境 TAKTON_WORKFORCE_BUDGET_HARD_CAP 覆盖
     agent_workforce_budget_hard_cap: int = 2_000_000
-    # 弹性预算：用尽前自动 top_up，避免长任务硬撞死（CEO 仍可 budgets/top_up 治理）
-    agent_budget_soft_renew_enabled: bool = True
+    # 弹性预算：默认关（硬顶叙事）。长任务/marathon profile 显式打开。
+    # 打开时 max≤2，避免静默续到 hard_cap（发布打磨：证据+默认值）。
+    agent_budget_soft_renew_enabled: bool = False
     # H2-B4：硬顶模式 — 关闭 soft renew，预算用尽即停（与「硬顶」叙事一致）
-    agent_budget_hard_cap_only: bool = False
+    agent_budget_hard_cap_only: bool = True
     # 剩余不足预估 或 已用占比 ≥ 此阈值时尝试续航
     agent_budget_soft_renew_threshold: float = 0.85
     # 每次续航追加 = max(原预算 * factor, min_add, 缺口*2)
     agent_budget_soft_renew_factor: float = 1.0
-    agent_budget_soft_renew_min_add: int = 200_000
-    # 单进程最多自动续航次数（防无限烧）
-    agent_budget_soft_renew_max: int = 12
+    agent_budget_soft_renew_min_add: int = 50_000
+    # 单进程最多自动续航次数（日用 profile 上限 2；marathon 可配置更高）
+    agent_budget_soft_renew_max: int = 2
     # H2-C1：CapabilityToken HMAC 专用密钥（≥16）；空则从 jwt_secret 派生
     agent_token_hmac_secret: str = ""
     # 演化分析阈值（Alpha Review #3：参数化——研发型/运营型身份工作模式

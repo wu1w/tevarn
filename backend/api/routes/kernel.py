@@ -201,7 +201,7 @@ async def governance_status(
     except Exception:
         pass
     hard_only = bool(getattr(settings, "agent_budget_hard_cap_only", False))
-    soft_on = bool(getattr(settings, "agent_budget_soft_renew_enabled", True)) and not hard_only
+    soft_on = bool(getattr(settings, "agent_budget_soft_renew_enabled", False)) and not hard_only
     return {
         "production_guard": is_production_guard(),
         "dev_unsafe": is_dev_unsafe(),
@@ -213,7 +213,7 @@ async def governance_status(
         "allow_kernel_disabled": allow_kernel_disabled(),
         "soft_renew_enabled": soft_on,
         "hard_cap_only": hard_only,
-        "soft_renew_max": int(getattr(settings, "agent_budget_soft_renew_max", 12) or 12),
+        "soft_renew_max": int(getattr(settings, "agent_budget_soft_renew_max", 2) or 2),
         "token_hmac_source": hmac_src,
         "court_rust_required": bool(getattr(settings, "agent_court_rust_required", True)),
         "run_gate_required": bool(getattr(settings, "agent_kernel_run_gate_required", True)),
@@ -2008,7 +2008,7 @@ async def kernel_dashboard(
         else 0,
         "governance": {
             "soft_renew_enabled": bool(
-                getattr(settings, "agent_budget_soft_renew_enabled", True)
+                getattr(settings, "agent_budget_soft_renew_enabled", False)
             )
             and not bool(getattr(settings, "agent_budget_hard_cap_only", False)),
             "hard_cap_only": bool(getattr(settings, "agent_budget_hard_cap_only", False)),

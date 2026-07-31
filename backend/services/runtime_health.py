@@ -88,41 +88,62 @@ def collect_runtime_health() -> dict[str, Any]:
             }
         )
 
-    # ── Sandbox capability ──
-    sandbox: dict[str, Any] = {"ok": True}
+    # ── Sandbox capability (honest: full vs restricted vs none) ──
+    sandbox: dict[str, Any] = {"ok": True, "full_isolation": False, "level": "unknown"}
     try:
         from backend.computer.detect import detect_sandbox_capability
 
         cap = detect_sandbox_capability()
-        # dataclass or dict
+        # dataclass SandboxCapability: mode/level/available/label/note
         available = bool(
             getattr(cap, "available", None)
             or getattr(cap, "ok", None)
             or (isinstance(cap, dict) and (cap.get("available") or cap.get("ok")))
         )
-        backend = getattr(cap, "backend", None) or (
-            cap.get("backend") if isinstance(cap, dict) else None
+        mode = getattr(cap, "mode", None) or (
+            cap.get("mode") if isinstance(cap, dict) else None
         )
+        level = getattr(cap, "level", None) or (
+            cap.get("level") if isinstance(cap, dict) else None
+        ) or ("full" if available else "none")
+        label = getattr(cap, "label", None) or (
+            cap.get("label") if isinstance(cap, dict) else None
+        )
+        note = getattr(cap, "note", None) or (
+            cap.get("note") if isinstance(cap, dict) else ""
+        ) or ""
         sandbox = {
             "ok": available,
-            "backend": backend,
-            "detail": cap if isinstance(cap, dict) else getattr(cap, "__dict__", str(cap)),
+            "backend": mode,
+            "mode": mode,
+            "level": level,
+            "label": label,
+            "note": note,
+            "full_isolation": level == "full",
+            "detail": {
+                "mode": mode,
+                "level": level,
+                "available": available,
+                "label": label,
+                "note": note,
+            },
         }
         if not available:
             from backend.core.config import settings
 
-            mode = str(getattr(settings, "agent_execution_mode", "sandbox") or "sandbox")
-            if mode == "sandbox":
+            exec_mode = str(getattr(settings, "agent_execution_mode", "sandbox") or "sandbox")
+            if exec_mode == "sandbox":
                 issues.append(describe_exit_reason("sandbox_missing"))
                 actions.append(
                     {
                         "id": "sandbox_docs",
                         "label": "沙箱说明",
-                        "hint": "install bubblewrap / enable WSL Job; or agent_execution_mode=local",
+                        "hint": note
+                        or "install bubblewrap / enable WSL Job; or agent_execution_mode=local",
                     }
                 )
     except Exception as e:
-        sandbox = {"ok": None, "error": str(e)}
+        sandbox = {"ok": None, "error": str(e), "full_isolation": False, "level": "unknown"}
 
     # ── Budget policy visibility ──
     budget = {}
@@ -130,28 +151,130 @@ def collect_runtime_health() -> dict[str, Any]:
         from backend.core.config import settings
 
         hard = bool(getattr(settings, "agent_budget_hard_cap_only", False))
-        soft = bool(getattr(settings, "agent_budget_soft_renew_enabled", True)) and not hard
+        soft = bool(getattr(settings, "agent_budget_soft_renew_enabled", False)) and not hard
         budget = {
             "hard_cap_only": hard,
             "soft_renew_enabled": soft,
-            "soft_renew_max": int(getattr(settings, "agent_budget_soft_renew_max", 12) or 12),
+            "soft_renew_max": int(getattr(settings, "agent_budget_soft_renew_max", 2) or 2),
+            "soft_renew_min_add": int(
+                getattr(settings, "agent_budget_soft_renew_min_add", 50_000) or 50_000
+            ),
+            "narrative": "hard_first" if hard or not soft else "soft_renew_active",
         }
+        if soft and int(budget["soft_renew_max"]) > 2:
+            issues.append(
+                {
+                    "code": "soft_renew_loose",
+                    "severity": "warn",
+                    "title": "Soft renew 偏松",
+                    "message": (
+                        f"soft_renew_max={budget['soft_renew_max']}（日用建议 ≤2）。"
+                        "长任务请用 marathon profile，并在 UI 展示续额次数。"
+                    ),
+                    "recovery_hint": "设 agent_budget_soft_renew_max=2 或 hard_cap_only=true",
+                }
+            )
     except Exception:
         budget = {}
 
-    # ── Court mode ──
+    # ── Court mode + escape hatches (red health when degraded) ──
     court = {}
+    degraded_modes: list[dict[str, Any]] = []
     try:
         from backend.core.config import settings
         from backend.kernel.production_guard import is_dev_unsafe, is_production_guard
+        import os
 
+        rust_req = bool(getattr(settings, "agent_court_rust_required", True))
+        prod = is_production_guard()
+        dev_u = is_dev_unsafe()
         court = {
-            "rust_required": bool(getattr(settings, "agent_court_rust_required", True)),
-            "python_tail_locked": is_production_guard() and not is_dev_unsafe(),
-            "production_guard": is_production_guard(),
+            "rust_required": rust_req,
+            "python_tail_locked": prod and not dev_u,
+            "production_guard": prod,
+            "dev_unsafe": dev_u,
         }
+        if dev_u:
+            degraded_modes.append(
+                {
+                    "id": "dev_unsafe",
+                    "severity": "error",
+                    "title": "DEV_UNSAFE",
+                    "message": "生产路径逃生口已打开（Python fallback / 弱守卫可能生效）",
+                }
+            )
+        if not rust_req:
+            degraded_modes.append(
+                {
+                    "id": "court_python",
+                    "severity": "error",
+                    "title": "Court 非 Rust 强制",
+                    "message": "agent_court_rust_required=false — Court 可回落 Python",
+                }
+            )
+        backend_env = (
+            os.environ.get("TAKTON_KERNEL_BACKEND")
+            or getattr(settings, "agent_kernel_backend", "")
+            or ""
+        ).strip().lower()
+        if backend_env == "python":
+            degraded_modes.append(
+                {
+                    "id": "kernel_python",
+                    "severity": "error",
+                    "title": "Kernel backend=python",
+                    "message": "控制平面未走 Rust host",
+                }
+            )
+        if not bool(getattr(settings, "agent_kernel_require_intent", True)):
+            degraded_modes.append(
+                {
+                    "id": "require_intent_off",
+                    "severity": "warn",
+                    "title": "require_intent=false",
+                    "message": "可回到弱 Intent 路径",
+                }
+            )
+        for d in degraded_modes:
+            issues.append(
+                {
+                    "code": d["id"],
+                    "severity": d["severity"],
+                    "title": d["title"],
+                    "message": d["message"],
+                    "recovery_hint": "生产 profile 关闭该开关；仅本地调试使用",
+                }
+            )
     except Exception:
         court = {}
+
+    # Sandbox honesty: restricted ≠ full OS isolation
+    try:
+        level = sandbox.get("level")
+        if level == "restricted":
+            note = str(sandbox.get("note") or "Job/进程管控可用，无完整 FS 隔离")
+            degraded_modes.append(
+                {
+                    "id": "sandbox_restricted",
+                    "severity": "warn",
+                    "title": "沙箱受限（非完整隔离）",
+                    "message": note,
+                }
+            )
+            issues.append(
+                {
+                    "code": "sandbox_restricted",
+                    "severity": "warn",
+                    "title": "沙箱受限模式",
+                    "message": (
+                        "当前不是完整 OS 沙箱（bwrap/seatbelt）。"
+                        "进程可管，文件系统未隔离——勿误以为已进沙箱。"
+                    ),
+                    "recovery_hint": "Linux 安装 bubblewrap；Windows 装 WSL2+bwrap；或接受 restricted 风险",
+                }
+            )
+    except Exception:
+        pass
 
     severity = "ok"
     for i in issues:
@@ -170,6 +293,7 @@ def collect_runtime_health() -> dict[str, Any]:
         "sandbox": sandbox,
         "budget": budget,
         "court": court,
+        "degraded_modes": degraded_modes,
         "issues": issues,
         "actions": actions,
         "scenario": _default_scenario_hint(),

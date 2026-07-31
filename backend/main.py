@@ -332,7 +332,9 @@ async def lifespan(app: FastAPI):
     _assert_password_backend_usable()
     # 统一安全自检：fail 级（如非 loopback + single_user_mode）直接拒绝启动
     from backend.core.security_check import run_startup_security_check
+    from backend.kernel.production_guard import warn_dev_unsafe_once
 
+    warn_dev_unsafe_once()
     run_startup_security_check()
 
     logger.info("=" * 50)

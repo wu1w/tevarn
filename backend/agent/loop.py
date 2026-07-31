@@ -416,7 +416,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     getattr(settings, "agent_budget_hard_cap_only", False)
                 )
                 soft_on = bool(
-                    getattr(settings, "agent_budget_soft_renew_enabled", True)
+                    getattr(settings, "agent_budget_soft_renew_enabled", False)
                 ) and not hard_only
                 need_renew = remaining < estimated or used_ratio >= thr
                 if soft_on and need_renew and remaining < estimated:
