@@ -797,16 +797,21 @@ class RustAgentKernel:
                 fut = _UI_EXECUTOR.submit(self._call_ui, method, params)
                 return fut.result(timeout=max(6.0, _UI_RPC_TIMEOUT * 3))
             except Exception as e:
-                # Degraded empty for list-like UI methods so panels stay up
+                # Degraded empty for list-like UI methods so panels stay up.
+                # Mark degraded so ABI health does not mislabel timeout as missing methods.
                 logger.warning("kernel UI RPC %s failed: %s", method, e)
                 if method == "list_methods":
-                    return {"methods": []}
+                    return {
+                        "methods": [],
+                        "_degraded": True,
+                        "error": str(e)[:200],
+                    }
                 if method == "list_processes":
-                    return {"processes": []}
+                    return {"processes": [], "_degraded": True, "error": str(e)[:200]}
                 if method == "list_escalations":
-                    return {"escalations": []}
+                    return {"escalations": [], "_degraded": True, "error": str(e)[:200]}
                 if method == "health":
-                    return {"ok": False, "error": str(e)[:200]}
+                    return {"ok": False, "error": str(e)[:200], "_degraded": True}
                 if method == "ping":
                     return None
                 raise
@@ -1069,20 +1074,53 @@ class RustAgentKernel:
         methods: list[str] = []
         health: dict[str, Any] = {}
         abi: dict[str, Any] = {"ok": False, "missing": ["unreachable"]}
+        degraded = False
         if up:
             try:
-                methods = self.list_methods()
-                abi = check_required_abi(methods)
-                health = self.health() or {}
+                # Prefer agent RPC path for ABI truth; UI channel may return [] on timeout.
+                raw = self._invoke_call("list_methods") or {}
+                if isinstance(raw, dict) and raw.get("_degraded"):
+                    degraded = True
+                methods = list(
+                    (raw.get("methods") if isinstance(raw, dict) else None) or []
+                )
+                if not methods:
+                    # Fallback UI once
+                    try:
+                        m2 = self.list_methods()
+                        methods = list(m2 or [])
+                    except Exception:
+                        pass
+                if not methods:
+                    degraded = True
+                    abi = {
+                        "ok": False,
+                        "degraded": True,
+                        "error": "host unresponsive (list_methods empty/timeout)",
+                        "missing": [],
+                        "have": 0,
+                        "required": 0,
+                    }
+                else:
+                    abi = check_required_abi(methods)
+                try:
+                    health = self.health() or {}
+                    if isinstance(health, dict) and health.get("_degraded"):
+                        degraded = True
+                except Exception as he:
+                    health = {"error": str(he), "_degraded": True}
+                    degraded = True
             except Exception as e:
-                health = {"error": str(e)}
-                abi = {"ok": False, "error": str(e)}
+                health = {"error": str(e), "_degraded": True}
+                abi = {"ok": False, "degraded": True, "error": str(e), "missing": []}
+                degraded = True
         return {
             "host": self._host,
             "up": up,
             "abi": abi,
             "health": health,
             "methods_count": len(methods),
+            "degraded": degraded,
             "restart_count": int(getattr(self, "_restart_count", 0)),
             "last_health_ok_at": float(getattr(self, "_last_health_ok_at", 0) or 0),
             "acceptance": {

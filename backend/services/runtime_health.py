@@ -78,13 +78,47 @@ def collect_runtime_health() -> dict[str, Any]:
                 "path": "/api/kernel/host/restart",
             }
         )
-    if host_up and not abi_ok and not any(i.get("code") == "host_abi_mismatch" for i in issues):
+    # False positive guard: UI side-channel returns methods=[] on host timeout.
+    # That is "host stuck/unresponsive", NOT a real ABI mismatch (missing methods).
+    methods_count = int(
+        host_status.get("methods_count")
+        or (host_status.get("abi") or {}).get("have")
+        or 0
+    )
+    abi_info = host_status.get("abi") or {}
+    host_error = str(host_status.get("error") or abi_info.get("error") or "")
+    looks_like_timeout = (
+        methods_count == 0
+        or "timeout" in host_error.lower()
+        or "timed out" in host_error.lower()
+        or bool(abi_info.get("degraded"))
+    )
+    if (
+        host_up
+        and not abi_ok
+        and looks_like_timeout
+        and not any(i.get("code") == "host_down" for i in issues)
+    ):
+        issues.append(describe_exit_reason("host_down"))
+        actions.append(
+            {
+                "id": "restart_host",
+                "label": "重启 Host（疑似卡死，非 ABI 缺方法）",
+                "path": "/api/kernel/host/restart",
+            }
+        )
+    elif (
+        host_up
+        and not abi_ok
+        and not looks_like_timeout
+        and not any(i.get("code") == "host_abi_mismatch" for i in issues)
+    ):
         issues.append(describe_exit_reason("host_abi_mismatch"))
         actions.append(
             {
                 "id": "rebuild_host",
                 "label": "重建并 stage Host",
-                "hint": "node scripts/ensure-vendor-host.mjs",
+                "hint": ".\\scripts\\build-kernel-host.ps1 -Release",
             }
         )
 
