@@ -626,6 +626,9 @@ class RustAgentKernel:
         return self._scheduler_proxy
 
     def _call(self, method: str, params: dict[str, Any] | None = None) -> Any:
+        """JSON-RPC with reconnect. Host is single-process in-memory: restart
+        wipes process table — prefer socket reconnect over host kill when possible.
+        """
         try:
             return self._rpc.call(method, params)
         except (
@@ -637,28 +640,63 @@ class RustAgentKernel:
             # 业务拒绝 / 参数错误：禁止当网络故障 reconnect（PermissionError⊂OSError）
             raise
         except (ConnectionError, OSError, BrokenPipeError, TimeoutError, socket.timeout) as e:
-            logger.warning("kernel RPC %s failed (%s); reconnect/retry", method, e)
-            self._rpc.close()
-            # 读超时通常 = host 卡死（端口仍监听但不回包）：必须强杀重启
-            recovered = False
-            try:
-                if isinstance(e, (TimeoutError, socket.timeout)):
-                    recovered = bool(restart_kernel_host(self._host))
-                    self._restart_count = int(getattr(self, "_restart_count", 0)) + 1
-                elif not is_rust_host_available(self._host):
-                    recovered = bool(start_kernel_host(self._host))
-                    if recovered:
-                        self._restart_count = int(getattr(self, "_restart_count", 0)) + 1
-            except Exception as re:
-                logger.debug("host recover after RPC fail: %s", re)
-            self._rpc.connect()
-            if recovered or not getattr(self, "_abi_checked", False):
+            last: BaseException = e
+            for attempt in range(1, 4):
+                logger.warning(
+                    "kernel RPC %s failed (%s); reconnect/retry %s/3",
+                    method,
+                    last,
+                    attempt,
+                )
+                self._rpc.close()
+                recovered = False
                 try:
-                    self._assert_abi_or_fail()
-                except Exception as abi_e:
-                    logger.error("post-restart ABI gate failed: %s", abi_e)
+                    # Timeout / dead port → restart host; 10053/10054 with port still
+                    # open → just re-open TCP (avoid wiping process table).
+                    host_up = bool(is_rust_host_available(self._host))
+                    if isinstance(last, (TimeoutError, socket.timeout)):
+                        recovered = bool(restart_kernel_host(self._host))
+                        self._restart_count = int(getattr(self, "_restart_count", 0)) + 1
+                    elif not host_up:
+                        recovered = bool(start_kernel_host(self._host))
+                        if recovered:
+                            self._restart_count = (
+                                int(getattr(self, "_restart_count", 0)) + 1
+                            )
+                    elif attempt >= 3:
+                        # last ditch: full restart
+                        recovered = bool(restart_kernel_host(self._host))
+                        self._restart_count = int(getattr(self, "_restart_count", 0)) + 1
+                except Exception as re:
+                    logger.debug("host recover after RPC fail: %s", re)
+                try:
+                    self._rpc.connect()
+                    if recovered or not getattr(self, "_abi_checked", False):
+                        try:
+                            self._assert_abi_or_fail()
+                        except Exception as abi_e:
+                            logger.error("post-restart ABI gate failed: %s", abi_e)
+                            last = abi_e
+                            continue
+                    return self._rpc.call(method, params)
+                except (
+                    KernelPermissionError,
+                    BudgetExceededError,
+                    CapabilityEscalationError,
+                    ValueError,
+                ):
                     raise
-            return self._rpc.call(method, params)
+                except (
+                    ConnectionError,
+                    OSError,
+                    BrokenPipeError,
+                    TimeoutError,
+                    socket.timeout,
+                ) as e2:
+                    last = e2
+                    time.sleep(0.05 * attempt)
+                    continue
+            raise last
 
     def host_watchdog_ping(self) -> dict[str, Any]:
         """Lightweight liveness for long-run; restarts on timeout once."""
