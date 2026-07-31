@@ -63,6 +63,11 @@ TOOL_TO_CREW_CAP: dict[str, str] = {
     "delegate_task": "delegate_task",
     "cronjob": "cronjob",
     "computer": "computer",
+    # Main-chat orchestration (parity with Rust tool_catalog + coding profile)
+    "crew_steward": "crew_steward",
+    "clarify": "crew_steward",
+    "use_tool_pack": "use_tool_pack",
+    "current_time": "current_time",
 }
 
 

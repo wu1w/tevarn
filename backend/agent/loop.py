@@ -866,7 +866,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         "chat",
                     ):
                         if hasattr(kernel, "_call"):
-                            kernel._call(
+                            applied = kernel._call(
                                 "coding_profile_apply",
                                 {
                                     "process_id": kernel_proc.id,
@@ -874,19 +874,36 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                                 },
                             )
                         elif hasattr(kernel, "coding_profile_apply"):
-                            kernel.coding_profile_apply(kernel_proc.id, profile)
+                            applied = kernel.coding_profile_apply(
+                                kernel_proc.id, profile
+                            )
+                        else:
+                            applied = None
                         fresh = kernel.get_process(kernel_proc.id)
                         if fresh is not None:
                             kernel_proc = fresh
                             self._kernel_process = kernel_proc
+                        # Token/tool surface sync: orchestration tools (crew_steward)
+                        # must appear in process.capabilities after profile apply.
+                        caps_now = list(getattr(kernel_proc, "capabilities", None) or [])
+                        if "crew_steward" not in caps_now:
+                            logger.warning(
+                                "coding_profile applied but crew_steward missing "
+                                "from token process=%s caps=%s applied=%s — "
+                                "tool packs will deny orchestration",
+                                kernel_proc.id[:8],
+                                caps_now[:16],
+                                applied,
+                            )
                         logger.info(
-                            "scenario=%s coding_profile=%s process=%s",
+                            "scenario=%s coding_profile=%s process=%s caps=%s",
                             scenario,
                             profile,
                             kernel_proc.id[:8],
+                            caps_now[:16],
                         )
                 except Exception as _sc:
-                    logger.debug("coding profile apply skip: %s", _sc)
+                    logger.warning("coding profile apply skip: %s", _sc)
             except Exception as e:
                 # H-03：Agent 正式 run 要求 kernel 时不得静默退回无门控路径
                 require_kernel = bool(

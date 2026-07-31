@@ -34,6 +34,11 @@ impl CodingProfile {
                 "command".into(),
                 "python".into(),
                 "git".into(),
+                // Always-on orchestration surface (matches tool_policy coding pack)
+                "crew_steward".into(),
+                "clarify".into(),
+                "use_tool_pack".into(),
+                "current_time".into(),
             ],
             capabilities: vec![
                 "file_read".into(),
@@ -42,6 +47,10 @@ impl CodingProfile {
                 "terminal".into(),
                 "command".into(),
                 "file_rw".into(),
+                "crew_steward".into(),
+                "clarify".into(),
+                "use_tool_pack".into(),
+                "current_time".into(),
             ],
             isolation: IsolationProfile::Interactive.as_str().into(),
             token_budget: 200_000,

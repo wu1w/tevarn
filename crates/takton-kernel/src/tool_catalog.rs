@@ -48,6 +48,11 @@ pub static TOOL_TO_CREW_CAP: &[(&str, &str)] = &[
     ("delegate_task", "delegate_task"),
     ("cronjob", "cronjob"),
     ("computer", "computer"),
+    // Main-chat orchestration (must stay in sync with tool_policy + coding profile)
+    ("crew_steward", "crew_steward"),
+    ("clarify", "crew_steward"),
+    ("use_tool_pack", "use_tool_pack"),
+    ("current_time", "current_time"),
 ];
 
 fn map() -> BTreeMap<&'static str, &'static str> {

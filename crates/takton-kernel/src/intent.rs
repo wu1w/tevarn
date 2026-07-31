@@ -19,6 +19,11 @@ pub static DEFAULT_GRANTABLE: &[&str] = &[
     "memory",
     "knowledge_search",
     "wiki_search",
+    // Main-chat orchestration (tool packs always inject these; token must match)
+    "crew_steward",
+    "clarify",
+    "use_tool_pack",
+    "current_time",
 ];
 
 pub static RISKY_CAPABILITIES: &[&str] = &[
