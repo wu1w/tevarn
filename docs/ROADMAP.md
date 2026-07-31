@@ -1,12 +1,12 @@
 # Takton 路线图 · 0.5.0-alpha 之后
 
-**版本基准**：`0.6.0-alpha`（`backend/VERSION`）  
+**版本基准**：`0.5.0-alpha`（`backend/VERSION`）  
 **分支**：[`feature/agent-kernel`](https://github.com/wu1w/takton/tree/feature/agent-kernel)  
-**文档版本**：2026-07-31（0.6 P0 收口）  
+**文档版本**：2026-07-31（P0 里程碑收口；**产品版本号维持 0.5.0-alpha**）  
 **定位**：本地优先、可审计、可治理的 **Personal Agent Runtime / 工作站**（Agent OS 方向）。  
 不是聊天套壳，也不是官方 Coding Agent 克隆。
 
-**关联文档**：[RELEASE_0.5.0-alpha](./RELEASE_0.5.0-alpha.md) · [KERNEL_RUST](./KERNEL_RUST.md) · [kernel-abi-v1](./kernel-abi-v1.md) · [agent-sdk](./agent-sdk.md) · [TECHNICAL_MANUAL](./TECHNICAL_MANUAL.md)
+**关联文档**：[RELEASE_0.5.0-alpha](./RELEASE_0.5.0-alpha.md) · [P0 交付说明](./RELEASE_0.6.0-alpha.md) · [KERNEL_RUST](./KERNEL_RUST.md) · [kernel-abi-v1](./kernel-abi-v1.md) · [agent-sdk](./agent-sdk.md) · [TECHNICAL_MANUAL](./TECHNICAL_MANUAL.md)
 
 ---
 
@@ -44,15 +44,15 @@
 | 阶段 | AIOS 完成度（自评） | 标志 |
 |------|-------------------|------|
 | 0.4.x | ~40% | Kernel 思想；偏权限网关 + 应用编排 |
-| **0.5.0-alpha** | **~48%** | 双端控制平面 + ABI + Phase H 打磨 |
-| **0.6.0-alpha（现在）** | **~55%** | **最小可用 AIOS Runtime**：Intent 闭环 · run_gate 调度 · 默认隔离 · 资源硬拒+审计 |
-| 0.7 | ~62% | 长程可靠 + 成本可观测（marathon / cache / 三维成本） |
+| 0.5 + Phase H | ~48% | 双端控制平面 + ABI + H 打磨 |
+| **0.5.0-alpha + P0（现在）** | **~55%** | 产品版本仍为 **0.5.0-alpha**；路线图 P0/「0.6」验收：Intent 闭环 · run_gate · 默认隔离 · 资源硬拒+审计 |
+| 0.7（路线图） | ~62% | 长程可靠 + 成本可观测（**不自动升产品号**） |
 | 0.8 | ~70% | 多 Agent 协作产品化 + Eval 驱动演进 |
 | 0.9 | ~78% | 人机协作与 Coding Profile 打透 |
 | 1.0 | ~85%+ | 稳定 ABI/SDK、日用文档、可选 WASM 技能常态 |
 
-> 第一性原理：**广度（零件）已接近半个 AIOS；深度（默认可依赖）仍是瓶颈。**  
-> 下一里程碑不是「再堆切片」，而是 **0.6：把 Kernel 做成真正的生命支持系统**。
+> **产品版本号**与**路线图阶段名**分离：当前对外版本固定 **0.5.0-alpha**，直至明确发布决策再升号。  
+> 下一路线图阶段：**0.7 长程/成本**（§6）。
 
 ### 1.2 分层成熟度
 
@@ -71,8 +71,8 @@ L0 Kernel（进程 / cap / 调度 / 隔离）████░░░░░░  ~45
 | ≤0.4.9 | Run / Court / Crew / 多后端沙箱 | 应用级治理 Runtime |
 | 0.4.10 | Phase 对齐、弹性预算 soft_renew、公开文档瘦身 | 长任务可跑、仓库可开源 |
 | 0.4.11 | 多 Provider Profile / cache / billable | 成本与配额侧（计费意识） |
-| **0.5.0-alpha** | Rust host、tool_gate、资源、WASM、包信任、P1/P2 大量切片 | **控制平面形态**出现 |
-| **→ 0.6** | P0 默认路径验收 | **最小可用 AIOS Runtime** |
+| **0.5.0-alpha** | Rust host、Phase H、P0 验收（cap_tools / resource_denied / tools 门控） | 控制平面 + **最小 AIOS Runtime 路径**（版本号仍 0.5.0-alpha） |
+| → 路线图 0.7+ | 长程 / 成本 / 多 Agent 产品化 | 仍可维持 0.5.x 产品号直至 GA 决策 |
 | → 1.0 | ABI 稳定 + 日用 | Personal Agent Runtime GA |
 
 ### 1.4 能力矩阵（切片 vs 默认可依赖）
@@ -392,4 +392,5 @@ Week 11–12 R-01/H-11       结果落盘 + cache 仪表；0.6 验收清单打�
 | 2026-07-31 | 初版：0.4.11 + Rust Kernel 0.1 综合意见 |
 | 2026-07-31 | **重写**：以 0.5.0-alpha 为基准；区分切片/默认可依赖；主线改为 H 打磨 → 0.6 验收；P1/P2 改为产品化阶段 |
 | 2026-07-31 | **阶段 H 收口**：H-01…H-14 实现/单测/CI/文档勾选；H-07/H-09 标切片、0.6 加深 |
-| 2026-07-31 | **0.6.0-alpha P0 收口**：cap_tools / resource_denied / tools API 门控 / 验收单测；版本升 0.6.0-alpha |
+| 2026-07-31 | **P0 里程碑收口**（产品版本维持 **0.5.0-alpha**）：cap_tools / resource_denied / tools API 门控 / 验收单测 |
+| 2026-07-31 | 明确：路线图阶段名与产品号解耦，不因 P0 升号 |

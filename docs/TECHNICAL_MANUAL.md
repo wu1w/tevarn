@@ -1,9 +1,9 @@
 # Takton 技术手册
 
-版本：**0.6.0-alpha**  
+版本：**0.5.0-alpha**  
 更新：2026-07-31  
 
-> **路线图**：[docs/ROADMAP.md](./ROADMAP.md)（0.5.x 打磨 → 0.6 最小 AIOS Runtime → 1.0）  
+> **路线图**：[docs/ROADMAP.md](./ROADMAP.md)（产品版本 **0.5.0-alpha**；P0 已收口 → 0.7 长程/成本 → 1.0）  
 >
 > **执行模型（现行）**  
 > **一切执行都是 Run**；Identity 是执行者；Cluster/SubAgent/Hire 是编排形态；Workflow 是 Run 模板。  

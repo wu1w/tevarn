@@ -1,11 +1,14 @@
-# Takton 0.6.0-alpha · 最小可用 AIOS Runtime（P0）
+# P0 里程碑交付说明（产品版本仍为 0.5.0-alpha）
 
-**分支**：[`feature/agent-kernel`](https://github.com/wu1w/takton/tree/feature/agent-kernel)  
-**基准**：0.5.0-alpha + Phase H 打磨
+**产品版本**：`0.5.0-alpha`（`backend/VERSION`，不因本里程碑升号）  
+**路线图里程碑**：§5 · 0.6 最小可用 AIOS Runtime（P0）  
+**分支**：[`feature/agent-kernel`](https://github.com/wu1w/takton/tree/feature/agent-kernel)
+
+> 文件名保留 `RELEASE_0.6.0-alpha` 仅对应 **路线图阶段名**；对外/安装包版本号以 `0.5.0-alpha` 为准。
 
 ---
 
-## 本版要点
+## 本里程碑要点
 
 | 项 | 说明 |
 |----|------|
@@ -20,11 +23,12 @@
 ## 测试
 
 - `cargo test -p takton-kernel --lib` — 绿  
-- `pytest backend/tests` — 绿（无 host 时 ABI/host 用例 skip）  
 - Phase H + P0 acceptance 单测 — 绿  
+- 全量 `backend/tests`（无 host 时 ABI 相关 skip）  
 
 ---
 
-## 后续（0.7）
+## 后续
 
-长程 checkpoint / 成本面板 / marathon 指标 — 见 [ROADMAP.md](./ROADMAP.md) §6。
+产品版本继续 **0.5.0-alpha**，按 ROADMAP 推进 **0.7 长程/成本**（§6）。  
+总览见 [ROADMAP.md](./ROADMAP.md)。
