@@ -574,6 +574,9 @@ class RustAgentKernel:
             self._rpc.connect(attempts=8, connect_timeout=0.8)
         self._abi_checked = False
         self._restart_count = 0
+        # Bumped on every host process restart — loops use this to rehydrate
+        # process handles after in-memory process table wipe.
+        self._host_epoch = 0
         self._last_health_ok_at = 0.0
         self._assert_abi_or_fail()
         self._configure_pkg_signing()
@@ -656,17 +659,26 @@ class RustAgentKernel:
                     host_up = bool(is_rust_host_available(self._host))
                     if isinstance(last, (TimeoutError, socket.timeout)):
                         recovered = bool(restart_kernel_host(self._host))
-                        self._restart_count = int(getattr(self, "_restart_count", 0)) + 1
+                        if recovered:
+                            self._restart_count = (
+                                int(getattr(self, "_restart_count", 0)) + 1
+                            )
+                            self._host_epoch = int(getattr(self, "_host_epoch", 0)) + 1
                     elif not host_up:
                         recovered = bool(start_kernel_host(self._host))
                         if recovered:
                             self._restart_count = (
                                 int(getattr(self, "_restart_count", 0)) + 1
                             )
+                            self._host_epoch = int(getattr(self, "_host_epoch", 0)) + 1
                     elif attempt >= 3:
                         # last ditch: full restart
                         recovered = bool(restart_kernel_host(self._host))
-                        self._restart_count = int(getattr(self, "_restart_count", 0)) + 1
+                        if recovered:
+                            self._restart_count = (
+                                int(getattr(self, "_restart_count", 0)) + 1
+                            )
+                            self._host_epoch = int(getattr(self, "_host_epoch", 0)) + 1
                 except Exception as re:
                     logger.debug("host recover after RPC fail: %s", re)
                 try:

@@ -971,6 +971,13 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         )
                 except Exception as _sc:
                     logger.warning("coding profile apply skip: %s", _sc)
+                # Track host epoch so tools can rehydrate after host restart
+                try:
+                    self._kernel_host_epoch = int(
+                        getattr(kernel, "_host_epoch", 0) or 0
+                    )
+                except Exception:
+                    self._kernel_host_epoch = 0
             except Exception as e:
                 # H-03：Agent 正式 run 要求 kernel 时不得静默退回无门控路径
                 require_kernel = bool(
