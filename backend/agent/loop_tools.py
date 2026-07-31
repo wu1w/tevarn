@@ -223,10 +223,30 @@ class LoopToolsMixin:
                     # Invalidate cached epoch so ensure always recreates
                     self._kernel_host_epoch = -1
                     if attempt > 1:
-                        await asyncio.sleep(0.2 * attempt)
+                        # Host needs settle time after closed-connection storms;
+                        # 0.2s was too short and rehydrate immediately re-failed.
+                        await asyncio.sleep(0.6 * attempt)
                     kernel_proc = await self._ensure_live_kernel_process(arguments)
                     if kernel_proc is None:
                         continue
+                    # Verify process is actually visible on host before gate
+                    try:
+                        from backend.kernel import get_kernel as _gk
+
+                        _k = _gk()
+                        live = _k.get_process(str(kernel_proc.id))
+                        if live is None:
+                            logger.warning(
+                                "rehydrate id not visible on host yet id=%s attempt=%s",
+                                str(kernel_proc.id)[:12],
+                                attempt,
+                            )
+                            await asyncio.sleep(0.3)
+                            continue
+                        kernel_proc = live
+                        self._kernel_process = live
+                    except Exception as ve:
+                        logger.debug("post-rehydrate verify skip: %s", ve)
                     arguments["_kernel_process_id"] = kernel_proc.id
                     arguments.pop("_tool_gate_passed", None)
                     arguments.pop("_tool_gate_internal", None)

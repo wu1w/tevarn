@@ -17,14 +17,30 @@ from typing import Any, Literal
 logger = logging.getLogger(__name__)
 
 DEFAULT_HOST = os.environ.get("TAKTON_KERNEL_HOST", "127.0.0.1:17890")
-_RPC_TIMEOUT = float(os.environ.get("TAKTON_KERNEL_RPC_TIMEOUT", "10"))
+_RPC_TIMEOUT = float(os.environ.get("TAKTON_KERNEL_RPC_TIMEOUT", "20"))
 # Full host restart wipes the in-memory process table. Concurrent RPC failures
 # must not thrash-restart (taskkill) the host — that was the assign "未知进程
 # (host reconnect)" cascade. Soft reconnect first; hard restart only when the
 # port is dead or the host is proven unresponsive after soft retries.
-_RESTART_COOLDOWN_S = float(os.environ.get("TAKTON_KERNEL_RESTART_COOLDOWN", "3.0"))
+_RESTART_COOLDOWN_S = float(os.environ.get("TAKTON_KERNEL_RESTART_COOLDOWN", "8.0"))
 _recovery_lock = threading.Lock()
 _last_hard_restart_at = 0.0
+# Background / best-effort RPCs must NEVER hard-restart the host (they race with
+# CEO mediate/rehydrate and produce closed-connection storms).
+_SOFT_ONLY_METHODS = frozenset(
+    {
+        "inbox_reclaim",
+        "isolation_reap",
+        "doom_record",
+        "emit",
+        "audit_append",
+        "ping",
+        "health",
+        "list_methods",
+        "list_processes",
+        "get_process",
+    }
+)
 
 # 必须与 backend.kernel 共用同一异常类：
 # 1) tool_gate `except KernelPermissionError` 才能命中
@@ -582,6 +598,9 @@ class RustAgentKernel:
     def __init__(self, host: str = DEFAULT_HOST, *, auto_start: bool = True) -> None:
         self._host = host
         self._rpc = _JsonRpcClient(host)
+        # Serialize ALL RPC + recovery: concurrent close/reconnect was tearing down
+        # the shared socket mid-rehydrate (CEO assign storm in logs).
+        self._call_lock = threading.RLock()
         self.identity_registry: Any | None = None
         self._scheduler_proxy = _SchedulerProxy(self)
         if auto_start and not is_rust_host_available(host):
@@ -686,38 +705,48 @@ class RustAgentKernel:
         return ok
 
     def _host_responsive(self, timeout: float = 1.5) -> bool:
-        """Cheap liveness: port open + ping within short timeout (no restart)."""
+        """Liveness via main socket only (no second TCP client).
+
+        A throwaway probe socket raced with the main client and contributed to
+        closed-connection storms under load.
+        """
         if not is_rust_host_available(self._host):
             return False
-        probe: _JsonRpcClient | None = None
         try:
-            # Throwaway socket so a stuck main RPC socket cannot poison the probe.
-            probe = _JsonRpcClient(self._host)
-            probe.connect(attempts=2, connect_timeout=0.4)
-            if probe._sock is not None:
-                probe._sock.settimeout(timeout)
-            pong = probe.call("ping")
+            self._rpc.close()
+            self._rpc.connect(attempts=2, connect_timeout=0.4)
+            if self._rpc._sock is not None:
+                self._rpc._sock.settimeout(timeout)
+            pong = self._rpc.call("ping")
+            # restore normal RPC timeout
+            if self._rpc._sock is not None:
+                self._rpc._sock.settimeout(_RPC_TIMEOUT)
             return pong is not None
         except Exception as e:
             logger.debug("host responsive probe failed: %s", e)
+            try:
+                if self._rpc._sock is not None:
+                    self._rpc._sock.settimeout(_RPC_TIMEOUT)
+            except Exception:
+                pass
             return False
-        finally:
-            if probe is not None:
-                try:
-                    probe.close()
-                except Exception:
-                    pass
 
     def _call(self, method: str, params: dict[str, Any] | None = None) -> Any:
         """JSON-RPC with reconnect. Host is single-process in-memory: restart
         wipes process table — prefer socket reconnect over host kill when possible.
 
-        Recovery policy (assign-channel fix):
-        1. Soft TCP reconnect first (10053/10054/timeout while port still up)
-        2. Start host if port dead
-        3. Hard restart only after soft retries fail AND host is unresponsive
-           (or last-ditch attempt 3). Cooldown prevents thrash restarts.
+        Recovery policy (CEO assign stability):
+        1. Entire call+recovery under one RLock (no concurrent close storms)
+        2. Soft TCP reconnect first
+        3. Start host if port dead
+        4. Hard restart ONLY for non-background methods, after soft fails AND
+           host unresponsive; long cooldown + settle
         """
+        with self._call_lock:
+            return self._call_locked(method, params)
+
+    def _call_locked(self, method: str, params: dict[str, Any] | None = None) -> Any:
+        soft_only = method in _SOFT_ONLY_METHODS
         try:
             return self._rpc.call(method, params)
         except (
@@ -730,37 +759,49 @@ class RustAgentKernel:
             raise
         except (ConnectionError, OSError, BrokenPipeError, TimeoutError, socket.timeout) as e:
             last: BaseException = e
-            for attempt in range(1, 4):
+            max_attempts = 2 if soft_only else 3
+            for attempt in range(1, max_attempts + 1):
                 logger.warning(
-                    "kernel RPC %s failed (%s); reconnect/retry %s/3",
+                    "kernel RPC %s failed (%s); reconnect/retry %s/%s soft_only=%s",
                     method,
                     last,
                     attempt,
+                    max_attempts,
+                    soft_only,
                 )
                 self._rpc.close()
                 recovered_hard = False
                 try:
                     host_up = bool(is_rust_host_available(self._host))
                     is_timeout = isinstance(last, (TimeoutError, socket.timeout))
-                    # Prefer soft reconnect: timeout often means host was busy or
-                    # the socket stalled — hard restart was wiping process table
-                    # mid-assign and cascading rehydrate failures.
                     if not host_up:
                         started = bool(start_kernel_host(self._host))
                         if started:
-                            # New process (or resurrected) → treat as wipe risk
                             self._mark_host_wiped()
                             recovered_hard = True
-                    elif is_timeout and attempt >= 2 and not self._host_responsive():
-                        # Port open but ping dead → truly stuck
+                            time.sleep(0.15)  # settle after spawn
+                    elif (
+                        not soft_only
+                        and is_timeout
+                        and attempt >= 2
+                        and not self._host_responsive()
+                    ):
                         recovered_hard = self._hard_recover_host(
                             reason=f"timeout+unresponsive method={method}"
                         )
-                    elif attempt >= 3 and not self._host_responsive(timeout=1.0):
+                        if recovered_hard:
+                            time.sleep(0.25)
+                    elif (
+                        not soft_only
+                        and attempt >= max_attempts
+                        and not self._host_responsive(timeout=1.0)
+                    ):
                         recovered_hard = self._hard_recover_host(
                             reason=f"last-ditch method={method} err={type(last).__name__}"
                         )
-                    # else: soft reconnect only (attempt 1 timeout, 10053/10054, …)
+                        if recovered_hard:
+                            time.sleep(0.25)
+                    # else: soft reconnect only
                 except Exception as re:
                     logger.debug("host recover after RPC fail: %s", re)
                 try:
@@ -791,7 +832,7 @@ class RustAgentKernel:
                     socket.timeout,
                 ) as e2:
                     last = e2
-                    time.sleep(0.15 * attempt)
+                    time.sleep(0.2 * attempt)
                     continue
             raise last
 
