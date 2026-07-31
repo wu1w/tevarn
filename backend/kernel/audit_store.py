@@ -24,27 +24,47 @@ _MAX_BYTES = int(os.environ.get("TAKTON_AUDIT_MAX_BYTES", str(32 * 1024 * 1024))
 _KEEP_SEGMENTS = int(os.environ.get("TAKTON_AUDIT_KEEP_SEGMENTS", "7") or 7)
 
 
+def _worm_enabled() -> bool:
+    v = (os.environ.get("TAKTON_AUDIT_WORM") or "").strip().lower()
+    return v in ("1", "true", "yes", "on")
+
+
 class AuditEventStore:
-    """线程安全的 JSONL 追加存储 + 链尾恢复 + 按大小 rotation。"""
+    """线程安全的 JSONL 追加存储 + 链尾恢复 + rotation + 可选 WORM/锚点。"""
 
     def __init__(self, path: str | None = None) -> None:
         self._path = path or _DEFAULT_PATH
         self._lock = threading.Lock()
         self._max_bytes = _MAX_BYTES
         self._keep = max(1, _KEEP_SEGMENTS)
+        self._worm = _worm_enabled()
+        self._anchor_path = self._path + ".anchor.json"
 
     @property
     def path(self) -> str:
         return self._path
 
+    def worm(self) -> bool:
+        return self._worm
+
     def _rotate_if_needed(self) -> None:
-        """When active file exceeds max_bytes, rename to .1.jsonl and cascade."""
+        """When active file exceeds max_bytes, rotate (WORM never deletes)."""
         try:
             if not os.path.isfile(self._path):
                 return
             if os.path.getsize(self._path) < self._max_bytes:
                 return
             base = self._path
+            if self._worm:
+                import time as _t
+
+                sealed = f"{base}.worm.{int(_t.time())}"
+                try:
+                    os.replace(base, sealed)
+                    logger.info("WORM audit sealed %s → %s", base, sealed)
+                except OSError as e:
+                    logger.warning("WORM seal failed: %s", e)
+                return
             # cascade: .(keep-1) <- ... <- .1 <- active
             for i in range(self._keep - 1, 0, -1):
                 src = f"{base}.{i}"
@@ -56,7 +76,6 @@ class AuditEventStore:
                         os.replace(src, dst)
                     except OSError:
                         pass
-            # drop oldest beyond keep
             oldest = f"{base}.{self._keep + 1}"
             if os.path.isfile(oldest):
                 try:
@@ -74,6 +93,49 @@ class AuditEventStore:
         except OSError as e:
             logger.debug("audit rotate check: %s", e)
 
+    def write_anchor(self, tip_hash: str, prev_hash: str = "") -> bool:
+        """External anchor tip for offline integrity (not WORM of content itself)."""
+        try:
+            import hashlib
+            import time as _t
+
+            body = {
+                "tip_hash": tip_hash,
+                "prev_hash": prev_hash or "",
+                "path": self._path,
+                "worm": self._worm,
+                "anchored_at": _t.time(),
+                "schema": "takton-audit-anchor-v1",
+            }
+            raw = json.dumps(body, sort_keys=True, ensure_ascii=False)
+            body["anchor_hash"] = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+            os.makedirs(os.path.dirname(self._anchor_path) or ".", exist_ok=True)
+            with open(self._anchor_path, "w", encoding="utf-8") as f:
+                json.dump(body, f, ensure_ascii=False, indent=2)
+            return True
+        except OSError as e:
+            logger.debug("anchor write: %s", e)
+            return False
+
+    def verify_anchor(self) -> dict[str, Any]:
+        tail = self.load_tail_hash()
+        tip = None
+        try:
+            if os.path.isfile(self._anchor_path):
+                with open(self._anchor_path, encoding="utf-8") as f:
+                    tip = (json.load(f) or {}).get("tip_hash")
+        except Exception:
+            tip = None
+        ok = (tail == tip) if (tail or tip) else True
+        return {
+            "ok": ok,
+            "worm": self._worm,
+            "tail_hash": tail,
+            "anchor_tip": tip,
+            "anchor_path": self._anchor_path,
+            "audit_path": self._path,
+        }
+
     def append(self, event_dict: dict[str, Any]) -> bool:
         """追加一条事件。返回是否成功（失败告警不抛）。"""
         try:
@@ -83,6 +145,9 @@ class AuditEventStore:
                 self._rotate_if_needed()
                 with open(self._path, "a", encoding="utf-8") as f:
                     f.write(line + "\n")
+                h = str(event_dict.get("hash") or "")
+                if h:
+                    self.write_anchor(h, str(event_dict.get("prev_hash") or ""))
             return True
         except OSError as e:
             logger.warning("kernel 审计落盘失败（不阻断）: %s", e)

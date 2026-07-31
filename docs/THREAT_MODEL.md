@@ -54,7 +54,10 @@
 | Permission Court + mediate | ✅ | 路径 key 不全时的旁路（H2 已扩展 key） |
 | Intent → schema 裁剪 | ✅ H2 | DEV_UNSAFE 仍可全开 |
 | 生产禁止 Python fallback | ✅ H2 | 显式 `TAKTON_KERNEL_BACKEND=python` 可绕过 |
-| 审计哈希链 + rotation | ✅ H2 切片 | 非 WORM；攻击者可删文件 |
+| 审计哈希链 + rotation | ✅ H2 | `TAKTON_AUDIT_WORM=1` 永不删段；外部 `*.anchor.json` 锚定 tip |
+| Context/Memory 隔离 | ✅ | process/identity namespace；跨身份 deny |
+| 多设备 sync | ✅ LWW | 需双方在线/传 envelope；非端到端加密通道 |
+| 工具结果 spill | ✅ 激进默认 | 句柄可 `result_load`；磁盘在 `~/.takton/tool_results` |
 | 包签名 / require_secure | ✅ | insecure_default 仅开发 |
 
 ---

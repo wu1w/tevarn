@@ -274,13 +274,130 @@ async def context_status_api(
     process_id: str,
     current_user: Annotated[UserRead, Depends(get_current_user)],
 ):
-    """上下文 VM 状态（配额/页）。"""
+    """上下文 VM 状态（配额/页/隔离）。"""
     k = get_kernel()
     if hasattr(k, "_call"):
         pages = k._call("context_list_pages", {"process_id": process_id}) or {}
-        st = k._call("context_status") or {}
+        st = k._call("context_status", {"process_id": process_id}) or {}
         return {"process_id": process_id, "pages": pages, "status": st}
     return {"process_id": process_id, "pages": {}, "status": {}}
+
+
+@router.post("/sys/context/schedule")
+async def context_schedule_api(
+    body: dict[str, Any],
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """内核调度 tick：LRU 换出 / 冷页老化。"""
+    k = get_kernel()
+    if not hasattr(k, "_call"):
+        raise HTTPException(status_code=503, detail="kernel host required")
+    pid = body.get("process_id")
+    return k._call("context_schedule", {"process_id": pid} if pid else {}) or {}
+
+
+@router.post("/sys/memory/schedule")
+async def memory_schedule_api(
+    body: dict[str, Any],
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """记忆调度：consolidate + working GC。"""
+    k = get_kernel()
+    if not hasattr(k, "_call"):
+        raise HTTPException(status_code=503, detail="kernel host required")
+    identity = body.get("identity")
+    return (
+        k._call("memory_layer_schedule", {"identity": identity} if identity else {})
+        or {}
+    )
+
+
+@router.get("/device-sync/status")
+async def device_sync_status_api(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    k = get_kernel()
+    if hasattr(k, "_call"):
+        return k._call("device_sync_status") or {}
+    return {}
+
+
+@router.get("/device-sync/devices")
+async def device_sync_list_api(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    k = get_kernel()
+    if hasattr(k, "_call"):
+        return k._call("device_sync_list") or {}
+    return {"devices": []}
+
+
+@router.post("/device-sync/push")
+async def device_sync_push_api(
+    body: dict[str, Any],
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    k = get_kernel()
+    if not hasattr(k, "_call"):
+        raise HTTPException(status_code=503, detail="kernel host required")
+    return (
+        k._call(
+            "device_sync_push",
+            {
+                "identity": body.get("identity") or "main",
+                "to_device": body.get("to_device"),
+            },
+        )
+        or {}
+    )
+
+
+@router.post("/device-sync/pull")
+async def device_sync_pull_api(
+    body: dict[str, Any],
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    k = get_kernel()
+    if not hasattr(k, "_call"):
+        raise HTTPException(status_code=503, detail="kernel host required")
+    return (
+        k._call(
+            "device_sync_pull",
+            {
+                "identity": body.get("identity") or "main",
+                "since_revision": body.get("since_revision"),
+            },
+        )
+        or {}
+    )
+
+
+@router.post("/device-sync/apply")
+async def device_sync_apply_api(
+    body: dict[str, Any],
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    k = get_kernel()
+    if not hasattr(k, "_call"):
+        raise HTTPException(status_code=503, detail="kernel host required")
+    env = body.get("envelope") or body
+    return k._call("device_sync_apply", {"envelope": env}) or {}
+
+
+@router.get("/audit/anchor")
+async def audit_anchor_api(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """WORM 外部锚点状态 + verify。"""
+    k = get_kernel()
+    if hasattr(k, "_call"):
+        return k._call("audit_anchor_status") or {}
+    try:
+        from backend.kernel.audit_store import AuditEventStore
+
+        return AuditEventStore().verify_anchor()
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 @router.get("/processes/{process_id}")

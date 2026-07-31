@@ -12,6 +12,7 @@ pub mod collab;
 pub mod domain_events;
 pub mod context_vm;
 pub mod cost;
+pub mod device_sync;
 pub mod edit_session;
 pub mod hal;
 pub mod identity_cache;
@@ -92,6 +93,7 @@ pub use hal::Hal;
 pub use wasm_runtime::{WasmInvokeResult, WasmModule, WasmRuntime};
 pub use package_mgr::{InstalledPackage, PackageManager};
 pub use instance::{AgentInstanceBundle, InstanceRegistry};
+pub use device_sync::{DeviceRecord, DeviceSyncHub, SyncEnvelope};
 pub use domain_events::{DomainEvent, DomainEventBus};
 pub use approval_rules::{
     classify_caps, evolution_requires_review, should_auto_approve, ApprovalPolicy,
@@ -255,12 +257,26 @@ pub const ABI_METHODS: &[&str] = &[
     "context_put_page",
     "context_swap_in",
     "context_swap_out",
+    "context_pin",
+    "context_set_isolation",
+    "context_schedule",
     "context_list_pages",
     "context_status",
     "memory_layer_put",
     "memory_layer_list",
     "memory_layer_consolidate",
+    "memory_layer_schedule",
     "memory_layer_status",
+    "device_sync_status",
+    "device_sync_register",
+    "device_sync_set_local",
+    "device_sync_list",
+    "device_sync_push",
+    "device_sync_pull",
+    "device_sync_apply",
+    "device_sync_outbox",
+    "audit_anchor_verify",
+    "audit_anchor_status",
     // P2
     "coding_profile_list",
     "coding_profile_get",

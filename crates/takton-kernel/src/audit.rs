@@ -125,16 +125,23 @@ impl KernelEvent {
     }
 }
 
-/// Append-only JSONL audit store with size-based rotation (H2-C2).
+/// Append-only JSONL audit store with size-based rotation + optional WORM.
+///
+/// WORM (`TAKTON_AUDIT_WORM=1`): rotated segments are never deleted; new
+/// segments get monotonic names `.worm.<ts>`. External anchor file holds
+/// signed tip hash for offline verification.
 pub struct AuditEventStore {
     path: PathBuf,
     lock: Mutex<()>,
     max_bytes: u64,
     keep_segments: u32,
+    worm: bool,
+    anchor_path: PathBuf,
 }
 
 impl AuditEventStore {
     pub fn new(path: impl Into<PathBuf>) -> Self {
+        let path = path.into();
         let max_bytes = std::env::var("TAKTON_AUDIT_MAX_BYTES")
             .ok()
             .and_then(|s| s.parse().ok())
@@ -144,11 +151,20 @@ impl AuditEventStore {
             .and_then(|s| s.parse().ok())
             .unwrap_or(7u32)
             .max(1);
+        let worm = std::env::var("TAKTON_AUDIT_WORM")
+            .map(|v| {
+                let t = v.trim().to_lowercase();
+                t == "1" || t == "true" || t == "yes" || t == "on"
+            })
+            .unwrap_or(false);
+        let anchor_path = path.with_extension("anchor.json");
         Self {
-            path: path.into(),
+            path,
             lock: Mutex::new(()),
             max_bytes,
             keep_segments,
+            worm,
+            anchor_path,
         }
     }
 
@@ -160,6 +176,14 @@ impl AuditEventStore {
         &self.path
     }
 
+    pub fn worm(&self) -> bool {
+        self.worm
+    }
+
+    pub fn set_worm(&mut self, on: bool) {
+        self.worm = on;
+    }
+
     fn rotate_if_needed(&self) {
         let meta = match fs::metadata(&self.path) {
             Ok(m) => m,
@@ -169,6 +193,18 @@ impl AuditEventStore {
             return;
         }
         let base = self.path.to_string_lossy().to_string();
+        if self.worm {
+            // WORM: never delete; seal active file under unique name
+            let sealed = format!(
+                "{base}.worm.{}",
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0)
+            );
+            let _ = fs::rename(&self.path, &sealed);
+            return;
+        }
         // cascade .N -> .(N+1)
         for i in (1..self.keep_segments).rev() {
             let src = format!("{base}.{i}");
@@ -197,7 +233,79 @@ impl AuditEventStore {
         let Ok(line) = serde_json::to_string(event) else {
             return false;
         };
-        writeln!(f, "{line}").is_ok()
+        if writeln!(f, "{line}").is_err() {
+            return false;
+        }
+        // refresh external anchor tip (best-effort)
+        if let Some(h) = event.get("hash").and_then(|v| v.as_str()) {
+            let _ = self.write_anchor(h, event.get("prev_hash").and_then(|v| v.as_str()));
+        }
+        true
+    }
+
+    /// External anchor: tip hash + monotonic seq file for offline integrity checks.
+    pub fn write_anchor(&self, tip_hash: &str, prev_hash: Option<&str>) -> bool {
+        let body = serde_json::json!({
+            "tip_hash": tip_hash,
+            "prev_hash": prev_hash.unwrap_or(""),
+            "path": self.path.display().to_string(),
+            "worm": self.worm,
+            "anchored_at": SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs_f64())
+                .unwrap_or(0.0),
+            "schema": "takton-audit-anchor-v1",
+        });
+        // content hash of anchor body (without self-hash) for external verify
+        let mut payload = body.clone();
+        if let Some(obj) = payload.as_object_mut() {
+            obj.remove("anchor_hash");
+        }
+        let text = serde_json::to_string(&payload).unwrap_or_default();
+        let mut hasher = Sha256::new();
+        hasher.update(text.as_bytes());
+        let anchor_hash = hex::encode(hasher.finalize());
+        let mut out = body;
+        if let Some(obj) = out.as_object_mut() {
+            obj.insert("anchor_hash".into(), serde_json::json!(anchor_hash));
+        }
+        if let Some(parent) = self.anchor_path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        fs::write(
+            &self.anchor_path,
+            serde_json::to_string_pretty(&out).unwrap_or_default(),
+        )
+        .is_ok()
+    }
+
+    pub fn read_anchor(&self) -> Option<Value> {
+        let s = fs::read_to_string(&self.anchor_path).ok()?;
+        serde_json::from_str(&s).ok()
+    }
+
+    /// Verify anchor tip matches active file tail hash.
+    pub fn verify_anchor(&self) -> Value {
+        let tail = self.load_tail_hash();
+        let anchor = self.read_anchor();
+        let tip = anchor
+            .as_ref()
+            .and_then(|a| a.get("tip_hash"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let ok = match (&tail, &tip) {
+            (Some(t), Some(a)) => t == a,
+            (None, None) => true,
+            _ => false,
+        };
+        serde_json::json!({
+            "ok": ok,
+            "worm": self.worm,
+            "tail_hash": tail,
+            "anchor_tip": tip,
+            "anchor_path": self.anchor_path.display().to_string(),
+            "audit_path": self.path.display().to_string(),
+        })
     }
 
     pub fn load_tail_hash(&self) -> Option<String> {

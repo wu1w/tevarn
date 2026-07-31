@@ -170,6 +170,10 @@ L0 Kernel（进程 / cap / 调度 / 隔离）████░░░░░░  ~45
 | H2-D | 生产禁止静默 Python kernel fallback | ✅ |
 | H2-E | 进程树 API/UI；治理 status；本 Run 能力芯片；domain WS 失效查询 | ✅ |
 | H2-F | `has_capability` 生产 fail-closed；`from_dict_safe`；Memory/Context 内核风格 HTTP | ✅ |
+| H2-G | Context/Memory **调度+隔离**（pin/schedule/identity GC） | ✅ |
+| H2-H | 多设备 sync 产品化（push/pull/LWW + hydrate） | ✅ |
+| H2-I | 审计 WORM + 外部 anchor | ✅ |
+| H2-J | 结果 spill 默认激进（threshold≈800） | ✅ |
 
 逃生舱：`TAKTON_DEV_UNSAFE=1` · `TAKTON_KERNEL_BACKEND=python` · 见 [THREAT_MODEL.md](./THREAT_MODEL.md)。
 

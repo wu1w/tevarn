@@ -45,7 +45,17 @@ pub struct ResultSpillStore {
 
 impl Default for ResultSpillStore {
     fn default() -> Self {
-        Self::new(Self::default_dir(), 4_000, 400)
+        // Aggressive default: spill early so LLM context keeps handle only.
+        // Override via TAKTON_RESULT_SPILL_THRESHOLD (chars).
+        let thr = std::env::var("TAKTON_RESULT_SPILL_THRESHOLD")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(800);
+        let preview = std::env::var("TAKTON_RESULT_SPILL_PREVIEW")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(240);
+        Self::new(Self::default_dir(), thr, preview)
     }
 }
 
@@ -151,7 +161,10 @@ impl ResultSpillStore {
         json!({
             "handles": self.by_id.len(),
             "threshold": self.threshold,
+            "preview_chars": self.preview_chars,
             "dir": self.dir.display().to_string(),
+            "aggressive_default": true,
+            "policy": "spill when len>=threshold; context keeps handle+preview only",
         })
     }
 }

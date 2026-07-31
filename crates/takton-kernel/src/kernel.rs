@@ -36,6 +36,7 @@ use crate::hal::Hal;
 use crate::wasm_runtime::WasmRuntime;
 use crate::package_mgr::PackageManager;
 use crate::instance::InstanceRegistry;
+use crate::device_sync::DeviceSyncHub;
 use crate::domain_events::DomainEventBus;
 use crate::approval_rules::ApprovalPolicy;
 use crate::eval_suite::EvalSuite;
@@ -185,6 +186,7 @@ struct KernelInner {
     wasm: WasmRuntime,
     packages: PackageManager,
     instances: InstanceRegistry,
+    device_sync: DeviceSyncHub,
     domain_events: DomainEventBus,
     approval: ApprovalPolicy,
     eval_suite: EvalSuite,
@@ -246,6 +248,7 @@ impl AgentKernel {
                 wasm: WasmRuntime::default(),
                 packages: PackageManager::default(),
                 instances: InstanceRegistry::default(),
+                device_sync: DeviceSyncHub::default(),
                 domain_events: DomainEventBus::default(),
                 approval: ApprovalPolicy::default(),
                 eval_suite: EvalSuite::default(),
@@ -2797,18 +2800,67 @@ impl AgentKernel {
         json!(page)
     }
 
-    pub fn context_swap_in(&self, page_id: &str) -> KernelResult<Value> {
-        match self.inner.write().context_vm.swap_in(page_id) {
+    pub fn context_swap_in(
+        &self,
+        page_id: &str,
+        caller_process: Option<&str>,
+    ) -> KernelResult<Value> {
+        match self
+            .inner
+            .write()
+            .context_vm
+            .swap_in(page_id, caller_process)
+        {
+            Ok(p) => Ok(json!(p)),
+            Err(e) => {
+                if e.contains("isolation") {
+                    Err(KernelError::Permission(e))
+                } else {
+                    Err(KernelError::NotFound(e))
+                }
+            }
+        }
+    }
+
+    pub fn context_swap_out(
+        &self,
+        page_id: &str,
+        caller_process: Option<&str>,
+    ) -> KernelResult<Value> {
+        match self
+            .inner
+            .write()
+            .context_vm
+            .swap_out(page_id, caller_process)
+        {
+            Ok(p) => Ok(json!(p)),
+            Err(e) => {
+                if e.contains("isolation") || e.contains("pinned") {
+                    Err(KernelError::Permission(e))
+                } else {
+                    Err(KernelError::NotFound(e))
+                }
+            }
+        }
+    }
+
+    pub fn context_pin(&self, page_id: &str, pinned: bool) -> KernelResult<Value> {
+        match self.inner.write().context_vm.pin_page(page_id, pinned) {
             Ok(p) => Ok(json!(p)),
             Err(e) => Err(KernelError::NotFound(e)),
         }
     }
 
-    pub fn context_swap_out(&self, page_id: &str) -> KernelResult<Value> {
-        match self.inner.write().context_vm.swap_out(page_id) {
-            Ok(p) => Ok(json!(p)),
-            Err(e) => Err(KernelError::NotFound(e)),
-        }
+    pub fn context_set_isolation(&self, process_id: &str, mode: &str) -> Value {
+        self.inner
+            .write()
+            .context_vm
+            .set_isolation(process_id, mode);
+        json!({"ok": true, "process_id": process_id, "isolation": mode})
+    }
+
+    pub fn context_schedule(&self, process_id: Option<&str>) -> Value {
+        self.inner.write().context_vm.schedule_tick(process_id)
     }
 
     pub fn context_list_pages(&self, process_id: &str) -> Value {
@@ -2862,8 +2914,136 @@ impl AgentKernel {
         r
     }
 
+    pub fn memory_layer_schedule(&self, identity: Option<&str>) -> Value {
+        self.inner.write().memory_layers.schedule_tick(identity)
+    }
+
     pub fn memory_layer_status(&self) -> Value {
         self.inner.read().memory_layers.status()
+    }
+
+    // ── Multi-device sync ──────────────────────────────────
+
+    pub fn device_sync_status(&self) -> Value {
+        self.inner.read().device_sync.status()
+    }
+
+    pub fn device_sync_register(&self, device_id: &str, label: &str) -> Value {
+        let mut g = self.inner.write();
+        json!(g.device_sync.register_peer(device_id, label))
+    }
+
+    pub fn device_sync_set_local(&self, device_id: &str, label: &str) -> Value {
+        let mut g = self.inner.write();
+        g.device_sync.set_local_device(device_id, label);
+        g.instances.set_device_id(device_id);
+        json!({"ok": true, "device_id": device_id, "label": label})
+    }
+
+    pub fn device_sync_list(&self) -> Value {
+        json!({"devices": self.inner.read().device_sync.list_devices()})
+    }
+
+    /// Push identity state (memory layers + sys memory + skills) to sync plane.
+    pub fn device_sync_push(
+        &self,
+        identity: &str,
+        to_device: Option<&str>,
+    ) -> Value {
+        let mut g = self.inner.write();
+        let mem = g.memory_layers.export_identity(identity);
+        let kv = g.services.memory.export_map(identity);
+        let skills = json!(g.skill_gate.list());
+        let payload = json!({
+            "memory_layers": mem,
+            "sys_memory": kv,
+            "skills": skills,
+            "exported_at": now_secs(),
+        });
+        let env = g.device_sync.push(identity, payload, to_device);
+        Self::emit_locked(
+            &mut g,
+            "device.sync_push",
+            "system",
+            json!({"identity": identity, "revision": env.revision}),
+        );
+        json!(env)
+    }
+
+    pub fn device_sync_pull(
+        &self,
+        identity: &str,
+        since_revision: Option<u64>,
+    ) -> Value {
+        self.inner
+            .read()
+            .device_sync
+            .pull(identity, since_revision)
+    }
+
+    pub fn device_sync_apply(&self, envelope: Value) -> KernelResult<Value> {
+        let mut g = self.inner.write();
+        match g.device_sync.apply_remote(envelope) {
+            Ok(r) => {
+                // hydrate memory if accepted
+                if r.get("ok") == Some(&json!(true)) {
+                    if let Some(head) = r.get("head") {
+                        let identity = head
+                            .get("identity")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let payload = head.get("payload").cloned().unwrap_or(json!({}));
+                        if let Some(entries) = payload
+                            .get("memory_layers")
+                            .and_then(|m| m.get("entries"))
+                            .and_then(|e| e.as_array())
+                        {
+                            g.memory_layers.import_identity(identity, entries);
+                        }
+                        if let Some(kv) = payload.get("sys_memory") {
+                            g.services.memory.import_map(identity, kv);
+                        }
+                    }
+                }
+                Self::emit_locked(
+                    &mut g,
+                    "device.sync_apply",
+                    "system",
+                    json!({"decision": r.get("decision")}),
+                );
+                Ok(r)
+            }
+            Err(e) => Err(KernelError::Invalid(e)),
+        }
+    }
+
+    pub fn device_sync_outbox(&self, limit: usize) -> Value {
+        let mut g = self.inner.write();
+        json!({"envelopes": g.device_sync.drain_outbox(limit)})
+    }
+
+    /// Audit WORM anchor verify (Rust host store).
+    pub fn audit_anchor_verify(&self) -> Value {
+        let g = self.inner.read();
+        match &g.audit_store {
+            Some(s) => s.verify_anchor(),
+            None => json!({
+                "ok": false,
+                "reason": "audit_persist_disabled",
+            }),
+        }
+    }
+
+    pub fn audit_anchor_status(&self) -> Value {
+        let g = self.inner.read();
+        match &g.audit_store {
+            Some(s) => json!({
+                "worm": s.worm(),
+                "anchor": s.read_anchor(),
+                "verify": s.verify_anchor(),
+            }),
+            None => json!({"worm": false, "enabled": false}),
+        }
     }
 
     // ── P2: coding profile ────────────────────────────────
@@ -4048,6 +4228,53 @@ mod tests {
         assert!(imp["hydrated"]["memory_keys"].as_u64().unwrap_or(0) >= 1);
         let got = kernel.sys_memory_get("alice", "pref");
         assert_eq!(got["found"], true);
+    }
+
+    #[test]
+    fn context_isolation_and_schedule() {
+        let k = k();
+        let p = k
+            .create_process("main", None, None, Some(vec!["file_read".into()]), None, None)
+            .unwrap();
+        k.context_set_isolation(&p.id, "process");
+        k.context_set_quota(&p.id, 40);
+        let page = k.context_put_page(&p.id, "a", &"x".repeat(200));
+        let pid = page["id"].as_str().unwrap();
+        // other process cannot access under isolation
+        let p2 = k
+            .create_process("other", None, None, Some(vec!["file_read".into()]), None, None)
+            .unwrap();
+        assert!(k.context_swap_in(pid, Some(&p2.id)).is_err());
+        assert!(k.context_swap_in(pid, Some(&p.id)).is_ok());
+        let tick = k.context_schedule(Some(&p.id));
+        assert!(tick.get("ticks").is_some());
+    }
+
+    #[test]
+    fn device_sync_push_pull() {
+        let ka = k();
+        ka.device_sync_set_local("dev-test", "T");
+        ka.memory_layer_put("alice", "working", "hello sync", 0.9);
+        let env = ka.device_sync_push("alice", None);
+        assert!(env["revision"].as_u64().unwrap() >= 1);
+        let pull = ka.device_sync_pull("alice", None);
+        assert_eq!(pull["found"], true);
+        let kb = k();
+        kb.device_sync_set_local("dev-b", "B");
+        let r = kb.device_sync_apply(env).unwrap();
+        assert_eq!(r["ok"], true);
+    }
+
+    #[test]
+    fn result_spill_aggressive_threshold() {
+        let k = k();
+        let p = k
+            .create_process("main", None, None, None, None, None)
+            .unwrap();
+        let big = "z".repeat(900);
+        let r = k.result_spill(&p.id, "command", &big);
+        assert_eq!(r["spilled"], true);
+        assert!(r["context"].as_str().unwrap().contains("tool_result_handle"));
     }
 
     #[test]

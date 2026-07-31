@@ -14,23 +14,32 @@ from typing import Any
 # 而模型以为自己读到了完整文件 —— 基于断裂视图改代码是静默错改的主因。
 # 故 budget 抬到与 executor 的 FILE_READ_MAX_CHARS 同量级，让分页成为唯一截断点；
 # 只有病态超长行才会兜底走 head+tail。
+# Aggressive defaults (H2/P1): prefer spill handle over fat LLM context.
+# file_read keeps higher budget so executor pagination remains authority.
 TOOL_RESULT_BUDGET: dict[str, int] = {
     "file_read": 21_000,
-    "grep": 1500,
-    "glob": 800,
-    "command": 3000,
+    "grep": 900,
+    "glob": 600,
+    "command": 1200,
     "file_write": 2500,  # 写入确认/回显路径；过短会导致模型重写
     "edit": 2500,
     "apply_patch": 2500,
-    "python": 2000,
-    "http": 1000,
-    "web_search": 1500,
-    "search": 1500,
-    "browser": 1000,
-    "doc_read": 2000,
-    "process": 1500,
+    "python": 1000,
+    "http": 800,
+    "web_search": 1000,
+    "search": 1000,
+    "browser": 800,
+    "doc_read": 1200,
+    "process": 900,
 }
-DEFAULT_TOOL_BUDGET = 1000
+DEFAULT_TOOL_BUDGET = 800
+
+# Spill to kernel result store at/above this size (chars). Env override.
+import os as _os
+
+SPILL_THRESHOLD = int(
+    _os.environ.get("TAKTON_RESULT_SPILL_THRESHOLD", "800") or 800
+)
 
 # 写类工具：成功短回执几乎不截断
 _WRITE_TOOLS = frozenset({"file_write", "edit", "apply_patch", "desktop_write_file"})
@@ -127,30 +136,37 @@ def normalize_tool_result(
     if not text:
         text = f"[Error] Tool '{tool_name or '?'}' returned empty result"
 
-    # P0.5 E2: spill large results to kernel store (handle stays in context)
-    pid = (process_id or "").strip()
-    if pid and len(text) >= 4_000:
-        try:
-            from backend.kernel import get_kernel
+    # Aggressive spill: kernel store keeps full body; LLM sees handle+preview.
+    pid = (process_id or "").strip() or "orphan"
+    thr = int(SPILL_THRESHOLD)
+    # write acks stay inline if short
+    if not (
+        (tool_name or "") in _WRITE_TOOLS
+        and _is_write_ack(text)
+        and len(text) <= 4000
+    ):
+        if len(text) >= thr:
+            try:
+                from backend.kernel import get_kernel
 
-            k = get_kernel()
-            if hasattr(k, "result_spill"):
-                r = k.result_spill(pid, tool_name or "tool", text)
-            elif hasattr(k, "_call"):
-                r = k._call(
-                    "result_spill",
-                    {
-                        "process_id": pid,
-                        "tool": tool_name or "tool",
-                        "content": text,
-                    },
-                )
-            else:
-                r = None
-            if isinstance(r, dict) and r.get("spilled") and r.get("context"):
-                return str(r["context"])
-        except Exception:
-            pass
+                k = get_kernel()
+                if hasattr(k, "result_spill"):
+                    r = k.result_spill(pid, tool_name or "tool", text)
+                elif hasattr(k, "_call"):
+                    r = k._call(
+                        "result_spill",
+                        {
+                            "process_id": pid,
+                            "tool": tool_name or "tool",
+                            "content": text,
+                        },
+                    )
+                else:
+                    r = None
+                if isinstance(r, dict) and r.get("spilled") and r.get("context"):
+                    return str(r["context"])
+            except Exception:
+                pass
 
     if max_chars is not None:
         # 写工具：max_chars 不得压到 2500 以下
@@ -163,6 +179,7 @@ def normalize_tool_result(
 __all__ = [
     "TOOL_RESULT_BUDGET",
     "DEFAULT_TOOL_BUDGET",
+    "SPILL_THRESHOLD",
     "truncate_for_llm",
     "normalize_tool_result",
     "is_tool_error",
