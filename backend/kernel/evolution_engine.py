@@ -10,8 +10,10 @@
   保留回滚点；rollback 恢复 before 状态
 - 全生命周期事件进哈希链（process_id="identity:<uuid>"）
 
-分析器是规则化的（无 LLM）：机器可验证、可复现、可单测——
-三个月验收「代际进步可测量」要求分析过程本身也是可测量的。
+**分析权威在 Rust**（``evolution_analyze``）。Python 只做：
+1. 从 SQL/事件组装 snapshot
+2. 调用 Rust 分析
+3. 把 draft 建议镜像为 SQL pending（UI/审批持久化）
 """
 
 from __future__ import annotations
@@ -96,11 +98,238 @@ class EvolutionEngine:
                 return str(meta["identity_id"]) == want
         return False
 
-    # ── 分析器（规则化述职报告）────────────────────────────────
+    # ── 分析器（Rust 权威；Python = snapshot feeder + SQL mirror）──
+
+    def _build_snapshot(self, ident: Any, done: list, failed: list) -> dict[str, Any]:
+        """Assemble analysis snapshot for Rust evolution_analyze."""
+        iid = ident.id
+        approved_caps: dict[str, int] = {}
+        for e in self._kernel.events(kind="escalation_approved", limit=1000):
+            if not self._event_belongs_to_identity(e, iid):
+                continue
+            for cap in (e.detail.get("capabilities") or []):
+                approved_caps[str(cap)] = approved_caps.get(str(cap), 0) + 1
+        denials: dict[str, int] = {}
+        attempts: dict[str, int] = {}
+        for e in self._kernel.events(kind="mediation", limit=1000):
+            if not self._event_belongs_to_identity(e, iid):
+                continue
+            target = str(e.detail.get("target") or "")
+            if not target:
+                continue
+            attempts[target] = attempts.get(target, 0) + 1
+            if e.detail.get("allowed") is False:
+                denials[target] = denials.get(target, 0) + 1
+        return {
+            "identity": str(getattr(ident, "name", None) or iid),
+            "identity_id": str(iid),
+            "capabilities": list(ident.capabilities or []),
+            "done": len(done),
+            "failed": len(failed),
+            "recent_done": [str(i.instruction or "")[:80] for i in done[-5:]],
+            "recent_errors": [str(i.error or "")[:80] for i in failed[-3:]],
+            "approved_caps": approved_caps,
+            "tool_attempts": attempts,
+            "tool_denials": denials,
+            "thresholds": {
+                "min_samples": int(_threshold("_MIN_SAMPLES")),
+                "deprecate_rate": float(_threshold("_DEPRECATE_DENIAL_RATE")),
+                "caps_adjust_approvals": int(_threshold("_CAPS_ADJUST_APPROVALS")),
+                "distill_min_done": int(_threshold("_DISTILL_MIN_DONE")),
+                "distill_min_success": float(_threshold("_DISTILL_MIN_SUCCESS")),
+                "planner_tune_fail_rate": float(_threshold("_PLANNER_TUNE_FAIL_RATE")),
+            },
+        }
+
+    def _rust_analyze(self, snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+        """Call Rust evolution_analyze. Empty list if host unavailable."""
+        try:
+            k = self._kernel
+            if not hasattr(k, "_call"):
+                return []
+            r = k._call("evolution_analyze", {"snapshot": snapshot}) or {}
+            props = r.get("proposals") if isinstance(r, dict) else None
+            if isinstance(props, list):
+                return [p for p in props if isinstance(p, dict)]
+        except Exception as e:
+            logger.warning("evolution_analyze rust call failed: %s", e)
+        return []
+
+    def _allow_offline_mirror(self) -> bool:
+        """Offline rule mirror only under DEV_UNSAFE / pytest (never production)."""
+        import os
+        import sys
+
+        if "pytest" in sys.modules:
+            return True
+        try:
+            from backend.kernel.production_guard import is_dev_unsafe
+
+            return bool(is_dev_unsafe())
+        except Exception:
+            return (os.environ.get("TAKTON_DEV_UNSAFE") or "").strip() in (
+                "1",
+                "true",
+                "yes",
+            )
+
+    def _offline_mirror_props(self, snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+        """Bit-for-bit style mirror of Rust EvolutionGate::analyze for offline tests.
+
+        Production never reaches here without DEV_UNSAFE. Keep in lockstep with
+        crates/takton-kernel/src/evolution_gate.rs::analyze.
+        """
+        identity = str(snapshot.get("identity") or "unknown")
+        caps = list(snapshot.get("capabilities") or [])
+        done = int(snapshot.get("done") or 0)
+        failed = int(snapshot.get("failed") or 0)
+        total = done + failed
+        success_rate = (done / total) if total else 0.0
+        thr = snapshot.get("thresholds") or {}
+        min_samples = int(thr.get("min_samples") or 5)
+        deprecate_rate = float(thr.get("deprecate_rate") or 0.5)
+        caps_adjust_n = int(thr.get("caps_adjust_approvals") or 2)
+        distill_min = int(thr.get("distill_min_done") or 5)
+        distill_success = float(thr.get("distill_min_success") or 0.8)
+        planner_fail = float(thr.get("planner_tune_fail_rate") or 0.3)
+        out: list[dict[str, Any]] = []
+        # Rule 1 distill
+        if done >= distill_min and success_rate >= distill_success:
+            recent = list(snapshot.get("recent_done") or [])[:5]
+            out.append({
+                "id": f"offline-{_uuid.uuid4().hex[:8]}",
+                "kind": "memory_distill",
+                "title": f"沉淀工作方法论（{done} 单，成功率 {success_rate:.0%}）",
+                "body": (
+                    f"完成 {done} 单 / 失败 {failed}，成功率 {success_rate:.0%}。"
+                    f"近期：{'；'.join(str(x) for x in recent)}"
+                ),
+                "meta": {
+                    "memory_kind": "methodology",
+                    "content": (
+                        f"经 {done} 单实践验证的工作模式（成功率 {success_rate:.0%}）："
+                        + "；".join(str(x) for x in recent)
+                    ),
+                    "stats": {
+                        "done": done,
+                        "failed": failed,
+                        "success_rate": round(success_rate, 4),
+                    },
+                    "source": "offline_mirror",
+                },
+            })
+        # Rule 2 planner
+        if total >= distill_min and success_rate < (1.0 - planner_fail):
+            errors = list(snapshot.get("recent_errors") or [])[:3]
+            fail_rate = 1.0 - success_rate
+            out.append({
+                "id": f"offline-{_uuid.uuid4().hex[:8]}",
+                "kind": "planner_tune",
+                "title": f"工作方式检讨（失败率 {fail_rate:.0%}）",
+                "body": (
+                    f"完成 {done} / 失败 {failed}，失败率 {fail_rate:.0%}。"
+                    f"错误：{'；'.join(str(x) for x in errors)}"
+                ),
+                "meta": {
+                    "planner_prefs": {"max_task_scope": "narrow", "verify_steps": True},
+                    "stats": {"done": done, "failed": failed},
+                    "source": "offline_mirror",
+                },
+            })
+        # Rule 3 caps
+        approved = snapshot.get("approved_caps") or {}
+        if isinstance(approved, dict):
+            for cap, count in approved.items():
+                if int(count or 0) >= caps_adjust_n and cap not in caps:
+                    out.append({
+                        "id": f"offline-{_uuid.uuid4().hex[:8]}",
+                        "kind": "caps_adjust",
+                        "title": f"能力「{cap}」并入编制（已获批 {count} 次）",
+                        "body": f"能力 {cap} 提权获批 {count} 次，建议并入身份权限档案。",
+                        "meta": {
+                            "add_capabilities": [cap],
+                            "before": {"capabilities": caps},
+                            "source": "offline_mirror",
+                        },
+                    })
+        # Rule 4 deprecate
+        attempts = snapshot.get("tool_attempts") or {}
+        denials = snapshot.get("tool_denials") or {}
+        if isinstance(attempts, dict):
+            for target, n in attempts.items():
+                n = int(n or 0)
+                if n < min_samples or target not in caps:
+                    continue
+                d = int((denials or {}).get(target) or 0)
+                rate = d / n if n else 0.0
+                if rate >= deprecate_rate:
+                    out.append({
+                        "id": f"offline-{_uuid.uuid4().hex[:8]}",
+                        "kind": "tool_deprecate",
+                        "title": f"淘汰能力「{target}」（拒绝率 {rate:.0%}）",
+                        "body": f"能力 {target} 共 {n} 次调用、{d} 次被拒（{rate:.0%}）。",
+                        "meta": {
+                            "remove_capabilities": [target],
+                            "before": {"capabilities": caps},
+                            "stats": {"attempts": n, "denials": d},
+                            "source": "offline_mirror",
+                        },
+                    })
+                    break
+        _ = identity  # snapshot identity used by rust for pending-kind filter
+        return out
+
+    async def _materialize_props(
+        self, iid: Any, ident: Any, rust_props: list[dict[str, Any]]
+    ) -> list[Any]:
+        proposals: list[Any] = []
+        for rp in rust_props:
+            kind = str(rp.get("kind") or "")
+            if kind not in PROPOSAL_KINDS:
+                continue
+            title = str(rp.get("title") or kind)[:200]
+            body = str(rp.get("body") or "")
+            meta = rp.get("meta") if isinstance(rp.get("meta"), dict) else {}
+            payload = dict(meta)
+            payload.setdefault("source", meta.get("source") or "rust_analyze")
+            payload["rust_proposal_id"] = str(rp.get("id") or "")
+            if kind == "memory_distill":
+                payload.setdefault("memory_kind", "methodology")
+                payload.setdefault("content", body or title)
+            if kind == "planner_tune":
+                payload.setdefault(
+                    "planner_prefs",
+                    {"max_task_scope": "narrow", "verify_steps": True},
+                )
+                payload.setdefault(
+                    "before",
+                    {"planner_prefs": (ident.meta or {}).get("planner_prefs")},
+                )
+            if kind == "caps_adjust":
+                payload.setdefault(
+                    "before", {"capabilities": list(ident.capabilities or [])}
+                )
+            if kind == "tool_deprecate":
+                payload.setdefault(
+                    "before", {"capabilities": list(ident.capabilities or [])}
+                )
+            p = await self._create_if_no_pending(
+                iid,
+                kind=kind,
+                title=title,
+                rationale=body or title,
+                payload=payload,
+            )
+            if p:
+                proposals.append(p)
+        return proposals
 
     async def analyze(self, identity_id: Any) -> list[Any]:
-        """分析身份的工作记录，生成 pending 建议（可重复调用，
-        同 kind 已有 pending 时跳过——不刷屏）。"""
+        """Feeder: SQL snapshot → Rust evolution_analyze → SQL pending mirror.
+
+        业务规则权威在 Rust。无 host 时：生产返回空；pytest/DEV_UNSAFE 用
+        offline mirror（与 Rust 规则对齐，仅便于单测）。
+        """
         from backend.models.agent_identity import AgentInboxItem
 
         iid = _uuid.UUID(str(identity_id))
@@ -118,120 +347,21 @@ class EvolutionEngine:
             )
         done = [i for i in items if i.status == "done"]
         failed = [i for i in items if i.status == "failed"]
-        total_finished = len(done) + len(failed)
-        success_rate = len(done) / total_finished if total_finished else 0.0
-
-        proposals: list[Any] = []
-
-        # 规则 1：SOP 沉淀（memory_distill）——干得又多又好 → 方法论该进档案
-        if len(done) >= _threshold("_DISTILL_MIN_DONE") and success_rate >= _threshold("_DISTILL_MIN_SUCCESS"):
-            recent = [i.instruction[:80] for i in done[-5:]]
-            p = await self._create_if_no_pending(
-                iid,
-                kind="memory_distill",
-                title=f"沉淀工作方法论（{len(done)} 单，成功率 {success_rate:.0%}）",
-                rationale=(
-                    f"该身份已完成 {len(done)} 单（失败 {len(failed)} 单，成功率 "
-                    f"{success_rate:.0%}），达到方法论沉淀阈值。"
-                    f"近期工单：{'；'.join(recent)}。建议将高频任务模式固化为 SOP。"
-                ),
-                payload={
-                    "memory_kind": "methodology",
-                    "content": (
-                        f"经 {len(done)} 单实践验证的工作模式"
-                        f"（成功率 {success_rate:.0%}）：高频任务类型——"
-                        + "；".join(recent)
-                    ),
-                    "stats": {"done": len(done), "failed": len(failed),
-                              "success_rate": round(success_rate, 4)},
-                },
-            )
-            if p:
-                proposals.append(p)
-
-        # 规则 2：失败率过高（planner_tune）——该检讨工作方式
-        if total_finished >= _threshold("_DISTILL_MIN_DONE") and success_rate < (1 - _threshold("_PLANNER_TUNE_FAIL_RATE")):
-            errors = [ (i.error or "")[:80] for i in failed[-3:] ]
-            p = await self._create_if_no_pending(
-                iid,
-                kind="planner_tune",
-                title=f"工作方式检讨（失败率 {1 - success_rate:.0%}）",
-                rationale=(
-                    f"完成 {len(done)} 单 / 失败 {len(failed)} 单，失败率 "
-                    f"{1 - success_rate:.0%} 超过阈值 {_threshold('_PLANNER_TUNE_FAIL_RATE'):.0%}。"
-                    f"近期失败原因：{'；'.join(errors) or '无'}。"
-                    f"建议调整 planner 偏好（缩小任务范围/增加验证步骤）。"
-                ),
-                payload={
-                    "planner_prefs": {"max_task_scope": "narrow", "verify_steps": True},
-                    "before": {"planner_prefs": (ident.meta or {}).get("planner_prefs")},
-                    "stats": {"done": len(done), "failed": len(failed)},
-                },
-            )
-            if p:
-                proposals.append(p)
-
-        # 规则 3：escalation 获批模式（caps_adjust）——反复获批的能力该入编制。
-        # 必须按 identity 过滤，禁止跨身份串统计
-        approved_caps: dict[str, int] = {}
-        for e in self._kernel.events(kind="escalation_approved", limit=1000):
-            if not self._event_belongs_to_identity(e, iid):
-                continue
-            for cap in (e.detail.get("capabilities") or []):
-                approved_caps[cap] = approved_caps.get(cap, 0) + 1
-        for cap, count in approved_caps.items():
-            if count >= _threshold("_CAPS_ADJUST_APPROVALS") and cap not in (ident.capabilities or []):
-                p = await self._create_if_no_pending(
-                    iid,
-                    kind="caps_adjust",
-                    title=f"能力「{cap}」并入编制（已获批 {count} 次）",
-                    rationale=(
-                        f"能力「{cap}」通过提权申请获批 {count} 次——反复临时授权"
-                        f"说明它是本职工作所需。建议并入身份权限档案，减少审批摩擦。"
-                    ),
-                    payload={
-                        "add_capabilities": [cap],
-                        "before": {"capabilities": ident.capabilities},
-                    },
+        snapshot = self._build_snapshot(ident, done, failed)
+        rust_props = self._rust_analyze(snapshot)
+        if not rust_props:
+            if self._allow_offline_mirror():
+                logger.debug(
+                    "evolution_analyze: offline mirror (no rust host / empty)"
                 )
-                if p:
-                    proposals.append(p)
-
-        # 规则 4：工具淘汰（tool_deprecate）——mediation 拒绝率过高的能力
-        denials: dict[str, int] = {}
-        attempts: dict[str, int] = {}
-        for e in self._kernel.events(kind="mediation", limit=1000):
-            if not self._event_belongs_to_identity(e, iid):
-                continue
-            target = str(e.detail.get("target") or "")
-            if not target:
-                continue
-            attempts[target] = attempts.get(target, 0) + 1
-            if e.detail.get("allowed") is False:
-                denials[target] = denials.get(target, 0) + 1
-        for target, n in attempts.items():
-            if n >= _threshold("_MIN_SAMPLES") and target in (ident.capabilities or []):
-                rate = denials.get(target, 0) / n
-                if rate >= _threshold("_DEPRECATE_DENIAL_RATE"):
-                    p = await self._create_if_no_pending(
-                        iid,
-                        kind="tool_deprecate",
-                        title=f"淘汰能力「{target}」（拒绝率 {rate:.0%}）",
-                        rationale=(
-                            f"能力「{target}」共 {n} 次调用其中 {denials.get(target, 0)} 次"
-                            f"被拒（{rate:.0%}）——该能力在编制内但持续无法有效使用，"
-                            f"建议移出权限档案，保持编制精干。"
-                        ),
-                        payload={
-                            "remove_capabilities": [target],
-                            "before": {"capabilities": ident.capabilities},
-                            "stats": {"attempts": n, "denials": denials.get(target, 0)},
-                        },
-                    )
-                    if p:
-                        proposals.append(p)
-
-        return proposals
+                rust_props = self._offline_mirror_props(snapshot)
+            else:
+                logger.warning(
+                    "evolution_analyze: rust host unavailable — no proposals "
+                    "(production fail-closed)"
+                )
+                return []
+        return await self._materialize_props(iid, ident, rust_props)
 
     async def _create_if_no_pending(self, iid: Any, **fields: Any) -> Any | None:
         from backend.models.agent_identity import AgentEvolutionProposal

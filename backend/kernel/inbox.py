@@ -177,18 +177,56 @@ class InboxService:
             k = self._kernel
             if not hasattr(k, "_call"):
                 return 0
-            # Rust reclaim is internal to inbox reclaim_stale on claim; status only
-            st = k._call("inbox_status") or {}
-            return int((st.get("counts") or {}).get("claimed") or 0)
+            r = k._call("inbox_reclaim") or {}
+            return int(r.get("reclaimed") or 0)
         except Exception:
             return 0
+
+    def _rust_host_up(self) -> bool:
+        try:
+            from backend.kernel_rust.client import is_rust_host_available
+
+            return bool(is_rust_host_available())
+        except Exception:
+            return hasattr(self._kernel, "_call")
+
+    def _rust_complete_by_db(self, db_item_id: str, result: str, process_id: str | None) -> None:
+        try:
+            k = self._kernel
+            if not hasattr(k, "_call"):
+                return
+            k._call(
+                "inbox_complete_by_db_id",
+                {
+                    "db_item_id": str(db_item_id),
+                    "result": (result or "")[:20000],
+                    "process_id": process_id,
+                },
+            )
+        except Exception as e:
+            logger.debug("rust inbox_complete_by_db skip: %s", e)
+
+    def _rust_fail_by_db(self, db_item_id: str, reason: str) -> None:
+        try:
+            k = self._kernel
+            if not hasattr(k, "_call"):
+                return
+            k._call(
+                "inbox_fail_by_db_id",
+                {
+                    "db_item_id": str(db_item_id),
+                    "reason": (reason or "failed")[:4000],
+                },
+            )
+        except Exception as e:
+            logger.debug("rust inbox_fail_by_db skip: %s", e)
 
     async def claim_next(self, *, busy_identity_ids: set[str] | None = None) -> Any:
         """领取下一条工单（优先级降序 + FIFO）。同一身份同时在手一单
         （编制内串行——一个员工不能同时干两单活）。
 
-        R3 去双轨：优先 Rust inbox_claim 协调 → 再原子 UPDATE DB；
-        host 不可用时回落纯 DB claim（DEPRECATED）。
+        R3：host 在线时 **只走** Rust inbox_claim → 原子 UPDATE DB；
+        禁止静默纯 SQL claim（双 worker 竞态）。host 宕机 + DEV_UNSAFE 才回落。
         """
         from sqlalchemy import update
 
@@ -269,6 +307,24 @@ class InboxService:
                     except Exception:
                         pass
 
+        # host 在线：纯 SQL claim 禁止（双 worker 必须走 Rust 协调）
+        if self._rust_host_up():
+            return None
+
+        # DEV / host-down fallback only
+        try:
+            from backend.kernel.production_guard import is_dev_unsafe
+
+            if not is_dev_unsafe():
+                logger.warning(
+                    "inbox claim_next: rust host down — refuse pure-SQL claim "
+                    "(set TAKTON_DEV_UNSAFE=1 for local fallback)"
+                )
+                return None
+        except Exception:
+            logger.warning("inbox claim_next: rust host down, refuse pure-SQL claim")
+            return None
+
         async with self._session_factory() as session:
             # 防双派：DB 层已 claimed 的身份也不可再领新单（多 worker / busy 集合丢失兜底）
             claimed_idents: set[_uuid.UUID] = set()
@@ -332,6 +388,7 @@ class InboxService:
                 await session.refresh(item)
                 self._emit("inbox_claimed", item.identity_id, {
                     "item_id": str(item.id), "attempts": item.attempts,
+                    "via": "sql_fallback_dev_unsafe",
                 })
                 return item
         return None
@@ -340,9 +397,14 @@ class InboxService:
         """回收超时仍停留在 claimed 的工单（worker 崩溃/超时未 fail）。
 
         回到 pending 并保留 attempts，由 fail 路径负责达上限转 failed。
-        返回回收条数。
+        返回回收条数。同时触发 Rust inbox_reclaim。
         """
         from backend.models.agent_identity import AgentInboxItem
+
+        try:
+            self._rust_inbox_reclaim()
+        except Exception:
+            pass
 
         cutoff = time.time() - max(30.0, float(timeout_seconds))
         n = 0
@@ -439,6 +501,8 @@ class InboxService:
             identity_id = item.identity_id
             instruction = str(item.instruction or "")
             await session.commit()
+        # Dual-complete Rust claim queue (authority for multi-worker)
+        self._rust_complete_by_db(str(item_id), result or "", process_id)
         self._emit("inbox_done", identity_id, {
             "item_id": str(item_id), "process_id": process_id,
         })
@@ -499,6 +563,9 @@ class InboxService:
                 item.status = "pending"
                 event = "inbox_retry"
             await session.commit()
+        # Dual-write Rust: fail terminal claim, or leave reclaim for retry
+        if event in ("inbox_dead",):
+            self._rust_fail_by_db(str(item_id), err)
         self._emit(
             event,
             identity_id,

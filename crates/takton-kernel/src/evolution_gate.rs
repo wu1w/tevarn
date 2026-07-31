@@ -188,6 +188,225 @@ impl EvolutionGate {
         })
     }
 
+    /// Business analysis fully in Rust (replaces Python rule engine).
+    ///
+    /// Input snapshot (from SQL feeder or pure kernel stats):
+    /// ```json
+    /// {
+    ///   "identity": "...",
+    ///   "capabilities": ["file_read", ...],
+    ///   "done": 10, "failed": 2,
+    ///   "recent_done": ["instr", ...],
+    ///   "recent_errors": ["err", ...],
+    ///   "approved_caps": {"terminal": 3},
+    ///   "tool_attempts": {"command": 20},
+    ///   "tool_denials": {"command": 12},
+    ///   "thresholds": { "min_samples": 5, "deprecate_rate": 0.5, ... }
+    /// }
+    /// ```
+    pub fn analyze(&mut self, snapshot: &Value) -> Vec<EvolutionProposal> {
+        let identity = snapshot
+            .get("identity")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let caps: Vec<String> = snapshot
+            .get("capabilities")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let done = snapshot.get("done").and_then(|v| v.as_u64()).unwrap_or(0);
+        let failed = snapshot.get("failed").and_then(|v| v.as_u64()).unwrap_or(0);
+        let total = done + failed;
+        let success_rate = if total > 0 {
+            done as f64 / total as f64
+        } else {
+            0.0
+        };
+        let thr = snapshot.get("thresholds").cloned().unwrap_or(json!({}));
+        let min_samples = thr.get("min_samples").and_then(|v| v.as_u64()).unwrap_or(5);
+        let deprecate_rate = thr
+            .get("deprecate_rate")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.5);
+        let caps_adjust_n = thr
+            .get("caps_adjust_approvals")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(2);
+        let distill_min = thr
+            .get("distill_min_done")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(5);
+        let distill_success = thr
+            .get("distill_min_success")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.8);
+        let planner_fail = thr
+            .get("planner_tune_fail_rate")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.3);
+
+        let pending_kinds: std::collections::HashSet<String> = self
+            .proposals
+            .values()
+            .filter(|p| {
+                p.status == "draft"
+                    && p.identity.as_deref() == Some(identity)
+            })
+            .map(|p| p.kind.clone())
+            .collect();
+
+        let mut out = Vec::new();
+
+        // Rule 1: memory_distill
+        if done >= distill_min && success_rate >= distill_success && !pending_kinds.contains("memory_distill")
+        {
+            let recent: Vec<String> = snapshot
+                .get("recent_done")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(|s| s.chars().take(80).collect()))
+                        .take(5)
+                        .collect()
+                })
+                .unwrap_or_default();
+            let pct = (success_rate * 100.0).round() as i64;
+            let title = format!("沉淀工作方法论（{done} 单，成功率 {pct}%）");
+            let body = format!(
+                "完成 {done} 单 / 失败 {failed}，成功率 {pct}%。近期：{}",
+                recent.join("；")
+            );
+            let p = self.submit(
+                "memory_distill",
+                &title,
+                &body,
+                Some(identity),
+                success_rate,
+                json!({
+                    "memory_kind": "methodology",
+                    "stats": {"done": done, "failed": failed, "success_rate": success_rate},
+                    "recent": recent,
+                    "source": "rust_analyze",
+                }),
+            );
+            out.push(p);
+        }
+
+        // Rule 2: planner_tune on high fail rate
+        if total >= distill_min
+            && success_rate < (1.0 - planner_fail)
+            && !pending_kinds.contains("planner_tune")
+        {
+            let errors: Vec<String> = snapshot
+                .get("recent_errors")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(|s| s.chars().take(80).collect()))
+                        .take(3)
+                        .collect()
+                })
+                .unwrap_or_default();
+            let fail_rate = 1.0 - success_rate;
+            let fpct = (fail_rate * 100.0).round() as i64;
+            let title = format!("工作方式检讨（失败率 {fpct}%）");
+            let body = format!(
+                "完成 {done} / 失败 {failed}，失败率 {fpct}%。错误：{}",
+                errors.join("；")
+            );
+            let p = self.submit(
+                "planner_tune",
+                &title,
+                &body,
+                Some(identity),
+                fail_rate,
+                json!({
+                    "planner_prefs": {"max_task_scope": "narrow", "verify_steps": true},
+                    "stats": {"done": done, "failed": failed},
+                    "source": "rust_analyze",
+                }),
+            );
+            out.push(p);
+        }
+
+        // Rule 3: caps_adjust from repeated approvals
+        if let Some(obj) = snapshot.get("approved_caps").and_then(|v| v.as_object()) {
+            for (cap, cnt_v) in obj {
+                let count = cnt_v.as_u64().unwrap_or(0);
+                if count >= caps_adjust_n && !caps.iter().any(|c| c == cap) {
+                    let kind_key = format!("caps_adjust:{cap}");
+                    if pending_kinds.iter().any(|k| k.starts_with("caps_adjust")) {
+                        continue;
+                    }
+                    let title = format!("能力「{cap}」并入编制（已获批 {count} 次）");
+                    let body = format!(
+                        "能力 {cap} 提权获批 {count} 次，建议并入身份权限档案。"
+                    );
+                    let p = self.submit(
+                        "caps_adjust",
+                        &title,
+                        &body,
+                        Some(identity),
+                        0.7,
+                        json!({
+                            "add_capabilities": [cap],
+                            "before": {"capabilities": caps},
+                            "source": "rust_analyze",
+                            "kind_key": kind_key,
+                        }),
+                    );
+                    out.push(p);
+                }
+            }
+        }
+
+        // Rule 4: tool_deprecate high denial rate
+        let attempts = snapshot
+            .get("tool_attempts")
+            .and_then(|v| v.as_object())
+            .cloned()
+            .unwrap_or_default();
+        let denials = snapshot
+            .get("tool_denials")
+            .and_then(|v| v.as_object())
+            .cloned()
+            .unwrap_or_default();
+        for (target, n_v) in &attempts {
+            let n = n_v.as_u64().unwrap_or(0);
+            if n < min_samples || !caps.iter().any(|c| c == target) {
+                continue;
+            }
+            let d = denials.get(target).and_then(|v| v.as_u64()).unwrap_or(0);
+            let rate = d as f64 / n as f64;
+            if rate >= deprecate_rate && !pending_kinds.contains("tool_deprecate") {
+                let rpct = (rate * 100.0).round() as i64;
+                let title = format!("淘汰能力「{target}」（拒绝率 {rpct}%）");
+                let body = format!("能力 {target} 共 {n} 次调用、{d} 次被拒（{rpct}%）。");
+                let p = self.submit(
+                    "tool_deprecate",
+                    &title,
+                    &body,
+                    Some(identity),
+                    rate,
+                    json!({
+                        "remove_capabilities": [target],
+                        "before": {"capabilities": caps},
+                        "stats": {"attempts": n, "denials": d},
+                        "source": "rust_analyze",
+                    }),
+                );
+                out.push(p);
+                break; // one deprecate suggestion per analyze
+            }
+        }
+
+        out
+    }
+
     pub fn status(&self) -> Value {
         json!({
             "proposals": self.proposals.len(),
@@ -198,6 +417,7 @@ impl EvolutionGate {
             "blocked_auto": self.blocked_auto,
             "policy": Self::policy(),
             "authority": "rust",
+            "analyzer": "rust",
         })
     }
 }
@@ -216,5 +436,32 @@ mod tests {
         let a = g.try_apply(&p.id, "human", true).unwrap();
         assert_eq!(a.status, "applied");
         assert_eq!(EVOLUTION_AUTO_APPLY, false);
+    }
+
+    #[test]
+    fn analyze_distill_and_deprecate() {
+        let mut g = EvolutionGate::default();
+        let snap = json!({
+            "identity": "alice",
+            "capabilities": ["command", "file_read"],
+            "done": 10,
+            "failed": 1,
+            "recent_done": ["fix a", "fix b"],
+            "recent_errors": [],
+            "approved_caps": {"terminal": 3},
+            "tool_attempts": {"command": 20},
+            "tool_denials": {"command": 15},
+            "thresholds": {
+                "min_samples": 5,
+                "deprecate_rate": 0.5,
+                "caps_adjust_approvals": 2,
+                "distill_min_done": 5,
+                "distill_min_success": 0.8,
+                "planner_tune_fail_rate": 0.3
+            }
+        });
+        let props = g.analyze(&snap);
+        assert!(props.iter().any(|p| p.kind == "memory_distill"));
+        assert!(props.iter().any(|p| p.kind == "tool_deprecate" || p.kind == "caps_adjust"));
     }
 }

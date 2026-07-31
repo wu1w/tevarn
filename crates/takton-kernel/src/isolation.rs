@@ -1,9 +1,12 @@
 //! Isolation supervisor + sandbox profiles (P0-D).
 //!
-//! Tracks logical isolation intent per process. OS backends (bwrap/job) remain
-//! platform adapters; this module is the policy + handle ledger.
+//! Policy + handle ledger, with **real OS process attach** for backends
+//! `local` / `os` / `auto`. Sandbox backends (`bwrap`, `job`, `firejail`)
+//! stay ledger-only until platform adapters land — but once an `os_pid` or
+//! `Child` is attached, reap/kill go through the kernel.
 
 use std::collections::HashMap;
+use std::process::{Child, Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -104,26 +107,42 @@ pub struct IsolationHandle {
     pub reaped: bool,
 }
 
-#[derive(Default)]
 pub struct IsolationSupervisor {
     /// process_id → profile override
     profiles: HashMap<String, IsolationProfile>,
     default_profile: IsolationProfile,
     handles: HashMap<String, IsolationHandle>,
+    /// Live OS children owned by this supervisor (handle_id → Child).
+    /// Not serializable — process authority lives in-kernel only.
+    children: HashMap<String, Child>,
     /// process_id → live handle count
     live_by_process: HashMap<String, usize>,
     /// max concurrent children per agent process
     max_children_per_process: usize,
     reaped_total: u64,
     orphan_kills: u64,
+    /// true once any real OS spawn succeeded in this process lifetime
+    os_spawned_total: u64,
+}
+
+impl Default for IsolationSupervisor {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl IsolationSupervisor {
     pub fn new() -> Self {
         Self {
+            profiles: HashMap::new(),
             default_profile: IsolationProfile::Interactive,
+            handles: HashMap::new(),
+            children: HashMap::new(),
+            live_by_process: HashMap::new(),
             max_children_per_process: 8,
-            ..Default::default()
+            reaped_total: 0,
+            orphan_kills: 0,
+            os_spawned_total: 0,
         }
     }
 
@@ -146,6 +165,13 @@ impl IsolationSupervisor {
             .unwrap_or(self.default_profile)
     }
 
+    fn backend_is_os(backend: &str) -> bool {
+        matches!(
+            backend.to_ascii_lowercase().as_str(),
+            "local" | "os" | "auto" | "native" | "process"
+        )
+    }
+
     /// Resolve execution policy for a process + optional force profile.
     pub fn resolve(
         &self,
@@ -165,30 +191,20 @@ impl IsolationSupervisor {
         let mut d = prof.to_dict();
         d["process_id"] = json!(process_id);
         d["live_children"] = json!(self.live_by_process.get(process_id).copied().unwrap_or(0));
+        d["os_children"] = json!(self.children.len());
         d
     }
 
-    /// Register a child exec (logical). Deny if profile forbids local bare exec when required.
-    pub fn spawn(
-        &mut self,
+    fn policy_allow_spawn(
+        &self,
         process_id: &str,
-        command: &str,
         backend: &str,
-    ) -> Result<IsolationHandle, String> {
-        self.spawn_with_pid(process_id, command, backend, None)
-    }
-
-    pub fn spawn_with_pid(
-        &mut self,
-        process_id: &str,
-        command: &str,
-        backend: &str,
-        os_pid: Option<u32>,
-    ) -> Result<IsolationHandle, String> {
+    ) -> Result<IsolationProfile, String> {
         let prof = self.profile_for(process_id);
-        if prof.sandbox_required() && backend == "local" {
+        if prof.sandbox_required() && (backend == "local" || backend == "os" || backend == "native")
+        {
             return Err(format!(
-                "isolation profile {} requires sandbox (got backend=local)",
+                "isolation profile {} requires sandbox (got backend={backend})",
                 prof.as_str()
             ));
         }
@@ -199,6 +215,17 @@ impl IsolationSupervisor {
                 self.max_children_per_process
             ));
         }
+        Ok(prof)
+    }
+
+    fn register_handle(
+        &mut self,
+        process_id: &str,
+        prof: IsolationProfile,
+        command: &str,
+        backend: &str,
+        os_pid: Option<u32>,
+    ) -> IsolationHandle {
         let h = IsolationHandle {
             id: short_id(),
             process_id: process_id.to_string(),
@@ -217,7 +244,80 @@ impl IsolationSupervisor {
             .entry(process_id.to_string())
             .or_insert(0) += 1;
         self.handles.insert(h.id.clone(), h.clone());
+        h
+    }
+
+    /// Spawn: OS backends create a real child; sandbox backends ledger-only.
+    pub fn spawn(
+        &mut self,
+        process_id: &str,
+        command: &str,
+        backend: &str,
+    ) -> Result<IsolationHandle, String> {
+        if Self::backend_is_os(backend) {
+            return self.spawn_os(process_id, command, backend);
+        }
+        self.spawn_with_pid(process_id, command, backend, None)
+    }
+
+    /// Ledger-only registration (optional external pid attach).
+    pub fn spawn_with_pid(
+        &mut self,
+        process_id: &str,
+        command: &str,
+        backend: &str,
+        os_pid: Option<u32>,
+    ) -> Result<IsolationHandle, String> {
+        let prof = self.policy_allow_spawn(process_id, backend)?;
+        Ok(self.register_handle(process_id, prof, command, backend, os_pid))
+    }
+
+    /// Real OS process spawn — kernel owns the Child handle.
+    pub fn spawn_os(
+        &mut self,
+        process_id: &str,
+        command: &str,
+        backend: &str,
+    ) -> Result<IsolationHandle, String> {
+        let prof = self.policy_allow_spawn(process_id, backend)?;
+        let cmd_line = command.trim();
+        if cmd_line.is_empty() {
+            return Err("empty command".into());
+        }
+        let child = Self::build_command(cmd_line)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| format!("os spawn failed: {e}"))?;
+        let os_pid = child.id();
+        let h = self.register_handle(
+            process_id,
+            prof,
+            cmd_line,
+            if backend.is_empty() { "os" } else { backend },
+            Some(os_pid),
+        );
+        self.children.insert(h.id.clone(), child);
+        self.os_spawned_total = self.os_spawned_total.saturating_add(1);
         Ok(h)
+    }
+
+    /// Platform command builder. Free-form agent command lines go through
+    /// the system shell so builtins (`echo`, `dir`) and pipes work.
+    fn build_command(cmd_line: &str) -> Command {
+        #[cfg(windows)]
+        {
+            let mut c = Command::new("cmd");
+            c.args(["/C", cmd_line]);
+            c
+        }
+        #[cfg(not(windows))]
+        {
+            let mut c = Command::new("sh");
+            c.args(["-c", cmd_line]);
+            c
+        }
     }
 
     pub fn attach_os_pid(&mut self, handle_id: &str, os_pid: u32) -> Option<IsolationHandle> {
@@ -226,7 +326,56 @@ impl IsolationSupervisor {
         Some(h.clone())
     }
 
+    /// Non-blocking poll: try_wait on owned Child, update ledger.
+    pub fn poll(&mut self, handle_id: &str) -> Option<Value> {
+        if self.children.contains_key(handle_id) {
+            let exited = {
+                let child = self.children.get_mut(handle_id)?;
+                match child.try_wait() {
+                    Ok(Some(status)) => Some(status.code().unwrap_or(if status.success() {
+                        0
+                    } else {
+                        1
+                    })),
+                    Ok(None) => None,
+                    Err(e) => {
+                        return Some(json!({
+                            "ok": false,
+                            "error": e.to_string(),
+                            "handle_id": handle_id,
+                        }));
+                    }
+                }
+            };
+            if let Some(code) = exited {
+                self.children.remove(handle_id);
+                let h = self.complete(handle_id, code)?;
+                return Some(json!({
+                    "ok": true,
+                    "running": false,
+                    "handle": h,
+                }));
+            }
+            let h = self.handles.get(handle_id)?;
+            return Some(json!({
+                "ok": true,
+                "running": true,
+                "handle": h,
+                "os_owned": true,
+            }));
+        }
+        let h = self.handles.get(handle_id)?;
+        Some(json!({
+            "ok": true,
+            "running": h.status == "running",
+            "handle": h,
+            "os_owned": false,
+        }))
+    }
+
     pub fn complete(&mut self, handle_id: &str, exit_code: i32) -> Option<IsolationHandle> {
+        // drop Child if still held (zombie reaped via complete path)
+        let _ = self.children.remove(handle_id);
         let h = self.handles.get_mut(handle_id)?;
         if h.status != "running" {
             return Some(h.clone());
@@ -242,7 +391,18 @@ impl IsolationSupervisor {
         Some(h.clone())
     }
 
+    /// Kill OS child (if owned) then mark ledger killed.
     pub fn kill(&mut self, handle_id: &str) -> Option<IsolationHandle> {
+        if let Some(mut child) = self.children.remove(handle_id) {
+            let _ = child.kill();
+            let _ = child.wait();
+        } else if let Some(h) = self.handles.get(handle_id) {
+            if h.status == "running" {
+                if let Some(pid) = h.os_pid {
+                    Self::kill_pid_external(pid);
+                }
+            }
+        }
         let h = self.handles.get_mut(handle_id)?;
         if h.status == "running" {
             h.status = "killed".into();
@@ -256,12 +416,37 @@ impl IsolationSupervisor {
         Some(h.clone())
     }
 
-    /// OS-level reaper: mark timed-out children as orphan and kill ledger.
+    fn kill_pid_external(pid: u32) {
+        if pid == 0 {
+            return;
+        }
+        #[cfg(windows)]
+        {
+            let _ = Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/F", "/T"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+        #[cfg(unix)]
+        {
+            let _ = Command::new("kill")
+                .args(["-9", &pid.to_string()])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+    }
+
+    /// OS-level reaper: poll exited children + kill timed-out ones.
     pub fn reap_tick(&mut self, max_age_secs: f64) -> Value {
         let now = now_secs();
         let max_age = max_age_secs.max(1.0);
         let mut reaped = 0u64;
         let mut orphans = 0u64;
+        let mut polled_exit = 0u64;
         let ids: Vec<_> = self
             .handles
             .values()
@@ -269,30 +454,54 @@ impl IsolationSupervisor {
             .map(|h| h.id.clone())
             .collect();
         for id in ids {
-            if let Some(h) = self.handles.get(&id) {
-                if now - h.started_at > max_age {
-                    if let Some(h) = self.kill(&id) {
-                        // mark orphan if no os_pid was ever attached
-                        if h.os_pid.is_none() {
-                            if let Some(hh) = self.handles.get_mut(&id) {
-                                hh.status = "orphan".into();
-                            }
-                            orphans += 1;
-                            self.orphan_kills = self.orphan_kills.saturating_add(1);
-                        }
+            // first: try_wait real children that already exited
+            if self.children.contains_key(&id) {
+                if let Some(v) = self.poll(&id) {
+                    if v.get("running") == Some(&json!(false)) {
+                        polled_exit += 1;
                         reaped += 1;
+                        continue;
                     }
                 }
+            }
+            let age_ok = self
+                .handles
+                .get(&id)
+                .map(|h| now - h.started_at > max_age)
+                .unwrap_or(false);
+            if !age_ok {
+                continue;
+            }
+            let had_os = self
+                .handles
+                .get(&id)
+                .map(|h| h.os_pid.is_some() || self.children.contains_key(&id))
+                .unwrap_or(false);
+            if let Some(h) = self.kill(&id) {
+                if !had_os {
+                    if let Some(hh) = self.handles.get_mut(&id) {
+                        hh.status = "orphan".into();
+                    }
+                    orphans += 1;
+                    self.orphan_kills = self.orphan_kills.saturating_add(1);
+                }
+                // silence unused warning on h when we only care about side-effect
+                let _ = h;
+                reaped += 1;
             }
         }
         json!({
             "reaped": reaped,
             "orphans": orphans,
+            "polled_exit": polled_exit,
             "live": self.live_by_process.values().sum::<usize>(),
+            "os_children": self.children.len(),
             "reaped_total": self.reaped_total,
             "orphan_kills": self.orphan_kills,
+            "os_spawned_total": self.os_spawned_total,
             "max_children_per_process": self.max_children_per_process,
             "os_level": true,
+            "authority": "rust",
         })
     }
 
@@ -322,11 +531,14 @@ impl IsolationSupervisor {
         json!({
             "handles": self.handles.len(),
             "live": self.live_by_process.values().sum::<usize>(),
+            "os_children": self.children.len(),
+            "os_spawned_total": self.os_spawned_total,
             "reaped_total": self.reaped_total,
             "orphan_kills": self.orphan_kills,
             "max_children_per_process": self.max_children_per_process,
             "default_profile": self.default_profile.as_str(),
             "os_level": true,
+            "os_process_attach": true,
             "authority": "rust",
         })
     }
@@ -350,5 +562,30 @@ mod tests {
         let d = s.resolve("p", None, true);
         assert_eq!(d["id"], "workforce");
         assert_eq!(d["sandbox_required"], true);
+    }
+
+    #[test]
+    fn os_spawn_and_poll() {
+        let mut s = IsolationSupervisor::new();
+        s.set_process_profile("p1", IsolationProfile::Off);
+        #[cfg(windows)]
+        let cmd = "cmd /C exit 0";
+        #[cfg(not(windows))]
+        let cmd = "true";
+        let h = s.spawn_os("p1", cmd, "os").expect("spawn");
+        assert!(h.os_pid.is_some());
+        // wait up to ~2s for exit
+        let mut done = false;
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            if let Some(v) = s.poll(&h.id) {
+                if v.get("running") == Some(&json!(false)) {
+                    done = true;
+                    break;
+                }
+            }
+        }
+        assert!(done, "child should exit");
+        assert_eq!(s.status()["os_spawned_total"], 1);
     }
 }

@@ -944,6 +944,34 @@ fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: 
                 .isolation_spawn(pid, command, backend)
                 .map_err(map_err)
         }
+        "isolation_spawn_os" => {
+            let pid = params
+                .get("process_id")
+                .and_then(|v| v.as_str())
+                .ok_or((-32005, "process_id required".into(), json!({})))?;
+            let command = params
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let backend = params.get("backend").and_then(|v| v.as_str());
+            kernel
+                .isolation_spawn_os(pid, command, backend)
+                .map_err(map_err)
+        }
+        "isolation_poll" => {
+            let hid = params
+                .get("handle_id")
+                .and_then(|v| v.as_str())
+                .ok_or((-32005, "handle_id required".into(), json!({})))?;
+            Ok(kernel.isolation_poll(hid))
+        }
+        "isolation_kill" => {
+            let hid = params
+                .get("handle_id")
+                .and_then(|v| v.as_str())
+                .ok_or((-32005, "handle_id required".into(), json!({})))?;
+            Ok(kernel.isolation_kill(hid).unwrap_or(Value::Null))
+        }
 
         "isolation_complete" => {
             let hid = params
@@ -1510,6 +1538,33 @@ fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: 
             let identity = params.get("identity").and_then(|v| v.as_str());
             Ok(kernel.inbox_claim(worker, identity))
         }
+        "inbox_reclaim" => Ok(kernel.inbox_reclaim()),
+        "inbox_complete_by_db_id" => {
+            let db_id = params
+                .get("db_item_id")
+                .or_else(|| params.get("item_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let result = params
+                .get("result")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let pid = params.get("process_id").and_then(|v| v.as_str());
+            Ok(kernel.inbox_complete_by_db_id(db_id, result, pid))
+        }
+        "inbox_fail_by_db_id" => {
+            let db_id = params
+                .get("db_item_id")
+                .or_else(|| params.get("item_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let reason = params
+                .get("reason")
+                .or_else(|| params.get("error"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("failed");
+            Ok(kernel.inbox_fail_by_db_id(db_id, reason))
+        }
         "inbox_complete" => {
             let id = params
                 .get("item_id")
@@ -1667,6 +1722,21 @@ fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: 
                 .and_then(|v| v.as_str())
                 .unwrap_or("auto_apply_forbidden");
             Ok(kernel.evolution_block_auto(reason))
+        }
+        "evolution_analyze" => {
+            let snapshot = params
+                .get("snapshot")
+                .cloned()
+                .or_else(|| {
+                    // allow flat params as snapshot
+                    if params.is_object() {
+                        Some(params.clone())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(json!({}));
+            Ok(kernel.evolution_analyze(snapshot))
         }
 
         // ── P1 context / memory layers ────────────────────

@@ -277,10 +277,85 @@ class WorkforceDispatcher:
         except Exception as e:
             logger.debug("redis busy refresh: %s", e)
 
+    def _rust_tick_hooks(self) -> None:
+        """Dispatcher tick: Rust reclaim + isolation OS reap (best-effort)."""
+        k = self._kernel
+        if not hasattr(k, "_call"):
+            return
+        try:
+            k._call("inbox_reclaim")
+        except Exception as e:
+            logger.debug("rust inbox_reclaim: %s", e)
+        try:
+            timeout = float(
+                getattr(settings, "agent_inbox_item_timeout", self._item_timeout)
+                or self._item_timeout
+            )
+            k._call("isolation_reap", {"max_age_secs": max(timeout, 60.0)})
+        except Exception as e:
+            logger.debug("rust isolation_reap: %s", e)
+
+    def _identity_admit(self, ident: Any) -> bool:
+        """Register + admit identity concurrency slot in Rust authority."""
+        k = self._kernel
+        if not hasattr(k, "_call"):
+            return True
+        try:
+            iid = str(getattr(ident, "id", "") or "")
+            name = str(getattr(ident, "name", "") or iid)
+            role = str(getattr(ident, "role", "") or "")
+            caps = list(getattr(ident, "capabilities", None) or [])
+            # ensure identity exists in rust cache
+            k._call(
+                "identity_hire",
+                {
+                    "id": iid,
+                    "name": name,
+                    "role": role,
+                    "capabilities": caps,
+                    "max_concurrent": 1,
+                },
+            )
+            r = k._call("identity_admit", {"id": name}) or k._call(
+                "identity_admit", {"id": iid}
+            )
+            if isinstance(r, dict) and r.get("ok") is False:
+                return False
+            return True
+        except Exception as e:
+            # Permission error = at capacity
+            msg = str(e).lower()
+            if "max" in msg or "admit" in msg or "permission" in msg or "concurrent" in msg:
+                logger.warning("identity_admit denied for %s: %s", getattr(ident, "name", ""), e)
+                return False
+            logger.debug("identity_admit soft-fail: %s", e)
+            return True
+
+    def _identity_release(self, ident: Any) -> None:
+        k = self._kernel
+        if not hasattr(k, "_call") or ident is None:
+            return
+        try:
+            iid = str(getattr(ident, "id", "") or "")
+            name = str(getattr(ident, "name", "") or iid)
+            k._call("identity_release", {"id": name})
+            if iid and iid != name:
+                k._call("identity_release", {"id": iid})
+        except Exception as e:
+            logger.debug("identity_release: %s", e)
+
     async def tick(self, *, wait: bool = False) -> int:
         """扫描一轮，派发所有可派工单。返回派发数。
-        wait=True 时等待本轮派发的工单全部完成（测试/同步场景）。"""
-        # 回收超时 claimed（worker 崩溃残留）
+        wait=True 时等待本轮派发的工单全部完成（测试/同步场景）。
+
+        Claim 路径：Rust inbox_claim 权威（见 InboxService.claim_next）。
+        """
+        # Rust reclaim + isolation OS reap first
+        try:
+            self._rust_tick_hooks()
+        except Exception as e:
+            logger.debug("rust tick hooks: %s", e)
+        # 回收超时 claimed（worker 崩溃残留）— SQL mirror + rust
         try:
             timeout = float(getattr(settings, "agent_inbox_item_timeout", self._item_timeout) or self._item_timeout)
             await self._inbox.reclaim_stale_claims(timeout_seconds=timeout)
@@ -952,6 +1027,11 @@ class WorkforceDispatcher:
             held = proc_id_holder.get("id")
             if held:
                 self._proc_to_item.pop(str(held), None)
+            # release Rust identity concurrency slot
+            try:
+                self._identity_release(ident)
+            except Exception:
+                pass
 
     async def _run_item(self, item: Any, *, proc_id_holder: dict | None = None) -> None:
         """唤醒身份执行一单。全程 kernel 中介 + 预算扣减。
@@ -963,6 +1043,16 @@ class WorkforceDispatcher:
         ident = await self._registry.get(item.identity_id)
         if ident is None or ident.status != "active":
             await self._inbox.fail(item.id, "身份不存在或已停用")
+            return
+
+        # Rust identity admit (concurrency authority) before waking worker
+        if not self._identity_admit(ident):
+            try:
+                await self._inbox.release_claim_to_pending(
+                    item.id, reason="identity_admit_denied"
+                )
+            except Exception:
+                await self._inbox.fail(item.id, "identity admit denied (at capacity)")
             return
 
         item_key = str(item.id)

@@ -180,9 +180,10 @@ L0 Kernel（进程 / cap / 调度 / 隔离）████░░░░░░  ~45
 | H3-4 | 日用场景 `coding_research` 默认 engineering profile | ✅ |
 | H3-5 | README 双产品线说明 | ✅ |
 | H4-1 | Identity hire/admit 并发闸 + Inbox 身份并发/溢出 — **Rust 权威** | ✅ |
-| H4-2 | EvolutionGate Rust 账本 + Python 引擎 dual-write / auto_apply 硬检 | ✅ |
+| H4-2 | EvolutionGate 业务分析全量 Rust（`evolution_analyze`）；Python 仅 snapshot feeder + SQL mirror | ✅ |
 | H4-3 | Scheduler 全局 cap + per-session fair share（解耦 session 锁） | ✅ |
-| H4-4 | Isolation OS 级：os_pid、reap_tick、max children、orphan 记账 | ✅ |
+| H4-4 | Isolation **真 OS 接入**：`spawn_os`/`Child`/`poll`/`kill` + reap；local/os/auto 真进程 | ✅ |
+| H4-5 | Dispatcher：Rust `inbox_claim/reclaim/complete_by_db` + identity_admit；host 在线禁纯 SQL claim | ✅ |
 
 **Host 长稳验收（写死）**
 

@@ -1825,6 +1825,49 @@ impl AgentKernel {
         }
     }
 
+    /// Force real OS process spawn (ignores ledger-only backends).
+    pub fn isolation_spawn_os(
+        &self,
+        process_id: &str,
+        command: &str,
+        backend: Option<&str>,
+    ) -> KernelResult<Value> {
+        let mut g = self.inner.write();
+        let be = backend.unwrap_or("os");
+        match g.isolation.spawn_os(process_id, command, be) {
+            Ok(h) => {
+                Self::emit_locked(
+                    &mut g,
+                    "isolation.spawn_os",
+                    process_id,
+                    json!(h),
+                );
+                Ok(json!(h))
+            }
+            Err(e) => Err(KernelError::Permission(e)),
+        }
+    }
+
+    pub fn isolation_poll(&self, handle_id: &str) -> Value {
+        let mut g = self.inner.write();
+        g.isolation
+            .poll(handle_id)
+            .unwrap_or_else(|| json!({"ok": false, "error": "unknown_handle"}))
+    }
+
+    pub fn isolation_kill(&self, handle_id: &str) -> Option<Value> {
+        let mut g = self.inner.write();
+        let h = g.isolation.kill(handle_id)?;
+        let pid = h.process_id.clone();
+        Self::emit_locked(
+            &mut g,
+            "isolation.kill",
+            &pid,
+            json!({"handle_id": handle_id, "status": h.status}),
+        );
+        Some(json!(h))
+    }
+
     pub fn isolation_complete(&self, handle_id: &str, exit_code: i32) -> Option<Value> {
         let mut g = self.inner.write();
         g.isolation.complete(handle_id, exit_code).map(|h| json!(h))
@@ -2727,6 +2770,59 @@ impl AgentKernel {
         }
     }
 
+    /// Explicit stale-claim reclaim (dispatcher tick).
+    pub fn inbox_reclaim(&self) -> Value {
+        let mut g = self.inner.write();
+        let n = g.inbox.reclaim_stale();
+        json!({"reclaimed": n, "authority": "rust"})
+    }
+
+    /// Complete by db_item_id in meta (Python dual-write path).
+    pub fn inbox_complete_by_db_id(
+        &self,
+        db_item_id: &str,
+        result: &str,
+        process_id: Option<&str>,
+    ) -> Value {
+        let mut g = self.inner.write();
+        let found = g.inbox.list(Some("claimed"), 200).into_iter().find(|it| {
+            it.meta
+                .get("db_item_id")
+                .and_then(|v| v.as_str())
+                == Some(db_item_id)
+        });
+        match found {
+            Some(it) => {
+                let token = it.claim_token.clone().unwrap_or_default();
+                match g.inbox.complete(&it.id, &token, result, process_id) {
+                    Ok(item) => json!({"ok": true, "item": item}),
+                    Err(e) => json!({"ok": false, "error": e}),
+                }
+            }
+            None => json!({"ok": false, "error": "not_found_or_not_claimed"}),
+        }
+    }
+
+    pub fn inbox_fail_by_db_id(&self, db_item_id: &str, reason: &str) -> Value {
+        let mut g = self.inner.write();
+        let found = g.inbox.list(Some("claimed"), 200).into_iter().find(|it| {
+            it.meta
+                .get("db_item_id")
+                .and_then(|v| v.as_str())
+                == Some(db_item_id)
+        });
+        match found {
+            Some(it) => {
+                let token = it.claim_token.clone().unwrap_or_default();
+                match g.inbox.fail(&it.id, &token, reason) {
+                    Ok(item) => json!({"ok": true, "item": item}),
+                    Err(e) => json!({"ok": false, "error": e}),
+                }
+            }
+            None => json!({"ok": false, "error": "not_found_or_not_claimed"}),
+        }
+    }
+
     pub fn inbox_complete(
         &self,
         item_id: &str,
@@ -2952,6 +3048,34 @@ impl AgentKernel {
 
     pub fn evolution_block_auto(&self, reason: &str) -> Value {
         self.inner.write().evolution.block_auto_apply(reason)
+    }
+
+    /// Business analysis fully in Rust. Python only feeds the snapshot.
+    pub fn evolution_analyze(&self, snapshot: Value) -> Value {
+        let mut g = self.inner.write();
+        let props = g.evolution.analyze(&snapshot);
+        let identity = snapshot
+            .get("identity")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        if !props.is_empty() {
+            Self::emit_locked(
+                &mut g,
+                "evolution.analyzed",
+                identity,
+                json!({
+                    "count": props.len(),
+                    "kinds": props.iter().map(|p| p.kind.clone()).collect::<Vec<_>>(),
+                }),
+            );
+        }
+        json!({
+            "ok": true,
+            "authority": "rust",
+            "analyzer": "rust",
+            "proposals": props,
+            "count": props.len(),
+        })
     }
 
     // ── P1: context VM ────────────────────────────────────
@@ -4422,7 +4546,7 @@ mod tests {
         k.identity_release("e1");
         k.identity_admit("e1").unwrap();
         // isolation reap
-        let h = k.isolation_spawn("px", "sleep", "bwrap");
+        let _h = k.isolation_spawn("px", "sleep", "bwrap");
         // untrusted would deny local; interactive allows local
         let h = k
             .isolation_spawn("px", "echo", "local")
