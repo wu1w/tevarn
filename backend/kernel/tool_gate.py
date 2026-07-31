@@ -298,13 +298,18 @@ async def enforce_tool_gate(
         return args, f"Error: Kernel 门控故障（ValueError: {e}），已拒绝 «{name}»。"
     except Exception as e:
         # fail-closed：kernel 故障不得静默放行
-        # 连接断开也标成可恢复拒绝，便于 rehydrate
+        # Connection/timeout are recoverable via rehydrate — but do NOT mislabel
+        # them as「未知进程」(that confused CEO into blaming employee channels).
         msg = str(e)
+        low = msg.lower()
         if (
-            "closed connection" in msg.lower()
+            "closed connection" in low
             or "10053" in msg
             or "10054" in msg
-            or "not connected" in msg.lower()
+            or "not connected" in low
+            or "read timeout" in low
+            or "write timeout" in low
+            or isinstance(e, (ConnectionError, TimeoutError, BrokenPipeError, OSError))
         ):
             logger.warning(
                 "tool_gate mediate host disconnect tool=%s proc=%s: %s",
@@ -312,7 +317,10 @@ async def enforce_tool_gate(
                 pid[:12],
                 e,
             )
-            return args, f"Error: Kernel 权限拒绝——未知进程 {pid}（host reconnect）"
+            return args, (
+                f"Error: Kernel host 重连中——process={pid} "
+                f"({type(e).__name__}: {msg[:160]})；将自动 rehydrate 后重试"
+            )
         logger.error(
             "tool_gate mediate failed tool=%s proc=%s: %s",
             name,

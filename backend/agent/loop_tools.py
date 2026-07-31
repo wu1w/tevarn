@@ -196,21 +196,37 @@ class LoopToolsMixin:
             arguments,
             process_id=getattr(kernel_proc, "id", None) if kernel_proc else None,
         )
-        # Fallback: still unknown after ensure — force rehydrate once more
-        if (
-            gate_err
-            and kernel_proc is not None
-            and (
-                "未知进程" in gate_err
-                or "not found" in gate_err.lower()
-                or "host reconnect" in gate_err
+
+        def _gate_needs_rehydrate(err: str | None) -> bool:
+            if not err:
+                return False
+            low = err.lower()
+            return (
+                "未知进程" in err
+                or "not found" in low
+                or "host reconnect" in low
+                or "host 重连" in err
+                or "rehydrate" in low
+                or "closed connection" in low
+                or "10053" in err
+                or "10054" in err
+                or "read timeout" in low
             )
-        ):
-            try:
-                # Invalidate cached epoch so ensure always recreates
-                self._kernel_host_epoch = -1
-                kernel_proc = await self._ensure_live_kernel_process(arguments)
-                if kernel_proc is not None:
+
+        # Fallback: host wiped / reconnecting — force rehydrate + gate up to 3 times.
+        # Single retry was not enough while host thrash-restarted mid-assign.
+        if gate_err and kernel_proc is not None and _gate_needs_rehydrate(gate_err):
+            import asyncio
+
+            for attempt in range(1, 4):
+                try:
+                    # Invalidate cached epoch so ensure always recreates
+                    self._kernel_host_epoch = -1
+                    if attempt > 1:
+                        await asyncio.sleep(0.2 * attempt)
+                    kernel_proc = await self._ensure_live_kernel_process(arguments)
+                    if kernel_proc is None:
+                        continue
                     arguments["_kernel_process_id"] = kernel_proc.id
                     arguments.pop("_tool_gate_passed", None)
                     arguments.pop("_tool_gate_internal", None)
@@ -219,8 +235,24 @@ class LoopToolsMixin:
                         arguments,
                         process_id=kernel_proc.id,
                     )
-            except Exception as re_e:
-                logger.error("process rehydrate retry failed: %s", re_e)
+                    if not gate_err or not _gate_needs_rehydrate(gate_err):
+                        break
+                    logger.warning(
+                        "tool gate still needs rehydrate tool=%s attempt=%s/3 err=%s",
+                        name,
+                        attempt,
+                        (gate_err or "")[:160],
+                    )
+                except Exception as re_e:
+                    logger.error(
+                        "process rehydrate retry failed attempt=%s: %s",
+                        attempt,
+                        re_e,
+                    )
+        # Reconnect / wiped-process errors are not capability denies — do not
+        # burn escalation budget on dead process ids.
+        if gate_err and _gate_needs_rehydrate(gate_err):
+            return gate_err
         if gate_err and "Kernel 权限拒绝" in gate_err and kernel_proc is not None:
             # ── 编制 / 主人 提权回退（gate 只做裁决；扩权逻辑仍在 loop）──
             from backend.kernel import KernelPermissionError, get_kernel
