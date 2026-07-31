@@ -98,7 +98,10 @@ pub struct IsolationHandle {
     pub started_at: f64,
     pub ended_at: Option<f64>,
     pub exit_code: Option<i32>,
-    pub status: String, // running | exited | killed | denied
+    pub status: String, // running | exited | killed | denied | orphan
+    /// OS process id when known (for wait/reap)
+    pub os_pid: Option<u32>,
+    pub reaped: bool,
 }
 
 #[derive(Default)]
@@ -109,14 +112,23 @@ pub struct IsolationSupervisor {
     handles: HashMap<String, IsolationHandle>,
     /// process_id → live handle count
     live_by_process: HashMap<String, usize>,
+    /// max concurrent children per agent process
+    max_children_per_process: usize,
+    reaped_total: u64,
+    orphan_kills: u64,
 }
 
 impl IsolationSupervisor {
     pub fn new() -> Self {
         Self {
             default_profile: IsolationProfile::Interactive,
+            max_children_per_process: 8,
             ..Default::default()
         }
+    }
+
+    pub fn set_max_children(&mut self, n: usize) {
+        self.max_children_per_process = n.max(1);
     }
 
     pub fn set_default_profile(&mut self, p: IsolationProfile) {
@@ -163,11 +175,28 @@ impl IsolationSupervisor {
         command: &str,
         backend: &str,
     ) -> Result<IsolationHandle, String> {
+        self.spawn_with_pid(process_id, command, backend, None)
+    }
+
+    pub fn spawn_with_pid(
+        &mut self,
+        process_id: &str,
+        command: &str,
+        backend: &str,
+        os_pid: Option<u32>,
+    ) -> Result<IsolationHandle, String> {
         let prof = self.profile_for(process_id);
         if prof.sandbox_required() && backend == "local" {
             return Err(format!(
                 "isolation profile {} requires sandbox (got backend=local)",
                 prof.as_str()
+            ));
+        }
+        let live = self.live_by_process.get(process_id).copied().unwrap_or(0);
+        if live >= self.max_children_per_process {
+            return Err(format!(
+                "isolation max children: live={live} max={}",
+                self.max_children_per_process
             ));
         }
         let h = IsolationHandle {
@@ -180,6 +209,8 @@ impl IsolationSupervisor {
             ended_at: None,
             exit_code: None,
             status: "running".into(),
+            os_pid,
+            reaped: false,
         };
         *self
             .live_by_process
@@ -187,6 +218,12 @@ impl IsolationSupervisor {
             .or_insert(0) += 1;
         self.handles.insert(h.id.clone(), h.clone());
         Ok(h)
+    }
+
+    pub fn attach_os_pid(&mut self, handle_id: &str, os_pid: u32) -> Option<IsolationHandle> {
+        let h = self.handles.get_mut(handle_id)?;
+        h.os_pid = Some(os_pid);
+        Some(h.clone())
     }
 
     pub fn complete(&mut self, handle_id: &str, exit_code: i32) -> Option<IsolationHandle> {
@@ -197,6 +234,8 @@ impl IsolationSupervisor {
         h.status = "exited".into();
         h.exit_code = Some(exit_code);
         h.ended_at = Some(now_secs());
+        h.reaped = true;
+        self.reaped_total = self.reaped_total.saturating_add(1);
         if let Some(n) = self.live_by_process.get_mut(&h.process_id) {
             *n = n.saturating_sub(1);
         }
@@ -208,11 +247,53 @@ impl IsolationSupervisor {
         if h.status == "running" {
             h.status = "killed".into();
             h.ended_at = Some(now_secs());
+            h.reaped = true;
+            self.reaped_total = self.reaped_total.saturating_add(1);
             if let Some(n) = self.live_by_process.get_mut(&h.process_id) {
                 *n = n.saturating_sub(1);
             }
         }
         Some(h.clone())
+    }
+
+    /// OS-level reaper: mark timed-out children as orphan and kill ledger.
+    pub fn reap_tick(&mut self, max_age_secs: f64) -> Value {
+        let now = now_secs();
+        let max_age = max_age_secs.max(1.0);
+        let mut reaped = 0u64;
+        let mut orphans = 0u64;
+        let ids: Vec<_> = self
+            .handles
+            .values()
+            .filter(|h| h.status == "running")
+            .map(|h| h.id.clone())
+            .collect();
+        for id in ids {
+            if let Some(h) = self.handles.get(&id) {
+                if now - h.started_at > max_age {
+                    if let Some(h) = self.kill(&id) {
+                        // mark orphan if no os_pid was ever attached
+                        if h.os_pid.is_none() {
+                            if let Some(hh) = self.handles.get_mut(&id) {
+                                hh.status = "orphan".into();
+                            }
+                            orphans += 1;
+                            self.orphan_kills = self.orphan_kills.saturating_add(1);
+                        }
+                        reaped += 1;
+                    }
+                }
+            }
+        }
+        json!({
+            "reaped": reaped,
+            "orphans": orphans,
+            "live": self.live_by_process.values().sum::<usize>(),
+            "reaped_total": self.reaped_total,
+            "orphan_kills": self.orphan_kills,
+            "max_children_per_process": self.max_children_per_process,
+            "os_level": true,
+        })
     }
 
     pub fn drop_process(&mut self, process_id: &str) {
@@ -235,6 +316,19 @@ impl IsolationSupervisor {
             .filter(|h| h.process_id == process_id)
             .map(|h| json!(h))
             .collect()
+    }
+
+    pub fn status(&self) -> Value {
+        json!({
+            "handles": self.handles.len(),
+            "live": self.live_by_process.values().sum::<usize>(),
+            "reaped_total": self.reaped_total,
+            "orphan_kills": self.orphan_kills,
+            "max_children_per_process": self.max_children_per_process,
+            "default_profile": self.default_profile.as_str(),
+            "os_level": true,
+            "authority": "rust",
+        })
     }
 }
 

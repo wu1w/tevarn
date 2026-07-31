@@ -36,7 +36,11 @@ Python 侧：
 |------|------|------|
 | process / mediate / budget / audit / court / run_gate | **Rust** | host JSON-RPC |
 | tool schema 裁剪 | Rust `filter_tools` + Python `cap_tools` | 生产 None caps → 空表 |
-| Identity / Inbox / SQL | Python | 应用层 |
+| **Identity 热路径** | **Rust** `identity_hire/admit/set_*` | SQL 镜像可选 |
+| **Inbox claim 队列** | **Rust** 并发/溢出/超时 reclaim | dispatcher 调 RPC |
+| **Evolution 门禁** | **Rust** `evolution_gate` | Python 分析器只产建议 + dual-write |
+| **Scheduler** | **Rust** 全局 cap + session fair share | 非 session 互斥锁 |
+| **Isolation** | **Rust** spawn/reap/os_pid | 平台 backend 仍适配 |
 | 单测直接 `AgentKernel()` | Python fixture | 非生产路径 |
 
 ## 构建

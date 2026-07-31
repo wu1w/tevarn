@@ -179,6 +179,10 @@ L0 Kernel（进程 / cap / 调度 / 隔离）████░░░░░░  ~45
 | H3-3 | 主路径 runtime health 恢复横幅 + host 一键重启 | ✅ |
 | H3-4 | 日用场景 `coding_research` 默认 engineering profile | ✅ |
 | H3-5 | README 双产品线说明 | ✅ |
+| H4-1 | Identity hire/admit 并发闸 + Inbox 身份并发/溢出 — **Rust 权威** | ✅ |
+| H4-2 | EvolutionGate Rust 账本 + Python 引擎 dual-write / auto_apply 硬检 | ✅ |
+| H4-3 | Scheduler 全局 cap + per-session fair share（解耦 session 锁） | ✅ |
+| H4-4 | Isolation OS 级：os_pid、reap_tick、max children、orphan 记账 | ✅ |
 
 **Host 长稳验收（写死）**
 

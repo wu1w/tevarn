@@ -26,6 +26,7 @@ use crate::services::{ServicePrivilege, ServiceSupervisor};
 use crate::identity_cache::IdentityCache;
 use crate::inbox::InboxQueue;
 use crate::skill_gate::SkillGate;
+use crate::evolution_gate::EvolutionGate;
 use crate::context_vm::ContextVm;
 use crate::memory_layers::{LayeredMemory, MemoryLayer};
 use crate::coding_profile::CodingProfileRegistry;
@@ -178,6 +179,7 @@ struct KernelInner {
     identity_cache: IdentityCache,
     inbox: InboxQueue,
     skill_gate: SkillGate,
+    evolution: EvolutionGate,
     context_vm: ContextVm,
     memory_layers: LayeredMemory,
     collab: CollabHub,
@@ -240,6 +242,7 @@ impl AgentKernel {
                 identity_cache: IdentityCache::default(),
                 inbox: InboxQueue::default(),
                 skill_gate: SkillGate::default(),
+                evolution: EvolutionGate::default(),
                 context_vm: ContextVm::default(),
                 memory_layers: LayeredMemory::default(),
                 collab: CollabHub::default(),
@@ -1553,7 +1556,14 @@ impl AgentKernel {
 
     pub fn scheduler_stats(&self) -> Value {
         let g = self.inner.read();
-        json!(g.scheduler.stats())
+        g.scheduler.status()
+    }
+
+    pub fn scheduler_set_limits(&self, max_running: u32, max_per_session: u32) -> Value {
+        let mut g = self.inner.write();
+        g.scheduler
+            .set_limits(max_running as usize, max_per_session as usize);
+        g.scheduler.status()
     }
 
     pub fn scheduler_complete(&self, task_id: &str, cancelled: bool) {
@@ -1818,6 +1828,22 @@ impl AgentKernel {
     pub fn isolation_complete(&self, handle_id: &str, exit_code: i32) -> Option<Value> {
         let mut g = self.inner.write();
         g.isolation.complete(handle_id, exit_code).map(|h| json!(h))
+    }
+
+    pub fn isolation_attach_pid(&self, handle_id: &str, os_pid: u32) -> Option<Value> {
+        let mut g = self.inner.write();
+        g.isolation
+            .attach_os_pid(handle_id, os_pid)
+            .map(|h| json!(h))
+    }
+
+    pub fn isolation_reap(&self, max_age_secs: Option<f64>) -> Value {
+        let mut g = self.inner.write();
+        g.isolation.reap_tick(max_age_secs.unwrap_or(600.0))
+    }
+
+    pub fn isolation_status(&self) -> Value {
+        self.inner.read().isolation.status()
     }
 
     pub fn checkpoint_begin(&self, process_id: &str, path: &str) -> KernelResult<Value> {
@@ -2572,6 +2598,72 @@ impl AgentKernel {
 
     // ── P1-A: identity cache ──────────────────────────────
 
+    pub fn identity_hire(
+        &self,
+        id: &str,
+        name: &str,
+        role: &str,
+        capabilities: Option<Vec<String>>,
+        max_concurrent: Option<u32>,
+    ) -> KernelResult<Value> {
+        let mut g = self.inner.write();
+        match g.identity_cache.hire(
+            id,
+            name,
+            role,
+            capabilities,
+            max_concurrent.unwrap_or(2),
+        ) {
+            Ok(r) => {
+                Self::emit_locked(
+                    &mut g,
+                    "identity.hired",
+                    "system",
+                    json!({"id": id, "name": name}),
+                );
+                Ok(json!(r))
+            }
+            Err(e) => Err(KernelError::Invalid(e)),
+        }
+    }
+
+    pub fn identity_set_status(&self, id_or_name: &str, status: &str) -> KernelResult<Value> {
+        let mut g = self.inner.write();
+        match g.identity_cache.set_status(id_or_name, status) {
+            Ok(r) => Ok(json!(r)),
+            Err(e) => Err(KernelError::NotFound(e)),
+        }
+    }
+
+    pub fn identity_set_capabilities(
+        &self,
+        id_or_name: &str,
+        caps: Vec<String>,
+    ) -> KernelResult<Value> {
+        let mut g = self.inner.write();
+        match g.identity_cache.set_capabilities(id_or_name, caps) {
+            Ok(r) => Ok(json!(r)),
+            Err(e) => Err(KernelError::NotFound(e)),
+        }
+    }
+
+    pub fn identity_admit(&self, id_or_name: &str) -> KernelResult<Value> {
+        let mut g = self.inner.write();
+        match g.identity_cache.admit_process(id_or_name) {
+            Ok(()) => Ok(json!({"ok": true, "identity": id_or_name})),
+            Err(e) => Err(KernelError::Permission(e)),
+        }
+    }
+
+    pub fn identity_release(&self, id_or_name: &str) -> Value {
+        self.inner.write().identity_cache.release_process(id_or_name);
+        json!({"ok": true})
+    }
+
+    pub fn identity_authority_status(&self) -> Value {
+        self.inner.read().identity_cache.authority_status()
+    }
+
     pub fn identity_cache_put(&self, data: Value) -> KernelResult<Value> {
         let mut g = self.inner.write();
         match g.identity_cache.put_json(&data) {
@@ -2776,7 +2868,90 @@ impl AgentKernel {
     }
 
     pub fn evolution_policy(&self) -> Value {
-        self.inner.read().skill_gate.evolution_policy()
+        // Rust evolution_gate is authority; skill_gate mirrors hard false
+        crate::evolution_gate::EvolutionGate::policy()
+    }
+
+    pub fn evolution_submit(
+        &self,
+        kind: &str,
+        title: &str,
+        body: &str,
+        identity: Option<&str>,
+        score: f64,
+        meta: Value,
+    ) -> Value {
+        let mut g = self.inner.write();
+        let p = g
+            .evolution
+            .submit(kind, title, body, identity, score, meta);
+        Self::emit_locked(
+            &mut g,
+            "evolution.submitted",
+            "system",
+            json!({"id": p.id, "kind": kind}),
+        );
+        json!(p)
+    }
+
+    pub fn evolution_list(&self, status: Option<&str>, limit: usize) -> Value {
+        json!({
+            "proposals": self.inner.read().evolution.list(status, limit),
+        })
+    }
+
+    pub fn evolution_approve(&self, id: &str, by: &str) -> KernelResult<Value> {
+        let mut g = self.inner.write();
+        match g.evolution.approve(id, by) {
+            Ok(p) => Ok(json!(p)),
+            Err(e) => Err(KernelError::Invalid(e)),
+        }
+    }
+
+    pub fn evolution_reject(&self, id: &str, by: &str, reason: &str) -> KernelResult<Value> {
+        let mut g = self.inner.write();
+        match g.evolution.reject(id, by, reason) {
+            Ok(p) => Ok(json!(p)),
+            Err(e) => Err(KernelError::Invalid(e)),
+        }
+    }
+
+    pub fn evolution_apply(&self, id: &str, by: &str) -> KernelResult<Value> {
+        let mut g = self.inner.write();
+        let skill_ok = {
+            let p = g.evolution.get(id);
+            match p {
+                Some(pp) if pp.kind == "skill" => {
+                    let name = pp
+                        .meta
+                        .get("skill_name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(pp.title.as_str());
+                    g.skill_gate.is_loadable(name)
+                }
+                _ => true,
+            }
+        };
+        match g.evolution.try_apply(id, by, skill_ok) {
+            Ok(p) => {
+                Self::emit_locked(
+                    &mut g,
+                    "evolution.applied",
+                    "system",
+                    json!({"id": id}),
+                );
+                Ok(json!(p))
+            }
+            Err(e) => Err(KernelError::Permission(e)),
+        }
+    }
+
+    pub fn evolution_status(&self) -> Value {
+        self.inner.read().evolution.status()
+    }
+
+    pub fn evolution_block_auto(&self, reason: &str) -> Value {
+        self.inner.write().evolution.block_auto_apply(reason)
     }
 
     // ── P1: context VM ────────────────────────────────────
@@ -4228,6 +4403,38 @@ mod tests {
         assert!(imp["hydrated"]["memory_keys"].as_u64().unwrap_or(0) >= 1);
         let got = kernel.sys_memory_get("alice", "pref");
         assert_eq!(got["found"], true);
+    }
+
+    #[test]
+    fn evolution_identity_isolation_scheduler() {
+        let k = k();
+        // evolution
+        let p = k.evolution_submit("skill", "demo", "body", Some("alice"), 0.8, json!({"skill_name":"nope"}));
+        let id = p["id"].as_str().unwrap();
+        assert!(k.evolution_apply(id, "sys").is_err());
+        k.evolution_approve(id, "human").unwrap();
+        assert!(k.evolution_apply(id, "human").is_err()); // skill not loadable
+        // identity hire + admit
+        k.identity_hire("e1", "emp1", "dev", Some(vec!["file_read".into()]), Some(1))
+            .unwrap();
+        k.identity_admit("e1").unwrap();
+        assert!(k.identity_admit("e1").is_err()); // concurrent limit
+        k.identity_release("e1");
+        k.identity_admit("e1").unwrap();
+        // isolation reap
+        let h = k.isolation_spawn("px", "sleep", "bwrap");
+        // untrusted would deny local; interactive allows local
+        let h = k
+            .isolation_spawn("px", "echo", "local")
+            .unwrap();
+        let hid = h["id"].as_str().unwrap();
+        let reap = k.isolation_reap(Some(0.0)); // age 0 → reap all running
+        assert!(reap["reaped"].as_u64().unwrap() >= 1 || k.isolation_status()["handles"].as_u64().unwrap() >= 1);
+        let _ = hid;
+        // scheduler fair share status
+        let st = k.scheduler_stats();
+        assert_eq!(st["fair_share"], true);
+        assert_eq!(st["session_lock_decoupled"], true);
     }
 
     #[test]

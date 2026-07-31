@@ -497,6 +497,17 @@ fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: 
 
         "scheduler_next" => Ok(kernel.scheduler_next().unwrap_or(Value::Null)),
         "scheduler_stats" => Ok(kernel.scheduler_stats()),
+        "scheduler_set_limits" => {
+            let max_r = params
+                .get("max_running")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(16) as u32;
+            let max_s = params
+                .get("max_per_session")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(2) as u32;
+            Ok(kernel.scheduler_set_limits(max_r, max_s))
+        }
 
         "scheduler_complete" => {
             let task_id = params
@@ -947,6 +958,25 @@ fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: 
                 .isolation_complete(hid, code)
                 .unwrap_or(Value::Null))
         }
+        "isolation_attach_pid" => {
+            let hid = params
+                .get("handle_id")
+                .and_then(|v| v.as_str())
+                .ok_or((-32005, "handle_id required".into(), json!({})))?;
+            let pid = params
+                .get("os_pid")
+                .or_else(|| params.get("pid"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32;
+            Ok(kernel
+                .isolation_attach_pid(hid, pid)
+                .unwrap_or(Value::Null))
+        }
+        "isolation_reap" => {
+            let max_age = params.get("max_age_secs").and_then(|v| v.as_f64());
+            Ok(kernel.isolation_reap(max_age))
+        }
+        "isolation_status" => Ok(kernel.isolation_status()),
 
         "checkpoint_begin" => {
             let pid = params
@@ -1389,6 +1419,73 @@ fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: 
             Ok(kernel.identity_cache_get(key))
         }
         "identity_cache_list" => Ok(kernel.identity_cache_list()),
+        "identity_hire" => {
+            let id = params.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let role = params.get("role").and_then(|v| v.as_str()).unwrap_or("");
+            let caps: Option<Vec<String>> = params.get("capabilities").and_then(|v| {
+                v.as_array().map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+            });
+            let max_c = params
+                .get("max_concurrent")
+                .and_then(|v| v.as_u64())
+                .map(|u| u as u32);
+            kernel
+                .identity_hire(id, name, role, caps, max_c)
+                .map_err(map_err)
+        }
+        "identity_set_status" => {
+            let id = params
+                .get("id")
+                .or_else(|| params.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let status = params
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("active");
+            kernel.identity_set_status(id, status).map_err(map_err)
+        }
+        "identity_set_capabilities" => {
+            let id = params
+                .get("id")
+                .or_else(|| params.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let caps: Vec<String> = params
+                .get("capabilities")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            kernel
+                .identity_set_capabilities(id, caps)
+                .map_err(map_err)
+        }
+        "identity_admit" => {
+            let id = params
+                .get("id")
+                .or_else(|| params.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            kernel.identity_admit(id).map_err(map_err)
+        }
+        "identity_release" => {
+            let id = params
+                .get("id")
+                .or_else(|| params.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            Ok(kernel.identity_release(id))
+        }
+        "identity_authority_status" => Ok(kernel.identity_authority_status()),
         "inbox_submit" => {
             let identity = params
                 .get("identity")
@@ -1533,6 +1630,44 @@ fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: 
         }
         "skill_gate_status" => Ok(kernel.skill_gate_status()),
         "evolution_policy" => Ok(kernel.evolution_policy()),
+        "evolution_submit" => {
+            let kind = params.get("kind").and_then(|v| v.as_str()).unwrap_or("skill");
+            let title = params.get("title").and_then(|v| v.as_str()).unwrap_or("");
+            let body = params.get("body").and_then(|v| v.as_str()).unwrap_or("");
+            let identity = params.get("identity").and_then(|v| v.as_str());
+            let score = params.get("score").and_then(|v| v.as_f64()).unwrap_or(0.5);
+            let meta = params.get("meta").cloned().unwrap_or(json!({}));
+            Ok(kernel.evolution_submit(kind, title, body, identity, score, meta))
+        }
+        "evolution_list" => {
+            let status = params.get("status").and_then(|v| v.as_str());
+            let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
+            Ok(kernel.evolution_list(status, limit))
+        }
+        "evolution_approve" => {
+            let id = params.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let by = params.get("by").and_then(|v| v.as_str()).unwrap_or("user");
+            kernel.evolution_approve(id, by).map_err(map_err)
+        }
+        "evolution_reject" => {
+            let id = params.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let by = params.get("by").and_then(|v| v.as_str()).unwrap_or("user");
+            let reason = params.get("reason").and_then(|v| v.as_str()).unwrap_or("");
+            kernel.evolution_reject(id, by, reason).map_err(map_err)
+        }
+        "evolution_apply" => {
+            let id = params.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let by = params.get("by").and_then(|v| v.as_str()).unwrap_or("user");
+            kernel.evolution_apply(id, by).map_err(map_err)
+        }
+        "evolution_status" => Ok(kernel.evolution_status()),
+        "evolution_block_auto" => {
+            let reason = params
+                .get("reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or("auto_apply_forbidden");
+            Ok(kernel.evolution_block_auto(reason))
+        }
 
         // ── P1 context / memory layers ────────────────────
         "context_set_quota" => {

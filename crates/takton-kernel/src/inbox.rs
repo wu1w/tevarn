@@ -37,6 +37,13 @@ pub struct InboxQueue {
     pending: VecDeque<String>,
     items: HashMap<String, InboxItem>,
     claim_timeout_secs: f64,
+    /// max pending items (overflow drops lowest priority)
+    max_pending: usize,
+    /// claimed-but-not-done per identity
+    claimed_by_identity: HashMap<String, u32>,
+    max_claimed_per_identity: u32,
+    dead: Vec<String>,
+    overflow_drops: u64,
 }
 
 impl Default for InboxQueue {
@@ -51,7 +58,17 @@ impl InboxQueue {
             pending: VecDeque::new(),
             items: HashMap::new(),
             claim_timeout_secs: claim_timeout_secs.max(1.0),
+            max_pending: 500,
+            claimed_by_identity: HashMap::new(),
+            max_claimed_per_identity: 2,
+            dead: Vec::new(),
+            overflow_drops: 0,
         }
+    }
+
+    pub fn set_limits(&mut self, max_pending: usize, max_claimed_per_identity: u32) {
+        self.max_pending = max_pending.max(8);
+        self.max_claimed_per_identity = max_claimed_per_identity.max(1);
     }
 
     pub fn submit(
@@ -90,7 +107,24 @@ impl InboxQueue {
             self.pending.push_back(item.id.clone());
         }
         self.items.insert(item.id.clone(), item.clone());
+        self.enforce_pending_cap();
         item
+    }
+
+    fn enforce_pending_cap(&mut self) {
+        while self.pending.len() > self.max_pending {
+            // drop from back (lowest priority / newest low-prio)
+            if let Some(id) = self.pending.pop_back() {
+                if let Some(mut it) = self.items.remove(&id) {
+                    it.status = "cancelled".into();
+                    it.result = Some("overflow_drop".into());
+                    self.dead.push(id);
+                    self.overflow_drops = self.overflow_drops.saturating_add(1);
+                }
+            } else {
+                break;
+            }
+        }
     }
 
     /// Atomic claim for identity (or any if identity empty).
@@ -111,6 +145,11 @@ impl InboxQueue {
                         continue;
                     }
                 }
+                // per-identity concurrency
+                let live = *self.claimed_by_identity.get(&it.identity).unwrap_or(&0);
+                if live >= self.max_claimed_per_identity {
+                    continue;
+                }
                 idx = Some(i);
                 break;
             }
@@ -122,7 +161,15 @@ impl InboxQueue {
         item.claim_token = Some(short_id());
         item.claimed_by = Some(worker_id.to_string());
         item.claimed_at = Some(now_secs());
+        let ident = item.identity.clone();
+        *self.claimed_by_identity.entry(ident).or_insert(0) += 1;
         Some(item.clone())
+    }
+
+    fn release_claim_count(&mut self, identity: &str) {
+        if let Some(n) = self.claimed_by_identity.get_mut(identity) {
+            *n = n.saturating_sub(1);
+        }
     }
 
     pub fn complete(
@@ -142,11 +189,14 @@ impl InboxQueue {
         if item.claim_token.as_deref() != Some(claim_token) {
             return Err("invalid claim_token".into());
         }
+        let ident = item.identity.clone();
         item.status = "done".into();
         item.result = Some(result.chars().take(20000).collect());
         item.process_id = process_id.map(|s| s.to_string());
         item.claim_token = None;
-        Ok(item.clone())
+        let out = item.clone();
+        self.release_claim_count(&ident);
+        Ok(out)
     }
 
     pub fn fail(
@@ -162,10 +212,13 @@ impl InboxQueue {
         if item.claim_token.as_deref() != Some(claim_token) {
             return Err("invalid claim_token".into());
         }
+        let ident = item.identity.clone();
         item.status = "failed".into();
         item.result = Some(reason.to_string());
         item.claim_token = None;
-        Ok(item.clone())
+        let out = item.clone();
+        self.release_claim_count(&ident);
+        Ok(out)
     }
 
     pub fn release_to_pending(
@@ -180,12 +233,15 @@ impl InboxQueue {
         if item.claim_token.as_deref() != Some(claim_token) {
             return Err("invalid claim_token".into());
         }
+        let ident = item.identity.clone();
         item.status = "pending".into();
         item.claim_token = None;
         item.claimed_by = None;
         item.claimed_at = None;
         self.pending.push_front(item.id.clone());
-        Ok(item.clone())
+        let out = item.clone();
+        self.release_claim_count(&ident);
+        Ok(out)
     }
 
     pub fn reclaim_stale(&mut self) -> usize {
@@ -193,10 +249,12 @@ impl InboxQueue {
         let timeout = self.claim_timeout_secs;
         let mut n = 0;
         let mut back = Vec::new();
+        let mut release_idents = Vec::new();
         for item in self.items.values_mut() {
             if item.status == "claimed" {
                 if let Some(at) = item.claimed_at {
                     if now - at > timeout {
+                        release_idents.push(item.identity.clone());
                         item.status = "pending".into();
                         item.claim_token = None;
                         item.claimed_by = None;
@@ -206,6 +264,9 @@ impl InboxQueue {
                     }
                 }
             }
+        }
+        for id in release_idents {
+            self.release_claim_count(&id);
         }
         for id in back {
             if !self.pending.contains(&id) {
@@ -242,6 +303,12 @@ impl InboxQueue {
             "total": self.items.len(),
             "counts": counts,
             "claim_timeout_secs": self.claim_timeout_secs,
+            "max_pending": self.max_pending,
+            "max_claimed_per_identity": self.max_claimed_per_identity,
+            "claimed_by_identity": self.claimed_by_identity,
+            "overflow_drops": self.overflow_drops,
+            "dead_letter": self.dead.len(),
+            "authority": "rust",
         })
     }
 }

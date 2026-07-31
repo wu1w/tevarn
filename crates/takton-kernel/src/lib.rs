@@ -27,6 +27,7 @@ pub mod services;
 pub mod skill_gate;
 pub mod wasm_runtime;
 pub mod eval_suite;
+pub mod evolution_gate;
 pub mod agent_manifest;
 pub mod capability;
 pub mod court;
@@ -77,6 +78,7 @@ pub use services::{
 pub use identity_cache::{IdentityCache, IdentityRecord};
 pub use inbox::{InboxItem, InboxQueue};
 pub use skill_gate::{SkillGate, SkillPackage, EVOLUTION_AUTO_APPLY};
+pub use evolution_gate::{EvolutionGate, EvolutionProposal};
 pub use context_vm::{ContextPage, ContextVm};
 pub use memory_layers::{LayeredMemory, MemoryEntry, MemoryLayer};
 pub use eval_suite::{EvalGate, EvalRun, EvalSuite};
@@ -149,6 +151,7 @@ pub const ABI_METHODS: &[&str] = &[
     "scheduler_submit",
     "scheduler_next",
     "scheduler_stats",
+    "scheduler_set_limits",
     "scheduler_complete",
     "scheduler_cancel_process",
     "capability_narrow",
@@ -179,6 +182,9 @@ pub const ABI_METHODS: &[&str] = &[
     "isolation_set_profile",
     "isolation_spawn",
     "isolation_complete",
+    "isolation_attach_pid",
+    "isolation_reap",
+    "isolation_status",
     "checkpoint_begin",
     "checkpoint_restore",
     "checkpoint_list",
@@ -236,6 +242,12 @@ pub const ABI_METHODS: &[&str] = &[
     "identity_cache_put",
     "identity_cache_get",
     "identity_cache_list",
+    "identity_hire",
+    "identity_set_status",
+    "identity_set_capabilities",
+    "identity_admit",
+    "identity_release",
+    "identity_authority_status",
     "inbox_submit",
     "inbox_claim",
     "inbox_complete",
@@ -243,6 +255,14 @@ pub const ABI_METHODS: &[&str] = &[
     "inbox_release",
     "inbox_list",
     "inbox_status",
+    "evolution_policy",
+    "evolution_submit",
+    "evolution_list",
+    "evolution_approve",
+    "evolution_reject",
+    "evolution_apply",
+    "evolution_status",
+    "evolution_block_auto",
     // P1-B
     "skill_register",
     "skill_verify",

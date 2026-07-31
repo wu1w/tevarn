@@ -280,15 +280,69 @@ class EvolutionEngine:
                 raise ValueError(f"未知进化建议 {proposal_id}")
             return p
 
+    def _mirror_rust(
+        self,
+        action: str,
+        *,
+        kind: str = "",
+        title: str = "",
+        body: str = "",
+        identity: str | None = None,
+        proposal_id: str = "",
+        by: str = "user",
+    ) -> None:
+        """Best-effort dual-write to Rust evolution_gate (authority ledger)."""
+        try:
+            k = self._kernel
+            if not hasattr(k, "_call"):
+                return
+            if action == "submit":
+                k._call(
+                    "evolution_submit",
+                    {
+                        "kind": kind or "policy",
+                        "title": title[:200],
+                        "body": body[:2000],
+                        "identity": identity,
+                        "score": 0.5,
+                        "meta": {"sql_proposal_id": proposal_id},
+                    },
+                )
+            elif action == "approve" and proposal_id:
+                # Rust list may use different ids — block_auto still records policy
+                k._call("evolution_block_auto", {"reason": f"sql_approve:{proposal_id}"})
+            elif action == "reject" and proposal_id:
+                k._call("evolution_block_auto", {"reason": f"sql_reject:{proposal_id}"})
+        except Exception as e:
+            logger.debug("evolution rust mirror skip: %s", e)
+
     async def approve(self, proposal_id: Any, *, by: str) -> Any:
         """批准并立即应用。应用失败 → 状态回 pending 并记录错误。"""
         p = await self._get(proposal_id)
         if p.status != "pending":
             raise ValueError(f"建议状态 {p.status}，仅 pending 可批准")
+        # Hard policy check via Rust (auto_apply must stay false)
+        try:
+            pol = {}
+            if hasattr(self._kernel, "_call"):
+                pol = self._kernel._call("evolution_policy") or {}
+            if pol.get("auto_apply") is True:
+                raise RuntimeError("evolution auto_apply must be false")
+        except RuntimeError:
+            raise
+        except Exception:
+            pass
         await self._set_status(p, "approved", by=by)
         self._emit("evolution_approved", p.identity_id, {
             "proposal_id": str(p.id), "kind": p.kind, "by": by,
         })
+        self._mirror_rust(
+            "approve",
+            proposal_id=str(p.id),
+            by=by,
+            kind=str(p.kind or ""),
+            title=str(getattr(p, "title", "") or p.kind),
+        )
         try:
             await self._apply(p, by=by)
         except Exception as e:
@@ -305,6 +359,7 @@ class EvolutionEngine:
         self._emit("evolution_rejected", p.identity_id, {
             "proposal_id": str(p.id), "kind": p.kind, "by": by,
         })
+        self._mirror_rust("reject", proposal_id=str(p.id), by=by)
         return await self._get(proposal_id)
 
     async def rollback(self, proposal_id: Any, *, by: str) -> Any:
