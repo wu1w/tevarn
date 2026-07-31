@@ -14,7 +14,7 @@
 
 <br/>
 
-[![Version](https://img.shields.io/badge/version-0.4.11--alpha-7C3AED?style=flat-square)](https://github.com/wu1w/takton/releases)
+[![Version](https://img.shields.io/badge/version-0.5.0--alpha-7C3AED?style=flat-square)](https://github.com/wu1w/takton/tree/feature/agent-kernel)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-06B6D4?style=flat-square)](https://github.com/wu1w/takton/releases)
 [![License](https://img.shields.io/badge/license-MIT-22C55E?style=flat-square)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/wu1w/takton?style=flat-square&logo=github)](https://github.com/wu1w/takton/stargazers)
@@ -160,7 +160,7 @@ curl -fsSL https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.sh
 
 > 一键脚本会自动解析 [最新 Release](https://github.com/wu1w/takton/releases/latest) 资产；上表为固定直链备份。
 
-### From Source · 源码运行（`0.4.11-alpha`）
+### From Source · 源码运行（`0.5.0-alpha`）
 
 ```powershell
 git clone https://github.com/wu1w/takton.git
@@ -270,8 +270,12 @@ Takton 正从「Agent 工作站」演进为 **Personal Agent OS**，Agent Kernel
 
 ## 📖 Documentation · 文档
 
-- [Changelog · 版本记录](CHANGELOG.md) — Release notes for every version
 - [Technical Manual · 技术手册](docs/TECHNICAL_MANUAL.md) — Architecture, API, Database design
+- [Kernel ABI v1](docs/kernel-abi-v1.md) — JSON-RPC control-plane contract
+- [Kernel / Runtime (Rust)](docs/KERNEL_RUST.md) — Host architecture
+- [Agent SDK](docs/agent-sdk.md) — Minimal agent packaging notes
+- [Roadmap · 路线图](docs/ROADMAP.md) — Product direction
+- [0.5.0-alpha release notes](docs/RELEASE_0.5.0-alpha.md) — 2026-07-31 delivery summary
 - [AGENTS.md](AGENTS.md) — AI coding assistant configuration guide
 
 ---
