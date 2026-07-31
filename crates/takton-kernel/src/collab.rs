@@ -159,8 +159,40 @@ impl CollabHub {
     pub fn is_blocked(&self, process_id: &str) -> bool {
         self.sessions
             .get(process_id)
-            .map(|s| s.interrupted || s.pending_approvals.iter().any(|a| a.status == "pending" && a.kind == "write"))
+            .map(|s| {
+                s.interrupted
+                    || s.pending_approvals.iter().any(|a| {
+                        a.status == "pending" && (a.kind == "write" || a.kind == "command")
+                    })
+            })
             .unwrap_or(false)
+    }
+
+    /// Why mediate should deny a write/command for this process (first-class collab gate).
+    pub fn block_reason(&self, process_id: &str, action: &str, target: &str) -> Option<String> {
+        let s = self.sessions.get(process_id)?;
+        if s.interrupted {
+            return Some(format!(
+                "collab:interrupted:{}",
+                s.interrupt_reason.as_deref().unwrap_or("user")
+            ));
+        }
+        let kind_needed = collab_kind_for(action, target);
+        if kind_needed.is_empty() {
+            return None;
+        }
+        if s.pending_approvals
+            .iter()
+            .any(|a| a.status == "pending" && (a.kind == kind_needed || a.kind == "write" || a.kind == "command"))
+        {
+            return Some(format!("collab:pending_approval:{kind_needed}"));
+        }
+        None
+    }
+
+    /// True when this action/target is subject to collab write/command gating.
+    pub fn is_gated_action(action: &str, target: &str) -> bool {
+        !collab_kind_for(action, target).is_empty()
     }
 
     pub fn drop_process(&mut self, process_id: &str) {
@@ -168,10 +200,50 @@ impl CollabHub {
     }
 
     pub fn status(&self) -> Value {
+        let pending: usize = self
+            .sessions
+            .values()
+            .map(|s| s.pending_approvals.iter().filter(|a| a.status == "pending").count())
+            .sum();
+        let interrupted = self.sessions.values().filter(|s| s.interrupted).count();
         json!({
             "sessions": self.sessions.len(),
+            "interrupted": interrupted,
+            "pending_approvals": pending,
+            "first_class_gate": true,
+            "gated_kinds": ["write", "command"],
         })
     }
+}
+
+/// Map mediate action/target → collab approval kind (empty = not gated).
+fn collab_kind_for(action: &str, target: &str) -> &'static str {
+    let a = action.to_lowercase();
+    let t = target.to_lowercase();
+    let write_tools = [
+        "file_write",
+        "edit",
+        "apply_patch",
+        "write",
+        "file_edit",
+        "delete",
+        "file_delete",
+    ];
+    let cmd_tools = ["command", "terminal", "shell", "python", "bash", "powershell"];
+    if a.contains("write")
+        || a == "tool_call" && write_tools.iter().any(|w| t == *w || t.contains(w))
+        || write_tools.iter().any(|w| t == *w)
+    {
+        return "write";
+    }
+    if a.contains("command")
+        || a.contains("exec")
+        || a == "tool_call" && cmd_tools.iter().any(|w| t == *w || t.contains(w))
+        || cmd_tools.iter().any(|w| t == *w)
+    {
+        return "command";
+    }
+    ""
 }
 
 #[cfg(test)]
@@ -184,12 +256,19 @@ mod tests {
         h.set_plan("p1", vec!["read".into(), "edit".into()]);
         h.interrupt("p1", "user pause");
         assert!(h.is_blocked("p1"));
+        assert!(h
+            .block_reason("p1", "tool_call", "file_write")
+            .unwrap()
+            .contains("interrupted"));
         h.resume_collab("p1");
         let a = h.request_approval("p1", "write", "edit file", json!({}));
+        assert!(h.is_blocked("p1"));
+        assert!(CollabHub::is_gated_action("tool_call", "file_write"));
         h.resolve_approval("p1", &a.id, true).unwrap();
         assert_eq!(
             h.get("p1").unwrap().pending_approvals[0].status,
             "approved"
         );
+        assert!(!h.is_blocked("p1"));
     }
 }

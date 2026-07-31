@@ -162,10 +162,36 @@ impl InstanceRegistry {
         self.bundles.values().cloned().collect()
     }
 
+    /// Hydration plan describing what import should apply into kernel services.
+    pub fn hydrate_plan(bundle: &AgentInstanceBundle) -> Value {
+        let mem_keys = bundle
+            .memory
+            .as_object()
+            .map(|o| o.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        let skill_count = match &bundle.skills {
+            Value::Array(a) => a.len(),
+            Value::Object(o) => o.len(),
+            _ => 0,
+        };
+        json!({
+            "identity": bundle.identity,
+            "memory_keys": mem_keys,
+            "memory_count": mem_keys.len(),
+            "skills_count": skill_count,
+            "capabilities": bundle.capabilities,
+            "has_process_snapshot": bundle.process_snapshot.is_some(),
+            "integrity_ok": bundle.meta.get("integrity_ok").and_then(|v| v.as_bool()).unwrap_or(true),
+            "policy": "memory_kv_hydrate; skills_register_draft_only; no_auto_activate",
+        })
+    }
+
     pub fn status(&self) -> Value {
         json!({
             "device_id": self.device_id,
             "bundles": self.bundles.len(),
+            "export_import": true,
+            "hydrate": ["identity_cache", "sys_memory", "skills_draft"],
         })
     }
 }
@@ -188,5 +214,7 @@ mod tests {
         let v = serde_json::to_value(&b).unwrap();
         let imp = r.import_bundle(v).unwrap();
         assert_eq!(imp.identity, "alice");
+        let plan = InstanceRegistry::hydrate_plan(&imp);
+        assert_eq!(plan["memory_count"], 1);
     }
 }

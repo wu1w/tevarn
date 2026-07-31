@@ -187,10 +187,83 @@ impl Hal {
         })
     }
 
+    /// Enforce path against workspace jail + capability hint for mediate.
+    /// Does not execute I/O — callers must still go through tool backends.
+    pub fn enforce_path(
+        workspace: Option<&str>,
+        path: &str,
+        capability: &str,
+    ) -> Result<Value, String> {
+        let resolved = Self::resolve_path(workspace, path)?;
+        let cap = if capability.is_empty() {
+            "file_read"
+        } else {
+            capability
+        };
+        Ok(json!({
+            "ok": true,
+            "enforced": true,
+            "capability_required": cap,
+            "path": resolved,
+            "policy": "workspace_jail+capability; execution stays outside HAL",
+        }))
+    }
+
+    /// Enforce command resolution: maps logical → argv and declares terminal capability.
+    pub fn enforce_command(logical: &str, args: &[String]) -> Value {
+        let mut r = Self::resolve_command(logical, args);
+        if let Some(obj) = r.as_object_mut() {
+            obj.insert("enforced".into(), json!(true));
+            obj.insert("capability_required".into(), json!("terminal"));
+            obj.insert(
+                "policy".into(),
+                json!("resolve_only; must mediate(process, tool_call, command) before exec"),
+            );
+        }
+        r
+    }
+
+    /// Enforce browser URL open descriptor + network/browser capability.
+    pub fn enforce_browser(url: &str) -> Result<Value, String> {
+        let u = url.trim();
+        if u.is_empty() {
+            return Err("empty url".into());
+        }
+        let lower = u.to_lowercase();
+        if !(lower.starts_with("http://")
+            || lower.starts_with("https://")
+            || lower.starts_with("file://"))
+        {
+            return Err(format!("unsupported url scheme: {url}"));
+        }
+        // block obvious local file exfil schemes beyond file:// already limited
+        if lower.contains('\0') {
+            return Err("NUL in url".into());
+        }
+        let mut r = Self::resolve_browser(url);
+        if let Some(obj) = r.as_object_mut() {
+            obj.insert("enforced".into(), json!(true));
+            obj.insert("capability_required".into(), json!("browser"));
+            obj.insert(
+                "policy".into(),
+                json!("scheme allowlist http/https/file; mediate before launch"),
+            );
+        }
+        Ok(r)
+    }
+
     pub fn status() -> Value {
         json!({
             "platform": Self::platform(),
-            "apis": ["resolve_path", "resolve_command", "resolve_browser"],
+            "apis": [
+                "resolve_path",
+                "resolve_command",
+                "resolve_browser",
+                "enforce_path",
+                "enforce_command",
+                "enforce_browser"
+            ],
+            "enforcement": "resolve+capability_hint; kernel.hal_enforce_* mediates",
         })
     }
 }
@@ -205,5 +278,15 @@ mod tests {
         assert!(r["resolved"].as_str().unwrap().len() > 0);
         let c = Hal::resolve_command("python", &[]);
         assert!(c["program"].as_str().is_some());
+    }
+
+    #[test]
+    fn enforce_path_and_browser() {
+        let e = Hal::enforce_path(None, ".", "file_read").unwrap();
+        assert_eq!(e["enforced"], true);
+        assert_eq!(e["capability_required"], "file_read");
+        let b = Hal::enforce_browser("https://example.com").unwrap();
+        assert_eq!(b["enforced"], true);
+        assert!(Hal::enforce_browser("javascript:alert(1)").is_err());
     }
 }

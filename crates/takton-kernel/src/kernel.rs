@@ -39,10 +39,10 @@ use crate::instance::InstanceRegistry;
 use crate::domain_events::DomainEventBus;
 use crate::approval_rules::ApprovalPolicy;
 use crate::eval_suite::EvalSuite;
+use crate::abi_compat::AbiCompatState;
 use crate::agent_manifest::{pack_checklist, validate_agent_manifest, validate_agent_manifest_str};
 use crate::error::{KernelError, KernelResult};
 use crate::intent::{synthesize_token, IntentDeclaration};
-use crate::ABI_VERSION;
 use crate::process::{AgentProcess, ProcessState};
 use crate::resource::{ResourceKind, ResourceManager};
 use crate::scheduler::AgentScheduler;
@@ -188,6 +188,7 @@ struct KernelInner {
     domain_events: DomainEventBus,
     approval: ApprovalPolicy,
     eval_suite: EvalSuite,
+    abi: AbiCompatState,
     /// Opaque identity registry hook marker (set by host/runtime glue)
     identity_registry_attached: bool,
 }
@@ -248,6 +249,7 @@ impl AgentKernel {
                 domain_events: DomainEventBus::default(),
                 approval: ApprovalPolicy::default(),
                 eval_suite: EvalSuite::default(),
+                abi: AbiCompatState::default(),
                 identity_registry_attached: false,
             }),
         }
@@ -1021,8 +1023,22 @@ impl AgentKernel {
             .map(|p| p.id.clone())
             .unwrap_or_else(|| process_id.to_string());
 
+        // E-02: collab first-class gate after capability court allows write/command
+        let mut final_verdict = court.verdict.clone();
+        let mut final_reason = court.reason.clone();
+        let mut final_layer = court.layer.clone();
+        let mut final_rule = court.matched_rule.clone();
+        if court.verdict == "allow" && CollabHub::is_gated_action(action, target) {
+            if let Some(reason) = g.collab.block_reason(process_id, action, target) {
+                final_verdict = "deny".into();
+                final_reason = reason;
+                final_layer = "collab".into();
+                final_rule = "collab:human_gate".into();
+            }
+        }
+
         let audit = court.to_audit();
-        let outcome = if court.verdict == "allow" {
+        let outcome = if final_verdict == "allow" {
             "allow"
         } else {
             "deny"
@@ -1031,9 +1047,11 @@ impl AgentKernel {
         let mut detail = json!({
             "action": action,
             "target": target,
-            "allowed": court.verdict == "allow",
-            "reason": court.reason,
+            "allowed": final_verdict == "allow",
+            "reason": final_reason,
             "capability_checked": court.capability_checked,
+            "layer": final_layer,
+            "matched_rule": final_rule,
             "args_keys": args.and_then(|a| a.as_object()).map(|m| {
                 let mut k: Vec<_> = m.keys().cloned().collect();
                 k.sort();
@@ -1046,6 +1064,11 @@ impl AgentKernel {
                     map.insert(k, v);
                 }
             }
+            // collab override wins on layer/reason for explainability
+            map.insert("layer".into(), json!(final_layer));
+            map.insert("matched_rule".into(), json!(final_rule));
+            map.insert("reason".into(), json!(final_reason));
+            map.insert("allowed".into(), json!(final_verdict == "allow"));
         }
 
         Self::emit_locked(&mut g, "mediation", &pid, detail);
@@ -1059,20 +1082,20 @@ impl AgentKernel {
                 "action": action,
                 "target": target,
                 "outcome": outcome,
-                "allowed": court.verdict == "allow",
-                "reason": court.reason,
-                "source": "permission_court",
+                "allowed": final_verdict == "allow",
+                "reason": final_reason,
+                "source": if final_layer == "collab" { "collab" } else { "permission_court" },
                 "tool": court.tool,
                 "args_digest": court.args_digest,
-                "verdict": court.verdict,
-                "matched_rule": court.matched_rule,
-                "layer": court.layer,
+                "verdict": final_verdict,
+                "matched_rule": final_rule,
+                "layer": final_layer,
                 "capability_checked": court.capability_checked,
             }),
         );
 
-        if court.verdict != "allow" {
-            return Err(KernelError::Permission(court.reason));
+        if final_verdict != "allow" {
+            return Err(KernelError::Permission(final_reason));
         }
         Ok(MediationDecision {
             allowed: true,
@@ -2874,15 +2897,21 @@ impl AgentKernel {
             if let Some(proc) = g.processes.get_mut(process_id) {
                 proc.meta
                     .insert("coding_profile".into(), json!(profile.id));
+                proc.meta
+                    .insert("collab_gate".into(), json!(profile.requires_collab_gate()));
                 if proc.token_budget.is_none() {
                     proc.token_budget = Some(profile.token_budget);
                 }
+            }
+            // pair profile: ensure collab session exists for interrupt/approve UX
+            if profile.requires_collab_gate() {
+                let _ = g.collab.ensure(process_id);
             }
             Self::emit_locked(
                 &mut g,
                 "coding_profile.applied",
                 process_id,
-                json!({"profile": profile.id}),
+                json!({"profile": profile.id, "collab_gate": profile.requires_collab_gate()}),
             );
         }
         // apply intent outside lock via public API
@@ -2894,6 +2923,40 @@ impl AgentKernel {
             "process_id": process_id,
             "profile": profile.to_dict(),
             "tools": profile.tools,
+            "collab_gate": profile.requires_collab_gate(),
+        }))
+    }
+
+    /// Spawn a process already stamped with a coding profile (E-01 UX path).
+    pub fn coding_profile_spawn(
+        &self,
+        identity: &str,
+        profile_id: &str,
+        session_id: Option<&str>,
+    ) -> KernelResult<Value> {
+        let profile = CodingProfileRegistry::resolve(profile_id)
+            .ok_or_else(|| KernelError::NotFound(format!("unknown profile {profile_id}")))?;
+        let mut meta = BTreeMap::new();
+        meta.insert("coding_profile".into(), json!(profile.id));
+        meta.insert("collab_gate".into(), json!(profile.requires_collab_gate()));
+        meta.insert("spawn_path".into(), json!("coding_profile_spawn"));
+        let intent = IntentDeclaration::from_dict(&profile.to_intent_dict())?;
+        let proc = self.create_process_with_intent(
+            identity,
+            session_id,
+            None,
+            Some(profile.capabilities.clone()),
+            Some(profile.token_budget),
+            Some(meta),
+            Some(intent),
+        )?;
+        let applied = self.coding_profile_apply(&proc.id, &profile.id)?;
+        Ok(json!({
+            "ok": true,
+            "process": proc.to_dict(),
+            "profile": profile.to_dict(),
+            "tools": profile.tools,
+            "applied": applied,
         }))
     }
 
@@ -2981,6 +3044,10 @@ impl AgentKernel {
             Some(s) => json!(s),
             None => json!({"process_id": process_id, "plan": [], "interrupted": false}),
         }
+    }
+
+    pub fn collab_status(&self) -> Value {
+        self.inner.read().collab.status()
     }
 
     // ── P2: edit session ──────────────────────────────────
@@ -3110,6 +3177,53 @@ impl AgentKernel {
         Hal::resolve_browser(url)
     }
 
+    /// Enforce path via HAL jail then mediate capability (E-05).
+    pub fn hal_enforce_path(
+        &self,
+        process_id: &str,
+        workspace: Option<&str>,
+        path: &str,
+        capability: Option<&str>,
+    ) -> KernelResult<Value> {
+        let cap = capability.unwrap_or("file_read");
+        let enforced = Hal::enforce_path(workspace, path, cap).map_err(KernelError::Invalid)?;
+        // mediate capability for this process
+        let _ = self.mediate(process_id, "tool_call", cap, Some(&enforced))?;
+        Ok(json!({
+            "ok": true,
+            "mediated": true,
+            "process_id": process_id,
+            "result": enforced,
+        }))
+    }
+
+    pub fn hal_enforce_command(
+        &self,
+        process_id: &str,
+        logical: &str,
+        args: Vec<String>,
+    ) -> KernelResult<Value> {
+        let enforced = Hal::enforce_command(logical, &args);
+        let _ = self.mediate(process_id, "tool_call", "command", Some(&enforced))?;
+        Ok(json!({
+            "ok": true,
+            "mediated": true,
+            "process_id": process_id,
+            "result": enforced,
+        }))
+    }
+
+    pub fn hal_enforce_browser(&self, process_id: &str, url: &str) -> KernelResult<Value> {
+        let enforced = Hal::enforce_browser(url).map_err(KernelError::Invalid)?;
+        let _ = self.mediate(process_id, "tool_call", "browser", Some(&enforced))?;
+        Ok(json!({
+            "ok": true,
+            "mediated": true,
+            "process_id": process_id,
+            "result": enforced,
+        }))
+    }
+
     pub fn hal_status(&self) -> Value {
         Hal::status()
     }
@@ -3185,6 +3299,17 @@ impl AgentKernel {
         self.inner.read().wasm.status()
     }
 
+    pub fn wasm_explain(&self, module_id: Option<&str>) -> Value {
+        let g = self.inner.read();
+        match module_id {
+            Some(id) if !id.is_empty() => g.wasm.explain_module(id),
+            _ => json!({
+                "limits": crate::wasm_runtime::WasmRuntime::explain_limits(None),
+                "status": g.wasm.status(),
+            }),
+        }
+    }
+
     // ── P2: package manager ───────────────────────────────
 
     pub fn pkg_install(
@@ -3255,6 +3380,18 @@ impl AgentKernel {
         json!({"ok": true, "key_source": g.packages.key_source()})
     }
 
+    /// Force production signing key policy (E-06).
+    pub fn pkg_set_require_secure(&self, require: bool) -> Value {
+        let mut g = self.inner.write();
+        g.packages.set_require_secure(require);
+        json!({
+            "ok": true,
+            "require_secure": g.packages.require_secure(),
+            "insecure_default_key": g.packages.is_insecure_default_key(),
+            "production_ready": !g.packages.is_insecure_default_key(),
+        })
+    }
+
     pub fn pkg_scan(&self, content: &str, permissions: Vec<String>) -> Value {
         self.inner.read().packages.scan_only(content, &permissions)
     }
@@ -3299,7 +3436,8 @@ impl AgentKernel {
                 .get(pid)
                 .and_then(|p| p.capabilities.clone())
         });
-        let mem = g.services.memory.list_keys(identity);
+        // Full KV map (not just keys) for multi-device hydrate
+        let mem = g.services.memory.export_map(identity);
         let skills = json!(g.skill_gate.list());
         let b = g.instances.export_bundle(
             identity,
@@ -3323,7 +3461,109 @@ impl AgentKernel {
                     "capabilities": b.capabilities,
                     "status": "active",
                 }));
-                Ok(json!(b))
+                // hydrate sys memory KV
+                let mem_n = g.services.memory.import_map(&b.identity, &b.memory);
+                // hydrate layered memory if entries present under memory._layers
+                let mut layer_n = 0usize;
+                if let Some(layers) = b.memory.get("_layers").and_then(|v| v.as_array()) {
+                    for ent in layers {
+                        let content = ent
+                            .get("content")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        if content.is_empty() {
+                            continue;
+                        }
+                        let layer = ent
+                            .get("layer")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("working");
+                        let score = ent.get("score").and_then(|v| v.as_f64()).unwrap_or(0.5);
+                        g.memory_layers.put(
+                            &b.identity,
+                            MemoryLayer::parse(layer),
+                            content,
+                            score,
+                        );
+                        layer_n += 1;
+                    }
+                }
+                // re-register skills as draft only (never auto-activate — security)
+                let mut skill_n = 0usize;
+                let skill_items: Vec<Value> = match &b.skills {
+                    Value::Array(a) => a.clone(),
+                    Value::Object(o) => o.values().cloned().collect(),
+                    _ => Vec::new(),
+                };
+                for sk in skill_items {
+                    let name = sk
+                        .get("manifest")
+                        .and_then(|m| m.get("name"))
+                        .or_else(|| sk.get("name"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if name.is_empty() {
+                        continue;
+                    }
+                    let version = sk
+                        .get("manifest")
+                        .and_then(|m| m.get("version"))
+                        .or_else(|| sk.get("version"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("0.0.0-import");
+                    let content = sk
+                        .get("content")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("# imported skill (draft)");
+                    let perms: Vec<String> = sk
+                        .get("manifest")
+                        .and_then(|m| m.get("permissions"))
+                        .or_else(|| sk.get("permissions"))
+                        .and_then(|v| v.as_array())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let _ = g
+                        .skill_gate
+                        .register(name, version, content, perms, vec!["import".into()]);
+                    skill_n += 1;
+                }
+                let plan = crate::instance::InstanceRegistry::hydrate_plan(&b);
+                Self::emit_locked(
+                    &mut g,
+                    "instance.imported",
+                    "system",
+                    json!({
+                        "identity": b.identity,
+                        "memory_keys": mem_n,
+                        "memory_layers": layer_n,
+                        "skills_draft": skill_n,
+                    }),
+                );
+                // Flat identity fields for ABI backward-compat + hydrate report.
+                Ok(json!({
+                    "id": b.id,
+                    "device_id": b.device_id,
+                    "identity": b.identity,
+                    "process_snapshot": b.process_snapshot,
+                    "capabilities": b.capabilities,
+                    "memory": b.memory,
+                    "skills": b.skills,
+                    "meta": b.meta,
+                    "created_at": b.created_at,
+                    "content_hash": b.content_hash,
+                    "hydrated": {
+                        "identity_cache": true,
+                        "memory_keys": mem_n,
+                        "memory_layers": layer_n,
+                        "skills_draft": skill_n,
+                        "skills_auto_activated": false,
+                    },
+                    "plan": plan,
+                }))
             }
             Err(e) => Err(KernelError::Invalid(e)),
         }
@@ -3337,16 +3577,49 @@ impl AgentKernel {
         self.inner.read().instances.status()
     }
 
-    /// ABI compatibility window (P2 E-03).
+    /// ABI compatibility window (E-03).
     pub fn abi_compat(&self) -> Value {
-        json!({
-            "abi": ABI_VERSION,
-            "min_compatible_abi": "1.0.0",
-            "max_compatible_abi": "1.0.0",
-            "compat_window": "same major.minor; patch additive only",
-            "breaking_policy": "bump major; dual-run host for one release when possible",
-            "methods_count": crate::ABI_METHODS.len(),
-        })
+        self.inner.read().abi.snapshot()
+    }
+
+    pub fn abi_negotiate(&self, client_abi: &str) -> Value {
+        let mut g = self.inner.write();
+        let r = g.abi.negotiate(client_abi);
+        Self::emit_locked(
+            &mut g,
+            "abi.negotiate",
+            "system",
+            json!({
+                "client_abi": client_abi,
+                "compatible": r.get("compatible"),
+            }),
+        );
+        r
+    }
+
+    pub fn abi_record_break(
+        &self,
+        from_abi: &str,
+        to_abi: &str,
+        reason: &str,
+        methods_removed: Vec<String>,
+    ) -> Value {
+        let mut g = self.inner.write();
+        let rec = g
+            .abi
+            .record_break(from_abi, to_abi, reason, methods_removed);
+        let break_count = g.abi.break_count();
+        Self::emit_locked(
+            &mut g,
+            "abi.break",
+            "system",
+            json!({
+                "from": from_abi,
+                "to": to_abi,
+                "break_count": break_count,
+            }),
+        );
+        json!(rec)
     }
 
     // ── R3/R4: domain events + approval ───────────────────
@@ -3686,5 +3959,124 @@ mod tests {
         }
         assert_eq!(kernel.gc_terminal(1.0), 1);
         assert!(kernel.get_process(&p.id).is_none());
+    }
+
+    // ── §8 / 0.9 platformization ──────────────────────────
+
+    #[test]
+    fn coding_profile_spawn_and_pair_collab() {
+        let kernel = k();
+        let r = kernel
+            .coding_profile_spawn("dev", "pair", Some("s-pair"))
+            .unwrap();
+        assert_eq!(r["ok"], true);
+        let pid = r["process"]["id"].as_str().unwrap();
+        assert_eq!(r["profile"]["id"], "pair");
+        assert_eq!(r["collab_gate"].as_bool().or_else(|| r["applied"]["collab_gate"].as_bool()).unwrap_or(false) || r["applied"]["collab_gate"] == true, true);
+        // interrupt blocks write mediate
+        kernel.collab_interrupt(pid, "review").unwrap();
+        let err = kernel
+            .mediate(pid, "tool_call", "file_write", None)
+            .unwrap_err();
+        assert!(
+            format!("{err}").contains("collab") || format!("{err}").contains("interrupt"),
+            "{err}"
+        );
+        kernel.collab_resume(pid).unwrap();
+        // pending write approval also blocks
+        let a = kernel.collab_request_approval(pid, "write", "patch", json!({}));
+        let aid = a["id"].as_str().unwrap();
+        assert!(kernel.mediate(pid, "tool_call", "file_write", None).is_err());
+        kernel.collab_resolve_approval(pid, aid, true).unwrap();
+        assert!(kernel.mediate(pid, "tool_call", "file_write", None).is_ok());
+    }
+
+    #[test]
+    fn abi_negotiate_and_break_count() {
+        let kernel = k();
+        let ok = kernel.abi_negotiate("1.0.0");
+        assert_eq!(ok["compatible"], true);
+        assert_eq!(kernel.abi_compat()["abi_break_count"], 0);
+        let bad = kernel.abi_negotiate("9.0.0");
+        assert_eq!(bad["compatible"], false);
+        kernel.abi_record_break("1.0.0", "2.0.0", "test", vec!["old".into()]);
+        assert_eq!(kernel.abi_compat()["abi_break_count"], 1);
+    }
+
+    #[test]
+    fn pkg_require_secure_and_instance_hydrate() {
+        let kernel = k();
+        // force secure policy with insecure key → install denied
+        kernel.pkg_set_require_secure(true);
+        let denied = kernel.pkg_install(
+            "x",
+            "1.0",
+            "print(1)",
+            vec![],
+            vec!["file_read".into()],
+            None,
+        );
+        // may pass if env already has a real key; still exercise set path
+        if kernel.pkg_status()["insecure_default_key"] == true {
+            assert!(denied.is_err());
+        }
+        kernel.pkg_set_require_secure(false);
+        kernel.pkg_set_signing_key("unit-test-signing-key-32bytes!!");
+        let content = "print('skill')";
+        let sig = kernel.pkg_sign(content)["signature"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let p = kernel
+            .pkg_install(
+                "demo_pkg",
+                "1.0.0",
+                content,
+                vec![],
+                vec!["file_read".into()],
+                Some(&sig),
+            )
+            .unwrap();
+        assert_eq!(p["status"], "verified");
+
+        // instance export/import with memory hydrate
+        kernel.sys_memory_put("alice", "pref", json!({"theme": "dark"}));
+        let exp = kernel.instance_export("alice", None);
+        assert!(exp["memory"]["pref"].is_object() || exp["memory"].is_object());
+        let imp = kernel.instance_import(exp).unwrap();
+        assert_eq!(imp["hydrated"]["identity_cache"], true);
+        assert!(imp["hydrated"]["memory_keys"].as_u64().unwrap_or(0) >= 1);
+        let got = kernel.sys_memory_get("alice", "pref");
+        assert_eq!(got["found"], true);
+    }
+
+    #[test]
+    fn wasm_explain_and_hal_enforce() {
+        let kernel = k();
+        let ex = kernel.wasm_explain(None);
+        assert!(ex["limits"]["fuel"]["what"].as_str().unwrap().contains("fuel"));
+        let p = kernel
+            .create_process(
+                "main",
+                None,
+                None,
+                Some(vec![
+                    "file_read".into(),
+                    "terminal".into(),
+                    "command".into(),
+                    "browser".into(),
+                ]),
+                None,
+                None,
+            )
+            .unwrap();
+        let path = kernel
+            .hal_enforce_path(&p.id, None, ".", Some("file_read"))
+            .unwrap();
+        assert_eq!(path["mediated"], true);
+        let cmd = kernel
+            .hal_enforce_command(&p.id, "python", vec!["-V".into()])
+            .unwrap();
+        assert_eq!(cmd["mediated"], true);
     }
 }

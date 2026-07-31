@@ -282,15 +282,24 @@ L0 Kernel（进程 / cap / 调度 / 隔离）████░░░░░░  ~45
 
 ## 8. 阶段 0.9 → 1.0 — 平台化与日用
 
-| ID | 工作项 | 0.5 切片 | 后续目标 |
-|----|--------|----------|----------|
-| E-01 | Coding Profile | 🧩 | engineering / review / pair 打透体验 |
-| E-02 | 人机协作打断 / 改 plan / 批准 | 🧩 | collab 一等公民 UX |
-| E-03 | ABI 版本策略 | 🧩 | 兼容窗口与破坏次数目标 0 |
-| E-04 | WASM Skill Runtime | 🧩 | 技能交付常态 + 限额可解释 |
-| E-05 | HAL 路径/命令/浏览器 | 🧩 | 统一经能力与策略 |
-| E-06 | 包管理 / 签名扫描 | 🧩 | 生产密钥默认强制 |
-| E-07 | 多设备 Instance 迁移 | 🧩 | export/import 可用 |
+> 产品版本仍为 **0.5.0-alpha**；下表「0.9」为路线图阶段名，非版本号。  
+> 权威在 **Rust kernel**；Python/API 仅薄封装。
+
+| ID | 工作项 | 0.5 切片 | 状态 |
+|----|--------|----------|------|
+| E-01 | Coding Profile | `coding_profile_spawn` + pair/review UX hints / collab_gate | ✅ |
+| E-02 | 人机协作打断 / 改 plan / 批准 | `mediate` 一等 collab 门控（interrupt / pending write\|command） | ✅ |
+| E-03 | ABI 版本策略 | `abi_compat` + `abi_negotiate` + `abi_record_break`（`abi_break_count` 目标 0） | ✅ |
+| E-04 | WASM Skill Runtime | `wasm_explain` / `limits_explained`（fuel·memory·ops 可解释） | ✅ |
+| E-05 | HAL 路径/命令/浏览器 | `hal_enforce_path/command/browser` → resolve + mediate | ✅ |
+| E-06 | 包管理 / 签名扫描 | `pkg_set_require_secure` / `TAKTON_PKG_REQUIRE_SECURE`；insecure 不可 verified | ✅ |
+| E-07 | 多设备 Instance 迁移 | export 全量 KV；import hydrate identity + memory + skills(draft) | ✅ |
+
+**验收（0.5.0-alpha 下）**
+
+- [x] `cargo test -p takton-kernel`：collab mediate gate / profile spawn / abi / pkg secure / instance hydrate  
+- [x] Host RPC：`coding_profile_spawn` · `collab_status` · `hal_enforce_*` · `wasm_explain` · `pkg_set_require_secure` · `abi_negotiate`  
+- [x] 产品版本保持 `0.5.0-alpha`（不因阶段名升 0.6/0.9）
 
 **1.0 GA 标志**：稳定 ABI、日用文档、可选 WASM 技能、单机日用「敢默认开」。
 

@@ -94,6 +94,27 @@ impl MemoryService {
         json!({"identity": identity, "keys": keys})
     }
 
+    /// Full KV dump for instance export / multi-device migrate.
+    pub fn export_map(&self, identity: &str) -> Value {
+        match self.store.get(identity) {
+            Some(m) => json!(m),
+            None => json!({}),
+        }
+    }
+
+    /// Hydrate from instance bundle memory map (object of key → value).
+    pub fn import_map(&mut self, identity: &str, map: &Value) -> usize {
+        let Some(obj) = map.as_object() else {
+            return 0;
+        };
+        let mut n = 0usize;
+        for (k, v) in obj {
+            self.put(identity, k, v.clone());
+            n += 1;
+        }
+        n
+    }
+
     pub fn delete(&mut self, identity: &str, key: &str) -> bool {
         self.store
             .get_mut(identity)

@@ -1153,8 +1153,55 @@ impl WasmRuntime {
                 "env.cap_check",
                 "hostcall_ledger_fallback"
             ],
+            "limits_explained": Self::explain_limits(None),
             "note": "Primary: wasmtime Cranelift with fuel+memory limits. Fallback: metered hostcall ledger for invalid modules / ops harness.",
         })
+    }
+
+    /// Human-readable limit explainability (E-04) for skill authors / UI.
+    pub fn explain_limits(module: Option<&WasmModule>) -> Value {
+        let fuel = module.map(|m| m.fuel_limit);
+        let pages = module.map(|m| m.memory_pages_limit);
+        let max_ops = module.map(|m| m.max_ops);
+        json!({
+            "fuel": {
+                "what": "wasmtime instruction fuel budget (consume_fuel)",
+                "default_or_module": fuel,
+                "on_exhaust": "trap; invoke returns ok=false with fuel error; no silent continue",
+            },
+            "memory_pages": {
+                "what": "StoreLimits memory_size hard cap (64KiB pages)",
+                "default_or_module": pages,
+                "on_exceed": "memory.grow denied; trap or hostcall_ledger abort",
+            },
+            "max_ops": {
+                "what": "hostcall_ledger op counter (fallback engine only)",
+                "default_or_module": max_ops,
+                "on_exceed": "invoke stops with max_ops exceeded",
+            },
+            "host_imports": {
+                "allowlist": ["env.log", "env.clock", "env.abort", "env.cap_check", "takton.log"],
+                "cap_check": "returns 0/1; empty allowlist = allow all (dev)",
+            },
+            "engines": {
+                "primary": "wasmtime_cranelift",
+                "fallback": "hostcall_ledger (invalid/incomplete modules or params.ops harness)",
+            },
+        })
+    }
+
+    pub fn explain_module(&self, module_id: &str) -> Value {
+        match self.modules.get(module_id) {
+            Some(m) => json!({
+                "module": m,
+                "limits": Self::explain_limits(Some(m)),
+                "compiled": self.compiled.contains_key(module_id),
+            }),
+            None => json!({
+                "error": format!("unknown module {module_id}"),
+                "limits": Self::explain_limits(None),
+            }),
+        }
     }
 }
 

@@ -3,6 +3,7 @@
 //! Process table · capability tokens · mediation · budget ledger ·
 //! hash-chained audit · priority scheduler · resource accounts.
 
+pub mod abi_compat;
 pub mod approval_rules;
 pub mod audit;
 pub mod cache_metrics;
@@ -82,6 +83,7 @@ pub use agent_manifest::{
     pack_checklist, validate_agent_manifest, validate_agent_manifest_str, AgentManifest,
     ManifestValidation,
 };
+pub use abi_compat::{is_compatible, parse_semver, AbiBreakRecord, AbiCompatState};
 pub use coding_profile::{CodingProfile, CodingProfileRegistry};
 pub use collab::{ApprovalRequest, CollabHub, CollabSession};
 pub use edit_session::{simple_diff, EditSession, EditSessionStore};
@@ -263,6 +265,7 @@ pub const ABI_METHODS: &[&str] = &[
     "coding_profile_list",
     "coding_profile_get",
     "coding_profile_apply",
+    "coding_profile_spawn",
     "collab_set_plan",
     "collab_revise_plan",
     "collab_interrupt",
@@ -270,6 +273,7 @@ pub const ABI_METHODS: &[&str] = &[
     "collab_request_approval",
     "collab_resolve_approval",
     "collab_get",
+    "collab_status",
     "edit_propose",
     "edit_confirm",
     "edit_reject",
@@ -283,6 +287,9 @@ pub const ABI_METHODS: &[&str] = &[
     "hal_resolve_path",
     "hal_resolve_command",
     "hal_resolve_browser",
+    "hal_enforce_path",
+    "hal_enforce_command",
+    "hal_enforce_browser",
     "hal_status",
     "wasm_load",
     "wasm_activate",
@@ -291,6 +298,7 @@ pub const ABI_METHODS: &[&str] = &[
     "wasm_kill",
     "wasm_list",
     "wasm_status",
+    "wasm_explain",
     "pkg_install",
     "pkg_activate",
     "pkg_uninstall",
@@ -298,6 +306,7 @@ pub const ABI_METHODS: &[&str] = &[
     "pkg_get",
     "pkg_sign",
     "pkg_set_signing_key",
+    "pkg_set_require_secure",
     "pkg_scan",
     "pkg_promote",
     "pkg_catalog",
@@ -307,6 +316,8 @@ pub const ABI_METHODS: &[&str] = &[
     "instance_list",
     "instance_status",
     "abi_compat",
+    "abi_negotiate",
+    "abi_record_break",
     // R3 de-dualize
     "domain_publish",
     "domain_recent",

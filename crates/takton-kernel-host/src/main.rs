@@ -1628,6 +1628,21 @@ fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: 
             let profile = params.get("profile").or_else(|| params.get("id")).and_then(|v| v.as_str()).unwrap_or("engineering");
             kernel.coding_profile_apply(pid, profile).map_err(map_err)
         }
+        "coding_profile_spawn" => {
+            let identity = params
+                .get("identity")
+                .and_then(|v| v.as_str())
+                .unwrap_or("main");
+            let profile = params
+                .get("profile")
+                .or_else(|| params.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("engineering");
+            let session = params.get("session_id").and_then(|v| v.as_str());
+            kernel
+                .coding_profile_spawn(identity, profile, session)
+                .map_err(map_err)
+        }
         "collab_set_plan" => {
             let pid = params.get("process_id").and_then(|v| v.as_str()).ok_or((-32005, "process_id required".into(), json!({})))?;
             let steps: Vec<String> = params.get("steps").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect()).unwrap_or_default();
@@ -1664,6 +1679,7 @@ fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: 
             let pid = params.get("process_id").and_then(|v| v.as_str()).unwrap_or("");
             Ok(kernel.collab_get(pid))
         }
+        "collab_status" => Ok(kernel.collab_status()),
         "edit_propose" => {
             let pid = params.get("process_id").and_then(|v| v.as_str()).ok_or((-32005, "process_id required".into(), json!({})))?;
             let path = params.get("path").and_then(|v| v.as_str()).ok_or((-32005, "path required".into(), json!({})))?;
@@ -1720,6 +1736,55 @@ fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: 
             Ok(kernel.hal_resolve_browser(url))
         }
         "hal_status" => Ok(kernel.hal_status()),
+        "hal_enforce_path" => {
+            let pid = params
+                .get("process_id")
+                .and_then(|v| v.as_str())
+                .ok_or((-32005, "process_id required".into(), json!({})))?;
+            let path = params
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or((-32005, "path required".into(), json!({})))?;
+            let ws = params.get("workspace").and_then(|v| v.as_str());
+            let cap = params.get("capability").and_then(|v| v.as_str());
+            kernel
+                .hal_enforce_path(pid, ws, path, cap)
+                .map_err(map_err)
+        }
+        "hal_enforce_command" => {
+            let pid = params
+                .get("process_id")
+                .and_then(|v| v.as_str())
+                .ok_or((-32005, "process_id required".into(), json!({})))?;
+            let logical = params
+                .get("logical")
+                .or_else(|| params.get("command"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("shell");
+            let args: Vec<String> = params
+                .get("args")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            kernel
+                .hal_enforce_command(pid, logical, args)
+                .map_err(map_err)
+        }
+        "hal_enforce_browser" => {
+            let pid = params
+                .get("process_id")
+                .and_then(|v| v.as_str())
+                .ok_or((-32005, "process_id required".into(), json!({})))?;
+            let url = params
+                .get("url")
+                .and_then(|v| v.as_str())
+                .ok_or((-32005, "url required".into(), json!({})))?;
+            kernel.hal_enforce_browser(pid, url).map_err(map_err)
+        }
         "wasm_load" => {
             let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("mod");
             let bytes = params.get("bytes").or_else(|| params.get("content")).and_then(|v| v.as_str()).unwrap_or("");
@@ -1747,6 +1812,13 @@ fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: 
         }
         "wasm_list" => Ok(kernel.wasm_list()),
         "wasm_status" => Ok(kernel.wasm_status()),
+        "wasm_explain" => {
+            let id = params
+                .get("module_id")
+                .or_else(|| params.get("id"))
+                .and_then(|v| v.as_str());
+            Ok(kernel.wasm_explain(id))
+        }
         "pkg_install" => {
             let name = params.get("name").and_then(|v| v.as_str()).ok_or((-32005, "name required".into(), json!({})))?;
             let version = params.get("version").and_then(|v| v.as_str()).unwrap_or("0.1.0");
@@ -1779,6 +1851,14 @@ fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: 
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             Ok(kernel.pkg_set_signing_key(key))
+        }
+        "pkg_set_require_secure" => {
+            let require = params
+                .get("require")
+                .or_else(|| params.get("require_secure"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            Ok(kernel.pkg_set_require_secure(require))
         }
         "pkg_scan" => {
             let content = params.get("content").and_then(|v| v.as_str()).unwrap_or("");
@@ -1818,6 +1898,40 @@ fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: 
         "instance_list" => Ok(kernel.instance_list()),
         "instance_status" => Ok(kernel.instance_status()),
         "abi_compat" => Ok(kernel.abi_compat()),
+        "abi_negotiate" => {
+            let client = params
+                .get("client_abi")
+                .or_else(|| params.get("abi"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            Ok(kernel.abi_negotiate(client))
+        }
+        "abi_record_break" => {
+            let from = params
+                .get("from_abi")
+                .or_else(|| params.get("from"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(env!("CARGO_PKG_VERSION"));
+            let to = params
+                .get("to_abi")
+                .or_else(|| params.get("to"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let reason = params
+                .get("reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unspecified");
+            let removed: Vec<String> = params
+                .get("methods_removed")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            Ok(kernel.abi_record_break(from, to, reason, removed))
+        }
 
         // ── R3/R4 domain + approval ───────────────────────
         "domain_publish" => {

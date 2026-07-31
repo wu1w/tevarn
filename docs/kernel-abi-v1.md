@@ -274,19 +274,19 @@ Isolation profiles: `off` · `interactive` · `workforce` · `untrusted` · `rea
 
 **P1 红线**：`evolution_policy.auto_apply` / `auto_apply_live_caps` 必须为 false；未 `skill_verify` 不可 `skill_activate`。
 
-### P2 方法（平台化）
+### P2 方法（平台化 / §8 加深）
 
 | method | 说明 |
 |--------|------|
-| `coding_profile_list/get/apply` | 工程/审阅/结对模板 |
-| `collab_*` | plan / interrupt / resume / approval |
+| `coding_profile_list/get/apply/spawn` | 工程/审阅/结对模板；spawn 一键建进程 |
+| `collab_*` / `collab_status` | plan / interrupt / resume / approval；**mediate 写/命令门控** |
 | `edit_propose/confirm/reject/rollback` | diff 一等公民 |
 | `repo_index_build/get/list` | 仓库索引 + 配额 |
-| `hal_platform` / `hal_resolve_*` | 跨平台路径/命令/浏览器 |
-| `wasm_load/activate/invoke` | fuel/memory 沙箱 |
-| `pkg_install/activate/sign/...` | 包安装签名扫描 |
-| `instance_export/import` | 多设备迁移 |
-| `abi_compat` | 兼容窗口策略 |
+| `hal_platform` / `hal_resolve_*` / `hal_enforce_*` | 解析 + **能力 mediate 强制路径** |
+| `wasm_load/activate/invoke` / `wasm_explain` | fuel/memory 沙箱 + 限额可解释 |
+| `pkg_install/activate/sign/...` / `pkg_set_require_secure` | 签名扫描；生产密钥可强制 |
+| `instance_export/import` | 多设备迁移；import hydrate memory/skills(draft) |
+| `abi_compat` / `abi_negotiate` / `abi_record_break` | 兼容窗口 + break 计数（目标 0） |
 
 ---
 

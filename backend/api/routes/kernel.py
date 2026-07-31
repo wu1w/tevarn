@@ -1988,6 +1988,92 @@ async def wasm_status_api(
     return {}
 
 
+@router.get("/wasm/explain")
+async def wasm_explain_api(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+    module_id: str | None = None,
+):
+    """E-04：WASM fuel/memory/ops 限额可解释说明。"""
+    from backend.kernel import get_kernel
+
+    k = get_kernel()
+    if hasattr(k, "_call"):
+        params: dict[str, Any] = {}
+        if module_id:
+            params["module_id"] = module_id
+        return k._call("wasm_explain", params) or {}
+    return {}
+
+
+@router.post("/coding-profile/spawn")
+async def coding_profile_spawn_api(
+    body: dict[str, Any],
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """E-01：按 Coding Profile 一键 spawn 进程。"""
+    from backend.kernel import get_kernel
+
+    k = get_kernel()
+    if not hasattr(k, "_call"):
+        return {"ok": False, "error": "kernel_rpc_unavailable"}
+    return (
+        k._call(
+            "coding_profile_spawn",
+            {
+                "identity": body.get("identity") or "main",
+                "profile": body.get("profile") or body.get("id") or "engineering",
+                "session_id": body.get("session_id"),
+            },
+        )
+        or {}
+    )
+
+
+@router.get("/abi/compat")
+async def abi_compat_api(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """E-03：ABI 兼容窗口与 break 计数。"""
+    from backend.kernel import get_kernel
+
+    k = get_kernel()
+    if hasattr(k, "_call"):
+        return k._call("abi_compat") or {}
+    return {}
+
+
+@router.post("/abi/negotiate")
+async def abi_negotiate_api(
+    body: dict[str, Any],
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """E-03：客户端 ABI 协商。"""
+    from backend.kernel import get_kernel
+
+    k = get_kernel()
+    if not hasattr(k, "_call"):
+        return {"compatible": False, "error": "kernel_rpc_unavailable"}
+    client = body.get("client_abi") or body.get("abi") or ""
+    return k._call("abi_negotiate", {"client_abi": client}) or {}
+
+
+@router.post("/packages/require-secure")
+async def pkg_require_secure_api(
+    body: dict[str, Any],
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """E-06：强制生产签名密钥策略。"""
+    from backend.kernel import get_kernel
+
+    k = get_kernel()
+    if not hasattr(k, "_call"):
+        return {"ok": False, "error": "kernel_rpc_unavailable"}
+    require = body.get("require")
+    if require is None:
+        require = body.get("require_secure", True)
+    return k._call("pkg_set_require_secure", {"require": bool(require)}) or {}
+
+
 @router.get("/packages/catalog")
 async def kernel_pkg_catalog(
     current_user: Annotated[UserRead, Depends(get_current_user)],

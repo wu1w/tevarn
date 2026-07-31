@@ -71,6 +71,8 @@ pub struct PackageManager {
     signing_key: Vec<u8>,
     /// env | derived_jwt | insecure_default | set
     key_source: String,
+    /// When true, install/activate/promote refuse insecure_default key (production force).
+    require_secure: bool,
 }
 
 /// Resolve signing key: env TAKTON_PKG_SIGNING_KEY → derive JWT → insecure dev fallback.
@@ -100,6 +102,17 @@ pub fn resolve_signing_key_from_env() -> (Vec<u8>, String) {
     )
 }
 
+/// `TAKTON_PKG_REQUIRE_SECURE=1|true|yes` forces production key policy.
+pub fn resolve_require_secure_from_env() -> bool {
+    match std::env::var("TAKTON_PKG_REQUIRE_SECURE") {
+        Ok(v) => {
+            let t = v.trim().to_lowercase();
+            t == "1" || t == "true" || t == "yes" || t == "on"
+        }
+        Err(_) => false,
+    }
+}
+
 impl Default for PackageManager {
     fn default() -> Self {
         let (key, source) = resolve_signing_key_from_env();
@@ -108,6 +121,7 @@ impl Default for PackageManager {
             by_id: HashMap::new(),
             signing_key: key,
             key_source: source,
+            require_secure: resolve_require_secure_from_env(),
         }
     }
 }
@@ -120,12 +134,30 @@ impl PackageManager {
         }
     }
 
+    pub fn set_require_secure(&mut self, require: bool) {
+        self.require_secure = require;
+    }
+
+    pub fn require_secure(&self) -> bool {
+        self.require_secure
+    }
+
     pub fn key_source(&self) -> &str {
         &self.key_source
     }
 
     pub fn is_insecure_default_key(&self) -> bool {
         self.key_source == "insecure_default"
+    }
+
+    /// Production gate: refuse ops that would trust an insecure_default key.
+    fn ensure_secure_key(&self, op: &str) -> Result<(), String> {
+        if self.require_secure && self.is_insecure_default_key() {
+            return Err(format!(
+                "pkg:{op}:require_secure refused insecure_default key; set TAKTON_PKG_SIGNING_KEY or TAKTON_JWT_SECRET (>=16 chars)"
+            ));
+        }
+        Ok(())
     }
 
     pub fn sign_content(&self, content: &str) -> String {
@@ -191,6 +223,7 @@ impl PackageManager {
         if name.is_empty() || version.is_empty() {
             return Err("name and version required".into());
         }
+        self.ensure_secure_key("install")?;
         let ch = content_hash(content);
         let sig = signature
             .map(|s| s.to_string())
@@ -255,6 +288,7 @@ impl PackageManager {
     }
 
     pub fn activate(&mut self, name: &str) -> Result<InstalledPackage, String> {
+        self.ensure_secure_key("activate")?;
         let pkg = self
             .packages
             .get_mut(name)
@@ -270,6 +304,7 @@ impl PackageManager {
     ///
     /// `force=true` only marks findings as reviewed and **keeps quarantine**.
     pub fn promote(&mut self, name: &str, force: bool) -> Result<InstalledPackage, String> {
+        self.ensure_secure_key("promote")?;
         let mut pkg = self
             .packages
             .get(name)
@@ -277,6 +312,12 @@ impl PackageManager {
             .ok_or_else(|| format!("package not installed: {name}"))?;
         if pkg.status == "active" || pkg.status == "verified" {
             return Ok(pkg);
+        }
+        // Never promote to verified under insecure_default even if require_secure is off
+        if self.is_insecure_default_key() {
+            return Err(
+                "cannot promote under insecure_default key; set TAKTON_PKG_SIGNING_KEY".into(),
+            );
         }
         let scan = Self::security_scan(&pkg.content, &pkg.manifest.permissions);
         let sig_ok = verify_hmac(&self.signing_key, &pkg.content, &pkg.signature);
@@ -367,6 +408,8 @@ impl PackageManager {
             "signing": "hmac-sha256",
             "key_source": self.key_source,
             "insecure_default_key": self.is_insecure_default_key(),
+            "require_secure": self.require_secure,
+            "production_ready": !self.is_insecure_default_key(),
             "warning": if self.is_insecure_default_key() {
                 "using insecure_default signing key; set TAKTON_PKG_SIGNING_KEY or TAKTON_JWT_SECRET"
             } else {
@@ -402,6 +445,7 @@ mod tests {
             by_id: Default::default(),
             signing_key: b"takton-package-signing-v1-INSECURE-DEV-ONLY".to_vec(),
             key_source: "insecure_default".into(),
+            require_secure: false,
         };
         let content = "print('safe')";
         let sig = pm.sign_content(content);
@@ -410,6 +454,21 @@ mod tests {
             .unwrap();
         assert_eq!(p.status, "quarantined");
         assert!(pm.status()["insecure_default_key"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn require_secure_blocks_insecure_install() {
+        let mut pm = PackageManager {
+            packages: Default::default(),
+            by_id: Default::default(),
+            signing_key: b"takton-package-signing-v1-INSECURE-DEV-ONLY".to_vec(),
+            key_source: "insecure_default".into(),
+            require_secure: true,
+        };
+        let err = pm
+            .install("x", "1.0", "print(1)", vec![], vec![], None)
+            .unwrap_err();
+        assert!(err.contains("require_secure"), "{err}");
     }
 
     #[test]

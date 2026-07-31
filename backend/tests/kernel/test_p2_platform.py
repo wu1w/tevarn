@@ -139,6 +139,22 @@ async def test_wasm_pkg_instance(k) -> None:
     assert exp.get("content_hash")
     imp = k._call("instance_import", {"bundle": exp})
     assert imp.get("identity") == "u1"
+    assert imp.get("hydrated", {}).get("identity_cache") is True
 
     compat = k._call("abi_compat")
     assert compat.get("min_compatible_abi") == "1.0.0"
+    assert compat.get("abi_break_count") == 0
+    neg = k._call("abi_negotiate", {"client_abi": "1.0.0"})
+    assert neg.get("compatible") is True
+
+    # E-01 spawn + E-04 explain + E-06 require_secure flag
+    sp = k._call(
+        "coding_profile_spawn",
+        {"identity": "p2_spawn", "profile": "pair"},
+    )
+    assert sp.get("ok") is True
+    assert (sp.get("process") or {}).get("id")
+    expl = k._call("wasm_explain", {})
+    assert (expl.get("limits") or {}).get("fuel") or expl.get("status")
+    sec = k._call("pkg_set_require_secure", {"require": False})
+    assert sec.get("ok") is True

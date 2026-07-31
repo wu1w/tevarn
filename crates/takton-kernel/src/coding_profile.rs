@@ -72,7 +72,7 @@ impl CodingProfile {
         p.id = "pair".into();
         p.name = "结对编程".into();
         p.max_iterations = 60;
-        p.description = "结对：可打断/改 plan/批准写操作".into();
+        p.description = "结对：可打断/改 plan/批准写操作；写与命令经 collab 门控".into();
         p
     }
 
@@ -84,6 +84,11 @@ impl CodingProfile {
         Self::all().into_iter().find(|p| p.id == id || p.id.replace('_', "-") == id)
     }
 
+    /// Pair / review modes that expect human-in-the-loop for writes.
+    pub fn requires_collab_gate(&self) -> bool {
+        self.id == "pair" || self.id == "code_review"
+    }
+
     pub fn to_intent_dict(&self) -> Value {
         json!({
             "goal": format!("coding profile: {}", self.id),
@@ -93,12 +98,27 @@ impl CodingProfile {
                 "token_budget": self.token_budget,
                 "max_iterations": self.max_iterations,
                 "profile": self.id,
+                "collab_gate": self.requires_collab_gate(),
+                "network": self.network,
             }
         })
     }
 
     pub fn to_dict(&self) -> Value {
-        json!(self)
+        let mut v = json!(self);
+        if let Some(obj) = v.as_object_mut() {
+            obj.insert("collab_gate".into(), json!(self.requires_collab_gate()));
+            obj.insert(
+                "ux_hints".into(),
+                json!({
+                    "interrupt": self.id == "pair",
+                    "revise_plan": self.id == "pair" || self.id == "engineering",
+                    "approve_writes": self.id == "pair",
+                    "read_only": self.id == "code_review",
+                }),
+            );
+        }
+        v
     }
 }
 
@@ -123,5 +143,12 @@ mod tests {
         let p = CodingProfile::engineering();
         assert!(p.tools.contains(&"file_write".into()) || p.tools.contains(&"edit".into()));
         assert!(p.allow_risky);
+    }
+
+    #[test]
+    fn pair_requires_collab_gate() {
+        assert!(CodingProfile::pair().requires_collab_gate());
+        assert!(CodingProfile::review_only().requires_collab_gate());
+        assert!(!CodingProfile::engineering().requires_collab_gate());
     }
 }
