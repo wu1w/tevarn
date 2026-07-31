@@ -3,6 +3,9 @@
 .. deprecated:: P0-A / R3 去双轨
     **生产权威**：Rust ``scheduler_*`` / ``run_gate_*`` RPC。
     本文件仅 fallback / 历史测试；禁止扩展生产队列逻辑。
+
+H-07：Session 锁只保证同会话不重入，不是全局调度器；
+跨会话排队与前台优先由 run_gate + priority_class 完成。
 """
 
 from __future__ import annotations

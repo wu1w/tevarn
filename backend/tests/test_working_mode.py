@@ -113,9 +113,9 @@ def test_legacy_computer_enabled_in_auto_prefers_sandbox(monkeypatch):
 def test_invalid_values_fall_back_to_safe_defaults(monkeypatch):
     monkeypatch.setattr(settings, "agent_working_mode", "yolo-max", raising=False)
     monkeypatch.setattr(settings, "agent_execution_mode", "nonsense", raising=False)
-    # 非法值绝不能放宽权限
+    # 非法值绝不能放宽权限（默认执行模式为 sandbox，见 DEFAULT_EXECUTION_MODE）
     assert wm.resolve_working_mode().id == "cautious"
-    assert wm.resolve_execution_mode() == "auto"
+    assert wm.resolve_execution_mode() == "sandbox"
 
 
 # ── 工作方式 → profile 映射 ─────────────────────────────────

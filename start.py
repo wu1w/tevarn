@@ -148,22 +148,40 @@ def wait_for_frontend(url: str, timeout: int = 30) -> bool:
 
 
 def find_kernel_host_bin() -> Path | None:
-    """Locate takton-kernel-host (same order as docs/kernel-abi-v1.md)."""
+    """Locate takton-kernel-host (H-01: align with kernel_rust.client._find_host_bin).
+
+    Prefer target/{release,debug} (current ABI) over vendor; newest mtime wins
+    within the same tier.
+    """
     env = os.environ.get("TAKTON_KERNEL_HOST_BIN")
     if env and Path(env).is_file():
         return Path(env)
     names = ("takton-kernel-host.exe", "takton-kernel-host")
     dirs = [
-        ROOT_DIR / "vendor" / "takton-kernel-host",
         ROOT_DIR / "target" / "release",
         ROOT_DIR / "target" / "debug",
+        ROOT_DIR / "vendor" / "takton-kernel-host",
+        ROOT_DIR / "vendor",
     ]
+    candidates: list[Path] = []
     for d in dirs:
         for name in names:
             p = d / name
             if p.is_file():
-                return p
-    return None
+                candidates.append(p)
+    if not candidates:
+        return None
+
+    def _rank(p: Path) -> tuple[int, float]:
+        s = str(p).replace("\\", "/").lower()
+        tier = 0 if "/target/release/" in s or "/target/debug/" in s else 1
+        try:
+            mtime = -float(p.stat().st_mtime)
+        except OSError:
+            mtime = 0.0
+        return (tier, mtime)
+
+    return min(candidates, key=_rank)
 
 
 def start_kernel_host() -> subprocess.Popen | None:

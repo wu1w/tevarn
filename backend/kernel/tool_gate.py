@@ -32,13 +32,15 @@ CHILD_PROC_TOOLS = frozenset({
     "computer",
 })
 
-# Agent 上下文线索：出现任一即视为「正式 run」，缺 process 时 fail-closed
+# Agent 上下文线索：出现任一即视为「正式 run」，缺 process 时 fail-closed。
+# 注意：_session_id 单独不算（确认弹窗/探针需要 session 穿透但未必有 kernel process）。
 _AGENT_CONTEXT_KEYS = (
-    "_session_id",
     "_workforce",
     "_require_kernel_process",
     "_inbox_item_id",
     "_run_recorder",
+    "_kernel_process_id",
+    "_process_id",
 )
 
 

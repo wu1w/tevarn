@@ -59,6 +59,18 @@ python start.py
 | `TAKTON_KERNEL_HOST_BIN` | host 可执行文件路径 |
 | `TAKTON_KERNEL_AUTO_START` | `1` 时自动 spawn host |
 | `TAKTON_KERNEL_AUDIT_PATH` | 审计 JSONL 路径 |
+| `TAKTON_PKG_SIGNING_KEY` | 包市场签名密钥（生产必设，见 [PACKAGE_TRUST.md](./PACKAGE_TRUST.md)） |
+| `TAKTON_KERNEL_HOST_BIN` | host 可执行文件绝对路径 |
+
+### Court fail-closed（H-04）
+
+| host | `agent_court_rust_required` | 行为 |
+|------|----------------------------|------|
+| 在线 + Rust 裁决成功 | * | 使用 Rust |
+| 在线 + Rust 失败/无结果 | **true**（默认） | **deny** |
+| 离线 | * | 回退 Python court |
+
+包生产信任：见 [PACKAGE_TRUST.md](./PACKAGE_TRUST.md)。
 
 强制 Python（测试 / 未编译）：
 

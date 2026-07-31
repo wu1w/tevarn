@@ -1169,6 +1169,130 @@ async def decision_trail(
     return {"process_id": process_id, "events": trail, "total": len(trail)}
 
 
+@router.get("/runs/{process_id}/replay")
+async def run_replay(
+    process_id: str,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+    limit: int = Query(1000, ge=1, le=10000),
+):
+    """H-10：一次 run 的可还原时间线（工具 + 裁决理由 + 预算/资源快照）。
+
+    不是全量 process 状态机 replay（禁止）；而是决策与扣费事件的有序重建。
+    """
+    k = get_kernel()
+    process_id = str(process_id or "").strip()
+    if not process_id:
+        raise HTTPException(status_code=400, detail="process_id required")
+
+    trail: dict[str, Any] = {"process_id": process_id, "events": [], "total": 0}
+    if hasattr(k, "export_decision_trail"):
+        try:
+            trail = k.export_decision_trail(process_id, limit=limit) or trail
+        except TypeError:
+            trail = k.export_decision_trail(process_id) or trail
+        except Exception as e:
+            logger.debug("export_decision_trail: %s", e)
+    elif hasattr(k, "_call"):
+        trail = (
+            k._call(
+                "export_decision_trail",
+                {"process_id": process_id, "limit": limit},
+            )
+            or trail
+        )
+    else:
+        events = k.events(process_id=process_id, limit=limit)
+        trail = {
+            "process_id": process_id,
+            "events": [
+                e.to_dict() if hasattr(e, "to_dict") else e for e in events
+            ],
+            "total": 0,
+        }
+        trail["total"] = len(trail["events"])
+
+    raw_events = list(trail.get("events") or [])
+    tools: list[dict[str, Any]] = []
+    court: list[dict[str, Any]] = []
+    budget_snaps: list[dict[str, Any]] = []
+    timeline: list[dict[str, Any]] = []
+
+    for ev in raw_events:
+        if not isinstance(ev, dict):
+            if hasattr(ev, "to_dict"):
+                ev = ev.to_dict()
+            else:
+                continue
+        kind = str(ev.get("kind") or ev.get("type") or "")
+        payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else ev
+        entry = {
+            "kind": kind,
+            "ts": ev.get("ts") or ev.get("timestamp") or payload.get("ts"),
+            "payload": payload,
+        }
+        timeline.append(entry)
+        low = kind.lower()
+        if "mediat" in low or low in ("tool_call", "tool.allow", "tool.deny"):
+            tools.append(entry)
+        if "policy" in low or "court" in low or "decision" in low:
+            court.append(entry)
+        if any(
+            x in low
+            for x in (
+                "budget",
+                "charge",
+                "resource",
+                "token",
+                "soft_renew",
+            )
+        ):
+            budget_snaps.append(entry)
+
+    proc_snapshot: dict[str, Any] = {}
+    try:
+        p = k.get_process(process_id) if hasattr(k, "get_process") else None
+        if p is not None:
+            proc_snapshot = p.to_dict() if hasattr(p, "to_dict") else {
+                "id": getattr(p, "id", process_id),
+                "tokens_used": getattr(p, "tokens_used", None),
+                "token_budget": getattr(p, "token_budget", None),
+                "state": getattr(p, "state", None),
+                "capabilities": list(getattr(p, "capabilities", None) or [])
+                if getattr(p, "capabilities", None) is not None
+                else None,
+            }
+    except Exception:
+        pass
+
+    resources: dict[str, Any] = {}
+    if hasattr(k, "resource_usage"):
+        try:
+            resources = k.resource_usage(process_id) or {}
+        except Exception:
+            resources = {}
+    elif hasattr(k, "_call"):
+        try:
+            resources = k._call("resource_usage", {"process_id": process_id}) or {}
+        except Exception:
+            resources = {}
+
+    return {
+        "process_id": process_id,
+        "full_state_replay_forbidden": True,
+        "note": (
+            "H-10 decision/cost timeline only — not a full AgentProcess state machine "
+            "replay (see recovery plan)."
+        ),
+        "process": proc_snapshot,
+        "resources": resources,
+        "tools": tools,
+        "court": court,
+        "budget_resource_events": budget_snaps,
+        "timeline": timeline,
+        "total_events": len(timeline),
+    }
+
+
 # ── P0.5：策略 / 成本 / 马拉松 / 恢复说明 ─────────────────────
 
 

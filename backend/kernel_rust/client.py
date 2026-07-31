@@ -257,15 +257,19 @@ class _JsonRpcClient:
         host, _, port = self.host.rpartition(":")
         return host or "127.0.0.1", int(port or 17890)
 
-    def connect(self) -> None:
+    def connect(self, *, attempts: int | None = None, connect_timeout: float | None = None) -> None:
+        """Connect to host. H-14: keep initial connect short so missing host fails fast."""
         with self._lock:
             if self._sock is not None:
                 return
             h, p = self._parse_addr()
             last_err: Exception | None = None
-            for attempt in range(15):
+            n = int(attempts if attempts is not None else 12)
+            # 首次建连用短超时；RPC 读写仍用 _RPC_TIMEOUT
+            cto = float(connect_timeout if connect_timeout is not None else min(1.5, _RPC_TIMEOUT))
+            for attempt in range(max(1, n)):
                 try:
-                    s = socket.create_connection((h, p), timeout=_RPC_TIMEOUT)
+                    s = socket.create_connection((h, p), timeout=cto)
                     s.settimeout(_RPC_TIMEOUT)
                     # 禁用 Nagle，降低小 JSON 行延迟
                     try:
@@ -277,7 +281,7 @@ class _JsonRpcClient:
                     return
                 except OSError as e:
                     last_err = e
-                    time.sleep(0.1 * (attempt + 1))
+                    time.sleep(min(0.25, 0.05 * (attempt + 1)))
             raise ConnectionError(
                 f"cannot connect to kernel host {h}:{p}: {last_err}"
             ) from last_err
@@ -564,8 +568,18 @@ class RustAgentKernel:
         self._scheduler_proxy = _SchedulerProxy(self)
         if auto_start and not is_rust_host_available(host):
             if os.environ.get("TAKTON_KERNEL_AUTO_START", "1") not in ("0", "false", "False"):
-                start_kernel_host(host)
-        self._rpc.connect()
+                started = start_kernel_host(host)
+                if not started and not is_rust_host_available(host):
+                    raise ConnectionError(
+                        f"takton-kernel-host unavailable at {host} "
+                        "(binary missing or failed to start). "
+                        "Build: cargo build -p takton-kernel-host --release"
+                    )
+        # H-14：host 已在线时少重试；刚拉起时稍多
+        if is_rust_host_available(host):
+            self._rpc.connect(attempts=5, connect_timeout=1.0)
+        else:
+            self._rpc.connect(attempts=8, connect_timeout=0.8)
         self._configure_pkg_signing()
 
     def _configure_pkg_signing(self) -> None:

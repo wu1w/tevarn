@@ -1,0 +1,69 @@
+name: kernel-ci
+
+# H-02 / H-12：Rust ABI 契约 + host 构建（与 backend-ci 并行）
+on:
+  push:
+    branches: [main, feature/agent-kernel]
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "backend/kernel_rust/**"
+      - "backend/tests/kernel/**"
+      - ".github/workflows/kernel-ci.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "backend/kernel_rust/**"
+      - "backend/tests/kernel/**"
+
+jobs:
+  rust-abi:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+
+      - name: cargo test -p takton-kernel
+        run: cargo test -p takton-kernel --all-targets
+
+      - name: cargo build host (release)
+        run: cargo build -p takton-kernel-host --release
+
+      - name: Setup Python for ABI host tests
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Python deps (minimal for kernel tests)
+        run: |
+          python -m pip install -U pip
+          pip install -r requirements.txt -r backend/requirements-dev.txt
+
+      - name: Python ABI / kernel hardening tests (with host binary)
+        env:
+          TAKTON_DB_URL: "sqlite+aiosqlite:///./ci-kernel.db"
+          TAKTON_TEST_MODE: "1"
+          TAKTON_AGENT_DISPATCHER_ENABLED: "false"
+          TAKTON_AGENT_KERNEL_PERSISTENCE: "false"
+          TAKTON_JWT_SECRET: "ci-jwt-secret-not-for-production-use-32b"
+          TAKTON_API_KEY: "ci-api-key-not-for-production-use-32bxxxx"
+          TAKTON_KERNEL_BACKEND: "rust"
+          TAKTON_KERNEL_AUTO_START: "1"
+          TAKTON_KERNEL_HOST_BIN: "${{ github.workspace }}/target/release/takton-kernel-host"
+        run: |
+          python -m pytest backend/tests/kernel/test_abi_rust.py \
+            backend/tests/kernel/test_hardening_tool_gate.py \
+            backend/tests/kernel/test_phase_h_hardening.py \
+            -q --tb=short

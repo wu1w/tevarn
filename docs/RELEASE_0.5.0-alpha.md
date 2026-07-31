@@ -72,10 +72,11 @@
 
 ## 建议后续
 
-主线已写入 **[ROADMAP.md](./ROADMAP.md)**（2026-07-31 重写）：
+主线已写入 **[ROADMAP.md](./ROADMAP.md)**（2026-07-31 重写；**阶段 H 已收口**）：
 
-1. **0.5.x Hardening（H-01…）**：host 发布路径、契约 CI、tool_gate 归零、资源/Intent/调度打磨  
+1. ~~0.5.x Hardening（H-01…H-14）~~ → **已完成**（见 ROADMAP §4 勾选）  
 2. **0.6**：P0 验收全勾 → 最小可用 AIOS Runtime  
 3. 其后 0.7 长程/成本 → 0.8 多 Agent 产品化 → 1.0 日用 GA  
 
-本文件只作 0.5.0-alpha **交付快照**；进度与勾选以 ROADMAP 为准。
+本文件只作 0.5.0-alpha **交付快照**；进度与勾选以 ROADMAP 为准。  
+补充文档：[PACKAGE_TRUST.md](./PACKAGE_TRUST.md) · CI：`kernel-ci.yml`

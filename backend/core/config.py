@@ -202,6 +202,8 @@ class Settings(BaseSettings):
     agent_kernel_run_gate_required: bool = True
     # T1：host 可用时 Court 必须以 Rust 为准；失败则 deny（不静默 Python 放宽）
     agent_court_rust_required: bool = True
+    # H-03：create_process 失败时 fail-closed（禁止退回无 kernel 工具路径）
+    agent_kernel_fail_closed_on_create: bool = True
     # T7：远程包市场 catalog JSON URL（空=仅本地）
     agent_package_market_url: str = ""
     # 包签名密钥（≥16 字符）；空则 host 从 JWT 派生或 insecure_default

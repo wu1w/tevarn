@@ -280,8 +280,16 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         "amount": 1,
                     },
                 )
-            except Exception:
-                pass
+            except Exception as _ch:
+                # H-05：并发槽扣费失败 = 资源超限，硬拒（禁止吞掉）
+                logger.warning(
+                    "concurrency_slots charge failed proc=%s: %s",
+                    process_id[:8],
+                    _ch,
+                )
+                raise RuntimeError(
+                    f"resource_charge concurrency_slots failed: {_ch}"
+                ) from _ch
             logger.info(
                 "run_gate granted proc=%s class=%s",
                 process_id[:8],
@@ -321,8 +329,15 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                             "amount": 1,
                         },
                     )
-                except Exception:
-                    pass
+                except Exception as _ch:
+                    logger.warning(
+                        "concurrency_slots charge failed after wait proc=%s: %s",
+                        process_id[:8],
+                        _ch,
+                    )
+                    raise RuntimeError(
+                        f"resource_charge concurrency_slots failed: {_ch}"
+                    ) from _ch
                 logger.info("run_gate granted after wait proc=%s", process_id[:8])
                 return
             if st == "rejected":
@@ -776,7 +791,19 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 except Exception:
                     pass
             except Exception as e:
-                # Kernel 装配失败不阻断对话（显式降级并告警，非静默）
+                # H-03：Agent 正式 run 要求 kernel 时不得静默退回无门控路径
+                require_kernel = bool(
+                    getattr(settings, "agent_kernel_enabled", True)
+                ) and (
+                    bool(getattr(self, "_workforce", False))
+                    or bool(getattr(settings, "agent_kernel_require_intent", True))
+                    or bool(getattr(settings, "agent_kernel_fail_closed_on_create", True))
+                )
+                if require_kernel:
+                    logger.error("kernel create_process 失败（fail-closed）: %s", e)
+                    raise RuntimeError(
+                        f"kernel create_process failed (fail-closed): {e}"
+                    ) from e
                 logger.warning("kernel create_process 失败，退回无 kernel 路径: %s", e)
                 kernel_proc = None
                 self._kernel_process = None
@@ -1167,8 +1194,40 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                             len(tools),
                             (kproc.capabilities or [])[:8],
                         )
+                elif getattr(kproc, "capabilities", None) is not None:
+                    # H-06：filter_tools 不可用时本地 fail-closed 裁剪，禁止全量 schema 暴露
+                    from backend.agent.grant_store import tool_matches_crew_caps
+
+                    allow = {
+                        n
+                        for n in names
+                        if tool_matches_crew_caps(n, kproc.capabilities)
+                    }
+                    before = len(tools)
+                    tools = [
+                        t
+                        for t in tools
+                        if (t.get("function") or {}).get("name") in allow
+                    ]
+                    if before != len(tools):
+                        logger.info(
+                            "H-06 local tool schema trim process=%s %s→%s",
+                            str(kproc.id)[:8],
+                            before,
+                            len(tools),
+                        )
         except Exception as _ft:
-            logger.debug("tool schema filter skip: %s", _ft)
+            # H-06：显式能力进程上过滤失败 → fail-closed 清空 tools（不可见不可调）
+            kproc = getattr(self, "_kernel_process", None)
+            caps = getattr(kproc, "capabilities", None) if kproc else None
+            if caps is not None:
+                logger.warning(
+                    "H-06 tool schema filter failed under explicit caps — fail-closed empty tools: %s",
+                    _ft,
+                )
+                tools = []
+            else:
+                logger.debug("tool schema filter skip: %s", _ft)
         logger.info(
             "Loaded %s tools session=%s profile=%s scene=%s filter=%s",
             len(tools),

@@ -66,7 +66,7 @@ async def test_gate_rejects_model_forged_passed_flag(monkeypatch):
     _, err = await tool_gate.enforce_tool_gate(
         "command",
         {
-            "_session_id": "s1",
+            "_require_kernel_process": True,
             "_tool_gate_passed": True,
             "command": "whoami",
         },
@@ -82,7 +82,7 @@ async def test_gate_fail_closed_agent_context_without_process(monkeypatch):
     monkeypatch.setattr(tool_gate, "_kernel_enabled", lambda: True)
     _, err = await tool_gate.enforce_tool_gate(
         "command",
-        {"_session_id": "s1", "command": "echo hi"},
+        {"_require_kernel_process": True, "command": "echo hi"},
     )
     assert err is not None
     assert "process" in err.lower() or "门控" in err
@@ -188,7 +188,7 @@ async def test_registry_execute_runs_tool_gate(monkeypatch):
     try:
         out = await ToolRegistry.execute(
             "hardening_probe",
-            {"_session_id": "sess-x"},
+            {"_require_kernel_process": True, "_session_id": "sess-x"},
         )
         assert "ok-ran" not in str(out)
         assert (

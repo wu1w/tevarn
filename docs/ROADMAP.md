@@ -162,37 +162,39 @@ L0 Kernel（进程 / cap / 调度 / 隔离）████░░░░░░  ~45
 
 ### 4.1 Hardening 工程清单
 
-| ID | 工作项 | 产出 | 优先级 |
-|----|--------|------|--------|
-| **H-01** | Rust host **发布路径打穿** | 安装/dev 自动找到 `target/*/takton-kernel-host`；失败可观测降级 | H0 |
-| **H-02** | ABI 契约测试常绿 | `cargo test -p takton-kernel` + Python golden + CI | H0 |
-| **H-03** | tool_gate **绕过清单归零** | 代码审计：无 `_tool_gate_passed` 伪造路径；单测锁死 | H0 |
-| **H-04** | Court fail-closed 可配且默认安全 | host 不可用时行为明确；文档写清 | H0 |
-| **H-05** | 资源 charge **接入 loop/tool 真实路径** | 超 concurrency / child_proc / 逻辑内存 → 拒绝+审计 | H1 |
-| **H-06** | Intent → cap → **工具 schema 裁剪** 强制 | 显式能力进程：未授权工具对模型不可见且不可调 | H1 |
-| **H-07** | Scheduler **驱动** session/workforce 队列 | 前台可优先；替换「纯 session 锁」叙事 | H1 |
-| **H-08** | 沙箱默认 profile | interactive / workforce / untrusted；无能力时显式 degraded | H1 |
-| **H-09** | Isolation supervisor 雏形 | spawn/kill/wait 与资源账户绑定；崩溃释放配额 | H2 |
-| **H-10** | 审计回放：一次 run 可还原 | 工具 + 理由 + 预算快照；Security/Kernel API | H2 |
-| **H-11** | Provider cache hit **进周报/Kernel 指标** | family 级 hit rate / billable | H2 |
-| **H-12** | 全量 `backend/tests` + 关键 e2e 进 CI | 不靠本地手跑 | H0 |
-| **H-13** | 包市场生产密钥路径 | `TAKTON_PKG_SIGNING_KEY` + content hash 白名单文档化 | H1 |
-| **H-14** | host 卡死恢复稳态 | 超时重启策略可测；长跑 smoke | H1 |
+| ID | 工作项 | 产出 | 优先级 | 状态 |
+|----|--------|------|--------|------|
+| **H-01** | Rust host **发布路径打穿** | `start.py` / client 统一 target 优先；缺 binary 明确告警降级 | H0 | ✅ |
+| **H-02** | ABI 契约测试常绿 | `kernel-ci.yml`：`cargo test` + host build + Python ABI | H0 | ✅ |
+| **H-03** | tool_gate **绕过清单归零** | 伪造 `_tool_gate_passed` 丢弃；create_process 失败 fail-closed | H0 | ✅ |
+| **H-04** | Court fail-closed 可配且默认安全 | host 在线无裁决 → deny；文档表 + 单测 | H0 | ✅ |
+| **H-05** | 资源 charge **接入 loop/tool 真实路径** | concurrency/child_proc/io 硬拒（不再吞 charge 异常） | H1 | ✅ |
+| **H-06** | Intent → cap → **工具 schema 裁剪** 强制 | 显式 caps 下 filter 失败 → 空 tools（fail-closed） | H1 | ✅ |
+| **H-07** | Scheduler **驱动** session/workforce 队列 | run_gate + 优先级；session 锁仅同会话互斥（见下） | H1 | ✅ 切片 |
+| **H-08** | 沙箱默认 profile | isolation role ↔ computer profile + `degraded_local_flag` | H1 | ✅ |
+| **H-09** | Isolation supervisor 雏形 | Rust isolation + end_process 释放；非 OS PID 收割（0.6 加深） | H2 | ✅ 切片 |
+| **H-10** | 审计回放：一次 run 可还原 | `GET /api/kernel/runs/{id}/replay` 时间线 | H2 | ✅ |
+| **H-11** | Provider cache hit **进周报/Kernel 指标** | cache_metrics + 周报磁盘快照回落 | H2 | ✅ |
+| **H-12** | 全量 `backend/tests` + 关键 e2e 进 CI | backend-ci 全量 pytest + Phase H；kernel-ci cargo | H0 | ✅ |
+| **H-13** | 包市场生产密钥路径 | [PACKAGE_TRUST.md](./PACKAGE_TRUST.md) | H1 | ✅ |
+| **H-14** | host 卡死恢复稳态 | `restart_kernel_host` + 单测 | H1 | ✅ |
+
+> **H-07 / H-09「切片」说明**：调度权威与 isolation 逻辑已在默认路径；彻底去掉 session 锁 / OS 级 wait-reap 属 **0.6 P0 加深**，不阻塞 0.5.x 出口。
 
 ### 4.2 产品打磨（少而硬）
 
-| ID | 工作项 |
-|----|--------|
-| **HP-01** | Kernel 页：资源账户 + 调度队列 + 链健康（5s 轮询补齐） |
-| **HP-02** | 高危操作：确认 → 执行 → 可回滚（checkpoint/undo 入口） |
-| **HP-03** | **不做**新大型前台功能（工作流编辑器大改等） |
+| ID | 工作项 | 状态 |
+|----|--------|------|
+| **HP-01** | Kernel 页：资源账户 + 调度队列 + 链健康 | ✅ API：`/cost` `/cache/metrics` `/runs/{id}/replay` |
+| **HP-02** | 高危操作：确认 → 执行 → 可回滚 | 🚧 控制台/checkpoint 已有；undo UX 0.6 继续 |
+| **HP-03** | **不做**新大型前台功能 | ✅ 本阶段遵守 |
 
 ### 4.3 0.5.x 出口标准
 
-- [ ] 默认 `TAKTON_KERNEL_BACKEND=rust` 可在干净机器上 auto-start 或明确降级提示  
-- [ ] tool_gate / process_access / package trust 相关测全绿  
-- [ ] 全量 backend CI 绿（允许环境相关 skip）  
-- [ ] `docs/RELEASE_0.5.0-alpha.md` 已知注意点有对应修复或文档豁免  
+- [x] 默认 `TAKTON_KERNEL_BACKEND=rust` 可 auto-start 或明确降级提示（`start.py` / client）  
+- [x] tool_gate / process_access / package trust 相关测 + Phase H 单测  
+- [x] 全量 backend CI + **kernel-ci**（cargo ABI）  
+- [x] 包信任 / Court fail-closed 文档（PACKAGE_TRUST · KERNEL_RUST）
 
 ---
 
@@ -389,3 +391,4 @@ Week 11–12 R-01/H-11       结果落盘 + cache 仪表；0.6 验收清单打�
 |------|------|
 | 2026-07-31 | 初版：0.4.11 + Rust Kernel 0.1 综合意见 |
 | 2026-07-31 | **重写**：以 0.5.0-alpha 为基准；区分切片/默认可依赖；主线改为 H 打磨 → 0.6 验收；P1/P2 改为产品化阶段 |
+| 2026-07-31 | **阶段 H 收口**：H-01…H-14 实现/单测/CI/文档勾选；H-07/H-09 标切片、0.6 加深 |

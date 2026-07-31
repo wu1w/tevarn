@@ -79,3 +79,15 @@ jobs:
         env:
           TAKTON_TEST_MODE: "1"
         run: python scripts/ci_eval_gate.py
+
+      # H-12：Phase H 硬化单测（不依赖 host 的部分；完整 ABI 见 kernel-ci.yml）
+      - name: Phase H hardening unit tests
+        env:
+          TAKTON_DB_URL: "sqlite+aiosqlite:///./ci-test.db"
+          TAKTON_TEST_MODE: "1"
+          TAKTON_AGENT_DISPATCHER_ENABLED: "false"
+          TAKTON_AGENT_KERNEL_PERSISTENCE: "false"
+          TAKTON_JWT_SECRET: "ci-jwt-secret-not-for-production-use-32b"
+          TAKTON_API_KEY: "ci-api-key-not-for-production-use-32bxxxx"
+          TAKTON_KERNEL_BACKEND: "python"
+        run: python -m pytest backend/tests/kernel/test_phase_h_hardening.py -q --tb=short

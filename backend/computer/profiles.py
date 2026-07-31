@@ -2,6 +2,8 @@
 
 Maps product names to agent_computer_backend + network + permission hints.
 OS-level isolation still depends on bwrap/seatbelt/job availability.
+
+H-08：内核 isolation 角色（interactive / workforce / untrusted）与本表映射。
 """
 
 from __future__ import annotations
@@ -10,6 +12,8 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 ProfileName = Literal["off", "workspace", "read_only", "strict"]
+# Kernel isolation role names (Rust IsolationProfile)
+IsolationRole = Literal["interactive", "workforce", "untrusted", "read_only"]
 
 
 @dataclass(frozen=True)
@@ -87,6 +91,57 @@ def apply_profile_to_backend_choice(backend_name: str, network: bool) -> tuple[s
     if backend_name == "auto" and prof.prefer_backend != "auto":
         return prof.prefer_backend, net
     return backend_name, net
+
+
+# H-08：isolation role → computer sandbox profile
+_ROLE_TO_PROFILE: dict[str, str] = {
+    "interactive": "workspace",
+    "workforce": "workspace",
+    "untrusted": "strict",
+    "read_only": "read_only",
+    "readonly": "read_only",
+}
+
+
+def profile_for_isolation_role(role: str | None) -> SandboxProfile:
+    """Map kernel isolation role to computer SandboxProfile."""
+    key = str(role or "interactive").strip().lower().replace("-", "_")
+    return resolve_profile(_ROLE_TO_PROFILE.get(key, "workspace"))
+
+
+def isolation_role_for_context(
+    *,
+    workforce: bool = False,
+    untrusted: bool = False,
+    readonly: bool = False,
+) -> str:
+    if untrusted:
+        return "untrusted"
+    if readonly:
+        return "read_only"
+    if workforce:
+        return "workforce"
+    return "interactive"
+
+
+def degraded_local_flag(
+    *,
+    wanted_sandbox: bool,
+    actual_backend: str | None,
+) -> dict[str, Any]:
+    """First-class degraded marker when sandbox was required but fell to local."""
+    actual = str(actual_backend or "").strip().lower()
+    degraded = bool(wanted_sandbox and actual in ("local", "none", "off", ""))
+    return {
+        "degraded": degraded,
+        "execution_backend": actual or "unknown",
+        "wanted_sandbox": wanted_sandbox,
+        "reason": (
+            "sandbox unavailable; running local (explicit degraded)"
+            if degraded
+            else ""
+        ),
+    }
 
 
 def list_profiles() -> list[dict[str, Any]]:

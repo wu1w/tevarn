@@ -122,7 +122,49 @@ def _kernel_metrics(k: Any) -> dict[str, Any]:
             }
     except Exception:
         out["live_processes"] = {}
+
+    # H-11：host 离线时回落磁盘上一次 cache 快照
+    cache = out.get("cache") or {}
+    if not cache or cache.get("error") or not (cache.get("totals") or cache.get("families")):
+        snap = _load_cache_snapshot()
+        if snap:
+            out["cache"] = {**snap, "from_snapshot": True}
+    else:
+        _persist_cache_snapshot(cache)
     return out
+
+
+def _cache_snapshot_path() -> Path:
+    return eval_data_dir() / "cache_metrics_latest.json"
+
+
+def _persist_cache_snapshot(cache: dict[str, Any]) -> None:
+    try:
+        path = _cache_snapshot_path()
+        path.write_text(
+            json.dumps(
+                {
+                    **cache,
+                    "snapshotted_at": time.time(),
+                    "iso_week": iso_week_id(),
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+    except Exception as e:
+        logger.debug("cache snapshot persist skip: %s", e)
+
+
+def _load_cache_snapshot() -> dict[str, Any] | None:
+    path = _cache_snapshot_path()
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
 
 
 def _score_health(metrics: dict[str, Any], eval_result: dict[str, Any] | None) -> dict[str, Any]:
