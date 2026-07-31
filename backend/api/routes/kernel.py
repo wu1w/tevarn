@@ -46,8 +46,12 @@ async def list_processes(
     shared_state=True 时：内存进程 + DB 档案合并（多 worker 观测前提）。
     本 worker 内存中的 live 进程优先（状态更鲜活）。
     """
+    import asyncio
+
     kernel = get_kernel()
-    live = {p.id: p.to_dict() for p in kernel.list_processes(include_terminal=True)}
+    # Off event loop: kernel RPC is sync and must not freeze UI polls during CEO runs.
+    procs = await asyncio.to_thread(kernel.list_processes, include_terminal=True)
+    live = {p.id: p.to_dict() for p in procs}
     shared = True
     try:
         from backend.core.config import settings
@@ -405,9 +409,11 @@ async def runtime_health_api(
     current_user: Annotated[UserRead, Depends(get_current_user)],
 ):
     """默认路径健康：host/ABI/沙箱/预算/court — 主 UI 恢复卡片数据源。"""
+    import asyncio
+
     from backend.services.runtime_health import collect_runtime_health
 
-    return collect_runtime_health()
+    return await asyncio.to_thread(collect_runtime_health)
 
 
 @router.post("/host/restart")
@@ -620,8 +626,11 @@ async def list_escalations(
     status: str | None = Query(None),
 ):
     """提权列表。shared_state 时合并 DB 中的 pending（跨 worker 可见）。"""
+    import asyncio
+
     kernel = get_kernel()
-    by_id = {r.id: r.to_dict() for r in kernel.list_escalations(status=None)}
+    esc_list = await asyncio.to_thread(lambda: kernel.list_escalations(status=None))
+    by_id = {r.id: r.to_dict() for r in esc_list}
     shared = True
     try:
         from backend.core.config import settings

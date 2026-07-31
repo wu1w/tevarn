@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -10,6 +11,7 @@ import subprocess
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -25,6 +27,10 @@ _RPC_TIMEOUT = float(os.environ.get("TAKTON_KERNEL_RPC_TIMEOUT", "20"))
 _RESTART_COOLDOWN_S = float(os.environ.get("TAKTON_KERNEL_RESTART_COOLDOWN", "8.0"))
 _recovery_lock = threading.Lock()
 _last_hard_restart_at = 0.0
+# Single worker: all host RPC on one thread so the asyncio event loop is never
+# blocked by 10–20s mediate/reconnect (that made Next proxy return 500 during CEO runs).
+_RPC_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="kernel-rpc")
+_RPC_RESULT_TIMEOUT = float(os.environ.get("TAKTON_KERNEL_RPC_RESULT_TIMEOUT", "90"))
 # Background / best-effort RPCs must NEVER hard-restart the host (they race with
 # CEO mediate/rehydrate and produce closed-connection storms).
 _SOFT_ONLY_METHODS = frozenset(
@@ -732,18 +738,35 @@ class RustAgentKernel:
             return False
 
     def _call(self, method: str, params: dict[str, Any] | None = None) -> Any:
-        """JSON-RPC with reconnect. Host is single-process in-memory: restart
-        wipes process table — prefer socket reconnect over host kill when possible.
+        """JSON-RPC with reconnect (sync). Prefer ``_acall`` from async code.
 
-        Recovery policy (CEO assign stability):
-        1. Entire call+recovery under one RLock (no concurrent close storms)
-        2. Soft TCP reconnect first
-        3. Start host if port dead
-        4. Hard restart ONLY for non-background methods, after soft fails AND
-           host unresponsive; long cooldown + settle
+        Always runs on the dedicated kernel-rpc thread so concurrent callers
+        serialize on the host socket. Sync callers still block their own thread
+        (not ideal on the asyncio loop — use ``_acall`` / ``asyncio.to_thread``).
         """
+        if threading.current_thread().name.startswith("kernel-rpc"):
+            with self._call_lock:
+                return self._call_locked(method, params)
+        fut = _RPC_EXECUTOR.submit(self._invoke_call, method, params)
+        return fut.result(timeout=_RPC_RESULT_TIMEOUT)
+
+    def _invoke_call(
+        self, method: str, params: dict[str, Any] | None = None
+    ) -> Any:
         with self._call_lock:
             return self._call_locked(method, params)
+
+    async def _acall(
+        self, method: str, params: dict[str, Any] | None = None
+    ) -> Any:
+        """Async RPC: does not block the uvicorn event loop (UI polls stay alive)."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            _RPC_EXECUTOR,
+            self._invoke_call,
+            method,
+            params,
+        )
 
     def _call_locked(self, method: str, params: dict[str, Any] | None = None) -> Any:
         soft_only = method in _SOFT_ONLY_METHODS
@@ -914,7 +937,7 @@ class RustAgentKernel:
         }
         if intent is not None:
             params["intent"] = intent
-        result = self._call("create_process", params)
+        result = await self._acall("create_process", params)
         p = self._proc(result)
         assert p is not None
         return p
@@ -1725,7 +1748,7 @@ class RustAgentKernel:
                         safe_args[str(k)] = v
                     except Exception:
                         safe_args[str(k)] = str(v)[:500]
-        r = self._call(
+        r = await self._acall(
             "mediate",
             {
                 "process_id": process_id,
