@@ -99,14 +99,25 @@ export function ChatRecoveryCard({
               data-testid="chat-recovery-resume"
               onClick={async () => {
                 setBusy(true);
+                // 先切 streaming UI，避免等 HTTP 返回才像「卡住」
+                onResumed?.();
                 try {
                   const r = (await resumeSessionRun(sessionId)) as {
                     resumed?: boolean;
+                    async?: boolean;
                     detail?: string;
                   };
                   if (r?.resumed) {
-                    addToast(zh ? '已触发续跑' : 'Resume started', 'success');
-                    onResumed?.();
+                    addToast(
+                      zh
+                        ? r.async
+                          ? '续跑已在后台启动'
+                          : '续跑完成'
+                        : r.async
+                          ? 'Resume started in background'
+                          : 'Resume finished',
+                      'success',
+                    );
                   } else {
                     addToast(r?.detail || (zh ? '无可续跑内容' : 'Nothing to resume'), 'info');
                   }

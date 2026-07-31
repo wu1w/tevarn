@@ -41,9 +41,13 @@ async def resume_session_agent(
     mode: str | None = None,
     prompt: str | None = None,
 ) -> str:
-    """构造 NexusAgentLoop 并续跑。供 cron / 管理 API 使用。"""
+    """构造 NexusAgentLoop 并续跑。供 cron / 管理 API 使用。
+
+    必须挂上 ws_manager，否则聊天侧看不到流式/工具事件，表现为「卡住」。
+    """
     from backend.agent import NexusAgentLoop
     from backend.agent.checkpoint import load_checkpoint
+    from backend.kernel.ports import get_ws_manager
     from backend.repositories.context_repo import (
         AsyncContextFlowRepository,
         AsyncCtxItemRepository,
@@ -65,15 +69,55 @@ async def resume_session_agent(
     if user_id is not None:
         uid = uuid.UUID(str(user_id)) if not isinstance(user_id, uuid.UUID) else user_id
 
+    # Restore contact/steward from session config so budget + tools match chat path
+    contact = ""
+    try:
+        sess = await AsyncSessionRepository().get_by_id(sid)
+        cfg = getattr(sess, "config", None) or {}
+        if isinstance(cfg, dict):
+            contact = str(cfg.get("contact_agent") or "").strip()
+    except Exception:
+        contact = ""
+
     agent = NexusAgentLoop(
         session_repo=AsyncSessionRepository(),
         message_repo=AsyncMessageRepository(),
         task_repo=AsyncTaskRepository(),
         ctx_item_repo=AsyncCtxItemRepository(),
         context_flow_repo=AsyncContextFlowRepository(),
-        ws_manager=None,
+        ws_manager=get_ws_manager(),
         user_id=uid,
         notification_repo=AsyncNotificationRepository(),
     )
-    logger.info("resume_session_agent session=%s mode=%s", str(sid)[:8], run_mode)
+    if contact:
+        agent._contact_agent = contact  # type: ignore[attr-defined]
+    logger.info(
+        "resume_session_agent session=%s mode=%s contact=%s",
+        str(sid)[:8],
+        run_mode,
+        contact or "-",
+    )
     return await agent.run(sid, resume_prompt, attachments=None, mode=run_mode)
+
+
+async def resume_session_agent_background(
+    session_id: uuid.UUID | str,
+    *,
+    user_id: uuid.UUID | str | None = None,
+    mode: str | None = None,
+    prompt: str | None = None,
+) -> None:
+    """Fire-and-forget wrapper; errors logged, never raised to HTTP."""
+    try:
+        out = await resume_session_agent(
+            session_id, user_id=user_id, mode=mode, prompt=prompt
+        )
+        logger.info(
+            "resume background done session=%s preview=%s",
+            str(session_id)[:8],
+            (out or "")[:120],
+        )
+    except Exception as e:
+        logger.exception(
+            "resume background failed session=%s: %s", str(session_id)[:8], e
+        )

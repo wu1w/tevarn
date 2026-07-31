@@ -6,7 +6,7 @@ Session 路由
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
 from backend.core.unit_of_work import UnitOfWork
 from backend.repositories import SessionRepository, SettingRepository
@@ -397,23 +397,50 @@ async def get_session_checkpoint(
 async def resume_session(
     session_id: uuid.UUID,
     current_user: Annotated[UserRead, Depends(get_current_user)],
+    background_tasks: BackgroundTasks,
+    wait: bool = Query(
+        False,
+        description="true=同步等本段结束（调试）；默认 false 后台跑，避免 UI 卡住",
+    ),
 ):
-    """续跑未完成 Goal / checkpoint（同步等待本段结束）"""
+    """续跑未完成 Goal / checkpoint。
+
+    默认 **异步**：立刻返回 ``{resumed:true, async:true}``，agent 在后台跑并通过
+    WebSocket 推流。同步等待整轮 run 会让「一键续跑」按钮空转数分钟像卡住。
+    """
     async with UnitOfWork() as uow:
         session = await uow.sessions.get_by_id(session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
         assert_session_owner(getattr(session, "user_id", None), current_user)
 
-    from backend.agent.resume import build_resume_prompt, resume_session_agent
+    from backend.agent.resume import (
+        build_resume_prompt,
+        resume_session_agent,
+        resume_session_agent_background,
+    )
 
     prompt = await build_resume_prompt(session_id)
     if not prompt:
         return {"resumed": False, "detail": "nothing to resume", "content": None}
 
-    content = await resume_session_agent(
+    if wait:
+        content = await resume_session_agent(
+            session_id,
+            user_id=current_user.id,
+            prompt=prompt,
+        )
+        return {"resumed": True, "async": False, "content": content}
+
+    background_tasks.add_task(
+        resume_session_agent_background,
         session_id,
         user_id=current_user.id,
         prompt=prompt,
     )
-    return {"resumed": True, "content": content}
+    return {
+        "resumed": True,
+        "async": True,
+        "detail": "resume started in background; watch WebSocket stream",
+        "content": None,
+    }
