@@ -19,19 +19,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_HOST = os.environ.get("TAKTON_KERNEL_HOST", "127.0.0.1:17890")
 _RPC_TIMEOUT = float(os.environ.get("TAKTON_KERNEL_RPC_TIMEOUT", "10"))
 
-
-class KernelPermissionError(PermissionError):
-    def __init__(self, message: str, decision: Any = None) -> None:
-        super().__init__(message)
-        self.decision = decision
-
-
-class BudgetExceededError(RuntimeError):
-    pass
-
-
-class CapabilityEscalationError(PermissionError):
-    pass
+# 必须与 backend.kernel 共用同一异常类：
+# 1) tool_gate `except KernelPermissionError` 才能命中
+# 2) PermissionError ⊂ OSError —— 若自建子类会被 _call 当成断连 reconnect
+from backend.kernel.capability import CapabilityEscalationError
+from backend.kernel.kernel import BudgetExceededError, KernelPermissionError
 
 
 @dataclass
@@ -636,6 +628,14 @@ class RustAgentKernel:
     def _call(self, method: str, params: dict[str, Any] | None = None) -> Any:
         try:
             return self._rpc.call(method, params)
+        except (
+            KernelPermissionError,
+            BudgetExceededError,
+            CapabilityEscalationError,
+            ValueError,
+        ):
+            # 业务拒绝 / 参数错误：禁止当网络故障 reconnect（PermissionError⊂OSError）
+            raise
         except (ConnectionError, OSError, BrokenPipeError, TimeoutError, socket.timeout) as e:
             logger.warning("kernel RPC %s failed (%s); reconnect/retry", method, e)
             self._rpc.close()

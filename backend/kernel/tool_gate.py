@@ -285,6 +285,10 @@ async def enforce_tool_gate(
     except KernelPermissionError as e:
         logger.warning("tool_gate mediate deny tool=%s proc=%s: %s", name, pid[:12], e)
         return args, f"Error: Kernel 权限拒绝——{e}"
+    except PermissionError as e:
+        # 兼容历史/第三方 PermissionError；能力拒绝不是「门控故障」
+        logger.warning("tool_gate mediate deny(PE) tool=%s proc=%s: %s", name, pid[:12], e)
+        return args, f"Error: Kernel 权限拒绝——{e}"
     except Exception as e:
         # fail-closed：kernel 故障不得静默放行
         logger.error(
