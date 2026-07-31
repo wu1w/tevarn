@@ -1,8 +1,10 @@
 # Takton 技术手册
 
 版本：**0.5.0-alpha**  
-更新：2026-07-30（Phase 5 对齐）
+更新：2026-07-31  
 
+> **路线图**：[docs/ROADMAP.md](./ROADMAP.md)（0.5.x 打磨 → 0.6 最小 AIOS Runtime → 1.0）  
+>
 > **执行模型（现行）**  
 > **一切执行都是 Run**；Identity 是执行者；Cluster/SubAgent/Hire 是编排形态；Workflow 是 Run 模板。  
 > 记忆总线：`backend/services/memory_bus.py` · 权限法院：`backend/kernel/permission_court.py`  

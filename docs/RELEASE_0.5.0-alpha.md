@@ -70,8 +70,12 @@
 
 ---
 
-## 建议后续（非阻塞）
+## 建议后续
 
-- 全量 backend CI + 前端 e2e  
-- release host 与 debug ABI 对齐发布  
-- ROADMAP 勾选与 0.5 契约冻结收尾  
+主线已写入 **[ROADMAP.md](./ROADMAP.md)**（2026-07-31 重写）：
+
+1. **0.5.x Hardening（H-01…）**：host 发布路径、契约 CI、tool_gate 归零、资源/Intent/调度打磨  
+2. **0.6**：P0 验收全勾 → 最小可用 AIOS Runtime  
+3. 其后 0.7 长程/成本 → 0.8 多 Agent 产品化 → 1.0 日用 GA  
+
+本文件只作 0.5.0-alpha **交付快照**；进度与勾选以 ROADMAP 为准。
