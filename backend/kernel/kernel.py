@@ -87,8 +87,13 @@ class MediationDecision:
 class KernelPermissionError(PermissionError):
     """mediate() 拒绝执行时抛出。"""
 
-    def __init__(self, message: str, decision: MediationDecision) -> None:
+    def __init__(
+        self,
+        message: str,
+        decision: MediationDecision | None = None,
+    ) -> None:
         super().__init__(message)
+        # decision optional: escalate paths / tests often only pass message
         self.decision = decision
 
 

@@ -289,8 +289,30 @@ async def enforce_tool_gate(
         # 兼容历史/第三方 PermissionError；能力拒绝不是「门控故障」
         logger.warning("tool_gate mediate deny(PE) tool=%s proc=%s: %s", name, pid[:12], e)
         return args, f"Error: Kernel 权限拒绝——{e}"
+    except ValueError as e:
+        # host not_found（未知进程）— 调用方可 rehydrate
+        msg = str(e)
+        logger.warning("tool_gate mediate value error tool=%s proc=%s: %s", name, pid[:12], e)
+        if "未知" in msg or "not found" in msg.lower() or "NotFound" in msg:
+            return args, f"Error: Kernel 权限拒绝——{msg}"
+        return args, f"Error: Kernel 门控故障（ValueError: {e}），已拒绝 «{name}»。"
     except Exception as e:
         # fail-closed：kernel 故障不得静默放行
+        # 连接断开也标成可恢复拒绝，便于 rehydrate
+        msg = str(e)
+        if (
+            "closed connection" in msg.lower()
+            or "10053" in msg
+            or "10054" in msg
+            or "not connected" in msg.lower()
+        ):
+            logger.warning(
+                "tool_gate mediate host disconnect tool=%s proc=%s: %s",
+                name,
+                pid[:12],
+                e,
+            )
+            return args, f"Error: Kernel 权限拒绝——未知进程 {pid}（host reconnect）"
         logger.error(
             "tool_gate mediate failed tool=%s proc=%s: %s",
             name,

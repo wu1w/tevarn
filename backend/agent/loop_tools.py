@@ -74,6 +74,54 @@ class LoopToolsMixin:
             arguments,
             process_id=getattr(kernel_proc, "id", None) if kernel_proc else None,
         )
+        # Host 重启后内存进程表清空 →「未知进程」；就地重建一次再 gate
+        if (
+            gate_err
+            and kernel_proc is not None
+            and ("未知进程" in gate_err or "not found" in gate_err.lower() or "NotFound" in gate_err)
+        ):
+            try:
+                from backend.kernel import get_kernel
+
+                k = get_kernel()
+                old = kernel_proc
+                caps = list(getattr(old, "capabilities", None) or []) or None
+                budget = getattr(old, "token_budget", None)
+                meta = dict(getattr(old, "meta", None) or {})
+                meta["rehydrated_from"] = str(getattr(old, "id", "") or "")
+                _sid = meta.get("session_id") or arguments.get("_session_id")
+                new_p = await k.create_process(
+                    str(getattr(self, "_agent_key", None) or "main"),
+                    session_id=str(_sid) if _sid else None,
+                    capabilities=caps,
+                    token_budget=budget,
+                    meta=meta,
+                )
+                # 尽量保留已用 token 记账（软恢复）
+                try:
+                    used = int(getattr(old, "tokens_used", 0) or 0)
+                    if used > 0 and hasattr(k, "charge_tokens"):
+                        k.charge_tokens(new_p.id, used)
+                except Exception:
+                    pass
+                self._kernel_process = new_p
+                kernel_proc = new_p
+                arguments["_kernel_process_id"] = new_p.id
+                arguments.pop("_tool_gate_passed", None)
+                arguments.pop("_tool_gate_internal", None)
+                logger.warning(
+                    "kernel process rehydrated after host loss old=%s new=%s tool=%s",
+                    str(getattr(old, "id", ""))[:12],
+                    new_p.id[:12],
+                    name,
+                )
+                arguments, gate_err = await enforce_tool_gate(
+                    name,
+                    arguments,
+                    process_id=new_p.id,
+                )
+            except Exception as re_e:
+                logger.error("process rehydrate failed: %s", re_e)
         if gate_err and "Kernel 权限拒绝" in gate_err and kernel_proc is not None:
             # ── 编制 / 主人 提权回退（gate 只做裁决；扩权逻辑仍在 loop）──
             from backend.kernel import KernelPermissionError, get_kernel
