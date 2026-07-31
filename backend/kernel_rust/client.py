@@ -50,12 +50,11 @@ _SOFT_ONLY_METHODS = frozenset(
         "iteration_status",
     }
 )
-# Dashboard / panel methods: always use UI side-channel (short timeout, own socket).
+# Dashboard / panel methods: short-timeout side-channel (own socket).
+# NOTE: list_methods / ping / health stay on the agent path — ABI gate and
+# liveness must not use the UI degrade-to-empty path (false host_abi_mismatch).
 _UI_SIDECHANNEL_METHODS = frozenset(
     {
-        "ping",
-        "health",
-        "list_methods",
         "list_processes",
         "list_escalations",
         "get_process",
@@ -666,11 +665,20 @@ class RustAgentKernel:
         self._configure_pkg_signing()
 
     def _assert_abi_or_fail(self) -> None:
-        """Fail-closed if host lacks required ABI methods (half-run forbidden)."""
+        """Fail-closed if host lacks required ABI methods (half-run forbidden).
+
+        Uses the agent socket path (not UI side-channel) so a transient UI
+        timeout cannot report 0 methods and false-fail ABI.
+        """
         from backend.kernel_rust.abi_gate import AbiMismatchError, assert_required_abi
 
         try:
-            methods = self.list_methods()
+            # Direct RPC — avoid list_methods() wrappers that may degrade to []
+            raw = self._rpc.call("list_methods") if self._rpc._sock else None
+            if raw is None:
+                self._rpc.connect(attempts=3, connect_timeout=0.8)
+                raw = self._rpc.call("list_methods")
+            methods = list((raw or {}).get("methods") or []) if isinstance(raw, dict) else list(raw or [])
             assert_required_abi(methods)
             self._abi_checked = True
             logger.info(
