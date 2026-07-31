@@ -1182,6 +1182,118 @@ fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: 
             kernel.ipc_recv(pid, max).map_err(map_err)
         }
         "ipc_status" => Ok(kernel.ipc_status()),
+        "ipc_channel_subscribe" => {
+            let pid = params
+                .get("process_id")
+                .and_then(|v| v.as_str())
+                .ok_or((-32005, "process_id required".into(), json!({})))?;
+            let channel = params
+                .get("channel")
+                .and_then(|v| v.as_str())
+                .ok_or((-32005, "channel required".into(), json!({})))?;
+            kernel
+                .ipc_channel_subscribe(pid, channel)
+                .map_err(map_err)
+        }
+        "ipc_channel_publish" => {
+            let from = params
+                .get("from")
+                .or_else(|| params.get("process_id"))
+                .and_then(|v| v.as_str())
+                .ok_or((-32005, "from required".into(), json!({})))?;
+            let channel = params
+                .get("channel")
+                .and_then(|v| v.as_str())
+                .ok_or((-32005, "channel required".into(), json!({})))?;
+            let kind = params.get("kind").and_then(|v| v.as_str()).unwrap_or("message");
+            let payload = params.get("payload").cloned().unwrap_or(json!({}));
+            kernel
+                .ipc_channel_publish(from, channel, kind, payload)
+                .map_err(map_err)
+        }
+        "ipc_broadcast" => {
+            let from = params
+                .get("from")
+                .or_else(|| params.get("process_id"))
+                .and_then(|v| v.as_str())
+                .ok_or((-32005, "from required".into(), json!({})))?;
+            let kind = params.get("kind").and_then(|v| v.as_str()).unwrap_or("message");
+            let payload = params.get("payload").cloned().unwrap_or(json!({}));
+            kernel.ipc_broadcast(from, kind, payload).map_err(map_err)
+        }
+        "ipc_reply" => {
+            let from = params
+                .get("from")
+                .or_else(|| params.get("process_id"))
+                .and_then(|v| v.as_str())
+                .ok_or((-32005, "from required".into(), json!({})))?;
+            let to = params
+                .get("to")
+                .and_then(|v| v.as_str())
+                .ok_or((-32005, "to required".into(), json!({})))?;
+            let reply_to = params
+                .get("reply_to")
+                .and_then(|v| v.as_str())
+                .ok_or((-32005, "reply_to required".into(), json!({})))?;
+            let kind = params.get("kind").and_then(|v| v.as_str()).unwrap_or("reply");
+            let payload = params.get("payload").cloned().unwrap_or(json!({}));
+            kernel
+                .ipc_reply(from, to, reply_to, kind, payload)
+                .map_err(map_err)
+        }
+        "multi_agent_demo" => kernel.multi_agent_demo().map_err(map_err),
+        "eval_record" => {
+            let suite = params
+                .get("suite")
+                .and_then(|v| v.as_str())
+                .unwrap_or("default");
+            let overall = params
+                .get("overall")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let mut parts = std::collections::HashMap::new();
+            if let Some(obj) = params.get("parts").and_then(|v| v.as_object()) {
+                for (k, v) in obj {
+                    if let Some(f) = v.as_f64() {
+                        parts.insert(k.clone(), f);
+                    }
+                }
+            }
+            let meta = params.get("meta").cloned().unwrap_or(json!({}));
+            Ok(kernel.eval_record(suite, overall, parts, meta))
+        }
+        "eval_trend" => {
+            let suite = params
+                .get("suite")
+                .and_then(|v| v.as_str())
+                .unwrap_or("default");
+            let last_n = params.get("last_n").and_then(|v| v.as_u64()).unwrap_or(8) as usize;
+            Ok(kernel.eval_trend(suite, last_n))
+        }
+        "eval_gate_check" => {
+            let suite = params.get("suite").and_then(|v| v.as_str());
+            Ok(kernel.eval_gate_check(suite))
+        }
+        "eval_status" => Ok(kernel.eval_status()),
+        "agent_manifest_validate" => {
+            if let Some(s) = params.get("json").and_then(|v| v.as_str()) {
+                Ok(kernel.agent_manifest_validate_str(s))
+            } else {
+                let raw = params
+                    .get("manifest")
+                    .cloned()
+                    .unwrap_or_else(|| params.clone());
+                Ok(kernel.agent_manifest_validate(raw))
+            }
+        }
+        "agent_sdk_checklist" => Ok(kernel.agent_sdk_checklist()),
+        "skill_require_loadable" => {
+            let name = params
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or((-32005, "name required".into(), json!({})))?;
+            kernel.skill_require_loadable(name).map_err(map_err)
+        }
 
         // ── P1-A services ─────────────────────────────────
         "service_register" => {

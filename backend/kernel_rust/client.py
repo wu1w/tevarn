@@ -974,6 +974,120 @@ class RustAgentKernel:
             or {}
         )
 
+    def ipc_channel_subscribe(self, process_id: str, channel: str) -> dict[str, Any]:
+        return (
+            self._call(
+                "ipc_channel_subscribe",
+                {"process_id": process_id, "channel": channel},
+            )
+            or {}
+        )
+
+    def ipc_channel_publish(
+        self,
+        from_id: str,
+        channel: str,
+        kind: str = "message",
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return (
+            self._call(
+                "ipc_channel_publish",
+                {
+                    "from": from_id,
+                    "channel": channel,
+                    "kind": kind,
+                    "payload": payload or {},
+                },
+            )
+            or {}
+        )
+
+    def ipc_broadcast(
+        self,
+        from_id: str,
+        kind: str = "message",
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return (
+            self._call(
+                "ipc_broadcast",
+                {"from": from_id, "kind": kind, "payload": payload or {}},
+            )
+            or {}
+        )
+
+    def ipc_reply(
+        self,
+        from_id: str,
+        to_id: str,
+        reply_to: str,
+        kind: str = "reply",
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return (
+            self._call(
+                "ipc_reply",
+                {
+                    "from": from_id,
+                    "to": to_id,
+                    "reply_to": reply_to,
+                    "kind": kind,
+                    "payload": payload or {},
+                },
+            )
+            or {}
+        )
+
+    def multi_agent_demo(self) -> dict[str, Any]:
+        """M-01 productization: Rust-orchestrated two-agent ping-pong demo."""
+        return self._call("multi_agent_demo") or {}
+
+    def eval_record(
+        self,
+        suite: str = "default",
+        overall: float = 0.0,
+        parts: dict[str, float] | None = None,
+        meta: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return (
+            self._call(
+                "eval_record",
+                {
+                    "suite": suite,
+                    "overall": float(overall),
+                    "parts": parts or {},
+                    "meta": meta or {},
+                },
+            )
+            or {}
+        )
+
+    def eval_trend(self, suite: str = "default", last_n: int = 8) -> dict[str, Any]:
+        return self._call("eval_trend", {"suite": suite, "last_n": int(last_n)}) or {}
+
+    def eval_gate_check(self, suite: str | None = None) -> dict[str, Any]:
+        params: dict[str, Any] = {}
+        if suite:
+            params["suite"] = suite
+        return self._call("eval_gate_check", params) or {}
+
+    def eval_status(self) -> dict[str, Any]:
+        return self._call("eval_status") or {}
+
+    def agent_manifest_validate(
+        self, manifest: dict[str, Any] | None = None, *, json_str: str | None = None
+    ) -> dict[str, Any]:
+        if json_str is not None:
+            return self._call("agent_manifest_validate", {"json": json_str}) or {}
+        return self._call("agent_manifest_validate", {"manifest": manifest or {}}) or {}
+
+    def agent_sdk_checklist(self) -> dict[str, Any]:
+        return self._call("agent_sdk_checklist") or {}
+
+    def skill_require_loadable(self, name: str) -> dict[str, Any]:
+        return self._call("skill_require_loadable", {"name": name}) or {}
+
     def service_list(self) -> dict[str, Any]:
         return self._call("service_list") or {}
 

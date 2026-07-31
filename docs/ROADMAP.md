@@ -256,18 +256,27 @@ L0 Kernel（进程 / cap / 调度 / 隔离）████░░░░░░  ~45
 
 ## 7. 阶段 0.8 — 多 Agent 与进化（产品化）
 
-0.5 已交付 **切片**（IPC、系统服务、context_vm、skill_gate、Eval、SDK 等）。本阶段目标是 **默认可用、可演示日用**，不是从零重写。
+> **产品版本仍为 `0.5.0-alpha`**。控制平面权威在 **Rust**（`crates/takton-kernel`）；Python 仅 RPC/API 薄封装。
 
-| ID | 工作项 | 0.5 切片 | 0.8 目标 |
-|----|--------|----------|----------|
-| M-01 | 内核 IPC | 🧩 | 两独立 Agent 经 IPC 协作成为演示默认路径 |
-| M-02 | 系统服务 Memory / Notify | 🧩 | 用户 Agent 只经 syscall，文档+示例齐 |
-| M-03 | 记忆分层 + 主动整理 | 🧩 | working/episodic/semantic/skill 可观测 |
-| M-04 | 上下文内核配额换入换出 | 🧩 | 长上下文不拖垮宿主 |
-| M-05 | 技能验证门 | 🧩 | 未过门不可加载为默认策略 |
-| M-06 | Evolution 永不自动改 live | ✅ | 保持硬约束 + 回放门加硬 |
-| M-07 | Eval Harness | 🧩 | 固定集出分趋势进 CI/周报 |
-| M-08 | Agent SDK + 打包 | 🧩 | 外部最小可复现示例 |
+0.5 已交付 **切片**；本阶段把多 Agent 路径做成 **默认可演示、可测、可门禁**。
+
+| ID | 工作项 | 实现（Rust 优先） | 状态 |
+|----|--------|-------------------|------|
+| M-01 | 内核 IPC | `ipc` channel 订阅/发布、reply_to、broadcast；`multi_agent_demo` | ✅ |
+| M-02 | 系统服务 Memory / Notify | 既有 `sys_memory_*` / `sys_notify_*`（用户 Agent 经 syscall） | ✅ |
+| M-03 | 记忆分层 + 主动整理 | `memory_layers` consolidate + status | ✅ |
+| M-04 | 上下文内核配额换入换出 | `context_vm` 配额/换出（既有） | ✅ 切片 |
+| M-05 | 技能验证门 | `skill_require_loadable` 硬门（未 activate 不可加载） | ✅ |
+| M-06 | Evolution 永不自动改 live | `EVOLUTION_AUTO_APPLY=false` 硬约束 | ✅ |
+| M-07 | Eval Harness | Rust `eval_suite`：record / trend / gate_check + API | ✅ |
+| M-08 | Agent SDK + 打包 | Rust `agent_manifest` 校验 + `agent_sdk_checklist` | ✅ |
+
+**验收**
+
+- [x] `cargo test -p takton-kernel`：multi_agent_demo / channel_pub_sub / eval / manifest  
+- [x] `POST /api/kernel/multi-agent/demo` 走 Rust 权威协作样例  
+- [x] skill 未 verify+activate → `skill_require_loadable` 拒绝  
+- [x] Eval gate / agent.json 校验在内核内完成
 
 ---
 
@@ -403,3 +412,4 @@ Week 11–12 R-01/H-11       结果落盘 + cache 仪表；0.6 验收清单打�
 | 2026-07-31 | **P0 里程碑收口**（产品版本维持 **0.5.0-alpha**）：cap_tools / resource_denied / tools API 门控 / 验收单测 |
 | 2026-07-31 | 明确：路线图阶段名与产品号解耦，不因 P0 升号 |
 | 2026-07-31 | **§6 0.7 推进**（产品仍 0.5.0-alpha）：spill 全路径、end_process 回收、cost/cache FE、result_load API |
+| 2026-07-31 | **§7 0.8 多 Agent 产品化（Rust 优先）**：IPC channel/reply/broadcast、multi_agent_demo、eval_suite、agent_manifest、skill_require_loadable |

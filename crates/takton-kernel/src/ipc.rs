@@ -26,15 +26,24 @@ pub struct IpcMessage {
     pub kind: String,
     pub payload: Value,
     pub ts: f64,
+    /// Optional correlation for request/response multi-agent patterns (M-01).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<String>,
+    /// Optional named channel (pub/sub). Empty = direct mailbox.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel: Option<String>,
 }
 
 pub struct IpcBus {
     /// mailbox per process_id
     mailboxes: HashMap<String, VecDeque<IpcMessage>>,
+    /// channel name -> subscriber process ids
+    channels: HashMap<String, Vec<String>>,
     max_mailbox: usize,
     sent: u64,
     dropped: u64,
     denied: u64,
+    broadcasts: u64,
 }
 
 impl Default for IpcBus {
@@ -47,10 +56,12 @@ impl IpcBus {
     pub fn new(max_mailbox: usize) -> Self {
         Self {
             mailboxes: HashMap::new(),
+            channels: HashMap::new(),
             max_mailbox: max_mailbox.max(1),
             sent: 0,
             dropped: 0,
             denied: 0,
+            broadcasts: 0,
         }
     }
 
@@ -65,6 +76,18 @@ impl IpcBus {
         to: &str,
         kind: &str,
         payload: Value,
+    ) -> Result<IpcMessage, String> {
+        self.send_ex(from, to, kind, payload, None, None)
+    }
+
+    pub fn send_ex(
+        &mut self,
+        from: &str,
+        to: &str,
+        kind: &str,
+        payload: Value,
+        reply_to: Option<String>,
+        channel: Option<String>,
     ) -> Result<IpcMessage, String> {
         let q = self.mailboxes.entry(to.to_string()).or_default();
         if q.len() >= self.max_mailbox {
@@ -81,6 +104,8 @@ impl IpcBus {
             kind: kind.to_string(),
             payload,
             ts: now_secs(),
+            reply_to,
+            channel,
         };
         q.push_back(msg.clone());
         self.sent = self.sent.saturating_add(1);
@@ -102,6 +127,108 @@ impl IpcBus {
         out
     }
 
+    /// Subscribe process to a named channel (multi-agent pub/sub).
+    pub fn channel_subscribe(&mut self, channel: &str, process_id: &str) -> Value {
+        let ch = channel.trim();
+        if ch.is_empty() {
+            return json!({"ok": false, "error": "empty channel"});
+        }
+        let subs = self.channels.entry(ch.to_string()).or_default();
+        if !subs.iter().any(|s| s == process_id) {
+            subs.push(process_id.to_string());
+        }
+        json!({
+            "ok": true,
+            "channel": ch,
+            "process_id": process_id,
+            "subscribers": subs.len(),
+        })
+    }
+
+    pub fn channel_unsubscribe(&mut self, channel: &str, process_id: &str) -> bool {
+        let Some(subs) = self.channels.get_mut(channel) else {
+            return false;
+        };
+        let before = subs.len();
+        subs.retain(|s| s != process_id);
+        before != subs.len()
+    }
+
+    /// Publish to all channel subscribers except sender. Returns delivered count.
+    pub fn channel_publish(
+        &mut self,
+        from: &str,
+        channel: &str,
+        kind: &str,
+        payload: Value,
+    ) -> Result<Value, String> {
+        let subs = self
+            .channels
+            .get(channel)
+            .cloned()
+            .unwrap_or_default();
+        if subs.is_empty() {
+            return Ok(json!({
+                "ok": true,
+                "channel": channel,
+                "delivered": 0,
+                "note": "no subscribers",
+            }));
+        }
+        let mut delivered = 0u32;
+        let mut errors = vec![];
+        for to in subs {
+            if to == from {
+                continue;
+            }
+            match self.send_ex(
+                from,
+                &to,
+                kind,
+                payload.clone(),
+                None,
+                Some(channel.to_string()),
+            ) {
+                Ok(_) => delivered += 1,
+                Err(e) => errors.push(json!({"to": to, "error": e})),
+            }
+        }
+        self.broadcasts = self.broadcasts.saturating_add(1);
+        Ok(json!({
+            "ok": errors.is_empty(),
+            "channel": channel,
+            "delivered": delivered,
+            "errors": errors,
+        }))
+    }
+
+    /// Fan-out to all live peer process ids (caller filters terminal).
+    pub fn broadcast_to(
+        &mut self,
+        from: &str,
+        peers: &[String],
+        kind: &str,
+        payload: Value,
+    ) -> Value {
+        let mut delivered = 0u32;
+        let mut errors = vec![];
+        for to in peers {
+            if to == from {
+                continue;
+            }
+            match self.send(from, to, kind, payload.clone()) {
+                Ok(_) => delivered += 1,
+                Err(e) => errors.push(json!({"to": to, "error": e})),
+            }
+        }
+        self.broadcasts = self.broadcasts.saturating_add(1);
+        json!({
+            "ok": errors.is_empty(),
+            "delivered": delivered,
+            "errors": errors,
+        })
+    }
+
     pub fn peek_len(&self, process_id: &str) -> usize {
         self.mailboxes
             .get(process_id)
@@ -111,15 +238,20 @@ impl IpcBus {
 
     pub fn drop_process(&mut self, process_id: &str) {
         self.mailboxes.remove(process_id);
+        for subs in self.channels.values_mut() {
+            subs.retain(|s| s != process_id);
+        }
     }
 
     pub fn status(&self) -> Value {
         json!({
             "mailboxes": self.mailboxes.len(),
+            "channels": self.channels.len(),
             "max_mailbox": self.max_mailbox,
             "sent": self.sent,
             "dropped": self.dropped,
             "denied": self.denied,
+            "broadcasts": self.broadcasts,
             "queued": self.mailboxes.values().map(|q| q.len()).sum::<usize>(),
         })
     }
@@ -139,5 +271,37 @@ mod tests {
         assert!(b.send("a", "b", "ping", json!({})).is_err());
         let got = b.recv("b", 10);
         assert_eq!(got.len(), 1);
+    }
+
+    #[test]
+    fn channel_pub_sub() {
+        let mut b = IpcBus::new(16);
+        b.channel_subscribe("crew", "w1");
+        b.channel_subscribe("crew", "w2");
+        let r = b
+            .channel_publish("boss", "crew", "task", json!({"op": "scan"}))
+            .unwrap();
+        assert_eq!(r["delivered"], 2);
+        assert_eq!(b.recv("w1", 5).len(), 1);
+        assert_eq!(b.recv("w2", 5).len(), 1);
+    }
+
+    #[test]
+    fn reply_to_correlation() {
+        let mut b = IpcBus::new(8);
+        let req = b
+            .send_ex("a", "b", "req", json!({"q": 1}), None, None)
+            .unwrap();
+        let rep = b
+            .send_ex(
+                "b",
+                "a",
+                "resp",
+                json!({"ok": true}),
+                Some(req.id.clone()),
+                None,
+            )
+            .unwrap();
+        assert_eq!(rep.reply_to.as_deref(), Some(req.id.as_str()));
     }
 }

@@ -24,6 +24,8 @@ pub mod repo_index;
 pub mod services;
 pub mod skill_gate;
 pub mod wasm_runtime;
+pub mod eval_suite;
+pub mod agent_manifest;
 pub mod capability;
 pub mod court;
 pub mod error;
@@ -75,6 +77,11 @@ pub use inbox::{InboxItem, InboxQueue};
 pub use skill_gate::{SkillGate, SkillPackage, EVOLUTION_AUTO_APPLY};
 pub use context_vm::{ContextPage, ContextVm};
 pub use memory_layers::{LayeredMemory, MemoryEntry, MemoryLayer};
+pub use eval_suite::{EvalGate, EvalRun, EvalSuite};
+pub use agent_manifest::{
+    pack_checklist, validate_agent_manifest, validate_agent_manifest_str, AgentManifest,
+    ManifestValidation,
+};
 pub use coding_profile::{CodingProfile, CodingProfileRegistry};
 pub use collab::{ApprovalRequest, CollabHub, CollabSession};
 pub use edit_session::{simple_diff, EditSession, EditSessionStore};
@@ -200,6 +207,18 @@ pub const ABI_METHODS: &[&str] = &[
     "ipc_send",
     "ipc_recv",
     "ipc_status",
+    "ipc_channel_subscribe",
+    "ipc_channel_publish",
+    "ipc_broadcast",
+    "ipc_reply",
+    "multi_agent_demo",
+    "eval_record",
+    "eval_trend",
+    "eval_gate_check",
+    "eval_status",
+    "agent_manifest_validate",
+    "agent_sdk_checklist",
+    "skill_require_loadable",
     "service_register",
     "service_list",
     "service_health",

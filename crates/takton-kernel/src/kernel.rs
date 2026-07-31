@@ -38,6 +38,8 @@ use crate::package_mgr::PackageManager;
 use crate::instance::InstanceRegistry;
 use crate::domain_events::DomainEventBus;
 use crate::approval_rules::ApprovalPolicy;
+use crate::eval_suite::EvalSuite;
+use crate::agent_manifest::{pack_checklist, validate_agent_manifest, validate_agent_manifest_str};
 use crate::error::{KernelError, KernelResult};
 use crate::intent::{synthesize_token, IntentDeclaration};
 use crate::ABI_VERSION;
@@ -185,6 +187,7 @@ struct KernelInner {
     instances: InstanceRegistry,
     domain_events: DomainEventBus,
     approval: ApprovalPolicy,
+    eval_suite: EvalSuite,
     /// Opaque identity registry hook marker (set by host/runtime glue)
     identity_registry_attached: bool,
 }
@@ -244,6 +247,7 @@ impl AgentKernel {
                 instances: InstanceRegistry::default(),
                 domain_events: DomainEventBus::default(),
                 approval: ApprovalPolicy::default(),
+                eval_suite: EvalSuite::default(),
                 identity_registry_attached: false,
             }),
         }
@@ -2171,6 +2175,288 @@ impl AgentKernel {
         self.inner.read().ipc.status()
     }
 
+    /// M-01: subscribe process to named IPC channel.
+    pub fn ipc_channel_subscribe(&self, process_id: &str, channel: &str) -> KernelResult<Value> {
+        let mut g = self.inner.write();
+        if !g.processes.contains_key(process_id) {
+            return Err(KernelError::NotFound(format!("进程 {process_id}")));
+        }
+        let allowed = match &g.processes[process_id].capabilities {
+            None => true,
+            Some(caps) => caps.iter().any(|c| {
+                c == "*" || c == "ipc_recv" || c == "ipc" || c == "agent_comm" || c == "ipc_send"
+            }),
+        };
+        if !allowed {
+            g.ipc.record_denied();
+            return Err(KernelError::Permission(
+                "ipc_channel_subscribe denied: missing ipc capability".into(),
+            ));
+        }
+        Ok(g.ipc.channel_subscribe(channel, process_id))
+    }
+
+    /// M-01: publish to channel subscribers (capability-checked).
+    pub fn ipc_channel_publish(
+        &self,
+        from: &str,
+        channel: &str,
+        kind: &str,
+        payload: Value,
+    ) -> KernelResult<Value> {
+        let mut g = self.inner.write();
+        let from_proc = g
+            .processes
+            .get(from)
+            .ok_or_else(|| KernelError::NotFound(format!("sender {from}")))?;
+        let allowed = match &from_proc.capabilities {
+            None => true,
+            Some(caps) => caps
+                .iter()
+                .any(|c| c == "*" || c == "ipc_send" || c == "ipc" || c == "agent_comm"),
+        };
+        if !allowed {
+            g.ipc.record_denied();
+            return Err(KernelError::Permission(
+                "ipc_channel_publish denied: missing ipc_send".into(),
+            ));
+        }
+        let r = g
+            .ipc
+            .channel_publish(from, channel, kind, payload)
+            .map_err(KernelError::BudgetExceeded)?;
+        Self::emit_locked(
+            &mut g,
+            "ipc.channel_publish",
+            from,
+            json!({"channel": channel, "kind": kind, "result": r}),
+        );
+        Ok(r)
+    }
+
+    /// M-01: broadcast to all non-terminal peers with ipc_recv.
+    pub fn ipc_broadcast(
+        &self,
+        from: &str,
+        kind: &str,
+        payload: Value,
+    ) -> KernelResult<Value> {
+        let mut g = self.inner.write();
+        let from_proc = g
+            .processes
+            .get(from)
+            .ok_or_else(|| KernelError::NotFound(format!("sender {from}")))?;
+        let allowed = match &from_proc.capabilities {
+            None => true,
+            Some(caps) => caps
+                .iter()
+                .any(|c| c == "*" || c == "ipc_send" || c == "ipc" || c == "agent_comm"),
+        };
+        if !allowed {
+            g.ipc.record_denied();
+            return Err(KernelError::Permission(
+                "ipc_broadcast denied: missing ipc_send".into(),
+            ));
+        }
+        let peers: Vec<String> = g
+            .processes
+            .values()
+            .filter(|p| !p.is_terminal() && p.id != from)
+            .filter(|p| match &p.capabilities {
+                None => true,
+                Some(caps) => caps.iter().any(|c| {
+                    c == "*" || c == "ipc_recv" || c == "ipc" || c == "agent_comm" || c == "ipc_send"
+                }),
+            })
+            .map(|p| p.id.clone())
+            .collect();
+        let r = g.ipc.broadcast_to(from, &peers, kind, payload);
+        Self::emit_locked(
+            &mut g,
+            "ipc.broadcast",
+            from,
+            json!({"kind": kind, "result": r}),
+        );
+        Ok(r)
+    }
+
+    /// M-01: reply correlated to a prior message id.
+    pub fn ipc_reply(
+        &self,
+        from: &str,
+        to: &str,
+        reply_to: &str,
+        kind: &str,
+        payload: Value,
+    ) -> KernelResult<Value> {
+        let mut g = self.inner.write();
+        let from_proc = g
+            .processes
+            .get(from)
+            .ok_or_else(|| KernelError::NotFound(format!("sender {from}")))?;
+        let allowed = match &from_proc.capabilities {
+            None => true,
+            Some(caps) => caps
+                .iter()
+                .any(|c| c == "*" || c == "ipc_send" || c == "ipc" || c == "agent_comm"),
+        };
+        if !allowed {
+            g.ipc.record_denied();
+            return Err(KernelError::Permission(
+                "ipc_reply denied: missing ipc_send".into(),
+            ));
+        }
+        if !g.processes.contains_key(to) {
+            return Err(KernelError::NotFound(format!("recipient {to}")));
+        }
+        match g.ipc.send_ex(
+            from,
+            to,
+            kind,
+            payload,
+            Some(reply_to.to_string()),
+            None,
+        ) {
+            Ok(msg) => {
+                Self::emit_locked(
+                    &mut g,
+                    "ipc.reply",
+                    from,
+                    json!({"id": msg.id, "to": to, "reply_to": reply_to}),
+                );
+                Ok(json!(msg))
+            }
+            Err(e) => Err(KernelError::BudgetExceeded(e)),
+        }
+    }
+
+    /// M-01 demo: two agents ping-pong under capability mediation (productization path).
+    pub fn multi_agent_demo(&self) -> KernelResult<Value> {
+        use crate::intent::IntentDeclaration;
+        let ipc_caps = vec![
+            "ipc_send".to_string(),
+            "ipc_recv".to_string(),
+            "ipc".to_string(),
+        ];
+        let intent_a = IntentDeclaration {
+            goal: "multi-agent demo A".into(),
+            capabilities: ipc_caps.clone(),
+            constraints: BTreeMap::new(),
+        };
+        let intent_b = IntentDeclaration {
+            goal: "multi-agent demo B".into(),
+            capabilities: ipc_caps.clone(),
+            constraints: BTreeMap::new(),
+        };
+        let a = self.create_process_with_intent(
+            "demo_a",
+            None,
+            None,
+            Some(ipc_caps.clone()),
+            Some(50_000),
+            None,
+            Some(intent_a),
+        )?;
+        let b = self.create_process_with_intent(
+            "demo_b",
+            None,
+            None,
+            Some(ipc_caps),
+            Some(50_000),
+            None,
+            Some(intent_b),
+        )?;
+        let ping = self.ipc_send(&a.id, &b.id, "ping", json!({"hello": "from A"}))?;
+        let ping_id = ping
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let inbox_b = self.ipc_recv(&b.id, 8)?;
+        let pong = self.ipc_reply(&b.id, &a.id, &ping_id, "pong", json!({"echo": true}))?;
+        let inbox_a = self.ipc_recv(&a.id, 8)?;
+        let _ = self.ipc_channel_subscribe(&a.id, "demo-room");
+        let _ = self.ipc_channel_subscribe(&b.id, "demo-room");
+        let pub_r = self.ipc_channel_publish(
+            &a.id,
+            "demo-room",
+            "announce",
+            json!({"msg": "room open"}),
+        )?;
+        let _ = self.end_process(&a.id, "completed", Some("demo done"));
+        let _ = self.end_process(&b.id, "completed", Some("demo done"));
+        Ok(json!({
+            "ok": true,
+            "agents": [a.id, b.id],
+            "ping": ping,
+            "inbox_b": inbox_b,
+            "pong": pong,
+            "inbox_a": inbox_a,
+            "channel_publish": pub_r,
+            "note": "M-01 multi-agent demo path (Rust authority)",
+        }))
+    }
+
+    // ── M-07 eval suite ───────────────────────────────────
+
+    pub fn eval_record(
+        &self,
+        suite: &str,
+        overall: f64,
+        parts: HashMap<String, f64>,
+        meta: Value,
+    ) -> Value {
+        let mut g = self.inner.write();
+        let run = g.eval_suite.record(suite, overall, parts, meta);
+        Self::emit_locked(
+            &mut g,
+            "eval.record",
+            "system",
+            json!({"id": run.id, "suite": suite, "overall": overall}),
+        );
+        json!(run)
+    }
+
+    pub fn eval_trend(&self, suite: &str, last_n: usize) -> Value {
+        self.inner.read().eval_suite.trend(suite, last_n)
+    }
+
+    pub fn eval_gate_check(&self, suite: Option<&str>) -> Value {
+        self.inner.read().eval_suite.check_gate(suite)
+    }
+
+    pub fn eval_status(&self) -> Value {
+        self.inner.read().eval_suite.status()
+    }
+
+    // ── M-08 agent manifest ───────────────────────────────
+
+    pub fn agent_manifest_validate(&self, raw: Value) -> Value {
+        let r = validate_agent_manifest(&raw);
+        json!(r)
+    }
+
+    pub fn agent_manifest_validate_str(&self, s: &str) -> Value {
+        let r = validate_agent_manifest_str(s);
+        json!(r)
+    }
+
+    pub fn agent_sdk_checklist(&self) -> Value {
+        pack_checklist()
+    }
+
+    /// M-05: hard gate — skill must be active before load.
+    pub fn skill_require_loadable(&self, name: &str) -> KernelResult<Value> {
+        let g = self.inner.read();
+        if g.skill_gate.is_loadable(name) {
+            Ok(json!({"ok": true, "name": name, "loadable": true}))
+        } else {
+            Err(KernelError::Permission(format!(
+                "skill '{name}' not loadable: must register → verify → activate (skill_gate)"
+            )))
+        }
+    }
+
     // ── P1-A: services ────────────────────────────────────
 
     pub fn service_register(
@@ -3245,6 +3531,51 @@ mod tests {
         assert!(filtered.contains(&"file_read".into()));
         assert!(filtered.contains(&"grep".into()));
         assert!(!filtered.contains(&"terminal".into()));
+    }
+
+    #[test]
+    fn multi_agent_demo_ping_pong() {
+        let k = k();
+        let r = k.multi_agent_demo().expect("demo");
+        assert_eq!(r["ok"], true);
+        assert_eq!(r["inbox_b"]["count"], 1);
+        assert_eq!(r["inbox_a"]["count"], 1);
+        assert!(r["channel_publish"]["delivered"].as_u64().unwrap_or(0) >= 1);
+    }
+
+    #[test]
+    fn skill_require_loadable_denies_draft() {
+        let k = k();
+        let pkg = k.skill_register(
+            "x",
+            "1.0",
+            "print(1)",
+            vec![],
+            vec!["t1".into()],
+        );
+        let id = pkg["id"].as_str().unwrap();
+        assert!(k.skill_require_loadable("x").is_err());
+        k.skill_verify(id).unwrap();
+        k.skill_activate(id).unwrap();
+        assert!(k.skill_require_loadable("x").is_ok());
+    }
+
+    #[test]
+    fn eval_suite_and_manifest() {
+        let k = k();
+        let mut parts = std::collections::HashMap::new();
+        parts.insert("coding".into(), 0.8);
+        parts.insert("safety".into(), 0.9);
+        parts.insert("long".into(), 0.6);
+        k.eval_record("default", 0.8, parts, json!({}));
+        let g = k.eval_gate_check(Some("default"));
+        assert_eq!(g["ok"], true);
+        let m = k.agent_manifest_validate(json!({
+            "name": "demo",
+            "version": "0.1.0",
+            "capabilities": ["file_read"],
+        }));
+        assert_eq!(m["ok"], true);
     }
 
     #[test]

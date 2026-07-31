@@ -1331,6 +1331,103 @@ async def process_policy(
     return out
 
 
+@router.post("/multi-agent/demo")
+async def multi_agent_demo(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """M-01：Rust 权威双 Agent ping-pong 演示路径（产品化默认协作样例）。"""
+    from backend.kernel import get_kernel
+
+    k = get_kernel()
+    if hasattr(k, "multi_agent_demo"):
+        return k.multi_agent_demo()
+    if hasattr(k, "_call"):
+        return k._call("multi_agent_demo") or {"ok": False, "error": "rpc empty"}
+    raise HTTPException(status_code=501, detail="multi_agent_demo requires Rust kernel host")
+
+
+@router.get("/eval/status")
+async def eval_status_api(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """M-07：内核内 Eval 账本状态。"""
+    from backend.kernel import get_kernel
+
+    k = get_kernel()
+    if hasattr(k, "eval_status"):
+        return k.eval_status()
+    if hasattr(k, "_call"):
+        return k._call("eval_status") or {}
+    return {"runs": 0}
+
+
+@router.post("/eval/record")
+async def eval_record_api(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+    body: dict[str, Any] | None = None,
+):
+    """M-07：写入一次 Eval 分数（Rust ledger）。"""
+    from backend.kernel import get_kernel
+
+    data = body or {}
+    k = get_kernel()
+    suite = str(data.get("suite") or "default")
+    overall = float(data.get("overall") or 0)
+    parts = data.get("parts") if isinstance(data.get("parts"), dict) else {}
+    meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+    if hasattr(k, "eval_record"):
+        return k.eval_record(suite, overall, parts, meta)
+    if hasattr(k, "_call"):
+        return k._call(
+            "eval_record",
+            {"suite": suite, "overall": overall, "parts": parts, "meta": meta},
+        ) or {}
+    raise HTTPException(status_code=501, detail="eval_record requires Rust kernel")
+
+
+@router.get("/eval/gate")
+async def eval_gate_api(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+    suite: str | None = Query(None),
+):
+    """M-07：Eval 门禁检查（周报/CI 可消费）。"""
+    from backend.kernel import get_kernel
+
+    k = get_kernel()
+    if hasattr(k, "eval_gate_check"):
+        return k.eval_gate_check(suite)
+    if hasattr(k, "_call"):
+        params: dict[str, Any] = {}
+        if suite:
+            params["suite"] = suite
+        return k._call("eval_gate_check", params) or {}
+    return {"ok": False, "reason": "no_kernel"}
+
+
+@router.post("/agent-manifest/validate")
+async def agent_manifest_validate_api(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+    body: dict[str, Any] | None = None,
+):
+    """M-08：Rust 校验 agent.json（SDK pack）。"""
+    from backend.kernel import get_kernel
+
+    data = body or {}
+    k = get_kernel()
+    if hasattr(k, "agent_manifest_validate"):
+        if isinstance(data.get("json"), str):
+            return k.agent_manifest_validate(json_str=data["json"])
+        return k.agent_manifest_validate(data.get("manifest") or data)
+    if hasattr(k, "_call"):
+        if isinstance(data.get("json"), str):
+            return k._call("agent_manifest_validate", {"json": data["json"]}) or {}
+        return k._call(
+            "agent_manifest_validate",
+            {"manifest": data.get("manifest") or data},
+        ) or {}
+    raise HTTPException(status_code=501, detail="agent_manifest_validate requires Rust kernel")
+
+
 @router.get("/cost")
 async def cost_panel(
     current_user: Annotated[UserRead, Depends(get_current_user)],
