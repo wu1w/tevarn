@@ -66,6 +66,39 @@ _EXIT_CATALOG: dict[str, tuple[str, str, str, str]] = {
         "",
         "ok",
     ),
+    "host_down": (
+        "Kernel Host 不可用",
+        "Rust 控制平面无响应或未启动，工具与进程治理暂时不可用。",
+        "点击「重启 Host」或执行 scripts/ensure-vendor-host；"
+        "重建：cargo build -p takton-kernel-host --release。",
+        "error",
+    ),
+    "host_abi_mismatch": (
+        "Kernel ABI 不完整",
+        "Host 在线但缺少必需 ABI 方法，已 fail-closed 禁止半跑。",
+        "重建并 stage host：.\\scripts\\build-kernel-host.ps1 -Release "
+        "或 node scripts/ensure-vendor-host.mjs。",
+        "error",
+    ),
+    "sandbox_missing": (
+        "沙箱能力不可用",
+        "当前平台缺少 Job/bwrap 等隔离后端，workforce 默认 fail-closed。",
+        "安装 bubblewrap（Linux）或启用 WSL/Job；"
+        "开发可临时设 agent_execution_mode=local（削弱治理）。",
+        "error",
+    ),
+    "intent_denied": (
+        "Intent / 能力被拒绝",
+        "本次 Run 的 Intent 合成或能力申请未通过（最小权限）。",
+        "缩小目标、补充 capabilities，或在 /approvals 批准提权后重试。",
+        "warn",
+    ),
+    "resource_denied": (
+        "资源配额拒绝",
+        "tool_calls / child_proc / io / memory 等资源账户超限。",
+        "在 Kernel 页查看 resource 用量；降低并发或 top_up 预算后重试。",
+        "error",
+    ),
 }
 
 

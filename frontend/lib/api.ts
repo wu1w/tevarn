@@ -1165,6 +1165,31 @@ export async function getGovernanceStatus(): Promise<Record<string, unknown>> {
   return res.data;
 }
 
+export async function getRuntimeHealth(): Promise<{
+  ok: boolean;
+  severity: string;
+  issues?: Array<{
+    code?: string;
+    title?: string;
+    message?: string;
+    recovery_hint?: string;
+    severity?: string;
+  }>;
+  actions?: Array<{ id?: string; label?: string; path?: string; hint?: string }>;
+  host?: Record<string, unknown>;
+  sandbox?: Record<string, unknown>;
+  budget?: Record<string, unknown>;
+  scenario?: Record<string, unknown>;
+}> {
+  const res = await api.get('/kernel/runtime/health');
+  return res.data;
+}
+
+export async function restartKernelHost(): Promise<{ ok: boolean; error?: string }> {
+  const res = await api.post('/kernel/host/restart');
+  return res.data;
+}
+
 export async function getKernelEvents(limit = 50): Promise<{
   events: KernelEvent[];
   total: number;

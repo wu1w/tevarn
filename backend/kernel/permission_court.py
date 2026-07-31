@@ -333,8 +333,35 @@ async def decide_tool(
                 ),
             )
 
-    # ── fallback：Python 完整 path（host 不可用 / rust 未要求）──
-    # 1) secret floor + user deny
+    # ── fallback：Python 完整 path ──
+    # H3: production forbids Python court when rust is the configured backend
+    # unless DEV_UNSAFE / agent_court_rust_required=false.
+    try:
+        from backend.kernel.production_guard import is_dev_unsafe, is_production_guard
+
+        if (
+            rust_required
+            and rust_backend == "rust"
+            and is_production_guard()
+            and not is_dev_unsafe()
+        ):
+            return CourtDecision(
+                tool=name,
+                args_digest=digest,
+                verdict="deny",
+                matched_rule="court:python_tail_locked",
+                layer="secret_floor",
+                reason=(
+                    "Python court fallback locked in production (H3). "
+                    "Host must serve decide_tool. "
+                    "Rebuild host or set TAKTON_DEV_UNSAFE=1 / "
+                    "agent_court_rust_required=false for local only."
+                ),
+            )
+    except Exception:
+        pass
+
+    # 1) secret floor + user deny (DEV / non-rust path only)
     denied = _check_deny_layers(name, args)
     if denied is not None:
         return denied

@@ -174,6 +174,18 @@ L0 Kernel（进程 / cap / 调度 / 隔离）████░░░░░░  ~45
 | H2-H | 多设备 sync 产品化（push/pull/LWW + hydrate） | ✅ |
 | H2-I | 审计 WORM + 外部 anchor | ✅ |
 | H2-J | 结果 spill 默认激进（threshold≈800） | ✅ |
+| H3-1 | Host ABI fail-closed + watchdog + marathon gate 脚本 | ✅ |
+| H3-2 | Python court 尾巴生产锁死（仅 DEV / rust_required=false） | ✅ |
+| H3-3 | 主路径 runtime health 恢复横幅 + host 一键重启 | ✅ |
+| H3-4 | 日用场景 `coding_research` 默认 engineering profile | ✅ |
+| H3-5 | README 双产品线说明 | ✅ |
+
+**Host 长稳验收（写死）**
+
+- [ ] `python scripts/host_marathon_gate.py --cycles 30 --inject-kill` 通过  
+- [ ] 可选：`--hours 2` 墙钟 soak（CI 不默认）  
+- [x] 缺 ABI 方法：连接即 fail-closed（`AbiMismatchError`）  
+- [x] RPC 超时：强杀重启 + 再检 ABI  
 
 逃生舱：`TAKTON_DEV_UNSAFE=1` · `TAKTON_KERNEL_BACKEND=python` · 见 [THREAT_MODEL.md](./THREAT_MODEL.md)。
 

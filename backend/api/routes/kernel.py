@@ -400,6 +400,42 @@ async def audit_anchor_api(
         return {"ok": False, "error": str(e)}
 
 
+@router.get("/runtime/health")
+async def runtime_health_api(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """默认路径健康：host/ABI/沙箱/预算/court — 主 UI 恢复卡片数据源。"""
+    from backend.services.runtime_health import collect_runtime_health
+
+    return collect_runtime_health()
+
+
+@router.post("/host/restart")
+async def host_restart_api(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """一键重启 Kernel Host（卡死/无响应恢复）。"""
+    from backend.services.runtime_health import try_restart_host
+
+    return try_restart_host()
+
+
+@router.get("/host/watchdog")
+async def host_watchdog_api(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """Host 存活 ping（含自动恢复计数）。"""
+    k = get_kernel()
+    if hasattr(k, "host_watchdog_ping"):
+        return k.host_watchdog_ping()
+    if hasattr(k, "_call"):
+        try:
+            return {"ok": True, "pong": k._call("ping") or {}}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+    return {"ok": False, "error": "no host client"}
+
+
 @router.get("/processes/{process_id}")
 async def get_process(
     process_id: str,

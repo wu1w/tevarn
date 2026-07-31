@@ -218,6 +218,12 @@ class Settings(BaseSettings):
     agent_resource_rss_sample: bool = True
     # 主会话默认 intent goal（require_intent 且未传 _intent_declaration 时）
     agent_kernel_default_intent_goal: str = "interactive chat (minimum privilege)"
+    # 日用场景收窄：coding_research | chat_min | custom
+    agent_default_scenario: str = "coding_research"
+    # 默认 coding profile（engineering | code_review | pair）
+    agent_default_coding_profile: str = "engineering"
+    # 场景工具白名单偏好（空=走 profile；非空=再裁一刀）
+    agent_scenario_tool_prefer: str = "file_read,file_write,edit,apply_patch,grep,glob,command,python,git"
     # Phase 2.3：启动时将非终态 Run 标 interrupted，并对 inbox/cron/headless 自动续跑
     agent_run_auto_recover: bool = True
     # ── 动态 skill 隔离（阶段 2）──

@@ -580,7 +580,34 @@ class RustAgentKernel:
             self._rpc.connect(attempts=5, connect_timeout=1.0)
         else:
             self._rpc.connect(attempts=8, connect_timeout=0.8)
+        self._abi_checked = False
+        self._restart_count = 0
+        self._last_health_ok_at = 0.0
+        self._assert_abi_or_fail()
         self._configure_pkg_signing()
+
+    def _assert_abi_or_fail(self) -> None:
+        """Fail-closed if host lacks required ABI methods (half-run forbidden)."""
+        from backend.kernel_rust.abi_gate import AbiMismatchError, assert_required_abi
+
+        try:
+            methods = self.list_methods()
+            assert_required_abi(methods)
+            self._abi_checked = True
+            logger.info(
+                "kernel host ABI ok methods=%s required_gate=pass",
+                len(methods),
+            )
+        except AbiMismatchError:
+            self._rpc.close()
+            raise
+        except Exception as e:
+            # list_methods itself failed — treat as host unusable
+            self._rpc.close()
+            raise ConnectionError(
+                f"kernel host ABI check failed: {e}. "
+                "Rebuild host binary and ensure it is the staged/current build."
+            ) from e
 
     def _configure_pkg_signing(self) -> None:
         """Push package HMAC key so we never rely on public insecure_default in app mode."""
@@ -613,15 +640,77 @@ class RustAgentKernel:
             logger.warning("kernel RPC %s failed (%s); reconnect/retry", method, e)
             self._rpc.close()
             # 读超时通常 = host 卡死（端口仍监听但不回包）：必须强杀重启
+            recovered = False
             try:
                 if isinstance(e, (TimeoutError, socket.timeout)):
-                    restart_kernel_host(self._host)
+                    recovered = bool(restart_kernel_host(self._host))
+                    self._restart_count = int(getattr(self, "_restart_count", 0)) + 1
                 elif not is_rust_host_available(self._host):
-                    start_kernel_host(self._host)
+                    recovered = bool(start_kernel_host(self._host))
+                    if recovered:
+                        self._restart_count = int(getattr(self, "_restart_count", 0)) + 1
             except Exception as re:
                 logger.debug("host recover after RPC fail: %s", re)
             self._rpc.connect()
+            if recovered or not getattr(self, "_abi_checked", False):
+                try:
+                    self._assert_abi_or_fail()
+                except Exception as abi_e:
+                    logger.error("post-restart ABI gate failed: %s", abi_e)
+                    raise
             return self._rpc.call(method, params)
+
+    def host_watchdog_ping(self) -> dict[str, Any]:
+        """Lightweight liveness for long-run; restarts on timeout once."""
+        t0 = time.time()
+        try:
+            pong = self._call("ping") or {}
+            self._last_health_ok_at = time.time()
+            return {
+                "ok": True,
+                "latency_ms": int((time.time() - t0) * 1000),
+                "restart_count": int(getattr(self, "_restart_count", 0)),
+                "pong": pong,
+                "abi_checked": bool(getattr(self, "_abi_checked", False)),
+            }
+        except Exception as e:
+            return {
+                "ok": False,
+                "error": str(e),
+                "restart_count": int(getattr(self, "_restart_count", 0)),
+                "latency_ms": int((time.time() - t0) * 1000),
+            }
+
+    def host_runtime_status(self) -> dict[str, Any]:
+        """Aggregated host health for recovery UX / marathon gate."""
+        from backend.kernel_rust.abi_gate import check_required_abi
+
+        up = is_rust_host_available(self._host)
+        methods: list[str] = []
+        health: dict[str, Any] = {}
+        abi: dict[str, Any] = {"ok": False, "missing": ["unreachable"]}
+        if up:
+            try:
+                methods = self.list_methods()
+                abi = check_required_abi(methods)
+                health = self.health() or {}
+            except Exception as e:
+                health = {"error": str(e)}
+                abi = {"ok": False, "error": str(e)}
+        return {
+            "host": self._host,
+            "up": up,
+            "abi": abi,
+            "health": health,
+            "methods_count": len(methods),
+            "restart_count": int(getattr(self, "_restart_count", 0)),
+            "last_health_ok_at": float(getattr(self, "_last_health_ok_at", 0) or 0),
+            "acceptance": {
+                "marathon_min_hours": 2,
+                "abi_fail_closed": True,
+                "auto_restart_on_timeout": True,
+            },
+        }
 
     def _proc(self, data: dict[str, Any] | None) -> RustKernelProcess | None:
         if not data or not isinstance(data, dict) or not data.get("id"):

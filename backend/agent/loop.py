@@ -848,6 +848,45 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     recorder.kernel_process_id = kernel_proc.id
                 except Exception:
                     pass
+                # 日用场景收窄：coding_research → 默认 engineering profile
+                try:
+                    scenario = str(
+                        getattr(settings, "agent_default_scenario", "coding_research")
+                        or "coding_research"
+                    )
+                    profile = str(
+                        getattr(settings, "agent_default_coding_profile", "engineering")
+                        or "engineering"
+                    )
+                    mode_l = str(mode or "").lower()
+                    if scenario == "coding_research" and mode_l not in (
+                        "ask",
+                        "plan",
+                        "explore",
+                        "chat",
+                    ):
+                        if hasattr(kernel, "_call"):
+                            kernel._call(
+                                "coding_profile_apply",
+                                {
+                                    "process_id": kernel_proc.id,
+                                    "profile": profile,
+                                },
+                            )
+                        elif hasattr(kernel, "coding_profile_apply"):
+                            kernel.coding_profile_apply(kernel_proc.id, profile)
+                        fresh = kernel.get_process(kernel_proc.id)
+                        if fresh is not None:
+                            kernel_proc = fresh
+                            self._kernel_process = kernel_proc
+                        logger.info(
+                            "scenario=%s coding_profile=%s process=%s",
+                            scenario,
+                            profile,
+                            kernel_proc.id[:8],
+                        )
+                except Exception as _sc:
+                    logger.debug("coding profile apply skip: %s", _sc)
             except Exception as e:
                 # H-03：Agent 正式 run 要求 kernel 时不得静默退回无门控路径
                 require_kernel = bool(

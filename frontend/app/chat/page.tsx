@@ -24,6 +24,7 @@ import { useTerminalStore } from '@/stores/terminalStore';
 import { generateImage, type SessionRecoveryPayload } from '@/lib/api';
 import { ChatRecoveryCard } from '@/components/chat/ChatRecoveryCard';
 import { RunCapabilityChip } from '@/components/chat/RunCapabilityChip';
+import { RuntimeHealthBanner } from '@/components/chat/RuntimeHealthBanner';
 import { generateUUID } from '@/lib/uuid';
 import { useRouter, useSearchParams } from 'next/navigation';
 import type { ToolCallData } from '@/components/chat/ToolCallPanel';
@@ -1172,6 +1173,7 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
                           <SessionRunsPanel sessionId={currentSession.id} compact />
                         </div>
                       ) : null}
+                      <RuntimeHealthBanner zh />
                       {(isStreaming || runCaps) && (
                         <RunCapabilityChip
                           capsCount={runCaps?.caps}
