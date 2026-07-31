@@ -21,9 +21,13 @@ import {
   sampleProcessRss,
   suspendKernelProcess, resumeKernelProcess,
   topUpProcessBudget,
+  getKernelProcessTree,
+  getGovernanceStatus,
   type KernelProcess, type KernelEvent,
 } from '@/lib/api';
 import { CollabInterruptPanel } from '@/components/kernel/CollabInterruptPanel';
+import { ProcessTreePanel } from '@/components/kernel/ProcessTreePanel';
+import { useDomainEventStore } from '@/stores/domainEventStore';
 import { useZh } from '@/hooks/useZh';
 import { useToastStore } from '@/stores/toastStore';
 
@@ -68,6 +72,22 @@ export default function KernelPage() {
   };
 
   const processes = useQuery({ queryKey: ['kernel-processes'], queryFn: () => getKernelProcesses(), staleTime: 8_000, refetchInterval: 15_000, retry: 1 });
+  const processTree = useQuery({
+    queryKey: ['kernel-process-tree'],
+    queryFn: () => getKernelProcessTree(),
+    staleTime: 5_000,
+    refetchInterval: tab === 'processes' ? 8_000 : 20_000,
+    retry: 1,
+  });
+  const govStatus = useQuery({
+    queryKey: ['kernel-governance-status'],
+    queryFn: getGovernanceStatus,
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+    retry: 1,
+  });
+  const domainLive = useDomainEventStore((s) => s.connected);
+  const domainLast = useDomainEventStore((s) => s.lastTopic);
   const events = useQuery({ queryKey: ['kernel-events', 500], queryFn: () => getKernelEvents(500), staleTime: 8_000, retry: 1 });
   const identities = useQuery({ queryKey: ['kernel-identities'], queryFn: () => getKernelIdentities(), staleTime: 30_000, retry: 1 });
   const escalations = useQuery({ queryKey: ['kernel-escalations', 'pending'], queryFn: () => getKernelEscalations('pending'), staleTime: 10_000, retry: 1 });
@@ -307,7 +327,7 @@ export default function KernelPage() {
 
       {/* tab */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
-        <TabBtn active={tab === 'processes'} onClick={() => setTab('processes')}>{zh ? `进程（${procs.length}）` : `Processes (${procs.length})`}</TabBtn>
+        <TabBtn active={tab === 'processes'} onClick={() => setTab('processes')}>{zh ? `进程树（${procs.length}）` : `Tree (${procs.length})`}</TabBtn>
         <TabBtn active={tab === 'mediate'} onClick={() => setTab('mediate')}>{zh ? `裁决记录（${mediateEvents.length}）` : `Mediation (${mediateEvents.length})`}</TabBtn>
         <TabBtn active={tab === 'policy'} onClick={() => setTab('policy')}>{zh ? `权限网（${policyDecisions.length}）` : `Policy (${policyDecisions.length})`}</TabBtn>
         <TabBtn active={tab === 'governance'} onClick={() => setTab('governance')}>{zh ? '治理' : 'Governance'}</TabBtn>
@@ -322,25 +342,52 @@ export default function KernelPage() {
       </div>
 
       {tab === 'processes' ? (
-        procs.length === 0 ? (
-          <div style={{ ...card, textAlign: 'center', padding: '48px 20px' }}>
-            <div style={{ fontSize: 26, marginBottom: 8 }}>💤</div>
-            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--foreground)' }}>
-              {zh ? '当前没有进程。Agent 干活时，这里会显示它的沙箱。' : 'No processes. Agent sandboxes appear here while they work.'}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ ...card, padding: '12px 14px', fontSize: 11, color: 'var(--foreground-dim)' }}>
+            <span style={{ color: domainLive ? 'var(--status-online)' : 'var(--foreground-dim)', fontWeight: 650 }}>
+              {domainLive ? (zh ? '● 领域事件实时' : '● domain live') : (zh ? '○ 事件轮询' : '○ polling')}
+            </span>
+            {domainLast ? ` · ${domainLast}` : ''}
+            {govStatus.data ? (
+              <span style={{ marginLeft: 10 }}>
+                guard={String(govStatus.data.production_guard)} · soft=
+                {String(govStatus.data.soft_renew_enabled)} · hard_only=
+                {String(govStatus.data.hard_cap_only)} · hmac=
+                {String(govStatus.data.token_hmac_source || '—')}
+              </span>
+            ) : null}
+          </div>
+          <div style={{ ...card, padding: '14px 16px' }}>
+            <div style={{ fontSize: 13, fontWeight: 650, marginBottom: 8 }}>
+              {zh ? '进程树（父子 · 能力继承）' : 'Process tree'}
             </div>
+            {(processTree.data?.roots || []).length === 0 && procs.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '32px 12px', color: 'var(--foreground-dim)', fontSize: 13 }}>
+                {zh ? '当前没有进程。' : 'No processes.'}
+              </div>
+            ) : (
+              <ProcessTreePanel roots={processTree.data?.roots || []} zh={zh} />
+            )}
           </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {procs.map((p) => (
-              <ProcessRow
-                key={p.id}
-                p={p}
-                zh={zh}
-                onChanged={() => void qc.invalidateQueries({ queryKey: ['kernel-processes'] })}
-              />
-            ))}
-          </div>
-        )
+          {procs.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--foreground-dim)' }}>
+                {zh ? '扁平操作' : 'Flat actions'}
+              </div>
+              {procs.map((p) => (
+                <ProcessRow
+                  key={p.id}
+                  p={p}
+                  zh={zh}
+                  onChanged={() => {
+                    void qc.invalidateQueries({ queryKey: ['kernel-processes'] });
+                    void qc.invalidateQueries({ queryKey: ['kernel-process-tree'] });
+                  }}
+                />
+              ))}
+            </div>
+          ) : null}
+        </div>
       ) : tab === 'mediate' ? (
         mediateEvents.length === 0 ? (
           <div style={{ ...card, textAlign: 'center', padding: '48px 20px' }}>

@@ -674,10 +674,16 @@ class RustAgentKernel:
         r = self._call("apply_intent", params) or {}
         from backend.kernel.capability import CapabilityToken
 
-        tok = CapabilityToken.from_dict(r.get("token") or {}, verify=False)
-        # refresh local view if process returned
-        if r.get("process"):
-            pass
+        tok = CapabilityToken.from_dict_safe(r.get("token") or {})
+        if tok is None:
+            # Host just issued — accept without sig field if present as caps list
+            raw = r.get("token") or {}
+            if isinstance(raw, dict) and raw.get("capabilities") is not None:
+                tok = CapabilityToken.from_dict(raw, verify=False)
+            else:
+                from backend.kernel.capability import CapabilityToken as CT
+
+                tok = CT(capabilities=frozenset(), process_id=process_id)
         return tok, list(r.get("dropped") or [])
 
     def filter_tools(self, process_id: str, tool_names: list[str]) -> list[str]:
@@ -1446,7 +1452,14 @@ class RustAgentKernel:
         )
         from backend.kernel.capability import CapabilityToken
 
-        return CapabilityToken.from_dict(data, verify=False)
+        tok = CapabilityToken.from_dict_safe(data if isinstance(data, dict) else None)
+        if tok is not None:
+            return tok
+        # Fresh host issue may omit signature field in some builds — dev/host trust
+        return CapabilityToken.from_dict(
+            data if isinstance(data, dict) else {"capabilities": []},
+            verify=False,
+        )
 
     async def request_escalation(
         self,

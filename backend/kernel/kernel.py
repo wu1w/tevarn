@@ -226,10 +226,10 @@ class AgentKernel:
                         local.exit_reason = data.get("exit_reason")
                         tok = data.get("token")
                         if isinstance(tok, dict) and tok.get("capabilities") is not None:
-                            try:
-                                local.token = CapabilityToken.from_dict(tok, verify=False)
-                            except Exception:
-                                pass
+                            safe = CapabilityToken.from_dict_safe(tok)
+                            if safe is not None:
+                                local.token = safe
+                            # else drop — never inject forged token from shared store
                         local.meta = dict(local.meta or {})
                         local.meta["_sync_at"] = remote_ts
                 return local

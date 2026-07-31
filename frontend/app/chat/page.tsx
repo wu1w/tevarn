@@ -23,6 +23,7 @@ import { Message, StatusUpdateMessage, StreamDeltaMessage, GoalUpdateMessage, Go
 import { useTerminalStore } from '@/stores/terminalStore';
 import { generateImage, type SessionRecoveryPayload } from '@/lib/api';
 import { ChatRecoveryCard } from '@/components/chat/ChatRecoveryCard';
+import { RunCapabilityChip } from '@/components/chat/RunCapabilityChip';
 import { generateUUID } from '@/lib/uuid';
 import { useRouter, useSearchParams } from 'next/navigation';
 import type { ToolCallData } from '@/components/chat/ToolCallPanel';
@@ -95,6 +96,11 @@ function ChatPageInner() {
     const composerRef = useRef<MessageInputHandle | null>(null);
     const [previewArtifact, setPreviewArtifact] = useState<ChatArtifact | null>(null);
     const [recovery, setRecovery] = useState<SessionRecoveryPayload | null>(null);
+    const [runCaps, setRunCaps] = useState<{
+      caps?: number;
+      tools?: number;
+      soft?: number;
+    } | null>(null);
 
     // 开发冒烟：允许 Playwright 注入消息 / 打开预览
     React.useEffect(() => {
@@ -424,7 +430,16 @@ function ChatPageInner() {
       const sid = currentSession?.id || '';
       if (msg.state === 'thinking' || msg.state === 'tool_executing' || msg.state === 'optimizing') {
         setIsStreaming(true);
-        if (msg.detail) setStreamStatusDetail(msg.detail);
+        if (msg.detail) {
+          setStreamStatusDetail(msg.detail);
+          // H2-E: parse "能力 N · 工具 M" from kernel status
+          const m = String(msg.detail).match(
+            /(?:能力|caps)\s*(\d+)\s*[·•]\s*(?:工具|tools)\s*(\d+)/i,
+          );
+          if (m) {
+            setRunCaps({ caps: Number(m[1]), tools: Number(m[2]) });
+          }
+        }
         if (sid) streamSessionApi().markRunning(sid, msg.detail || null);
       } else if (msg.state === 'error') {
         setIsStreaming(false);
@@ -435,6 +450,7 @@ function ChatPageInner() {
       } else if (msg.state === 'idle') {
               setIsStreaming(false);
               setStreamStatusDetail(null);
+              // keep last runCaps briefly for post-run visibility
               const leftover = streamingContentRef.current;
               streamingContentRef.current = '';
               setStreamingContent('');
@@ -1156,6 +1172,14 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
                           <SessionRunsPanel sessionId={currentSession.id} compact />
                         </div>
                       ) : null}
+                      {(isStreaming || runCaps) && (
+                        <RunCapabilityChip
+                          capsCount={runCaps?.caps}
+                          toolsCount={runCaps?.tools}
+                          softRenew={runCaps?.soft}
+                          zh
+                        />
+                      )}
                       {/* R-02：条件恢复卡片（can_resume / 可恢复 exit） */}
                       {currentSession?.id && !isStreaming ? (
                         <ChatRecoveryCard

@@ -166,8 +166,10 @@ L0 Kernel（进程 / cap / 调度 / 隔离）████░░░░░░  ~45
 |----|--------|------|
 | H2-A | Intent→cap→schema 生产强制；None caps 空 schema；kernel 关闭仅 DEV_UNSAFE | ✅ |
 | H2-B | 路径 key 扩展；token verify；resume Event 重建；hard_cap_only；禁本地 cap 扩权 | ✅ |
-| H2-C | HMAC 与 JWT 解耦；审计 rotation；THREAT_MODEL | ✅ |
+| H2-C | HMAC 与 JWT 解耦；审计 rotation（Python+Rust）；THREAT_MODEL | ✅ |
 | H2-D | 生产禁止静默 Python kernel fallback | ✅ |
+| H2-E | 进程树 API/UI；治理 status；本 Run 能力芯片；domain WS 失效查询 | ✅ |
+| H2-F | `has_capability` 生产 fail-closed；`from_dict_safe`；Memory/Context 内核风格 HTTP | ✅ |
 
 逃生舱：`TAKTON_DEV_UNSAFE=1` · `TAKTON_KERNEL_BACKEND=python` · 见 [THREAT_MODEL.md](./THREAT_MODEL.md)。
 

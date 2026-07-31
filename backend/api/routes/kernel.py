@@ -133,6 +133,156 @@ async def list_processes(
     return out
 
 
+@router.get("/processes/tree")
+async def process_tree(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+    include_terminal: bool = Query(False),
+):
+    """进程树：按 parent_id 建树，附能力/预算继承摘要（分析 P1）。"""
+    kernel = get_kernel()
+    flat = [p.to_dict() for p in kernel.list_processes(include_terminal=include_terminal)]
+    by_id: dict[str, dict[str, Any]] = {}
+    for p in flat:
+        pid = str(p.get("id") or "")
+        if not pid:
+            continue
+        p = dict(p)
+        p["children"] = []
+        caps = p.get("capabilities")
+        p["caps_count"] = len(caps) if isinstance(caps, list) else (0 if caps is None else 1)
+        p["compat_open"] = caps is None
+        meta = p.get("meta") if isinstance(p.get("meta"), dict) else {}
+        p["soft_renew_count"] = int(meta.get("soft_renew_count") or 0)
+        p["tools_visible_count"] = meta.get("tools_visible_count")
+        by_id[pid] = p
+    roots: list[dict[str, Any]] = []
+    for pid, p in by_id.items():
+        parent = p.get("parent_id")
+        if parent and str(parent) in by_id:
+            by_id[str(parent)]["children"].append(p)
+        else:
+            roots.append(p)
+
+    def _sort(nodes: list[dict[str, Any]]) -> None:
+        nodes.sort(key=lambda x: float(x.get("created_at") or 0))
+        for n in nodes:
+            ch = n.get("children") or []
+            if isinstance(ch, list):
+                _sort(ch)
+
+    _sort(roots)
+    return {
+        "roots": roots,
+        "total": len(by_id),
+        "flat_count": len(flat),
+    }
+
+
+@router.get("/governance/status")
+async def governance_status(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """H2 治理基线快照：旁路开关、soft renew、密钥来源、生产守卫。"""
+    from backend.core.config import settings
+    from backend.kernel.production_guard import (
+        allow_compat_full_open,
+        allow_kernel_disabled,
+        allow_python_kernel_fallback,
+        is_dev_unsafe,
+        is_production_guard,
+    )
+    from backend.kernel import get_kernel_backend
+
+    hmac_src = "unknown"
+    try:
+        from backend.kernel.signing import hmac_key_source
+
+        hmac_src = hmac_key_source()
+    except Exception:
+        pass
+    hard_only = bool(getattr(settings, "agent_budget_hard_cap_only", False))
+    soft_on = bool(getattr(settings, "agent_budget_soft_renew_enabled", True)) and not hard_only
+    return {
+        "production_guard": is_production_guard(),
+        "dev_unsafe": is_dev_unsafe(),
+        "kernel_backend": get_kernel_backend(),
+        "kernel_enabled": bool(getattr(settings, "agent_kernel_enabled", True)),
+        "require_intent": bool(getattr(settings, "agent_kernel_require_intent", True)),
+        "allow_compat_full_open": allow_compat_full_open(),
+        "allow_python_fallback": allow_python_kernel_fallback(),
+        "allow_kernel_disabled": allow_kernel_disabled(),
+        "soft_renew_enabled": soft_on,
+        "hard_cap_only": hard_only,
+        "soft_renew_max": int(getattr(settings, "agent_budget_soft_renew_max", 12) or 12),
+        "token_hmac_source": hmac_src,
+        "court_rust_required": bool(getattr(settings, "agent_court_rust_required", True)),
+        "run_gate_required": bool(getattr(settings, "agent_kernel_run_gate_required", True)),
+    }
+
+
+@router.get("/sys/memory/{identity}")
+async def sys_memory_list_api(
+    identity: str,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """内核风格 Memory 服务：list keys（经 host RPC）。"""
+    k = get_kernel()
+    if hasattr(k, "_call"):
+        return k._call("sys_memory_list", {"identity": identity}) or {}
+    return {"identity": identity, "keys": []}
+
+
+@router.post("/sys/memory/{identity}")
+async def sys_memory_put_api(
+    identity: str,
+    body: dict[str, Any],
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    k = get_kernel()
+    key = str(body.get("key") or "").strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="key required")
+    if hasattr(k, "_call"):
+        return (
+            k._call(
+                "sys_memory_put",
+                {"identity": identity, "key": key, "value": body.get("value")},
+            )
+            or {}
+        )
+    raise HTTPException(status_code=503, detail="kernel host required")
+
+
+@router.get("/sys/memory-layers/{identity}")
+async def memory_layers_api(
+    identity: str,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+    layer: str | None = Query(None),
+):
+    """分层记忆列表（可审计内核风格接口）。"""
+    k = get_kernel()
+    if hasattr(k, "_call"):
+        params: dict[str, Any] = {"identity": identity}
+        if layer:
+            params["layer"] = layer
+        return k._call("memory_layer_list", params) or {}
+    return {"entries": []}
+
+
+@router.get("/sys/context/{process_id}")
+async def context_status_api(
+    process_id: str,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """上下文 VM 状态（配额/页）。"""
+    k = get_kernel()
+    if hasattr(k, "_call"):
+        pages = k._call("context_list_pages", {"process_id": process_id}) or {}
+        st = k._call("context_status") or {}
+        return {"process_id": process_id, "pages": pages, "status": st}
+    return {"process_id": process_id, "pages": {}, "status": {}}
+
+
 @router.get("/processes/{process_id}")
 async def get_process(
     process_id: str,
@@ -1703,6 +1853,17 @@ async def kernel_dashboard(
         "live_processes": len(k.list_processes(include_terminal=False) or [])
         if hasattr(k, "list_processes")
         else 0,
+        "governance": {
+            "soft_renew_enabled": bool(
+                getattr(settings, "agent_budget_soft_renew_enabled", True)
+            )
+            and not bool(getattr(settings, "agent_budget_hard_cap_only", False)),
+            "hard_cap_only": bool(getattr(settings, "agent_budget_hard_cap_only", False)),
+            "require_intent": bool(
+                getattr(settings, "agent_kernel_require_intent", True)
+            ),
+            "production_guard": True,
+        },
     }
 
 

@@ -125,17 +125,30 @@ impl KernelEvent {
     }
 }
 
-/// Append-only JSONL audit store.
+/// Append-only JSONL audit store with size-based rotation (H2-C2).
 pub struct AuditEventStore {
     path: PathBuf,
     lock: Mutex<()>,
+    max_bytes: u64,
+    keep_segments: u32,
 }
 
 impl AuditEventStore {
     pub fn new(path: impl Into<PathBuf>) -> Self {
+        let max_bytes = std::env::var("TAKTON_AUDIT_MAX_BYTES")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(32 * 1024 * 1024);
+        let keep_segments = std::env::var("TAKTON_AUDIT_KEEP_SEGMENTS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(7u32)
+            .max(1);
         Self {
             path: path.into(),
             lock: Mutex::new(()),
+            max_bytes,
+            keep_segments,
         }
     }
 
@@ -147,11 +160,37 @@ impl AuditEventStore {
         &self.path
     }
 
+    fn rotate_if_needed(&self) {
+        let meta = match fs::metadata(&self.path) {
+            Ok(m) => m,
+            Err(_) => return,
+        };
+        if meta.len() < self.max_bytes {
+            return;
+        }
+        let base = self.path.to_string_lossy().to_string();
+        // cascade .N -> .(N+1)
+        for i in (1..self.keep_segments).rev() {
+            let src = format!("{base}.{i}");
+            let dst = format!("{base}.{}", i + 1);
+            if Path::new(&src).exists() {
+                let _ = fs::remove_file(&dst);
+                let _ = fs::rename(&src, &dst);
+            }
+        }
+        let oldest = format!("{base}.{}", self.keep_segments + 1);
+        let _ = fs::remove_file(&oldest);
+        let rotated = format!("{base}.1");
+        let _ = fs::remove_file(&rotated);
+        let _ = fs::rename(&self.path, &rotated);
+    }
+
     pub fn append(&self, event: &Value) -> bool {
         let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(parent) = self.path.parent() {
             let _ = fs::create_dir_all(parent);
         }
+        self.rotate_if_needed();
         let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&self.path) else {
             return false;
         };

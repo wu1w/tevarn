@@ -87,9 +87,32 @@ class CapabilityToken:
         return data
 
     @classmethod
+    def from_dict_safe(
+        cls, data: dict | None, *, allow_unsigned_in_dev: bool = True
+    ) -> "CapabilityToken | None":
+        """H2: hydrate with verify=True; unsigned only under DEV_UNSAFE. Never forge."""
+        if not isinstance(data, dict) or data.get("capabilities") is None:
+            return None
+        try:
+            return cls.from_dict(data, verify=True)
+        except Exception:
+            if not allow_unsigned_in_dev:
+                return None
+            try:
+                from backend.kernel.production_guard import is_dev_unsafe
+
+                if is_dev_unsafe() and not (
+                    data.get("signature") or data.get("sig")
+                ):
+                    return cls.from_dict(data, verify=False)
+            except Exception:
+                pass
+            return None
+
+    @classmethod
     def from_dict(cls, data: dict, *, verify: bool = True) -> "CapabilityToken":
         """反序列化。verify=True（默认）时签名缺失/不匹配即拒绝（防伪造）；
-        verify=False 仅用于读取历史无签名数据（向后兼容窗口）。"""
+        verify=False 仅用于读取历史无签名数据（向后兼容窗口 / DEV）。"""
         if verify:
             from backend.kernel.signing import TokenSignatureError, verify_token_dict
 

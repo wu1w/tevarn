@@ -12,18 +12,28 @@ import { useDomainEventStore } from '@/stores/domainEventStore';
 import { useAuthStore } from '@/stores/authStore';
 
 function invalidateForTopic(qc: ReturnType<typeof useQueryClient>, topic: string) {
-  if (topic.startsWith('job.') || topic.startsWith('process.')) {
+  if (
+    topic.startsWith('job.') ||
+    topic.startsWith('process.') ||
+    topic.startsWith('mediation') ||
+    topic.startsWith('budget') ||
+    topic.includes('process_created') ||
+    topic.includes('process_ended')
+  ) {
     void qc.invalidateQueries({ queryKey: ['jobs-running'] });
     void qc.invalidateQueries({ queryKey: ['kernel-processes'] });
+    void qc.invalidateQueries({ queryKey: ['kernel-process-tree'] });
     void qc.invalidateQueries({ queryKey: ['workforce-report'] });
     void qc.invalidateQueries({ queryKey: ['workspace-brief'] });
     void qc.invalidateQueries({ queryKey: ['kernel-inbox'] });
+    void qc.invalidateQueries({ queryKey: ['kernel-events'] });
   }
-  if (topic.startsWith('approval.') || topic === 'policy.decision') {
+  if (topic.startsWith('approval.') || topic === 'policy.decision' || topic.includes('compat_denied')) {
     void qc.invalidateQueries({ queryKey: ['kernel-escalations'] });
     void qc.invalidateQueries({ queryKey: ['evolution-proposals'] });
     void qc.invalidateQueries({ queryKey: ['policy-decisions'] });
     void qc.invalidateQueries({ queryKey: ['workspace-brief'] });
+    void qc.invalidateQueries({ queryKey: ['kernel-governance-status'] });
   }
   if (topic.startsWith('employee.') || topic.includes('identity')) {
     void qc.invalidateQueries({ queryKey: ['kernel-identities'] });

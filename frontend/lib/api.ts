@@ -1143,6 +1143,28 @@ export async function getKernelProcesses(opts?: {
   return res.data;
 }
 
+export type KernelProcessTreeNode = KernelProcess & {
+  children?: KernelProcessTreeNode[];
+  caps_count?: number;
+  compat_open?: boolean;
+  soft_renew_count?: number;
+  tools_visible_count?: number;
+};
+
+export async function getKernelProcessTree(opts?: {
+  include_terminal?: boolean;
+}): Promise<{ roots: KernelProcessTreeNode[]; total: number }> {
+  const res = await api.get('/kernel/processes/tree', {
+    params: opts?.include_terminal ? { include_terminal: true } : undefined,
+  });
+  return res.data;
+}
+
+export async function getGovernanceStatus(): Promise<Record<string, unknown>> {
+  const res = await api.get('/kernel/governance/status');
+  return res.data;
+}
+
 export async function getKernelEvents(limit = 50): Promise<{
   events: KernelEvent[];
   total: number;

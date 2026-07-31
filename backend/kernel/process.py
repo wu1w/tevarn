@@ -105,13 +105,21 @@ class AgentProcess:
         return max(0, self.token_budget - self.tokens_used)
 
     def has_capability(self, cap: str) -> bool:
-        """None = 兼容模式全放行；显式能力集必须包含目标能力。
+        """显式能力集必须包含目标能力。
 
+        H2：生产路径 ``capabilities is None`` **不再**全放行（兼容仅 DEV_UNSAFE）。
         编制层存抽象 cap（file_rw / command / web_search），
         mediate 传入的是工具名（file_read / glob / grep）——经 TOOL_TO_CREW_CAP 映射。
         """
         if self.capabilities is None:
-            return True
+            try:
+                from backend.kernel.production_guard import allow_compat_full_open
+
+                if allow_compat_full_open():
+                    return True
+            except Exception:
+                pass
+            return False  # production fail-closed
         if cap in self.capabilities or "*" in self.capabilities:
             return True
         try:
