@@ -213,40 +213,75 @@ class LoopToolsMixin:
                 or "read timeout" in low
             )
 
-        # Fallback: host wiped / reconnecting — force rehydrate + gate up to 3 times.
-        # Single retry was not enough while host thrash-restarted mid-assign.
+        # Fallback: host wiped / reconnecting — atomic ensure+mediate (one lock)
+        # so create_process cannot be separated from mediate by a thrash restart.
         if gate_err and kernel_proc is not None and _gate_needs_rehydrate(gate_err):
             import asyncio
 
             for attempt in range(1, 4):
                 try:
-                    # Invalidate cached epoch so ensure always recreates
-                    self._kernel_host_epoch = -1
                     if attempt > 1:
-                        # Host needs settle time after closed-connection storms;
-                        # 0.2s was too short and rehydrate immediately re-failed.
-                        await asyncio.sleep(0.6 * attempt)
+                        await asyncio.sleep(0.4 * attempt)
+                    from backend.kernel import get_kernel as _gk
+                    from backend.kernel.tool_gate import sanitize_args_for_kernel
+
+                    _k = _gk()
+                    if hasattr(_k, "ensure_and_mediate"):
+                        old = kernel_proc
+                        caps = list(getattr(old, "capabilities", None) or []) or None
+                        budget = getattr(old, "token_budget", None)
+                        meta = dict(getattr(old, "meta", None) or {})
+                        meta["rehydrated_from"] = str(getattr(old, "id", "") or "")
+                        meta["rehydrate_reason"] = "atomic_ensure_mediate"
+                        _sid = (
+                            meta.get("session_id")
+                            or arguments.get("_session_id")
+                            or getattr(self, "_session_id", None)
+                        )
+                        intent = None
+                        if caps:
+                            intent = {
+                                "goal": "rehydrate after host reconnect",
+                                "capabilities": caps,
+                                "constraints": {"allow_risky": True},
+                            }
+                        safe_args = sanitize_args_for_kernel(arguments)
+                        new_p, decision = await _k.ensure_and_mediate(
+                            str(getattr(old, "id", "") or "") or None,
+                            identity=str(
+                                getattr(self, "_agent_key", None) or "main"
+                            ),
+                            capabilities=caps,
+                            token_budget=budget,
+                            meta=meta,
+                            session_id=str(_sid) if _sid else None,
+                            action="tool_call",
+                            target=name,
+                            args=safe_args,
+                            intent=intent,
+                        )
+                        self._kernel_process = new_p
+                        self._kernel_host_epoch = int(
+                            getattr(_k, "_host_epoch", 0) or 0
+                        )
+                        arguments["_kernel_process_id"] = new_p.id
+                        arguments["_tool_gate_passed"] = True
+                        arguments["_tool_gate_internal"] = True
+                        kernel_proc = new_p
+                        gate_err = None
+                        logger.warning(
+                            "atomic ensure+mediate ok tool=%s proc=%s→%s allowed=%s",
+                            name,
+                            str(getattr(old, "id", ""))[:12],
+                            new_p.id[:12],
+                            decision.allowed,
+                        )
+                        break
+                    # Fallback without atomic helper
+                    self._kernel_host_epoch = -1
                     kernel_proc = await self._ensure_live_kernel_process(arguments)
                     if kernel_proc is None:
                         continue
-                    # Verify process is actually visible on host before gate
-                    try:
-                        from backend.kernel import get_kernel as _gk
-
-                        _k = _gk()
-                        live = _k.get_process(str(kernel_proc.id))
-                        if live is None:
-                            logger.warning(
-                                "rehydrate id not visible on host yet id=%s attempt=%s",
-                                str(kernel_proc.id)[:12],
-                                attempt,
-                            )
-                            await asyncio.sleep(0.3)
-                            continue
-                        kernel_proc = live
-                        self._kernel_process = live
-                    except Exception as ve:
-                        logger.debug("post-rehydrate verify skip: %s", ve)
                     arguments["_kernel_process_id"] = kernel_proc.id
                     arguments.pop("_tool_gate_passed", None)
                     arguments.pop("_tool_gate_internal", None)
@@ -257,17 +292,21 @@ class LoopToolsMixin:
                     )
                     if not gate_err or not _gate_needs_rehydrate(gate_err):
                         break
-                    logger.warning(
-                        "tool gate still needs rehydrate tool=%s attempt=%s/3 err=%s",
-                        name,
-                        attempt,
-                        (gate_err or "")[:160],
-                    )
                 except Exception as re_e:
+                    from backend.kernel import KernelPermissionError as _KPE
+
+                    if isinstance(re_e, _KPE):
+                        # Real capability deny — stop retrying reconnect path
+                        gate_err = f"Error: Kernel 权限拒绝——{re_e}"
+                        break
                     logger.error(
-                        "process rehydrate retry failed attempt=%s: %s",
+                        "atomic ensure+mediate failed attempt=%s: %s",
                         attempt,
                         re_e,
+                    )
+                    gate_err = (
+                        f"Error: Kernel host 重连中——{type(re_e).__name__}: "
+                        f"{str(re_e)[:160]}"
                     )
         # Reconnect / wiped-process errors are not capability denies — do not
         # burn escalation budget on dead process ids.

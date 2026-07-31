@@ -769,6 +769,13 @@ class RustAgentKernel:
         )
 
     def _call_locked(self, method: str, params: dict[str, Any] | None = None) -> Any:
+        """Single RPC under lock. Recovery is soft-only by default.
+
+        Automatic hard-restart (taskkill) is DISABLED here: it wiped the process
+        table between rehydrate create_process and mediate, which is exactly the
+        CEO assign storm (new process id every retry, closed connection).
+        Hard restart remains available via host_restart API / ``_hard_recover_host``.
+        """
         soft_only = method in _SOFT_ONLY_METHODS
         try:
             return self._rpc.call(method, params)
@@ -782,61 +789,36 @@ class RustAgentKernel:
             raise
         except (ConnectionError, OSError, BrokenPipeError, TimeoutError, socket.timeout) as e:
             last: BaseException = e
-            max_attempts = 2 if soft_only else 3
+            max_attempts = 2 if soft_only else 4
             for attempt in range(1, max_attempts + 1):
                 logger.warning(
-                    "kernel RPC %s failed (%s); reconnect/retry %s/%s soft_only=%s",
+                    "kernel RPC %s failed (%s); soft-reconnect %s/%s",
                     method,
                     last,
                     attempt,
                     max_attempts,
-                    soft_only,
                 )
                 self._rpc.close()
-                recovered_hard = False
+                wiped = False
                 try:
                     host_up = bool(is_rust_host_available(self._host))
-                    is_timeout = isinstance(last, (TimeoutError, socket.timeout))
                     if not host_up:
+                        # Port dead only: start host (no taskkill of a live host).
                         started = bool(start_kernel_host(self._host))
                         if started:
                             self._mark_host_wiped()
-                            recovered_hard = True
-                            time.sleep(0.15)  # settle after spawn
-                    elif (
-                        not soft_only
-                        and is_timeout
-                        and attempt >= 2
-                        and not self._host_responsive()
-                    ):
-                        recovered_hard = self._hard_recover_host(
-                            reason=f"timeout+unresponsive method={method}"
-                        )
-                        if recovered_hard:
-                            time.sleep(0.25)
-                    elif (
-                        not soft_only
-                        and attempt >= max_attempts
-                        and not self._host_responsive(timeout=1.0)
-                    ):
-                        recovered_hard = self._hard_recover_host(
-                            reason=f"last-ditch method={method} err={type(last).__name__}"
-                        )
-                        if recovered_hard:
-                            time.sleep(0.25)
-                    # else: soft reconnect only
+                            wiped = True
+                            time.sleep(0.2)
+                    # Never auto taskkill here — that was the assign thrash root cause.
                 except Exception as re:
-                    logger.debug("host recover after RPC fail: %s", re)
+                    logger.debug("host soft recover after RPC fail: %s", re)
                 try:
-                    if not recovered_hard:
-                        self._soft_reconnect()
-                    elif self._rpc._sock is None:
-                        self._rpc.connect()
-                    if recovered_hard or not getattr(self, "_abi_checked", False):
+                    self._soft_reconnect()
+                    if wiped or not getattr(self, "_abi_checked", False):
                         try:
                             self._assert_abi_or_fail()
                         except Exception as abi_e:
-                            logger.error("post-restart ABI gate failed: %s", abi_e)
+                            logger.error("post-start ABI gate failed: %s", abi_e)
                             last = abi_e
                             continue
                     return self._rpc.call(method, params)
@@ -855,9 +837,131 @@ class RustAgentKernel:
                     socket.timeout,
                 ) as e2:
                     last = e2
-                    time.sleep(0.2 * attempt)
+                    time.sleep(0.25 * attempt)
                     continue
             raise last
+
+    def ensure_and_mediate_sync(
+        self,
+        process_id: str | None,
+        *,
+        identity: str,
+        capabilities: list[str] | None,
+        token_budget: int | None,
+        meta: dict[str, Any] | None,
+        session_id: str | None,
+        action: str,
+        target: str,
+        args: dict[str, Any] | None,
+        intent: dict[str, Any] | None = None,
+    ) -> tuple[RustKernelProcess, MediationDecision]:
+        """Atomic get-or-create process + mediate under one lock.
+
+        Closes the race: rehydrate create_process succeeds, then another RPC
+        (or auto-restart) wipes host before mediate — CEO saw rotating process ids.
+        """
+
+        def body() -> tuple[RustKernelProcess, MediationDecision]:
+            with self._call_lock:
+                pid = (process_id or "").strip() or None
+                proc_data: dict[str, Any] | None = None
+                if pid:
+                    try:
+                        proc_data = self._call_locked(
+                            "get_process", {"process_id": pid}
+                        )
+                        if not (isinstance(proc_data, dict) and proc_data.get("id")):
+                            proc_data = None
+                    except Exception:
+                        proc_data = None
+                if proc_data is None:
+                    create_params: dict[str, Any] = {
+                        "identity": identity,
+                        "session_id": session_id,
+                        "capabilities": capabilities,
+                        "token_budget": token_budget,
+                        "meta": meta or {},
+                    }
+                    if intent is not None:
+                        create_params["intent"] = intent
+                    proc_data = self._call_locked("create_process", create_params)
+                    if not (isinstance(proc_data, dict) and proc_data.get("id")):
+                        raise RuntimeError("create_process returned no process")
+                    pid = str(proc_data["id"])
+                    profile = str((meta or {}).get("coding_profile") or "")
+                    if profile:
+                        try:
+                            self._call_locked(
+                                "coding_profile_apply",
+                                {"process_id": pid, "profile": profile},
+                            )
+                            refreshed = self._call_locked(
+                                "get_process", {"process_id": pid}
+                            )
+                            if isinstance(refreshed, dict) and refreshed.get("id"):
+                                proc_data = refreshed
+                        except Exception as pe:
+                            logger.debug("coding_profile_apply in ensure batch: %s", pe)
+                assert pid is not None
+                med = self._call_locked(
+                    "mediate",
+                    {
+                        "process_id": pid,
+                        "action": action,
+                        "target": target,
+                        "args": args or {},
+                    },
+                )
+                decision = MediationDecision(
+                    allowed=bool((med or {}).get("allowed")),
+                    reason=str((med or {}).get("reason") or ""),
+                    capability_checked=bool(
+                        (med or {}).get("capability_checked")
+                    ),
+                )
+                if not decision.allowed:
+                    raise KernelPermissionError(
+                        decision.reason or "mediate denied", decision
+                    )
+                p = self._proc(proc_data)
+                assert p is not None
+                return p, decision
+
+        if threading.current_thread().name.startswith("kernel-rpc"):
+            return body()
+        fut = _RPC_EXECUTOR.submit(body)
+        return fut.result(timeout=_RPC_RESULT_TIMEOUT)
+
+    async def ensure_and_mediate(
+        self,
+        process_id: str | None,
+        *,
+        identity: str,
+        capabilities: list[str] | None = None,
+        token_budget: int | None = None,
+        meta: dict[str, Any] | None = None,
+        session_id: str | None = None,
+        action: str = "tool_call",
+        target: str,
+        args: dict[str, Any] | None = None,
+        intent: dict[str, Any] | None = None,
+    ) -> tuple[RustKernelProcess, MediationDecision]:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            _RPC_EXECUTOR,
+            lambda: self.ensure_and_mediate_sync(
+                process_id,
+                identity=identity,
+                capabilities=capabilities,
+                token_budget=token_budget,
+                meta=meta,
+                session_id=session_id,
+                action=action,
+                target=target,
+                args=args,
+                intent=intent,
+            ),
+        )
 
     def host_watchdog_ping(self) -> dict[str, Any]:
         """Lightweight liveness for long-run; restarts on timeout once."""
