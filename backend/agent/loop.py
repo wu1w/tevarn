@@ -1154,80 +1154,12 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         tools = await self._load_tools(
             session_id, enabled_skills, enabled_tools_filter, user_input=user_input
         )
-        # P0-B：按 kernel 进程能力裁剪 LLM 可见 tools（模型看不到无权限工具）
-        try:
-            kproc = getattr(self, "_kernel_process", None)
-            if kproc is not None and getattr(kproc, "id", None):
-                from backend.kernel import get_kernel
+        # K-03 / P0：按 kernel 进程能力裁剪 LLM 可见 tools
+        from backend.agent.cap_tools import filter_tools_for_process
 
-                k = get_kernel()
-                names = [
-                    (t.get("function") or {}).get("name")
-                    for t in tools
-                    if (t.get("function") or {}).get("name")
-                ]
-                names = [n for n in names if n]
-                filtered_names: list[str] | None = None
-                if hasattr(k, "filter_tools"):
-                    filtered_names = k.filter_tools(kproc.id, names)
-                elif getattr(kproc, "capabilities", None) is not None:
-                    from backend.agent.grant_store import tool_matches_crew_caps
-
-                    filtered_names = [
-                        n
-                        for n in names
-                        if tool_matches_crew_caps(n, kproc.capabilities)
-                    ]
-                if filtered_names is not None:
-                    allow = set(filtered_names)
-                    before = len(tools)
-                    tools = [
-                        t
-                        for t in tools
-                        if (t.get("function") or {}).get("name") in allow
-                    ]
-                    if before != len(tools):
-                        logger.info(
-                            "P0-B tool schema trim process=%s %s→%s caps=%s",
-                            str(kproc.id)[:8],
-                            before,
-                            len(tools),
-                            (kproc.capabilities or [])[:8],
-                        )
-                elif getattr(kproc, "capabilities", None) is not None:
-                    # H-06：filter_tools 不可用时本地 fail-closed 裁剪，禁止全量 schema 暴露
-                    from backend.agent.grant_store import tool_matches_crew_caps
-
-                    allow = {
-                        n
-                        for n in names
-                        if tool_matches_crew_caps(n, kproc.capabilities)
-                    }
-                    before = len(tools)
-                    tools = [
-                        t
-                        for t in tools
-                        if (t.get("function") or {}).get("name") in allow
-                    ]
-                    if before != len(tools):
-                        logger.info(
-                            "H-06 local tool schema trim process=%s %s→%s",
-                            str(kproc.id)[:8],
-                            before,
-                            len(tools),
-                        )
-        except Exception as _ft:
-            # H-06：显式能力进程上过滤失败 → fail-closed 清空 tools（不可见不可调）
-            kproc = getattr(self, "_kernel_process", None)
-            caps = getattr(kproc, "capabilities", None) if kproc else None
-            if caps is not None:
-                logger.warning(
-                    "H-06 tool schema filter failed under explicit caps — fail-closed empty tools: %s",
-                    _ft,
-                )
-                tools = []
-            else:
-                logger.debug("tool schema filter skip: %s", _ft)
+        tools = filter_tools_for_process(
+            tools, getattr(self, "_kernel_process", None)
+        )
         logger.info(
             "Loaded %s tools session=%s profile=%s scene=%s filter=%s",
             len(tools),

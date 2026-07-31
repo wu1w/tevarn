@@ -138,13 +138,41 @@ async def execute_tool_endpoint(
     current_user: Annotated[UserRead, Depends(get_current_user)],
     repo: Annotated[ToolRepository, Depends(get_tool_repo)],
 ):
-    """手动执行工具（调试用，任何登录用户可调用）"""
+    """手动执行工具（调试用）。
+
+    P0 验收：生产路径必须带 kernel process 上下文，经 tool_gate mediate。
+    无 process 时拒绝（禁止匿名绕过 ABI）。测试可设 ``TAKTON_ALLOW_DEBUG_TOOL_EXECUTE=1``。
+    """
+    import os
+
     tool = await repo.get_by_id(tool_id)
     if not tool:
         raise HTTPException(status_code=404, detail="Tool not found")
 
+    args = dict(req.arguments or {})
+    pid = str(
+        args.get("_kernel_process_id") or args.get("_process_id") or ""
+    ).strip()
+    allow_debug = os.environ.get("TAKTON_ALLOW_DEBUG_TOOL_EXECUTE", "").strip() in (
+        "1",
+        "true",
+        "True",
+    )
+    if not pid and not allow_debug:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "P0: tool execute requires _kernel_process_id (ABI mediate). "
+                "Agent runs inject process automatically; debug-only without process: "
+                "set TAKTON_ALLOW_DEBUG_TOOL_EXECUTE=1."
+            ),
+        )
+    if pid:
+        args["_kernel_process_id"] = pid
+        args["_require_kernel_process"] = True
+
     logger.info(
-        f"Tool execution requested: user={current_user.id}, tool={tool.name}, args={req.arguments}"
+        f"Tool execution requested: user={current_user.id}, tool={tool.name}, args={args}"
     )
     try:
         # v3.0: 优先走统一 ToolRegistry，兼容旧版 DB ToolRegistry
@@ -152,15 +180,17 @@ async def execute_tool_endpoint(
 
         unified_tool = UnifiedToolRegistry.get(tool.name)
         if unified_tool is not None:
-            result = await UnifiedToolRegistry.execute(tool.name, req.arguments)
+            result = await UnifiedToolRegistry.execute(tool.name, args)
         else:
-            result = await ToolRegistry.execute_tool(tool, req.arguments)
+            result = await ToolRegistry.execute_tool(tool, args)
     except Exception as exc:
         logger.exception(f"Tool execution failed: {tool.name}")
         raise HTTPException(status_code=502, detail=f"Tool execution failed: {exc}") from exc
+    # result may be non-str (dict)
+    text = result if isinstance(result, str) else str(result)
     return ToolExecuteResponse(
-        success=not result.startswith("[Error]"),
-        result=result,
+        success=not text.startswith("[Error]") and not text.startswith("Error:"),
+        result=text,
         tool_name=tool.name,
     )
 

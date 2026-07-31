@@ -377,6 +377,17 @@ class ComputerManager:
                             f"[Error] 资源配额不足——child_proc used={used}/{lim}。"
                             "请降低并发命令或提高进程资源上限。"
                         )
+                    mem = usage.get("memory_bytes") or {}
+                    mlim, mused = mem.get("limit"), mem.get("used")
+                    if (
+                        mlim is not None
+                        and mused is not None
+                        and int(mused) > int(mlim)
+                    ):
+                        return (
+                            f"[Error] 资源配额不足——memory_bytes used={mused}/{mlim}。"
+                            "进程逻辑内存超限，拒绝继续执行命令。"
+                        )
             except Exception as e:
                 logger.debug("pre-spawn resource check skip: %s", e)
 

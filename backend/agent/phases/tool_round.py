@@ -714,6 +714,15 @@ async def run_tool_round(
                 state.enabled_tools_filter,
                 user_input=user_input,
             )
+            # K-03：pack 扩容后必须再次按进程能力裁剪（防可见性泄漏）
+            try:
+                from backend.agent.cap_tools import filter_tools_for_process
+
+                state.tools = filter_tools_for_process(
+                    state.tools, getattr(loop, "_kernel_process", None)
+                )
+            except Exception as _cf:
+                logger.debug("cap re-filter after pack expand: %s", _cf)
             await loop._push_status(
                 session_id,
                 "thinking",

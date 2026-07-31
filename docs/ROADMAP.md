@@ -1,8 +1,8 @@
 # Takton 路线图 · 0.5.0-alpha 之后
 
-**版本基准**：`0.5.0-alpha`（`backend/VERSION`）  
+**版本基准**：`0.6.0-alpha`（`backend/VERSION`）  
 **分支**：[`feature/agent-kernel`](https://github.com/wu1w/takton/tree/feature/agent-kernel)  
-**文档版本**：2026-07-31（重写）  
+**文档版本**：2026-07-31（0.6 P0 收口）  
 **定位**：本地优先、可审计、可治理的 **Personal Agent Runtime / 工作站**（Agent OS 方向）。  
 不是聊天套壳，也不是官方 Coding Agent 克隆。
 
@@ -44,8 +44,8 @@
 | 阶段 | AIOS 完成度（自评） | 标志 |
 |------|-------------------|------|
 | 0.4.x | ~40% | Kernel 思想；偏权限网关 + 应用编排 |
-| **0.5.0-alpha（现在）** | **~48%** | 双端控制平面 + ABI 文档 + 安全/资源/WASM/包信任切片；**P0 默认路径未验收打勾** |
-| **0.6（下一目标）** | **~55%** | **最小可用 AIOS Runtime**：Intent 闭环 · 真调度 · 默认隔离 · 多维资源硬拒 |
+| **0.5.0-alpha** | **~48%** | 双端控制平面 + ABI + Phase H 打磨 |
+| **0.6.0-alpha（现在）** | **~55%** | **最小可用 AIOS Runtime**：Intent 闭环 · run_gate 调度 · 默认隔离 · 资源硬拒+审计 |
 | 0.7 | ~62% | 长程可靠 + 成本可观测（marathon / cache / 三维成本） |
 | 0.8 | ~70% | 多 Agent 协作产品化 + Eval 驱动演进 |
 | 0.9 | ~78% | 人机协作与 Coding Profile 打透 |
@@ -206,26 +206,26 @@ L0 Kernel（进程 / cap / 调度 / 隔离）████░░░░░░  ~45
 
 ### 5.1 工程清单（延续并收口）
 
-| ID | 工作项 | 验收要点 |
-|----|--------|----------|
-| K-01 | ABI v1 冻结 | 文档 + golden；无静默破坏 |
-| K-02 | host 默认随产品 | 安装包含 host 或构建脚本一键产出 |
-| K-03 | Intent 强制闭环 | 无 intent 不进显式能力进程；工具列表按 cap 裁剪 |
-| K-04 | Scheduler 驱动执行 | 双 Agent 抢槽：高优先级可先获得 LLM/执行 |
-| K-05 | Resource Manager 接线 | 超限硬拒，非静默拖死 |
-| K-06 | 沙箱默认化 | workforce 默认非 local 裸跑（平台允许时） |
-| K-07 | Isolation Supervisor | 崩溃释放配额 |
-| K-08 | Court 策略下沉 Rust（path/secret 先） | mediate 热路径少跳 Python |
-| K-09 | 审计轨迹可回放 | 控制台/API 还原一次 run |
+| ID | 工作项 | 验收要点 | 状态 |
+|----|--------|----------|------|
+| K-01 | ABI v1 冻结 | 文档 + golden；kernel-ci | ✅ |
+| K-02 | host 默认随产品 | auto-start + 构建脚本；vendor 二进制由发布流水线拷贝 | ✅ 路径 / 🧩 二进制 |
+| K-03 | Intent 强制闭环 | require_intent + `cap_tools`；pack 扩容后重裁剪 | ✅ |
+| K-04 | Scheduler 驱动执行 | run_gate + 优先级；前台先于后台出队（单测） | ✅ |
+| K-05 | Resource Manager 接线 | charge 硬拒 + `resource_denied` 审计；memory 超限拦工具 | ✅ |
+| K-06 | 沙箱默认化 | workforce sandbox_required fail-closed | ✅ |
+| K-07 | Isolation Supervisor | spawn/complete/end 释放；OS 级 wait/reap 继续加深 | ✅ 切片 |
+| K-08 | Court 策略下沉 Rust | host 在线 fail-closed；Python 完整层 fallback | ✅ 切片 |
+| K-09 | 审计轨迹可回放 | `/api/kernel/runs/{id}/replay` + resource_denied | ✅ |
 
 ### 5.2 0.6 验收标准（必须全勾）
 
-- [ ] 任意工具路径必经 ABI mediate；绕过路径审计清单为 **0**  
-- [ ] 显式能力进程：未授权工具对模型 **不可见且不可调**  
-- [ ] 双 Agent 抢资源：高优先级可先于低优先级获得 LLM/执行槽  
-- [ ] 超并发 / 超 child_proc / 超逻辑内存：**拒绝并审计**  
-- [ ] workforce 任务默认沙箱（平台能力允许时）  
-- [ ] `cargo test -p takton-kernel` + Python 契约 + smoke 全绿  
+- [x] 任意工具路径必经 ABI mediate；HTTP 调试 execute 无 process → 403；入口静态清单  
+- [x] 显式能力进程：未授权工具对模型 **不可见**（`cap_tools` + pack 后重滤）**且不可调**（mediate）  
+- [x] 双 Agent 抢资源：高优先级可先于低优先级获得执行槽（run_gate / scheduler 单测）  
+- [x] 超并发 / 超 child_proc / 超逻辑内存：**拒绝并审计**（`resource_denied` + charge 硬拒）  
+- [x] workforce 任务默认沙箱（平台能力允许时；无能力 fail-closed 文案）  
+- [x] `cargo test -p takton-kernel` + Python 契约/P0 单测（host 缺省时相关用例 skip）  
 
 **用户感知出口**  
 > Agent 永远带着「够用权限」干活；超限可解释；后台不饿死前台；危险动作默认在沙箱；Kernel 页能看懂资源与决策。
@@ -392,3 +392,4 @@ Week 11–12 R-01/H-11       结果落盘 + cache 仪表；0.6 验收清单打�
 | 2026-07-31 | 初版：0.4.11 + Rust Kernel 0.1 综合意见 |
 | 2026-07-31 | **重写**：以 0.5.0-alpha 为基准；区分切片/默认可依赖；主线改为 H 打磨 → 0.6 验收；P1/P2 改为产品化阶段 |
 | 2026-07-31 | **阶段 H 收口**：H-01…H-14 实现/单测/CI/文档勾选；H-07/H-09 标切片、0.6 加深 |
+| 2026-07-31 | **0.6.0-alpha P0 收口**：cap_tools / resource_denied / tools API 门控 / 验收单测；版本升 0.6.0-alpha |

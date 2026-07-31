@@ -1419,14 +1419,32 @@ impl AgentKernel {
         let kind = ResourceKind::parse(kind)
             .ok_or_else(|| KernelError::Invalid(format!("unknown resource kind {kind}")))?;
         let mut g = self.inner.write();
-        let rem = g.resources.charge(process_id, kind, amount)?;
-        Self::emit_locked(
-            &mut g,
-            "resource_charge",
-            process_id,
-            json!({"kind": kind.as_str(), "amount": amount, "remaining": rem}),
-        );
-        Ok(rem)
+        match g.resources.charge(process_id, kind, amount) {
+            Ok(rem) => {
+                Self::emit_locked(
+                    &mut g,
+                    "resource_charge",
+                    process_id,
+                    json!({"kind": kind.as_str(), "amount": amount, "remaining": rem}),
+                );
+                Ok(rem)
+            }
+            Err(e) => {
+                // K-05 / P0：超限必须进审计链（拒绝可回放），再向上返回错误
+                Self::emit_locked(
+                    &mut g,
+                    "resource_denied",
+                    process_id,
+                    json!({
+                        "kind": kind.as_str(),
+                        "amount": amount,
+                        "reason": e.to_string(),
+                        "verdict": "deny",
+                    }),
+                );
+                Err(e)
+            }
+        }
     }
 
     pub fn resource_usage(&self, process_id: &str) -> Value {
@@ -1448,6 +1466,21 @@ impl AgentKernel {
                 "over_limit": over,
             }),
         );
+        if over {
+            Self::emit_locked(
+                &mut g,
+                "resource_denied",
+                process_id,
+                json!({
+                    "kind": "memory_bytes",
+                    "amount": rss_bytes,
+                    "used": used,
+                    "limit": limit,
+                    "reason": "memory_bytes over_limit after RSS sample",
+                    "verdict": "deny",
+                }),
+            );
+        }
         Ok(json!({
             "process_id": process_id,
             "rss_bytes": rss_bytes,

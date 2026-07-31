@@ -1,6 +1,6 @@
 # Takton 技术手册
 
-版本：**0.5.0-alpha**  
+版本：**0.6.0-alpha**  
 更新：2026-07-31  
 
 > **路线图**：[docs/ROADMAP.md](./ROADMAP.md)（0.5.x 打磨 → 0.6 最小 AIOS Runtime → 1.0）  

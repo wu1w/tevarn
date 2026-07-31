@@ -117,6 +117,20 @@ def charge_for_tool(name: str, process_id: str, arguments: dict[str, Any] | None
     from backend.kernel import get_kernel
 
     k = get_kernel()
+    # K-05：内存已超限则拒绝任何新工具（含非 command）
+    try:
+        usage = k.resource_usage(process_id) if hasattr(k, "resource_usage") else None
+        if isinstance(usage, dict):
+            mem = usage.get("memory_bytes") or {}
+            mlim, mused = mem.get("limit"), mem.get("used")
+            if mlim is not None and mused is not None and int(mused) > int(mlim):
+                raise RuntimeError(
+                    f"memory_bytes exceeded: used={mused} limit={mlim}"
+                )
+    except RuntimeError:
+        raise
+    except Exception:
+        pass
     _charge(k, process_id, "tool_calls", 1)
     if name in CHILD_PROC_TOOLS:
         _charge(k, process_id, "child_proc", 1)
