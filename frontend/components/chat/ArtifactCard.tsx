@@ -24,8 +24,13 @@ function apiBase(): string {
 
 /** 与 FileDownloadLink 一致：相对 workspace 根 */
 function toRelPath(href: string): string {
-  let p = href.trim();
+  let p = href.trim().replace(/\\/g, '/');
   p = p.replace(/^sandbox:\/*/i, '');
+  p = p.replace(/^file:\/\//i, '');
+  const wsIdx = p.toLowerCase().lastIndexOf('/workspace/');
+  if (wsIdx >= 0 && /^[a-zA-Z]:\//.test(p)) {
+    p = p.slice(wsIdx + '/workspace/'.length);
+  }
   p = p.replace(/^\/+/, '');
   p = p.replace(/^(\.\/)?workspace\//i, '');
   p = p.replace(/^\.\//, '');

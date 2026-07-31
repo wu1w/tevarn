@@ -37,8 +37,19 @@ function apiBase(): string {
 }
 
 export function toRelPath(href: string): string {
-  let p = href.trim();
+  let p = href.trim().replace(/\\/g, '/');
   p = p.replace(/^sandbox:\/*/i, '');
+  p = p.replace(/^file:\/\//i, '');
+  // Windows abs under …/workspace/… → relative to that workspace root
+  const wsIdx = p.toLowerCase().lastIndexOf('/workspace/');
+  if (wsIdx >= 0 && /^[a-zA-Z]:\//.test(p)) {
+    p = p.slice(wsIdx + '/workspace/'.length);
+  }
+  // UNC or posix abs with /workspace/
+  const wsIdx2 = p.toLowerCase().indexOf('/workspace/');
+  if (wsIdx2 >= 0 && p.startsWith('/')) {
+    p = p.slice(wsIdx2 + '/workspace/'.length);
+  }
   p = p.replace(/^\/+/, '');
   p = p.replace(/^(\.\/)?workspace\//i, '');
   p = p.replace(/^\.\//, '');

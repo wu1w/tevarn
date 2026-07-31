@@ -19,8 +19,13 @@ export function isWorkspaceFileLink(href: string | undefined): boolean {
 
 /** 从 href 提取相对 workspace 根的路径 */
 function extractRelPath(href: string): string {
-  let p = href.trim();
+  let p = href.trim().replace(/\\/g, '/');
   p = p.replace(/^sandbox:\/?/i, '');
+  p = p.replace(/^file:\/\//i, '');
+  const wsIdx = p.toLowerCase().lastIndexOf('/workspace/');
+  if (wsIdx >= 0 && /^[a-zA-Z]:\//.test(p)) {
+    p = p.slice(wsIdx + '/workspace/'.length);
+  }
   p = p.replace(/^\/+/, '');
   // 去掉开头的 workspace/ 或 ./workspace/（后端沙箱根即 workspace）
   p = p.replace(/^(\.\/)?workspace\//i, '');

@@ -1,12 +1,14 @@
 """File tree browser API - sandboxed file browser with mode support
 
 Modes:
-  - sandbox (default): constrained to settings.file_browser_root (desktop: userData/workspace)
+  - sandbox (default): constrained to allowed workspace roots
+    (file_browser_root + agent workspace + Electron userData/workspace)
   - local: full server filesystem (requires FILE_BROWSER_LOCAL=1)
   - ssh: remote machine via SSH (future)
 """
 import logging
 import os
+import sys
 from pathlib import Path
 from typing import Annotated
 
@@ -28,36 +30,159 @@ def _sandbox_root() -> Path:
     raw = (settings.file_browser_root or "workspace").strip() or "workspace"
     root = Path(raw).expanduser()
     if not root.is_absolute():
-        root = Path.cwd() / root
+        # Prefer project root over cwd (cwd may be frontend/ when mis-started)
+        try:
+            from backend.tools.permissions import detect_project_root
+
+            root = Path(detect_project_root()) / root
+        except Exception:
+            root = Path.cwd() / root
     root = root.resolve()
     root.mkdir(parents=True, exist_ok=True)
     return root
 
 
+def _electron_userdata_workspace_candidates() -> list[Path]:
+    """Desktop agent often writes under userData/workspace, not project root."""
+    home = Path.home()
+    cands: list[Path] = []
+    if sys.platform == "win32":
+        roaming = os.environ.get("APPDATA") or str(home / "AppData" / "Roaming")
+        cands.append(Path(roaming) / "takton" / "data" / "workspace")
+        cands.append(Path(roaming) / "takton" / "workspace")
+    elif sys.platform == "darwin":
+        cands.append(
+            home / "Library" / "Application Support" / "takton" / "data" / "workspace"
+        )
+    cands.append(home / ".takton" / "data" / "workspace")
+    cands.append(home / ".takton" / "workspace")
+    return cands
+
+
+def _allowed_sandbox_roots() -> list[Path]:
+    """Union of roots the browser may read (deduped, existing dirs preferred)."""
+    roots: list[Path] = []
+    seen: set[str] = set()
+
+    def _add(p: Path) -> None:
+        try:
+            r = p.expanduser().resolve()
+        except Exception:
+            return
+        key = str(r).lower()
+        if key in seen:
+            return
+        seen.add(key)
+        roots.append(r)
+
+    _add(_sandbox_root())
+    try:
+        from backend.tools.permissions import resolve_agent_workspace_root
+
+        _add(Path(resolve_agent_workspace_root()))
+    except Exception:
+        pass
+    for c in _electron_userdata_workspace_candidates():
+        if c.is_dir():
+            _add(c)
+    return roots
+
+
+def _normalize_rel(raw_path: str) -> str:
+    rel = (raw_path or "").strip().replace("\\", "/")
+    while rel.startswith("./"):
+        rel = rel[2:]
+    rel = rel.lstrip("/")
+    if rel.lower().startswith("workspace/"):
+        rel = rel[len("workspace/") :]
+    if rel.lower().startswith("sandbox:"):
+        rel = rel.split(":", 1)[-1].lstrip("/")
+    return rel
+
+
+def _is_windows_abs(s: str) -> bool:
+    s = (s or "").strip()
+    if not s:
+        return False
+    # C:\... or \\server\share
+    if len(s) >= 3 and s[1] == ":" and s[2] in ("\\", "/"):
+        return True
+    if s.startswith("\\\\"):
+        return True
+    return Path(s).is_absolute()
+
+
 def _resolve_path(mode: str, raw_path: str) -> tuple[Path, Path]:
-    """根据 mode 解析和校验路径，返回 (target_path, base_path)"""
-    if mode == "sandbox":
-        base = _sandbox_root()
-    elif mode == "local":
+    """根据 mode 解析和校验路径，返回 (target_path, base_path)。
+
+    Absolute paths under any allowed sandbox root are accepted (preview/download
+    often pass Electron userData abs paths while API root is project ``.``).
+    """
+    if mode == "local":
         if not LOCAL_ENABLED:
             raise HTTPException(
                 status_code=403,
                 detail="Local mode is disabled. Set FILE_BROWSER_LOCAL=1 to enable.",
             )
         base = Path(LOCAL_ROOT)
-    else:
+        if not raw_path:
+            return base, base
+        if _is_windows_abs(raw_path) or Path(raw_path).is_absolute():
+            return Path(raw_path).expanduser().resolve(), base
+        return (base / raw_path).resolve(), base
+
+    if mode != "sandbox":
         raise HTTPException(status_code=400, detail=f"Unknown mode: {mode}")
 
-    target = (base / raw_path).resolve() if raw_path else base
-    return target, base
+    roots = _allowed_sandbox_roots()
+    primary = roots[0] if roots else _sandbox_root()
+    raw = (raw_path or "").strip()
+    if not raw:
+        return primary, primary
+
+    # Absolute path → must sit under some allowed root
+    if _is_windows_abs(raw) or Path(raw).is_absolute():
+        target = Path(raw).expanduser().resolve()
+        for base in roots:
+            try:
+                target.relative_to(base)
+                return target, base
+            except ValueError:
+                continue
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied: path outside allowed workspace roots",
+        )
+
+    rel = _normalize_rel(raw)
+    # Prefer a root that already contains the file (agent may write to userData)
+    for base in roots:
+        candidate = (base / rel).resolve()
+        try:
+            candidate.relative_to(base)
+        except ValueError:
+            continue
+        if candidate.exists():
+            return candidate, base
+    # Default: primary root (may 404 later)
+    target = (primary / rel).resolve()
+    return target, primary
 
 
 def _check_access(target: Path, base: Path):
-    """安全校验：target 必须在 base 之下"""
+    """安全校验：target 必须在 base 或任一 allowed root 之下"""
     try:
         target.relative_to(base)
+        return
     except ValueError:
-        raise HTTPException(status_code=403, detail="Access denied") from None
+        pass
+    for root in _allowed_sandbox_roots():
+        try:
+            target.relative_to(root)
+            return
+        except ValueError:
+            continue
+    raise HTTPException(status_code=403, detail="Access denied") from None
 
 
 @router.get("/tree")
@@ -263,6 +388,7 @@ async def get_file_info(
     sandbox = _sandbox_root()
     return {
         "sandbox_root": str(sandbox),
+        "allowed_roots": [str(r) for r in _allowed_sandbox_roots()],
         "local_enabled": LOCAL_ENABLED,
         "modes": ["sandbox"] + (["local"] if LOCAL_ENABLED else []),
     }
