@@ -1917,11 +1917,14 @@ async def collab_approve(
     if not hasattr(k, "_call"):
         raise HTTPException(status_code=503, detail="kernel host unavailable")
     _require_process(k, body.process_id, session_id=body.session_id, require_session=True)
+    aid = body.request_id
     return k._call(
         "collab_resolve_approval",
         {
             "process_id": body.process_id,
-            "request_id": body.request_id,
+            "approval_id": aid,
+            "id": aid,
+            "request_id": aid,
             "approve": body.approve,
             "note": body.note,
         },

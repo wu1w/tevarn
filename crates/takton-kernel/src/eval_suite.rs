@@ -33,6 +33,8 @@ pub struct EvalRun {
 pub struct EvalGate {
     pub min_overall: f64,
     pub min_parts: HashMap<String, f64>,
+    /// Marathon resume success rate floor (0.7 hard gate; target ≥0.95 in CI).
+    pub min_marathon_resume: f64,
 }
 
 impl Default for EvalGate {
@@ -41,9 +43,12 @@ impl Default for EvalGate {
         min_parts.insert("coding".into(), 0.4);
         min_parts.insert("safety".into(), 0.7);
         min_parts.insert("long".into(), 0.3);
+        // compressed marathon suite must clear this rate
+        min_parts.insert("marathon".into(), 0.95);
         Self {
             min_overall: 0.5,
             min_parts,
+            min_marathon_resume: 0.95,
         }
     }
 }
@@ -135,7 +140,7 @@ impl EvalSuite {
             return json!({
                 "ok": false,
                 "reason": "no_eval_runs",
-                "gate": self.gate,
+                "gate": self.gate_json(),
             });
         };
         let mut failed = vec![];
@@ -146,9 +151,46 @@ impl EvalSuite {
             ));
         }
         for (k, min_v) in &self.gate.min_parts {
-            let got = run.parts.get(k).copied().unwrap_or(0.0);
+            // marathon is optional unless present in parts or meta
+            if k == "marathon"
+                && !run.parts.contains_key("marathon")
+                && run
+                    .meta
+                    .get("marathon_resume_success")
+                    .and_then(|v| v.as_f64())
+                    .is_none()
+            {
+                continue;
+            }
+            let got = run
+                .parts
+                .get(k)
+                .copied()
+                .or_else(|| {
+                    if k == "marathon" {
+                        run.meta
+                            .get("marathon_resume_success")
+                            .and_then(|v| v.as_f64())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(0.0);
             if got < *min_v {
                 failed.push(format!("{k} {got:.3} < min {min_v:.3}"));
+            }
+        }
+        // Explicit marathon hard gate from meta even if min_parts skipped
+        if let Some(rate) = run
+            .meta
+            .get("marathon_resume_success")
+            .and_then(|v| v.as_f64())
+        {
+            if rate + 1e-9 < self.gate.min_marathon_resume {
+                failed.push(format!(
+                    "marathon_resume_success {rate:.3} < min {:.3}",
+                    self.gate.min_marathon_resume
+                ));
             }
         }
         json!({
@@ -157,10 +199,16 @@ impl EvalSuite {
             "suite": run.suite,
             "overall": run.overall,
             "failed": failed,
-            "gate": {
-                "min_overall": self.gate.min_overall,
-                "min_parts": self.gate.min_parts,
-            },
+            "gate": self.gate_json(),
+            "hard_gate": "marathon_resume_success",
+        })
+    }
+
+    fn gate_json(&self) -> Value {
+        json!({
+            "min_overall": self.gate.min_overall,
+            "min_parts": self.gate.min_parts,
+            "min_marathon_resume": self.gate.min_marathon_resume,
         })
     }
 
@@ -168,10 +216,7 @@ impl EvalSuite {
         json!({
             "runs": self.runs.len(),
             "latest": self.latest(None),
-            "gate": {
-                "min_overall": self.gate.min_overall,
-                "min_parts": self.gate.min_parts,
-            },
+            "gate": self.gate_json(),
         })
     }
 }
@@ -194,5 +239,39 @@ mod tests {
         assert!(t["improving"].as_bool().unwrap());
         let g = e.check_gate(Some("default"));
         assert_eq!(g["ok"], true);
+    }
+
+    #[test]
+    fn marathon_hard_gate() {
+        let mut e = EvalSuite::default();
+        let mut parts = HashMap::new();
+        parts.insert("coding".into(), 0.9);
+        parts.insert("safety".into(), 0.9);
+        parts.insert("long".into(), 0.9);
+        parts.insert("marathon".into(), 0.5);
+        e.record(
+            "default",
+            0.9,
+            parts,
+            json!({"marathon_resume_success": 0.5}),
+        );
+        let g = e.check_gate(Some("default"));
+        assert_eq!(g["ok"], false);
+        let failed = g["failed"].as_array().unwrap();
+        assert!(!failed.is_empty());
+
+        let mut parts2 = HashMap::new();
+        parts2.insert("coding".into(), 0.9);
+        parts2.insert("safety".into(), 0.9);
+        parts2.insert("long".into(), 0.9);
+        parts2.insert("marathon".into(), 1.0);
+        e.record(
+            "default",
+            0.9,
+            parts2,
+            json!({"marathon_resume_success": 1.0}),
+        );
+        let g2 = e.check_gate(Some("default"));
+        assert_eq!(g2["ok"], true);
     }
 }

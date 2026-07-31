@@ -209,7 +209,7 @@ L0 Kernel（进程 / cap / 调度 / 隔离）████░░░░░░  ~45
 | ID | 工作项 | 验收要点 | 状态 |
 |----|--------|----------|------|
 | K-01 | ABI v1 冻结 | 文档 + golden；kernel-ci | ✅ |
-| K-02 | host 默认随产品 | auto-start + 构建脚本；vendor 二进制由发布流水线拷贝 | ✅ 路径 / 🧩 二进制 |
+| K-02 | host 默认随产品 | auto-start + `build-kernel-host` + `ensure-vendor-host` 进 pack | ✅ |
 | K-03 | Intent 强制闭环 | require_intent + `cap_tools`；pack 扩容后重裁剪 | ✅ |
 | K-04 | Scheduler 驱动执行 | run_gate + 优先级；前台先于后台出队（单测） | ✅ |
 | K-05 | Resource Manager 接线 | charge 硬拒 + `resource_denied` 审计；memory 超限拦工具 | ✅ |
@@ -239,7 +239,7 @@ L0 Kernel（进程 / cap / 调度 / 隔离）████░░░░░░  ~45
 | ID | 工作项 | 说明 | 状态 |
 |----|--------|------|------|
 | R-01 | Checkpoint + 工具结果落盘统一 | Registry/loop 透传 process_id spill；`GET /kernel/results/{handle}` | ✅ |
-| R-02 | Doom loop / 预算耗尽优雅退出与恢复 UX | `exit_reasons` 统一预算文案；控制台 resume 入口 | ✅ 后端 / 🚧 会话页卡片 |
+| R-02 | Doom loop / 预算耗尽优雅退出与恢复 UX | `exit_reasons` + 会话 `recovery` 卡片（条件展示） | ✅ |
 | R-03 | 上下文泄漏控制 | Python `end_process` 级联子进程 + 清 cap；Rust 既有 drop | ✅ |
 | R-04 | Provider 缓存命中率仪表 | Kernel 仪表盘 family 表 + 周报 health | ✅ |
 | R-05 | Token / billable / 资源三维成本面板 | `/kernel/cost` summary + 资源聚合 + FE 卡片 | ✅ |
@@ -250,7 +250,7 @@ L0 Kernel（进程 / cap / 调度 / 隔离）████░░░░░░  ~45
 - [x] 预算耗尽走统一恢复文案（`budget_exhausted`）  
 - [x] 父进程结束级联子进程并清能力  
 - [x] Kernel 页展示 cost / cache family / weekly  
-- [ ] marathon ≥2h 模拟进 Eval 硬阈值（继续加深，smoke 已有）
+- [x] marathon 压缩循环进 Eval 硬阈值（`marathon_resume_success` ≥ 0.95；`ci_eval_gate --min-marathon`）
 
 ---
 

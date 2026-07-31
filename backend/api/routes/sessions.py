@@ -261,13 +261,14 @@ async def get_session_checkpoint(
     session_id: uuid.UUID,
     current_user: Annotated[UserRead, Depends(get_current_user)],
 ):
-    """查看 agent 断点 / Goal 续跑状态"""
+    """查看 agent 断点 / Goal 续跑状态 + 恢复卡片（R-02 UX）。"""
     async with UnitOfWork() as uow:
         session = await uow.sessions.get_by_id(session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
         assert_session_owner(getattr(session, "user_id", None), current_user)
     from backend.agent.checkpoint import load_checkpoint
+    from backend.agent.exit_reasons import describe_exit_reason
     from backend.agent.goal_state import get_goal, load_goal_from_db
     from backend.agent.resume import build_resume_prompt
 
@@ -275,11 +276,120 @@ async def get_session_checkpoint(
     g = get_goal(session_id)
     cp = await load_checkpoint(session_id)
     prompt = await build_resume_prompt(session_id)
+    can_resume = prompt is not None
+
+    # Recovery card: last run exit + process hooks
+    exit_code: str | None = None
+    process_id: str | None = None
+    run_status: str | None = None
+    if isinstance(cp, dict):
+        extra = cp.get("extra") if isinstance(cp.get("extra"), dict) else {}
+        exit_code = (
+            (extra or {}).get("exit_reason")
+            or (extra or {}).get("last_exit_reason")
+            or cp.get("exit_reason")
+            or cp.get("last_exit_reason")
+        )
+        process_id = (
+            (extra or {}).get("process_id")
+            or cp.get("process_id")
+            or None
+        )
+        if process_id is not None:
+            process_id = str(process_id)
+        if exit_code is not None:
+            exit_code = str(exit_code)
+
+    try:
+        from backend.repositories.agent_run_repo import AsyncAgentRunRepository
+
+        runs = await AsyncAgentRunRepository().list_runs(session_id, limit=1)
+        if runs:
+            latest = runs[0]
+            run_status = getattr(latest, "status", None)
+            meta = getattr(latest, "meta", None) or {}
+            if isinstance(meta, dict):
+                exit_code = exit_code or meta.get("exit_reason") or meta.get("last_exit_reason")
+                process_id = process_id or meta.get("process_id")
+            cp_run = getattr(latest, "checkpoint", None) or {}
+            if isinstance(cp_run, dict):
+                extra = cp_run.get("extra") if isinstance(cp_run.get("extra"), dict) else {}
+                exit_code = (
+                    exit_code
+                    or cp_run.get("exit_reason")
+                    or (extra or {}).get("exit_reason")
+                    or (extra or {}).get("last_exit_reason")
+                )
+                process_id = process_id or cp_run.get("process_id") or (extra or {}).get(
+                    "process_id"
+                )
+            err = getattr(latest, "error", None)
+            if err and not exit_code:
+                # best-effort parse codes from error text
+                low = str(err).lower()
+                for code in (
+                    "doom_loop",
+                    "budget_exhausted",
+                    "budget_grace",
+                    "kernel_gate_stop",
+                    "resource_denied",
+                ):
+                    if code in low:
+                        exit_code = code
+                        break
+    except Exception:
+        pass
+
+    recoverable_codes = {
+        "budget_grace",
+        "budget_exhausted",
+        "kernel_iteration_exhausted",
+        "kernel_budget_precheck",
+        "kernel_gate_stop",
+        "doom_loop",
+        "thrash",
+        "stopped_by_user",
+        "interrupted",
+        "resource_denied",
+    }
+    show_card = bool(can_resume) or (
+        bool(exit_code) and str(exit_code) in recoverable_codes
+    ) or (
+        bool(run_status)
+        and str(run_status).lower()
+        in ("interrupted", "failed", "suspended", "stopped", "error")
+    )
+    exit_payload = describe_exit_reason(exit_code) if (exit_code or show_card) else None
+    if exit_payload and not exit_code and can_resume:
+        exit_payload = {
+            **describe_exit_reason("stopped_by_user"),
+            "code": "checkpoint_resume",
+            "title": "可从断点续跑",
+            "message": "检测到未完成的 Goal / checkpoint，可一键续跑。",
+            "severity": "info",
+        }
+
     return {
         "checkpoint": cp,
         "goal": g.to_dict() if g else None,
-        "can_resume": prompt is not None,
+        "can_resume": can_resume,
         "resume_preview": (prompt[:500] + "…") if prompt and len(prompt) > 500 else prompt,
+        "recovery": {
+            "show": show_card,
+            "can_resume": can_resume,
+            "exit": exit_payload,
+            "process_id": process_id,
+            "run_status": run_status,
+            "actions": {
+                "session_resume": f"/api/sessions/{session_id}/resume",
+                "process_resume": (
+                    f"/api/kernel/processes/{process_id}/resume" if process_id else None
+                ),
+                "policy": (
+                    f"/api/kernel/policy/{process_id}" if process_id else None
+                ),
+            },
+        },
     }
 
 

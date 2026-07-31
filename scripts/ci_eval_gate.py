@@ -26,8 +26,20 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", action="store_true", help="run live eval against host")
     ap.add_argument("--min-overall", type=float, default=float(os.environ.get("TAKTON_EVAL_THRESHOLD", "0.75")))
+    ap.add_argument(
+        "--min-marathon",
+        type=float,
+        default=float(os.environ.get("TAKTON_MARATHON_RESUME_THRESHOLD", "0.95")),
+        help="hard floor for marathon_resume_success (0.7 productization)",
+    )
     ap.add_argument("--max-health-drop", type=float, default=0.2)
     ap.add_argument("--require-eval", action="store_true", help="fail if no eval artifact")
+    ap.add_argument(
+        "--require-marathon",
+        action="store_true",
+        default=os.environ.get("TAKTON_REQUIRE_MARATHON", "").strip() in ("1", "true", "yes"),
+        help="fail when marathon metrics missing (hard gate mode)",
+    )
     args = ap.parse_args()
 
     from backend.services.weekly_report import (
@@ -41,26 +53,24 @@ def main() -> int:
     if args.run:
         os.environ.setdefault("TAKTON_KERNEL_BACKEND", "rust")
         os.environ.setdefault("TAKTON_KERNEL_AUTO_START", "1")
-        from scripts.takton_eval import (
-            _connect,
-            suite_coding,
-            suite_long,
-            suite_research,
-            suite_safety,
-        )
-        from backend.services.weekly_report import persist_eval_run
+        # Delegate to full harness (includes marathon hard gate + kernel ledger)
+        from scripts.takton_eval import main as eval_main
 
-        k = _connect()
-        suites = [suite_coding(k), suite_research(k), suite_long(k), suite_safety(k)]
-        overall = sum(s["score"] for s in suites) / max(1, len(suites))
-        eval_result = {
-            "overall": round(overall, 4),
-            "threshold": args.min_overall,
-            "suites": suites,
-            "pass": overall + 1e-9 >= args.min_overall,
-        }
-        persist_eval_run(eval_result)
-        collect_weekly_report(k, eval_result=eval_result, persist=True)
+        rc = eval_main()
+        eval_result = load_latest_eval()
+        if rc != 0:
+            print("FAIL: live takton_eval hard gate")
+            return rc
+        if eval_result is not None:
+            try:
+                from backend.kernel_rust.client import RustAgentKernel, is_rust_host_available, start_kernel_host
+
+                if not is_rust_host_available():
+                    start_kernel_host()
+                k = RustAgentKernel(auto_start=True)
+                collect_weekly_report(k, eval_result=eval_result, persist=True)
+            except Exception as e:
+                print(f"WARN: weekly collect skipped: {e}")
 
     if eval_result is None:
         msg = "no eval artifact (run takton_eval.py or pass --run)"
@@ -74,6 +84,36 @@ def main() -> int:
     if overall + 1e-9 < args.min_overall:
         print(json.dumps({"fail": "eval_overall", "overall": overall, "min": args.min_overall}, indent=2))
         return 1
+
+    # Marathon hard gate
+    marathon_rate = eval_result.get("marathon_resume_success")
+    if marathon_rate is None:
+        for s in eval_result.get("suites") or []:
+            if isinstance(s, dict) and s.get("suite") == "long":
+                marathon_rate = s.get("marathon_resume_success")
+                if marathon_rate is None and isinstance(s.get("marathon_metrics"), dict):
+                    marathon_rate = s["marathon_metrics"].get("marathon_resume_success")
+                break
+    if marathon_rate is None:
+        if args.require_marathon or args.require_eval:
+            print(json.dumps({"fail": "marathon_missing", "min": args.min_marathon}, indent=2))
+            return 1
+        print("WARN: marathon_resume_success missing — soft skip marathon hard gate")
+        marathon_rate = None
+    else:
+        marathon_rate = float(marathon_rate)
+        if marathon_rate + 1e-9 < args.min_marathon:
+            print(
+                json.dumps(
+                    {
+                        "fail": "marathon_resume_success",
+                        "rate": marathon_rate,
+                        "min": args.min_marathon,
+                    },
+                    indent=2,
+                )
+            )
+            return 1
 
     weekly = load_weekly_report(None)
     trend_ok = True
@@ -91,6 +131,8 @@ def main() -> int:
         "ok": trend_ok,
         "eval_overall": overall,
         "min_overall": args.min_overall,
+        "marathon_resume_success": marathon_rate,
+        "min_marathon": args.min_marathon,
         "health_drop": drop,
         "max_health_drop": args.max_health_drop,
         "week": (weekly or {}).get("week"),

@@ -32,6 +32,7 @@
 - **wasmtime** 真执行（fuel / memory 限额）
 - Host RPC：可靠超时、卡死后重启恢复；二进制优先 `target/*` 最新构建
 - Electron / vendor host 查找路径对齐（不含 kill-process 类危险能力）
+- **vendor 打包**：`scripts/build-kernel-host.ps1|-sh` 落盘 `vendor/takton-kernel-host/`；`npm run pack/dist` 前 `ensure-vendor-host` 失败即停
 
 ### 5. LLM 准入
 
@@ -65,8 +66,10 @@
 
 1. 生产远程装包请配置 `TAKTON_PKG_SIGNING_KEY`（或 JWT 派生）与内容哈希白名单  
 2. 无 Job/bwrap 的环境若坚持 sandbox 默认，需显式改 `agent_execution_mode=local`  
-3. `target/release` host 若缺新 ABI 方法，请重建：`cargo build -p takton-kernel-host --release`  
+3. `target/release` host 若缺新 ABI 方法，请重建并 stage：`.\scripts\build-kernel-host.ps1 -Release`  
 4. 长跑后 host 偶发无响应：客户端会超时并尝试重启本进程拉起的 host  
+5. 会话恢复：`GET /sessions/{id}/checkpoint` 返回 `recovery` 卡片；仅 `can_resume` / 可恢复 exit 时展示  
+6. Eval 硬门：`marathon_resume_success ≥ 0.95`（`TAKTON_MARATHON_RESUME_THRESHOLD`） 
 
 ---
 

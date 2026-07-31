@@ -108,7 +108,7 @@ def suite_research(k) -> dict:
 
 
 def suite_long(k) -> dict:
-    """Long-run: snapshot + suspend/resume + iteration budget."""
+    """Long-run: snapshot + suspend/resume + compressed marathon gate."""
     import asyncio
 
     p = asyncio.run(
@@ -123,14 +123,51 @@ def suite_long(k) -> dict:
     for _ in range(3):
         k.iteration_consume(p.id)
     snap = k.process_snapshot(p.id, meta={"eval": "long"})
-    score += 0.3 if snap.get("id") else 0.0
+    score += 0.25 if snap.get("id") else 0.0
+    try:
+        k.marathon_record("snapshot_ok")
+    except Exception:
+        pass
     plan = k.process_recovery_plan(p.id)
-    score += 0.3 if plan.get("full_replay") is False else 0.0
-    k.suspend_process_sync(p.id, reason="eval")
-    rp = k.resume_process_sync(p.id)
-    score += 0.4 if str(getattr(rp, "state", "")) == "running" else 0.0
+    score += 0.25 if plan.get("full_replay") is False else 0.0
+
+    # Compressed marathon: N suspend/resume cycles (hard gate input)
+    cycles = int(os.environ.get("TAKTON_MARATHON_EVAL_CYCLES", "5") or 5)
+    cycles = max(2, min(cycles, 32))
+    resume_ok = 0
+    for i in range(cycles):
+        try:
+            k.marathon_record("attempt")
+            k.suspend_process_sync(p.id, reason=f"eval_marathon_{i}")
+            rp = k.resume_process_sync(p.id)
+            ok = str(getattr(rp, "state", "")) == "running"
+            if ok:
+                resume_ok += 1
+                k.marathon_record("resume_ok", reason="eval")
+            else:
+                k.marathon_record("resume_fail", reason="not_running")
+        except Exception as e:
+            try:
+                k.marathon_record("resume_fail", reason=str(e)[:80])
+            except Exception:
+                pass
+    rate = resume_ok / float(cycles)
+    score += 0.5 * rate
+    metrics = {}
+    try:
+        metrics = k.marathon_metrics() or {}
+    except Exception:
+        metrics = {"marathon_resume_success": rate}
     asyncio.run(k.end_process(p.id, state="completed"))
-    return {"suite": "long", "score": round(score, 3), "max": 1.0}
+    return {
+        "suite": "long",
+        "score": round(min(1.0, score), 3),
+        "max": 1.0,
+        "marathon_cycles": cycles,
+        "marathon_resume_ok": resume_ok,
+        "marathon_resume_success": round(rate, 4),
+        "marathon_metrics": metrics,
+    }
 
 
 def suite_safety(k) -> dict:
@@ -169,6 +206,9 @@ def suite_safety(k) -> dict:
 
 def main() -> int:
     threshold = float(os.environ.get("TAKTON_EVAL_THRESHOLD", "0.75") or 0.75)
+    marathon_min = float(
+        os.environ.get("TAKTON_MARATHON_RESUME_THRESHOLD", "0.95") or 0.95
+    )
     k = _connect()
     results = [
         suite_coding(k),
@@ -177,12 +217,43 @@ def main() -> int:
         suite_safety(k),
     ]
     overall = sum(r["score"] for r in results) / max(1, len(results))
+    long_suite = next((r for r in results if r.get("suite") == "long"), {})
+    marathon_rate = float(
+        long_suite.get("marathon_resume_success")
+        or (long_suite.get("marathon_metrics") or {}).get("marathon_resume_success")
+        or 0.0
+    )
+    marathon_ok = marathon_rate + 1e-9 >= marathon_min
+    overall_ok = overall + 1e-9 >= threshold
     out = {
         "overall": round(overall, 4),
         "threshold": threshold,
         "suites": results,
-        "pass": overall + 1e-9 >= threshold,
+        "marathon_resume_success": round(marathon_rate, 4),
+        "marathon_min": marathon_min,
+        "marathon_ok": marathon_ok,
+        "pass": overall_ok and marathon_ok,
     }
+    # Feed in-kernel eval ledger + hard gate
+    try:
+        parts = {r["suite"]: float(r["score"]) for r in results if r.get("suite")}
+        parts["marathon"] = marathon_rate
+        k.eval_record(
+            "default",
+            overall,
+            parts,
+            {
+                "marathon_resume_success": marathon_rate,
+                "source": "takton_eval",
+            },
+        )
+        gate = k.eval_gate_check("default")
+        out["kernel_gate"] = gate
+        if gate and gate.get("ok") is False:
+            out["pass"] = False
+            out["kernel_gate_failed"] = gate.get("failed")
+    except Exception as e:
+        out["kernel_gate_error"] = str(e)
     # 债 #2：持久化 eval 结果，供周报趋势
     try:
         from backend.services.weekly_report import persist_eval_run
@@ -194,7 +265,8 @@ def main() -> int:
     print(json.dumps(out, ensure_ascii=False, indent=2))
     print(
         f"=== Eval Harness {'PASSED' if out['pass'] else 'FAILED'} "
-        f"overall={overall:.3f} threshold={threshold} ==="
+        f"overall={overall:.3f} threshold={threshold} "
+        f"marathon={marathon_rate:.3f} min={marathon_min} ==="
     )
     return 0 if out["pass"] else 1
 

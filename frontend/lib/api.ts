@@ -311,12 +311,33 @@ export async function getMessages(sessionId: string, limit = 200, offset = 0): P
   return res.data;
 }
 
-/** Goal / checkpoint 状态（切回会话时恢复任务看板） */
+/** R-02 会话恢复卡片载荷 */
+export type SessionRecoveryPayload = {
+  show: boolean;
+  can_resume: boolean;
+  exit?: {
+    code?: string;
+    title?: string;
+    message?: string;
+    recovery_hint?: string;
+    severity?: string;
+  } | null;
+  process_id?: string | null;
+  run_status?: string | null;
+  actions?: {
+    session_resume?: string;
+    process_resume?: string | null;
+    policy?: string | null;
+  };
+};
+
+/** Goal / checkpoint 状态（切回会话时恢复任务看板 + 恢复卡片） */
 export async function getSessionCheckpoint(sessionId: string): Promise<{
   checkpoint: unknown;
   goal: import('@/types').GoalState | null;
   can_resume: boolean;
   resume_preview?: string | null;
+  recovery?: SessionRecoveryPayload;
 }> {
   const res = await api.get(`/sessions/${sessionId}/checkpoint`);
   return res.data;
@@ -3194,6 +3215,36 @@ export async function collabResume(
   const res = await api.post('/kernel/collab/resume', {
     process_id: processId,
     reason: '',
+    session_id: sessionId || undefined,
+  });
+  return res.data;
+}
+
+export async function collabSetPlan(
+  processId: string,
+  steps: string[],
+  sessionId?: string | null,
+): Promise<Record<string, unknown>> {
+  const res = await api.post('/kernel/collab/plan', {
+    process_id: processId,
+    steps,
+    session_id: sessionId || undefined,
+  });
+  return res.data;
+}
+
+export async function collabApprove(
+  processId: string,
+  requestId: string,
+  approve = true,
+  sessionId?: string | null,
+  note = '',
+): Promise<Record<string, unknown>> {
+  const res = await api.post('/kernel/collab/approve', {
+    process_id: processId,
+    request_id: requestId,
+    approve,
+    note,
     session_id: sessionId || undefined,
   });
   return res.data;

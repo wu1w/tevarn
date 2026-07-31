@@ -18,13 +18,12 @@ import {
   getKernelCacheMetrics,
   getKernelWeekly,
   getSandboxCoverage,
-  collabInterrupt,
-  collabResume,
   sampleProcessRss,
   suspendKernelProcess, resumeKernelProcess,
   topUpProcessBudget,
   type KernelProcess, type KernelEvent,
 } from '@/lib/api';
+import { CollabInterruptPanel } from '@/components/kernel/CollabInterruptPanel';
 import { useZh } from '@/hooks/useZh';
 import { useToastStore } from '@/stores/toastStore';
 
@@ -47,7 +46,7 @@ export default function KernelPage() {
   const [tab, setTab] = useState<'processes' | 'mediate' | 'policy' | 'governance' | 'protocol' | 'sched' | 'dash' | 'collab'>('processes');
   const [backupBusy, setBackupBusy] = useState(false);
   const [stoppingId, setStoppingId] = useState<string | null>(null);
-  const [collabBusy, setCollabBusy] = useState<string | null>(null);
+
 
   const handleStopJob = async (opts: { inbox_item_id?: string; process_id?: string }) => {
     const key = opts.inbox_item_id || opts.process_id || '';
@@ -677,98 +676,44 @@ export default function KernelPage() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ ...card, padding: '14px 16px' }}>
             <div style={{ fontSize: 13, fontWeight: 650, marginBottom: 8 }}>
-              {zh ? '人机协作（打断 / 恢复）' : 'Collab interrupt / resume'}
+              {zh ? '人机协作（打断 / plan / 批准）' : 'Collab interrupt / plan / approve'}
             </div>
             <div style={{ fontSize: 12, color: 'var(--foreground-dim)', marginBottom: 10, lineHeight: 1.5 }}>
               {zh
-                ? '对当前 running 进程调用 collab_interrupt（并 suspend）或 collab_resume。'
-                : 'Call collab_interrupt (+suspend) or collab_resume on running processes.'}
+                ? '一等公民：interrupt 阻断写/命令 mediate；待批 write/command 可批准或拒绝；可改 plan。'
+                : 'First-class: interrupt gates write/command mediate; approve pending write/command; revise plan.'}
             </div>
-            {procs.filter((p) => p.state === 'running' || p.state === 'suspended' || String(p.state).includes('wait')).length === 0 ? (
-              <div style={{ fontSize: 12, color: 'var(--foreground-dim)' }}>
-                {zh ? '暂无合适进程' : 'No eligible processes'}
+            <CollabInterruptPanel processes={procs} zh={zh} />
+            <div style={{ marginTop: 12, borderTop: '1px solid var(--border-subtle)', paddingTop: 10 }}>
+              <div style={{ fontSize: 11, color: 'var(--foreground-dim)', marginBottom: 6 }}>
+                {zh ? '采样 RSS（资源）' : 'Sample RSS'}
               </div>
-            ) : (
-              procs
-                .filter((p) => p.state === 'running' || p.state === 'suspended' || String(p.state).includes('wait'))
-                .slice(0, 12)
-                .map((p) => {
-                  const busy = collabBusy === p.id;
-                  return (
-                    <div
-                      key={p.id}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0',
-                        borderBottom: '1px solid var(--border-subtle)', fontSize: 12,
-                      }}
-                    >
-                      <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {String(p.identity || p.id).slice(0, 28)} · {p.state}
-                      </span>
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={async () => {
-                          setCollabBusy(p.id);
-                          try {
-                            await collabInterrupt(p.id, 'ui', p.session_id || null);
-                            addToast(zh ? '已打断' : 'Interrupted', 'success');
-                            void qc.invalidateQueries({ queryKey: ['kernel-processes'] });
-                          } catch { /* toast */ } finally { setCollabBusy(null); }
-                        }}
-                        style={{
-                          fontSize: 11, padding: '4px 10px', borderRadius: 6, cursor: busy ? 'wait' : 'pointer',
-                          border: '1px solid var(--border-subtle)', background: 'var(--card-bg)',
-                        }}
-                      >
-                        {zh ? '打断' : 'Interrupt'}
-                      </button>
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={async () => {
-                          setCollabBusy(p.id);
-                          try {
-                            await collabResume(p.id, p.session_id || null);
-                            addToast(zh ? '已恢复' : 'Resumed', 'success');
-                            void qc.invalidateQueries({ queryKey: ['kernel-processes'] });
-                          } catch { /* toast */ } finally { setCollabBusy(null); }
-                        }}
-                        style={{
-                          fontSize: 11, padding: '4px 10px', borderRadius: 6, cursor: busy ? 'wait' : 'pointer',
-                          border: '1px solid var(--border-subtle)', background: 'var(--card-bg)',
-                        }}
-                      >
-                        {zh ? '恢复' : 'Resume'}
-                      </button>
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={async () => {
-                          setCollabBusy(p.id);
-                          try {
-                            const r = await sampleProcessRss(p.id, p.session_id || null);
-                            addToast(
-                              zh
-                                ? `RSS ${String((r as { rss_bytes?: number }).rss_bytes ?? '—')} · over=${String((r as { over_limit?: boolean }).over_limit)}`
-                                : `RSS sample done`,
-                              'info',
-                            );
-                          } catch { /* toast */ } finally { setCollabBusy(null); }
-                        }}
-                        style={{
-                          fontSize: 11, padding: '4px 10px', borderRadius: 6, cursor: busy ? 'wait' : 'pointer',
-                          border: '1px solid var(--border-subtle)', background: 'var(--card-bg)',
-                        }}
-                      >
-                        RSS
-                      </button>
-                    </div>
-                  );
-                })
-            )}
-            <div style={{ fontSize: 11, color: 'var(--foreground-dim)', marginTop: 10 }}>
-              POST /api/kernel/collab/interrupt · resume · POST …/resources/&#123;id&#125;/sample-rss
+              {procs
+                .filter((p) => p.state === 'running' || p.state === 'suspended')
+                .slice(0, 4)
+                .map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const r = await sampleProcessRss(p.id, p.session_id || null);
+                        addToast(
+                          zh
+                            ? `RSS ${String((r as { rss_bytes?: number }).rss_bytes ?? '—')}`
+                            : 'RSS sample done',
+                          'info',
+                        );
+                      } catch { /* toast */ }
+                    }}
+                    style={{
+                      fontSize: 11, padding: '4px 10px', borderRadius: 6, marginRight: 6, marginBottom: 4,
+                      border: '1px solid var(--border-subtle)', background: 'var(--card-bg)', cursor: 'pointer',
+                    }}
+                  >
+                    RSS · {String(p.identity || p.id).slice(0, 12)}
+                  </button>
+                ))}
             </div>
           </div>
         </div>

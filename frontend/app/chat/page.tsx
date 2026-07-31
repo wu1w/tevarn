@@ -21,7 +21,8 @@ import { useAuthStore } from '@/stores/authStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { Message, StatusUpdateMessage, StreamDeltaMessage, GoalUpdateMessage, GoalState, ToolEventMessage, RunEventMessage } from '@/types';
 import { useTerminalStore } from '@/stores/terminalStore';
-import { generateImage, resumeSessionRun } from '@/lib/api';
+import { generateImage, type SessionRecoveryPayload } from '@/lib/api';
+import { ChatRecoveryCard } from '@/components/chat/ChatRecoveryCard';
 import { generateUUID } from '@/lib/uuid';
 import { useRouter, useSearchParams } from 'next/navigation';
 import type { ToolCallData } from '@/components/chat/ToolCallPanel';
@@ -93,6 +94,7 @@ function ChatPageInner() {
     const [isDragging, setIsDragging] = useState(false);
     const composerRef = useRef<MessageInputHandle | null>(null);
     const [previewArtifact, setPreviewArtifact] = useState<ChatArtifact | null>(null);
+    const [recovery, setRecovery] = useState<SessionRecoveryPayload | null>(null);
 
     // 开发冒烟：允许 Playwright 注入消息 / 打开预览
     React.useEffect(() => {
@@ -238,9 +240,27 @@ function ChatPageInner() {
               setIsTaskPanelOpen(true);
             }
           }
+          // R-02：仅在可恢复时展示卡片
+          if (cp?.recovery?.show) {
+            setRecovery(cp.recovery);
+          } else if (cp?.can_resume) {
+            setRecovery({
+              show: true,
+              can_resume: true,
+              exit: {
+                code: 'checkpoint_resume',
+                title: '可从断点续跑',
+                message: '检测到未完成的 Goal / checkpoint。',
+                severity: 'info',
+              },
+            });
+          } else {
+            setRecovery(null);
+          }
         } catch (e) {
           const status = (e as { response?: { status?: number } })?.response?.status;
           if (status && status !== 404) console.warn('restore goal failed', e);
+          setRecovery(null);
         }
       })();
       return () => {
@@ -1136,38 +1156,17 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
                           <SessionRunsPanel sessionId={currentSession.id} compact />
                         </div>
                       ) : null}
-                      {/* Phase 4.3：停止后一键续跑（干净 checkpoint → resume） */}
+                      {/* R-02：条件恢复卡片（can_resume / 可恢复 exit） */}
                       {currentSession?.id && !isStreaming ? (
-                        <div className="mx-3 mb-2 flex items-center justify-between gap-2 rounded-lg border border-brand-purple/25 bg-brand-purple/5 px-3 py-1.5 text-[11px]">
-                          <span className="text-foreground-dim">
-                            {t('chat.resumeHint') || '任务中断？可从 checkpoint 一键续跑'}
-                          </span>
-                          <button
-                            type="button"
-                            className="rounded px-2 py-0.5 font-semibold text-brand-purple hover:bg-brand-purple/10"
-                            onClick={async () => {
-                              try {
-                                const r = (await resumeSessionRun(currentSession.id)) as {
-                                  resumed?: boolean;
-                                  detail?: string;
-                                };
-                                if (r?.resumed) {
-                                  addToast(t('chat.resumeOk') || '已触发续跑', 'success');
-                                  setIsStreaming(true);
-                                } else {
-                                  addToast(
-                                    r?.detail || t('chat.resumeEmpty') || '无可续跑内容',
-                                    'info',
-                                  );
-                                }
-                              } catch {
-                                /* interceptor */
-                              }
-                            }}
-                          >
-                            {t('chat.resumeBtn') || '一键续跑'}
-                          </button>
-                        </div>
+                        <ChatRecoveryCard
+                          sessionId={currentSession.id}
+                          recovery={recovery}
+                          zh
+                          onResumed={() => {
+                            setIsStreaming(true);
+                            setRecovery(null);
+                          }}
+                        />
                       ) : null}
                       <MessageInput
                                               ref={composerRef}
