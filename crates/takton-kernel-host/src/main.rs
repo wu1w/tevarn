@@ -2333,7 +2333,22 @@ async fn handle_connection(runtime: Arc<Runtime>, stream: TcpStream) {
         if line.is_empty() {
             continue;
         }
-        let resp = dispatch(&runtime, &line);
+        // spawn_blocking: sync dispatch must not occupy a Tokio worker.
+        // A stuck/long mediate on one connection previously starved all other
+        // clients (UI panel 500s / ping timeout) when workers blocked on locks.
+        let rt = runtime.clone();
+        let resp = match tokio::task::spawn_blocking(move || dispatch(&rt, &line)).await {
+            Ok(v) => v,
+            Err(e) => {
+                warn!("dispatch join failed: {e}");
+                err_resp(
+                    serde_json::Value::Null,
+                    -32603,
+                    format!("dispatch join: {e}"),
+                    None,
+                )
+            }
+        };
         let mut out = serde_json::to_string(&resp).unwrap_or_else(|_| {
             r#"{"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"serialize"}}"#
                 .into()

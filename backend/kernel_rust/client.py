@@ -19,20 +19,20 @@ from typing import Any, Literal
 logger = logging.getLogger(__name__)
 
 DEFAULT_HOST = os.environ.get("TAKTON_KERNEL_HOST", "127.0.0.1:17890")
-_RPC_TIMEOUT = float(os.environ.get("TAKTON_KERNEL_RPC_TIMEOUT", "20"))
-# Full host restart wipes the in-memory process table. Concurrent RPC failures
-# must not thrash-restart (taskkill) the host — that was the assign "未知进程
-# (host reconnect)" cascade. Soft reconnect first; hard restart only when the
-# port is dead or the host is proven unresponsive after soft retries.
+# Agent mediate can be slower; UI side-channel uses _UI_RPC_TIMEOUT.
+_RPC_TIMEOUT = float(os.environ.get("TAKTON_KERNEL_RPC_TIMEOUT", "8"))
+_UI_RPC_TIMEOUT = float(os.environ.get("TAKTON_KERNEL_UI_RPC_TIMEOUT", "2.0"))
+# Full host restart wipes the in-memory process table. Prefer soft reconnect;
+# hard restart only when host is proven stuck (port up, ping dead) after soft fails.
 _RESTART_COOLDOWN_S = float(os.environ.get("TAKTON_KERNEL_RESTART_COOLDOWN", "8.0"))
 _recovery_lock = threading.Lock()
 _last_hard_restart_at = 0.0
-# Single worker: all host RPC on one thread so the asyncio event loop is never
-# blocked by 10–20s mediate/reconnect (that made Next proxy return 500 during CEO runs).
+# Agent RPC executor (serial). UI reads use a separate ephemeral TCP client so a
+# stuck mediate cannot queue-block panel APIs (Next proxy 500 / socket hang up).
 _RPC_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="kernel-rpc")
-_RPC_RESULT_TIMEOUT = float(os.environ.get("TAKTON_KERNEL_RPC_RESULT_TIMEOUT", "90"))
-# Background / best-effort RPCs must NEVER hard-restart the host (they race with
-# CEO mediate/rehydrate and produce closed-connection storms).
+_UI_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="kernel-ui")
+_RPC_RESULT_TIMEOUT = float(os.environ.get("TAKTON_KERNEL_RPC_RESULT_TIMEOUT", "40"))
+# Background / best-effort RPCs: soft reconnect only (never taskkill).
 _SOFT_ONLY_METHODS = frozenset(
     {
         "inbox_reclaim",
@@ -44,7 +44,31 @@ _SOFT_ONLY_METHODS = frozenset(
         "health",
         "list_methods",
         "list_processes",
+        "list_escalations",
         "get_process",
+        "iteration_consume",
+        "iteration_status",
+    }
+)
+# Dashboard / panel methods: always use UI side-channel (short timeout, own socket).
+_UI_SIDECHANNEL_METHODS = frozenset(
+    {
+        "ping",
+        "health",
+        "list_methods",
+        "list_processes",
+        "list_escalations",
+        "get_process",
+        "abi_version",
+        "tool_catalog",
+        "run_gate_status",
+        "llm_status",
+        "cost_panel",
+        "service_list",
+        "service_status",
+        "cache_metrics",
+        "marathon_metrics",
+        "eval_status",
     }
 )
 
@@ -267,8 +291,13 @@ class RustKernelProcess:
 
 
 class _JsonRpcClient:
-    def __init__(self, host: str = DEFAULT_HOST) -> None:
+    def __init__(
+        self, host: str = DEFAULT_HOST, *, rpc_timeout: float | None = None
+    ) -> None:
         self.host = host
+        self.rpc_timeout = float(
+            rpc_timeout if rpc_timeout is not None else _RPC_TIMEOUT
+        )
         self._lock = threading.Lock()
         self._sock: socket.socket | None = None
         self._recv_buf = bytearray()
@@ -286,12 +315,16 @@ class _JsonRpcClient:
             h, p = self._parse_addr()
             last_err: Exception | None = None
             n = int(attempts if attempts is not None else 12)
-            # 首次建连用短超时；RPC 读写仍用 _RPC_TIMEOUT
-            cto = float(connect_timeout if connect_timeout is not None else min(1.5, _RPC_TIMEOUT))
+            # 首次建连用短超时；RPC 读写用本 client 的 rpc_timeout
+            cto = float(
+                connect_timeout
+                if connect_timeout is not None
+                else min(1.5, self.rpc_timeout)
+            )
             for attempt in range(max(1, n)):
                 try:
                     s = socket.create_connection((h, p), timeout=cto)
-                    s.settimeout(_RPC_TIMEOUT)
+                    s.settimeout(self.rpc_timeout)
                     # 禁用 Nagle，降低小 JSON 行延迟
                     try:
                         s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -330,7 +363,7 @@ class _JsonRpcClient:
                 chunk = self._sock.recv(65536)
             except socket.timeout as e:
                 raise TimeoutError(
-                    f"kernel host RPC read timeout ({_RPC_TIMEOUT}s)"
+                    f"kernel host RPC read timeout ({self.rpc_timeout}s)"
                 ) from e
             if not chunk:
                 raise ConnectionError("kernel host closed connection")
@@ -711,39 +744,73 @@ class RustAgentKernel:
         return ok
 
     def _host_responsive(self, timeout: float = 1.5) -> bool:
-        """Liveness via main socket only (no second TCP client).
-
-        A throwaway probe socket raced with the main client and contributed to
-        closed-connection storms under load.
-        """
+        """Liveness via short-lived UI socket (does not touch agent socket)."""
         if not is_rust_host_available(self._host):
             return False
+        probe: _JsonRpcClient | None = None
         try:
-            self._rpc.close()
-            self._rpc.connect(attempts=2, connect_timeout=0.4)
-            if self._rpc._sock is not None:
-                self._rpc._sock.settimeout(timeout)
-            pong = self._rpc.call("ping")
-            # restore normal RPC timeout
-            if self._rpc._sock is not None:
-                self._rpc._sock.settimeout(_RPC_TIMEOUT)
+            probe = _JsonRpcClient(self._host, rpc_timeout=timeout)
+            probe.connect(attempts=2, connect_timeout=0.4)
+            pong = probe.call("ping")
             return pong is not None
         except Exception as e:
             logger.debug("host responsive probe failed: %s", e)
+            return False
+        finally:
+            if probe is not None:
+                try:
+                    probe.close()
+                except Exception:
+                    pass
+
+    def _call_ui(
+        self, method: str, params: dict[str, Any] | None = None
+    ) -> Any:
+        """Dashboard side-channel: own TCP socket + short timeout.
+
+        Never shares the agent socket / single-worker queue, so a stuck mediate
+        cannot freeze panel APIs (browser 500 via Next proxy hang-up).
+
+        On failure: fail fast (caller degrades to empty). Do NOT hard-restart from
+        UI path — concurrent panel polls would thrash-kill the host.
+        """
+        client = _JsonRpcClient(self._host, rpc_timeout=_UI_RPC_TIMEOUT)
+        try:
+            client.connect(attempts=2, connect_timeout=0.4)
+            return client.call(method, params)
+        finally:
             try:
-                if self._rpc._sock is not None:
-                    self._rpc._sock.settimeout(_RPC_TIMEOUT)
+                client.close()
             except Exception:
                 pass
-            return False
 
     def _call(self, method: str, params: dict[str, Any] | None = None) -> Any:
         """JSON-RPC with reconnect (sync). Prefer ``_acall`` from async code.
 
-        Always runs on the dedicated kernel-rpc thread so concurrent callers
-        serialize on the host socket. Sync callers still block their own thread
-        (not ideal on the asyncio loop — use ``_acall`` / ``asyncio.to_thread``).
+        UI/read methods use a side-channel socket. Agent methods run on the
+        dedicated kernel-rpc thread (serial host socket).
         """
+        if method in _UI_SIDECHANNEL_METHODS:
+            try:
+                if threading.current_thread().name.startswith("kernel-ui"):
+                    return self._call_ui(method, params)
+                fut = _UI_EXECUTOR.submit(self._call_ui, method, params)
+                return fut.result(timeout=max(6.0, _UI_RPC_TIMEOUT * 3))
+            except Exception as e:
+                # Degraded empty for list-like UI methods so panels stay up
+                logger.warning("kernel UI RPC %s failed: %s", method, e)
+                if method == "list_methods":
+                    return {"methods": []}
+                if method == "list_processes":
+                    return {"processes": []}
+                if method == "list_escalations":
+                    return {"escalations": []}
+                if method == "health":
+                    return {"ok": False, "error": str(e)[:200]}
+                if method == "ping":
+                    return None
+                raise
+
         if threading.current_thread().name.startswith("kernel-rpc"):
             with self._call_lock:
                 return self._call_locked(method, params)
@@ -761,6 +828,10 @@ class RustAgentKernel:
     ) -> Any:
         """Async RPC: does not block the uvicorn event loop (UI polls stay alive)."""
         loop = asyncio.get_running_loop()
+        if method in _UI_SIDECHANNEL_METHODS:
+            return await loop.run_in_executor(
+                _UI_EXECUTOR, self._call_ui, method, params
+            )
         return await loop.run_in_executor(
             _RPC_EXECUTOR,
             self._invoke_call,
@@ -769,12 +840,8 @@ class RustAgentKernel:
         )
 
     def _call_locked(self, method: str, params: dict[str, Any] | None = None) -> Any:
-        """Single RPC under lock. Recovery is soft-only by default.
-
-        Automatic hard-restart (taskkill) is DISABLED here: it wiped the process
-        table between rehydrate create_process and mediate, which is exactly the
-        CEO assign storm (new process id every retry, closed connection).
-        Hard restart remains available via host_restart API / ``_hard_recover_host``.
+        """Single RPC under lock. Soft reconnect first; hard-restart only if host
+        is proven stuck (port up but ping dead) after soft retries — never thrash.
         """
         soft_only = method in _SOFT_ONLY_METHODS
         try:
@@ -789,7 +856,7 @@ class RustAgentKernel:
             raise
         except (ConnectionError, OSError, BrokenPipeError, TimeoutError, socket.timeout) as e:
             last: BaseException = e
-            max_attempts = 2 if soft_only else 4
+            max_attempts = 2 if soft_only else 3
             for attempt in range(1, max_attempts + 1):
                 logger.warning(
                     "kernel RPC %s failed (%s); soft-reconnect %s/%s",
@@ -803,17 +870,27 @@ class RustAgentKernel:
                 try:
                     host_up = bool(is_rust_host_available(self._host))
                     if not host_up:
-                        # Port dead only: start host (no taskkill of a live host).
                         started = bool(start_kernel_host(self._host))
                         if started:
                             self._mark_host_wiped()
                             wiped = True
                             time.sleep(0.2)
-                    # Never auto taskkill here — that was the assign thrash root cause.
+                    elif (
+                        not soft_only
+                        and attempt >= max_attempts
+                        and isinstance(last, (TimeoutError, socket.timeout))
+                    ):
+                        # Host port open but agent RPC stuck (e.g. mediate hang):
+                        # one hard restart with cooldown — panels use UI channel.
+                        if not self._host_responsive(timeout=1.0):
+                            wiped = self._hard_recover_host(
+                                reason=f"stuck-timeout method={method}"
+                            )
                 except Exception as re:
                     logger.debug("host soft recover after RPC fail: %s", re)
                 try:
-                    self._soft_reconnect()
+                    if not wiped or self._rpc._sock is None:
+                        self._soft_reconnect()
                     if wiped or not getattr(self, "_abi_checked", False):
                         try:
                             self._assert_abi_or_fail()
@@ -837,7 +914,7 @@ class RustAgentKernel:
                     socket.timeout,
                 ) as e2:
                     last = e2
-                    time.sleep(0.25 * attempt)
+                    time.sleep(0.2 * attempt)
                     continue
             raise last
 
