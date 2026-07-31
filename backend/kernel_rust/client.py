@@ -1508,13 +1508,32 @@ class RustAgentKernel:
         target: str,
         args: dict[str, Any] | None = None,
     ) -> MediationDecision:
+        # Defense-in-depth: never ship live objects (e.g. ConnectionManager) over RPC.
+        safe_args: dict[str, Any] = {}
+        if isinstance(args, dict):
+            try:
+                from backend.kernel.tool_gate import sanitize_args_for_kernel
+
+                safe_args = sanitize_args_for_kernel(args)
+            except Exception:
+                for k, v in args.items():
+                    if str(k).startswith("_") and str(k) not in (
+                        "_kernel_process_id",
+                        "_session_id",
+                    ):
+                        continue
+                    try:
+                        json.dumps(v, default=str)
+                        safe_args[str(k)] = v
+                    except Exception:
+                        safe_args[str(k)] = str(v)[:500]
         r = self._call(
             "mediate",
             {
                 "process_id": process_id,
                 "action": action,
                 "target": target,
-                "args": args or {},
+                "args": safe_args,
             },
         )
         return MediationDecision(

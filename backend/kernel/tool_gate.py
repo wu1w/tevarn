@@ -16,6 +16,7 @@
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -42,6 +43,52 @@ _AGENT_CONTEXT_KEYS = (
     "_kernel_process_id",
     "_process_id",
 )
+
+# 注入到工具 args 的服务端对象，绝不可进入 Rust RPC / 审计 JSON。
+_INTERNAL_ARG_DROP = frozenset({
+    "_ws_manager",
+    "ws_manager",
+    "connection_manager",
+    "_run_recorder",
+    "_tool_gate_passed",
+    "_tool_gate_internal",
+})
+
+
+def sanitize_args_for_kernel(arguments: dict[str, Any] | None) -> dict[str, Any]:
+    """Strip non-JSON / live objects before kernel mediate / charge / RPC.
+
+    tool_round injects ``_ws_manager=ConnectionManager`` for confirmation UI;
+    that must never be serialized into host ``mediate`` params (TypeError →
+    total tool paralysis).
+    """
+    if not isinstance(arguments, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for k, v in arguments.items():
+        ks = str(k)
+        if ks in _INTERNAL_ARG_DROP:
+            continue
+        # Live service objects (WebSocket manager, DB sessions, etc.)
+        tname = type(v).__name__
+        if tname in (
+            "ConnectionManager",
+            "AsyncSession",
+            "Session",
+            "ClientSession",
+            "WebSocket",
+        ):
+            continue
+        if callable(v) and not isinstance(v, (str, bytes, bytearray)):
+            continue
+        try:
+            out[ks] = json.loads(json.dumps(v, ensure_ascii=False, default=str))
+        except Exception:
+            try:
+                out[ks] = str(v)[:2000]
+            except Exception:
+                continue
+    return out
 
 
 def extract_process_id(arguments: dict[str, Any] | None) -> str | None:
@@ -124,7 +171,12 @@ async def mediate_tool_call(
     from backend.kernel import get_kernel
 
     k = get_kernel()
-    await k.mediate(process_id, "tool_call", name, args=arguments or {})
+    await k.mediate(
+        process_id,
+        "tool_call",
+        name,
+        args=sanitize_args_for_kernel(arguments),
+    )
 
 
 def charge_for_tool(name: str, process_id: str, arguments: dict[str, Any] | None = None) -> None:
@@ -151,9 +203,11 @@ def charge_for_tool(name: str, process_id: str, arguments: dict[str, Any] | None
         _charge(k, process_id, "child_proc", 1)
     # T3：按参数体量预扣 io_write_bytes（逻辑账户，防止 runaway 写）
     try:
-        import json as _json
-
-        raw = _json.dumps(arguments or {}, ensure_ascii=False, default=str)
+        raw = json.dumps(
+            sanitize_args_for_kernel(arguments),
+            ensure_ascii=False,
+            default=str,
+        )
         nbytes = len(raw.encode("utf-8", errors="replace"))
         if nbytes >= 4096:
             _charge(k, process_id, "io_write_bytes", nbytes)
@@ -223,9 +277,11 @@ async def enforce_tool_gate(
 
     from backend.kernel import KernelPermissionError, get_kernel
 
+    # Mediate only JSON-safe user args (never live ConnectionManager / recorder).
+    mediate_args = sanitize_args_for_kernel(args)
     try:
         k = get_kernel()
-        await k.mediate(pid, "tool_call", name, args=args)
+        await k.mediate(pid, "tool_call", name, args=mediate_args)
     except KernelPermissionError as e:
         logger.warning("tool_gate mediate deny tool=%s proc=%s: %s", name, pid[:12], e)
         return args, f"Error: Kernel 权限拒绝——{e}"
