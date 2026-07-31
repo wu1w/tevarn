@@ -568,11 +568,48 @@ pub fn decide_tool(
 
 fn extract_path(args: Option<&Value>) -> Option<String> {
     let obj = args?.as_object()?;
-    for key in ["path", "file", "filepath", "file_path", "target", "filename"] {
+    // H2-B1: align with Python permission_court path keys
+    for key in [
+        "path",
+        "file",
+        "filepath",
+        "file_path",
+        "filename",
+        "target",
+        "src",
+        "dst",
+        "source",
+        "destination",
+        "directory",
+        "dir",
+        "cwd",
+        "working_directory",
+        "workdir",
+        "uri",
+        "url",
+    ] {
         if let Some(Value::String(s)) = obj.get(key) {
-            if !s.is_empty() {
-                return Some(s.clone());
+            let mut s = s.trim().to_string();
+            if s.is_empty() {
+                continue;
             }
+            if key == "url" || key == "uri" {
+                let low = s.to_ascii_lowercase();
+                if !low.starts_with("file:") {
+                    continue;
+                }
+                if let Some(rest) = s.strip_prefix("file://").or_else(|| s.strip_prefix("FILE://"))
+                {
+                    s = rest.trim_start_matches('/').to_string();
+                    // Windows file:///C:/...
+                    if s.len() >= 2 && s.as_bytes()[1] == b':' {
+                        // ok
+                    } else if !s.starts_with('/') {
+                        s = format!("/{s}");
+                    }
+                }
+            }
+            return Some(s);
         }
     }
     None

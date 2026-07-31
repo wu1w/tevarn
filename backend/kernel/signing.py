@@ -4,8 +4,9 @@
 工作流暂停恢复、外部存储）。无签名的 Token 反序列化时无法区分
 「Kernel 签发」与「调用方伪造」——伪造 `capabilities=["*"]` 即提权。
 
-方案：HMAC-SHA256，密钥从 jwt_secret 经 HKDF 派生（与 settings
-加密同源不同 info，互不可推）。签名覆盖 Token 全部语义字段。
+H2-C1 密钥优先级：
+1. ``TAKTON_TOKEN_HMAC_SECRET`` / ``settings.agent_token_hmac_secret``（推荐，与 JWT 解耦）
+2. 否则从 ``jwt_secret`` 经 HKDF 派生（兼容旧部署；泄露 JWT 仍可伪造 token）
 """
 
 from __future__ import annotations
@@ -14,32 +15,68 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 _HMAC_INFO = b"takton-kernel-token-hmac-v1"
 _key_cache: bytes | None = None
+_key_source: str = "unset"
 
 
 class TokenSignatureError(PermissionError):
     """Token 签名缺失或验证失败——按伪造处理，一律拒绝。"""
 
 
+def hmac_key_source() -> str:
+    """env | settings | derived_jwt — for health/dashboard."""
+    _hmac_key()
+    return _key_source
+
+
 def _hmac_key() -> bytes:
-    global _key_cache
-    if _key_cache is None:
-        from cryptography.hazmat.primitives import hashes
-        from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+    global _key_cache, _key_source
+    if _key_cache is not None:
+        return _key_cache
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
-        from backend.core.config import settings
+    # 1) dedicated secret (production preferred)
+    dedicated = (os.environ.get("TAKTON_TOKEN_HMAC_SECRET") or "").strip()
+    if not dedicated:
+        try:
+            from backend.core.config import settings
 
+            dedicated = str(
+                getattr(settings, "agent_token_hmac_secret", "") or ""
+            ).strip()
+        except Exception:
+            dedicated = ""
+    if len(dedicated) >= 16:
         _key_cache = HKDF(
             algorithm=hashes.SHA256(),
             length=32,
             salt=None,
-            info=_HMAC_INFO,
-        ).derive(settings.jwt_secret.encode("utf-8"))
+            info=_HMAC_INFO + b"|dedicated",
+        ).derive(dedicated.encode("utf-8"))
+        _key_source = "dedicated"
+        return _key_cache
+
+    # 2) legacy: derive from jwt_secret
+    from backend.core.config import settings
+
+    _key_cache = HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=None,
+        info=_HMAC_INFO,
+    ).derive(settings.jwt_secret.encode("utf-8"))
+    _key_source = "derived_jwt"
+    logger.warning(
+        "H2: token HMAC derived from jwt_secret; set TAKTON_TOKEN_HMAC_SECRET "
+        "to decouple JWT and capability signing"
+    )
     return _key_cache
 
 

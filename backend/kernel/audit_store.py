@@ -17,26 +17,72 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_PATH = os.path.expanduser("~/.takton/kernel_events.jsonl")
 _TAIL_LOAD_LIMIT = 200  # 启动时只回放尾部，链验证按需全量读文件
+# H2-C2 rotation defaults
+_MAX_BYTES = int(os.environ.get("TAKTON_AUDIT_MAX_BYTES", str(32 * 1024 * 1024)) or 0) or (
+    32 * 1024 * 1024
+)
+_KEEP_SEGMENTS = int(os.environ.get("TAKTON_AUDIT_KEEP_SEGMENTS", "7") or 7)
 
 
 class AuditEventStore:
-    """线程安全的 JSONL 追加存储 + 链尾恢复。"""
+    """线程安全的 JSONL 追加存储 + 链尾恢复 + 按大小 rotation。"""
 
     def __init__(self, path: str | None = None) -> None:
         self._path = path or _DEFAULT_PATH
         self._lock = threading.Lock()
+        self._max_bytes = _MAX_BYTES
+        self._keep = max(1, _KEEP_SEGMENTS)
 
     @property
     def path(self) -> str:
         return self._path
 
+    def _rotate_if_needed(self) -> None:
+        """When active file exceeds max_bytes, rename to .1.jsonl and cascade."""
+        try:
+            if not os.path.isfile(self._path):
+                return
+            if os.path.getsize(self._path) < self._max_bytes:
+                return
+            base = self._path
+            # cascade: .(keep-1) <- ... <- .1 <- active
+            for i in range(self._keep - 1, 0, -1):
+                src = f"{base}.{i}"
+                dst = f"{base}.{i + 1}"
+                if os.path.isfile(src):
+                    try:
+                        if os.path.isfile(dst):
+                            os.remove(dst)
+                        os.replace(src, dst)
+                    except OSError:
+                        pass
+            # drop oldest beyond keep
+            oldest = f"{base}.{self._keep + 1}"
+            if os.path.isfile(oldest):
+                try:
+                    os.remove(oldest)
+                except OSError:
+                    pass
+            rotated = f"{base}.1"
+            try:
+                if os.path.isfile(rotated):
+                    os.remove(rotated)
+                os.replace(base, rotated)
+                logger.info("H2 audit rotated %s → %s", base, rotated)
+            except OSError as e:
+                logger.warning("audit rotate failed: %s", e)
+        except OSError as e:
+            logger.debug("audit rotate check: %s", e)
+
     def append(self, event_dict: dict[str, Any]) -> bool:
         """追加一条事件。返回是否成功（失败告警不抛）。"""
         try:
-            os.makedirs(os.path.dirname(self._path), exist_ok=True)
+            os.makedirs(os.path.dirname(self._path) or ".", exist_ok=True)
             line = json.dumps(event_dict, ensure_ascii=False, default=str)
-            with self._lock, open(self._path, "a", encoding="utf-8") as f:
-                f.write(line + "\n")
+            with self._lock:
+                self._rotate_if_needed()
+                with open(self._path, "a", encoding="utf-8") as f:
+                    f.write(line + "\n")
             return True
         except OSError as e:
             logger.warning("kernel 审计落盘失败（不阻断）: %s", e)

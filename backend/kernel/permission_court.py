@@ -590,30 +590,67 @@ def _check_deny_layers(name: str, args: dict[str, Any]) -> CourtDecision | None:
     return None
 
 
+# H2-B1: common tool arg keys that carry filesystem paths
+_PATH_ARG_KEYS = (
+    "path",
+    "file",
+    "filepath",
+    "file_path",
+    "filename",
+    "target",
+    "src",
+    "dst",
+    "source",
+    "destination",
+    "directory",
+    "dir",
+    "cwd",
+    "uri",
+    "url",  # file:// only checked below
+    "working_directory",
+    "workdir",
+)
+
+
+def _extract_path_candidates(args: dict[str, Any]) -> list[str]:
+    out: list[str] = []
+    for k in _PATH_ARG_KEYS:
+        v = args.get(k)
+        if v is None:
+            continue
+        s = str(v).strip()
+        if not s:
+            continue
+        if k in ("url", "uri") and not s.lower().startswith("file:"):
+            continue
+        if s.lower().startswith("file://"):
+            s = s[7:]
+            if s.startswith("/") and len(s) > 2 and s[2] == ":":
+                # file:///C:/...
+                s = s.lstrip("/")
+        out.append(s)
+    return out
+
+
 def _check_path_permission(name: str, args: dict[str, Any]) -> CourtDecision | None:
     digest = args_digest(name, args)
-    path = str(
-        args.get("path")
-        or args.get("file")
-        or args.get("filepath")
-        or args.get("target")
-        or ""
-    ).strip()
-    if not path:
+    candidates = _extract_path_candidates(args)
+    if not candidates:
         return None
     try:
         from backend.tools.permissions import ToolPermissionManager
 
         mgr = ToolPermissionManager()
-        if not mgr.is_path_allowed(path):
-            return CourtDecision(
-                tool=name,
-                args_digest=digest,
-                verdict="deny",
-                matched_rule="path:whitelist",
-                layer="path",
-                reason=f"path not allowed: {path[:120]}",
-            )
+        for path in candidates:
+            if not mgr.is_path_allowed(path):
+                return CourtDecision(
+                    tool=name,
+                    args_digest=digest,
+                    verdict="deny",
+                    matched_rule="path:whitelist",
+                    layer="path",
+                    reason=f"path not allowed: {path[:120]}",
+                )
     except Exception as e:
         logger.debug("path permission: %s", e)
     return None

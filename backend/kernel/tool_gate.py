@@ -82,7 +82,22 @@ def _kernel_enabled() -> bool:
     try:
         from backend.core.config import settings
 
-        return bool(getattr(settings, "agent_kernel_enabled", True))
+        enabled = bool(getattr(settings, "agent_kernel_enabled", True))
+        if enabled:
+            return True
+        # H2-A3: disabling kernel only legal under DEV_UNSAFE / test
+        from backend.kernel.production_guard import allow_kernel_disabled
+
+        if allow_kernel_disabled():
+            logger.warning(
+                "agent_kernel_enabled=False accepted (DEV_UNSAFE/test only)"
+            )
+            return False
+        logger.error(
+            "H2: agent_kernel_enabled=False ignored in production — "
+            "set TAKTON_DEV_UNSAFE=1 to allow ungoverned mode"
+        )
+        return True
     except Exception:
         return True
 

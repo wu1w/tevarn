@@ -105,27 +105,46 @@ class LoopToolsMixin:
                             )
                         ) or []
                     if tool_matches_crew_caps(name, caps):
+                        # H2-B5: no local capabilities |=  — only escalate / re-issue via kernel
                         try:
                             k = get_kernel()
-                            proc = None
-                            if hasattr(k, "_resolve_process"):
-                                proc = k._resolve_process(kernel_proc.id)
-                            if proc is not None and getattr(proc, "capabilities", None) is not None:
-                                if name not in proc.capabilities:
-                                    proc.capabilities = sorted(
-                                        set(proc.capabilities) | {name}
+                            from backend.agent.grant_store import crew_cap_for_tool
+
+                            want = crew_cap_for_tool(name) or name
+                            esc = None
+                            if hasattr(k, "request_escalation"):
+                                esc = await k.request_escalation(
+                                    kernel_proc.id,
+                                    [want],
+                                    reason=f"workforce identity grant for tool {name}",
+                                )
+                            # Auto-approve only when approval rules allow (kernel side)
+                            if esc is not None and hasattr(k, "approve_escalation"):
+                                try:
+                                    from backend.core.config import settings as _st
+
+                                    auto = bool(
+                                        getattr(
+                                            _st,
+                                            "agent_kernel_auto_escalate",
+                                            True,
+                                        )
                                     )
-                                    if hasattr(k, "_persist_process"):
-                                        k._persist_process(proc)
-                                    if hasattr(k, "_share_process"):
-                                        k._share_process(proc)
-                                    logger.info(
-                                        "steward silent expand tool=%s proc=%s",
-                                        name,
-                                        kernel_proc.id,
-                                    )
+                                    if auto and getattr(esc, "status", "") == "pending":
+                                        await k.approve_escalation(
+                                            getattr(esc, "id", ""),
+                                            by="system:workforce_identity",
+                                        )
+                                        logger.info(
+                                            "workforce escalate+approve tool=%s cap=%s proc=%s",
+                                            name,
+                                            want,
+                                            kernel_proc.id,
+                                        )
+                                except Exception as ae:
+                                    logger.debug("workforce auto-approve skip: %s", ae)
                         except Exception as se:
-                            logger.debug("steward silent expand skip: %s", se)
+                            logger.debug("workforce escalate path skip: %s", se)
                         # 清掉 passed/internal 标记后强制再 gate 一次（含 charge）
                         arguments.pop("_tool_gate_passed", None)
                         arguments.pop("_tool_gate_internal", None)
@@ -137,7 +156,7 @@ class LoopToolsMixin:
                         if gate_err2:
                             return (
                                 f"{gate_err2}"
-                                "（编制策略已尝试扩权仍失败；请 CEO 在权限看板检查该员工能力）"
+                                "（编制已走提权通道仍失败；请 CEO 在 /approvals 批准）"
                                 if "权限拒绝" in gate_err2
                                 else gate_err2
                             )

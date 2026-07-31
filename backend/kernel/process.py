@@ -164,7 +164,12 @@ class AgentProcess:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AgentProcess":
-        """从 Redis/DB 字典水合（无 resume Event；跨 worker 挂起靠 state 轮询）。"""
+        """从 Redis/DB 字典水合。
+
+        H2-B3：重建 ``_resume_event``（suspended → clear；其余 set），
+        避免跨 worker 水合后丢唤醒语义。
+        H2-B2：token 默认 verify=True；仅历史无签名数据在 DEV 路径放宽。
+        """
         proc = cls(
             identity=str(data.get("identity") or "main"),
             session_id=data.get("session_id"),
@@ -180,12 +185,31 @@ class AgentProcess:
             exit_reason=data.get("exit_reason"),
             meta=dict(data.get("meta") or {}),
         )
+        # Rebuild suspend/resume Event after hydrate
+        try:
+            import asyncio
+
+            ev = asyncio.Event()
+            if proc.state == "suspended":
+                # leave cleared so waiters block until resume()
+                pass
+            else:
+                ev.set()
+            proc._resume_event = ev
+        except Exception:
+            proc._resume_event = None
+
         tok = data.get("token")
         if isinstance(tok, dict) and tok.get("capabilities") is not None:
             try:
                 from backend.kernel.capability import CapabilityToken
+                from backend.kernel.production_guard import is_dev_unsafe
 
-                proc.token = CapabilityToken.from_dict(tok, verify=False)
+                verify = True
+                if not tok.get("sig") and is_dev_unsafe():
+                    verify = False
+                proc.token = CapabilityToken.from_dict(tok, verify=verify)
             except Exception:
+                # Signature fail: drop token (do not inject forged caps)
                 proc.token = None
         return proc

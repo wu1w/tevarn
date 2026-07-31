@@ -24,8 +24,20 @@ takton-kernel-host  ──►  takton-runtime  ──►  takton-kernel
 Python 侧：
 
 - `backend/kernel_rust/` — RPC 客户端，API 兼容原 `AgentKernel`
-- `backend/kernel/kernel.py::get_kernel()` — 默认走 Rust，失败回退 Python
+- `backend/kernel/kernel.py::get_kernel()` — **生产必须 Rust host**；失败时：
+  - 默认 **raise**（H2）
+  - 仅 `TAKTON_DEV_UNSAFE=1` 或 `TAKTON_KERNEL_BACKEND=python` 才回退废弃 Python 实现
 - `backend/kernel/*.py` 中 **Identity / Inbox / Dispatcher / Evolution** 仍为 Python（依赖 SQLAlchemy / Agent Loop），作为 Runtime 适配器挂到 kernel
+- **禁止**在 `backend/kernel/kernel.py` 增加新权威业务逻辑（改 `crates/takton-kernel`）
+
+### 权威边界（H2）
+
+| 职责 | 权威 | 备注 |
+|------|------|------|
+| process / mediate / budget / audit / court / run_gate | **Rust** | host JSON-RPC |
+| tool schema 裁剪 | Rust `filter_tools` + Python `cap_tools` | 生产 None caps → 空表 |
+| Identity / Inbox / SQL | Python | 应用层 |
+| 单测直接 `AgentKernel()` | Python fixture | 非生产路径 |
 
 ## 构建
 
@@ -54,10 +66,13 @@ python start.py
 
 | 变量 | 说明 |
 |------|------|
-| `TAKTON_KERNEL_BACKEND` | `rust`（默认倾向）/ `python` |
+| `TAKTON_KERNEL_BACKEND` | `rust`（默认）/ `python`（仅 fixture） |
 | `TAKTON_KERNEL_HOST` | 默认 `127.0.0.1:17890` |
 | `TAKTON_KERNEL_HOST_BIN` | host 可执行文件路径 |
 | `TAKTON_KERNEL_AUTO_START` | `1` 时自动 spawn host |
+| `TAKTON_DEV_UNSAFE` | `1` 允许 Python fallback / 兼容全开（开发 only） |
+| `TAKTON_FORCE_PRODUCTION_GUARD` | `1` 在 test 中也强制生产守卫 |
+| `TAKTON_TOKEN_HMAC_SECRET` | CapabilityToken HMAC（与 JWT 解耦） |
 | `TAKTON_KERNEL_AUDIT_PATH` | 审计 JSONL 路径 |
 | `TAKTON_PKG_SIGNING_KEY` | 包市场签名密钥（生产必设，见 [PACKAGE_TRUST.md](./PACKAGE_TRUST.md)） |
 | `TAKTON_KERNEL_HOST_BIN` | host 可执行文件绝对路径 |

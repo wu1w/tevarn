@@ -657,7 +657,8 @@ class AgentKernel:
         try:
             from backend.core.config import settings as _st
 
-            enabled = bool(getattr(_st, "agent_budget_soft_renew_enabled", True))
+            hard_only = bool(getattr(_st, "agent_budget_hard_cap_only", False))
+            enabled = bool(getattr(_st, "agent_budget_soft_renew_enabled", True)) and not hard_only
             max_n = int(getattr(_st, "agent_budget_soft_renew_max", 12) or 12)
             factor = float(getattr(_st, "agent_budget_soft_renew_factor", 1.0) or 1.0)
             min_add = int(getattr(_st, "agent_budget_soft_renew_min_add", 200_000) or 200_000)
@@ -1460,14 +1461,16 @@ def get_kernel() -> Any:
 
     默认优先 **Rust Kernel Host**（``TAKTON_KERNEL_BACKEND=rust``）：
     进程表 / 能力 / mediate / 预算 / 审计链 / 资源账户在 ``takton-kernel`` 中。
-    若 host 不可用则回退 Python 实现（兼容测试与未编译场景）。
 
-    显式 ``TAKTON_KERNEL_BACKEND=python`` 强制旧路径。
+    H2：生产路径 **禁止** 静默降级到 Python（除非 ``TAKTON_DEV_UNSAFE=1``
+    或显式 ``TAKTON_KERNEL_BACKEND=python``）。
     """
     global _kernel_singleton, _kernel_persistence_singleton, _kernel_shared_singleton
     global _kernel_backend_active
     if _kernel_singleton is not None:
         return _kernel_singleton
+
+    from backend.kernel.production_guard import allow_python_kernel_fallback
 
     backend = _resolve_kernel_backend()
     if backend == "rust":
@@ -1478,9 +1481,8 @@ def get_kernel() -> Any:
                 started = start_kernel_host()
                 if not started:
                     logger.error(
-                        "P0-A: Rust kernel host failed to start. "
-                        "Control plane will fall back to DEPRECATED Python AgentKernel. "
-                        "Fix: cargo build -p takton-kernel-host --release "
+                        "H2: Rust kernel host failed to start. "
+                        "Fix: .\\scripts\\build-kernel-host.ps1 -Release "
                         "or set TAKTON_KERNEL_HOST_BIN. See docs/kernel-abi-v1.md"
                     )
             if is_rust_host_available():
@@ -1499,16 +1501,31 @@ def get_kernel() -> Any:
                 return _kernel_singleton
         except Exception as e:
             logger.error(
-                "Rust kernel init failed, fallback to DEPRECATED Python AgentKernel: %s",
+                "Rust kernel init failed: %s",
                 e,
                 exc_info=True,
+            )
+            if not allow_python_kernel_fallback():
+                raise RuntimeError(
+                    "H2: Rust kernel host required in production. "
+                    "Build: cargo build -p takton-kernel-host --release "
+                    "or .\\scripts\\build-kernel-host.ps1 -Release. "
+                    "Dev escape: TAKTON_DEV_UNSAFE=1 or TAKTON_KERNEL_BACKEND=python. "
+                    f"Cause: {e}"
+                ) from e
+
+        if not allow_python_kernel_fallback():
+            raise RuntimeError(
+                "H2: Rust kernel host unavailable and production guard forbids "
+                "Python fallback. Stage host: node scripts/ensure-vendor-host.mjs "
+                "or set TAKTON_DEV_UNSAFE=1 for local-only ungoverned mode."
             )
 
     _kernel_singleton = _build_python_kernel()
     _kernel_backend_active = "python"
     logger.warning(
-        "AgentKernel backend=python (DEPRECATED fallback). "
-        "Set TAKTON_KERNEL_BACKEND=rust and ensure host is running for production."
+        "AgentKernel backend=python (DEPRECATED fixture/fallback; DEV_UNSAFE or "
+        "TAKTON_KERNEL_BACKEND=python). Production must use rust host."
     )
     return _kernel_singleton
 

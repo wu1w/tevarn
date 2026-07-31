@@ -160,6 +160,17 @@ L0 Kernel（进程 / cap / 调度 / 隔离）████░░░░░░  ~45
 
 **目标**：不扩功能面；把 0.5 已有零件变成 **默认可依赖、可观测、可发布**。
 
+### 4.0 H2 — 收窄 · 强制 · 可观测（分析驱动，版本仍 0.5.0-alpha）
+
+| ID | 工作项 | 状态 |
+|----|--------|------|
+| H2-A | Intent→cap→schema 生产强制；None caps 空 schema；kernel 关闭仅 DEV_UNSAFE | ✅ |
+| H2-B | 路径 key 扩展；token verify；resume Event 重建；hard_cap_only；禁本地 cap 扩权 | ✅ |
+| H2-C | HMAC 与 JWT 解耦；审计 rotation；THREAT_MODEL | ✅ |
+| H2-D | 生产禁止静默 Python kernel fallback | ✅ |
+
+逃生舱：`TAKTON_DEV_UNSAFE=1` · `TAKTON_KERNEL_BACKEND=python` · 见 [THREAT_MODEL.md](./THREAT_MODEL.md)。
+
 ### 4.1 Hardening 工程清单
 
 | ID | 工作项 | 产出 | 优先级 | 状态 |

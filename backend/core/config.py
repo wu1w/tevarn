@@ -263,6 +263,8 @@ class Settings(BaseSettings):
     agent_workforce_budget_hard_cap: int = 2_000_000
     # 弹性预算：用尽前自动 top_up，避免长任务硬撞死（CEO 仍可 budgets/top_up 治理）
     agent_budget_soft_renew_enabled: bool = True
+    # H2-B4：硬顶模式 — 关闭 soft renew，预算用尽即停（与「硬顶」叙事一致）
+    agent_budget_hard_cap_only: bool = False
     # 剩余不足预估 或 已用占比 ≥ 此阈值时尝试续航
     agent_budget_soft_renew_threshold: float = 0.85
     # 每次续航追加 = max(原预算 * factor, min_add, 缺口*2)
@@ -270,6 +272,8 @@ class Settings(BaseSettings):
     agent_budget_soft_renew_min_add: int = 200_000
     # 单进程最多自动续航次数（防无限烧）
     agent_budget_soft_renew_max: int = 12
+    # H2-C1：CapabilityToken HMAC 专用密钥（≥16）；空则从 jwt_secret 派生
+    agent_token_hmac_secret: str = ""
     # 演化分析阈值（Alpha Review #3：参数化——研发型/运营型身份工作模式
     # 不同，阈值应可调而非统一硬编码；默认值与 alpha 常量一致）
     agent_evolution_min_samples: int = 5

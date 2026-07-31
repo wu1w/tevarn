@@ -412,8 +412,14 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 used_ratio = 0.0
                 if proc.token_budget and proc.token_budget > 0:
                     used_ratio = float(proc.tokens_used) / float(proc.token_budget)
+                hard_only = bool(
+                    getattr(settings, "agent_budget_hard_cap_only", False)
+                )
+                soft_on = bool(
+                    getattr(settings, "agent_budget_soft_renew_enabled", True)
+                ) and not hard_only
                 need_renew = remaining < estimated or used_ratio >= thr
-                if need_renew and remaining < estimated:
+                if soft_on and need_renew and remaining < estimated:
                     try:
                         from backend.kernel import get_kernel
 
@@ -697,6 +703,58 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     create_kwargs.pop("intent", None)
                     kernel_proc = await kernel.create_process(_akey, **create_kwargs)
                 await kernel.mark_running(kernel_proc.id)
+                # H2-A2: production must not run with capabilities=None (compat full-open)
+                try:
+                    from backend.kernel.production_guard import (
+                        allow_compat_full_open,
+                        emit_compat_denied,
+                    )
+
+                    if (
+                        getattr(kernel_proc, "capabilities", None) is None
+                        and not allow_compat_full_open()
+                    ):
+                        emit_compat_denied(
+                            kernel_proc.id,
+                            "create_process_compat_none",
+                            {"identity": _akey},
+                        )
+                        # Force default readonly intent if possible
+                        try:
+                            from backend.kernel.intent import (
+                                IntentDeclaration,
+                                apply_intent_to_process,
+                            )
+
+                            di = IntentDeclaration.from_dict(
+                                {
+                                    "goal": "h2 forced minimum privilege",
+                                    "capabilities": [],
+                                    "constraints": {},
+                                }
+                            )
+                            apply_intent_to_process(kernel, kernel_proc.id, di)
+                            fresh = kernel.get_process(kernel_proc.id)
+                            if fresh is not None:
+                                kernel_proc = fresh
+                        except Exception as _force_e:
+                            logger.error(
+                                "H2: cannot force intent on None caps: %s", _force_e
+                            )
+                            if bool(
+                                getattr(
+                                    settings,
+                                    "agent_kernel_fail_closed_on_create",
+                                    True,
+                                )
+                            ):
+                                raise RuntimeError(
+                                    "H2: process has capabilities=None in production"
+                                ) from _force_e
+                except RuntimeError:
+                    raise
+                except Exception as _pg:
+                    logger.debug("production guard post-create: %s", _pg)
                 # Intent apply if not already applied at create (Python fallback / late intent)
                 if intent_raw and not (
                     isinstance(getattr(kernel_proc, "meta", None), dict)
@@ -1160,6 +1218,29 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         tools = filter_tools_for_process(
             tools, getattr(self, "_kernel_process", None)
         )
+        # H2-E: thin observability — caps / visible tools on process meta + status
+        try:
+            kp = getattr(self, "_kernel_process", None)
+            caps_n = len(getattr(kp, "capabilities", None) or []) if kp else 0
+            if kp is not None and isinstance(getattr(kp, "meta", None), dict):
+                kp.meta["tools_visible_count"] = len(tools)
+                kp.meta["caps_count"] = caps_n
+                if getattr(kp, "capabilities", None) is not None:
+                    kp.meta["caps_preview"] = list(kp.capabilities)[:16]
+            await self._push_status(
+                session_id,
+                "thinking",
+                f"场景 {scene_plan.summary()} · 能力 {caps_n} · 工具 {len(tools)}",
+            )
+        except Exception:
+            try:
+                await self._push_status(
+                    session_id,
+                    "thinking",
+                    f"场景 {scene_plan.summary()} · 工具 {len(tools)}",
+                )
+            except Exception:
+                pass
         logger.info(
             "Loaded %s tools session=%s profile=%s scene=%s filter=%s",
             len(tools),
@@ -1168,14 +1249,6 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             scene_plan.summary(),
             "ALL" if enabled_tools_filter is None else len(enabled_tools_filter),
         )
-        try:
-            await self._push_status(
-                session_id,
-                "thinking",
-                f"场景 {scene_plan.summary()} · 工具 {len(tools)}",
-            )
-        except Exception:
-            pass
 
         # 短纪律 brief + 场景/扩包提示
         try:
