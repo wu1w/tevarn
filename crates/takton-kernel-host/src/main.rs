@@ -1564,14 +1564,43 @@ fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: 
                 .get("page_id")
                 .and_then(|v| v.as_str())
                 .ok_or((-32005, "page_id required".into(), json!({})))?;
-            kernel.context_swap_in(id).map_err(map_err)
+            let caller = params.get("process_id").and_then(|v| v.as_str());
+            kernel.context_swap_in(id, caller).map_err(map_err)
         }
         "context_swap_out" => {
             let id = params
                 .get("page_id")
                 .and_then(|v| v.as_str())
                 .ok_or((-32005, "page_id required".into(), json!({})))?;
-            kernel.context_swap_out(id).map_err(map_err)
+            let caller = params.get("process_id").and_then(|v| v.as_str());
+            kernel.context_swap_out(id, caller).map_err(map_err)
+        }
+        "context_pin" => {
+            let id = params
+                .get("page_id")
+                .and_then(|v| v.as_str())
+                .ok_or((-32005, "page_id required".into(), json!({})))?;
+            let pinned = params
+                .get("pinned")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            kernel.context_pin(id, pinned).map_err(map_err)
+        }
+        "context_set_isolation" => {
+            let pid = params
+                .get("process_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let mode = params
+                .get("mode")
+                .or_else(|| params.get("isolation"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("process");
+            Ok(kernel.context_set_isolation(pid, mode))
+        }
+        "context_schedule" => {
+            let pid = params.get("process_id").and_then(|v| v.as_str());
+            Ok(kernel.context_schedule(pid))
         }
         "context_list_pages" => {
             let pid = params
@@ -1615,7 +1644,61 @@ fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: 
                 .unwrap_or("");
             Ok(kernel.memory_layer_consolidate(identity))
         }
+        "memory_layer_schedule" => {
+            let identity = params.get("identity").and_then(|v| v.as_str());
+            Ok(kernel.memory_layer_schedule(identity))
+        }
         "memory_layer_status" => Ok(kernel.memory_layer_status()),
+        "device_sync_status" => Ok(kernel.device_sync_status()),
+        "device_sync_register" => {
+            let id = params
+                .get("device_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let label = params.get("label").and_then(|v| v.as_str()).unwrap_or("");
+            Ok(kernel.device_sync_register(id, label))
+        }
+        "device_sync_set_local" => {
+            let id = params
+                .get("device_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let label = params.get("label").and_then(|v| v.as_str()).unwrap_or("local");
+            Ok(kernel.device_sync_set_local(id, label))
+        }
+        "device_sync_list" => Ok(kernel.device_sync_list()),
+        "device_sync_push" => {
+            let identity = params
+                .get("identity")
+                .and_then(|v| v.as_str())
+                .unwrap_or("main");
+            let to = params.get("to_device").and_then(|v| v.as_str());
+            Ok(kernel.device_sync_push(identity, to))
+        }
+        "device_sync_pull" => {
+            let identity = params
+                .get("identity")
+                .and_then(|v| v.as_str())
+                .unwrap_or("main");
+            let since = params.get("since_revision").and_then(|v| v.as_u64());
+            Ok(kernel.device_sync_pull(identity, since))
+        }
+        "device_sync_apply" => {
+            let env = params
+                .get("envelope")
+                .cloned()
+                .unwrap_or_else(|| params.clone());
+            kernel.device_sync_apply(env).map_err(map_err)
+        }
+        "device_sync_outbox" => {
+            let limit = params
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(16) as usize;
+            Ok(kernel.device_sync_outbox(limit))
+        }
+        "audit_anchor_verify" => Ok(kernel.audit_anchor_verify()),
+        "audit_anchor_status" => Ok(kernel.audit_anchor_status()),
 
         // ── P2 ────────────────────────────────────────────
         "coding_profile_list" => Ok(kernel.coding_profile_list()),
