@@ -195,8 +195,10 @@ async def run_capture(
             "mode": mode,
         }
 
-    out = (stdout_b or b"").decode("utf-8", errors="replace")
-    err = (stderr_b or b"").decode("utf-8", errors="replace")
+    from backend.computer.text_decode import decode_process_bytes
+
+    out = decode_process_bytes(stdout_b or b"")
+    err = decode_process_bytes(stderr_b or b"")
     if len(out) > max_output:
         out = out[:max_output] + f"\n...[stdout truncated {len(stdout_b or b'')} bytes]"
     if len(err) > max(max_output // 2, 1000):

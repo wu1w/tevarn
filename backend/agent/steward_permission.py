@@ -68,14 +68,16 @@ async def steward_decide_tool(
     if caps is None:
         caps = _caps_from_args(arguments or {})
 
-    # 无能力档案：保守只放行只读检索类（避免裸奔）
+    # 无能力档案：给工程默认面（与 hire 默认一致），避免 current_time 等被静默 deny
     if not caps:
-        from backend.kernel.approval_rules import _LOW_RISK_CAPS
-
-        if tool_name in _LOW_RISK_CAPS or tool_matches_crew_caps(
-            tool_name, ["file_rw", "web_search"]
-        ):
-            # 默认编制兜底：读写文件 + 搜索（与 hire 默认一致）
+        _default = [
+            "file_rw",
+            "command",
+            "web_search",
+            "current_time",
+            "clarify",
+        ]
+        if tool_matches_crew_caps(tool_name, _default):
             return "allow", "steward:default_roster_caps"
         return "deny", "steward:no_capabilities"
 

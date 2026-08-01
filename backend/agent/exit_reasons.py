@@ -23,6 +23,14 @@ _EXIT_CATALOG: dict[str, tuple[str, str, str, str]] = {
         "提高迭代上限或缩小目标后重开会话；检查 Goal 自动续段设置。",
         "error",
     ),
+    # Token process budget (charge_tokens) — MUST NOT reuse budget_exhausted title
+    "kernel_token_budget_exhausted": (
+        "Token 预算耗尽",
+        "本进程 token 额度已用尽，运行中断（这不是迭代轮次上限）。",
+        "对进程 top_up 预算，或提高会话/员工默认 token_budget 后重试；"
+        "CEO 对话应自动弹性续航（soft_renew / auto top_up）。",
+        "error",
+    ),
     "kernel_iteration_exhausted": (
         "内核迭代预算耗尽",
         "Rust policy 侧 iteration 预算已耗尽，已触发优雅收尾。",

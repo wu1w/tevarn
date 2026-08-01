@@ -221,6 +221,60 @@ class InboxService:
         except Exception as e:
             logger.debug("rust inbox_fail_by_db skip: %s", e)
 
+    def _rust_touch_by_db(self, db_item_id: str) -> bool:
+        try:
+            k = self._kernel
+            if not hasattr(k, "_call"):
+                return False
+            r = k._call("inbox_touch_by_db_id", {"db_item_id": str(db_item_id)}) or {}
+            return bool(r.get("ok"))
+        except Exception as e:
+            logger.debug("rust inbox_touch skip: %s", e)
+            return False
+
+    def ensure_rust_pending(
+        self,
+        *,
+        identity_key: str,
+        instruction: str,
+        priority: int,
+        db_item_id: str,
+    ) -> None:
+        """Re-mirror SQL pending into Rust (host restart / requeue / reclaim)."""
+        self._rust_inbox_submit(
+            identity_key,
+            instruction,
+            priority=priority,
+            db_item_id=db_item_id,
+        )
+
+    async def touch_claim(self, item_id: Any) -> bool:
+        """Heartbeat claimed lease (SQL claimed_at + Rust claimed_at).
+
+        Without this, reclaim_stale treats long-running workers as dead and
+        drops claimed→pending (sticky fail).
+        """
+        from backend.models.agent_identity import AgentInboxItem
+
+        now = time.time()
+        ok = False
+        async with self._session_factory() as session:
+            item = (
+                await session.execute(
+                    select(AgentInboxItem).where(
+                        AgentInboxItem.id == _uuid.UUID(str(item_id))
+                    )
+                )
+            ).scalar_one_or_none()
+            if item is None or item.status != "claimed":
+                return False
+            item.claimed_at = now
+            await session.commit()
+            ok = True
+        if ok:
+            self._rust_touch_by_db(str(item_id))
+        return ok
+
     async def claim_next(self, *, busy_identity_ids: set[str] | None = None) -> Any:
         """领取下一条工单（优先级降序 + FIFO）。同一身份同时在手一单
         （编制内串行——一个员工不能同时干两单活）。
@@ -393,13 +447,23 @@ class InboxService:
                 return item
         return None
 
-    async def reclaim_stale_claims(self, *, timeout_seconds: float = 600.0) -> int:
+    async def reclaim_stale_claims(
+        self,
+        *,
+        timeout_seconds: float = 600.0,
+        busy_identity_ids: set[str] | None = None,
+    ) -> int:
         """回收超时仍停留在 claimed 的工单（worker 崩溃/超时未 fail）。
 
         回到 pending 并保留 attempts，由 fail 路径负责达上限转 failed。
         返回回收条数。同时触发 Rust inbox_reclaim。
+
+        busy_identity_ids: dispatcher 内存中正在跑的身份 — **绝不 reclaim**
+        （避免长任务 heartbeat 间隙被误回收）。
         """
         from backend.models.agent_identity import AgentInboxItem
+
+        busy = {str(x) for x in (busy_identity_ids or set())}
 
         try:
             self._rust_inbox_reclaim()
@@ -408,6 +472,7 @@ class InboxService:
 
         cutoff = time.time() - max(30.0, float(timeout_seconds))
         n = 0
+        requeued: list[tuple[Any, str, str, int]] = []
         async with self._session_factory() as session:
             rows = (
                 (
@@ -419,11 +484,37 @@ class InboxService:
                 .all()
             )
             for row in rows:
+                iid = str(row.identity_id)
+                if iid in busy:
+                    continue
                 claimed_at = float(row.claimed_at or 0)
                 if claimed_at <= 0 or claimed_at > cutoff:
                     continue
                 row.status = "pending"
-                row.error = (row.error or "")[:3500] + f" | reclaimed after {timeout_seconds:.0f}s claim timeout"
+                row.error = (
+                    (row.error or "")[:3500]
+                    + f" | reclaimed after {timeout_seconds:.0f}s claim timeout"
+                )
+                # Capture for rust re-mirror after commit
+                try:
+                    from backend.models.agent_identity import AgentIdentity
+
+                    ident = (
+                        await session.execute(
+                            select(AgentIdentity).where(AgentIdentity.id == row.identity_id)
+                        )
+                    ).scalar_one_or_none()
+                    ikey = str(getattr(ident, "name", "") or iid)
+                except Exception:
+                    ikey = iid
+                requeued.append(
+                    (
+                        str(row.id),
+                        ikey,
+                        str(row.instruction or ""),
+                        int(row.priority or 0),
+                    )
+                )
                 self._emit("inbox_reclaimed", row.identity_id, {
                     "item_id": str(row.id),
                     "claimed_at": claimed_at,
@@ -432,6 +523,17 @@ class InboxService:
                 n += 1
             if n:
                 await session.commit()
+        # Re-mirror to Rust so digestion continues after reclaim
+        for db_id, ikey, instr, prio in requeued:
+            try:
+                self.ensure_rust_pending(
+                    identity_key=ikey,
+                    instruction=instr,
+                    priority=prio,
+                    db_item_id=db_id,
+                )
+            except Exception:
+                pass
         return n
 
     async def attach_run_id(self, item_id: Any, run_id: Any, *, origin: str | None = None) -> None:
@@ -473,6 +575,8 @@ class InboxService:
             await session.commit()
             ok = int(result.rowcount or 0) == 1
         if ok:
+            # Dual-write: free Rust claim slot (was SQL-only → sticky desync)
+            self._rust_fail_by_db(str(item_id), f"release:{reason[:80]}")
             try:
                 self._emit(
                     "inbox_requeued",
@@ -562,10 +666,34 @@ class InboxService:
             else:
                 item.status = "pending"
                 event = "inbox_retry"
+            instr = str(item.instruction or "")
+            prio = int(item.priority or 0)
             await session.commit()
-        # Dual-write Rust: fail terminal claim, or leave reclaim for retry
-        if event in ("inbox_dead",):
-            self._rust_fail_by_db(str(item_id), err)
+        # Dual-write Rust: free claim slot (retry or terminal)
+        # Leaving rust claimed on non-terminal fail blocked max_claimed_per_identity.
+        self._rust_fail_by_db(str(item_id), err)
+        if event == "inbox_retry":
+            # Re-mirror pending so host can claim again immediately
+            try:
+                from backend.models.agent_identity import AgentIdentity
+
+                async with self._session_factory() as s2:
+                    ident = (
+                        await s2.execute(
+                            select(AgentIdentity).where(
+                                AgentIdentity.id == identity_id
+                            )
+                        )
+                    ).scalar_one_or_none()
+                ikey = str(getattr(ident, "name", "") or identity_id)
+                self.ensure_rust_pending(
+                    identity_key=ikey,
+                    instruction=instr,
+                    priority=prio,
+                    db_item_id=str(item_id),
+                )
+            except Exception as e:
+                logger.debug("fail→retry rust resubmit skip: %s", e)
         self._emit(
             event,
             identity_id,
@@ -649,6 +777,27 @@ class InboxService:
             item.finished_at = None
             await session.commit()
             await session.refresh(item)
+            # Re-mirror to Rust so host can claim again after dead/failed requeue
+            try:
+                from backend.models.agent_identity import AgentIdentity
+
+                async with self._session_factory() as s2:
+                    ident = (
+                        await s2.execute(
+                            select(AgentIdentity).where(
+                                AgentIdentity.id == item.identity_id
+                            )
+                        )
+                    ).scalar_one_or_none()
+                ikey = str(getattr(ident, "name", "") or item.identity_id)
+                self.ensure_rust_pending(
+                    identity_key=ikey,
+                    instruction=str(item.instruction or ""),
+                    priority=int(item.priority or 0),
+                    db_item_id=str(item.id),
+                )
+            except Exception as e:
+                logger.debug("requeue rust resubmit skip: %s", e)
             self._emit("inbox_requeued", item.identity_id, {"item_id": str(item.id)})
             return item
 

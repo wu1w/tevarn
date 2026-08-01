@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Per-model generation parameters (temperature / max_tokens / context_window).
+"""Per-model generation parameters (temperature / max_tokens / context_window / reasoning_effort).
 
 Stored as one settings row: key=llm_model_gen_params, JSON map
-  { "<provider_id>|||<model>": { temperature, max_tokens, context_window }, ... }
+  { "<provider_id>|||<model>": { temperature, max_tokens, context_window, reasoning_effort }, ... }
 
 Switching models loads that model's slot (or seeds from limits_for_model).
 Saving generation params writes into the active model's slot.
@@ -21,6 +21,8 @@ SETTING_KEY = "llm_model_gen_params"
 SEP = "|||"
 
 DEFAULT_TEMPERATURE = 0.7
+DEFAULT_REASONING_EFFORT = "medium"
+_ALLOWED_EFFORTS = frozenset({"off", "none", "low", "medium", "high", "max", "xhigh", "minimal"})
 
 
 def make_key(provider_id: str, model: str) -> str:
@@ -34,12 +36,26 @@ def parse_key(key: str) -> tuple[str, str]:
     return "", (key or "").strip()
 
 
+def normalize_reasoning_effort(raw: Any, *, default: str = DEFAULT_REASONING_EFFORT) -> str:
+    s = str(raw or "").strip().lower()
+    if not s:
+        return default
+    if s in ("disabled", "disable", "false", "0"):
+        return "off"
+    if s == "none":
+        return "off"
+    if s not in _ALLOWED_EFFORTS:
+        return default
+    return s
+
+
 def _defaults_for_model(model: str) -> dict[str, Any]:
     lim = limits_for_model(model)
     return {
         "temperature": DEFAULT_TEMPERATURE,
         "max_tokens": int(lim["max_tokens"]),
         "context_window": int(lim["context_window"]),
+        "reasoning_effort": DEFAULT_REASONING_EFFORT,
     }
 
 
@@ -63,6 +79,8 @@ def _coerce_slot(raw: Any, model: str) -> dict[str, Any]:
             out["context_window"] = max(2048, int(raw["context_window"]))
     except (TypeError, ValueError):
         pass
+    if raw.get("reasoning_effort") is not None:
+        out["reasoning_effort"] = normalize_reasoning_effort(raw.get("reasoning_effort"))
     # clamp max_tokens to context
     out["max_tokens"] = min(out["max_tokens"], max(256, out["context_window"] // 2))
     # temperature range
@@ -147,6 +165,9 @@ async def apply_params_to_global_settings(repo: Any, params: dict[str, Any]) -> 
         "temperature": params["temperature"],
         "max_tokens": params["max_tokens"],
         "context_window": params["context_window"],
+        "reasoning_effort": normalize_reasoning_effort(
+            params.get("reasoning_effort"), default=DEFAULT_REASONING_EFFORT
+        ),
     }
     for k, v in items.items():
         await repo.upsert(k, v, "llm")
@@ -160,4 +181,7 @@ def params_for_snapshot(params: dict[str, Any] | None) -> dict[str, Any]:
         "temperature": params.get("temperature"),
         "max_tokens": params.get("max_tokens"),
         "context_window": params.get("context_window"),
+        "reasoning_effort": normalize_reasoning_effort(
+            params.get("reasoning_effort"), default=DEFAULT_REASONING_EFFORT
+        ),
     }

@@ -142,9 +142,27 @@ class JobBackend:
         self.agent_home = ntpath.join(
             self.workspace_root, ".computers", safe_key, "home"
         )
+        # Capture *host* profile before we rewrite USERPROFILE for the job.
+        # Used so tools can still open real ~/.takton logs (self-check / ops).
+        self.host_user_home = (
+            os.environ.get("TAKTON_HOST_HOME")
+            or os.environ.get("USERPROFILE")
+            or os.environ.get("HOME")
+            or str(Path.home())
+        )
+        self.host_takton_home = (
+            os.environ.get("TAKTON_HOME")
+            or ntpath.join(self.host_user_home, ".takton")
+        )
 
     def _ensure_dirs(self) -> None:
         Path(self.agent_home).mkdir(parents=True, exist_ok=True)
+        try:
+            from backend.agent._takton_paths import ensure_sandbox_takton_link
+
+            ensure_sandbox_takton_link(self.agent_home, self.host_takton_home)
+        except Exception:
+            pass
 
     def _check_cwd(self, cwd: str) -> str | None:
         real = ntpath.abspath(cwd)
@@ -161,12 +179,25 @@ class JobBackend:
         env = {
             "HOME": self.agent_home,
             "USERPROFILE": self.agent_home,
+            # Real host paths for Takton data / logs (do not use sandbox USERPROFILE)
+            "TAKTON_HOST_HOME": self.host_user_home,
+            "TAKTON_HOME": self.host_takton_home,
             "PATH": os.environ.get("PATH", ""),
             "SYSTEMROOT": os.environ.get("SYSTEMROOT", r"C:\Windows"),
             "TEMP": os.environ.get("TEMP", r"C:\Windows\Temp"),
             "TMP": os.environ.get("TMP", r"C:\Windows\Temp"),
+            # Prefer UTF-8 from Python tools inside the job (stderr still may be GBK
+            # from cmd.exe / CRT — decode_process_bytes handles both).
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUTF8": "1",
         }
+        # Preserve HOMEDRIVE/HOMEPATH so host_home() can recover real profile
+        for k in ("HOMEDRIVE", "HOMEPATH", "USERNAME", "USERDOMAIN"):
+            if os.environ.get(k):
+                env[k] = os.environ[k]
         try:
+            from backend.computer.text_decode import decode_process_bytes
+
             proc = subprocess.Popen(
                 ["cmd.exe", "/d", "/c", command],
                 cwd=cwd,
@@ -182,8 +213,8 @@ class JobBackend:
                 proc.wait()
                 raise
             return (
-                out_b.decode("utf-8", errors="replace"),
-                err_b.decode("utf-8", errors="replace"),
+                decode_process_bytes(out_b),
+                decode_process_bytes(err_b),
                 proc.returncode or 0,
             )
         finally:

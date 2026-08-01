@@ -375,7 +375,9 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Cluster run startup sweep skipped: {e}")
 
     # Phase 2.3：统一 Run 恢复（非终态 → interrupted；inbox/cron 可自动续跑）
-    # 测试模式跳过自动续跑，避免 CI 拉起真 LLM
+    # 关键：resume 会 await 整段 agent loop + run_gate。若在 lifespan 内同步
+    # 跑完，uvicorn 永远到不了 listen（Waiting for application startup 死锁）。
+    # 因此启动时只做 mark；auto-resume 丢到后台任务。
     try:
         import os as _os
 
@@ -386,12 +388,28 @@ async def lifespan(app: FastAPI):
             "true",
             "yes",
         }
-        if _test:
-            # 仅标记 interrupted，不 resume
-            summary = await recover_stale_runs(auto_resume=False)
-        else:
-            summary = await recover_stale_runs()
-        logger.info("agent run recovery: %s", summary)
+        summary = await recover_stale_runs(auto_resume=False)
+        logger.info("agent run recovery (mark): %s", summary)
+        # auto_resume_enabled in summary is False because we forced mark-only;
+        # re-check settings for whether to schedule background resume.
+        _do_bg = True
+        try:
+            from backend.agent.run_recovery import _auto_recover_enabled
+
+            _do_bg = bool(_auto_recover_enabled())
+        except Exception:
+            _do_bg = True
+        if not _test and _do_bg:
+            async def _bg_auto_resume() -> None:
+                try:
+                    # 等 listen 就绪后再拉起，避免 run_gate 与启动互锁
+                    await asyncio.sleep(1.5)
+                    s2 = await recover_stale_runs(auto_resume=True)
+                    logger.info("agent run recovery (bg resume): %s", s2)
+                except Exception as re:
+                    logger.warning("agent run recovery bg resume failed: %s", re)
+
+            _spawn_bg(_bg_auto_resume(), name="run-auto-resume")
     except Exception as e:
         logger.warning(f"agent run recovery skipped: {e}")
 

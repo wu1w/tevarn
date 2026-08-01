@@ -176,6 +176,8 @@ class Settings(BaseSettings):
     default_llm_model: str = ""
     default_max_tokens: int = 12288  # 生成上限默认 12K
     llm_temperature: float = 0.7
+    # 思考强度：off | low | medium | high | max（按模型/供应商映射到 API 参数）
+    reasoning_effort: str = "medium"
     # 当前模型上下文窗口（选模型时写入；用于截断/摘要/auto-optimize）
     context_window: int = 128000
     # Agent 多步工具循环上限（长链/编码任务需要更高，默认 40）
@@ -383,7 +385,8 @@ class Settings(BaseSettings):
     # ── 工作方式 / 执行环境（T5：权限体系的两个正交开关，见 agent/working_mode.py）──
     # 用户只需选这两个；下面的 profile / ask_mode / 沙箱后端都由它们派生。
     # readonly | cautious | auto_edit | autonomous
-    agent_working_mode: str = "cautious"
+    # 产品默认：工作区内改文件不问，命令仍确认（auto_edit）
+    agent_working_mode: str = "auto_edit"
     # sandbox（强制隔离，不可用则报错）| auto（有则用，无则本机并明示）| local
     agent_execution_mode: str = "auto"
 
@@ -406,6 +409,9 @@ class Settings(BaseSettings):
     #            绝大多数定时任务（整理笔记、汇总报告）不受影响。
     #   deny  —— 全拒绝（最严；无人值守只做只读也不行）
     agent_permission_headless: str = "safe"
+    # 无前端 WS 时自动批准危险确认（CI / headless marathon）。默认关；
+    # 也可用环境变量 TAKTON_HEADLESS_AUTO_APPROVE=1 打开。
+    agent_permission_auto_approve_no_fe: bool = False
     agent_permission_enabled: bool = True
     # T4 prompt caching：Volatile 层（秒级时间戳/记忆）不并入 messages[0] 的 system 块，
     # 改挂 messages 尾部，保住可缓存的稳定前缀。设 False 回到旧的三层合并行为。

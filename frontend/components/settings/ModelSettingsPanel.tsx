@@ -84,7 +84,11 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
   const [temperature, setTemperature] = useState(0.7);
   const [maxTokens, setMaxTokens] = useState(12288);
   const [contextWindow, setContextWindow] = useState(128000);
+  /** 思考强度：off | low | medium | high | max */
+  const [reasoningEffort, setReasoningEffort] = useState('medium');
   const [genSaving, setGenSaving] = useState(false);
+  /** 允许手写模型名（列表没有的自定义 slug） */
+  const [customModelMode, setCustomModelMode] = useState(false);
 
   // default session model (Hermes-style optional override)
   const [defaultLlmModel, setDefaultLlmModel] = useState('');
@@ -134,7 +138,15 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
     if (!settings.length) return;
     const pid = (catalog?.active_provider_id || '').trim();
     const mid = (catalog?.active_model || mapVal(settings, 'llm_model', '')).trim();
-    let map: Record<string, { temperature?: number; max_tokens?: number; context_window?: number }> = {};
+    let map: Record<
+      string,
+      {
+        temperature?: number;
+        max_tokens?: number;
+        context_window?: number;
+        reasoning_effort?: string;
+      }
+    > = {};
     try {
       const raw = mapVal(settings, 'llm_model_gen_params', '');
       if (raw) map = typeof raw === 'string' ? JSON.parse(raw) : (raw as typeof map);
@@ -147,10 +159,12 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
       if (slot.temperature != null) setTemperature(Number(slot.temperature));
       if (slot.max_tokens != null) setMaxTokens(Number(slot.max_tokens));
       if (slot.context_window != null) setContextWindow(Number(slot.context_window));
+      if (slot.reasoning_effort) setReasoningEffort(String(slot.reasoning_effort));
     } else {
       setTemperature(numVal(settings, 'temperature', 0.7));
       setMaxTokens(numVal(settings, 'max_tokens', 12288));
       setContextWindow(numVal(settings, 'context_window', 128000));
+      setReasoningEffort(mapVal(settings, 'reasoning_effort', 'medium') || 'medium');
     }
   }, [settings, catalog?.active_provider_id, catalog?.active_model]);
 
@@ -240,6 +254,7 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
     }
     setApiKey('');
     setLiveModels([]);
+    setCustomModelMode(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProviderId]);
 
@@ -293,6 +308,8 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
       if (res.temperature != null) setTemperature(Number(res.temperature));
       if (res.max_tokens != null) setMaxTokens(Number(res.max_tokens));
       if (res.context_window != null) setContextWindow(Number(res.context_window));
+      const gp = (res as { gen_params?: { reasoning_effort?: string } }).gen_params;
+      if (gp?.reasoning_effort) setReasoningEffort(String(gp.reasoning_effort));
       addToast(res.message || t('settings.switchedTo').replace('{n}', selectedModel), 'success');
       await onSettingsRefetch();
       await refreshCatalog(true);
@@ -402,6 +419,8 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
         llm_api_key: apiKey.trim() || undefined,
         llm_model: model,
         set_active: true,
+        // 把刚拉取的列表一并缓存，激活后下拉立刻有选项
+        models: liveModels.length ? liveModels : undefined,
       });
       if (!reg.ok) {
         addToast(reg.message || t('settings.saveFailed'), 'error');
@@ -455,13 +474,21 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
         llm_provider: llmProvider,
         llm_base_url: url,
         llm_api_key: apiKey.trim() || undefined,
+        provider_id: selectedProviderId || undefined,
+        llm_model: selectedModel || undefined,
       });
       const models = res.models || [];
       if (models.length) {
         setLiveModels(models);
+        setCustomModelMode(false);
         if (!selectedModel || !models.includes(selectedModel)) {
           setSelectedModel(models[0]);
         }
+        // 已登记供应商：后端会写缓存并回传 catalog，立刻刷新下拉
+        if (res.catalog) {
+          setCatalog(res.catalog);
+        }
+        addToast(res.message || `已拉取 ${models.length} 个模型`, 'success');
       } else {
         addToast(res.message || t('settings.noModelList'), 'error');
       }
@@ -502,13 +529,14 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
         temperature,
         max_tokens: maxTokens,
         context_window: contextWindow,
+        reasoning_effort: reasoningEffort,
       });
       addToast(
         (res.message || t('settings.genSaved')) +
           (catalog?.active_model ? ` · ${catalog.active_model}` : ''),
         'success');
       await onSettingsRefetch();
-      notifySettingsChanged(['temperature', 'max_tokens', 'context_window']);
+      notifySettingsChanged(['temperature', 'max_tokens', 'context_window', 'reasoning_effort']);
     } catch (e: unknown) {
       addToast(e instanceof Error ? e.message : t('settings.saveFailed'), 'error');
     } finally {
@@ -589,7 +617,8 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
                   className={`${inputCls} min-w-[12rem] flex-1 font-mono text-xs`}
                   value={baseUrl}
                   onChange={(e) => setBaseUrl(e.target.value)}
-                  placeholder="https://api.example.com/v1"/>
+                  placeholder="https://api.example.com/v1"
+                />
               )}
               {selectedPreset?.needs_api_key !== false &&
                 (selectedCatalog?.llm_provider || selectedPreset?.llm?.llm_provider) !== 'ollama' && (
@@ -600,30 +629,65 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
                       value={apiKey}
                       onChange={(e) => setApiKey(e.target.value)}
                       placeholder={t('settings.pasteApiKey')}
-                      autoComplete="off"/>
+                      autoComplete="off"
+                    />
                     <button
-                      type="button"className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-foreground-dim"onClick={() => setShowKey((v) => !v)}
+                      type="button"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-foreground-dim"
+                      onClick={() => setShowKey((v) => !v)}
                     >
                       {showKey ? t('settings.hide') : t('settings.show')}
                     </button>
                   </div>
                 )}
-              <input
-                className={`${inputCls} min-w-[8rem] font-mono text-xs`}
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
-                placeholder={t('settings.modelName')}
-                list="takton-model-suggestions"/>
-              <datalist id="takton-model-suggestions">
-                {modelsForSelected.map((m) => (
-                  <option key={m} value={m} />
-                ))}
-              </datalist>
+              {/* 首次配置：有列表用真正的 select，避免 datalist 在多数浏览器里「点开是空的」 */}
+              {modelsForSelected.length > 0 && !customModelMode ? (
+                <select
+                  className={`${inputCls} min-w-[12rem] sm:max-w-xs font-mono text-xs`}
+                  value={modelsForSelected.includes(selectedModel) ? selectedModel : ''}
+                  onChange={(e) => {
+                    if (e.target.value === '__custom__') {
+                      setCustomModelMode(true);
+                      return;
+                    }
+                    setSelectedModel(e.target.value);
+                  }}
+                >
+                  <option value="">{t('settings.model') || 'Model'}</option>
+                  {modelsForSelected.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                  <option value="__custom__">自定义模型名…</option>
+                </select>
+              ) : (
+                <input
+                  className={`${inputCls} min-w-[8rem] font-mono text-xs`}
+                  value={selectedModel}
+                  onChange={(e) => setSelectedModel(e.target.value)}
+                  placeholder={
+                    modelsForSelected.length
+                      ? t('settings.modelName')
+                      : `${t('settings.modelName')}（可先拉取列表）`
+                  }
+                />
+              )}
+              {modelsForSelected.length > 0 && customModelMode && (
+                <button
+                  type="button"
+                  className="text-[11px] text-brand-cyan hover:underline"
+                  onClick={() => setCustomModelMode(false)}
+                >
+                  返回列表
+                </button>
+              )}
               <button type="button" className={btnGhost} disabled={fetchingModels} onClick={() => void handleFetchModels()}>
                 {fetchingModels ? t('settings.fetching') : t('settings.fetchModels')}
               </button>
               <button
-                type="button"className={btnPrimary}
+                type="button"
+                className={btnPrimary}
                 disabled={activating || !selectedProviderId}
                 onClick={() => void activateProvider()}
               >
@@ -632,23 +696,53 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
             </>
           ) : (
             <>
-              <select
-                className={`${inputCls} min-w-[12rem] sm:max-w-xs`}
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
-              >
-                <option value="">{t('settings.model') || 'Model'}</option>
-                {modelsForSelected.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
+              {modelsForSelected.length > 0 && !customModelMode ? (
+                <select
+                  className={`${inputCls} min-w-[12rem] sm:max-w-xs font-mono text-xs`}
+                  value={modelsForSelected.includes(selectedModel) ? selectedModel : selectedModel || ''}
+                  onChange={(e) => {
+                    if (e.target.value === '__custom__') {
+                      setCustomModelMode(true);
+                      return;
+                    }
+                    setSelectedModel(e.target.value);
+                  }}
+                >
+                  <option value="">{t('settings.model') || 'Model'}</option>
+                  {/* 当前值不在列表时也显示 */}
+                  {selectedModel && !modelsForSelected.includes(selectedModel) && (
+                    <option value={selectedModel}>{selectedModel}</option>
+                  )}
+                  {modelsForSelected.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                  <option value="__custom__">自定义模型名…</option>
+                </select>
+              ) : (
+                <input
+                  className={`${inputCls} min-w-[12rem] font-mono text-xs`}
+                  value={selectedModel}
+                  onChange={(e) => setSelectedModel(e.target.value)}
+                  placeholder={t('settings.modelName')}
+                />
+              )}
+              {customModelMode && (
+                <button
+                  type="button"
+                  className="text-[11px] text-brand-cyan hover:underline"
+                  onClick={() => setCustomModelMode(false)}
+                >
+                  返回列表
+                </button>
+              )}
               <button type="button" className={btnGhost} disabled={fetchingModels} onClick={() => void handleFetchModels()}>
                 {fetchingModels ? '…' : t('settings.fetchModels')}
               </button>
               <button
-                type="button"className={btnPrimary}
+                type="button"
+                className={btnPrimary}
                 disabled={applying || !selectedProviderId || !selectedModel}
                 onClick={() => void applyMainModel()}
               >
@@ -882,18 +976,21 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
         <label className="block text-xs text-foreground-muted">
           {t('settings.creativity').replace('{n}', temperature.toFixed(1))}
           <input
-            type="range"min={0}
+            type="range"
+            min={0}
             max={2}
             step={0.1}
             value={temperature}
             onChange={(e) => setTemperature(Number(e.target.value))}
-            className="mt-1 h-1.5 w-full accent-violet-500"/>
+            className="mt-1 h-1.5 w-full accent-violet-500"
+          />
         </label>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label className="block text-xs text-foreground-muted">
             {t('settings.maxReplyLength')}
             <input
-              type="number"min={256}
+              type="number"
+              min={256}
               max={200000}
               step={256}
               value={maxTokens}
@@ -904,7 +1001,8 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
           <label className="block text-xs text-foreground-muted">
             {t('settings.contextWindowLabel')}
             <input
-              type="number"min={2048}
+              type="number"
+              min={2048}
               max={1000000}
               step={1024}
               value={contextWindow}
@@ -913,6 +1011,23 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
             />
           </label>
         </div>
+        <label className="block text-xs text-foreground-muted">
+          思考强度
+          <select
+            className={`${inputCls} mt-1 max-w-xs`}
+            value={reasoningEffort}
+            onChange={(e) => setReasoningEffort(e.target.value)}
+          >
+            <option value="off">关闭（最快）</option>
+            <option value="low">低</option>
+            <option value="medium">中（推荐）</option>
+            <option value="high">高</option>
+            <option value="max">最大</option>
+          </select>
+          <span className="mt-1 block text-[10px] text-foreground-dim">
+            绑定当前模型。对 DeepSeek / OpenAI o 系列 / Qwen 思考模型等生效；不支持的服务商会自动忽略。
+          </span>
+        </label>
         <button type="button" className={btnPrimary} disabled={genSaving} onClick={() => void handleSaveGen()}>
           {genSaving ? t('common.saving') : t('settings.saveGenerationForModel')}
         </button>

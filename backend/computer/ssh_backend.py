@@ -83,7 +83,13 @@ class SshBackend:
         except asyncio.TimeoutError:
             proc.kill()
             return 124, "", f"command exceeded {timeout}s"
-        return proc.returncode or 0, out.decode(errors="replace"), err.decode(errors="replace")
+        from backend.computer.text_decode import decode_process_bytes
+
+        return (
+            proc.returncode or 0,
+            decode_process_bytes(out),
+            decode_process_bytes(err),
+        )
 
     async def run(
         self,

@@ -25,7 +25,8 @@ from typing import Any, Literal
 WorkingMode = Literal["readonly", "cautious", "auto_edit", "autonomous"]
 ExecutionMode = Literal["sandbox", "auto", "local"]
 
-DEFAULT_WORKING_MODE: WorkingMode = "cautious"
+# 产品默认：工作区内改文件不问，命令仍要问（日常写代码推荐）
+DEFAULT_WORKING_MODE: WorkingMode = "auto_edit"
 # T4：默认更隔离——有沙箱能力时强制用；无沙箱时 sandbox 模式会明确报错（不静默 local）
 # 需要本机直跑请显式 agent_execution_mode=local
 DEFAULT_EXECUTION_MODE: ExecutionMode = "sandbox"
@@ -62,7 +63,6 @@ WORKING_MODES: tuple[WorkingModeSpec, ...] = (
         desc_en="Ask before every file write and shell command. Safest, but interrupts long tasks often.",
         profile="cautious",
         ask_mode="auto",
-        recommended=True,
     ),
     WorkingModeSpec(
         id="auto_edit",
@@ -72,6 +72,7 @@ WORKING_MODES: tuple[WorkingModeSpec, ...] = (
         desc_en="File edits inside the workspace run freely; shell commands still ask. Best for everyday coding.",
         profile="acceptEdits",
         ask_mode="auto",
+        recommended=True,
     ),
     WorkingModeSpec(
         id="autonomous",

@@ -1208,7 +1208,9 @@ export async function getRuntimeHealth(): Promise<{
 }
 
 export async function restartKernelHost(): Promise<{ ok: boolean; error?: string }> {
-  const res = await api.post('/kernel/host/restart');
+  // Host restart does taskkill + respawn (several seconds). Cap wait so the
+  // banner button cannot spin forever if the proxy/event-loop wedges.
+  const res = await api.post('/kernel/host/restart', null, { timeout: 45000 });
   return res.data;
 }
 
@@ -2132,12 +2134,15 @@ export async function listRemoteModels(payload?: {
   llm_base_url?: string;
   llm_model?: string;
   llm_api_key?: string;
+  provider_id?: string;
 }): Promise<{
   ok: boolean;
   models: string[];
   message: string;
   detail?: string;
   source?: string;
+  catalog?: ModelCatalog;
+  provider_id?: string;
 }> {
   const res = await api.post('/settings/list-models', payload ?? {});
   return res.data;
@@ -2210,7 +2215,12 @@ export async function selectCatalogModel(
   temperature?: number;
   max_tokens?: number;
   context_window?: number;
-  gen_params?: { temperature: number; max_tokens: number; context_window: number };
+  gen_params?: {
+    temperature: number;
+    max_tokens: number;
+    context_window: number;
+    reasoning_effort?: string;
+  };
 }> {
   const res = await api.post('/settings/model-catalog/select', {
     provider_id: providerId,
@@ -2288,6 +2298,8 @@ export async function registerCatalogProvider(payload: {
   llm_api_key?: string | null;
   llm_model?: string | null;
   set_active?: boolean;
+  /** 首次拉取的模型列表，登记时一并缓存 */
+  models?: string[] | null;
 }): Promise<{ ok: boolean; message: string; catalog?: ModelCatalog }> {
   const res = await api.post('/settings/model-catalog/register', payload);
   return res.data;

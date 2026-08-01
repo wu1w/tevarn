@@ -27,6 +27,7 @@ _KEY_MAP: dict[str, str] = {
     "default_llm_model": "default_llm_model",
     "max_tokens": "default_max_tokens",
     "temperature": "llm_temperature",
+    "reasoning_effort": "reasoning_effort",
     "context_window": "context_window",
     "context_threshold_percent": "context_threshold_percent",
     "context_protect_first_n": "context_protect_first_n",
@@ -75,6 +76,7 @@ _LLM_KEYS = {
     "llm_api_key",
     "max_tokens",
     "temperature",
+    "reasoning_effort",
     "context_window",
 }
 _EMBED_KEYS = {

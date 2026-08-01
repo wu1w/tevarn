@@ -474,6 +474,24 @@ fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: 
                 .map_err(map_err)
         }
 
+        "resource_release" => {
+            let pid = params
+                .get("process_id")
+                .and_then(|v| v.as_str())
+                .ok_or((-32005, "process_id required".into(), json!({})))?;
+            let kind = params
+                .get("kind")
+                .and_then(|v| v.as_str())
+                .unwrap_or("child_proc");
+            let amount = params
+                .get("amount")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(1);
+            kernel
+                .resource_release(pid, kind, amount)
+                .map_err(map_err)
+        }
+
         "resource_usage" => {
             let pid = params
                 .get("process_id")
@@ -1576,6 +1594,22 @@ fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: 
                 .unwrap_or("failed");
             Ok(kernel.inbox_fail_by_db_id(db_id, reason))
         }
+        "inbox_touch_by_db_id" => {
+            let db_id = params
+                .get("db_item_id")
+                .or_else(|| params.get("item_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            Ok(kernel.inbox_touch_by_db_id(db_id))
+        }
+        "inbox_set_claim_timeout" => {
+            let secs = params
+                .get("secs")
+                .or_else(|| params.get("timeout_seconds"))
+                .and_then(|v| v.as_f64())
+                .unwrap_or(900.0);
+            Ok(kernel.inbox_set_claim_timeout(secs))
+        }
         "inbox_complete" => {
             let id = params
                 .get("item_id")
@@ -2325,6 +2359,11 @@ fn dispatch(runtime: &Arc<Runtime>, line: &str) -> Value {
     }
 }
 
+/// Max wall time for a single JSON-RPC dispatch on the blocking pool.
+/// Prevents one hung mediate/lock from filling the pool and starving `accept`
+/// (symptom: LISTEN open but new TCP connects SYN_SENT / timed out).
+const DISPATCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 async fn handle_connection(runtime: Arc<Runtime>, stream: TcpStream) {
     let (reader, mut writer) = stream.into_split();
     let mut lines = BufReader::new(reader).lines();
@@ -2336,15 +2375,34 @@ async fn handle_connection(runtime: Arc<Runtime>, stream: TcpStream) {
         // spawn_blocking: sync dispatch must not occupy a Tokio worker.
         // A stuck/long mediate on one connection previously starved all other
         // clients (UI panel 500s / ping timeout) when workers blocked on locks.
+        // Also: if the blocking pool saturates while every worker awaits
+        // spawn_blocking, accept() never runs → host looks "up" but dead.
         let rt = runtime.clone();
-        let resp = match tokio::task::spawn_blocking(move || dispatch(&rt, &line)).await {
-            Ok(v) => v,
-            Err(e) => {
+        let resp = match tokio::time::timeout(
+            DISPATCH_TIMEOUT,
+            tokio::task::spawn_blocking(move || dispatch(&rt, &line)),
+        )
+        .await
+        {
+            Ok(Ok(v)) => v,
+            Ok(Err(e)) => {
                 warn!("dispatch join failed: {e}");
                 err_resp(
                     serde_json::Value::Null,
                     -32603,
                     format!("dispatch join: {e}"),
+                    None,
+                )
+            }
+            Err(_) => {
+                warn!("dispatch timed out after {DISPATCH_TIMEOUT:?}");
+                err_resp(
+                    serde_json::Value::Null,
+                    -32603,
+                    format!(
+                        "dispatch timeout after {}s (kernel busy / lock)",
+                        DISPATCH_TIMEOUT.as_secs()
+                    ),
                     None,
                 )
             }
@@ -2395,8 +2453,21 @@ async fn run_stdio(runtime: Arc<Runtime>) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
+    // Larger blocking pool so concurrent agent RPCs + UI side-channel do not
+    // exhaust workers and deadlock accept (default is ~512 but under load with
+    // held kernel locks we still want headroom for short pings).
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_name("takton-host")
+        .worker_threads(4)
+        .max_blocking_threads(64)
+        .build()
+        .context("tokio runtime")?;
+    rt.block_on(async_main())
+}
+
+async fn async_main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -2408,9 +2479,10 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let runtime = build_runtime(&args);
     info!(
-        "runtime up profile={} health={}",
+        "runtime up profile={} health={} blocking_pool=64 dispatch_timeout={}s",
         runtime.profile(),
-        runtime.health()
+        runtime.health(),
+        DISPATCH_TIMEOUT.as_secs()
     );
 
     if args.stdio {

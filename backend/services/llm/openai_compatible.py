@@ -37,6 +37,11 @@ class OpenAICompatibleService(LLMService):
             getattr(self.config, "max_tokens", None), model=self.model
         )
         self.temperature = sanitize_temperature(getattr(self.config, "temperature", 0.7))
+        self.reasoning_effort = str(
+            getattr(self.config, "reasoning_effort", None)
+            or getattr(settings, "reasoning_effort", "medium")
+            or "medium"
+        ).strip().lower() or "medium"
         self.api_key = getattr(self.config, "api_key", None)
         self.provider_id = (provider_id or getattr(config, "provider_id", None) or "").strip()
         self.prompt_cache_key = prompt_cache_key or getattr(config, "prompt_cache_key", None)
@@ -134,6 +139,19 @@ class OpenAICompatibleService(LLMService):
 
         if getattr(prof, "tools_before_system", False):
             reorder_tools_before_system_messages(payload)
+
+        # 思考强度 → 各家 API 字段（不支持的模型自动跳过）
+        try:
+            from .reasoning_effort import apply_reasoning_effort
+
+            apply_reasoning_effort(
+                payload,
+                effort=getattr(self, "reasoning_effort", None),
+                model=self.model,
+                family=str(getattr(prof, "family", "") or ""),
+            )
+        except Exception:
+            logger.debug("apply_reasoning_effort skipped", exc_info=True)
 
     @staticmethod
     def _normalize_model_id(model: str, base_url: str) -> str:

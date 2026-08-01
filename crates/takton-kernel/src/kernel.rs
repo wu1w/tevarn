@@ -1487,6 +1487,29 @@ impl AgentKernel {
         self.inner.read().resources.usage(process_id)
     }
 
+    /// Release previously charged resource (e.g. child_proc after command exits).
+    /// Turns ChildProc from a lifetime counter into a concurrency lease.
+    pub fn resource_release(
+        &self,
+        process_id: &str,
+        kind: &str,
+        amount: i64,
+    ) -> KernelResult<Value> {
+        let kind = ResourceKind::parse(kind)
+            .ok_or_else(|| KernelError::Invalid(format!("unknown resource kind {kind}")))?;
+        let mut g = self.inner.write();
+        let amt = amount.max(0);
+        g.resources.release_amount(process_id, kind, amt);
+        let usage = g.resources.usage(process_id);
+        Self::emit_locked(
+            &mut g,
+            "resource_release",
+            process_id,
+            json!({"kind": kind.as_str(), "amount": amt}),
+        );
+        Ok(json!({"ok": true, "kind": kind.as_str(), "amount": amt, "usage": usage}))
+    }
+
     /// OS RSS → memory_bytes account (deepen hard limit surface).
     pub fn resource_report_rss(&self, process_id: &str, rss_bytes: i64) -> KernelResult<Value> {
         let mut g = self.inner.write();
@@ -2824,6 +2847,20 @@ impl AgentKernel {
             }
             None => json!({"ok": false, "error": "not_found_or_not_claimed"}),
         }
+    }
+
+    /// Heartbeat claimed lease so long-running workers are not reclaimed mid-job.
+    pub fn inbox_touch_by_db_id(&self, db_item_id: &str) -> Value {
+        let mut g = self.inner.write();
+        let ok = g.inbox.touch_by_db_id(db_item_id);
+        json!({"ok": ok, "db_item_id": db_item_id})
+    }
+
+    /// Align claim lease with Python agent_inbox_item_timeout (+ grace).
+    pub fn inbox_set_claim_timeout(&self, secs: f64) -> Value {
+        let mut g = self.inner.write();
+        g.inbox.set_claim_timeout(secs);
+        json!({"ok": true, "claim_timeout_secs": secs.max(30.0)})
     }
 
     pub fn inbox_complete(

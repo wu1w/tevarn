@@ -171,6 +171,7 @@ async def create_session(
             temperature=getattr(cfg, "temperature", None),
             max_tokens=getattr(cfg, "max_tokens", None),
             context_window=getattr(app_settings, "context_window", None),
+            reasoning_effort=getattr(app_settings, "reasoning_effort", None),
         )
         try:
             params = await gen_params_mod.get_params(
@@ -185,6 +186,8 @@ async def create_session(
                     snap["max_tokens"] = params["max_tokens"]
                 if params.get("context_window") is not None:
                     snap["context_window"] = params["context_window"]
+                if params.get("reasoning_effort") is not None:
+                    snap["reasoning_effort"] = params["reasoning_effort"]
         except Exception:
             pass
         config["llm"] = snap

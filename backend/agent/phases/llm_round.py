@@ -365,29 +365,138 @@ async def _run_llm_round_body(
             if spent > 0:
                 get_kernel().charge_tokens(kernel_proc.id, spent)
         except BudgetExceededError as e:
-            logger.warning("kernel 预算耗尽，中断 run proc=%s: %s", kernel_proc.id, e)
-            loop._should_stop = True
-            result.action = "break"
-            # R-02：与 exit_reasons 统一恢复文案（禁止空报告冒充结论）
+            # Dynamic budget: interactive CEO + limited workforce auto top_up.
+            # Workforce used to hard-stop → budget-fail churn; now allows a few
+            # renewals so long jobs can finish without CEO babysitting.
+            _recovered = False
             try:
-                from backend.agent.exit_reasons import format_exit_user_message
-
-                loop.last_exit_reason = "budget_exhausted"
-                result.final_content = (
-                    format_exit_user_message(
-                        "budget_exhausted", process_id=kernel_proc.id
+                _origin = str(getattr(loop, "_run_origin", "") or "").lower()
+                _meta = getattr(kernel_proc, "meta", None) or {}
+                _is_wf = bool(_meta.get("workforce")) or str(
+                    getattr(kernel_proc, "identity", "") or ""
+                ).startswith("wf:")
+                _interactive = (not _is_wf) and _origin in (
+                    "",
+                    "chat",
+                    "default",
+                    "goal",
+                )
+                # Workforce opt-out: payload/meta hard_cap_only or global flag
+                _wf_auto = True
+                try:
+                    if _is_wf and bool(
+                        getattr(settings, "agent_workforce_hard_cap_only", False)
+                    ):
+                        _wf_auto = False
+                    if isinstance(_meta, dict) and _meta.get("hard_cap_only") in (
+                        True,
+                        "true",
+                        1,
+                        "1",
+                    ):
+                        _wf_auto = False
+                except Exception:
+                    pass
+                if _interactive or (_is_wf and _wf_auto):
+                    _k = get_kernel()
+                    _n = int(
+                        (_meta.get("auto_top_up_count") or 0)
+                        if isinstance(_meta, dict)
+                        else 0
                     )
-                    + f"\n（{e}）\n禁止用报告框架/预期结果冒充结论。"
+                    if _interactive:
+                        _max = int(
+                            getattr(settings, "agent_budget_soft_renew_max", 2) or 2
+                        )
+                        # CEO long runs: allow more auto top-ups
+                        if _max < 6:
+                            _max = 6
+                        _min_add = int(
+                            getattr(settings, "agent_budget_soft_renew_min_add", 50_000)
+                            or 50_000
+                        )
+                        _add = max(_min_add, int(spent) * 3, 300_000)
+                        _add = min(_add, 1_000_000)
+                        _by = "system:interactive_auto"
+                    else:
+                        # Workforce: smaller, bounded renewals (product dynamic budget)
+                        _max = int(
+                            getattr(settings, "agent_workforce_auto_top_up_max", 4) or 4
+                        )
+                        _min_add = int(
+                            getattr(
+                                settings, "agent_workforce_auto_top_up_min_add", 150_000
+                            )
+                            or 150_000
+                        )
+                        _add = max(_min_add, int(spent) * 2, 200_000)
+                        _add = min(_add, 500_000)
+                        _by = "system:workforce_auto"
+                    if _n < _max:
+                        _k.top_up_budget(
+                            kernel_proc.id,
+                            _add,
+                            by=_by,
+                            reason=f"auto top_up after BudgetExceeded (n={_n + 1})",
+                        )
+                        if isinstance(_meta, dict):
+                            _meta = dict(_meta)
+                            _meta["auto_top_up_count"] = _n + 1
+                            try:
+                                kernel_proc.meta = _meta  # type: ignore[misc]
+                            except Exception:
+                                pass
+                        _k.charge_tokens(kernel_proc.id, spent)
+                        fresh = _k.get_process(kernel_proc.id)
+                        if fresh is not None:
+                            loop._kernel_process = fresh
+                        _recovered = True
+                        logger.info(
+                            "%s auto top_up ok proc=%s add=%s n=%s",
+                            "interactive" if _interactive else "workforce",
+                            kernel_proc.id,
+                            _add,
+                            _n + 1,
+                        )
+                        try:
+                            await loop._push_status(
+                                session_id,
+                                "thinking",
+                                f"Token 预算动态追加 +{_add}（第 {_n + 1}/{_max} 次），继续…",
+                            )
+                        except Exception:
+                            pass
+            except Exception as _tu_e:
+                logger.warning("auto top_up failed: %s", _tu_e)
+                _recovered = False
+
+            if not _recovered:
+                logger.warning(
+                    "kernel token 预算耗尽，中断 run proc=%s: %s", kernel_proc.id, e
                 )
-            except Exception:
-                result.final_content = (
-                    f"[Budget Exceeded] 进程 token 预算耗尽，运行已中断（{e}）。"
-                    "本工单未完成实质检查；请提高预算、收窄范围或拆小任务后重试。"
-                    "禁止用报告框架/预期结果冒充结论。"
-                )
-            result.accumulated_content = ""
-            result.tool_calls = []
-            return result
+                loop._should_stop = True
+                result.action = "break"
+                try:
+                    from backend.agent.exit_reasons import format_exit_user_message
+
+                    # Token budget — NOT iteration budget (was mislabeled as 迭代预算耗尽)
+                    loop.last_exit_reason = "kernel_token_budget_exhausted"
+                    result.final_content = (
+                        format_exit_user_message(
+                            "kernel_token_budget_exhausted",
+                            process_id=kernel_proc.id,
+                        )
+                        + f"\n（{e}）\n禁止用报告框架/预期结果冒充结论。"
+                    )
+                except Exception:
+                    result.final_content = (
+                        f"[Token 预算耗尽] 进程 token 额度用尽，运行已中断（{e}）。"
+                        "请 top_up 或提高默认 token_budget 后重试。"
+                        "禁止用报告框架/预期结果冒充结论。"
+                    )
+                result.accumulated_content = ""
+                result.tool_calls = []
+                return result
         except Exception as e:
             logger.debug("kernel charge_tokens 跳过: %s", e)
 

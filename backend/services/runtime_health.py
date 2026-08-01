@@ -353,16 +353,52 @@ def _default_scenario_hint() -> dict[str, Any]:
 
 
 def try_restart_host() -> dict[str, Any]:
-    try:
-        from backend.kernel_rust.client import restart_kernel_host, is_rust_host_available
-        from backend.kernel import reset_kernel_for_tests, get_kernel
+    """Operator/UI host restart. Always force-kill (cooldown does not skip).
 
-        ok = restart_kernel_host()
-        reset_kernel_for_tests()
+    Must be run off the asyncio event loop (see host_restart_api) — this path
+    does taskkill + wait + spawn and would freeze all HTTP/WS if called sync
+    inside an async route.
+    """
+    try:
+        from backend.kernel_rust.client import (
+            restart_kernel_host,
+            is_rust_host_available,
+        )
+        from backend.kernel import get_kernel
+
+        # force=True: UI click must kill even when TCP port still "open" (hung host)
+        ok = restart_kernel_host(force=True)
+        k = get_kernel()
+        # Do NOT reset_kernel_for_tests() here — that wipes the process-wide
+        # singleton mid-flight and races agent loops. Just mark wipe + reconnect.
+        if hasattr(k, "_mark_host_wiped"):
+            try:
+                k._mark_host_wiped()
+            except Exception:
+                pass
+        try:
+            if hasattr(k, "_rpc"):
+                k._rpc.close()
+            if hasattr(k, "_soft_reconnect"):
+                k._soft_reconnect()
+            elif hasattr(k, "_rpc"):
+                k._rpc.connect()
+        except Exception as re:
+            # Host may still be coming up; client will reconnect on next RPC
+            logger = __import__("logging").getLogger(__name__)
+            logger.debug("post-restart reconnect: %s", re)
         if ok or is_rust_host_available():
-            k = get_kernel()
+            try:
+                if hasattr(k, "_assert_abi_or_fail"):
+                    k._assert_abi_or_fail()
+            except Exception as abi_e:
+                return {
+                    "ok": True,
+                    "warning": f"host up but ABI check: {abi_e}",
+                    "host": {},
+                }
             st = k.host_runtime_status() if hasattr(k, "host_runtime_status") else {}
             return {"ok": True, "host": st}
-        return {"ok": False, "error": "restart failed"}
+        return {"ok": False, "error": "restart failed — host not accepting connections"}
     except Exception as e:
         return {"ok": False, "error": str(e)}

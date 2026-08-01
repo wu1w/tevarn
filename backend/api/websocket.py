@@ -468,6 +468,21 @@ class ConnectionManager:
         # Starlette WebSocketState.CONNECTED.value == 1
         return bool(state is not None and getattr(state, "value", state) == 1)
 
+    def user_has_live_connection(self, user_id) -> bool:
+        """该用户任意会话是否有 live WS（CEO 在别的 tab 打开了应用也算有人可问）。"""
+        if user_id is None:
+            return False
+        uid = user_id
+        if isinstance(user_id, str):
+            try:
+                uid = uuid.UUID(user_id)
+            except (ValueError, AttributeError):
+                return False
+        for sid in list(self._user_sessions.get(uid, set()) or set()):
+            if self.is_connected(sid):
+                return True
+        return False
+
 
 # 全局连接管理器单例
 manager = ConnectionManager()

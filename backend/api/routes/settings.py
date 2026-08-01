@@ -464,6 +464,8 @@ class TestLLMBody(BaseModel):
     llm_base_url: Optional[str] = None
     llm_model: Optional[str] = None
     llm_api_key: Optional[str] = None
+    # 已登记供应商 id：拉取成功后写回该条 cached_models（优先于 base_url 模糊匹配）
+    provider_id: Optional[str] = None
 
 
 def _models_url(base_url: str) -> str:
@@ -1200,18 +1202,25 @@ async def list_remote_models(
     api_key = await _resolve_api_key(repo, data.llm_api_key)
     result = await fetch_provider_models(provider, base_url, api_key)
 
-    # 写回缓存：匹配同 base_url / 同 provider 类型的已登记供应商
+    # 写回缓存：优先 provider_id，其次 base_url / provider 类型
     models = [str(m).strip() for m in (result.get("models") or []) if str(m).strip()]
     if result.get("ok") and models:
         try:
             catalog = await model_catalog_mod.load_catalog(repo)
-            base_l = base_url.lower().rstrip("/")
             matched = None
-            for p in catalog.get("providers") or []:
-                pb = str(p.get("llm_base_url") or "").rstrip("/").lower()
-                if base_l and pb == base_l:
-                    matched = p
-                    break
+            want_pid = str(getattr(data, "provider_id", None) or "").strip()
+            if want_pid:
+                matched = next(
+                    (p for p in (catalog.get("providers") or []) if str(p.get("id") or "") == want_pid),
+                    None,
+                )
+            base_l = base_url.lower().rstrip("/")
+            if matched is None:
+                for p in catalog.get("providers") or []:
+                    pb = str(p.get("llm_base_url") or "").rstrip("/").lower()
+                    if base_l and pb == base_l:
+                        matched = p
+                        break
             if matched is None:
                 for p in catalog.get("providers") or []:
                     if str(p.get("llm_provider") or "").lower() == str(provider or "").lower():
@@ -1225,6 +1234,9 @@ async def list_remote_models(
                     active_model=str(data.llm_model or matched.get("active_model") or "") or None,
                 )
                 await model_catalog_mod.save_catalog(repo, catalog)
+                # 带上可直接用于下拉的 models，免前端再 round-trip
+                result["catalog"] = model_catalog_mod.mask_catalog_for_client(catalog)
+                result["provider_id"] = str(matched.get("id") or "")
         except Exception as e:
             logger.warning("list-models cache write failed: %s", e)
 
@@ -1271,6 +1283,8 @@ class RegisterProviderBody(BaseModel):
     llm_api_key: str | None = None
     llm_model: str | None = None
     set_active: bool = True
+    # 首次「拉取模型」后一并写入缓存，避免下拉要等二次 live fetch
+    models: list[str] | None = None
 
 
 @router.post("/oauth/xai/start")
@@ -1517,6 +1531,16 @@ async def register_provider_in_catalog(
         set_active=data.set_active,
         active_model=data.llm_model,
     )
+    # 把设置页刚拉取到的模型列表写进缓存，立刻可供下拉/子代理使用
+    if data.models:
+        cleaned = [str(m).strip() for m in data.models if str(m).strip()]
+        if cleaned:
+            catalog = model_catalog_mod.set_provider_cached_models(
+                catalog,
+                data.id,
+                cleaned,
+                active_model=data.llm_model,
+            )
     await model_catalog_mod.save_catalog(repo, catalog)
     if data.set_active:
         model_catalog_mod.apply_active_to_runtime(catalog)
@@ -1603,6 +1627,7 @@ async def select_active_model(
             "context_window": slot["context_window"],
             "max_tokens": slot["max_tokens"],
             "temperature": slot["temperature"],
+            "reasoning_effort": slot.get("reasoning_effort"),
         },
     )
     # 可选：同步更新当前会话的 LLM 快照，使对话框内切换立即生效
@@ -1618,6 +1643,7 @@ async def select_active_model(
                 temperature=slot.get("temperature"),
                 max_tokens=slot.get("max_tokens"),
                 context_window=slot.get("context_window"),
+                reasoning_effort=slot.get("reasoning_effort"),
             )
             # 键级合并：只写 llm 快照键，不覆盖 _goal/_agent_checkpoint 等并发键
             await session_repo.merge_config_keys(sid, {"llm": new_snap})
@@ -1990,6 +2016,7 @@ async def apply_settings_batch(
         "max_tokens": "llm",
         "context_window": "llm",
         "temperature": "llm",
+        "reasoning_effort": "llm",
         "llm_model_gen_params": "llm",
         "embedding_provider": "embedding",
         "embedding_model": "embedding",
@@ -2048,8 +2075,8 @@ async def apply_settings_batch(
     )
 
 
-    # 生成参数绑定到当前激活模型（温度/max_tokens/context_window）
-    gen_keys = {"temperature", "max_tokens", "context_window"}
+    # 生成参数绑定到当前激活模型（温度/max_tokens/context_window/思考强度）
+    gen_keys = {"temperature", "max_tokens", "context_window", "reasoning_effort"}
     if gen_keys & set(saved_keys):
         try:
             from backend.core import model_catalog as model_catalog_mod
@@ -2066,6 +2093,8 @@ async def apply_settings_batch(
                     payload["max_tokens"] = data.items.get("max_tokens")
                 if "context_window" in saved_keys:
                     payload["context_window"] = data.items.get("context_window")
+                if "reasoning_effort" in saved_keys:
+                    payload["reasoning_effort"] = data.items.get("reasoning_effort")
                 await gen_params_mod.upsert_params(repo, pid, mid, payload)
                 saved_keys.append(gen_params_mod.SETTING_KEY)
         except Exception as e:

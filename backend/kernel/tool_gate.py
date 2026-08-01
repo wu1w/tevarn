@@ -162,6 +162,38 @@ def _charge(kernel: Any, process_id: str, kind: str, amount: int = 1) -> None:
     raise RuntimeError("kernel has no resource_charge")
 
 
+def _release(kernel: Any, process_id: str, kind: str, amount: int = 1) -> None:
+    """Return resource lease (child_proc concurrency slot)."""
+    if hasattr(kernel, "resource_release"):
+        kernel.resource_release(process_id, kind, amount)
+        return
+    if hasattr(kernel, "_call"):
+        kernel._call(
+            "resource_release",
+            {"process_id": process_id, "kind": kind, "amount": amount},
+        )
+        return
+    # Soft no-op on pure-Python kernels without release
+    logger.debug("kernel has no resource_release; skip %s/%s", kind, process_id[:12])
+
+
+def release_for_tool(name: str, process_id: str | None) -> None:
+    """Release child_proc lease after command-class tool finishes (or is aborted).
+
+    ChildProc is a *concurrency* quota, not a lifetime call counter. Without
+    release, 16 shell tools permanently kill command for that process.
+    """
+    pid = (process_id or "").strip()
+    if not pid or name not in CHILD_PROC_TOOLS:
+        return
+    try:
+        from backend.kernel import get_kernel
+
+        _release(get_kernel(), pid, "child_proc", 1)
+    except Exception as e:
+        logger.debug("resource_release child_proc skip tool=%s: %s", name, e)
+
+
 async def mediate_tool_call(
     name: str,
     process_id: str,
@@ -335,11 +367,22 @@ async def enforce_tool_gate(
     if charge:
         try:
             charge_for_tool(name, pid, args)
+            if name in CHILD_PROC_TOOLS:
+                # Lease flag: caller must release_for_tool after execute / early abort
+                args["_child_proc_leased"] = True
         except Exception as rce:
             logger.warning("tool_gate resource_charge deny tool=%s: %s", name, rce)
+            msg = str(rce)
+            if "child_proc" in msg.lower() or "ChildProc" in msg:
+                return args, (
+                    f"Error: 子进程并发配额已满（child_proc）——{rce}。"
+                    "请等待当前命令结束（系统会释放名额）后重试；"
+                    "或改用 file_read/grep 等不启子进程的工具。"
+                    "不要连续空转重试同一 command。"
+                )
             return args, (
                 f"Error: 资源配额不足——{rce}。"
-                "请降低调用频率或提高进程资源上限。"
+                "请降低调用频率、缩小范围，或让 CEO top_up token 预算（资源账户另计）。"
             )
 
     if mark_passed:

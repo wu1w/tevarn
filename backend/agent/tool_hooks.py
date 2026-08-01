@@ -296,13 +296,59 @@ async def builtin_permission_before(name: str, arguments: dict[str, Any]) -> Bef
 
     ask_mode = effective_ask_mode()
     if ask_mode == "auto":
-        has_channel = args.get("_ws_manager") is not None
-        if has_channel:
+        # Has channel if this session OR any same-user tab has live FE.
+        # (CEO often sits on another page; session-only probe caused silent deny.)
+        has_channel = False
+        ws_mgr = args.get("_ws_manager")
+        if ws_mgr is not None:
+            sid = args.get("_session_id")
+            checker = getattr(ws_mgr, "is_connected", None)
+            if callable(checker) and sid is not None:
+                try:
+                    has_channel = bool(checker(sid))
+                except Exception:
+                    has_channel = False
+            if not has_channel:
+                uid = args.get("_user_id") or args.get("user_id")
+                user_probe = getattr(ws_mgr, "user_has_live_connection", None)
+                if callable(user_probe) and uid:
+                    try:
+                        has_channel = bool(user_probe(uid))
+                    except Exception:
+                        pass
+        # Workforce never pops owner UI (steward already decided allow/deny).
+        from backend.agent.steward_permission import is_workforce_context
+
+        is_wf = is_workforce_context(args)
+        if has_channel and not is_wf:
             ask_mode = "interactive"
+        elif not is_wf:
+            # Desktop CEO / main chat on owner machine: no live FE → local_allow
+            # so shell/edit are not silently killed (cron/webhook stay headless).
+            origin = str(
+                args.get("_run_origin")
+                or args.get("_origin")
+                or args.get("_chat_mode")
+                or ""
+            ).lower()
+            if origin in ("", "chat", "default", "goal", "build", "agent"):
+                ask_mode = "local_allow"
+                logger.info(
+                    "permission ask (CEO/desktop chat, no FE) → local_allow tool=%s",
+                    name,
+                )
+            else:
+                ask_mode = _headless_fallback_mode(name, settings)
+                logger.info(
+                    "permission ask (no live FE) → headless %s tool=%s origin=%s",
+                    ask_mode,
+                    name,
+                    origin or "-",
+                )
         else:
             ask_mode = _headless_fallback_mode(name, settings)
             logger.info(
-                "permission ask (no approval channel) → headless %s tool=%s",
+                "permission ask (workforce/no FE) → headless %s tool=%s",
                 ask_mode,
                 name,
             )
@@ -335,16 +381,19 @@ async def builtin_permission_before(name: str, arguments: dict[str, Any]) -> Bef
 #
 # 但一刀切拒绝会静默弄坏用户已有的定时任务（多数只是读文件、整理、写报告）。
 # 折中：默认只拦「能执行任意代码 / 能把数据发出去」的那一类，读写照常。
+# bash covers command/python/process/http/browser via TOOL_TO_KEY.
 _HEADLESS_HIGH_RISK_KEYS = frozenset({"bash", "desktop"})
 
 
 def _headless_fallback_mode(tool_name: str, settings: Any) -> str:
-    """无确认通道时的兜底决策。
+    """无确认通道时的兜底决策（cron / webhook / workforce 无 FE）。
 
     agent_permission_headless:
-      - "allow" —— 全放行（0.3.x 的旧行为，需显式选择）
+      - "allow" —— 全放行
       - "safe"  —— 默认：读/写放行，shell·python·remote_exec·http·browser 拒绝
       - "deny"  —— 全拒绝
+
+    Desktop CEO chat without FE is handled *before* this function (local_allow).
     """
     fallback = str(
         getattr(settings, "agent_permission_headless", "safe") or "safe"
@@ -453,6 +502,10 @@ async def _interactive_approval(
         outcome = await request_confirmation(
             ws_manager,
             session_id,
+            user_id=str(
+                arguments.get("_user_id") or arguments.get("user_id") or ""
+            ).strip()
+            or None,
             title="危险操作确认",
             command=summary,
             reason=f"权限 profile={profile}，工具 {name} 需要确认"

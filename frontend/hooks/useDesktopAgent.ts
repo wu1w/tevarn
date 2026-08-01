@@ -190,10 +190,20 @@ export function useDesktopAgent(options: UseDesktopAgentOptions = {}) {
       return;
     }
 
-    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    // 浏览器 next dev 下勿走 location.host（Next rewrites 不支持 WS upgrade）
+    const { hostname, port, protocol } = window.location;
+    const isLocalDev =
+      (hostname === '127.0.0.1' || hostname === 'localhost') &&
+      (port === '3000' || port === '3001');
+    const wsProto = protocol === 'https:' ? 'wss' : 'ws';
+    const host = isLocalDev
+      ? '127.0.0.1:8090'
+      : port
+        ? `${hostname}:${port}`
+        : hostname;
     const token = useAuthStore.getState().token as string | undefined | null;
     const q = token ? `?token=${encodeURIComponent(token)}` : '';
-    const ws = new WebSocket(`${proto}://${window.location.host}/api/desktop/stream${q}`);
+    const ws = new WebSocket(`${wsProto}://${host}/api/desktop/stream${q}`);
 
     ws.onopen = () => setIsStreaming(true);
     ws.onmessage = (event) => {

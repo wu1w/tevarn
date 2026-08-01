@@ -1149,6 +1149,7 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
                           onExampleSelect={(text) => setEditingContent(text)}
                           onPreviewArtifact={setPreviewArtifact}
                           contactName={sessionIdentity || null}
+                          sessionId={currentSession?.id || null}
                         />
                       </div>
                       )}

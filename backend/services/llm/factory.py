@@ -126,6 +126,13 @@ class LLMServiceFactory:
             temperature=sanitize_temperature(
                 _pick("temperature", getattr(base_cfg, "temperature", 0.7))
             ),
+            reasoning_effort=str(
+                _pick(
+                    "reasoning_effort",
+                    getattr(settings, "reasoning_effort", "medium") or "medium",
+                )
+                or "medium"
+            ).strip().lower(),
         )
         from .provider_profiles import resolve_profile
 

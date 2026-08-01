@@ -165,8 +165,14 @@ def normalize_catalog(raw: Any) -> dict[str, Any]:
 
 
 def mask_catalog_for_client(catalog: dict[str, Any]) -> dict[str, Any]:
-    """返回给前端的目录：API Key 脱敏。"""
+    """返回给前端的目录：API Key 脱敏。
+
+    同时把 cached_models 展成前端期望的 models[{id,disabled}]，
+    避免 register / credentials 等接口回写后下拉变空。
+    """
     out = deepcopy(normalize_catalog(catalog))
+    active_pid = str(out.get("active_provider_id") or "")
+    active_model = str(out.get("active_model") or "")
     for p in out.get("providers") or []:
         key = p.get("llm_api_key") or ""
         p["has_api_key"] = bool(key)
@@ -189,6 +195,17 @@ def mask_catalog_for_client(catalog: dict[str, Any]) -> dict[str, Any]:
                 }
             )
         p["credentials"] = masked_creds
+        disabled_set = {str(m).strip() for m in (p.get("disabled_models") or []) if str(m).strip()}
+        model_ids = provider_models_for_display(
+            p,
+            global_active_provider_id=active_pid,
+            global_active_model=active_model,
+        )
+        # 禁用列表里有但缓存没有的也展示，方便管理
+        for mid in disabled_set:
+            if mid not in model_ids:
+                model_ids.append(mid)
+        p["models"] = [{"id": mid, "disabled": mid in disabled_set} for mid in model_ids]
     return out
 
 
@@ -673,6 +690,7 @@ def build_llm_snapshot(
     temperature: float | None = None,
     max_tokens: int | None = None,
     context_window: int | None = None,
+    reasoning_effort: str | None = None,
 ) -> dict[str, Any]:
     """会话/调用用的完整 LLM 快照（含 provider_id，禁止只带裸 model）。"""
     mid = (model or "").strip() or str(provider.get("active_model") or "").strip()
@@ -685,6 +703,7 @@ def build_llm_snapshot(
         "temperature": temperature,
         "max_tokens": max_tokens,
         "context_window": context_window,
+        "reasoning_effort": reasoning_effort,
     }
 
 
@@ -699,6 +718,7 @@ def resolve_new_session_llm_snapshot(
     temperature: float | None = None,
     max_tokens: int | None = None,
     context_window: int | None = None,
+    reasoning_effort: str | None = None,
 ) -> dict[str, Any]:
     """新会话 LLM 快照：默认模型必须解析到真实供应商，禁止 custom 空壳。
 
@@ -727,6 +747,7 @@ def resolve_new_session_llm_snapshot(
             temperature=temperature,
             max_tokens=max_tokens,
             context_window=context_window,
+            reasoning_effort=reasoning_effort,
         )
         if snap.get("base_url") or snap.get("provider") == "ollama":
             return snap
@@ -741,6 +762,7 @@ def resolve_new_session_llm_snapshot(
         "temperature": temperature,
         "max_tokens": max_tokens,
         "context_window": context_window,
+        "reasoning_effort": reasoning_effort,
     }
 
 

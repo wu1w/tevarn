@@ -420,10 +420,16 @@ async def runtime_health_api(
 async def host_restart_api(
     current_user: Annotated[UserRead, Depends(get_current_user)],
 ):
-    """一键重启 Kernel Host（卡死/无响应恢复）。"""
+    """一键重启 Kernel Host（卡死/无响应恢复）。
+
+    必须在线程池执行：内部 taskkill + 等端口释放会阻塞数秒；若在 event loop
+    同步跑，整站 HTTP/WS 一起假死（前端点「重启」后卡死）。
+    """
+    import asyncio
+
     from backend.services.runtime_health import try_restart_host
 
-    return try_restart_host()
+    return await asyncio.to_thread(try_restart_host)
 
 
 @router.get("/host/watchdog")

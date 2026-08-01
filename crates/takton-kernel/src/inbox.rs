@@ -48,7 +48,9 @@ pub struct InboxQueue {
 
 impl Default for InboxQueue {
     fn default() -> Self {
-        Self::new(300.0)
+        // Align with Python agent_inbox_item_timeout (600s) + grace so long
+        // jobs are not reclaimed while workers still run (was 300s → sticky fail).
+        Self::new(900.0)
     }
 }
 
@@ -60,7 +62,8 @@ impl InboxQueue {
             claim_timeout_secs: claim_timeout_secs.max(1.0),
             max_pending: 500,
             claimed_by_identity: HashMap::new(),
-            max_claimed_per_identity: 2,
+            // Product serial-1: match agent_dispatcher_max_identity_concurrent default
+            max_claimed_per_identity: 1,
             dead: Vec::new(),
             overflow_drops: 0,
         }
@@ -69,6 +72,30 @@ impl InboxQueue {
     pub fn set_limits(&mut self, max_pending: usize, max_claimed_per_identity: u32) {
         self.max_pending = max_pending.max(8);
         self.max_claimed_per_identity = max_claimed_per_identity.max(1);
+    }
+
+    pub fn set_claim_timeout(&mut self, secs: f64) {
+        self.claim_timeout_secs = secs.max(30.0);
+    }
+
+    /// Heartbeat: refresh claimed_at for sticky leases (by SQL db_item_id in meta).
+    pub fn touch_by_db_id(&mut self, db_item_id: &str) -> bool {
+        let now = now_secs();
+        for item in self.items.values_mut() {
+            if item.status != "claimed" {
+                continue;
+            }
+            let mid = item
+                .meta
+                .get("db_item_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if mid == db_item_id {
+                item.claimed_at = Some(now);
+                return true;
+            }
+        }
+        false
     }
 
     pub fn submit(

@@ -24,9 +24,21 @@ _RPC_TIMEOUT = float(os.environ.get("TAKTON_KERNEL_RPC_TIMEOUT", "8"))
 _UI_RPC_TIMEOUT = float(os.environ.get("TAKTON_KERNEL_UI_RPC_TIMEOUT", "2.0"))
 # Full host restart wipes the in-memory process table. Prefer soft reconnect;
 # hard restart only when host is proven stuck (port up, ping dead) after soft fails.
-_RESTART_COOLDOWN_S = float(os.environ.get("TAKTON_KERNEL_RESTART_COOLDOWN", "8.0"))
+# Default cooldown raised (was 8s) to stop thrash during marathon / assign storms.
+_RESTART_COOLDOWN_S = float(os.environ.get("TAKTON_KERNEL_RESTART_COOLDOWN", "45.0"))
+# Cap hard restarts per rolling window (env TAKTON_KERNEL_HARD_RESTART_MAX, 0=unlimited)
+_HARD_RESTART_MAX = int(os.environ.get("TAKTON_KERNEL_HARD_RESTART_MAX", "3"))
+_HARD_RESTART_WINDOW_S = float(os.environ.get("TAKTON_KERNEL_HARD_RESTART_WINDOW", "3600"))
+# 0/false: never hard-restart (soft only); operator uses REST restart
+_HARD_RESTART_ENABLED = os.environ.get("TAKTON_KERNEL_HARD_RESTART", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
 _recovery_lock = threading.Lock()
 _last_hard_restart_at = 0.0
+_hard_restart_times: list[float] = []
 # Agent RPC executor (serial). UI reads use a separate ephemeral TCP client so a
 # stuck mediate cannot queue-block panel APIs (Next proxy 500 / socket hang up).
 _RPC_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="kernel-rpc")
@@ -36,6 +48,11 @@ _RPC_RESULT_TIMEOUT = float(os.environ.get("TAKTON_KERNEL_RPC_RESULT_TIMEOUT", "
 _SOFT_ONLY_METHODS = frozenset(
     {
         "inbox_reclaim",
+        "inbox_touch_by_db_id",
+        "inbox_set_claim_timeout",
+        "inbox_list",
+        "inbox_status",
+        "inbox_submit",
         "isolation_reap",
         "doom_record",
         "emit",
@@ -48,6 +65,11 @@ _SOFT_ONLY_METHODS = frozenset(
         "get_process",
         "iteration_consume",
         "iteration_status",
+        "top_up_budget",
+        "try_soft_renew_budget",
+        "charge_tokens",
+        "resource_release",
+        "resource_usage",
     }
 )
 # Dashboard / panel methods: short-timeout side-channel (own socket).
@@ -486,12 +508,33 @@ _host_lock = threading.Lock()
 
 
 def is_rust_host_available(host: str = DEFAULT_HOST) -> bool:
+    """TCP connect probe. Short timeout — hung accept looks like unavailable."""
     h, _, p = host.rpartition(":")
     try:
-        with socket.create_connection((h or "127.0.0.1", int(p or 17890)), timeout=0.5):
+        with socket.create_connection((h or "127.0.0.1", int(p or 17890)), timeout=0.35):
             return True
     except OSError:
         return False
+
+
+def is_rust_host_responsive(host: str = DEFAULT_HOST, *, timeout: float = 1.0) -> bool:
+    """Port open AND answers JSON-RPC ping (detects accept-dead hosts)."""
+    if not is_rust_host_available(host):
+        return False
+    client: _JsonRpcClient | None = None
+    try:
+        client = _JsonRpcClient(host, rpc_timeout=timeout)
+        client.connect(attempts=1, connect_timeout=min(0.5, timeout))
+        r = client.call("ping", {})
+        return bool(r is not None)
+    except Exception:
+        return False
+    finally:
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass
 
 
 def stop_kernel_host() -> None:
@@ -535,18 +578,41 @@ def _kill_stale_host_processes() -> None:
 
 
 def restart_kernel_host(
-    host: str = DEFAULT_HOST, *, extra_args: list[str] | None = None
+    host: str = DEFAULT_HOST,
+    *,
+    extra_args: list[str] | None = None,
+    force: bool = False,
 ) -> bool:
     """停掉 host 并重新 start（host 卡死时的恢复路径）。
 
     Serialized + cooldown: concurrent RPC failures must not multi-taskkill the
     host (that wiped the process table mid-rehydrate and broke crew_steward assign).
+
+    force=True: operator/UI 一键重启 — 跳过 cooldown，且始终 taskkill 残留进程
+    （假死时 port 仍 open，is_rust_host_available 会误报 True 导致跳过）。
     """
-    global _last_hard_restart_at
+    global _last_hard_restart_at, _hard_restart_times
     with _recovery_lock:
+        if not _HARD_RESTART_ENABLED:
+            logger.warning(
+                "kernel host hard-restart disabled (TAKTON_KERNEL_HARD_RESTART=0); soft-only"
+            )
+            return is_rust_host_available(host)
         now = time.time()
+        # Rate limit: max N hard restarts per window (force still counts)
+        _hard_restart_times = [
+            t for t in _hard_restart_times if now - t < _HARD_RESTART_WINDOW_S
+        ]
+        if _HARD_RESTART_MAX > 0 and len(_hard_restart_times) >= _HARD_RESTART_MAX:
+            logger.error(
+                "kernel host hard-restart rate-limited (%s/%ss); soft-only",
+                _HARD_RESTART_MAX,
+                int(_HARD_RESTART_WINDOW_S),
+            )
+            return is_rust_host_available(host)
         if (
-            now - float(_last_hard_restart_at or 0.0) < _RESTART_COOLDOWN_S
+            not force
+            and now - float(_last_hard_restart_at or 0.0) < _RESTART_COOLDOWN_S
             and is_rust_host_available(host)
         ):
             logger.warning(
@@ -555,16 +621,22 @@ def restart_kernel_host(
             )
             return True
         stop_kernel_host()
-        # 外部残留 / 无响应 host：按进程名强杀后重启
-        if is_rust_host_available(host):
+        # Always force-kill by image name on operator restart, or if port still open
+        # after stop (external / orphan host, or hung accept loop).
+        if force or is_rust_host_available(host):
             _kill_stale_host_processes()
-        for _ in range(40):
+        for _ in range(50):
             if not is_rust_host_available(host):
                 break
             time.sleep(0.1)
+        else:
+            # Still up after ~5s — one more kill pass
+            _kill_stale_host_processes()
+            time.sleep(0.3)
         ok = start_kernel_host(host, extra_args=extra_args)
         if ok:
             _last_hard_restart_at = time.time()
+            _hard_restart_times.append(_last_hard_restart_at)
         return ok
 
 
@@ -602,13 +674,14 @@ def start_kernel_host(host: str = DEFAULT_HOST, *, extra_args: list[str] | None 
             _host_proc = subprocess.Popen(cmd, **popen_kwargs)
         except Exception as e:
             logger.error("failed to start kernel host (%s): %s", bin_path, e)
-            return False
+            # Another process may already own the port
+            return bool(is_rust_host_available(host))
         for _ in range(80):
             if is_rust_host_available(host):
                 logger.info(
                     "rust kernel host ready at %s (pid=%s bin=%s)",
                     host,
-                    _host_proc.pid,
+                    getattr(_host_proc, "pid", None),
                     bin_path,
                 )
                 return True
@@ -619,6 +692,13 @@ def start_kernel_host(host: str = DEFAULT_HOST, *, extra_args: list[str] | None 
                         err = _host_proc.stderr.read().decode("utf-8", errors="replace")[:500]
                 except Exception:
                     pass
+                # Bind race: second instance exits with port-in-use, but first is fine
+                if is_rust_host_available(host):
+                    logger.info(
+                        "kernel host already up after spawn race (stderr=%s)",
+                        (err or "")[:120],
+                    )
+                    return True
                 logger.error(
                     "kernel host exited early code=%s stderr=%s",
                     _host_proc.returncode,
@@ -626,6 +706,8 @@ def start_kernel_host(host: str = DEFAULT_HOST, *, extra_args: list[str] | None 
                 )
                 return False
             time.sleep(0.1)
+        if is_rust_host_available(host):
+            return True
         logger.error("kernel host did not become ready at %s within timeout", host)
         return False
 
@@ -892,10 +974,16 @@ class RustAgentKernel:
                         not soft_only
                         and attempt >= max_attempts
                         and isinstance(last, (TimeoutError, socket.timeout))
+                        and _HARD_RESTART_ENABLED
                     ):
                         # Host port open but agent RPC stuck (e.g. mediate hang):
-                        # one hard restart with cooldown — panels use UI channel.
-                        if not self._host_responsive(timeout=1.0):
+                        # hard restart only after dead ping + cooldown/rate-limit.
+                        # Exponential soft backoff first.
+                        time.sleep(min(2.0, 0.35 * attempt))
+                        # Prefer full ping (not just TCP) so accept-dead hosts recover
+                        if not is_rust_host_responsive(
+                            self._host, timeout=1.2
+                        ) and not self._host_responsive(timeout=1.0):
                             wiped = self._hard_recover_host(
                                 reason=f"stuck-timeout method={method}"
                             )
@@ -2107,6 +2195,16 @@ class RustAgentKernel:
             {"process_id": process_id, "kind": kind, "amount": amount},
         ) or {}
         return int(r.get("remaining") if r.get("remaining") is not None else 0)
+
+    def resource_release(self, process_id: str, kind: str, amount: int = 1) -> dict[str, Any]:
+        """Release concurrency lease (child_proc after command exits)."""
+        return (
+            self._call(
+                "resource_release",
+                {"process_id": process_id, "kind": kind, "amount": amount},
+            )
+            or {}
+        )
 
     def resource_usage(self, process_id: str) -> dict[str, Any]:
         return self._call("resource_usage", {"process_id": process_id}) or {}

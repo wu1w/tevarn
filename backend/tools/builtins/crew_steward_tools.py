@@ -39,9 +39,11 @@ class CrewStewardTool(BaseTool):
                 "CEO 大管家工具（编制真源）。action：\n"
                 "list / hire / assign / status / results / open_project /\n"
                 "grant_caps / revoke_caps / set_caps / pending_grants /\n"
-                "set_budget（改员工档案默认预算）/ budgets（台账+在跑进程用量）/\n"
+                "set_budget（改员工档案默认预算；默认只抬高不降档，降档需 force）/\n"
+                " budgets（台账+在跑进程用量）/\n"
                 "top_up（运行中给在跑进程追加 token，动态加预算，不杀进程）。\n"
-                "预算：assign 可带 token_budget=本单硬顶（优先于自动抬升）；"
+                "预算：assign 可带 token_budget=本单下限（floor，与自动抬升取 max；"
+                "硬顶需 budget_mode=absolute）；"
                 "0=本单不限；大体检建议 200000–300000 或拆单。"
                 "撞 Budget Exceeded 或用量>70%：优先 top_up name=… amount=300000；"
                 "并 set_budget 抬档案默认，避免下一单再顶死。"
@@ -100,14 +102,32 @@ class CrewStewardTool(BaseTool):
                         "type": "integer",
                         "description": (
                             "hire：档案默认预算（默认 100000）；"
-                            "assign：本单预算硬顶（优先于自动抬升，0=本单不限）；"
-                            "set_budget：写入员工档案默认预算（0=档案不限）；"
+                            "assign：本单预算 floor（与自动抬升取 max；0=本单不限；"
+                            "硬顶请另传 budget_mode=absolute）；"
+                            "set_budget：目标档案默认预算（默认 mode=raise 只抬高不降档）；"
                             "top_up：本轮追加额度（同 amount）"
+                        ),
+                    },
+                    "budget_mode": {
+                        "type": "string",
+                        "description": (
+                            "assign：floor（默认，token_budget 只抬高）|"
+                            "absolute（token_budget 作硬顶，可低于自动抬升）"
                         ),
                     },
                     "amount": {
                         "type": "integer",
-                        "description": "top_up：追加 token 数量（正整数，建议 200000–500000）",
+                        "description": (
+                            "top_up：追加 token 数量（正整数，建议 200000–500000）；"
+                            "set_budget：增量抬高档案默认（与 token_budget 二选一）"
+                        ),
+                    },
+                    "mode": {
+                        "type": "string",
+                        "description": (
+                            "set_budget：raise（默认，只抬高不降）| absolute（绝对覆盖 token_budget，含下调）"
+                            "| delta（用 amount 增量抬高）"
+                        ),
                     },
                     "process_id": {
                         "type": "string",
@@ -148,7 +168,10 @@ class CrewStewardTool(BaseTool):
                     },
                     "force": {
                         "type": "boolean",
-                        "description": "assign：跳过 instruction 落地校验（不推荐；仅主人明确要求）",
+                        "description": (
+                            "assign：跳过 instruction 落地校验（不推荐）；"
+                            "set_budget：等价 mode=absolute，允许绝对覆盖（含下调）"
+                        ),
                     },
                     "reason": {
                         "type": "string",
@@ -266,19 +289,85 @@ class CrewStewardTool(BaseTool):
         return clamp_ceo_budget(int(raw))
 
     async def _set_budget(self, kwargs: dict[str, Any]) -> str:
-        """改员工档案 default_token_budget（持久）。"""
-        try:
-            budget_i = self._parse_token_budget_arg(kwargs, required=True)
-        except Exception as e:
-            return f"[Error] set_budget: {e}"
-        assert budget_i is not None
+        """改员工档案 default_token_budget（持久）。
+
+        语义三档（产品红线：默认不误降）：
+        - mode=raise（默认）：只抬高；目标 < 档案时拒绝（除非 force=true）
+        - mode=absolute：绝对覆盖写入 token_budget（含下调 / 0=不限），不再二次拦
+        - amount/delta：增量抬高（等价 delta）
+
+        CEO 常把「设 250k」当成补预算；raise 防止把 900k 踩成 250k。
+        真要绝对改档：mode=absolute token_budget=250000。
+        """
         ident = await self._resolve_identity(kwargs)
         reg = self._registry()
         old = getattr(ident, "default_token_budget", None)
+        old_i = int(old) if old is not None else None
+
+        # Delta path
+        raw_amt = kwargs.get("amount", kwargs.get("delta"))
+        mode = str(kwargs.get("mode") or "raise").strip().lower()
+        force = kwargs.get("force") in (True, "true", "1", 1, "yes")
+
+        budget_i: int | None = None
+        if raw_amt is not None and str(raw_amt).strip() != "":
+            try:
+                delta = int(raw_amt)
+            except (TypeError, ValueError):
+                return f"[Error] set_budget: amount/delta 必须是整数，收到 {raw_amt!r}"
+            if delta <= 0:
+                return "[Error] set_budget: amount/delta 必须为正（抬高预算）"
+            base = 0 if old_i in (None,) else (0 if old_i == 0 else old_i)
+            if old_i == 0:
+                return (
+                    "[Error] set_budget: 档案当前为不限(0)，无法用 amount 增量；"
+                    "请 mode=absolute token_budget=正整数 绝对改写。"
+                )
+            from backend.agent.workforce_budget import clamp_ceo_budget
+
+            budget_i = clamp_ceo_budget(base + delta)
+            mode = "delta"
+        else:
+            try:
+                budget_i = self._parse_token_budget_arg(kwargs, required=True)
+            except Exception as e:
+                return f"[Error] set_budget: {e}"
+            assert budget_i is not None
+
+            # force=true without explicit mode → treat as absolute override
+            if force and mode in ("raise", "floor", "min", "ensure", ""):
+                mode = "absolute"
+
+            if mode in ("raise", "floor", "min", "ensure", ""):
+                # Default raise: refuse accidental downgrade
+                if (
+                    old_i is not None
+                    and old_i > 0
+                    and budget_i > 0
+                    and budget_i < old_i
+                ):
+                    return (
+                        f"[Error] set_budget 拒绝降档：「{ident.name}」档案 "
+                        f"{old_i} → {budget_i} 会降低默认预算。"
+                        f"绝对覆盖：mode=absolute token_budget={budget_i}；"
+                        f"或 force=true。只想加预算：top_up amount=… / set_budget amount=…"
+                    )
+                if old_i is not None and old_i > 0 and budget_i > 0:
+                    budget_i = max(old_i, budget_i)
+                mode = "raise"
+            elif mode in ("absolute", "set", "replace"):
+                # Absolute override: write exactly what was asked (incl. downgrade / 0)
+                mode = "absolute"
+            else:
+                return (
+                    f"[Error] set_budget: 未知 mode={mode!r} "
+                    f"（支持 raise|absolute|delta）"
+                )
+
         await reg.update_profile(
             ident.id,
             default_token_budget=budget_i,
-            by="ceo:set_budget",
+            by=f"ceo:set_budget:{mode}",
         )
         btxt = "不限(0)" if budget_i == 0 else str(budget_i)
         otxt = "不限" if old == 0 else (str(old) if old is not None else "null")
@@ -295,7 +384,8 @@ class CrewStewardTool(BaseTool):
             if requeue_note:
                 requeue_note = f" {requeue_note}"
         return (
-            f"✅ 已更新「{ident.name}」档案默认预算 {otxt} → {btxt}。"
+            f"✅ 已更新「{ident.name}」档案默认预算 {otxt} → {btxt}"
+            f"（mode={mode}）。"
             f"新工单自动抬升仍会在此基础上取 max；"
             f"本单硬顶请在 assign 时另传 token_budget。{requeue_note}"
         )
@@ -500,7 +590,14 @@ class CrewStewardTool(BaseTool):
         duty = str(kwargs.get("duty") or "").strip()
         caps = kwargs.get("capabilities")
         if not isinstance(caps, list) or not caps:
-            caps = ["file_rw", "web_search"]
+            # 工程员工默认可读写+命令+时间+搜索；高危仍受 sandbox / path 约束
+            caps = [
+                "file_rw",
+                "command",
+                "web_search",
+                "current_time",
+                "clarify",
+            ]
         budget = kwargs.get("token_budget")
         try:
             budget_i = int(budget) if budget is not None else 100_000
@@ -862,24 +959,55 @@ class CrewStewardTool(BaseTool):
                 payload["dispatch_grounding"] = risk.to_dict()
             except Exception:
                 pass
-        # CEO 本单预算硬顶（优先于档案+任务类自动抬升）
+        # CEO 本单预算：默认 floor（与 auto 取 max）；absolute 才是硬顶
         budget_note = ""
         try:
             job_budget = self._parse_token_budget_arg(kwargs, required=False)
         except Exception as e:
             return f"[Error] assign token_budget: {e}"
+        budget_mode = str(
+            kwargs.get("budget_mode") or kwargs.get("token_budget_mode") or "floor"
+        ).strip().lower()
         if job_budget is not None:
             payload["token_budget"] = job_budget
             payload["budget_source"] = "ceo_assign"
-            btxt = "不限" if job_budget == 0 else str(job_budget)
-            budget_note = f" 本单预算={btxt}（CEO 指定）"
+            if budget_mode in ("absolute", "hard", "cap", "set") or kwargs.get(
+                "budget_hard"
+            ) in (True, "true", "1", 1, "yes"):
+                payload["budget_mode"] = "absolute"
+            else:
+                payload["budget_mode"] = "floor"
+            try:
+                from backend.agent.workforce_budget import resolve_job_budget
+
+                eff, src = resolve_job_budget(
+                    ident, instruction, payload=payload
+                )
+                if job_budget == 0:
+                    budget_note = " 本单预算=不限（CEO 指定）"
+                elif src.startswith("ceo_floor") and eff and eff > job_budget:
+                    budget_note = (
+                        f" 本单预算={eff}（CEO floor {job_budget} + 自动抬升→取 max，"
+                        f"source={src}）"
+                    )
+                else:
+                    btxt = str(eff if eff is not None else job_budget)
+                    budget_note = (
+                        f" 本单预算={btxt}（CEO {payload.get('budget_mode')}）"
+                    )
+            except Exception:
+                btxt = "不限" if job_budget == 0 else str(job_budget)
+                budget_note = f" 本单预算={btxt}（CEO 指定）"
         else:
             try:
                 from backend.agent.workforce_budget import resolve_job_budget
 
                 auto_b, _src = resolve_job_budget(ident, instruction)
                 if auto_b is not None:
-                    budget_note = f" 本单预算≈{auto_b}（自动抬升；可加 token_budget= 覆盖）"
+                    budget_note = (
+                        f" 本单预算≈{auto_b}（自动抬升；"
+                        f"可加 token_budget= 作 floor，budget_mode=absolute 作硬顶）"
+                    )
             except Exception:
                 pass
         item = await inbox.enqueue(

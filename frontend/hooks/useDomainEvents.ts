@@ -10,10 +10,41 @@ import { useEffect } from 'react';
 import { useDomainEventStore } from '@/stores/domainEventStore';
 import { useAuthStore } from '@/stores/authStore';
 
+/**
+ * 与 useWebSocket 对齐：浏览器 next dev (:3000/:3001) 下 Next rewrites
+ * 不支持 WebSocket upgrade，必须直连后端 8090，否则会 ECONNRESET / 控制台刷屏。
+ */
 function resolveWsBase(): string {
   if (typeof window === 'undefined') return 'ws://127.0.0.1:8090/api';
-  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${proto}//${window.location.host}/api`;
+
+  const injected = (window as unknown as { __TAKTON_WS_URL__?: string }).__TAKTON_WS_URL__;
+  if (injected) return injected.replace(/\/$/, '');
+
+  const { hostname, port, protocol } = window.location;
+  const isLocalHost = hostname === '127.0.0.1' || hostname === 'localhost';
+  const hasElectron = Boolean(
+    (window as unknown as { electronAPI?: unknown }).electronAPI
+  );
+
+  // Electron：走同源反代
+  if (hasElectron) {
+    const wsProto = protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = port ? `${hostname}:${port}` : hostname;
+    return `${wsProto}//${host}/api`;
+  }
+
+  // 浏览器 + next dev：直连后端
+  if (isLocalHost && (port === '3000' || port === '3001')) {
+    return 'ws://127.0.0.1:8090/api';
+  }
+
+  if (process.env.NEXT_PUBLIC_WS_URL) {
+    return process.env.NEXT_PUBLIC_WS_URL.replace(/\/$/, '');
+  }
+
+  const wsProto = protocol === 'https:' ? 'wss:' : 'ws:';
+  const host = port ? `${hostname}:${port}` : hostname;
+  return `${wsProto}//${host}/api`;
 }
 
 /** 页面只读：不管理连接生命周期 */

@@ -53,15 +53,57 @@ class ConfirmOutcome:
             "denied": "用户明确拒绝",
             "timeout": f"确认请求已推送，但 {DEFAULT_TIMEOUT:.0f}s 内无人响应，按拒绝处理",
             "no_channel": (
-                "当前运行环境没有确认通道（定时任务 / 渠道机器人 / 无前端连接），"
-                "无法征求用户同意，已保守拒绝"
+                "当前运行环境没有确认通道（定时任务 / 渠道机器人 / 无前端连接）；"
+                "已按 headless 策略处理（safe 默认：读写可放行，shell/网络拒绝）。"
+                "全放行可设 TAKTON_HEADLESS_AUTO_APPROVE=1 或 agent_permission_headless=allow"
             ),
             "not_connected": (
-                "会话没有活跃的前端连接，确认弹窗无法送达，已保守拒绝。"
-                "请在应用界面里打开该会话后重试"
+                "会话没有活跃的前端连接，确认弹窗无法送达；"
+                "已按 headless 策略处理。打开应用界面可走真确认弹窗。"
             ),
-            "broadcast_failed": "确认请求推送失败（连接异常），已保守拒绝",
+            "broadcast_failed": "确认请求推送失败（连接异常）；已按 headless 策略或拒绝处理",
         }.get(self.reason, self.reason)
+
+
+def _headless_auto_approve_enabled() -> bool:
+    """Product flag: allow headless auto-approve when no FE (env or settings)."""
+    import os
+
+    env = os.environ.get("TAKTON_HEADLESS_AUTO_APPROVE", "").strip().lower()
+    if env in ("1", "true", "yes", "on"):
+        return True
+    if env in ("0", "false", "no", "off"):
+        return False
+    try:
+        from backend.core.config import settings
+
+        return bool(getattr(settings, "agent_permission_auto_approve_no_fe", False))
+    except Exception:
+        return False
+
+
+def _headless_safe_allow(tool: str, command: str) -> bool:
+    """safe headless: allow read/write edits, deny shell/network high-risk."""
+    t = (tool or "").lower()
+    c = (command or "").lower()
+    high = (
+        "command",
+        "bash",
+        "shell",
+        "terminal",
+        "python",
+        "execute_python",
+        "remote",
+        "browser",
+        "http",
+        "desktop",
+        "sudo",
+        "rm ",
+        "del ",
+    )
+    if any(h in t for h in high) or any(h in c for h in ("sudo", "rm -rf", "format ")):
+        return False
+    return True
 
 
 async def request_confirmation(
@@ -75,11 +117,17 @@ async def request_confirmation(
     tool: str = "",
     agent_id: str | None = None,
     agent_name: str | None = None,
+    user_id: str | None = None,
 ) -> ConfirmOutcome:
-    """推送确认请求并等待用户决定（含授权作用域）。"""
+    """推送确认请求并等待用户决定（含授权作用域）。
+
+    Delivery:
+    - Prefer session WS; if that tab is gone, fan-out to any live WS of the same user
+      (CEO often has domain/other-session tabs open).
+    - Only fall to headless when no FE can receive the popup.
+    """
     if ws_manager is None:
-        logger.warning("confirm: no ws_manager, auto-deny dangerous op: %s", command[:120])
-        return ConfirmOutcome(False, "no_channel")
+        return _headless_confirm_outcome(tool=tool, command=command, why="no_channel")
 
     sid = session_id
     if isinstance(session_id, str):
@@ -88,41 +136,62 @@ async def request_confirmation(
         except (ValueError, AttributeError):
             sid = session_id
 
+    session_live = False
+    user_live = False
     checker = getattr(ws_manager, "is_connected", None)
     if callable(checker):
         try:
-            if not checker(sid):
-                logger.warning(
-                    "confirm: session %s has no live WS connection, auto-deny: %s",
-                    session_id,
-                    command[:120],
-                )
-                return ConfirmOutcome(False, "not_connected")
+            session_live = bool(checker(sid))
         except Exception as e:
             logger.debug("confirm: is_connected probe failed: %s", e)
+    user_probe = getattr(ws_manager, "user_has_live_connection", None)
+    if callable(user_probe) and user_id:
+        try:
+            user_live = bool(user_probe(user_id))
+        except Exception as e:
+            logger.debug("confirm: user_has_live_connection failed: %s", e)
+
+    if not session_live and not user_live:
+        logger.warning(
+            "confirm: no live FE (session=%s user=%s) — headless policy for: %s",
+            session_id,
+            user_id or "-",
+            command[:120],
+        )
+        return _headless_confirm_outcome(
+            tool=tool, command=command, why="not_connected"
+        )
 
     confirm_id = _uuid.uuid4().hex[:12]
     event = asyncio.Event()
     holder: dict = {"approved": False, "scope": "deny"}
     _pending[confirm_id] = (event, holder)
 
+    payload = {
+        "type": "confirm_request",
+        "session_id": str(session_id),
+        "confirm_id": confirm_id,
+        "title": title,
+        "command": command,
+        "reason": reason,
+        "timeout": timeout,
+        "tool": tool or "",
+        "agent_id": agent_id or "",
+        "agent_name": agent_name or "",
+        "scopes": ["once", "session", "agent", "deny"],
+    }
     try:
-        await ws_manager.broadcast(
-            sid,
-            {
-                "type": "confirm_request",
-                "session_id": str(session_id),
-                "confirm_id": confirm_id,
-                "title": title,
-                "command": command,
-                "reason": reason,
-                "timeout": timeout,
-                "tool": tool or "",
-                "agent_id": agent_id or "",
-                "agent_name": agent_name or "",
-                "scopes": ["once", "session", "agent", "deny"],
-            },
-        )
+        # Always try session first (even if probe said offline — race with reconnect)
+        await ws_manager.broadcast(sid, payload)
+        # Fan-out to other tabs of the same user so popup is not lost
+        if user_id and hasattr(ws_manager, "broadcast_to_user"):
+            try:
+                uid = user_id
+                if isinstance(user_id, str):
+                    uid = _uuid.UUID(user_id)
+                await ws_manager.broadcast_to_user(uid, payload, exclude_session=None)
+            except Exception as ue:
+                logger.debug("confirm: user fan-out skip: %s", ue)
     except Exception as e:
         logger.warning("confirm: broadcast failed: %s", e)
         _pending.pop(confirm_id, None)
@@ -142,6 +211,40 @@ async def request_confirmation(
         return ConfirmOutcome(False, "timeout", "deny")
     finally:
         _pending.pop(confirm_id, None)
+
+
+def _headless_confirm_outcome(
+    *, tool: str, command: str, why: str
+) -> ConfirmOutcome:
+    """When no FE is connected: product headless policy instead of hard deny-only."""
+    if _headless_auto_approve_enabled():
+        logger.info(
+            "confirm: headless auto-approve (%s) tool=%s cmd=%s",
+            why,
+            tool or "-",
+            command[:80],
+        )
+        return ConfirmOutcome(True, "approved", "session")
+    try:
+        from backend.core.config import settings
+
+        mode = str(getattr(settings, "agent_permission_headless", "safe") or "safe").lower()
+    except Exception:
+        mode = "safe"
+    if mode in ("allow", "local_allow", "auto_allow"):
+        logger.info("confirm: headless allow (%s) tool=%s", why, tool or "-")
+        return ConfirmOutcome(True, "approved", "session")
+    if mode == "safe" and _headless_safe_allow(tool, command):
+        logger.info("confirm: headless safe-allow (%s) tool=%s", why, tool or "-")
+        return ConfirmOutcome(True, "approved", "once")
+    logger.warning(
+        "confirm: headless deny (%s mode=%s) tool=%s cmd=%s",
+        why,
+        mode,
+        tool or "-",
+        command[:80],
+    )
+    return ConfirmOutcome(False, why)
 
 
 def resolve_confirmation(

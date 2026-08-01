@@ -14,9 +14,13 @@ class LoopToolsMixin:
         """Ensure loop's kernel process still exists on host (post-reconnect).
 
         Host process table is in-memory: restart/wipe invalidates process ids.
-        Proactively recreate before every tool gate so crew_steward assign is
-        not falsely blamed on "employee worker channels".
+
+        Critical: host *busy* (RPC timeout / connect fail) must NOT be treated as
+        "process missing". Rehydrating on every timeout creates a create_process
+        storm that deadlocks the host (LISTEN but no accept) — product instability.
         """
+        import time as _time
+
         proc = getattr(self, "_kernel_process", None)
         if proc is None:
             return None
@@ -30,10 +34,39 @@ class LoopToolsMixin:
         host_epoch = int(getattr(k, "_host_epoch", 0) or 0)
         cached_epoch = getattr(self, "_kernel_host_epoch", None)
         live = None
+        probe_soft_fail = False
         try:
             live = k.get_process(str(proc.id))
+            # UI path may return degraded empty dict on failure
+            if isinstance(live, dict) and live.get("_degraded"):
+                probe_soft_fail = True
+                live = None
+            elif live is not None and not getattr(live, "id", None):
+                # empty shell object
+                if isinstance(live, dict) and not live.get("id"):
+                    live = None
         except Exception as e:
-            logger.debug("get_process for ensure failed: %s", e)
+            msg = str(e).lower()
+            # Host busy / flaky — keep cached process id, do not recreate
+            if any(
+                x in msg
+                for x in (
+                    "timeout",
+                    "timed out",
+                    "connect",
+                    "10054",
+                    "10053",
+                    "unavailable",
+                    "closed connection",
+                    "refused",
+                )
+            ):
+                probe_soft_fail = True
+                logger.debug(
+                    "get_process soft-fail (host busy, skip rehydrate): %s", e
+                )
+            else:
+                logger.debug("get_process for ensure failed: %s", e)
             live = None
 
         if live is not None and (
@@ -43,8 +76,26 @@ class LoopToolsMixin:
             self._kernel_host_epoch = host_epoch
             return live
 
+        # Soft fail + same epoch: process almost certainly still on host
+        if probe_soft_fail and (
+            cached_epoch is None or int(cached_epoch) == host_epoch
+        ):
+            return proc
+
+        # Rate-limit rehydrate (max 1 / 8s per loop) — storm protection
+        now = _time.monotonic()
+        last_rh = float(getattr(self, "_last_rehydrate_at", 0.0) or 0.0)
+        if now - last_rh < 8.0 and cached_epoch is not None and int(cached_epoch) == host_epoch:
+            logger.debug(
+                "rehydrate throttled (%.1fs since last) proc=%s",
+                now - last_rh,
+                str(getattr(proc, "id", ""))[:12],
+            )
+            return proc
+
         # Missing on host or host epoch advanced → recreate
         try:
+            self._last_rehydrate_at = now
             old = proc
             caps = list(getattr(old, "capabilities", None) or []) or None
             budget = getattr(old, "token_budget", None)
@@ -176,7 +227,7 @@ class LoopToolsMixin:
         # 兼容模式进程（capabilities=None）放行+记录；显式能力集/令牌未授权 →
         # 返回工具级权限错误（反馈给模型，不炸掉整个 run）。
         # 编制路径在 gate deny 后可静默扩权再试；主人路径可 auto escalate。
-        from backend.kernel.tool_gate import enforce_tool_gate
+        from backend.kernel.tool_gate import enforce_tool_gate, release_for_tool
 
         # Proactive: host may have restarted since last tool — fix process id first
         kernel_proc = await self._ensure_live_kernel_process(arguments)
@@ -196,6 +247,12 @@ class LoopToolsMixin:
             arguments,
             process_id=getattr(kernel_proc, "id", None) if kernel_proc else None,
         )
+        # child_proc is a concurrency lease — always release after this call path
+        _lease_pid = str(
+            arguments.get("_kernel_process_id")
+            or (getattr(kernel_proc, "id", None) or "")
+        ).strip()
+        _child_leased = bool(arguments.get("_child_proc_leased"))
 
         def _gate_needs_rehydrate(err: str | None) -> bool:
             if not err:
@@ -311,6 +368,8 @@ class LoopToolsMixin:
         # Reconnect / wiped-process errors are not capability denies — do not
         # burn escalation budget on dead process ids.
         if gate_err and _gate_needs_rehydrate(gate_err):
+            if _child_leased:
+                release_for_tool(name, _lease_pid)
             return gate_err
         if gate_err and "Kernel 权限拒绝" in gate_err and kernel_proc is not None:
             # ── 编制 / 主人 提权回退（gate 只做裁决；扩权逻辑仍在 loop）──
@@ -392,20 +451,33 @@ class LoopToolsMixin:
                             process_id=kernel_proc.id,
                         )
                         if gate_err2:
+                            if _child_leased or arguments.get("_child_proc_leased"):
+                                release_for_tool(name, _lease_pid or kernel_proc.id)
                             return (
                                 f"{gate_err2}"
                                 "（编制已走提权通道仍失败；请 CEO 在 /approvals 批准）"
                                 if "权限拒绝" in gate_err2
                                 else gate_err2
                             )
+                        # re-gate may have taken a fresh child_proc lease
+                        _child_leased = bool(
+                            arguments.get("_child_proc_leased") or _child_leased
+                        )
+                        _lease_pid = str(
+                            arguments.get("_kernel_process_id") or kernel_proc.id
+                        )
                         # fall through
                     else:
+                        if _child_leased:
+                            release_for_tool(name, _lease_pid or kernel_proc.id)
                         return (
                             f"Error: 编制策略拒绝工具 «{name}»（不在员工能力档案内）。"
                             "请主人让 CEO 在权限看板扩权，不要对每一次工具点「允许」。"
                         )
                 except Exception as se:
                     logger.debug("workforce steward escalate path: %s", se)
+                    if _child_leased:
+                        release_for_tool(name, _lease_pid or kernel_proc.id)
                     return (
                         f"Error: Kernel 权限拒绝——{e}。"
                         "员工路径不向主人发起提权审批。"
@@ -427,40 +499,58 @@ class LoopToolsMixin:
                         pass
                     except Exception:
                         pass
+                if _child_leased:
+                    release_for_tool(name, _lease_pid or kernel_proc.id)
                 return f"Error: Kernel 权限拒绝——{e}{esc_note}"
         elif gate_err:
+            if _child_leased:
+                release_for_tool(name, _lease_pid)
             return gate_err
         # ── 重复搜索软干预（0.4.4：研究任务收敛刹车）──
         # 同 run 内同查询重复：第 2 次结果前附提醒；第 3 次起直接拒绝执行，
         # 强制模型基于已有信息总结（prompt 层刹车之外的工程层兜底）。
-        repeat_verdict = self._search_repeat_verdict(name, arguments)
-        if repeat_verdict == "block":
-            logger.info("重复搜索拦截 tool=%s query=%s", name, str(arguments)[:120])
-            total = int(getattr(self, "_search_total_calls", 0) or 0)
-            max_run = int(getattr(settings, "agent_search_max_per_run", 8) or 8)
-            if max_run > 0 and total > max_run:
+        try:
+            repeat_verdict = self._search_repeat_verdict(name, arguments)
+            if repeat_verdict == "block":
+                logger.info("重复搜索拦截 tool=%s query=%s", name, str(arguments)[:120])
+                total = int(getattr(self, "_search_total_calls", 0) or 0)
+                max_run = int(getattr(settings, "agent_search_max_per_run", 8) or 8)
+                if max_run > 0 and total > max_run:
+                    return (
+                        f"Error: 本轮研究已累计搜索 {total} 次（上限 {max_run}）。"
+                        "继续搜索收益极低——请立即基于已收集内容总结交付；"
+                        "缺口请在答案中显式列出，勿再调用搜索类工具。"
+                    )
                 return (
-                    f"Error: 本轮研究已累计搜索 {total} 次（上限 {max_run}）。"
-                    "继续搜索收益极低——请立即基于已收集内容总结交付；"
-                    "缺口请在答案中显式列出，勿再调用搜索类工具。"
+                    "Error: 检测到同一/近似查询已执行 3 次以上——继续重复搜索不会带来新信息。"
+                    "请立即基于已收集的内容总结交付；如有未覆盖的缺口，在答案中显式注明，"
+                    "或改用**角度完全不同**的新查询（而非同义改写）。"
                 )
-            return (
-                "Error: 检测到同一/近似查询已执行 3 次以上——继续重复搜索不会带来新信息。"
-                "请立即基于已收集的内容总结交付；如有未覆盖的缺口，在答案中显式注明，"
-                "或改用**角度完全不同**的新查询（而非同义改写）。"
+            repeat_prefix = (
+                "[提醒] 该查询此前已执行过，结果大概率相同。若本次结果无新增事实，"
+                "请停止继续搜索并进入总结阶段。\n\n" if repeat_verdict == "warn" else ""
             )
-        repeat_prefix = (
-            "[提醒] 该查询此前已执行过，结果大概率相同。若本次结果无新增事实，"
-            "请停止继续搜索并进入总结阶段。\n\n" if repeat_verdict == "warn" else ""
-        )
-        ex = getattr(self, "tool_executor", None)
-        if ex is not None:
-            result = await ex.execute(name, arguments)
-            return repeat_prefix + result if repeat_prefix and isinstance(result, str) else result
-        from backend.tools.registry import ToolRegistry as UnifiedToolRegistry
+            ex = getattr(self, "tool_executor", None)
+            if ex is not None:
+                result = await ex.execute(name, arguments)
+                return (
+                    repeat_prefix + result
+                    if repeat_prefix and isinstance(result, str)
+                    else result
+                )
+            from backend.tools.registry import ToolRegistry as UnifiedToolRegistry
 
-        result = await UnifiedToolRegistry.execute(name, arguments)
-        return repeat_prefix + result if repeat_prefix and isinstance(result, str) else result
+            result = await UnifiedToolRegistry.execute(name, arguments)
+            return (
+                repeat_prefix + result
+                if repeat_prefix and isinstance(result, str)
+                else result
+            )
+        finally:
+            # Always free child_proc concurrency lease after tool path completes
+            if _child_leased or arguments.get("_child_proc_leased"):
+                release_for_tool(name, _lease_pid or arguments.get("_kernel_process_id"))
+                arguments.pop("_child_proc_leased", None)
 
     # ── 重复搜索检测（收敛刹车 + 全局预算 + 近似同义）──────────
 

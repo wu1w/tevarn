@@ -166,7 +166,8 @@ pub fn args_digest(tool: &str, arguments: Option<&Value>) -> String {
             let v = &map[&k];
             let vv = if let Value::String(s) = v {
                 if s.len() > 200 {
-                    Value::String(format!("{}…", &s[..200]))
+                    let boundary = s.floor_char_boundary(200);
+                    Value::String(format!("{}…", &s[..boundary]))
                 } else {
                     v.clone()
                 }

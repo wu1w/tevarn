@@ -103,6 +103,9 @@ async def domain_event_stream(
                 t.cancel()
                 try:
                     await t
+                except asyncio.CancelledError:
+                    # Py3.8+ CancelledError is BaseException, not Exception
+                    pass
                 except Exception:
                     pass
             if not done:
@@ -129,6 +132,9 @@ async def domain_event_stream(
                 except Exception:
                     pass
     except WebSocketDisconnect:
+        pass
+    except asyncio.CancelledError:
+        # 客户端断开 / 服务端取消时勿冒泡成 ASGI Exception
         pass
     except Exception as e:
         logger.debug("domain stream end: %s", e)

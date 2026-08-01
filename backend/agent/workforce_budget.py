@@ -86,12 +86,36 @@ def role_budget_floor(role: str | None, name: str | None = None) -> int:
 
 
 def is_budget_exceeded_result(text: str | None) -> bool:
+    """Detect *token* budget kill — NOT iteration-budget grace/exhaust.
+
+    History bug: matching bare「预算耗尽」also hit「迭代预算耗尽」, so jobs that
+    finished via iteration grace were marked inbox budget-fail and re-queued
+    forever even with 1.5M+ token budgets still remaining.
+    """
     t = text or ""
-    if "[Budget Exceeded]" in t:
+    if not t:
+        return False
+    low = t.lower()
+    # Explicit token markers first
+    if "[Budget Exceeded]" in t or "[Token 预算耗尽]" in t:
         return True
-    if "预算耗尽" in t or "预算不足" in t:
+    if "kernel_token_budget_exhausted" in t or "kernel_budget_precheck" in t:
         return True
-    if "token 预算" in t and ("中断" in t or "拒绝" in t):
+    # Iteration / round budget — complete normally, do NOT budget-fail
+    if (
+        "迭代预算" in t
+        or "iteration budget" in low
+        or "max_total" in low
+        or "budget_grace" in t
+        or "kernel_iteration_exhausted" in t
+    ):
+        return False
+    # Token-specific Chinese
+    if "Token 预算耗尽" in t or "进程 token" in t and ("用尽" in t or "不足" in t):
+        return True
+    if "token 预算" in low and any(k in t for k in ("中断", "拒绝", "耗尽", "不足")):
+        return True
+    if "事前预算" in t and ("不足" in t or "中断" in t):
         return True
     return False
 
@@ -236,13 +260,16 @@ def resolve_interactive_chat_budget(
             return clamp_ceo_budget(int(explicit))
         except Exception:
             return explicit
-    # Floors: CEO/steward orchestration needs room; normal chat mid
-    base = 800_000 if is_steward else 400_000
+    # Floors: CEO/steward orchestration needs room for multi-tool deep work.
+    # Marathon evidence: 400k dies in ~8–12 LLM rounds under long context.
+    base = 1_500_000 if is_steward else 800_000
     # Long context sessions: each turn re-sends history
     if history_tokens_est >= 40_000:
-        base = max(base, 1_000_000 if is_steward else 600_000)
+        base = max(base, 2_000_000 if is_steward else 1_200_000)
     if history_tokens_est >= 80_000:
-        base = max(base, 1_500_000 if is_steward else 900_000)
+        base = max(base, 2_500_000 if is_steward else 1_500_000)
+    if history_tokens_est >= 150_000:
+        base = max(base, 3_000_000 if is_steward else 2_000_000)
     return suggested_token_budget(
         base=base,
         instruction=user_input or "",
@@ -291,13 +318,40 @@ def resolve_job_budget(
 ) -> tuple[int | None, str]:
     """工单有效预算 + 来源说明。
 
-    优先级：CEO 显式（payload / 参数）> 自动抬升(档案+任务类)。
-    返回 (budget, source) source 如 ceo_assign / auto_lift。
+    CEO 显式 token_budget 语义（产品红线）：
+    - 0 = 本单不限
+    - 正整数默认 **floor（只抬高）**：max(CEO 指定, 档案+任务类自动抬升)
+      避免 CEO 随手写 80k 把 audit/health 的 150k+ 地板踩扁
+    - payload.budget_mode=absolute / budget_hard=true → 绝对硬顶（可低于 auto）
+
+    返回 (budget, source) 如 ceo_floor / ceo_absolute / auto。
     """
     explicit = ceo_token_budget
     if explicit is None:
         explicit = parse_payload_token_budget(payload)
-    if explicit is not None:
-        return explicit, "ceo"
     auto = budget_for_identity(ident, instruction or "")
-    return auto, "auto"
+
+    if explicit is None:
+        return auto, "auto"
+
+    if explicit == 0:
+        return 0, "ceo_unlimited"
+
+    # Absolute hard cap only when CEO explicitly opts in
+    mode = ""
+    hard = False
+    if isinstance(payload, dict):
+        mode = str(
+            payload.get("budget_mode") or payload.get("token_budget_mode") or ""
+        ).strip().lower()
+        hard = payload.get("budget_hard") in (True, "true", "1", 1, "yes")
+        hard = hard or payload.get("token_budget_hard") in (True, "true", "1", 1, "yes")
+    if mode in ("absolute", "hard", "cap", "set") or hard:
+        return explicit, "ceo_absolute"
+
+    # Default floor: never let CEO override *lower* than auto lift
+    if auto is not None and auto > 0 and explicit > 0:
+        if auto > explicit:
+            return auto, "ceo_floor+auto"
+        return explicit, "ceo_floor"
+    return explicit, "ceo_floor"

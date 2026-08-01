@@ -120,8 +120,10 @@ class BwrapBackend:
             stdout_b, stderr_b = await asyncio.wait_for(
                 proc.communicate(), timeout=timeout
             )
-            out = stdout_b.decode("utf-8", errors="replace")
-            err = stderr_b.decode("utf-8", errors="replace")
+            from backend.computer.text_decode import decode_process_bytes
+
+            out = decode_process_bytes(stdout_b)
+            err = decode_process_bytes(stderr_b)
             rc = proc.returncode or 0
             if rc == 127 and "bwrap:" in err:
                 # bwrap 自身启动失败（如 userns 被禁用）→ 明确报错，不静默降级

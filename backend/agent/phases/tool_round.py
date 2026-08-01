@@ -277,6 +277,12 @@ async def run_tool_round(
                 validated_args["_session_id"] = str(session_id)
                 validated_args["_chat_mode"] = str(mode or "default")
                 validated_args["_ws_manager"] = loop.ws_manager
+                validated_args["_run_origin"] = str(
+                    getattr(loop, "_run_origin", None) or "chat"
+                )
+                validated_args["_agent_key"] = str(
+                    getattr(loop, "_agent_key", None) or "main"
+                )
                 # 联系员工：危险确认「本员工允许」需要 identity
                 _contact = str(getattr(loop, "_contact_agent", "") or "").strip()
                 if _contact:
@@ -292,6 +298,7 @@ async def run_tool_round(
                 ).startswith("wf:"):
                     validated_args["_workforce"] = True
                     validated_args["_agent_key"] = getattr(loop, "_agent_key", "wf:")
+                    validated_args["_run_origin"] = "inbox"
                     if getattr(loop, "_identity_id", None):
                         validated_args["_identity_id"] = str(loop._identity_id)
                     if getattr(loop, "_identity_name", None):

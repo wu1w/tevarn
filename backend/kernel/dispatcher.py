@@ -144,9 +144,10 @@ class WorkforceDispatcher:
             budget, source = resolve_job_budget(
                 ident, instruction or "", payload=payload
             )
-            if source == "ceo":
+            if source.startswith("ceo") or source == "auto":
                 logger.info(
-                    "job budget ceo-override identity=%s budget=%s",
+                    "job budget source=%s identity=%s budget=%s",
+                    source,
                     getattr(ident, "name", "") or str(getattr(ident, "id", ""))[:8],
                     budget,
                 )
@@ -278,14 +279,14 @@ class WorkforceDispatcher:
             logger.debug("redis busy refresh: %s", e)
 
     def _rust_tick_hooks(self) -> None:
-        """Dispatcher tick: Rust reclaim + isolation OS reap (best-effort)."""
+        """Dispatcher tick: isolation OS reap (best-effort).
+
+        Note: inbox_reclaim is done once in reclaim_stale_claims — avoid
+        double-reclaim thrash each tick.
+        """
         k = self._kernel
         if not hasattr(k, "_call"):
             return
-        try:
-            k._call("inbox_reclaim")
-        except Exception as e:
-            logger.debug("rust inbox_reclaim: %s", e)
         try:
             timeout = float(
                 getattr(settings, "agent_inbox_item_timeout", self._item_timeout)
@@ -294,6 +295,52 @@ class WorkforceDispatcher:
             k._call("isolation_reap", {"max_age_secs": max(timeout, 60.0)})
         except Exception as e:
             logger.debug("rust isolation_reap: %s", e)
+
+    async def _resync_pending_to_rust(self) -> None:
+        """After host restart, SQL pending may have no Rust mirror — re-submit.
+
+        Re-runs when kernel host_epoch advances (hard restart wiped in-memory inbox).
+        """
+        if not hasattr(self._kernel, "_call"):
+            return
+        try:
+            from backend.kernel_rust.client import is_rust_host_available
+
+            if not is_rust_host_available():
+                return
+        except Exception:
+            return
+        epoch = int(getattr(self._kernel, "_host_epoch", 0) or 0)
+        last_epoch = getattr(self, "_pending_resync_epoch", None)
+        if last_epoch is not None and int(last_epoch) == epoch and getattr(
+            self, "_pending_resync_done", False
+        ):
+            return
+        try:
+            rows = await self._inbox.list_items(status="pending", limit=200)
+        except Exception as e:
+            logger.debug("list pending for resync: %s", e)
+            return
+        n = 0
+        for it in rows or []:
+            try:
+                ident = await self._registry.get(it.identity_id)
+                ikey = str(getattr(ident, "name", "") or it.identity_id)
+                self._inbox.ensure_rust_pending(
+                    identity_key=ikey,
+                    instruction=str(it.instruction or ""),
+                    priority=int(getattr(it, "priority", 0) or 0),
+                    db_item_id=str(it.id),
+                )
+                n += 1
+            except Exception:
+                continue
+        self._pending_resync_done = True
+        self._pending_resync_epoch = epoch
+        if n:
+            logger.info(
+                "resync pending→rust submitted=%s host_epoch=%s", n, epoch
+            )
 
     def _identity_admit(self, ident: Any) -> bool:
         """Register + admit identity concurrency slot in Rust authority."""
@@ -355,10 +402,35 @@ class WorkforceDispatcher:
             self._rust_tick_hooks()
         except Exception as e:
             logger.debug("rust tick hooks: %s", e)
-        # 回收超时 claimed（worker 崩溃残留）— SQL mirror + rust
+        # Align Rust claim lease with item timeout (once per process)
+        try:
+            if not getattr(self, "_rust_claim_timeout_synced", False):
+                k = getattr(self, "_kernel", None)
+                if k is not None and hasattr(k, "_call"):
+                    timeout = float(
+                        getattr(settings, "agent_inbox_item_timeout", self._item_timeout)
+                        or self._item_timeout
+                    )
+                    # lease = item timeout + 5min grace so heartbeat keeps sticky
+                    k._call(
+                        "inbox_set_claim_timeout",
+                        {"secs": max(120.0, timeout + 300.0)},
+                    )
+                    self._rust_claim_timeout_synced = True
+        except Exception as e:
+            logger.debug("inbox_set_claim_timeout skip: %s", e)
+        # Bootstrap: re-mirror SQL pending into Rust after host restart
+        try:
+            await self._resync_pending_to_rust()
+        except Exception as e:
+            logger.debug("resync pending→rust skip: %s", e)
+        # 回收超时 claimed（worker 崩溃残留）— 跳过本进程 busy 身份
         try:
             timeout = float(getattr(settings, "agent_inbox_item_timeout", self._item_timeout) or self._item_timeout)
-            await self._inbox.reclaim_stale_claims(timeout_seconds=timeout)
+            await self._inbox.reclaim_stale_claims(
+                timeout_seconds=timeout,
+                busy_identity_ids=set(self._busy) | self._merge_busy_identity_ids(),
+            )
         except Exception as e:
             logger.debug("reclaim_stale_claims skip: %s", e)
         dispatched = 0
@@ -939,6 +1011,11 @@ class WorkforceDispatcher:
                             break
                         except asyncio.TimeoutError:
                             self._refresh_redis_busy(str(item.identity_id), item_key)
+                            # Claim lease heartbeat (SQL + Rust) — sticky while worker runs
+                            try:
+                                await self._inbox.touch_claim(item.id)
+                            except Exception as _te:
+                                logger.debug("touch_claim skip: %s", _te)
 
                 hb_task = asyncio.create_task(_hb())
                 try:

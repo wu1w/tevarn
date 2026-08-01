@@ -110,8 +110,13 @@ export function RuntimeHealthBanner({ zh = true }: { zh?: boolean }) {
                     } else {
                       addToast(r.error || (zh ? '重启失败' : 'Restart failed'), 'error');
                     }
-                  } catch {
-                    /* interceptor */
+                  } catch (e) {
+                    addToast(
+                      zh
+                        ? '重启超时或网络中断，请刷新后重试'
+                        : 'Restart timed out — refresh and retry',
+                      'error',
+                    );
                   } finally {
                     setBusy(false);
                   }
