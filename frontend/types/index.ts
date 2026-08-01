@@ -479,7 +479,8 @@ export type WSMessageType =
   | 'confirm_request'
   | 'confirm_response'
   | 'run_event'
-  | 'screenshot';
+  | 'screenshot'
+  | 'user_message_ack';
 
 export interface WSMessage {
   type: WSMessageType;

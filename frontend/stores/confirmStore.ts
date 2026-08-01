@@ -42,8 +42,41 @@ export const useConfirmStore = create<ConfirmState>((set, get) => ({
     // 去重同 confirmId
     if (pending?.confirmId === data.confirmId) return;
     if (queue.some((q) => q.confirmId === data.confirmId)) return;
+
+    let curSid = '';
+    try {
+      // 懒取，避免 confirmStore ↔ sessionStore 硬循环依赖
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { useSessionStore } = require('@/stores/sessionStore') as typeof import('@/stores/sessionStore');
+      curSid = String(useSessionStore.getState().currentSession?.id || '');
+    } catch {
+      curSid = '';
+    }
+    const isCur = Boolean(data.sessionId && curSid && data.sessionId === curSid);
+
     if (!pending) {
       set({ pending: data });
+      if (isCur) return;
+      // 非当前会话：仍弹，但 toast 提示（用户可能已切页）
+      if (data.sessionId && typeof window !== 'undefined') {
+        try {
+          const { useToastStore } = require('@/stores/toastStore') as typeof import('@/stores/toastStore');
+          useToastStore
+            .getState()
+            .addToast(
+              `会话 ${String(data.sessionId).slice(0, 8)} 有操作待确认`,
+              'info',
+            );
+        } catch {
+          /* ignore */
+        }
+      }
+      return;
+    }
+
+    // 当前会话的确认插队到队首（优先处理眼前页）
+    if (isCur && pending.sessionId !== curSid) {
+      set({ pending: data, queue: [pending, ...queue] });
       return;
     }
     set({ queue: [...queue, data] });
@@ -66,7 +99,22 @@ export const useConfirmStore = create<ConfirmState>((set, get) => ({
         )
         .catch((e) => console.warn('confirm HTTP fallback failed', e));
     }
-    const [next, ...rest] = queue;
-    set({ pending: next || null, queue: rest });
+    // 下一个：当前会话优先
+    let curSid = '';
+    try {
+      const { useSessionStore } =
+        require('@/stores/sessionStore') as typeof import('@/stores/sessionStore');
+      curSid = String(useSessionStore.getState().currentSession?.id || '');
+    } catch {
+      curSid = '';
+    }
+    const rest = [...queue];
+    let next: ConfirmRequestData | null = null;
+    if (curSid) {
+      const idx = rest.findIndex((q) => q.sessionId === curSid);
+      if (idx >= 0) next = rest.splice(idx, 1)[0] || null;
+    }
+    if (!next) next = rest.shift() || null;
+    set({ pending: next, queue: rest });
   },
 }));

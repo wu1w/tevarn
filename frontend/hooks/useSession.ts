@@ -163,14 +163,22 @@ export function useSession() {
     async (sessionId: string) => {
       const st = useSessionStore.getState();
       const prevId = st.currentSession?.id;
-      if (prevId && prevId !== sessionId) {
-        const knownEmpty = !hasChatContent(st.messages);
-        await discardEmptySession(prevId, { knownEmpty });
+      if (prevId === sessionId) {
+        await loadMessages(sessionId);
+        return;
       }
-      // 立即清空旧消息，避免短暂显示上一个会话
+      if (prevId) {
+        const knownEmpty = !hasChatContent(st.messages);
+        // 不阻塞切换
+        void discardEmptySession(prevId, { knownEmpty });
+      }
+      // 清空 + 作废在途 loadMessages（世代号）
       clearMessages();
       setError(null);
+      useSessionStore.setState({ _loadSeq: (st._loadSeq || 0) + 1 });
       await loadSession(sessionId);
+      // 并发连切：最终 current 已是别人 → 不拉消息
+      if (useSessionStore.getState().currentSession?.id !== sessionId) return;
       await loadMessages(sessionId);
     },
     [loadSession, loadMessages, clearMessages, setError, discardEmptySession]

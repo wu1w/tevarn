@@ -22,11 +22,15 @@ interface SessionState {
   setCurrentSession: (session: Session | null) => void;
   addMessage: (message: Message) => void;
   updateMessage: (id: string, updates: Partial<Message>) => void;
+  /** 移除消息（发送失败清幽灵乐观气泡） */
+  removeMessage: (id: string) => void;
   /** 用服务端 id 替换乐观用户消息（同 role+content 合并，避免双气泡） */
   reconcileMessage: (serverMsg: Message) => void;
   setMessages: (messages: Message[]) => void;
   loadSession: (sessionId: string) => Promise<void>;
   loadMessages: (sessionId: string) => Promise<void>;
+  /** 递增：快速连切会话时丢弃过期 loadMessages 结果 */
+  _loadSeq: number;
   updateConfig: (sessionId: string, config: SessionConfig) => Promise<void>;
   clearMessages: () => void;
   setError: (error: string | null) => void;
@@ -49,6 +53,7 @@ export const useSessionStore = create<SessionState>()(
       error: null,
       sessionTitles: {},
       starredSessionIds: [],
+      _loadSeq: 0,
 
       setCurrentSession: (session) => set({ currentSession: session }),
 
@@ -95,6 +100,11 @@ export const useSessionStore = create<SessionState>()(
           messages: state.messages.map((m) =>
             m.id === id ? { ...m, ...updates } : m
           ),
+        })),
+
+      removeMessage: (id) =>
+        set((state) => ({
+          messages: state.messages.filter((m) => m.id !== id),
         })),
 
       reconcileMessage: (serverMsg) => {
@@ -202,14 +212,20 @@ export const useSessionStore = create<SessionState>()(
       },
 
       loadMessages: async (sessionId) => {
-        set({ isLoading: true, error: null });
+        const seq = (get()._loadSeq || 0) + 1;
+        set({ isLoading: true, error: null, _loadSeq: seq });
         try {
           // 默认拉最近 200 条（后端 offset=0 时为尾部窗口）
           const messages = await api.getMessages(sessionId, 200, 0);
           const st = get();
-          // 保留尚未 ack 的乐观用户气泡（服务端尚未返回时）
-          const optimistic = (st.messages || []).filter((m) =>
-            String(m.id || '').startsWith('optimistic:')
+          // 快速连切：已切到别的会话 / 更新的 load 已发出 → 丢弃
+          if (st._loadSeq !== seq) return;
+          if (st.currentSession?.id && st.currentSession.id !== sessionId) return;
+          // 仅合并「本会话」尚未 ack 的乐观气泡
+          const optimistic = (st.messages || []).filter(
+            (m) =>
+              String(m.id || '').startsWith('optimistic:') &&
+              (!m.session_id || m.session_id === sessionId)
           );
           let merged = Array.isArray(messages) ? [...messages] : [];
           const norm = (s: string) => (s || '').replace(/\s+/g, ' ').trim();
@@ -226,13 +242,15 @@ export const useSessionStore = create<SessionState>()(
               merged = [...merged, o];
             }
           }
-          // 同 role+内容去重（保留较新 id）
-          const seen = new Set<string>();
+          // 只对 optimistic 去重，正式历史允许连发相同「继续」「好的」
+          const seenOpt = new Set<string>();
           merged = merged.filter((m) => {
+            const id = String(m.id || '');
+            if (!id.startsWith('optimistic:')) return true;
             const key = `${m.role}|${norm(m.content || '')}`;
             if (!norm(m.content || '')) return true;
-            if (seen.has(key)) return false;
-            seen.add(key);
+            if (seenOpt.has(key)) return false;
+            seenOpt.add(key);
             return true;
           });
           // 加载历史后补标题：取首条用户消息
@@ -243,6 +261,9 @@ export const useSessionStore = create<SessionState>()(
             if (firstUser?.content) {
               const raw = firstUser.content.trim().replace(/\s+/g, ' ');
               const title = raw.slice(0, 36) + (raw.length > 36 ? '…' : '');
+              // 再次校验世代，避免写脏
+              if (get()._loadSeq !== seq) return;
+              if (get().currentSession?.id && get().currentSession!.id !== sessionId) return;
               set({
                 messages: merged,
                 isLoading: false,
@@ -251,6 +272,8 @@ export const useSessionStore = create<SessionState>()(
               return;
             }
           }
+          if (get()._loadSeq !== seq) return;
+          if (get().currentSession?.id && get().currentSession!.id !== sessionId) return;
           set({ messages: merged, isLoading: false });
         } catch (err) {
           const status = (err as { response?: { status?: number } })?.response?.status;

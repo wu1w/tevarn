@@ -79,9 +79,20 @@ function ChatPageInner() {
         const [isTransparencyOpen, setIsTransparencyOpen] = useState(false);
         const [highlightMessageId, setHighlightMessageId] = useState<string | null>(null);
         const [isStreaming, setIsStreaming] = useState(false);
-        /** Stop 后等待服务端 idle，避免假停后仍收 stream_delta */
+        /** Stop 后等待服务端 idle，避免假停后仍收 stream_delta（按会话，防切会话误伤） */
         const [isStopping, setIsStopping] = useState(false);
-        const isStoppingRef = useRef(false);
+        const stoppingBySessionRef = useRef<Record<string, boolean>>({});
+        const isStoppingSid = useCallback((sid?: string | null) => {
+          if (!sid) return false;
+          return Boolean(stoppingBySessionRef.current[sid]);
+        }, []);
+        const setStoppingSid = useCallback((sid: string | null | undefined, v: boolean) => {
+          if (!sid) return;
+          if (v) stoppingBySessionRef.current[sid] = true;
+          else delete stoppingBySessionRef.current[sid];
+          const cur = useSessionStore.getState().currentSession?.id;
+          if (cur === sid) setIsStopping(v);
+        }, []);
         /** 流式活动时间戳：长时间无 delta 则视为卡住，露出恢复入口 */
         const lastStreamActivityRef = useRef<number>(Date.now());
         const [streamStuck, setStreamStuck] = useState(false);
@@ -209,6 +220,8 @@ function ChatPageInner() {
         if (sessionChanged) {
           setEditingContent(null);
           setActiveGoal(null);
+          // 停止态按会话恢复，不继承 A 的 isStopping 到 B
+          setIsStopping(isStoppingSid(sid));
           // 恢复该会话上轮能力芯片（已结束会话也能回顾）
           setRunCaps(runCapsCacheRef.current[sid] || null);
           const cached = streamSessionApi().get(sid);
@@ -218,6 +231,25 @@ function ChatPageInner() {
             streamingContentRef.current = cached.content || '';
             setLiveToolCalls(cached.tools || []);
             setStreamStatusDetail(cached.statusDetail || 'Resuming…');
+            lastStreamActivityRef.current = Date.now();
+            // 假 Resuming：4s 内无任何 delta/status running 则收束，避免输入永久锁死
+            const resumeSid = sid;
+            window.setTimeout(() => {
+              if (cancelled) return;
+              if (useSessionStore.getState().currentSession?.id !== resumeSid) return;
+              const st = streamSessionApi().get(resumeSid);
+              // 若 4s 内有活动（delta 会刷新 lastStreamActivity），不收束
+              if (Date.now() - lastStreamActivityRef.current < 3500) return;
+              if (!st.agentRunning && !st.isStreaming) return;
+              // 仍停在 cache 假 running → 校正
+              streamSessionApi().markIdle(resumeSid);
+              setIsStreaming(false);
+              setStreamStatusDetail(null);
+              setLiveToolCalls([]);
+              streamingContentRef.current = '';
+              setStreamingContent('');
+              loadMessages(resumeSid).catch(console.error);
+            }, 4000);
           } else {
             setIsStreaming(false);
             setStreamingContent('');
@@ -362,14 +394,14 @@ function ChatPageInner() {
   }, []);
 
   const handleStreamDelta = useCallback((msg: StreamDeltaMessage) => {
-      if (isStoppingRef.current) return; // 停止中丢弃 late delta
+      const sid = currentSession?.id || '';
+      if (isStoppingSid(sid)) return; // 仅丢弃「本会话」停止中的 late delta
       setIsStreaming(true);
       lastStreamActivityRef.current = Date.now();
       setStreamStuck(false);
       setStreamingContent((prev) => {
         const mid = msg.message_id || '';
         const store = streamSessionApi();
-        const sid = currentSession?.id || '';
         const prevMid = sid ? store.get(sid).streamMessageId : null;
         let next: string;
         if (mid && prevMid && mid !== prevMid && (msg.content || '').length > 0) {
@@ -388,10 +420,11 @@ function ChatPageInner() {
         }
         return next;
       });
-    }, [currentSession?.id]);
+    }, [currentSession?.id, isStoppingSid]);
 
     const handleToolEvent = useCallback((msg: ToolEventMessage) => {
-      if (isStoppingRef.current) return;
+      const sid = currentSession?.id || '';
+      if (isStoppingSid(sid)) return;
       setIsStreaming(true);
       lastStreamActivityRef.current = Date.now();
       setStreamStuck(false);
@@ -479,7 +512,7 @@ function ChatPageInner() {
           );
         }
       }
-    }, [appendAgentOutput, t, currentSession?.id]);
+    }, [appendAgentOutput, t, currentSession?.id, isStoppingSid]);
 
     const lastWsToastAtRef = React.useRef(0);
     const toastWsError = useCallback(
@@ -536,7 +569,7 @@ function ChatPageInner() {
       const sid = currentSession?.id || '';
       if (msg.state === 'thinking' || msg.state === 'tool_executing' || msg.state === 'optimizing') {
         // 用户已点停止：忽略迟到的 running 态，避免假停被冲掉
-        if (isStoppingRef.current) {
+        if (isStoppingSid(sid)) {
           setStreamStatusDetail(msg.detail || t('chat.stopping') || 'Stopping…');
           return;
         }
@@ -577,17 +610,15 @@ function ChatPageInner() {
         }
         if (sid) streamSessionApi().markRunning(sid, msg.detail || null);
       } else if (msg.state === 'error') {
-        isStoppingRef.current = false;
-        setIsStopping(false);
+        setStoppingSid(sid, false);
         setIsStreaming(false);
         const detail = msg.detail || t('chat.error');
         setStreamStatusDetail(detail);
         addToast(detail, 'error');
         if (sid) streamSessionApi().markIdle(sid);
       } else if (msg.state === 'idle') {
-              const wasStopping = isStoppingRef.current;
-              isStoppingRef.current = false;
-              setIsStopping(false);
+              const wasStopping = isStoppingSid(sid);
+              setStoppingSid(sid, false);
               setStreamStuck(false);
               setIsStreaming(false);
               setStreamStatusDetail(null);
@@ -620,7 +651,7 @@ function ChatPageInner() {
                 }, 0);
               }
             }
-          }, [addMessage, addToast, currentSession, loadMessages, t]);
+          }, [addMessage, addToast, currentSession, loadMessages, t, isStoppingSid, setStoppingSid]);
 
   const handleGoalUpdate = useCallback((msg: GoalUpdateMessage) => {
       if (msg.goal) {
@@ -841,8 +872,9 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
         mode: ChatMode = 'default',
         subAgentIds?: string[]
       ) => {
-        // 防连点/连 Enter：父级 isStreaming 尚未置位时的竞态
-        if (sendInFlightRef.current || isStoppingRef.current) return;
+        // 防连点/连 Enter：父级 isStreaming 尚未置位时的竞态；停止态按会话
+        const stopCheckSid = currentSession?.id || '';
+        if (sendInFlightRef.current || isStoppingSid(stopCheckSid)) return;
         sendInFlightRef.current = true;
 
         // D10 专业模式：强制项目文件夹
@@ -899,8 +931,9 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
         }
 
         // 乐观：临时 id，sync/load 后用服务端 id reconcile，避免双气泡
+        const optId = `optimistic:${generateUUID()}`;
         const userMsg: Message = {
-          id: `optimistic:${generateUUID()}`,
+          id: optId,
           session_id: session.id,
           role: 'user',
           content: displayContent,
@@ -909,19 +942,26 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
           created_at: new Date().toISOString(),
         };
         addMessage(userMsg);
-        isStoppingRef.current = false;
-        setIsStopping(false);
+        setStoppingSid(session.id, false);
         setIsStreaming(true);
         setStreamingContent('');
         setLiveToolCalls([]);
         setStreamStatusDetail(t('chat.connectingSend'));
 
+        const dropGhost = () => {
+          useSessionStore.getState().removeMessage(optId);
+          if (useSessionStore.getState().currentSession?.id === session!.id) {
+            setIsStreaming(false);
+            setStreamStatusDetail(null);
+          }
+          streamSessionApi().markIdle(session!.id);
+        };
+
         try {
           const ready = await waitForConnection(session.id, 15000);
           if (!ready) {
             addToast(t('chat.channelNotConnected'), 'error');
-            setIsStreaming(false);
-            setStreamStatusDetail(null);
+            dropGhost();
             return;
           }
 
@@ -929,8 +969,7 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
           const sent = sendMessage(content, attachments, mode, subAgentIds);
           if (!sent) {
             addToast(t('chat.sendFailedDisconnected'), 'error');
-            setIsStreaming(false);
-            setStreamStatusDetail(null);
+            dropGhost();
           }
         } finally {
           // streaming 已 true 时由 MessageInput disabled 挡二次发送；此处放行以便失败后可重发
@@ -939,30 +978,51 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
           }, 400);
         }
       },
-      [currentSession, addMessage, addToast, sendMessage, createAndLoadSession, waitForConnection, t]
+      [
+        currentSession,
+        addMessage,
+        addToast,
+        sendMessage,
+        createAndLoadSession,
+        waitForConnection,
+        t,
+        isStoppingSid,
+        setStoppingSid,
+      ]
     );
 
-  // 重新生成（若仍在跑则先发 stop，再发同一条用户内容；不插乐观气泡）
+  // 重新生成（若仍在跑则先 stop 并等到 idle，再发同一条用户内容；不插乐观气泡）
   const handleRegenerate = useCallback(
     async (_message: Message) => {
       if (!currentSession) return;
+      const sid = currentSession.id;
       const msgs = useSessionStore.getState().messages;
       const lastUserMsg = [...msgs].reverse().find((m) => m.role === 'user');
       if (!lastUserMsg?.content) return;
-      if (isStreaming || isStoppingRef.current) {
-        isStoppingRef.current = true;
-        setIsStopping(true);
+      if (isStreaming || isStoppingSid(sid) || streamSessionApi().get(sid).agentRunning) {
+        setStoppingSid(sid, true);
         setStreamStatusDetail(t('chat.stopping') || 'Stopping…');
         sendStop();
-        await new Promise((r) => setTimeout(r, 800));
+        // 等到本会话 idle / 停止标志清除，最长 12s（勿固定 800ms）
+        const deadline = Date.now() + 12_000;
+        while (Date.now() < deadline) {
+          const st = streamSessionApi().get(sid);
+          if (!isStoppingSid(sid) && !st.agentRunning && !st.isStreaming) break;
+          // idle 回调会清 stopping；也接受 cache 已 idle
+          if (!st.agentRunning && !st.isStreaming) {
+            setStoppingSid(sid, false);
+            break;
+          }
+          await new Promise((r) => setTimeout(r, 150));
+        }
+        setStoppingSid(sid, false);
       }
-      isStoppingRef.current = false;
-      setIsStopping(false);
+      if (useSessionStore.getState().currentSession?.id !== sid) return;
       setIsStreaming(true);
       setStreamingContent('');
       setLiveToolCalls([]);
       setStreamStatusDetail(t('chat.connectingSend'));
-      const ready = await waitForConnection(currentSession.id, 15000);
+      const ready = await waitForConnection(sid, 15000);
       if (!ready) {
         addToast(t('chat.channelNotConnected2'), 'error');
         setIsStreaming(false);
@@ -980,7 +1040,17 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
         setStreamStatusDetail(null);
       }
     },
-    [currentSession, sendMessage, sendStop, waitForConnection, addToast, t, isStreaming]
+    [
+      currentSession,
+      sendMessage,
+      sendStop,
+      waitForConnection,
+      addToast,
+      t,
+      isStreaming,
+      isStoppingSid,
+      setStoppingSid,
+    ]
   );
 
   // 编辑并重新发送
@@ -1050,44 +1120,41 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
 
   const handleStopStreaming = useCallback(() => {
       // 保持 streaming UI + stopping 态，等服务端 status:idle 再清（避免假停后 late delta）
-      isStoppingRef.current = true;
-      setIsStopping(true);
+      const sid = currentSession?.id || '';
+      if (!sid) return;
+      setStoppingSid(sid, true);
       setIsStreaming(true);
       setStreamStatusDetail(t('chat.stopping') || 'Stopping…');
       const ok = sendStop();
       if (!ok) {
         // 未连上：本地直接收束
-        isStoppingRef.current = false;
-        setIsStopping(false);
-        setIsStreaming(false);
-        setStreamStatusDetail(null);
-        setLiveToolCalls([]);
-        streamingContentRef.current = '';
-        setStreamingContent('');
-        const sid = currentSession?.id || '';
-        if (sid) {
-          streamSessionApi().markIdle(sid);
-          loadMessages(sid).catch(console.error);
+        setStoppingSid(sid, false);
+        if (useSessionStore.getState().currentSession?.id === sid) {
+          setIsStreaming(false);
+          setStreamStatusDetail(null);
+          setLiveToolCalls([]);
+          streamingContentRef.current = '';
+          setStreamingContent('');
         }
+        streamSessionApi().markIdle(sid);
+        loadMessages(sid).catch(console.error);
         return;
       }
-      // 兜底：8s 仍无 idle 则强制收束并拉历史
-      const sid = currentSession?.id || '';
+      // 兜底：8s 仍无 idle 则强制收束——仅影响发起 stop 的 sid，且仅当仍在看该会话时改 UI
       window.setTimeout(() => {
-        if (!isStoppingRef.current) return;
-        isStoppingRef.current = false;
-        setIsStopping(false);
-        setIsStreaming(false);
-        setStreamStatusDetail(null);
-        setLiveToolCalls([]);
-        streamingContentRef.current = '';
-        setStreamingContent('');
-        if (sid) {
-          streamSessionApi().markIdle(sid);
+        if (!isStoppingSid(sid)) return;
+        setStoppingSid(sid, false);
+        streamSessionApi().markIdle(sid);
+        if (useSessionStore.getState().currentSession?.id === sid) {
+          setIsStreaming(false);
+          setStreamStatusDetail(null);
+          setLiveToolCalls([]);
+          streamingContentRef.current = '';
+          setStreamingContent('');
           loadMessages(sid).catch(console.error);
         }
       }, 8000);
-    }, [sendStop, currentSession, loadMessages, t]);
+    }, [sendStop, currentSession, loadMessages, t, setStoppingSid, isStoppingSid]);
 
   const handleTagClick = useCallback(
     (tagKey: string) => {
