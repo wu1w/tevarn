@@ -471,9 +471,12 @@ pre {
 .titlebar a,
 .titlebar input,
 .titlebar textarea,
-.titlebar select {
+.titlebar select,
+.titlebar [data-no-drag],
+.titlebar .no-drag {
   -webkit-app-region: no-drag;
   app-region: no-drag;
+  pointer-events: auto;
 }
 
 /* 输入区在 Electron 无边框窗口中必须可交互（防止继承 drag region） */

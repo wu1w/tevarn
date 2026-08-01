@@ -454,6 +454,9 @@ class InboxService:
         *,
         timeout_seconds: float = 600.0,
         busy_identity_ids: set[str] | None = None,
+        live_item_ids: set[str] | None = None,
+        orphan_grace_seconds: float = 45.0,
+        force_all_orphans: bool = False,
     ) -> int:
         """回收超时仍停留在 claimed 的工单（worker 崩溃/超时未 fail）。
 
@@ -462,17 +465,24 @@ class InboxService:
 
         busy_identity_ids: dispatcher 内存中正在跑的身份 — **绝不 reclaim**
         （避免长任务 heartbeat 间隙被误回收）。
+
+        live_item_ids: 本进程正在跑的工单 id。不在集合中且超过 orphan_grace
+        的 claimed 视为孤儿（后端重启后常见：status=claimed 但 worker 已死）。
+        force_all_orphans=True：启动时强制回收全部非 live claimed。
         """
         from backend.models.agent_identity import AgentInboxItem
 
         busy = {str(x) for x in (busy_identity_ids or set())}
+        live_items = {str(x) for x in (live_item_ids or set())}
 
         try:
             self._rust_inbox_reclaim()
         except Exception:
             pass
 
-        cutoff = time.time() - max(30.0, float(timeout_seconds))
+        now = time.time()
+        cutoff = now - max(30.0, float(timeout_seconds))
+        orphan_cutoff = now - max(15.0, float(orphan_grace_seconds))
         n = 0
         requeued: list[tuple[Any, str, str, int]] = []
         async with self._session_factory() as session:
@@ -489,13 +499,33 @@ class InboxService:
                 iid = str(row.identity_id)
                 if iid in busy:
                     continue
-                claimed_at = float(row.claimed_at or 0)
-                if claimed_at <= 0 or claimed_at > cutoff:
+                item_key = str(row.id)
+                # 本进程仍在跑 → 跳过
+                if item_key in live_items:
                     continue
+                claimed_at = float(row.claimed_at or 0)
+                is_orphan = force_all_orphans or (
+                    claimed_at > 0 and claimed_at <= orphan_cutoff
+                )
+                is_timeout = claimed_at > 0 and claimed_at <= cutoff
+                # claimed_at 缺失/异常：也当孤儿（防永久卡死）
+                if claimed_at <= 0:
+                    is_orphan = True
+                if not (is_timeout or is_orphan):
+                    continue
+                why = (
+                    "startup_orphan"
+                    if force_all_orphans
+                    else (
+                        "orphan_no_live_worker"
+                        if is_orphan and not is_timeout
+                        else f"timeout_{timeout_seconds:.0f}s"
+                    )
+                )
                 row.status = "pending"
                 row.error = (
                     (row.error or "")[:3500]
-                    + f" | reclaimed after {timeout_seconds:.0f}s claim timeout"
+                    + f" | reclaimed ({why})"
                 )
                 # Capture for rust re-mirror after commit
                 try:

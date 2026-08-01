@@ -67,6 +67,21 @@ class WorkforceDispatcher:
         """后台主循环（lifespan _spawn_bg 拉起）。"""
         self._running = True
         logger.info("workforce dispatcher started (poll=%.0fs)", self._poll_seconds)
+        # 冷启动：后端重启后 SQL claimed 无 worker → 立即回收，避免等满 600s
+        try:
+            n = await self._inbox.reclaim_stale_claims(
+                timeout_seconds=30.0,
+                busy_identity_ids=set(),
+                live_item_ids=set(),
+                orphan_grace_seconds=0.0,
+                force_all_orphans=True,
+            )
+            if n:
+                logger.warning(
+                    "dispatcher startup reclaimed %s orphan claimed job(s)", n
+                )
+        except Exception as e:
+            logger.warning("dispatcher startup reclaim skip: %s", e)
         while self._running:
             try:
                 await self.tick()
@@ -434,12 +449,17 @@ class WorkforceDispatcher:
             await self._resync_pending_to_rust()
         except Exception as e:
             logger.debug("resync pending→rust skip: %s", e)
-        # 回收超时 claimed（worker 崩溃残留）— 跳过本进程 busy 身份
+        # 回收超时 / 孤儿 claimed（worker 崩溃或后端重启残留）
         try:
-            timeout = float(getattr(settings, "agent_inbox_item_timeout", self._item_timeout) or self._item_timeout)
+            timeout = float(
+                getattr(settings, "agent_inbox_item_timeout", self._item_timeout)
+                or self._item_timeout
+            )
             await self._inbox.reclaim_stale_claims(
                 timeout_seconds=timeout,
                 busy_identity_ids=set(self._busy) | self._merge_busy_identity_ids(),
+                live_item_ids=set(self._item_tasks.keys()),
+                orphan_grace_seconds=45.0,
             )
         except Exception as e:
             logger.debug("reclaim_stale_claims skip: %s", e)
