@@ -133,23 +133,36 @@ async def list_processes(
         p["stalled"] = bool(idle >= stall_sec and st == "running")
         p["idle_seconds"] = int(idle)
     # 多用户：过滤非本人进程（single_user 全放行）
-    try:
-        from backend.core.config import settings as _st2
-        from backend.kernel.process_access import assert_user_owns_process
+    # 过滤基础设施失败时 fail-closed（503），禁止退回全量列表
+    from backend.core.config import settings as _st2
 
-        if not bool(getattr(_st2, "single_user_mode", True)):
-            filtered = []
-            for p in procs:
-                try:
-                    await assert_user_owns_process(
-                        kernel, str(p.get("id") or ""), current_user.id
-                    )
-                    filtered.append(p)
-                except Exception:
-                    continue
-            procs = filtered
-    except Exception as e:
-        logger.debug("list_processes ownership filter skip: %s", e)
+    if not bool(getattr(_st2, "single_user_mode", True)):
+        try:
+            from backend.kernel.process_access import assert_user_owns_process
+        except Exception as e:
+            logger.error("list_processes ownership filter import failed: %s", e)
+            raise HTTPException(
+                status_code=503,
+                detail="process ownership filter unavailable",
+            ) from e
+        filtered = []
+        for p in procs:
+            try:
+                await assert_user_owns_process(
+                    kernel, str(p.get("id") or ""), current_user.id
+                )
+                filtered.append(p)
+            except (ValueError, PermissionError):
+                continue
+            except Exception as e:
+                # 单条异常不拖垮整表，但也不静默放行该条
+                logger.debug(
+                    "list_processes skip process %s: %s",
+                    str(p.get("id") or "")[:12],
+                    e,
+                )
+                continue
+        procs = filtered
 
     out = {
         "enabled": True,
@@ -527,8 +540,18 @@ async def confirm_resolve_http(
         raise HTTPException(status_code=410, detail="confirm expired or not found")
     _ev, holder = pending
     owner = str(holder.get("user_id") or "").strip()
-    if owner and str(current_user.id) != owner:
-        raise HTTPException(status_code=403, detail="confirm not owned by current user")
+    if owner:
+        if str(current_user.id) != owner:
+            raise HTTPException(status_code=403, detail="confirm not owned by current user")
+    else:
+        # multi-user 无主 pending：拒绝（与 resolve_confirmation fail-closed 一致）
+        from backend.core.config import settings as _st_confirm
+
+        if not bool(getattr(_st_confirm, "single_user_mode", True)):
+            raise HTTPException(
+                status_code=403,
+                detail="confirm has no owner binding (multi-user)",
+            )
 
     scope = str(body.scope or "once").lower()
     if scope not in ("once", "session", "agent", "deny"):

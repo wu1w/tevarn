@@ -380,6 +380,10 @@ class ClarifyTool(BaseTool):
             command=cmd,
             reason="clarify",
             timeout=float(kwargs.get("timeout") or 60),
+            user_id=str(
+                kwargs.get("_user_id") or kwargs.get("user_id") or ""
+            ).strip()
+            or None,
         )
         if outcome:
             return "User approved."

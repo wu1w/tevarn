@@ -1164,7 +1164,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
     ) -> str:
         """实际的 Agent Loop 逻辑（已被外层锁保护）"""
         logger.info(f"Agent loop started for session {session_id}, mode={mode}")
-        logger.info(f"DEBUG_START: should_stop={self._should_stop}")
+        logger.debug("loop start should_stop=%s", self._should_stop)
 
         # Durable Run：进入规划阶段
         _rc = getattr(self, "_run_recorder", None)

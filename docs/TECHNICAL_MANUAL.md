@@ -12,9 +12,20 @@
 > 默认端口 **8090**（`start.py` / CLI / Electron）。文中若写 `8000` 仅历史参考。  
 > 默认零外部依赖：SQLite；Redis / Qdrant 可选。  
 >
+> **单用户 / 多用户**  
+> - `single_user_mode` **默认 True**（本机桌面）：进程/confirm 归属放宽。  
+> - 多租户务必 `single_user_mode=False`，否则 process owner 校验形同关闭。  
+> - Redis：多 worker 下 busy 门应视为硬依赖；挂掉时退回单机锁。  
+>
+> **Run 快照落盘**  
+> - `~/.takton/run_snapshots/{session}.json`（`agent_run_snapshot_persist`）  
+> - 默认**截断** tool result / 限制 partial 长度；调试可 `agent_run_snapshot_disk_full_tools=True`  
+> - 本机可读文件，非加密多租户存储  
+>
 > **编制预算（弹性）**  
 > - 硬顶默认 **200 万** token/进程（`agent_workforce_budget_hard_cap` / `TAKTON_WORKFORCE_BUDGET_HARD_CAP`）  
 > - **软续航**：默认 **关**（硬顶优先）；显式打开时 `max≤2`（`agent_budget_soft_renew_*` / host `--soft-renew`）  
+> - `agent_budget_hard_cap_only=True` 时关闭 soft renew，仅硬顶  
 > - CEO：`crew_steward top_up` / `set_budget` / `budgets` 仍可人工治理  
 > - 长 instruction / 马拉松类任务自动抬高开局预算  
 > - 扣费优先 **billable tokens**（cache miss + output；`agent_budget_prefer_billable`）

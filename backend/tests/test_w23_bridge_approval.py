@@ -88,6 +88,7 @@ def _interactive_args(recorder):
         "_session_id": str(uuid.uuid4()),
         "_run_recorder": recorder,
         "command": "rm -rf /tmp/x",
+        "_user_id": str(uuid.uuid4()),
     }
 
 
@@ -106,13 +107,20 @@ class _AutoAnswerWS:
         self.approved = approved
         self.requests: list[dict] = []
 
+    def is_connected(self, session_id) -> bool:
+        # confirm_manager 先 probe 再 broadcast；缺此方法会误判 not_connected
+        return True
+
     async def broadcast(self, session_id, message):
         if message.get("type") == "confirm_request":
             self.requests.append(message)
             from backend.services import confirm_manager
 
+            owner = str(message.get("user_id") or "").strip() or None
             confirm_manager.resolve_confirmation(
-                message["confirm_id"], self.approved
+                message["confirm_id"],
+                self.approved,
+                user_id=owner,
             )
 
 

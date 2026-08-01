@@ -790,6 +790,10 @@ async def enforce_command_policy(
         tool="command",
         agent_id=agent_id,
         agent_name=agent_name,
+        user_id=str(
+            arguments.get("_user_id") or arguments.get("user_id") or ""
+        ).strip()
+        or None,
     )
     if outcome:
         conf_scope = getattr(outcome, "scope", "once") or "once"
@@ -1280,6 +1284,10 @@ async def execute_python(config: dict[str, Any], arguments: dict[str, Any]) -> s
                 tool="python",
                 agent_id=agent_id,
                 agent_name=agent_name,
+                user_id=str(
+                    arguments.get("_user_id") or arguments.get("user_id") or ""
+                ).strip()
+                or None,
             )
             if not outcome:
                 label = "Denied" if outcome.reason == "denied" else "Blocked"

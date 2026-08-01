@@ -129,6 +129,15 @@ def _headless_safe_allow(tool: str, command: str) -> bool:
     return True
 
 
+def _confirm_single_user_mode() -> bool:
+    try:
+        from backend.core.config import settings
+
+        return bool(getattr(settings, "single_user_mode", True))
+    except Exception:
+        return True
+
+
 async def request_confirmation(
     ws_manager,
     session_id,
@@ -148,9 +157,20 @@ async def request_confirmation(
     - Prefer session WS; if that tab is gone, fan-out to any live WS of the same user
       (CEO often has domain/other-session tabs open).
     - Only fall to headless when no FE can receive the popup.
+
+    Multi-user：必须带 user_id，否则 pending.owner 为空会变成「任意人可 resolve」。
     """
     if ws_manager is None:
         return _headless_confirm_outcome(tool=tool, command=command, why="no_channel")
+
+    owner_uid = str(user_id).strip() if user_id else ""
+    if not owner_uid and not _confirm_single_user_mode():
+        logger.warning(
+            "confirm: multi-user requires user_id (tool=%s cmd=%s)",
+            tool or "-",
+            command[:80],
+        )
+        return ConfirmOutcome(False, "user_id_required")
 
     sid = session_id
     if isinstance(session_id, str):
@@ -168,9 +188,9 @@ async def request_confirmation(
         except Exception as e:
             logger.debug("confirm: is_connected probe failed: %s", e)
     user_probe = getattr(ws_manager, "user_has_live_connection", None)
-    if callable(user_probe) and user_id:
+    if callable(user_probe) and owner_uid:
         try:
-            user_live = bool(user_probe(user_id))
+            user_live = bool(user_probe(owner_uid))
         except Exception as e:
             logger.debug("confirm: user_has_live_connection failed: %s", e)
 
@@ -178,7 +198,7 @@ async def request_confirmation(
         logger.warning(
             "confirm: no live FE (session=%s user=%s) — headless policy for: %s",
             session_id,
-            user_id or "-",
+            owner_uid or "-",
             command[:120],
         )
         return _headless_confirm_outcome(
@@ -188,7 +208,6 @@ async def request_confirmation(
     confirm_id = _uuid.uuid4().hex[:12]
     event = asyncio.Event()
     # 绑定 user_id：HTTP resolve 时校验，防止任意登录用户 resolve 他人 confirm
-    owner_uid = str(user_id) if user_id else ""
     holder: dict = {
         "approved": False,
         "scope": "deny",
@@ -215,11 +234,13 @@ async def request_confirmation(
         # Always try session first (even if probe said offline — race with reconnect)
         await ws_manager.broadcast(sid, payload)
         # Fan-out to *other* tabs only — exclude this session to avoid double popup
-        if user_id and hasattr(ws_manager, "broadcast_to_user"):
+        if owner_uid and hasattr(ws_manager, "broadcast_to_user"):
             try:
-                uid = user_id
-                if isinstance(user_id, str):
-                    uid = _uuid.UUID(user_id)
+                uid: object = owner_uid
+                try:
+                    uid = _uuid.UUID(owner_uid)
+                except (ValueError, AttributeError, TypeError):
+                    pass
                 exclude = sid if isinstance(sid, _uuid.UUID) else None
                 if exclude is None and isinstance(session_id, str):
                     try:
@@ -295,22 +316,33 @@ def resolve_confirmation(
 ) -> bool:
     """前端回传确认结果。scope: once|session|agent|deny。
 
-    user_id：若 pending 绑了 owner，则必须匹配（HTTP 路径必传）。
+    归属规则：
+    - pending.owner 有值：必须与 user_id 匹配（HTTP/WS 均应传）
+    - pending.owner 为空且 multi-user：拒绝（防任意登录用户 resolve）
+    - single_user_mode：允许空 owner（桌面单用户兼容）
     """
     entry = _pending.get(confirm_id)
     if entry is None:
         return False
     event, holder = entry
     owner = str(holder.get("user_id") or "").strip()
-    if owner and user_id is not None:
-        if str(user_id).strip() != owner:
+    uid = str(user_id).strip() if user_id is not None else ""
+    if owner:
+        if not uid or uid != owner:
             logger.warning(
                 "confirm: user_id mismatch confirm=%s owner=%s got=%s",
                 confirm_id[:8],
                 owner[:8],
-                str(user_id)[:8],
+                (uid or "-")[:8],
             )
             return False
+    elif not _confirm_single_user_mode():
+        # multi-user + 无主 pending：fail-closed（旧 hook / 编制旁路未注入 _user_id）
+        logger.warning(
+            "confirm: reject unbound pending in multi-user confirm=%s",
+            confirm_id[:8],
+        )
+        return False
     holder["approved"] = bool(approved)
     if approved:
         s = (scope or "once").strip().lower()

@@ -164,6 +164,68 @@ async def test_approval_round_trip():
     assert outcome.reason == "approved"
 
 
+def test_resolve_rejects_unbound_pending_in_multi_user(monkeypatch):
+    """multi-user + owner 空：任意 resolve 必须拒绝。"""
+    monkeypatch.setattr(
+        confirm_manager, "_confirm_single_user_mode", lambda: False
+    )
+    import asyncio
+
+    ev = asyncio.Event()
+    holder = {"approved": False, "scope": "deny", "user_id": ""}
+    confirm_manager._pending["orphan1"] = (ev, holder)
+    try:
+        assert confirm_manager.resolve_confirmation("orphan1", True) is False
+        assert confirm_manager.resolve_confirmation(
+            "orphan1", True, user_id="anyone"
+        ) is False
+    finally:
+        confirm_manager._pending.pop("orphan1", None)
+
+
+def test_resolve_requires_matching_owner(monkeypatch):
+    """有 owner 时 user_id 必须匹配（含必须传入）。"""
+    monkeypatch.setattr(
+        confirm_manager, "_confirm_single_user_mode", lambda: False
+    )
+    import asyncio
+
+    ev = asyncio.Event()
+    holder = {"approved": False, "scope": "deny", "user_id": "owner-A"}
+    confirm_manager._pending["own1"] = (ev, holder)
+    try:
+        assert confirm_manager.resolve_confirmation("own1", True) is False
+        assert (
+            confirm_manager.resolve_confirmation(
+                "own1", True, user_id="other"
+            )
+            is False
+        )
+        assert (
+            confirm_manager.resolve_confirmation(
+                "own1", True, user_id="owner-A"
+            )
+            is True
+        )
+        assert holder["approved"] is True
+    finally:
+        confirm_manager._pending.pop("own1", None)
+
+
+@pytest.mark.asyncio
+async def test_request_requires_user_id_in_multi_user(monkeypatch):
+    monkeypatch.setattr(
+        confirm_manager, "_confirm_single_user_mode", lambda: False
+    )
+    sid = uuid.uuid4()
+    mgr = _FakeManager(connected_sid=sid)
+    outcome = await confirm_manager.request_confirmation(
+        mgr, sid, title="t", command="rm -rf x", timeout=2.0
+    )
+    assert outcome.approved is False
+    assert outcome.reason == "user_id_required"
+
+
 # ── 缺陷 3：broadcast 对未知 session 是静默的，调用方必须先问 ──
 
 

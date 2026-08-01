@@ -342,30 +342,41 @@ class WorkforceDispatcher:
                 "resync pending→rust submitted=%s host_epoch=%s", n, epoch
             )
 
+    @staticmethod
+    def _identity_slot_key(ident: Any) -> str:
+        """并发槽位键：与 identity_hire 的 id 一致（uuid，不用显示名）。
+
+        进程 identity 仍是 ``wf:{uuid}``；host 编制缓存按 hire id 索引。
+        """
+        iid = str(getattr(ident, "id", "") or "").strip()
+        if iid:
+            return iid
+        return str(getattr(ident, "name", "") or "").strip()
+
     def _identity_admit(self, ident: Any) -> bool:
         """Register + admit identity concurrency slot in Rust authority."""
         k = self._kernel
         if not hasattr(k, "_call"):
             return True
         try:
-            iid = str(getattr(ident, "id", "") or "")
-            name = str(getattr(ident, "name", "") or iid)
+            key = self._identity_slot_key(ident)
+            if not key:
+                return True
+            name = str(getattr(ident, "name", "") or key)
             role = str(getattr(ident, "role", "") or "")
             caps = list(getattr(ident, "capabilities", None) or [])
-            # ensure identity exists in rust cache
+            # ensure identity exists in rust cache（id=uuid，name 仅展示）
             k._call(
                 "identity_hire",
                 {
-                    "id": iid,
+                    "id": key,
                     "name": name,
                     "role": role,
                     "capabilities": caps,
                     "max_concurrent": 1,
                 },
             )
-            r = k._call("identity_admit", {"id": name}) or k._call(
-                "identity_admit", {"id": iid}
-            )
+            r = k._call("identity_admit", {"id": key})
             if isinstance(r, dict) and r.get("ok") is False:
                 return False
             return True
@@ -379,15 +390,14 @@ class WorkforceDispatcher:
             return True
 
     def _identity_release(self, ident: Any) -> None:
+        """释放并发槽：只按 hire id（uuid）一次，避免 name 空操作噪音。"""
         k = self._kernel
         if not hasattr(k, "_call") or ident is None:
             return
         try:
-            iid = str(getattr(ident, "id", "") or "")
-            name = str(getattr(ident, "name", "") or iid)
-            k._call("identity_release", {"id": name})
-            if iid and iid != name:
-                k._call("identity_release", {"id": iid})
+            key = self._identity_slot_key(ident)
+            if key:
+                k._call("identity_release", {"id": key})
         except Exception as e:
             logger.debug("identity_release: %s", e)
 
@@ -1201,14 +1211,23 @@ class WorkforceDispatcher:
             _budget = self._effective_budget(
                 ident, getattr(item, "instruction", None), item=item
             )
+            _owner = getattr(ident, "user_id", None)
+            _owner_s = str(_owner) if _owner else None
             kernel_proc = await self._kernel.create_process(
                 f"wf:{ident.id}",
                 session_id=None,
                 capabilities=list(ident.capabilities) if ident.capabilities is not None else None,
                 token_budget=_budget,
-                meta={"inbox_item_id": str(item.id), "identity_id": str(ident.id),
-                      "source": item.source, "identity_name": getattr(ident, "name", None),
-                      "token_budget_applied": _budget},
+                meta={
+                    "inbox_item_id": str(item.id),
+                    "identity_id": str(ident.id),
+                    "source": item.source,
+                    "identity_name": getattr(ident, "name", None),
+                    "token_budget_applied": _budget,
+                    # 多用户直接归属：list/top-up 不必再绕 identity 反查
+                    "user_id": _owner_s,
+                    "owner_user_id": _owner_s,
+                },
             )
             if proc_id_holder is not None:
                 proc_id_holder["id"] = kernel_proc.id
@@ -1394,6 +1413,8 @@ class WorkforceDispatcher:
         _item_payload = getattr(item, "payload", None) or {}
         if not isinstance(_item_payload, dict):
             _item_payload = {}
+        _owner = getattr(ident, "user_id", None)
+        _owner_s = str(_owner) if _owner else None
         loop._kernel_process_options = {
             "capabilities": list(ident.capabilities) if ident.capabilities is not None else None,
             "token_budget": _budget,
@@ -1409,6 +1430,9 @@ class WorkforceDispatcher:
                 "llm_source": "workforce",
                 "llm_priority": _llm_pri,
                 "inbox_priority": int(getattr(item, "priority", 0) or 0),
+                # 多用户直接归属（与 executor 路径 create_process meta 对齐）
+                "user_id": _owner_s,
+                "owner_user_id": _owner_s,
             },
         }
         loop._llm_source = "workforce"

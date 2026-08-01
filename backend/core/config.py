@@ -183,7 +183,10 @@ class Settings(BaseSettings):
     # Agent 多步工具循环上限（长链/编码任务需要更高，默认 40）
     agent_max_iterations: int = 40
     # 聊天 run 快照是否落盘（跳页/崩溃后可恢复 partial；默认开）
+    # 落盘路径：~/.takton/run_snapshots/ — 本机可读，非多租户隔离（见 run_snapshot_store）
     agent_run_snapshot_persist: bool = True
+    # 落盘是否保留工具 result 全文（默认 False：截断 args/result，防共享机泄露）
+    agent_run_snapshot_disk_full_tools: bool = False
     # Goal 模式额外轮次上限
     agent_goal_max_iterations: int = 100
     max_tool_result_length: int = 12_000
