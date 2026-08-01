@@ -50,26 +50,31 @@ export function createUserInputMessage(
   content: string,
   attachments?: Array<{ filename: string; url: string; type: string; text_content?: string }>,
   mode?: string,
-  subAgentIds?: string[]
+  subAgentIds?: string[],
+  opts?: { regenerate?: boolean }
 ): {
-  type: 'user_input';
+  type: 'user_input' | 'regenerate';
   content: string;
   attachments: typeof attachments;
   mode: string;
   sub_agent_ids?: string[];
+  regenerate?: boolean;
 } {
+  const regenerate = Boolean(opts?.regenerate);
   const msg: {
-    type: 'user_input';
+    type: 'user_input' | 'regenerate';
     content: string;
     attachments: typeof attachments;
     mode: string;
     sub_agent_ids?: string[];
+    regenerate?: boolean;
   } = {
-    type: 'user_input',
+    type: regenerate ? 'regenerate' : 'user_input',
     content,
     attachments: attachments || [],
     mode: mode || 'default',
   };
+  if (regenerate) msg.regenerate = true;
   if (subAgentIds && subAgentIds.length > 0) {
     msg.sub_agent_ids = subAgentIds;
   }

@@ -55,7 +55,17 @@ export const useConfirmStore = create<ConfirmState>((set, get) => ({
     const { pending, queue, _sender } = get();
     if (!pending) return;
     const approved = scope !== 'deny';
-    _sender?.(pending.confirmId, approved, scope);
+    const id = pending.confirmId;
+    // 优先 WS；无 sender 时 HTTP 兜底（人在 B tab 批 A 的确认时 B 可能已断）
+    if (_sender) {
+      _sender(id, approved, scope);
+    } else if (typeof window !== 'undefined') {
+      void import('@/lib/api')
+        .then(({ resolveConfirmHttp }) =>
+          resolveConfirmHttp(id, approved, scope === 'deny' ? 'deny' : scope)
+        )
+        .catch((e) => console.warn('confirm HTTP fallback failed', e));
+    }
     const [next, ...rest] = queue;
     set({ pending: next || null, queue: rest });
   },

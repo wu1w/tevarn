@@ -475,6 +475,30 @@ async def host_restart_api(
     return await asyncio.to_thread(try_restart_host)
 
 
+class ConfirmResolveBody(BaseModel):
+    approved: bool = False
+    scope: str = "once"
+
+
+@router.post("/confirm/{confirm_id}")
+async def confirm_resolve_http(
+    confirm_id: str,
+    body: ConfirmResolveBody,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """危险确认 HTTP 兜底：WS sender 未注册时前端可 POST 此路径。"""
+    from backend.services import confirm_manager
+
+    ok = confirm_manager.resolve_confirmation(
+        confirm_id,
+        bool(body.approved),
+        scope=str(body.scope or "once"),
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="confirm_id not found or expired")
+    return {"ok": True, "confirm_id": confirm_id}
+
+
 @router.get("/host/watchdog")
 async def host_watchdog_api(
     current_user: Annotated[UserRead, Depends(get_current_user)],

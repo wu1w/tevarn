@@ -1218,7 +1218,11 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 )
 
         # 1. 保存用户消息 + TTL 清理 + 同步到 CtxItem（同一事务）
-        await self._persist_user_input(session_id, enriched_input)
+        # regenerate 路径：不再落库重复用户句
+        if getattr(self, "_skip_user_persist", False):
+            self._skip_user_persist = False
+        else:
+            await self._persist_user_input(session_id, enriched_input)
 
         # 2. 获取 Session 配置（行级锁由 Repository 实现）
         session = await self.session_repo.get_with_lock(session_id)

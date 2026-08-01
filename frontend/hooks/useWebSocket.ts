@@ -599,14 +599,17 @@ export function useWebSocket(options: UseWebSocketOptions) {
         text_content?: string;
       }>,
       mode?: string,
-      subAgentIds?: string[]
+      subAgentIds?: string[],
+      opts?: { regenerate?: boolean }
     ) => {
       if (wsRef.current?.readyState !== WebSocket.OPEN) {
         onError?.('WebSocket not connected');
         return false;
       }
       wsRef.current.send(
-        JSON.stringify(createUserInputMessage(content, attachments, mode, subAgentIds))
+        JSON.stringify(
+          createUserInputMessage(content, attachments, mode, subAgentIds, opts)
+        )
       );
       return true;
     },

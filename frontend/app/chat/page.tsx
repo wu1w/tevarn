@@ -502,15 +502,25 @@ function ChatPageInner() {
       [addToast, t, currentSession?.id]
     );
 
-    // Host wipe：清空 process 相关 UI 提示，避免 resume 死 id
+    // Host wipe：清空 process 相关 UI / 恢复卡，避免 resume 死 id
     React.useEffect(() => {
-      const onEpoch = () => {
+      const onEpoch = (e: Event) => {
+        const epoch = (e as CustomEvent).detail?.host_epoch;
         setRunCaps(null);
-        setStreamStatusDetail((d) =>
-          d && /进程|process|resume/i.test(d)
-            ? t('chat.hostWiped') || 'Host 已重置，请重新发送'
-            : d
-        );
+        setRecovery(null);
+        setStreamStatusDetail(t('chat.hostWiped') || 'Host 已重置，请重新发送');
+        // 清当前会话 stream 缓存里的假 running（进程表已 wipe）
+        const sid = useSessionStore.getState().currentSession?.id;
+        if (sid) {
+          streamSessionApi().markIdle(sid);
+        }
+        if (epoch != null) {
+          try {
+            sessionStorage.setItem('takton:last_host_epoch', String(epoch));
+          } catch {
+            /* ignore */
+          }
+        }
       };
       window.addEventListener('takton:host-epoch', onEpoch);
       return () => window.removeEventListener('takton:host-epoch', onEpoch);
@@ -905,7 +915,8 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
         return;
       }
       setStreamStatusDetail(t('chat.thinking'));
-      if (sendMessage(lastUserMsg.content, [], 'default')) {
+      // regenerate：后端不重复落库用户句
+      if (sendMessage(lastUserMsg.content, [], 'default', undefined, { regenerate: true })) {
         setIsStreaming(true);
         setStreamingContent('');
       } else {

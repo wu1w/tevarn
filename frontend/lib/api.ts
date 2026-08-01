@@ -1226,6 +1226,19 @@ export async function restartKernelHost(): Promise<{ ok: boolean; error?: string
   return res.data;
 }
 
+/** 危险确认 HTTP 兜底（WS sender 未注册/断线时） */
+export async function resolveConfirmHttp(
+  confirmId: string,
+  approved: boolean,
+  scope: string = 'once'
+): Promise<{ ok: boolean }> {
+  const res = await api.post(`/kernel/confirm/${encodeURIComponent(confirmId)}`, {
+    approved,
+    scope,
+  });
+  return res.data;
+}
+
 export async function getKernelEvents(limit = 50): Promise<{
   events: KernelEvent[];
   total: number;

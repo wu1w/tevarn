@@ -4,6 +4,7 @@ WebSocket 通信层
 """
 
 import asyncio
+import contextvars
 import json
 import logging
 import time
@@ -13,6 +14,11 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
+
+# 当前 agent task 的 run_generation（broadcast 自动打戳，ingest 过滤 late event）
+_run_gen_ctx: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "takton_run_generation", default=None
+)
 
 from backend.agent import NexusAgentLoop
 from backend.core.config import settings
@@ -49,6 +55,8 @@ class SessionRunSnapshot:
     stream_message_id: str | None = None
     live_tools: list[dict[str, Any]] = field(default_factory=list)
     updated_at: float = 0.0
+    # 与 ConnectionManager._run_generations 对齐；late event gen 不符则不写入
+    generation: int = 0
 
     def to_sync_fields(self) -> dict[str, Any]:
         return {
@@ -59,6 +67,7 @@ class SessionRunSnapshot:
             "stream_message_id": self.stream_message_id if self.agent_running else None,
             "live_tools": list(self.live_tools) if self.agent_running else [],
             "snapshot_updated_at": self.updated_at or None,
+            "run_generation": self.generation or None,
         }
 
 
@@ -139,12 +148,13 @@ class ConnectionManager:
 
     def begin_run_snapshot(self, session_id: uuid.UUID) -> None:
         """新 user turn 开始：标记 running，清空上一轮残留。"""
-        self.bump_run_generation(session_id)
+        gen = self.bump_run_generation(session_id)
         self._run_snapshots[session_id] = SessionRunSnapshot(
             agent_running=True,
             state="thinking",
             detail="Starting…",
             updated_at=time.time(),
+            generation=gen,
         )
 
     def end_run_snapshot(self, session_id: uuid.UUID) -> None:
@@ -163,13 +173,27 @@ class ConnectionManager:
         return snap
 
     def _ingest_run_event(self, session_id: uuid.UUID, message: dict[str, Any]) -> None:
-        """从广播消息维护快照。无 WS 连接时也要更新（用户在别的页面）。"""
+        """从广播消息维护快照。无 WS 连接时也要更新（用户在别的页面）。
+
+        带 run_generation 且与当前 generation 不符 → 丢弃（旧 task late event）。
+        """
         msg_type = message.get("type")
         if msg_type not in ("stream_delta", "status", "tool_event", "error"):
             return
 
+        msg_gen = message.get("run_generation")
+        cur_gen = self.current_run_generation(session_id)
+        if msg_gen is not None:
+            try:
+                if int(msg_gen) != int(cur_gen):
+                    return
+            except (TypeError, ValueError):
+                return
+
         running = self.has_running_agent(session_id)
         snap = self._touch_snapshot(session_id)
+        if getattr(snap, "generation", 0) == 0 and cur_gen:
+            snap.generation = cur_gen
         if running:
             snap.agent_running = True
 
@@ -429,6 +453,20 @@ class ConnectionManager:
         无论是否有连接，都先更新 run snapshot——用户跳页断线后 agent 仍在跑，
         回连 sync 才能恢复 partial 正文与 live tools。
         """
+        # 打戳 run_generation（来自 agent task contextvar），供 ingest/前端过滤 late event
+        if isinstance(message, dict) and message.get("type") in (
+            "stream_delta",
+            "status",
+            "tool_event",
+            "error",
+        ):
+            if message.get("run_generation") is None:
+                ctx_gen = _run_gen_ctx.get()
+                if ctx_gen is not None:
+                    message = {**message, "run_generation": int(ctx_gen)}
+            if not message.get("session_id"):
+                message = {**message, "session_id": str(session_id)}
+
         try:
             self._ingest_run_event(session_id, message)
         except Exception as e:
@@ -760,8 +798,21 @@ async def websocket_endpoint(
             if msg_type == "ping":
                 await manager.broadcast(session_id, {"type": "pong"})
 
-            elif msg_type == "user_input":
+            elif msg_type in ("user_input", "regenerate"):
+                regenerate = msg_type == "regenerate" or bool(data.get("regenerate"))
                 user_input = data.get("content", "").strip()
+                if not user_input and regenerate:
+                    # 从历史取最后一条用户消息
+                    try:
+                        hist = await message_repo.get_history_by_session(
+                            session_id, limit=20
+                        )
+                        for m in reversed(list(hist or [])):
+                            if getattr(m, "role", None) == "user" and (m.content or "").strip():
+                                user_input = (m.content or "").strip()
+                                break
+                    except Exception as e:
+                        logger.warning("regenerate load history failed: %s", e)
                 if not user_input:
                     continue
 
@@ -796,6 +847,7 @@ async def websocket_endpoint(
                         continue
 
                 agent._should_stop = False
+                agent._skip_user_persist = bool(regenerate)
                 manager.begin_run_snapshot(session_id)
                 run_gen = manager.current_run_generation(session_id)
 
@@ -977,6 +1029,7 @@ async def _run_agent_safe(
             return True
         return manager.current_run_generation(session_id) == run_generation
 
+    _gen_token = _run_gen_ctx.set(int(run_generation) if run_generation else None)
     try:
         # Phase 2.2：chat 路径显式 origin（不靠 mode 默认猜）
         agent._run_origin = "chat"
@@ -1018,6 +1071,10 @@ async def _run_agent_safe(
             },
         )
     finally:
+        try:
+            _run_gen_ctx.reset(_gen_token)
+        except Exception:
+            pass
         # 异常分支漏清时的兜底：仅当 generation 仍是本轮且无存活 agent
         try:
             if _still_current() and not manager.has_running_agent(session_id):

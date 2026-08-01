@@ -361,6 +361,7 @@ class LoopIOMixin:
                             "id": mid,
                             "role": "user",
                             "content": enriched_input,
+                            "session_id": str(session_id),
                             "created_at": created.isoformat() if created else None,
                         },
                     )
