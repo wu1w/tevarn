@@ -443,10 +443,14 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         "1",
                     ):
                         _wf_hard = True
-                soft_on = (
+                # 产品语义：hard_cap_only=True → 全局硬顶，禁止 soft renew
+                # （含 chat/CEO）。要弹性续航请关 hard_cap_only 并开 soft_renew。
+                # hard_cap 关闭时：soft_renew 开关或 interactive/workforce 可续。
+                soft_on = (not hard_only) and (
                     bool(getattr(settings, "agent_budget_soft_renew_enabled", False))
-                    and not hard_only
-                ) or _interactive or (_is_wf_proc and not _wf_hard and not hard_only)
+                    or _interactive
+                    or (_is_wf_proc and not _wf_hard)
+                )
                 need_renew = remaining < estimated or used_ratio >= thr
                 if soft_on and need_renew and remaining < estimated:
                     try:

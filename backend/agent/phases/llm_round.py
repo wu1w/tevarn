@@ -397,7 +397,11 @@ async def _run_llm_round_body(
                         _wf_auto = False
                 except Exception:
                     pass
-                if _interactive or (_is_wf and _wf_auto):
+                # 全局 hard_cap_only：禁止 auto top_up / soft renew（与 precheck 一致）
+                _global_hard = bool(
+                    getattr(settings, "agent_budget_hard_cap_only", False)
+                )
+                if (not _global_hard) and (_interactive or (_is_wf and _wf_auto)):
                     _k = get_kernel()
                     _n = int(
                         (_meta.get("auto_top_up_count") or 0)

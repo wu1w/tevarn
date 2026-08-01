@@ -8,10 +8,11 @@ import { useZh } from '@/hooks/useZh';
 
 /** 危险命令确认：拒绝 / 允许一次 / 本会话 / 本员工 */
 export function DangerConfirmDialog() {
-  const { pending, respond } = useConfirmStore();
+  const { pending, queue, respond } = useConfirmStore();
   const t = useT();
   const zh = useZh();
   const hasAgent = Boolean(pending?.agentId || pending?.agentName);
+  const queueLen = queue.length;
 
   const act = (scope: ConfirmScope) => () => respond(scope);
 
@@ -36,11 +37,27 @@ export function DangerConfirmDialog() {
                   {zh
                     ? '可选择授权范围：一次 / 本会话 / 本员工（写入编制）'
                     : 'Choose scope: once / this session / this agent'}
+                  {queueLen > 0
+                    ? zh
+                      ? ` · 还有 ${queueLen} 条等待`
+                      : ` · ${queueLen} more waiting`
+                    : ''}
                 </p>
               </div>
             </div>
 
             <div className="space-y-3 px-5 py-4">
+              {pending.sessionId ? (
+                <div className="flex items-center gap-2 text-xs text-foreground-muted">
+                  <MessageSquare className="h-3.5 w-3.5" />
+                  <span>
+                    {zh ? '来自会话' : 'Session'}：
+                    <strong className="font-mono text-foreground">
+                      {pending.sessionId.slice(0, 8)}…
+                    </strong>
+                  </span>
+                </div>
+              ) : null}
               {pending.agentName ? (
                 <div className="flex items-center gap-2 text-xs text-foreground-muted">
                   <User className="h-3.5 w-3.5" />

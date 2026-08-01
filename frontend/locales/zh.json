@@ -390,6 +390,8 @@
   "chat.streamStuck": "长时间无响应，可停止或使用下方恢复",
   "chat.reconnecting": "连接中断，正在重连…",
   "chat.hostWiped": "Host 已重置，旧进程失效，请重新发送",
+  "chat.newOutput": "有新输出 · 回到底部",
+  "chat.jumpBottom": "回到底部",
   "chat.clusterWorking": "多角色草稿生成中…",
   "chat.error": "出错了",
   "chat.imageGenDone": "图片生成完成",

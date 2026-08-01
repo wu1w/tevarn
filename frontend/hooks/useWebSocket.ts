@@ -354,7 +354,16 @@ export function useWebSocket(options: UseWebSocketOptions) {
 
     ws.onmessage = (event: MessageEvent) => {
       try {
+        // 关键：旧 socket 晚到消息不得写入当前会话 UI / stream 缓存
+        if (activeSessionRef.current !== sid || wsRef.current !== ws) {
+          return;
+        }
         const msg: WSMessage = JSON.parse(event.data);
+        // 部分消息体可能带 session_id，二次校验
+        const msgSid = (msg as { session_id?: string }).session_id;
+        if (msgSid && String(msgSid) !== sid) {
+          return;
+        }
 
         if (isStreamDelta(msg)) {
           optionsRef.current.onStreamDelta?.(msg);
@@ -466,6 +475,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
             timeout?: number;
           };
           import('@/stores/confirmStore').then((mod) => {
+            const body = msg as unknown as { session_id?: string };
             mod.useConfirmStore.getState().showConfirm({
               confirmId: m.confirm_id,
               title: m.title || t('useWebSocket._e2'),
@@ -475,6 +485,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
               agentId: m.agent_id || undefined,
               agentName: m.agent_name || undefined,
               timeout: m.timeout,
+              sessionId: body.session_id || sid,
             });
           });
         }

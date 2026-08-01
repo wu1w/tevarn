@@ -206,8 +206,37 @@ export function ChatWindow({
   }, []);
 
   const isEmpty = displayMessages.length === 0;
+  const [showJumpBottom, setShowJumpBottom] = useState(false);
+
+  // 流式增高且用户不在底部 → 显示「有新输出」
+  useEffect(() => {
+    if (!isStreaming) {
+      setShowJumpBottom(false);
+      return;
+    }
+    const el = scrollRef.current;
+    if (!el) return;
+    const tick = () => {
+      const near = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
+      setShowJumpBottom(!near);
+      if (near) isNearBottom.current = true;
+    };
+    tick();
+    const id = window.setInterval(tick, 400);
+    return () => clearInterval(id);
+  }, [isStreaming, displayMessages.length]);
+
+  const jumpToBottom = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    isNearBottom.current = true;
+    setShowJumpBottom(false);
+    writeSavedScroll(sessionId, el, true);
+  };
 
   return (
+    <div className="relative flex h-full min-h-0 w-full flex-col">
     <div
       ref={scrollRef}
       className="flex h-full min-h-0 w-full flex-col overflow-y-auto px-4 py-4"
@@ -301,6 +330,16 @@ export function ChatWindow({
         </div>
       )}
       <div ref={bottomRef} />
+    </div>
+    {showJumpBottom && (
+      <button
+        type="button"
+        onClick={jumpToBottom}
+        className="absolute bottom-4 left-1/2 z-20 -translate-x-1/2 rounded-full border border-brand-cyan/40 bg-elevated-bg/95 px-3 py-1.5 text-[11px] font-medium text-brand-cyan shadow-lg backdrop-blur hover:bg-card-bg"
+      >
+        {isStreaming ? t('chat.newOutput') || '有新输出 · 回到底部' : t('chat.jumpBottom') || '回到底部'}
+      </button>
+    )}
     </div>
   );
 }

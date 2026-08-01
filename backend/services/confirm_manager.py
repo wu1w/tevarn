@@ -83,25 +83,48 @@ def _headless_auto_approve_enabled() -> bool:
 
 
 def _headless_safe_allow(tool: str, command: str) -> bool:
-    """safe headless: allow read/write edits, deny shell/network high-risk."""
-    t = (tool or "").lower()
+    """safe headless: allow file edits/reads; deny shell/network by tool id.
+
+    Tool name is matched as a whole token (or exact id), not bare substring —
+    avoids false deny when e.g. a path contains 'http' or 'python'.
+    """
+    t = (tool or "").strip().lower()
     c = (command or "").lower()
-    high = (
-        "command",
-        "bash",
-        "shell",
-        "terminal",
-        "python",
-        "execute_python",
-        "remote",
-        "browser",
-        "http",
-        "desktop",
-        "sudo",
-        "rm ",
-        "del ",
+    # Exact / token tool ids (and common aliases)
+    high_tools = frozenset(
+        {
+            "command",
+            "bash",
+            "shell",
+            "terminal",
+            "python",
+            "execute_python",
+            "remote",
+            "browser",
+            "http",
+            "desktop",
+            "run_command",
+            "shell_session",
+            "process",
+        }
     )
-    if any(h in t for h in high) or any(h in c for h in ("sudo", "rm -rf", "format ")):
+    # tool may be "pack.command" or "CommandTool"
+    base = t.split(".")[-1].replace("tool", "").strip("_")
+    if t in high_tools or base in high_tools:
+        return False
+    # Command text: only clear high-risk patterns (not bare 'python'/'http')
+    if any(
+        p in c
+        for p in (
+            "sudo ",
+            "rm -rf",
+            "rm -r ",
+            "format ",
+            "mkfs",
+            "dd if=",
+            ":(){",
+        )
+    ):
         return False
     return True
 
@@ -183,13 +206,21 @@ async def request_confirmation(
     try:
         # Always try session first (even if probe said offline — race with reconnect)
         await ws_manager.broadcast(sid, payload)
-        # Fan-out to other tabs of the same user so popup is not lost
+        # Fan-out to *other* tabs only — exclude this session to avoid double popup
         if user_id and hasattr(ws_manager, "broadcast_to_user"):
             try:
                 uid = user_id
                 if isinstance(user_id, str):
                     uid = _uuid.UUID(user_id)
-                await ws_manager.broadcast_to_user(uid, payload, exclude_session=None)
+                exclude = sid if isinstance(sid, _uuid.UUID) else None
+                if exclude is None and isinstance(session_id, str):
+                    try:
+                        exclude = _uuid.UUID(session_id)
+                    except (ValueError, AttributeError):
+                        exclude = None
+                await ws_manager.broadcast_to_user(
+                    uid, payload, exclude_session=exclude
+                )
             except Exception as ue:
                 logger.debug("confirm: user fan-out skip: %s", ue)
     except Exception as e:
