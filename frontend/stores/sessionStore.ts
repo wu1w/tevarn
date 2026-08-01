@@ -31,6 +31,9 @@ interface SessionState {
   loadMessages: (sessionId: string) => Promise<void>;
   /** 递增：快速连切会话时丢弃过期 loadMessages 结果 */
   _loadSeq: number;
+  /** 最近一次用户发送/乐观气泡时间（防空白会话误删） */
+  recentActivityBySession: Record<string, number>;
+  touchSessionActivity: (sessionId: string) => void;
   updateConfig: (sessionId: string, config: SessionConfig) => Promise<void>;
   clearMessages: () => void;
   setError: (error: string | null) => void;
@@ -54,8 +57,19 @@ export const useSessionStore = create<SessionState>()(
       sessionTitles: {},
       starredSessionIds: [],
       _loadSeq: 0,
+      recentActivityBySession: {},
 
       setCurrentSession: (session) => set({ currentSession: session }),
+
+      touchSessionActivity: (sessionId) => {
+        if (!sessionId) return;
+        set((st) => ({
+          recentActivityBySession: {
+            ...st.recentActivityBySession,
+            [sessionId]: Date.now(),
+          },
+        }));
+      },
 
       addMessage: (message) => {
         const state = get();
@@ -73,6 +87,8 @@ export const useSessionStore = create<SessionState>()(
             return !ts || Math.abs(now - ts) < 2500;
           });
           if (dup) return;
+          // 用户发言 → 标记活跃，空白会话回收跳过
+          get().touchSessionActivity(sessionId);
         }
 
         // 自动命名：用户的第一条消息自动生成 session 标题

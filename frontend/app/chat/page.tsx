@@ -910,11 +910,24 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
           }
         }
 
+        // 只带可发送附件（排除 blob/上传失败），避免乐观文案与真实 payload 不一致
+        const sendableAtts = (attachments || []).filter((a) => {
+          const u = String(a.url || '').trim();
+          if (!u || u.startsWith('blob:') || u.startsWith('data:')) return false;
+          if (a.status === 'error' || a.status === 'uploading') return false;
+          return true;
+        });
+        if ((attachments?.length || 0) > 0 && sendableAtts.length === 0 && !content.trim()) {
+          addToast(t('chat.removeFailedAttachments'), 'error');
+          sendInFlightRef.current = false;
+          return;
+        }
+
         // 乐观气泡与后端 _build_user_input_with_attachments 对齐，便于 ack reconcile
         let displayContent = content;
-        if (attachments.length > 0) {
+        if (sendableAtts.length > 0) {
           const parts = [content];
-          attachments.forEach((a, i) => {
+          sendableAtts.forEach((a, i) => {
             parts.push(`\n\n[附件 ${i + 1}: ${a.filename}]`);
             if (a.text_content) {
               const preview = a.text_content.slice(0, 8000);
@@ -942,6 +955,7 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
           created_at: new Date().toISOString(),
         };
         addMessage(userMsg);
+        useSessionStore.getState().touchSessionActivity(session.id);
         setStoppingSid(session.id, false);
         setIsStreaming(true);
         setStreamingContent('');
@@ -966,7 +980,8 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
           }
 
           setStreamStatusDetail(mode === 'cluster' ? t('chat.clusterWorking') : t('chat.thinking'));
-          const sent = sendMessage(content, attachments, mode, subAgentIds);
+          // 只发可发送附件，避免把失败 chip 带进 WS
+          const sent = sendMessage(content, sendableAtts, mode, subAgentIds);
           if (!sent) {
             addToast(t('chat.sendFailedDisconnected'), 'error');
             dropGhost();

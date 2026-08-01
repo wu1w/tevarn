@@ -322,10 +322,23 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
 
   useImperativeHandle(ref, () => ({ ingestFiles }), [ingestFiles]);
 
+  /** 可真正发出的附件：非上传中/失败，且 URL 不是 blob 占位 */
+  const isSendableAttachment = (a: Attachment): boolean => {
+    if (a.status === 'error' || a.status === 'uploading') return false;
+    const u = String(a.url || '').trim();
+    if (!u || u.startsWith('blob:') || u.startsWith('data:')) return false;
+    // 本地 staging 未完成
+    if (a.localId && a.status && a.status !== 'ready') return false;
+    return true;
+  };
+
   const handleSend = () => {
     const trimmed = content.trim();
-    const readyAtts = attachments.filter((a) => a.status !== 'error' && a.url);
+    const readyAtts = attachments.filter(isSendableAttachment);
     const pending = attachments.some((a) => a.status === 'uploading');
+    const failedOnly =
+      attachments.length > 0 &&
+      attachments.every((a) => a.status === 'error' || !isSendableAttachment(a));
     if (!trimmed && readyAtts.length === 0 && attachments.length === 0) return;
     if (disabled) return;
     if (sendingRef.current) return;
@@ -335,10 +348,16 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       return;
     }
     if (!trimmed && readyAtts.length === 0) {
-      if (attachments.some((a) => a.status === 'error')) {
+      if (failedOnly || attachments.some((a) => a.status === 'error')) {
         addToast(t('chat.removeFailedAttachments'), 'error');
+      } else {
+        addToast(t('chat.waitUploadBeforeSend'), 'error');
       }
       return;
+    }
+    // 有失败附件时仍可只发正文+成功附件，但明确 toast 一次
+    if (attachments.some((a) => a.status === 'error')) {
+      addToast(t('chat.removeFailedAttachments'), 'info');
     }
     sendingRef.current = true;
 
