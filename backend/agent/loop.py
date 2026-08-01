@@ -1443,6 +1443,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 session_id,
                 "thinking",
                 f"场景 {scene_plan.summary()} · 能力 {caps_n} · 工具 {len(tools)}",
+                caps_count=caps_n,
+                tools_count=len(tools),
             )
         except Exception:
             try:
@@ -1450,6 +1452,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     session_id,
                     "thinking",
                     f"场景 {scene_plan.summary()} · 工具 {len(tools)}",
+                    tools_count=len(tools),
                 )
             except Exception:
                 pass

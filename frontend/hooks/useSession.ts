@@ -48,11 +48,20 @@ export function useSession() {
     ): Promise<boolean> => {
       if (!sessionId) return false;
       try {
+        // 流式/agent 仍在跑：绝不自动删（防 WS 断时误删）
+        try {
+          const { streamSessionApi } = await import('@/stores/streamSessionStore');
+          const st = streamSessionApi().get(sessionId);
+          if (st.agentRunning || st.isStreaming) return false;
+        } catch {
+          /* ignore */
+        }
         try {
           const active = await api.getActiveSessionIds();
           if (active?.includes(sessionId)) return false;
         } catch {
-          /* ignore */
+          // 拉 active 失败时更保守：不删（原逻辑 ignore 后继续删有误删窗口）
+          if (options?.knownEmpty !== true) return false;
         }
         let empty = options?.knownEmpty;
         if (empty === undefined) {
@@ -60,6 +69,14 @@ export function useSession() {
           empty = !hasChatContent(msgs || []);
         }
         if (!empty) return false;
+        // 新建后 30s 内不自动删（避免「刚建就闪没」）
+        try {
+          const sess = await api.getSession(sessionId);
+          const created = sess?.created_at ? Date.parse(String(sess.created_at)) : 0;
+          if (created && Date.now() - created < 30_000) return false;
+        } catch {
+          /* 404 等 → 下面 delete 会 no-op */
+        }
         await api.deleteSession(sessionId);
         // 清理本地标题 / 星标
         const st = useSessionStore.getState();
@@ -68,6 +85,13 @@ export function useSession() {
           sessionTitles: restTitles,
           starredSessionIds: st.starredSessionIds.filter((id) => id !== sessionId),
         });
+        try {
+          window.dispatchEvent(
+            new CustomEvent('takton:session-invalid', { detail: { sessionId } })
+          );
+        } catch {
+          /* ignore */
+        }
         return true;
       } catch {
         return false;

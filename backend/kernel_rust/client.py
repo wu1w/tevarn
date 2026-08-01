@@ -1218,6 +1218,7 @@ class RustAgentKernel:
             "methods_count": len(methods),
             "degraded": degraded,
             "restart_count": int(getattr(self, "_restart_count", 0)),
+            "host_epoch": int(getattr(self, "_host_epoch", 0) or 0),
             "last_health_ok_at": float(getattr(self, "_last_health_ok_at", 0) or 0),
             "acceptance": {
                 "marathon_min_hours": 2,

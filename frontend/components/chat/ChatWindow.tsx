@@ -134,14 +134,16 @@ export function ChatWindow({
   }, [sessionId]);
 
   // 首屏 instant 恢复离开位置；之后仅贴底时 scrollTop 贴底（不用 smooth）
+  // 消息从 0→N 加载完成后再定位，避免 switch 时 clearMessages 导致的顶→底闪动
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     const len = displayMessages.length;
 
-    // 加载中/空列表：不滚，避免先空白再闪
+    // 加载中/空列表：不滚，避免先空白再闪；并允许下一帧重新首屏定位
     if (len === 0) {
       prevMsgLen.current = 0;
+      didInitialScroll.current = false;
       return;
     }
 
@@ -149,20 +151,24 @@ export function ChatWindow({
       didInitialScroll.current = true;
       prevMsgLen.current = len;
       const saved = readSavedScroll(sessionId);
-      // 等 MessageBubble 布局完成再定 scrollTop
+      // 等 MessageBubble 布局完成再定 scrollTop（双 rAF + 短延时）
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          const box = scrollRef.current;
-          if (!box) return;
-          if (saved.nearBottom || saved.top === null) {
-            box.scrollTop = box.scrollHeight;
-            isNearBottom.current = true;
-          } else {
-            box.scrollTop = Math.min(Math.max(0, saved.top), box.scrollHeight);
-            isNearBottom.current =
-              box.scrollHeight - box.scrollTop - box.clientHeight < NEAR_BOTTOM_PX;
-          }
-          writeSavedScroll(sessionId, box, isNearBottom.current);
+          window.setTimeout(() => {
+            const box = scrollRef.current;
+            if (!box) return;
+            // 会话已切换则放弃
+            if (prevSessionId.current !== sessionId) return;
+            if (saved.nearBottom || saved.top === null) {
+              box.scrollTop = box.scrollHeight;
+              isNearBottom.current = true;
+            } else {
+              box.scrollTop = Math.min(Math.max(0, saved.top), box.scrollHeight);
+              isNearBottom.current =
+                box.scrollHeight - box.scrollTop - box.clientHeight < NEAR_BOTTOM_PX;
+            }
+            writeSavedScroll(sessionId, box, isNearBottom.current);
+          }, 16);
         });
       });
       return;

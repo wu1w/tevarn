@@ -1168,6 +1168,7 @@ export async function getGovernanceStatus(): Promise<Record<string, unknown>> {
 export async function getRuntimeHealth(): Promise<{
   ok: boolean;
   severity: string;
+  host_epoch?: number;
   issues?: Array<{
     code?: string;
     title?: string;
@@ -1204,6 +1205,17 @@ export async function getRuntimeHealth(): Promise<{
   scenario?: Record<string, unknown>;
 }> {
   const res = await api.get('/kernel/runtime/health');
+  return res.data;
+}
+
+/** WS/API 基址发现（避免前端写死 8090） */
+export async function getRuntimeEndpoints(): Promise<{
+  api_base: string;
+  ws_base: string;
+  api_port?: number;
+  host_epoch?: number;
+}> {
+  const res = await api.get('/kernel/runtime/endpoints');
   return res.data;
 }
 

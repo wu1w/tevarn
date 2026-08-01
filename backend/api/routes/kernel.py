@@ -13,7 +13,7 @@ import logging
 import time
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from backend.kernel import get_kernel
@@ -414,6 +414,49 @@ async def runtime_health_api(
     from backend.services.runtime_health import collect_runtime_health
 
     return await asyncio.to_thread(collect_runtime_health)
+
+
+@router.get("/runtime/endpoints")
+async def runtime_endpoints_api(
+    request: Request,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """前端 WS/API 基址发现：避免 dev 写死 8090。
+
+    浏览器可据此拼 ws URL；Electron 仍可优先 __TAKTON_WS_URL__。
+    """
+    import os
+
+    from backend.core.config import settings
+
+    host = request.headers.get("host") or "127.0.0.1:8090"
+    # 真实后端端口：环境变量 > settings.app_port > 8090 产品默认
+    api_port = int(
+        os.environ.get("TAKTON_API_PORT")
+        or os.environ.get("PORT")
+        or getattr(settings, "app_port", 0)
+        or 8090
+    )
+    env_ws = (os.environ.get("TAKTON_PUBLIC_WS_URL") or "").strip().rstrip("/")
+    env_api = (os.environ.get("TAKTON_PUBLIC_API_URL") or "").strip().rstrip("/")
+    # Next dev 不代理 WS upgrade → 默认直连后端
+    default_api = f"http://127.0.0.1:{api_port}/api"
+    default_ws = f"ws://127.0.0.1:{api_port}/api"
+    host_epoch = 0
+    try:
+        from backend.kernel import get_kernel
+
+        k = get_kernel()
+        host_epoch = int(getattr(k, "_host_epoch", 0) or 0)
+    except Exception:
+        pass
+    return {
+        "api_base": env_api or default_api,
+        "ws_base": env_ws or default_ws,
+        "api_port": api_port,
+        "request_host": host,
+        "host_epoch": host_epoch,
+    }
 
 
 @router.post("/host/restart")

@@ -39,16 +39,27 @@ def collect_runtime_health() -> dict[str, Any]:
 
                 abi = check_required_abi(methods)
                 abi_ok = bool(abi.get("ok"))
-                host_status = {"up": True, "abi": abi, "methods_count": len(methods)}
+                host_status = {
+                    "up": True,
+                    "abi": abi,
+                    "methods_count": len(methods),
+                    "host_epoch": int(getattr(k, "_host_epoch", 0) or 0),
+                }
             except Exception as e:
                 host_up = False
                 host_status = {"up": False, "error": str(e)}
         else:
             backend = "python"
             host_status = {"up": False, "backend": "python"}
+        # 确保 epoch 始终可见（host wipe 后前端清 process UI）
+        if "host_epoch" not in host_status:
+            try:
+                host_status["host_epoch"] = int(getattr(k, "_host_epoch", 0) or 0)
+            except Exception:
+                host_status["host_epoch"] = 0
     except Exception as e:
         backend = "unknown"
-        host_status = {"up": False, "error": str(e)}
+        host_status = {"up": False, "error": str(e), "host_epoch": 0}
         err = str(e).lower()
         if "abi" in err or "missing" in err:
             issues.append(describe_exit_reason("host_abi_mismatch"))
@@ -319,11 +330,13 @@ def collect_runtime_health() -> dict[str, Any]:
         if sev == "warn" and severity != "error":
             severity = "warn"
 
+    host_epoch = int(host_status.get("host_epoch") or 0)
     return {
         "ok": severity == "ok" and host_up and abi_ok,
         "severity": severity,
         "backend": backend if "backend" in dir() else host_status.get("backend"),
         "host": host_status,
+        "host_epoch": host_epoch,
         "sandbox": sandbox,
         "budget": budget,
         "court": court,

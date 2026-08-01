@@ -496,6 +496,8 @@ export interface StatusUpdateMessage extends WSMessage {
   type: 'status';
   state: string;
   detail?: string;
+  caps_count?: number | null;
+  tools_count?: number | null;
 }
 
 export interface SettingsChangedMessage extends WSMessage {

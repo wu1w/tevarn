@@ -36,6 +36,21 @@ import {
   createStopMessage,
 } from '@/lib/ws';
 
+/** 运行时下发的 WS 基址缓存（getRuntimeEndpoints） */
+let _discoveredWsBase: string | null = null;
+
+export function setDiscoveredWsBase(url: string | null | undefined) {
+  const u = (url || '').trim().replace(/\/$/, '');
+  _discoveredWsBase = u || null;
+  if (typeof window !== 'undefined' && u) {
+    try {
+      (window as unknown as { __TAKTON_WS_URL__?: string }).__TAKTON_WS_URL__ = u;
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 /** 每次连接时解析 WS 基址 */
 function resolveWsBaseUrl(): string {
   if (typeof window !== 'undefined') {
@@ -47,6 +62,7 @@ function resolveWsBaseUrl(): string {
 
     const injected = (window as unknown as { __TAKTON_WS_URL__?: string }).__TAKTON_WS_URL__;
     if (injected) return injected.replace(/\/$/, '');
+    if (_discoveredWsBase) return _discoveredWsBase;
 
     // Electron 桌面：主进程反代 /api → 真实后端，走同源 WS
     if (hasElectron) {
@@ -66,8 +82,12 @@ function resolveWsBaseUrl(): string {
       return `${wsProto}//${host}/api`;
     }
 
-    // 浏览器 + next dev（:3000/:3001）：Next rewrites 不支持 WS upgrade，必须直连后端 8090
+    // 浏览器 + next dev：Next rewrites 不支持 WS upgrade
+    // 优先 NEXT_PUBLIC_WS_URL / 发现结果，否则 8090（产品 dev 默认）
     if (isLocalHost && (port === '3000' || port === '3001')) {
+      if (process.env.NEXT_PUBLIC_WS_URL) {
+        return process.env.NEXT_PUBLIC_WS_URL.replace(/\/$/, '');
+      }
       return 'ws://127.0.0.1:8090/api';
     }
   }
@@ -81,20 +101,22 @@ function resolveWsBaseUrl(): string {
       if (port === '3000' || port === '3001') {
         return 'ws://127.0.0.1:8090/api';
       }
-      if (port && port !== '8000') {
+      if (port && port !== '8000' && port !== '8090') {
         const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         return `${wsProto}//${hostname}:${port}/api`;
       }
-      return 'ws://localhost:8000/api';
+      return 'ws://127.0.0.1:8090/api';
     }
-    return `ws://${hostname}:8000/api`;
+    return `ws://${hostname}/api`;
   }
-  return 'ws://localhost:8000/api';
+  return 'ws://127.0.0.1:8090/api';
 }
 
 const RECONNECT_DELAY_BASE = 1000;
 const MAX_RECONNECT_DELAY = 30000;
+/** 快重连次数上限；达到后改为慢重试，不再彻底放弃 */
 const MAX_RECONNECT_ATTEMPTS = 15;
+const SLOW_RECONNECT_DELAY = 60000;
 
 interface UseWebSocketOptions {
   sessionId: string;
@@ -128,6 +150,13 @@ interface UseWebSocketOptions {
       result?: string | null;
     }>;
   }) => void;
+  /** 服务端落库用户消息后的 id 回执（替换乐观气泡） */
+  onUserMessageAck?: (payload: {
+    id: string;
+    role: string;
+    content: string;
+    created_at?: string | null;
+  }) => void;
   /** 连接成功后自动 sync 时使用的 last message id */
   getLastMessageId?: () => string | undefined;
 }
@@ -148,6 +177,9 @@ export function useWebSocket(options: UseWebSocketOptions) {
   const optionsRef = useRef(options);
   const connectingRef = useRef(false);
   const intentionalCloseRef = useRef(false);
+  /** 已发 auth，等 auth_ok 再 sync（有 token 时） */
+  const authOkRef = useRef(false);
+  const pendingSyncAfterAuthRef = useRef(false);
   const tokenRef = useRef(token);
   const sessionIdRef = useRef(sessionId);
 
@@ -190,10 +222,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
     if (overrideSessionId) {
       reconnectAttempts.current = 0;
     }
-    if (reconnectAttempts.current >= MAX_RECONNECT_ATTEMPTS) {
-      optionsRef.current.onError?.('WebSocket reconnect limit reached — refresh or click reconnect');
-      return;
-    }
+    // 达到快重连上限后不再 return：由自动重连 effect 走慢间隔
 
     // 清理旧连接
     intentionalCloseRef.current = true;
@@ -254,24 +283,39 @@ export function useWebSocket(options: UseWebSocketOptions) {
       connectingRef.current = false;
       setIsConnecting(false);
       reconnectAttempts.current = 0;
+      authOkRef.current = false;
+      pendingSyncAfterAuthRef.current = false;
       try { useWsStore.getState().setConnected(true); } catch (e) { console.error(e); }
       optionsRef.current.onConnect?.();
 
+      const doSync = () => {
+        try {
+          const lastId = optionsRef.current.getLastMessageId?.();
+          ws.send(JSON.stringify({ type: 'sync', last_message_id: lastId || undefined }));
+        } catch {
+          /* ignore */
+        }
+      };
+
       const tok = tokenRef.current;
       if (tok) {
+        // 有 token：等 auth_ok 再 sync，避免未鉴权 sync 被丢
+        pendingSyncAfterAuthRef.current = true;
         try {
           ws.send(JSON.stringify({ type: 'auth', token: tok }));
         } catch {
           /* ignore */
         }
-      }
-
-      // 回页/重连：主动 sync
-      try {
-        const lastId = optionsRef.current.getLastMessageId?.();
-        ws.send(JSON.stringify({ type: 'sync', last_message_id: lastId || undefined }));
-      } catch {
-        /* ignore */
+        // 兜底：1.5s 无 auth_ok 仍 sync（兼容旧后端）
+        window.setTimeout(() => {
+          if (ws.readyState === WebSocket.OPEN && pendingSyncAfterAuthRef.current) {
+            pendingSyncAfterAuthRef.current = false;
+            doSync();
+          }
+        }, 1500);
+      } else {
+        // 无 token（loopback 单用户）：直接 sync
+        doSync();
       }
 
       clearPing();
@@ -352,6 +396,34 @@ export function useWebSocket(options: UseWebSocketOptions) {
         } else if (msg.type === 'settings_changed') {
           const keys = (msg as unknown as { keys?: string[] }).keys || [];
           optionsRef.current.onSettingsChanged?.(keys);
+        } else if (msg.type === 'auth_ok') {
+          authOkRef.current = true;
+          if (pendingSyncAfterAuthRef.current) {
+            pendingSyncAfterAuthRef.current = false;
+            try {
+              const lastId = optionsRef.current.getLastMessageId?.();
+              wsRef.current?.send(
+                JSON.stringify({ type: 'sync', last_message_id: lastId || undefined })
+              );
+            } catch {
+              /* ignore */
+            }
+          }
+        } else if (msg.type === 'user_message_ack') {
+          const m = msg as unknown as {
+            id?: string;
+            role?: string;
+            content?: string;
+            created_at?: string | null;
+          };
+          if (m.id) {
+            optionsRef.current.onUserMessageAck?.({
+              id: m.id,
+              role: m.role || 'user',
+              content: m.content || '',
+              created_at: m.created_at,
+            });
+          }
         } else if (msg.type === 'sync_response') {
           const m = msg as unknown as {
             messages?: Array<{ id: string; role: string; content: string; created_at?: string | null }>;
@@ -565,10 +637,20 @@ export function useWebSocket(options: UseWebSocketOptions) {
     if (!sessionId) return;
     if (isConnected || isConnecting) return;
 
-    const delay = Math.min(
-      RECONNECT_DELAY_BASE * Math.pow(2, Math.min(reconnectAttempts.current, 5)),
-      MAX_RECONNECT_DELAY
-    );
+    const fastExhausted = reconnectAttempts.current >= MAX_RECONNECT_ATTEMPTS;
+    const delay = fastExhausted
+      ? SLOW_RECONNECT_DELAY
+      : Math.min(
+          RECONNECT_DELAY_BASE * Math.pow(2, Math.min(reconnectAttempts.current, 5)),
+          MAX_RECONNECT_DELAY
+        );
+
+    if (fastExhausted && reconnectAttempts.current === MAX_RECONNECT_ATTEMPTS) {
+      // 仅提示一次，之后慢重试
+      optionsRef.current.onError?.(
+        'WebSocket fast reconnect paused — slow retry every 60s, or click reconnect'
+      );
+    }
 
     const timer = setTimeout(() => {
       if (!sessionIdRef.current) return;

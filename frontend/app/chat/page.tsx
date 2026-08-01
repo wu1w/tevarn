@@ -51,6 +51,7 @@ function ChatPageInner() {
   const contactIdentity = (searchParams.get('identity') || '').trim();
   const projectGroupId = (searchParams.get('group') || '').trim();
   const { currentSession, messages, addMessage, createAndLoadSession, openContactSession, loadMessages, switchSession } = useSession();
+  const reconcileMessage = useSessionStore((s) => s.reconcileMessage);
     const token = useAuthStore((s) => s.token);
     const {
       uiMode,
@@ -78,6 +79,12 @@ function ChatPageInner() {
         const [isTransparencyOpen, setIsTransparencyOpen] = useState(false);
         const [highlightMessageId, setHighlightMessageId] = useState<string | null>(null);
         const [isStreaming, setIsStreaming] = useState(false);
+        /** Stop 后等待服务端 idle，避免假停后仍收 stream_delta */
+        const [isStopping, setIsStopping] = useState(false);
+        const isStoppingRef = useRef(false);
+        /** 流式活动时间戳：长时间无 delta 则视为卡住，露出恢复入口 */
+        const lastStreamActivityRef = useRef<number>(Date.now());
+        const [streamStuck, setStreamStuck] = useState(false);
         const [streamingContent, setStreamingContent] = useState('');
         // 流式正文 ref：idle/stop 时落地，避免在 setState updater 内同步写 sessionStore
         const streamingContentRef = React.useRef('');
@@ -223,6 +230,13 @@ function ChatPageInner() {
           if (status === 404) {
             useSessionStore.getState().setCurrentSession(null);
             useSessionStore.getState().clearMessages();
+            try {
+              window.dispatchEvent(
+                new CustomEvent('takton:session-invalid', { detail: { sessionId: sid } })
+              );
+            } catch {
+              /* ignore */
+            }
             return;
           }
         }
@@ -231,7 +245,15 @@ function ChatPageInner() {
           await loadMessages(sid);
         } catch (e) {
           const status = (e as { response?: { status?: number } })?.response?.status;
-          if (status !== 404) console.error(e);
+          if (status === 404) {
+            try {
+              window.dispatchEvent(
+                new CustomEvent('takton:session-invalid', { detail: { sessionId: sid } })
+              );
+            } catch {
+              /* ignore */
+            }
+          } else if (status !== 404) console.error(e);
         }
         if (cancelled) return;
         try {
@@ -290,8 +312,54 @@ function ChatPageInner() {
     });
   }, [currentSession?.id, isStreaming, streamingContent, liveToolCalls, streamStatusDetail]);
 
+  // 长时间 thinking 无 delta → 卡住，露出恢复/停止入口
+  React.useEffect(() => {
+    if (!isStreaming || isStopping) {
+      setStreamStuck(false);
+      return;
+    }
+    const STUCK_MS = 90_000;
+    const tick = window.setInterval(() => {
+      if (Date.now() - lastStreamActivityRef.current >= STUCK_MS) {
+        setStreamStuck(true);
+        setStreamStatusDetail((d) => d || t('chat.streamStuck') || '长时间无响应，可停止或恢复');
+      }
+    }, 10_000);
+    return () => clearInterval(tick);
+  }, [isStreaming, isStopping, t]);
+
+  // 404 会话跨标签同步 + 发现 WS 基址
+  React.useEffect(() => {
+    const onInvalid = (e: Event) => {
+      const id = (e as CustomEvent).detail?.sessionId as string | undefined;
+      const cur = useSessionStore.getState().currentSession?.id;
+      if (id && cur === id) {
+        useSessionStore.getState().setCurrentSession(null);
+        useSessionStore.getState().clearMessages();
+        setIsStreaming(false);
+        setStreamStatusDetail(null);
+      }
+    };
+    window.addEventListener('takton:session-invalid', onInvalid);
+    // 启动时拉一次 endpoints，覆盖魔法 8090
+    void import('@/lib/api')
+      .then(({ getRuntimeEndpoints }) => getRuntimeEndpoints())
+      .then((ep) => {
+        if (ep?.ws_base) {
+          import('@/hooks/useWebSocket').then((m) => {
+            m.setDiscoveredWsBase?.(ep.ws_base);
+          });
+        }
+      })
+      .catch(() => undefined);
+    return () => window.removeEventListener('takton:session-invalid', onInvalid);
+  }, []);
+
   const handleStreamDelta = useCallback((msg: StreamDeltaMessage) => {
+      if (isStoppingRef.current) return; // 停止中丢弃 late delta
       setIsStreaming(true);
+      lastStreamActivityRef.current = Date.now();
+      setStreamStuck(false);
       setStreamingContent((prev) => {
         const mid = msg.message_id || '';
         const store = streamSessionApi();
@@ -317,7 +385,10 @@ function ChatPageInner() {
     }, [currentSession?.id]);
 
     const handleToolEvent = useCallback((msg: ToolEventMessage) => {
+      if (isStoppingRef.current) return;
       setIsStreaming(true);
+      lastStreamActivityRef.current = Date.now();
+      setStreamStuck(false);
       useTerminalStore.getState().upsert({
         callId: msg.tool_call_id,
         name: msg.name,
@@ -410,9 +481,13 @@ function ChatPageInner() {
         const msg = (err || '').trim() || t('chat.wsError');
         console.error('WebSocket error:', msg);
         const now = Date.now();
-        const soft = /connection error|not connected|reconnect/i.test(msg)
-          && !/limit reached|Invalid|creation failed|Unknown/i.test(msg);
-        if (!opts?.force && soft && now - lastWsToastAtRef.current < 4000) {
+        const soft = /connection error|not connected|reconnect|slow retry/i.test(msg)
+          && !/Invalid|creation failed|Unknown/i.test(msg);
+        // 软断线：状态行持续提示，toast 放宽到 12s 节流（原 4s 几乎无反馈）
+        if (soft && !opts?.force) {
+          setStreamStatusDetail(t('chat.reconnecting') || '连接中断，正在重连…');
+          if (now - lastWsToastAtRef.current < 12_000) return;
+        } else if (!opts?.force && now - lastWsToastAtRef.current < 4000) {
           return;
         }
         lastWsToastAtRef.current = now;
@@ -427,28 +502,73 @@ function ChatPageInner() {
       [addToast, t, currentSession?.id]
     );
 
+    // Host wipe：清空 process 相关 UI 提示，避免 resume 死 id
+    React.useEffect(() => {
+      const onEpoch = () => {
+        setRunCaps(null);
+        setStreamStatusDetail((d) =>
+          d && /进程|process|resume/i.test(d)
+            ? t('chat.hostWiped') || 'Host 已重置，请重新发送'
+            : d
+        );
+      };
+      window.addEventListener('takton:host-epoch', onEpoch);
+      return () => window.removeEventListener('takton:host-epoch', onEpoch);
+    }, [t]);
+
     const handleStatusUpdate = useCallback((msg: StatusUpdateMessage) => {
       const sid = currentSession?.id || '';
       if (msg.state === 'thinking' || msg.state === 'tool_executing' || msg.state === 'optimizing') {
+        // 用户已点停止：忽略迟到的 running 态，避免假停被冲掉
+        if (isStoppingRef.current) {
+          setStreamStatusDetail(msg.detail || t('chat.stopping') || 'Stopping…');
+          return;
+        }
         setIsStreaming(true);
+        lastStreamActivityRef.current = Date.now();
         if (msg.detail) {
           setStreamStatusDetail(msg.detail);
-          // H2-E: parse "能力 N · 工具 M" from kernel status
-          const m = String(msg.detail).match(
-            /(?:能力|caps)\s*(\d+)\s*[·•]\s*(?:工具|tools)\s*(\d+)/i,
-          );
-          if (m) {
-            setRunCaps({ caps: Number(m[1]), tools: Number(m[2]) });
-          }
+        }
+        // 优先结构化 caps/tools；文案正则仅作回落
+        const capsN =
+          typeof msg.caps_count === 'number'
+            ? msg.caps_count
+            : (() => {
+                const m = String(msg.detail || '').match(
+                  /(?:能力|caps)\s*(\d+)/i,
+                );
+                return m ? Number(m[1]) : null;
+              })();
+        const toolsN =
+          typeof msg.tools_count === 'number'
+            ? msg.tools_count
+            : (() => {
+                const m = String(msg.detail || '').match(
+                  /(?:工具|tools)\s*(\d+)/i,
+                );
+                return m ? Number(m[1]) : null;
+              })();
+        if (capsN != null || toolsN != null) {
+          setRunCaps((prev) => ({
+            caps: capsN ?? prev?.caps ?? 0,
+            tools: toolsN ?? prev?.tools ?? 0,
+            soft: prev?.soft,
+          }));
         }
         if (sid) streamSessionApi().markRunning(sid, msg.detail || null);
       } else if (msg.state === 'error') {
+        isStoppingRef.current = false;
+        setIsStopping(false);
         setIsStreaming(false);
         const detail = msg.detail || t('chat.error');
         setStreamStatusDetail(detail);
         addToast(detail, 'error');
         if (sid) streamSessionApi().markIdle(sid);
       } else if (msg.state === 'idle') {
+              const wasStopping = isStoppingRef.current;
+              isStoppingRef.current = false;
+              setIsStopping(false);
+              setStreamStuck(false);
               setIsStreaming(false);
               setStreamStatusDetail(null);
               // keep last runCaps briefly for post-run visibility
@@ -457,9 +577,10 @@ function ChatPageInner() {
               setStreamingContent('');
               setLiveToolCalls([]);
               if (sid) streamSessionApi().markIdle(sid);
+              // 停止路径：不把 partial 当最终消息二次插入（loadMessages 会拉权威历史）
               if (leftover || sid) {
                 setTimeout(() => {
-                  if (leftover) {
+                  if (leftover && !wasStopping) {
                     addMessage({
                       id: generateUUID(),
                       session_id: sid,
@@ -601,11 +722,9 @@ function ChatPageInner() {
           }
         }
         if (payload.messages?.length && sid) {
-          const st = useSessionStore.getState();
-          const have = new Set((st.messages || []).map((m: { id: string }) => m.id));
           for (const m of payload.messages) {
-            if (!m?.id || have.has(m.id)) continue;
-            addMessage({
+            if (!m?.id) continue;
+            reconcileMessage({
               id: m.id,
               session_id: sid,
               role: (m.role as 'user' | 'assistant' | 'system') || 'assistant',
@@ -616,7 +735,24 @@ function ChatPageInner() {
             });
           }
         }
-      }, [addMessage, currentSession?.id, loadMessages]);
+      }, [reconcileMessage, currentSession?.id, loadMessages]);
+
+const handleUserMessageAck = useCallback(
+        (payload: { id: string; role: string; content: string; created_at?: string | null }) => {
+          const sid = currentSession?.id || '';
+          if (!sid || !payload.id) return;
+          reconcileMessage({
+            id: payload.id,
+            session_id: sid,
+            role: (payload.role as 'user' | 'assistant' | 'system') || 'user',
+            content: payload.content || '',
+            tool_calls: null,
+            token_count: null,
+            created_at: payload.created_at || new Date().toISOString(),
+          });
+        },
+        [currentSession?.id, reconcileMessage]
+      );
 
 const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, connect } = useWebSocket({
         sessionId: currentSession?.id || '',
@@ -624,11 +760,25 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
         onStreamDelta: handleStreamDelta,
         onStatusUpdate: handleStatusUpdate,
         onSyncResponse: handleSyncResponse,
+        onUserMessageAck: handleUserMessageAck,
         getLastMessageId: () => {
           const msgs = useSessionStore.getState().messages || [];
           for (let i = msgs.length - 1; i >= 0; i--) {
             const id = msgs[i]?.id;
-            if (id && !String(id).startsWith('streaming') && id !== 'streaming') return id;
+            if (!id) continue;
+            const s = String(id);
+            // 乐观/临时 id 不能传给 get_messages_after（后端 UUID 校验失败或漏补）
+            if (
+              s.startsWith('streaming') ||
+              s === 'streaming' ||
+              s.startsWith('optimistic:') ||
+              s.startsWith('local:')
+            ) {
+              continue;
+            }
+            // 粗过滤非 UUID
+            if (s.length < 32) continue;
+            return s;
           }
           return undefined;
         },
@@ -689,9 +839,9 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
           displayContent = `${attNames}\n${content}`;
         }
 
-        // 乐观：先落用户消息 + 思考态，再等 WS（避免「卡死感」）
+        // 乐观：临时 id，sync/load 后用服务端 id reconcile，避免双气泡
         const userMsg: Message = {
-          id: generateUUID(),
+          id: `optimistic:${generateUUID()}`,
           session_id: session.id,
           role: 'user',
           content: displayContent,
@@ -700,6 +850,8 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
           created_at: new Date().toISOString(),
         };
         addMessage(userMsg);
+        isStoppingRef.current = false;
+        setIsStopping(false);
         setIsStreaming(true);
         setStreamingContent('');
         setLiveToolCalls([]);
@@ -725,13 +877,22 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
       [currentSession, addMessage, addToast, sendMessage, createAndLoadSession, waitForConnection, t]
     );
 
-  // 重新生成
+  // 重新生成（若仍在跑则先发 stop，再发同一条用户内容；不插乐观气泡）
   const handleRegenerate = useCallback(
     async (_message: Message) => {
       if (!currentSession) return;
       const msgs = useSessionStore.getState().messages;
       const lastUserMsg = [...msgs].reverse().find((m) => m.role === 'user');
       if (!lastUserMsg?.content) return;
+      if (isStreaming || isStoppingRef.current) {
+        isStoppingRef.current = true;
+        setIsStopping(true);
+        setStreamStatusDetail(t('chat.stopping') || 'Stopping…');
+        sendStop();
+        await new Promise((r) => setTimeout(r, 800));
+      }
+      isStoppingRef.current = false;
+      setIsStopping(false);
       setIsStreaming(true);
       setStreamingContent('');
       setLiveToolCalls([]);
@@ -753,7 +914,7 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
         setStreamStatusDetail(null);
       }
     },
-    [currentSession, sendMessage, waitForConnection, addToast, t]
+    [currentSession, sendMessage, sendStop, waitForConnection, addToast, t, isStreaming]
   );
 
   // 编辑并重新发送
@@ -822,30 +983,45 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
   );
 
   const handleStopStreaming = useCallback(() => {
-      sendStop();
-      setIsStreaming(false);
-      setStreamStatusDetail(null);
-      setLiveToolCalls([]);
-      const leftover = streamingContentRef.current || streamingContent;
-      streamingContentRef.current = '';
-      setStreamingContent('');
-      const sid = currentSession?.id || '';
-      if (sid) streamSessionApi().markIdle(sid);
-      if (leftover) {
-        setTimeout(() => {
-          addMessage({
-            id: generateUUID(),
-            session_id: sid,
-            role: 'assistant',
-            content: leftover,
-            tool_calls: null,
-            token_count: null,
-            created_at: new Date().toISOString(),
-          });
-          if (sid) loadMessages(sid).catch(console.error);
-        }, 0);
+      // 保持 streaming UI + stopping 态，等服务端 status:idle 再清（避免假停后 late delta）
+      isStoppingRef.current = true;
+      setIsStopping(true);
+      setIsStreaming(true);
+      setStreamStatusDetail(t('chat.stopping') || 'Stopping…');
+      const ok = sendStop();
+      if (!ok) {
+        // 未连上：本地直接收束
+        isStoppingRef.current = false;
+        setIsStopping(false);
+        setIsStreaming(false);
+        setStreamStatusDetail(null);
+        setLiveToolCalls([]);
+        streamingContentRef.current = '';
+        setStreamingContent('');
+        const sid = currentSession?.id || '';
+        if (sid) {
+          streamSessionApi().markIdle(sid);
+          loadMessages(sid).catch(console.error);
+        }
+        return;
       }
-    }, [sendStop, streamingContent, addMessage, currentSession, loadMessages]);
+      // 兜底：8s 仍无 idle 则强制收束并拉历史
+      const sid = currentSession?.id || '';
+      window.setTimeout(() => {
+        if (!isStoppingRef.current) return;
+        isStoppingRef.current = false;
+        setIsStopping(false);
+        setIsStreaming(false);
+        setStreamStatusDetail(null);
+        setLiveToolCalls([]);
+        streamingContentRef.current = '';
+        setStreamingContent('');
+        if (sid) {
+          streamSessionApi().markIdle(sid);
+          loadMessages(sid).catch(console.error);
+        }
+      }, 8000);
+    }, [sendStop, currentSession, loadMessages, t]);
 
   const handleTagClick = useCallback(
     (tagKey: string) => {
@@ -858,17 +1034,39 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
     []
   );
 
-  // 全局搜索选择会话 → 直接进入该会话
+  // 全局搜索选择会话 → 直接进入该会话（保留目标会话缓存的 streaming 态，不强制 idle）
   const handleSearchSelect = useCallback(
     async (sessionId: string) => {
       setSearchOpen(false);
-      setIsStreaming(false);
-      setStreamingContent('');
+      // 先存当前会话流式态，再切；目标会话由 session-change effect 从 cache 恢复
+      const cur = useSessionStore.getState().currentSession?.id;
+      if (cur) {
+        streamSessionApi().save(cur, {
+          isStreaming,
+          agentRunning: isStreaming,
+          content: streamingContentRef.current || streamingContent,
+          tools: liveToolCalls,
+          statusDetail: streamStatusDetail,
+        });
+      }
+      const cached = streamSessionApi().get(sessionId);
+      if (cached.agentRunning || cached.isStreaming || cached.content) {
+        setIsStreaming(true);
+        setStreamingContent(cached.content || '');
+        streamingContentRef.current = cached.content || '';
+        setLiveToolCalls(cached.tools || []);
+        setStreamStatusDetail(cached.statusDetail || 'Resuming…');
+      } else {
+        // 未知是否在跑：先不清 streaming，等 switch 后 sync_response 校正
+        setStreamingContent('');
+        streamingContentRef.current = '';
+        setLiveToolCalls([]);
+      }
       if (switchSession) {
         await switchSession(sessionId);
       }
     },
-    [switchSession]
+    [switchSession, isStreaming, streamingContent, liveToolCalls, streamStatusDetail]
   );
 
   // ====== Keyboard Shortcuts ======
@@ -1183,8 +1381,8 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
                           zh
                         />
                       )}
-                      {/* R-02：条件恢复卡片（can_resume / 可恢复 exit） */}
-                      {currentSession?.id && !isStreaming ? (
+                      {/* R-02：非流式 / 停止中 / 长时间无 delta 卡住 → 露出恢复入口 */}
+                      {currentSession?.id && (!isStreaming || isStopping || streamStuck) ? (
                         <ChatRecoveryCard
                           sessionId={currentSession.id}
                           recovery={recovery}

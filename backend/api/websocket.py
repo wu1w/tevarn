@@ -113,13 +113,33 @@ class ConnectionManager:
         self._agent_tasks: dict[uuid.UUID, asyncio.Task] = {}
         # session_id -> 运行中流式快照（断线/跳页后仍可 sync 恢复）
         self._run_snapshots: dict[uuid.UUID, SessionRunSnapshot] = {}
-        # 保护 WebSocket 并发发送（后台任务与主循环可能同时 send）
-        self._send_lock = asyncio.Lock()
+        # 保护 WebSocket 并发发送：per-session，避免全局锁堵住其它会话
+        self._send_locks: dict[uuid.UUID, asyncio.Lock] = {}
+        # 连续发送失败计数：瞬断不立刻 disconnect
+        self._send_fail_counts: dict[uuid.UUID, int] = {}
+        # run generation：忽略旧 task 的 late stream 污染新一轮
+        self._run_generations: dict[uuid.UUID, int] = {}
+
+    def _send_lock_for(self, session_id: uuid.UUID) -> asyncio.Lock:
+        lock = self._send_locks.get(session_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._send_locks[session_id] = lock
+        return lock
+
+    def bump_run_generation(self, session_id: uuid.UUID) -> int:
+        n = int(self._run_generations.get(session_id, 0)) + 1
+        self._run_generations[session_id] = n
+        return n
+
+    def current_run_generation(self, session_id: uuid.UUID) -> int:
+        return int(self._run_generations.get(session_id, 0))
 
     # ── run snapshot (navigate-away safe) ───────────────────────────
 
     def begin_run_snapshot(self, session_id: uuid.UUID) -> None:
         """新 user turn 开始：标记 running，清空上一轮残留。"""
+        self.bump_run_generation(session_id)
         self._run_snapshots[session_id] = SessionRunSnapshot(
             agent_running=True,
             state="thinking",
@@ -388,6 +408,8 @@ class ConnectionManager:
         self._cancel_session_tasks(session_id, cancel_agent=False)
 
         self._connections.pop(session_id, None)
+        self._send_fail_counts.pop(session_id, None)
+        # 保留 _send_locks / _run_generations：agent 可能仍在跑，回连还要用
 
         if user_id and user_id in self._user_sessions:
             self._user_sessions[user_id].discard(session_id)
@@ -418,14 +440,25 @@ class ConnectionManager:
         try:
             # 未 accept 的连接不能发送；FastAPI 会在 client 连接时自动 accept，
             # 但此处防御性检查，避免 'not connected' 错误。
-            if not getattr(ws, 'client_state', None) or ws.client_state.value != 1:
-                # 0=CONNECTING, 1=CONNECTED; 非 CONNECTED 不发
+            st = getattr(ws, "client_state", None)
+            if st is not None and getattr(st, "value", None) != 1:
+                # 0=CONNECTING, 1=CONNECTED; 非 CONNECTED 不发，也不立刻 disconnect
                 return
-            async with self._send_lock:
+            async with self._send_lock_for(session_id):
                 await ws.send_json(message)
+            self._send_fail_counts[session_id] = 0
         except Exception as e:
-            logger.debug(f"Failed to send message to session {session_id}: {e}")
-            self.disconnect(session_id)
+            n = int(self._send_fail_counts.get(session_id, 0)) + 1
+            self._send_fail_counts[session_id] = n
+            logger.debug(
+                "Failed to send message to session %s (fail=%s): %s",
+                session_id,
+                n,
+                e,
+            )
+            # 连续失败才 disconnect，避免浏览器休眠/半关闭一次就清映射
+            if n >= 3:
+                self.disconnect(session_id)
 
     async def broadcast_to_user(
         self, user_id: uuid.UUID, message: dict[str, Any], exclude_session: uuid.UUID | None = None
@@ -443,10 +476,20 @@ class ConnectionManager:
         if ws is None:
             return
         try:
-            await ws.send_text(text)
+            st = getattr(ws, "client_state", None)
+            if st is not None and getattr(st, "value", None) != 1:
+                return
+            async with self._send_lock_for(session_id):
+                await ws.send_text(text)
+            self._send_fail_counts[session_id] = 0
         except Exception as e:
-            logger.error(f"Failed to send text to session {session_id}: {e}")
-            self.disconnect(session_id)
+            n = int(self._send_fail_counts.get(session_id, 0)) + 1
+            self._send_fail_counts[session_id] = n
+            logger.error(
+                "Failed to send text to session %s (fail=%s): %s", session_id, n, e
+            )
+            if n >= 3:
+                self.disconnect(session_id)
 
     def is_connected(self, session_id) -> bool:
         """该 session 是否有处于 CONNECTED 状态的 WS 连接。
@@ -729,11 +772,9 @@ async def websocket_endpoint(
                     sub_agent_ids = []
                 sub_agent_ids = [str(x) for x in sub_agent_ids if x]
 
-                # 若上一轮仍在跑：先请求停止并尽量等退出，再清 stop 标志，避免叠跑竞态
+                # 若上一轮仍在跑：先请求停止并尽量等退出，避免叠跑 / late delta
                 if manager.has_running_agent(session_id):
                     agent.stop()
-                    await manager.cancel_agent(session_id, wait=2.0)
-                    await manager.wait_agent_idle(session_id, timeout=2.0)
                     await manager.broadcast(
                         session_id,
                         {
@@ -742,24 +783,43 @@ async def websocket_endpoint(
                             "detail": "Stopping previous run to start new input...",
                         },
                     )
+                    await manager.cancel_agent(session_id, wait=6.0)
+                    idle = await manager.wait_agent_idle(session_id, timeout=6.0)
+                    if not idle and manager.has_running_agent(session_id):
+                        await manager.broadcast(
+                            session_id,
+                            {
+                                "type": "error",
+                                "detail": "上一轮仍在结束，请稍后再发（或点停止后等待）",
+                            },
+                        )
+                        continue
 
                 agent._should_stop = False
                 manager.begin_run_snapshot(session_id)
+                run_gen = manager.current_run_generation(session_id)
 
                 # 后台跑 Agent，保持收包循环可响应 stop/ping
                 task = asyncio.create_task(
                     _run_agent_safe(
-                        agent, session_id, user_input, attachments, mode, sub_agent_ids
+                        agent,
+                        session_id,
+                        user_input,
+                        attachments,
+                        mode,
+                        sub_agent_ids,
+                        run_generation=run_gen,
                     ),
-                    name=f"agent:{session_id}",
+                    name=f"agent:{session_id}:g{run_gen}",
                 )
                 manager.track_agent_task(session_id, task)
 
             elif msg_type == "stop":
                 logger.info(f"Stop signal received for session {session_id}")
                 agent.stop()
-                await manager.cancel_agent(session_id, wait=2.0)
+                await manager.cancel_agent(session_id, wait=6.0)
                 manager.end_run_snapshot(session_id)
+                manager.bump_run_generation(session_id)  # 使旧 task late event 失效
                 await manager.broadcast(
                     session_id,
                     {"type": "status", "state": "idle", "detail": "Generation stopped by user"},
@@ -904,8 +964,19 @@ async def _run_agent_safe(
     attachments: list = None,
     mode: str = "default",
     sub_agent_ids: list | None = None,
+    run_generation: int = 0,
 ) -> None:
-    """安全地运行 Agent Loop，捕获异常与取消"""
+    """安全地运行 Agent Loop，捕获异常与取消。
+
+    run_generation：若结束时 generation 已前进（新 user_input / stop），
+    不再 end_snapshot / 推 idle，避免 late event 污染新一轮。
+    """
+
+    def _still_current() -> bool:
+        if not run_generation:
+            return True
+        return manager.current_run_generation(session_id) == run_generation
+
     try:
         # Phase 2.2：chat 路径显式 origin（不靠 mode 默认猜）
         agent._run_origin = "chat"
@@ -917,21 +988,24 @@ async def _run_agent_safe(
             sub_agent_ids=sub_agent_ids or [],
         )
         # 正常结束：若 epilogue 已推 idle，快照会在 ingest 时清理；双保险
-        if not manager.has_running_agent(session_id):
+        if _still_current() and not manager.has_running_agent(session_id):
             manager.end_run_snapshot(session_id)
     except asyncio.CancelledError:
         logger.info(f"Agent loop cancelled for session {session_id}")
-        try:
-            manager.end_run_snapshot(session_id)
-            await manager.broadcast(
-                session_id,
-                {"type": "status", "state": "idle", "detail": "Generation stopped"},
-            )
-        except Exception:
-            pass
+        if _still_current():
+            try:
+                manager.end_run_snapshot(session_id)
+                await manager.broadcast(
+                    session_id,
+                    {"type": "status", "state": "idle", "detail": "Generation stopped"},
+                )
+            except Exception:
+                pass
         raise
     except Exception as e:
         logger.exception(f"Agent loop failed for session {session_id}: {e}")
+        if not _still_current():
+            return
         try:
             manager.end_run_snapshot(session_id)
         except Exception:
@@ -943,3 +1017,11 @@ async def _run_agent_safe(
                 "detail": f"Agent error: {str(e)}",
             },
         )
+    finally:
+        # 异常分支漏清时的兜底：仅当 generation 仍是本轮且无存活 agent
+        try:
+            if _still_current() and not manager.has_running_agent(session_id):
+                if manager.get_run_snapshot(session_id) is not None:
+                    manager.end_run_snapshot(session_id)
+        except Exception:
+            pass

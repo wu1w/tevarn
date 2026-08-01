@@ -22,6 +22,8 @@ interface SessionState {
   setCurrentSession: (session: Session | null) => void;
   addMessage: (message: Message) => void;
   updateMessage: (id: string, updates: Partial<Message>) => void;
+  /** 用服务端 id 替换乐观用户消息（同 role+content 合并，避免双气泡） */
+  reconcileMessage: (serverMsg: Message) => void;
   setMessages: (messages: Message[]) => void;
   loadSession: (sessionId: string) => Promise<void>;
   loadMessages: (sessionId: string) => Promise<void>;
@@ -82,6 +84,37 @@ export const useSessionStore = create<SessionState>()(
           ),
         })),
 
+      reconcileMessage: (serverMsg) => {
+        set((state) => {
+          const haveById = state.messages.some((m) => m.id === serverMsg.id);
+          if (haveById) return state;
+
+          const norm = (s: string) => (s || '').replace(/\s+/g, ' ').trim();
+          const serverContent = norm(serverMsg.content || '');
+          const optIdx = state.messages.findIndex((m) => {
+            if (m.role !== serverMsg.role) return false;
+            const id = String(m.id || '');
+            const isOptimistic =
+              id.startsWith('optimistic:') ||
+              id.startsWith('local:') ||
+              id.startsWith('streaming');
+            if (!isOptimistic && m.role === 'user') {
+              // 非乐观也允许 content 精确匹配时替换（防双用户气泡）
+              return norm(m.content || '') === serverContent && serverContent.length > 0;
+            }
+            if (!isOptimistic) return false;
+            return norm(m.content || '') === serverContent && serverContent.length > 0;
+          });
+
+          if (optIdx >= 0) {
+            const next = [...state.messages];
+            next[optIdx] = { ...next[optIdx], ...serverMsg, id: serverMsg.id };
+            return { messages: next };
+          }
+          return { messages: [...state.messages, serverMsg] };
+        });
+      },
+
       setMessages: (messages) => set({ messages }),
 
       loadSession: async (sessionId) => {
@@ -94,6 +127,15 @@ export const useSessionStore = create<SessionState>()(
           // 本地持久化了已删/换库的 session id → 清掉，别反复 404
           if (status === 404 && get().currentSession?.id === sessionId) {
             set({ currentSession: null, messages: [], isLoading: false, error: null });
+            try {
+              window.dispatchEvent(
+                new CustomEvent('takton:session-invalid', {
+                  detail: { sessionId },
+                })
+              );
+            } catch {
+              /* ignore */
+            }
             return;
           }
           set({ error: (err as Error).message, isLoading: false });
@@ -106,27 +148,48 @@ export const useSessionStore = create<SessionState>()(
           // 默认拉最近 200 条（后端 offset=0 时为尾部窗口）
           const messages = await api.getMessages(sessionId, 200, 0);
           const st = get();
+          // 保留尚未 ack 的乐观用户气泡（服务端尚未返回时）
+          const optimistic = (st.messages || []).filter((m) =>
+            String(m.id || '').startsWith('optimistic:')
+          );
+          let merged = Array.isArray(messages) ? [...messages] : [];
+          for (const o of optimistic) {
+            const norm = (s: string) => (s || '').replace(/\s+/g, ' ').trim();
+            const oc = norm(o.content || '');
+            if (!merged.some((m) => m.role === o.role && norm(m.content || '') === oc)) {
+              merged = [...merged, o];
+            }
+          }
           // 加载历史后补标题：取首条用户消息
-          if (!st.sessionTitles[sessionId] && Array.isArray(messages)) {
-            const firstUser = messages.find(
+          if (!st.sessionTitles[sessionId] && merged.length) {
+            const firstUser = merged.find(
               (m) => m.role === 'user' && (m.content || '').trim()
             );
             if (firstUser?.content) {
               const raw = firstUser.content.trim().replace(/\s+/g, ' ');
               const title = raw.slice(0, 36) + (raw.length > 36 ? '…' : '');
               set({
-                messages,
+                messages: merged,
                 isLoading: false,
                 sessionTitles: { ...st.sessionTitles, [sessionId]: title },
               });
               return;
             }
           }
-          set({ messages, isLoading: false });
+          set({ messages: merged, isLoading: false });
         } catch (err) {
           const status = (err as { response?: { status?: number } })?.response?.status;
           if (status === 404 && get().currentSession?.id === sessionId) {
             set({ currentSession: null, messages: [], isLoading: false, error: null });
+            try {
+              window.dispatchEvent(
+                new CustomEvent('takton:session-invalid', {
+                  detail: { sessionId },
+                })
+              );
+            } catch {
+              /* ignore */
+            }
             return;
           }
           set({ error: (err as Error).message, isLoading: false });

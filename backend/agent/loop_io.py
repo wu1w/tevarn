@@ -33,25 +33,31 @@ class LoopIOMixin:
             logger.debug("progress_sink failed: %s", e)
 
     async def _push_status(
-        self, session_id: uuid.UUID, state: str, detail: str
+        self,
+        session_id: uuid.UUID,
+        state: str,
+        detail: str,
+        *,
+        caps_count: int | None = None,
+        tools_count: int | None = None,
     ) -> None:
         """推送状态：优先 EventSinkPort，回落 ws_manager。"""
         sink = getattr(self, "event_sink", None)
-        if sink is not None:
+        if sink is not None and caps_count is None and tools_count is None:
             try:
                 await sink.push_status(session_id, state, detail or "")
                 return
             except Exception as e:
                 logger.debug("event_sink.push_status failed: %s", e)
         if self.ws_manager:
-            await self.ws_manager.broadcast(
-                session_id,
-                StatusUpdate(
-                    session_id=session_id,
-                    state=state,
-                    detail=detail,
-                ).model_dump(mode="json"),
-            )
+            payload = StatusUpdate(
+                session_id=session_id,
+                state=state,
+                detail=detail,
+                caps_count=caps_count,
+                tools_count=tools_count,
+            ).model_dump(mode="json")
+            await self.ws_manager.broadcast(session_id, payload)
         if state == "error" and detail:
             await self._emit_progress("error", detail)
 
@@ -317,14 +323,18 @@ class LoopIOMixin:
     async def _persist_user_input(
         self, session_id: uuid.UUID, enriched_input: str
     ) -> None:
-        """原子化保存用户输入：TTL 清理 + Message + CtxItem"""
+        """原子化保存用户输入：TTL 清理 + Message + CtxItem。
+
+        保存后广播 user_message_ack，供前端用服务端 id 替换乐观气泡。
+        """
         if self.message_repo is None or self.ctx_item_repo is None:
             return
+        saved = None
         async with get_db_context() as db:
             msg_repo = AsyncMessageRepository(db)
             ctx_repo = AsyncCtxItemRepository(db)
             await ctx_repo.prune_by_ttl(session_id=session_id, ttl="session")
-            await msg_repo.save_message(session_id, "user", enriched_input)
+            saved = await msg_repo.save_message(session_id, "user", enriched_input)
             await ctx_repo.create({
                 "session_id": session_id,
                 "scope": "session",
@@ -336,6 +346,26 @@ class LoopIOMixin:
                 "ttl": "session",
                 "origin": f"agent:{self.agent_name}",
             })
+        # 通知前端对齐乐观 id（无连接时静默）
+        if saved is not None:
+            try:
+                from backend.api.websocket import manager as ws_manager
+
+                mid = str(getattr(saved, "id", "") or "")
+                created = getattr(saved, "created_at", None)
+                if mid:
+                    await ws_manager.broadcast(
+                        session_id,
+                        {
+                            "type": "user_message_ack",
+                            "id": mid,
+                            "role": "user",
+                            "content": enriched_input,
+                            "created_at": created.isoformat() if created else None,
+                        },
+                    )
+            except Exception:
+                pass
 
     async def _persist_tool_start(
         self, session_id: uuid.UUID, tool_name: str

@@ -29,6 +29,9 @@ class StatusUpdate(WSMessage):
     type: Literal["status"] = "status"
     state: str  # idle / thinking / tool_executing
     detail: Optional[str] = None
+    # 结构化可观测字段（避免前端解析文案正则）
+    caps_count: Optional[int] = None
+    tools_count: Optional[int] = None
 
 
 class MemoryUpdated(WSMessage):

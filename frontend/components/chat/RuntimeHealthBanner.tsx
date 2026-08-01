@@ -3,7 +3,7 @@
 /**
  * 默认路径可解释性：host/ABI/沙箱/预算 — 主聊天路径可见恢复动作。
  */
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getRuntimeHealth, restartKernelHost } from '@/lib/api';
 import { useToastStore } from '@/stores/toastStore';
@@ -12,15 +12,51 @@ export function RuntimeHealthBanner({ zh = true }: { zh?: boolean }) {
   const addToast = useToastStore((s) => s.addToast);
   const qc = useQueryClient();
   const [busy, setBusy] = useState(false);
+  const lastEpochRef = useRef<number | null>(null);
   const q = useQuery({
     queryKey: ['runtime-health'],
     queryFn: getRuntimeHealth,
-    staleTime: 8_000,
-    refetchInterval: 20_000,
+    staleTime: 5_000,
+    // 异常时更勤：8s；健康 12s（原 20s 过慢）
+    refetchInterval: (query) => {
+      const d = query.state.data;
+      if (!d) return 8_000;
+      if (!d.ok || d.severity === 'error' || d.severity === 'warn') return 8_000;
+      return 12_000;
+    },
     retry: 1,
   });
 
   const data = q.data;
+
+  // host_epoch 前进 → 进程表已 wipe，通知前端勿 resume 旧 process_id
+  useEffect(() => {
+    if (!data) return;
+    const epoch = Number(
+      data.host_epoch ?? (data.host as { host_epoch?: number } | undefined)?.host_epoch ?? 0
+    );
+    if (lastEpochRef.current == null) {
+      lastEpochRef.current = epoch;
+      return;
+    }
+    if (epoch > lastEpochRef.current) {
+      lastEpochRef.current = epoch;
+      try {
+        window.dispatchEvent(
+          new CustomEvent('takton:host-epoch', { detail: { host_epoch: epoch } })
+        );
+      } catch {
+        /* ignore */
+      }
+      addToast(
+        zh
+          ? `Host 已重置 (epoch ${epoch})，旧进程失效，请重新开跑`
+          : `Host wiped (epoch ${epoch}) — restart your run`,
+        'info'
+      );
+    }
+  }, [data, addToast, zh]);
+
   if (!data) return null;
 
   // Healthy path: still surface scenario + budget + sandbox honesty (main chat path)
