@@ -1423,14 +1423,21 @@ export async function getWorkforceOrg(): Promise<WorkforceOrgView> {
 export interface KernelInboxItem {
   id: string;
   identity_id: string;
+  identity_name?: string | null;
   source: string;
   instruction: string;
   status: string;
   attempts: number;
   result: string;
   error: string;
+  process_id?: string | null;
   created_at: string | null;
   finished_at: number | null;
+  steward_session_id?: string | null;
+  project_title?: string | null;
+  token_budget?: number | null;
+  budget_failed?: boolean;
+  payload_via?: string | null;
 }
 
 export async function listKernelInbox(params?: {
@@ -1439,6 +1446,41 @@ export async function listKernelInbox(params?: {
   limit?: number;
 }): Promise<{ items: KernelInboxItem[]; total: number }> {
   const res = await api.get('/kernel/inbox', { params });
+  return res.data;
+}
+
+/** CEO 会话关联工单（payload.steward_session_id） */
+export async function listSessionWorkforceJobs(
+  sessionId: string,
+  limit = 40,
+): Promise<{
+  session_id: string;
+  items: KernelInboxItem[];
+  total: number;
+  by_status?: Record<string, number>;
+  budget_failed?: number;
+  enabled?: boolean;
+}> {
+  const res = await api.get(`/kernel/sessions/${sessionId}/workforce-jobs`, {
+    params: { limit },
+  });
+  return res.data;
+}
+
+/** 预算失败一键：加预算 + requeue */
+export async function budgetRetryInboxItem(
+  itemId: string,
+  body?: { amount?: number; also_default?: boolean; reason?: string },
+): Promise<{
+  ok: boolean;
+  id: string;
+  status: string;
+  requeued?: boolean;
+  amount?: number;
+  token_budget?: number;
+  message?: string;
+}> {
+  const res = await api.post(`/kernel/inbox/${itemId}/budget-retry`, body || {});
   return res.data;
 }
 

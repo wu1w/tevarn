@@ -2776,24 +2776,23 @@ async def list_inbox_items(
             detail="收件箱未启用。打开 dispatcher/persistence 或 TAKTON_AIOS_PROFILE=aios-dev 后重启。",
         )
     items = await inbox.list_items(identity_id=identity_id, status=status, limit=limit)
+    reg = _identity_registry()
+    name_cache: dict[str, str] = {}
+    out = []
+    for i in items:
+        iid = str(i.identity_id)
+        iname = name_cache.get(iid)
+        if iname is None and reg is not None:
+            try:
+                ident = await reg.get(iid)
+                iname = str(getattr(ident, "name", "") or "") if ident else ""
+            except Exception:
+                iname = ""
+            name_cache[iid] = iname or ""
+        out.append(_inbox_item_public(i, identity_name=iname or None))
     return {
-        "items": [
-            {
-                "id": str(i.id),
-                "identity_id": str(i.identity_id),
-                "source": i.source,
-                "instruction": i.instruction[:300],
-                "status": i.status,
-                "attempts": i.attempts,
-                "result": (i.result or "")[:500],
-                "error": (i.error or "")[:300],
-                "process_id": getattr(i, "process_id", None),
-                "created_at": i.created_at.isoformat() if i.created_at else None,
-                "finished_at": i.finished_at,
-            }
-            for i in items
-        ],
-        "total": len(items),
+        "items": out,
+        "total": len(out),
     }
 
 
@@ -2857,6 +2856,299 @@ async def requeue_inbox_item(
         "status": item.status,
         "attempts": item.attempts,
         "message": "已重放为 pending，dispatcher 将自动领取",
+    }
+
+
+def _inbox_item_public(i: Any, *, identity_name: str | None = None) -> dict[str, Any]:
+    """工单对外 JSON（进度卡 / 会话关联）。"""
+    payload = getattr(i, "payload", None)
+    if not isinstance(payload, dict):
+        payload = {}
+    err = str(getattr(i, "error", None) or "")
+    result = str(getattr(i, "result", None) or "")
+    budget_fail = bool(
+        re_search_budget(err)
+        or re_search_budget(result)
+        or payload.get("budget_failed")
+    )
+    return {
+        "id": str(i.id),
+        "identity_id": str(i.identity_id),
+        "identity_name": identity_name
+        or str(payload.get("assigned_name") or payload.get("identity_name") or "")
+        or None,
+        "source": getattr(i, "source", None) or "",
+        "instruction": (getattr(i, "instruction", None) or "")[:400],
+        "status": i.status,
+        "attempts": int(getattr(i, "attempts", 0) or 0),
+        "result": result[:500],
+        "error": err[:400],
+        "process_id": getattr(i, "process_id", None),
+        "created_at": i.created_at.isoformat() if getattr(i, "created_at", None) else None,
+        "finished_at": getattr(i, "finished_at", None),
+        "steward_session_id": str(payload.get("steward_session_id") or "") or None,
+        "project_title": str(payload.get("project_title") or "") or None,
+        "token_budget": payload.get("token_budget"),
+        "budget_failed": budget_fail,
+        "payload_via": str(payload.get("via") or "") or None,
+    }
+
+
+def re_search_budget(text: str) -> bool:
+    t = (text or "").lower()
+    if not t:
+        return False
+    keys = (
+        "budget",
+        "token 预算",
+        "预算耗尽",
+        "预算中断",
+        "budgetexceeded",
+        "kernel_token_budget",
+        "kernel_budget_precheck",
+        "额度用尽",
+        "token_budget",
+    )
+    return any(k in t for k in keys)
+
+
+@router.get("/sessions/{session_id}/workforce-jobs")
+async def list_session_workforce_jobs(
+    session_id: str,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+    limit: int = Query(40, ge=1, le=100),
+):
+    """CEO 会话关联工单进度：payload.steward_session_id == session_id。
+
+    供聊天页「工单进度卡」轮询；无关联时返回空列表（不 404）。
+    """
+    from backend.kernel.workforce import get_workforce_inbox
+
+    sid = str(session_id or "").strip()
+    if not sid:
+        raise HTTPException(status_code=400, detail="session_id required")
+    # 会话归属
+    try:
+        import uuid as _uuid
+
+        from backend.core.unit_of_work import UnitOfWork
+        from backend.api.dependencies import assert_session_owner
+
+        async with UnitOfWork() as uow:
+            sess = await uow.sessions.get_by_id(_uuid.UUID(sid))
+            if sess is None:
+                raise HTTPException(status_code=404, detail="Session not found")
+            assert_session_owner(getattr(sess, "user_id", None), current_user)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.debug("session owner check soft-fail: %s", e)
+
+    inbox = get_workforce_inbox()
+    if inbox is None:
+        return {"session_id": sid, "items": [], "total": 0, "enabled": False}
+
+    # 拉近窗再按 steward_session_id 过滤（payload JSON 无索引）
+    raw = await inbox.list_items(limit=min(200, max(limit * 4, 80)))
+    reg = _identity_registry()
+    name_cache: dict[str, str] = {}
+    items_out: list[dict[str, Any]] = []
+    for i in raw:
+        payload = getattr(i, "payload", None)
+        if not isinstance(payload, dict):
+            payload = {}
+        job_sid = str(payload.get("steward_session_id") or "").strip()
+        if job_sid != sid:
+            continue
+        iid = str(i.identity_id)
+        iname = name_cache.get(iid)
+        if iname is None and reg is not None:
+            try:
+                ident = await reg.get(iid)
+                iname = str(getattr(ident, "name", "") or "") if ident else ""
+            except Exception:
+                iname = ""
+            name_cache[iid] = iname or ""
+        items_out.append(_inbox_item_public(i, identity_name=iname or None))
+        if len(items_out) >= limit:
+            break
+
+    # 统计
+    by_status: dict[str, int] = {}
+    budget_failed_n = 0
+    for it in items_out:
+        st = str(it.get("status") or "unknown")
+        by_status[st] = by_status.get(st, 0) + 1
+        if it.get("budget_failed"):
+            budget_failed_n += 1
+
+    return {
+        "session_id": sid,
+        "items": items_out,
+        "total": len(items_out),
+        "by_status": by_status,
+        "budget_failed": budget_failed_n,
+        "enabled": True,
+    }
+
+
+@router.post("/inbox/{item_id}/budget-retry")
+async def budget_retry_inbox_item(
+    item_id: str,
+    body: dict,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """预算失败一键：抬档案/本单预算 + requeue（或给在跑进程 top_up）。
+
+    body: { amount?: int=300000, also_default?: bool=true, reason?: str }
+    """
+    from backend.agent.workforce_budget import clamp_ceo_budget, hard_cap
+    from backend.kernel.workforce import get_workforce_inbox
+    from backend.models.agent_identity import AgentInboxItem
+    from sqlalchemy import select
+
+    inbox = get_workforce_inbox()
+    if inbox is None:
+        raise HTTPException(status_code=503, detail="收件箱未启用")
+    try:
+        amount = int(body.get("amount") or 300_000)
+    except (TypeError, ValueError) as e:
+        raise HTTPException(status_code=400, detail="amount 必须为整数") from e
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="amount 必须为正")
+    amount = clamp_ceo_budget(amount) if callable(clamp_ceo_budget) else min(amount, hard_cap())
+    also_default = body.get("also_default", True) not in (False, "false", "0", 0, "no")
+    reason = str(body.get("reason") or "ceo_budget_retry").strip()[:200]
+    by = f"ceo:{getattr(current_user, 'id', current_user)}"
+
+    # 取工单
+    item = None
+    try:
+        async with inbox._session_factory() as session:  # type: ignore[attr-defined]
+            item = (
+                await session.execute(
+                    select(AgentInboxItem).where(AgentInboxItem.id == __import__("uuid").UUID(str(item_id)))
+                )
+            ).scalar_one_or_none()
+            if item is None:
+                raise HTTPException(status_code=404, detail="工单不存在")
+            iid = str(item.identity_id)
+            await _require_identity_owner(iid, current_user)
+
+            # 抬高本单 payload.token_budget
+            payload = dict(item.payload or {}) if isinstance(item.payload, dict) else {}
+            prev_tb = payload.get("token_budget")
+            try:
+                prev_n = int(prev_tb) if prev_tb is not None else 0
+            except Exception:
+                prev_n = 0
+            # 新本单预算 = max(原, 原+amount/2, amount*2) 夹 hard_cap
+            new_tb = max(prev_n + amount, amount * 2, 200_000)
+            try:
+                cap = int(hard_cap() or 2_000_000)
+            except Exception:
+                cap = 2_000_000
+            if cap > 0:
+                new_tb = min(new_tb, cap)
+            payload["token_budget"] = new_tb
+            payload["budget_source"] = "ceo_budget_retry"
+            payload["budget_retry_at"] = time.time()
+            payload["budget_retry_by"] = by
+            payload.pop("budget_failed", None)
+            item.payload = payload
+            await session.commit()
+            await session.refresh(item)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("budget-retry load item: %s", e)
+        raise HTTPException(status_code=500, detail=f"读取工单失败: {e}") from e
+
+    iid = str(item.identity_id)
+    default_updated = None
+    if also_default:
+        reg = _identity_registry()
+        if reg is not None:
+            try:
+                ident = await reg.get(iid)
+                if ident is not None:
+                    cur = int(getattr(ident, "default_token_budget", 0) or 0)
+                    new_def = cur + amount if cur > 0 else max(amount, 200_000)
+                    try:
+                        cap = int(hard_cap() or 2_000_000)
+                        if cap > 0:
+                            new_def = min(new_def, cap)
+                    except Exception:
+                        pass
+                    await reg.update_profile(iid, default_token_budget=new_def)
+                    default_updated = new_def
+            except Exception as e:
+                default_updated = f"error:{e}"
+
+    # 在跑进程 top_up
+    kernel = get_kernel()
+    process_results: list[dict[str, Any]] = []
+    for key in (f"wf:{iid}", iid):
+        try:
+            live = kernel.live_processes_for_identity(key)
+        except Exception:
+            live = []
+        for p in live:
+            try:
+                process_results.append(
+                    kernel.top_up_budget(
+                        p.id,
+                        amount,
+                        by=by,
+                        reason=reason or "budget_retry",
+                    )
+                )
+            except Exception as e:
+                process_results.append(
+                    {"ok": False, "process_id": getattr(p, "id", None), "error": str(e)[:200]}
+                )
+
+    # 失败/死信 → requeue；在途则只加预算
+    requeued = False
+    new_status = str(item.status)
+    if str(item.status) in ("dead", "failed", "dropped"):
+        rq = await inbox.requeue(item_id, reset_attempts=True)
+        if rq is not None:
+            requeued = True
+            new_status = str(rq.status)
+            # requeue 可能清掉 payload 以外字段；再写一次 token_budget
+            try:
+                async with inbox._session_factory() as session:  # type: ignore[attr-defined]
+                    row = (
+                        await session.execute(
+                            select(AgentInboxItem).where(
+                                AgentInboxItem.id == __import__("uuid").UUID(str(item_id))
+                            )
+                        )
+                    ).scalar_one_or_none()
+                    if row is not None:
+                        pl = dict(row.payload or {}) if isinstance(row.payload, dict) else {}
+                        pl["token_budget"] = payload.get("token_budget")
+                        pl["budget_source"] = "ceo_budget_retry"
+                        row.payload = pl
+                        await session.commit()
+            except Exception as e:
+                logger.debug("budget-retry rewrite payload: %s", e)
+
+    return {
+        "ok": True,
+        "id": str(item_id),
+        "status": new_status,
+        "requeued": requeued,
+        "amount": amount,
+        "token_budget": payload.get("token_budget"),
+        "default_token_budget": default_updated,
+        "processes": process_results,
+        "message": (
+            f"已追加预算 +{amount}"
+            + (f"，本单 token_budget={payload.get('token_budget')}" if payload.get("token_budget") else "")
+            + ("，工单已重派 pending" if requeued else "（在途进程已 top_up）")
+        ),
     }
 
 

@@ -8,6 +8,7 @@ import { MessageInput, Attachment, ChatMode, type MessageInputHandle } from '@/c
 import { FilePreviewHost } from '@/components/chat/FilePreviewHost';
 import { SessionArtifactsBar } from '@/components/chat/SessionArtifactsBar';
 import { SessionRunsPanel } from '@/components/chat/SessionRunsPanel';
+import { SessionJobsPanel } from '@/components/chat/SessionJobsPanel';
 import type { ChatArtifact } from '@/lib/artifacts';
 import { TerminalPanel, formatArgsText, formatResultText } from '@/components/chat/TerminalPanel';
 import { ActivityPanel } from '@/components/chat/ActivityPanel';
@@ -1673,7 +1674,8 @@ const { isConnected, isConnecting, kickedByPeer, reclaimConnection, sendMessage,
                         isStreaming={isStreaming}
                       />
                       {currentSession?.id ? (
-                        <div className="px-2 pb-2">
+                        <div className="px-2 pb-2 space-y-1">
+                          <SessionJobsPanel sessionId={currentSession.id} compact zh />
                           <SessionRunsPanel sessionId={currentSession.id} compact />
                         </div>
                       ) : null}

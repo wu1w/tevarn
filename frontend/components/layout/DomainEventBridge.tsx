@@ -30,6 +30,7 @@ function invalidateForTopic(qc: ReturnType<typeof useQueryClient>, topic: string
     void qc.invalidateQueries({ queryKey: ['workforce-report'] });
     void qc.invalidateQueries({ queryKey: ['workspace-brief'] });
     void qc.invalidateQueries({ queryKey: ['kernel-inbox'] });
+    void qc.invalidateQueries({ queryKey: ['session-workforce-jobs'] });
     void qc.invalidateQueries({ queryKey: ['kernel-events'] });
     void qc.invalidateQueries({ queryKey: ['notifications'] });
   }
@@ -89,6 +90,9 @@ function toastForJobEvent(e: DomainEvent): void {
     topic === 'job.cancelled' ||
     topic === 'job.overflow'
   ) {
+    const err = String(data.error || data.reason || data.detail || '').toLowerCase();
+    const budgetish =
+      /budget|预算|token|额度/.test(err) || Boolean(data.budget_failed);
     const label =
       topic === 'job.dead'
         ? '失败'
@@ -97,7 +101,12 @@ function toastForJobEvent(e: DomainEvent): void {
           : topic === 'job.dropped'
             ? '已丢弃'
             : '异常';
-    addToast(`工单${label} · ${name}${jobShort ? ` · #${jobShort}` : ''}`, 'error');
+    addToast(
+      budgetish
+        ? `工单预算中断 · ${name}${jobShort ? ` · #${jobShort}` : ''}（可在进度卡一键加预算重派）`
+        : `工单${label} · ${name}${jobShort ? ` · #${jobShort}` : ''}`,
+      'error',
+    );
     bumpUnread();
   }
 }
