@@ -2310,16 +2310,11 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         self.last_iterations = _global_iter + 1
         self.last_tool_rounds = _tool_rounds
         # 不覆盖 llm_round 等已写入的精确退出码（如 llm_stream_error）
-        if not getattr(self, "last_exit_reason", None) or self.last_exit_reason in (
-            "",
-            "completed",
-            None,
-        ):
+        # 仅当尚无精确码 / 仍是 completed 占位时，才用循环级原因覆盖
+        _cur = getattr(self, "last_exit_reason", None)
+        if not _cur or _cur in ("", "completed", None):
             self.last_exit_reason = _loop_exit_reason or "completed"
-        elif _loop_exit_reason and _loop_exit_reason not in ("", "completed"):
-            # 循环级原因优先于默认 completed，但保留 llm_stream_error 等
-            if self.last_exit_reason in ("completed", ""):
-                self.last_exit_reason = _loop_exit_reason
+        # 已有精确码（llm_stream_error 等）→ 保留，不二次覆盖
         # P0.5 R4：结构化退出说明挂到 loop，供 API / harness
         try:
             from backend.agent.exit_reasons import describe_exit_reason

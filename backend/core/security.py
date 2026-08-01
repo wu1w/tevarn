@@ -3,6 +3,7 @@ Security utilities
 JWT token creation/decoding and password hashing
 """
 
+import hashlib
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -59,11 +60,26 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_DAYS = 7
 
 
-def create_access_token(data: dict[str, Any]) -> str:
-    """Create a JWT access token"""
+def password_token_stamp(hashed_password: str | None) -> str:
+    """密码哈希指纹：改密后旧 JWT 的 pwc 不匹配即失效（无需 DB 迁移）。"""
+    raw = (hashed_password or "").encode("utf-8", errors="ignore")
+    return hashlib.sha256(raw).hexdigest()[:16]
+
+
+def create_access_token(
+    data: dict[str, Any],
+    *,
+    hashed_password: str | None = None,
+) -> str:
+    """Create a JWT access token.
+
+    若传入 hashed_password，会写入 ``pwc`` 声明；改密后旧 token 在鉴权时被拒。
+    """
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + timedelta(days=ACCESS_TOKEN_EXPIRE_DAYS)
     to_encode.update({"exp": expire})
+    if hashed_password is not None:
+        to_encode["pwc"] = password_token_stamp(hashed_password)
     encoded_jwt = jwt.encode(to_encode, settings.jwt_secret, algorithm=ALGORITHM)
     return encoded_jwt
 
@@ -80,6 +96,20 @@ def decode_access_token(token: str) -> dict[str, Any] | None:
         return payload
     except JWTError:
         return None
+
+
+def token_password_matches(payload: dict[str, Any] | None, hashed_password: str | None) -> bool:
+    """校验 JWT pwc 与当前密码哈希是否一致。
+
+    - 无 pwc（旧 token）：仍放行一次兼容，但建议重新登录拿带 pwc 的 token
+    - 有 pwc 且不匹配：改密后旧 token → 拒绝
+    """
+    if not payload:
+        return False
+    stamp = payload.get("pwc")
+    if not stamp:
+        return True  # legacy tokens without pwc
+    return str(stamp) == password_token_stamp(hashed_password)
 
 
 def get_password_hash(password: str) -> str:

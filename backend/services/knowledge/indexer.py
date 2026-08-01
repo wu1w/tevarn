@@ -126,6 +126,43 @@ async def upsert_qdrant_points(points: list[dict[str, Any]]) -> dict[str, Any]:
             return {"ok": True, "count": len(points)}
 
 
+async def delete_qdrant_by_filter(
+    *,
+    document_id: str | None = None,
+    user_id: str | None = None,
+    collection: str | None = None,
+) -> dict[str, Any]:
+    """按 payload filter 删向量（删文档 / 用户级 rebuild 用，禁止无条件全清）。"""
+    import aiohttp
+
+    must: list[dict[str, Any]] = []
+    if document_id:
+        must.append({"key": "document_id", "match": {"value": str(document_id)}})
+    if user_id:
+        must.append({"key": "user_id", "match": {"value": str(user_id)}})
+    if not must:
+        return {"ok": False, "message": "refuse unscoped vector delete"}
+    url = (settings.qdrant_url or "").rstrip("/")
+    if not url:
+        return {"ok": False, "message": "qdrant_url empty"}
+    col = collection or settings.qdrant_collection
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
+            async with session.post(
+                f"{url}/collections/{col}/points/delete?wait=true",
+                json={"filter": {"must": must}},
+            ) as resp:
+                text = await resp.text()
+                if resp.status not in (200, 201):
+                    return {
+                        "ok": False,
+                        "message": f"Qdrant delete failed HTTP {resp.status}: {text[:300]}",
+                    }
+                return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "message": str(e)}
+
+
 def _point_id(doc_id: str, index: int) -> str:
     # Qdrant 接受 uuid 或 unsigned int；用稳定 uuid5
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{doc_id}:{index}"))

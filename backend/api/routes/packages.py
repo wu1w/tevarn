@@ -23,7 +23,7 @@ from backend.packages.session_packages import (
 )
 from backend.schemas.user import UserRead
 
-from ..dependencies import get_current_user
+from ..dependencies import assert_session_owner, get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,22 @@ class SetAttachedBody(BaseModel):
     packages: list[str] = Field(default_factory=list)
 
 
+async def _assert_session_access(session_id: str, current_user: UserRead) -> None:
+    """packages attach/list 必须校验会话归属，防跨用户挂载。"""
+    import uuid as _uuid
+
+    from backend.repositories.session_repo import AsyncSessionRepository
+
+    try:
+        sid = _uuid.UUID(str(session_id))
+    except (ValueError, TypeError) as e:
+        raise HTTPException(status_code=400, detail="invalid session_id") from e
+    sess = await AsyncSessionRepository().get_by_id(sid)
+    if sess is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    assert_session_owner(getattr(sess, "user_id", None), current_user)
+
+
 @router.get("")
 async def list_packages(
     current_user: Annotated[UserRead, Depends(get_current_user)],
@@ -50,7 +66,10 @@ async def list_packages(
     attached: list[str] = []
     if session_id:
         try:
+            await _assert_session_access(session_id, current_user)
             attached = await get_session_attached_packages(session_id)
+        except HTTPException:
+            raise
         except Exception:
             attached = []
     att_set = set(attached)
@@ -71,6 +90,7 @@ async def get_session_packages(
     session_id: str,
     current_user: Annotated[UserRead, Depends(get_current_user)],
 ):
+    await _assert_session_access(session_id, current_user)
     attached = await get_session_attached_packages(session_id)
     snippets = await resolve_attached_snippets(attached)
     return {"session_id": session_id, "attached": attached, "snippets": snippets}
@@ -81,6 +101,7 @@ async def attach_pkg(
     body: AttachBody,
     current_user: Annotated[UserRead, Depends(get_current_user)],
 ):
+    await _assert_session_access(body.session_id, current_user)
     pkgs = await list_all_packages()
     if not get_package_by_name(pkgs, body.name):
         raise HTTPException(status_code=404, detail=f"package `{body.name}` not found")
@@ -102,6 +123,7 @@ async def detach_pkg(
     body: AttachBody,
     current_user: Annotated[UserRead, Depends(get_current_user)],
 ):
+    await _assert_session_access(body.session_id, current_user)
     try:
         attached = await detach_package(body.session_id, body.name)
     except ValueError as e:
@@ -118,6 +140,7 @@ async def set_session_packages(
     body: SetAttachedBody,
     current_user: Annotated[UserRead, Depends(get_current_user)],
 ):
+    await _assert_session_access(body.session_id, current_user)
     pkgs = await list_all_packages()
     known = {p.name for p in pkgs}
     unknown = [n for n in body.packages if n not in known]
@@ -346,10 +369,14 @@ async def market_install_remote(
     current_user: Annotated[UserRead, Depends(get_current_user)],
 ):
     """远程包一键下载安装（https + 重定向防护 + 内容信任根 + 签名扫描）。"""
+    import asyncio
+
     from backend.packages.market import install_from_remote_url, install_remote_by_name
 
     if body.url:
-        result = install_from_remote_url(
+        # 同步 urllib 下载最长 60s：丢线程池，避免卡死事件循环
+        result = await asyncio.to_thread(
+            install_from_remote_url,
             body.url,
             overwrite=body.overwrite,
             content_sha256_hex=body.content_sha256,

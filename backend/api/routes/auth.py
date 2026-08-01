@@ -74,7 +74,10 @@ async def register(
             ) from exc
 
         # 生成令牌（在 uow 事务内，确保 user 已定义且事务未关闭）
-        token = create_access_token({"sub": str(user.id)})
+        token = create_access_token(
+            {"sub": str(user.id)},
+            hashed_password=getattr(user, "hashed_password", None),
+        )
 
     return TokenResponse(
         access_token=token,
@@ -111,7 +114,10 @@ async def auto_login(
             }
             user = await uow.users.create(user_data)
 
-    token = create_access_token({"sub": str(user.id)})
+    token = create_access_token(
+        {"sub": str(user.id)},
+        hashed_password=getattr(user, "hashed_password", None),
+    )
     return TokenResponse(
         access_token=token,
         user=UserRead.model_validate(user),
@@ -141,8 +147,11 @@ async def login(
         # 更新最后登录时间
         await uow.users.update_last_login(user.id)
 
-    # 生成令牌
-    token = create_access_token({"sub": str(user.id)})
+    # 生成令牌（带 pwc，改密后旧 token 失效）
+    token = create_access_token(
+        {"sub": str(user.id)},
+        hashed_password=getattr(user, "hashed_password", None),
+    )
 
     return TokenResponse(
         access_token=token,
@@ -191,8 +200,19 @@ async def change_password(
             detail="Old password is incorrect",
         )
 
+    new_hash = get_password_hash(data.new_password)
     await repo.update(
         current_user.id,
-        {"hashed_password": get_password_hash(data.new_password)},
+        {"hashed_password": new_hash},
     )
-    return {"ok": True, "message": "Password changed successfully"}
+    # 改密后旧 JWT 因 pwc 不匹配立即失效；返回新 token 供前端热切换
+    new_token = create_access_token(
+        {"sub": str(current_user.id)},
+        hashed_password=new_hash,
+    )
+    return {
+        "ok": True,
+        "message": "Password changed successfully",
+        "access_token": new_token,
+        "token_type": "bearer",
+    }

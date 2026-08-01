@@ -190,6 +190,9 @@ class CronScheduler:
 
             except asyncio.CancelledError:
                 # 取消：收尾 CronExecutionLog（真正卡 running 的是 log，不是 job 表）
+                # 注意：list_by_cron_job / update_run_status 要 UUID 对象；
+                # job_id 变量是 str（任务字典 key），必须用 job.id。
+                uid = getattr(job, "id", None)
                 try:
                     from backend.repositories.cron_execution_log_repo import (
                         AsyncCronExecutionLogRepository,
@@ -198,23 +201,35 @@ class CronScheduler:
                     log_repo = AsyncCronExecutionLogRepository()
                     # 找该 job 最近一条 running 日志
                     try:
-                        logs = await log_repo.list_by_cron_job(job_id, limit=5)
-                        for lg in logs:
-                            if str(getattr(lg, "status", "") or "") == "running":
-                                await log_repo.finish(
-                                    lg.id, "cancelled", error="scheduler stopped"
-                                )
-                                break
-                    except Exception:
-                        pass
+                        if uid is not None:
+                            logs = await log_repo.list_by_cron_job(uid, limit=5)
+                            for lg in logs:
+                                if str(getattr(lg, "status", "") or "") == "running":
+                                    await log_repo.finish(
+                                        lg.id, "cancelled", error="scheduler stopped"
+                                    )
+                                    break
+                    except Exception as le:
+                        logger.warning(
+                            "cron cancel finish log failed job=%s: %s",
+                            str(uid)[:8] if uid else job_id[:8],
+                            le,
+                        )
                 except Exception as ce:
                     logger.debug("cron cancel execution log: %s", ce)
                 try:
-                    repo = AsyncCronJobRepository()
-                    # 仅当本 tick 确实在跑时才更新 last_status（避免从未执行盖假记录）
-                    await repo.update_run_status(job_id, "cancelled", "scheduler stopped")
+                    if uid is not None:
+                        repo = AsyncCronJobRepository()
+                        # 取消即更新 last_status（调度器停 / 用户关 job）
+                        await repo.update_run_status(
+                            uid, "cancelled", "scheduler stopped"
+                        )
                 except Exception as ce:
-                    logger.debug("cron cancel job status: %s", ce)
+                    logger.warning(
+                        "cron cancel job status failed job=%s: %s",
+                        str(uid)[:8] if uid else job_id[:8],
+                        ce,
+                    )
                 break
             except Exception as e:
                 logger.error("Cron job '%s' loop error: %s", getattr(job, "name", job_id), e)

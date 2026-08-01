@@ -736,7 +736,13 @@ class QdrantService:
         import uuid as _uuid
 
         from backend.repositories.knowledge_repo import AsyncDocumentRepository
+        from backend.services.knowledge.indexer import delete_qdrant_by_filter
 
+        # SQL + 向量同步删除（payload.document_id filter）
+        try:
+            await delete_qdrant_by_filter(document_id=str(doc_id))
+        except Exception as e:
+            logger.warning("delete_document qdrant: %s", e)
         repo = AsyncDocumentRepository()
         await repo.delete(_uuid.UUID(str(doc_id)))
 

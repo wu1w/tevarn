@@ -156,19 +156,8 @@ def mount_frontend_static(app: FastAPI) -> Path | None:
                     return Response(status_code=200, media_type="text/html")
                 return FileResponse(as_index, media_type="text/html")
 
-            # 已知产品路由：
-            # - 有子路径（/agents/<uuid>、/chat?）或主入口缺失导出时 → SPA index 回落
-            # - 仅当「裸路由目录本该存在却完全没有」且不是主入口时，才硬 404 提示重建
-            top = first.lower()
-            if top in _APP_ROUTES:
-                has_sub = "/" in path.rstrip("/")
-                # 主入口与动态段：始终 SPA 回落（旧 static 无 chat/ 目录也不能 404）
-                if has_sub or top in ("chat", "login", ""):
-                    pass  # fall through to SPA index
-                else:
-                    # 裸 /kernel 等：若导出树有 index 但无该页，仍 SPA 回落并在 query 提示
-                    # （硬 404 会误杀未重新导出的部署）
-                    pass
+            # 产品路由 / 动态段：统一 SPA 回落（客户端路由 + 客户端 404 页兜底）
+            # 硬 404 会误杀未重新导出的部署；导出树有对应 index 时上面已命中。
 
         # SPA fallback：index.html（client-side router 接管）
         index = root / "index.html"

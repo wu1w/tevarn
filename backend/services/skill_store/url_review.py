@@ -132,7 +132,40 @@ async def review_extension_url(url: str) -> dict[str, Any]:
 
     try:
         async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
-            async with session.get(fetch_url, allow_redirects=True) as resp:
+            # 每跳重定向再校验公网 URL（防 302 → 内网 SSRF）
+            current = fetch_url
+            resp = None
+            for _hop in range(5):
+                validate_public_url(current)
+                resp = await session.get(current, allow_redirects=False)
+                if resp.status in (301, 302, 303, 307, 308):
+                    loc = resp.headers.get("Location") or ""
+                    await resp.release()
+                    if not loc:
+                        return {
+                            "ok": False,
+                            "url": url,
+                            "error": "redirect without Location",
+                            "risk": "dangerous",
+                            "installable": False,
+                        }
+                    from urllib.parse import urljoin
+
+                    current = urljoin(current, loc)
+                    continue
+                break
+            else:
+                if resp is not None:
+                    await resp.release()
+                return {
+                    "ok": False,
+                    "url": url,
+                    "error": "too many redirects",
+                    "risk": "dangerous",
+                    "installable": False,
+                }
+            assert resp is not None
+            async with resp:
                 if resp.status >= 400:
                     return {
                         "ok": False,
@@ -266,10 +299,24 @@ async def install_from_url(
 
 
 async def _fetch_full(url: str) -> str:
-    validate_public_url(url)
+    """拉取全文；每跳重定向重新 validate_public_url。"""
+    from urllib.parse import urljoin
+
+    current = url
     async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
-        async with session.get(url, allow_redirects=True) as resp:
-            resp.raise_for_status()
-            validate_public_url(str(resp.url))
-            raw = await resp.content.read(_MAX_BYTES)
-            return raw.decode("utf-8", errors="replace")
+        for _hop in range(5):
+            validate_public_url(current)
+            resp = await session.get(current, allow_redirects=False)
+            if resp.status in (301, 302, 303, 307, 308):
+                loc = resp.headers.get("Location") or ""
+                await resp.release()
+                if not loc:
+                    raise UnsafeURLError("redirect without Location")
+                current = urljoin(current, loc)
+                continue
+            async with resp:
+                resp.raise_for_status()
+                validate_public_url(str(resp.url))
+                raw = await resp.content.read(_MAX_BYTES)
+                return raw.decode("utf-8", errors="replace")
+        raise UnsafeURLError("too many redirects")

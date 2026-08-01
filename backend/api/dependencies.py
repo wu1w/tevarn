@@ -8,7 +8,7 @@ from typing import Annotated
 from fastapi import Depends, Header, HTTPException, Request, status
 
 from backend.core.config import get_or_create_initial_admin_password, settings
-from backend.core.security import decode_access_token
+from backend.core.security import decode_access_token, token_password_matches
 from backend.repositories import (
     AgentProfileRepository,
     AuditLogRepository,
@@ -171,6 +171,15 @@ async def get_current_user(
             if user_id is not None:
                 user = await user_repo.get_by_id(user_id)
                 if user and getattr(user, "is_active", True):
+                    # 改密后旧 JWT（pwc 不匹配）立即失效
+                    if not token_password_matches(
+                        payload, getattr(user, "hashed_password", None)
+                    ):
+                        raise HTTPException(
+                            status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Token revoked (password changed)",
+                            headers={"WWW-Authenticate": "Bearer"},
+                        )
                     return UserRead.model_validate(user)
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
@@ -252,6 +261,12 @@ async def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is deactivated",
+        )
+    if not token_password_matches(payload, getattr(user, "hashed_password", None)):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token revoked (password changed)",
+            headers={"WWW-Authenticate": "Bearer"},
         )
     return UserRead.model_validate(user)
 

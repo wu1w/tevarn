@@ -99,6 +99,21 @@ export const useAuthStore = create<AuthState>()(
                 /* ignore */
               }
             });
+            // 清跨账号流式缓存（同 session id 撞号时防串数据）
+            void import('@/stores/streamSessionStore').then((m) => {
+              try {
+                m.useStreamSessionStore.setState({ bySession: {} });
+              } catch {
+                /* ignore */
+              }
+            });
+            void import('@/stores/confirmStore').then((m) => {
+              try {
+                m.useConfirmStore.setState({ pending: null, queue: [] });
+              } catch {
+                /* ignore */
+              }
+            });
           } catch {
             /* ignore */
           }

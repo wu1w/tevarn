@@ -71,9 +71,13 @@ async def recover_stale_runs(*, auto_resume: bool | None = None) -> dict[str, An
         )
         return summary
 
+    # 每 run 最多自动 resume 一次，防止每次重启重复执行 cron/inbox 副作用
+    _MAX_AUTO_RESUME_ATTEMPTS = 1
+
     # 2) 按 origin 策略续跑（串行，避免启动风暴）
     for run in interrupted:
         origin = str(getattr(run, "origin", "") or "chat")
+        meta = dict(getattr(run, "meta", None) or {})
         detail = {
             "run_id": str(run.id),
             "origin": origin,
@@ -88,16 +92,46 @@ async def recover_stale_runs(*, auto_resume: bool | None = None) -> dict[str, An
             detail["action"] = "skip_no_session"
             summary["details"].append(detail)
             continue
+        # 已终态过 / 已尝试过自动续跑 → 不再 resume，避免副作用叠加
+        attempts = int(meta.get("auto_resume_attempts") or 0)
+        if (
+            attempts >= _MAX_AUTO_RESUME_ATTEMPTS
+            or meta.get("terminal_via") in ("auto_resume", "auto_resume_error", "auto_resume_skipped")
+            or meta.get("auto_resume_done") is True
+        ):
+            detail["action"] = "skip_already_resumed"
+            detail["auto_resume_attempts"] = attempts
+            try:
+                # 收口为 cancelled，避免每次启动再进 interrupted 列表
+                await repo.update_run(
+                    run.id,
+                    {
+                        "status": RunStatus.CANCELLED.value
+                        if hasattr(RunStatus, "CANCELLED")
+                        else "cancelled",
+                        "meta": {
+                            **meta,
+                            "terminal_via": "auto_resume_skipped",
+                            "auto_resume_skipped_at": datetime.now(timezone.utc).isoformat(),
+                        },
+                    },
+                )
+            except Exception:
+                pass
+            summary["details"].append(detail)
+            continue
         try:
+            attempts += 1
             # 先把状态拨到 executing，再 resume（lifecycle 允许 interrupted→executing）
             await repo.update_run(
                 run.id,
                 {
                     "status": RunStatus.EXECUTING.value,
                     "meta": {
-                        **(run.meta or {}),
+                        **meta,
                         "recovered_at": datetime.now(timezone.utc).isoformat(),
                         "recovered_from": "interrupted",
+                        "auto_resume_attempts": attempts,
                     },
                 },
             )
@@ -119,9 +153,11 @@ async def recover_stale_runs(*, auto_resume: bool | None = None) -> dict[str, An
                     {
                         "status": RunStatus.DONE.value,
                         "meta": {
-                            **(getattr(run, "meta", None) or {}),
+                            **meta,
                             "recovered_at": datetime.now(timezone.utc).isoformat(),
                             "recovered_from": "interrupted",
+                            "auto_resume_attempts": attempts,
+                            "auto_resume_done": True,
                             "resume_result_preview": (text or "")[:200],
                             "terminal_via": "auto_resume",
                         },
@@ -153,7 +189,9 @@ async def recover_stale_runs(*, auto_resume: bool | None = None) -> dict[str, An
                         "status": RunStatus.FAILED.value,
                         "error": f"auto-resume failed: {e}"[:500],
                         "meta": {
-                            **(getattr(run, "meta", None) or {}),
+                            **meta,
+                            "auto_resume_attempts": attempts,
+                            "auto_resume_done": True,
                             "terminal_via": "auto_resume_error",
                         },
                     },

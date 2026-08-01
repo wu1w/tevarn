@@ -263,6 +263,13 @@ async def delete_document(
         raise HTTPException(status_code=404, detail="Document not found")
     if not _is_doc_owner_or_admin(doc, current_user):
         raise HTTPException(status_code=403, detail="Access denied")
+    # 先删向量（按 document_id filter），再删 SQL
+    try:
+        from backend.services.knowledge.indexer import delete_qdrant_by_filter
+
+        await delete_qdrant_by_filter(document_id=str(doc_id))
+    except Exception as e:
+        logger.warning("delete_document qdrant vectors: %s", e)
     success = await repo.delete(doc_id)
     if not success:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -460,29 +467,34 @@ async def rebuild_index(
 
 
 async def _bg_rebuild_index(collection: str, user_id: str) -> None:
-    """后台重建索引：删除旧 collection → 重新索引所有文档"""
-    import aiohttp
-
+    """后台重建索引：只删该用户向量点 → 再重建该用户文档（不毁他人 collection）。"""
     from backend.repositories.knowledge_repo import AsyncDocumentRepository
-    from backend.services.knowledge.indexer import index_document_text
+    from backend.services.knowledge.indexer import (
+        delete_qdrant_by_filter,
+        index_document_text,
+    )
 
-    url = settings.qdrant_url.rstrip("/")
-
-    # 1. 删除旧 collection
+    # 1. 仅删除该 user_id 的向量点（禁止 drop 全 collection）
     try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
-            async with session.delete(f"{url}/collections/{collection}") as resp:
-                if resp.status in (200, 201):
-                    logger.info(f"Deleted old collection '{collection}' for rebuild")
-                else:
-                    text = await resp.text()
-                    logger.error(f"Failed to delete collection: {text[:200]}")
-                    return
+        dr = await delete_qdrant_by_filter(user_id=str(user_id), collection=collection)
+        if not dr.get("ok"):
+            logger.error(
+                "Rebuild: failed to delete user vectors collection=%s user=%s: %s",
+                collection,
+                user_id[:8],
+                dr.get("message"),
+            )
+            # 继续尝试 reindex：upsert 会覆盖同 id 点
+        else:
+            logger.info(
+                "Deleted user vectors for rebuild collection=%s user=%s",
+                collection,
+                user_id[:8],
+            )
     except Exception as e:
-        logger.error(f"Rebuild: failed to delete collection: {e}")
-        return
+        logger.error(f"Rebuild: failed to delete user vectors: {e}")
 
-    # 2. 遍历所有已索引文档，重新索引
+    # 2. 遍历该用户已索引文档，重新索引
     doc_repo = AsyncDocumentRepository()
     try:
         docs = await doc_repo.list_by_user(uuid.UUID(user_id))
