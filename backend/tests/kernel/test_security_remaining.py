@@ -162,6 +162,77 @@ def test_process_access_require_session_unbound_interactive_denied():
         )
 
 
+@pytest.mark.asyncio
+async def test_identity_owner_multi_user_match_and_deny(monkeypatch):
+    """编制 identity top-up 同源：多用户按 user_id 归属，无主 fail-closed。"""
+    from unittest.mock import patch
+
+    from backend.kernel import process_access as pa
+
+    class Row:
+        user_id = "owner-1"
+        owner_user_id = None
+        created_by = None
+
+    row = Row()
+
+    class FakeResult:
+        def scalar_one_or_none(self):
+            return row
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def execute(self, *a, **k):
+            return FakeResult()
+
+    monkeypatch.setattr(pa, "_single_user_mode", lambda: False)
+    iid = "11111111-1111-1111-1111-111111111111"
+    with patch("backend.database.AsyncSessionLocal", return_value=FakeSession()):
+        got = await pa.assert_user_owns_identity(iid, "owner-1")
+        assert got is row
+        with pytest.raises(PermissionError, match="not owned"):
+            await pa.assert_user_owns_identity(iid, "other-user")
+        row.user_id = None
+        with pytest.raises(PermissionError, match="no owner binding"):
+            await pa.assert_user_owns_identity(f"wf:{iid}", "owner-1")
+
+
+@pytest.mark.asyncio
+async def test_identity_owner_single_user_allows(monkeypatch):
+    from unittest.mock import patch
+
+    from backend.kernel import process_access as pa
+
+    class Row:
+        user_id = "someone-else"
+
+    class FakeResult:
+        def scalar_one_or_none(self):
+            return Row()
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def execute(self, *a, **k):
+            return FakeResult()
+
+    monkeypatch.setattr(pa, "_single_user_mode", lambda: True)
+    with patch("backend.database.AsyncSessionLocal", return_value=FakeSession()):
+        got = await pa.assert_user_owns_identity(
+            "11111111-1111-1111-1111-111111111111", "any"
+        )
+        assert got is not None
+
+
 def test_verify_content_trust_root(monkeypatch):
     from backend.packages import market as m
 

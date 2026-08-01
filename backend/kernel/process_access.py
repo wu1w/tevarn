@@ -202,6 +202,72 @@ async def assert_user_owns_process(
     raise PermissionError(f"process not owned by user: {process_id[:12]}")
 
 
+async def assert_user_owns_identity(
+    identity_id: Any,
+    user_id: Any,
+) -> Any:
+    """校验当前用户是否可操作该编制身份（多用户安全）。
+
+    与 assert_user_owns_process 对称：
+    1. single_user_mode=True → 存在即放行
+    2. identity.user_id / owner_user_id / created_by == user
+    3. 多用户且无归属字段 → fail-closed
+    4. 归属他人 → PermissionError
+
+    identity_id 可带 ``wf:`` 前缀（会剥掉）。
+
+    Returns:
+        AgentIdentity ORM 行（存在时）
+
+    Raises:
+        ValueError: 不存在
+        PermissionError: 无权
+    """
+    uid = str(user_id or "").strip()
+    if not uid:
+        raise PermissionError("user required")
+
+    iid_raw = str(identity_id or "").strip()
+    if iid_raw.startswith("wf:"):
+        iid_raw = iid_raw[3:].strip()
+    if not iid_raw:
+        raise ValueError("identity_id required")
+
+    try:
+        import uuid as _uuid
+
+        from backend.database import AsyncSessionLocal
+        from backend.models.agent_identity import AgentIdentity
+        from sqlalchemy import select
+
+        aid = _uuid.UUID(iid_raw)
+    except Exception as e:
+        raise ValueError(f"identity not found: {iid_raw}") from e
+
+    async with AsyncSessionLocal() as db:
+        row = (
+            await db.execute(select(AgentIdentity).where(AgentIdentity.id == aid))
+        ).scalar_one_or_none()
+    if row is None:
+        raise ValueError(f"identity not found: {iid_raw}")
+
+    if _single_user_mode():
+        return row
+
+    for attr in ("owner_user_id", "user_id", "created_by"):
+        ow = str(getattr(row, attr, "") or "")
+        if ow and ow == uid:
+            return row
+
+    has_owner = any(
+        str(getattr(row, a, "") or "")
+        for a in ("owner_user_id", "user_id", "created_by")
+    )
+    if not has_owner:
+        raise PermissionError("identity has no owner binding")
+    raise PermissionError(f"identity not owned by user: {iid_raw[:12]}")
+
+
 def ownership_http_exc(err: Exception) -> tuple[int, str]:
     """Map ownership errors to HTTP status."""
     if isinstance(err, PermissionError):

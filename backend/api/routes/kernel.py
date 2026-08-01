@@ -575,6 +575,19 @@ async def _require_process_owner(process_id: str, current_user: UserRead, *, liv
         raise HTTPException(status_code=code, detail=detail) from e
 
 
+async def _require_identity_owner(identity_id: str, current_user: UserRead):
+    """编制身份归属校验：不通过则 HTTPException。"""
+    from backend.kernel.process_access import assert_user_owns_identity, ownership_http_exc
+
+    try:
+        return await assert_user_owns_identity(
+            identity_id, getattr(current_user, "id", current_user)
+        )
+    except (ValueError, PermissionError) as e:
+        code, detail = ownership_http_exc(e)
+        raise HTTPException(status_code=code, detail=detail) from e
+
+
 @router.get("/processes/{process_id}")
 async def get_process(
     process_id: str,
@@ -684,7 +697,11 @@ async def top_up_identity_running_budget(
 
     body: { amount: int, reason?: str, also_default?: bool }
     also_default=true 时同时抬高 identity.default_token_budget（后续新工单生效）。
+
+    多用户下需拥有该 identity；在跑进程再走 process owner 校验（与单进程 top-up 一致）。
     """
+    # 身份归属：与 process top-up 同一套 owner 语义
+    await _require_identity_owner(identity_id, current_user)
     kernel = get_kernel()
     try:
         amount = int(body.get("amount") or 0)
@@ -701,6 +718,8 @@ async def top_up_identity_running_budget(
     results = []
     for p in live:
         try:
+            # 双保险：每条在跑进程也过 process owner（防 identity 串绑）
+            await _require_process_owner(p.id, current_user)
             results.append(
                 kernel.top_up_budget(
                     p.id,
@@ -708,6 +727,14 @@ async def top_up_identity_running_budget(
                     by=f"ceo:{getattr(current_user, 'id', current_user)}",
                     reason=reason or f"identity top-up {identity_id[:8]}",
                 )
+            )
+        except HTTPException as e:
+            results.append(
+                {
+                    "ok": False,
+                    "process_id": getattr(p, "id", None),
+                    "error": str(e.detail)[:200],
+                }
             )
         except Exception as e:
             results.append({"ok": False, "process_id": p.id, "error": str(e)[:200]})
