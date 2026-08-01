@@ -23,6 +23,8 @@ interface ConfirmState {
   queue: ConfirmRequestData[];
   /** WS 发送：confirm_id + approved + scope */
   _sender: ((confirmId: string, approved: boolean, scope: ConfirmScope) => void) | null;
+  /** 本地倒计时到期 / 服务端 confirm_expired */
+  expireConfirm: (confirmId: string, reason?: string) => void;
 
   showConfirm: (data: ConfirmRequestData) => void;
   registerSender: (
@@ -30,6 +32,28 @@ interface ConfirmState {
   ) => void;
   /** 用户决定当前弹窗；若有队列则弹出下一个 */
   respond: (scope: ConfirmScope) => void;
+}
+
+function _nextPreferCurrent(queue: ConfirmRequestData[]): {
+  next: ConfirmRequestData | null;
+  rest: ConfirmRequestData[];
+} {
+  let curSid = '';
+  try {
+    const { useSessionStore } =
+      require('@/stores/sessionStore') as typeof import('@/stores/sessionStore');
+    curSid = String(useSessionStore.getState().currentSession?.id || '');
+  } catch {
+    curSid = '';
+  }
+  const rest = [...queue];
+  let next: ConfirmRequestData | null = null;
+  if (curSid) {
+    const idx = rest.findIndex((q) => q.sessionId === curSid);
+    if (idx >= 0) next = rest.splice(idx, 1)[0] || null;
+  }
+  if (!next) next = rest.shift() || null;
+  return { next, rest };
 }
 
 export const useConfirmStore = create<ConfirmState>((set, get) => ({
@@ -84,6 +108,34 @@ export const useConfirmStore = create<ConfirmState>((set, get) => ({
 
   registerSender: (fn) => set({ _sender: fn }),
 
+  expireConfirm: (confirmId, reason = 'timeout') => {
+    const { pending, queue } = get();
+    const hitPending = pending?.confirmId === confirmId;
+    const hitQueue = queue.some((q) => q.confirmId === confirmId);
+    if (!hitPending && !hitQueue) return;
+
+    if (hitPending) {
+      const { next, rest } = _nextPreferCurrent(queue);
+      set({ pending: next, queue: rest });
+    } else {
+      set({ queue: queue.filter((q) => q.confirmId !== confirmId) });
+    }
+    try {
+      const { useToastStore } =
+        require('@/stores/toastStore') as typeof import('@/stores/toastStore');
+      useToastStore
+        .getState()
+        .addToast(
+          reason === 'timeout'
+            ? '确认已超时，已按拒绝处理'
+            : '确认已失效',
+          'info',
+        );
+    } catch {
+      /* ignore */
+    }
+  },
+
   respond: (scope) => {
     const { pending, queue, _sender } = get();
     if (!pending) return;
@@ -99,22 +151,7 @@ export const useConfirmStore = create<ConfirmState>((set, get) => ({
         )
         .catch((e) => console.warn('confirm HTTP fallback failed', e));
     }
-    // 下一个：当前会话优先
-    let curSid = '';
-    try {
-      const { useSessionStore } =
-        require('@/stores/sessionStore') as typeof import('@/stores/sessionStore');
-      curSid = String(useSessionStore.getState().currentSession?.id || '');
-    } catch {
-      curSid = '';
-    }
-    const rest = [...queue];
-    let next: ConfirmRequestData | null = null;
-    if (curSid) {
-      const idx = rest.findIndex((q) => q.sessionId === curSid);
-      if (idx >= 0) next = rest.splice(idx, 1)[0] || null;
-    }
-    if (!next) next = rest.shift() || null;
+    const { next, rest } = _nextPreferCurrent(queue);
     set({ pending: next, queue: rest });
   },
 }));

@@ -163,6 +163,42 @@ class AsyncMessageRepository(AsyncBaseRepository, MessageRepository):
         finally:
             await self._close_session(session)
 
+    async def get_history_before(
+        self,
+        session_id: uuid.UUID,
+        *,
+        before: str,
+        limit: int = 100,
+    ) -> list[MessageRead]:
+        """取 created_at < before 的更早消息（正序，最多 limit 条）。"""
+        from datetime import datetime
+
+        from sqlalchemy import desc
+
+        try:
+            # 支持 ISO / 带 Z
+            raw = (before or "").strip().replace("Z", "+00:00")
+            before_dt = datetime.fromisoformat(raw)
+        except Exception as e:
+            raise ValueError(f"invalid before timestamp: {before}") from e
+
+        session = await self._get_session()
+        try:
+            result = await session.execute(
+                select(Message)
+                .where(
+                    Message.session_id == session_id,
+                    Message.created_at < before_dt,
+                )
+                .order_by(desc(Message.created_at))
+                .limit(limit)
+            )
+            rows = list(result.scalars().all())
+            rows.reverse()
+            return [MessageRead.model_validate(m) for m in rows]
+        finally:
+            await self._close_session(session)
+
     async def save_message(
         self,
         session_id: uuid.UUID,

@@ -24,8 +24,9 @@ async def get_messages(
     limit: Annotated[int, Query(ge=1, le=500)] = 200,
     offset: Annotated[int, Query(ge=0)] = 0,
     q: Annotated[str, Query(max_length=200)] = "",
+    before: Annotated[str, Query(description="ISO 时间：取该时刻之前的更早消息")] = "",
 ):
-    """分页获取会话的历史消息（默认最近 limit 条；支持 q 全文搜索）"""
+    """分页获取会话的历史消息（默认最近 limit 条；支持 q 全文搜索 / before 向上翻页）"""
     async with UnitOfWork() as uow:
         session = await uow.sessions.get_by_id(session_id)
         if session is None:
@@ -34,6 +35,11 @@ async def get_messages(
         if q:
             return await uow.messages.search_messages(
                 session_id, q, limit=limit, offset=offset
+            )
+        before_ts = (before or "").strip()
+        if before_ts and hasattr(uow.messages, "get_history_before"):
+            return await uow.messages.get_history_before(
+                session_id, before=before_ts, limit=limit
             )
         return await uow.messages.get_history_by_session(
             session_id, limit=limit, offset=offset

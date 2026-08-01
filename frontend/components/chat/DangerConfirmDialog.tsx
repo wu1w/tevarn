@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AlertTriangle, Terminal, User, MessageSquare, Check } from 'lucide-react';
 import { useConfirmStore, type ConfirmScope } from '@/stores/confirmStore';
@@ -8,11 +9,32 @@ import { useZh } from '@/hooks/useZh';
 
 /** 危险命令确认：拒绝 / 允许一次 / 本会话 / 本员工 */
 export function DangerConfirmDialog() {
-  const { pending, queue, respond } = useConfirmStore();
+  const { pending, queue, respond, expireConfirm } = useConfirmStore();
   const t = useT();
   const zh = useZh();
   const hasAgent = Boolean(pending?.agentId || pending?.agentName);
   const queueLen = queue.length;
+  const [remainSec, setRemainSec] = useState<number | null>(null);
+
+  // 本地倒计时：与后端 timeout 对齐，到期关窗（即使没收到 confirm_expired）
+  useEffect(() => {
+    if (!pending) {
+      setRemainSec(null);
+      return;
+    }
+    const total = Math.max(5, Math.floor(Number(pending.timeout) || 120));
+    const started = Date.now();
+    setRemainSec(total);
+    const tick = window.setInterval(() => {
+      const left = Math.max(0, total - Math.floor((Date.now() - started) / 1000));
+      setRemainSec(left);
+      if (left <= 0) {
+        window.clearInterval(tick);
+        expireConfirm(pending.confirmId, 'timeout');
+      }
+    }, 250);
+    return () => window.clearInterval(tick);
+  }, [pending?.confirmId, pending?.timeout, expireConfirm, pending]);
 
   const act = (scope: ConfirmScope) => () => respond(scope);
 
@@ -31,7 +53,7 @@ export function DangerConfirmDialog() {
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-amber-500/15">
                 <AlertTriangle className="h-5 w-5 text-amber-400" />
               </div>
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <h3 className="text-[15px] font-semibold text-foreground">{pending.title}</h3>
                 <p className="text-xs text-foreground-dim">
                   {zh
@@ -44,6 +66,18 @@ export function DangerConfirmDialog() {
                     : ''}
                 </p>
               </div>
+              {remainSec != null && (
+                <div
+                  className={`flex-shrink-0 rounded-lg px-2 py-1 font-mono text-[11px] tabular-nums ${
+                    remainSec <= 15
+                      ? 'bg-red-500/15 text-red-300'
+                      : 'bg-card-bg text-foreground-dim'
+                  }`}
+                  title={zh ? '超时将自动拒绝' : 'Auto-deny on timeout'}
+                >
+                  {remainSec}s
+                </div>
+              )}
             </div>
 
             <div className="space-y-3 px-5 py-4">
@@ -78,6 +112,13 @@ export function DangerConfirmDialog() {
                   {pending.command}
                 </code>
               </div>
+              {remainSec != null && remainSec <= 30 && (
+                <p className="text-[11px] text-foreground-dim">
+                  {zh
+                    ? `${remainSec}s 后未操作将自动拒绝`
+                    : `Auto-deny in ${remainSec}s if no action`}
+                </p>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-2 px-5 pb-5">

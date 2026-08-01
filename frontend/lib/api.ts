@@ -304,9 +304,18 @@ export async function deleteSession(sessionId: string, force = false): Promise<{
 
 // ====== Message APIs ======
 
-export async function getMessages(sessionId: string, limit = 200, offset = 0): Promise<Message[]> {
+export async function getMessages(
+  sessionId: string,
+  limit = 200,
+  offset = 0,
+  opts?: { before?: string },
+): Promise<Message[]> {
   const res = await api.get(`/sessions/${sessionId}/messages`, {
-    params: { limit, offset },
+    params: {
+      limit,
+      offset,
+      ...(opts?.before ? { before: opts.before } : {}),
+    },
   });
   return res.data;
 }

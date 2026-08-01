@@ -35,6 +35,7 @@ import { DangerConfirmDialog } from '@/components/chat/DangerConfirmDialog';
 import { useToastStore } from '@/stores/toastStore';
 import { useT } from '@/stores/localeStore';
 import { streamSessionApi } from '@/stores/streamSessionStore';
+import { openSessionTabChannel } from '@/lib/sessionTabChannel';
 
 
 export default function ChatPage() {
@@ -95,6 +96,14 @@ function ChatPageInner() {
         }, []);
         /** 流式活动时间戳：长时间无 delta 则视为卡住，露出恢复入口 */
         const lastStreamActivityRef = useRef<number>(Date.now());
+        /** 假 Resuming：等 sync 完成后再 arm 短超时（弱网 auth+sync 常 >4s） */
+        const syncSeenForResumeRef = useRef<Record<string, boolean>>({});
+        const pendingResumeFallbackRef = useRef<Record<string, () => void>>({});
+        /** 同会话其它 Tab 正在跑流式（BroadcastChannel） */
+        const [peerOccupied, setPeerOccupied] = useState(false);
+        const tabChannelRef = useRef<ReturnType<typeof openSessionTabChannel> | null>(null);
+        const isStreamingRef = useRef(false);
+        const isStoppingRef = useRef(false);
         const [streamStuck, setStreamStuck] = useState(false);
         const [streamingContent, setStreamingContent] = useState('');
         // 流式正文 ref：idle/stop 时落地，避免在 setState updater 内同步写 sessionStore
@@ -225,6 +234,8 @@ function ChatPageInner() {
           // 恢复该会话上轮能力芯片（已结束会话也能回顾）
           setRunCaps(runCapsCacheRef.current[sid] || null);
           const cached = streamSessionApi().get(sid);
+          // 标记：等 sync 完成后再启假 Resuming 超时（弱网 auth+sync 常 >4s）
+          syncSeenForResumeRef.current[sid] = false;
           if (cached.agentRunning || cached.isStreaming || cached.content || cached.tools.length) {
             setIsStreaming(true);
             setStreamingContent(cached.content || '');
@@ -232,24 +243,28 @@ function ChatPageInner() {
             setLiveToolCalls(cached.tools || []);
             setStreamStatusDetail(cached.statusDetail || 'Resuming…');
             lastStreamActivityRef.current = Date.now();
-            // 假 Resuming：4s 内无任何 delta/status running 则收束，避免输入永久锁死
             const resumeSid = sid;
-            window.setTimeout(() => {
-              if (cancelled) return;
-              if (useSessionStore.getState().currentSession?.id !== resumeSid) return;
-              const st = streamSessionApi().get(resumeSid);
-              // 若 4s 内有活动（delta 会刷新 lastStreamActivity），不收束
-              if (Date.now() - lastStreamActivityRef.current < 3500) return;
-              if (!st.agentRunning && !st.isStreaming) return;
-              // 仍停在 cache 假 running → 校正
-              streamSessionApi().markIdle(resumeSid);
-              setIsStreaming(false);
-              setStreamStatusDetail(null);
-              setLiveToolCalls([]);
-              streamingContentRef.current = '';
-              setStreamingContent('');
-              loadMessages(resumeSid).catch(console.error);
-            }, 4000);
+            // 假 Resuming：sync 到达后 6s、或最多等 12s 仍无活动则收束
+            const armIdleFallback = (delayMs: number) => {
+              window.setTimeout(() => {
+                if (cancelled) return;
+                if (useSessionStore.getState().currentSession?.id !== resumeSid) return;
+                const st = streamSessionApi().get(resumeSid);
+                if (Date.now() - lastStreamActivityRef.current < delayMs - 500) return;
+                if (!st.agentRunning && !st.isStreaming) return;
+                streamSessionApi().markIdle(resumeSid);
+                setIsStreaming(false);
+                setStreamStatusDetail(null);
+                setLiveToolCalls([]);
+                streamingContentRef.current = '';
+                setStreamingContent('');
+                loadMessages(resumeSid).catch(console.error);
+              }, delayMs);
+            };
+            // 兜底上限 12s（sync 一直不来）
+            armIdleFallback(12_000);
+            // sync 后由 handleSyncResponse 再 arm 6s
+            pendingResumeFallbackRef.current[resumeSid] = () => armIdleFallback(6_000);
           } else {
             setIsStreaming(false);
             setStreamingContent('');
@@ -616,6 +631,24 @@ function ChatPageInner() {
         setStreamStatusDetail(detail);
         addToast(detail, 'error');
         if (sid) streamSessionApi().markIdle(sid);
+        // 服务端入队后错误：回滚最近未 ack 的乐观用户气泡（防幽灵消息）
+        if (sid) {
+          const st = useSessionStore.getState();
+          const opts = (st.messages || []).filter(
+            (m) =>
+              String(m.id || '').startsWith('optimistic:') &&
+              m.role === 'user' &&
+              (!m.session_id || m.session_id === sid),
+          );
+          // 优先删最近一条；若 detail 含「稍后再发」类则全清本会话乐观用户
+          const bulk =
+            /仍在结束|稍后再发|busy|上一轮/i.test(detail) || opts.length > 1;
+          if (bulk) {
+            for (const o of opts) st.removeMessage(o.id);
+          } else if (opts.length) {
+            st.removeMessage(opts[opts.length - 1].id);
+          }
+        }
       } else if (msg.state === 'idle') {
               const wasStopping = isStoppingSid(sid);
               setStoppingSid(sid, false);
@@ -722,6 +755,17 @@ function ChatPageInner() {
         }>;
       }) => {
         const sid = currentSession?.id || '';
+        // sync 为权威：标记已见，并触发「sync 后再 arm 6s 假 Resuming 超时」
+        if (sid) {
+          syncSeenForResumeRef.current[sid] = true;
+          lastStreamActivityRef.current = Date.now();
+          const arm = pendingResumeFallbackRef.current[sid];
+          if (arm) {
+            delete pendingResumeFallbackRef.current[sid];
+            // agent 仍在跑才 arm 短超时；已 idle 则无需
+            if (payload.agent_running) arm();
+          }
+        }
         if (payload.agent_running) {
           setIsStreaming(true);
           const partial = payload.partial_content ?? '';
@@ -861,6 +905,80 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
         },
       });
 
+  // 保持 streaming/stopping 最新值供 BroadcastChannel hello 回复
+  React.useEffect(() => {
+    isStreamingRef.current = isStreaming;
+  }, [isStreaming]);
+  React.useEffect(() => {
+    isStoppingRef.current = isStopping;
+  }, [isStopping]);
+
+  // 同会话多 Tab：BroadcastChannel 仅作占用提示（两边仍各连 WS 收 stream）
+  // 不改本端 isStreaming，避免对端停跑时本端误收束 / 死锁
+  React.useEffect(() => {
+    const sid = currentSession?.id || '';
+    tabChannelRef.current?.close();
+    tabChannelRef.current = null;
+    setPeerOccupied(false);
+    if (!sid) return;
+    let peerLiveUntil = 0;
+    const ch = openSessionTabChannel(sid, (msg) => {
+      if (msg.type === 'stream_state' || msg.type === 'peer_claim') {
+        const peerOn = Boolean(msg.isStreaming);
+        if (peerOn) {
+          peerLiveUntil = Date.now() + 15_000;
+          setPeerOccupied(true);
+        } else {
+          peerLiveUntil = 0;
+          setPeerOccupied(false);
+        }
+      } else if (msg.type === 'hello') {
+        // 新 Tab 探活：若本端在跑，立刻宣告
+        if (isStreamingRef.current) {
+          ch.post({
+            type: 'stream_state',
+            sessionId: sid,
+            isStreaming: true,
+            isStopping: isStoppingRef.current,
+            statusDetail: null,
+          });
+        }
+      }
+    });
+    tabChannelRef.current = ch;
+    ch.post({ type: 'hello', sessionId: sid });
+    // 对端若崩溃未发 stop：15s 无心跳则清 banner
+    const tick = window.setInterval(() => {
+      if (peerLiveUntil && Date.now() > peerLiveUntil) {
+        peerLiveUntil = 0;
+        setPeerOccupied(false);
+      }
+    }, 3000);
+    return () => {
+      window.clearInterval(tick);
+      ch.close();
+      if (tabChannelRef.current === ch) tabChannelRef.current = null;
+    };
+  }, [currentSession?.id]);
+
+  // 本端 streaming 变化 → 广播给其它 Tab
+  React.useEffect(() => {
+    const sid = currentSession?.id;
+    if (!sid || !tabChannelRef.current) return;
+    tabChannelRef.current.post({
+      type: 'stream_state',
+      sessionId: sid,
+      isStreaming,
+      isStopping,
+      statusDetail: streamStatusDetail,
+    });
+  }, [isStreaming, isStopping, streamStatusDetail, currentSession?.id]);
+
+  const handleLoadOlder = useCallback(async () => {
+    const sid = currentSession?.id;
+    if (!sid) return { loaded: 0, hasMore: false };
+    return useSessionStore.getState().loadOlderMessages(sid);
+  }, [currentSession?.id]);
 
   // 发送消息（乐观 UI：先出用户气泡 + streaming，session/WS 后台并行）
   // 发送成功后会话将出现在「历史会话」中
@@ -1496,11 +1614,20 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
                           onPreviewArtifact={setPreviewArtifact}
                           contactName={sessionIdentity || null}
                           sessionId={currentSession?.id || null}
+                          onLoadOlder={handleLoadOlder}
                         />
                       </div>
                       )}
                       {!projectGroupId ? (
                       <>
+                      {peerOccupied && !!currentSession && (
+                        <div className="mx-3 mb-2 flex items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-200">
+                          <span>
+                            {t('chat.peerStreaming') ||
+                              '另一浏览器窗口正在使用此会话 · 两边都会收到流式更新'}
+                          </span>
+                        </div>
+                      )}
                       {!isConnected && !isConnecting && !!currentSession && (
                         <div className="mx-3 mb-2 flex items-center justify-between gap-2 rounded-lg border border-border-subtle bg-card-bg/60 px-3 py-1.5 text-[11px] text-foreground-dim">
                           <span>{t('chat.channelIdle')}</span>

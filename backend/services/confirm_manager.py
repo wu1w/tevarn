@@ -268,6 +268,28 @@ async def request_confirmation(
         return ConfirmOutcome(True, "approved", scope_raw)  # type: ignore[arg-type]
     except asyncio.TimeoutError:
         logger.info("confirm: timeout (%ss), auto-deny: %s", timeout, command[:120])
+        # 通知前端关窗（否则弹窗会一直挂着，用户点允许静默失败）
+        try:
+            expired = {
+                "type": "confirm_expired",
+                "confirm_id": confirm_id,
+                "session_id": str(session_id) if session_id else "",
+                "reason": "timeout",
+                "timeout": timeout,
+            }
+            await ws_manager.broadcast(sid, expired)
+            if owner_uid and hasattr(ws_manager, "broadcast_to_user"):
+                try:
+                    uid: object = owner_uid
+                    try:
+                        uid = _uuid.UUID(owner_uid)
+                    except (ValueError, AttributeError, TypeError):
+                        pass
+                    await ws_manager.broadcast_to_user(uid, expired)
+                except Exception:
+                    pass
+        except Exception as te:
+            logger.debug("confirm_expired broadcast skip: %s", te)
         return ConfirmOutcome(False, "timeout", "deny")
     finally:
         _pending.pop(confirm_id, None)

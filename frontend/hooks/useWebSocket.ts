@@ -488,10 +488,19 @@ export function useWebSocket(options: UseWebSocketOptions) {
               tool: m.tool,
               agentId: m.agent_id || undefined,
               agentName: m.agent_name || undefined,
-              timeout: m.timeout,
+              timeout: m.timeout ?? 120,
               sessionId: m.session_id || sid,
             });
           });
+        } else if (msg.type === 'confirm_expired') {
+          const m = msg as unknown as { confirm_id?: string; reason?: string };
+          if (m.confirm_id) {
+            import('@/stores/confirmStore').then((mod) => {
+              mod.useConfirmStore
+                .getState()
+                .expireConfirm(m.confirm_id!, m.reason || 'timeout');
+            });
+          }
         }
       } catch (err) {
         console.error('WebSocket message parse error:', err);

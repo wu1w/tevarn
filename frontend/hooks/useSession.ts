@@ -226,8 +226,7 @@ export function useSession() {
         // 不阻塞切换
         void discardEmptySession(prevId, { knownEmpty });
       }
-      // 清空 + 作废在途 loadMessages（世代号）
-      clearMessages();
+      // 不作 clearMessages：等 loadMessages 一次性替换，避免侧栏连点闪空白
       setError(null);
       useSessionStore.setState({ _loadSeq: (st._loadSeq || 0) + 1 });
       await loadSession(sessionId);
@@ -235,7 +234,7 @@ export function useSession() {
       if (useSessionStore.getState().currentSession?.id !== sessionId) return;
       await loadMessages(sessionId);
     },
-    [loadSession, loadMessages, clearMessages, setError, discardEmptySession]
+    [loadSession, loadMessages, setError, discardEmptySession]
   );
 
   return {

@@ -29,6 +29,10 @@ interface SessionState {
   setMessages: (messages: Message[]) => void;
   loadSession: (sessionId: string) => Promise<void>;
   loadMessages: (sessionId: string) => Promise<void>;
+  /** 向上翻页加载更早消息 */
+  loadOlderMessages: (
+    sessionId: string,
+  ) => Promise<{ loaded: number; hasMore: boolean }>;
   /** 递增：快速连切会话时丢弃过期 loadMessages 结果 */
   _loadSeq: number;
   /** 最近一次用户发送/乐观气泡时间（防空白会话误删） */
@@ -230,13 +234,24 @@ export const useSessionStore = create<SessionState>()(
       loadMessages: async (sessionId) => {
         const seq = (get()._loadSeq || 0) + 1;
         set({ isLoading: true, error: null, _loadSeq: seq });
+        const finishIfMine = () => {
+          // 仅当仍是本次 load 的世代时清 isLoading，避免踩掉更新的加载
+          if (get()._loadSeq !== seq) return;
+          set({ isLoading: false });
+        };
         try {
           // 默认拉最近 200 条（后端 offset=0 时为尾部窗口）
           const messages = await api.getMessages(sessionId, 200, 0);
           const st = get();
-          // 快速连切：已切到别的会话 / 更新的 load 已发出 → 丢弃
-          if (st._loadSeq !== seq) return;
-          if (st.currentSession?.id && st.currentSession.id !== sessionId) return;
+          // 快速连切：已切到别的会话 / 更新的 load 已发出 → 丢弃（仍清 isLoading）
+          if (st._loadSeq !== seq) {
+            finishIfMine();
+            return;
+          }
+          if (st.currentSession?.id && st.currentSession.id !== sessionId) {
+            finishIfMine();
+            return;
+          }
           // 仅合并「本会话」尚未 ack 的乐观气泡
           const optimistic = (st.messages || []).filter(
             (m) =>
@@ -278,8 +293,14 @@ export const useSessionStore = create<SessionState>()(
               const raw = firstUser.content.trim().replace(/\s+/g, ' ');
               const title = raw.slice(0, 36) + (raw.length > 36 ? '…' : '');
               // 再次校验世代，避免写脏
-              if (get()._loadSeq !== seq) return;
-              if (get().currentSession?.id && get().currentSession!.id !== sessionId) return;
+              if (get()._loadSeq !== seq) {
+                finishIfMine();
+                return;
+              }
+              if (get().currentSession?.id && get().currentSession!.id !== sessionId) {
+                finishIfMine();
+                return;
+              }
               set({
                 messages: merged,
                 isLoading: false,
@@ -288,8 +309,14 @@ export const useSessionStore = create<SessionState>()(
               return;
             }
           }
-          if (get()._loadSeq !== seq) return;
-          if (get().currentSession?.id && get().currentSession!.id !== sessionId) return;
+          if (get()._loadSeq !== seq) {
+            finishIfMine();
+            return;
+          }
+          if (get().currentSession?.id && get().currentSession!.id !== sessionId) {
+            finishIfMine();
+            return;
+          }
           set({ messages: merged, isLoading: false });
         } catch (err) {
           const status = (err as { response?: { status?: number } })?.response?.status;
@@ -306,7 +333,32 @@ export const useSessionStore = create<SessionState>()(
             }
             return;
           }
-          set({ error: (err as Error).message, isLoading: false });
+          if (get()._loadSeq === seq) {
+            set({ error: (err as Error).message, isLoading: false });
+          }
+        }
+      },
+
+      /** 向上翻页：加载更早消息，prepend 到现有列表 */
+      loadOlderMessages: async (sessionId: string) => {
+        const st = get();
+        if (st.currentSession?.id !== sessionId) return { loaded: 0, hasMore: false };
+        const msgs = st.messages || [];
+        const oldest = msgs.find((m) => !String(m.id || '').startsWith('optimistic:'));
+        const before = oldest?.created_at;
+        if (!before) return { loaded: 0, hasMore: false };
+        try {
+          const older = await api.getMessages(sessionId, 100, 0, { before: String(before) });
+          if (get().currentSession?.id !== sessionId) return { loaded: 0, hasMore: false };
+          if (!older?.length) return { loaded: 0, hasMore: false };
+          const have = new Set((get().messages || []).map((m) => m.id));
+          const fresh = older.filter((m) => m.id && !have.has(m.id));
+          if (fresh.length) {
+            set({ messages: [...fresh, ...(get().messages || [])] });
+          }
+          return { loaded: fresh.length, hasMore: older.length >= 100 };
+        } catch {
+          return { loaded: 0, hasMore: false };
         }
       },
 

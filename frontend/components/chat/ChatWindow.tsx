@@ -24,6 +24,8 @@ interface ChatWindowProps {
   contactIdentityId?: string | null;
   /** 会话 id：记住/恢复滚动位置（离开再进不闪空白+从顶滚到底） */
   sessionId?: string | null;
+  /** 向上翻页加载更早历史（长会话 >200 条） */
+  onLoadOlder?: () => Promise<{ loaded: number; hasMore: boolean }>;
 }
 
 const TAG_KEYS = ['goal', 'cluster', 'code', 'research', 'writing', 'debug', 'data', 'devops', 'other'] as const;
@@ -92,13 +94,19 @@ export function ChatWindow({
   contactName,
   contactIdentityId,
   sessionId,
+  onLoadOlder,
 }: ChatWindowProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const loadOlderSentinelRef = useRef<HTMLDivElement>(null);
   const t = useT();
   const [onlineDevices, setOnlineDevices] = useState<
     Array<{ id: string; name: string; latency?: number }>
   >([]);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  /** null = 未知；true 可能还有更早；false 已到顶 */
+  const [hasMoreOlder, setHasMoreOlder] = useState<boolean | null>(null);
+  const loadingOlderRef = useRef(false);
 
   const displayMessages = useMemo(() => {
     return messages.filter((m) => m.role !== 'system');
@@ -110,7 +118,7 @@ export function ChatWindow({
   const prevSessionId = useRef<string | null | undefined>(undefined);
   const prevMsgLen = useRef(0);
 
-  // 会话切换：重置首屏定位
+  // 会话切换：重置首屏定位 + 翻页状态
   useEffect(() => {
     if (prevSessionId.current !== sessionId) {
       didInitialScroll.current = false;
@@ -118,8 +126,60 @@ export function ChatWindow({
       prevSessionId.current = sessionId;
       const saved = readSavedScroll(sessionId);
       isNearBottom.current = saved.nearBottom;
+      setHasMoreOlder(null);
+      setLoadingOlder(false);
+      loadingOlderRef.current = false;
     }
   }, [sessionId]);
+
+  // 首屏已满 200 条时默认允许尝试加载更早
+  useEffect(() => {
+    if (hasMoreOlder === null && displayMessages.length >= 200) {
+      setHasMoreOlder(true);
+    }
+  }, [displayMessages.length, hasMoreOlder]);
+
+  const tryLoadOlder = React.useCallback(async () => {
+    if (!onLoadOlder || !sessionId || loadingOlderRef.current) return;
+    if (hasMoreOlder === false) return;
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
+    const el = scrollRef.current;
+    const prevHeight = el?.scrollHeight ?? 0;
+    const prevTop = el?.scrollTop ?? 0;
+    try {
+      const { loaded, hasMore } = await onLoadOlder();
+      setHasMoreOlder(hasMore);
+      // 保持视口锚点：prepend 后补偿 scrollTop
+      requestAnimationFrame(() => {
+        const box = scrollRef.current;
+        if (!box || !loaded) return;
+        const delta = box.scrollHeight - prevHeight;
+        box.scrollTop = prevTop + Math.max(0, delta);
+      });
+    } finally {
+      loadingOlderRef.current = false;
+      setLoadingOlder(false);
+    }
+  }, [onLoadOlder, sessionId, hasMoreOlder]);
+
+  // 顶栏 IntersectionObserver：滚到顶自动拉更早
+  useEffect(() => {
+    if (!onLoadOlder || !sessionId) return;
+    const root = scrollRef.current;
+    const target = loadOlderSentinelRef.current;
+    if (!root || !target) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          void tryLoadOlder();
+        }
+      },
+      { root, rootMargin: '80px 0px 0px 0px', threshold: 0 },
+    );
+    io.observe(target);
+    return () => io.disconnect();
+  }, [onLoadOlder, sessionId, tryLoadOlder, displayMessages.length]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -317,6 +377,25 @@ export function ChatWindow({
         </div>
       ) : (
         <div className="mx-auto flex w-full max-w-[min(100%,80rem)] flex-col gap-4 px-1 sm:px-2">
+          {/* 向上翻页：sentinel + 按钮 */}
+          <div ref={loadOlderSentinelRef} className="flex flex-col items-center gap-1 py-1">
+            {onLoadOlder && hasMoreOlder !== false && displayMessages.length >= 50 ? (
+              <button
+                type="button"
+                disabled={loadingOlder}
+                onClick={() => void tryLoadOlder()}
+                className="rounded-full border border-border-subtle bg-card-bg/80 px-3 py-1 text-[11px] text-foreground-dim transition-colors hover:border-brand-cyan/40 hover:text-brand-cyan disabled:opacity-50"
+              >
+                {loadingOlder
+                  ? t('chat.loadingOlder') || '加载更早消息…'
+                  : t('chat.loadOlder') || '加载更早消息'}
+              </button>
+            ) : hasMoreOlder === false && displayMessages.length > 0 ? (
+              <span className="text-[10px] text-foreground-dim/60">
+                {t('chat.historyStart') || '已到会话开头'}
+              </span>
+            ) : null}
+          </div>
           {displayMessages.map((msg) => (
             <MessageBubble
               key={msg.id}
