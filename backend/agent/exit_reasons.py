@@ -27,8 +27,8 @@ _EXIT_CATALOG: dict[str, tuple[str, str, str, str]] = {
     "kernel_token_budget_exhausted": (
         "Token 预算耗尽",
         "本进程 token 额度已用尽，运行中断（这不是迭代轮次上限）。",
-        "对进程 top_up 预算，或提高会话/员工默认 token_budget 后重试；"
-        "CEO 对话应自动弹性续航（soft_renew / auto top_up）。",
+        "主会话/CEO：系统会自动 chat_elastic top_up（上限 agent_chat_budget_hard_cap）；"
+        "若仍中断多半已达天花板或 host 不可用。编制工单：crew_steward top_up / 提高 token_budget。",
         "error",
     ),
     "kernel_iteration_exhausted": (

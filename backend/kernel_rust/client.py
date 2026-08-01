@@ -1991,6 +1991,124 @@ class RustAgentKernel:
             {"process_id": process_id, "amount": amount, "by": by, "reason": reason},
         )
 
+    def _is_workforce_process(self, process_id: str) -> bool:
+        try:
+            p = self.get_process(process_id)
+            if p is None:
+                return False
+            ident = str(getattr(p, "identity", "") or "")
+            meta = getattr(p, "meta", None) or {}
+            if ident.startswith("wf:") or ident.startswith("workforce"):
+                return True
+            if isinstance(meta, dict) and meta.get("workforce"):
+                return True
+        except Exception:
+            pass
+        return False
+
+    def _chat_elastic_top_up(
+        self,
+        process_id: str,
+        *,
+        need: int = 0,
+        reason: str = "chat_elastic",
+    ) -> dict[str, Any] | None:
+        """CEO / 主会话弹性续航（不依赖 host --soft-renew）。
+
+        编制工单 (wf:) 不走此路径——仍受 hard_cap_only / soft_renew 策略约束。
+        hard_cap 默认 200 万；达顶后返回 None。
+        """
+        if self._is_workforce_process(process_id):
+            return None
+        try:
+            from backend.core.config import settings as _st
+
+            max_n = int(getattr(_st, "agent_chat_auto_top_up_max", 16) or 16)
+            min_add = int(getattr(_st, "agent_chat_auto_top_up_min_add", 250_000) or 250_000)
+            hard = int(
+                getattr(_st, "agent_workforce_budget_hard_cap", 2_000_000) or 2_000_000
+            )
+            # 主会话可略高于编制 hard_cap（长 CEO 对话）
+            chat_hard = int(
+                getattr(_st, "agent_chat_budget_hard_cap", 0) or 0
+            ) or max(hard, 5_000_000)
+        except Exception:
+            max_n, min_add, chat_hard = 16, 250_000, 5_000_000
+
+        p = self.get_process(process_id)
+        if p is None:
+            return None
+        if getattr(p, "token_budget", None) is None:
+            return None
+        meta = dict(getattr(p, "meta", None) or {})
+        n = int(meta.get("chat_auto_top_up_count") or meta.get("soft_renew_count") or 0)
+        if n >= max_n:
+            logger.info(
+                "chat elastic top_up cap reached proc=%s n=%s", process_id[:12], n
+            )
+            return None
+        budget = int(p.token_budget or 0)
+        used = int(getattr(p, "tokens_used", 0) or 0)
+        remaining = max(0, budget - used)
+        gap = max(0, int(need) - remaining)
+        add = max(gap + 80_000, min_add, budget // 2 if budget > 0 else min_add)
+        if chat_hard > 0 and budget + add > chat_hard:
+            add = max(0, chat_hard - budget)
+        if add <= 0:
+            return None
+        try:
+            r = self.top_up_budget(
+                process_id,
+                int(add),
+                by="system:chat_elastic",
+                reason=f"{reason}#{n + 1}",
+            )
+        except Exception as e:
+            logger.warning("chat elastic top_up failed proc=%s: %s", process_id[:12], e)
+            return None
+        # 尽力写回计数（host meta 可能只部分保留）
+        try:
+            fresh = self.get_process(process_id)
+            if fresh is not None:
+                m = dict(getattr(fresh, "meta", None) or {})
+                m["chat_auto_top_up_count"] = n + 1
+                m["soft_renew_count"] = max(int(m.get("soft_renew_count") or 0), n + 1)
+                m["last_chat_elastic_at"] = time.time()
+                # best-effort: some hosts accept process_patch_meta
+                if hasattr(self, "_call"):
+                    try:
+                        self._call(
+                            "process_set_meta",
+                            {"process_id": process_id, "meta": m},
+                        )
+                    except Exception:
+                        try:
+                            self._call(
+                                "update_process_meta",
+                                {"process_id": process_id, "meta": m},
+                            )
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+        logger.info(
+            "chat elastic top_up proc=%s +%s need=%s n=%s budget→%s",
+            process_id[:12],
+            add,
+            need,
+            n + 1,
+            (r or {}).get("token_budget"),
+        )
+        return {
+            "ok": True,
+            "amount": int(add),
+            "renew_count": n + 1,
+            "token_budget": (r or {}).get("token_budget"),
+            "tokens_used": (r or {}).get("tokens_used"),
+            "budget_remaining": (r or {}).get("budget_remaining"),
+            "source": "chat_elastic",
+        }
+
     def try_soft_renew_budget(
         self,
         process_id: str,
@@ -1998,16 +2116,34 @@ class RustAgentKernel:
         need: int = 0,
         reason: str = "soft_renew",
     ) -> dict[str, Any] | None:
+        # Host soft_renew 默认关（hard-budget first）；主会话走 chat_elastic 兜底
         r = self._call(
             "try_soft_renew_budget",
             {"process_id": process_id, "need": need, "reason": reason},
         )
-        return r if r else None
+        if r:
+            return r
+        return self._chat_elastic_top_up(
+            process_id, need=need, reason=reason or "soft_renew"
+        )
 
     def charge_tokens(self, process_id: str, amount: int) -> int | None:
-        r = self._call("charge_tokens", {"process_id": process_id, "amount": amount}) or {}
-        # host 写入 last_charge_at；本地若有缓存视图由调用方 get_process 刷新
-        return r.get("remaining")
+        try:
+            r = self._call(
+                "charge_tokens", {"process_id": process_id, "amount": amount}
+            ) or {}
+            return r.get("remaining")
+        except BudgetExceededError:
+            # 撞墙前再弹性一次（CEO 长对话）
+            renewed = self._chat_elastic_top_up(
+                process_id, need=int(amount), reason="charge_overflow"
+            )
+            if not renewed:
+                raise
+            r = self._call(
+                "charge_tokens", {"process_id": process_id, "amount": amount}
+            ) or {}
+            return r.get("remaining")
 
     def _emit_policy_decision(
         self,

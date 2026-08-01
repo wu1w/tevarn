@@ -663,22 +663,47 @@ class AgentKernel:
             from backend.core.config import settings as _st
 
             hard_only = bool(getattr(_st, "agent_budget_hard_cap_only", False))
-            enabled = bool(getattr(_st, "agent_budget_soft_renew_enabled", False)) and not hard_only
+            soft_flag = bool(getattr(_st, "agent_budget_soft_renew_enabled", False))
             max_n = int(getattr(_st, "agent_budget_soft_renew_max", 2) or 2)
             factor = float(getattr(_st, "agent_budget_soft_renew_factor", 1.0) or 1.0)
             min_add = int(getattr(_st, "agent_budget_soft_renew_min_add", 50_000) or 50_000)
             hard = int(getattr(_st, "agent_workforce_budget_hard_cap", 2_000_000) or 2_000_000)
         except Exception:
-            enabled, max_n, factor, min_add, hard = False, 2, 1.0, 50_000, 2_000_000
-        if not enabled:
-            return None
+            hard_only, soft_flag = True, False
+            max_n, factor, min_add, hard = 2, 1.0, 50_000, 2_000_000
         proc = self._resolve_process(process_id)
         if proc is None or proc.is_terminal or proc.token_budget is None:
             return None
         meta = dict(proc.meta or {})
-        count = int(meta.get("soft_renew_count") or 0)
-        if count >= max_n:
-            return None
+        ident = str(getattr(proc, "identity", "") or "")
+        is_wf = ident.startswith("wf:") or bool(meta.get("workforce"))
+        # CEO/主会话：不受 hard_cap_only 关闭；编制：仅 soft_flag 且非 hard_only
+        if is_wf:
+            if hard_only or not soft_flag:
+                return None
+            count = int(meta.get("soft_renew_count") or 0)
+            if count >= max_n:
+                return None
+            cap = hard
+        else:
+            # interactive chat elastic（默认开启，不依赖 soft_renew_enabled）
+            try:
+                from backend.core.config import settings as _st2
+
+                max_n = int(getattr(_st2, "agent_chat_auto_top_up_max", 16) or 16)
+                min_add = int(
+                    getattr(_st2, "agent_chat_auto_top_up_min_add", 250_000) or 250_000
+                )
+                cap = int(getattr(_st2, "agent_chat_budget_hard_cap", 0) or 0) or max(
+                    hard, 5_000_000
+                )
+            except Exception:
+                max_n, min_add, cap = 16, 250_000, 5_000_000
+            count = int(
+                meta.get("chat_auto_top_up_count") or meta.get("soft_renew_count") or 0
+            )
+            if count >= max_n:
+                return None
         base = int(meta.get("budget_base") or proc.token_budget or 0)
         if base <= 0:
             base = int(proc.token_budget or min_add)
@@ -686,16 +711,16 @@ class AgentKernel:
         # 追加：原预算 * factor、最小加码、当前缺口*2 取大
         gap = max(0, int(need) - max(0, int(proc.token_budget) - int(proc.tokens_used)))
         add = max(int(base * max(0.25, factor)), min_add, gap * 2, 50_000)
-        # 不超过 hard_cap 总预算（已用+剩余上限）
-        if hard > 0 and int(proc.token_budget) + add > hard:
-            add = max(0, hard - int(proc.token_budget))
+        # 不超过 hard_cap 总预算
+        if cap > 0 and int(proc.token_budget) + add > cap:
+            add = max(0, cap - int(proc.token_budget))
         if add <= 0:
             return None
         try:
             r = self.top_up_budget(
                 process_id,
                 add,
-                by="system:soft_renew",
+                by="system:soft_renew" if is_wf else "system:chat_elastic",
                 reason=f"{reason}#{count + 1}",
             )
         except Exception as e:
@@ -705,6 +730,8 @@ class AgentKernel:
         proc = self._resolve_process(process_id) or proc
         proc.meta = dict(proc.meta or {})
         proc.meta["soft_renew_count"] = count + 1
+        if not is_wf:
+            proc.meta["chat_auto_top_up_count"] = count + 1
         proc.meta["budget_base"] = base
         proc.meta["last_soft_renew_at"] = time.time()
         self._persist_process(proc)
