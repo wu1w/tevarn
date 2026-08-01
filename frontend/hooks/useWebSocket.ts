@@ -171,6 +171,9 @@ export function useWebSocket(options: UseWebSocketOptions) {
 
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
+  /** 被其它 Tab 以 1001 踢下线：禁止自动重连抢主 */
+  const [kickedByPeer, setKickedByPeer] = useState(false);
+  const kickedByPeerRef = useRef(false);
   const wsRef = useRef<WebSocket | null>(null);
   const activeSessionRef = useRef<string>('');
   const reconnectAttempts = useRef(0);
@@ -201,9 +204,18 @@ export function useWebSocket(options: UseWebSocketOptions) {
     }
   };
 
-  const connect = useCallback((overrideSessionId?: string) => {
+  const connect = useCallback((overrideSessionId?: string, opts?: { force?: boolean }) => {
     const sid = (overrideSessionId || sessionIdRef.current || '').trim();
     if (!sid) return;
+
+    // 被踢后禁止自动抢主；仅 force（用户点「夺取连接」/切会话）才清标志并连接
+    if (kickedByPeerRef.current && !opts?.force) {
+      return;
+    }
+    if (opts?.force) {
+      kickedByPeerRef.current = false;
+      setKickedByPeer(false);
+    }
 
     // 已连上同一 session
     if (
@@ -220,7 +232,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
     }
 
     // 手动 connect(override) 时重置计数（用户点「重连」）
-    if (overrideSessionId) {
+    if (overrideSessionId || opts?.force) {
       reconnectAttempts.current = 0;
     }
     // 达到快重连上限后不再 return：由自动重连 effect 走慢间隔
@@ -331,7 +343,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
       }, 30000);
     };
 
-    ws.onclose = () => {
+    ws.onclose = (ev: CloseEvent) => {
       if (wsRef.current === ws) {
         wsRef.current = null;
       }
@@ -340,7 +352,20 @@ export function useWebSocket(options: UseWebSocketOptions) {
         connectingRef.current = false;
         setIsConnecting(false);
         try { useWsStore.getState().setConnected(false); } catch (e) { console.error(e); }
-        if (!intentionalCloseRef.current) {
+        // 1001 = 其它连接顶替本 session（后端单连接踢旧）
+        // 不自动重连，避免双 Tab 互抢；用户可点「夺取连接」
+        const kicked =
+          !intentionalCloseRef.current &&
+          (ev?.code === 1001 ||
+            /new connection|replaced|another/i.test(String(ev?.reason || '')));
+        if (kicked) {
+          kickedByPeerRef.current = true;
+          setKickedByPeer(true);
+          optionsRef.current.onError?.(
+            t('chat.wsKickedByPeer') ||
+              '此会话已在其它窗口连接（已停止自动重连，避免互抢）',
+          );
+        } else if (!intentionalCloseRef.current) {
           optionsRef.current.onDisconnect?.();
         }
       }
@@ -564,9 +589,9 @@ export function useWebSocket(options: UseWebSocketOptions) {
         return Promise.resolve(true);
       }
 
-      // 重置重连上限，给发送一次机会
+      // 用户主动发送：允许夺取连接（区别于后台自动重连抢主）
       reconnectAttempts.current = 0;
-      connect(sid);
+      connect(sid, { force: true });
 
       return new Promise((resolve) => {
         const start = Date.now();
@@ -592,7 +617,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
               reconnectAttempts.current + 1,
               MAX_RECONNECT_ATTEMPTS - 1
             );
-            connect(sid);
+            connect(sid, { force: true });
           }
           setTimeout(tick, 120);
         };
@@ -650,8 +675,11 @@ export function useWebSocket(options: UseWebSocketOptions) {
         disconnect();
         return;
       }
+      // 切会话：清被踢状态，允许新会话连接
+      kickedByPeerRef.current = false;
+      setKickedByPeer(false);
       reconnectAttempts.current = 0;
-      connect(sessionId);
+      connect(sessionId, { force: true });
     }, 0);
     return () => {
       clearTimeout(timer);
@@ -659,10 +687,11 @@ export function useWebSocket(options: UseWebSocketOptions) {
     };
   }, [sessionId, connect, disconnect]);
 
-  // 自动重连（仅在有 session 且意外断开时）
+  // 自动重连（仅在有 session 且意外断开时；被踢不抢主）
   useEffect(() => {
     if (!sessionId) return;
     if (isConnected || isConnecting) return;
+    if (kickedByPeer || kickedByPeerRef.current) return;
 
     const fastExhausted = reconnectAttempts.current >= MAX_RECONNECT_ATTEMPTS;
     const delay = fastExhausted
@@ -681,13 +710,23 @@ export function useWebSocket(options: UseWebSocketOptions) {
 
     const timer = setTimeout(() => {
       if (!sessionIdRef.current) return;
+      if (kickedByPeerRef.current) return;
       if (wsRef.current?.readyState === WebSocket.OPEN) return;
       reconnectAttempts.current += 1;
       connect(sessionIdRef.current);
     }, delay);
 
     return () => clearTimeout(timer);
-  }, [isConnected, isConnecting, sessionId, connect]);
+  }, [isConnected, isConnecting, sessionId, connect, kickedByPeer]);
+
+  const reclaimConnection = useCallback(() => {
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    kickedByPeerRef.current = false;
+    setKickedByPeer(false);
+    reconnectAttempts.current = 0;
+    connect(sid, { force: true });
+  }, [connect]);
 
   // 组件卸载清理
   useEffect(() => {
@@ -699,6 +738,8 @@ export function useWebSocket(options: UseWebSocketOptions) {
   return {
     isConnected,
     isConnecting,
+    kickedByPeer,
+    reclaimConnection,
     connect,
     disconnect,
     waitForConnection,

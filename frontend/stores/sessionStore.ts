@@ -395,8 +395,14 @@ export const useSessionStore = create<SessionState>()(
             }
             return;
           }
+          // 失败且仍在目标会话：清空消息，禁止 B 会话标题下残留 A 历史
           if (get()._loadSeq === seq) {
-            set({ error: (err as Error).message, isLoading: false });
+            const stillHere = get().currentSession?.id === sessionId;
+            set({
+              error: (err as Error).message,
+              isLoading: false,
+              ...(stillHere ? { messages: [] } : {}),
+            });
           }
         }
       },

@@ -164,7 +164,11 @@ class CrewStewardTool(BaseTool):
                     },
                     "requeue": {
                         "type": "boolean",
-                        "description": "grant_caps 后是否把原工单/新指令重新入队（默认 false）",
+                        "description": (
+                            "grant_caps 后是否重派工单。"
+                            "省略时：若带 inbox_item_id 或有待批关联工单则默认 true；"
+                            "显式 false 可关闭"
+                        ),
                     },
                     "force": {
                         "type": "boolean",
@@ -751,15 +755,25 @@ class CrewStewardTool(BaseTool):
         except Exception:
             pass
 
+        # 热更新在跑进程 capabilities（否则当单仍按旧权 deny）
+        hot_note = ""
+        try:
+            hot_note = await self._hot_refresh_process_caps(ident, merged, add)
+        except Exception as he:
+            hot_note = f"（热更新进程能力跳过: {he}）"
+
+        # requeue 默认：显式 false 关；显式 true 开；省略则带工单时默认开
         requeue_note = ""
-        if kwargs.get("requeue") in (True, "true", "1", 1, "yes"):
+        do_requeue = self._should_requeue_after_grant(kwargs, ident)
+        if do_requeue:
             requeue_note = await self._requeue_after_grant(ident, kwargs)
 
         return (
             f"✅ 已给「{ident.name}」扩权：+{add}\n"
             f"原 caps={old or []}\n"
             f"现 caps={merged}\n"
-            f"（审计 by={by}；下一刀工具即生效，无需重启）"
+            f"（审计 by={by}；在跑进程已热更新，下一刀工具即生效）"
+            + (f"\n{hot_note}" if hot_note else "")
             + (f"\n{requeue_note}" if requeue_note else "")
         )
 
@@ -826,6 +840,82 @@ class CrewStewardTool(BaseTool):
             "示例：crew_steward action=grant_caps name=金算 capabilities=[\"command\"] requeue=true"
         )
         return "\n".join(lines)
+
+    def _should_requeue_after_grant(self, kwargs: dict[str, Any], ident: Any) -> bool:
+        """requeue 策略：显式 false 关；显式 true 开；省略时有工单则默认开。"""
+        raw = kwargs.get("requeue", None)
+        if raw in (False, "false", "0", 0, "no"):
+            return False
+        if raw in (True, "true", "1", 1, "yes"):
+            return True
+        # 省略：带 inbox_item_id 或待批里有关联工单 → 默认 requeue
+        if str(kwargs.get("inbox_item_id") or "").strip():
+            return True
+        try:
+            from backend.kernel.cap_requests import list_pending
+
+            for r in list_pending(identity_id=str(ident.id), limit=10):
+                if r.get("inbox_item_id"):
+                    # 自动带上 id 方便 _requeue_after_grant 取 instruction
+                    if not kwargs.get("inbox_item_id"):
+                        kwargs["inbox_item_id"] = r.get("inbox_item_id")
+                    return True
+        except Exception:
+            pass
+        return False
+
+    async def _hot_refresh_process_caps(
+        self, ident: Any, merged: list[str], add: list[str]
+    ) -> str:
+        """把新 caps 并入该身份所有在跑进程，并 re-issue token。"""
+        from backend.kernel import get_kernel
+
+        k = get_kernel()
+        keys = [f"wf:{ident.id}", str(ident.id)]
+        # 部分进程 identity 用 name
+        name = str(getattr(ident, "name", "") or "").strip()
+        if name:
+            keys.append(f"wf:{name}")
+        seen: set[str] = set()
+        touched = 0
+        for key in keys:
+            try:
+                procs = k.live_processes_for_identity(key)
+            except Exception:
+                procs = []
+            for p in procs:
+                pid = str(getattr(p, "id", "") or "")
+                if not pid or pid in seen:
+                    continue
+                seen.add(pid)
+                try:
+                    old_caps = list(getattr(p, "capabilities", None) or [])
+                    new_caps = sorted(set(old_caps) | set(merged) | set(add))
+                    p.capabilities = new_caps  # type: ignore[misc]
+                    if hasattr(k, "issue_token"):
+                        try:
+                            k.issue_token(pid, new_caps)
+                        except Exception:
+                            pass
+                    if hasattr(k, "_persist_process"):
+                        try:
+                            k._persist_process(p)  # type: ignore[attr-defined]
+                        except Exception:
+                            pass
+                    # meta 标记，便于审计
+                    try:
+                        meta = dict(getattr(p, "meta", None) or {})
+                        meta["caps_hot_refreshed_at"] = __import__("time").time()
+                        meta["caps_hot_add"] = list(add)
+                        p.meta = meta  # type: ignore[misc]
+                    except Exception:
+                        pass
+                    touched += 1
+                except Exception as e:
+                    logger.debug("hot refresh caps proc=%s: %s", pid[:8], e)
+        if touched:
+            return f"已热更新 {touched} 个在跑进程能力（+{add}）"
+        return "（当前无在跑进程；下一单自动用新权）"
 
     async def _requeue_after_grant(self, ident: Any, kwargs: dict[str, Any]) -> str:
         """扩权后重派：优先 inbox_item_id 的 instruction，否则用 instruction 字段。"""

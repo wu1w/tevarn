@@ -397,11 +397,11 @@ async def _run_llm_round_body(
                         _wf_auto = False
                 except Exception:
                     pass
-                # 全局 hard_cap_only：禁止 auto top_up / soft renew（与 precheck 一致）
-                _global_hard = bool(
-                    getattr(settings, "agent_budget_hard_cap_only", False)
+                # hard_cap_only 只挡经典 soft_renew；编制有限次 auto 与 chat_elastic 独立
+                _wf_auto_enabled = bool(
+                    getattr(settings, "agent_workforce_auto_top_up_enabled", True)
                 )
-                if (not _global_hard) and (_interactive or (_is_wf and _wf_auto)):
+                if _interactive or (_is_wf and _wf_auto and _wf_auto_enabled):
                     _k = get_kernel()
                     _n = int(
                         (_meta.get("auto_top_up_count") or 0)
@@ -410,33 +410,44 @@ async def _run_llm_round_body(
                     )
                     if _interactive:
                         _max = int(
-                            getattr(settings, "agent_budget_soft_renew_max", 2) or 2
+                            getattr(settings, "agent_chat_auto_top_up_max", 16) or 16
                         )
-                        # CEO long runs: allow more auto top-ups
-                        if _max < 6:
-                            _max = 6
                         _min_add = int(
-                            getattr(settings, "agent_budget_soft_renew_min_add", 50_000)
-                            or 50_000
+                            getattr(settings, "agent_chat_auto_top_up_min_add", 250_000)
+                            or 250_000
                         )
                         _add = max(_min_add, int(spent) * 3, 300_000)
                         _add = min(_add, 1_000_000)
                         _by = "system:interactive_auto"
                     else:
-                        # Workforce: smaller, bounded renewals (product dynamic budget)
+                        # Workforce: 比主会话更紧（默认 max=3 / min 100k / 单次 ≤400k）
                         _max = int(
-                            getattr(settings, "agent_workforce_auto_top_up_max", 4) or 4
+                            getattr(settings, "agent_workforce_auto_top_up_max", 3) or 3
                         )
                         _min_add = int(
                             getattr(
-                                settings, "agent_workforce_auto_top_up_min_add", 150_000
+                                settings, "agent_workforce_auto_top_up_min_add", 100_000
                             )
-                            or 150_000
+                            or 100_000
                         )
-                        _add = max(_min_add, int(spent) * 2, 200_000)
-                        _add = min(_add, 500_000)
+                        _add = max(_min_add, int(spent) * 2, 150_000)
+                        _add = min(_add, 400_000)
+                        try:
+                            _cap = int(
+                                getattr(
+                                    settings,
+                                    "agent_workforce_budget_hard_cap",
+                                    2_000_000,
+                                )
+                                or 2_000_000
+                            )
+                            _bud = int(getattr(kernel_proc, "token_budget", 0) or 0)
+                            if _cap > 0 and _bud + _add > _cap:
+                                _add = max(0, _cap - _bud)
+                        except Exception:
+                            pass
                         _by = "system:workforce_auto"
-                    if _n < _max:
+                    if _n < _max and _add > 0:
                         _k.top_up_budget(
                             kernel_proc.id,
                             _add,

@@ -227,12 +227,32 @@ export function useSession() {
         void discardEmptySession(prevId, { knownEmpty });
       }
       // 不作 clearMessages：等 loadMessages 一次性替换，避免侧栏连点闪空白
+      // 但若 load 失败会清空（见 sessionStore），禁止 B 标题下挂 A 历史
       setError(null);
       useSessionStore.setState({ _loadSeq: (st._loadSeq || 0) + 1 });
-      await loadSession(sessionId);
+      try {
+        await loadSession(sessionId);
+      } catch {
+        // loadSession 内部已 set error；不继续拉消息
+        return;
+      }
       // 并发连切：最终 current 已是别人 → 不拉消息
       if (useSessionStore.getState().currentSession?.id !== sessionId) return;
-      await loadMessages(sessionId);
+      try {
+        await loadMessages(sessionId);
+      } catch {
+        // loadMessages 失败路径已清空 messages（仍在本会话时）
+      }
+      // 防御：消息仍属其它会话 → 清空
+      const after = useSessionStore.getState();
+      if (after.currentSession?.id === sessionId) {
+        const foreign = (after.messages || []).some(
+          (m) => m.session_id && m.session_id !== sessionId && !String(m.id || '').startsWith('optimistic:')
+        );
+        if (foreign) {
+          useSessionStore.setState({ messages: [] });
+        }
+      }
     },
     [loadSession, loadMessages, setError, discardEmptySession]
   );

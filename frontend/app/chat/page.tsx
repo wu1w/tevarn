@@ -865,7 +865,7 @@ const handleUserMessageAck = useCallback(
         [currentSession?.id, reconcileMessage]
       );
 
-const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, connect } = useWebSocket({
+const { isConnected, isConnecting, kickedByPeer, reclaimConnection, sendMessage, sendStop, waitForConnection, connect } = useWebSocket({
         sessionId: currentSession?.id || '',
         token,
         onStreamDelta: handleStreamDelta,
@@ -1384,7 +1384,15 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
     [addToast, t]
   );
 
-  const displayMessages = [...messages];
+  // 防御：绝不在 B 会话渲染 A 的正式历史（切会话 load 失败/竞态）
+  const displayMessages = messages.filter(
+    (m) =>
+      !m.session_id ||
+      !currentSession?.id ||
+      m.session_id === currentSession.id ||
+      String(m.id || '').startsWith('optimistic:') ||
+      String(m.id || '').startsWith('streaming'),
+  );
     // 实时气泡：文本 + tool call 边产生边展示（不要等 idle 整包刷）
     if (isStreaming || streamingContent || liveToolCalls.length > 0) {
       const liveToolCallsForMsg =
@@ -1620,17 +1628,39 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
                       )}
                       {!projectGroupId ? (
                       <>
-                      {peerOccupied && !!currentSession && (
+                      {kickedByPeer && !!currentSession && (
+                        <div className="mx-3 mb-2 flex items-center justify-between gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-100">
+                          <span>
+                            {t('chat.wsKickedByPeer') ||
+                              '此会话已在其它窗口连接 · 本窗已停止自动重连，避免互抢断流'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => reclaimConnection()}
+                            className="shrink-0 rounded-md border border-amber-400/40 bg-amber-500/20 px-2 py-0.5 text-[11px] font-medium text-amber-50 hover:bg-amber-500/30"
+                          >
+                            {t('chat.reclaimWs') || '夺取连接'}
+                          </button>
+                        </div>
+                      )}
+                      {peerOccupied && !kickedByPeer && !!currentSession && (
                         <div className="mx-3 mb-2 flex items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-200">
                           <span>
                             {t('chat.peerStreaming') ||
-                              '另一浏览器窗口正在使用此会话 · 两边都会收到流式更新'}
+                              '另一浏览器窗口也在使用此会话（流式状态提示）'}
                           </span>
                         </div>
                       )}
-                      {!isConnected && !isConnecting && !!currentSession && (
+                      {!isConnected && !isConnecting && !kickedByPeer && !!currentSession && (
                         <div className="mx-3 mb-2 flex items-center justify-between gap-2 rounded-lg border border-border-subtle bg-card-bg/60 px-3 py-1.5 text-[11px] text-foreground-dim">
                           <span>{t('chat.channelIdle')}</span>
+                          <button
+                            type="button"
+                            onClick={() => connect(currentSession.id, { force: true })}
+                            className="shrink-0 rounded-md border border-border-subtle px-2 py-0.5 text-[11px] hover:border-brand-cyan/40"
+                          >
+                            {t('chat.reconnect') || '重连'}
+                          </button>
                         </div>
                       )}
                       <SessionArtifactsBar

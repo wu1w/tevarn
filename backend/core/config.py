@@ -277,7 +277,8 @@ class Settings(BaseSettings):
     # 编制 soft_renew：默认关（硬顶叙事）。长任务/marathon 可显式打开。
     # CEO/主会话不依赖此开关，走 chat_elastic 动态 top_up。
     agent_budget_soft_renew_enabled: bool = False
-    # H2-B4：编制硬顶 — 禁止编制 soft renew。不影响 CEO/主会话弹性。
+    # H2-B4：编制「经典 soft_renew」硬顶 — 禁止无界 soft renew。
+    # 不影响 CEO chat_elastic；也不再挡住下面的「编制有限次 auto top_up」。
     agent_budget_hard_cap_only: bool = True
     # 剩余不足预估 或 已用占比 ≥ 此阈值时尝试续航
     agent_budget_soft_renew_threshold: float = 0.85
@@ -291,6 +292,13 @@ class Settings(BaseSettings):
     agent_chat_auto_top_up_min_add: int = 250_000
     # 主会话预算天花板（0 → max(workforce_hard_cap, 5_000_000)）
     agent_chat_budget_hard_cap: int = 5_000_000
+    # 编制有限次 auto top_up（与 chat_elastic 独立；比主会话更紧，避免长工单必挂）
+    # hard_cap_only 只挡经典 soft_renew，不挡本路径。meta.hard_cap_only / agent_workforce_hard_cap_only 仍可 opt-out。
+    agent_workforce_auto_top_up_enabled: bool = True
+    agent_workforce_auto_top_up_max: int = 3
+    agent_workforce_auto_top_up_min_add: int = 100_000
+    # 编制进程强制硬顶（禁止任何 auto top_up）；默认关
+    agent_workforce_hard_cap_only: bool = False
     # H2-C1：CapabilityToken HMAC 专用密钥（≥16）；空则从 jwt_secret 派生
     agent_token_hmac_secret: str = ""
     # 演化分析阈值（Alpha Review #3：参数化——研发型/运营型身份工作模式

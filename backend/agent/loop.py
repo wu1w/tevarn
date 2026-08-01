@@ -444,16 +444,16 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     ):
                         _wf_hard = True
                 # 产品语义：
-                # - hard_cap_only：约束编制工单（防员工任务静默烧预算）
-                # - CEO / 主会话 (_interactive)：始终允许弹性续航（chat_elastic）
-                # - 编制：hard_cap 关 + soft_renew 开，或 auto top_up（非 hard）
-                soft_on = bool(_interactive) or (
-                    (not hard_only)
-                    and (
-                        bool(getattr(settings, "agent_budget_soft_renew_enabled", False))
-                        or (_is_wf_proc and not _wf_hard)
-                    )
+                # - hard_cap_only：只挡「经典 soft_renew」（防无界续航）
+                # - CEO / 主会话 (_interactive)：始终 chat_elastic
+                # - 编制有限次 auto top_up：独立开关，默认开（比主会话更紧）
+                _wf_auto_on = bool(_is_wf_proc) and (not _wf_hard) and bool(
+                    getattr(settings, "agent_workforce_auto_top_up_enabled", True)
                 )
+                _soft_renew_on = (not hard_only) and bool(
+                    getattr(settings, "agent_budget_soft_renew_enabled", False)
+                )
+                soft_on = bool(_interactive) or _wf_auto_on or _soft_renew_on
                 need_renew = remaining < estimated or used_ratio >= thr
                 if soft_on and need_renew and remaining < estimated:
                     try:
@@ -478,16 +478,18 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                                 f"预算弹性续航 +{renewed.get('amount')} "
                                 f"（{src} 第 {renewed.get('renew_count')} 次），继续执行…",
                             )
-                        elif _is_wf_proc and not _wf_hard:
-                            # soft_renew unavailable — direct top_up for workforce
+                        elif _is_wf_proc and not _wf_hard and bool(
+                            getattr(settings, "agent_workforce_auto_top_up_enabled", True)
+                        ):
+                            # 经典 soft_renew 不可用时：编制有限次 direct top_up
                             _n = 0
                             if isinstance(_meta_p, dict):
                                 _n = int(_meta_p.get("auto_top_up_count") or 0)
                             _max = int(
                                 getattr(
-                                    settings, "agent_workforce_auto_top_up_max", 4
+                                    settings, "agent_workforce_auto_top_up_max", 3
                                 )
-                                or 4
+                                or 3
                             )
                             if _n < _max:
                                 _add = max(
@@ -496,41 +498,57 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                                         getattr(
                                             settings,
                                             "agent_workforce_auto_top_up_min_add",
-                                            150_000,
+                                            100_000,
                                         )
-                                        or 150_000
+                                        or 100_000
                                     ),
                                 )
-                                _add = min(_add, 500_000)
-                                get_kernel().top_up_budget(
-                                    proc.id,
-                                    _add,
-                                    by="system:workforce_precheck",
-                                    reason=f"precheck top_up n={_n + 1}",
-                                )
-                                if isinstance(_meta_p, dict):
-                                    _meta_p = dict(_meta_p)
-                                    _meta_p["auto_top_up_count"] = _n + 1
-                                    try:
-                                        proc.meta = _meta_p  # type: ignore[misc]
-                                    except Exception:
-                                        pass
-                                fresh = get_kernel().get_process(proc.id)
-                                if fresh is not None:
-                                    self._kernel_process = fresh
-                                    proc = fresh
-                                remaining = proc.budget_remaining
-                                logger.info(
-                                    "workforce precheck top_up proc=%s add=%s n=%s",
-                                    proc.id,
-                                    _add,
-                                    _n + 1,
-                                )
-                                await self._push_status(
-                                    session_id,
-                                    "thinking",
-                                    f"员工预算动态追加 +{_add}（事前检查），继续…",
-                                )
+                                _add = min(_add, 400_000)
+                                # 总预算不超过编制 hard_cap
+                                try:
+                                    _cap = int(
+                                        getattr(
+                                            settings,
+                                            "agent_workforce_budget_hard_cap",
+                                            2_000_000,
+                                        )
+                                        or 2_000_000
+                                    )
+                                    _bud = int(proc.token_budget or 0)
+                                    if _cap > 0 and _bud + _add > _cap:
+                                        _add = max(0, _cap - _bud)
+                                except Exception:
+                                    pass
+                                if _add > 0:
+                                    get_kernel().top_up_budget(
+                                        proc.id,
+                                        _add,
+                                        by="system:workforce_precheck",
+                                        reason=f"precheck top_up n={_n + 1}",
+                                    )
+                                    if isinstance(_meta_p, dict):
+                                        _meta_p = dict(_meta_p)
+                                        _meta_p["auto_top_up_count"] = _n + 1
+                                        try:
+                                            proc.meta = _meta_p  # type: ignore[misc]
+                                        except Exception:
+                                            pass
+                                    fresh = get_kernel().get_process(proc.id)
+                                    if fresh is not None:
+                                        self._kernel_process = fresh
+                                        proc = fresh
+                                    remaining = proc.budget_remaining
+                                    logger.info(
+                                        "workforce precheck top_up proc=%s add=%s n=%s",
+                                        proc.id,
+                                        _add,
+                                        _n + 1,
+                                    )
+                                    await self._push_status(
+                                        session_id,
+                                        "thinking",
+                                        f"员工预算动态追加 +{_add}（事前检查），继续…",
+                                    )
                         elif _interactive and not renewed:
                             # 双保险：try_soft_renew 已含 chat_elastic；再显式 top_up 一次
                             _n = 0

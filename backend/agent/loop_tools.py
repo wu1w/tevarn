@@ -405,13 +405,20 @@ class LoopToolsMixin:
                         load_identity_capabilities,
                     )
 
+                    # 始终从档案重载：grant_caps 后当单要立刻吃到新权
                     caps = list(getattr(self, "_identity_capabilities", None) or [])
-                    if not caps:
-                        caps = (
+                    try:
+                        fresh_caps = (
                             await load_identity_capabilities(
                                 str(getattr(self, "_identity_id", "") or "") or None
                             )
                         ) or []
+                        if fresh_caps:
+                            # 合并：档案 ∪ 本轮快照（扩权后档案更大）
+                            caps = list(dict.fromkeys([*caps, *fresh_caps]))
+                            self._identity_capabilities = caps  # type: ignore[misc]
+                    except Exception:
+                        pass
                     if tool_matches_crew_caps(name, caps):
                         # H2-B5: no local capabilities |=  — only escalate / re-issue via kernel
                         try:
