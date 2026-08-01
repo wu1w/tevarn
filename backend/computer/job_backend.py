@@ -111,8 +111,24 @@ class _JobHandle:
         if not self._kernel32.AssignProcessToJobObject(self.handle, process_handle):
             raise OSError("AssignProcessToJobObject failed")
 
+    def terminate(self, exit_code: int = 1) -> None:
+        """强制 TerminateJobObject：cancel/超时在 communicate 阻塞时也能杀树。"""
+        if not self.handle:
+            return
+        try:
+            # BOOL TerminateJobObject(HANDLE hJob, UINT uExitCode)
+            self._kernel32.TerminateJobObject(self.handle, exit_code)
+        except Exception as e:
+            logger.debug("TerminateJobObject skip: %s", e)
+
     def close(self) -> None:
         if self.handle:
+            # 先 terminate 再 close：KILL_ON_JOB_CLOSE 依赖 close，但显式 terminate
+            # 在句柄泄漏/半关闭路径更可靠
+            try:
+                self.terminate(1)
+            except Exception:
+                pass
             self._kernel32.CloseHandle(self.handle)
             self.handle = None
 
@@ -209,8 +225,31 @@ class JobBackend:
             try:
                 out_b, err_b = proc.communicate(timeout=timeout)
             except subprocess.TimeoutExpired:
-                job.close()  # KILL_ON_JOB_CLOSE 强杀进程树
-                proc.wait()
+                # 先 TerminateJobObject 再 close，避免仅依赖 KILL_ON_JOB_CLOSE
+                try:
+                    job.terminate(124)
+                except Exception:
+                    pass
+                job.close()
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                try:
+                    proc.wait(timeout=5)
+                except Exception:
+                    pass
+                raise
+            except Exception:
+                # cancel / 其它异常：强制杀树，避免 read 阻塞拖死
+                try:
+                    job.terminate(1)
+                except Exception:
+                    pass
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
                 raise
             return (
                 decode_process_bytes(out_b),
@@ -218,6 +257,10 @@ class JobBackend:
                 proc.returncode or 0,
             )
         finally:
+            try:
+                job.terminate(1)
+            except Exception:
+                pass
             job.close()
 
     async def run(

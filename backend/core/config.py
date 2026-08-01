@@ -182,6 +182,8 @@ class Settings(BaseSettings):
     context_window: int = 128000
     # Agent 多步工具循环上限（长链/编码任务需要更高，默认 40）
     agent_max_iterations: int = 40
+    # 聊天 run 快照是否落盘（跳页/崩溃后可恢复 partial；默认开）
+    agent_run_snapshot_persist: bool = True
     # Goal 模式额外轮次上限
     agent_goal_max_iterations: int = 100
     max_tool_result_length: int = 12_000

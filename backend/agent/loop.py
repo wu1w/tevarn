@@ -746,11 +746,16 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     "parent_run_id": str(parent_run_id) if parent_run_id else None,
                     "run_id": str(self._agent_run_id) if self._agent_run_id else None,
                     "origin": getattr(recorder, "origin", None),
+                    # 多用户归属：API 用 meta.user_id 做 owner 校验
+                    "user_id": str(self.user_id) if getattr(self, "user_id", None) else None,
+                    "session_id": str(session_id),
                 }
                 if isinstance(proc_opts.get("meta"), dict):
                     _meta.update(proc_opts["meta"])
                     if self._agent_run_id:
                         _meta["run_id"] = str(self._agent_run_id)
+                    if getattr(self, "user_id", None) and not _meta.get("user_id"):
+                        _meta["user_id"] = str(self.user_id)
                 _akey = agent_key or "main"
                 if str(_akey).startswith("wf:") or _meta.get("workforce"):
                     try:

@@ -168,6 +168,17 @@ class LoopToolsMixin:
                     await k.mark_running(new_p.id)
             except Exception:
                 pass
+            # rehydrate 后旧 process 上的 child_proc 租约会 no-op release → 主动清旧 id
+            try:
+                from backend.kernel.tool_gate import release_orphaned_child_leases
+
+                old_id = str(getattr(old, "id", "") or "")
+                if old_id and old_id != str(new_p.id):
+                    release_orphaned_child_leases(old_id)
+                    # 记录映射：工具 finally 可对 old+new 双 release
+                    self._rehydrate_lease_prev = old_id
+            except Exception as le:
+                logger.debug("rehydrate lease cleanup skip: %s", le)
             self._kernel_process = new_p
             self._kernel_host_epoch = int(getattr(k, "_host_epoch", 0) or 0)
             logger.warning(
@@ -549,8 +560,19 @@ class LoopToolsMixin:
         finally:
             # Always free child_proc concurrency lease after tool path completes
             if _child_leased or arguments.get("_child_proc_leased"):
-                release_for_tool(name, _lease_pid or arguments.get("_kernel_process_id"))
+                prev = str(getattr(self, "_rehydrate_lease_prev", "") or "")
+                also = [prev] if prev else None
+                release_for_tool(
+                    name,
+                    _lease_pid or arguments.get("_kernel_process_id"),
+                    also_process_ids=also,
+                )
                 arguments.pop("_child_proc_leased", None)
+                if prev:
+                    try:
+                        delattr(self, "_rehydrate_lease_prev")
+                    except Exception:
+                        self._rehydrate_lease_prev = None
 
     # ── 重复搜索检测（收敛刹车 + 全局预算 + 近似同义）──────────
 

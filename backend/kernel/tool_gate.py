@@ -177,21 +177,73 @@ def _release(kernel: Any, process_id: str, kind: str, amount: int = 1) -> None:
     logger.debug("kernel has no resource_release; skip %s/%s", kind, process_id[:12])
 
 
-def release_for_tool(name: str, process_id: str | None) -> None:
+def release_for_tool(
+    name: str,
+    process_id: str | None,
+    *,
+    also_process_ids: list[str] | None = None,
+) -> None:
     """Release child_proc lease after command-class tool finishes (or is aborted).
 
     ChildProc is a *concurrency* quota, not a lifetime call counter. Without
     release, 16 shell tools permanently kill command for that process.
+
+    also_process_ids: rehydrate 换 id 后，对旧 process 也尝试 release（防 lease 挂死）。
     """
-    pid = (process_id or "").strip()
-    if not pid or name not in CHILD_PROC_TOOLS:
+    if name not in CHILD_PROC_TOOLS:
+        return
+    pids: list[str] = []
+    for p in [process_id, *(also_process_ids or [])]:
+        s = (p or "").strip()
+        if s and s not in pids:
+            pids.append(s)
+    if not pids:
         return
     try:
         from backend.kernel import get_kernel
 
-        _release(get_kernel(), pid, "child_proc", 1)
+        k = get_kernel()
+        for pid in pids:
+            try:
+                _release(k, pid, "child_proc", 1)
+            except Exception as e:
+                logger.debug(
+                    "resource_release child_proc skip tool=%s pid=%s: %s",
+                    name,
+                    pid[:12],
+                    e,
+                )
     except Exception as e:
         logger.debug("resource_release child_proc skip tool=%s: %s", name, e)
+
+
+def release_orphaned_child_leases(old_process_id: str | None) -> None:
+    """rehydrate 后清理旧 process 上可能残留的 child_proc 租约。"""
+    pid = (old_process_id or "").strip()
+    if not pid:
+        return
+    try:
+        from backend.kernel import get_kernel
+
+        k = get_kernel()
+        # 尽量清空旧 id 上的 child_proc 占用（幂等）
+        for _ in range(8):
+            try:
+                usage = k.resource_usage(pid) if hasattr(k, "resource_usage") else None
+                used = 0
+                if isinstance(usage, dict):
+                    cp = usage.get("child_proc") or usage.get("ChildProc") or {}
+                    if isinstance(cp, dict):
+                        used = int(cp.get("used") or cp.get("count") or 0)
+                    elif isinstance(cp, (int, float)):
+                        used = int(cp)
+                if used <= 0:
+                    break
+                _release(k, pid, "child_proc", 1)
+            except Exception:
+                break
+    except Exception as e:
+        logger.debug("release_orphaned_child_leases skip: %s", e)
 
 
 async def mediate_tool_call(

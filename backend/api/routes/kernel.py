@@ -100,6 +100,13 @@ async def list_processes(
     if not include_terminal:
         terminal = {"completed", "failed", "killed", "interrupted", "exited", "done", "error"}
         procs = [p for p in procs if p.get("state") not in terminal]
+    # 标记来源：live 优先；DB 档案若与 live 终态冲突，标 db_stale
+    for p in procs:
+        if p.get("source") != "db":
+            p["source"] = p.get("source") or "live"
+            p["authoritative"] = True
+        else:
+            p["authoritative"] = False
     # P2：stalled 检测 — running 且长时间无 charge 心跳
     import time as _time
 
@@ -125,15 +132,36 @@ async def list_processes(
         idle = now - last_f if last_f > 0 else 0
         p["stalled"] = bool(idle >= stall_sec and st == "running")
         p["idle_seconds"] = int(idle)
+    # 多用户：过滤非本人进程（single_user 全放行）
+    try:
+        from backend.core.config import settings as _st2
+        from backend.kernel.process_access import assert_user_owns_process
+
+        if not bool(getattr(_st2, "single_user_mode", True)):
+            filtered = []
+            for p in procs:
+                try:
+                    await assert_user_owns_process(
+                        kernel, str(p.get("id") or ""), current_user.id
+                    )
+                    filtered.append(p)
+                except Exception:
+                    continue
+            procs = filtered
+    except Exception as e:
+        logger.debug("list_processes ownership filter skip: %s", e)
+
     out = {
         "enabled": True,
         "processes": procs,
         "total": len(procs),
         "shared_state": shared,
         "stall_threshold_seconds": stall_sec,
+        "live_preferred": True,
     }
     if db_error:
         out["db_warning"] = db_error
+        out["db_stale_risk"] = True
     return out
 
 
@@ -533,11 +561,26 @@ async def host_watchdog_api(
     return {"ok": False, "error": "no host client"}
 
 
+async def _require_process_owner(process_id: str, current_user: UserRead, *, live: bool = False):
+    """归属校验：不通过则 HTTPException。"""
+    from backend.kernel.process_access import assert_user_owns_process, ownership_http_exc
+
+    kernel = get_kernel()
+    try:
+        return await assert_user_owns_process(
+            kernel, process_id, getattr(current_user, "id", current_user), require_live=live
+        )
+    except (ValueError, PermissionError) as e:
+        code, detail = ownership_http_exc(e)
+        raise HTTPException(status_code=code, detail=detail) from e
+
+
 @router.get("/processes/{process_id}")
 async def get_process(
     process_id: str,
     current_user: Annotated[UserRead, Depends(get_current_user)],
 ):
+    await _require_process_owner(process_id, current_user)
     kernel = get_kernel()
     proc = kernel.get_process(process_id)
     if proc is None:
@@ -558,6 +601,7 @@ async def suspend_process(
     reason: str = Query("", description="挂起原因"),
 ):
     """Phase 3.3：挂起运行中进程（loop 下一轮 gate 阻塞）。"""
+    await _require_process_owner(process_id, current_user, live=True)
     kernel = get_kernel()
     try:
         proc = await kernel.suspend_process(process_id, reason=reason or "")
@@ -574,6 +618,7 @@ async def resume_process(
     current_user: Annotated[UserRead, Depends(get_current_user)],
 ):
     """Phase 3.3：恢复挂起进程。"""
+    await _require_process_owner(process_id, current_user)
     kernel = get_kernel()
     try:
         proc = await kernel.resume_process(process_id)
@@ -595,6 +640,7 @@ async def top_up_process_budget(
     body: { amount: int (>0), reason?: str }
     下一刀 charge_tokens 立即使用新上限；不重置已用额度。
     """
+    await _require_process_owner(process_id, current_user)
     kernel = get_kernel()
     try:
         amount = int(body.get("amount") or 0)
@@ -2964,6 +3010,14 @@ async def stop_job(
         )
 
     reason = (body.reason or "stopped by user").strip()[:500]
+    # 有 process_id 时校验归属
+    if process_id:
+        try:
+            await _require_process_owner(process_id, current_user)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
     disp = get_workforce_dispatcher()
     if disp is not None:
         result = await disp.cancel_job(

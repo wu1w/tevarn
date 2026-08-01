@@ -156,13 +156,72 @@ class ConnectionManager:
             updated_at=time.time(),
             generation=gen,
         )
+        self._persist_snapshot_disk(session_id)
 
     def end_run_snapshot(self, session_id: uuid.UUID) -> None:
         """Agent 主任务结束：释放快照，避免假 running。"""
         self._run_snapshots.pop(session_id, None)
+        try:
+            from backend.agent.run_snapshot_store import delete_snapshot
+
+            delete_snapshot(str(session_id))
+        except Exception:
+            pass
 
     def get_run_snapshot(self, session_id: uuid.UUID) -> SessionRunSnapshot | None:
-        return self._run_snapshots.get(session_id)
+        snap = self._run_snapshots.get(session_id)
+        if snap is not None:
+            return snap
+        # 内存空：尝试从磁盘恢复（崩溃/worker 切换）
+        try:
+            from backend.agent.run_snapshot_store import load_snapshot
+
+            raw = load_snapshot(str(session_id))
+            if not raw or not raw.get("agent_running"):
+                return None
+            snap = SessionRunSnapshot(
+                agent_running=bool(raw.get("agent_running")),
+                state=str(raw.get("state") or "thinking"),
+                detail=str(raw.get("detail") or raw.get("stream_status") or ""),
+                partial_content=str(raw.get("partial_content") or "")[:_MAX_PARTIAL_CHARS],
+                stream_message_id=raw.get("stream_message_id"),
+                live_tools=list(raw.get("live_tools") or [])[:_MAX_LIVE_TOOLS],
+                updated_at=float(raw.get("updated_at") or raw.get("persisted_at") or 0),
+                generation=int(raw.get("generation") or raw.get("run_generation") or 0),
+            )
+            self._run_snapshots[session_id] = snap
+            if snap.generation:
+                self._run_generations[session_id] = max(
+                    int(self._run_generations.get(session_id, 0) or 0),
+                    snap.generation,
+                )
+            return snap
+        except Exception:
+            return None
+
+    def _persist_snapshot_disk(self, session_id: uuid.UUID) -> None:
+        snap = self._run_snapshots.get(session_id)
+        if snap is None:
+            return
+        try:
+            from backend.agent.run_snapshot_store import save_snapshot
+
+            save_snapshot(
+                str(session_id),
+                {
+                    **snap.to_sync_fields(),
+                    "detail": snap.detail,
+                    "generation": snap.generation,
+                    "updated_at": snap.updated_at,
+                    "agent_running": snap.agent_running,
+                    "state": snap.state,
+                    "partial_content": snap.partial_content,
+                    "stream_message_id": snap.stream_message_id,
+                    "live_tools": list(snap.live_tools),
+                },
+            )
+        except Exception:
+            pass
 
     def _touch_snapshot(self, session_id: uuid.UUID) -> SessionRunSnapshot:
         snap = self._run_snapshots.get(session_id)
@@ -171,6 +230,21 @@ class ConnectionManager:
             self._run_snapshots[session_id] = snap
         snap.updated_at = time.time()
         return snap
+
+    def _maybe_flush_snapshot(self, session_id: uuid.UUID) -> None:
+        """节流落盘：最多约 1.5s 一次，避免每帧 delta 打盘。"""
+        snap = self._run_snapshots.get(session_id)
+        if snap is None:
+            return
+        last = float(getattr(snap, "_last_disk_flush", 0) or 0)
+        now = time.time()
+        if now - last < 1.5 and snap.state not in ("idle", "error"):
+            return
+        try:
+            snap._last_disk_flush = now  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        self._persist_snapshot_disk(session_id)
 
     def _ingest_run_event(self, session_id: uuid.UUID, message: dict[str, Any]) -> None:
         """从广播消息维护快照。无 WS 连接时也要更新（用户在别的页面）。
@@ -218,6 +292,7 @@ class ConnectionManager:
                     snap.partial_content = (snap.partial_content + content)[:_MAX_PARTIAL_CHARS]
             if snap.state in ("idle", ""):
                 snap.state = "thinking"
+            self._maybe_flush_snapshot(session_id)
             return
 
         if msg_type == "status":
@@ -230,12 +305,17 @@ class ConnectionManager:
             if state == "idle":
                 # 终态：若 agent 任务已结束则清快照；否则保留到 task done
                 if not running:
-                    self._run_snapshots.pop(session_id, None)
+                    self.end_run_snapshot(session_id)
                 else:
                     snap.agent_running = True
+                    self._maybe_flush_snapshot(session_id)
             elif state == "error":
                 if not running:
-                    self._run_snapshots.pop(session_id, None)
+                    self.end_run_snapshot(session_id)
+                else:
+                    self._maybe_flush_snapshot(session_id)
+            else:
+                self._maybe_flush_snapshot(session_id)
             return
 
         if msg_type == "error":
@@ -244,7 +324,9 @@ class ConnectionManager:
                 snap.detail = str(detail)
             snap.state = "error"
             if not running:
-                self._run_snapshots.pop(session_id, None)
+                self.end_run_snapshot(session_id)
+            else:
+                self._maybe_flush_snapshot(session_id)
             return
 
         if msg_type == "tool_event":
@@ -283,6 +365,7 @@ class ConnectionManager:
                 snap.live_tools = snap.live_tools[-_MAX_LIVE_TOOLS:]
             if snap.state in ("idle", ""):
                 snap.state = "tool_executing"
+            self._maybe_flush_snapshot(session_id)
             return
 
     async def _safe_close(self, websocket: WebSocket, code: int = 1000, reason: str = "") -> None:
