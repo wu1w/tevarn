@@ -1,10 +1,13 @@
 """
 Mount Next.js static export (if present) so one uvicorn process serves API + UI.
 
-Static candidates (first hit wins):
-  - backend/static          (pip / monorepo build output)
-  - ../frontend/dist        (dev export dir, when index.html exists)
+Static candidates (first hit wins among *valid* trees):
   - TAKTON_FRONTEND_STATIC  env override
+  - ../frontend/out         (next export)
+  - ../frontend/dist
+  - backend/static          (legacy pip / monorepo build output)
+
+P0: 旧 backend/static 缺 agents/kernel 等路由时，若 frontend/out 更新则优先它。
 """
 
 from __future__ import annotations
@@ -13,11 +16,50 @@ import logging
 import os
 from pathlib import Path
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 logger = logging.getLogger(__name__)
+
+# 产品路由：导出树必须有对应 index.html，否则显式 404（勿静默回落到聊天页）
+_APP_ROUTES = frozenset({
+    "agents",
+    "kernel",
+    "activity",
+    "audit",
+    "goals",
+    "market",
+    "approvals",
+    "chat",
+    "settings",
+    "tools",
+    "skills",
+    "workflows",
+    "wiki",
+    "memory",
+    "knowledge",
+    "devices",
+    "cron",
+    "channels",
+    "cluster",
+    "security",
+    "profiles",
+    "login",
+    "config",
+    "context",
+    "evolution",
+    "mcp",
+})
+
+
+def _route_coverage(root: Path) -> int:
+    """统计导出树中已有的产品路由目录数（用于挑较新构建）。"""
+    n = 0
+    for name in _APP_ROUTES:
+        if (root / name / "index.html").is_file() or (root / f"{name}.html").is_file():
+            n += 1
+    return n
 
 
 def resolve_frontend_static() -> Path | None:
@@ -27,21 +69,42 @@ def resolve_frontend_static() -> Path | None:
         candidates.append(Path(env).expanduser().resolve())
 
     here = Path(__file__).resolve().parent  # backend/
+    # 优先 next export / dist，再落 legacy backend/static（避免 07-27 旧包盖住新导出）
     candidates.extend(
         [
-            here / "static",
-            here.parent / "frontend" / "dist",
             here.parent / "frontend" / "out",
+            here.parent / "frontend" / "dist",
+            here / "static",
         ]
     )
 
+    valid: list[tuple[int, float, Path]] = []
     for c in candidates:
         try:
-            if c.is_dir() and (c / "index.html").is_file():
-                return c
+            if not c.is_dir() or not (c / "index.html").is_file():
+                continue
+            cov = _route_coverage(c)
+            try:
+                mtime = (c / "index.html").stat().st_mtime
+            except OSError:
+                mtime = 0.0
+            valid.append((cov, mtime, c))
         except OSError:
             continue
-    return None
+
+    if not valid:
+        return None
+    # 路由覆盖优先，其次 mtime
+    valid.sort(key=lambda t: (t[0], t[1]), reverse=True)
+    chosen = valid[0][2]
+    if len(valid) > 1 and valid[0][0] < 5:
+        logger.warning(
+            "Frontend static at %s has low route coverage (%s). "
+            "Re-export with NEXT_EXPORT=1 to restore agents/kernel/… pages.",
+            chosen,
+            valid[0][0],
+        )
+    return chosen
 
 
 def mount_frontend_static(app: FastAPI) -> Path | None:
@@ -55,39 +118,88 @@ def mount_frontend_static(app: FastAPI) -> Path | None:
     if next_dir.is_dir():
         app.mount("/_next", StaticFiles(directory=str(next_dir)), name="next_assets")
 
-    # Common public assets exported next to index.html
-    for _name in ("favicon.ico", "icon.png", "robots.txt"):
-        pass  # served via catch-all FileResponse
+    @app.api_route("/{full_path:path}", methods=["GET", "HEAD"])
+    async def serve_frontend(request: Request, full_path: str):
+        # 归一化：//agents → agents；去掉前导 /
+        path = (full_path or "").replace("\\", "/")
+        while "//" in path:
+            path = path.replace("//", "/")
+        path = path.lstrip("/")
 
-    @app.get("/{full_path:path}")
-    async def serve_frontend(full_path: str):
         # Never shadow API / uploads / docs
-        blocked = ("api", "uploads", "docs", "redoc", "openapi.json", "health")
-        first = full_path.split("/", 1)[0]
-        if first in blocked or full_path in blocked:
+        blocked = ("api", "uploads", "docs", "redoc", "openapi.json", "health", "ws")
+        first = path.split("/", 1)[0] if path else ""
+        if first in blocked or path in blocked:
             return JSONResponse({"detail": "Not Found"}, status_code=404)
 
         # Exact file
-        candidate = (root / full_path).resolve()
-        try:
-            candidate.relative_to(root.resolve())
-        except ValueError:
-            return JSONResponse({"detail": "Not Found"}, status_code=404)
+        if path:
+            candidate = (root / path).resolve()
+            try:
+                candidate.relative_to(root.resolve())
+            except ValueError:
+                return JSONResponse({"detail": "Not Found"}, status_code=404)
 
-        if candidate.is_file():
-            return FileResponse(candidate)
+            if candidate.is_file():
+                if request.method == "HEAD":
+                    return Response(
+                        status_code=200,
+                        media_type=_guess_media(candidate),
+                        headers={"Content-Length": str(candidate.stat().st_size)},
+                    )
+                return FileResponse(candidate)
 
-        # trailingSlash export: path/index.html
-        as_index = root / full_path / "index.html"
-        if as_index.is_file():
-            return FileResponse(as_index, media_type="text/html")
+            # trailingSlash export: path/index.html
+            as_index = root / path / "index.html"
+            if as_index.is_file():
+                if request.method == "HEAD":
+                    return Response(status_code=200, media_type="text/html")
+                return FileResponse(as_index, media_type="text/html")
 
-        # SPA / missing client route → index.html
+            # 已知产品路由但导出树没有 → 显式 404（勿静默回落到聊天 index）
+            top = first.lower()
+            if top in _APP_ROUTES:
+                return JSONResponse(
+                    {
+                        "detail": (
+                            f"Route /{top} not in static export. "
+                            "Rebuild frontend (NEXT_EXPORT=1) and refresh backend/static or frontend/out."
+                        ),
+                        "path": path,
+                    },
+                    status_code=404,
+                )
+
+        # SPA fallback only for unknown soft paths / root
         index = root / "index.html"
         if index.is_file():
+            if request.method == "HEAD":
+                return Response(status_code=200, media_type="text/html")
             return FileResponse(index, media_type="text/html")
 
         return JSONResponse({"detail": "Frontend not built"}, status_code=503)
 
-    logger.info("Frontend static mounted from %s", root)
+    logger.info(
+        "Frontend static mounted from %s (routes≈%s)",
+        root,
+        _route_coverage(root),
+    )
     return root
+
+
+def _guess_media(path: Path) -> str:
+    suf = path.suffix.lower()
+    return {
+        ".html": "text/html",
+        ".js": "application/javascript",
+        ".css": "text/css",
+        ".json": "application/json",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".svg": "image/svg+xml",
+        ".ico": "image/x-icon",
+        ".woff": "font/woff",
+        ".woff2": "font/woff2",
+        ".txt": "text/plain",
+    }.get(suf, "application/octet-stream")

@@ -44,7 +44,8 @@ _AGENT_CONTEXT_KEYS = (
     "_process_id",
 )
 
-# 注入到工具 args 的服务端对象，绝不可进入 Rust RPC / 审计 JSON。
+# 注入到工具 args 的服务端对象 / 门控字段，绝不可进入 Rust RPC / 审计 JSON，
+# 也不可被模型在入参里伪装（P0：_confirm_ok 等自授权）。
 _INTERNAL_ARG_DROP = frozenset({
     "_ws_manager",
     "ws_manager",
@@ -52,6 +53,14 @@ _INTERNAL_ARG_DROP = frozenset({
     "_run_recorder",
     "_tool_gate_passed",
     "_tool_gate_internal",
+    "_confirm_ok",
+    "_confirm_ok_source",
+    "_session_grant",
+    # 进程/身份元数据由服务端强制赋值，不经模型 JSON 透传
+    "_kernel_process_id",
+    "_process_id",
+    "_require_kernel_process",
+    "_child_proc_leased",
 })
 
 

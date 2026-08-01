@@ -665,13 +665,40 @@ def start_kernel_host(host: str = DEFAULT_HOST, *, extra_args: list[str] | None 
         if extra_args:
             cmd.extend(extra_args)
         try:
+            # P0：stderr=PIPE 无人排空 → Windows 管道写满后 host 阻塞 → RPC 全超时
+            # 启动期若需诊断，设 TAKTON_KERNEL_HOST_STDERR=pipe 并起 drain 线程
+            _stderr_mode = (os.environ.get("TAKTON_KERNEL_HOST_STDERR") or "devnull").strip().lower()
             popen_kwargs: dict[str, Any] = {
                 "stdout": subprocess.DEVNULL,
-                "stderr": subprocess.PIPE,
+                "stderr": (
+                    subprocess.PIPE
+                    if _stderr_mode in ("pipe", "1", "true")
+                    else subprocess.DEVNULL
+                ),
             }
             if sys.platform == "win32":
                 popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
             _host_proc = subprocess.Popen(cmd, **popen_kwargs)
+            # pipe 模式：后台 drain，防管道塞死
+            if popen_kwargs.get("stderr") is subprocess.PIPE and _host_proc.stderr:
+                def _drain_stderr(proc: subprocess.Popen = _host_proc) -> None:
+                    try:
+                        for line in iter(proc.stderr.readline, b""):
+                            if not line:
+                                break
+                            try:
+                                logger.debug(
+                                    "kernel-host: %s",
+                                    line.decode("utf-8", errors="replace").rstrip()[:300],
+                                )
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+
+                threading.Thread(
+                    target=_drain_stderr, name="kernel-host-stderr", daemon=True
+                ).start()
         except Exception as e:
             logger.error("failed to start kernel host (%s): %s", bin_path, e)
             # Another process may already own the port

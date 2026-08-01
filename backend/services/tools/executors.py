@@ -738,7 +738,8 @@ async def enforce_command_policy(
         pass
 
     # 本轮 tool_hooks 已确认过（含 once）→ 不再二次弹窗
-    if arguments.get("_confirm_ok"):
+    # 只信服务端标记：模型注入的 _confirm_ok 在 _validate_tool_args 已剥离
+    if arguments.get("_confirm_ok") is True and arguments.get("_confirm_ok_source") == "server":
         return None
 
     # 「本会话允许」短路：与 tool_hooks / grant_store 对齐
@@ -763,6 +764,7 @@ async def enforce_command_policy(
                 command[:120],
             )
             arguments["_confirm_ok"] = True
+            arguments["_confirm_ok_source"] = "server"
             return None
     except Exception:
         pass
@@ -807,6 +809,7 @@ async def enforce_command_policy(
             # 整工具会话缓存，避免只记住 command:rm
             add_session_grant(sid, "command", arguments, whole_tool=True)
         arguments["_confirm_ok"] = True
+        arguments["_confirm_ok_source"] = "server"
         return None
 
     # 诚实口径：没问到人 ≠ 用户拒绝。前者要让模型知道是环境问题，
@@ -1241,28 +1244,34 @@ async def execute_python(config: dict[str, Any], arguments: dict[str, Any]) -> s
             break
 
     if danger_reason:
-        # tool_hooks 已确认 / 本会话授权 / 本员工能力 → 不再二次弹窗
-        if arguments.get("_confirm_ok"):
-            pass
-        else:
+        # 只信服务端确认标记（模型注入的 _confirm_ok 已在 validate 剥离）
+        confirmed = (
+            arguments.get("_confirm_ok") is True
+            and arguments.get("_confirm_ok_source") == "server"
+        )
+        if not confirmed:
             try:
                 from backend.agent.grant_store import has_session_grant
 
                 sid = str(arguments.get("_session_id") or "")
                 if sid and has_session_grant(sid, "python", arguments):
+                    confirmed = True
                     arguments["_confirm_ok"] = True
+                    arguments["_confirm_ok_source"] = "server"
             except Exception:
                 pass
-            if not arguments.get("_confirm_ok"):
-                try:
-                    from backend.agent.grant_store import has_identity_tool_grant
+        if not confirmed:
+            try:
+                from backend.agent.grant_store import has_identity_tool_grant
 
-                    if await has_identity_tool_grant("python", arguments=arguments):
-                        arguments["_confirm_ok"] = True
-                except Exception:
-                    pass
+                if await has_identity_tool_grant("python", arguments=arguments):
+                    confirmed = True
+                    arguments["_confirm_ok"] = True
+                    arguments["_confirm_ok_source"] = "server"
+            except Exception:
+                pass
 
-        if not arguments.get("_confirm_ok"):
+        if not confirmed:
             from backend.agent.grant_store import (
                 add_session_grant,
                 grant_agent_capability,
@@ -1305,6 +1314,7 @@ async def execute_python(config: dict[str, Any], arguments: dict[str, Any]) -> s
                 await grant_agent_capability(agent_id, "python")
                 add_session_grant(sid, "python", arguments, whole_tool=True)
             arguments["_confirm_ok"] = True
+            arguments["_confirm_ok_source"] = "server"
 
     # Prefer current interpreter (Windows rarely has python3 on PATH)
     py = sys.executable or "python3"

@@ -1155,6 +1155,39 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 logger.warning("kernel create_process 失败，退回无 kernel 路径: %s", e)
                 kernel_proc = None
                 self._kernel_process = None
+        async def _release_kernel_slot(
+            *, state: str, reason: str | None = None
+        ) -> None:
+            """释放 run_gate / 结束进程。CancelledError 路径必须走这里（P0）。"""
+            if kernel is None or kernel_proc is None:
+                return
+            try:
+                if hasattr(kernel, "_call"):
+                    try:
+                        kernel._call(
+                            "run_gate_release", {"process_id": kernel_proc.id}
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        kernel._call(
+                            "run_release", {"process_id": kernel_proc.id}
+                        )
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            try:
+                await kernel.end_process(
+                    kernel_proc.id, state=state, reason=reason
+                )
+            except Exception as ee:
+                logger.warning(
+                    "end_process after run failed proc=%s: %s",
+                    getattr(kernel_proc, "id", "")[:12],
+                    ee,
+                )
+
         try:
             result = await self._run_locked(
                 session_id, user_input, attachments, mode, sub_agent_ids
@@ -1171,48 +1204,37 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 await recorder.cancel("stopped by user")
             else:
                 await recorder.finish_ok(final_summary=result or "")
-            if kernel is not None and kernel_proc is not None:
-                try:
-                    if hasattr(kernel, "_call"):
-                        kernel._call(
-                            "run_gate_release", {"process_id": kernel_proc.id}
-                        )
-                        try:
-                            kernel._call(
-                                "run_release", {"process_id": kernel_proc.id}
-                            )
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
-                await kernel.end_process(
-                    kernel_proc.id,
-                    state="killed" if self._should_stop else "completed",
-                    reason="stopped by user" if self._should_stop else None,
-                )
+            await _release_kernel_slot(
+                state="killed" if self._should_stop else "completed",
+                reason="stopped by user" if self._should_stop else None,
+            )
             return result
+        except asyncio.CancelledError:
+            # P0：停止/超时取消是 BaseException，旧代码只 catch Exception → 槽泄漏 → 全系统假死
+            try:
+                if kernel_proc is not None:
+                    recorder.set_token_used(
+                        int(getattr(kernel_proc, "tokens_used", 0) or 0)
+                    )
+            except Exception:
+                pass
+            try:
+                await recorder.cancel("cancelled")
+            except Exception:
+                pass
+            await _release_kernel_slot(state="killed", reason="cancelled")
+            raise
         except Exception as e:
             try:
                 if kernel_proc is not None:
                     recorder.set_token_used(int(getattr(kernel_proc, "tokens_used", 0) or 0))
             except Exception:
                 pass
-            await recorder.finish_fail(str(e))
-            if kernel is not None and kernel_proc is not None:
-                try:
-                    if hasattr(kernel, "_call"):
-                        kernel._call(
-                            "run_gate_release", {"process_id": kernel_proc.id}
-                        )
-                        try:
-                            kernel._call(
-                                "run_release", {"process_id": kernel_proc.id}
-                            )
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
-                await kernel.end_process(kernel_proc.id, state="failed", reason=str(e))
+            try:
+                await recorder.finish_fail(str(e))
+            except Exception:
+                pass
+            await _release_kernel_slot(state="failed", reason=str(e)[:500])
             raise
         finally:
             self._run_recorder = None

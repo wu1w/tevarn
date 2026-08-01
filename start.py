@@ -219,12 +219,13 @@ def start_kernel_host() -> subprocess.Popen | None:
     cmd = [str(bin_path), "--listen", listen]
     print(f"[Takton] Starting kernel host: {' '.join(cmd)}")
     env = os.environ.copy()
+    # P0：stderr=PIPE 无人排空会塞满管道导致 host 假死；默认 DEVNULL
     proc = subprocess.Popen(
         cmd,
         cwd=str(ROOT_DIR),
         env=env,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
     )
     processes.append(proc)
     # Wait ready
@@ -233,13 +234,10 @@ def start_kernel_host() -> subprocess.Popen | None:
     h, _, p = listen.rpartition(":")
     for i in range(50):
         if proc.poll() is not None:
-            err = ""
-            try:
-                if proc.stderr:
-                    err = proc.stderr.read().decode("utf-8", errors="replace")[:400]
-            except Exception:
-                pass
-            print(f"[Takton] Kernel host exited early: {err}")
+            print(
+                f"[Takton] Kernel host exited early code={proc.returncode} "
+                f"(stderr discarded; set TAKTON_KERNEL_HOST_STDERR=pipe for logs)"
+            )
             return None
         try:
             with socket.create_connection((h or "127.0.0.1", int(p or 17890)), timeout=0.3):

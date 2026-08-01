@@ -190,37 +190,77 @@ class LoopClusterMixin:
             except Exception as e:
                 logger.warning(f"Auto optimize failed: {e}")
 
+    # 模型不可信的内部键（白名单化：绝不从 tool_call 入参保留）
+    # 含 _confirm_ok / _workforce 等——否则 prompt injection 可自授权跳过确认
+    _MODEL_FORBIDDEN_ARG_KEYS = frozenset({
+        "_tool_gate_passed",
+        "_tool_gate_internal",
+        "_kernel_process_id",
+        "_process_id",
+        "_require_kernel_process",
+        "_ws_manager",
+        "_run_recorder",
+        "_confirm_ok",
+        "_confirm_ok_source",
+        "_workforce",
+        "_session_grant",
+        "_identity_capabilities",
+        "_identity_id",
+        "_identity_name",
+        "_session_id",
+        "_steward_session_id",
+        "_user_id",
+        "_contact_agent",
+        "_inbox_item_id",
+        "_agent_key",
+        "_agent_label",
+        "_subagent_depth",
+        "_child_proc_leased",
+        "ws_manager",
+        "connection_manager",
+    })
+
     def _validate_tool_args(self, schema: dict | None, arguments: dict) -> dict:
         """使用 JSON Schema 校验 tool call 参数。
 
         始终返回新 dict，避免在原始 tc.arguments 上注入 _ws_manager 等
         导致 WS ToolEvent.model_dump 无法序列化 ConnectionManager。
+
+        安全（P0）：
+        - 剥离全部内部 meta 键（模型不可注入 _confirm_ok 等）
+        - 若 schema 有 properties，**只保留白名单字段**（防任意键走私）
+        服务端 meta 由 loop_tools 在校验后再强制注入。
         """
-        base = dict(arguments) if isinstance(arguments, dict) else {}
-        # 安全：剥离模型不可信的内部门控/进程字段（由 loop 再注入）
-        for k in (
-            "_tool_gate_passed",
-            "_tool_gate_internal",
-            "_kernel_process_id",
-            "_process_id",
-            "_require_kernel_process",
-            "_ws_manager",
-            "_run_recorder",
-        ):
-            base.pop(k, None)
+        raw = dict(arguments) if isinstance(arguments, dict) else {}
+        # 1) 剥内部键 + 一切以 _ 开头的键（模型侧）
+        cleaned: dict = {}
+        for k, v in raw.items():
+            ks = str(k)
+            if ks in self._MODEL_FORBIDDEN_ARG_KEYS:
+                continue
+            if ks.startswith("_"):
+                continue
+            cleaned[ks] = v
+
+        # 2) schema 白名单：只保留 properties 声明的键
+        props = None
+        if isinstance(schema, dict):
+            props = schema.get("properties")
+        if isinstance(props, dict) and props:
+            allowed = set(props.keys())
+            cleaned = {k: v for k, v in cleaned.items() if k in allowed}
+
         if not schema:
-            return base
-        # validate only "public" args — strip underscore keys for schema check
-        public = {k: v for k, v in base.items() if not str(k).startswith("_")}
+            return cleaned
         try:
             from jsonschema import ValidationError, validate
 
-            validate(instance=public, schema=schema)
+            validate(instance=cleaned, schema=schema)
         except ImportError:
             pass  # jsonschema未安装时跳过校验
         except ValidationError as e:
             raise ValueError(f"Invalid tool arguments: {e.message}") from e
-        return base
+        return cleaned
 
     async def _load_tools(
         self,
