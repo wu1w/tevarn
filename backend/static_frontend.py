@@ -158,6 +158,25 @@ def mount_frontend_static(app: FastAPI) -> Path | None:
 
             # 产品路由 / 动态段：统一 SPA 回落（客户端路由 + 客户端 404 页兜底）
             # 硬 404 会误杀未重新导出的部署；导出树有对应 index 时上面已命中。
+            top = first.lower() if first else ""
+            # 单段且不在产品路由表：优先真实 404 页（避免 /nonexistent 静默成工作台）
+            if (
+                top
+                and top not in _APP_ROUTES
+                and top not in ("_next", "favicon.ico", "assets", "fonts", "public")
+                and "/" not in path.rstrip("/")
+            ):
+                not_found = root / "404.html"
+                if not not_found.is_file():
+                    not_found = root / "404" / "index.html"
+                if not not_found.is_file():
+                    not_found = root / "_not-found" / "index.html"
+                if not_found.is_file():
+                    if request.method == "HEAD":
+                        return Response(status_code=404, media_type="text/html")
+                    return FileResponse(
+                        not_found, media_type="text/html", status_code=404
+                    )
 
         # SPA fallback：index.html（client-side router 接管）
         index = root / "index.html"

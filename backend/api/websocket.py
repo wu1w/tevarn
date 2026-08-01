@@ -181,10 +181,18 @@ class ConnectionManager:
         except Exception:
             pass
 
+    def _flush_delta_buf(self, snap: SessionRunSnapshot | None) -> None:
+        """ConnectionManager 侧别名：读快照 / 落盘 / 合帧阈值后统一刷缓冲。
+
+        与 SessionRunSnapshot.flush_delta_buf 等价；避免半成品调用不存在的方法名。
+        """
+        if snap is not None:
+            snap.flush_delta_buf()
+
     def get_run_snapshot(self, session_id: uuid.UUID) -> SessionRunSnapshot | None:
         snap = self._run_snapshots.get(session_id)
         if snap is not None:
-            snap.flush_delta_buf()
+            self._flush_delta_buf(snap)
             return snap
         # 内存空：尝试从磁盘恢复（崩溃/worker 切换）
         try:
@@ -220,7 +228,7 @@ class ConnectionManager:
         try:
             from backend.agent.run_snapshot_store import save_snapshot
 
-            snap.flush_delta_buf()
+            self._flush_delta_buf(snap)
             save_snapshot(
                 str(session_id),
                 {
@@ -311,12 +319,10 @@ class ConnectionManager:
                         snap._delta_buf = buf  # type: ignore[attr-defined]
                     buf.append(content)
                     if done or len(buf) >= 24 or sum(len(x) for x in buf) >= 800:
-                        joined = "".join(buf)
-                        buf.clear()
-                        snap.partial_content = (
-                            snap.partial_content + joined
-                        )[:_MAX_PARTIAL_CHARS]
-                    # 未达阈值时仍标记 running，_maybe_flush 用节流
+                        # 达阈值 / done：立即刷进 partial_content
+                        self._flush_delta_buf(snap)
+                    # 未达阈值时仍标记 running；读侧 get_run_snapshot / to_sync_fields
+                    # 也会 flush，保证短流也能拿到完整 partial
             if snap.state in ("idle", ""):
                 snap.state = "thinking"
             self._maybe_flush_snapshot(session_id)

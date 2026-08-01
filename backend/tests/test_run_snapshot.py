@@ -28,6 +28,31 @@ def test_ingest_stream_without_connection():
     assert snap.agent_running is True
 
 
+def test_stream_delta_buf_flush_on_read_and_manager_alias():
+    """合帧缓冲：未达 24 帧阈值时读快照必须 flush；_flush_delta_buf 别名可用。"""
+    m = ConnectionManager()
+    sid = uuid.uuid4()
+    m.begin_run_snapshot(sid)
+    # 两帧远低于 24 / 800 阈值
+    m._ingest_run_event(
+        sid, {"type": "stream_delta", "message_id": "x", "content": "ab"}
+    )
+    m._ingest_run_event(
+        sid, {"type": "stream_delta", "message_id": "x", "content": "cd"}
+    )
+    raw = m._run_snapshots.get(sid)
+    assert raw is not None
+    # 未读前可能仍在 _delta_buf
+    buf = getattr(raw, "_delta_buf", None)
+    # 经 manager 别名刷
+    m._flush_delta_buf(raw)
+    assert raw.partial_content == "abcd"
+    assert not buf  # cleared
+    # to_sync_fields 也要带上
+    f = raw.to_sync_fields()
+    assert f["partial_content"] == "abcd"
+
+
 def test_ingest_tool_events_upsert():
     m = ConnectionManager()
     sid = uuid.uuid4()
