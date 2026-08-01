@@ -69,13 +69,14 @@ export function ModelPicker({ disabled = false, onChanged, sessionId }: ModelPic
         if (prev && data.providers.some((p) => p.id === prev)) return prev;
         return prefer;
       });
-      if (!data.providers?.length) {
-        setLoadError(t('modelPicker.noProvidersSaved'));
-      }
+      // 空目录 ≠ 加载失败：只显示「未配置」，不要「加载失败·点击重试」
+      // （原先 setLoadError(noProvidersSaved) 会让 label 误用 channels.loadFailed）
+      setLoadError(null);
     } catch (e) {
       console.error(e);
       const msg = e instanceof Error ? e.message : t('modelPicker.loadFailed');
       setLoadError(msg);
+      // 仅真失败 toast；空目录不再当错误刷屏
       addToast(t('modelPicker.loadFailedToast') + msg, 'error');
     } finally {
       setLoading(false);
@@ -122,11 +123,22 @@ export function ModelPicker({ disabled = false, onChanged, sessionId }: ModelPic
   const activeProvider = catalog?.providers.find(
     (p) => p.id === catalog.active_provider_id
   );
+  // 真失败：加载失败 · 点击重试；空目录：未配置 · 选择模型；加载中：加载中…
   const labelProvider =
     activeProvider?.name ||
     catalog?.active_provider_id ||
-    (loadError ? t('channels.loadFailed') : loading ? t('channels.loading') : t('modelPicker.notConfigured'));
-  const labelModel = catalog?.active_model || (loadError ? t('modelPicker.retry') : t('modelPicker.selectModel'));
+    (loadError
+      ? t('modelPicker.loadError')
+      : loading
+        ? t('channels.loading')
+        : t('modelPicker.notConfigured'));
+  const labelModel =
+    catalog?.active_model ||
+    (loadError
+      ? t('modelPicker.retry')
+      : loading
+        ? '…'
+        : t('modelPicker.selectModel'));
 
   const focusProvider: CatalogProvider | undefined = catalog?.providers.find(
     (p) => p.id === selectedProviderId
