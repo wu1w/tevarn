@@ -25,7 +25,10 @@ interface SessionState {
   /** 移除消息（发送失败清幽灵乐观气泡） */
   removeMessage: (id: string) => void;
   /** 用服务端 id 替换乐观用户消息（同 role+content 合并，避免双气泡） */
-  reconcileMessage: (serverMsg: Message) => void;
+  reconcileMessage: (
+    serverMsg: Message,
+    opts?: { matchContents?: string[] },
+  ) => void;
   setMessages: (messages: Message[]) => void;
   loadSession: (sessionId: string) => Promise<void>;
   loadMessages: (sessionId: string) => Promise<void>;
@@ -127,7 +130,7 @@ export const useSessionStore = create<SessionState>()(
           messages: state.messages.filter((m) => m.id !== id),
         })),
 
-      reconcileMessage: (serverMsg) => {
+      reconcileMessage: (serverMsg, opts) => {
         set((state) => {
           const haveById = state.messages.some((m) => m.id === serverMsg.id);
           if (haveById) return state;
@@ -137,64 +140,85 @@ export const useSessionStore = create<SessionState>()(
             id.startsWith('optimistic:') ||
             id.startsWith('local:') ||
             id.startsWith('streaming');
+          // 服务端 created_at 常为 naive（无 Z），浏览器按本地解析；乐观气泡用 toISOString() UTC。
+          // 在 UTC+8 下可差 ~8h，旧 120s 窗口会把全部 optimistic 滤掉 → ack 再 append = 双气泡。
           const serverContent = norm(serverMsg.content || '');
-          const serverTs = Date.parse(String(serverMsg.created_at || '')) || Date.now();
-          const WINDOW_MS = 120_000;
+          const extraMatch = (opts?.matchContents || []).map(norm).filter(Boolean);
+          const matchPool = Array.from(
+            new Set([serverContent, ...extraMatch].filter(Boolean)),
+          );
           const sameSession = (m: Message) =>
             !serverMsg.session_id ||
             !m.session_id ||
             m.session_id === serverMsg.session_id;
 
-          const candidates = state.messages
+          // 只顶替临时 id，绝不按正文改写已有正式消息（「好的」连发会踩旧气泡）
+          const optCandidates = state.messages
             .map((m, i) => ({ m, i }))
             .filter(({ m }) => {
               if (m.role !== serverMsg.role) return false;
               if (!sameSession(m)) return false;
-              const id = String(m.id || '');
-              if (!isOptId(id) && m.role !== 'user') return false;
-              const localTs = Date.parse(String(m.created_at || '')) || 0;
-              if (localTs && Math.abs(localTs - serverTs) > WINDOW_MS) return false;
-              return true;
+              return isOptId(String(m.id || ''));
             });
 
-          // 1) 精确内容
-          let optIdx = candidates.find(({ m }) => {
-            const c = norm(m.content || '');
-            return Boolean(serverContent) && c === serverContent;
-          })?.i;
+          const contentHit = (c: string) =>
+            matchPool.some(
+              (sc) => sc && (c === sc || c.includes(sc) || sc.includes(c)),
+            );
 
-          // 2) 模糊：一端包含另一端（附件前缀 / enrich 差异）
-          if (optIdx == null && serverContent) {
-            optIdx = candidates.find(({ m }) => {
-              const c = norm(m.content || '');
-              if (!c) return false;
-              return c.includes(serverContent) || serverContent.includes(c);
-            })?.i;
+          // 1) 精确 / 模糊（从最新往旧找，避免顶替更早的乐观残留）
+          let optIdx: number | undefined;
+          for (let k = optCandidates.length - 1; k >= 0; k--) {
+            const { m, i } = optCandidates[k];
+            const c = norm(m.content || '');
+            if (c && contentHit(c)) {
+              optIdx = i;
+              break;
+            }
           }
 
-          // 3) 用户消息：最近一条 optimistic 直接顶替（ack 权威，防双气泡）
-          if (optIdx == null && serverMsg.role === 'user') {
-            const optsOnly = candidates.filter(({ m }) => isOptId(String(m.id || '')));
-            if (optsOnly.length > 0) {
-              optIdx = optsOnly[optsOnly.length - 1].i;
-            }
+          // 2) 用户消息：仍无命中 → 最近一条 optimistic 直接顶替（ack 权威）
+          //    无时间窗：时区差不能再挡合并
+          if (optIdx == null && serverMsg.role === 'user' && optCandidates.length > 0) {
+            optIdx = optCandidates[optCandidates.length - 1].i;
+          }
+
+          // 3) 助手流式：顶替 streaming 占位
+          if (optIdx == null && serverMsg.role === 'assistant' && optCandidates.length > 0) {
+            const stream = [...optCandidates]
+              .reverse()
+              .find(({ m }) => String(m.id || '').startsWith('streaming'));
+            if (stream) optIdx = stream.i;
           }
 
           if (optIdx != null && optIdx >= 0) {
             const next = [...state.messages];
-            next[optIdx] = { ...next[optIdx], ...serverMsg, id: serverMsg.id };
-            // 清掉同会话其它未 ack 的同文案乐观气泡（双发残留）
-            if (serverMsg.role === 'user' && serverContent) {
+            // 展示优先用较短/原文（乐观），id/时间用服务端；避免附件 enrich 把气泡撑成超长
+            const prev = next[optIdx];
+            const preferDisplay =
+              serverMsg.role === 'user' &&
+              prev?.content &&
+              serverMsg.content &&
+              norm(prev.content).length < norm(serverMsg.content).length &&
+              norm(serverMsg.content).includes(norm(prev.content));
+            next[optIdx] = {
+              ...prev,
+              ...serverMsg,
+              id: serverMsg.id,
+              content: preferDisplay ? prev.content : serverMsg.content,
+            };
+            // 清掉同会话其它未 ack 乐观用户气泡（双发 / 双路径残留）
+            if (serverMsg.role === 'user') {
               return {
                 messages: next.filter((m, i) => {
                   if (i === optIdx) return true;
                   if (!isOptId(String(m.id || ''))) return true;
                   if (m.role !== 'user' || !sameSession(m)) return true;
                   const c = norm(m.content || '');
-                  if (c === serverContent) return false;
-                  if (c && serverContent && (c.includes(serverContent) || serverContent.includes(c)))
-                    return false;
-                  return true;
+                  if (!c) return false; // 空乐观也丢
+                  if (contentHit(c)) return false;
+                  // 同会话、仍挂着的用户乐观：ack 已到则一律清（防时区/文案差漏网）
+                  return false;
                 }),
               };
             }
@@ -260,6 +284,10 @@ export const useSessionStore = create<SessionState>()(
           );
           let merged = Array.isArray(messages) ? [...messages] : [];
           const norm = (s: string) => (s || '').replace(/\s+/g, ' ').trim();
+          // 服务端尾部最近几条用户消息（用于覆盖乐观，忽略时区）
+          const recentServerUser = merged
+            .filter((m) => m.role === 'user')
+            .slice(-8);
           for (const o of optimistic) {
             const oc = norm(o.content || '');
             // 服务端已有同 role 精确/包含内容 → 丢弃乐观（避免双气泡）
@@ -269,7 +297,17 @@ export const useSessionStore = create<SessionState>()(
               if (!oc || !mc) return false;
               return mc === oc || mc.includes(oc) || oc.includes(mc);
             });
-            if (!covered) {
+            // 用户乐观：若尾部已有任意正式用户消息且本轮在跑，也倾向丢弃
+            // （内容被 enrich 后 includes 可能失败；ack 应已顶替，残留乐观一律危险）
+            const userOptStale =
+              o.role === 'user' &&
+              recentServerUser.length > 0 &&
+              recentServerUser.some((m) => {
+                const mc = norm(m.content || '');
+                if (!oc || !mc) return false;
+                return mc === oc || mc.includes(oc) || oc.includes(mc) || oc.slice(0, 40) === mc.slice(0, 40);
+              });
+            if (!covered && !userOptStale) {
               merged = [...merged, o];
             }
           }
@@ -284,6 +322,30 @@ export const useSessionStore = create<SessionState>()(
             seenOpt.add(key);
             return true;
           });
+          // 防御：同会话尾部连续两条用户、正文相同且 id 不同 → 丢临时 id 那条
+          const deduped: Message[] = [];
+          for (const m of merged) {
+            const prev = deduped[deduped.length - 1];
+            if (
+              prev &&
+              m.role === 'user' &&
+              prev.role === 'user' &&
+              norm(prev.content || '') &&
+              norm(prev.content || '') === norm(m.content || '')
+            ) {
+              const prevOpt = String(prev.id || '').startsWith('optimistic:');
+              const curOpt = String(m.id || '').startsWith('optimistic:');
+              if (prevOpt && !curOpt) {
+                deduped[deduped.length - 1] = m;
+                continue;
+              }
+              if (!prevOpt && curOpt) {
+                continue; // 丢当前乐观
+              }
+            }
+            deduped.push(m);
+          }
+          merged = deduped;
           // 加载历史后补标题：取首条用户消息
           if (!st.sessionTitles[sessionId] && merged.length) {
             const firstUser = merged.find(

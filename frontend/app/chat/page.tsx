@@ -845,22 +845,22 @@ const handleUserMessageAck = useCallback(
         }) => {
           const sid = currentSession?.id || '';
           if (!sid || !payload.id) return;
-          // 先用服务端落库正文 reconcile；若有 display_content 再尝试合并乐观原文
-          const base = {
-            id: payload.id,
-            session_id: sid,
-            role: (payload.role as 'user' | 'assistant' | 'system') || 'user',
-            content: payload.content || '',
-            tool_calls: null as null,
-            token_count: null as null,
-            created_at: payload.created_at || new Date().toISOString(),
-          };
-          reconcileMessage(base);
+          const enriched = payload.content || '';
           const disp = (payload.display_content || '').trim();
-          if (disp && disp !== (payload.content || '').trim()) {
-            // 仅用于吃掉「乐观原文」；已 haveById 时 no-op
-            reconcileMessage({ ...base, content: disp });
-          }
+          // 一次 reconcile：正文用落库内容，匹配池同时含原文（乐观气泡）+ enrich
+          // 绝不可先 append enrich 再二次 reconcile（haveById 会跳过，乐观残留=双气泡）
+          reconcileMessage(
+            {
+              id: payload.id,
+              session_id: sid,
+              role: (payload.role as 'user' | 'assistant' | 'system') || 'user',
+              content: enriched,
+              tool_calls: null,
+              token_count: null,
+              created_at: payload.created_at || new Date().toISOString(),
+            },
+            { matchContents: [enriched, disp].filter(Boolean) },
+          );
         },
         [currentSession?.id, reconcileMessage]
       );

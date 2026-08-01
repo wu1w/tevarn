@@ -386,13 +386,24 @@ class LoopIOMixin:
                 mid = str(getattr(saved, "id", "") or "")
                 created = getattr(saved, "created_at", None)
                 if mid:
+                    # 统一带 Z / offset，避免前端 Date.parse naive 当本地时区 → 与乐观 toISOString 差 8h
+                    created_s = None
+                    if created is not None:
+                        try:
+                            if getattr(created, "tzinfo", None) is None:
+                                from datetime import timezone as _tz
+
+                                created = created.replace(tzinfo=_tz.utc)
+                            created_s = created.isoformat().replace("+00:00", "Z")
+                        except Exception:
+                            created_s = str(created)
                     payload = {
                         "type": "user_message_ack",
                         "id": mid,
                         "role": "user",
                         "content": enriched_input,
                         "session_id": str(session_id),
-                        "created_at": created.isoformat() if created else None,
+                        "created_at": created_s,
                     }
                     if display_content and display_content != enriched_input:
                         payload["display_content"] = display_content
