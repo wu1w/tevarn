@@ -18,7 +18,6 @@ import { GlobalSearch } from '@/components/search/GlobalSearch';
 import { useSession } from '@/hooks/useSession';
 import { useChatWsBridge } from '@/stores/chatWsBridge';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
-import { useAuthStore } from '@/stores/authStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { Message, StatusUpdateMessage, StreamDeltaMessage, GoalUpdateMessage, GoalState, ToolEventMessage, RunEventMessage } from '@/types';
 import { useTerminalStore } from '@/stores/terminalStore';
