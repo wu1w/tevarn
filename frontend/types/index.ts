@@ -500,6 +500,28 @@ export interface StatusUpdateMessage extends WSMessage {
   tools_count?: number | null;
 }
 
+/** 与 confirm_manager 广播 / ConfirmRequest schema 对齐 */
+export interface ConfirmRequestMessage extends WSMessage {
+  type: 'confirm_request';
+  confirm_id: string;
+  title: string;
+  command: string;
+  reason?: string;
+  timeout?: number;
+  tool?: string;
+  agent_id?: string;
+  agent_name?: string;
+  user_id?: string;
+  scopes?: Array<'once' | 'session' | 'agent' | 'deny'>;
+}
+
+export interface ConfirmResponseMessage extends WSMessage {
+  type: 'confirm_response';
+  confirm_id: string;
+  approved: boolean;
+  scope?: 'once' | 'session' | 'agent' | 'deny';
+}
+
 export interface SettingsChangedMessage extends WSMessage {
   type: 'settings_changed';
   keys?: string[];

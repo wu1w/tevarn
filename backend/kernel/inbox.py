@@ -609,10 +609,25 @@ class InboxService:
             await session.commit()
         # Dual-complete Rust claim queue (authority for multi-worker)
         self._rust_complete_by_db(str(item_id), result or "", process_id)
+        _iname = ""
+        try:
+            from backend.models.agent_identity import AgentIdentity as _AI
+
+            async with self._session_factory() as _s:
+                _row = (
+                    await _s.execute(
+                        select(_AI).where(_AI.id == identity_id)
+                    )
+                ).scalar_one_or_none()
+                if _row is not None:
+                    _iname = str(getattr(_row, "name", "") or "")
+        except Exception:
+            pass
         self._emit("inbox_done", identity_id, {
             "item_id": str(item_id),
             "process_id": process_id,
             "identity_id": str(identity_id),
+            "identity_name": _iname,
         })
         # P0-4: 工单完成 → 自动沉淀 experience（成长轨迹）
         try:

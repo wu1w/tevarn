@@ -28,7 +28,17 @@
 > - `agent_budget_hard_cap_only=True` 时关闭 soft renew，仅硬顶  
 > - CEO：`crew_steward top_up` / `set_budget` / `budgets` 仍可人工治理  
 > - 长 instruction / 马拉松类任务自动抬高开局预算  
-> - 扣费优先 **billable tokens**（cache miss + output；`agent_budget_prefer_billable`）
+> - 扣费优先 **billable tokens**（cache miss + output；`agent_budget_prefer_billable`）  
+>
+> **审计闭环（0.5.1-alpha · feature/agent-kernel）**  
+> | 域 | 状态 | 要点 |
+> |----|------|------|
+> | 聊天 WS/Stop/ack/generation | ✅ | optimistic id、stop FSM、session 防串流 |
+> | process/identity owner | ✅ | top-up、list/tree 过滤、fail-closed |
+> | confirm owner | ✅ | multi-user 强制 user_id；无主 pending 拒绝 |
+> | 编制 notify 回流 | ✅ | DB + WS notification + domain toast + 顶栏铃铛 |
+> | snapshot 落盘隐私 | ✅ | tool result 默认截断 |
+> | EventSink ↔ status 字段 | ✅ | caps_count/tools_count 与 WS 一致 |
 
 ### Provider 缓存与 Token 优化（S1–S4）
 

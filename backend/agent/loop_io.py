@@ -41,12 +41,39 @@ class LoopIOMixin:
         caps_count: int | None = None,
         tools_count: int | None = None,
     ) -> None:
-        """推送状态：优先 EventSinkPort，回落 ws_manager。"""
+        """推送状态：优先 EventSinkPort（字段与 WS 一致，含 caps/tools），回落 ws_manager。"""
         sink = getattr(self, "event_sink", None)
-        if sink is not None and caps_count is None and tools_count is None:
+        if sink is not None:
             try:
-                await sink.push_status(session_id, state, detail or "")
+                await sink.push_status(
+                    session_id,
+                    state,
+                    detail or "",
+                    caps_count=caps_count,
+                    tools_count=tools_count,
+                )
+                if state == "error" and detail:
+                    await self._emit_progress("error", detail)
                 return
+            except TypeError:
+                # 旧 sink 无 kwargs：降级位置参数
+                try:
+                    await sink.push_status(session_id, state, detail or "")
+                    if state == "error" and detail:
+                        await self._emit_progress("error", detail)
+                    # caps 仍走 WS，避免 H2-E 可观测字段丢失
+                    if self.ws_manager and (caps_count is not None or tools_count is not None):
+                        payload = StatusUpdate(
+                            session_id=session_id,
+                            state=state,
+                            detail=detail,
+                            caps_count=caps_count,
+                            tools_count=tools_count,
+                        ).model_dump(mode="json")
+                        await self.ws_manager.broadcast(session_id, payload)
+                    return
+                except Exception as e:
+                    logger.debug("event_sink.push_status legacy failed: %s", e)
             except Exception as e:
                 logger.debug("event_sink.push_status failed: %s", e)
         if self.ws_manager:

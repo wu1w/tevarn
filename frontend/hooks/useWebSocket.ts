@@ -475,18 +475,8 @@ export function useWebSocket(options: UseWebSocketOptions) {
           );
         } else if (msg.type === 'confirm_request') {
           // 危险操作确认请求 → 写入 store，触发前端弹窗（支持 once/session/agent）
-          const m = msg as unknown as {
-            confirm_id: string;
-            title: string;
-            command: string;
-            reason?: string;
-            tool?: string;
-            agent_id?: string;
-            agent_name?: string;
-            timeout?: number;
-          };
+          const m = msg as import('@/types').ConfirmRequestMessage;
           import('@/stores/confirmStore').then((mod) => {
-            const body = msg as unknown as { session_id?: string };
             mod.useConfirmStore.getState().showConfirm({
               confirmId: m.confirm_id,
               title: m.title || t('useWebSocket._e2'),
@@ -496,7 +486,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
               agentId: m.agent_id || undefined,
               agentName: m.agent_name || undefined,
               timeout: m.timeout,
-              sessionId: body.session_id || sid,
+              sessionId: m.session_id || sid,
             });
           });
         }

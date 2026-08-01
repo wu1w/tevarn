@@ -970,17 +970,11 @@ class WorkforceDispatcher:
 
         owner = None
         try:
-            owner = await self._resolve_owner_user_id(identity) if identity is not None else None
-        except Exception:
+            # 与 notify 同口径：identity → process meta → 单用户 admin
+            owner = await self._resolve_notify_user_id(identity)
+        except Exception as e:
+            logger.debug("ceo rollup owner resolve: %s", e)
             owner = None
-        if owner is None:
-            try:
-                from backend.repositories.user_repo import AsyncUserRepository
-
-                u = await AsyncUserRepository().get_by_email("admin@takton.dev")
-                owner = u.id if u else None
-            except Exception:
-                owner = None
         if owner is None:
             logger.warning("ceo rollup: no owner user")
             return
@@ -1588,7 +1582,8 @@ class WorkforceDispatcher:
     async def _resolve_owner_user_id(self, ident: Any) -> uuid.UUID:
         """工单会话必须挂 user_id（sessions.user_id NOT NULL）。
 
-        优先身份归属；缺失时（旧 hire / manage_sub_agent 双写）回落单用户默认 admin。
+        与 _resolve_notify_user_id 同口径：
+        identity.user_id → 单用户才回落 admin@；多用户无归属直接失败。
         """
         raw = getattr(ident, "user_id", None)
         if raw is not None:
@@ -1596,6 +1591,18 @@ class WorkforceDispatcher:
                 return raw if isinstance(raw, uuid.UUID) else uuid.UUID(str(raw))
             except (ValueError, TypeError):
                 pass
+        try:
+            from backend.core.config import settings
+
+            if not bool(getattr(settings, "single_user_mode", True)):
+                raise RuntimeError(
+                    f"员工 «{getattr(ident, 'name', '?')}» 无 user_id，"
+                    "多用户模式下请先设置 identity.user_id"
+                )
+        except RuntimeError:
+            raise
+        except Exception:
+            pass
         # 单用户 / 迁移窗口：admin@takton.dev
         try:
             from backend.repositories.user_repo import AsyncUserRepository

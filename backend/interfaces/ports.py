@@ -28,9 +28,21 @@ class MessageStorePort(Protocol):
 
 @runtime_checkable
 class EventSinkPort(Protocol):
-    """Push status / stream / tool events to UI or channels."""
+    """Push status / stream / tool events to UI or channels.
 
-    async def push_status(self, session_id: UUID, state: str, detail: str = "") -> None: ...
+    push_status 字段集须与 StatusUpdate / loop_io._push_status 一致
+   （含 caps_count / tools_count，避免 sink 短路丢可观测字段）。
+    """
+
+    async def push_status(
+        self,
+        session_id: UUID,
+        state: str,
+        detail: str = "",
+        *,
+        caps_count: int | None = None,
+        tools_count: int | None = None,
+    ) -> None: ...
 
     async def push_stream_delta(
         self, session_id: UUID, delta: str, *, done: bool = False

@@ -18,7 +18,16 @@ class WebSocketEventSink:
         self.ws_manager = ws_manager
         self.progress_sink = progress_sink
 
-    async def push_status(self, session_id: UUID, state: str, detail: str = "") -> None:
+    async def push_status(
+        self,
+        session_id: UUID,
+        state: str,
+        detail: str = "",
+        *,
+        caps_count: int | None = None,
+        tools_count: int | None = None,
+    ) -> None:
+        """与 loop_io._push_status / StatusUpdate 字段集对齐（含 caps/tools）。"""
         if self.ws_manager:
             try:
                 from backend.schemas.ws import StatusUpdate
@@ -27,6 +36,8 @@ class WebSocketEventSink:
                     session_id=session_id,
                     state=state,
                     detail=detail or None,
+                    caps_count=caps_count,
+                    tools_count=tools_count,
                 ).model_dump(mode="json")
                 await self.ws_manager.broadcast(session_id, payload)
             except Exception as e:

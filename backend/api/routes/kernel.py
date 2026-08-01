@@ -183,9 +183,38 @@ async def process_tree(
     current_user: Annotated[UserRead, Depends(get_current_user)],
     include_terminal: bool = Query(False),
 ):
-    """进程树：按 parent_id 建树，附能力/预算继承摘要（分析 P1）。"""
+    """进程树：按 parent_id 建树，附能力/预算继承摘要（分析 P1）。
+
+    多用户与 list_processes 同口径过滤；filter 基础设施失败 → 503。
+    """
     kernel = get_kernel()
     flat = [p.to_dict() for p in kernel.list_processes(include_terminal=include_terminal)]
+    from backend.core.config import settings as _st_tree
+
+    if not bool(getattr(_st_tree, "single_user_mode", True)):
+        try:
+            from backend.kernel.process_access import assert_user_owns_process
+        except Exception as e:
+            logger.error("process_tree ownership filter import failed: %s", e)
+            raise HTTPException(
+                status_code=503,
+                detail="process ownership filter unavailable",
+            ) from e
+        owned: list[dict[str, Any]] = []
+        for p in flat:
+            try:
+                await assert_user_owns_process(
+                    kernel, str(p.get("id") or ""), current_user.id
+                )
+                owned.append(p)
+            except (ValueError, PermissionError):
+                continue
+            except Exception as e:
+                logger.debug(
+                    "process_tree skip %s: %s", str(p.get("id") or "")[:12], e
+                )
+                continue
+        flat = owned
     by_id: dict[str, dict[str, Any]] = {}
     for p in flat:
         pid = str(p.get("id") or "")
