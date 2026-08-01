@@ -555,6 +555,60 @@ class WorkforceDispatcher:
         )
         return out
 
+    async def _resolve_notify_user_id(
+        self,
+        identity: Any | None,
+        *,
+        process_id: str | None = None,
+    ) -> Any | None:
+        """通知落点：identity.user_id → process meta owner → 单用户默认 admin。
+
+        多用户禁止魔术邮箱静默吞掉；与 create_process meta.owner_user_id 对齐。
+        """
+        uid = getattr(identity, "user_id", None) if identity is not None else None
+        if uid is not None:
+            return uid
+
+        # 进程 meta（编制 create_process 已写 owner_user_id）
+        pid = str(process_id or "").strip()
+        if pid:
+            try:
+                k = self._kernel
+                proc = k.get_process(pid) if hasattr(k, "get_process") else None
+                meta = {}
+                if proc is not None:
+                    meta = dict(getattr(proc, "meta", None) or {})
+                    if not meta and hasattr(proc, "to_dict"):
+                        meta = dict((proc.to_dict() or {}).get("meta") or {})
+                for key in ("owner_user_id", "user_id", "ceo_user_id", "owner_id"):
+                    mid = meta.get(key)
+                    if mid:
+                        return mid
+            except Exception as e:
+                logger.debug("notify resolve process meta: %s", e)
+
+        # 仅单用户：回落默认 admin（兼容未 seed identity.user_id 的本机）
+        try:
+            from backend.core.config import settings
+
+            if not bool(getattr(settings, "single_user_mode", True)):
+                logger.warning(
+                    "workforce notify: no owner (identity=%s process=%s) multi-user skip",
+                    str(getattr(identity, "id", "") or "")[:8],
+                    pid[:8] if pid else "-",
+                )
+                return None
+        except Exception:
+            pass
+        try:
+            from backend.repositories.user_repo import AsyncUserRepository
+
+            u = await AsyncUserRepository().get_by_email("admin@takton.dev")
+            return u.id if u is not None else None
+        except Exception as e:
+            logger.debug("notify default admin skip: %s", e)
+            return None
+
     async def _notify_owner(
         self,
         *,
@@ -563,22 +617,21 @@ class WorkforceDispatcher:
         content: str,
         identity: Any | None = None,
         item_id: Any | None = None,
+        process_id: str | None = None,
     ) -> None:
-        """工单完成/失败时通知主人（单用户取 identity.user_id 或默认 admin）。"""
+        """工单完成/失败：写 notification 表 + 向主人所有 live WS 推 type:notification。"""
         try:
             from backend.repositories.notification_repo import (
                 AsyncNotificationRepository,
             )
-            from backend.repositories.user_repo import AsyncUserRepository
 
-            uid = getattr(identity, "user_id", None) if identity is not None else None
-            if uid is None:
-                u = await AsyncUserRepository().get_by_email("admin@takton.dev")
-                uid = u.id if u is not None else None
+            uid = await self._resolve_notify_user_id(
+                identity, process_id=process_id
+            )
             if uid is None:
                 return
             repo = AsyncNotificationRepository()
-            await repo.create(
+            row = await repo.create(
                 {
                     "user_id": uid,
                     "type": kind,
@@ -589,11 +642,47 @@ class WorkforceDispatcher:
                         "identity_id": str(getattr(identity, "id", "") or ""),
                         "identity_name": str(getattr(identity, "name", "") or ""),
                         "inbox_item_id": str(item_id or ""),
+                        "process_id": str(process_id or ""),
                         "source": "workforce_dispatcher",
                     },
                     "source_id": str(item_id or "")[:64] or None,
                 }
             )
+            # 实时推送：聊天页 useWebSocket 会写入 notificationStore；无 chat WS 时
+            # DomainEventBridge 仍靠 job.* toast 兜底
+            try:
+                import uuid as _uuid
+
+                from backend.api.websocket import manager as ws_manager
+
+                uid_u = uid if isinstance(uid, _uuid.UUID) else _uuid.UUID(str(uid))
+                payload = {
+                    "type": "notification",
+                    "id": str(getattr(row, "id", "") or ""),
+                    "user_id": str(uid),
+                    "notification_type": kind,
+                    "title": title[:256],
+                    "message": content[:500],
+                    "content": content[:4000],
+                    "is_read": False,
+                    "created_at": (
+                        getattr(row, "created_at", None).isoformat()
+                        if getattr(row, "created_at", None)
+                        else None
+                    ),
+                    "data": {
+                        "identity_id": str(getattr(identity, "id", "") or ""),
+                        "identity_name": str(getattr(identity, "name", "") or ""),
+                        "inbox_item_id": str(item_id or ""),
+                        "process_id": str(process_id or ""),
+                        "source": "workforce_dispatcher",
+                        "kind": kind,
+                    },
+                    "link": "/agents",
+                }
+                await ws_manager.broadcast_to_user(uid_u, payload)
+            except Exception as pe:
+                logger.debug("workforce notify WS push skip: %s", pe)
         except Exception as e:
             logger.debug("workforce notify skip: %s", e)
 
@@ -1066,6 +1155,7 @@ class WorkforceDispatcher:
             # 预算/逻辑失败不得发 task_complete（否则主人收到「完成」但 DB 是 fail）
             result_snip = await self._load_item_result_snip(item.id)
             status = str(finish_status or "completed")
+            _pid = proc_id_holder.get("id") or self._item_proc_ids.get(item_key)
             if status == "budget_failed":
                 await self._notify_owner(
                     kind="task_failed",
@@ -1077,6 +1167,7 @@ class WorkforceDispatcher:
                     ),
                     identity=ident,
                     item_id=item.id,
+                    process_id=_pid,
                 )
             elif status == "failed":
                 await self._notify_owner(
@@ -1088,6 +1179,7 @@ class WorkforceDispatcher:
                     ),
                     identity=ident,
                     item_id=item.id,
+                    process_id=_pid,
                 )
             elif status == "skipped":
                 logger.info(
@@ -1104,6 +1196,7 @@ class WorkforceDispatcher:
                     ),
                     identity=ident,
                     item_id=item.id,
+                    process_id=_pid,
                 )
                 # 仅真正完成才触发 CEO rollup
                 try:
@@ -1128,6 +1221,7 @@ class WorkforceDispatcher:
                 content=f"超时 {self._item_timeout:.0f}s · {(item.instruction or '')[:160]}",
                 identity=ident,
                 item_id=item.id,
+                process_id=pid,
             )
         except asyncio.CancelledError:
             # E4：用户/API 取消 → 工单 cancelled + process killed，不进重试/死信
@@ -1155,6 +1249,7 @@ class WorkforceDispatcher:
                 content=f"{e!s}"[:200] + " · " + (item.instruction or "")[:120],
                 identity=ident,
                 item_id=item.id,
+                process_id=proc_id_holder.get("id"),
             )
         finally:
             self._busy.discard(str(item.identity_id))

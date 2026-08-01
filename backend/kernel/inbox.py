@@ -118,6 +118,8 @@ class InboxService:
             "item_id": str(item.id), "source": source,
             "source_ref": source_ref, "priority": priority,
             "instruction": instruction[:200],
+            "identity_id": str(iid),
+            "identity_name": str(getattr(ident, "name", "") or ""),
         })
         # R3: mirror to Rust claim queue (identity key + db id in meta)
         try:
@@ -608,7 +610,9 @@ class InboxService:
         # Dual-complete Rust claim queue (authority for multi-worker)
         self._rust_complete_by_db(str(item_id), result or "", process_id)
         self._emit("inbox_done", identity_id, {
-            "item_id": str(item_id), "process_id": process_id,
+            "item_id": str(item_id),
+            "process_id": process_id,
+            "identity_id": str(identity_id),
         })
         # P0-4: 工单完成 → 自动沉淀 experience（成长轨迹）
         try:
@@ -702,6 +706,8 @@ class InboxService:
                 "attempts": attempts,
                 "error": (error or "")[:300],
                 "terminal": terminal,
+                "identity_id": str(identity_id),
+                "process_id": process_id,
             },
         )
 

@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { ConnectionIndicator, ConnectionState } from '@/components/desktop/ConnectionIndicator';
+import { NotificationBell } from '@/components/layout/NotificationBell';
 import { useT } from '@/stores/localeStore';
 
 interface TitleBarProps {
@@ -72,8 +73,11 @@ export function TitleBar({
         </span>
       </div>
 
-      {/* 右侧：状态 + 窗口按钮 */}
+      {/* 右侧：通知 + 状态 + 窗口按钮 */}
       <div className="flex h-full items-center gap-1 pr-1.5">
+        <div className="mr-1 flex items-center">
+          <NotificationBell />
+        </div>
         <div className="mr-2 hidden sm:flex">
           <ConnectionIndicator
             state={wsState}

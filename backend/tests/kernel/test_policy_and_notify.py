@@ -44,18 +44,26 @@ def test_notify_owner_uses_data_field() -> None:
     from backend.kernel.dispatcher import WorkforceDispatcher
 
     created: dict = {}
+    pushed: list = []
 
     class FakeRepo:
         async def create(self, data):
             created.update(data)
-            return data
+            created["id"] = "n-1"
+            return type("Row", (), {**data, "id": "n-1", "created_at": None})()
+
+    owner_uid = "11111111-1111-1111-1111-111111111111"
 
     class FakeUser:
-        id = "user-1"
+        id = owner_uid
 
     class FakeUserRepo:
         async def get_by_email(self, email):
             return FakeUser()
+
+    class FakeWs:
+        async def broadcast_to_user(self, uid, payload):
+            pushed.append((str(uid), payload))
 
     async def go():
         disp = WorkforceDispatcher(
@@ -73,11 +81,15 @@ def test_notify_owner_uses_data_field() -> None:
                 "backend.repositories.user_repo.AsyncUserRepository",
                 return_value=FakeUserRepo(),
             ),
+            patch(
+                "backend.api.websocket.manager",
+                FakeWs(),
+            ),
         ):
             class Ident:
                 id = "id-1"
                 name = "工程师"
-                user_id = None
+                user_id = owner_uid
 
             await disp._notify_owner(
                 kind="task_complete",
@@ -94,6 +106,65 @@ def test_notify_owner_uses_data_field() -> None:
     assert created["data"].get("identity_name") == "工程师"
     assert created["data"].get("inbox_item_id") == "item-99"
     assert created.get("title", "").startswith("工单完成")
+    assert pushed, "should WS push notification"
+    assert pushed[0][1].get("type") == "notification"
+    assert "工单完成" in (pushed[0][1].get("title") or "")
+
+
+def test_notify_owner_prefers_process_meta_over_admin(monkeypatch) -> None:
+    """identity.user_id 空时读 process meta.owner_user_id。"""
+    from backend.kernel.dispatcher import WorkforceDispatcher
+
+    created: dict = {}
+
+    class FakeRepo:
+        async def create(self, data):
+            created.update(data)
+            return type("Row", (), {**data, "id": "n-2", "created_at": None})()
+
+    owner_meta = "22222222-2222-2222-2222-222222222222"
+
+    class FakeProc:
+        meta = {"owner_user_id": owner_meta}
+
+    class FakeKernel:
+        def get_process(self, pid):
+            return FakeProc()
+
+    class FakeWs:
+        async def broadcast_to_user(self, *a, **k):
+            return None
+
+    async def go():
+        disp = WorkforceDispatcher(
+            kernel=FakeKernel(),
+            inbox=object(),
+            registry=object(),
+            session_factory=object(),
+        )
+        with (
+            patch(
+                "backend.repositories.notification_repo.AsyncNotificationRepository",
+                return_value=FakeRepo(),
+            ),
+            patch("backend.api.websocket.manager", FakeWs()),
+        ):
+            class Ident:
+                id = "id-1"
+                name = "工程师"
+                user_id = None
+
+            await disp._notify_owner(
+                kind="task_complete",
+                title="t",
+                content="c",
+                identity=Ident(),
+                item_id="i1",
+                process_id="proc-1",
+            )
+
+    asyncio.run(go())
+    assert str(created.get("user_id")) == owner_meta
 
 
 def test_parent_child_budget_reservation(kernel: AgentKernel) -> None:

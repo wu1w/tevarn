@@ -18,8 +18,9 @@ const STATUS_COLOR: Record<string, string> = {
 
 export function ActivityPanel({ liveToolCalls, streamStatusDetail, isStreaming }: ActivityPanelProps) {
   const t = useT();
-  // 默认折叠：只显示标题行，展开后看工具块
+  // 默认折叠；有工具在跑时自动展开，结束后可手动收起
   const [open, setOpen] = useState(false);
+  const [userCollapsed, setUserCollapsed] = useState(false);
 
   const items = useMemo(() => {
     return liveToolCalls.map((tc) => ({
@@ -35,9 +36,18 @@ export function ActivityPanel({ liveToolCalls, streamStatusDetail, isStreaming }
   const done = items.filter((i) => i.status === 'completed').length;
   const failed = items.filter((i) => i.status === 'failed').length;
 
-  // 新工具开始时若面板关着保持折叠；有 running 时标题高亮
+  // 工具执行中自动展开（除非用户本轮手动收起）
   useEffect(() => {
-    if (!isStreaming && items.length === 0) setOpen(false);
+    if (running > 0 && !userCollapsed) {
+      setOpen(true);
+    }
+  }, [running, userCollapsed]);
+
+  useEffect(() => {
+    if (!isStreaming && items.length === 0) {
+      setOpen(false);
+      setUserCollapsed(false);
+    }
   }, [isStreaming, items.length]);
 
   if (!isStreaming && items.length === 0) return null;
@@ -46,8 +56,18 @@ export function ActivityPanel({ liveToolCalls, streamStatusDetail, isStreaming }
     <div className="border-t border-border-subtle bg-elevated-bg/30 px-3 py-1.5">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 rounded-lg px-1 py-1 text-left transition-colors hover:bg-card-bg-hover/60"
+        onClick={() => {
+          setOpen((v) => {
+            const next = !v;
+            // 有 running 时用户收起 → 本轮不再强行展开
+            if (!next && running > 0) setUserCollapsed(true);
+            if (next) setUserCollapsed(false);
+            return next;
+          });
+        }}
+        className={`flex w-full items-center gap-2 rounded-lg px-1 py-1 text-left transition-colors hover:bg-card-bg-hover/60 ${
+          running > 0 ? 'bg-brand-cyan/5' : ''
+        }`}
       >
         <svg
           className={`h-3 w-3 flex-shrink-0 text-foreground-dim transition-transform ${open ? 'rotate-90' : ''}`}

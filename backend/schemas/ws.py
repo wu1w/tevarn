@@ -88,13 +88,24 @@ class SyncRequest(WSMessage):
 
 
 class ConfirmRequest(WSMessage):
-    """危险操作确认请求（服务端 → 前端弹窗）"""
+    """危险操作确认请求（服务端 → 前端弹窗）。
+
+    与 confirm_manager.request_confirmation 广播载荷对齐。
+    """
 
     type: Literal["confirm_request"] = "confirm_request"
     confirm_id: str
     title: str
     command: str
     reason: str = ""
+    timeout: Optional[float] = None
+    tool: str = ""
+    agent_id: str = ""
+    agent_name: str = ""
+    user_id: str = ""
+    scopes: list[str] = Field(
+        default_factory=lambda: ["once", "session", "agent", "deny"]
+    )
 
 
 class ConfirmResponse(WSMessage):
@@ -103,6 +114,7 @@ class ConfirmResponse(WSMessage):
     type: Literal["confirm_response"] = "confirm_response"
     confirm_id: str
     approved: bool
+    scope: Optional[str] = None  # once | session | agent | deny
 
 
 class ScreenshotEvent(WSMessage):

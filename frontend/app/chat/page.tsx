@@ -109,6 +109,10 @@ function ChatPageInner() {
       tools?: number;
       soft?: number;
     } | null>(null);
+    // 按会话缓存上轮 caps，切回已结束会话仍可回顾
+    const runCapsCacheRef = useRef<
+      Record<string, { caps?: number; tools?: number; soft?: number }>
+    >({});
 
     // 开发冒烟：允许 Playwright 注入消息 / 打开预览
     React.useEffect(() => {
@@ -205,6 +209,8 @@ function ChatPageInner() {
         if (sessionChanged) {
           setEditingContent(null);
           setActiveGoal(null);
+          // 恢复该会话上轮能力芯片（已结束会话也能回顾）
+          setRunCaps(runCapsCacheRef.current[sid] || null);
           const cached = streamSessionApi().get(sid);
           if (cached.agentRunning || cached.isStreaming || cached.content || cached.tools.length) {
             setIsStreaming(true);
@@ -559,11 +565,15 @@ function ChatPageInner() {
                 return m ? Number(m[1]) : null;
               })();
         if (capsN != null || toolsN != null) {
-          setRunCaps((prev) => ({
-            caps: capsN ?? prev?.caps ?? 0,
-            tools: toolsN ?? prev?.tools ?? 0,
-            soft: prev?.soft,
-          }));
+          setRunCaps((prev) => {
+            const next = {
+              caps: capsN ?? prev?.caps ?? 0,
+              tools: toolsN ?? prev?.tools ?? 0,
+              soft: prev?.soft,
+            };
+            if (sid) runCapsCacheRef.current[sid] = next;
+            return next;
+          });
         }
         if (sid) streamSessionApi().markRunning(sid, msg.detail || null);
       } else if (msg.state === 'error') {
@@ -581,7 +591,10 @@ function ChatPageInner() {
               setStreamStuck(false);
               setIsStreaming(false);
               setStreamStatusDetail(null);
-              // keep last runCaps briefly for post-run visibility
+              // keep last runCaps for this session (switch-back + post-run)
+              if (sid && runCapsCacheRef.current[sid] == null) {
+                /* already cached on status updates */
+              }
               const leftover = streamingContentRef.current;
               streamingContentRef.current = '';
               setStreamingContent('');
@@ -1391,6 +1404,21 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
                           softRenew={runCaps?.soft}
                           zh
                         />
+                      )}
+                      {/* 卡住：优先提示停止，再给恢复卡 */}
+                      {streamStuck && isStreaming && !isStopping && (
+                        <div className="mx-3 mb-2 flex items-center justify-between gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200">
+                          <span className="min-w-0 flex-1">
+                            {t('chat.streamStuck') || '长时间无响应 — 可先停止本轮，再从断点恢复'}
+                          </span>
+                          <button
+                            type="button"
+                            className="flex-shrink-0 rounded-md bg-amber-500/20 px-2 py-1 font-semibold text-amber-100 hover:bg-amber-500/30"
+                            onClick={() => handleStopStreaming()}
+                          >
+                            {t('chat.stop') || '停止'}
+                          </button>
+                        </div>
                       )}
                       {/* R-02：非流式 / 停止中 / 长时间无 delta 卡住 → 露出恢复入口 */}
                       {currentSession?.id && (!isStreaming || isStopping || streamStuck) ? (

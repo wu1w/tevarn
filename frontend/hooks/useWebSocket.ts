@@ -400,6 +400,17 @@ export function useWebSocket(options: UseWebSocketOptions) {
                 data: notif.data ?? null,
               } as Notification);
             });
+            // 编制完成等：domain 可能已 toast；WS 路径再补一条（标题短，防静默）
+            // workforce 由 DomainEventBridge job.* 负责；其它类型这里 toast
+            const src = String((notif.data as { source?: string } | undefined)?.source || '');
+            if (src !== 'workforce_dispatcher') {
+              import('@/stores/toastStore').then((mod) => {
+                mod.useToastStore.getState().addToast(
+                  notif.title || notif.message || t('nav.notifications'),
+                  notif.notification_type === 'task_failed' ? 'error' : 'info',
+                );
+              }).catch(() => {});
+            }
           } catch (e) { console.error(e); }
           optionsRef.current.onNotification?.(notif);
         } else if (msg.type === 'settings_changed') {

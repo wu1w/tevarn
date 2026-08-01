@@ -13,6 +13,7 @@ import {
   type KernelIdentity,
   type KernelInboxItem,
 } from '@/lib/api';
+import { useToastStore } from '@/stores/toastStore';
 
 const card: React.CSSProperties = {
   background: 'var(--card-bg)',
@@ -23,6 +24,7 @@ const card: React.CSSProperties = {
 
 export function WorkforceInboxPanel({ zh = true }: { zh?: boolean }) {
   const qc = useQueryClient();
+  const addToast = useToastStore((s) => s.addToast);
   const [identityId, setIdentityId] = useState('');
   const [status, setStatus] = useState<string>('');
   const [instruction, setInstruction] = useState('');
@@ -71,12 +73,14 @@ export function WorkforceInboxPanel({ zh = true }: { zh?: boolean }) {
     },
     onSuccess: (r) => {
       const extra = (r as { message?: string; identity_name?: string }).message;
-      setMsg(
+      const text =
         extra ||
-          (zh
-            ? `已派活 ${r.id.slice(0, 8)} · ${r.status}`
-            : `Enqueued ${r.id.slice(0, 8)} · ${r.status}`),
-      );
+        (zh
+          ? `已派活 #${r.id.slice(0, 8)} · ${r.status}`
+          : `Enqueued #${r.id.slice(0, 8)} · ${r.status}`);
+      setMsg(text);
+      // 即时反馈（domain job.enqueued 也会 toast；mutation 路径保证必达）
+      addToast(text, 'success');
       setInstruction('');
       qc.invalidateQueries({ queryKey: ['kernel-inbox'] });
       qc.invalidateQueries({ queryKey: ['workforce-report'] });
@@ -99,6 +103,7 @@ export function WorkforceInboxPanel({ zh = true }: { zh?: boolean }) {
           : `${text} (service unavailable — check dispatcher)`;
       }
       setMsg(text);
+      addToast(text, 'error');
     },
   });
 
