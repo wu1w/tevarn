@@ -38,9 +38,16 @@ async def get_messages(
             )
         before_ts = (before or "").strip()
         if before_ts and hasattr(uow.messages, "get_history_before"):
-            return await uow.messages.get_history_before(
-                session_id, before=before_ts, limit=limit
-            )
+            try:
+                return await uow.messages.get_history_before(
+                    session_id, before=before_ts, limit=limit
+                )
+            except ValueError as e:
+                # 非法 ISO 时间 → 400，勿 500（向上翻页偶发「加载失败」）
+                raise HTTPException(
+                    status_code=400,
+                    detail=str(e) or "invalid before timestamp",
+                ) from e
         return await uow.messages.get_history_by_session(
             session_id, limit=limit, offset=offset
         )

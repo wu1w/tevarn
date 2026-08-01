@@ -418,25 +418,31 @@ export const useSessionStore = create<SessionState>()(
         }
       },
 
-      /** 向上翻页：加载更早消息，prepend 到现有列表 */
+      /** 向上翻页：加载更早消息，prepend 到现有列表（纳入 _loadSeq 防连切串台） */
       loadOlderMessages: async (sessionId: string) => {
-        const st = get();
-        if (st.currentSession?.id !== sessionId) return { loaded: 0, hasMore: false };
-        const msgs = st.messages || [];
+        const st0 = get();
+        if (st0.currentSession?.id !== sessionId) return { loaded: 0, hasMore: false };
+        const seq = st0._loadSeq || 0;
+        const msgs = st0.messages || [];
         const oldest = msgs.find((m) => !String(m.id || '').startsWith('optimistic:'));
         const before = oldest?.created_at;
         if (!before) return { loaded: 0, hasMore: false };
         try {
           const older = await api.getMessages(sessionId, 100, 0, { before: String(before) });
-          if (get().currentSession?.id !== sessionId) return { loaded: 0, hasMore: false };
+          const st = get();
+          // 世代号或会话已变：丢弃结果
+          if (st.currentSession?.id !== sessionId || st._loadSeq !== seq) {
+            return { loaded: 0, hasMore: false };
+          }
           if (!older?.length) return { loaded: 0, hasMore: false };
-          const have = new Set((get().messages || []).map((m) => m.id));
+          const have = new Set((st.messages || []).map((m) => m.id));
           const fresh = older.filter((m) => m.id && !have.has(m.id));
           if (fresh.length) {
             set({ messages: [...fresh, ...(get().messages || [])] });
           }
           return { loaded: fresh.length, hasMore: older.length >= 100 };
-        } catch {
+        } catch (err) {
+          console.warn('loadOlderMessages failed', err);
           return { loaded: 0, hasMore: false };
         }
       },

@@ -11,13 +11,80 @@ scope:
 
 from __future__ import annotations
 
+import json
 import logging
+import os
+import threading
+import time
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # session_id -> set of allow signatures (e.g. "command:rm", "file_write")
 _session_grants: dict[str, set[str]] = {}
+_grants_lock = threading.RLock()
+_persist_loaded = False
+
+
+def _grants_path() -> Path:
+    """会话授权落盘路径（热重载 / 单机重启可恢复；非跨机权威）。"""
+    base = (
+        os.environ.get("TAKTON_DATA_DIR")
+        or os.environ.get("TAKTON_HOME")
+        or ""
+    ).strip()
+    if not base:
+        # 与其它本机状态对齐：~/.takton
+        home = os.environ.get("USERPROFILE") or os.environ.get("HOME") or "."
+        base = str(Path(home) / ".takton")
+    p = Path(base) / "session_grants.json"
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    return p
+
+
+def _ensure_loaded() -> None:
+    global _persist_loaded
+    if _persist_loaded:
+        return
+    with _grants_lock:
+        if _persist_loaded:
+            return
+        path = _grants_path()
+        try:
+            if path.is_file():
+                raw = json.loads(path.read_text(encoding="utf-8"))
+                data = raw.get("grants") if isinstance(raw, dict) else raw
+                if isinstance(data, dict):
+                    for sid, sigs in data.items():
+                        if isinstance(sigs, list):
+                            _session_grants[str(sid)] = set(str(s) for s in sigs)
+                    logger.info(
+                        "session grants loaded from disk sessions=%s path=%s",
+                        len(_session_grants),
+                        path,
+                    )
+        except Exception as e:
+            logger.warning("session grants load failed: %s", e)
+        _persist_loaded = True
+
+
+def _persist() -> None:
+    """best-effort 写盘（单机桌面热重载不丢「本会话允许」）。"""
+    path = _grants_path()
+    try:
+        payload = {
+            "updated_at": time.time(),
+            "grants": {sid: sorted(sigs) for sid, sigs in _session_grants.items()},
+        }
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=0), encoding="utf-8")
+        tmp.replace(path)
+    except Exception as e:
+        logger.warning("session grants persist failed: %s", e)
 
 # tool name / permission key -> identity capability id (CAP_POOL)
 # P0-B：权威副本在 Rust tool_catalog；此处为 fallback / 无 host 时使用。
@@ -130,6 +197,7 @@ def allow_signature(tool: str, arguments: dict[str, Any] | None = None) -> str:
 def has_session_grant(session_id: str | None, tool: str, arguments: dict[str, Any] | None = None) -> bool:
     if not session_id:
         return False
+    _ensure_loaded()
     grants = _session_grants.get(str(session_id))
     if not grants:
         return False
@@ -152,15 +220,19 @@ def add_session_grant(
 
     whole_tool=True：放行该工具全部调用（「本员工允许」后的会话缓存，避免同轮再问）。
     默认 False：shell 仍按命令首词细分（「本会话允许」粒度）。
+    落盘：单机热重载 / 进程重启后仍可短路确认（非多机权威）。
     """
     if not session_id:
         return
+    _ensure_loaded()
     sid = str(session_id)
-    bucket = _session_grants.setdefault(sid, set())
-    sig = allow_signature(tool, arguments)
-    bucket.add(sig)
-    if whole_tool:
-        bucket.add(tool)
+    with _grants_lock:
+        bucket = _session_grants.setdefault(sid, set())
+        sig = allow_signature(tool, arguments)
+        bucket.add(sig)
+        if whole_tool:
+            bucket.add(tool)
+        _persist()
     logger.info(
         "grant session allow session=%s sig=%s whole=%s",
         sid[:8],
@@ -231,7 +303,10 @@ async def has_identity_tool_grant(
 def clear_session_grants(session_id: str | None) -> None:
     if not session_id:
         return
-    _session_grants.pop(str(session_id), None)
+    _ensure_loaded()
+    with _grants_lock:
+        _session_grants.pop(str(session_id), None)
+        _persist()
 
 
 def crew_cap_for_tool(tool: str) -> str | None:
@@ -283,4 +358,13 @@ async def grant_agent_capability(
 
 
 def reset_for_tests() -> None:
-    _session_grants.clear()
+    global _persist_loaded
+    with _grants_lock:
+        _session_grants.clear()
+        _persist_loaded = True  # 测试不读盘
+        try:
+            p = _grants_path()
+            if p.is_file():
+                p.unlink()
+        except OSError:
+            pass

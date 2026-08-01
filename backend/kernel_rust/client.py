@@ -1335,10 +1335,17 @@ class RustAgentKernel:
 
         tok = CapabilityToken.from_dict_safe(r.get("token") or {})
         if tok is None:
-            # Host just issued — accept without sig field if present as caps list
+            # Host 刚签发：仅信任本机 host 回传（不可被外部 API 输入触达）
             raw = r.get("token") or {}
             if isinstance(raw, dict) and raw.get("capabilities") is not None:
-                tok = CapabilityToken.from_dict(raw, verify=False)
+                try:
+                    tok = CapabilityToken.from_dict(raw, verify=True)
+                except Exception:
+                    # 旧 host 未带签名字段时降级（仍仅 host 输出）
+                    logger.debug(
+                        "apply_intent token verify failed; host-trust fallback"
+                    )
+                    tok = CapabilityToken.from_dict(raw, verify=False)
             else:
                 from backend.kernel.capability import CapabilityToken as CT
 
@@ -2343,11 +2350,13 @@ class RustAgentKernel:
         tok = CapabilityToken.from_dict_safe(data if isinstance(data, dict) else None)
         if tok is not None:
             return tok
-        # Fresh host issue may omit signature field in some builds — dev/host trust
-        return CapabilityToken.from_dict(
-            data if isinstance(data, dict) else {"capabilities": []},
-            verify=False,
-        )
+        # 仅 host 回传路径：先 verify，失败再 host-trust 降级（无外部输入）
+        payload = data if isinstance(data, dict) else {"capabilities": []}
+        try:
+            return CapabilityToken.from_dict(payload, verify=True)
+        except Exception:
+            logger.debug("issue_token verify failed; host-trust fallback")
+            return CapabilityToken.from_dict(payload, verify=False)
 
     async def request_escalation(
         self,
