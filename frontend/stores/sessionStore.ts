@@ -91,6 +91,9 @@ export const useSessionStore = create<SessionState>()(
 
           const norm = (s: string) => (s || '').replace(/\s+/g, ' ').trim();
           const serverContent = norm(serverMsg.content || '');
+          const serverTs = Date.parse(String(serverMsg.created_at || '')) || Date.now();
+          // 时间窗：仅合并 ±2 分钟内的乐观气泡，降低连发相同文案错合
+          const WINDOW_MS = 120_000;
           const optIdx = state.messages.findIndex((m) => {
             if (m.role !== serverMsg.role) return false;
             const id = String(m.id || '');
@@ -98,12 +101,11 @@ export const useSessionStore = create<SessionState>()(
               id.startsWith('optimistic:') ||
               id.startsWith('local:') ||
               id.startsWith('streaming');
-            if (!isOptimistic && m.role === 'user') {
-              // 非乐观也允许 content 精确匹配时替换（防双用户气泡）
-              return norm(m.content || '') === serverContent && serverContent.length > 0;
-            }
-            if (!isOptimistic) return false;
-            return norm(m.content || '') === serverContent && serverContent.length > 0;
+            if (!isOptimistic && m.role !== 'user') return false;
+            if (norm(m.content || '') !== serverContent || !serverContent) return false;
+            const localTs = Date.parse(String(m.created_at || '')) || 0;
+            if (localTs && Math.abs(localTs - serverTs) > WINDOW_MS) return false;
+            return true;
           });
 
           if (optIdx >= 0) {

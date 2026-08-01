@@ -1227,6 +1227,13 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         # 2. 获取 Session 配置（行级锁由 Repository 实现）
         session = await self.session_repo.get_with_lock(session_id)
         if session is None:
+            self._should_stop = True
+            try:
+                from backend.api.websocket import manager as ws_manager
+
+                ws_manager.end_run_snapshot(session_id)
+            except Exception:
+                pass
             raise ValueError(f"Session {session_id} not found")
 
         config = await self.session_repo.get_config(session_id)
@@ -1962,8 +1969,27 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     msg = str(e)
                     if "FOREIGN KEY" in msg or "IntegrityError" in msg:
                         logger.warning(
-                            "Skip persist assistant tool_calls (session missing?): %s", e
+                            "Session gone (FK) — stop agent run session=%s: %s",
+                            session_id,
+                            e,
                         )
+                        # 会话已删：尽快停跑，避免幽灵 run 烧预算
+                        self._should_stop = True
+                        try:
+                            from backend.api.websocket import manager as ws_manager
+
+                            ws_manager.end_run_snapshot(session_id)
+                            await ws_manager.broadcast(
+                                session_id,
+                                {
+                                    "type": "status",
+                                    "state": "idle",
+                                    "detail": "Session deleted — run stopped",
+                                },
+                            )
+                        except Exception:
+                            pass
+                        break
                     else:
                         logger.warning(f"Failed to persist assistant tool_calls message: {e}")
 

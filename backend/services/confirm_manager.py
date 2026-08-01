@@ -187,7 +187,14 @@ async def request_confirmation(
 
     confirm_id = _uuid.uuid4().hex[:12]
     event = asyncio.Event()
-    holder: dict = {"approved": False, "scope": "deny"}
+    # 绑定 user_id：HTTP resolve 时校验，防止任意登录用户 resolve 他人 confirm
+    owner_uid = str(user_id) if user_id else ""
+    holder: dict = {
+        "approved": False,
+        "scope": "deny",
+        "user_id": owner_uid,
+        "session_id": str(session_id) if session_id else "",
+    }
     _pending[confirm_id] = (event, holder)
 
     payload = {
@@ -202,6 +209,7 @@ async def request_confirmation(
         "agent_id": agent_id or "",
         "agent_name": agent_name or "",
         "scopes": ["once", "session", "agent", "deny"],
+        "user_id": owner_uid,
     }
     try:
         # Always try session first (even if probe said offline — race with reconnect)
@@ -283,15 +291,30 @@ def resolve_confirmation(
     approved: bool,
     *,
     scope: str | None = None,
+    user_id: str | None = None,
 ) -> bool:
-    """前端回传确认结果。scope: once|session|agent|deny。"""
+    """前端回传确认结果。scope: once|session|agent|deny。
+
+    user_id：若 pending 绑了 owner，则必须匹配（HTTP 路径必传）。
+    """
     entry = _pending.get(confirm_id)
     if entry is None:
         return False
     event, holder = entry
+    owner = str(holder.get("user_id") or "").strip()
+    if owner and user_id is not None:
+        if str(user_id).strip() != owner:
+            logger.warning(
+                "confirm: user_id mismatch confirm=%s owner=%s got=%s",
+                confirm_id[:8],
+                owner[:8],
+                str(user_id)[:8],
+            )
+            return False
     holder["approved"] = bool(approved)
     if approved:
         s = (scope or "once").strip().lower()
+        # 白名单：脏 scope 不得写入
         if s not in ("once", "session", "agent"):
             s = "once"
         holder["scope"] = s

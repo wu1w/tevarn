@@ -1003,6 +1003,8 @@ class WorkforceDispatcher:
             async def _run_with_busy_heartbeat() -> None:
                 hb_stop = asyncio.Event()
 
+                touch_fail_streak = {"n": 0}
+
                 async def _hb() -> None:
                     interval = max(30.0, min(120.0, self._busy_ttl_seconds() / 4))
                     while not hb_stop.is_set():
@@ -1013,13 +1015,33 @@ class WorkforceDispatcher:
                             self._refresh_redis_busy(str(item.identity_id), item_key)
                             # Claim lease heartbeat (SQL + Rust) — sticky while worker runs
                             try:
-                                await self._inbox.touch_claim(item.id)
+                                ok = await self._inbox.touch_claim(item.id)
+                                if ok is False:
+                                    touch_fail_streak["n"] += 1
+                                else:
+                                    touch_fail_streak["n"] = 0
                             except Exception as _te:
+                                touch_fail_streak["n"] += 1
                                 logger.debug("touch_claim skip: %s", _te)
+                            # 连续失败：claim 可能已被 reclaim → 主动停本单防双执行
+                            if touch_fail_streak["n"] >= 3:
+                                logger.warning(
+                                    "touch_claim failed %s times — stop item %s",
+                                    touch_fail_streak["n"],
+                                    str(item.id)[:8],
+                                )
+                                loop = self._item_loops.get(item_key)
+                                if loop is not None and hasattr(loop, "stop"):
+                                    try:
+                                        loop.stop()
+                                    except Exception:
+                                        pass
+                                hb_stop.set()
+                                break
 
                 hb_task = asyncio.create_task(_hb())
                 try:
-                    await self._run_item(item, proc_id_holder=proc_id_holder)
+                    return await self._run_item(item, proc_id_holder=proc_id_holder)
                 finally:
                     hb_stop.set()
                     try:
@@ -1027,29 +1049,60 @@ class WorkforceDispatcher:
                     except Exception:
                         pass
 
-            await asyncio.wait_for(
+            finish_status = await asyncio.wait_for(
                 _run_with_busy_heartbeat(), timeout=self._item_timeout
             )
-            # 尽量带上 result 摘要（完成正文在 DB；item 内存可能无 result）
+            # finish_status: completed | budget_failed | failed | skipped
+            # 预算/逻辑失败不得发 task_complete（否则主人收到「完成」但 DB 是 fail）
             result_snip = await self._load_item_result_snip(item.id)
-            await self._notify_owner(
-                kind="task_complete",
-                title=f"工单完成 · {getattr(ident, 'name', '员工')}",
-                content=(
-                    (result_snip or "")[:1800]
-                    or (item.instruction or "")[:200]
-                ),
-                identity=ident,
-                item_id=item.id,
-            )
-            # 批次全部结束后唤醒 CEO 会话汇总（异步，不挡 dispatcher）
-            try:
-                asyncio.create_task(
-                    self._maybe_wake_ceo_rollup(item_id=item.id, identity=ident),
-                    name=f"ceo-rollup-{str(item.id)[:8]}",
+            status = str(finish_status or "completed")
+            if status == "budget_failed":
+                await self._notify_owner(
+                    kind="task_failed",
+                    title=f"工单预算中断 · {getattr(ident, 'name', '员工')}",
+                    content=(
+                        (result_snip or "")[:1800]
+                        or "预算耗尽，未完成实质工作 · "
+                        + (item.instruction or "")[:120]
+                    ),
+                    identity=ident,
+                    item_id=item.id,
                 )
-            except Exception as e:
-                logger.debug("schedule ceo rollup skip: %s", e)
+            elif status == "failed":
+                await self._notify_owner(
+                    kind="task_failed",
+                    title=f"工单失败 · {getattr(ident, 'name', '员工')}",
+                    content=(
+                        (result_snip or "")[:1800]
+                        or (item.instruction or "")[:200]
+                    ),
+                    identity=ident,
+                    item_id=item.id,
+                )
+            elif status == "skipped":
+                logger.info(
+                    "inbox item skipped (no notify) id=%s",
+                    str(getattr(item, "id", ""))[:8],
+                )
+            else:
+                await self._notify_owner(
+                    kind="task_complete",
+                    title=f"工单完成 · {getattr(ident, 'name', '员工')}",
+                    content=(
+                        (result_snip or "")[:1800]
+                        or (item.instruction or "")[:200]
+                    ),
+                    identity=ident,
+                    item_id=item.id,
+                )
+                # 仅真正完成才触发 CEO rollup
+                try:
+                    asyncio.create_task(
+                        self._maybe_wake_ceo_rollup(item_id=item.id, identity=ident),
+                        name=f"ceo-rollup-{str(item.id)[:8]}",
+                    )
+                except Exception as e:
+                    logger.debug("schedule ceo rollup skip: %s", e)
         except asyncio.TimeoutError:
             logger.warning("工单 %s 超时（%.0fs）", item.id, self._item_timeout)
             pid = proc_id_holder.get("id")
@@ -1110,8 +1163,10 @@ class WorkforceDispatcher:
             except Exception:
                 pass
 
-    async def _run_item(self, item: Any, *, proc_id_holder: dict | None = None) -> None:
-        """唤醒身份执行一单。全程 kernel 中介 + 预算扣减。
+    async def _run_item(
+        self, item: Any, *, proc_id_holder: dict | None = None
+    ) -> str:
+        """唤醒身份执行一单。返回终态：completed | budget_failed | failed | skipped。
 
         进程归属：executor 路径由 dispatcher 建进程（审计锚点）；
         生产 loop 路径由 loop._run_inner 建进程（带编制选项），
@@ -1120,7 +1175,7 @@ class WorkforceDispatcher:
         ident = await self._registry.get(item.identity_id)
         if ident is None or ident.status != "active":
             await self._inbox.fail(item.id, "身份不存在或已停用")
-            return
+            return "failed"
 
         # Rust identity admit (concurrency authority) before waking worker
         if not self._identity_admit(ident):
@@ -1130,7 +1185,8 @@ class WorkforceDispatcher:
                 )
             except Exception:
                 await self._inbox.fail(item.id, "identity admit denied (at capacity)")
-            return
+            # admit 失败未占槽：外层 finally 的 identity_release 必须幂等
+            return "skipped"
 
         item_key = str(item.id)
         # P1-7: 工单级 rewind 起点
@@ -1164,8 +1220,7 @@ class WorkforceDispatcher:
             except Exception as e:
                 await self._kernel.end_process(kernel_proc.id, state="failed", reason=str(e)[:200])
                 raise
-            await self._finish_item(item, result, process_id=kernel_proc.id)
-            return
+            return await self._finish_item(item, result, process_id=kernel_proc.id)
 
         result, proc_id = await self._execute_with_loop(ident, item, item_key=item_key)
         if proc_id_holder is not None:
@@ -1173,12 +1228,16 @@ class WorkforceDispatcher:
         if proc_id:
             self._item_proc_ids[item_key] = str(proc_id)
             self._proc_to_item[str(proc_id)] = item_key
-        await self._finish_item(item, result, process_id=proc_id)
+        return await self._finish_item(item, result, process_id=proc_id)
 
     async def _finish_item(
         self, item: Any, result: str, *, process_id: str | None
-    ) -> None:
-        """Budget 中断 → fail（可重试/进死信）；正常 → complete。"""
+    ) -> str:
+        """Budget 中断 → fail（可重试/进死信）；正常 → complete。
+
+        返回终态字符串供 _run_item_guarded 发正确通知：
+        completed | budget_failed | failed
+        """
         text = result or ""
         try:
             from backend.agent.workforce_budget import is_budget_exceeded_result
@@ -1221,7 +1280,7 @@ class WorkforceDispatcher:
                 str(getattr(item, "id", ""))[:8],
                 (process_id or "")[:8],
             )
-            return
+            return "budget_failed"
 
         if process_id:
             try:
@@ -1229,6 +1288,7 @@ class WorkforceDispatcher:
             except Exception:
                 pass
         await self._inbox.complete(item.id, text, process_id=process_id)
+        return "completed"
 
     async def _execute_with_loop(
         self, ident: Any, item: Any, *, item_key: str | None = None

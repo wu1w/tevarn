@@ -888,7 +888,10 @@ async def websocket_endpoint(
                 if scope is None and approved:
                     scope = "once"
                 confirm_manager.resolve_confirmation(
-                    confirm_id, approved, scope=str(scope) if scope is not None else None
+                    confirm_id,
+                    approved,
+                    scope=str(scope) if scope is not None else None,
+                    user_id=str(user_id) if user_id else None,
                 )
 
             elif msg_type == "sync":

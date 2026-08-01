@@ -609,8 +609,20 @@ async def run_tool_round(
             msg = str(e)
             if "FOREIGN KEY" in msg or "IntegrityError" in msg:
                 logger.warning(
-                    "Skip persist tool result (session missing?): %s", e
+                    "Session gone (FK) on tool result — stop run session=%s: %s",
+                    session_id,
+                    e,
                 )
+                try:
+                    loop._should_stop = True
+                except Exception:
+                    pass
+                try:
+                    from backend.api.websocket import manager as ws_manager
+
+                    ws_manager.end_run_snapshot(session_id)
+                except Exception:
+                    pass
             else:
                 logger.warning(f"Failed to persist tool result message: {e}")
 

@@ -477,7 +477,7 @@ async def host_restart_api(
 
 class ConfirmResolveBody(BaseModel):
     approved: bool = False
-    scope: str = "once"
+    scope: str = Field("once", pattern="^(once|session|agent|deny)$")
 
 
 @router.post("/confirm/{confirm_id}")
@@ -486,16 +486,34 @@ async def confirm_resolve_http(
     body: ConfirmResolveBody,
     current_user: Annotated[UserRead, Depends(get_current_user)],
 ):
-    """危险确认 HTTP 兜底：WS sender 未注册时前端可 POST 此路径。"""
+    """危险确认 HTTP 兜底：WS sender 未注册时前端可 POST 此路径。
+
+    校验 pending.user_id == current_user，防止横向 resolve。
+    过期/不存在 → 410；归属不符 → 403。
+    """
     from backend.services import confirm_manager
+
+    # 先探归属（不消费）
+    pending = getattr(confirm_manager, "_pending", {}).get(confirm_id)
+    if pending is None:
+        raise HTTPException(status_code=410, detail="confirm expired or not found")
+    _ev, holder = pending
+    owner = str(holder.get("user_id") or "").strip()
+    if owner and str(current_user.id) != owner:
+        raise HTTPException(status_code=403, detail="confirm not owned by current user")
+
+    scope = str(body.scope or "once").lower()
+    if scope not in ("once", "session", "agent", "deny"):
+        scope = "deny" if not body.approved else "once"
 
     ok = confirm_manager.resolve_confirmation(
         confirm_id,
         bool(body.approved),
-        scope=str(body.scope or "once"),
+        scope=scope,
+        user_id=str(current_user.id),
     )
     if not ok:
-        raise HTTPException(status_code=404, detail="confirm_id not found or expired")
+        raise HTTPException(status_code=410, detail="confirm expired or not found")
     return {"ok": True, "confirm_id": confirm_id}
 
 
