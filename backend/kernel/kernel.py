@@ -763,13 +763,34 @@ class AgentKernel:
             "budget_remaining": r.get("budget_remaining"),
         }
 
-    def charge_tokens(self, process_id: str, amount: int) -> int | None:
+    def charge_tokens(
+        self,
+        process_id: str,
+        amount: int,
+        *,
+        idempotency_key: str | None = None,
+    ) -> int | None:
         """扣减进程预算，返回剩余。超限抛 BudgetExceededError（调用方决定中断策略）。
 
         多 worker：Redis HINCRBY 原子扣减，再同步本地缓存。
         硬顶：单次 charge 不得把 tokens_used 顶穿 budget（拒绝写入）。
         弹性：超限前先 try_soft_renew_budget，续航成功则继续扣。
+        idempotency_key：RPC 超时重试时同 key 不双扣。
         """
+        import uuid as _uuid
+
+        if not idempotency_key and amount > 0:
+            idempotency_key = f"py-{_uuid.uuid4().hex}"
+        # 进程内幂等（无 Redis 时）
+        if idempotency_key:
+            cache: dict[str, tuple[float, int | None]] = getattr(
+                self, "_charge_idem", None
+            ) or {}
+            self._charge_idem = cache  # type: ignore[attr-defined]
+            ck = f"{process_id}:{idempotency_key}"
+            hit = cache.get(ck)
+            if hit and (time.time() - hit[0]) < 300:
+                return hit[1]
         proc = self._resolve_process(process_id)
         if proc is None:
             return None
@@ -802,7 +823,9 @@ class AgentKernel:
             ) + int(amount)
         if self._shared is not None and amount > 0:
             try:
-                used, remaining = self._shared.charge_tokens(process_id, amount)
+                used, remaining = self._shared.charge_tokens(
+                    process_id, amount, idempotency_key=idempotency_key
+                )
                 if used is not None:
                     proc.tokens_used = used
                 # 成功扣到 0 = 预算用尽但本刀合法，不抛；下一刀由硬顶拒绝
@@ -814,6 +837,11 @@ class AgentKernel:
                 # 写入 DB 档案，否则 UI/org 聚合 tokens_used 永远为 0
                 self._persist_process(proc)
                 self._maybe_auto_tighten(proc)
+                if idempotency_key:
+                    self._charge_idem[f"{process_id}:{idempotency_key}"] = (
+                        time.time(),
+                        remaining,
+                    )
                 return remaining
             except BudgetExceededError:
                 raise
@@ -845,6 +873,11 @@ class AgentKernel:
                 "tokens_used": proc.tokens_used,
             })
         self._maybe_auto_tighten(proc)
+        if idempotency_key:
+            self._charge_idem[f"{process_id}:{idempotency_key}"] = (
+                time.time(),
+                remaining,
+            )
         return remaining
 
     def _maybe_auto_tighten(self, proc: AgentProcess) -> None:

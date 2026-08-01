@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Optional
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base, TimestampMixin, UUIDMixin
@@ -24,6 +24,12 @@ class AgentRun(Base, UUIDMixin, TimestampMixin):
     """
 
     __tablename__ = "agent_runs"
+    __table_args__ = (
+        # 列表 / 恢复扫描：按时间倒序
+        Index("ix_agent_runs_created", "created_at"),
+        Index("ix_agent_runs_session_created", "session_id", "created_at"),
+        Index("ix_agent_runs_status_created", "status", "created_at"),
+    )
 
     session_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("sessions.id", ondelete="CASCADE"), index=True

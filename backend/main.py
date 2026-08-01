@@ -554,6 +554,20 @@ async def lifespan(app: FastAPI):
             logger.info("Cron scheduler started")
         except Exception as e:
             logger.warning(f"Cron scheduler start skipped: {e}")
+        # 数据保留清理（默认 days=0 不删；配置 message_retention_days / agent_run_retention_days）
+        try:
+            from backend.services.data_retention import retention_loop
+
+            _spawn_bg(
+                retention_loop(
+                    interval_hours=float(
+                        getattr(settings, "data_retention_interval_hours", 24.0) or 24.0
+                    )
+                ),
+                "data_retention",
+            )
+        except Exception as e:
+            logger.debug("data_retention skip: %s", e)
     else:
         logger.info("Cron scheduler skipped (TAKTON_TEST_MODE)")
 

@@ -267,6 +267,10 @@ class Settings(BaseSettings):
     agent_dispatcher_poll_seconds: float = 10.0
     agent_inbox_max_pending: int = 200  # 有界红线：超限丢弃最旧 pending
     agent_inbox_item_timeout: float = 600.0  # 单工单执行超时（秒）
+    # 数据保留（0 = 不自动清理）
+    message_retention_days: int = 0
+    agent_run_retention_days: int = 0
+    data_retention_interval_hours: float = 24.0
     # F2 并发上限：全局同时在跑工单数；单身份默认串行（1）
     agent_dispatcher_max_global_concurrent: int = 8
     agent_dispatcher_max_identity_concurrent: int = 1

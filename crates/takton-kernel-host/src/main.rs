@@ -7,10 +7,11 @@
 //! {"jsonrpc":"2.0","id":2,"error":{"code":-32000,"message":"...","data":{...}}}
 //! ```
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use clap::Parser;
@@ -121,6 +122,29 @@ fn map_err(e: takton_kernel::KernelError) -> (i64, String, Value) {
         _ => -32000,
     };
     (code, e.to_string(), e.to_json())
+}
+
+/// charge_tokens 幂等缓存：key → (deadline, remaining)
+static CHARGE_IDEM: Mutex<Option<HashMap<String, (Instant, Option<i64>)>>> = Mutex::new(None);
+
+fn charge_idem_get(key: &str) -> Option<Option<i64>> {
+    let mut g = CHARGE_IDEM.lock().ok()?;
+    let map = g.get_or_insert_with(HashMap::new);
+    // 顺手清过期
+    let now = Instant::now();
+    map.retain(|_, (dl, _)| *dl > now);
+    map.get(key).map(|(_, rem)| *rem)
+}
+
+fn charge_idem_put(key: &str, remaining: Option<i64>) {
+    if let Ok(mut g) = CHARGE_IDEM.lock() {
+        let map = g.get_or_insert_with(HashMap::new);
+        map.insert(key.to_string(), (Instant::now() + Duration::from_secs(300), remaining));
+        if map.len() > 4096 {
+            let now = Instant::now();
+            map.retain(|_, (dl, _)| *dl > now);
+        }
+    }
 }
 
 fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: &Value) -> Result<Value, (i64, String, Value)> {
@@ -300,10 +324,28 @@ fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: 
                 .get("amount")
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0);
-            kernel
+            // 幂等：同 idempotency_key 5 分钟内只扣一次（防 RPC 超时双写）
+            let idem = params
+                .get("idempotency_key")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .filter(|s| !s.is_empty());
+            if let Some(ref k) = idem {
+                let cache_key = format!("{pid}:{k}");
+                if let Some(rem) = charge_idem_get(&cache_key) {
+                    return Ok(json!({"remaining": rem, "idempotent": true}));
+                }
+            }
+            let out = kernel
                 .charge_tokens(pid, amount)
-                .map(|r| json!({"remaining": r}))
-                .map_err(map_err)
+                .map(|r| {
+                    if let Some(ref k) = idem {
+                        charge_idem_put(&format!("{pid}:{k}"), r);
+                    }
+                    json!({"remaining": r})
+                })
+                .map_err(map_err);
+            out
         }
 
         "top_up_budget" => {

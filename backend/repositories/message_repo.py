@@ -130,27 +130,38 @@ class AsyncMessageRepository(AsyncBaseRepository, MessageRepository):
         session_id: uuid.UUID,
         limit: int = 100,
         offset: int = 0,
+        *,
+        from_latest: bool | None = None,
     ) -> list[MessageRead]:
-        """分页获取会话历史。
+        """分页获取会话历史（统一语义，返回正序）。
 
-        offset=0 时返回**最近** limit 条（聊天 UI 默认需要尾部）；
-        offset>0 时仍从最早消息起算（兼容旧分页）。
+        - **默认 from_latest=True**（聊天 UI）：取最近 limit 条，offset 表示
+          「再往前跳过的批次数」（offset=0 最近一批，offset=limit 更早一批…）。
+        - from_latest=False：从最早消息起 offset/limit（旧分页兼容）。
+
+        以前 offset=0 取尾、offset>0 取头，语义矛盾；现用 from_latest 显式分支。
         """
         from sqlalchemy import desc
 
         session = await self._get_session()
         try:
-            if offset == 0:
-                # 最近 limit 条：desc 取后 reverse 为正序
+            # 默认：聊天 UI 要尾部；offset 仅在 from_latest 窗口内跳过
+            use_latest = True if from_latest is None else bool(from_latest)
+            if use_latest:
+                # 最近 (offset+limit) 条中丢掉最新 offset，留下更早的 limit 条
+                # offset=0 → 最近 limit；offset=50,limit=50 → 倒数 51–100
+                take = max(1, int(limit) + max(0, int(offset)))
                 result = await session.execute(
                     select(Message)
                     .where(Message.session_id == session_id)
                     .order_by(desc(Message.created_at))
-                    .limit(limit)
+                    .limit(take)
                 )
                 rows = list(result.scalars().all())
-                rows.reverse()
-                return [MessageRead.model_validate(m) for m in rows]
+                # rows[0] 最新；取 [offset : offset+limit] 再 reverse 为正序
+                slice_rows = rows[max(0, int(offset)) : max(0, int(offset)) + int(limit)]
+                slice_rows.reverse()
+                return [MessageRead.model_validate(m) for m in slice_rows]
 
             result = await session.execute(
                 select(Message)

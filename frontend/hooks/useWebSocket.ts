@@ -535,18 +535,25 @@ export function useWebSocket(options: UseWebSocketOptions) {
     wsRef.current = ws;
 
     // 注册危险操作确认的发送函数：弹窗组件经 store 调用（含 scope）
+    // 返回 false → store 走 HTTP 兜底，避免 WS 断开时确认被吞
     import('@/stores/confirmStore').then((mod) => {
       mod.useConfirmStore.getState().registerSender((confirmId, approved, scope) => {
         if (wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(
-            JSON.stringify({
-              type: 'confirm_response',
-              confirm_id: confirmId,
-              approved,
-              scope: approved ? scope : 'deny',
-            }),
-          );
+          try {
+            wsRef.current.send(
+              JSON.stringify({
+                type: 'confirm_response',
+                confirm_id: confirmId,
+                approved,
+                scope: approved ? scope : 'deny',
+              }),
+            );
+            return true;
+          } catch {
+            return false;
+          }
         }
+        return false;
       });
     });
   }, []);

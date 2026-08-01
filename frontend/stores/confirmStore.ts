@@ -21,14 +21,21 @@ interface ConfirmState {
   pending: ConfirmRequestData | null;
   /** 等待中的后续确认（后到不覆盖先到） */
   queue: ConfirmRequestData[];
-  /** WS 发送：confirm_id + approved + scope */
-  _sender: ((confirmId: string, approved: boolean, scope: ConfirmScope) => void) | null;
+  /**
+   * WS 发送：confirm_id + approved + scope。
+   * 返回 true=已发出；false=WS 不可用（调用方应走 HTTP 兜底）。
+   */
+  _sender:
+    | ((confirmId: string, approved: boolean, scope: ConfirmScope) => boolean)
+    | null;
   /** 本地倒计时到期 / 服务端 confirm_expired */
   expireConfirm: (confirmId: string, reason?: string) => void;
 
   showConfirm: (data: ConfirmRequestData) => void;
   registerSender: (
-    fn: ((confirmId: string, approved: boolean, scope: ConfirmScope) => void) | null,
+    fn:
+      | ((confirmId: string, approved: boolean, scope: ConfirmScope) => boolean)
+      | null,
   ) => void;
   /** 用户决定当前弹窗；若有队列则弹出下一个 */
   respond: (scope: ConfirmScope) => void;
@@ -141,13 +148,19 @@ export const useConfirmStore = create<ConfirmState>((set, get) => ({
     if (!pending) return;
     const approved = scope !== 'deny';
     const id = pending.confirmId;
-    // 优先 WS；无 sender 时 HTTP 兜底（人在 B tab 批 A 的确认时 B 可能已断）
+    // 优先 WS；sender 返回 false / 未注册 → HTTP 兜底（断线不能吞确认）
+    let sent = false;
     if (_sender) {
-      _sender(id, approved, scope);
-    } else if (typeof window !== 'undefined') {
+      try {
+        sent = Boolean(_sender(id, approved, scope));
+      } catch {
+        sent = false;
+      }
+    }
+    if (!sent && typeof window !== 'undefined') {
       void import('@/lib/api')
         .then(({ resolveConfirmHttp }) =>
-          resolveConfirmHttp(id, approved, scope === 'deny' ? 'deny' : scope)
+          resolveConfirmHttp(id, approved, scope === 'deny' ? 'deny' : scope),
         )
         .catch((e) => console.warn('confirm HTTP fallback failed', e));
     }

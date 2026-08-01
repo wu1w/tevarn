@@ -186,7 +186,7 @@ async def _create_index_if_missing(conn, name: str, table: str, columns: str) ->
 
 
 async def _migrate_perf_indexes(conn) -> None:
-    """notifications 压测热点 + kernel_escalations 查询索引。"""
+    """notifications 压测热点 + kernel_escalations / messages / agent_runs 查询索引。"""
     await _create_index_if_missing(
         conn, "ix_notifications_user_created", "notifications", "user_id, created_at"
     )
@@ -198,6 +198,19 @@ async def _migrate_perf_indexes(conn) -> None:
     )
     await _create_index_if_missing(
         conn, "ix_kernel_escalations_process", "kernel_escalations", "process_id"
+    )
+    # 聊天历史尾部分页 + Run 恢复扫描
+    await _create_index_if_missing(
+        conn, "ix_messages_session_created", "messages", "session_id, created_at"
+    )
+    await _create_index_if_missing(
+        conn, "ix_agent_runs_created", "agent_runs", "created_at"
+    )
+    await _create_index_if_missing(
+        conn, "ix_agent_runs_session_created", "agent_runs", "session_id, created_at"
+    )
+    await _create_index_if_missing(
+        conn, "ix_agent_runs_status_created", "agent_runs", "status, created_at"
     )
 
 

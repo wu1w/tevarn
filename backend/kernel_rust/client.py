@@ -2190,12 +2190,44 @@ class RustAgentKernel:
             process_id, need=need, reason=reason or "soft_renew"
         )
 
-    def charge_tokens(self, process_id: str, amount: int) -> int | None:
+    def charge_tokens(
+        self,
+        process_id: str,
+        amount: int,
+        *,
+        idempotency_key: str | None = None,
+    ) -> int | None:
+        """扣减预算。idempotency_key 防 RPC 超时重试双扣。"""
+        import time as _time
+        import uuid as _uuid
+
+        # 进程内幂等缓存（跨超时重试）；TTL 5min
+        cache: dict[str, tuple[float, int | None]] = getattr(
+            self, "_charge_idem_cache", None
+        ) or {}
+        self._charge_idem_cache = cache  # type: ignore[attr-defined]
+        key = None
+        if idempotency_key:
+            key = f"{process_id}:{idempotency_key}"
+            hit = cache.get(key)
+            if hit and (_time.time() - hit[0]) < 300:
+                return hit[1]
+        elif amount > 0:
+            # 未显式传入时也生成一次 key，便于超时后同参重试去重
+            key = f"{process_id}:auto:{_uuid.uuid4().hex}"
+
+        params: dict[str, Any] = {"process_id": process_id, "amount": amount}
+        if key:
+            params["idempotency_key"] = key.split(":", 1)[-1] if key.startswith(f"{process_id}:") else key
+            # 传完整 key 给 host（host 可忽略）
+            params["idempotency_key"] = key
+
         try:
-            r = self._call(
-                "charge_tokens", {"process_id": process_id, "amount": amount}
-            ) or {}
-            return r.get("remaining")
+            r = self._call("charge_tokens", params) or {}
+            remaining = r.get("remaining")
+            if key:
+                cache[key] = (_time.time(), remaining)
+            return remaining
         except BudgetExceededError:
             # 撞墙前再弹性一次（CEO 长对话）
             renewed = self._chat_elastic_top_up(
@@ -2203,10 +2235,22 @@ class RustAgentKernel:
             )
             if not renewed:
                 raise
-            r = self._call(
-                "charge_tokens", {"process_id": process_id, "amount": amount}
-            ) or {}
-            return r.get("remaining")
+            r = self._call("charge_tokens", params) or {}
+            remaining = r.get("remaining")
+            if key:
+                cache[key] = (_time.time(), remaining)
+            return remaining
+        except TimeoutError:
+            # 超时后若用相同 key 再调一次，走缓存/host 幂等，避免双扣
+            if key:
+                try:
+                    r = self._call("charge_tokens", params) or {}
+                    remaining = r.get("remaining")
+                    cache[key] = (_time.time(), remaining)
+                    return remaining
+                except Exception:
+                    raise
+            raise
 
     def _emit_policy_decision(
         self,

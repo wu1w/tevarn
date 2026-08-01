@@ -147,12 +147,35 @@ class KernelSharedStore:
             self._r.srem(key, *dead)
         return alive
 
-    def charge_tokens(self, process_id: str, amount: int) -> tuple[int | None, int | None]:
+    def charge_tokens(
+        self,
+        process_id: str,
+        amount: int,
+        *,
+        idempotency_key: str | None = None,
+    ) -> tuple[int | None, int | None]:
         """Lua 原子扣减。返回 (tokens_used, budget_remaining)。
 
         超预算拒绝写入时返回 used=None 且 remaining 语义由调用方识别——
         实际用 raising via special: 若 res[0]=='exceeded' 则抛给上层。
+        idempotency_key：同一 key 5 分钟内只扣一次（RPC 超时重试防双写）。
         """
+        if idempotency_key:
+            idem_k = f"{self._prefix}:charge_idem:{process_id}:{idempotency_key}"
+            try:
+                cached = self._r.get(idem_k)
+                if cached:
+                    # format: used|remaining
+                    parts = self._s(cached).split("|", 1)
+                    used = int(parts[0]) if parts[0] not in ("", "None") else None
+                    rem = (
+                        int(parts[1])
+                        if len(parts) > 1 and parts[1] not in ("", "None")
+                        else None
+                    )
+                    return used, rem
+            except Exception:
+                pass
         key = _proc_key(process_id)
         res = self._r.eval(_CHARGE_LUA, 1, key, int(amount), _PROC_TTL)
         if res is None or res is False:
@@ -166,19 +189,39 @@ class KernelSharedStore:
         used = int(res[0])
         budget_s = self._s(res[1])
         if budget_s == "" or budget_s is None:
+            remaining: int | None = None
             if amount > 0:
                 try:
                     self.record_daily_charge(amount)
                 except Exception:
                     pass
-            return used, None
+            if idempotency_key:
+                try:
+                    self._r.setex(
+                        f"{self._prefix}:charge_idem:{process_id}:{idempotency_key}",
+                        300,
+                        f"{used}|None",
+                    )
+                except Exception:
+                    pass
+            return used, remaining
         budget = int(budget_s)
+        remaining = max(0, budget - used)
         if amount > 0:
             try:
                 self.record_daily_charge(amount)
             except Exception:
                 pass
-        return used, max(0, budget - used)
+        if idempotency_key:
+            try:
+                self._r.setex(
+                    f"{self._prefix}:charge_idem:{process_id}:{idempotency_key}",
+                    300,
+                    f"{used}|{remaining}",
+                )
+            except Exception:
+                pass
+        return used, remaining
 
     def set_process_fields(self, process_id: str, **fields: Any) -> None:
         """更新元数据字段；默认**拒绝**写 tokens_used（请用 charge_tokens）。"""

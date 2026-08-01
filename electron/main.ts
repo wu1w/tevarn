@@ -690,7 +690,14 @@ function startFrontend(): Promise<void> {
     };
 
     const server = http.createServer((req, res) => {
-      let urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
+      let urlPath: string;
+      try {
+        urlPath = decodeURIComponent((req.url || '/').split('?')[0] || '/');
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('Bad Request: malformed URI');
+        return;
+      }
 
       // 反向代理 API / 上传到后端 —— 避免 SPA 误把 /api 当页面返回 HTML，
       // 也避免渲染进程直连错误端口导致 Network Error
@@ -774,7 +781,14 @@ function startFrontend(): Promise<void> {
     // WebSocket 反代：渲染进程连 ws://127.0.0.1:3000/api/ws/* → 真实后端端口
     // 避免硬编码 8000，以及 activeBackendPort 切换后旧注入地址失效
     server.on('upgrade', (req, socket, head) => {
-      const urlPath = decodeURIComponent((req.url || '/').split('?')[0] || '/');
+      let urlPath: string;
+      try {
+        urlPath = decodeURIComponent((req.url || '/').split('?')[0] || '/');
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('Bad Request: malformed URI');
+        return;
+      }
       if (!(urlPath === '/api' || urlPath.startsWith('/api/'))) {
         socket.destroy();
         return;
@@ -1177,7 +1191,17 @@ function createWindow(): void {
   mainWindow.on('unmaximize', () => persistBounds(false));
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    // 仅 http(s) / mailto；拒绝 file: javascript: 等危险 scheme
+    try {
+      const u = String(url || '');
+      if (/^https?:\/\//i.test(u) || /^mailto:/i.test(u)) {
+        void shell.openExternal(u);
+      } else {
+        console.warn('[Takton] blocked openExternal scheme:', u.slice(0, 80));
+      }
+    } catch (e) {
+      console.warn('[Takton] openExternal failed', e);
+    }
     return { action: 'deny' };
   });
 }
@@ -1191,8 +1215,17 @@ ipcMain.handle('get-app-version', () => app.getVersion());
 ipcMain.handle('get-backend-url', () => getApiBase());
 ipcMain.handle('get-ws-url', () => getWsBase());
 ipcMain.handle('open-external', async (_event, url: string) => {
-  if (typeof url === 'string' && (url.startsWith('https://') || url.startsWith('http://'))) {
-    await shell.openExternal(url);
+  if (typeof url !== 'string') return;
+  const u = url.trim();
+  // scheme 白名单：仅 http(s)/mailto
+  if (!/^https?:\/\//i.test(u) && !/^mailto:/i.test(u)) {
+    console.warn('[Takton] open-external blocked scheme:', u.slice(0, 80));
+    return;
+  }
+  try {
+    await shell.openExternal(u);
+  } catch (e) {
+    console.warn('[Takton] open-external failed', e);
   }
 });
 

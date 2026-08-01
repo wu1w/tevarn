@@ -6,7 +6,7 @@ import uuid
 from enum import Enum as PyEnum
 from typing import Any, Optional
 
-from sqlalchemy import JSON, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TimestampMixin, UUIDMixin
@@ -23,6 +23,10 @@ class Message(Base, UUIDMixin, TimestampMixin):
     """消息表：存储会话中的所有消息"""
 
     __tablename__ = "messages"
+    __table_args__ = (
+        # 历史分页 / 尾部取最近 N 条：session + created_at 复合索引
+        Index("ix_messages_session_created", "session_id", "created_at"),
+    )
 
     session_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("sessions.id", ondelete="CASCADE"), index=True

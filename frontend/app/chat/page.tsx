@@ -897,14 +897,25 @@ const handleUserMessageAck = useCallback(
       onError: (err) => toastWsError(err),
       getLastMessageId: getLast,
     });
-    // 回 /chat：连接已在、handler 刚挂上 → 主动 sync 一次，补切页期间丢的 delta
-    const t = window.setTimeout(() => {
+    // 回 /chat：连接已在、handler 刚挂上 → 主动 sync 一次，补切页期间丢的 delta。
+    // 不用固定 200ms：轮询等 isConnected（最多 ~1.5s），避免 session 切换瞬间绑在旧会话。
+    let cancelled = false;
+    let attempts = 0;
+    const trySync = () => {
+      if (cancelled) return;
       const api = useChatWsBridge.getState().api;
       if (api?.isConnected) {
         api.sendSync?.(getLast());
+        return;
       }
-    }, 200);
+      attempts += 1;
+      if (attempts < 15) {
+        window.setTimeout(trySync, 100);
+      }
+    };
+    const t = window.setTimeout(trySync, 50);
     return () => {
+      cancelled = true;
       window.clearTimeout(t);
       useChatWsBridge.getState().setHandlers(null);
     };
