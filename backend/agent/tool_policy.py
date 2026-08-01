@@ -34,6 +34,7 @@ DEFAULT_CHAT_TOOL_WHITELIST: tuple[str, ...] = (
     "doc_read",
     "session_search",
     "clarify",
+    "result_load",  # 外置大结果回读（与 result_spill 配对）
     "use_tool_pack",  # meta：动态扩容
 )
 
@@ -50,6 +51,7 @@ TOOL_PACKS: dict[str, tuple[str, ...]] = {
         "command",
         "process",
         "python",
+        "result_load",
         "shell_session",
     ),
     "web": (

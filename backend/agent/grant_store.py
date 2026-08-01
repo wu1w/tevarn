@@ -68,6 +68,7 @@ TOOL_TO_CREW_CAP: dict[str, str] = {
     "clarify": "crew_steward",
     "use_tool_pack": "use_tool_pack",
     "current_time": "current_time",
+    "result_load": "file_read",  # 外置结果回读，与读权限同级
 }
 
 

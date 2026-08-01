@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from backend.services.tools.executors import (
     execute_browser,
     execute_command,
@@ -462,6 +464,96 @@ class SQLiteQueryTool(_BuiltinToolBase):
         )
 
 
+async def execute_result_load(config: dict[str, Any], arguments: dict[str, Any]) -> str:
+    """加载 kernel result_spill 外置的完整工具结果。"""
+    hid = str(
+        arguments.get("id")
+        or arguments.get("handle_id")
+        or arguments.get("handle")
+        or ""
+    ).strip()
+    if not hid:
+        return (
+            "[Error] id is required "
+            "(from [tool_result_handle id=…] spill message)"
+        )
+    # 兼容模型传入 "id=abc" 或整段 handle 行
+    if hid.startswith("id="):
+        hid = hid[3:].strip()
+    if " " in hid:
+        hid = hid.split()[0]
+    try:
+        from backend.kernel import get_kernel
+
+        k = get_kernel()
+        r: dict[str, Any] = {}
+        if hasattr(k, "result_load"):
+            r = k.result_load(hid) or {}
+        elif hasattr(k, "_call"):
+            r = k._call("result_load", {"handle_id": hid}) or {}
+        else:
+            return "[Error] kernel result_load unavailable"
+        if isinstance(r, dict):
+            if r.get("error"):
+                return f"[Error] result_load: {r.get('error')}"
+            # host 可能返回 {content} / {body} / {text}
+            for key in ("content", "body", "text", "result"):
+                if key in r and r[key] is not None:
+                    body = str(r[key])
+                    max_c = int(arguments.get("max_chars") or 100_000)
+                    if len(body) > max_c:
+                        return (
+                            body[:max_c]
+                            + f"\n...[truncated at {max_c} chars; "
+                            f"total={len(body)}; call again with higher max_chars]"
+                        )
+                    return body
+            # 整包 dump
+            import json
+
+            return json.dumps(r, ensure_ascii=False, default=str)[:100_000]
+        return str(r)
+    except Exception as e:
+        return f"[Error] result_load failed: {e}"
+
+
+class ResultLoadTool(_BuiltinToolBase):
+    """大工具结果外置后的回读（与 kernel result_spill 配对）。"""
+
+    _executor = execute_result_load
+
+    def __init__(self):
+        super().__init__(
+            name="result_load",
+            description=(
+                "加载被外置存储的完整工具结果。"
+                "当上一条工具返回含 [tool_result_handle id=…] 或 "
+                "「use result_load id=…」时调用本工具，传入该 id 取全文。"
+                "不要猜测 id；只用来自 spill 句柄的 id。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "result handle id（来自 tool_result_handle）",
+                    },
+                    "handle_id": {
+                        "type": "string",
+                        "description": "id 的别名",
+                    },
+                    "max_chars": {
+                        "type": "integer",
+                        "description": "返回正文最大字符数，默认 100000",
+                        "default": 100000,
+                    },
+                },
+                "required": ["id"],
+            },
+            risk_level=ToolRiskLevel.LOW,
+        )
+
+
 # 所有内置工具类
 BUILTIN_TOOL_CLASSES = [
     FileReadTool,
@@ -478,6 +570,7 @@ BUILTIN_TOOL_CLASSES = [
     PythonTool,
     SearchTool,
     SQLiteQueryTool,
+    ResultLoadTool,
 ]
 
 # ── Agent 自配置工具（v3.1） ──

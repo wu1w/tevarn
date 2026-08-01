@@ -31,3 +31,5 @@ croniter>=2.0.0
 # Multi-worker kernel shared state (optional; needed when
 # agent_kernel_redis_shared=true)
 redis>=5.0.0
+
+tzdata>=2024.1  # Windows ZoneInfo / current_time

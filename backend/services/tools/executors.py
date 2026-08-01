@@ -1317,53 +1317,85 @@ async def execute_python(config: dict[str, Any], arguments: dict[str, Any]) -> s
             arguments["_confirm_ok_source"] = "server"
 
     # Prefer current interpreter (Windows rarely has python3 on PATH)
-    py = sys.executable or "python3"
+    py = sys.executable or ("python" if os.name == "nt" else "python3")
 
-    # 执行环境裁决（T5）：python 与 command 走同一口径；P0 isolation 强制 sandbox
-    _kpid = _kernel_process_id_from_args(arguments)
-    if _must_use_computer_path(arguments):
-        try:
-            import shlex
+    # Windows：shlex.quote 用单引号，cmd/CreateProcess 会报「文件名语法不正确」；
+    # 多行 -c 也脆弱。统一写临时 .py 再 exec，argv 列表传参。
+    import tempfile
 
-            from backend.computer.manager import get_computer_manager
-
-            _cmd = f"{shlex.quote(py)} -c {shlex.quote(code)}"
-            return await get_computer_manager().execute(
-                _cmd,
-                agent_key=str(arguments.get("_agent_key") or "main"),
-                agent_label=str(arguments.get("_agent_label") or ""),
-                session_id=arguments.get("_session_id"),
-                recorder=arguments.get("_run_recorder"),
-                timeout=int(timeout or 30),
-                process_id=_kpid,
-            )
-        except Exception as _ce:
-            __import__("logging").getLogger(__name__).warning(
-                "agent computer python failed: %s", _ce
-            )
-            return (
-                f"[Error] 沙箱执行失败: {_ce}"
-                "（未降级本机直跑。可在权限控制台把「执行环境」改为「自动」或「本机直跑」）"
-            )
+    script_path: str | None = None
+    try:
+        fd, script_path = tempfile.mkstemp(suffix=".py", prefix="takton_py_")
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+            f.write(code if code.endswith("\n") else code + "\n")
+    except Exception as e:
+        return f"[Error] cannot write temp script: {e}"
 
     try:
-        proc = await asyncio.create_subprocess_exec(
-            py, "-c", code,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(), timeout=timeout
-        )
-        out = stdout.decode("utf-8", errors="replace").strip()
-        err = stderr.decode("utf-8", errors="replace").strip()
-        if err:
-            return f"[Exit {proc.returncode}]\nstdout:\n{out}\n\nstderr:\n{err}"
-        return out or "[No output]"
-    except asyncio.TimeoutError:
-        return f"[Timeout] Execution exceeded {timeout}s"
-    except Exception as e:
-        return f"[Error] {e}"
+        # 执行环境裁决（T5）：python 与 command 走同一口径；P0 isolation 强制 sandbox
+        _kpid = _kernel_process_id_from_args(arguments)
+        if _must_use_computer_path(arguments):
+            try:
+                from backend.computer.manager import get_computer_manager
+
+                # JobBackend = cmd.exe /c <command>：Windows 引号规则是 "" 转义，不是 \"
+                if os.name == "nt":
+                    def _cmd_quote(s: str) -> str:
+                        if not s:
+                            return '""'
+                        # 含空格/特殊字符才加引号；内部 " → ""
+                        if any(c in s for c in ' \t&|<>()^"'):
+                            return '"' + s.replace('"', '""') + '"'
+                        return s
+
+                    _cmd = f"{_cmd_quote(py)} {_cmd_quote(script_path)}"
+                else:
+                    import shlex
+
+                    _cmd = f"{shlex.quote(py)} {shlex.quote(script_path)}"
+                return await get_computer_manager().execute(
+                    _cmd,
+                    agent_key=str(arguments.get("_agent_key") or "main"),
+                    agent_label=str(arguments.get("_agent_label") or ""),
+                    session_id=arguments.get("_session_id"),
+                    recorder=arguments.get("_run_recorder"),
+                    timeout=int(timeout or 30),
+                    process_id=_kpid,
+                )
+            except Exception as _ce:
+                __import__("logging").getLogger(__name__).warning(
+                    "agent computer python failed: %s", _ce
+                )
+                return (
+                    f"[Error] 沙箱执行失败: {_ce}"
+                    "（未降级本机直跑。可在权限控制台把「执行环境」改为「自动」或「本机直跑」）"
+                )
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                py,
+                script_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=timeout
+            )
+            out = stdout.decode("utf-8", errors="replace").strip()
+            err = stderr.decode("utf-8", errors="replace").strip()
+            if err:
+                return f"[Exit {proc.returncode}]\nstdout:\n{out}\n\nstderr:\n{err}"
+            return out or "[No output]"
+        except asyncio.TimeoutError:
+            return f"[Timeout] Execution exceeded {timeout}s"
+        except Exception as e:
+            return f"[Error] {e}"
+    finally:
+        if script_path:
+            try:
+                os.unlink(script_path)
+            except OSError:
+                pass
 
 
 async def _search_duckduckgo(
