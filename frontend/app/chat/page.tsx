@@ -54,7 +54,7 @@ function ChatPageInner() {
   const projectGroupId = (searchParams.get('group') || '').trim();
   const { currentSession, messages, addMessage, createAndLoadSession, openContactSession, loadMessages, switchSession } = useSession();
   const reconcileMessage = useSessionStore((s) => s.reconcileMessage);
-    const token = useAuthStore((s) => s.token);
+    // token 由 AppShell GlobalChatWs 使用；chat 页不再直接连 WS
     const {
       uiMode,
       setUiMode,
@@ -866,8 +866,27 @@ const handleUserMessageAck = useCallback(
         [currentSession?.id, reconcileMessage]
       );
 
-  // AppShell GlobalChatWs 常驻连接；本页只注册 handlers
+  // AppShell GlobalChatWs 常驻连接；本页注册 handlers，并在回页后主动 sync 补漏 delta
   React.useEffect(() => {
+    const getLast = () => {
+      const msgs = useSessionStore.getState().messages || [];
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const id = msgs[i]?.id;
+        if (!id) continue;
+        const s = String(id);
+        if (
+          s.startsWith('streaming') ||
+          s === 'streaming' ||
+          s.startsWith('optimistic:') ||
+          s.startsWith('local:')
+        ) {
+          continue;
+        }
+        if (s.length < 32) continue;
+        return s;
+      }
+      return undefined;
+    };
     useChatWsBridge.getState().setHandlers({
       onStreamDelta: handleStreamDelta,
       onStatusUpdate: handleStatusUpdate,
@@ -877,27 +896,17 @@ const handleUserMessageAck = useCallback(
       onRunEvent: handleRunEvent,
       onGoalUpdate: handleGoalUpdate,
       onError: (err) => toastWsError(err),
-      getLastMessageId: () => {
-        const msgs = useSessionStore.getState().messages || [];
-        for (let i = msgs.length - 1; i >= 0; i--) {
-          const id = msgs[i]?.id;
-          if (!id) continue;
-          const s = String(id);
-          if (
-            s.startsWith('streaming') ||
-            s === 'streaming' ||
-            s.startsWith('optimistic:') ||
-            s.startsWith('local:')
-          ) {
-            continue;
-          }
-          if (s.length < 32) continue;
-          return s;
-        }
-        return undefined;
-      },
+      getLastMessageId: getLast,
     });
+    // 回 /chat：连接已在、handler 刚挂上 → 主动 sync 一次，补切页期间丢的 delta
+    const t = window.setTimeout(() => {
+      const api = useChatWsBridge.getState().api;
+      if (api?.isConnected) {
+        api.sendSync?.(getLast());
+      }
+    }, 200);
     return () => {
+      window.clearTimeout(t);
       useChatWsBridge.getState().setHandlers(null);
     };
   }, [

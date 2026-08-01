@@ -918,8 +918,9 @@ class RustAgentKernel:
         UI/read methods use a side-channel socket. Agent methods run on the
         dedicated kernel-rpc thread (serial host socket).
         """
-        params = self._inject_rpc_auth(params)
+        # auth 在 _invoke_call / _call_ui 注入，避免 _acall 漏注
         if method in _UI_SIDECHANNEL_METHODS:
+            params = self._inject_rpc_auth(params)
             try:
                 if threading.current_thread().name.startswith("kernel-ui"):
                     return self._call_ui(method, params)
@@ -947,21 +948,17 @@ class RustAgentKernel:
 
         if threading.current_thread().name.startswith("kernel-rpc"):
             with self._call_lock:
-                return self._call_locked(method, params)
-        # P1：超时后丢弃结果，避免积压的 charge/create 在恢复后非幂等重放
-        # （线程无法强杀，但标记 generation 使晚到的结果作废）
-        gen = int(getattr(self, "_rpc_gen", 0) or 0)
+                return self._call_locked(method, self._inject_rpc_auth(params))
+        # 超时只影响本 future；不再全局 _rpc_gen 作废队列里无关的 charge/end_process
         fut = _RPC_EXECUTOR.submit(self._invoke_call, method, params)
         try:
             return fut.result(timeout=_RPC_RESULT_TIMEOUT)
         except TimeoutError:
-            self._rpc_gen = gen + 1  # type: ignore[attr-defined]
             logger.error(
-                "kernel RPC timeout method=%s after %ss — bump gen (late result discarded)",
+                "kernel RPC timeout method=%s after %ss",
                 method,
                 _RPC_RESULT_TIMEOUT,
             )
-            # 不 cancel 线程（Python 无法安全杀），但调用方看到超时不会二次 submit 同逻辑
             raise TimeoutError(
                 f"kernel RPC timeout method={method} after {_RPC_RESULT_TIMEOUT}s"
             )
@@ -969,22 +966,19 @@ class RustAgentKernel:
     def _invoke_call(
         self, method: str, params: dict[str, Any] | None = None
     ) -> Any:
-        gen_at_submit = int(getattr(self, "_rpc_gen", 0) or 0)
+        # 统一注入 auth（_call / _acall 都经此）
+        params = self._inject_rpc_auth(params)
         with self._call_lock:
-            # 超时后 gen 已前进 → 仍执行但结果对调用方已无意义；避免连锁写
-            if int(getattr(self, "_rpc_gen", 0) or 0) != gen_at_submit:
-                logger.warning(
-                    "kernel RPC late invoke skipped method=%s (gen advanced)", method
-                )
-                raise TimeoutError(f"kernel RPC superseded method={method}")
             return self._call_locked(method, params)
 
     async def _acall(
         self, method: str, params: dict[str, Any] | None = None
     ) -> Any:
         """Async RPC: does not block the uvicorn event loop (UI polls stay alive)."""
+        # auth 由 _invoke_call / _call_ui 路径注入
         loop = asyncio.get_running_loop()
         if method in _UI_SIDECHANNEL_METHODS:
+            params = self._inject_rpc_auth(params)
             return await loop.run_in_executor(
                 _UI_EXECUTOR, self._call_ui, method, params
             )

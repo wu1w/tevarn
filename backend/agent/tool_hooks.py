@@ -236,6 +236,7 @@ async def builtin_permission_before(name: str, arguments: dict[str, Any]) -> Bef
 
     if court.extra.get("_confirm_ok"):
         args["_confirm_ok"] = True
+        args["_confirm_ok_source"] = "server"
 
     if decision == "allow":
         logger.info(
@@ -274,6 +275,7 @@ async def builtin_permission_before(name: str, arguments: dict[str, Any]) -> Bef
                 str(args.get("_identity_id") or args.get("_contact_agent") or "")[:16],
             )
             args["_confirm_ok"] = True
+            args["_confirm_ok_source"] = "server"
             return BeforeHookResult(arguments=args)
     except Exception as e:
         logger.debug("identity grant short-circuit skip: %s", e)
@@ -566,6 +568,7 @@ async def _interactive_approval(
             # 标记本轮已确认，避免 execute_command/python 内二次弹窗
             out_args = dict(arguments)
             out_args["_confirm_ok"] = True
+            out_args["_confirm_ok_source"] = "server"
             out_args["_confirm_scope"] = scope
             return BeforeHookResult(arguments=out_args)
         return BeforeHookResult(

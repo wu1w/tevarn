@@ -197,7 +197,16 @@ async def update_device(
     _ensure_owner(device, current_user.id)
     update_data = data.model_dump(exclude_unset=True)
     if isinstance(update_data.get("config"), dict):
-        update_data["config"] = _encrypt_config_token(update_data["config"])
+        cfg = dict(update_data["config"])
+        # 前端回传掩码 "***" 时保留库内已加密 token，避免一存即毁
+        tok = cfg.get("agent_token")
+        if isinstance(tok, str) and tok.strip() in ("***", "******", "••••", ""):
+            old_cfg = getattr(device, "config", None) or {}
+            if isinstance(old_cfg, dict) and old_cfg.get("agent_token"):
+                cfg["agent_token"] = old_cfg["agent_token"]
+            else:
+                cfg.pop("agent_token", None)
+        update_data["config"] = _encrypt_config_token(cfg)
     updated = await repo.update(device_id, update_data)
     if updated is None:
         raise HTTPException(status_code=404, detail="Device not found")

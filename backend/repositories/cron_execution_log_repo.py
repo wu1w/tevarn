@@ -68,7 +68,19 @@ class AsyncCronExecutionLogRepository(AsyncBaseRepository):
             if error is not None:
                 log.error = error
             if log.started_at and log.finished_at:
-                log.duration_ms = int((log.finished_at - log.started_at).total_seconds() * 1000)
+                def _aware(dt):
+                    if dt is None:
+                        return None
+                    if getattr(dt, "tzinfo", None) is None:
+                        return dt.replace(tzinfo=timezone.utc)
+                    return dt.astimezone(timezone.utc)
+
+                try:
+                    sa, fa = _aware(log.started_at), _aware(log.finished_at)
+                    if sa and fa:
+                        log.duration_ms = int((fa - sa).total_seconds() * 1000)
+                except Exception:
+                    log.duration_ms = None
             await self._maybe_commit(session)
             await session.refresh(log)
             return log

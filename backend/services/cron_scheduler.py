@@ -189,12 +189,32 @@ class CronScheduler:
                     logger.warning("Failed to update next_run_at: %s", e)
 
             except asyncio.CancelledError:
-                # P0：取消时把执行记录从 running 收尾，避免永久卡 running
+                # 取消：收尾 CronExecutionLog（真正卡 running 的是 log，不是 job 表）
+                try:
+                    from backend.repositories.cron_execution_log_repo import (
+                        AsyncCronExecutionLogRepository,
+                    )
+
+                    log_repo = AsyncCronExecutionLogRepository()
+                    # 找该 job 最近一条 running 日志
+                    try:
+                        logs = await log_repo.list_by_cron_job(job_id, limit=5)
+                        for lg in logs:
+                            if str(getattr(lg, "status", "") or "") == "running":
+                                await log_repo.finish(
+                                    lg.id, "cancelled", error="scheduler stopped"
+                                )
+                                break
+                    except Exception:
+                        pass
+                except Exception as ce:
+                    logger.debug("cron cancel execution log: %s", ce)
                 try:
                     repo = AsyncCronJobRepository()
+                    # 仅当本 tick 确实在跑时才更新 last_status（避免从未执行盖假记录）
                     await repo.update_run_status(job_id, "cancelled", "scheduler stopped")
                 except Exception as ce:
-                    logger.debug("cron cancel status update: %s", ce)
+                    logger.debug("cron cancel job status: %s", ce)
                 break
             except Exception as e:
                 logger.error("Cron job '%s' loop error: %s", getattr(job, "name", job_id), e)
@@ -225,8 +245,23 @@ class CronScheduler:
                     )
 
                     log_repo = AsyncCronExecutionLogRepository()
-                    if hasattr(log_repo, "start"):
-                        log_id = await log_repo.start(job_id)
+                    # create 一条 running 日志（旧代码 hasattr(start) 恒 False → 历史从未写入）
+                    try:
+                        log = await log_repo.create(
+                            {
+                                "cron_job_id": job_id,
+                                "status": "running",
+                                "started_at": __import__(
+                                    "datetime"
+                                ).datetime.now(
+                                    __import__("datetime").timezone.utc
+                                ),
+                            }
+                        )
+                        log_id = getattr(log, "id", None)
+                    except Exception as ce:
+                        logger.debug("cron log create: %s", ce)
+                        log_id = None
                 except Exception:
                     log_repo = None
                     log_id = None

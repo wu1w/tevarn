@@ -115,18 +115,26 @@ export function DomainEventBridge() {
   const qc = useQueryClient();
   const isAuth = useAuthStore((s) => s.isAuthenticated);
   const { connected, lastTopic } = useDomainEventsOwner(Boolean(isAuth));
-  const prevLen = useRef(0);
+  // 用 lastTopic+ts 游标，避免 cap=80 后 length 不增导致永久早退
+  const lastSeenKey = useRef('');
   const events = useDomainEventStore((s) => s.events);
   // 防 domain_snapshot 批量灌入时 toast 风暴
   const toastedKeys = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    if (events.length <= prevLen.current) {
-      prevLen.current = events.length;
-      return;
+    if (!events.length) return;
+    // 找到上次处理位置之后的增量
+    let start = 0;
+    if (lastSeenKey.current) {
+      const idx = events.findIndex(
+        (e) => `${e.topic}:${e.ts}` === lastSeenKey.current,
+      );
+      start = idx >= 0 ? idx + 1 : Math.max(0, events.length - 8);
     }
-    const fresh = events.slice(prevLen.current);
-    prevLen.current = events.length;
+    if (start >= events.length) return;
+    const fresh = events.slice(start);
+    const last = events[events.length - 1];
+    lastSeenKey.current = `${last.topic}:${last.ts}`;
     const seenPrefix = new Set<string>();
     for (const e of fresh) {
       const t = e.topic || '';

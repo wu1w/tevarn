@@ -74,9 +74,20 @@ class AsyncWorkflowExecutionRepository(AsyncBaseRepository):
             if error is not None:
                 execution.error = error
             if execution.started_at and execution.finished_at:
-                execution.duration_ms = int(
-                    (execution.finished_at - execution.started_at).total_seconds() * 1000
-                )
+                # SQLite 重读可能是 naive；统一按 UTC 再相减，避免 TypeError
+                def _aware(dt):
+                    if dt is None:
+                        return None
+                    if getattr(dt, "tzinfo", None) is None:
+                        return dt.replace(tzinfo=timezone.utc)
+                    return dt.astimezone(timezone.utc)
+
+                try:
+                    sa, fa = _aware(execution.started_at), _aware(execution.finished_at)
+                    if sa and fa:
+                        execution.duration_ms = int((fa - sa).total_seconds() * 1000)
+                except Exception:
+                    execution.duration_ms = None
             await self._maybe_commit(session)
             await session.refresh(execution)
             return execution

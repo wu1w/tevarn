@@ -60,6 +60,7 @@ type Api = {
     opts?: { regenerate?: boolean },
   ) => boolean;
   sendStop: () => boolean;
+  sendSync: (lastMessageId?: string) => boolean;
   waitForConnection: (sessionId?: string, timeoutMs?: number) => Promise<boolean>;
   connect: (sessionId?: string, opts?: { force?: boolean }) => void;
   reclaimConnection: () => void;

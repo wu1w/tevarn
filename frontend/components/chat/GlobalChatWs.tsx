@@ -3,7 +3,7 @@
 /**
  * 挂在 AppShell：按 sessionStore.currentSession 维持 WS，不随 /chat 卸载而断。
  */
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { useAuthStore } from '@/stores/authStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useWebSocket } from '@/hooks/useWebSocket';
@@ -27,6 +27,7 @@ export function GlobalChatWs() {
     kickedByPeer,
     sendMessage,
     sendStop,
+    sendSync,
     waitForConnection,
     connect,
     reclaimConnection,
@@ -66,50 +67,6 @@ export function GlobalChatWs() {
   });
 
   // 发布 API 给 chat 页；卸载时清空
-  const apiRef = useRef({
-    isConnected,
-    isConnecting,
-    kickedByPeer,
-    sendMessage,
-    sendStop,
-    waitForConnection,
-    connect,
-    reclaimConnection,
-  });
-  apiRef.current = {
-    isConnected,
-    isConnecting,
-    kickedByPeer,
-    sendMessage,
-    sendStop,
-    waitForConnection,
-    connect,
-    reclaimConnection,
-  };
-
-  useEffect(() => {
-    setApi({
-      get isConnected() {
-        return apiRef.current.isConnected;
-      },
-      get isConnecting() {
-        return apiRef.current.isConnecting;
-      },
-      get kickedByPeer() {
-        return apiRef.current.kickedByPeer;
-      },
-      sendMessage: (content, attachments, mode, subAgentIds, opts) =>
-        apiRef.current.sendMessage(content, attachments as never, mode, subAgentIds, opts as never),
-      sendStop: () => apiRef.current.sendStop(),
-      waitForConnection: (sessionId, timeoutMs) =>
-        apiRef.current.waitForConnection(sessionId, timeoutMs),
-      connect: (sessionId, opts) => apiRef.current.connect(sessionId, opts),
-      reclaimConnection: () => apiRef.current.reclaimConnection(),
-    });
-    return () => setApi(null);
-  }, [setApi]);
-
-  // 同步连接态到 bridge（触发订阅方重渲染）
   useEffect(() => {
     setApi({
       isConnected,
@@ -117,16 +74,19 @@ export function GlobalChatWs() {
       kickedByPeer,
       sendMessage: sendMessage as never,
       sendStop,
+      sendSync,
       waitForConnection,
       connect,
       reclaimConnection,
     });
+    return () => setApi(null);
   }, [
     isConnected,
     isConnecting,
     kickedByPeer,
     sendMessage,
     sendStop,
+    sendSync,
     waitForConnection,
     connect,
     reclaimConnection,

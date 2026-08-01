@@ -69,12 +69,38 @@ export const useAuthStore = create<AuthState>()(
           token: null,
           isAuthenticated: false,
         });
-        // 清理会话状态，避免同一浏览器下一个登录用户看到上一个用户遗留的会话
+        // 清理会话 / WS / 领域事件，避免换账号串数据
         if (typeof window !== 'undefined') {
           try {
             window.localStorage.removeItem('takton-session');
           } catch {
-            // ignore
+            /* ignore */
+          }
+          try {
+            // 动态清内存 store（避免循环依赖）
+            void import('@/stores/sessionStore').then((m) => {
+              m.useSessionStore.setState({
+                currentSession: null,
+                messages: [],
+                error: null,
+              });
+            });
+            void import('@/stores/chatWsBridge').then((m) => {
+              m.useChatWsBridge.getState().setHandlers(null);
+              m.useChatWsBridge.getState().setApi(null);
+            });
+            void import('@/stores/domainEventStore').then((m) => {
+              m.useDomainEventStore.getState().disconnect();
+            });
+            void import('@/stores/wsStore').then((m) => {
+              try {
+                m.useWsStore.getState().setConnected(false);
+              } catch {
+                /* ignore */
+              }
+            });
+          } catch {
+            /* ignore */
           }
         }
       },

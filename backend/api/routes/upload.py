@@ -39,8 +39,9 @@ UPLOAD_DIR = _resolve_upload_dir()
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 ALLOWED_EXTENSIONS = {
     "txt", "md", "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
-    "csv", "json", "xml", "yaml", "yml", "html", "htm", "py", "js", "ts", "java", "c", "cpp", "go", "rs",
-    "jpg", "jpeg", "png", "gif", "webp", "bmp", "svg",
+    "csv", "json", "xml", "yaml", "yml", "py", "js", "ts", "java", "c", "cpp", "go", "rs",
+    "jpg", "jpeg", "png", "gif", "webp", "bmp",
+    # 禁止 html/htm/svg：/uploads 无鉴权直出可构成 stored XSS 偷 JWT
 }
 
 

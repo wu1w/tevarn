@@ -896,15 +896,22 @@ Be thorough on technical detail needed to continue coding (paths, errors, decisi
                 return ""
             if not text:
                 return ""
-            low = text.lower()
+            # 仅当整段像错误响应时丢弃（避免合法摘要含 "error 400" 子串被误杀）
+            low = text.lower().strip()
             if (
                 low.startswith("[llm error")
-                or "error 400" in low
-                or "error 401" in low
-                or "error 429" in low
-                or "error 500" in low
-                or "invalid_api_key" in low
-                or "context_length_exceeded" in low
+                or low.startswith("error:")
+                or low.startswith("openai error")
+                or (
+                    len(text) < 200
+                    and (
+                        low.startswith("error 400")
+                        or low.startswith("error 401")
+                        or low.startswith("error 429")
+                        or "invalid_api_key" == low
+                        or low.startswith("context_length_exceeded")
+                    )
+                )
             ):
                 logger.warning("L5 compress got error payload, discard: %s", text[:160])
                 return ""

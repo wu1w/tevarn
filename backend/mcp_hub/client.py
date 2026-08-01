@@ -123,7 +123,18 @@ class MCPClient:
                 except Exception:
                     safe_args[ks] = str(v)
 
-        result: CallToolResult = await self._session.call_tool(tool_name, safe_args)
+        # 超时：避免挂死的 MCP 永久卡死 agent loop
+        import asyncio
+
+        timeout = float(getattr(self, "timeout", 30.0) or 30.0)
+        timeout = max(5.0, min(timeout, 300.0))
+        try:
+            result: CallToolResult = await asyncio.wait_for(
+                self._session.call_tool(tool_name, safe_args),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            return f"[Error] MCP tool '{tool_name}' timed out after {timeout:.0f}s"
 
         # 将结果统一转为字符串
         parts: list[str] = []

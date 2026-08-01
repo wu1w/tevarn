@@ -201,12 +201,31 @@ async def index_document(
     if not content:
         content = str((doc.meta or {}).get("content") or "")
     if not content and doc.source:
-        # 尝试读本地文件
+        # 仅允许 workspace/uploads 下文件（防 LFI 读 secrets）
         try:
             from pathlib import Path
 
-            p = Path(doc.source)
-            if p.is_file():
+            p = Path(doc.source).resolve()
+            roots = []
+            try:
+                roots.append(Path("workspace").resolve())
+            except Exception:
+                pass
+            try:
+                roots.append(Path("uploads").resolve())
+            except Exception:
+                pass
+            allowed = False
+            for r in roots:
+                try:
+                    p.relative_to(r)
+                    allowed = True
+                    break
+                except ValueError:
+                    continue
+            if allowed and p.is_file() and p.suffix.lower() in (
+                ".md", ".txt", ".json", ".csv", ".py", ".ts", ".tsx", ".js", ".yaml", ".yml",
+            ):
                 content = p.read_text(encoding="utf-8", errors="ignore")
         except Exception:
             pass
@@ -476,11 +495,20 @@ async def _bg_rebuild_index(collection: str, user_id: str) -> None:
         for doc in docs:
             content = str((doc.meta or {}).get("content", ""))
             if not content and doc.source:
+                # rebuild 同样禁止任意路径 LFI
                 try:
                     from pathlib import Path
-                    p = Path(doc.source)
-                    if p.is_file():
-                        content = p.read_text(encoding="utf-8", errors="ignore")
+
+                    p = Path(doc.source).resolve()
+                    for root_name in ("workspace", "uploads"):
+                        try:
+                            root = Path(root_name).resolve()
+                            p.relative_to(root)
+                            if p.is_file():
+                                content = p.read_text(encoding="utf-8", errors="ignore")
+                            break
+                        except ValueError:
+                            continue
                 except Exception:
                     pass
 

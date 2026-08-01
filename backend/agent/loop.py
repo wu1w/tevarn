@@ -1230,31 +1230,45 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             )
             return result
         except asyncio.CancelledError:
-            # P0：停止/超时取消是 BaseException，旧代码只 catch Exception → 槽泄漏 → 全系统假死
+            # P0：CancelledError 是 BaseException；清理段用 shield 防二次 cancel 打断漏槽
+            async def _cleanup_cancel() -> None:
+                try:
+                    if kernel_proc is not None:
+                        recorder.set_token_used(
+                            int(getattr(kernel_proc, "tokens_used", 0) or 0)
+                        )
+                except Exception:
+                    pass
+                try:
+                    await recorder.cancel("cancelled")
+                except Exception:
+                    pass
+                await _release_kernel_slot(state="killed", reason="cancelled")
+
             try:
-                if kernel_proc is not None:
-                    recorder.set_token_used(
-                        int(getattr(kernel_proc, "tokens_used", 0) or 0)
-                    )
-            except Exception:
-                pass
-            try:
-                await recorder.cancel("cancelled")
-            except Exception:
-                pass
-            await _release_kernel_slot(state="killed", reason="cancelled")
+                await asyncio.shield(_cleanup_cancel())
+            except Exception as ce:
+                logger.warning("cancel cleanup incomplete: %s", ce)
             raise
         except Exception as e:
+            async def _cleanup_fail() -> None:
+                try:
+                    if kernel_proc is not None:
+                        recorder.set_token_used(
+                            int(getattr(kernel_proc, "tokens_used", 0) or 0)
+                        )
+                except Exception:
+                    pass
+                try:
+                    await recorder.finish_fail(str(e))
+                except Exception:
+                    pass
+                await _release_kernel_slot(state="failed", reason=str(e)[:500])
+
             try:
-                if kernel_proc is not None:
-                    recorder.set_token_used(int(getattr(kernel_proc, "tokens_used", 0) or 0))
-            except Exception:
-                pass
-            try:
-                await recorder.finish_fail(str(e))
-            except Exception:
-                pass
-            await _release_kernel_slot(state="failed", reason=str(e)[:500])
+                await asyncio.shield(_cleanup_fail())
+            except Exception as ce:
+                logger.warning("fail cleanup incomplete: %s", ce)
             raise
         finally:
             self._run_recorder = None
@@ -2295,7 +2309,17 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         # 不暴露就只能靠翻日志反推。
         self.last_iterations = _global_iter + 1
         self.last_tool_rounds = _tool_rounds
-        self.last_exit_reason = _loop_exit_reason or "completed"
+        # 不覆盖 llm_round 等已写入的精确退出码（如 llm_stream_error）
+        if not getattr(self, "last_exit_reason", None) or self.last_exit_reason in (
+            "",
+            "completed",
+            None,
+        ):
+            self.last_exit_reason = _loop_exit_reason or "completed"
+        elif _loop_exit_reason and _loop_exit_reason not in ("", "completed"):
+            # 循环级原因优先于默认 completed，但保留 llm_stream_error 等
+            if self.last_exit_reason in ("completed", ""):
+                self.last_exit_reason = _loop_exit_reason
         # P0.5 R4：结构化退出说明挂到 loop，供 API / harness
         try:
             from backend.agent.exit_reasons import describe_exit_reason
