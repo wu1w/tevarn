@@ -57,7 +57,13 @@ async def list_nodes(
     limit: int = Query(20, ge=1, le=100),
 ) -> list[Any]:
     repo = AsyncMemoryGraphRepository()
-    return await repo.recall(query=q, kind=kind or None, limit=limit, bump_hits=False)
+    return await repo.recall(
+        query=q,
+        kind=kind or None,
+        limit=limit,
+        bump_hits=False,
+        user_id=current_user.id,
+    )
 
 
 @router.get("/nodes/{node_id}", response_model=MemoryNodeDetail)
@@ -66,8 +72,14 @@ async def get_node(
     current_user: Annotated[UserRead, Depends(get_current_user)],
 ) -> dict[str, Any]:
     repo = AsyncMemoryGraphRepository()
-    node = await repo.get_node(node_id)
+    node = await repo.get_node(node_id, user_id=current_user.id)
     if node is None:
+        raise HTTPException(status_code=404, detail="Memory node not found")
+    # 严格归属：他人节点不可读（遗留 user_id=None 仍可读）
+    owner = getattr(node, "user_id", None)
+    if owner is not None and owner != current_user.id and not getattr(
+        current_user, "is_superuser", False
+    ):
         raise HTTPException(status_code=404, detail="Memory node not found")
     edges = await repo.edges_of(node_id)
     data = {c.name: getattr(node, c.name) for c in node.__table__.columns}

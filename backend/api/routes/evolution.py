@@ -243,8 +243,26 @@ async def apply_draft(
     )
     if not gate["ok"]:
         raise HTTPException(400, detail={"message": "未过安全门", "gates": gate})
-    updated = store.update_asset_status(asset_id, "active")
+    # 规范终态：applied（scoreboard/回滚链）同时兼容 active 查询
+    updated = store.update_asset_status(asset_id, "applied")
     if updated:
+        # 保留 distill 写入的 tool_trace，并打 applied 元数据
+        try:
+            from datetime import datetime, timezone
+
+            meta = dict(updated.get("meta") or {})
+            # tool_trace 必须保留（回放/审计）；若缺失则从 replay 输入回填
+            if not meta.get("tool_trace"):
+                replay = (meta.get("replay") or {}) if isinstance(meta.get("replay"), dict) else {}
+                if replay.get("tool_trace"):
+                    meta["tool_trace"] = replay["tool_trace"]
+            meta["applied_at"] = datetime.now(timezone.utc).isoformat()
+            meta["applied_by"] = str(getattr(current_user, "id", "") or "")
+            meta["auto_applied"] = False
+            store.update_asset_meta(asset_id, meta)
+            updated = store.get_asset(asset_id) or updated
+        except Exception:
+            pass
         try:
             from backend.evolution.skill_sync import upsert_skill_from_asset
 
@@ -263,6 +281,10 @@ async def apply_draft(
         "asset": updated,
         "gate": gate,
         "replay": replay_gate.get("replay"),
+        "status": "applied",
+        "tool_trace": (updated or {}).get("meta", {}).get("tool_trace")
+        if isinstance((updated or {}).get("meta"), dict)
+        else None,
     }
 
 

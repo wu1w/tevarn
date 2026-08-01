@@ -105,6 +105,13 @@ def load_active_evolution_tools() -> int:
 
         get_evolution_manager().ensure_seeded()
         assets = store.list_assets(kind="skill", status="active", limit=500)
+        # applied 与 active 等价为 live（apply_draft 规范态）
+        applied = store.list_assets(kind="skill", status="applied", limit=500)
+        if applied:
+            seen = {a.get("id") for a in assets}
+            for a in applied:
+                if a.get("id") not in seen:
+                    assets.append(a)
         n = 0
         for a in assets:
             if a.get("source") == "seed":

@@ -58,7 +58,18 @@ class SessionRunSnapshot:
     # 与 ConnectionManager._run_generations 对齐；late event gen 不符则不写入
     generation: int = 0
 
+    def flush_delta_buf(self) -> None:
+        """把合帧缓冲刷进 partial_content（读快照 / 落盘前必调）。"""
+        buf = getattr(self, "_delta_buf", None)
+        if not isinstance(buf, list) or not buf:
+            return
+        joined = "".join(buf)
+        buf.clear()
+        if joined:
+            self.partial_content = (self.partial_content + joined)[:_MAX_PARTIAL_CHARS]
+
     def to_sync_fields(self) -> dict[str, Any]:
+        self.flush_delta_buf()
         return {
             "agent_running": self.agent_running,
             "state": self.state if self.agent_running else "idle",
@@ -173,6 +184,7 @@ class ConnectionManager:
     def get_run_snapshot(self, session_id: uuid.UUID) -> SessionRunSnapshot | None:
         snap = self._run_snapshots.get(session_id)
         if snap is not None:
+            snap.flush_delta_buf()
             return snap
         # 内存空：尝试从磁盘恢复（崩溃/worker 切换）
         try:
@@ -208,6 +220,7 @@ class ConnectionManager:
         try:
             from backend.agent.run_snapshot_store import save_snapshot
 
+            snap.flush_delta_buf()
             save_snapshot(
                 str(session_id),
                 {

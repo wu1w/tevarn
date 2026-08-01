@@ -169,7 +169,7 @@ def main() -> int:
         "inject_kill": injected,
         "restart_count": st.get("restart_count"),
         "metrics": metrics,
-        "product_version": "0.5.0-alpha",
+        "product_version": "0.5.2-alpha",
         "gate": "host_marathon",
     }
     print(summary)

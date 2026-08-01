@@ -35,12 +35,24 @@ class AsyncMemoryGraphRepository(AsyncBaseRepository):
         finally:
             await self._close_session(session)
 
-    async def get_node(self, node_id: uuid.UUID) -> MemoryNode | None:
+    async def get_node(
+        self,
+        node_id: uuid.UUID,
+        *,
+        user_id: uuid.UUID | None = None,
+    ) -> MemoryNode | None:
         session = await self._get_session()
         try:
-            result = await session.execute(
-                select(MemoryNode).where(MemoryNode.id == node_id)
-            )
+            stmt = select(MemoryNode).where(MemoryNode.id == node_id)
+            if user_id is not None:
+                # 归属隔离：仅本人节点，或历史无 user_id 的共享/遗留节点
+                stmt = stmt.where(
+                    or_(
+                        MemoryNode.user_id == user_id,
+                        MemoryNode.user_id.is_(None),
+                    )
+                )
+            result = await session.execute(stmt)
             return result.scalar_one_or_none()
         finally:
             await self._close_session(session)
@@ -99,15 +111,24 @@ class AsyncMemoryGraphRepository(AsyncBaseRepository):
         limit: int = 10,
         bump_hits: bool = True,
         match_any: bool = False,
+        user_id: uuid.UUID | None = None,
     ) -> list[MemoryNode]:
         """文本召回：title/content LIKE + kind 过滤；按 hit_count+置信度+新鲜度排序
 
         match_any=True 时 query 按空白拆词做 OR 匹配（自动注入场景：
         整句 user_input 全串 LIKE 几乎必然零命中）。
+        user_id 给定时只召回本人 + 无归属遗留节点（防跨用户 IDOR）。
         """
         session = await self._get_session()
         try:
             stmt = select(MemoryNode)
+            if user_id is not None:
+                stmt = stmt.where(
+                    or_(
+                        MemoryNode.user_id == user_id,
+                        MemoryNode.user_id.is_(None),
+                    )
+                )
             if kind:
                 stmt = stmt.where(MemoryNode.kind == kind)
             q = (query or "").strip()

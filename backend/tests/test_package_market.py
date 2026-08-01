@@ -85,6 +85,18 @@ def test_install_path_traversal_rejected():
     assert "unsafe path" in result.error
 
 
+def test_install_zip_bomb_too_many_entries_rejected():
+    """条目数超限 → zip bomb 拦截。"""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for i in range(2100):
+            zf.writestr(f"bomb-pkg/f{i}.txt", "x")
+        zf.writestr("bomb-pkg/SYSTEM.md", "x")
+    result = publisher.install_package_zip(buf.getvalue())
+    assert not result.ok
+    assert "zip bomb" in result.error.lower() or "too many entries" in result.error
+
+
 def test_install_absolute_path_rejected():
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:

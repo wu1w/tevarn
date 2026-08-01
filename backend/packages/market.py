@@ -140,14 +140,17 @@ def mirror_to_kernel(
 def install_zip_market(
     data: bytes, *, overwrite: bool = False, mirror: bool = True
 ) -> dict[str, Any]:
-    """产品化安装：文件系统 zip + Kernel 扫描镜像。"""
+    """产品化安装：文件系统 zip + Kernel 扫描镜像。
+
+    高危内容（本地启发式 / kernel scan high）默认 **阻断安装并回滚落盘**；
+    仅当设置 ``agent_package_allow_quarantine_install=true`` 时允许 quarantine 留存。
+    """
     result: InstallResult = install_package_zip(data, overwrite=overwrite)
     out: dict[str, Any] = result.model_dump()
     out["kernel"] = None
     if not result.ok:
         return out
-    if not mirror:
-        return out
+
     dest = Path(result.path)
     version, content, perms = _read_package_body(dest)
     if result.version:
@@ -157,10 +160,62 @@ def install_zip_market(
         tools = result.contract.get("tools") or []
         if isinstance(tools, list) and tools and not perms:
             perms = [str(t) for t in tools]
+
+    # 安装前本地预检：高危直接阻断（不依赖 kernel 是否在线）
+    pre = security_scan_content(content, permissions=perms)
+    out["pre_scan"] = pre
+    scan = (pre or {}).get("scan") if isinstance(pre, dict) else None
+    if isinstance(scan, dict) and scan.get("ok") is False:
+        high = [
+            f
+            for f in (scan.get("findings") or [])
+            if isinstance(f, dict) and str(f.get("severity") or "").lower() == "high"
+        ]
+        if high:
+            try:
+                uninstall_package(result.name)
+            except Exception:
+                pass
+            return {
+                "ok": False,
+                "name": result.name,
+                "error": "package blocked by security scan (high severity findings)",
+                "findings": high,
+                "pre_scan": pre,
+            }
+
+    if not mirror:
+        return out
     kern = mirror_to_kernel(result.name, version, content, perms)
     out["kernel"] = kern
-    # 高危扫描失败：标记但不回滚文件系统（用户可审阅 quarantine）
-    if kern.get("kernel_status") == "quarantined":
+    # 高危扫描失败：默认回滚；可选 quarantine 模式
+    allow_q = False
+    try:
+        from backend.core.config import settings
+
+        allow_q = bool(getattr(settings, "agent_package_allow_quarantine_install", False))
+    except Exception:
+        allow_q = False
+    if kern.get("kernel_status") == "quarantined" or (
+        isinstance(kern.get("security"), dict)
+        and kern["security"].get("ok") is False
+    ):
+        if not allow_q:
+            try:
+                uninstall_package(result.name)
+            except Exception:
+                pass
+            # kernel 侧也尽量卸掉
+            try:
+                _call(_kernel(), "pkg_uninstall", {"name": result.name})
+            except Exception:
+                pass
+            return {
+                "ok": False,
+                "name": result.name,
+                "error": "package blocked: kernel security scan failed / quarantined",
+                "kernel": kern,
+            }
         out["warning"] = (
             "package extracted but kernel security scan quarantined it; "
             "call market promote after review, or fix content and reinstall"
@@ -300,7 +355,10 @@ def uninstall_market(name: str) -> dict[str, Any]:
 
 
 def _safe_https_download(url: str, *, max_bytes: int = 64 * 1024 * 1024) -> bytes:
-    """下载公网 https 内容；**每一跳重定向都重新 validate_public_url**（防 SSRF）。"""
+    """下载公网 https 内容；**每一跳重定向都重新 validate_public_url**（防 SSRF）。
+
+    最多跟随 5 跳；禁止 http 降级与私网目标。
+    """
     from backend.core.net_safety import UnsafeURLError, validate_public_url
     import urllib.error
     import urllib.request
@@ -309,8 +367,16 @@ def _safe_https_download(url: str, *, max_bytes: int = 64 * 1024 * 1024) -> byte
         raise UnsafeURLError("only https allowed")
     validate_public_url(url)
 
+    _redirect_hops = {"n": 0}
+    _MAX_REDIRECTS = 5
+
     class _NoOpenRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+            _redirect_hops["n"] += 1
+            if _redirect_hops["n"] > _MAX_REDIRECTS:
+                raise UnsafeURLError(
+                    f"too many redirects (>{_MAX_REDIRECTS}); possible SSRF chain"
+                )
             # 强制 https + 公网校验，禁止跳到 metadata/内网
             if not str(newurl).lower().startswith("https://"):
                 raise UnsafeURLError(f"redirect to non-https blocked: {newurl}")
@@ -326,6 +392,12 @@ def _safe_https_download(url: str, *, max_bytes: int = 64 * 1024 * 1024) -> byte
         method="GET",
     )
     with opener.open(req, timeout=60) as resp:  # noqa: S310
+        # 最终 URL 再校验一次（部分实现不经 redirect_request）
+        final = getattr(resp, "geturl", lambda: url)()
+        if final and str(final) != str(url):
+            if not str(final).lower().startswith("https://"):
+                raise UnsafeURLError(f"final url non-https blocked: {final}")
+            validate_public_url(final)
         data = resp.read(max_bytes + 1)
     if len(data) > max_bytes:
         raise ValueError(f"download too large (>{max_bytes} bytes)")

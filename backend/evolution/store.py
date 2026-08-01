@@ -379,6 +379,21 @@ def update_asset_status(asset_id: str, status: str) -> dict[str, Any] | None:
     return get_asset(asset_id)
 
 
+def update_asset_meta(asset_id: str, meta: dict[str, Any]) -> dict[str, Any] | None:
+    """合并写入 meta_json（保留既有 tool_trace 等字段）。"""
+    cur = get_asset(asset_id)
+    if not cur:
+        return None
+    merged = dict(cur.get("meta") or {})
+    merged.update(meta or {})
+    with _db() as conn:
+        conn.execute(
+            "UPDATE evo_assets SET meta_json=?, updated_at=? WHERE id=?",
+            (json.dumps(merged, ensure_ascii=False), _utc(), asset_id),
+        )
+    return get_asset(asset_id)
+
+
 def delete_asset(asset_id: str) -> bool:
     with _db() as conn:
         row = conn.execute("SELECT source FROM evo_assets WHERE id=?", (asset_id,)).fetchone()
@@ -400,11 +415,15 @@ def bulk_delete_unused_auto() -> int:
 
 
 def bump_use(name: str, kind: str = "skill") -> None:
-    """Increment use_count for active asset matching name (latest gen)."""
+    """Increment use_count for live asset matching name (latest gen).
+
+    Live = status in (active, applied) — apply_draft 写 applied，enable 写 active。
+    """
     now = _utc()
     with _db() as conn:
         row = conn.execute(
-            """SELECT id FROM evo_assets WHERE kind=? AND name=? AND status='active'
+            """SELECT id FROM evo_assets
+               WHERE kind=? AND name=? AND status IN ('active','applied')
                ORDER BY gen DESC LIMIT 1""",
             (kind, name),
         ).fetchone()
@@ -428,7 +447,7 @@ def stats() -> dict[str, Any]:
             "SELECT COUNT(*) AS c FROM evo_assets WHERE source='auto'"
         ).fetchone()["c"]
         active = conn.execute(
-            "SELECT COUNT(*) AS c FROM evo_assets WHERE status='active'"
+            "SELECT COUNT(*) AS c FROM evo_assets WHERE status IN ('active','applied')"
         ).fetchone()["c"]
         draft = conn.execute(
             "SELECT COUNT(*) AS c FROM evo_assets WHERE status='draft'"

@@ -60,6 +60,23 @@ class QdrantRAGService(RAGService):
         """文本向量化（委托给 Embedding 服务）"""
         return await self.embedding_service.embed_query(query)
 
+    def _payload_filter(self, user_id: str | None) -> dict[str, Any] | None:
+        """租户隔离：有 user_id 必须带 filter；无 user_id 时默认禁止全局扫库。
+
+        settings.rag_allow_global_search=True 时才允许无过滤（单用户/运维调试）。
+        """
+        if user_id:
+            return {"must": [{"key": "user_id", "match": {"value": str(user_id)}}]}
+        allow_global = bool(getattr(settings, "rag_allow_global_search", False))
+        if allow_global:
+            return None
+        # 无 user_id 且禁止全局：用不可能命中的 filter，避免返回他人数据
+        return {
+            "must": [
+                {"key": "user_id", "match": {"value": "__takton_no_user_scope__"}}
+            ]
+        }
+
     # ─── 混合检索 ───
 
     async def hybrid_search(
@@ -85,10 +102,9 @@ class QdrantRAGService(RAGService):
             "with_payload": True,
             "fusion": "rrf",
         }
-        if user_id:
-            payload["filter"] = {
-                "must": [{"key": "user_id", "match": {"value": user_id}}]
-            }
+        flt = self._payload_filter(user_id)
+        if flt is not None:
+            payload["filter"] = flt
 
         # collection 不存在时自动创建（避免 wiki_pages 等新 collection 404 刷屏）
         await self._ensure_collection(collection)
@@ -180,10 +196,9 @@ class QdrantRAGService(RAGService):
             "limit": limit,
             "with_payload": True,
         }
-        if user_id:
-            payload["filter"] = {
-                "must": [{"key": "user_id", "match": {"value": user_id}}]
-            }
+        flt = self._payload_filter(user_id)
+        if flt is not None:
+            payload["filter"] = flt
 
         # N1: 404 自愈 — 先确保 collection 存在
         await self._ensure_collection(collection)
@@ -230,10 +245,9 @@ class QdrantRAGService(RAGService):
             "with_payload": True,
             "using": "text",
         }
-        if user_id:
-            payload["filter"] = {
-                "must": [{"key": "user_id", "match": {"value": user_id}}]
-            }
+        flt = self._payload_filter(user_id)
+        if flt is not None:
+            payload["filter"] = flt
 
         async with aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=30)

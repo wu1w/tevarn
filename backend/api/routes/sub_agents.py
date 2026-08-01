@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -215,13 +215,39 @@ async def get_model_inventory(
 
 # ────────────────── 子代理 CRUD ──────────────────
 
+def _can_access_sub_agent(obj: Any, current_user: UserRead) -> bool:
+    """内置模板全员可读；自定义包仅 owner / superuser。"""
+    if getattr(obj, "is_builtin", False):
+        return True
+    if getattr(current_user, "is_superuser", False):
+        return True
+    owner = getattr(obj, "user_id", None)
+    if owner is None:
+        # 历史无归属：仅 superuser 可写，读允许当前用户（兼容单用户）
+        return True
+    return owner == current_user.id
+
+
 @router.get("", response_model=list[SubAgentRead])
 async def list_sub_agents(
     current_user: Annotated[UserRead, Depends(get_current_user)],
     repo: AsyncSubAgentRepository = Depends(get_agent_repo),
 ):
-    """列出所有子代理（内置 + 用户自定义）"""
-    return await repo.list_all() or []
+    """列出可见子代理：内置模板 + 当前用户自定义（防跨用户 IDOR）。"""
+    if getattr(current_user, "is_superuser", False):
+        return await repo.list_all() or []
+    builtins = await repo.list_builtins() or []
+    mine = await repo.list_by_user(current_user.id) or []
+    # list_by_user 不含 builtin；合并去重
+    seen: set[Any] = set()
+    out: list[Any] = []
+    for row in list(builtins) + list(mine):
+        rid = getattr(row, "id", None)
+        if rid in seen:
+            continue
+        seen.add(rid)
+        out.append(row)
+    return out
 
 
 @router.get("/{agent_id}", response_model=SubAgentRead)
@@ -230,9 +256,11 @@ async def get_sub_agent(
     current_user: Annotated[UserRead, Depends(get_current_user)],
     repo: AsyncSubAgentRepository = Depends(get_agent_repo),
 ):
-    """获取单个子代理"""
+    """获取单个子代理（校验归属）"""
     obj = await repo.get_by_id(agent_id)
     if not obj:
+        raise HTTPException(status_code=404, detail="SubAgent not found")
+    if not _can_access_sub_agent(obj, current_user):
         raise HTTPException(status_code=404, detail="SubAgent not found")
     return obj
 
@@ -268,6 +296,8 @@ async def update_sub_agent(
         updates = {k: v for k, v in updates.items() if k in allowed}
         if not updates:
             raise HTTPException(status_code=400, detail="Builtin template: nothing allowed to update")
+    elif not _can_access_sub_agent(obj, current_user):
+        raise HTTPException(status_code=403, detail="Access denied")
     elif obj.user_id and obj.user_id != current_user.id and not getattr(current_user, "is_superuser", False):
         raise HTTPException(status_code=403, detail="Access denied")
     return await repo.update(agent_id, updates)
@@ -285,6 +315,8 @@ async def delete_sub_agent(
         raise HTTPException(status_code=404, detail="SubAgent not found")
     if obj.is_builtin:
         raise HTTPException(status_code=400, detail="Cannot delete builtin template")
+    if not _can_access_sub_agent(obj, current_user):
+        raise HTTPException(status_code=403, detail="Access denied")
     if obj.user_id and obj.user_id != current_user.id and not getattr(current_user, "is_superuser", False):
         raise HTTPException(status_code=403, detail="Access denied")
     await repo.delete(agent_id)
@@ -302,6 +334,8 @@ async def resolve_model(
     """解析子代理 model_ref → 实际 LLM 配置（密钥脱敏）。"""
     obj = await repo.get_by_id(agent_id)
     if not obj:
+        raise HTTPException(status_code=404, detail="SubAgent not found")
+    if not _can_access_sub_agent(obj, current_user):
         raise HTTPException(status_code=404, detail="SubAgent not found")
 
     model_ref = obj.model_ref or ""

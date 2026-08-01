@@ -97,7 +97,74 @@ async def resume_session_agent(
         run_mode,
         contact or "-",
     )
-    return await agent.run(sid, resume_prompt, attachments=None, mode=run_mode)
+    try:
+        out = await agent.run(sid, resume_prompt, attachments=None, mode=run_mode)
+    except Exception:
+        # 续跑异常：将会话内仍非终态的旧 run 标 failed，避免永久 hung
+        await _mark_session_interrupted_terminal(
+            sid, status="failed", reason="resume_exception"
+        )
+        raise
+    # 续跑成功：将会话内 interrupted 旧 run 收口为 done（新 run 由 recorder 自己收尾）
+    await _mark_session_interrupted_terminal(
+        sid, status="done", reason="resume_ok"
+    )
+    return out
+
+
+async def _mark_session_interrupted_terminal(
+    session_id: uuid.UUID,
+    *,
+    status: str = "done",
+    reason: str = "resume",
+) -> int:
+    """把会话下仍为 interrupted/executing(recovered) 的旧 AgentRun 推到终态。"""
+    n = 0
+    try:
+        from datetime import datetime, timezone
+
+        from backend.agent.run_state import TERMINAL_STATES, RunStatus
+        from backend.repositories.agent_run_repo import AsyncAgentRunRepository
+
+        repo = AsyncAgentRunRepository()
+        runs = await repo.list_runs(session_id, limit=20)
+        terminal = {s.value for s in TERMINAL_STATES}
+        want_fail = status == "failed"
+        for run in runs:
+            st = str(getattr(run, "status", "") or "")
+            if st in terminal:
+                continue
+            # 只收口 interrupted，以及 recovery 拨到 executing 但未结束的
+            meta = getattr(run, "meta", None) or {}
+            recovered = isinstance(meta, dict) and meta.get("recovered_from") == "interrupted"
+            if st not in (RunStatus.INTERRUPTED.value, RunStatus.EXECUTING.value) and not recovered:
+                # 仍允许收口 interrupted 别名
+                if st != "interrupted":
+                    continue
+            if st == RunStatus.EXECUTING.value and not recovered:
+                # 可能是本次 resume 新建的 live run——跳过（由 recorder 收尾）
+                continue
+            new_status = (
+                RunStatus.FAILED.value if want_fail else RunStatus.DONE.value
+            )
+            try:
+                await repo.update_run(
+                    run.id,
+                    {
+                        "status": new_status,
+                        "meta": {
+                            **(meta if isinstance(meta, dict) else {}),
+                            "terminal_via": reason,
+                            "terminal_at": datetime.now(timezone.utc).isoformat(),
+                        },
+                    },
+                )
+                n += 1
+            except Exception as e:
+                logger.debug("mark terminal skip run=%s: %s", getattr(run, "id", "?"), e)
+    except Exception as e:
+        logger.debug("mark session interrupted terminal: %s", e)
+    return n
 
 
 async def resume_session_agent_background(

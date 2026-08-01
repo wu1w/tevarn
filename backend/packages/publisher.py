@@ -40,6 +40,11 @@ _MANIFEST_CANDIDATES = (
     "package.yaml",
     "SYSTEM.md",
 )
+# Zip bomb 防护：条目数 / 单文件 / 总解压体积 / 压缩比
+_MAX_ZIP_ENTRIES = 2_000
+_MAX_ZIP_FILE_UNCOMPRESSED = 32 * 1024 * 1024  # 32 MiB per file
+_MAX_ZIP_TOTAL_UNCOMPRESSED = 128 * 1024 * 1024  # 128 MiB total
+_MAX_ZIP_COMPRESSION_RATIO = 200  # compressed:1 → reject if file_size * ratio < file_size
 
 
 class InstallResult(BaseModel):
@@ -111,15 +116,25 @@ def load_packages_sync():
 
 
 def _safe_zip_entries(data: bytes) -> tuple[zipfile.ZipFile, str, list[str]]:
-    """校验 zip：单顶层目录 + 无穿越/绝对路径/symlink。返回 (zf, top_dir, files)。"""
+    """校验 zip：单顶层目录 + 无穿越/绝对路径/symlink + zip bomb 限额。
+
+    返回 (zf, top_dir, files)。
+    """
     try:
         zf = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile as e:
         raise ValueError(f"not a valid zip: {e}") from e
 
+    infos = zf.infolist()
+    if len(infos) > _MAX_ZIP_ENTRIES:
+        raise ValueError(
+            f"zip bomb rejected: too many entries ({len(infos)} > {_MAX_ZIP_ENTRIES})"
+        )
+
     tops: set[str] = set()
     files: list[str] = []
-    for info in zf.infolist():
+    total_uncompressed = 0
+    for info in infos:
         name = info.filename
         # symlink 拒绝（Unix mode 高位 0120000）
         if (info.external_attr >> 16) & 0o170000 == 0o120000:
@@ -131,8 +146,27 @@ def _safe_zip_entries(data: bytes) -> tuple[zipfile.ZipFile, str, list[str]]:
         if not parts:
             continue
         tops.add(parts[0])
-        if not info.is_dir():
-            files.append(norm)
+        if info.is_dir():
+            continue
+        # zip bomb：单文件 / 总解压体积 / 压缩比
+        unc = int(info.file_size or 0)
+        comp = int(info.compress_size or 0)
+        if unc < 0 or comp < 0:
+            raise ValueError(f"invalid zip sizes for entry: {name}")
+        if unc > _MAX_ZIP_FILE_UNCOMPRESSED:
+            raise ValueError(
+                f"zip bomb rejected: entry too large ({name}: {unc} > {_MAX_ZIP_FILE_UNCOMPRESSED})"
+            )
+        total_uncompressed += unc
+        if total_uncompressed > _MAX_ZIP_TOTAL_UNCOMPRESSED:
+            raise ValueError(
+                f"zip bomb rejected: total uncompressed > {_MAX_ZIP_TOTAL_UNCOMPRESSED}"
+            )
+        if comp > 0 and unc // max(comp, 1) > _MAX_ZIP_COMPRESSION_RATIO:
+            raise ValueError(
+                f"zip bomb rejected: compression ratio too high for {name}"
+            )
+        files.append(norm)
     if len(tops) != 1:
         raise ValueError("zip must contain exactly one top-level package directory")
     top = tops.pop()
@@ -161,6 +195,7 @@ def install_package_zip(data: bytes, *, overwrite: bool = False) -> InstallResul
             return InstallResult(ok=False, name=top, error=f"package `{top}` already installed")
         shutil.rmtree(dest)
 
+    written = 0
     try:
         for info in zf.infolist():
             if info.is_dir():
@@ -170,9 +205,27 @@ def install_package_zip(data: bytes, *, overwrite: bool = False) -> InstallResul
             if not rel:
                 continue
             target = dest / rel
+            # 二次路径校验：防 zip 奇异条目绕过
+            try:
+                target.resolve().relative_to(dest.resolve())
+            except ValueError as e:
+                shutil.rmtree(dest, ignore_errors=True)
+                return InstallResult(ok=False, name=top, error=f"unsafe extract path: {e}")
             target.parent.mkdir(parents=True, exist_ok=True)
             with zf.open(info) as src, open(target, "wb") as out:
-                shutil.copyfileobj(src, out)
+                while True:
+                    chunk = src.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    if written > _MAX_ZIP_TOTAL_UNCOMPRESSED:
+                        shutil.rmtree(dest, ignore_errors=True)
+                        return InstallResult(
+                            ok=False,
+                            name=top,
+                            error="zip bomb rejected during extract: total size limit",
+                        )
+                    out.write(chunk)
     except OSError as e:
         shutil.rmtree(dest, ignore_errors=True)
         return InstallResult(ok=False, name=top, error=f"extract failed: {e}")

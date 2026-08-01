@@ -4,6 +4,10 @@ import type { NextConfig } from "next";
 const isExport = process.env.NEXT_EXPORT === "1";
 
 const nextConfig: NextConfig = {
+  // monorepo 双 lockfile：锁定 frontend 为 turbopack 根
+  turbopack: {
+    root: process.cwd(),
+  },
   typescript: {
     ignoreBuildErrors: true,
   },

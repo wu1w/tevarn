@@ -86,7 +86,11 @@ def _cfg(name: str, default: Any) -> Any:
 
 
 def _repair_tool_pairs(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """去掉无匹配 tool_calls 的 tool 结果、无结果的悬空 tool_calls（公共修复）。"""
+    """去掉无匹配 tool_calls 的 tool 结果、无结果的悬空 tool_calls（公共修复）。
+
+    若消息里完全没有 assistant.tool_calls（call_ids 为空），则**不剥 tool 行**——
+    L1 预算截断等场景会单独处理孤立 tool 内容，全剥会导致 IndexError / 丢内容。
+    """
     if not messages:
         return messages
     # collect assistant tool_call ids
@@ -97,6 +101,9 @@ def _repair_tool_pairs(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for tc in m.get("tool_calls") or []:
             if isinstance(tc, dict) and tc.get("id"):
                 call_ids.add(str(tc["id"]))
+    # 无任何 tool_calls 时：保留原序列（仅做浅拷贝，避免原地改）
+    if not call_ids:
+        return list(messages)
     out: list[dict[str, Any]] = []
     used_results: set[str] = set()
     for m in messages:

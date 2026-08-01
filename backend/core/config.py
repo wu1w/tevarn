@@ -554,6 +554,8 @@ class Settings(BaseSettings):
     # RAG / Qdrant
     # True=允许在 Embedding+Qdrant 已配置时启用向量 RAG；未配置时仍为 local 模式
     rag_enabled: bool = True
+    # False（默认）：无 user_id 时禁止 Qdrant 全局扫库（租户隔离）
+    rag_allow_global_search: bool = False
     qdrant_url: str = ""
     qdrant_collection: str = "knowledge_base"
     # 多 Collection 路由（key=逻辑名, value=Qdrant collection 名）

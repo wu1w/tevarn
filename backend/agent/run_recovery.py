@@ -112,8 +112,30 @@ async def recover_stale_runs(*, auto_resume: bool | None = None) -> dict[str, An
                 user_id=getattr(run, "user_id", None),
                 mode=mode,
             )
+            # 续跑成功：原 interrupted 记录必须落到终态，避免永远 hung 在 executing
+            try:
+                await repo.update_run(
+                    run.id,
+                    {
+                        "status": RunStatus.DONE.value,
+                        "meta": {
+                            **(getattr(run, "meta", None) or {}),
+                            "recovered_at": datetime.now(timezone.utc).isoformat(),
+                            "recovered_from": "interrupted",
+                            "resume_result_preview": (text or "")[:200],
+                            "terminal_via": "auto_resume",
+                        },
+                    },
+                )
+            except Exception as te:
+                logger.warning(
+                    "mark recovered run terminal failed run=%s: %s",
+                    str(run.id)[:8],
+                    te,
+                )
             detail["action"] = "resumed"
             detail["result_preview"] = (text or "")[:120]
+            detail["terminal_status"] = RunStatus.DONE.value
             summary["resumed"] += 1
         except Exception as e:
             logger.warning(
@@ -128,8 +150,12 @@ async def recover_stale_runs(*, auto_resume: bool | None = None) -> dict[str, An
                 await repo.update_run(
                     run.id,
                     {
-                        "status": RunStatus.INTERRUPTED.value,
+                        "status": RunStatus.FAILED.value,
                         "error": f"auto-resume failed: {e}"[:500],
+                        "meta": {
+                            **(getattr(run, "meta", None) or {}),
+                            "terminal_via": "auto_resume_error",
+                        },
                     },
                 )
             except Exception:
