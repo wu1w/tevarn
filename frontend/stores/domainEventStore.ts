@@ -1,6 +1,7 @@
 /**
  * 领域事件消费者（OS 化：UI 订 Kernel 广播，而非只靠轮询）。
  * Snapshot on connect + live domain_event.
+ * P1：旧 socket onclose 不得抹掉新连接；断线自动重连。
  */
 
 import { create } from 'zustand';
@@ -18,6 +19,9 @@ type State = {
   lastTopic: string | null;
   error: string | null;
   _ws: WebSocket | null;
+  _gen: number;
+  _reconnectTimer: ReturnType<typeof setTimeout> | null;
+  _opts: { wsBase: string; token: string } | null;
   connect: (opts: { wsBase: string; token: string }) => void;
   disconnect: () => void;
   pushLocal: (e: DomainEvent) => void;
@@ -36,6 +40,9 @@ export const useDomainEventStore = create<State>((set, get) => ({
   lastTopic: null,
   error: null,
   _ws: null,
+  _gen: 0,
+  _reconnectTimer: null,
+  _opts: null,
 
   pushLocal: (e) => {
     set((s) => ({
@@ -45,19 +52,51 @@ export const useDomainEventStore = create<State>((set, get) => ({
   },
 
   disconnect: () => {
-    const ws = get()._ws;
+    const st = get();
+    if (st._reconnectTimer) {
+      clearTimeout(st._reconnectTimer);
+    }
+    const ws = st._ws;
+    // 抬 gen，使旧 socket 的 onclose 失效
+    set({ _ws: null, connected: false, _reconnectTimer: null, _gen: st._gen + 1, _opts: null });
     if (ws) {
       try {
+        ws.onclose = null;
+        ws.onerror = null;
+        ws.onmessage = null;
         ws.close();
       } catch {
         /* ignore */
       }
     }
-    set({ _ws: null, connected: false });
   },
 
   connect: ({ wsBase, token }) => {
-    get().disconnect();
+    const prev = get();
+    if (prev._reconnectTimer) {
+      clearTimeout(prev._reconnectTimer);
+    }
+    // 关掉旧连接，但用 gen 防止其 onclose 清掉新状态
+    const oldWs = prev._ws;
+    const gen = prev._gen + 1;
+    set({
+      _ws: null,
+      connected: false,
+      error: null,
+      _gen: gen,
+      _opts: { wsBase, token },
+      _reconnectTimer: null,
+    });
+    if (oldWs) {
+      try {
+        oldWs.onclose = null;
+        oldWs.onerror = null;
+        oldWs.onmessage = null;
+        oldWs.close();
+      } catch {
+        /* ignore */
+      }
+    }
     if (!token) {
       set({ error: 'no token', connected: false });
       return;
@@ -73,10 +112,30 @@ export const useDomainEventStore = create<State>((set, get) => ({
     }
     set({ _ws: ws, error: null });
 
-    ws.onopen = () => set({ connected: true, error: null });
-    ws.onclose = () => set({ connected: false, _ws: null });
-    ws.onerror = () => set({ error: 'ws error', connected: false });
+    ws.onopen = () => {
+      if (get()._gen !== gen || get()._ws !== ws) return;
+      set({ connected: true, error: null });
+    };
+    ws.onclose = () => {
+      // 仅本代 socket 才更新；避免旧连接抹掉新连接
+      if (get()._gen !== gen || get()._ws !== ws) return;
+      set({ connected: false, _ws: null });
+      // 自动重连（有 opts 时）
+      const opts = get()._opts;
+      if (!opts?.token) return;
+      const timer = setTimeout(() => {
+        if (get()._gen !== gen) return;
+        const o = get()._opts;
+        if (o?.token) get().connect(o);
+      }, 3000);
+      set({ _reconnectTimer: timer });
+    };
+    ws.onerror = () => {
+      if (get()._gen !== gen || get()._ws !== ws) return;
+      set({ error: 'ws error', connected: false });
+    };
     ws.onmessage = (ev) => {
+      if (get()._gen !== gen || get()._ws !== ws) return;
       try {
         const msg = JSON.parse(String(ev.data)) as Record<string, unknown>;
         if (msg.type === 'domain_snapshot' && Array.isArray(msg.events)) {

@@ -234,12 +234,20 @@ export function ChatWindow({
       return;
     }
 
-    // 新消息且用户在底部：瞬时贴底（流式同样，避免 smooth 扫屏）
+    // 新消息且用户在底部：瞬时贴底
     if (len > prevMsgLen.current && isNearBottom.current) {
       el.scrollTop = el.scrollHeight;
     }
     prevMsgLen.current = len;
   }, [displayMessages.length, sessionId, isStreaming]);
+
+  // P1：流式期间气泡长度变但 length 不变 → 额外跟滚 streaming 内容
+  useEffect(() => {
+    if (!isStreaming || !isNearBottom.current) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [isStreaming, displayMessages]);
 
   useEffect(() => {
     let cancelled = false;

@@ -196,6 +196,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         # （worker 池复用同一员工；跨工单身份不变）
         self._run_recorder = None
         self._search_fp_counter = {}
+        self._search_total_calls = 0  # P1：跨工单泄漏会误 ban 下一单全部搜索
         self._contract_wl_ready = False
         self._contract_whitelist = None
         self._should_stop = False
@@ -609,9 +610,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         return None
 
     def _estimate_next_call_tokens(self, messages: list[dict[str, Any]]) -> int:
-        """粗估下一次 LLM 调用消耗：近期上下文输入 + 输出预留。
-        字符 /3.4（与 token_meter 口径一致），只看近 20 条——
-        更早的上下文会被压缩，全量计入会高估导致误刹车。"""
+        """粗估下一次 LLM 调用消耗：近期上下文 + 工具 schema 开销 + 输出预留。"""
         reserve = int(getattr(settings, "agent_kernel_precheck_reserve", 2000) or 2000)
         recent = messages[-20:] if len(messages) > 20 else messages
         chars = 0
@@ -623,7 +622,28 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 chars += sum(
                     len(str(p.get("text") or "")) for p in c if isinstance(p, dict)
                 )
-        return max(1, round(chars / 3.4)) + reserve
+            # tool_calls 参数也计入
+            for tc in m.get("tool_calls") or []:
+                if isinstance(tc, dict):
+                    fn = tc.get("function") or {}
+                    chars += len(str(fn.get("name") or ""))
+                    chars += len(str(fn.get("arguments") or ""))
+        # 工具 schema：几十工具可达数万 token，不能忽略
+        schema_est = 0
+        try:
+            tools = getattr(self, "_last_tools_payload", None) or getattr(
+                self, "_loaded_tools_for_est", None
+            )
+            if isinstance(tools, list) and tools:
+                # 粗估：每工具名+描述 ~80 token，上限 40k
+                schema_est = min(40_000, len(tools) * 120)
+            else:
+                n = int(getattr(self, "_last_tools_count", 0) or 0)
+                if n > 0:
+                    schema_est = min(40_000, n * 120)
+        except Exception:
+            schema_est = 0
+        return max(1, round(chars / 3.4)) + reserve + schema_est
 
     async def _contract_tool_block_reason(
         self, name: str, arguments: dict[str, Any]
@@ -1679,10 +1699,39 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         )
         llm_service = LLMServiceFactory.get_service_for_snapshot(llm_snapshot)
 
-        # 6.5 上下文引擎 pipeline（L1/L3/L5）
+        # 6.5 上下文引擎 pipeline（L1/L3/L5）— per-session 隔离 thrash/L5
         try:
             from backend.agent.context_compress import compress_history_if_needed
             from backend.agent.context_engine import get_context_engine
+            from backend.services.llm.provider_profiles import resolve_profile
+
+            eng = get_context_engine(session_id)
+            # 每 run 边界重置 L5 计数（同 session 多轮长任务仍可压）
+            try:
+                eng.on_session_reset()
+            except Exception:
+                pass
+            # 按会话模型窗口 apply_profile
+            try:
+                snap = llm_snapshot if isinstance(llm_snapshot, dict) else {}
+                model = str(snap.get("model") or getattr(settings, "llm_model", "") or "")
+                base_url = str(
+                    snap.get("base_url")
+                    or getattr(settings, "llm_base_url", "")
+                    or ""
+                )
+                prov = str(
+                    snap.get("provider")
+                    or getattr(settings, "llm_provider", "")
+                    or ""
+                )
+                prof = resolve_profile(
+                    base_url=base_url or None, model=model or None, llm_provider=prov or None
+                )
+                if prof is not None and hasattr(eng, "apply_profile"):
+                    eng.apply_profile(prof)
+            except Exception:
+                pass
 
             thr = float(getattr(settings, "context_threshold_percent", 0.72) or 0.72)
             messages, compress_meta = await compress_history_if_needed(
@@ -1698,7 +1747,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 )
             # seed engine meter from pre-call estimate
             try:
-                get_context_engine().update_from_response(
+                eng.update_from_response(
                     {"prompt_tokens": compress_meta.get("tokens_after")
                      or compress_meta.get("tokens_before")
                      or total_tokens}

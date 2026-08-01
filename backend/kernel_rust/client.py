@@ -504,6 +504,9 @@ def _find_host_bin() -> Path | None:
 
 
 _host_proc: subprocess.Popen | None = None
+# chat_elastic / workforce auto top-up 次数（Rust meta 写回不可靠时的权威侧车）
+_CHAT_TOP_UP_COUNTS: dict[str, int] = {}
+_WF_TOP_UP_COUNTS: dict[str, int] = {}
 _host_lock = threading.Lock()
 
 
@@ -2068,7 +2071,10 @@ class RustAgentKernel:
         if getattr(p, "token_budget", None) is None:
             return None
         meta = dict(getattr(p, "meta", None) or {})
-        n = int(meta.get("chat_auto_top_up_count") or meta.get("soft_renew_count") or 0)
+        # P1：Rust ABI 无 process_set_meta → meta 写回静默失败；用进程侧计数兜底
+        n_meta = int(meta.get("chat_auto_top_up_count") or meta.get("soft_renew_count") or 0)
+        n_local = int(_CHAT_TOP_UP_COUNTS.get(str(process_id), 0) or 0)
+        n = max(n_meta, n_local)
         if n >= max_n:
             logger.info(
                 "chat elastic top_up cap reached proc=%s n=%s", process_id[:12], n
@@ -2093,7 +2099,8 @@ class RustAgentKernel:
         except Exception as e:
             logger.warning("chat elastic top_up failed proc=%s: %s", process_id[:12], e)
             return None
-        # 尽力写回计数（host meta 可能只部分保留）
+        # 权威计数：本地进程字典（跨 top_up 存活）+ 尽力写 host meta
+        _CHAT_TOP_UP_COUNTS[str(process_id)] = n + 1
         try:
             fresh = self.get_process(process_id)
             if fresh is not None:
@@ -2101,21 +2108,25 @@ class RustAgentKernel:
                 m["chat_auto_top_up_count"] = n + 1
                 m["soft_renew_count"] = max(int(m.get("soft_renew_count") or 0), n + 1)
                 m["last_chat_elastic_at"] = time.time()
-                # best-effort: some hosts accept process_patch_meta
+                try:
+                    fresh.meta = m  # type: ignore[misc]
+                except Exception:
+                    pass
                 if hasattr(self, "_call"):
-                    try:
-                        self._call(
-                            "process_set_meta",
-                            {"process_id": process_id, "meta": m},
-                        )
-                    except Exception:
+                    for method in (
+                        "process_set_meta",
+                        "update_process_meta",
+                        "process_patch_meta",
+                        "set_process_meta",
+                    ):
                         try:
                             self._call(
-                                "update_process_meta",
+                                method,
                                 {"process_id": process_id, "meta": m},
                             )
+                            break
                         except Exception:
-                            pass
+                            continue
         except Exception:
             pass
         logger.info(

@@ -71,18 +71,45 @@ class ContextEngine(ABC):
         }
 
 
+# 全局默认（无 session 的脚本/单测）
 _ENGINE: ContextEngine | None = None
+# 按 session 隔离 L5 计数 / thrash / meter（P1：全局单例会株连所有并发会话）
+_SESSION_ENGINES: dict[str, ContextEngine] = {}
+_SESSION_ENGINE_MAX = 64
 
 
-def get_context_engine() -> ContextEngine:
+def get_context_engine(session_id: Any = None) -> ContextEngine:
+    """取上下文引擎。传入 session_id 时 per-session 实例（长任务隔离 thrash/L5）。"""
     global _ENGINE
-    if _ENGINE is None:
-        from backend.agent.context_pipeline import PipelineContextEngine
+    from backend.agent.context_pipeline import PipelineContextEngine
 
-        _ENGINE = PipelineContextEngine()
-    return _ENGINE
+    if session_id is None or str(session_id).strip() in ("", "None"):
+        if _ENGINE is None:
+            _ENGINE = PipelineContextEngine()
+        return _ENGINE
+    key = str(session_id).strip()
+    eng = _SESSION_ENGINES.get(key)
+    if eng is None:
+        # 淘汰最旧（FIFO by insert order on py3.7+）
+        while len(_SESSION_ENGINES) >= _SESSION_ENGINE_MAX:
+            try:
+                old_k = next(iter(_SESSION_ENGINES))
+                _SESSION_ENGINES.pop(old_k, None)
+            except StopIteration:
+                break
+        eng = PipelineContextEngine()
+        _SESSION_ENGINES[key] = eng
+    return eng
 
 
-def reset_context_engine() -> None:
+def reset_context_engine(session_id: Any = None) -> None:
+    """重置全局或指定 session 的引擎。"""
     global _ENGINE
-    _ENGINE = None
+    if session_id is None or str(session_id).strip() in ("", "None"):
+        _ENGINE = None
+        return
+    _SESSION_ENGINES.pop(str(session_id).strip(), None)
+
+
+def reset_all_session_context_engines() -> None:
+    _SESSION_ENGINES.clear()

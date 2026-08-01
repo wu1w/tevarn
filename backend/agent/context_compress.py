@@ -45,9 +45,13 @@ async def compress_history_if_needed(
     注意：阈值判断用**本调用局部 TokenMeter**，不再改写全局 engine.threshold_percent
    （多 session 并发压缩时避免互相踩阈值）。
     """
-    engine = get_context_engine()
+    engine = get_context_engine(session_id)
     thr = float(threshold or getattr(engine, "threshold_percent", 0.75) or 0.75)
-    window = int(getattr(settings, "context_window", 128_000) or 128_000)
+    window = int(
+        getattr(engine, "context_length", 0)
+        or getattr(settings, "context_window", 128_000)
+        or 128_000
+    )
     local_meter = TokenMeter(context_window=window, threshold_percent=thr)
 
     tokens = estimate_msgs_tokens(messages)

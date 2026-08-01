@@ -1385,41 +1385,59 @@ const { isConnected, isConnecting, kickedByPeer, reclaimConnection, sendMessage,
     [addToast, t]
   );
 
-  // 防御：绝不在 B 会话渲染 A 的正式历史（切会话 load 失败/竞态）
-  const displayMessages = messages.filter(
-    (m) =>
-      !m.session_id ||
-      !currentSession?.id ||
-      m.session_id === currentSession.id ||
-      String(m.id || '').startsWith('optimistic:') ||
-      String(m.id || '').startsWith('streaming'),
-  );
-    // 实时气泡：文本 + tool call 边产生边展示（不要等 idle 整包刷）
-    if (isStreaming || streamingContent || liveToolCalls.length > 0) {
-      const liveToolCallsForMsg =
-        liveToolCalls.length > 0
-          ? liveToolCalls.map((tc) => ({
-              id: tc.id,
-              name: tc.name,
-              arguments: tc.arguments,
-              result: tc.result,
-              status: tc.status,
-            }))
-          : null;
-      let liveContent = streamingContent;
-      if (!liveContent && streamStatusDetail && liveToolCalls.length === 0) {
-        liveContent = '';
-      }
-      displayMessages.push({
+  // 防御：绝不在 B 会话渲染 A 的正式历史；useMemo 稳定引用避免每 token 全树失效
+  const displayMessages = React.useMemo(() => {
+    const base = messages.filter(
+      (m) =>
+        !m.session_id ||
+        !currentSession?.id ||
+        m.session_id === currentSession.id ||
+        String(m.id || '').startsWith('optimistic:') ||
+        String(m.id || '').startsWith('streaming'),
+    );
+    if (!(isStreaming || streamingContent || liveToolCalls.length > 0)) {
+      return base;
+    }
+    const liveToolCallsForMsg =
+      liveToolCalls.length > 0
+        ? liveToolCalls.map((tc, i) => ({
+            id: tc.id || `tool-${tc.name}-${i}`,
+            name: tc.name,
+            arguments: tc.arguments,
+            result: tc.result,
+            status: tc.status,
+          }))
+        : null;
+    let liveContent = streamingContent;
+    if (!liveContent && streamStatusDetail && liveToolCalls.length === 0) {
+      liveContent = '';
+    }
+    return [
+      ...base,
+      {
         id: 'streaming',
         session_id: currentSession?.id || '',
-        role: 'assistant',
-        content: liveContent || (liveToolCalls.length ? '' : streamStatusDetail ? `_${streamStatusDetail}_` : ''),
+        role: 'assistant' as const,
+        content:
+          liveContent ||
+          (liveToolCalls.length
+            ? ''
+            : streamStatusDetail
+              ? `_${streamStatusDetail}_`
+              : ''),
         tool_calls: liveToolCallsForMsg as Message['tool_calls'],
         token_count: null,
         created_at: new Date().toISOString(),
-      });
-    }
+      },
+    ];
+  }, [
+    messages,
+    currentSession?.id,
+    isStreaming,
+    streamingContent,
+    liveToolCalls,
+    streamStatusDetail,
+  ]);
 
   return (
     <div

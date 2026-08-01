@@ -213,6 +213,7 @@ async def request_confirmation(
         "scope": "deny",
         "user_id": owner_uid,
         "session_id": str(session_id) if session_id else "",
+        "payload": None,  # 填入后供 sync 重放
     }
     _pending[confirm_id] = (event, holder)
 
@@ -230,6 +231,7 @@ async def request_confirmation(
         "scopes": ["once", "session", "agent", "deny"],
         "user_id": owner_uid,
     }
+    holder["payload"] = dict(payload)
     try:
         # Always try session first (even if probe said offline — race with reconnect)
         await ws_manager.broadcast(sid, payload)
@@ -327,6 +329,33 @@ def _headless_confirm_outcome(
         command[:80],
     )
     return ConfirmOutcome(False, why)
+
+
+def list_pending_for_session(session_id: str | None) -> list[dict]:
+    """sync 重放：该会话未决确认（前端刷新/切页后补弹窗）。"""
+    sid = str(session_id or "").strip()
+    if not sid:
+        return []
+    out: list[dict] = []
+    for cid, (_ev, holder) in list(_pending.items()):
+        if str(holder.get("session_id") or "") != sid:
+            continue
+        pl = holder.get("payload")
+        if isinstance(pl, dict) and pl.get("confirm_id"):
+            out.append(dict(pl))
+        else:
+            out.append(
+                {
+                    "type": "confirm_request",
+                    "confirm_id": cid,
+                    "session_id": sid,
+                    "title": "待确认操作",
+                    "command": "",
+                    "reason": "rehydrate",
+                    "timeout": DEFAULT_TIMEOUT,
+                }
+            )
+    return out
 
 
 def resolve_confirmation(

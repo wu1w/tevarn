@@ -395,13 +395,24 @@ export const useSessionStore = create<SessionState>()(
             }
             return;
           }
-          // 失败且仍在目标会话：清空消息，禁止 B 会话标题下残留 A 历史
+          // 失败：瞬时网络错误不清空已有本会话历史（P2 长会话空白）
+          // 仅当消息明显属于「其它会话」时才清
           if (get()._loadSeq === seq) {
             const stillHere = get().currentSession?.id === sessionId;
+            const msgs = get().messages || [];
+            const foreign =
+              stillHere &&
+              msgs.length > 0 &&
+              msgs.every(
+                (m) =>
+                  m.session_id &&
+                  m.session_id !== sessionId &&
+                  !String(m.id || '').startsWith('optimistic:'),
+              );
             set({
               error: (err as Error).message,
               isLoading: false,
-              ...(stillHere ? { messages: [] } : {}),
+              ...(foreign ? { messages: [] } : {}),
             });
           }
         }

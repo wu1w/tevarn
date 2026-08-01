@@ -329,6 +329,17 @@ class WorkflowEngine:
                 await self.execution_repo.finish(execution_id, "success", result)
             await self._finish_workflow_parent_run("done", summary=str(result)[:400])
             return result
+        except asyncio.CancelledError:
+            logger.info("Workflow execution cancelled")
+            if execution_id:
+                try:
+                    await self.execution_repo.finish(
+                        execution_id, "cancelled", error="cancelled"
+                    )
+                except Exception:
+                    pass
+            await self._finish_workflow_parent_run("cancelled", error="cancelled")
+            raise
         except Exception as e:
             logger.error(f"Workflow execution failed: {e}")
             if execution_id:
@@ -543,8 +554,9 @@ class WorkflowEngine:
             resp = await llm.chat_complete(messages)
             return {"response": resp.content, "tokens_used": resp.usage.get("total_tokens", 0)}
         except Exception as e:
-            logger.warning(f"LLM 调用失败: {e}，返回模拟响应")
-            return {"response": f"[LLM模拟响应] 提示词: {prompt[:100]}...", "tokens_used": 0}
+            # P1：绝不可吞失败返回「模拟响应」当成功——欠费/断网会污染下游与 cron success
+            logger.error("Workflow LLM node failed: %s", e)
+            raise RuntimeError(f"LLM node failed: {e}") from e
 
     async def _exec_agent(
         self, config: dict[str, Any], inputs: dict[str, Any], ctx: WorkflowContext

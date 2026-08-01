@@ -120,6 +120,8 @@ class ConnectionManager:
         self._tasks: dict[uuid.UUID, set[asyncio.Task]] = {}
         # session_id -> 当前 agent 主任务（可 stop/cancel）
         self._agent_tasks: dict[uuid.UUID, asyncio.Task] = {}
+        # session_id -> 运行中 loop 实例（stop 必须打到这只，而非重连后新建的空壳）
+        self._agent_loops: dict[uuid.UUID, Any] = {}
         # session_id -> 运行中流式快照（断线/跳页后仍可 sync 恢复）
         self._run_snapshots: dict[uuid.UUID, SessionRunSnapshot] = {}
         # 保护 WebSocket 并发发送：per-session，避免全局锁堵住其它会话
@@ -407,12 +409,20 @@ class ConnectionManager:
             if agent is not None and not agent.done():
                 agent.cancel()
 
-    def track_agent_task(self, session_id: uuid.UUID, task: asyncio.Task) -> None:
+    def track_agent_task(
+        self,
+        session_id: uuid.UUID,
+        task: asyncio.Task,
+        *,
+        loop: Any | None = None,
+    ) -> None:
         """登记当前 agent 主任务，便于显式 stop；断线不自动取消。"""
         old = self._agent_tasks.get(session_id)
         if old is not None and not old.done() and old is not task:
             old.cancel()
         self._agent_tasks[session_id] = task
+        if loop is not None:
+            self._agent_loops[session_id] = loop
         # 新主任务：确保快照为 running（begin 可能已在 user_input 调用）
         snap = self._run_snapshots.get(session_id)
         if snap is None:
@@ -426,10 +436,26 @@ class ConnectionManager:
             cur = self._agent_tasks.get(sid)
             if cur is t:
                 self._agent_tasks.pop(sid, None)
+                self._agent_loops.pop(sid, None)
                 # 任务结束后释放快照，防止 UI 永久 Resuming
                 self.end_run_snapshot(sid)
 
         task.add_done_callback(_cleanup)
+
+    def get_agent_loop(self, session_id: uuid.UUID) -> Any | None:
+        return self._agent_loops.get(session_id)
+
+    def stop_agent_loop(self, session_id: uuid.UUID) -> bool:
+        """协作停止运行中实例（重连后新空壳 agent 无效）。"""
+        loop = self._agent_loops.get(session_id)
+        if loop is None:
+            return False
+        try:
+            loop.stop()
+            return True
+        except Exception as e:
+            logger.debug("stop_agent_loop: %s", e)
+            return False
 
     def has_running_agent(self, session_id: uuid.UUID) -> bool:
         t = self._agent_tasks.get(session_id)
@@ -908,7 +934,8 @@ async def websocket_endpoint(
 
                 # 若上一轮仍在跑：先请求停止并尽量等退出，避免叠跑 / late delta
                 if manager.has_running_agent(session_id):
-                    agent.stop()
+                    if not manager.stop_agent_loop(session_id):
+                        agent.stop()
                     await manager.broadcast(
                         session_id,
                         {
@@ -947,11 +974,13 @@ async def websocket_endpoint(
                     ),
                     name=f"agent:{session_id}:g{run_gen}",
                 )
-                manager.track_agent_task(session_id, task)
+                manager.track_agent_task(session_id, task, loop=agent)
 
             elif msg_type == "stop":
                 logger.info(f"Stop signal received for session {session_id}")
-                agent.stop()
+                # P1：必须 stop 运行中实例，不是本连接新建的空壳 agent
+                if not manager.stop_agent_loop(session_id):
+                    agent.stop()
                 await manager.cancel_agent(session_id, wait=6.0)
                 manager.end_run_snapshot(session_id)
                 manager.bump_run_generation(session_id)  # 使旧 task late event 失效
@@ -1044,6 +1073,14 @@ async def websocket_endpoint(
                             **snap_fields,
                         },
                     )
+                    # P1：刷新/切页后补推未决危险确认（confirm 只直播不进快照）
+                    try:
+                        from backend.services import confirm_manager as _cm
+
+                        for pl in _cm.list_pending_for_session(str(session_id)):
+                            await manager.broadcast(session_id, pl)
+                    except Exception as ce:
+                        logger.debug("confirm rehydrate on sync: %s", ce)
                     if running:
                         detail = (snap.detail if snap else None) or "Resumed — agent still running"
                         await manager.broadcast(

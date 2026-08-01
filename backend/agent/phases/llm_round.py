@@ -185,15 +185,32 @@ async def _run_llm_round_body(
 
             # 结束标记
             if chunk.finish_reason:
-                if chunk.finish_reason == "error" and not (accumulated_content or "").strip():
-                    if chunk.delta:
-                        accumulated_content = chunk.delta
-                    else:
-                        accumulated_content = (
+                if chunk.finish_reason == "error":
+                    # P1：连接重置等 error 不得把半截正文当最终答复持久化
+                    err_delta = (chunk.delta or "").strip()
+                    body = (accumulated_content or "").strip()
+                    if err_delta.startswith("[LLM Error") or not body:
+                        accumulated_content = err_delta or (
                             "[LLM Error] 模型返回失败且无正文。"
-                            "若使用 Kimi Plan/Kimi Code，请将模型设为 "
-                            "kimi-for-coding 或 kimi-for-coding-highspeed（不要用 k3）。"
+                            "请检查网络/API Key/模型名后重试。"
                         )
+                        result.action = "break"
+                        result.final_content = accumulated_content
+                        result.accumulated_content = accumulated_content
+                        result.tool_calls = []
+                        # 不落半截为成功 assistant
+                        try:
+                            loop.last_exit_reason = "llm_stream_error"
+                        except Exception:
+                            pass
+                        return result
+                    # 有正文 + error：去掉尾部错误文案，标记需用户知悉
+                    if err_delta and body.endswith(err_delta):
+                        accumulated_content = body[: -len(err_delta)].rstrip()
+                    accumulated_content = (
+                        (accumulated_content or "").rstrip()
+                        + "\n\n[系统] 流式中断，以上为不完整草稿，请重试或点重新生成。"
+                    )
                 break
 
         if loop._should_stop:
@@ -273,15 +290,14 @@ async def _run_llm_round_body(
         from backend.agent.context_engine import get_context_engine
         from backend.agent.token_meter import TokenMeter
 
-        eng = get_context_engine()
+        eng = get_context_engine(session_id)
         if stream_usage.get("prompt_tokens"):
             eng.update_from_response(dict(stream_usage))
         else:
-            est = TokenMeter(
-                context_window=int(
-                    getattr(settings, "context_window", 128_000) or 128_000
-                )
-            ).estimate_messages(messages)
+            win = int(getattr(eng, "context_length", 0) or 0) or int(
+                getattr(settings, "context_window", 128_000) or 128_000
+            )
+            est = TokenMeter(context_window=win).estimate_messages(messages)
             eng.update_from_response({
                 "prompt_tokens": est,
                 "completion_tokens": max(

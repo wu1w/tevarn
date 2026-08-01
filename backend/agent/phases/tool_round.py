@@ -867,7 +867,7 @@ async def run_tool_round(
         from backend.agent.context_compress import compress_history_if_needed
         from backend.agent.context_engine import get_context_engine
 
-        eng = get_context_engine()
+        eng = get_context_engine(session_id)
         do_l1 = (l1_every > 0 and state.tool_rounds % l1_every == 0) or eng.should_compress_preflight(messages)
         if do_l1 and hasattr(eng, "_l1_budget"):
             state.messages, _n = eng._l1_budget(messages)  # type: ignore[attr-defined]

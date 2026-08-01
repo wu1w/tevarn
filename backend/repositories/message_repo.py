@@ -282,15 +282,30 @@ class AsyncMessageRepository(AsyncBaseRepository, MessageRepository):
     ) -> list[MessageRead]:
         session = await self._get_session()
         try:
+            # 同刻 created_at 用 id 兜底，避免 > 严格比较漏消息（P2 sync 静默丢）
+            sub_ts = (
+                select(Message.created_at)
+                .where(Message.id == last_message_id)
+                .scalar_subquery()
+            )
             result = await session.execute(
                 select(Message)
                 .where(
                     Message.session_id == session_id,
-                    Message.created_at > select(Message.created_at).where(Message.id == last_message_id).scalar_subquery(),
+                    (
+                        (Message.created_at > sub_ts)
+                        | (
+                            (Message.created_at == sub_ts)
+                            & (Message.id != last_message_id)
+                        )
+                    ),
                 )
-                .order_by(asc(Message.created_at))
+                .order_by(asc(Message.created_at), asc(Message.id))
             )
-            return [MessageRead.model_validate(m) for m in result.scalars().all()]
+            rows = list(result.scalars().all())
+            # 去掉 last_message 本身（若因 == 被带上）
+            rows = [m for m in rows if m.id != last_message_id]
+            return [MessageRead.model_validate(m) for m in rows]
         finally:
             await self._close_session(session)
 

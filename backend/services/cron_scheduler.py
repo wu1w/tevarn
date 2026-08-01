@@ -189,6 +189,12 @@ class CronScheduler:
                     logger.warning("Failed to update next_run_at: %s", e)
 
             except asyncio.CancelledError:
+                # P0：取消时把执行记录从 running 收尾，避免永久卡 running
+                try:
+                    repo = AsyncCronJobRepository()
+                    await repo.update_run_status(job_id, "cancelled", "scheduler stopped")
+                except Exception as ce:
+                    logger.debug("cron cancel status update: %s", ce)
                 break
             except Exception as e:
                 logger.error("Cron job '%s' loop error: %s", getattr(job, "name", job_id), e)

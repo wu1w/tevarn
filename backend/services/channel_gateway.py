@@ -764,12 +764,34 @@ class ChannelGateway:
         return "\n".join(lines)
 
     async def _cmd_stop(self, chat_key: str) -> str:
-        """停止当前运行的 agent。"""
-        if chat_key in self._session_map:
-            sid = self._session_map[chat_key]
-            self._stop_flags[sid] = True
-            return "🛑 已发送停止信号"
-        return "⚠️ 当前没有活跃会话"
+        """停止当前运行的 agent（协作 stop + cancel task，不只立 flag）。"""
+        if chat_key not in self._session_map:
+            return "⚠️ 当前没有活跃会话"
+        sid = self._session_map[chat_key]
+        self._stop_flags[sid] = True
+        stopped = False
+        try:
+            from backend.api.websocket import manager as ws_manager
+            import uuid as _uuid
+
+            uid = _uuid.UUID(str(sid)) if not isinstance(sid, _uuid.UUID) else sid
+            if ws_manager.stop_agent_loop(uid):
+                stopped = True
+            await ws_manager.cancel_agent(uid, wait=3.0)
+            stopped = True
+        except Exception as e:
+            logger.debug("channel stop via ws manager: %s", e)
+        # 通道侧 agent 实例（若有）
+        try:
+            agent = getattr(self, "_agents", {}).get(chat_key) or getattr(
+                self, "_running_agents", {}
+            ).get(str(sid))
+            if agent is not None and hasattr(agent, "stop"):
+                agent.stop()
+                stopped = True
+        except Exception:
+            pass
+        return "🛑 已发送停止信号" if stopped else "🛑 已标记停止（若仍在跑请稍候）"
 
     # ─── 消息处理 ──────────────────────────────────────────
 
@@ -978,16 +1000,15 @@ class ChannelGateway:
             )
             agent.max_iterations = int(getattr(app_settings, "agent_max_iterations", 25) or 25)
 
-            original_model = None
+            # P1：model_override 不得改全局 app_settings.llm_model（并发会话互污染）
             if model_override:
-                original_model = getattr(app_settings, "llm_model", None)
-                app_settings.llm_model = model_override
+                agent._llm_snapshot_override = {
+                    "model": model_override,
+                    "provider": getattr(app_settings, "llm_provider", None),
+                    "base_url": getattr(app_settings, "llm_base_url", None),
+                }
 
-            try:
-                result = await agent.run(sid, final_input, mode="default")
-            finally:
-                if original_model is not None:
-                    app_settings.llm_model = original_model
+            result = await agent.run(sid, final_input, mode="default")
 
             if result:
                 reply_text = (result or "")[:4000]

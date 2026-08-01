@@ -1065,12 +1065,14 @@ async def test_embedding(
     items = {k: v for k, v in data.model_dump().items() if v is not None and v != ""}
     if "embedding_base_url" in items and isinstance(items["embedding_base_url"], str):
         items["embedding_base_url"] = normalize_base_url(items["embedding_base_url"]) or items["embedding_base_url"].strip()
-    if items:
-        apply_settings_dict(items, reset=True)
-
-    provider = (app_settings.embedding_provider or "").strip().lower()
-    base = normalize_base_url(app_settings.embedding_base_url or "") or (app_settings.embedding_base_url or "").strip()
-    model = (app_settings.embedding_model or "").strip()
+    # P1：测试端点不得 apply_settings_dict 污染全局运行时；仅用请求体覆盖本地变量
+    provider = str(
+        items.get("embedding_provider") or app_settings.embedding_provider or ""
+    ).strip().lower()
+    base = normalize_base_url(
+        str(items.get("embedding_base_url") or app_settings.embedding_base_url or "")
+    ) or str(items.get("embedding_base_url") or app_settings.embedding_base_url or "").strip()
+    model = str(items.get("embedding_model") or app_settings.embedding_model or "").strip()
 
     if not base or not model:
         return {
@@ -1127,9 +1129,11 @@ async def test_qdrant(
     from backend.services.endpoint_probe import probe_qdrant
 
     items = {k: v for k, v in data.model_dump().items() if v is not None and v != ""}
-    if items:
-        apply_settings_dict(items, reset=True)
-    url = (app_settings.qdrant_url or "").rstrip("/")
+    # P1：测试探测不写全局 settings
+    url = str(items.get("qdrant_url") or app_settings.qdrant_url or "").rstrip("/")
+    collection = str(
+        items.get("qdrant_collection") or app_settings.qdrant_collection or ""
+    )
     if not url:
         return {"ok": False, "message": "请填写 Qdrant URL（例：http://127.0.0.1:6333）"}
     try:
@@ -1138,9 +1142,9 @@ async def test_qdrant(
             if ok:
                 return {
                     "ok": True,
-                    "message": f"{message} · collection 默认 {app_settings.qdrant_collection}",
+                    "message": f"{message} · collection 默认 {collection}",
                     "url": used or url,
-                    "collection": app_settings.qdrant_collection,
+                    "collection": collection,
                 }
             return {"ok": False, "message": message}
     except Exception as e:

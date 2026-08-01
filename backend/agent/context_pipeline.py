@@ -85,6 +85,66 @@ def _cfg(name: str, default: Any) -> Any:
     return getattr(settings, name, default)
 
 
+def _repair_tool_pairs(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """去掉无匹配 tool_calls 的 tool 结果、无结果的悬空 tool_calls（公共修复）。"""
+    if not messages:
+        return messages
+    # collect assistant tool_call ids
+    call_ids: set[str] = set()
+    for m in messages:
+        if m.get("role") != "assistant":
+            continue
+        for tc in m.get("tool_calls") or []:
+            if isinstance(tc, dict) and tc.get("id"):
+                call_ids.add(str(tc["id"]))
+    out: list[dict[str, Any]] = []
+    used_results: set[str] = set()
+    for m in messages:
+        if m.get("role") == "tool":
+            tid = str(m.get("tool_call_id") or "")
+            if tid and tid not in call_ids:
+                continue  # orphan tool result
+            if tid:
+                used_results.add(tid)
+            out.append(m)
+            continue
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            tcs = [
+                tc
+                for tc in (m.get("tool_calls") or [])
+                if isinstance(tc, dict)
+            ]
+            # 先原样保留；第二遍再剥无 result 的（需要完整扫描）
+            out.append({**m, "tool_calls": tcs})
+            continue
+        out.append(m)
+    # 第二遍：剥掉没有 tool 结果的 tool_calls（避免网关 400）
+    result_ids = {
+        str(m.get("tool_call_id") or "")
+        for m in out
+        if m.get("role") == "tool" and m.get("tool_call_id")
+    }
+    fixed: list[dict[str, Any]] = []
+    for m in out:
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            tcs = [
+                tc
+                for tc in m["tool_calls"]
+                if str(tc.get("id") or "") in result_ids
+                or not tc.get("id")  # 无 id 无法配，保留由下游 sanitize
+            ]
+            if tcs:
+                fixed.append({**m, "tool_calls": tcs})
+            elif (m.get("content") or "").strip():
+                nm = {**m}
+                nm.pop("tool_calls", None)
+                fixed.append(nm)
+            # 空 assistant+空 tool_calls → 丢弃
+            continue
+        fixed.append(m)
+    return fixed
+
+
 def format_compact_summary(raw: str) -> str:
     """Strip <analysis> scratchpad; unwrap <summary> (Claude Code formatCompactSummary)."""
     text = raw or ""
@@ -187,9 +247,16 @@ class PipelineContextEngine(ContextEngine):
         except Exception:
             pass
         cw = int(getattr(profile, "default_context_window", 0) or 0)
-        if cw > 0 and not _cfg("context_window", None):
-            self.context_length = cw
-            self.meter.context_window = cw
+        # 会话模型窗口优先于全局 128k 默认（32k 模型勿等到 92k 才压；1M 勿过度压）
+        if cw > 0:
+            forced = int(_cfg("context_window", 0) or 0)
+            # 仅当显式配置了 context_window 且与 profile 冲突时才尊重 settings 覆盖
+            if forced > 0 and forced != 128_000:
+                self.context_length = forced
+            else:
+                self.context_length = cw
+            self.meter.context_window = self.context_length
+            self._window_from_profile = True
 
     @property
     def name(self) -> str:
@@ -200,18 +267,29 @@ class PipelineContextEngine(ContextEngine):
         self.last_prompt_tokens = self.meter.last_prompt_tokens
         self.last_completion_tokens = self.meter.last_completion_tokens
         self.last_total_tokens = self.meter.last_total_tokens
-        # keep window in sync with runtime settings
-        self.context_length = int(_cfg("context_window", self.context_length) or self.context_length)
-        self.meter.context_window = self.context_length
+        # 若已 apply_profile 绑定模型窗口，不再被全局 settings.context_window 冲掉
+        if not getattr(self, "_window_from_profile", False):
+            self.context_length = int(
+                _cfg("context_window", self.context_length) or self.context_length
+            )
+            self.meter.context_window = self.context_length
 
     def should_compress(self, prompt_tokens: int | None = None) -> bool:
-        self.meter.context_window = int(
-            _cfg("context_window", self.context_length) or self.context_length
-        )
+        if not getattr(self, "_window_from_profile", False):
+            self.meter.context_window = int(
+                _cfg("context_window", self.context_length) or self.context_length
+            )
         self.meter.threshold_percent = float(
             _cfg("context_threshold_percent", self.threshold_percent) or self.threshold_percent
         )
         return self.meter.should_compress(prompt_tokens)
+
+    def on_session_reset(self) -> None:
+        super().on_session_reset()
+        # 每 run / 会话切换：L5 次数与 thrash 归零（防全局永久禁用）
+        self._l5_attempts_run = 0
+        self._l5_events = []
+        self._thrash_until = 0.0
 
     def should_compress_preflight(self, messages: list[dict[str, Any]]) -> bool:
         est = self.meter.estimate_messages(messages)
@@ -340,6 +418,9 @@ class PipelineContextEngine(ContextEngine):
                     after,
                 )
 
+        # 统一修复 tool 配对（压缩/硬截断后的不变量）
+        out = _repair_tool_pairs(out)
+        after = self.meter.estimate_messages(out)
         meta["tokens_after"] = after
         meta["layers"] = layers
         meta["compressed"] = after < before or bool(layers)
@@ -360,14 +441,47 @@ class PipelineContextEngine(ContextEngine):
     def _hard_truncate(
         self, messages: list[dict[str, Any]]
     ) -> tuple[list[dict[str, Any]], int]:
-        """保留头/尾，丢弃中间（不可再递归压缩时的最后手段）。"""
+        """保留头/尾，丢弃中间；**扩展边界以不切断 tool_call/tool 配对**。"""
         head_n = max(1, self.protect_first_n)
         tail_n = max(1, self.protect_last_n)
         if len(messages) <= head_n + tail_n:
             return messages, 0
-        head = messages[:head_n]
-        tail = messages[-tail_n:]
-        dropped = len(messages) - head_n - tail_n
+        # 向后扩 head：若 head 末条是带 tool_calls 的 assistant，吞掉紧随的 tool 结果
+        head_end = head_n
+        while head_end < len(messages) - tail_n:
+            prev = messages[head_end - 1] if head_end > 0 else None
+            cur = messages[head_end]
+            if (
+                prev
+                and prev.get("role") == "assistant"
+                and prev.get("tool_calls")
+                and cur.get("role") == "tool"
+            ):
+                head_end += 1
+                continue
+            break
+        # 向前扩 tail：若 tail 首条是 tool，把前面的 assistant tool_calls 一并纳入
+        tail_start = len(messages) - tail_n
+        while tail_start > head_end:
+            cur = messages[tail_start]
+            prev = messages[tail_start - 1] if tail_start > 0 else None
+            if (
+                cur.get("role") == "tool"
+                and prev
+                and prev.get("role") == "assistant"
+                and prev.get("tool_calls")
+            ):
+                tail_start -= 1
+                continue
+            break
+        if tail_start <= head_end:
+            return messages, 0
+        head = messages[:head_end]
+        tail = messages[tail_start:]
+        dropped = tail_start - head_end
+        # 清 orphan tool（保险）
+        head = _repair_tool_pairs(head)
+        tail = _repair_tool_pairs(tail)
         marker = {
             "role": "system",
             "content": (
@@ -548,9 +662,33 @@ class PipelineContextEngine(ContextEngine):
         session_id: Any,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         systems = [m for m in messages if m.get("role") == "system"]
-        # Keep first system as stable identity if present; extra systems go into compress body
-        stable_systems = systems[:1] if systems else []
-        extra_systems = systems[1:]
+        # 保留：首条 system + 短编排/能力纪律（防长任务后半程行为漂移）
+        stable_systems: list[dict[str, Any]] = []
+        extra_systems: list[dict[str, Any]] = []
+        for i, m in enumerate(systems):
+            c = m.get("content") if isinstance(m.get("content"), str) else ""
+            keep = i == 0 or (
+                len(c) <= 4000
+                and any(
+                    k in c.lower()
+                    for k in (
+                        "capability",
+                        "能力",
+                        "orchestr",
+                        "编排",
+                        "steward",
+                        "crew",
+                        "discipline",
+                        "纪律",
+                        "you are",
+                        "你是",
+                    )
+                )
+            )
+            if keep and len(stable_systems) < 4:
+                stable_systems.append(m)
+            else:
+                extra_systems.append(m)
         rest = extra_systems + [m for m in messages if m.get("role") != "system"]
 
         if len(rest) < 6:
@@ -710,10 +848,34 @@ Be thorough on technical detail needed to continue coding (paths, errors, decisi
                 {"role": "user", "content": transcript},
             ]
             parts: list[str] = []
+            finish = None
             async for chunk in llm.chat(prompt, tools=None, stream=False):
-                if getattr(chunk, "delta", None):
-                    parts.append(chunk.delta)
-            return "".join(parts).strip()
+                fr = getattr(chunk, "finish_reason", None)
+                if fr:
+                    finish = fr
+                d = getattr(chunk, "delta", None)
+                if d:
+                    parts.append(d)
+            text = "".join(parts).strip()
+            # 非流式错误常被包成 delta="[LLM Error 400]…"——绝不可当摘要写入 pinned
+            if finish in ("error", "content_filter"):
+                logger.warning("L5 compress aborted finish_reason=%s", finish)
+                return ""
+            if not text:
+                return ""
+            low = text.lower()
+            if (
+                low.startswith("[llm error")
+                or "error 400" in low
+                or "error 401" in low
+                or "error 429" in low
+                or "error 500" in low
+                or "invalid_api_key" in low
+                or "context_length_exceeded" in low
+            ):
+                logger.warning("L5 compress got error payload, discard: %s", text[:160])
+                return ""
+            return text
         except Exception as e:
             logger.warning("L5 LLM compress failed: %s", e)
             return ""

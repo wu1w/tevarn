@@ -330,9 +330,9 @@ pub fn decide_tool(
         }
     }
 
-    // 2) user deny patterns (tool name or path glob)
+    // 2) user deny patterns (tool name exact / path glob — 禁止 name.contains 子串误伤)
     for pat in &policy.user_deny {
-        if pat == name || name.contains(pat) {
+        if pat == name || tool_name_matches(name, pat) {
             return CourtDecision::make(
                 name,
                 digest,
@@ -449,9 +449,9 @@ pub fn decide_tool(
         }
     }
 
-    // 6) user allow
+    // 6) user allow（精确 / 通配，禁止 name.contains 子串误放行 file→file_write）
     for pat in &policy.user_allow {
-        if pat == name || name.contains(pat) {
+        if pat == name || tool_name_matches(name, pat) {
             return CourtDecision::make(
                 name,
                 digest,
@@ -650,6 +650,27 @@ fn is_human_strategy_surface(name: &str) -> bool {
         name,
         "crew_steward" | "notify" | "ask_user" | "message_user"
     )
+}
+
+/// 工具名匹配：精确相等，或 `*` 通配（如 `file_*`），**不做子串 contains**。
+fn tool_name_matches(name: &str, pat: &str) -> bool {
+    if pat == name {
+        return true;
+    }
+    if pat == "*" {
+        return true;
+    }
+    if let Some(prefix) = pat.strip_suffix('*') {
+        if !prefix.is_empty() && name.starts_with(prefix) {
+            return true;
+        }
+    }
+    if let Some(suffix) = pat.strip_prefix('*') {
+        if !suffix.is_empty() && name.ends_with(suffix) {
+            return true;
+        }
+    }
+    false
 }
 
 fn path_matches_any(path: &str, globs: &[String]) -> bool {
