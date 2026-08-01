@@ -14,6 +14,7 @@ import { ConnectionState } from '@/components/desktop/ConnectionIndicator';
 import { AppLogo } from '@/components/brand/AppLogo';
 import { DangerConfirmDialog } from '@/components/chat/DangerConfirmDialog';
 import { DomainEventBridge } from '@/components/layout/DomainEventBridge';
+import { GlobalChatWs } from '@/components/chat/GlobalChatWs';
 import { useT } from '@/stores/localeStore';
 
 const SIDEBAR_KEY = 'takton-sidebar-open';
@@ -233,6 +234,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <DangerConfirmDialog />
         {/* OS：领域事件单例订阅 → 刷新员工/工单/审批查询 */}
         <DomainEventBridge />
+        {/* Chat WS 常驻：切 settings/agents 不断连，stop/confirm/sync 不丢 */}
+        {isAuthenticated ? <GlobalChatWs /> : null}
       </div>
     </ErrorBoundary>
   );

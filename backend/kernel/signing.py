@@ -90,7 +90,10 @@ def _canonical_payload(data: dict[str, Any]) -> bytes:
         "issued_at": data.get("issued_at"),
         "expires_at": data.get("expires_at"),
     }
-    return json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    # separators 紧凑无空格，与 Rust serde_json 默认一致（否则 HMAC 永不匹配）
+    return json.dumps(
+        payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
 
 
 def sign_token_dict(data: dict[str, Any]) -> str:

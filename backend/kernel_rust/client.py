@@ -904,12 +904,21 @@ class RustAgentKernel:
             except Exception:
                 pass
 
+    def _inject_rpc_auth(self, params: dict[str, Any] | None) -> dict[str, Any]:
+        """若配置 TAKTON_KERNEL_RPC_SECRET，注入特权 RPC 鉴权。"""
+        p = dict(params or {})
+        secret = (os.environ.get("TAKTON_KERNEL_RPC_SECRET") or "").strip()
+        if secret:
+            p["_rpc_auth"] = secret
+        return p
+
     def _call(self, method: str, params: dict[str, Any] | None = None) -> Any:
         """JSON-RPC with reconnect (sync). Prefer ``_acall`` from async code.
 
         UI/read methods use a side-channel socket. Agent methods run on the
         dedicated kernel-rpc thread (serial host socket).
         """
+        params = self._inject_rpc_auth(params)
         if method in _UI_SIDECHANNEL_METHODS:
             try:
                 if threading.current_thread().name.startswith("kernel-ui"):
@@ -939,13 +948,35 @@ class RustAgentKernel:
         if threading.current_thread().name.startswith("kernel-rpc"):
             with self._call_lock:
                 return self._call_locked(method, params)
+        # P1：超时后丢弃结果，避免积压的 charge/create 在恢复后非幂等重放
+        # （线程无法强杀，但标记 generation 使晚到的结果作废）
+        gen = int(getattr(self, "_rpc_gen", 0) or 0)
         fut = _RPC_EXECUTOR.submit(self._invoke_call, method, params)
-        return fut.result(timeout=_RPC_RESULT_TIMEOUT)
+        try:
+            return fut.result(timeout=_RPC_RESULT_TIMEOUT)
+        except TimeoutError:
+            self._rpc_gen = gen + 1  # type: ignore[attr-defined]
+            logger.error(
+                "kernel RPC timeout method=%s after %ss — bump gen (late result discarded)",
+                method,
+                _RPC_RESULT_TIMEOUT,
+            )
+            # 不 cancel 线程（Python 无法安全杀），但调用方看到超时不会二次 submit 同逻辑
+            raise TimeoutError(
+                f"kernel RPC timeout method={method} after {_RPC_RESULT_TIMEOUT}s"
+            )
 
     def _invoke_call(
         self, method: str, params: dict[str, Any] | None = None
     ) -> Any:
+        gen_at_submit = int(getattr(self, "_rpc_gen", 0) or 0)
         with self._call_lock:
+            # 超时后 gen 已前进 → 仍执行但结果对调用方已无意义；避免连锁写
+            if int(getattr(self, "_rpc_gen", 0) or 0) != gen_at_submit:
+                logger.warning(
+                    "kernel RPC late invoke skipped method=%s (gen advanced)", method
+                )
+                raise TimeoutError(f"kernel RPC superseded method={method}")
             return self._call_locked(method, params)
 
     async def _acall(

@@ -504,6 +504,69 @@ impl LlmAdmissionController {
         gone
     }
 
+    /// 进程结束时回收该 process 占用的全部 LLM 租约（防 4 槽漏光）
+    pub fn release_by_process(&mut self, process_id: &str) -> usize {
+        let pid = process_id.trim();
+        if pid.is_empty() {
+            return 0;
+        }
+        let mut n = 0usize;
+        let ids: Vec<String> = self
+            .in_flight
+            .values()
+            .filter(|l| l.process_id.as_deref() == Some(pid))
+            .map(|l| l.request_id.clone())
+            .collect();
+        for id in ids {
+            if self.in_flight.remove(&id).is_some() {
+                n += 1;
+            }
+            self.pending_grants.remove(&id);
+        }
+        let qids: Vec<String> = self
+            .queued
+            .values()
+            .filter(|r| r.process_id.as_deref() == Some(pid))
+            .map(|r| r.request_id.clone())
+            .collect();
+        for id in qids {
+            if self.queued.remove(&id).is_some() {
+                n += 1;
+            }
+        }
+        if n > 0 {
+            self.wake_best();
+        }
+        n
+    }
+
+    /// 超时租约回收（默认 600s；无 TTL 时槽会永久占满）
+    pub fn expire_stale(&mut self, max_hold_secs: f64) -> usize {
+        let max_hold = if max_hold_secs > 0.0 {
+            max_hold_secs
+        } else {
+            600.0
+        };
+        let now = now_secs();
+        let ids: Vec<String> = self
+            .in_flight
+            .values()
+            .filter(|l| now - l.granted_at > max_hold)
+            .map(|l| l.request_id.clone())
+            .collect();
+        let mut n = 0usize;
+        for id in ids {
+            if self.in_flight.remove(&id).is_some() {
+                n += 1;
+            }
+            self.pending_grants.remove(&id);
+        }
+        if n > 0 {
+            self.wake_best();
+        }
+        n
+    }
+
     pub fn cancel_wait(&mut self, request_id: &str) -> bool {
         let q = self.queued.remove(request_id).is_some();
         self.pending_grants.remove(request_id);

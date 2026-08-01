@@ -649,17 +649,33 @@ class RenderChartTool(BaseTool):
         content = str(kwargs.get("content") or "")
         if not content.strip():
             return "[Error] content required"
-        out_dir = Path("workspace")
+        out_dir = Path("workspace").resolve()
         out_dir.mkdir(parents=True, exist_ok=True)
+
+        def _safe_name(raw: str, default: str, allow_ext: str) -> str:
+            # P1：禁止路径穿越（.. / 绝对路径）
+            base = Path(str(raw or default)).name
+            base = base.replace("..", "").strip() or default
+            if not base.endswith(allow_ext):
+                base = base + allow_ext
+            # 只允许安全字符
+            safe = "".join(
+                c for c in base if c.isalnum() or c in ("-", "_", ".", "中")
+            ) or default
+            if not safe.endswith(allow_ext):
+                safe = safe + allow_ext
+            return safe
 
         if action == "table_md":
             text_md = self._csv_or_md_to_table(content)
             if text_md.startswith("[Error]"):
                 return text_md
-            fname = kwargs.get("filename") or "table.md"
-            if not str(fname).endswith(".md"):
-                fname = str(fname) + ".md"
-            fp = out_dir / fname
+            fname = _safe_name(str(kwargs.get("filename") or "table.md"), "table.md", ".md")
+            fp = (out_dir / fname).resolve()
+            try:
+                fp.relative_to(out_dir)
+            except ValueError:
+                return "[Error] invalid filename (path escape)"
             fp.write_text(text_md, encoding="utf-8")
             # 回读校验中文未丢
             back = fp.read_text(encoding="utf-8")
@@ -670,10 +686,16 @@ class RenderChartTool(BaseTool):
                 note = f"\n[warn] CJK chars in={cjk_in} out={cjk_out}"
             return f"OK {fp.resolve()}\n\n{back}{note}"
 
-        name = kwargs.get("filename") or f"diagram_{uuid.uuid4().hex[:6]}.mmd"
-        if not str(name).endswith(".mmd"):
-            name = str(name) + ".mmd"
-        fp = out_dir / name
+        name = _safe_name(
+            str(kwargs.get("filename") or f"diagram_{uuid.uuid4().hex[:6]}.mmd"),
+            f"diagram_{uuid.uuid4().hex[:6]}.mmd",
+            ".mmd",
+        )
+        fp = (out_dir / name).resolve()
+        try:
+            fp.relative_to(out_dir)
+        except ValueError:
+            return "[Error] invalid filename (path escape)"
         fp.write_text(content, encoding="utf-8")
         png = fp.with_suffix(".png")
         try:

@@ -16,7 +16,7 @@ import { TaskPanel } from '@/components/tasks/TaskPanel';
 import { TransparencyPanel } from '@/components/chat/TransparencyPanel';
 import { GlobalSearch } from '@/components/search/GlobalSearch';
 import { useSession } from '@/hooks/useSession';
-import { useWebSocket } from '@/hooks/useWebSocket';
+import { useChatWsBridge } from '@/stores/chatWsBridge';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { useAuthStore } from '@/stores/authStore';
 import { useSessionStore } from '@/stores/sessionStore';
@@ -866,45 +866,74 @@ const handleUserMessageAck = useCallback(
         [currentSession?.id, reconcileMessage]
       );
 
-const { isConnected, isConnecting, kickedByPeer, reclaimConnection, sendMessage, sendStop, waitForConnection, connect } = useWebSocket({
-        sessionId: currentSession?.id || '',
-        token,
-        onStreamDelta: handleStreamDelta,
-        onStatusUpdate: handleStatusUpdate,
-        onSyncResponse: handleSyncResponse,
-        onUserMessageAck: handleUserMessageAck,
-        getLastMessageId: () => {
-          const msgs = useSessionStore.getState().messages || [];
-          for (let i = msgs.length - 1; i >= 0; i--) {
-            const id = msgs[i]?.id;
-            if (!id) continue;
-            const s = String(id);
-            // 乐观/临时 id 不能传给 get_messages_after（后端 UUID 校验失败或漏补）
-            if (
-              s.startsWith('streaming') ||
-              s === 'streaming' ||
-              s.startsWith('optimistic:') ||
-              s.startsWith('local:')
-            ) {
-              continue;
-            }
-            // 粗过滤非 UUID
-            if (s.length < 32) continue;
-            return s;
+  // AppShell GlobalChatWs 常驻连接；本页只注册 handlers
+  React.useEffect(() => {
+    useChatWsBridge.getState().setHandlers({
+      onStreamDelta: handleStreamDelta,
+      onStatusUpdate: handleStatusUpdate,
+      onSyncResponse: handleSyncResponse,
+      onUserMessageAck: handleUserMessageAck,
+      onToolEvent: handleToolEvent,
+      onRunEvent: handleRunEvent,
+      onGoalUpdate: handleGoalUpdate,
+      onError: (err) => toastWsError(err),
+      getLastMessageId: () => {
+        const msgs = useSessionStore.getState().messages || [];
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          const id = msgs[i]?.id;
+          if (!id) continue;
+          const s = String(id);
+          if (
+            s.startsWith('streaming') ||
+            s === 'streaming' ||
+            s.startsWith('optimistic:') ||
+            s.startsWith('local:')
+          ) {
+            continue;
           }
-          return undefined;
-        },
-        onToolEvent: handleToolEvent,
-        onRunEvent: handleRunEvent,
-        onGoalUpdate: handleGoalUpdate,
-        onError: (err) => toastWsError(err),
-        onSettingsChanged: (keys) => {
-          // 通知全局模型目录刷新（被设置页同步、多标签页切换等场景复用）
-          if (typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent('takton:settings-changed', { detail: keys }));
-          }
-        },
-      });
+          if (s.length < 32) continue;
+          return s;
+        }
+        return undefined;
+      },
+    });
+    return () => {
+      useChatWsBridge.getState().setHandlers(null);
+    };
+  }, [
+    handleStreamDelta,
+    handleStatusUpdate,
+    handleSyncResponse,
+    handleUserMessageAck,
+    handleToolEvent,
+    handleRunEvent,
+    handleGoalUpdate,
+    toastWsError,
+  ]);
+
+  const bridgeApi = useChatWsBridge((s) => s.api);
+  const isConnected = bridgeApi?.isConnected ?? false;
+  const isConnecting = bridgeApi?.isConnecting ?? false;
+  const kickedByPeer = bridgeApi?.kickedByPeer ?? false;
+  const reclaimConnection = () => bridgeApi?.reclaimConnection();
+  const sendMessage = (
+    content: string,
+    attachments?: Array<{
+      filename: string;
+      url: string;
+      type: string;
+      text_content?: string;
+    }>,
+    mode?: string,
+    subAgentIds?: string[],
+    opts?: { regenerate?: boolean },
+  ) =>
+    bridgeApi?.sendMessage(content, attachments, mode, subAgentIds, opts) ?? false;
+  const sendStop = () => bridgeApi?.sendStop() ?? false;
+  const waitForConnection = (sid?: string, ms?: number) =>
+    bridgeApi?.waitForConnection(sid, ms) ?? Promise.resolve(false);
+  const connect = (sid?: string, opts?: { force?: boolean }) =>
+    bridgeApi?.connect(sid, opts);
 
   // 保持 streaming/stopping 最新值供 BroadcastChannel hello 回复
   React.useEffect(() => {

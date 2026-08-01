@@ -291,7 +291,19 @@ class ConnectionManager:
                 if done and content and len(content) >= len(snap.partial_content):
                     snap.partial_content = content
                 else:
-                    snap.partial_content = (snap.partial_content + content)[:_MAX_PARTIAL_CHARS]
+                    # 合帧：避免每 token 全量拷贝 O(n²) — 用 list 缓冲
+                    buf = getattr(snap, "_delta_buf", None)
+                    if not isinstance(buf, list):
+                        buf = []
+                        snap._delta_buf = buf  # type: ignore[attr-defined]
+                    buf.append(content)
+                    if done or len(buf) >= 24 or sum(len(x) for x in buf) >= 800:
+                        joined = "".join(buf)
+                        buf.clear()
+                        snap.partial_content = (
+                            snap.partial_content + joined
+                        )[:_MAX_PARTIAL_CHARS]
+                    # 未达阈值时仍标记 running，_maybe_flush 用节流
             if snap.state in ("idle", ""):
                 snap.state = "thinking"
             self._maybe_flush_snapshot(session_id)

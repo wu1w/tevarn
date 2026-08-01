@@ -60,7 +60,7 @@ interface MessageBubbleProps {
   onPreviewArtifact?: (art: ChatArtifact) => void;
 }
 
-export function MessageBubble({
+function MessageBubbleInner({
   message,
   onRegenerate,
   onEdit,
@@ -307,6 +307,18 @@ export function MessageBubble({
     </div>
   );
 }
+
+export const MessageBubble = React.memo(
+  MessageBubbleInner,
+  (prev, next) =>
+    prev.message.id === next.message.id &&
+    prev.message.content === next.message.content &&
+    prev.streaming === next.streaming &&
+    prev.message.tool_calls === next.message.tool_calls &&
+    prev.onRegenerate === next.onRegenerate &&
+    prev.onEdit === next.onEdit &&
+    prev.onPreviewArtifact === next.onPreviewArtifact,
+);
 
 /** 未配对 tool 消息的兜底展示：可折叠、JSON 美化，不再整墙原始 JSON */
 function ToolResultBubble({ message }: { message: Message }) {

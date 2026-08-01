@@ -75,11 +75,21 @@ fn build_runtime(args: &Args) -> Arc<Runtime> {
     // Default require_intent=true (P0-B).
     let ri = args.require_intent.trim().to_ascii_lowercase();
     let require_intent = !(ri == "0" || ri == "false" || ri == "no" || ri == "off");
+    // HMAC：与 Python signing 同源（env TAKTON_TOKEN_HMAC_SECRET / TAKTON_JWT_SECRET）
+    let hmac_key = std::env::var("TAKTON_TOKEN_HMAC_SECRET")
+        .ok()
+        .filter(|s| s.trim().len() >= 16)
+        .or_else(|| {
+            std::env::var("TAKTON_JWT_SECRET")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+        })
+        .map(|s| s.into_bytes());
     let kernel = KernelConfig {
         audit_path: args.audit_path.clone(),
         audit_persist: !args.no_audit,
         soft_renew: soft,
-        hmac_key: None,
+        hmac_key,
         require_intent,
     };
     init_runtime(RuntimeConfig {
@@ -2339,6 +2349,49 @@ fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: 
     }
 }
 
+/// 特权方法：若设置 TAKTON_KERNEL_RPC_SECRET，必须 params._rpc_auth 匹配
+const PRIVILEGED: &[&str] = &[
+    "approve_escalation",
+    "deny_escalation",
+    "top_up_budget",
+    "set_court_policy",
+    "set_permission_rules",
+    "llm_set_config",
+    "create_process",
+    "end_process",
+    "kill_process",
+];
+
+fn check_rpc_auth(method: &str, params: &Value) -> Result<(), (i64, String, Value)> {
+    let secret = std::env::var("TAKTON_KERNEL_RPC_SECRET")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let Some(secret) = secret else {
+        return Ok(()); // 未配置则保持 localhost 兼容
+    };
+    // ping/health/list_methods 始终放行（探活）
+    if matches!(method, "ping" | "health" | "list_methods" | "abi_version") {
+        return Ok(());
+    }
+    let need = PRIVILEGED.contains(&method);
+    if !need {
+        return Ok(());
+    }
+    let got = params
+        .get("_rpc_auth")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if got == secret {
+        return Ok(());
+    }
+    Err((
+        -32013,
+        "RPC auth required: set params._rpc_auth = TAKTON_KERNEL_RPC_SECRET".into(),
+        json!({"method": method}),
+    ))
+}
+
 fn dispatch(runtime: &Arc<Runtime>, line: &str) -> Value {
     let req: Value = match serde_json::from_str(line) {
         Ok(v) => v,
@@ -2351,7 +2404,14 @@ fn dispatch(runtime: &Arc<Runtime>, line: &str) -> Value {
         Some(m) => m,
         None => return err_resp(id, -32600, "Invalid Request", None),
     };
-    let params = req.get("params").cloned().unwrap_or(json!({}));
+    let mut params = req.get("params").cloned().unwrap_or(json!({}));
+    if let Err((code, msg, data)) = check_rpc_auth(method, &params) {
+        return err_resp(id, code, msg, Some(data));
+    }
+    // 不把密钥写进审计：剥掉 _rpc_auth
+    if let Some(obj) = params.as_object_mut() {
+        obj.remove("_rpc_auth");
+    }
     let kernel = runtime.kernel();
     match handle_method(kernel.as_ref(), runtime.as_ref(), method, &params) {
         Ok(result) => ok_resp(id, result),

@@ -107,17 +107,54 @@ async def resume_session_agent_background(
     mode: str | None = None,
     prompt: str | None = None,
 ) -> None:
-    """Fire-and-forget wrapper; errors logged, never raised to HTTP."""
+    """Fire-and-forget；接入 WS track/snapshot，使 stop/sync 可见（P1）。"""
+    import asyncio
+    import uuid as _uuid
+
+    sid = (
+        session_id
+        if isinstance(session_id, _uuid.UUID)
+        else _uuid.UUID(str(session_id))
+    )
+    manager = None
     try:
-        out = await resume_session_agent(
-            session_id, user_id=user_id, mode=mode, prompt=prompt
-        )
-        logger.info(
-            "resume background done session=%s preview=%s",
-            str(session_id)[:8],
-            (out or "")[:120],
-        )
+        from backend.api.websocket import manager as ws_manager
+
+        manager = ws_manager
+    except Exception:
+        manager = None
+
+    async def _run() -> None:
+        try:
+            if manager is not None:
+                try:
+                    manager.begin_run_snapshot(sid)
+                except Exception:
+                    pass
+            out = await resume_session_agent(
+                session_id, user_id=user_id, mode=mode, prompt=prompt
+            )
+            logger.info(
+                "resume background done session=%s preview=%s",
+                str(session_id)[:8],
+                (out or "")[:120],
+            )
+        except Exception as e:
+            logger.exception(
+                "resume background failed session=%s: %s", str(session_id)[:8], e
+            )
+        finally:
+            if manager is not None:
+                try:
+                    manager.end_run_snapshot(sid)
+                except Exception:
+                    pass
+
+    try:
+        task = asyncio.create_task(_run(), name=f"resume:{str(sid)[:8]}")
+        if manager is not None and hasattr(manager, "track_agent_task"):
+            # loop 在 resume 内新建，stop 至少能 cancel task
+            manager.track_agent_task(sid, task, loop=None)
     except Exception as e:
-        logger.exception(
-            "resume background failed session=%s: %s", str(session_id)[:8], e
-        )
+        logger.exception("resume background schedule failed: %s", e)
+        await _run()

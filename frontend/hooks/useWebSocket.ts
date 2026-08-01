@@ -728,9 +728,12 @@ export function useWebSocket(options: UseWebSocketOptions) {
     connect(sid, { force: true });
   }, [connect]);
 
-  // 组件卸载清理
+  // 组件卸载：仅在无 session 时断连（AppShell 常驻时切页不断）
+  // 真正清会话 / 登出由 sessionId 变空 的 effect 处理
   useEffect(() => {
     return () => {
+      // 若仍绑定 session，保留连接给 GlobalChatWs / 回聊页
+      if (sessionIdRef.current) return;
       disconnect();
     };
   }, [disconnect]);

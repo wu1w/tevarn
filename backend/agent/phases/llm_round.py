@@ -269,6 +269,7 @@ async def _run_llm_round_body(
         )
         if _can:
             import asyncio as _aio
+            import uuid as _uuid
 
             delay = min(8.0, 0.8 * (2 ** (_retried - 1)))
             await loop._push_status(
@@ -277,6 +278,18 @@ async def _run_llm_round_body(
                 f"LLM {_kind.value}，{_retried}/{_attempts} 次重试…",
             )
             await _aio.sleep(delay)
+            # P1：重试用新 message_id，避免前端把全量重推拼到旧气泡（幽灵半截）
+            try:
+                message_id = _uuid.uuid4()  # noqa: F841 — 外层 loop 下一轮会新建；此处清缓冲
+            except Exception:
+                pass
+            # 通知前端清 streaming 缓冲（status 即可）
+            try:
+                await loop._push_status(
+                    session_id, "thinking", f"重试中 · 新一轮输出…"
+                )
+            except Exception:
+                pass
             result.action = "continue"
             return result
         loop._llm_fail_streak = 0

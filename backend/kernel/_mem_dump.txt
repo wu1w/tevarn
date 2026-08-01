@@ -1,0 +1,661 @@
+1	"""编制记忆：统一注入（Assembler）与沉淀（Writer）。
+2	
+3	不新建记忆表 — 只读写 IdentityRegistry / IdentityMemoryEntry。
+4	读优先级：Identity Memory ≫ session ≫ entities/wiki/graph（后三者不在此模块）。
+5	"""
+6	
+7	from __future__ import annotations
+8	
+9	import logging
+10	import re
+11	from dataclasses import dataclass, field
+12	from typing import Any, Literal
+13	
+14	logger = logging.getLogger(__name__)
+15	
+16	STICKY_KINDS = ("persona", "duty", "methodology", "preference")
+17	TOMBSTONE_MARKERS = ("（已废止）", "(已废止)", "[tombstone]", "[superseded]")
+18	
+19	Mode = Literal["workforce", "chat", "preview", "compact"]
+20	
+21	
+22	@dataclass
+23	class MemoryEntryRef:
+24	    id: str
+25	    kind: str
+26	    version: int = 1
+27	    chars: int = 0
+28	
+29	
+30	@dataclass
+31	class MemoryInjectResult:
+32	    header: str
+33	    body: str
+34	    entries_used: list[MemoryEntryRef] = field(default_factory=list)
+35	    truncated: bool = False
+36	    token_estimate: int = 0
+37	    mode: str = "workforce"
+38	
+39	
+40	def _settings_int(name: str, default: int) -> int:
+41	    try:
+42	        from backend.core.config import settings
+43	
+44	        return int(getattr(settings, name, default) or default)
+45	    except Exception:
+46	        return default
+47	
+48	
+49	def _settings_bool(name: str, default: bool) -> bool:
+50	    try:
+51	        from backend.core.config import settings
+52	
+53	        return bool(getattr(settings, name, default))
+54	    except Exception:
+55	        return default
+56	
+57	
+58	def _clip(text: str, n: int) -> str:
+59	    t = (text or "").replace("\r", "").strip()
+60	    if len(t) <= n:
+61	        return t
+62	    return t[: max(0, n - 1)] + "…"
+63	
+64	
+65	def _is_tombstone(content: str) -> bool:
+66	    c = (content or "").strip()
+67	    if not c:
+68	        return True
+69	    for m in TOMBSTONE_MARKERS:
+70	        if c == m or c.startswith(m):
+71	            return True
+72	    return False
+73	
+74	
+75	def _entry_id(m: Any) -> str:
+76	    return str(getattr(m, "id", "") or "")
+77	
+78	
+79	def _kind(m: Any) -> str:
+80	    return str(getattr(m, "kind", "") or "")
+81	
+82	
+83	def _content(m: Any) -> str:
+84	    return str(getattr(m, "content", "") or "")
+85	
+86	
+87	def _version(m: Any) -> int:
+88	    try:
+89	        return int(getattr(m, "version", 1) or 1)
+90	    except (TypeError, ValueError):
+91	        return 1
+92	
+93	
+94	def _keyword_score(text: str, query: str) -> int:
+95	    """极简相关度：query 词出现次数。"""
+96	    if not query or not text:
+97	        return 0
+98	    tokens = [t for t in re.split(r"[\s,，。；;、/\\]+", query.lower()) if len(t) >= 2]
+99	    if not tokens:
+100	        return 0
+101	    low = text.lower()
+102	    return sum(1 for t in tokens if t in low)
+103	
+104	
+105	class CrewMemoryAssembler:
+106	    """身份记忆注入块组装（编制 / 联系 TA / 预览共用）。"""
+107	
+108	    def __init__(self, registry: Any | None = None) -> None:
+109	        self._registry = registry
+110	
+111	    def _reg(self) -> Any:
+112	        if self._registry is not None:
+113	            return self._registry
+114	        try:
+115	            from backend.kernel import get_kernel
+116	
+117	            k = get_kernel()
+118	            reg = getattr(k, "identity_registry", None)
+119	            if reg is not None:
+120	                return reg
+121	        except Exception:
+122	            k = None
+123	        # 兜底：kernel 未挂 registry 时按标准方式自建（kernel + AsyncSessionLocal）。
+124	        # 不能无参构造——IdentityRegistry.__init__ 必填 kernel 与 session_factory。
+125	        from backend.database import AsyncSessionLocal
+126	        from backend.kernel.identity import IdentityRegistry
+127	
+128	        return IdentityRegistry(k, AsyncSessionLocal)
+129	
+130	    async def _select_experiences(
+131	        self,
+132	        experiences: list[Any],
+133	        *,
+134	        instruction: str,
+135	        identity_id: Any,
+136	        exp_max: int,
+137	    ) -> list[Any]:
+138	        """experience 超 cap 时挑选：向量 top-k（对齐 SQLite）→ 关键词 → 最新。
+139	
+140	        硬约束：只返回 current_memory 里仍生效、非 tombstone 的条目；
+141	        禁止只拿向量原文跳过版本链。
+142	        """
+143	        if exp_max <= 0 or not experiences:
+144	            return []
+145	        if len(experiences) <= exp_max:
+146	            return experiences
+147	
+148	        by_id: dict[str, Any] = {}
+149	        for m in experiences:
+150	            eid = _entry_id(m)
+151	            if eid:
+152	                by_id[eid] = m
+153	
+154	        # 1) 向量 RAG（可选）
+155	        if instruction.strip():
+156	            try:
+157	                from backend.services.rag.capability import use_vector_rag
+158	
+159	                if use_vector_rag():
+160	                    from backend.services.rag.factory import RAGServiceFactory
+161	
+162	                    rag = RAGServiceFactory.get_service()
+163	                    docs = await rag.search_identity_memory(
+164	                        instruction,
+165	                        str(identity_id),
+166	                        top_k=max(exp_max * 3, exp_max),  # 多取再过滤 kind
+167	                    )
+168	                    ordered: list[Any] = []
+169	                    seen: set[str] = set()
+170	                    for d in docs or []:
+171	                        payload = getattr(d, "payload", None) or {}
+172	                        if not isinstance(payload, dict):
+173	                            payload = {}
+174	                        # 只收 experience（向量库可能混有 sticky 投影）
+175	                        kind = str(payload.get("kind") or "")
+176	                        eid = str(
+177	                            payload.get("entry_id")
+178	                            or getattr(d, "id", "")
+179	                            or ""
+180	                        )
+181	                        if not eid or eid in seen:
+182	                            continue
+183	                        m = by_id.get(eid)
+184	                        if m is None:
+185	                            continue
+186	                        if kind and kind != "experience" and _kind(m) != "experience":
+187	                            continue
+188	                        if _kind(m) != "experience":
+189	                            continue
+190	                        if _is_tombstone(_content(m)):
+191	                            continue
+192	                        ordered.append(m)
+193	                        seen.add(eid)
+194	                        if len(ordered) >= exp_max:
+195	                            break
+196	                    if ordered:
+197	                        logger.debug(
+198	                            "crew_memory experience via vector top-k n=%s",
+199	                            len(ordered),
+200	                        )
+201	                        return ordered
+202	            except Exception as e:
+203	                logger.debug("crew_memory vector select skip: %s", e)
+204	
+205	        # 2) 关键词
+206	        if instruction.strip():
+207	            scored = sorted(
+208	                experiences,
+209	                key=lambda m: (
+210	                    _keyword_score(_content(m), instruction),
+211	                    _version(m),
+212	                ),
+213	                reverse=True,
+214	            )
+215	            return scored[:exp_max]
+216	
+217	        # 3) 最新
+218	        return experiences[:exp_max]
+219	
+220	    async def build_inject_block(
+221	        self,
+222	        identity_id: Any,
+223	        instruction: str = "",
+224	        *,
+225	        mode: Mode = "workforce",
+226	        memory_entries: list[Any] | None = None,
+227	    ) -> MemoryInjectResult:
+228	        """组装注入块。memory_entries 可选（dispatcher 已拉取时可传入避免双查）。"""
+229	        if memory_entries is None:
+230	            try:
+231	                memory_entries = await self._reg().current_memory(identity_id)
+232	            except Exception as e:
+233	                logger.debug("crew_memory load failed: %s", e)
+234	                memory_entries = []
+235	
+236	        header = "## 你的身份记忆（人格/职责）"
+237	        if not memory_entries:
+238	            return MemoryInjectResult(
+239	                header=header,
+240	                body="（暂无身份记忆）",
+241	                mode=mode,
+242	            )
+243	
+244	        # compact：配额紧时只 persona+duty
+245	        if mode == "compact":
+246	            sticky_kinds = ("persona", "duty")
+247	            exp_max = 0
+248	        else:
+249	            sticky_kinds = STICKY_KINDS
+250	            exp_max = _settings_int("crew_memory_experience_max_inject", 2)
+251	            if mode == "chat":
+252	                exp_max = min(exp_max, _settings_int("crew_memory_experience_max_inject_chat", 1))
+253	
+254	        exp_chars = _settings_int("crew_memory_experience_max_chars", 800)
+255	        sticky_chars = 2000 if mode in ("chat", "preview") else 280
+256	        sticky_cap = 6
+257	        other_cap = 2
+258	        total_text_cap = 1500 if mode == "workforce" else 2400
+259	        full_max = _settings_int("agent_identity_memory_full_inject_max", 8)
+260	
+261	        sticky: list[Any] = []
+262	        experiences: list[Any] = []
+263	        other: list[Any] = []
+264	        for m in memory_entries:
+265	            if _is_tombstone(_content(m)):
+266	                continue
+267	            k = _kind(m)
+268	            if k in sticky_kinds:
+269	                sticky.append(m)
+270	            elif k == "experience":
+271	                experiences.append(m)
+272	            else:
+273	                other.append(m)
+274	
+275	        # experience：倒序（新优先），cap
+276	        # 超 cap 时：优先向量 top-k（须对齐 SQLite current + 非 tombstone），回落关键词
+277	        experiences = list(reversed(experiences))  # current_memory 通常旧→新
+278	        if exp_max <= 0:
+279	            experiences = []
+280	        elif len(experiences) > exp_max:
+281	            picked = await self._select_experiences(
+282	                experiences,
+283	                instruction=instruction or "",
+284	                identity_id=identity_id,
+285	                exp_max=exp_max,
+286	            )
+287	            experiences = picked
+288	
+289	        def line(m: Any, n: int) -> str:
+290	            body = _clip(_content(m).replace("\n", " "), n)
+291	            return f"- [{_kind(m) or 'memory'}] {body}"
+292	
+293	        lines: list[str] = []
+294	        used: list[MemoryEntryRef] = []
+295	        truncated = False
+296	
+297	        for m in sticky[:sticky_cap]:
+298	            lines.append(line(m, sticky_chars))
+299	            used.append(
+300	                MemoryEntryRef(
+301	                    id=_entry_id(m),
+302	                    kind=_kind(m),
+303	                    version=_version(m),
+304	                    chars=len(_content(m)),
+305	                )
+306	            )
+307	        if len(sticky) > sticky_cap:
+308	            truncated = True
+309	
+310	        for m in experiences:
+311	            lines.append(line(m, exp_chars if mode != "workforce" else min(exp_chars, 160)))
+312	            used.append(
+313	                MemoryEntryRef(
+314	                    id=_entry_id(m),
+315	                    kind="experience",
+316	                    version=_version(m),
+317	                    chars=len(_content(m)),
+318	                )
+319	            )
+320	
+321	        for m in other[:other_cap]:
+322	            lines.append(line(m, 160))
+323	            used.append(
+324	                MemoryEntryRef(
+325	                    id=_entry_id(m),
+326	                    kind=_kind(m),
+327	                    version=_version(m),
+328	                    chars=len(_content(m)),
+329	                )
+330	            )
+331	        if len(other) > other_cap:
+332	            truncated = True
+333	
+334	        # 总条目超 full_max：砍 other → experience（sticky 保）
+335	        if len(used) > full_max:
+336	            keep_sticky = [u for u in used if u.kind in sticky_kinds]
+337	            keep_rest = [u for u in used if u.kind not in sticky_kinds]
+338	            budget = max(0, full_max - len(keep_sticky))
+339	            keep_rest = keep_rest[:budget]
+340	            keep_ids = {u.id for u in keep_sticky + keep_rest}
+341	            # 重建 lines
+342	            lines = []
+343	            used = []
+344	            for m in sticky[:sticky_cap]:
+345	                if _entry_id(m) in keep_ids or not keep_ids:
+346	                    lines.append(line(m, sticky_chars))
+347	                    used.append(
+348	                        MemoryEntryRef(
+349	                            id=_entry_id(m), kind=_kind(m), version=_version(m)
+350	                        )
+351	                    )
+352	            for m in experiences + other:
+353	                if _entry_id(m) in keep_ids:
+354	                    n = exp_chars if _kind(m) == "experience" else 160
+355	                    if mode == "workforce" and _kind(m) == "experience":
+356	                        n = min(n, 160)
+357	                    lines.append(line(m, n))
+358	                    used.append(
+359	                        MemoryEntryRef(
+360	                            id=_entry_id(m), kind=_kind(m), version=_version(m)
+361	                        )
+362	                    )
+363	            truncated = True
+364	
+365	        text = "\n".join(lines) if lines else "（暂无身份记忆）"
+366	        if len(text) > total_text_cap:
+367	            text = text[: total_text_cap - 1] + "…"
+368	            truncated = True
+369	
+370	        # 粗估 token
+371	        token_est = max(1, round(len(text) / 3.4))
+372	        return MemoryInjectResult(
+373	            header=header,
+374	            body=text,
+375	            entries_used=used,
+376	            truncated=truncated,
+377	            token_estimate=token_est,
+378	            mode=mode,
+379	        )
+380	
+381	
+382	class CrewMemoryWriter:
+383	    """身份记忆写入门禁：失败不沉淀、自动沉淀默关、distilled 需审批。
+384	
+385	    R3-P3：成功写入后镜像到 Rust Memory 服务 + memory_layers（控制平面权威）。
+386	    """
+387	
+388	    def __init__(self, registry: Any | None = None) -> None:
+389	        self._registry = registry
+390	
+391	    def _reg(self) -> Any:
+392	        if self._registry is not None:
+393	            return self._registry
+394	        try:
+395	            from backend.kernel import get_kernel
+396	
+397	            k = get_kernel()
+398	            reg = getattr(k, "identity_registry", None)
+399	            if reg is not None:
+400	                return reg
+401	        except Exception:
+402	            k = None
+403	        # 兜底：kernel 未挂 registry 时按标准方式自建（kernel + AsyncSessionLocal）。
+404	        # 不能无参构造——IdentityRegistry.__init__ 必填 kernel 与 session_factory。
+405	        from backend.database import AsyncSessionLocal
+406	        from backend.kernel.identity import IdentityRegistry
+407	
+408	        return IdentityRegistry(k, AsyncSessionLocal)
+409	
+410	    @staticmethod
+411	    def _mirror_to_rust_memory(
+412	        identity_id: Any,
+413	        *,
+414	        kind: str,
+415	        content: str,
+416	        score: float = 0.8,
+417	    ) -> None:
+418	        """P3: write path goes through sys_memory + memory_layers."""
+419	        try:
+420	            from backend.kernel import get_kernel
+421	
+422	            k = get_kernel()
+423	            iid = str(identity_id)
+424	            key = f"crew.{kind}.{hash(content) & 0xFFFFFFFF:x}"
+425	            if hasattr(k, "sys_memory_put"):
+426	                k.sys_memory_put(iid, key, {"kind": kind, "content": content[:4000]})
+427	            elif hasattr(k, "_call"):
+428	                k._call(
+429	                    "sys_memory_put",
+430	                    {
+431	                        "identity": iid,
+432	                        "key": key,
+433	                        "value": {"kind": kind, "content": content[:4000]},
+434	                    },
+435	                )
+436	            layer = {
+437	                "persona": "semantic",
+438	                "duty": "semantic",
+439	                "experience": "episodic",
+440	                "preference": "working",
+441	                "methodology": "skill",
+442	            }.get(str(kind or ""), "working")
+443	            if hasattr(k, "memory_layer_put"):
+444	                k.memory_layer_put(iid, layer, content[:2000], score)
+445	            elif hasattr(k, "_call"):
+446	                k._call(
+447	                    "memory_layer_put",
+448	                    {
+449	                        "identity": iid,
+450	                        "layer": layer,
+451	                        "content": content[:2000],
+452	                        "score": float(score),
+453	                    },
+454	                )
+455	        except Exception as e:
+456	            logger.debug("crew_memory rust mirror skip: %s", e)
+457	
+458	    @staticmethod
+459	    def should_skip_distill(
+460	        *,
+461	        status: str,
+462	        result: str,
+463	        force: bool = False,
+464	    ) -> str | None:
+465	        """返回跳过原因；None=可写。"""
+466	        st = (status or "").lower().strip()
+467	        res = result or ""
+468	        if not force:
+469	            if st not in ("done", "completed", "success", "ok"):
+470	                return f"status={st or 'empty'}"
+471	            if any(
+472	                x in res
+473	                for x in (
+474	                    "[Budget Exceeded]",
+475	                    "预算耗尽",
+476	                    "预算不足",
+477	                    "[Stopped]",
+478	                    "[Cancelled]",
+479	                    "Generation was cancelled",
+480	                    "[Timeout]",
+481	                    "超时",
+482	                    "grounding block",
+483	                    "[Error]",
+484	                )
+485	            ):
+486	                return "failure_marker_in_result"
+487	            min_chars = _settings_int("crew_memory_auto_distill_min_chars", 200)
+488	            if len(res.strip()) < min_chars:
+489	                return "result_too_short"
+490	            if not _settings_bool("crew_memory_auto_distill", False):
+491	                return "auto_distill_disabled"
+492	        else:
+493	            # 手动：仍拒绝明确失败标记
+494	            if any(
+495	                x in res
+496	                for x in (
+497	                    "[Budget Exceeded]",
+498	                    "预算耗尽",
+499	                    "预算不足",
+500	                )
+501	            ):
+502	                return "failure_marker_in_result"
+503	        return None
+504	
+505	    async def maybe_distill_from_job(
+506	        self,
+507	        *,
+508	        identity_id: Any,
+509	        instruction: str,
+510	        result: str,
+511	        process_id: str | None = None,
+512	        status: str = "done",
+513	        force: bool = False,
+514	        approved_by: str | None = None,
+515	        source: str | None = None,
+516	    ) -> Any | None:
+517	        """完工沉淀 experience。force=True 为手动 distill（忽略 auto 开关）。
+518	
+519	        返回写入的 entry 或 None（跳过）。不向调用方抛业务跳过。
+520	        """
+521	        if not identity_id:
+522	            return None
+523	        reason = self.should_skip_distill(status=status, result=result or "", force=force)
+524	        if reason:
+525	            logger.debug(
+526	                "crew_memory skip distill identity=%s reason=%s",
+527	                str(identity_id)[:8],
+528	                reason,
+529	            )
+530	            return None
+531	
+532	        require_approve = _settings_bool("crew_memory_require_approve_distill", True)
+533	        # 自动路径：若要求审批且无 approved_by → 跳过（v1 不写 pending 表）
+534	        if not force and require_approve and not approved_by:
+535	            logger.debug("crew_memory skip auto distill: require approve")
+536	            return None
+537	
+538	        instr = _clip(instruction, 160)
+539	        body = _clip(result, 220)
+540	        content = (
+541	            f"[{status}] 工单完成。\n"
+542	            f"任务：{instr or '（无指令）'}\n"
+543	            f"结果摘要：{body or '（无结果）'}"
+544	        )
+545	        if process_id:
+546	            content += f"\nprocess={str(process_id)[:12]}"
+547	
+548	        # 手动：manual；自动且有审批：distilled；否则 system
+549	        if force:
+550	            write_source = source or "manual"
+551	            ab = approved_by or "owner"
+552	        elif approved_by:
+553	            write_source = "distilled"
+554	            ab = approved_by
+555	        else:
+556	            write_source = "system"
+557	            ab = None
+558	
+559	        try:
+560	            entry = await self._reg().add_memory(
+561	                identity_id,
+562	                "experience",
+563	                content,
+564	                source=write_source,
+565	                approved_by=ab,
+566	            )
+567	            self._mirror_to_rust_memory(
+568	                identity_id, kind="experience", content=content, score=0.85
+569	            )
+570	            logger.info(
+571	                "crew_memory distilled identity=%s process=%s force=%s",
+572	                str(identity_id)[:8],
+573	                (process_id or "")[:8],
+574	                force,
+575	            )
+576	            return entry
+577	        except Exception as e:
+578	            logger.debug("crew_memory distill failed: %s", e)
+579	            return None
+580	
+581	    async def record_manual(
+582	        self,
+583	        identity_id: Any,
+584	        kind: str,
+585	        content: str,
+586	        *,
+587	        approved_by: str,
+588	        source: str = "manual",
+589	    ) -> Any:
+590	        # Phase 3.1：编制手动沉淀走记忆总线
+591	        try:
+592	            from backend.services import memory_bus
+593	
+594	            result = await memory_bus.remember(
+595	                kind,
+596	                content,
+597	                identity_id=identity_id,
+598	                approved_by=approved_by,
+599	                source=source,
+600	                confidence=1.0,
+601	            )
+602	            if result.ok and result.raw is not None:
+603	                self._mirror_to_rust_memory(
+604	                    identity_id, kind=kind, content=content, score=0.9
+605	                )
+606	                return result.raw
+607	            if not result.ok:
+608	                logger.warning("memory_bus.record_manual fallback: %s", result.message)
+609	        except Exception as e:
+610	            logger.debug("memory_bus record_manual skip: %s", e)
+611	        return await self._reg().add_memory(
+612	            identity_id, kind, content, source=source, approved_by=approved_by
+613	        )
+614	
+615	    async def supersede(
+616	        self, entry_id: Any, new_content: str, *, approved_by: str
+617	    ) -> Any:
+618	        try:
+619	            from backend.services import memory_bus
+620	
+621	            result = await memory_bus.supersede(
+622	                f"identity:{entry_id}",
+623	                new_content,
+624	                approved_by=approved_by,
+625	            )
+626	            if result.ok and result.raw is not None:
+627	                return result.raw
+628	        except Exception as e:
+629	            logger.debug("memory_bus supersede skip: %s", e)
+630	        return await self._reg().supersede_memory(
+631	            entry_id, new_content, approved_by=approved_by
+632	        )
+633	
+634	    async def retire(self, entry_id: Any, *, approved_by: str) -> Any:
+635	        """废止：用 tombstone 文案 supersede，Assembler 不再注入。"""
+636	        return await self.supersede(
+637	            entry_id, "（已废止）", approved_by=approved_by
+638	        )
+639	
+640	
+641	# 模块级便捷
+642	_assembler: CrewMemoryAssembler | None = None
+643	_writer: CrewMemoryWriter | None = None
+644	
+645	
+646	def get_crew_memory_assembler(registry: Any | None = None) -> CrewMemoryAssembler:
+647	    global _assembler
+648	    if registry is not None:
+649	        return CrewMemoryAssembler(registry)
+650	    if _assembler is None:
+651	        _assembler = CrewMemoryAssembler()
+652	    return _assembler
+653	
+654	
+655	def get_crew_memory_writer(registry: Any | None = None) -> CrewMemoryWriter:
+656	    global _writer
+657	    if registry is not None:
+658	        return CrewMemoryWriter(registry)
+659	    if _writer is None:
+660	        _writer = CrewMemoryWriter()
+661	    return _writer

@@ -28,6 +28,20 @@ router = APIRouter(prefix="/kernel", tags=["kernel"])
 _REPORT_READ_KEY = "workforce_report_read_at"
 
 
+async def _kcall(method: str, params: dict[str, Any] | None = None) -> Any:
+    """异步 RPC：优先 _acall，否则 to_thread(_call)，避免阻塞事件循环（P1）。"""
+    import asyncio
+
+    k = get_kernel()
+    acall = getattr(k, "_acall", None)
+    if acall is not None:
+        return await acall(method, params)
+    call = getattr(k, "_call", None)
+    if call is not None:
+        return await asyncio.to_thread(call, method, params)
+    raise RuntimeError(f"kernel has no RPC for {method}")
+
+
 class StopJobBody(BaseModel):
     """E4 统一停止：至少填 inbox_item_id 或 process_id。"""
 

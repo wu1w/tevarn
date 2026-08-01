@@ -812,7 +812,17 @@ class PipelineContextEngine(ContextEngine):
 
     async def _llm_summarize(self, transcript: str, focus_line: str) -> str:
         try:
-            llm = _get_compress_llm()
+            # 优先会话模型快照，避免 L5 打到全局另一个 provider
+            snap = getattr(self, "_llm_snapshot", None)
+            if isinstance(snap, dict) and (snap.get("model") or snap.get("provider")):
+                try:
+                    from backend.services.llm.factory import LLMServiceFactory
+
+                    llm = LLMServiceFactory.get_service_for_snapshot(snap)
+                except Exception:
+                    llm = _get_compress_llm()
+            else:
+                llm = _get_compress_llm()
             # Claude Code BASE_COMPACT_PROMPT (9 sections) — bilingual OK, Chinese preferred.
             system = f"""CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.
 You are a conversation compaction assistant. Create a detailed summary so the agent can CONTINUE development work without losing context. Do not invent facts.
@@ -849,6 +859,7 @@ Be thorough on technical detail needed to continue coding (paths, errors, decisi
             ]
             parts: list[str] = []
             finish = None
+            usage_acc: dict[str, int] = {}
             async for chunk in llm.chat(prompt, tools=None, stream=False):
                 fr = getattr(chunk, "finish_reason", None)
                 if fr:
@@ -856,7 +867,29 @@ Be thorough on technical detail needed to continue coding (paths, errors, decisi
                 d = getattr(chunk, "delta", None)
                 if d:
                     parts.append(d)
+                u = getattr(chunk, "usage", None)
+                if isinstance(u, dict):
+                    for k in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                        if u.get(k):
+                            usage_acc[k] = int(u[k])
             text = "".join(parts).strip()
+            # P1：L5 摘要纳入 kernel charge（若有进程）
+            try:
+                spent = int(
+                    usage_acc.get("total_tokens")
+                    or (
+                        int(usage_acc.get("prompt_tokens") or 0)
+                        + int(usage_acc.get("completion_tokens") or 0)
+                    )
+                    or max(8, round(len(transcript) / 3.4) + round(len(text) / 3.4))
+                )
+                pid = getattr(self, "_charge_process_id", None)
+                if pid and spent > 0:
+                    from backend.kernel import get_kernel
+
+                    get_kernel().charge_tokens(str(pid), spent)
+            except Exception as ce:
+                logger.debug("L5 charge skip: %s", ce)
             # 非流式错误常被包成 delta="[LLM Error 400]…"——绝不可当摘要写入 pinned
             if finish in ("error", "content_filter"):
                 logger.warning("L5 compress aborted finish_reason=%s", finish)

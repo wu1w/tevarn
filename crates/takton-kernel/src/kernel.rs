@@ -608,6 +608,26 @@ impl AgentKernel {
         g.scheduler.cancel_process(process_id);
         g.isolation.drop_process(process_id);
         g.run_gate.release(process_id);
+        // P1：回收该进程 LLM 租约，防 max_in_flight=4 漏满后全系统堵死
+        let llm_n = g.llm.release_by_process(process_id);
+        if llm_n > 0 {
+            Self::emit_locked(
+                g,
+                "llm.released_by_process",
+                process_id,
+                json!({ "count": llm_n }),
+            );
+        }
+        // 顺带扫过期租约
+        let expired = g.llm.expire_stale(600.0);
+        if expired > 0 {
+            Self::emit_locked(
+                g,
+                "llm.expired",
+                process_id,
+                json!({ "count": expired }),
+            );
+        }
         g.policy.drop_process(process_id);
         g.result_store.drop_process(process_id);
         g.cost_ledger.drop_process(process_id);

@@ -1711,6 +1711,13 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 eng.on_session_reset()
             except Exception:
                 pass
+            # L5 charge 绑定本 run 进程；摘要用会话模型快照
+            try:
+                kp = getattr(self, "_kernel_process", None)
+                eng._charge_process_id = getattr(kp, "id", None)  # type: ignore[attr-defined]
+                eng._llm_snapshot = llm_snapshot if isinstance(llm_snapshot, dict) else None  # type: ignore[attr-defined]
+            except Exception:
+                pass
             # 按会话模型窗口 apply_profile
             try:
                 snap = llm_snapshot if isinstance(llm_snapshot, dict) else {}
