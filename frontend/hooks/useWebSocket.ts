@@ -152,6 +152,7 @@ interface UseWebSocketOptions {
   }) => void;
   /** 服务端落库用户消息后的 id 回执（替换乐观气泡） */
   onUserMessageAck?: (payload: {
+    display_content?: string | null;
     id: string;
     role: string;
     content: string;
@@ -434,6 +435,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
             id?: string;
             role?: string;
             content?: string;
+            display_content?: string | null;
             created_at?: string | null;
           };
           if (m.id) {
@@ -441,6 +443,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
               id: m.id,
               role: m.role || 'user',
               content: m.content || '',
+              display_content: m.display_content,
               created_at: m.created_at,
             });
           }

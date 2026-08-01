@@ -55,9 +55,22 @@ export const useSessionStore = create<SessionState>()(
       addMessage: (message) => {
         const state = get();
         const sessionId = message.session_id;
+        const content = message.content || '';
+        const norm = (s: string) => (s || '').replace(/\s+/g, ' ').trim();
+
+        // 防双插：同会话同 role 同内容在 2.5s 内只保留一条（Enter 连发 / 双击发送）
+        if (message.role === 'user' && content && sessionId) {
+          const now = Date.parse(String(message.created_at || '')) || Date.now();
+          const dup = [...state.messages].reverse().find((m) => {
+            if (m.session_id !== sessionId || m.role !== 'user') return false;
+            if (norm(m.content || '') !== norm(content)) return false;
+            const ts = Date.parse(String(m.created_at || '')) || 0;
+            return !ts || Math.abs(now - ts) < 2500;
+          });
+          if (dup) return;
+        }
 
         // 自动命名：用户的第一条消息自动生成 session 标题
-        const content = message.content || '';
         if (
           message.role === 'user' &&
           content &&
@@ -90,27 +103,71 @@ export const useSessionStore = create<SessionState>()(
           if (haveById) return state;
 
           const norm = (s: string) => (s || '').replace(/\s+/g, ' ').trim();
+          const isOptId = (id: string) =>
+            id.startsWith('optimistic:') ||
+            id.startsWith('local:') ||
+            id.startsWith('streaming');
           const serverContent = norm(serverMsg.content || '');
           const serverTs = Date.parse(String(serverMsg.created_at || '')) || Date.now();
-          // 时间窗：仅合并 ±2 分钟内的乐观气泡，降低连发相同文案错合
           const WINDOW_MS = 120_000;
-          const optIdx = state.messages.findIndex((m) => {
-            if (m.role !== serverMsg.role) return false;
-            const id = String(m.id || '');
-            const isOptimistic =
-              id.startsWith('optimistic:') ||
-              id.startsWith('local:') ||
-              id.startsWith('streaming');
-            if (!isOptimistic && m.role !== 'user') return false;
-            if (norm(m.content || '') !== serverContent || !serverContent) return false;
-            const localTs = Date.parse(String(m.created_at || '')) || 0;
-            if (localTs && Math.abs(localTs - serverTs) > WINDOW_MS) return false;
-            return true;
-          });
+          const sameSession = (m: Message) =>
+            !serverMsg.session_id ||
+            !m.session_id ||
+            m.session_id === serverMsg.session_id;
 
-          if (optIdx >= 0) {
+          const candidates = state.messages
+            .map((m, i) => ({ m, i }))
+            .filter(({ m }) => {
+              if (m.role !== serverMsg.role) return false;
+              if (!sameSession(m)) return false;
+              const id = String(m.id || '');
+              if (!isOptId(id) && m.role !== 'user') return false;
+              const localTs = Date.parse(String(m.created_at || '')) || 0;
+              if (localTs && Math.abs(localTs - serverTs) > WINDOW_MS) return false;
+              return true;
+            });
+
+          // 1) 精确内容
+          let optIdx = candidates.find(({ m }) => {
+            const c = norm(m.content || '');
+            return Boolean(serverContent) && c === serverContent;
+          })?.i;
+
+          // 2) 模糊：一端包含另一端（附件前缀 / enrich 差异）
+          if (optIdx == null && serverContent) {
+            optIdx = candidates.find(({ m }) => {
+              const c = norm(m.content || '');
+              if (!c) return false;
+              return c.includes(serverContent) || serverContent.includes(c);
+            })?.i;
+          }
+
+          // 3) 用户消息：最近一条 optimistic 直接顶替（ack 权威，防双气泡）
+          if (optIdx == null && serverMsg.role === 'user') {
+            const optsOnly = candidates.filter(({ m }) => isOptId(String(m.id || '')));
+            if (optsOnly.length > 0) {
+              optIdx = optsOnly[optsOnly.length - 1].i;
+            }
+          }
+
+          if (optIdx != null && optIdx >= 0) {
             const next = [...state.messages];
             next[optIdx] = { ...next[optIdx], ...serverMsg, id: serverMsg.id };
+            // 清掉同会话其它未 ack 的同文案乐观气泡（双发残留）
+            if (serverMsg.role === 'user' && serverContent) {
+              return {
+                messages: next.filter((m, i) => {
+                  if (i === optIdx) return true;
+                  if (!isOptId(String(m.id || ''))) return true;
+                  if (m.role !== 'user' || !sameSession(m)) return true;
+                  const c = norm(m.content || '');
+                  if (c === serverContent) return false;
+                  if (c && serverContent && (c.includes(serverContent) || serverContent.includes(c)))
+                    return false;
+                  return true;
+                }),
+              };
+            }
             return { messages: next };
           }
           return { messages: [...state.messages, serverMsg] };
@@ -155,13 +212,29 @@ export const useSessionStore = create<SessionState>()(
             String(m.id || '').startsWith('optimistic:')
           );
           let merged = Array.isArray(messages) ? [...messages] : [];
+          const norm = (s: string) => (s || '').replace(/\s+/g, ' ').trim();
           for (const o of optimistic) {
-            const norm = (s: string) => (s || '').replace(/\s+/g, ' ').trim();
             const oc = norm(o.content || '');
-            if (!merged.some((m) => m.role === o.role && norm(m.content || '') === oc)) {
+            // 服务端已有同 role 精确/包含内容 → 丢弃乐观（避免双气泡）
+            const covered = merged.some((m) => {
+              if (m.role !== o.role) return false;
+              const mc = norm(m.content || '');
+              if (!oc || !mc) return false;
+              return mc === oc || mc.includes(oc) || oc.includes(mc);
+            });
+            if (!covered) {
               merged = [...merged, o];
             }
           }
+          // 同 role+内容去重（保留较新 id）
+          const seen = new Set<string>();
+          merged = merged.filter((m) => {
+            const key = `${m.role}|${norm(m.content || '')}`;
+            if (!norm(m.content || '')) return true;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
           // 加载历史后补标题：取首条用户消息
           if (!st.sessionTitles[sessionId] && merged.length) {
             const firstUser = merged.find(

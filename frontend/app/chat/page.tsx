@@ -761,18 +761,31 @@ function ChatPageInner() {
       }, [reconcileMessage, currentSession?.id, loadMessages]);
 
 const handleUserMessageAck = useCallback(
-        (payload: { id: string; role: string; content: string; created_at?: string | null }) => {
+        (payload: {
+          id: string;
+          role: string;
+          content: string;
+          created_at?: string | null;
+          display_content?: string | null;
+        }) => {
           const sid = currentSession?.id || '';
           if (!sid || !payload.id) return;
-          reconcileMessage({
+          // 先用服务端落库正文 reconcile；若有 display_content 再尝试合并乐观原文
+          const base = {
             id: payload.id,
             session_id: sid,
             role: (payload.role as 'user' | 'assistant' | 'system') || 'user',
             content: payload.content || '',
-            tool_calls: null,
-            token_count: null,
+            tool_calls: null as null,
+            token_count: null as null,
             created_at: payload.created_at || new Date().toISOString(),
-          });
+          };
+          reconcileMessage(base);
+          const disp = (payload.display_content || '').trim();
+          if (disp && disp !== (payload.content || '').trim()) {
+            // 仅用于吃掉「乐观原文」；已 haveById 时 no-op
+            reconcileMessage({ ...base, content: disp });
+          }
         },
         [currentSession?.id, reconcileMessage]
       );
@@ -820,6 +833,7 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
 
   // 发送消息（乐观 UI：先出用户气泡 + streaming，session/WS 后台并行）
   // 发送成功后会话将出现在「历史会话」中
+  const sendInFlightRef = useRef(false);
   const handleSend = useCallback(
       async (
         content: string,
@@ -827,14 +841,20 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
         mode: ChatMode = 'default',
         subAgentIds?: string[]
       ) => {
+        // 防连点/连 Enter：父级 isStreaming 尚未置位时的竞态
+        if (sendInFlightRef.current || isStoppingRef.current) return;
+        sendInFlightRef.current = true;
+
         // D10 专业模式：强制项目文件夹
         if (useWorkspaceStore.getState().uiMode === 'pro' && !useWorkspaceStore.getState().root) {
           useWorkspaceStore.getState().setForceProjectOpen(true);
+          sendInFlightRef.current = false;
           return;
         }
 
         if (mode === 'cluster' && (!subAgentIds || subAgentIds.length === 0)) {
           addToast(t('chat.clusterNeedAgent'), 'error');
+          sendInFlightRef.current = false;
           return;
         }
 
@@ -846,20 +866,36 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
           } catch (e) {
             console.error(t('page._e1'), e);
             addToast(t('chat.createSessionFailed'), 'error');
+            sendInFlightRef.current = false;
             return;
           } finally {
             setCreatingSession(false);
           }
           if (!session) {
             addToast(t('chat.createSessionFailed2'), 'error');
+            sendInFlightRef.current = false;
             return;
           }
         }
 
+        // 乐观气泡与后端 _build_user_input_with_attachments 对齐，便于 ack reconcile
         let displayContent = content;
         if (attachments.length > 0) {
-          const attNames = attachments.map((a) => `[${a.filename}]`).join(' ');
-          displayContent = `${attNames}\n${content}`;
+          const parts = [content];
+          attachments.forEach((a, i) => {
+            parts.push(`\n\n[附件 ${i + 1}: ${a.filename}]`);
+            if (a.text_content) {
+              const preview = a.text_content.slice(0, 8000);
+              parts.push(
+                a.text_content.length > 8000 ? `${preview}\n...（内容已截断）` : preview
+              );
+            } else if ((a.type || '').startsWith('image/') || /\.(png|jpe?g|gif|webp)$/i.test(a.filename)) {
+              parts.push(`[图片文件] ${a.url || ''}`);
+            } else {
+              parts.push(`[文件类型: ${a.type || 'unknown'}] ${a.url || ''}`);
+            }
+          });
+          displayContent = parts.join('\n');
         }
 
         // 乐观：临时 id，sync/load 后用服务端 id reconcile，避免双气泡
@@ -880,21 +916,27 @@ const { isConnected, isConnecting, sendMessage, sendStop, waitForConnection, con
         setLiveToolCalls([]);
         setStreamStatusDetail(t('chat.connectingSend'));
 
-        const ready = await waitForConnection(session.id, 15000);
-        if (!ready) {
-          addToast(t('chat.channelNotConnected'), 'error');
-          setIsStreaming(false);
-          setStreamStatusDetail(null);
-          return;
-        }
+        try {
+          const ready = await waitForConnection(session.id, 15000);
+          if (!ready) {
+            addToast(t('chat.channelNotConnected'), 'error');
+            setIsStreaming(false);
+            setStreamStatusDetail(null);
+            return;
+          }
 
-        setStreamStatusDetail(mode === 'cluster' ? t('chat.clusterWorking') : t('chat.thinking'));
-        const sent = sendMessage(content, attachments, mode, subAgentIds);
-        if (!sent) {
-          addToast(t('chat.sendFailedDisconnected'), 'error');
-          setIsStreaming(false);
-          setStreamStatusDetail(null);
-          return;
+          setStreamStatusDetail(mode === 'cluster' ? t('chat.clusterWorking') : t('chat.thinking'));
+          const sent = sendMessage(content, attachments, mode, subAgentIds);
+          if (!sent) {
+            addToast(t('chat.sendFailedDisconnected'), 'error');
+            setIsStreaming(false);
+            setStreamStatusDetail(null);
+          }
+        } finally {
+          // streaming 已 true 时由 MessageInput disabled 挡二次发送；此处放行以便失败后可重发
+          window.setTimeout(() => {
+            sendInFlightRef.current = false;
+          }, 400);
         }
       },
       [currentSession, addMessage, addToast, sendMessage, createAndLoadSession, waitForConnection, t]

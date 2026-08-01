@@ -348,11 +348,16 @@ class LoopIOMixin:
     # ─────────── Transactional persistence helpers ───────────
 
     async def _persist_user_input(
-        self, session_id: uuid.UUID, enriched_input: str
+        self,
+        session_id: uuid.UUID,
+        enriched_input: str,
+        *,
+        display_content: str | None = None,
     ) -> None:
         """原子化保存用户输入：TTL 清理 + Message + CtxItem。
 
         保存后广播 user_message_ack，供前端用服务端 id 替换乐观气泡。
+        display_content：可选，ack 时一并带上原始展示文案，便于乐观合并。
         """
         if self.message_repo is None or self.ctx_item_repo is None:
             return
@@ -381,17 +386,17 @@ class LoopIOMixin:
                 mid = str(getattr(saved, "id", "") or "")
                 created = getattr(saved, "created_at", None)
                 if mid:
-                    await ws_manager.broadcast(
-                        session_id,
-                        {
-                            "type": "user_message_ack",
-                            "id": mid,
-                            "role": "user",
-                            "content": enriched_input,
-                            "session_id": str(session_id),
-                            "created_at": created.isoformat() if created else None,
-                        },
-                    )
+                    payload = {
+                        "type": "user_message_ack",
+                        "id": mid,
+                        "role": "user",
+                        "content": enriched_input,
+                        "session_id": str(session_id),
+                        "created_at": created.isoformat() if created else None,
+                    }
+                    if display_content and display_content != enriched_input:
+                        payload["display_content"] = display_content
+                    await ws_manager.broadcast(session_id, payload)
             except Exception:
                 pass
 

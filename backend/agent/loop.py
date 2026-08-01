@@ -1227,7 +1227,12 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         if getattr(self, "_skip_user_persist", False):
             self._skip_user_persist = False
         else:
-            await self._persist_user_input(session_id, enriched_input)
+            # ack 带上原始 user_input，前端乐观气泡可按原文合并（enriched 可能含附件正文）
+            await self._persist_user_input(
+                session_id,
+                enriched_input,
+                display_content=user_input,
+            )
 
         # 2. 获取 Session 配置（行级锁由 Repository 实现）
         session = await self.session_repo.get_with_lock(session_id)

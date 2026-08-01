@@ -385,9 +385,21 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       next.delete('image');
       return next;
     });
-    sendingRef.current = false;
-    window.setTimeout(() => focusComposer(), 0);
+    // 勿立刻解锁：父组件 setIsStreaming 要下一帧才生效；过早清 sendingRef 会双发双气泡
+    window.setTimeout(() => {
+      sendingRef.current = false;
+      focusComposer();
+    }, 600);
   };
+
+  // 父级进入 streaming/disabled 时保持锁；结束再放行
+  useEffect(() => {
+    if (isStreaming || disabled) {
+      sendingRef.current = true;
+    } else {
+      sendingRef.current = false;
+    }
+  }, [isStreaming, disabled]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (mentionOpen && mentionCandidates.length > 0) {
