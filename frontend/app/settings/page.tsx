@@ -21,6 +21,7 @@ import { useT } from '@/stores/localeStore';
 import { useZh } from '@/hooks/useZh';
 import { LanguageCard } from '@/components/ui/LanguageSwitcher';
 import { ModelSettingsPanel } from '@/components/settings/ModelSettingsPanel';
+import { APP_VERSION } from '@/lib/appVersion';
 
 
 function mapVal(settings: Setting[], key: string, fallback = ''): string {
@@ -1180,15 +1181,15 @@ export default function SettingsPage() {
                 <div className="space-y-2 text-[12.5px]">
                   <div className="flex justify-between border-b border-border-subtle py-1.5">
                     <span className="text-foreground-dim">{zh ? '版本' : 'Version'}</span>
-                    <span className="font-mono text-foreground">v0.4.4-alpha</span>
+                    <span className="font-mono text-foreground">v{APP_VERSION}</span>
                   </div>
                   <div className="flex justify-between border-b border-border-subtle py-1.5">
                     <span className="text-foreground-dim">{zh ? '内核' : 'Kernel'}</span>
-                    <span className="text-foreground">AgentKernel · mediate</span>
+                    <span className="text-foreground">Takton OS kernel</span>
                   </div>
                   <div className="flex justify-between border-b border-border-subtle py-1.5">
                     <span className="text-foreground-dim">{zh ? '设计' : 'Design'}</span>
-                    <span className="text-foreground">demo v2 · AIOS workbench</span>
+                    <span className="text-foreground">AIOS workbench</span>
                   </div>
                 </div>
                 <p className="mt-4 text-[11px] text-foreground-dim">
