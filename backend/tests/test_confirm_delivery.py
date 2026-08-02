@@ -212,6 +212,77 @@ def test_resolve_requires_matching_owner(monkeypatch):
         confirm_manager._pending.pop("own1", None)
 
 
+def test_resolve_choice_must_be_in_options(monkeypatch):
+    """clarify：choice 必须落在 options 白名单。"""
+    monkeypatch.setattr(
+        confirm_manager, "_confirm_single_user_mode", lambda: True
+    )
+    import asyncio
+
+    ev = asyncio.Event()
+    holder = {
+        "approved": False,
+        "scope": "deny",
+        "user_id": "u1",
+        "options": ["继续", "取消"],
+        "kind": "clarify",
+    }
+    confirm_manager._pending["cl1"] = (ev, holder)
+    try:
+        assert (
+            confirm_manager.resolve_confirmation(
+                "cl1", False, user_id="u1", choice="任意注入"
+            )
+            is False
+        )
+        assert not ev.is_set()
+        assert (
+            confirm_manager.resolve_confirmation(
+                "cl1", False, user_id="u1", choice="继续"
+            )
+            is True
+        )
+        assert holder["approved"] is True
+        assert holder["choice"] == "继续"
+        assert ev.is_set()
+    finally:
+        confirm_manager._pending.pop("cl1", None)
+
+
+def test_resolve_freeform_choice_without_options_rejected(monkeypatch):
+    """无 options 时不得用任意 choice 伪造成 approve。"""
+    monkeypatch.setattr(
+        confirm_manager, "_confirm_single_user_mode", lambda: True
+    )
+    import asyncio
+
+    ev = asyncio.Event()
+    holder = {
+        "approved": False,
+        "scope": "deny",
+        "user_id": "u1",
+        "options": [],
+        "kind": "clarify",
+    }
+    confirm_manager._pending["cl2"] = (ev, holder)
+    try:
+        assert (
+            confirm_manager.resolve_confirmation(
+                "cl2", False, user_id="u1", choice="自由文本"
+            )
+            is False
+        )
+        # 显式 approved 仍可
+        assert (
+            confirm_manager.resolve_confirmation(
+                "cl2", True, user_id="u1"
+            )
+            is True
+        )
+    finally:
+        confirm_manager._pending.pop("cl2", None)
+
+
 @pytest.mark.asyncio
 async def test_request_requires_user_id_in_multi_user(monkeypatch):
     monkeypatch.setattr(

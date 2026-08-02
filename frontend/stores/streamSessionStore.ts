@@ -19,7 +19,8 @@ export type SessionStreamState = {
 };
 
 /** 同时保留的会话流状态上限（含运行中） */
-const MAX_SESSION_STREAM_ENTRIES = 40;
+// 运行中优先保留；idle 淘汰。略提高上限降低「切回久未动会话丢缓存」体感（P3-9）
+const MAX_SESSION_STREAM_ENTRIES = 64;
 
 const emptyState = (): SessionStreamState => ({
   isStreaming: false,

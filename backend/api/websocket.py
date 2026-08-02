@@ -141,6 +141,32 @@ class ConnectionManager:
         self._send_fail_counts: dict[uuid.UUID, int] = {}
         # run generation：忽略旧 task 的 late stream 污染新一轮
         self._run_generations: dict[uuid.UUID, int] = {}
+        # 已删除会话 tombstone：monotonic 截止时间；阻止晚到 agent 再写已删 session
+        self._deleted_sessions: dict[uuid.UUID, float] = {}
+        # tombstone 默认保留 10 分钟（足够 cancel 收尾）
+        self._deleted_ttl_s: float = 600.0
+
+    def mark_session_deleted(self, session_id: uuid.UUID, *, ttl: float | None = None) -> None:
+        """标记会话已删：拦截新 user_input / agent 登记，并抑制非踢线类广播。"""
+        hold = float(ttl if ttl is not None else self._deleted_ttl_s)
+        self._deleted_sessions[session_id] = time.monotonic() + max(30.0, hold)
+        # 顺带使 generation 前进，旧 task late event 失效
+        try:
+            self.bump_run_generation(session_id)
+        except Exception:
+            pass
+
+    def is_session_deleted(self, session_id: uuid.UUID) -> bool:
+        exp = self._deleted_sessions.get(session_id)
+        if exp is None:
+            return False
+        if time.monotonic() >= exp:
+            self._deleted_sessions.pop(session_id, None)
+            return False
+        return True
+
+    def clear_session_deleted(self, session_id: uuid.UUID) -> None:
+        self._deleted_sessions.pop(session_id, None)
 
     def _send_lock_for(self, session_id: uuid.UUID) -> asyncio.Lock:
         lock = self._send_locks.get(session_id)
@@ -448,6 +474,14 @@ class ConnectionManager:
         loop: Any | None = None,
     ) -> None:
         """登记当前 agent 主任务，便于显式 stop；断线不自动取消。"""
+        if self.is_session_deleted(session_id):
+            # 会话已删：立刻取消，避免写已删库
+            if not task.done():
+                task.cancel()
+            logger.warning(
+                "track_agent_task rejected: session %s already deleted", session_id
+            )
+            return
         old = self._agent_tasks.get(session_id)
         if old is not None and not old.done() and old is not task:
             old.cancel()
@@ -504,21 +538,24 @@ class ConnectionManager:
                 ids.add(str(sid))
         return ids
 
-    async def cancel_agent(self, session_id: uuid.UUID, *, wait: float = 2.0) -> None:
+    async def cancel_agent(self, session_id: uuid.UUID, *, wait: float = 2.0) -> bool:
         """取消正在运行的 agent（配合 agent.stop() 使用）。
 
         wait: 尽量等旧 task 退出，避免立刻清 _should_stop 导致叠跑。
+        返回 True 表示 agent 已 idle（done / 无任务）。
         """
+        self.stop_agent_loop(session_id)
         t = self._agent_tasks.get(session_id)
         if t is None or t.done():
-            return
+            return True
         t.cancel()
         try:
             await asyncio.wait_for(asyncio.shield(t), timeout=max(0.05, float(wait)))
         except (asyncio.TimeoutError, asyncio.CancelledError):
             pass
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("cancel_agent wait error session=%s: %s", session_id, e)
+        return not self.has_running_agent(session_id)
 
     async def wait_agent_idle(self, session_id: uuid.UUID, *, timeout: float = 2.0) -> bool:
         """轮询直到无运行中 agent 或超时。返回是否已 idle。"""
@@ -528,6 +565,74 @@ class ConnectionManager:
                 return True
             await asyncio.sleep(0.05)
         return not self.has_running_agent(session_id)
+
+    async def force_stop_agent(
+        self, session_id: uuid.UUID, *, total_wait: float = 12.0
+    ) -> bool:
+        """删除会话用：stop + 多次 cancel，直到 idle 或耗尽预算。
+
+        返回 True 表示 task 已 done()。
+        """
+        budget = max(1.0, float(total_wait))
+        deadline = time.monotonic() + budget
+        # 先协作 stop
+        self.stop_agent_loop(session_id)
+        while time.monotonic() < deadline:
+            if not self.has_running_agent(session_id):
+                return True
+            remain = deadline - time.monotonic()
+            slice_wait = min(3.0, max(0.2, remain))
+            await self.cancel_agent(session_id, wait=slice_wait)
+            if not self.has_running_agent(session_id):
+                return True
+            await asyncio.sleep(0.05)
+        idle = not self.has_running_agent(session_id)
+        if not idle:
+            logger.warning(
+                "force_stop_agent: session %s still running after %.1fs",
+                session_id,
+                budget,
+            )
+        return idle
+
+    async def kick_session(
+        self,
+        session_id: uuid.UUID,
+        *,
+        code: int = 4004,
+        reason: str = "session deleted",
+        user_id: uuid.UUID | None = None,
+    ) -> None:
+        """主动踢掉该 session 的 WebSocket（删会话 / 强制下线）。
+
+        先发 session_deleted 事件，再 close(code)；最后 disconnect 清映射。
+        code 默认 4004（应用层「会话已不存在」）。
+        """
+        ws = self._connections.get(session_id)
+        if ws is not None:
+            try:
+                st = getattr(ws, "client_state", None)
+                if st is None or getattr(st, "value", None) == 1:
+                    try:
+                        await ws.send_json(
+                            {
+                                "type": "session_deleted",
+                                "session_id": str(session_id),
+                                "reason": reason,
+                            }
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        await safe_close_ws(ws, code=code, reason=reason[:120])
+                    except Exception:
+                        try:
+                            await ws.close(code=code, reason=reason[:120])
+                        except Exception:
+                            pass
+            except Exception as e:
+                logger.debug("kick_session close skip session=%s: %s", session_id, e)
+        self.disconnect(session_id, user_id=user_id)
 
     async def connect(
         self,
@@ -593,6 +698,12 @@ class ConnectionManager:
         无论是否有连接，都先更新 run snapshot——用户跳页断线后 agent 仍在跑，
         回连 sync 才能恢复 partial 正文与 live tools。
         """
+        # 已删会话：只放行踢线/删除通知，其余吞掉（防 late write 刷 UI / 写库旁路）
+        if self.is_session_deleted(session_id):
+            msg_type = (message or {}).get("type") if isinstance(message, dict) else None
+            if msg_type not in ("session_deleted", "error"):
+                return
+
         # 打戳 run_generation（来自 agent task contextvar），供 ingest/前端过滤 late event
         if isinstance(message, dict) and message.get("type") in (
             "stream_delta",
@@ -608,7 +719,8 @@ class ConnectionManager:
                 message = {**message, "session_id": str(session_id)}
 
         try:
-            self._ingest_run_event(session_id, message)
+            if not self.is_session_deleted(session_id):
+                self._ingest_run_event(session_id, message)
         except Exception as e:
             logger.debug("run snapshot ingest skipped: %s", e)
 
@@ -926,6 +1038,21 @@ async def websocket_endpoint(
         await safe_close_ws(websocket, code=1011, reason="Session validation failed")
         return
 
+    # 已删 tombstone：拒绝重连（防 force 删除后客户端立刻重连复活）
+    if manager.is_session_deleted(session_id):
+        try:
+            await websocket.send_json(
+                {
+                    "type": "session_deleted",
+                    "session_id": str(session_id),
+                    "detail": "Session has been deleted",
+                }
+            )
+        except Exception:
+            pass
+        await safe_close_ws(websocket, code=4004, reason="session deleted")
+        return
+
     await manager.connect(session_id, websocket, user_id=user_id)
 
     # 重连恢复：若该 session 后台 agent 仍在跑，立刻推 status
@@ -975,6 +1102,25 @@ async def websocket_endpoint(
                 await manager.broadcast(session_id, {"type": "pong"})
 
             elif msg_type in ("user_input", "regenerate"):
+                if manager.is_session_deleted(session_id):
+                    try:
+                        await manager.broadcast(
+                            session_id,
+                            {
+                                "type": "error",
+                                "detail": "Session has been deleted",
+                                "code": "session_deleted",
+                            },
+                        )
+                    except Exception:
+                        pass
+                    await manager.kick_session(
+                        session_id,
+                        code=4004,
+                        reason="session deleted",
+                        user_id=user_id,
+                    )
+                    break
                 regenerate = msg_type == "regenerate" or bool(data.get("regenerate"))
                 user_input = data.get("content", "").strip()
                 if not user_input and regenerate:

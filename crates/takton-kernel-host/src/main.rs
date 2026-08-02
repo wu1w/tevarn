@@ -2439,14 +2439,12 @@ fn ensure_rpc_secret() -> String {
             return t;
         }
     }
-    // 生成 secret：时间戳 + 地址熵（无需额外 crate）
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut h = DefaultHasher::new();
-    Instant::now().hash(&mut h);
-    std::process::id().hash(&mut h);
-    path.hash(&mut h);
-    let secret = format!("{:016x}{:016x}{:016x}{:016x}", h.finish(), h.finish().wrapping_mul(0x9e37), Instant::now().elapsed().as_nanos(), std::process::id());
+    // CSPRNG：uuid v4 底层走 OS 随机源（审计 P3-5）
+    let secret = format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    );
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -2464,13 +2462,59 @@ fn ensure_rpc_secret() -> String {
             let _ = f.write_all(secret.as_bytes());
         }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        // 先写文件，再用 icacls 收紧为当前用户只读（审计 P2-4）
+        if let Err(e) = std::fs::write(&path, secret.as_bytes()) {
+            tracing::warn!("failed to write rpc.secret: {e}");
+        } else {
+            tighten_windows_secret_acl(&path);
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = std::fs::write(&path, secret.as_bytes());
     }
     std::env::set_var("TAKTON_KERNEL_RPC_SECRET", &secret);
     info!("kernel RPC secret persisted to {}", path.display());
     secret
+}
+
+/// Windows：去掉继承 ACL，仅授予当前用户读权限。
+#[cfg(windows)]
+fn tighten_windows_secret_acl(path: &std::path::Path) {
+    let Some(path_s) = path.to_str() else {
+        return;
+    };
+    // 优先用 USERNAME；失败则跳过（不阻断启动）
+    let user = std::env::var("USERNAME")
+        .or_else(|_| std::env::var("USER"))
+        .unwrap_or_default();
+    if user.is_empty() {
+        tracing::warn!("rpc.secret: USERNAME empty, skip ACL tighten");
+        return;
+    }
+    // /inheritance:r 去掉继承；/grant:r 仅当前用户读
+    let grant = format!("{user}:(R)");
+    match std::process::Command::new("icacls")
+        .args([path_s, "/inheritance:r", "/grant:r", &grant])
+        .output()
+    {
+        Ok(out) if out.status.success() => {
+            info!("rpc.secret ACL tightened for user {user}");
+        }
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            tracing::warn!(
+                "icacls failed for rpc.secret (status={}): {}",
+                out.status,
+                stderr.trim()
+            );
+        }
+        Err(e) => {
+            tracing::warn!("icacls not available for rpc.secret ACL: {e}");
+        }
+    }
 }
 
 fn check_rpc_auth(method: &str, params: &Value) -> Result<(), (i64, String, Value)> {

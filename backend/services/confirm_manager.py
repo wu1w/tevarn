@@ -234,6 +234,8 @@ async def request_confirmation(
         "user_id": owner_uid,
         "session_id": str(session_id) if session_id else "",
         "kind": kind_norm,
+        # clarify 选项白名单（resolve 时强制校验）
+        "options": list(opt_list),
         "payload": None,  # 填入后供 sync 重放
     }
     _pending[confirm_id] = (event, holder)
@@ -425,8 +427,34 @@ def resolve_confirmation(
         )
         return False
     choice_s = str(choice).strip() if choice is not None else ""
-    # clarify：选了选项即视为批准
-    if choice_s and not approved:
+    # 选项白名单：有 options 时 choice 必须命中（防任意文案注入模型上下文）
+    opt_raw = holder.get("options")
+    if not isinstance(opt_raw, list):
+        payload = holder.get("payload") if isinstance(holder.get("payload"), dict) else {}
+        opt_raw = payload.get("options") if isinstance(payload, dict) else None
+    opt_list: list[str] = []
+    if isinstance(opt_raw, list):
+        for o in opt_raw:
+            s = str(o or "").strip()
+            if s:
+                opt_list.append(s)
+    if choice_s and opt_list and choice_s not in opt_list:
+        logger.warning(
+            "confirm: reject choice not in options confirm=%s choice=%r opts=%s",
+            confirm_id[:8],
+            choice_s[:80],
+            [o[:40] for o in opt_list[:8]],
+        )
+        return False
+    # 无 options 时不允许用任意 choice 伪造成 approve（只认 approved 标志）
+    if choice_s and not opt_list and not approved:
+        logger.warning(
+            "confirm: reject free-form choice without options confirm=%s",
+            confirm_id[:8],
+        )
+        return False
+    # clarify：合法 choice 即视为批准
+    if choice_s and opt_list and not approved:
         approved = True
     holder["approved"] = bool(approved)
     holder["choice"] = choice_s or None

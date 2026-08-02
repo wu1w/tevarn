@@ -603,8 +603,25 @@ async def confirm_resolve_http(
         scope = "deny" if not body.approved else "once"
     approved = bool(body.approved)
     choice = (body.choice or "").strip() or None
-    if choice and not approved:
-        approved = True
+    # 预检 options 白名单（给出 400 而非 410，便于前端区分）
+    opt_raw = holder.get("options")
+    if not isinstance(opt_raw, list):
+        payload = holder.get("payload") if isinstance(holder.get("payload"), dict) else {}
+        opt_raw = payload.get("options") if isinstance(payload, dict) else None
+    if choice:
+        opts = [str(o).strip() for o in (opt_raw or []) if str(o or "").strip()]
+        if opts and choice not in opts:
+            raise HTTPException(
+                status_code=400,
+                detail="choice must be one of the pending options",
+            )
+        if not opts and not approved:
+            raise HTTPException(
+                status_code=400,
+                detail="free-form choice not allowed without options",
+            )
+        if opts:
+            approved = True
 
     ok = confirm_manager.resolve_confirmation(
         confirm_id,

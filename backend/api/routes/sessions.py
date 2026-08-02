@@ -239,9 +239,9 @@ async def delete_session(
     防止自动清理逻辑误删运行中会话（流式消息未落库时按内容判空白会误杀）。
     用户显式删除时前端带 force=true 放行。
 
-    force 删除时先 cancel_agent → end_run_snapshot → clear_session_grants，
-    再删库，避免任务继续写已删 session、session_grants 只增不减。
-    普通删除同样清理 grants（会话已不存在）。
+    force 删除：先 tombstone + kick WS + force_stop_agent（确认 task done），
+    再 end_run_snapshot / clear_session_grants / 删库。
+    即使 cancel 超时，tombstone 仍拦截该 session 的写入与新 user_input。
     """
     import logging
 
@@ -258,18 +258,54 @@ async def delete_session(
         )
 
     # 归属先校验（避免对他人会话做 cancel）
+    owner_uid = None
     async with UnitOfWork() as uow:
         session = await uow.sessions.get_by_id(session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
         assert_session_owner(getattr(session, "user_id", None), current_user)
+        owner_uid = getattr(session, "user_id", None)
 
-    # 运行时清理：force 或会话仍挂着 agent 时都要停任务
+    # 1) 立即 tombstone：后续 broadcast / user_input / track_agent 全部拦截
+    try:
+        ws_manager.mark_session_deleted(session_id)
+    except Exception as e:
+        log.warning("delete_session mark_deleted skip session=%s: %s", session_id, e)
+
+    # 2) 主动踢 WS（4004），客户端立刻离线而非「假连接」
+    try:
+        await ws_manager.kick_session(
+            session_id,
+            code=4004,
+            reason="session deleted",
+            user_id=owner_uid if isinstance(owner_uid, uuid.UUID) else None,
+        )
+    except Exception as e:
+        log.warning("delete_session kick_session skip session=%s: %s", session_id, e)
+
+    # 3) 停 agent：必须尽量等到 done()，失败不静默放行
+    agent_idle = True
     try:
         if force or ws_manager.has_running_agent(session_id):
-            await ws_manager.cancel_agent(session_id, wait=3.0)
+            agent_idle = await ws_manager.force_stop_agent(session_id, total_wait=12.0)
+            if not agent_idle:
+                # 再给一轮硬 cancel
+                agent_idle = await ws_manager.cancel_agent(session_id, wait=3.0)
+                if not agent_idle:
+                    log.error(
+                        "delete_session: agent still running after force_stop "
+                        "session=%s — proceeding with tombstone to block writes",
+                        session_id,
+                    )
     except Exception as e:
-        log.warning("delete_session cancel_agent skip session=%s: %s", session_id, e)
+        agent_idle = not ws_manager.has_running_agent(session_id)
+        log.error(
+            "delete_session force_stop failed session=%s idle=%s: %s",
+            session_id,
+            agent_idle,
+            e,
+        )
+
     try:
         ws_manager.end_run_snapshot(session_id)
     except Exception as e:
@@ -280,28 +316,17 @@ async def delete_session(
         clear_session_grants(str(session_id))
     except Exception as e:
         log.warning("delete_session clear_session_grants skip session=%s: %s", session_id, e)
-    # 尽量踢掉仍占用的 WS，避免客户端继续往已删 session 发消息
-    try:
-        old = getattr(ws_manager, "_connections", {}).get(session_id)
-        if old is not None:
-            try:
-                await old.close(code=1000, reason="session deleted")
-            except Exception:
-                pass
-        ws_manager.disconnect(session_id)
-    except Exception as e:
-        log.debug("delete_session disconnect skip session=%s: %s", session_id, e)
 
     async with UnitOfWork() as uow:
         session = await uow.sessions.get_by_id(session_id)
         if session is None:
             # 并发删除：runtime 已清理即可
-            return {"deleted": True}
+            return {"deleted": True, "agent_idle": agent_idle}
         assert_session_owner(getattr(session, "user_id", None), current_user)
         success = await uow.sessions.delete(session_id)
         if not success:
             raise HTTPException(status_code=404, detail="Session not found")
-        return {"deleted": True}
+        return {"deleted": True, "agent_idle": agent_idle}
 
 
 @router.get("/{session_id}/checkpoint")
