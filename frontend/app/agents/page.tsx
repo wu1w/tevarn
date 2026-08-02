@@ -13,12 +13,15 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useT } from '@/stores/localeStore';
 import { useZh } from '@/hooks/useZh';
 import {
+  getHireTemplates,
   getKernelIdentities,
   getKernelProcesses,
   getWorkforceOrg,
   getWorkforceReport,
+  hireFromTemplate,
   markWorkforceReportRead,
   seedTemplateCrew,
+  type HireTemplate,
   type KernelIdentity,
   type KernelProcess,
 } from '@/lib/api';
@@ -56,13 +59,23 @@ function AgentCard({
       ? Math.min(100, Math.round((Math.min(used, budget * 3) / budget) * 100))
       : 0;
   const over = budget > 0 && usedLive / budget >= 0.85;
+  const isCeo =
+    Boolean(a.meta && a.meta.is_ceo) ||
+    /ceo|管家/i.test(String(a.role || '')) ||
+    ['CEO', '小白', '管家'].includes(a.name);
   return (
     <button
       type="button"
       onClick={onClick}
       style={{
         background: 'var(--card-bg)',
-        border: `1px solid ${active ? 'color-mix(in srgb, var(--brand-purple) 45%, var(--border-subtle))' : 'var(--border-subtle)'}`,
+        border: `1px solid ${
+          active
+            ? 'color-mix(in srgb, var(--brand-purple) 45%, var(--border-subtle))'
+            : isCeo
+              ? 'color-mix(in srgb, var(--brand-purple) 28%, var(--border-subtle))'
+              : 'var(--border-subtle)'
+        }`,
         borderRadius: 'var(--r-lg, 14px)',
         padding: '16px 18px',
         textAlign: 'left',
@@ -76,7 +89,11 @@ function AgentCard({
         if (!active) e.currentTarget.style.borderColor = 'var(--border-default)';
       }}
       onMouseLeave={(e) => {
-        if (!active) e.currentTarget.style.borderColor = 'var(--border-subtle)';
+        if (!active) {
+          e.currentTarget.style.borderColor = isCeo
+            ? 'color-mix(in srgb, var(--brand-purple) 28%, var(--border-subtle))'
+            : 'var(--border-subtle)';
+        }
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -86,7 +103,18 @@ function AgentCard({
           color: '#fff', fontWeight: 700, fontSize: 15,
         }}>{a.name[0]}</span>
         <span style={{ flex: 1, minWidth: 0 }}>
-          <span style={{ display: 'block', fontSize: 14, fontWeight: 650, color: 'var(--foreground)' }}>{a.name}</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 14, fontWeight: 650, color: 'var(--foreground)' }}>{a.name}</span>
+            {isCeo ? (
+              <span style={{
+                fontSize: 9.5, fontWeight: 700, padding: '1px 6px', borderRadius: 6,
+                background: 'color-mix(in srgb, var(--brand-purple) 16%, transparent)',
+                color: 'var(--brand-purple)',
+              }}>
+                {zh ? '默认管家' : 'Default CEO'}
+              </span>
+            ) : null}
+          </span>
           <span style={{ display: 'block', fontSize: 11, color: 'var(--foreground-dim)' }}>{a.role || '—'}</span>
         </span>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10.5, fontWeight: 600, color: stColor(st) }}>
@@ -143,6 +171,7 @@ function AgentsInner() {
   const zh = useZh();
   const addToast = useToastStore((s) => s.addToast);
   const [seedBusy, setSeedBusy] = useState(false);
+  const [hireBusyId, setHireBusyId] = useState<string | null>(null);
   const [markReadBusy, setMarkReadBusy] = useState(false);
 
   // 抽屉：open 控制动效；snap 在退场结束前保留，避免卸载闪屏
@@ -157,7 +186,7 @@ function AgentsInner() {
       const r = await seedTemplateCrew();
       addToast(
         zh
-          ? `模板员工：新建 ${r.created?.length ?? 0} · 已有跳过 ${(r.skipped || []).length}`
+          ? `默认编制：新建 ${r.created?.length ?? 0} · 已有跳过 ${(r.skipped || []).length}`
           : `Seeded ${r.created?.length ?? 0}, skipped ${(r.skipped || []).length}`,
         'success',
       );
@@ -167,6 +196,24 @@ function AgentsInner() {
       /* interceptor */
     } finally {
       setSeedBusy(false);
+    }
+  };
+
+  const onHireTemplate = async (tpl: HireTemplate) => {
+    setHireBusyId(tpl.template_id);
+    try {
+      const r = await hireFromTemplate({ template_id: tpl.template_id });
+      const name = r.identity?.name || tpl.name;
+      addToast(
+        zh ? `已入编「${name}」` : `Hired “${name}”`,
+        'success',
+      );
+      void qc.invalidateQueries({ queryKey: ['kernel-identities'] });
+      void qc.invalidateQueries({ queryKey: ['workforce-org'] });
+    } catch {
+      /* interceptor */
+    } finally {
+      setHireBusyId(null);
     }
   };
 
@@ -190,6 +237,12 @@ function AgentsInner() {
     retry: 1,
     // 刷新时保留旧列表，避免网格瞬间变空
     placeholderData: (prev) => prev,
+  });
+  const hireTemplates = useQuery({
+    queryKey: ['hire-templates'],
+    queryFn: () => getHireTemplates(),
+    staleTime: 60_000,
+    retry: 1,
   });
   const processes = useQuery({
     // 含终态：卡片预算/抽屉成本要累计历史工单，不能只看 live
@@ -326,8 +379,8 @@ function AgentsInner() {
           </div>
           <div style={{ fontSize: 12, color: 'var(--foreground-dim)', marginTop: 3, lineHeight: 1.5, maxWidth: 520 }}>
             {zh
-              ? '这里管理的是长期数字员工，不是一次性 Agent。入编 → 派工单 → 看结果；需要时再联系 TA 对话。'
-              : 'Long-lived digital employees — not one-shot agents. Hire → dispatch jobs → review; chat only when needed.'}
+              ? '默认已有 CEO 管家。下面可一键起同事，再派工单；需要时再联系 TA 对话。'
+              : 'A default CEO steward is ready. One-click hire coworkers below, then dispatch jobs.'}
           </div>
           <div style={{ display: 'flex', gap: 12, marginTop: 8, flexWrap: 'wrap', fontSize: 11.5 }}>
             <Link href="/" style={{ color: 'var(--brand-purple)', fontWeight: 600, textDecoration: 'none' }}>
@@ -371,24 +424,38 @@ function AgentsInner() {
       {ids.length === 0 ? (
         <div style={{
           background: 'var(--card-bg)', border: '1px solid var(--border-subtle)',
-          borderRadius: 'var(--r-lg, 14px)', padding: '60px 20px', textAlign: 'center',
+          borderRadius: 'var(--r-lg, 14px)', padding: '40px 20px', textAlign: 'center',
         }}>
           <div style={{ fontSize: 32, marginBottom: 10 }}>🐣</div>
           <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--foreground)' }}>
             {zh
-              ? (dismissed.length > 0 ? '当前没有在编员工' : '编制还是空的')
-              : (dismissed.length > 0 ? 'No active employees' : 'Your crew is empty')}
+              ? (dismissed.length > 0 ? '当前没有在编员工' : '正在准备默认编制…')
+              : (dismissed.length > 0 ? 'No active employees' : 'Preparing default crew…')}
           </div>
           <div style={{ fontSize: 12, color: 'var(--foreground-dim)', marginTop: 6, lineHeight: 1.55 }}>
             {zh
               ? dismissed.length > 0
-                ? '在编列表为空。可新建员工，或在下方「已解雇」中查看历史档案。'
-                : '先入编（或一键预置管家/研究/工程），再在下方收件箱派第一单活。不要从空白对话框开始。'
+                ? '在编列表为空。可一键起同事，或在下方「已解雇」中查看历史。'
+                : '启动后会自动入编 CEO。也可点下方模板立刻起同事，再派第一单。'
               : dismissed.length > 0
-                ? 'No active crew. Hire new staff, or open Dismissed below for history.'
-                : 'Hire (or seed steward/research/eng), then dispatch the first job below — not from a blank chat.'}
+                ? 'No active crew. One-click hire below, or open Dismissed for history.'
+                : 'CEO is seeded on startup. Use templates below, then dispatch a job.'}
           </div>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap', marginTop: 18 }}>
+            <button
+              type="button"
+              disabled={seedBusy}
+              onClick={() => void onSeedCrew()}
+              style={{
+                padding: '9px 18px', borderRadius: 10, cursor: seedBusy ? 'wait' : 'pointer',
+                border: 'none', background: 'var(--brand-purple)', color: 'var(--on-acc, #fff)',
+                fontSize: 13, fontWeight: 600,
+              }}
+            >
+              {seedBusy
+                ? (zh ? '入编中…' : 'Seeding…')
+                : (zh ? '立即预置 CEO + 同事' : 'Seed CEO + crew now')}
+            </button>
             <button
               type="button"
               onClick={() => {
@@ -396,29 +463,13 @@ function AgentsInner() {
                 router.replace('/agents?new=1', { scroll: false });
               }}
               style={{
-                padding: '9px 18px', borderRadius: 10, border: 'none', cursor: 'pointer',
-                background: 'var(--brand-purple)', color: 'var(--on-acc, #fff)', fontSize: 13, fontWeight: 600,
-              }}
-            >
-              {zh ? '新建员工' : 'Hire employee'}
-            </button>
-            <button
-              type="button"
-              disabled={seedBusy}
-              onClick={() => void onSeedCrew()}
-              style={{
-                padding: '9px 18px', borderRadius: 10, cursor: seedBusy ? 'wait' : 'pointer',
+                padding: '9px 18px', borderRadius: 10, cursor: 'pointer',
                 border: '1px solid var(--border-subtle)', background: 'var(--card-bg)',
                 color: 'var(--foreground)', fontSize: 13, fontWeight: 600,
               }}
             >
-              {seedBusy
-                ? (zh ? '入编中…' : 'Seeding…')
-                : (zh ? '一键预置模板员工' : 'Seed template crew')}
+              {zh ? '自定义新建' : 'Custom hire'}
             </button>
-          </div>
-          <div style={{ fontSize: 11, color: 'var(--foreground-dim)', marginTop: 10 }}>
-            {zh ? '模板：小白（管家）· 研究员 · 工程师' : 'Templates: steward · researcher · engineer'}
           </div>
         </div>
       ) : (
@@ -426,6 +477,77 @@ function AgentsInner() {
           {grid}
         </div>
       )}
+
+      {/* 一键起新员工：模板条（始终可见） */}
+      <div style={{
+        marginTop: 18, background: 'var(--card-bg)', border: '1px solid var(--border-subtle)',
+        borderRadius: 'var(--r-lg, 14px)', padding: '14px 16px', boxShadow: 'var(--glass-inner)',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ fontSize: 13.5, fontWeight: 650, color: 'var(--foreground)' }}>
+              {zh ? '一键起新员工' : 'One-click hire'}
+            </div>
+            <div style={{ fontSize: 11.5, color: 'var(--foreground-dim)', marginTop: 3 }}>
+              {zh
+                ? '选岗位模板立刻入编；重名会自动加编号。CEO 默认已在上方列表。'
+                : 'Pick a role template. Duplicate names get a numeric suffix.'}
+            </div>
+          </div>
+        </div>
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 160px), 1fr))',
+          gap: 10,
+          marginTop: 12,
+        }}>
+          {(hireTemplates.data?.templates ?? []).map((tpl) => {
+            const busy = hireBusyId === tpl.template_id;
+            return (
+              <button
+                key={tpl.template_id}
+                type="button"
+                disabled={busy || hireBusyId != null}
+                onClick={() => void onHireTemplate(tpl)}
+                style={{
+                  textAlign: 'left',
+                  padding: '12px 12px',
+                  borderRadius: 12,
+                  border: '1px solid var(--border-subtle)',
+                  background: 'var(--input-bg, var(--card-bg))',
+                  cursor: busy ? 'wait' : 'pointer',
+                  opacity: hireBusyId != null && !busy ? 0.65 : 1,
+                }}
+              >
+                <div style={{ fontSize: 18, lineHeight: 1 }}>{tpl.icon || '👤'}</div>
+                <div style={{ fontSize: 13, fontWeight: 650, color: 'var(--foreground)', marginTop: 6 }}>
+                  {tpl.name}
+                  {tpl.is_ceo ? (
+                    <span style={{
+                      marginLeft: 6, fontSize: 9.5, fontWeight: 700,
+                      color: 'var(--brand-purple)',
+                    }}>CEO</span>
+                  ) : null}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--foreground-dim)', marginTop: 3, lineHeight: 1.4 }}>
+                  {tpl.blurb || tpl.role}
+                </div>
+                <div style={{
+                  marginTop: 8, fontSize: 11, fontWeight: 650,
+                  color: 'var(--brand-purple)',
+                }}>
+                  {busy ? (zh ? '入编中…' : 'Hiring…') : (zh ? '一键入编 →' : 'Hire →')}
+                </div>
+              </button>
+            );
+          })}
+          {hireTemplates.isLoading ? (
+            <div style={{ fontSize: 12, color: 'var(--foreground-dim)', padding: 12 }}>
+              {zh ? '加载模板…' : 'Loading templates…'}
+            </div>
+          ) : null}
+        </div>
+      </div>
 
       {/* snap 在退场结束前保留，open 控制滑入/滑出 */}
       {openAgent ? (

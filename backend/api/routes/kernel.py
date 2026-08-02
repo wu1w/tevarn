@@ -3589,13 +3589,55 @@ async def mark_workforce_report_read(
 async def seed_template_crew_api(
     current_user: Annotated[UserRead, Depends(get_current_user)],
 ):
-    """编制为空时一键预置模板员工（小白/研究员/工程师，幂等）。"""
+    """补全默认编制：CEO + 自动入编同事模板（幂等）。"""
     from backend.scripts.seed_template_crew import seed_template_crew
 
     reg = _identity_registry()
     if reg is None:
         raise HTTPException(status_code=503, detail="身份注册表未启用")
-    result = await seed_template_crew(reg)
+    result = await seed_template_crew(
+        reg, user_id=current_user.id, include_workers=True
+    )
+    return result
+
+
+@router.get("/workforce/hire-templates")
+async def list_hire_templates_api(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """同事模板目录：前端「一键起新员工」用。"""
+    from backend.scripts.seed_template_crew import list_hire_templates
+
+    templates = list_hire_templates()
+    return {"templates": templates, "total": len(templates)}
+
+
+@router.post("/workforce/hire-from-template")
+async def hire_from_template_api(
+    body: dict,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """从模板一键雇佣（重名自动加后缀）。
+
+    body: { template_id: str, name?: str }
+    """
+    from backend.scripts.seed_template_crew import hire_from_template
+
+    reg = _identity_registry()
+    if reg is None:
+        raise HTTPException(status_code=503, detail="身份注册表未启用")
+    tid = str(body.get("template_id") or "").strip()
+    if not tid:
+        raise HTTPException(status_code=400, detail="template_id required")
+    name = body.get("name")
+    name_s = str(name).strip() if name is not None else None
+    result = await hire_from_template(
+        reg, tid, user_id=current_user.id, name=name_s or None
+    )
+    if not result.get("ok"):
+        raise HTTPException(
+            status_code=400, detail=result.get("error") or "hire failed"
+        )
     return result
 
 

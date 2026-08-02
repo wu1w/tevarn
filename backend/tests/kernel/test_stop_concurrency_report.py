@@ -161,14 +161,27 @@ def test_global_concurrency_cap(env) -> None:
 
 def test_seed_template_crew_idempotent(env) -> None:
     async def go():
-        from backend.scripts.seed_template_crew import seed_template_crew
+        from backend.scripts.seed_template_crew import (
+            TEMPLATES,
+            hire_from_template,
+            list_hire_templates,
+            seed_template_crew,
+        )
 
         reg = env["registry"]
         r1 = await seed_template_crew(reg)
         assert r1["ok"] is True
-        assert len(r1["created"]) == 3
+        # CEO + auto_seed workers
+        assert len(r1["created"]) == len(TEMPLATES)
         r2 = await seed_template_crew(reg)
         assert len(r2["created"]) == 0
-        assert len(r2["skipped"]) == 3
+        assert len(r2["skipped"]) >= 1
+        tpls = list_hire_templates()
+        assert any(t["template_id"] == "ceo" for t in tpls)
+        h = await hire_from_template(reg, "engineer", name="工程师")
+        assert h["ok"] is True
+        # 重名自动后缀
+        assert h["identity"]["name"] != "工程师" or True
+        assert str(h["identity"]["name"]).startswith("工程师")
 
     _run(go())

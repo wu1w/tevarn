@@ -508,6 +508,27 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Skills seeding skipped: {e}")
 
+    # 默认编制引导：预置 CEO + 默认同事（幂等；用户不必手建）
+    try:
+        from backend.scripts.seed_template_crew import seed_default_crew_on_startup
+
+        crew_seed = await seed_default_crew_on_startup()
+        n_new = len(crew_seed.get("created") or [])
+        if n_new:
+            logger.info(
+                "Default crew seeded: %s (total_after=%s)",
+                [c.get("name") for c in (crew_seed.get("created") or [])],
+                crew_seed.get("total_after"),
+            )
+        else:
+            logger.info(
+                "Default crew already present (skipped=%s total=%s)",
+                crew_seed.get("skipped"),
+                crew_seed.get("total_after"),
+            )
+    except Exception as e:
+        logger.warning("Default crew seeding skipped: %s", e)
+
     # v3.0: 统一工具注册表 —— 必须在 workforce dispatcher 之前完成
     # （否则首轮工单 Loaded 0 tools，员工只能空口编 tool_call XML）
     try:

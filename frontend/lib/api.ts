@@ -1635,6 +1635,46 @@ export async function seedTemplateCrew(): Promise<{
   return res.data;
 }
 
+export type HireTemplate = {
+  template_id: string;
+  name: string;
+  role: string;
+  icon: string;
+  blurb: string;
+  capabilities: string[];
+  token_budget: number;
+  is_ceo?: boolean;
+  auto_seed?: boolean;
+};
+
+/** 同事模板目录（一键起新员工） */
+export async function getHireTemplates(): Promise<{
+  templates: HireTemplate[];
+  total: number;
+}> {
+  const res = await api.get('/kernel/workforce/hire-templates');
+  return res.data;
+}
+
+/** 从模板一键雇佣 */
+export async function hireFromTemplate(body: {
+  template_id: string;
+  name?: string;
+}): Promise<{
+  ok: boolean;
+  identity?: {
+    name: string;
+    id: string;
+    role: string;
+    template_id?: string;
+    is_ceo?: boolean;
+  };
+  error?: string;
+}> {
+  const res = await api.post('/kernel/workforce/hire-from-template', body);
+  return res.data;
+}
+
 /** 审计日志只读（管理员） */
 export async function listAuditLogs(params?: {
   limit?: number;
