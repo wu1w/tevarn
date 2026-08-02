@@ -5,12 +5,21 @@ Desktop Agent 路由
 
 from __future__ import annotations
 
+import hmac
 import logging
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    Depends,
+    Header,
+    HTTPException,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from pydantic import BaseModel, Field
 
+from backend.core.config import settings
 from backend.schemas.user import UserRead
 from backend.services.desktop import (
     DesktopAgentService,
@@ -65,6 +74,15 @@ async def get_service() -> DesktopAgentService:
     return _desktop_service
 
 
+def require_native_permission_proof(
+    proof: Annotated[str | None, Header(alias="X-Takton-Desktop-Permission")] = None,
+) -> None:
+    """Electron 模式下只接受主进程签发的桌面授权请求。"""
+    expected = str(settings.desktop_permission_secret or "")
+    if expected and not hmac.compare_digest(str(proof or ""), expected):
+        raise HTTPException(status_code=403, detail="Native desktop confirmation required")
+
+
 # ────────────────── API 端点 ──────────────────
 
 @router.post("/execute", response_model=DesktopOperationResponse)
@@ -91,7 +109,8 @@ async def execute_desktop_task(
         result = await service.execute_task(
             user_id=current_user.id,
             task=request.task,
-            permission=request.permission,
+            # 权限必须先经 /desktop/permission 明确授予；请求体不能自证授权。
+            permission=PermissionLevel.ASK,
         )
         
         return DesktopOperationResponse(
@@ -131,7 +150,8 @@ async def execute_operation(
             user_id=current_user.id,
             operation=request.operation,
             params=request.params,
-            permission=request.permission,
+            # 权限必须先经 /desktop/permission 明确授予；请求体不能自证授权。
+            permission=PermissionLevel.ASK,
         )
         
         return DesktopOperationResponse(
@@ -194,6 +214,7 @@ async def set_permission(
     request: PermissionRequest,
     current_user: Annotated[UserRead, Depends(get_current_user)],
     service: Annotated[DesktopAgentService, Depends(get_service)],
+    _native_proof: Annotated[None, Depends(require_native_permission_proof)],
 ):
     """
     设置权限

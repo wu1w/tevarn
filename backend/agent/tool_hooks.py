@@ -326,14 +326,15 @@ async def builtin_permission_before(name: str, arguments: dict[str, Any]) -> Bef
             ask_mode = "interactive"
         elif not is_wf:
             # Desktop CEO / main chat on owner machine: no live FE → local_allow
-            # so shell/edit are not silently killed (cron/webhook stay headless).
+            # so shell/edit are not silently killed.  The origin must be explicit:
+            # a missing marker is untrusted metadata, not proof of an owner chat.
             origin = str(
                 args.get("_run_origin")
                 or args.get("_origin")
                 or args.get("_chat_mode")
                 or ""
             ).lower()
-            if origin in ("", "chat", "default", "goal", "build", "agent"):
+            if origin in ("chat", "default", "goal", "build", "agent"):
                 ask_mode = "local_allow"
                 logger.info(
                     "permission ask (CEO/desktop chat, no FE) → local_allow tool=%s",
@@ -410,7 +411,7 @@ def _headless_fallback_mode(tool_name: str, settings: Any) -> str:
     from backend.agent.permissions_rules import TOOL_TO_KEY
 
     key = TOOL_TO_KEY.get(tool_name, tool_name)
-    if key in _HEADLESS_HIGH_RISK_KEYS:
+    if key in _HEADLESS_HIGH_RISK_KEYS or _tool_self_declares_confirmation(tool_name):
         return "deny"
     return "local_allow"
 

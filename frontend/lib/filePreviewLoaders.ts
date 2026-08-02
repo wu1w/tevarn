@@ -3,6 +3,8 @@
  * 仅用于 FilePreviewHost，不进默认 agent schema。
  */
 
+import DOMPurify from 'dompurify';
+
 export type SheetTable = { name: string; rows: string[][] };
 
 /** 统一成独立 ArrayBuffer，避免 Uint8Array.buffer 带 byteOffset 时 SheetJS/mammoth 读歪 */
@@ -187,52 +189,10 @@ export async function loadPptxSlides(
 }
 
 export function sanitizeHtmlForPreview(html: string): string {
-  // 审计 P0-F3：DOMPurify 主路径；失败时多趟正则 + 实体解码后再剥 javascript:
-  const purifyOpts = {
+  return DOMPurify.sanitize(html || '', {
     USE_PROFILES: { html: true },
-    FORBID_TAGS: ['style', 'form', 'base', 'object', 'embed', 'iframe', 'script'],
-    FORBID_ATTR: ['srcdoc', 'formaction', 'style'],
-  } as const;
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const DOMPurify = require('dompurify') as typeof import('dompurify');
-    if (typeof window !== 'undefined' && DOMPurify?.sanitize) {
-      return DOMPurify.sanitize(html || '', purifyOpts);
-    }
-  } catch {
-    /* fall through */
-  }
-  // SSR / 无 DOM 回落：先解一层 HTML 实体再多趟剥离（防 javas&#x63;ript:）
-  let h = html || '';
-  const decodeEntities = (s: string) =>
-    s
-      .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => {
-        try {
-          return String.fromCodePoint(parseInt(hex, 16));
-        } catch {
-          return '';
-        }
-      })
-      .replace(/&#(\d+);/g, (_, n) => {
-        try {
-          return String.fromCodePoint(parseInt(n, 10));
-        } catch {
-          return '';
-        }
-      })
-      .replace(/&colon;/gi, ':')
-      .replace(/&Tab;/gi, '')
-      .replace(/&NewLine;/gi, '');
-  for (let i = 0; i < 3; i++) {
-    h = decodeEntities(h);
-    h = h.replace(/<script[\s\S]*?<\/script>/gi, '');
-    h = h.replace(/<iframe[\s\S]*?>[\s\S]*?<\/iframe>/gi, '');
-    h = h.replace(/<iframe[\s\S]*?>/gi, '');
-    h = h.replace(/\son\w+\s*=\s*(['"]).*?\1/gi, '');
-    h = h.replace(/\son\w+\s*=\s*[^\s>]+/gi, '');
-    h = h.replace(/javascript\s*:/gi, '');
-    h = h.replace(/vbscript\s*:/gi, '');
-    h = h.replace(/data\s*:\s*text\s*\/\s*html/gi, '');
-  }
-  return h;
+    FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'input', 'button'],
+    FORBID_ATTR: ['style'],
+    ALLOW_DATA_ATTR: false,
+  });
 }

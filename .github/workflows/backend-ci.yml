@@ -46,6 +46,10 @@ jobs:
           TAKTON_TEST_MODE: "1"
           TAKTON_AGENT_DISPATCHER_ENABLED: "false"
           TAKTON_AGENT_KERNEL_PERSISTENCE: "false"
+          # Backend unit/security tests must not attach to an unrelated host.
+          # Rust ABI integration has its own isolated job in kernel-ci.yml.
+          TAKTON_AGENT_KERNEL_BACKEND: "python"
+          TAKTON_AGENT_COURT_RUST_REQUIRED: "false"
           TAKTON_JWT_SECRET: "ci-jwt-secret-not-for-production-use-32b"
           TAKTON_API_KEY: "ci-api-key-not-for-production-use-32bxxxx"
         run: python -m pytest backend/tests/security -q
@@ -57,6 +61,8 @@ jobs:
           TAKTON_TEST_MODE: "1"
           TAKTON_AGENT_DISPATCHER_ENABLED: "false"
           TAKTON_AGENT_KERNEL_PERSISTENCE: "false"
+          TAKTON_AGENT_KERNEL_BACKEND: "python"
+          TAKTON_AGENT_COURT_RUST_REQUIRED: "false"
           TAKTON_JWT_SECRET: "ci-jwt-secret-not-for-production-use-32b"
           TAKTON_API_KEY: "ci-api-key-not-for-production-use-32bxxxx"
         run: python -m pytest backend/tests -q --tb=short --junitxml=pytest-report.xml

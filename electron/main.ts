@@ -13,6 +13,7 @@
  */
 
 import { app, BrowserWindow, ipcMain, shell, Tray, Menu, Notification, globalShortcut, nativeImage, dialog } from 'electron';
+import type { IpcMainInvokeEvent } from 'electron';
 import { ChildProcess, spawn, execSync } from 'child_process';
 import * as crypto from 'crypto';
 import * as path from 'path';
@@ -47,6 +48,30 @@ const DEFAULT_BACKEND_PORT = 8090;
 const CANDIDATE_BACKEND_PORTS = [8090, 8000, 8001, 8002, 8010, 18090];
 let activeBackendPort = DEFAULT_BACKEND_PORT;
 const FRONTEND_PORT = 3000;
+const TRUSTED_FRONTEND_ORIGIN = `http://127.0.0.1:${FRONTEND_PORT}`;
+
+function isTrustedRendererUrl(rawUrl: string): boolean {
+  try {
+    return new URL(rawUrl).origin === TRUSTED_FRONTEND_ORIGIN;
+  } catch {
+    return false;
+  }
+}
+
+function isAllowedExternalUrl(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    return url.protocol === 'https:' || url.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
+function assertTrustedIpc(event: IpcMainInvokeEvent): void {
+  if (!isTrustedRendererUrl(event.senderFrame?.url || '')) {
+    throw new Error('IPC rejected: untrusted renderer origin');
+  }
+}
 // Canonical path: <repo>/electron/dist → 上两级即仓库根（勿用三级，那是 frontend/electron 旧布局）
 const ROOT_DIR = isDev
   ? path.resolve(__dirname, '..', '..')
@@ -85,6 +110,7 @@ interface AppSecrets {
   apiKey: string;
   encryptionSalt: string;
   defaultAdminPassword: string;
+  desktopPermissionSecret: string;
 }
 
 function ensureDataDirs(): void {
@@ -100,12 +126,17 @@ function loadOrCreateSecrets(): AppSecrets {
     if (fs.existsSync(SECRETS_FILE)) {
       const raw = JSON.parse(fs.readFileSync(SECRETS_FILE, 'utf-8')) as Partial<AppSecrets>;
       if (raw.jwtSecret && raw.apiKey && raw.encryptionSalt) {
-        return {
+        const secrets: AppSecrets = {
           jwtSecret: raw.jwtSecret,
           apiKey: raw.apiKey,
           encryptionSalt: raw.encryptionSalt,
           defaultAdminPassword: raw.defaultAdminPassword || crypto.randomBytes(12).toString('hex'),
+          desktopPermissionSecret: raw.desktopPermissionSecret || crypto.randomBytes(32).toString('hex'),
         };
+        if (!raw.desktopPermissionSecret) {
+          fs.writeFileSync(SECRETS_FILE, JSON.stringify(secrets, null, 2), 'utf-8');
+        }
+        return secrets;
       }
     }
   } catch {
@@ -117,6 +148,7 @@ function loadOrCreateSecrets(): AppSecrets {
     apiKey: crypto.randomBytes(32).toString('hex'),
     encryptionSalt: crypto.randomBytes(16).toString('hex'),
     defaultAdminPassword: crypto.randomBytes(12).toString('hex'),
+    desktopPermissionSecret: crypto.randomBytes(32).toString('hex'),
   };
 
   try {
@@ -474,6 +506,7 @@ function buildBackendEnv(secrets: AppSecrets, port: number, sitePackages?: strin
     TAKTON_UPLOADS_DIR: UPLOADS_DIR,
     TAKTON_FILE_BROWSER_ROOT: WORKSPACE_DIR,
     TAKTON_DEFAULT_ADMIN_PASSWORD: secrets.defaultAdminPassword,
+    TAKTON_DESKTOP_PERMISSION_SECRET: secrets.desktopPermissionSecret,
     CORS_ALLOWED_ORIGINS: [
       `http://localhost:${FRONTEND_PORT}`,
       `http://127.0.0.1:${FRONTEND_PORT}`,
@@ -492,6 +525,47 @@ function getApiBase(): string {
 
 function getWsBase(): string {
   return `ws://127.0.0.1:${activeBackendPort}/api`;
+}
+
+function postDesktopPermissionFromMain(
+  body: { operation: string; level: string; app_name: string | null },
+  token: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const payload = JSON.stringify(body);
+  const secret = loadOrCreateSecrets().desktopPermissionSecret;
+  return new Promise((resolve) => {
+    const req = http.request(
+      {
+        host: '127.0.0.1',
+        port: activeBackendPort,
+        path: '/api/desktop/permission',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(payload),
+          Authorization: `Bearer ${token}`,
+          'X-Takton-Desktop-Permission': secret,
+        },
+      },
+      (res) => {
+        let responseBody = '';
+        res.on('data', (chunk) => {
+          if (responseBody.length < 65_536) responseBody += String(chunk);
+        });
+        res.on('end', () => {
+          const status = res.statusCode || 0;
+          resolve(
+            status >= 200 && status < 300
+              ? { ok: true }
+              : { ok: false, error: `Backend rejected permission (${status})` },
+          );
+        });
+      },
+    );
+    req.setTimeout(5_000, () => req.destroy(new Error('Permission request timed out')));
+    req.on('error', (error) => resolve({ ok: false, error: error.message }));
+    req.end(payload);
+  });
 }
 
 /** P0-A: locate takton-kernel-host binary (docs/kernel-abi-v1.md). */
@@ -800,8 +874,10 @@ function startFrontend(): Promise<void> {
       try {
         urlPath = decodeURIComponent((req.url || '/').split('?')[0] || '/');
       } catch {
-        res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
-        res.end('Bad Request: malformed URI');
+        socket.write(
+          'HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n',
+        );
+        socket.destroy();
         return;
       }
       if (!(urlPath === '/api' || urlPath.startsWith('/api/'))) {
@@ -1206,54 +1282,21 @@ function createWindow(): void {
   mainWindow.on('unmaximize', () => persistBounds(false));
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    // 仅 http(s) / mailto；拒绝 file: javascript: 等危险 scheme
-    try {
-      const u = String(url || '');
-      if (/^https?:\/\//i.test(u) || /^mailto:/i.test(u)) {
-        void shell.openExternal(u);
-      } else {
-        console.warn('[Takton] blocked openExternal scheme:', u.slice(0, 80));
-      }
-    } catch (e) {
-      console.warn('[Takton] openExternal failed', e);
+    if (isAllowedExternalUrl(url)) {
+      void shell.openExternal(url);
     }
     return { action: 'deny' };
   });
 
-  // 审计 P1-F1：禁止渲染进程导航到远程站点（会继承 electronAPI）
-  const isAllowedAppNav = (raw: string): boolean => {
-    try {
-      const u = new URL(raw);
-      if (u.protocol === 'file:') return false;
-      if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
-      const host = u.hostname;
-      if (host !== '127.0.0.1' && host !== 'localhost') return false;
-      // 允许本机前端端口与后端端口（dev / 静态服）
-      const port = u.port || (u.protocol === 'https:' ? '443' : '80');
-      const okPorts = new Set([
-        String(FRONTEND_PORT),
-        String(activeBackendPort || DEFAULT_BACKEND_PORT),
-        '3000',
-        '8090',
-        '8000',
-      ]);
-      return okPorts.has(port);
-    } catch {
-      return false;
-    }
-  };
   mainWindow.webContents.on('will-navigate', (event, url) => {
-    if (isAllowedAppNav(url)) return;
+    if (isTrustedRendererUrl(url)) return;
     event.preventDefault();
-    // 外链改走系统浏览器（scheme 白名单）
-    if (/^https?:\/\//i.test(url)) {
-      void shell.openExternal(url).catch(() => undefined);
-    } else {
-      console.warn('[Takton] blocked will-navigate:', String(url).slice(0, 120));
+    if (isAllowedExternalUrl(url)) {
+      void shell.openExternal(url);
     }
   });
   mainWindow.webContents.on('will-redirect', (event, url) => {
-    if (isAllowedAppNav(url)) return;
+    if (isTrustedRendererUrl(url)) return;
     event.preventDefault();
     console.warn('[Takton] blocked will-redirect:', String(url).slice(0, 120));
   });
@@ -1267,23 +1310,16 @@ ipcMain.handle('get-user-data-path', () => USER_DATA_DIR);
 ipcMain.handle('get-app-version', () => app.getVersion());
 ipcMain.handle('get-backend-url', () => getApiBase());
 ipcMain.handle('get-ws-url', () => getWsBase());
-ipcMain.handle('open-external', async (_event, url: string) => {
-  if (typeof url !== 'string') return;
-  const u = url.trim();
-  // scheme 白名单：仅 http(s)/mailto
-  if (!/^https?:\/\//i.test(u) && !/^mailto:/i.test(u)) {
-    console.warn('[Takton] open-external blocked scheme:', u.slice(0, 80));
-    return;
-  }
-  try {
-    await shell.openExternal(u);
-  } catch (e) {
-    console.warn('[Takton] open-external failed', e);
+ipcMain.handle('open-external', async (event, url: string) => {
+  assertTrustedIpc(event);
+  if (typeof url === 'string' && isAllowedExternalUrl(url)) {
+    await shell.openExternal(url);
   }
 });
 
 /** 用系统默认应用打开本地文件路径；成功返回空串，失败返回错误信息（与 shell.openPath 一致） */
-ipcMain.handle('open-path', async (_event, filePath: string) => {
+ipcMain.handle('open-path', async (event, filePath: string) => {
+  assertTrustedIpc(event);
   if (typeof filePath !== 'string' || !filePath.trim()) {
     return 'invalid path';
   }
@@ -1354,7 +1390,53 @@ ipcMain.handle('show-notification', (_event, { title, body }: { title: string; b
 
 ipcMain.handle('get-dropped-files', (_event, filePaths: string[]) => filePaths);
 
-ipcMain.handle('select-directory', async () => {
+ipcMain.handle(
+  'grant-desktop-permission',
+  async (
+    event,
+    request: { operation?: string; appName?: string; description?: string; token?: string },
+  ) => {
+    assertTrustedIpc(event);
+    const allowedOperations = new Set([
+      'screenshot', 'click', 'type', 'open_app', 'scroll', 'drag', 'read_file', 'write_file',
+    ]);
+    const operation = String(request?.operation || '');
+    const token = String(request?.token || '');
+    if (!allowedOperations.has(operation) || !token) {
+      return { ok: false, error: 'Invalid native permission request' };
+    }
+
+    const options = {
+      type: 'warning' as const,
+      title: 'Takton 桌面操作确认',
+      message: `是否允许桌面操作：${operation}？`,
+      detail: String(request?.description || '').slice(0, 500),
+      buttons: ['仅本次允许', '本次会话允许', '始终允许', '拒绝'],
+      defaultId: 0,
+      cancelId: 3,
+      noLink: true,
+    };
+    const choice = mainWindow
+      ? await dialog.showMessageBox(mainWindow, options)
+      : await dialog.showMessageBox(options);
+    const levels = ['allow_once', 'allow_session', 'always_allow'] as const;
+    const level = levels[choice.response];
+    if (!level) return { ok: false, denied: true };
+
+    const saved = await postDesktopPermissionFromMain(
+      {
+        operation,
+        level,
+        app_name: request?.appName ? String(request.appName).slice(0, 256) : null,
+      },
+      token,
+    );
+    return saved.ok ? { ok: true, level } : saved;
+  },
+);
+
+ipcMain.handle('select-directory', async (event) => {
+  assertTrustedIpc(event);
   const opts: Electron.OpenDialogOptions = {
     properties: ['openDirectory', 'createDirectory'],
     title: 'Select project folder',
@@ -1373,18 +1455,19 @@ ipcMain.handle('select-directory', async () => {
 ipcMain.handle(
   'open-takton-code',
   async (
-    _event,
+    event,
     opts?: { path?: string; mode?: string },
   ): Promise<{ ok: boolean; error?: string }> => {
     try {
-      const projectPath =
+      assertTrustedIpc(event);
+      const requestedPath =
         (opts?.path && String(opts.path).trim()) ||
         process.env.TAKTON_CODE_DEFAULT_PATH ||
         app.getPath('home');
-      // 审计 P0-F1：path 仅 trim 会注入 bat / shell
-      if (!path.isAbsolute(projectPath)) {
+      if (!path.isAbsolute(requestedPath)) {
         return { ok: false, error: 'path must be absolute' };
       }
+      const projectPath = path.resolve(requestedPath);
       if (/["\r\n&|<>^%!]/.test(projectPath)) {
         return { ok: false, error: 'illegal characters in path' };
       }
@@ -1426,7 +1509,6 @@ ipcMain.handle(
 
       const launchUnix = (bin: string, args: string[]) => {
         const term = process.env.TERMINAL || process.env.TERM_PROGRAM || 'x-terminal-emulator';
-        // 不用 bash -lc 拼字符串：数组透传
         const p = spawn(term, ['-e', bin, ...args], {
           env,
           detached: true,
@@ -1445,7 +1527,6 @@ ipcMain.handle(
           ? null
           : path.join(process.resourcesPath, 'python', 'python.exe');
         const hasBundled = bundledPython ? fs.existsSync(bundledPython) : false;
-        // 安全 bat：path 已校验无注入字符；仍用延迟环境变量避免二次解析
         const batPath = path.join(
           os.tmpdir(),
           `takton-code-launch-${Date.now()}-${process.pid}.bat`,
@@ -1513,7 +1594,8 @@ ipcMain.handle(
   },
 );
 
-ipcMain.handle('install-update', () => {
+ipcMain.handle('install-update', (event) => {
+  assertTrustedIpc(event);
   isQuitting = true;
   autoUpdater?.quitAndInstall();
 });

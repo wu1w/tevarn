@@ -417,6 +417,19 @@ export function FilePreviewHost({ artifact, onClose }: FilePreviewHostProps) {
         {!loading && !error && preview.type === 'docx' && (
           <div
             className="prose prose-sm dark:prose-invert max-w-none rounded-xl border border-border-subtle bg-elevated-bg/30 p-4 text-foreground"
+            onClick={(event) => {
+              const target = event.target as Element | null;
+              const anchor = target?.closest('a');
+              if (!anchor) return;
+              event.preventDefault();
+              const href = anchor.getAttribute('href') || '';
+              if (!/^https?:\/\//i.test(href)) return;
+              if (window.electronAPI?.openExternal) {
+                void window.electronAPI.openExternal(href);
+              } else {
+                window.open(href, '_blank', 'noopener,noreferrer');
+              }
+            }}
             dangerouslySetInnerHTML={{ __html: preview.html }}
           />
         )}

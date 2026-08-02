@@ -45,6 +45,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   showNotification: (title: string, body: string): Promise<void> =>
     ipcRenderer.invoke('show-notification', { title, body }),
 
+  /** 由主进程显示原生确认框，再直接向后端授予桌面权限。 */
+  grantDesktopPermission: (request: {
+    operation: string;
+    appName?: string;
+    description?: string;
+    token?: string;
+  }): Promise<{ ok: boolean; level?: string; denied?: boolean; error?: string }> =>
+    ipcRenderer.invoke('grant-desktop-permission', request),
+
   getDroppedFiles: (filePaths: string[]): Promise<string[]> =>
     ipcRenderer.invoke('get-dropped-files', filePaths),
 

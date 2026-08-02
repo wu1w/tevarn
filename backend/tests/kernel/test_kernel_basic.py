@@ -150,12 +150,13 @@ def test_expired_token_denies() -> None:
 
 
 def test_b1_charge_tokens_and_exceeded(kernel: AgentKernel, monkeypatch) -> None:
-    # soft_renew 会在撞墙前自动 top_up，本用例验证硬顶拒绝
+    # 主会话走独立的 chat_elastic；用编制进程验证 soft_renew 关闭后的硬顶拒绝。
     monkeypatch.setattr(
         "backend.core.config.settings.agent_budget_soft_renew_enabled", False, raising=False
     )
+
     async def go():
-        proc = await kernel.create_process("main", token_budget=100)
+        proc = await kernel.create_process("wf:main", token_budget=100)
         assert kernel.charge_tokens(proc.id, 40) == 60
         with pytest.raises(BudgetExceededError):
             kernel.charge_tokens(proc.id, 61)

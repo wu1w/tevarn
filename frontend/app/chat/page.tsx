@@ -1433,13 +1433,17 @@ const handleUserMessageAck = useCallback(
     [addToast, t]
   );
 
+  // Depend on the primitive id so React Compiler can preserve this memoization
+  // even when the session store replaces the containing object.
+  const currentSessionId = currentSession?.id || '';
+
   // 防御：绝不在 B 会话渲染 A 的正式历史；useMemo 稳定引用避免每 token 全树失效
   const displayMessages = React.useMemo(() => {
     const base = messages.filter(
       (m) =>
         !m.session_id ||
-        !currentSession?.id ||
-        m.session_id === currentSession.id ||
+        !currentSessionId ||
+        m.session_id === currentSessionId ||
         String(m.id || '').startsWith('optimistic:') ||
         String(m.id || '').startsWith('streaming'),
     );
@@ -1464,7 +1468,7 @@ const handleUserMessageAck = useCallback(
       ...base,
       {
         id: 'streaming',
-        session_id: currentSession?.id || '',
+        session_id: currentSessionId,
         role: 'assistant' as const,
         content:
           liveContent ||
@@ -1480,7 +1484,7 @@ const handleUserMessageAck = useCallback(
     ];
   }, [
     messages,
-    currentSession?.id,
+    currentSessionId,
     isStreaming,
     streamingContent,
     liveToolCalls,
@@ -1518,9 +1522,7 @@ const handleUserMessageAck = useCallback(
       {!contactIdentity && !projectGroupId && !sessionIdentity ? (
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border-subtle/60 bg-card-bg/90 px-4 py-2.5 text-[11.5px] text-foreground-muted">
           <span>
-            {t('nav.chatContact') === 'nav.chatContact'
-              ? '联系员工：从员工页点「联系 TA」，或在侧栏通讯录选人。日常派活请用工单。'
-              : 'Contact an employee from Crew · day-to-day work uses Jobs, not blank chat.'}
+            {t('chat.contactHint')}
           </span>
           <span className="flex shrink-0 gap-3 font-semibold">
             <Link href="/agents" className="text-brand-purple no-underline">

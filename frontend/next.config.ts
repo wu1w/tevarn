@@ -4,12 +4,10 @@ import type { NextConfig } from "next";
 const isExport = process.env.NEXT_EXPORT === "1";
 
 const nextConfig: NextConfig = {
-  // monorepo 双 lockfile：锁定 frontend 为 turbopack 根
+  // This app has its own lockfile. Pinning the root prevents Turbopack from
+  // accidentally reusing caches or resolving dependencies from the repo root.
   turbopack: {
     root: process.cwd(),
-  },
-  typescript: {
-    ignoreBuildErrors: true,
   },
   allowedDevOrigins: process.env.ALLOWED_DEV_ORIGINS?.split(',') || ["localhost", "127.0.0.1"],
   distDir: "dist",

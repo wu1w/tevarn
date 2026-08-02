@@ -218,7 +218,9 @@ class Settings(BaseSettings):
     # 远程包信任根：允许的内容 sha256 列表（逗号/空白分隔）；非空时远程安装必须命中
     agent_package_trusted_content_hashes: str = ""
     # 远程安装是否强制提供 content_sha256 查询参数或 catalog 字段
-    agent_package_require_content_hash: bool = False
+    # 远程包默认必须固定内容 hash；本机上传包不受影响。
+    # 本机重新签名只能证明“已进入本实例”，不能证明远程发布者身份。
+    agent_package_require_content_hash: bool = True
     # 资源加深：Linux cgroup v2 可选硬限（失败不阻断）
     agent_resource_cgroup_enabled: bool = False
     # 每轮工具后采样 RSS 并上报 memory_bytes（需 process_id）
@@ -607,6 +609,8 @@ class Settings(BaseSettings):
     # 单用户模式默认管理员密码（仅首次创建用户时使用；桌面由 Electron 注入随机值）。
     # 留空（默认）→ 首次创建用户时随机生成并写入 ~/.takton/initial_admin_password（0600）。
     default_admin_password: str = ""
+    # Electron 主进程与其拉起的后端共享；配置后 renderer 不能直接授予桌面权限。
+    desktop_permission_secret: str = ""
     # 单用户模式（个人部署时无需登录）
     single_user_mode: bool = True
     # 允许的跨源 Origin（空格/逗号分隔）。默认空 = 只放行 loopback，

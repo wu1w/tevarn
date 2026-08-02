@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+import { useSessionStore } from '@/stores/sessionStore';
+import { useToastStore } from '@/stores/toastStore';
 
 /** 危险确认授权作用域 */
 export type ConfirmScope = 'once' | 'session' | 'agent' | 'deny';
@@ -59,14 +61,7 @@ function _nextPreferCurrent(queue: ConfirmRequestData[]): {
   next: ConfirmRequestData | null;
   rest: ConfirmRequestData[];
 } {
-  let curSid = '';
-  try {
-    const { useSessionStore } =
-      require('@/stores/sessionStore') as typeof import('@/stores/sessionStore');
-    curSid = String(useSessionStore.getState().currentSession?.id || '');
-  } catch {
-    curSid = '';
-  }
+  const curSid = String(useSessionStore.getState().currentSession?.id || '');
   const rest = [...queue];
   let next: ConfirmRequestData | null = null;
   if (curSid) {
@@ -88,15 +83,7 @@ export const useConfirmStore = create<ConfirmState>((set, get) => ({
     if (pending?.confirmId === data.confirmId) return;
     if (queue.some((q) => q.confirmId === data.confirmId)) return;
 
-    let curSid = '';
-    try {
-      // 懒取，避免 confirmStore ↔ sessionStore 硬循环依赖
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { useSessionStore } = require('@/stores/sessionStore') as typeof import('@/stores/sessionStore');
-      curSid = String(useSessionStore.getState().currentSession?.id || '');
-    } catch {
-      curSid = '';
-    }
+    const curSid = String(useSessionStore.getState().currentSession?.id || '');
     const isCur = Boolean(data.sessionId && curSid && data.sessionId === curSid);
 
     if (!pending) {
@@ -104,17 +91,12 @@ export const useConfirmStore = create<ConfirmState>((set, get) => ({
       if (isCur) return;
       // 非当前会话：仍弹，但 toast 提示（用户可能已切页）
       if (data.sessionId && typeof window !== 'undefined') {
-        try {
-          const { useToastStore } = require('@/stores/toastStore') as typeof import('@/stores/toastStore');
-          useToastStore
-            .getState()
-            .addToast(
-              `会话 ${String(data.sessionId).slice(0, 8)} 有操作待确认`,
-              'info',
-            );
-        } catch {
-          /* ignore */
-        }
+        useToastStore
+          .getState()
+          .addToast(
+            `会话 ${String(data.sessionId).slice(0, 8)} 有操作待确认`,
+            'info',
+          );
       }
       return;
     }
@@ -141,20 +123,14 @@ export const useConfirmStore = create<ConfirmState>((set, get) => ({
     } else {
       set({ queue: queue.filter((q) => q.confirmId !== confirmId) });
     }
-    try {
-      const { useToastStore } =
-        require('@/stores/toastStore') as typeof import('@/stores/toastStore');
-      useToastStore
-        .getState()
-        .addToast(
-          reason === 'timeout'
-            ? '确认已超时，已按拒绝处理'
-            : '确认已失效',
-          'info',
-        );
-    } catch {
-      /* ignore */
-    }
+    useToastStore
+      .getState()
+      .addToast(
+        reason === 'timeout'
+          ? '确认已超时，已按拒绝处理'
+          : '确认已失效',
+        'info',
+      );
   },
 
   respond: (scope, choice) => {

@@ -43,7 +43,7 @@ export function useDesktopAgent(options: UseDesktopAgentOptions = {}) {
 
   const persistPermission = useCallback(
     async (operation: string, level: PermissionLevel, appName?: string) => {
-      if (level === 'ask' || level === 'allow_once') return;
+      if (level === 'ask') return;
       try {
         await setDesktopPermission({
           operation,
@@ -55,6 +55,30 @@ export function useDesktopAgent(options: UseDesktopAgentOptions = {}) {
       }
     },
     [],
+  );
+
+  const requestPermission = useCallback(
+    async (request: DesktopPermissionRequest): Promise<PermissionLevel | null> => {
+      const nativeGrant = window.electronAPI?.grantDesktopPermission;
+      if (nativeGrant) {
+        const result = await nativeGrant({
+          operation: request.operation,
+          appName: request.appName,
+          description: request.description,
+          token: useAuthStore.getState().token || undefined,
+        });
+        if (!result.ok || !result.level) return null;
+        return result.level as PermissionLevel;
+      }
+
+      if (!options.onPermissionRequest) return null;
+      const level = await options.onPermissionRequest(request);
+      if (level) {
+        await persistPermission(request.operation, level, request.appName);
+      }
+      return level;
+    },
+    [options.onPermissionRequest, persistPermission],
   );
 
   const executeOperation = useCallback(
@@ -86,8 +110,8 @@ export function useDesktopAgent(options: UseDesktopAgentOptions = {}) {
           Boolean(result.requires_permission) ||
           Boolean(result.data && (result.data as { requires_permission?: boolean }).requires_permission);
 
-        if (needs && options.onPermissionRequest) {
-          const level = await options.onPermissionRequest({
+        if (needs) {
+          const level = await requestPermission({
             operation: operation.type,
             operationLabel: getOperationLabel(operation.type),
             appName: operation.params.app_name,
@@ -95,9 +119,8 @@ export function useDesktopAgent(options: UseDesktopAgentOptions = {}) {
           });
 
           if (level) {
-            await persistPermission(operation.type, level, operation.params.app_name);
-            // 非递归重试一次（避免 useCallback 自引用 immutability 报错）
-            result = await postOnce(level);
+            // 授权与执行分离：执行请求本身不再携带“我已授权”的自证字段。
+            result = await postOnce('ask');
           } else {
             throw new Error('User denied permission');
           }
@@ -121,7 +144,7 @@ export function useDesktopAgent(options: UseDesktopAgentOptions = {}) {
         setCurrentOperation(null);
       }
     },
-    [options, persistPermission],
+    [options, requestPermission],
   );
 
   const executeTask = useCallback(
@@ -143,20 +166,15 @@ export function useDesktopAgent(options: UseDesktopAgentOptions = {}) {
         const needs =
           Boolean(result.requires_permission) ||
           Boolean(result.data && result.data.requires_permission);
-        if (needs && options.onPermissionRequest) {
-          const level = await options.onPermissionRequest({
+        if (needs) {
+          const level = await requestPermission({
             operation: result.data?.operation || 'screenshot',
             operationLabel: getOperationLabel(result.data?.operation || 'screenshot'),
             appName: result.data?.app_name,
             description: result.message || task,
           });
           if (level) {
-            await persistPermission(
-              result.data?.operation || 'screenshot',
-              level,
-              result.data?.app_name,
-            );
-            result = await postOnce(level);
+            result = await postOnce('ask');
           } else {
             throw new Error('User denied permission');
           }
@@ -175,7 +193,7 @@ export function useDesktopAgent(options: UseDesktopAgentOptions = {}) {
         setIsExecuting(false);
       }
     },
-    [options, persistPermission],
+    [requestPermission],
   );
 
   const clearPermissions = useCallback(async (operation?: string, appName?: string) => {

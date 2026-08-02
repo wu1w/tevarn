@@ -29,6 +29,14 @@ export interface ElectronAPI {
   // 桌面原生通知
   showNotification: (title: string, body: string) => Promise<void>;
 
+  /** 在受信主进程中确认并授予桌面操作权限。 */
+  grantDesktopPermission?: (request: {
+    operation: string;
+    appName?: string;
+    description?: string;
+    token?: string;
+  }) => Promise<{ ok: boolean; level?: string; denied?: boolean; error?: string }>;
+
   // 文件拖拽
   getDroppedFiles: (filePaths: string[]) => Promise<string[]>;
 
@@ -43,6 +51,9 @@ export interface ElectronAPI {
 
   /** 在系统浏览器打开外链（OAuth 设备码登录等） */
   openExternal?: (url: string) => Promise<void>;
+
+  /** 用系统默认应用打开已解析的本地文件 */
+  openPath?: (filePath: string) => Promise<string>;
 
   /** 在系统终端拉起 Takton Code TUI（注入 bridge 环境变量） */
   openTaktonCode?: (opts?: { path?: string; mode?: string }) => Promise<{ ok: boolean; error?: string }>;

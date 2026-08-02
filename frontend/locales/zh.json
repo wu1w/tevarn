@@ -382,6 +382,7 @@
   "chat.aiReplying": "AI 回复中…",
   "chat.proSelectProject": "专业模式：请先选择项目文件夹…",
   "chat.inputHint": "输入消息开始对话，或点上方示例…",
+  "chat.contactHint": "联系员工：从员工页点「联系 TA」，或在侧栏通讯录选人。日常派活请用工单。",
   "chat.connectingCanSend": "正在连接…（仍可发送）",
   "chat.sendAutoConnect": "发送消息…（自动连接会话）",
   "chat.send": "发送消息…",

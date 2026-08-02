@@ -6,7 +6,13 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
+
+
+def _validate_bcrypt_length(value: str) -> str:
+    if len(value.encode("utf-8")) > 72:
+        raise ValueError("密码最多允许 72 个 UTF-8 字节")
+    return value
 
 
 class UserBase(BaseModel):
@@ -20,12 +26,16 @@ class UserRegister(UserBase):
 
     password: str = Field(..., min_length=8, max_length=128)
 
+    _password_bytes = field_validator("password")(_validate_bcrypt_length)
+
 
 class UserLogin(BaseModel):
     """用户登录请求"""
 
     email: EmailStr
-    password: str
+    password: str = Field(..., max_length=128)
+
+    _password_bytes = field_validator("password")(_validate_bcrypt_length)
 
 
 class UserUpdate(BaseModel):
@@ -54,6 +64,10 @@ class PasswordChange(BaseModel):
 
     old_password: str = Field(..., min_length=1, max_length=128)
     new_password: str = Field(..., min_length=8, max_length=128)
+
+    _password_bytes = field_validator("old_password", "new_password")(
+        _validate_bcrypt_length
+    )
 
 
 class TokenResponse(BaseModel):

@@ -27,6 +27,8 @@ ExecutionMode = Literal["sandbox", "auto", "local"]
 
 # 产品默认：工作区内改文件不问，命令仍要问（日常写代码推荐）
 DEFAULT_WORKING_MODE: WorkingMode = "auto_edit"
+# 配置解析失败必须 fail-closed；不要复用产品推荐默认值，否则拼写错误会静默放宽权限。
+INVALID_WORKING_MODE_FALLBACK: WorkingMode = "cautious"
 # T4：默认更隔离——有沙箱能力时强制用；无沙箱时 sandbox 模式会明确报错（不静默 local）
 # 需要本机直跑请显式 agent_execution_mode=local
 DEFAULT_EXECUTION_MODE: ExecutionMode = "sandbox"
@@ -137,7 +139,7 @@ def resolve_working_mode(raw: str | None = None) -> WorkingModeSpec:
     if raw is None:
         raw = getattr(_settings(), "agent_working_mode", DEFAULT_WORKING_MODE)
     key = str(raw or "").strip().lower()
-    return WORKING_MODE_BY_ID.get(key) or WORKING_MODE_BY_ID[DEFAULT_WORKING_MODE]
+    return WORKING_MODE_BY_ID.get(key) or WORKING_MODE_BY_ID[INVALID_WORKING_MODE_FALLBACK]
 
 
 def resolve_execution_mode(raw: str | None = None) -> str:

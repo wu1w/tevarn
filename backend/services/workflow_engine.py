@@ -1134,27 +1134,11 @@ class WorkflowEngine:
     async def _exec_loop(
         self, config: dict[str, Any], inputs: dict[str, Any], ctx: WorkflowContext
     ) -> dict[str, Any]:
-        """
-        循环节点（当前实现限制）：
-        引擎按一次性拓扑排序执行整个 DAG，不支持对"循环体"子图进行多次重复调度。
-        因此该节点目前只能将输入列表整体透传，并返回第一个元素供简单场景使用，
-        不会真正对每个元素重复执行下游子图。如果工作流依赖"逐条处理并分别执行下游节点"
-        的语义，请勿使用此节点，需等待后续实现真正的子图循环调度机制。
-        """
-        items = inputs.get("items", [])
-        if not isinstance(items, list):
-            items = [items]
-        ctx.log(
-            "loop",
-            "warning",
-            "循环节点当前不支持真正的子图重复执行，仅透传第一个元素，"
-            "如需批处理请在 Python 节点中显式实现循环逻辑。",
+        """循环节点尚未具备子图重复调度能力；必须明确失败，禁止静默漏处理。"""
+        raise WorkflowExecutionError(
+            "循环节点尚未实现逐项子图调度，已拒绝执行以避免只处理第一项。"
+            "请暂时使用 Python 节点显式批处理，或移除该节点。"
         )
-        return {
-            "item": items[0] if items else None,
-            "index": 0,
-            "results": items,
-        }
 
     async def _exec_merge(
         self, config: dict[str, Any], inputs: dict[str, Any], ctx: WorkflowContext

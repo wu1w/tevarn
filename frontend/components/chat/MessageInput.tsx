@@ -692,6 +692,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
           )}
           <textarea
             ref={textareaRef}
+            aria-label={t('chat.inputHint')}
             value={content}
             onChange={(e) => {
               if (inputLocked) return;

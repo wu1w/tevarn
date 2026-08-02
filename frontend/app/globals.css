@@ -204,7 +204,7 @@ pre {
   --sidebar: rgba(239, 233, 218, 0.86);
   --foreground: #33302a;
   --foreground-muted: #6f6958;
-  --foreground-dim: #a29a84;
+  --foreground-dim: #77705e;
   --brand-purple: #5f7550;
   --brand-cyan: #4f7d6a;
   --brand-gradient-start: #5f7550;
@@ -220,7 +220,7 @@ pre {
   --success-bg: rgba(93, 138, 74, 0.1);
   --success-text: #5d8a4a;
   --input-bg: rgba(70, 62, 46, 0.05);
-  --input-placeholder: #a29a84;
+  --input-placeholder: #77705e;
   --glass-bg: rgba(251, 248, 239, 0.6);
   --glass-border: rgba(95, 117, 80, 0.16);
   --glass-inner: inset 0 1px 0 rgba(255, 255, 255, 0.65);
@@ -254,7 +254,7 @@ pre {
   --sidebar: rgba(30, 28, 23, 0.86);
   --foreground: #ece7d9;
   --foreground-muted: #a8a28f;
-  --foreground-dim: #6d6757;
+  --foreground-dim: #928b78;
   --brand-purple: #a3bd8b;
   --brand-cyan: #80b09b;
   --brand-gradient-start: #a3bd8b;
@@ -762,7 +762,7 @@ button {
 }
 .tk-sb-new:hover { filter: brightness(1.06); }
 .tk-sb-section {
-  font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.06em;
   text-transform: uppercase; color: var(--foreground-dim);
   padding: 10px 4px 4px;
 }
@@ -775,7 +775,7 @@ button {
 .tk-sb-agent:hover { background: var(--card-bg-hover); }
 .tk-sb-agent-meta { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .tk-sb-agent-name { font-size: 12.5px; font-weight: 600; color: var(--foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tk-sb-agent-sub { font-size: 10.5px; color: var(--foreground-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tk-sb-agent-sub { font-size: 11px; color: var(--foreground-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tk-sb-agent-star { font-size: 11px; color: var(--brand-cyan); }
 .tk-sb-avatar {
   border-radius: 9px; display: inline-flex; align-items: center; justify-content: center;
@@ -1064,3 +1064,14 @@ button {
   transform: scale(1.04);
 }
 
+/* 可读性下限：工作站会长时间显示状态、日志和辅助说明，9–10px 在桌面端过小。 */
+@media (min-width: 900px) {
+  [class~="text-[9px]"] {
+    font-size: 0.6875rem !important;
+  }
+
+  [class~="text-[10px]"],
+  [class~="text-[10.5px]"] {
+    font-size: 0.75rem !important;
+  }
+}

@@ -393,32 +393,8 @@ NODE_TYPE_DEFINITIONS: list[NodeTypeDefinition] = [
             ),
         ],
     ),
-    NodeTypeDefinition(
-        type="loop",
-        label="循环",
-        category="logic",
-        description="对列表中的每个元素执行循环体",
-        icon="refresh-cw",
-        color="#ef4444",
-        inputs=[
-            PortSchema(name="items", label="列表", type="list", required=True),
-        ],
-        outputs=[
-            PortSchema(name="item", label="当前项", type="any"),
-            PortSchema(name="index", label="索引", type="number"),
-            PortSchema(name="results", label="结果列表", type="list"),
-        ],
-        config_schema=[
-            ConfigFieldSchema(
-                key="batch_size",
-                label="批量大小",
-                type="number",
-                default=1,
-                min=1,
-                max=100,
-            ),
-        ],
-    ),
+    # loop 暂不暴露给编辑器：当前 DAG 引擎只做一次拓扑调度，无法兑现逐项子图执行。
+    # 旧工作流若仍含 loop，执行器会 fail-closed 并给出迁移提示。
     NodeTypeDefinition(
         type="merge",
         label="合并",

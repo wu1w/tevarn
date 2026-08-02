@@ -14,16 +14,16 @@ from passlib.context import CryptContext
 from backend.core.config import settings
 
 # Password hashing
-# bcrypt 4.1+ 移除了 __about__，passlib 会打 warning；截断到 72 字节避免 bcrypt 限制异常
+# bcrypt 4.1+ 移除了 __about__，passlib 会打 warning；输入超过 72 bytes 时显式拒绝。
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def _truncate_password(password: str) -> str:
-    """bcrypt 最多 72 bytes；避免超长密码触发后端 500"""
+    """bcrypt 最多 72 bytes；禁止静默截断造成不同密码等价。"""
     raw = password.encode("utf-8")
     if len(raw) <= 72:
         return password
-    return raw[:72].decode("utf-8", errors="ignore")
+    raise ValueError("password must be at most 72 UTF-8 bytes")
 
 
 def _assert_password_backend_usable() -> None:

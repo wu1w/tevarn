@@ -177,6 +177,13 @@ async def get_package(
 class InstallUrlBody(BaseModel):
     url: str
     overwrite: bool = False
+    content_sha256: str | None = Field(
+        default=None,
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-fA-F]{64}$",
+        description="发布方提供的 SHA-256；远程安装默认必填",
+    )
 
 
 @router.get("/export/{name}")
@@ -213,7 +220,7 @@ async def install_pkg_upload(
     """安装：上传 .takton-pkg.zip → 校验 → 解压 →（默认）Kernel 签名扫描镜像（需 admin）"""
     from backend.packages.market import install_zip_market
 
-    data = await file.read()
+    data = await file.read(64 * 1024 * 1024 + 1)
     if len(data) > 64 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="package zip too large (64MB max)")
     result = install_zip_market(data, overwrite=overwrite, mirror=mirror_kernel)
@@ -228,33 +235,29 @@ async def install_pkg_url(
     body: InstallUrlBody,
     current_user: Annotated[UserRead, Depends(require_admin)],
 ):
-    """安装：从 URL 拉取 zip（公网校验防 SSRF）→ 同上传安装流程（需 admin）"""
-    import aiohttp
+    """安装：逐跳校验公网 HTTPS、固定内容 hash，再进入签名扫描安装流程。"""
+    import asyncio
 
-    from backend.core.net_safety import UnsafeURLError, validate_public_url
-    from backend.packages.publisher import install_package_zip
+    from backend.packages.market import install_from_remote_url
 
-    try:
-        validate_public_url(body.url)
-    except UnsafeURLError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(body.url, timeout=aiohttp.ClientTimeout(total=60)) as resp:
-                if resp.status != 200:
-                    raise HTTPException(status_code=502, detail=f"download failed: HTTP {resp.status}")
-                data = await resp.read()
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"download failed: {e}") from e
-    if len(data) > 64 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="package zip too large (64MB max)")
-    result = install_package_zip(data, overwrite=body.overwrite)
-    if not result.ok:
-        status = 409 if "already installed" in result.error else 400
-        raise HTTPException(status_code=status, detail=result.error)
-    return result.model_dump()
+    result = await asyncio.to_thread(
+        install_from_remote_url,
+        body.url,
+        overwrite=body.overwrite,
+        content_sha256_hex=body.content_sha256,
+    )
+    if not result.get("ok"):
+        error = str(result.get("error") or "install failed")
+        if "too large" in error:
+            status = 413
+        elif "already installed" in error:
+            status = 409
+        elif "download failed" in error:
+            status = 502
+        else:
+            status = 400
+        raise HTTPException(status_code=status, detail=error)
+    return result
 
 
 @router.delete("/installed/{name}")

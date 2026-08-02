@@ -169,9 +169,18 @@ async def test_ask_prompts_when_approval_channel_exists(monkeypatch):
     monkeypatch.setattr(
         "backend.services.confirm_manager.request_confirmation", _fake
     )
+    class _ConnectedManager:
+        @staticmethod
+        def is_connected(_session_id):
+            return True
+
     res = await builtin_permission_before(
         "command",
-        {"command": "rm -rf build", "_ws_manager": object(), "_session_id": "s1"},
+        {
+            "command": "rm -rf build",
+            "_ws_manager": _ConnectedManager(),
+            "_session_id": "s1",
+        },
     )
     assert seen.get("asked") is True
     assert res.block is True
@@ -290,8 +299,14 @@ async def test_custom_tool_self_declared_confirmation_is_honoured(monkeypatch):
         "backend.services.confirm_manager.request_confirmation", _fake
     )
 
+    class _ConnectedManager:
+        @staticmethod
+        def is_connected(_session_id):
+            return True
+
     res = await builtin_permission_before(
-        "my_custom_danger", {"_ws_manager": object()}
+        "my_custom_danger",
+        {"_ws_manager": _ConnectedManager(), "_session_id": "s1"},
     )
     assert asked["n"] == 1
     assert res.block is True

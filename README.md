@@ -33,7 +33,7 @@
 >
 > | 线 | 分支 / 版本 | 是什么 |
 > |----|-------------|--------|
-> | **Kernel 控制平面（当前主开发）** | [`feature/agent-kernel`](https://github.com/wu1w/takton/tree/feature/agent-kernel) · **0.5.0-alpha** | Rust host 权威 · Intent/tool_gate · 进程树 · marathon 门禁 |
+> | **Kernel 控制平面（当前主开发）** | [`feature/agent-kernel`](https://github.com/wu1w/takton/tree/feature/agent-kernel) · **0.5.3-alpha** | Rust host 权威 · Intent/tool_gate · 进程树 · marathon 门禁 |
 > | **历史产品线** | `main` / GitHub Releases **0.3.x** | 较早的桌面 Agent 工作站；**不含**完整 0.5 Kernel 重写 |
 >
 > - 需要治理内核 / AIOS 控制平面 → **务必** clone `feature/agent-kernel` 并构建 `takton-kernel-host`  
@@ -173,7 +173,7 @@ curl -fsSL https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.sh
 
 > 一键脚本会自动解析 [最新 Release](https://github.com/wu1w/takton/releases/latest) 资产；上表为固定直链备份。
 
-### From Source · 源码运行（`0.5.0-alpha`）
+### From Source · 源码运行（`0.5.3-alpha`）
 
 ```powershell
 git clone https://github.com/wu1w/takton.git
@@ -288,6 +288,7 @@ Takton 正从「Agent 工作站」演进为 **Personal Agent OS**，Agent Kernel
 - [Kernel / Runtime (Rust)](docs/KERNEL_RUST.md) — Host architecture
 - [Agent SDK](docs/agent-sdk.md) — Minimal agent packaging notes
 - [Roadmap · 路线图](docs/ROADMAP.md) — Product direction
+- [0.5.3-alpha release notes](docs/RELEASE_0.5.3-alpha.md) — local AIOS governance and desktop UX hardening
 - [0.5.0-alpha release notes](docs/RELEASE_0.5.0-alpha.md) — 2026-07-31 delivery summary
 - [AGENTS.md](AGENTS.md) — AI coding assistant configuration guide
 

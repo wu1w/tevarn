@@ -382,6 +382,7 @@
   "chat.aiReplying": "AI replying…",
   "chat.proSelectProject": "Pro mode: please select a project folder first…",
   "chat.inputHint": "Type a message to start, or click an example above…",
+  "chat.contactHint": "Contact an employee from Crew. Use Jobs for day-to-day assignments instead of a blank chat.",
   "chat.connectingCanSend": "Connecting… (you can still send)",
   "chat.sendAutoConnect": "Send message… (auto-connect session)",
   "chat.send": "Send message…",

@@ -71,6 +71,7 @@ class DesktopAgentService:
         self._platform_adapter = None
         self._initialized = False
         self._session_permissions: dict[str, PermissionLevel] = {}
+        self._once_permissions: set[str] = set()
 
     @property
     def platform(self) -> str:
@@ -116,7 +117,10 @@ class DesktopAgentService:
             (是否允许, 当前权限级别)
         """
         # 1. 检查会话级缓存
-        cache_key = f"{user_id}:{operation}:{app_name or '*'}"
+        cache_key = f"{user_id}:{operation.value}:{app_name or '*'}"
+        if cache_key in self._once_permissions:
+            self._once_permissions.discard(cache_key)
+            return True, PermissionLevel.ALLOW_ONCE
         if cache_key in self._session_permissions:
             level = self._session_permissions[cache_key]
             if level in (PermissionLevel.ALLOW_SESSION, PermissionLevel.ALWAYS_ALLOW):
@@ -145,11 +149,11 @@ class DesktopAgentService:
         app_name: str | None = None,
     ) -> None:
         """设置权限"""
-        cache_key = f"{user_id}:{operation}:{app_name or '*'}"
+        cache_key = f"{user_id}:{operation.value}:{app_name or '*'}"
         
         if level == PermissionLevel.ALLOW_ONCE:
-            # 仅本次有效，不存储
-            pass
+            # 仅下一次匹配的操作有效；check_permission 原子消费。
+            self._once_permissions.add(cache_key)
         elif level == PermissionLevel.ALLOW_SESSION:
             # 会话级，存内存
             self._session_permissions[cache_key] = level
@@ -196,17 +200,11 @@ class DesktopAgentService:
             user_id, operation, params.get("app_name")
         )
         
-        if not allowed and permission == PermissionLevel.ASK:
+        if not allowed:
             return DesktopOperationResult(
                 success=False,
                 message="需要用户授权",
                 data={"requires_permission": True, "operation": operation.value},
-            )
-        
-        # 记录已授予的权限
-        if permission != PermissionLevel.ASK:
-            await self.set_permission(
-                user_id, operation, permission, params.get("app_name")
             )
         
         # 执行操作
@@ -316,7 +314,7 @@ class DesktopAgentService:
                     user_id, op_type, op_params.get("app_name")
                 )
                 
-                if not allowed and permission == PermissionLevel.ASK:
+                if not allowed:
                     return DesktopOperationResult(
                         success=False,
                         message=f"操作 {i+1}/{len(operations)} 需要授权: {op['description']}",
@@ -376,6 +374,9 @@ class DesktopAgentService:
         ]
         for key in keys_to_remove:
             del self._session_permissions[key]
+        self._once_permissions = {
+            key for key in self._once_permissions if not key.startswith(f"{user_id}:")
+        }
 
     async def clear_permissions(
         self,
@@ -388,7 +389,8 @@ class DesktopAgentService:
         removed_session = 0
         keys_to_remove = []
         prefix = f"{user_id}:"
-        for k in list(self._session_permissions.keys()):
+        all_memory_keys = set(self._session_permissions) | self._once_permissions
+        for k in all_memory_keys:
             if not k.startswith(prefix):
                 continue
             # key 格式 user:operation:app_or_*
@@ -409,7 +411,8 @@ class DesktopAgentService:
                             continue
             keys_to_remove.append(k)
         for key in keys_to_remove:
-            del self._session_permissions[key]
+            self._session_permissions.pop(key, None)
+            self._once_permissions.discard(key)
             removed_session += 1
 
         removed_db = 0

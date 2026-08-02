@@ -1602,7 +1602,18 @@ impl AgentKernel {
 
     pub fn scheduler_stats(&self) -> Value {
         let g = self.inner.read();
-        g.scheduler.status()
+        let mut status = g.scheduler.status();
+        // ABI v1 的 Python 客户端和 golden fixture 读取顶层计数。
+        // 同时保留嵌套 stats，兼容已经消费 status() 丰富元数据的调用方。
+        if let Some(obj) = status.as_object_mut() {
+            let stats = obj.get("stats").and_then(Value::as_object).cloned();
+            if let Some(stats) = stats {
+                for (key, value) in stats {
+                    obj.entry(key).or_insert(value);
+                }
+            }
+        }
+        status
     }
 
     pub fn scheduler_set_limits(&self, max_running: u32, max_per_session: u32) -> Value {

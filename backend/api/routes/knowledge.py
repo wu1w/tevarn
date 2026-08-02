@@ -32,6 +32,23 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/knowledge", tags=["Knowledge"])
 
+MAX_DOCUMENT_BYTES = 16 * 1024 * 1024
+
+
+def _reject_oversized_request(request: Request) -> None:
+    raw = request.headers.get("content-length", "").strip()
+    if not raw:
+        return
+    try:
+        length = int(raw)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="无效的 Content-Length") from None
+    if length > MAX_DOCUMENT_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"文档过大，最大允许 {MAX_DOCUMENT_BYTES // 1024 // 1024}MB",
+        )
+
 
 def _is_doc_owner_or_admin(doc: Any, user: UserRead) -> bool:
     if doc.user_id is None:
@@ -72,10 +89,11 @@ async def create_document(
     status_val = "pending"
     meta_val: dict[str, Any] = {}
     source_val = ""
+    _reject_oversized_request(request)
 
     if content_type.startswith("multipart/form-data"):
         # multipart 上传：title（可选）、auto_index（可选）、file（必选）
-        form = await request.form()
+        form = await request.form(max_files=1, max_fields=10, max_part_size=MAX_DOCUMENT_BYTES)
         title = (form.get("title") or "").strip()
         auto_index = str(form.get("auto_index", "true")).strip().lower() in {"1", "true", "yes", "on"}
         uploaded: UploadFile | None = form.get("file")
@@ -84,7 +102,12 @@ async def create_document(
         filename = uploaded.filename or "uploaded.txt"
         if not title:
             title = filename.rsplit(".", 1)[0]
-        raw_bytes = await uploaded.read()
+        raw_bytes = await uploaded.read(MAX_DOCUMENT_BYTES + 1)
+        if len(raw_bytes) > MAX_DOCUMENT_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"文档过大，最大允许 {MAX_DOCUMENT_BYTES // 1024 // 1024}MB",
+            )
         try:
             doc_content = raw_bytes.decode("utf-8", errors="replace")
         except Exception:
@@ -99,6 +122,11 @@ async def create_document(
     else:
         # JSON body
         body = await request.body()
+        if len(body) > MAX_DOCUMENT_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"请求体过大，最大允许 {MAX_DOCUMENT_BYTES // 1024 // 1024}MB",
+            )
         if not body:
             raise HTTPException(status_code=400, detail="请求体为空")
         try:
