@@ -1536,8 +1536,13 @@ class RustAgentKernel:
             or {}
         )
 
-    def result_load(self, handle_id: str) -> dict[str, Any]:
-        return self._call("result_load", {"handle_id": handle_id}) or {}
+    def result_load(
+        self, handle_id: str, process_id: str | None = None
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"handle_id": handle_id}
+        if process_id:
+            payload["process_id"] = str(process_id)
+        return self._call("result_load", payload) or {}
 
     def iteration_set_budget(self, process_id: str, max_total: int) -> bool:
         r = (

@@ -2092,27 +2092,40 @@ async def cache_metrics_api(
 async def result_load_api(
     handle_id: str,
     current_user: Annotated[UserRead, Depends(get_current_user)],
+    process_id: str = Query(..., description="spill 所属 kernel process_id（绑定校验）"),
     preview_only: bool = Query(False),
 ):
-    """R-01：按 spill 句柄取回完整工具结果（或预览）。"""
+    """R-01：按 spill 句柄取回完整工具结果（或预览）。
+
+    必须传 process_id，与写入 spill 时的进程一致，防止横向读其它任务结果。
+    """
     from backend.kernel import get_kernel
 
     k = get_kernel()
     hid = str(handle_id or "").strip()
+    pid = str(process_id or "").strip()
     if not hid:
         raise HTTPException(status_code=400, detail="handle_id required")
+    if not pid:
+        raise HTTPException(status_code=400, detail="process_id required")
     data: dict[str, Any] = {}
     if hasattr(k, "result_load"):
-        data = k.result_load(hid) or {}
+        try:
+            data = k.result_load(hid, process_id=pid) or {}
+        except TypeError:
+            data = k._call(
+                "result_load", {"handle_id": hid, "process_id": pid}
+            ) or {}
     elif hasattr(k, "_call"):
-        data = k._call("result_load", {"handle_id": hid}) or {}
+        data = k._call(
+            "result_load", {"handle_id": hid, "process_id": pid}
+        ) or {}
     else:
         raise HTTPException(status_code=501, detail="result_load requires Rust kernel host")
     if not data or data.get("error"):
-        raise HTTPException(
-            status_code=404,
-            detail=str(data.get("error") or "handle not found"),
-        )
+        err = str(data.get("error") or data.get("message") or "handle not found")
+        code = 403 if "process" in err.lower() else 404
+        raise HTTPException(status_code=code, detail=err)
     if preview_only and "content" in data:
         content = str(data.get("content") or "")
         data = {
@@ -3976,6 +3989,12 @@ def _proposal_dict(p) -> dict:
     }
 
 
+def _evo_include_orphan() -> bool:
+    from backend.core.config import settings
+
+    return bool(getattr(settings, "single_user_mode", True))
+
+
 @router.get("/evolution/proposals")
 async def list_evolution_proposals(
     current_user: Annotated[UserRead, Depends(get_current_user)],
@@ -3987,7 +4006,13 @@ async def list_evolution_proposals(
     eng = get_evolution_engine()
     if eng is None:
         raise HTTPException(status_code=503, detail="evolution engine 未启用")
-    items = await eng.list_proposals(identity_id=identity_id, status=status)
+    # 多租户：只列当前用户 Identity 的提案（单用户模式附带 orphan）
+    items = await eng.list_proposals(
+        identity_id=identity_id,
+        status=status,
+        user_id=current_user.id,
+        include_orphan=_evo_include_orphan(),
+    )
     return {"proposals": [_proposal_dict(p) for p in items], "total": len(items)}
 
 
@@ -4002,8 +4027,27 @@ async def run_evolution_analyze(
     eng = get_evolution_engine()
     if eng is None:
         raise HTTPException(status_code=503, detail="evolution engine 未启用")
+    iid = str(body.get("identity_id") or "").strip()
+    if not iid:
+        raise HTTPException(status_code=400, detail="identity_id required")
+    # 归属：只能分析自己的员工
     try:
-        proposals = await eng.analyze(str(body.get("identity_id") or ""))
+        reg = _identity_registry()
+        if reg is not None:
+            ident = await reg.get(iid)
+            if ident is None:
+                raise HTTPException(status_code=404, detail="identity not found")
+            owner = getattr(ident, "user_id", None)
+            if owner is not None and str(owner) != str(current_user.id):
+                raise HTTPException(status_code=403, detail="not your identity")
+            if owner is None and not _evo_include_orphan():
+                raise HTTPException(status_code=403, detail="orphan identity blocked")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    try:
+        proposals = await eng.analyze(iid)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return {"generated": len(proposals), "proposals": [_proposal_dict(p) for p in proposals]}
@@ -4020,9 +4064,14 @@ async def approve_evolution(
     if eng is None:
         raise HTTPException(status_code=503, detail="evolution engine 未启用")
     try:
+        await eng.assert_proposal_owner(
+            proposal_id, current_user.id, include_orphan=_evo_include_orphan()
+        )
         p = await eng.approve(proposal_id, by=str(current_user.id))
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        msg = str(e)
+        code = 403 if ("无权" in msg or "归属" in msg) else 400
+        raise HTTPException(status_code=code, detail=msg) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"apply failed: {e}") from e
     return _proposal_dict(p)
@@ -4039,9 +4088,14 @@ async def reject_evolution(
     if eng is None:
         raise HTTPException(status_code=503, detail="evolution engine 未启用")
     try:
+        await eng.assert_proposal_owner(
+            proposal_id, current_user.id, include_orphan=_evo_include_orphan()
+        )
         p = await eng.reject(proposal_id, by=str(current_user.id))
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        msg = str(e)
+        code = 403 if ("无权" in msg or "归属" in msg) else 400
+        raise HTTPException(status_code=code, detail=msg) from e
     return _proposal_dict(p)
 
 
@@ -4056,9 +4110,14 @@ async def rollback_evolution(
     if eng is None:
         raise HTTPException(status_code=503, detail="evolution engine 未启用")
     try:
+        await eng.assert_proposal_owner(
+            proposal_id, current_user.id, include_orphan=_evo_include_orphan()
+        )
         p = await eng.rollback(proposal_id, by=str(current_user.id))
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        msg = str(e)
+        code = 403 if ("无权" in msg or "归属" in msg) else 400
+        raise HTTPException(status_code=code, detail=msg) from e
     return _proposal_dict(p)
 
 

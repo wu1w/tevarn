@@ -122,11 +122,27 @@ impl ResultSpillStore {
         Some(h)
     }
 
-    pub fn load(&self, handle_id: &str) -> Result<String, String> {
+    /// Load full spill content. When `caller_process_id` is set, it must match
+    /// the handle's process (prevents cross-process lateral read of tool results).
+    pub fn load(
+        &self,
+        handle_id: &str,
+        caller_process_id: Option<&str>,
+    ) -> Result<String, String> {
         let h = self
             .by_id
             .get(handle_id)
             .ok_or_else(|| format!("unknown result handle {handle_id}"))?;
+        if let Some(pid) = caller_process_id.map(str::trim).filter(|s| !s.is_empty()) {
+            if h.process_id != pid {
+                return Err(format!(
+                    "result handle {handle_id} belongs to another process"
+                ));
+            }
+        } else {
+            // Strict: callers must bind process (agent injects _kernel_process_id).
+            return Err("process_id required to load result handle".into());
+        }
         fs::read_to_string(&h.path).map_err(|e| e.to_string())
     }
 
@@ -182,8 +198,10 @@ mod tests {
         let big = "x".repeat(200);
         let h = s.maybe_spill("p1", "cmd", &big).expect("spill");
         assert_eq!(h.bytes, 200);
-        let loaded = s.load(&h.id).unwrap();
+        let loaded = s.load(&h.id, Some("p1")).unwrap();
         assert_eq!(loaded.len(), 200);
+        assert!(s.load(&h.id, None).is_err());
+        assert!(s.load(&h.id, Some("other")).is_err());
         s.drop_process("p1");
         let _ = fs::remove_dir_all(&dir);
     }

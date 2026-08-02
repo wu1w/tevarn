@@ -358,6 +358,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Default user seeding skipped: {e}")
 
+    # Session grants: drop TTL-expired + orphans (session row gone)
+    try:
+        from backend.agent.grant_store import prune_session_grants_startup
+
+        gsum = await prune_session_grants_startup()
+        if gsum.get("expired") or gsum.get("orphaned"):
+            logger.info("session grants startup prune: %s", gsum)
+    except Exception as e:
+        logger.warning(f"session grants startup prune skipped: {e}")
+
     # Seed default settings
     try:
         await _seed_settings()

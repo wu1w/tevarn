@@ -2089,15 +2089,27 @@ impl AgentKernel {
         }
     }
 
-    pub fn result_load(&self, handle_id: &str) -> KernelResult<Value> {
+    pub fn result_load(
+        &self,
+        handle_id: &str,
+        process_id: Option<&str>,
+    ) -> KernelResult<Value> {
         let g = self.inner.read();
-        match g.result_store.load(handle_id) {
+        match g.result_store.load(handle_id, process_id) {
             Ok(text) => Ok(json!({
                 "id": handle_id,
                 "content": text,
                 "bytes": text.len(),
+                "process_id": process_id.unwrap_or(""),
             })),
-            Err(e) => Err(KernelError::NotFound(e)),
+            Err(e) => {
+                // Cross-process / missing bind → Permission; unknown id → NotFound.
+                if e.contains("another process") || e.contains("process_id required") {
+                    Err(KernelError::Permission(e))
+                } else {
+                    Err(KernelError::NotFound(e))
+                }
+            }
         }
     }
 

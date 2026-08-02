@@ -96,8 +96,13 @@ async def test_result_spill_and_load(k) -> None:
     hid = (r.get("handle") or {}).get("id")
     assert hid
     assert "tool_result_handle" in str(r.get("context") or "")
-    loaded = k.result_load(hid)
+    loaded = k.result_load(hid, process_id=p.id)
     assert loaded.get("content") == big
+    # 绑定校验：无 process / 错误 process 不可读
+    with pytest.raises(Exception):
+        k.result_load(hid, process_id="not-the-owner")
+    with pytest.raises(Exception):
+        k.result_load(hid)
     small = k.result_spill(p.id, "command", "tiny")
     assert small.get("spilled") is False
     await k.end_process(p.id, state="completed")

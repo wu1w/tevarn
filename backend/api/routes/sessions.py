@@ -238,8 +238,16 @@ async def delete_session(
     活跃保护（纵深防御）：WS 连接中或 agent 运行中的会话默认拒删（409），
     防止自动清理逻辑误删运行中会话（流式消息未落库时按内容判空白会误杀）。
     用户显式删除时前端带 force=true 放行。
+
+    force 删除时先 cancel_agent → end_run_snapshot → clear_session_grants，
+    再删库，避免任务继续写已删 session、session_grants 只增不减。
+    普通删除同样清理 grants（会话已不存在）。
     """
+    import logging
+
     from backend.api.websocket import manager as ws_manager
+
+    log = logging.getLogger(__name__)
 
     if not force and session_id in {
         uuid.UUID(s) for s in ws_manager.active_session_ids()
@@ -248,10 +256,47 @@ async def delete_session(
             status_code=409,
             detail="Session is active (connected or running), cannot delete",
         )
+
+    # 归属先校验（避免对他人会话做 cancel）
     async with UnitOfWork() as uow:
         session = await uow.sessions.get_by_id(session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
+        assert_session_owner(getattr(session, "user_id", None), current_user)
+
+    # 运行时清理：force 或会话仍挂着 agent 时都要停任务
+    try:
+        if force or ws_manager.has_running_agent(session_id):
+            await ws_manager.cancel_agent(session_id, wait=3.0)
+    except Exception as e:
+        log.warning("delete_session cancel_agent skip session=%s: %s", session_id, e)
+    try:
+        ws_manager.end_run_snapshot(session_id)
+    except Exception as e:
+        log.warning("delete_session end_run_snapshot skip session=%s: %s", session_id, e)
+    try:
+        from backend.agent.grant_store import clear_session_grants
+
+        clear_session_grants(str(session_id))
+    except Exception as e:
+        log.warning("delete_session clear_session_grants skip session=%s: %s", session_id, e)
+    # 尽量踢掉仍占用的 WS，避免客户端继续往已删 session 发消息
+    try:
+        old = getattr(ws_manager, "_connections", {}).get(session_id)
+        if old is not None:
+            try:
+                await old.close(code=1000, reason="session deleted")
+            except Exception:
+                pass
+        ws_manager.disconnect(session_id)
+    except Exception as e:
+        log.debug("delete_session disconnect skip session=%s: %s", session_id, e)
+
+    async with UnitOfWork() as uow:
+        session = await uow.sessions.get_by_id(session_id)
+        if session is None:
+            # 并发删除：runtime 已清理即可
+            return {"deleted": True}
         assert_session_owner(getattr(session, "user_id", None), current_user)
         success = await uow.sessions.delete(session_id)
         if not success:

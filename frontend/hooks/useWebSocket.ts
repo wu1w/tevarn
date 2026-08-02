@@ -589,6 +589,11 @@ export function useWebSocket(options: UseWebSocketOptions) {
       const sid = (targetSessionId || sessionIdRef.current || '').trim();
       if (!sid) return Promise.resolve(false);
 
+      // 被踢后禁止发送路径抢主；必须先点「夺取连接」
+      if (kickedByPeerRef.current) {
+        return Promise.resolve(false);
+      }
+
       if (
         wsRef.current?.readyState === WebSocket.OPEN &&
         activeSessionRef.current === sid
@@ -597,6 +602,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
       }
 
       // 用户主动发送：允许夺取连接（区别于后台自动重连抢主）
+      // 注意：kicked 状态已在上方短路，不会走到 force 抢主
       reconnectAttempts.current = 0;
       connect(sid, { force: true });
 

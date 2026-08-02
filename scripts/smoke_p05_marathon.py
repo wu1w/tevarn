@@ -109,7 +109,7 @@ def main() -> int:
     if not spill.get("spilled"):
         fail(f"expected spill: {spill}")
     hid = (spill.get("handle") or {}).get("id")
-    loaded = k.result_load(str(hid))
+    loaded = k.result_load(str(hid), process_id=parent.id)
     if loaded.get("content") != big:
         fail("spill load mismatch")
     ok(f"result spill/load bytes={len(big)}")

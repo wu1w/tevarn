@@ -117,6 +117,37 @@ def test_delete_active_session_force_allowed(client: TestClient, clean_manager) 
         manager._connections.pop(uuid.UUID(sid), None)
 
 
+def test_force_delete_clears_grants_and_deletes(client: TestClient, clean_manager) -> None:
+    """force 删除：清 session grants + 删库（cancel 在生产同 loop 生效）。
+
+    注：TestClient 与 pytest 的 asyncio 循环不同，此处不强断言跨 loop 的
+    Task.cancelled()；生产路径 WS manager 与 agent 同 loop。
+    """
+    from backend.agent.grant_store import (
+        add_session_grant,
+        has_session_grant,
+        reset_for_tests,
+    )
+
+    reset_for_tests()
+    sid = _create_session(client)
+    uid = uuid.UUID(sid)
+    # 布置「活跃」：连接占位（force 应放行）
+    manager._connections[uid] = None
+    add_session_grant(sid, "command", {"command": "rm x"}, whole_tool=True)
+    assert has_session_grant(sid, "command", {"command": "rm x"})
+    try:
+        resp = client.delete(f"/api/sessions/{sid}?force=true")
+        assert resp.status_code == 200, resp.text
+        assert client.get(f"/api/sessions/{sid}").status_code == 404
+        assert not has_session_grant(sid, "command", {"command": "rm x"})
+        # disconnect 已摘连接
+        assert uid not in manager._connections
+    finally:
+        manager._connections.pop(uid, None)
+        reset_for_tests()
+
+
 def test_delete_inactive_session_still_works(client: TestClient, clean_manager) -> None:
     """回归：非活跃会话的普通删除不受活跃保护影响。"""
     sid = _create_session(client)

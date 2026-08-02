@@ -23,8 +23,20 @@ logger = logging.getLogger(__name__)
 
 # session_id -> set of allow signatures (e.g. "command:rm", "file_write")
 _session_grants: dict[str, set[str]] = {}
+# session_id -> last grant activity (unix ts); used for TTL prune
+_session_grant_ts: dict[str, float] = {}
 _grants_lock = threading.RLock()
 _persist_loaded = False
+
+# Default 7d; override with TAKTON_SESSION_GRANT_TTL_SECONDS (0 = no TTL)
+def _grant_ttl_seconds() -> float:
+    raw = (os.environ.get("TAKTON_SESSION_GRANT_TTL_SECONDS") or "").strip()
+    if raw:
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            pass
+    return 7.0 * 24 * 3600
 
 
 def _grants_path() -> Path:
@@ -59,9 +71,23 @@ def _ensure_loaded() -> None:
                 raw = json.loads(path.read_text(encoding="utf-8"))
                 data = raw.get("grants") if isinstance(raw, dict) else raw
                 if isinstance(data, dict):
-                    for sid, sigs in data.items():
-                        if isinstance(sigs, list):
-                            _session_grants[str(sid)] = set(str(s) for s in sigs)
+                    now = time.time()
+                    for sid, entry in data.items():
+                        key = str(sid)
+                        # New format: {sigs: [...], updated_at: ts}
+                        if isinstance(entry, dict):
+                            sigs = entry.get("sigs") or entry.get("signatures") or []
+                            ts = entry.get("updated_at") or entry.get("ts") or now
+                            if isinstance(sigs, list):
+                                _session_grants[key] = set(str(s) for s in sigs)
+                                try:
+                                    _session_grant_ts[key] = float(ts)
+                                except (TypeError, ValueError):
+                                    _session_grant_ts[key] = now
+                        elif isinstance(entry, list):
+                            # Legacy: sid -> [sigs]
+                            _session_grants[key] = set(str(s) for s in entry)
+                            _session_grant_ts[key] = now
                     logger.info(
                         "session grants loaded from disk sessions=%s path=%s",
                         len(_session_grants),
@@ -70,21 +96,48 @@ def _ensure_loaded() -> None:
         except Exception as e:
             logger.warning("session grants load failed: %s", e)
         _persist_loaded = True
+        # Drop expired entries on load (best-effort, no DB yet)
+        _prune_expired_locked()
 
 
 def _persist() -> None:
     """best-effort 写盘（单机桌面热重载不丢「本会话允许」）。"""
     path = _grants_path()
     try:
+        grants_out: dict[str, Any] = {}
+        for sid, sigs in _session_grants.items():
+            grants_out[sid] = {
+                "sigs": sorted(sigs),
+                "updated_at": _session_grant_ts.get(sid) or time.time(),
+            }
         payload = {
             "updated_at": time.time(),
-            "grants": {sid: sorted(sigs) for sid, sigs in _session_grants.items()},
+            "ttl_seconds": _grant_ttl_seconds(),
+            "grants": grants_out,
         }
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=0), encoding="utf-8")
         tmp.replace(path)
     except Exception as e:
         logger.warning("session grants persist failed: %s", e)
+
+
+def _prune_expired_locked() -> int:
+    """Remove TTL-expired grants. Caller must hold _grants_lock."""
+    ttl = _grant_ttl_seconds()
+    if ttl <= 0:
+        return 0
+    now = time.time()
+    dead = [
+        sid
+        for sid, ts in list(_session_grant_ts.items())
+        if (now - float(ts or 0)) > ttl
+    ]
+    # Also drop grants with no timestamp if very large file? keep them, touch on use.
+    for sid in dead:
+        _session_grants.pop(sid, None)
+        _session_grant_ts.pop(sid, None)
+    return len(dead)
 
 # tool name / permission key -> identity capability id (CAP_POOL)
 # P0-B：权威副本在 Rust tool_catalog；此处为 fallback / 无 host 时使用。
@@ -198,15 +251,26 @@ def has_session_grant(session_id: str | None, tool: str, arguments: dict[str, An
     if not session_id:
         return False
     _ensure_loaded()
-    grants = _session_grants.get(str(session_id))
-    if not grants:
+    sid = str(session_id)
+    with _grants_lock:
+        # Lazy TTL check
+        ttl = _grant_ttl_seconds()
+        if ttl > 0:
+            ts = _session_grant_ts.get(sid)
+            if ts is not None and (time.time() - float(ts)) > ttl:
+                _session_grants.pop(sid, None)
+                _session_grant_ts.pop(sid, None)
+                _persist()
+                return False
+        grants = _session_grants.get(sid)
+        if not grants:
+            return False
+        # 细粒度签名（command:rm）或整工具名（本员工/本会话放行 command）
+        if allow_signature(tool, arguments) in grants:
+            return True
+        if tool in grants:
+            return True
         return False
-    # 细粒度签名（command:rm）或整工具名（本员工/本会话放行 command）
-    if allow_signature(tool, arguments) in grants:
-        return True
-    if tool in grants:
-        return True
-    return False
 
 
 def add_session_grant(
@@ -232,6 +296,7 @@ def add_session_grant(
         bucket.add(sig)
         if whole_tool:
             bucket.add(tool)
+        _session_grant_ts[sid] = time.time()
         _persist()
     logger.info(
         "grant session allow session=%s sig=%s whole=%s",
@@ -305,8 +370,63 @@ def clear_session_grants(session_id: str | None) -> None:
         return
     _ensure_loaded()
     with _grants_lock:
-        _session_grants.pop(str(session_id), None)
-        _persist()
+        sid = str(session_id)
+        had = sid in _session_grants
+        _session_grants.pop(sid, None)
+        _session_grant_ts.pop(sid, None)
+        if had:
+            _persist()
+
+
+def prune_expired_session_grants() -> int:
+    """Drop grants past TTL. Returns number removed."""
+    _ensure_loaded()
+    with _grants_lock:
+        n = _prune_expired_locked()
+        if n:
+            _persist()
+            logger.info("session grants TTL pruned count=%s", n)
+        return n
+
+
+def prune_orphan_session_grants(live_session_ids: set[str] | list[str] | None) -> int:
+    """Drop grants whose session_id is not in the live set (DB sessions)."""
+    if live_session_ids is None:
+        return 0
+    live = {str(s) for s in live_session_ids}
+    _ensure_loaded()
+    with _grants_lock:
+        dead = [sid for sid in list(_session_grants.keys()) if sid not in live]
+        for sid in dead:
+            _session_grants.pop(sid, None)
+            _session_grant_ts.pop(sid, None)
+        if dead:
+            _persist()
+            logger.info(
+                "session grants orphan pruned count=%s remaining=%s",
+                len(dead),
+                len(_session_grants),
+            )
+        return len(dead)
+
+
+async def prune_session_grants_startup() -> dict[str, int]:
+    """Startup: TTL prune + drop grants for sessions no longer in DB."""
+    expired = prune_expired_session_grants()
+    orphaned = 0
+    try:
+        from sqlalchemy import select
+
+        from backend.database import AsyncSessionLocal
+        from backend.models.session import Session
+
+        async with AsyncSessionLocal() as db:
+            rows = (await db.execute(select(Session.id))).scalars().all()
+            live = {str(r) for r in rows}
+        orphaned = prune_orphan_session_grants(live)
+    except Exception as e:
+        logger.warning("session grants orphan prune skipped: %s", e)
+    return {"expired": expired, "orphaned": orphaned}
 
 
 def crew_cap_for_tool(tool: str) -> str | None:
@@ -361,6 +481,7 @@ def reset_for_tests() -> None:
     global _persist_loaded
     with _grants_lock:
         _session_grants.clear()
+        _session_grant_ts.clear()
         _persist_loaded = True  # 测试不读盘
         try:
             p = _grants_path()

@@ -1175,7 +1175,11 @@ fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: 
                 .or_else(|| params.get("id"))
                 .and_then(|v| v.as_str())
                 .ok_or((-32005, "handle_id required".into(), json!({})))?;
-            kernel.result_load(id).map_err(map_err)
+            let pid = params
+                .get("process_id")
+                .or_else(|| params.get("caller_process_id"))
+                .and_then(|v| v.as_str());
+            kernel.result_load(id, pid).map_err(map_err)
         }
         "result_store_status" => Ok(kernel.result_store_status()),
         "iteration_set_budget" => {

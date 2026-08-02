@@ -465,7 +465,11 @@ class SQLiteQueryTool(_BuiltinToolBase):
 
 
 async def execute_result_load(config: dict[str, Any], arguments: dict[str, Any]) -> str:
-    """加载 kernel result_spill 外置的完整工具结果。"""
+    """加载 kernel result_spill 外置的完整工具结果。
+
+    必须绑定调用方 process_id（loop 注入 _kernel_process_id），
+    防止横向读取其它进程的 spill 全文。
+    """
     hid = str(
         arguments.get("id")
         or arguments.get("handle_id")
@@ -482,20 +486,40 @@ async def execute_result_load(config: dict[str, Any], arguments: dict[str, Any])
         hid = hid[3:].strip()
     if " " in hid:
         hid = hid.split()[0]
+    # 只信任 loop 注入的 process，禁止模型在 arguments 里伪造
+    pid = str(
+        arguments.get("_kernel_process_id")
+        or arguments.get("_process_id")
+        or ""
+    ).strip()
+    if not pid:
+        return (
+            "[Error] result_load requires bound process "
+            "(missing _kernel_process_id; call from agent loop only)"
+        )
     try:
         from backend.kernel import get_kernel
 
         k = get_kernel()
         r: dict[str, Any] = {}
         if hasattr(k, "result_load"):
-            r = k.result_load(hid) or {}
+            try:
+                r = k.result_load(hid, process_id=pid) or {}
+            except TypeError:
+                # 旧签名兼容（仍传 process_id 进 _call）
+                r = k.result_load(hid) or {}
         elif hasattr(k, "_call"):
-            r = k._call("result_load", {"handle_id": hid}) or {}
+            r = k._call(
+                "result_load", {"handle_id": hid, "process_id": pid}
+            ) or {}
         else:
             return "[Error] kernel result_load unavailable"
         if isinstance(r, dict):
             if r.get("error"):
                 return f"[Error] result_load: {r.get('error')}"
+            msg = str(r.get("message") or "")
+            if msg and "process" in msg.lower() and "content" not in r:
+                return f"[Error] result_load: {msg}"
             # host 可能返回 {content} / {body} / {text}
             for key in ("content", "body", "text", "result"):
                 if key in r and r[key] is not None:

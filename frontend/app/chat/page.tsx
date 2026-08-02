@@ -1786,12 +1786,21 @@ const handleUserMessageAck = useCallback(
                                               key={editingContent ?? 'default'}
                                               onSend={handleSend}
                                               onGenerateImage={handleGenerateImage}
-                                              disabled={isStreaming || isGeneratingImage || creatingSession}
+                                              disabled={
+                                                isStreaming ||
+                                                isGeneratingImage ||
+                                                creatingSession ||
+                                                // 被踢后禁用输入，只保留横幅「夺取连接」，避免发送=无确认抢主
+                                                kickedByPeer
+                                              }
                                               isStreaming={isStreaming}
                                               sessionId={currentSession?.id}
                                               onStopStreaming={handleStopStreaming}
                                               placeholder={
-                                                creatingSession
+                                                kickedByPeer
+                                                  ? (t('chat.wsKickedInputDisabled') ||
+                                                    '已在其它窗口连接 — 点「夺取连接」后再发送')
+                                                  : creatingSession
                                                   ? t('chat.creating')
                                                   : isStreaming
                                                     ? t('chat.aiReplying')

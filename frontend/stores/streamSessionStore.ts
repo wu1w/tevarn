@@ -1,6 +1,8 @@
 /**
  * Per-session 流式运行态：用户乱切页面 / 切换会话时本地保留，
  * 切回后可立即恢复；再由 WS sync_response 用服务端快照校正。
+ *
+ * 有上限：idle 条目优先淘汰，避免长时多会话 bySession 无界涨内存。
  */
 
 import { create } from 'zustand';
@@ -16,6 +18,9 @@ export type SessionStreamState = {
   updatedAt: number;
 };
 
+/** 同时保留的会话流状态上限（含运行中） */
+const MAX_SESSION_STREAM_ENTRIES = 40;
+
 const emptyState = (): SessionStreamState => ({
   isStreaming: false,
   agentRunning: false,
@@ -25,6 +30,27 @@ const emptyState = (): SessionStreamState => ({
   streamMessageId: null,
   updatedAt: 0,
 });
+
+function pruneBySession(
+  map: Record<string, SessionStreamState>
+): Record<string, SessionStreamState> {
+  const keys = Object.keys(map);
+  if (keys.length <= MAX_SESSION_STREAM_ENTRIES) return map;
+  const entries = keys.map((k) => ({ k, s: map[k] }));
+  // idle 优先丢；同级按 updatedAt 最旧优先
+  entries.sort((a, b) => {
+    const aActive = a.s.isStreaming || a.s.agentRunning ? 1 : 0;
+    const bActive = b.s.isStreaming || b.s.agentRunning ? 1 : 0;
+    if (aActive !== bActive) return aActive - bActive;
+    return (a.s.updatedAt || 0) - (b.s.updatedAt || 0);
+  });
+  const next = { ...map };
+  const drop = entries.length - MAX_SESSION_STREAM_ENTRIES;
+  for (let i = 0; i < drop; i++) {
+    delete next[entries[i].k];
+  }
+  return next;
+}
 
 interface StreamSessionStore {
   bySession: Record<string, SessionStreamState>;
@@ -48,17 +74,16 @@ export const useStreamSessionStore = create<StreamSessionStore>((set, get) => ({
     if (!sessionId) return;
     set((s) => {
       const prev = s.bySession[sessionId] || emptyState();
-      return {
-        bySession: {
-          ...s.bySession,
-          [sessionId]: {
-            ...prev,
-            ...state,
-            tools: state.tools !== undefined ? state.tools : prev.tools,
-            updatedAt: Date.now(),
-          },
+      const nextMap = {
+        ...s.bySession,
+        [sessionId]: {
+          ...prev,
+          ...state,
+          tools: state.tools !== undefined ? state.tools : prev.tools,
+          updatedAt: Date.now(),
         },
       };
+      return { bySession: pruneBySession(nextMap) };
     });
   },
 
@@ -87,6 +112,7 @@ export const useStreamSessionStore = create<StreamSessionStore>((set, get) => ({
 
   markIdle: (sessionId) => {
     if (!sessionId) return;
+    // 保留 key 便于切回瞬间恢复空闲态；靠 prune 上限控制内存
     get().save(sessionId, {
       isStreaming: false,
       agentRunning: false,

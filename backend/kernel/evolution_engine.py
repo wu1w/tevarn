@@ -635,13 +635,82 @@ class EvolutionEngine:
                 row.rolled_back_at = time.time()
             await session.commit()
 
-    async def list_proposals(self, *, identity_id: Any | None = None, status: str | None = None) -> list[Any]:
-        from backend.models.agent_identity import AgentEvolutionProposal
+    async def list_proposals(
+        self,
+        *,
+        identity_id: Any | None = None,
+        status: str | None = None,
+        user_id: Any | None = None,
+        include_orphan: bool = False,
+    ) -> list[Any]:
+        """列出进化提案。
+
+        user_id 非空时只返回归属该用户的 Identity 的提案（多租户隔离）。
+        include_orphan=True：额外包含 user_id IS NULL 的历史 Identity（单用户迁移）。
+        """
+        from sqlalchemy import or_
+
+        from backend.models.agent_identity import AgentEvolutionProposal, AgentIdentity
 
         async with self._session_factory() as session:
-            q = select(AgentEvolutionProposal).order_by(AgentEvolutionProposal.created_at.desc())
+            q = select(AgentEvolutionProposal).order_by(
+                AgentEvolutionProposal.created_at.desc()
+            )
+            if user_id is not None:
+                uid = _uuid.UUID(str(user_id)) if not isinstance(user_id, _uuid.UUID) else user_id
+                q = q.join(
+                    AgentIdentity,
+                    AgentEvolutionProposal.identity_id == AgentIdentity.id,
+                )
+                if include_orphan:
+                    q = q.where(
+                        or_(
+                            AgentIdentity.user_id == uid,
+                            AgentIdentity.user_id.is_(None),
+                        )
+                    )
+                else:
+                    q = q.where(AgentIdentity.user_id == uid)
             if identity_id is not None:
-                q = q.where(AgentEvolutionProposal.identity_id == _uuid.UUID(str(identity_id)))
+                q = q.where(
+                    AgentEvolutionProposal.identity_id
+                    == _uuid.UUID(str(identity_id))
+                )
             if status is not None:
                 q = q.where(AgentEvolutionProposal.status == status)
             return list((await session.execute(q)).scalars().all())
+
+    async def assert_proposal_owner(
+        self,
+        proposal_id: Any,
+        user_id: Any,
+        *,
+        include_orphan: bool = False,
+    ) -> Any:
+        """归属校验：提案所属 Identity 必须属于 user（或 orphan 单用户窗口）。"""
+        from backend.models.agent_identity import AgentEvolutionProposal, AgentIdentity
+
+        pid = _uuid.UUID(str(proposal_id))
+        uid = _uuid.UUID(str(user_id)) if not isinstance(user_id, _uuid.UUID) else user_id
+        async with self._session_factory() as session:
+            row = (
+                await session.execute(
+                    select(AgentEvolutionProposal, AgentIdentity)
+                    .join(
+                        AgentIdentity,
+                        AgentEvolutionProposal.identity_id == AgentIdentity.id,
+                    )
+                    .where(AgentEvolutionProposal.id == pid)
+                )
+            ).first()
+            if row is None:
+                raise ValueError(f"提案不存在: {proposal_id}")
+            p, ident = row
+            owner = getattr(ident, "user_id", None)
+            if owner is None:
+                if include_orphan:
+                    return p
+                raise ValueError("提案所属员工无归属，拒绝跨用户操作")
+            if str(owner) != str(uid):
+                raise ValueError("无权操作他人员工的进化提案")
+            return p
