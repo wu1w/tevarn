@@ -89,26 +89,57 @@ Takton 是「多机 Agent 工作台」：用对话指挥本机和家里/公司�
         "title": "功能模块地图（侧栏对照）",
         "content": """# 功能模块地图
 
+## IconRail 主轨（左侧图标）
+| 区域 | 路径 | 一句话 |
+|------|------|--------|
+| 工作台 | `/` | 驾驶舱 / 组织简报 |
+| 员工 | `/agents` | 编制 Identity / 招聘 / 工单 |
+| 审批 | `/approvals` | 提权 + 进化建议 |
+| 联系员工 | `/chat` | 对话指挥 |
+| **用量** | `/usage` | Token / 计费 / 缓存命中（按供应商·模型筛选） |
+| 内核 | `/kernel` | 进程 / mediate / 观测 |
+| 设置 | `/settings` | 模型、Key、RAG 等 |
+
+## 其它常用页（URL 直达）
 | 区域 | 打开哪里 | 一句话 |
 |------|----------|--------|
-| 对话 | 工作区→对话 | 日常聊天与工具 |
 | 任务 | 工作区→任务 | 异步作业状态 |
 | 设备 | 工作区→设备 | 远程 @设备名 |
 | 工作流 | 工作区→工作流 | 多步自动化 |
-| 模型/设置 | Agent→配置 / 系统→设置 | 模型、Key、压缩 |
 | 工具/技能 | Agent→工具/技能 | 开关能力 |
-| 子代理 | Agent→子代理 | 专职小助手 |
-| MCP/配置文件 | Agent→MCP/Profiles | 扩展与人设 |
 | 知识库 | 记忆→知识 | 上传文档向量检索 |
 | Wiki | 记忆→Wiki | 图谱记忆 |
 | 定时 | 记忆→定时 | Cron 绑工作流 |
-| 上下文 | 记忆→上下文 | 长对话压缩 |
 | 自主进化 | 进化 | 任务经验→skill |
 | 通道 | 系统→通道 | QQ/企微等 |
-| 通知/Webhook | 系统相关页 | 事件推送 |
-| Packages | 扩展包 | 插件式能力 |
 
 不懂就问：「XX 怎么用」——优先查知识库预置手册。
+""",
+    },
+    {
+        "title": "Windows 路径与命令环境（必读）",
+        "content": """# Windows 路径与命令环境
+
+本机默认 **Windows + cmd**，不是 Linux bash。
+
+## 路径权威（常见漂移）
+| 角色 | 典型路径 |
+|------|----------|
+| 源码/沙箱根 | 仓库目录（如 `Documents\\kimi\\workspace\\takton`） |
+| 桌面会话契约与 memory | `%APPDATA%\\takton\\data\\workspace` |
+| Skills 实际 | `<仓库>\\.computers\\main\\home\\.takton\\skills` |
+| Kernel 旁路状态 | `%USERPROFILE%\\.takton`（grants、tool_results） |
+
+若自查提示「AppData workspace / ~/.takton/skills 不存在」：先核对上表 **实际** 路径，不要只信旧文档。
+
+## 命令语法
+| 目的 | 用 | 别用 |
+|------|----|------|
+| 串联 | `a & b` | bash 的 `a; b` |
+| 列目录 | `dir` | `ls`（除非 WSL/Git Bash） |
+
+## 用量
+侧栏 **用量** `/usage`：真实 LLM 回填的 token/缓存命中；**禁止**为演示灌 mock。
 """,
     },
 ]

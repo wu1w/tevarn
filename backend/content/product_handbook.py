@@ -21,20 +21,67 @@ Takton 是**自托管多机 Agent 工作台**。目标：尽量在**对话框**�
 - 「教我用知识库 / 定时任务 / 工作流」
 - 「我是小白，从头教」
 
-## 功能地图（侧栏）
-| 区域 | 页面 | 干什么 |
+## 功能地图（IconRail 主轨）
+| 区域 | 路径 | 干什么 |
 |------|------|--------|
-| 工作区 | 对话 / 任务 / 设备 / 工作流 | 日常干活与异步任务 |
-| Agent | 配置·模型 / 工具 / 技能 / 子代理 / MCP / 配置文件 | 能力与模型 |
-| 记忆 | 上下文 / 定时 / 知识 / Wiki | 记忆与自动化 |
-| 进化 | **自主进化** | 任务经验自动生成 skill/tool |
-| 系统 | 通道 / 通知·Webhook / 设置 / Packages | 对外连接与扩展 |
+| 工作台 | `/` | 驾驶舱 |
+| 员工 | `/agents` | 编制 / 工单 |
+| 审批 | `/approvals` | 提权 + 进化建议 |
+| 联系员工 | `/chat` | 对话 |
+| **用量** | `/usage` | Token / 计费 / 缓存命中（按供应商·模型） |
+| 内核 | `/kernel` | 进程与观测 |
+| 设置 | `/settings` | 模型与系统 |
+
+## 其它页（URL 仍可用）
+工作流 / 设备 / 知识 / Wiki / 定时 / 工具·技能 / 自主进化 / 通道 等。
 
 ## 原则
 1. **先问状态，再改配置**（避免盲改 API Key）。
 2. **高风险配置（API Key、服务地址）**必须你口头确认后再写。
 3. **远程命令**用 `@设备名 …`，本机文件用对话 + 工具。
 4. 菜单仍可用；对话是主路径。
+5. **Windows 默认 cmd**：串联用 `&`，列目录用 `dir`；路径以 memory 契约「路径权威」为准。
+6. **禁止 mock 用量数据**；ledger 只来自真实 LLM usage。
+""",
+    },
+    "usage_cache": {
+        "title": "用量与缓存命中率",
+        "body": """# 用量与缓存
+
+## 打开
+侧栏 **用量** → `/usage`
+
+## 能看什么
+- Tokens / 计费 tokens / LLM 轮次
+- Prompt cache 命中率、命中/未中、约节省
+- 按 **供应商（family）** 与 **模型** 筛选明细表
+
+## 数据来源
+- `GET /api/kernel/cost`（by_family / by_model）
+- `GET /api/kernel/cache/metrics`（families / models）
+- 由真实对话的 usage 回填；**kernel host 重启后进程内累计清零**
+
+## 注意
+- 不是账单系统，是本机观测面板
+- 不要为「页面好看」手工写入 mock
+""",
+    },
+    "windows_paths": {
+        "title": "Windows 路径与沙箱落盘",
+        "body": """# Windows 路径与沙箱
+
+## 命令环境
+默认 **cmd.exe**：`&` 串联、`dir` 列目录。误用 bash 的 `;` / `ls` 会报错，属于语法问题不是工具损坏。
+
+## 落盘对照
+| 角色 | 路径 |
+|------|------|
+| 源码/沙箱根 | 仓库目录 |
+| 会话契约 memory/AGENTS | `%APPDATA%\\takton\\data\\workspace` |
+| Skills | `<repo>\\.computers\\main\\home\\.takton\\skills` |
+| grants / tool_results | `%USERPROFILE%\\.takton` |
+
+自查「路径不存在」时按上表核对实际磁盘，再下结论。
 """,
     },
     "models": {
@@ -487,25 +534,35 @@ TOPIC_ALIASES: dict[str, str] = {
     "安全": "security",
     "security": "security",
     "速查": "dialog_cheatsheet",
-        "cheatsheet": "dialog_cheatsheet",
-        "清单": "checklist",
-        "checklist": "checklist",
-        "开箱": "checklist",
-        "图表": "charts_media",
-        "图表渲染": "charts_media",
-        "render": "charts_media",
-        "render_chart": "charts_media",
-        "mermaid": "charts_media",
-        "文生图": "charts_media",
-        "image_generate": "charts_media",
-        "图片生成": "charts_media",
-        "ppt": "charts_media",
-        "PPT": "charts_media",
-        "报告": "charts_media",
-        "docx": "charts_media",
-        "tts": "charts_media",
-        "语音": "charts_media",
-    }
+    "cheatsheet": "dialog_cheatsheet",
+    "清单": "checklist",
+    "checklist": "checklist",
+    "开箱": "checklist",
+    "图表": "charts_media",
+    "图表渲染": "charts_media",
+    "render": "charts_media",
+    "render_chart": "charts_media",
+    "mermaid": "charts_media",
+    "文生图": "charts_media",
+    "image_generate": "charts_media",
+    "图片生成": "charts_media",
+    "ppt": "charts_media",
+    "PPT": "charts_media",
+    "报告": "charts_media",
+    "docx": "charts_media",
+    "tts": "charts_media",
+    "语音": "charts_media",
+    "usage": "usage_cache",
+    "用量": "usage_cache",
+    "缓存": "usage_cache",
+    "cache": "usage_cache",
+    "命中率": "usage_cache",
+    "token": "usage_cache",
+    "windows": "windows_paths",
+    "路径": "windows_paths",
+    "沙箱": "windows_paths",
+    "cmd": "windows_paths",
+}
 
 
 def resolve_topic(topic: str | None) -> str:

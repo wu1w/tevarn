@@ -30,6 +30,13 @@ _DATE_RE = re.compile(r"^(?:memory[_-])?(\d{4}-\d{2}-\d{2})\.md$", re.I)
 
 
 def _candidate_roots(extra_roots: list[str | Path] | None = None) -> list[Path]:
+    """记忆/契约查找根（Windows 桌面 + 源码仓 + computer 虚拟 home）。
+
+    权威落盘常不一致：
+    - Electron userData：``%APPDATA%/takton/data/workspace``
+    - 源码开发：仓库根 / cwd
+    - Job 沙箱 skills/home：``<workspace>/.computers/<id>/home``
+    """
     roots: list[Path] = []
     for r in extra_roots or []:
         roots.append(Path(r))
@@ -37,6 +44,7 @@ def _candidate_roots(extra_roots: list[str | Path] | None = None) -> list[Path]:
         "TAKTON_FILE_BROWSER_ROOT",
         "TAKTON_WORKSPACE_DIR",
         "TAKTON_PROJECT_ROOT",
+        "TAKTON_HOME",
     ):
         v = (os.environ.get(env_key) or "").strip()
         if v:
@@ -46,11 +54,36 @@ def _candidate_roots(extra_roots: list[str | Path] | None = None) -> list[Path]:
     if appdata:
         roots.append(Path(appdata) / "takton" / "data" / "workspace")
         roots.append(Path(appdata) / "Takton" / "data" / "workspace")
+    # user profile ~/.takton (skills / grants 旁路；可能是目录或 junction)
+    home = os.environ.get("USERPROFILE") or os.environ.get("HOME") or ""
+    if home:
+        roots.append(Path(home) / ".takton")
     roots.append(Path.cwd())
+    repo_root: Path | None = None
     try:
-        roots.append(Path(__file__).resolve().parents[2])
+        repo_root = Path(__file__).resolve().parents[2]
+        roots.append(repo_root)
     except Exception:
         pass
+    # Computer 虚拟 home：沙箱内真实 skills / 部分记忆
+    for base in list(roots):
+        try:
+            computers = Path(base) / ".computers"
+            if not computers.is_dir():
+                continue
+            for child in computers.iterdir():
+                if not child.is_dir():
+                    continue
+                home_dir = child / "home"
+                if home_dir.is_dir():
+                    roots.append(home_dir)
+        except Exception:
+            continue
+    # 常见 main seat
+    if repo_root is not None:
+        main_home = repo_root / ".computers" / "main" / "home"
+        if main_home.is_dir():
+            roots.append(main_home)
     seen: set[str] = set()
     out: list[Path] = []
     for r in roots:

@@ -90,8 +90,11 @@ def load_workspace_contract(
 
     block = (
         "## WORKSPACE CONTRACT（会话启动契约 · 自动注入）\n"
-        "下列文件来自项目/workspace 根。缺失会标明 [missing]；"
-        "大文件会截断并带 [truncated]。用户本轮明确指令优先于契约。\n\n"
+        "下列文件来自项目/workspace 根、桌面 userData workspace "
+        "（`%APPDATA%/takton/data/workspace`）或 `.computers/*/home`。"
+        "缺失会标明 [missing]；大文件会截断并带 [truncated]。"
+        "用户本轮明确指令优先于契约。"
+        "Windows 默认 cmd：串联用 `&`，列目录用 `dir`。\n\n"
         + "\n\n".join(sections)
     )
     return block, meta
