@@ -502,7 +502,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
             (msg as unknown as { detail: string }).detail || 'Unknown error'
           );
         } else if (msg.type === 'confirm_request') {
-          // 危险操作确认请求 → 写入 store，触发前端弹窗（支持 once/session/agent）
+          // 危险操作 / clarify 选项 → 写入 store，触发前端弹窗
           const m = msg as import('@/types').ConfirmRequestMessage;
           import('@/stores/confirmStore').then((mod) => {
             mod.useConfirmStore.getState().showConfirm({
@@ -515,6 +515,8 @@ export function useWebSocket(options: UseWebSocketOptions) {
               agentName: m.agent_name || undefined,
               timeout: m.timeout ?? 120,
               sessionId: m.session_id || sid,
+              kind: m.kind || (m.reason === 'clarify' ? 'clarify' : 'danger'),
+              options: Array.isArray(m.options) ? m.options.map(String) : [],
             });
           });
         } else if (msg.type === 'confirm_expired') {
@@ -537,24 +539,29 @@ export function useWebSocket(options: UseWebSocketOptions) {
     // 注册危险操作确认的发送函数：弹窗组件经 store 调用（含 scope）
     // 返回 false → store 走 HTTP 兜底，避免 WS 断开时确认被吞
     import('@/stores/confirmStore').then((mod) => {
-      mod.useConfirmStore.getState().registerSender((confirmId, approved, scope) => {
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
-          try {
-            wsRef.current.send(
-              JSON.stringify({
-                type: 'confirm_response',
-                confirm_id: confirmId,
-                approved,
-                scope: approved ? scope : 'deny',
-              }),
-            );
-            return true;
-          } catch {
-            return false;
+      mod.useConfirmStore
+        .getState()
+        .registerSender((confirmId, approved, scope, choice) => {
+          if (wsRef.current?.readyState === WebSocket.OPEN) {
+            try {
+              wsRef.current.send(
+                JSON.stringify({
+                  type: 'confirm_response',
+                  confirm_id: confirmId,
+                  approved: Boolean(approved || (choice && String(choice).trim())),
+                  scope: approved || (choice && String(choice).trim()) ? scope : 'deny',
+                  ...(choice && String(choice).trim()
+                    ? { choice: String(choice).trim() }
+                    : {}),
+                }),
+              );
+              return true;
+            } catch {
+              return false;
+            }
           }
-        }
-        return false;
-      });
+          return false;
+        });
     });
   }, []);
 

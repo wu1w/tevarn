@@ -88,9 +88,10 @@ class SyncRequest(WSMessage):
 
 
 class ConfirmRequest(WSMessage):
-    """危险操作确认请求（服务端 → 前端弹窗）。
+    """危险操作 / clarify 确认请求（服务端 → 前端弹窗）。
 
     与 confirm_manager.request_confirmation 广播载荷对齐。
+    kind=clarify 时 options 为可点选项。
     """
 
     type: Literal["confirm_request"] = "confirm_request"
@@ -106,15 +107,18 @@ class ConfirmRequest(WSMessage):
     scopes: list[str] = Field(
         default_factory=lambda: ["once", "session", "agent", "deny"]
     )
+    kind: str = "danger"  # danger | clarify
+    options: list[str] = Field(default_factory=list)
 
 
 class ConfirmResponse(WSMessage):
-    """危险操作确认响应（前端 → 服务端）"""
+    """危险操作 / clarify 确认响应（前端 → 服务端）"""
 
     type: Literal["confirm_response"] = "confirm_response"
     confirm_id: str
     approved: bool
     scope: Optional[str] = None  # once | session | agent | deny
+    choice: Optional[str] = None  # clarify 选项原文
 
 
 class ScreenshotEvent(WSMessage):

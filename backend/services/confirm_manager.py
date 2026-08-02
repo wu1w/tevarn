@@ -33,6 +33,8 @@ class ConfirmOutcome:
     approved: bool
     reason: str  # approved | denied | timeout | no_channel | not_connected | broadcast_failed
     scope: ConfirmScope = "once"
+    # clarify 弹窗：用户点选的选项原文（危险确认时为空）
+    choice: str | None = None
 
     def __bool__(self) -> bool:
         return self.approved
@@ -43,6 +45,8 @@ class ConfirmOutcome:
 
     def describe(self) -> str:
         if self.approved:
+            if self.choice:
+                return f"用户选择：{self.choice}"
             scope_zh = {
                 "once": "允许一次",
                 "session": "本会话允许",
@@ -150,8 +154,14 @@ async def request_confirmation(
     agent_id: str | None = None,
     agent_name: str | None = None,
     user_id: str | None = None,
+    options: list[str] | None = None,
+    kind: str = "danger",
 ) -> ConfirmOutcome:
     """推送确认请求并等待用户决定（含授权作用域）。
+
+    kind:
+      - danger（默认）：允许一次 / 本会话 / 本员工 / 拒绝
+      - clarify：展示 options 选项按钮 + 取消；回传 choice
 
     Delivery:
     - Prefer session WS; if that tab is gone, fan-out to any live WS of the same user
@@ -208,15 +218,30 @@ async def request_confirmation(
     confirm_id = _uuid.uuid4().hex[:12]
     event = asyncio.Event()
     # 绑定 user_id：HTTP resolve 时校验，防止任意登录用户 resolve 他人 confirm
+    kind_norm = (kind or "danger").strip().lower()
+    if kind_norm not in ("danger", "clarify"):
+        kind_norm = "danger"
+    opt_list: list[str] = []
+    if isinstance(options, list):
+        for o in options[:8]:
+            s = str(o or "").strip()
+            if s:
+                opt_list.append(s)
     holder: dict = {
         "approved": False,
         "scope": "deny",
+        "choice": None,
         "user_id": owner_uid,
         "session_id": str(session_id) if session_id else "",
+        "kind": kind_norm,
         "payload": None,  # 填入后供 sync 重放
     }
     _pending[confirm_id] = (event, holder)
 
+    if kind_norm == "clarify":
+        scopes = ["choice", "deny"] if opt_list else ["once", "deny"]
+    else:
+        scopes = ["once", "session", "agent", "deny"]
     payload = {
         "type": "confirm_request",
         "session_id": str(session_id),
@@ -228,8 +253,10 @@ async def request_confirmation(
         "tool": tool or "",
         "agent_id": agent_id or "",
         "agent_name": agent_name or "",
-        "scopes": ["once", "session", "agent", "deny"],
+        "scopes": scopes,
         "user_id": owner_uid,
+        "kind": kind_norm,
+        "options": opt_list,
     }
     holder["payload"] = dict(payload)
     try:
@@ -265,9 +292,11 @@ async def request_confirmation(
         scope_raw = str(holder.get("scope") or ("once" if approved else "deny")).lower()
         if scope_raw not in ("once", "session", "agent", "deny"):
             scope_raw = "once" if approved else "deny"
+        choice_raw = holder.get("choice")
+        choice = str(choice_raw).strip() if choice_raw else None
         if not approved:
-            return ConfirmOutcome(False, "denied", "deny")
-        return ConfirmOutcome(True, "approved", scope_raw)  # type: ignore[arg-type]
+            return ConfirmOutcome(False, "denied", "deny", None)
+        return ConfirmOutcome(True, "approved", scope_raw, choice)  # type: ignore[arg-type]
     except asyncio.TimeoutError:
         logger.info("confirm: timeout (%ss), auto-deny: %s", timeout, command[:120])
         # 通知前端关窗（否则弹窗会一直挂着，用户点允许静默失败）
@@ -364,8 +393,9 @@ def resolve_confirmation(
     *,
     scope: str | None = None,
     user_id: str | None = None,
+    choice: str | None = None,
 ) -> bool:
-    """前端回传确认结果。scope: once|session|agent|deny。
+    """前端回传确认结果。scope: once|session|agent|deny；clarify 可带 choice。
 
     归属规则：
     - pending.owner 有值：必须与 user_id 匹配（HTTP/WS 均应传）
@@ -394,10 +424,15 @@ def resolve_confirmation(
             confirm_id[:8],
         )
         return False
+    choice_s = str(choice).strip() if choice is not None else ""
+    # clarify：选了选项即视为批准
+    if choice_s and not approved:
+        approved = True
     holder["approved"] = bool(approved)
+    holder["choice"] = choice_s or None
     if approved:
         s = (scope or "once").strip().lower()
-        # 白名单：脏 scope 不得写入
+        # 白名单：脏 scope 不得写入（choice 不是 grant scope）
         if s not in ("once", "session", "agent"):
             s = "once"
         holder["scope"] = s

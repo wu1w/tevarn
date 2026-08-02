@@ -1021,13 +1021,16 @@ async def websocket_endpoint(
                 )
 
             elif msg_type == "confirm_response":
-                # 危险操作确认结果：唤醒等待的工具执行协程
-                # scope: once | session | agent | deny
+                # 危险操作确认 / clarify 选项：唤醒等待的工具执行协程
+                # scope: once | session | agent | deny；choice: clarify 选项原文
                 from backend.services import confirm_manager
 
                 confirm_id = str(data.get("confirm_id", ""))
                 approved = bool(data.get("approved", False))
                 scope = data.get("scope")
+                choice = data.get("choice")
+                if choice is not None and str(choice).strip() and not approved:
+                    approved = True
                 if scope is None and approved:
                     scope = "once"
                 confirm_manager.resolve_confirmation(
@@ -1035,6 +1038,7 @@ async def websocket_endpoint(
                     approved,
                     scope=str(scope) if scope is not None else None,
                     user_id=str(user_id) if user_id else None,
+                    choice=str(choice) if choice is not None else None,
                 )
 
             elif msg_type == "sync":

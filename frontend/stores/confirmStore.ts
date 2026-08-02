@@ -14,6 +14,10 @@ export interface ConfirmRequestData {
   timeout?: number;
   /** 来源会话（多 tab fan-out 时展示，避免在 B 批 A 的操作时无上下文） */
   sessionId?: string;
+  /** danger | clarify */
+  kind?: string;
+  /** clarify 选项 */
+  options?: string[];
 }
 
 interface ConfirmState {
@@ -22,11 +26,16 @@ interface ConfirmState {
   /** 等待中的后续确认（后到不覆盖先到） */
   queue: ConfirmRequestData[];
   /**
-   * WS 发送：confirm_id + approved + scope。
+   * WS 发送：confirm_id + approved + scope + optional choice。
    * 返回 true=已发出；false=WS 不可用（调用方应走 HTTP 兜底）。
    */
   _sender:
-    | ((confirmId: string, approved: boolean, scope: ConfirmScope) => boolean)
+    | ((
+        confirmId: string,
+        approved: boolean,
+        scope: ConfirmScope,
+        choice?: string,
+      ) => boolean)
     | null;
   /** 本地倒计时到期 / 服务端 confirm_expired */
   expireConfirm: (confirmId: string, reason?: string) => void;
@@ -34,11 +43,16 @@ interface ConfirmState {
   showConfirm: (data: ConfirmRequestData) => void;
   registerSender: (
     fn:
-      | ((confirmId: string, approved: boolean, scope: ConfirmScope) => boolean)
+      | ((
+          confirmId: string,
+          approved: boolean,
+          scope: ConfirmScope,
+          choice?: string,
+        ) => boolean)
       | null,
   ) => void;
   /** 用户决定当前弹窗；若有队列则弹出下一个 */
-  respond: (scope: ConfirmScope) => void;
+  respond: (scope: ConfirmScope, choice?: string) => void;
 }
 
 function _nextPreferCurrent(queue: ConfirmRequestData[]): {
@@ -143,16 +157,22 @@ export const useConfirmStore = create<ConfirmState>((set, get) => ({
     }
   },
 
-  respond: (scope) => {
+  respond: (scope, choice) => {
     const { pending, queue, _sender } = get();
     if (!pending) return;
-    const approved = scope !== 'deny';
+    const choiceText = (choice || '').trim();
+    const approved = scope !== 'deny' || Boolean(choiceText);
     const id = pending.confirmId;
+    const grantScope: ConfirmScope = choiceText
+      ? 'once'
+      : scope === 'deny'
+        ? 'deny'
+        : scope;
     // 优先 WS；sender 返回 false / 未注册 → HTTP 兜底（断线不能吞确认）
     let sent = false;
     if (_sender) {
       try {
-        sent = Boolean(_sender(id, approved, scope));
+        sent = Boolean(_sender(id, approved && scope !== 'deny', grantScope, choiceText || undefined));
       } catch {
         sent = false;
       }
@@ -160,7 +180,12 @@ export const useConfirmStore = create<ConfirmState>((set, get) => ({
     if (!sent && typeof window !== 'undefined') {
       void import('@/lib/api')
         .then(({ resolveConfirmHttp }) =>
-          resolveConfirmHttp(id, approved, scope === 'deny' ? 'deny' : scope),
+          resolveConfirmHttp(
+            id,
+            approved && scope !== 'deny',
+            grantScope === 'deny' ? 'deny' : grantScope,
+            choiceText || undefined,
+          ),
         )
         .catch((e) => console.warn('confirm HTTP fallback failed', e));
     }

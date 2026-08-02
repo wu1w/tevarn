@@ -562,6 +562,8 @@ async def host_restart_api(
 class ConfirmResolveBody(BaseModel):
     approved: bool = False
     scope: str = Field("once", pattern="^(once|session|agent|deny)$")
+    # clarify 选项原文（可选）
+    choice: str | None = None
 
 
 @router.post("/confirm/{confirm_id}")
@@ -570,7 +572,7 @@ async def confirm_resolve_http(
     body: ConfirmResolveBody,
     current_user: Annotated[UserRead, Depends(get_current_user)],
 ):
-    """危险确认 HTTP 兜底：WS sender 未注册时前端可 POST 此路径。
+    """危险确认 / clarify HTTP 兜底：WS sender 未注册时前端可 POST 此路径。
 
     校验 pending.user_id == current_user，防止横向 resolve。
     过期/不存在 → 410；归属不符 → 403。
@@ -599,16 +601,21 @@ async def confirm_resolve_http(
     scope = str(body.scope or "once").lower()
     if scope not in ("once", "session", "agent", "deny"):
         scope = "deny" if not body.approved else "once"
+    approved = bool(body.approved)
+    choice = (body.choice or "").strip() or None
+    if choice and not approved:
+        approved = True
 
     ok = confirm_manager.resolve_confirmation(
         confirm_id,
-        bool(body.approved),
+        approved,
         scope=scope,
         user_id=str(current_user.id),
+        choice=choice,
     )
     if not ok:
         raise HTTPException(status_code=410, detail="confirm expired or not found")
-    return {"ok": True, "confirm_id": confirm_id}
+    return {"ok": True, "confirm_id": confirm_id, "choice": choice}
 
 
 @router.get("/host/watchdog")

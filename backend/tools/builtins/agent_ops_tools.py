@@ -367,26 +367,40 @@ class ClarifyTool(BaseTool):
         q = (kwargs.get("question") or "").strip()
         if not q:
             return "[Error] question required"
-        opts = kwargs.get("options") or []
-        if isinstance(opts, list) and opts:
-            opt_txt = "\n".join(f"- {o}" for o in opts[:4])
-            cmd = f"{q}\nOptions:\n{opt_txt}"
-        else:
-            cmd = q
+        raw_opts = kwargs.get("options") or []
+        opts: list[str] = []
+        if isinstance(raw_opts, list):
+            for o in raw_opts[:4]:
+                s = str(o or "").strip()
+                if s:
+                    opts.append(s)
+        # 弹窗正文只放问题；选项走独立 options 字段，前端渲染可点按钮
         outcome = await confirm_manager.request_confirmation(
             kwargs.get("_ws_manager"),
             kwargs.get("_session_id"),
-            title="需要你的确认",
-            command=cmd,
+            title="需要你的选择" if opts else "需要你的确认",
+            command=q,
             reason="clarify",
             timeout=float(kwargs.get("timeout") or 60),
+            tool="clarify",
             user_id=str(
                 kwargs.get("_user_id") or kwargs.get("user_id") or ""
             ).strip()
             or None,
+            options=opts or None,
+            kind="clarify",
+            agent_id=str(kwargs.get("_identity_id") or "").strip() or None,
+            agent_name=str(
+                kwargs.get("_identity_name")
+                or kwargs.get("_contact_agent")
+                or ""
+            ).strip()
+            or None,
         )
         if outcome:
-            return "User approved."
+            if outcome.choice:
+                return f"User selected: {outcome.choice}"
+            return "User approved (yes)."
         # 没送达时明确告诉模型「问不到人」，否则它会把环境故障当成用户否决，
         # 进而擅自替用户做决定继续往下跑。
         return f"Could not get an answer: {outcome.describe()}"

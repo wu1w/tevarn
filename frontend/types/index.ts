@@ -514,7 +514,11 @@ export interface ConfirmRequestMessage extends WSMessage {
   agent_id?: string;
   agent_name?: string;
   user_id?: string;
-  scopes?: Array<'once' | 'session' | 'agent' | 'deny'>;
+  scopes?: Array<'once' | 'session' | 'agent' | 'deny' | 'choice'>;
+  /** danger=危险命令授权；clarify=向用户提问选项 */
+  kind?: 'danger' | 'clarify' | string;
+  /** clarify 可点选项 */
+  options?: string[];
 }
 
 export interface ConfirmResponseMessage extends WSMessage {
@@ -522,6 +526,8 @@ export interface ConfirmResponseMessage extends WSMessage {
   confirm_id: string;
   approved: boolean;
   scope?: 'once' | 'session' | 'agent' | 'deny';
+  /** clarify 所选选项原文 */
+  choice?: string;
 }
 
 export interface SettingsChangedMessage extends WSMessage {
