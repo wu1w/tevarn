@@ -305,18 +305,53 @@ impl IsolationSupervisor {
 
     /// Platform command builder. Free-form agent command lines go through
     /// the system shell so builtins (`echo`, `dir`) and pipes work.
+    ///
+    /// Environment is scrubbed: clear inherited secrets (TAKTON_*_SECRET / keys).
     fn build_command(cmd_line: &str) -> Command {
         #[cfg(windows)]
         {
             let mut c = Command::new("cmd");
             c.args(["/C", cmd_line]);
+            Self::scrub_child_env(&mut c);
             c
         }
         #[cfg(not(windows))]
         {
             let mut c = Command::new("sh");
             c.args(["-c", cmd_line]);
+            Self::scrub_child_env(&mut c);
             c
+        }
+    }
+
+    fn scrub_child_env(cmd: &mut Command) {
+        // Remove control-plane secrets from child env (defense in depth).
+        const DROP_PREFIXES: &[&str] = &[
+            "TAKTON_KERNEL_RPC_SECRET",
+            "TAKTON_TOKEN_HMAC_SECRET",
+            "TAKTON_JWT_SECRET",
+            "SETTINGS_ENCRYPTION_KEY",
+            "TAKTON_SETTINGS_ENCRYPTION",
+        ];
+        for k in DROP_PREFIXES {
+            cmd.env_remove(k);
+        }
+        // Also drop any env key that looks like a secret (vars() is an iterator, not Result)
+        for (k, _) in std::env::vars() {
+            let ku = k.to_ascii_uppercase();
+            if ku.contains("SECRET")
+                || ku.ends_with("_API_KEY")
+                || ku.ends_with("_TOKEN")
+                || ku.contains("PASSWORD")
+            {
+                if ku.starts_with("TAKTON_")
+                    || ku.starts_with("SETTINGS_")
+                    || ku.contains("JWT")
+                    || ku.contains("HMAC")
+                {
+                    cmd.env_remove(&k);
+                }
+            }
         }
     }
 

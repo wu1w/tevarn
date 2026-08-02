@@ -1035,6 +1035,23 @@ fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: 
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             let backend = params.get("backend").and_then(|v| v.as_str());
+            // 强制过 court：任意 OS 命令必须留下裁决记录
+            let args = json!({"command": command});
+            let decision = kernel.decide_tool_and_emit("command", Some(&args), Some(pid), None, None);
+            if decision.verdict != "allow" {
+                return Err((
+                    -32001,
+                    format!(
+                        "isolation_spawn_os denied by court: {} ({})",
+                        decision.verdict, decision.reason
+                    ),
+                    json!({
+                        "verdict": decision.verdict,
+                        "layer": decision.layer,
+                        "reason": decision.reason,
+                    }),
+                ));
+            }
             kernel
                 .isolation_spawn_os(pid, command, backend)
                 .map_err(map_err)
@@ -2397,45 +2414,90 @@ fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: 
     }
 }
 
-/// 特权方法：若设置 TAKTON_KERNEL_RPC_SECRET，必须 params._rpc_auth 匹配
-const PRIVILEGED: &[&str] = &[
-    "approve_escalation",
-    "deny_escalation",
-    "top_up_budget",
-    "set_court_policy",
-    "set_permission_rules",
-    "llm_set_config",
-    "create_process",
-    "end_process",
-    "kill_process",
-];
+/// 探活方法：无需 RPC secret（其余方法一律需认证）。
+const PUBLIC_METHODS: &[&str] = &["ping", "health", "list_methods", "abi_version"];
+
+/// 确保存在 RPC secret：env 优先，否则读写 `~/.takton/rpc.secret`（仅当前用户可读）。
+fn ensure_rpc_secret() -> String {
+    if let Ok(s) = std::env::var("TAKTON_KERNEL_RPC_SECRET") {
+        let t = s.trim().to_string();
+        if !t.is_empty() {
+            return t;
+        }
+    }
+    let path = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".takton")
+        .join("rpc.secret");
+    if let Ok(existing) = std::fs::read_to_string(&path) {
+        let t = existing.trim().to_string();
+        if !t.is_empty() {
+            // 同步到 env，便于同机 Python 客户端读取
+            std::env::set_var("TAKTON_KERNEL_RPC_SECRET", &t);
+            return t;
+        }
+    }
+    // 生成 secret：时间戳 + 地址熵（无需额外 crate）
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    Instant::now().hash(&mut h);
+    std::process::id().hash(&mut h);
+    path.hash(&mut h);
+    let secret = format!("{:016x}{:016x}{:016x}{:016x}", h.finish(), h.finish().wrapping_mul(0x9e37), Instant::now().elapsed().as_nanos(), std::process::id());
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&path)
+        {
+            use std::io::Write;
+            let _ = f.write_all(secret.as_bytes());
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = std::fs::write(&path, secret.as_bytes());
+    }
+    std::env::set_var("TAKTON_KERNEL_RPC_SECRET", &secret);
+    info!("kernel RPC secret persisted to {}", path.display());
+    secret
+}
 
 fn check_rpc_auth(method: &str, params: &Value) -> Result<(), (i64, String, Value)> {
-    let secret = std::env::var("TAKTON_KERNEL_RPC_SECRET")
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    let Some(secret) = secret else {
-        return Ok(()); // 未配置则保持 localhost 兼容
-    };
-    // ping/health/list_methods 始终放行（探活）
-    if matches!(method, "ping" | "health" | "list_methods" | "abi_version") {
+    // 探活始终放行
+    if PUBLIC_METHODS.contains(&method) {
         return Ok(());
     }
-    let need = PRIVILEGED.contains(&method);
-    if !need {
-        return Ok(());
-    }
+    // 默认全部需认证（消除「漏加白名单」旁路）
+    let secret = ensure_rpc_secret();
     let got = params
         .get("_rpc_auth")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    if got == secret {
+    // 常量时间比较（长度不等时仍做一轮比较）
+    let a = secret.as_bytes();
+    let b = got.as_bytes();
+    let mut diff = (a.len() ^ b.len()) as u8;
+    let n = a.len().min(b.len());
+    for i in 0..n {
+        diff |= a[i] ^ b[i];
+    }
+    if diff == 0 && a.len() == b.len() && !a.is_empty() {
         return Ok(());
     }
     Err((
         -32013,
-        "RPC auth required: set params._rpc_auth = TAKTON_KERNEL_RPC_SECRET".into(),
+        "RPC auth required: set params._rpc_auth = TAKTON_KERNEL_RPC_SECRET (or ~/.takton/rpc.secret)".into(),
         json!({"method": method}),
     ))
 }

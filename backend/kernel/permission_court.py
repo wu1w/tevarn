@@ -277,10 +277,24 @@ def _try_rust_decide_tool(
                 pass
         except Exception:
             pass
+        # 审计 P1-K2：set_court_policy 失败不得静默继续用陈旧/默认策略裁决
         try:
             k._call("set_court_policy", policy_payload)
-        except Exception:
-            pass
+        except Exception as policy_err:
+            logger.warning(
+                "set_court_policy failed tool=%s: %s: %s — fail-closed deny",
+                name,
+                type(policy_err).__name__,
+                policy_err,
+            )
+            return CourtDecision(
+                tool=name,
+                args_digest=args_digest(name, args if isinstance(args, dict) else {}),
+                verdict="deny",
+                matched_rule="court:policy_sync_failed",
+                layer="secret_floor",
+                reason=f"set_court_policy failed: {policy_err}",
+            )
         r = k._call("decide_tool", payload)
         if isinstance(r, dict) and r.get("verdict"):
             return _court_from_rust_dict(r)

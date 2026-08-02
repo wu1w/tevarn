@@ -409,10 +409,48 @@ class _JsonRpcClient:
                 raise TimeoutError(
                     f"kernel host RPC write timeout ({_RPC_TIMEOUT}s) method={method}"
                 ) from e
-            raw = self._recv_line()
-            if not raw:
-                raise ConnectionError("kernel host closed connection")
-            resp = json.loads(raw.decode("utf-8"))
+            # 审计 P1-K4：必须比对响应 id；超时后缓冲区可能残留旧响应，
+            # 错位会把别人的裁决当成本次结果。
+            deadline = time.monotonic() + float(self.rpc_timeout)
+            resp: dict[str, Any] | None = None
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    # 清空半读缓冲，避免永久错位
+                    self._recv_buf = bytearray()
+                    raise TimeoutError(
+                        f"kernel host RPC read timeout ({self.rpc_timeout}s) "
+                        f"method={method} waiting id={req_id}"
+                    )
+                prev_to = self._sock.gettimeout()
+                try:
+                    self._sock.settimeout(max(0.05, remaining))
+                    raw = self._recv_line()
+                finally:
+                    try:
+                        self._sock.settimeout(prev_to)
+                    except Exception:
+                        pass
+                if not raw:
+                    raise ConnectionError("kernel host closed connection")
+                try:
+                    candidate = json.loads(raw.decode("utf-8"))
+                except json.JSONDecodeError as e:
+                    raise ConnectionError(f"kernel host invalid JSON: {e}") from e
+                if not isinstance(candidate, dict):
+                    continue
+                got_id = candidate.get("id")
+                if got_id is None or got_id == req_id:
+                    resp = candidate
+                    break
+                # 丢弃错位/过期响应，继续等到匹配 id
+                logger.warning(
+                    "kernel RPC id mismatch method=%s expected=%s got=%s — discarded",
+                    method,
+                    req_id,
+                    got_id,
+                )
+            assert resp is not None
             if "error" in resp and resp["error"] is not None:
                 err = resp["error"]
                 msg = str(err.get("message") or "kernel error")
@@ -905,9 +943,19 @@ class RustAgentKernel:
                 pass
 
     def _inject_rpc_auth(self, params: dict[str, Any] | None) -> dict[str, Any]:
-        """若配置 TAKTON_KERNEL_RPC_SECRET，注入特权 RPC 鉴权。"""
+        """注入 RPC 鉴权：env 或 ~/.takton/rpc.secret（与 host ensure_rpc_secret 对齐）。"""
         p = dict(params or {})
         secret = (os.environ.get("TAKTON_KERNEL_RPC_SECRET") or "").strip()
+        if not secret:
+            try:
+                home = os.environ.get("USERPROFILE") or os.environ.get("HOME") or ""
+                sp = Path(home) / ".takton" / "rpc.secret"
+                if sp.is_file():
+                    secret = sp.read_text(encoding="utf-8", errors="replace").strip()
+                    if secret:
+                        os.environ["TAKTON_KERNEL_RPC_SECRET"] = secret
+            except Exception:
+                secret = ""
         if secret:
             p["_rpc_auth"] = secret
         return p

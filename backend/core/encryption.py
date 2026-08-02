@@ -1,11 +1,16 @@
 """
 Setting 敏感字段加密工具
 基于 Fernet (AES-128-CBC + HMAC) 对存储在数据库中的 API Key 等敏感值进行加密。
+
+审计 P0-C2：默认使用独立密钥（~/.takton/secrets.json），不再仅由 JWT 派生。
+JWT 派生密钥仅作解密回落，兼容历史数据。
 """
 
+import json
 import logging
 import os
 from base64 import urlsafe_b64encode
+from pathlib import Path
 from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -17,13 +22,15 @@ from backend.core.config import settings
 logger = logging.getLogger(__name__)
 
 
-def _derive_key_from_jwt_secret() -> bytes:
-    """当未配置独立加密密钥时，使用 HKDF 从 JWT_SECRET 派生 32 字节密钥。
+def _secrets_file_path() -> Path:
+    override = os.environ.get("TAKTON_SECRETS_FILE", "").strip()
+    if override:
+        return Path(override)
+    return Path.home() / ".takton" / "secrets.json"
 
-    salt 必须跨进程稳定，否则重启后无法解密已加密的 settings。
-    优先：settings.settings_encryption_salt → SETTINGS_ENCRYPTION_SALT →
-    派生自 jwt_secret 的固定 HKDF 材料（最后手段，仍保证确定性）。
-    """
+
+def _derive_key_from_jwt_secret() -> bytes:
+    """历史兼容：从 JWT_SECRET 派生 Fernet 密钥（仅解密回落，不再作为默认写密钥）。"""
     salt_str = (
         (settings.settings_encryption_salt or "").strip()
         or os.environ.get("SETTINGS_ENCRYPTION_SALT", "").strip()
@@ -32,17 +39,12 @@ def _derive_key_from_jwt_secret() -> bytes:
     if salt_str:
         salt = salt_str.encode("utf-8")
     else:
-        # 确定性 fallback：不使用随机 salt，避免每次重启密钥变化
         salt = HKDF(
             algorithm=hashes.SHA256(),
             length=16,
             salt=b"takton-fallback-salt-v1",
             info=b"takton-settings-salt-fallback",
         ).derive(settings.jwt_secret.encode("utf-8"))
-        logger.warning(
-            "SETTINGS_ENCRYPTION_SALT is not set; using deterministic fallback salt "
-            "derived from JWT secret. Set TAKTON_SETTINGS_ENCRYPTION_SALT for isolation."
-        )
     return urlsafe_b64encode(
         HKDF(
             algorithm=hashes.SHA256(),
@@ -53,37 +55,87 @@ def _derive_key_from_jwt_secret() -> bytes:
     )
 
 
+def _load_or_create_independent_key() -> str:
+    """独立加密密钥：env → secrets.json → 生成并持久化。"""
+    raw = (
+        os.environ.get("SETTINGS_ENCRYPTION_KEY", "").strip()
+        or os.environ.get("TAKTON_SETTINGS_ENCRYPTION_KEY", "").strip()
+    )
+    if raw:
+        # 校验可构造 Fernet
+        Fernet(raw.encode("utf-8") if not isinstance(raw, (bytes, bytearray)) else raw)
+        return raw if isinstance(raw, str) else raw.decode("utf-8")
+
+    path = _secrets_file_path()
+    data: dict = {}
+    try:
+        if path.exists():
+            data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        data = {}
+
+    stored = str(data.get("settings_encryption_key", "")).strip()
+    if stored:
+        try:
+            Fernet(stored.encode("utf-8"))
+            os.environ.setdefault("SETTINGS_ENCRYPTION_KEY", stored)
+            return stored
+        except Exception:
+            logger.warning("Stored settings_encryption_key invalid; regenerating")
+
+    new_key = Fernet.generate_key().decode("utf-8")
+    data["settings_encryption_key"] = new_key
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+        logger.info(
+            "Generated independent SETTINGS_ENCRYPTION_KEY and persisted to %s",
+            path,
+        )
+    except Exception as e:
+        logger.warning(
+            "Cannot persist SETTINGS_ENCRYPTION_KEY to %s (%s); using ephemeral key",
+            path,
+            e,
+        )
+    os.environ["SETTINGS_ENCRYPTION_KEY"] = new_key
+    return new_key
+
+
 _fernet_cache: Fernet | None = None
+_legacy_fernet_cache: Fernet | None = None
 
 
 def _get_fernet() -> Fernet:
+    """写路径 / 主读路径：独立密钥（与 JWT 解耦）。"""
     global _fernet_cache
     if _fernet_cache is not None:
         return _fernet_cache
 
-    raw_key = os.environ.get("SETTINGS_ENCRYPTION_KEY", "").strip()
-    if not raw_key:
-        logger.warning(
-            "SETTINGS_ENCRYPTION_KEY is not set; deriving encryption key from JWT_SECRET. "
-            "Set a dedicated SETTINGS_ENCRYPTION_KEY for stronger isolation."
+    try:
+        raw_key = _load_or_create_independent_key()
+        _fernet_cache = Fernet(raw_key.encode("utf-8"))
+    except Exception as e:
+        logger.error(
+            "Independent SETTINGS_ENCRYPTION_KEY unavailable (%s); "
+            "falling back to JWT-derived key for this process",
+            e,
         )
         _fernet_cache = Fernet(_derive_key_from_jwt_secret())
-    else:
-        try:
-            _fernet_cache = Fernet(raw_key)
-        except Exception as e:
-            # 此前这里只按 len == 44 判断，长度不对就**静默**回落到 JWT 派生密钥：
-            # 用户以为自己配了独立加密密钥，实际根本没生效，而且毫无提示。
-            logger.error(
-                "SETTINGS_ENCRYPTION_KEY is set but invalid (%s); falling back to the "
-                "key derived from JWT_SECRET. Generate a proper one with: "
-                "python -c \"from cryptography.fernet import Fernet; "
-                "print(Fernet.generate_key().decode())\"",
-                e,
-            )
-            _fernet_cache = Fernet(_derive_key_from_jwt_secret())
 
     return _fernet_cache
+
+
+def _get_legacy_fernet() -> Fernet:
+    """解密回落：历史 JWT 派生密钥。"""
+    global _legacy_fernet_cache
+    if _legacy_fernet_cache is None:
+        _legacy_fernet_cache = Fernet(_derive_key_from_jwt_secret())
+    return _legacy_fernet_cache
 
 
 def _is_sensitive_key(key: str) -> bool:
@@ -126,6 +178,11 @@ def decrypt_setting(value: Any, key: str | None = None) -> Any:
     try:
         return _get_fernet().decrypt(value.encode("utf-8")).decode("utf-8")
     except InvalidToken:
+        # 历史数据：JWT 派生密钥解密回落（审计 P0-C2 迁移兼容）
+        try:
+            return _get_legacy_fernet().decrypt(value.encode("utf-8")).decode("utf-8")
+        except InvalidToken:
+            pass
         if key is not None and not _is_sensitive_key(key):
             logger.warning(
                 "Setting %s looks encrypted but cannot decrypt (key mismatch?). "
@@ -133,9 +190,7 @@ def decrypt_setting(value: Any, key: str | None = None) -> Any:
                 key,
             )
             return ""
-        # 敏感字段解密失败：可能是旧明文误判，或密钥已轮换
         logger.debug("Setting value is not decryptable with current key, key=%s", key)
-        # 若整段都是 token 形态且解密失败，不要把密文当 api_key 用
         if key is not None and _is_sensitive_key(key):
             return ""
         return value

@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from backend.kernel import get_kernel
 from backend.schemas.user import UserRead
 
-from ..dependencies import get_current_user
+from ..dependencies import get_current_user, require_admin
 
 logger = logging.getLogger(__name__)
 
@@ -922,8 +922,9 @@ async def list_escalations(
 @router.post("/escalations/{request_id}/approve")
 async def approve_escalation(
     request_id: str,
-    current_user: Annotated[UserRead, Depends(get_current_user)],
+    current_user: Annotated[UserRead, Depends(require_admin)],
 ):
+    """审批 Agent 提权：仅管理员（审计 P1：普通用户不得自批 shell）。"""
     kernel = get_kernel()
     # 跨 worker：先把 DB 中的 pending 水合进本进程内存
     await kernel.ensure_escalation_loaded(request_id)
@@ -938,7 +939,7 @@ async def approve_escalation(
 @router.post("/escalations/{request_id}/deny")
 async def deny_escalation(
     request_id: str,
-    current_user: Annotated[UserRead, Depends(get_current_user)],
+    current_user: Annotated[UserRead, Depends(require_admin)],
 ):
     kernel = get_kernel()
     await kernel.ensure_escalation_loaded(request_id)

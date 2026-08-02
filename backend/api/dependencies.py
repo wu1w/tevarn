@@ -285,19 +285,44 @@ async def require_admin(
     return current_user
 
 
-def assert_session_owner(session_user_id, current_user: UserRead) -> None:
+def assert_session_owner(
+    session_user_id,
+    current_user: UserRead,
+    *,
+    request: Request | None = None,
+    allow_single_user_any: bool = False,
+) -> None:
     """校验会话归属。
 
-    single_user_mode 下本机可访问任意会话（桌面单用户产品语义，
-    避免 admin@takton.dev 与其它本地账号之间的 403 错乱）。
-    多用户模式仍严格按 user_id 隔离。
+    - 多用户：严格 user_id
+    - 单用户 + loopback（可选 request）：允许跨本地账号（桌面产品语义）
+    - 无主会话：仅 superuser 或 allow_single_user_any
     """
     if session_user_id is None:
+        if current_user.is_superuser or (
+            allow_single_user_any and settings.single_user_mode
+        ):
+            return
+        # 单用户桌面：无 request 时保持兼容（多数路由未传 Request）
+        if settings.single_user_mode and request is None:
+            return
+        if settings.single_user_mode and request is not None:
+            client_host = request.client.host if request.client else None
+            if _is_loopback_host(client_host):
+                return
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Access denied"
+        )
+    if session_user_id == current_user.id:
         return
     if settings.single_user_mode:
-        return
-    if session_user_id != current_user.id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+        if request is None:
+            # 兼容旧调用：单用户默认放行（桌面）
+            return
+        client_host = request.client.host if request.client else None
+        if _is_loopback_host(client_host):
+            return
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
 
 # ---- Services (工厂模式) ----

@@ -23,7 +23,7 @@ from backend.packages.session_packages import (
 )
 from backend.schemas.user import UserRead
 
-from ..dependencies import assert_session_owner, get_current_user
+from ..dependencies import assert_session_owner, get_current_user, require_admin
 
 logger = logging.getLogger(__name__)
 
@@ -202,7 +202,7 @@ async def export_pkg(
 
 @router.post("/install")
 async def install_pkg_upload(
-    current_user: Annotated[UserRead, Depends(get_current_user)],
+    current_user: Annotated[UserRead, Depends(require_admin)],
     file: UploadFile = File(...),
     overwrite: bool = Query(default=False),
     mirror_kernel: bool = Query(
@@ -210,7 +210,7 @@ async def install_pkg_upload(
         description="安装后镜像进 Kernel 包管理（签名扫描）",
     ),
 ):
-    """安装：上传 .takton-pkg.zip → 校验 → 解压 →（默认）Kernel 签名扫描镜像"""
+    """安装：上传 .takton-pkg.zip → 校验 → 解压 →（默认）Kernel 签名扫描镜像（需 admin）"""
     from backend.packages.market import install_zip_market
 
     data = await file.read()
@@ -226,9 +226,9 @@ async def install_pkg_upload(
 @router.post("/install-url")
 async def install_pkg_url(
     body: InstallUrlBody,
-    current_user: Annotated[UserRead, Depends(get_current_user)],
+    current_user: Annotated[UserRead, Depends(require_admin)],
 ):
-    """安装：从 URL 拉取 zip（公网校验防 SSRF）→ 同上传安装流程"""
+    """安装：从 URL 拉取 zip（公网校验防 SSRF）→ 同上传安装流程（需 admin）"""
     import aiohttp
 
     from backend.core.net_safety import UnsafeURLError, validate_public_url
@@ -260,9 +260,9 @@ async def install_pkg_url(
 @router.delete("/installed/{name}")
 async def uninstall_pkg(
     name: str,
-    current_user: Annotated[UserRead, Depends(get_current_user)],
+    current_user: Annotated[UserRead, Depends(require_admin)],
 ):
-    """卸载：删除可写安装根内的同名包（examples/只读根的包拒绝）"""
+    """卸载：删除可写安装根内的同名包（examples/只读根的包拒绝）。需 admin。"""
     from backend.packages.publisher import uninstall_package
 
     try:
@@ -310,11 +310,11 @@ async def market_scan(
 
 @router.post("/market/install")
 async def market_install_upload(
-    current_user: Annotated[UserRead, Depends(get_current_user)],
+    current_user: Annotated[UserRead, Depends(require_admin)],
     file: UploadFile = File(...),
     overwrite: bool = Query(default=False),
 ):
-    """市场安装：zip 解压 + Kernel 签名扫描镜像。"""
+    """市场安装：zip 解压 + Kernel 签名扫描镜像（需 admin）。"""
     from backend.packages.market import install_zip_market
 
     data = await file.read()
@@ -366,9 +366,9 @@ async def market_trust_status(
 @router.post("/market/install-remote")
 async def market_install_remote(
     body: RemoteInstallBody,
-    current_user: Annotated[UserRead, Depends(get_current_user)],
+    current_user: Annotated[UserRead, Depends(require_admin)],
 ):
-    """远程包一键下载安装（https + 重定向防护 + 内容信任根 + 签名扫描）。"""
+    """远程包一键下载安装（需 admin；https + 重定向防护 + 内容信任根 + 签名扫描）。"""
     import asyncio
 
     from backend.packages.market import install_from_remote_url, install_remote_by_name

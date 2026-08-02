@@ -676,15 +676,30 @@ function startFrontend(): Promise<void> {
     };
 
     const resolveHtml = (pagePath: string): string | null => {
+      // 审计 P1-F5：禁止路径穿越（../、绝对路径）
       let clean = pagePath.replace(/^\/+/, '').replace(/\/+$/, '');
-      if (clean.endsWith('.html')) clean = clean.slice(0, -5);
-      if (clean === '' || clean === 'index') clean = 'index';
+      if (clean === '' || clean === 'index') {
+        clean = 'index';
+      } else {
+        if (clean.includes('..') || path.isAbsolute(clean) || clean.includes('\0')) {
+          return null;
+        }
+        if (clean.endsWith('.html')) clean = clean.slice(0, -5);
+        // 仅允许简单路径段
+        if (!clean || /[^a-zA-Z0-9._\-\/\\]/.test(clean)) return null;
+      }
       const candidates = [
         path.join(root, `${clean}.html`),
         path.join(root, clean, 'index.html'),
       ];
       for (const c of candidates) {
-        if (fs.existsSync(c) && fs.statSync(c).isFile()) return c;
+        try {
+          const rel = path.relative(root, c);
+          if (rel.startsWith('..') || path.isAbsolute(rel)) continue;
+          if (fs.existsSync(c) && fs.statSync(c).isFile()) return c;
+        } catch {
+          /* skip */
+        }
       }
       return null;
     };
@@ -1204,6 +1219,44 @@ function createWindow(): void {
     }
     return { action: 'deny' };
   });
+
+  // 审计 P1-F1：禁止渲染进程导航到远程站点（会继承 electronAPI）
+  const isAllowedAppNav = (raw: string): boolean => {
+    try {
+      const u = new URL(raw);
+      if (u.protocol === 'file:') return false;
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+      const host = u.hostname;
+      if (host !== '127.0.0.1' && host !== 'localhost') return false;
+      // 允许本机前端端口与后端端口（dev / 静态服）
+      const port = u.port || (u.protocol === 'https:' ? '443' : '80');
+      const okPorts = new Set([
+        String(FRONTEND_PORT),
+        String(activeBackendPort || DEFAULT_BACKEND_PORT),
+        '3000',
+        '8090',
+        '8000',
+      ]);
+      return okPorts.has(port);
+    } catch {
+      return false;
+    }
+  };
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (isAllowedAppNav(url)) return;
+    event.preventDefault();
+    // 外链改走系统浏览器（scheme 白名单）
+    if (/^https?:\/\//i.test(url)) {
+      void shell.openExternal(url).catch(() => undefined);
+    } else {
+      console.warn('[Takton] blocked will-navigate:', String(url).slice(0, 120));
+    }
+  });
+  mainWindow.webContents.on('will-redirect', (event, url) => {
+    if (isAllowedAppNav(url)) return;
+    event.preventDefault();
+    console.warn('[Takton] blocked will-redirect:', String(url).slice(0, 120));
+  });
 }
 
 // ---- IPC Handlers ----
@@ -1234,12 +1287,36 @@ ipcMain.handle('open-path', async (_event, filePath: string) => {
   if (typeof filePath !== 'string' || !filePath.trim()) {
     return 'invalid path';
   }
-  // 仅允许绝对路径，避免被注入相对恶意路径
+  // 审计 P1-F2：绝对路径 + realpath + 拒绝可执行后缀（防 Agent 诱导一键启动）
   if (!path.isAbsolute(filePath)) {
     return 'path must be absolute';
   }
+  if (/[\0\r\n]/.test(filePath)) {
+    return 'illegal characters in path';
+  }
+  const DANGEROUS_EXT = new Set([
+    '.exe', '.bat', '.cmd', '.com', '.msi', '.scr', '.ps1', '.vbs', '.vbe',
+    '.js', '.jse', '.wsf', '.wsh', '.msc', '.jar', '.cpl', '.dll', '.sys',
+    '.sh', '.bash', '.zsh', '.app', '.command', '.pkg', '.dmg',
+  ]);
   try {
-    return await shell.openPath(filePath);
+    let resolved = path.resolve(filePath);
+    try {
+      resolved = fs.realpathSync(resolved);
+    } catch {
+      return 'path does not exist';
+    }
+    const st = fs.statSync(resolved);
+    if (!st.isFile() && !st.isDirectory()) {
+      return 'unsupported path type';
+    }
+    if (st.isFile()) {
+      const ext = path.extname(resolved).toLowerCase();
+      if (DANGEROUS_EXT.has(ext)) {
+        return `refused to open executable-like path (${ext})`;
+      }
+    }
+    return await shell.openPath(resolved);
   } catch (e) {
     return e instanceof Error ? e.message : String(e);
   }
@@ -1304,6 +1381,21 @@ ipcMain.handle(
         (opts?.path && String(opts.path).trim()) ||
         process.env.TAKTON_CODE_DEFAULT_PATH ||
         app.getPath('home');
+      // 审计 P0-F1：path 仅 trim 会注入 bat / shell
+      if (!path.isAbsolute(projectPath)) {
+        return { ok: false, error: 'path must be absolute' };
+      }
+      if (/["\r\n&|<>^%!]/.test(projectPath)) {
+        return { ok: false, error: 'illegal characters in path' };
+      }
+      try {
+        const st = fs.statSync(projectPath);
+        if (!st.isDirectory()) {
+          return { ok: false, error: 'path is not a directory' };
+        }
+      } catch {
+        return { ok: false, error: 'path does not exist' };
+      }
       const mode = (opts?.mode || 'build').replace(/[^a-z]/gi, '') || 'build';
       const bridgeUrl = getApiBase(); // e.g. http://127.0.0.1:8000/api
       const env = {
@@ -1313,31 +1405,33 @@ ipcMain.handle(
       };
 
       // Prefer `takton-code` / `tkc` on PATH; fall back to python -m
+      // shell:false 数组参数，避免 path 注入
       const candidates: { cmd: string; args: string[]; shell?: boolean }[] = [
         {
           cmd: 'takton-code',
           args: ['--path', projectPath, '--mode', mode, '--bridge'],
-          shell: true,
+          shell: false,
         },
         {
           cmd: 'tkc',
           args: ['--path', projectPath, '--mode', mode, '--bridge'],
-          shell: true,
+          shell: false,
         },
         {
           cmd: process.platform === 'win32' ? 'python' : 'python3',
           args: ['-m', 'takton_code', '--path', projectPath, '--mode', mode, '--bridge'],
-          shell: true,
+          shell: false,
         },
       ];
 
       const launchUnix = (bin: string, args: string[]) => {
         const term = process.env.TERMINAL || process.env.TERM_PROGRAM || 'x-terminal-emulator';
-        const full = `${bin} ${args.map((a) => `"${a}"`).join(' ')}`;
-        const p = spawn(term, ['-e', 'bash', '-lc', full], {
+        // 不用 bash -lc 拼字符串：数组透传
+        const p = spawn(term, ['-e', bin, ...args], {
           env,
           detached: true,
           stdio: 'ignore',
+          cwd: projectPath,
         });
         p.on('error', () => {
           /* ignore spawn failure */
@@ -1351,28 +1445,21 @@ ipcMain.handle(
           ? null
           : path.join(process.resourcesPath, 'python', 'python.exe');
         const hasBundled = bundledPython ? fs.existsSync(bundledPython) : false;
-        const argStr = `--path "${projectPath}" --mode ${mode} --bridge`;
-        const primary = hasBundled
-          ? `"${bundledPython}" -m takton_code ${argStr}`
-          : `takton-code ${argStr}`;
-        const fallbacks = hasBundled
-          ? `takton-code ${argStr} || tkc ${argStr} || python -m takton_code ${argStr}`
-          : `tkc ${argStr} || python -m takton_code ${argStr}`;
-
-        // Write the launch command to a temp .bat so we never pass a quoted path
-        // through multiple layers of `cmd /c start ... cmd /k` parsing (which was
-        // mangling `--path "C:\..."` into a relative path resolved against the
-        // install dir). The bat runs inside projectPath via `cd /d`.
+        // 安全 bat：path 已校验无注入字符；仍用延迟环境变量避免二次解析
         const batPath = path.join(
           os.tmpdir(),
-          `takton-code-launch-${Date.now()}.bat`,
+          `takton-code-launch-${Date.now()}-${process.pid}.bat`,
         );
+        const pyLine = hasBundled
+          ? `"${bundledPython}" -m takton_code --path "%PROJECT_PATH%" --mode ${mode} --bridge`
+          : `takton-code --path "%PROJECT_PATH%" --mode ${mode} --bridge`;
         const batLines = [
           '@echo off',
-          `cd /d "${projectPath}"`,
+          `set "PROJECT_PATH=${projectPath}"`,
           'set TAKTON_CODE_BRIDGE_ENABLED=true',
-          `set TAKTON_CODE_BRIDGE_URL=${bridgeUrl}`,
-          `${primary} || ${fallbacks}`,
+          `set "TAKTON_CODE_BRIDGE_URL=${bridgeUrl}"`,
+          'cd /d "%PROJECT_PATH%"',
+          pyLine,
         ];
         try {
           fs.writeFileSync(batPath, batLines.join('\r\n'), 'utf8');
@@ -1385,6 +1472,7 @@ ipcMain.handle(
         // escaping) parses the quotes around batPath. Node's non-shell spawn escapes
         // quotes as \" which leaked into the command line and broke `start`.
         const launchViaCmdStart = () => {
+          // batPath 在 os.tmpdir()，无用户可控字符
           const p = spawn(`start "Takton Code" cmd /k "${batPath}"`, {
             env,
             detached: true,

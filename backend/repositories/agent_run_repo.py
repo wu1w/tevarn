@@ -90,8 +90,12 @@ class AsyncAgentRunRepository(AsyncBaseRepository):
         status: str | None = None,
         origin: str | None = None,
         identity_id: uuid.UUID | None = None,
+        user_id: uuid.UUID | None = None,
     ) -> list[AgentRun]:
-        """跨会话最近 runs（0.5.3 全局 Runs 入口；Phase 2.1 支持 origin/identity 过滤）。"""
+        """跨会话最近 runs（0.5.3 全局 Runs 入口；Phase 2.1 支持 origin/identity 过滤）。
+
+        user_id 非空时按归属过滤（审计 P1-A4）。
+        """
         session = await self._get_session()
         try:
             q = select(AgentRun).order_by(desc(AgentRun.created_at)).limit(limit)
@@ -101,6 +105,8 @@ class AsyncAgentRunRepository(AsyncBaseRepository):
                 q = q.where(AgentRun.origin == origin)
             if identity_id is not None:
                 q = q.where(AgentRun.identity_id == identity_id)
+            if user_id is not None:
+                q = q.where(AgentRun.user_id == user_id)
             result = await session.execute(q)
             return list(result.scalars().all())
         finally:

@@ -56,8 +56,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return False
 
     def _get_max_requests(self, request: Request) -> int:
-        # 桌面单用户 / 本机：给足配额，避免 React Query 并行请求 429
-        if self._single_user_mode() or self._is_local_client(request):
+        # 仅「单用户且本机」放宽配额（与 dispatch 内 and 口径一致；or 会让限流全局失效）
+        if self._single_user_mode() and self._is_local_client(request):
             return max(self.max_requests * 50, 5000)
         return self.max_requests
 

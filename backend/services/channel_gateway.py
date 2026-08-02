@@ -261,7 +261,17 @@ class ChannelGateway:
 
         backoff = 2
         while self._running:
+            adapter = None
             try:
+                # 审计 P1-S1：重连前必须 disconnect 旧 adapter，否则 aiohttp/WS 泄漏
+                old = self._adapters.pop(str(ch.id), None)
+                if old is not None:
+                    try:
+                        await old.disconnect()
+                    except Exception as de:
+                        logger.warning(
+                            "%s old adapter disconnect failed: %s", ch.platform, de
+                        )
                 adapter = self._create_adapter(adapter_cls, ch)
                 await adapter.connect()
                 self._adapters[str(ch.id)] = adapter
@@ -276,6 +286,14 @@ class ChannelGateway:
                 break
             except Exception as e:
                 logger.error("%s error: %s", ch.platform, e, exc_info=True)
+            finally:
+                # 退出连接循环时清理当前 adapter（避免僵尸监听）
+                if adapter is not None and self._adapters.get(str(ch.id)) is adapter:
+                    self._adapters.pop(str(ch.id), None)
+                    try:
+                        await adapter.disconnect()
+                    except Exception:
+                        pass
 
             if self._running:
                 logger.info("%s reconnecting in %ds...", ch.platform, backoff)
@@ -796,18 +814,35 @@ class ChannelGateway:
     # ─── 消息处理 ──────────────────────────────────────────
 
     async def _is_duplicate_message(
-        self, platform: str, chat_id: str, msg_id: str
+        self,
+        platform: str,
+        chat_id: str,
+        msg_id: str,
+        *,
+        content_hint: str = "",
     ) -> bool:
-        """基于 platform+chat+message_id 的短时去重。无 msg_id 时不拦截。"""
-        if not msg_id:
+        """基于 platform+chat+message_id 的短时去重。
+
+        无 msg_id 时用 content hash 做 15s 短窗兜底（防企微/飞书超时重推）。
+        """
+        mid = (msg_id or "").strip()
+        if not mid and content_hint:
+            import hashlib
+
+            mid = "h:" + hashlib.sha256(
+                f"{platform}|{chat_id}|{content_hint[:512]}".encode("utf-8", errors="replace")
+            ).hexdigest()[:24]
+        if not mid:
             return False
-        key = f"{platform}:{chat_id}:{msg_id}"
+        key = f"{platform}:{chat_id}:{mid}"
         now = time.monotonic()
+        # 无平台 msg_id 时 TTL 更短，避免误杀合法重复发言
+        ttl = 15.0 if mid.startswith("h:") else self._seen_ttl_s
         async with self._seen_lock:
             # 过期清理
             while self._seen_msgs:
                 oldest_key, oldest_ts = next(iter(self._seen_msgs.items()))
-                if now - oldest_ts <= self._seen_ttl_s:
+                if now - oldest_ts <= ttl:
                     break
                 self._seen_msgs.popitem(last=False)
             if key in self._seen_msgs:
@@ -857,24 +892,37 @@ class ChannelGateway:
             content = data.get("content", "")
             chat_id = data.get("from_user", "")
             user_id = chat_id
-            reply_to_id = ""
+            # 企微 MsgId：适配器应写入 data.msg_id；否则短窗 content hash 兜底
+            reply_to_id = str(
+                data.get("msg_id") or data.get("MsgId") or data.get("msgid") or ""
+            )
         elif platform == "feishu":
             content = data.get("content", "")
             chat_id = data.get("chat_id", "")
             user_id = data.get("sender", {}).get("sender_id", {}).get("user_id", "")
+            reply_to_id = str(
+                data.get("message_id") or data.get("messageId") or data.get("msg_id") or ""
+            )
         elif platform == "dingtalk":
             content = data.get("text", {}).get("content", "") if isinstance(data.get("text"), dict) else data.get("content", "")
             chat_id = data.get("conversationId", "")
             user_id = data.get("senderStaffId", data.get("senderId", ""))
+            reply_to_id = str(
+                data.get("msgId") or data.get("msg_id") or data.get("messageId") or ""
+            )
         elif platform == "signal":
             content = data.get("content", "")
             chat_id = data.get("source_number", data.get("source", ""))
             user_id = chat_id
+            reply_to_id = str(
+                data.get("timestamp") or data.get("msg_id") or data.get("id") or ""
+            )
         else:
             # 通用 fallback
             content = data.get("content", data.get("text", ""))
             chat_id = data.get("chat_id", data.get("channel_id", ""))
             user_id = data.get("user_id", data.get("from", ""))
+            reply_to_id = str(data.get("msg_id") or data.get("id") or reply_to_id or "")
 
         # Phase 5 D1：长度 / NUL 门禁（在进 loop 之前）
         try:
@@ -907,8 +955,13 @@ class ChannelGateway:
         if not content.strip():
             return
 
-        # 平台重推 / 网络抖动去重
-        if await self._is_duplicate_message(platform, str(chat_id), str(reply_to_id or "")):
+        # 平台重推 / 网络抖动去重（无 msg_id 时 content 短窗兜底）
+        if await self._is_duplicate_message(
+            platform,
+            str(chat_id),
+            str(reply_to_id or ""),
+            content_hint=str(content or "")[:512],
+        ):
             logger.info(
                 "%s duplicate message dropped: chat=%s msg_id=%s",
                 platform, str(chat_id)[:16], str(reply_to_id)[:32],

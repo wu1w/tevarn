@@ -1251,6 +1251,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 logger.warning("cancel cleanup incomplete: %s", ce)
             raise
         except Exception as e:
+            # P0 审计 N1：except 退出时 Python 会 del e；shield 内闭包若引用 e 会 NameError → 槽位泄漏
+            err_msg = str(e)
             async def _cleanup_fail() -> None:
                 try:
                     if kernel_proc is not None:
@@ -1260,10 +1262,10 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 except Exception:
                     pass
                 try:
-                    await recorder.finish_fail(str(e))
+                    await recorder.finish_fail(err_msg)
                 except Exception:
                     pass
-                await _release_kernel_slot(state="failed", reason=str(e)[:500])
+                await _release_kernel_slot(state="failed", reason=err_msg[:500])
 
             try:
                 await asyncio.shield(_cleanup_fail())

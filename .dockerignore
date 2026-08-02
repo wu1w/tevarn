@@ -1,0 +1,44 @@
+# VCS / secrets
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+**/secrets.json
+*.pem
+*.key
+
+# Databases / runtime data (never bake into images)
+*.db
+*.db-*
+*.sqlite3
+*.db-journal
+**/uploads/
+logs/
+.dev-logs/
+.computers/
+.takton/
+data/
+
+# Deps / build
+.venv/
+venv/
+node_modules/
+**/__pycache__/
+target/
+frontend/.next/
+frontend/release/
+frontend/dist/
+
+# Temp / audit / smoke artifacts
+.tmp_*
+_*
+.smoke*
+.overnight_smoke.txt
+.audit_tmp/
+.audit-report/
+r4_server.pid
+.DS_Store
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/

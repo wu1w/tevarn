@@ -793,19 +793,45 @@ async def websocket_endpoint(
             await safe_close_ws(websocket, code=1008, reason="Invalid token")
             return
 
-        # 单用户模式下：如果 token 里的 user_id 在数据库中不存在，
-        # 可能是前端缓存了旧 token，回退到默认用户（admin@takton.dev）。
-        if settings.single_user_mode:
-            from backend.repositories.user_repo import AsyncUserRepository
-            user_repo_check = AsyncUserRepository()
-            existing = await user_repo_check.get_by_id(user_id)
-            if not existing:
+        # token sub → 用户：必须校验存在 + is_active（与 HTTP get_current_user 对齐）
+        from backend.repositories.user_repo import AsyncUserRepository
+
+        user_repo_check = AsyncUserRepository()
+        existing = await user_repo_check.get_by_id(user_id)
+        active = bool(existing and getattr(existing, "is_active", True))
+        if not active:
+            # 单用户本机：仅 loopback 可回落默认 admin（删除用户≠提权）
+            if settings.single_user_mode and _ws_client_is_loopback(websocket):
                 default_user = await user_repo_check.get_by_email("admin@takton.dev")
-                if default_user:
+                if default_user and getattr(default_user, "is_active", True):
                     user_id = default_user.id
                     logger.info(
-                        f"Single-user fallback: token sub not found, using default user {user_id}"
+                        "Single-user loopback fallback: token sub missing/inactive → default admin"
                     )
+                else:
+                    await _accept_once()
+                    try:
+                        await websocket.send_json(
+                            {"type": "error", "detail": "User not found or deactivated"}
+                        )
+                    except Exception:
+                        pass
+                    await safe_close_ws(
+                        websocket, code=1008, reason="User not found or deactivated"
+                    )
+                    return
+            else:
+                await _accept_once()
+                try:
+                    await websocket.send_json(
+                        {"type": "error", "detail": "User not found or deactivated"}
+                    )
+                except Exception:
+                    pass
+                await safe_close_ws(
+                    websocket, code=1008, reason="User not found or deactivated"
+                )
+                return
     elif settings.single_user_mode and _ws_client_is_loopback(websocket):
         # 单用户免认证直连：**仅本机** 无 token 时回落默认 admin。
         #
@@ -855,7 +881,7 @@ async def websocket_endpoint(
     # query-token 路径此前尚未 accept
     await _accept_once()
 
-    # ---- 长会话保持：检查/创建 session（同一事务） ----
+    # ---- 长会话保持：检查/创建 session（同一事务）—— fail-closed ----
     try:
         async with get_db_context() as db:
             session_repo_tx = AsyncSessionRepository(db)
@@ -870,25 +896,35 @@ async def websocket_endpoint(
                     await safe_close_ws(websocket, code=1008, reason="Session expired")
                     return
 
-                # 会话用户隔离检查（单用户模式本机不卡）
-                if (
-                    not settings.single_user_mode
-                    and session.user_id is not None
-                    and session.user_id != user_id
-                ):
-                    await websocket.send_json(
-                        {"type": "error", "detail": "Session access denied"}
+                # 会话用户隔离：多用户严格；单用户仅 loopback 可跨账号
+                owner = getattr(session, "user_id", None)
+                if owner is not None and user_id is not None and owner != user_id:
+                    allow_cross = settings.single_user_mode and _ws_client_is_loopback(
+                        websocket
                     )
-                    await safe_close_ws(websocket, code=1008, reason="Session access denied")
-                    return
+                    if not allow_cross:
+                        await websocket.send_json(
+                            {"type": "error", "detail": "Session access denied"}
+                        )
+                        await safe_close_ws(
+                            websocket, code=1008, reason="Session access denied"
+                        )
+                        return
             else:
                 # Session 不存在，自动创建（使用前端传入的 session_id）
                 session = await session_repo_tx.create(
                     {"id": session_id, "user_id": user_id, "config": {}}
                 )
     except Exception as e:
-        logger.warning(f"Session validation warning: {e}")
-        session = None
+        logger.exception("Session validation failed, refusing connection: %s", e)
+        try:
+            await websocket.send_json(
+                {"type": "error", "detail": "Session validation failed"}
+            )
+        except Exception:
+            pass
+        await safe_close_ws(websocket, code=1011, reason="Session validation failed")
+        return
 
     await manager.connect(session_id, websocket, user_id=user_id)
 

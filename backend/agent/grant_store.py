@@ -175,7 +175,6 @@ TOOL_TO_CREW_CAP: dict[str, str] = {
     "notify": "notify",
     "send_email": "notify",
     "send_message": "notify",
-    "current_time": "web_search",
     "session_search": "memory",
     "memory": "memory",
     "knowledge_search": "memory",
@@ -187,6 +186,7 @@ TOOL_TO_CREW_CAP: dict[str, str] = {
     "crew_steward": "crew_steward",
     "clarify": "crew_steward",
     "use_tool_pack": "use_tool_pack",
+    # 唯一映射：current_time 为独立 cap（勿重复键 F601）
     "current_time": "current_time",
     "result_load": "file_read",  # 外置结果回读，与读权限同级
 }

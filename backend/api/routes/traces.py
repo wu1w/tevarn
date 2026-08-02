@@ -80,6 +80,12 @@ async def get_latest_trace(
 ):
     """获取会话最新一次运行的完整轨迹"""
     async with UnitOfWork() as uow:
+        session = await uow.sessions.get_by_id(session_id)
+        if session is None:
+            return None
+        from backend.api.dependencies import assert_session_owner
+
+        assert_session_owner(getattr(session, "user_id", None), current_user)
         repo = TraceRepository(uow.session)
         t = await repo.get_latest_by_session(session_id)
         if not t:
@@ -113,6 +119,12 @@ async def get_trace(
         t = await repo.get_by_id(trace_id)
         if not t:
             raise HTTPException(status_code=404, detail="Trace not found")
+        session = await uow.sessions.get_by_id(t.session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Trace not found")
+        from backend.api.dependencies import assert_session_owner
+
+        assert_session_owner(getattr(session, "user_id", None), current_user)
         return TraceRead(
             id=t.id,
             session_id=t.session_id,

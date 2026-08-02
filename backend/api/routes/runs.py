@@ -18,7 +18,7 @@ from backend.agent.run_lifecycle import public_status
 from backend.repositories.agent_run_repo import AsyncAgentRunRepository
 from backend.schemas.user import UserRead
 
-from ..dependencies import get_current_user
+from ..dependencies import assert_session_owner, get_current_user
 
 router = APIRouter(prefix="/runs", tags=["AgentRuns"])
 
@@ -85,10 +85,14 @@ async def list_runs(
     ),
     identity_id: uuid.UUID | None = Query(None),
 ) -> list[dict[str, Any]]:
-    """Phase 2 统一入口：全部 origin 的 Run 列表。"""
+    """Phase 2 统一入口：当前用户的 Run 列表。"""
     repo = AsyncAgentRunRepository()
     rows = await repo.list_recent(
-        limit=limit, status=status, origin=origin, identity_id=identity_id
+        limit=limit,
+        status=status,
+        origin=origin,
+        identity_id=identity_id,
+        user_id=current_user.id,
     )
     return [_enrich(r) for r in rows]
 
@@ -100,6 +104,13 @@ async def list_session_runs(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ) -> list[dict[str, Any]]:
+    from backend.core.unit_of_work import UnitOfWork
+
+    async with UnitOfWork() as uow:
+        session = await uow.sessions.get_by_id(session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        assert_session_owner(getattr(session, "user_id", None), current_user)
     repo = AsyncAgentRunRepository()
     rows = await repo.list_runs(session_id, limit=limit, offset=offset)
     return [_enrich(r) for r in rows]
@@ -114,7 +125,9 @@ async def list_recent_runs(
 ) -> list[dict[str, Any]]:
     """兼容 0.5.3 入口；等价 GET /runs。"""
     repo = AsyncAgentRunRepository()
-    rows = await repo.list_recent(limit=limit, status=status, origin=origin)
+    rows = await repo.list_recent(
+        limit=limit, status=status, origin=origin, user_id=current_user.id
+    )
     return [_enrich(r) for r in rows]
 
 
@@ -127,6 +140,17 @@ async def get_run(
     run = await repo.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
+    owner = getattr(run, "user_id", None)
+    if owner is not None and str(owner) != str(current_user.id):
+        # 404 避免存在性泄露
+        raise HTTPException(status_code=404, detail="Run not found")
+    if owner is None and getattr(run, "session_id", None):
+        from backend.core.unit_of_work import UnitOfWork
+
+        async with UnitOfWork() as uow:
+            session = await uow.sessions.get_by_id(run.session_id)
+            if session is not None:
+                assert_session_owner(getattr(session, "user_id", None), current_user)
     steps = await repo.list_steps(run_id)
     data = _enrich(run)
     data["steps"] = steps

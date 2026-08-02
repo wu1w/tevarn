@@ -1,7 +1,8 @@
 # Rust
 /target/
 **/target/
-Cargo.lock
+# Cargo.lock 必须入库以保证 Rust 安全内核可复现构建（审计 P1-C3）
+# Cargo.lock
 # Staged host binary (build with scripts/build-kernel-host.ps1)
 vendor/takton-kernel-host/takton-kernel-host
 vendor/takton-kernel-host/takton-kernel-host.exe
@@ -193,3 +194,14 @@ scripts/dispatch_dogfood*
 scripts/dogfood_*
 scripts/*dogfood*
 *.exit
+
+# Local temp / smoke / audit (2026-08-02 audit P0-C3 / P1-C2)
+.tmp_*
+.smoke*
+.overnight_smoke.txt
+.git_status_tmp.txt
+.audit_tmp/
+.audit-report/
+r4_server.pid
+_smoke_*.txt
+_audit*.txt

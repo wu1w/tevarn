@@ -8,11 +8,15 @@ import { ThinkingBlock } from './ThinkingBlock';
 import { FileDownloadLink, isWorkspaceFileLink } from './FileDownloadLink';
 import { useT } from '@/stores/localeStore';
 
+/** 白名单协议：拒绝 file: / javascript: / smb: 等（审计 P0-F2） */
 function safeUrlTransform(url: string): string {
-  if (/^javascript:/i.test(url)) return '';
-  if (/^data:/i.test(url) && !url.startsWith('data:image/')) return '';
-  if (/^vbscript:/i.test(url)) return '';
-  return url;
+  const u = String(url || '').trim();
+  if (!u) return '';
+  if (/^(https?:|mailto:)/i.test(u)) return u;
+  if (/^data:image\//i.test(u)) return u;
+  // 站内相对链接
+  if (/^[./#?]/.test(u)) return u;
+  return '';
 }
 
 interface MarkdownContentProps {

@@ -20,6 +20,9 @@ User=wuyw
 Group=wuyw
 WorkingDirectory=/opt/hermes-workspace/takton
 Environment=PYTHONUNBUFFERED=1
+# 审计 P1-C1 / 攻击链 C：反向代理部署必须关闭单用户免登录，
+# 否则对端始终是 127.0.0.1，任意外部访问者会被授予 admin。
+Environment=TAKTON_SINGLE_USER_MODE=false
 # 生产配置走环境变量或 .env（不要在此写密钥）
 EnvironmentFile=-/opt/hermes-workspace/takton/.env
 ExecStart=/opt/hermes-workspace/takton/.venv311/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
