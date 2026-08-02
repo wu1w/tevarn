@@ -2175,15 +2175,17 @@ impl AgentKernel {
         family: &str,
         hit: bool,
         bytes_saved: u64,
+        model: Option<&str>,
     ) -> Value {
         let mut g = self.inner.write();
-        g.cache_metrics.record(family, hit, bytes_saved);
+        g.cache_metrics.record(family, hit, bytes_saved, model);
         Self::emit_locked(
             &mut g,
             "cache.record",
             "system",
             json!({
                 "family": family,
+                "model": model.unwrap_or(""),
                 "hit": hit,
                 "bytes_saved": bytes_saved,
             }),
@@ -2201,15 +2203,18 @@ impl AgentKernel {
         family: &str,
         tokens: u64,
         billable: u64,
+        model: Option<&str>,
     ) -> Value {
         let mut g = self.inner.write();
-        g.cost_ledger.charge(process_id, family, tokens, billable);
+        g.cost_ledger
+            .charge(process_id, family, tokens, billable, model);
         Self::emit_locked(
             &mut g,
             "cost.charge",
             process_id,
             json!({
                 "family": family,
+                "model": model.unwrap_or(""),
                 "tokens": tokens,
                 "billable": billable,
             }),

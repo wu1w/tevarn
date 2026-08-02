@@ -2061,6 +2061,14 @@ async def cost_panel(
     if not isinstance(ctot, dict):
         ctot = {}
     live = panel.get("live_processes") or {}
+    # 提升 by_family / by_model 到顶层，便于用量页筛选
+    if isinstance(tb, dict):
+        panel["by_family"] = tb.get("by_family") or {}
+        panel["by_model"] = tb.get("by_model") or {}
+        panel["totals"] = totals
+    if isinstance(cache, dict):
+        panel["cache_families"] = cache.get("families") or {}
+        panel["cache_models"] = cache.get("models") or {}
     panel["summary"] = {
         "tokens": int(totals.get("tokens") or live.get("tokens_used") or 0),
         "billable": int(totals.get("billable") or 0),

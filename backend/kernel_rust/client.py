@@ -1583,19 +1583,21 @@ class RustAgentKernel:
         return bool(r.get("ok", True))
 
     def cache_record(
-        self, family: str, *, hit: bool, bytes_saved: int = 0
+        self,
+        family: str,
+        *,
+        hit: bool,
+        bytes_saved: int = 0,
+        model: str | None = None,
     ) -> dict[str, Any]:
-        return (
-            self._call(
-                "cache_record",
-                {
-                    "family": family,
-                    "hit": bool(hit),
-                    "bytes_saved": int(bytes_saved),
-                },
-            )
-            or {}
-        )
+        params: dict[str, Any] = {
+            "family": family,
+            "hit": bool(hit),
+            "bytes_saved": int(bytes_saved),
+        }
+        if model:
+            params["model"] = str(model)
+        return self._call("cache_record", params) or {}
 
     def cache_metrics(self) -> dict[str, Any]:
         return self._call("cache_metrics") or {}
@@ -1614,19 +1616,18 @@ class RustAgentKernel:
         family: str,
         tokens: int,
         billable: int | None = None,
+        *,
+        model: str | None = None,
     ) -> dict[str, Any]:
-        return (
-            self._call(
-                "cost_charge",
-                {
-                    "process_id": process_id,
-                    "family": family,
-                    "tokens": int(tokens),
-                    "billable": int(billable if billable is not None else tokens),
-                },
-            )
-            or {}
-        )
+        params: dict[str, Any] = {
+            "process_id": process_id,
+            "family": family,
+            "tokens": int(tokens),
+            "billable": int(billable if billable is not None else tokens),
+        }
+        if model:
+            params["model"] = str(model)
+        return self._call("cost_charge", params) or {}
 
     def cost_panel(self) -> dict[str, Any]:
         return self._call("cost_panel") or {}

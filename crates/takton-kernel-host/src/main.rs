@@ -1252,7 +1252,8 @@ fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: 
                 .get("bytes_saved")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
-            Ok(kernel.cache_record(family, hit, bytes))
+            let model = params.get("model").and_then(|v| v.as_str());
+            Ok(kernel.cache_record(family, hit, bytes, model))
         }
         "cache_metrics" => Ok(kernel.cache_metrics()),
         "cost_charge" => {
@@ -1273,7 +1274,8 @@ fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: 
                 .get("billable")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(tokens);
-            Ok(kernel.cost_charge(pid, family, tokens, billable))
+            let model = params.get("model").and_then(|v| v.as_str());
+            Ok(kernel.cost_charge(pid, family, tokens, billable, model))
         }
         "cost_panel" => Ok(kernel.cost_panel()),
         "cost_process" => {

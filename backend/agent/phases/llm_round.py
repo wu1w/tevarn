@@ -378,11 +378,17 @@ async def _run_llm_round_body(
                 or getattr(settings, "llm_provider", None)
                 or "default"
             )
+        _model = str(
+            getattr(llm_service, "model", None)
+            or getattr(settings, "llm_model", None)
+            or ""
+        ).strip()
         report_cost_to_kernel(
             process_id=getattr(kernel_proc, "id", None) if kernel_proc else None,
             family=_fam,
             tokens=_tok,
             billable=_bill if _bill > 0 else _tok,
+            model=_model or None,
         )
     except Exception as _cost_e:
         logger.debug("cost_charge skip: %s", _cost_e)

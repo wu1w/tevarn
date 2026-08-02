@@ -159,30 +159,37 @@ def log_cache_usage(model: str, usage: dict[str, int], *, family: str = "") -> N
     # P0.5 R1: aggregate into Rust cache_metrics (hit if any cache_read)
     _report_cache_to_kernel(
         family=family or "default",
+        model=model or "",
         hit=read > 0,
         bytes_saved=max(0, read) * 4,  # rough chars≈tokens*4
     )
 
 
 def _report_cache_to_kernel(
-    *, family: str, hit: bool, bytes_saved: int = 0
+    *, family: str, hit: bool, bytes_saved: int = 0, model: str = ""
 ) -> None:
     try:
         from backend.kernel import get_kernel
 
         k = get_kernel()
         fam = (family or "default").strip() or "default"
+        mid = (model or "").strip()
         if hasattr(k, "cache_record"):
-            k.cache_record(fam, hit=hit, bytes_saved=int(bytes_saved or 0))
+            try:
+                k.cache_record(
+                    fam, hit=hit, bytes_saved=int(bytes_saved or 0), model=mid or None
+                )
+            except TypeError:
+                k.cache_record(fam, hit=hit, bytes_saved=int(bytes_saved or 0))
         elif hasattr(k, "_call"):
-            k._call(
-                "cache_record",
-                {
-                    "family": fam,
-                    "hit": bool(hit),
-                    "bytes_saved": int(bytes_saved or 0),
-                },
-            )
+            payload: dict[str, Any] = {
+                "family": fam,
+                "hit": bool(hit),
+                "bytes_saved": int(bytes_saved or 0),
+            }
+            if mid:
+                payload["model"] = mid
+            k._call("cache_record", payload)
     except Exception as e:
         logger.debug("cache_record skip: %s", e)
 
@@ -193,27 +200,35 @@ def report_cost_to_kernel(
     family: str,
     tokens: int,
     billable: int,
+    model: str | None = None,
 ) -> None:
-    """P0.5 R5: charge 3D cost ledger (tokens / billable)."""
+    """P0.5 R5: charge 3D cost ledger (tokens / billable), keyed by family+model."""
     pid = (process_id or "").strip() or "system"
     try:
         from backend.kernel import get_kernel
 
         k = get_kernel()
         fam = (family or "default").strip() or "default"
-        params = {
+        mid = (model or "").strip()
+        params: dict[str, Any] = {
             "process_id": pid,
             "family": fam,
             "tokens": max(0, int(tokens or 0)),
             "billable": max(0, int(billable or 0)),
         }
+        if mid:
+            params["model"] = mid
         if hasattr(k, "cost_charge"):
-            k.cost_charge(
-                pid,
-                fam,
-                params["tokens"],
-                params["billable"],
-            )
+            try:
+                k.cost_charge(
+                    pid,
+                    fam,
+                    params["tokens"],
+                    params["billable"],
+                    model=mid or None,
+                )
+            except TypeError:
+                k.cost_charge(pid, fam, params["tokens"], params["billable"])
         elif hasattr(k, "_call"):
             k._call("cost_charge", params)
     except Exception as e:

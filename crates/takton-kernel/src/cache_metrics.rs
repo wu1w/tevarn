@@ -1,4 +1,6 @@
 //! Provider cache hit metrics aggregation (P0.5 E5).
+//!
+//! Tracks hit/miss by provider family and by model (family/model).
 
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -11,6 +13,15 @@ fn now_secs() -> f64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs_f64())
         .unwrap_or(0.0)
+}
+
+fn model_key(family: &str, model: &str) -> String {
+    let m = model.trim();
+    if m.is_empty() {
+        format!("{family}/(default)")
+    } else {
+        format!("{family}/{m}")
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -31,19 +42,69 @@ impl FamilyStats {
     }
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ModelStats {
+    pub family: String,
+    pub model: String,
+    pub hits: u64,
+    pub misses: u64,
+    pub bytes_saved: u64,
+}
+
+impl ModelStats {
+    pub fn hit_rate(&self) -> f64 {
+        let t = self.hits + self.misses;
+        if t == 0 {
+            0.0
+        } else {
+            self.hits as f64 / t as f64
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct CacheMetrics {
     by_family: HashMap<String, FamilyStats>,
+    by_model: HashMap<String, ModelStats>,
 }
 
 impl CacheMetrics {
-    pub fn record(&mut self, family: &str, hit: bool, bytes_saved: u64) {
-        let st = self.by_family.entry(family.to_string()).or_default();
+    pub fn record(
+        &mut self,
+        family: &str,
+        hit: bool,
+        bytes_saved: u64,
+        model: Option<&str>,
+    ) {
+        let fam = if family.trim().is_empty() {
+            "default"
+        } else {
+            family.trim()
+        };
+        let st = self.by_family.entry(fam.to_string()).or_default();
         if hit {
             st.hits += 1;
             st.bytes_saved = st.bytes_saved.saturating_add(bytes_saved);
         } else {
             st.misses += 1;
+        }
+
+        let model_name = model.map(str::trim).filter(|s| !s.is_empty()).unwrap_or("");
+        let key = model_key(fam, model_name);
+        let ms = self.by_model.entry(key).or_insert_with(|| ModelStats {
+            family: fam.to_string(),
+            model: if model_name.is_empty() {
+                "(default)".into()
+            } else {
+                model_name.to_string()
+            },
+            ..Default::default()
+        });
+        if hit {
+            ms.hits += 1;
+            ms.bytes_saved = ms.bytes_saved.saturating_add(bytes_saved);
+        } else {
+            ms.misses += 1;
         }
     }
 
@@ -51,12 +112,28 @@ impl CacheMetrics {
         let mut families = serde_json::Map::new();
         let mut total_hits = 0u64;
         let mut total_misses = 0u64;
+        let mut total_bytes = 0u64;
         for (k, v) in &self.by_family {
             total_hits += v.hits;
             total_misses += v.misses;
+            total_bytes = total_bytes.saturating_add(v.bytes_saved);
             families.insert(
                 k.clone(),
                 json!({
+                    "hits": v.hits,
+                    "misses": v.misses,
+                    "bytes_saved": v.bytes_saved,
+                    "hit_rate": v.hit_rate(),
+                }),
+            );
+        }
+        let mut models = serde_json::Map::new();
+        for (k, v) in &self.by_model {
+            models.insert(
+                k.clone(),
+                json!({
+                    "family": v.family,
+                    "model": v.model,
                     "hits": v.hits,
                     "misses": v.misses,
                     "bytes_saved": v.bytes_saved,
@@ -72,9 +149,11 @@ impl CacheMetrics {
         };
         json!({
             "families": families,
+            "models": models,
             "totals": {
                 "hits": total_hits,
                 "misses": total_misses,
+                "bytes_saved": total_bytes,
                 "hit_rate": overall,
             },
             "ts": now_secs(),
@@ -89,10 +168,12 @@ mod tests {
     #[test]
     fn hit_rate() {
         let mut m = CacheMetrics::default();
-        m.record("openai", true, 100);
-        m.record("openai", false, 0);
-        m.record("openai", true, 50);
+        m.record("openai", true, 100, Some("gpt-4o"));
+        m.record("openai", false, 0, Some("gpt-4o"));
+        m.record("openai", true, 50, Some("gpt-4o-mini"));
         let s = m.status();
         assert!((s["families"]["openai"]["hit_rate"].as_f64().unwrap() - 2.0 / 3.0).abs() < 1e-9);
+        assert!((s["models"]["openai/gpt-4o"]["hit_rate"].as_f64().unwrap() - 0.5).abs() < 1e-9);
+        assert!((s["models"]["openai/gpt-4o-mini"]["hit_rate"].as_f64().unwrap() - 1.0).abs() < 1e-9);
     }
 }

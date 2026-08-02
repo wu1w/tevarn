@@ -94,6 +94,17 @@ export function IconRail() {
       match: (p) => p === '/chat' || p.startsWith('/chat/'),
     },
     {
+      href: '/usage',
+      titleKey: 'nav.usage',
+      icon: (
+        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M4 19V5M4 19h16" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M8 16v-5M12 16V8M16 16v-3" />
+        </svg>
+      ),
+      match: (p) => p === '/usage' || p.startsWith('/usage/'),
+    },
+    {
       href: '/kernel',
       titleKey: 'nav.kernel',
       icon: ic('M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3', <rect x="6" y="6" width="12" height="12" rx="2" />),
