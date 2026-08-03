@@ -25,10 +25,6 @@ def _extract_usage(raw: dict[str, Any]) -> dict[str, int]:
     return normalize_usage(raw if isinstance(raw, dict) else {}, family="anthropic")
 
 
-def _log_cache_usage(model: str, usage: dict[str, int]) -> None:
-    from .usage_normalize import log_cache_usage
-
-    log_cache_usage(model, usage, family="anthropic")
 
 
 class AnthropicService(LLMService):
@@ -268,8 +264,6 @@ class AnthropicService(LLMService):
                             yield LLMChunk(message_id=message_id, delta="", tool_call=tc)
                     finish_reason = "tool_calls" if tool_calls else data.get("stop_reason", "stop")
                     _usage = _extract_usage(data.get("usage") or {})
-                    if _usage:
-                        _log_cache_usage(self.model, _usage or {})
                     yield LLMChunk(
                         message_id=message_id,
                         delta="".join(content_parts),
@@ -360,8 +354,6 @@ class AnthropicService(LLMService):
 
                     elif event_type == "message_stop":
                         finish_reason = "tool_calls" if tool_calls_list else "stop"
-                        if stream_usage:
-                            _log_cache_usage(self.model, stream_usage)
                         yield LLMChunk(
                             message_id=message_id,
                             delta="",

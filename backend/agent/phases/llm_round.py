@@ -178,10 +178,15 @@ async def _run_llm_round_body(
             if chunk.tool_call:
                 tool_calls.append(chunk.tool_call)
 
-            # 真实用量（T4）：provider 回填时优先于粗估
+            # 真实用量（T4）：provider 回填时优先于粗估；合并 partial stream
             _cu = getattr(chunk, "usage", None)
             if isinstance(_cu, dict) and _cu:
-                stream_usage.update(_cu)
+                try:
+                    from backend.services.llm.usage_normalize import merge_usage
+
+                    merge_usage(stream_usage, _cu)
+                except Exception:
+                    stream_usage.update(_cu)
 
             # 结束标记
             if chunk.finish_reason:
@@ -360,60 +365,18 @@ async def _run_llm_round_body(
             logger.debug("llm daily quota charge skip: %s", e)
 
     kernel_proc = getattr(loop, "_kernel_process", None)
-    # P0.5 R1/R5：cost ledger（token/billable）；cache_record 在 log_cache_usage
+    # P0.5 R1/R5：每轮只写一次 cost+cache（统一 family/model 归因，禁止 stream 侧重复记账）
     try:
-        from backend.services.llm.usage_normalize import report_cost_to_kernel
+        from backend.services.llm.usage_normalize import record_round_usage
 
-        _bill = int(stream_usage.get("billable_tokens") or spent or 0)
-        _tok = int(stream_usage.get("total_tokens") or spent or 0)
-        # 归因优先级：真实 service.provider_id → _family() → settings catalog → model 启发
-        # 必须用**本轮 llm_service** 上的 model，禁止回落成 settings 与 service 不一致时的错账
-        _model = str(getattr(llm_service, "model", None) or "").strip()
-        _fam = str(getattr(llm_service, "provider_id", None) or "").strip()
-        if not _fam or _fam.lower() in (
-            "custom",
-            "generic",
-            "openai-compatible",
-            "openai_compatible",
-            "default",
-        ):
-            if hasattr(llm_service, "_family") and callable(llm_service._family):
-                try:
-                    _fam = str(llm_service._family() or "").strip()
-                except Exception:
-                    _fam = ""
-        if not _fam:
-            _fam = str(
-                getattr(settings, "llm_catalog_provider_id", None)
-                or getattr(settings, "llm_provider", None)
-                or "default"
-            )
-        if (not _fam or _fam in ("default", "generic", "openai-compatible")) and _model:
-            try:
-                from backend.services.llm.provider_profiles import _family_from_model
-
-                _hint = _family_from_model(_model)
-                if _hint:
-                    _fam = _hint
-            except Exception:
-                pass
-        if not _model:
-            _model = str(getattr(settings, "llm_model", None) or "").strip()
-        logger.info(
-            "usage charge family=%s model=%s tokens=%s billable=%s",
-            _fam,
-            _model or "?",
-            _tok,
-            _bill if _bill > 0 else _tok,
-        )
-        report_cost_to_kernel(
+        record_round_usage(
+            usage=stream_usage if stream_usage else None,
+            llm_service=llm_service,
             process_id=getattr(kernel_proc, "id", None) if kernel_proc else None,
-            family=_fam,
-            tokens=_tok,
-            billable=_bill if _bill > 0 else _tok,
-            model=_model or None,
+            settings=settings,
+            estimated_tokens=int(spent or 0),
+            estimated_billable=int(spent or 0),
         )
-
     except Exception as _cost_e:
         logger.warning("cost_charge skip: %s", _cost_e)
 

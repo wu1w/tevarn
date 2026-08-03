@@ -683,7 +683,16 @@ function ChatPageInner() {
               const leftover = streamingContentRef.current;
               streamingContentRef.current = '';
               setStreamingContent('');
-              setLiveToolCalls([]);
+              // 先把残留 running 标 completed，再清空，避免 idle 瞬间 UI 仍显示「运行中」
+              setLiveToolCalls((prev) =>
+                prev.map((t) =>
+                  t.status === 'failed'
+                    ? t
+                    : { ...t, status: 'completed' as const },
+                ),
+              );
+              // 下一帧清空 live 列表（历史消息已 load）
+              window.setTimeout(() => setLiveToolCalls([]), 0);
               if (sid) streamSessionApi().markIdle(sid);
               // 停止路径：不把 partial 当最终消息二次插入（loadMessages 会拉权威历史）
               if (leftover || sid) {

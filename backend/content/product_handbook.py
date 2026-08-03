@@ -57,11 +57,13 @@ Takton 是**自托管多机 Agent 工作台**。目标：尽量在**对话框**�
 - 按 **供应商（family）** 与 **模型** 筛选明细表
 
 ## 数据来源
-- `GET /api/kernel/cost`（by_family / by_model）
-- `GET /api/kernel/cache/metrics`（families / models）
-- 由真实对话的 usage 回填；**kernel host 重启后进程内累计清零**
+- `GET /api/kernel/cost`（by_family / by_model；含 prompt / cache_read / billable）
+- `GET /api/kernel/cache/metrics`（token_hit_rate = cache_read÷prompt）
+- 由真实对话的 provider usage 回填；写入本机 **usage_ledger**（host 重启不丢）
+- 每轮 LLM **只记账一次**；无 usage 时记 estimated_rounds（不计 cache）
 
 ## 注意
+- 主指标是 **token 级命中率**（压缩策略用），不是轮次 hit/miss
 - 不是账单系统，是本机观测面板
 - 不要为「页面好看」手工写入 mock
 """,

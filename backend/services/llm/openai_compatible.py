@@ -133,12 +133,11 @@ class OpenAICompatibleService(LLMService):
         return fam or "generic"
 
     def _normalize_usage(self, raw: dict[str, Any] | None) -> dict[str, int]:
-        from .usage_normalize import log_cache_usage, normalize_usage
+        """Normalize only — ledger write is once per round in llm_round.record_round_usage."""
+        from .usage_normalize import map_responses_usage_to_openai, normalize_usage
 
-        usage = normalize_usage(raw, family=self._family())
-        if usage:
-            log_cache_usage(self.model, usage, family=self._family())
-        return usage
+        mapped = map_responses_usage_to_openai(raw if isinstance(raw, dict) else None)
+        return normalize_usage(mapped or raw, family=self._family())
 
     def _apply_profile_payload_hooks(self, payload: dict[str, Any], messages: list[dict[str, Any]]) -> None:
         """stream_options / prompt_cache_key / optional explicit cache_control."""

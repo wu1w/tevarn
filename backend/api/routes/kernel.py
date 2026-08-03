@@ -2152,10 +2152,26 @@ async def cost_panel(
     if isinstance(cache, dict):
         panel["cache_families"] = cache.get("families") or {}
         panel["cache_models"] = cache.get("models") or {}
+    # Prefer token-level cache hit rate (cache_read / prompt) for compression work
+    token_hit = ctot.get("token_hit_rate")
+    if token_hit is None:
+        pt = int(totals.get("prompt") or 0) or int(ctot.get("prompt_tokens") or 0)
+        cr = int(totals.get("cache_read") or 0) or int(
+            ctot.get("cache_read_tokens") or 0
+        )
+        token_hit = (cr / pt) if pt > 0 else None
     panel["summary"] = {
         "tokens": int(totals.get("tokens") or live.get("tokens_used") or 0),
         "billable": int(totals.get("billable") or 0),
-        "cache_hit_rate": ctot.get("hit_rate"),
+        "prompt": int(totals.get("prompt") or 0),
+        "completion": int(totals.get("completion") or 0),
+        "cache_read": int(totals.get("cache_read") or 0),
+        "cache_write": int(totals.get("cache_write") or 0),
+        "real_rounds": int(totals.get("real_rounds") or 0),
+        "estimated_rounds": int(totals.get("estimated_rounds") or 0),
+        "cache_hit_rate": token_hit if token_hit is not None else ctot.get("hit_rate"),
+        "round_cache_hit_rate": ctot.get("hit_rate"),
+        "token_cache_hit_rate": token_hit,
         "live_process_count": int(live.get("count") or 0),
         "resource_kinds": list((panel.get("resources") or {}).keys())
         if isinstance(panel.get("resources"), dict)

@@ -21,6 +21,20 @@ interface ToolCallPanelProps {
   pending?: boolean;
 }
 
+/** 流式结束后不得残留 running（历史/落库 tool_calls 常缺 result 却标 running）。 */
+export function resolveToolCallStatus(
+  tc: Pick<ToolCallData, 'status' | 'result'>,
+  pending: boolean,
+): 'running' | 'completed' | 'failed' {
+  if (tc.status === 'failed') return 'failed';
+  // 有结果 → 完成
+  if (tc.result !== undefined && tc.result !== null) return 'completed';
+  if (tc.status === 'completed') return 'completed';
+  // 对话已结束：禁止「运行中」卡死（结果往往在独立 tool 消息里）
+  if (!pending) return 'completed';
+  return 'running';
+}
+
 /**
  * 工具透明化 TRACE 卡（对齐像素控制台 demo）：
  * 虚线边框 + 「TRACE 工具轨迹 N 步」头，默认折叠；
@@ -28,16 +42,26 @@ interface ToolCallPanelProps {
  */
 export function ToolCallPanel({ toolCalls, pending = false }: ToolCallPanelProps) {
   const runningCount = toolCalls.filter(
-    (tc) => (tc.status || (pending ? 'running' : 'completed')) === 'running',
+    (tc) => resolveToolCallStatus(tc, pending) === 'running',
+  ).length;
+  const failedCount = toolCalls.filter(
+    (tc) => resolveToolCallStatus(tc, pending) === 'failed',
   ).length;
   const [open, setOpen] = useState(false);
 
-  // 有工具开始运行时自动展开一次，全部结束后保持用户选择
+  // 有工具开始运行时自动展开一次；结束后保持用户折叠选择
   useEffect(() => {
     if (runningCount > 0) setOpen(true);
   }, [runningCount > 0]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!toolCalls?.length) return null;
+
+  const statusSuffix =
+    runningCount > 0
+      ? ` · ${runningCount} 运行中`
+      : failedCount > 0
+        ? ` · ${failedCount} 失败`
+        : ` · 已完成`;
 
   return (
     <div className="tk-trace">
@@ -49,7 +73,7 @@ export function ToolCallPanel({ toolCalls, pending = false }: ToolCallPanelProps
         <span className="tk-trace-tag">TRACE</span>
         <span>
           工具轨迹 {toolCalls.length} 步
-          {runningCount > 0 ? ` · ${runningCount} 运行中` : ''}
+          {statusSuffix}
         </span>
         {runningCount > 0 && (
           <span className="tk-pxdot" style={{ background: '#d97706' }} />
@@ -87,7 +111,7 @@ function TraceStep({
   toolCall: ToolCallData;
   pending: boolean;
 }) {
-  const status = toolCall.status || (pending ? 'running' : 'completed');
+  const status = resolveToolCallStatus(toolCall, pending);
   const hasResult = toolCall.result !== undefined && toolCall.result !== null;
   const hasArgs = toolCall.arguments && Object.keys(toolCall.arguments).length > 0;
   const [detailOpen, setDetailOpen] = useState(false);
@@ -96,6 +120,7 @@ function TraceStep({
   const summary = useMemo(() => {
     if (hasResult) return summarizeToolResult(toolCall.result, toolCall.name);
     if (status === 'running') return '执行中…';
+    if (status === 'completed' && !hasResult) return '已完成';
     if (hasArgs) {
       const keys = Object.keys(toolCall.arguments);
       return keys.slice(0, 3).join(', ') + (keys.length > 3 ? '…' : '');

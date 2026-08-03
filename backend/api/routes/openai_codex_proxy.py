@@ -379,6 +379,32 @@ def _extract_tool_calls_from_codex(data: dict[str, Any]) -> list[dict[str, Any]]
     return tool_calls
 
 
+def _map_responses_usage(raw: dict[str, Any] | None) -> dict[str, Any]:
+    """Responses usage → OpenAI chat.completions usage (for stream clients)."""
+    if not isinstance(raw, dict) or not raw:
+        return {}
+    try:
+        from backend.services.llm.usage_normalize import map_responses_usage_to_openai
+
+        return map_responses_usage_to_openai(raw)
+    except Exception:
+        out: dict[str, Any] = dict(raw)
+        if "input_tokens" in raw and "prompt_tokens" not in raw:
+            try:
+                out["prompt_tokens"] = int(raw.get("input_tokens") or 0)
+            except (TypeError, ValueError):
+                out["prompt_tokens"] = 0
+        if "output_tokens" in raw and "completion_tokens" not in raw:
+            try:
+                out["completion_tokens"] = int(raw.get("output_tokens") or 0)
+            except (TypeError, ValueError):
+                out["completion_tokens"] = 0
+        if isinstance(raw.get("input_tokens_details"), dict):
+            out["prompt_tokens_details"] = dict(raw["input_tokens_details"])
+            out["input_tokens_details"] = dict(raw["input_tokens_details"])
+        return out
+
+
 def _sse_chat_chunk(
     *,
     model: str,
@@ -386,15 +412,16 @@ def _sse_chat_chunk(
     tool_calls: list[dict[str, Any]] | None = None,
     finish_reason: str | None = None,
     chunk_id: str = "codex-stream",
+    usage: dict[str, Any] | None = None,
 ) -> str:
     delta: dict[str, Any] = {}
     if content:
         delta["content"] = content
     if tool_calls:
         delta["tool_calls"] = tool_calls
-    if content is None and tool_calls is None and finish_reason is None:
+    if content is None and tool_calls is None and finish_reason is None and not usage:
         delta = {}
-    payload = {
+    payload: dict[str, Any] = {
         "id": chunk_id,
         "object": "chat.completion.chunk",
         "model": model,
@@ -406,6 +433,10 @@ def _sse_chat_chunk(
             }
         ],
     }
+    if isinstance(usage, dict) and usage:
+        payload["usage"] = usage
+        # OpenAI stream_options pattern: empty choices when usage-only is also ok;
+        # keep finish chunk + usage on same or follow-up chunk for compat.
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
@@ -425,6 +456,7 @@ class _CodexStreamToChat:
         self._calls: dict[int, dict[str, str]] = {}
         self._next_index = 0
         self._finished = False
+        self._usage: dict[str, Any] = {}
 
     def _idx_for(self, *, item_id: str = "", call_id: str = "", name: str = "") -> int:
         for key in (call_id, item_id):
@@ -503,11 +535,30 @@ class _CodexStreamToChat:
             fr = "tool_calls"
         else:
             fr = "stop"
+        usage = _map_responses_usage(self._usage) if self._usage else {}
         out.append(
             _sse_chat_chunk(
-                model=self.model, finish_reason=fr, chunk_id=self.resp_id
+                model=self.model,
+                finish_reason=fr,
+                chunk_id=self.resp_id,
+                usage=usage or None,
             )
         )
+        # Separate usage-only chunk (OpenAI stream_options.include_usage style)
+        if usage:
+            out.append(
+                _sse_chat_chunk(
+                    model=self.model,
+                    chunk_id=self.resp_id,
+                    usage=usage,
+                )
+            )
+            logger.info(
+                "codex oauth usage mapped prompt=%s completion=%s details=%s",
+                usage.get("prompt_tokens") or usage.get("input_tokens"),
+                usage.get("completion_tokens") or usage.get("output_tokens"),
+                usage.get("prompt_tokens_details") or usage.get("input_tokens_details"),
+            )
         out.append("data: [DONE]\n\n")
         return out
 
@@ -613,6 +664,11 @@ class _CodexStreamToChat:
                 if resp.get("id"):
                     self.resp_id = str(resp["id"])
                 self._merge_from_final_output(resp)
+                if isinstance(resp.get("usage"), dict):
+                    self._usage = dict(resp["usage"])
+            # some gateways put usage on the event root
+            if not self._usage and isinstance(ev.get("usage"), dict):
+                self._usage = dict(ev["usage"])
             out.extend(self._emit_tools_and_finish())
             return out
 
@@ -868,7 +924,7 @@ async def chat_completions(request: Request):
                                 "finish_reason": "tool_calls" if tool_calls else "stop",
                             }
                         ],
-                        "usage": usage or {},
+                        "usage": _map_responses_usage(usage) if usage else {},
                     }
         except Exception as e:
             logger.warning("openai-codex proxy failed: %s", e)

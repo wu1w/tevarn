@@ -84,7 +84,7 @@ async def steward_decide_tool(
     if tool_matches_crew_caps(tool_name, caps):
         return "allow", f"steward:within_identity_caps tool={tool_name}"
 
-    # 不在编制内 → 不弹主人；记一笔待 CEO grant_caps 的请求
+    # 不在编制内 → 不弹主人；记 pending，并尽量由 CEO 策略自动扩权放行
     from backend.agent.grant_store import crew_cap_for_tool
 
     needed = crew_cap_for_tool(tool_name) or tool_name
@@ -111,11 +111,39 @@ async def steward_decide_tool(
         except Exception as e:
             logger.debug("record_cap_request skip: %s", e)
 
+    # CEO 默认执行：自动扩权并当场 allow（不依赖管家 LLM 是否在线）
+    if iid:
+        try:
+            from backend.agent.steward_auto_grant import apply_ceo_auto_grant
+
+            ag = await apply_ceo_auto_grant(
+                identity_id=iid,
+                identity_name=iname,
+                needed_cap=str(needed),
+                tool=tool_name,
+                inbox_item_id=job_id,
+                reason=f"outside caps have={list(caps)[:8]}",
+            )
+            if ag.get("ok"):
+                # 同步本轮 args，后续同轮工具可继续匹配
+                try:
+                    new_caps = list(ag.get("merged") or []) or (list(caps or []) + [str(needed)])
+                    args["_identity_capabilities"] = new_caps
+                except Exception:
+                    pass
+                return (
+                    "allow",
+                    f"steward:auto_grant_ok cap={needed} tool={tool_name} "
+                    f"{ag.get('message') or ''}".strip(),
+                )
+        except Exception as e:
+            logger.debug("ceo auto_grant skip: %s", e)
+
     hint = (
         f"steward:outside_identity_caps tool={tool_name} need_cap={needed} "
         f"have={list(caps)[:12]}。"
         f"请 CEO 用 crew_steward action=grant_caps name=<员工> capabilities=[\"{needed}\"] "
-        f"扩权后可 reassign 重派；不要让主人点弹窗批每一次工具。"
+        f"requeue=true 扩权；禁止让主人点弹窗批每一次工具。"
     )
     if req_id:
         hint += f" pending_grant={req_id}"

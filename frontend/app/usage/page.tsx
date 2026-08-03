@@ -1,9 +1,11 @@
 'use client';
 
 /**
- * 用量与缓存命中率
+ * 用量与缓存命中率（高精度）
  * 数据：/kernel/cost + /kernel/cache/metrics
- * 可按供应商（family）与模型筛选
+ * - prompt / cache_read / billable 来自 durable ledger 真实累计
+ * - 主指标：token 级命中率 = cache_read / prompt（压缩策略用）
+ * - 次指标：轮次 hit/miss（仅表示该轮是否有任意 cache_read）
  */
 
 import React, { useMemo, useState } from 'react';
@@ -11,15 +13,20 @@ import { useQuery } from '@tanstack/react-query';
 import { getKernelCost, getKernelCacheMetrics } from '@/lib/api';
 import { useZh } from '@/hooks/useZh';
 
-type CostFamily = { tokens?: number; billable?: number; rounds?: number };
-type CostModel = {
-  family?: string;
-  model?: string;
+type CostFamily = {
   tokens?: number;
   billable?: number;
   rounds?: number;
   prompt?: number;
+  completion?: number;
   cache_read?: number;
+  cache_write?: number;
+  real_rounds?: number;
+  estimated_rounds?: number;
+};
+type CostModel = CostFamily & {
+  family?: string;
+  model?: string;
   input?: number;
   output?: number;
 };
@@ -28,25 +35,54 @@ type CacheFamily = {
   misses?: number;
   hit_rate?: number;
   bytes_saved?: number;
+  prompt_tokens?: number;
+  cache_read_tokens?: number;
+  token_hit_rate?: number;
 };
 type CacheModel = CacheFamily & { family?: string; model?: string };
 
 type CostPanel = {
-  totals?: { tokens?: number; billable?: number; llm_rounds?: number };
+  totals?: {
+    tokens?: number;
+    billable?: number;
+    llm_rounds?: number;
+    prompt?: number;
+    completion?: number;
+    cache_read?: number;
+    cache_write?: number;
+    real_rounds?: number;
+    estimated_rounds?: number;
+    token_cache_hit_rate?: number;
+  };
   by_family?: Record<string, CostFamily>;
   by_model?: Record<string, CostModel>;
   summary?: {
     tokens?: number;
     billable?: number;
+    prompt?: number;
+    cache_read?: number;
     cache_hit_rate?: number;
+    token_cache_hit_rate?: number;
+    round_cache_hit_rate?: number;
+    real_rounds?: number;
+    estimated_rounds?: number;
     live_process_count?: number;
+    ledger_source?: string;
   };
 };
 
 type CachePanel = {
   families?: Record<string, CacheFamily>;
   models?: Record<string, CacheModel>;
-  totals?: { hits?: number; misses?: number; hit_rate?: number; bytes_saved?: number };
+  totals?: {
+    hits?: number;
+    misses?: number;
+    hit_rate?: number;
+    bytes_saved?: number;
+    prompt_tokens?: number;
+    cache_read_tokens?: number;
+    token_hit_rate?: number;
+  };
 };
 
 const card: React.CSSProperties = {
@@ -127,7 +163,6 @@ export default function UsagePage() {
   const cost = (costQ.data || {}) as CostPanel;
   const cache = (cacheQ.data || {}) as CachePanel;
 
-  // cost API: top-level by_family/by_model (new) or nested tokens_billable
   const costInner = useMemo(() => {
     const raw = costQ.data as Record<string, unknown> | undefined;
     if (!raw) return {} as CostPanel;
@@ -139,13 +174,14 @@ export default function UsagePage() {
 
   const byFamily = costInner.by_family || {};
   const byModel = costInner.by_model || {};
-  // cache: top-level cache_models (cost API) or /cache/metrics families/models
   const cacheFamilies =
-    (costQ.data as { cache_families?: Record<string, CacheFamily> } | undefined)?.cache_families ||
+    (costQ.data as { cache_families?: Record<string, CacheFamily> } | undefined)
+      ?.cache_families ||
     cache.families ||
     {};
   const cacheModels =
-    (costQ.data as { cache_models?: Record<string, CacheModel> } | undefined)?.cache_models ||
+    (costQ.data as { cache_models?: Record<string, CacheModel> } | undefined)
+      ?.cache_models ||
     cache.models ||
     {};
 
@@ -179,7 +215,6 @@ export default function UsagePage() {
     return [...s].sort();
   }, [byModel, cacheModels, provider]);
 
-  // reset model when provider changes and current model out of scope
   React.useEffect(() => {
     if (model === 'all') return;
     if (!modelOptions.includes(model)) setModel('all');
@@ -192,9 +227,14 @@ export default function UsagePage() {
       model: string;
       tokens: number;
       prompt: number;
+      completion: number;
       cache_read: number;
+      cache_write: number;
       billable: number;
       rounds: number;
+      real_rounds: number;
+      estimated_rounds: number;
+      token_hit: number | null;
     }> = [];
     const entries = Object.entries(byModel);
     if (entries.length) {
@@ -205,37 +245,47 @@ export default function UsagePage() {
         if (model !== 'all' && `${fam}/${mid}` !== model && key !== model) continue;
         const tokens = Number(m.tokens || 0);
         const billable = Number(m.billable || 0);
+        const prompt = Number(m.prompt ?? m.input ?? 0);
+        const completion = Number(m.completion ?? m.output ?? 0);
         const cacheRead = Number(m.cache_read || 0);
-        // prompt ≈ 输入侧：优先显式 prompt/input，否则 tokens - output 不可得时用 billable+cache
-        const prompt = Number(
-          m.prompt ?? m.input ?? (cacheRead > 0 ? billable + cacheRead : tokens),
-        );
+        const cacheWrite = Number(m.cache_write || 0);
         rows.push({
           key,
           family: fam,
           model: mid,
           tokens,
           prompt,
+          completion,
           cache_read: cacheRead,
+          cache_write: cacheWrite,
           billable,
           rounds: Number(m.rounds || 0),
+          real_rounds: Number(m.real_rounds || 0),
+          estimated_rounds: Number(m.estimated_rounds || 0),
+          token_hit: prompt > 0 ? cacheRead / prompt : null,
         });
       }
     } else {
-      // fallback: family-only data (old host / no model yet)
       for (const [fam, m] of Object.entries(byFamily)) {
         if (provider !== 'all' && fam !== provider) continue;
         const tokens = Number(m.tokens || 0);
         const billable = Number(m.billable || 0);
+        const prompt = Number(m.prompt || 0);
+        const cacheRead = Number(m.cache_read || 0);
         rows.push({
           key: fam,
           family: fam,
           model: '—',
           tokens,
-          prompt: tokens,
-          cache_read: 0,
+          prompt,
+          completion: Number(m.completion || 0),
+          cache_read: cacheRead,
+          cache_write: Number(m.cache_write || 0),
           billable,
           rounds: Number(m.rounds || 0),
+          real_rounds: Number(m.real_rounds || 0),
+          estimated_rounds: Number(m.estimated_rounds || 0),
+          token_hit: prompt > 0 ? cacheRead / prompt : null,
         });
       }
     }
@@ -251,6 +301,9 @@ export default function UsagePage() {
       hits: number;
       misses: number;
       hit_rate: number;
+      token_hit_rate: number | null;
+      prompt_tokens: number;
+      cache_read_tokens: number;
       bytes_saved: number;
     }> = [];
     const entries = Object.entries(cacheModels);
@@ -262,12 +315,20 @@ export default function UsagePage() {
         if (model !== 'all' && `${fam}/${mid}` !== model && key !== model) continue;
         const hits = Number(m.hits || 0);
         const misses = Number(m.misses || 0);
+        const pt = Number(m.prompt_tokens || 0);
+        const crt = Number(m.cache_read_tokens || 0);
         const rate =
           m.hit_rate != null
             ? Number(m.hit_rate)
             : hits + misses > 0
               ? hits / (hits + misses)
               : 0;
+        const thr =
+          m.token_hit_rate != null
+            ? Number(m.token_hit_rate)
+            : pt > 0
+              ? crt / pt
+              : null;
         rows.push({
           key,
           family: fam,
@@ -275,6 +336,9 @@ export default function UsagePage() {
           hits,
           misses,
           hit_rate: rate,
+          token_hit_rate: thr,
+          prompt_tokens: pt,
+          cache_read_tokens: crt,
           bytes_saved: Number(m.bytes_saved || 0),
         });
       }
@@ -283,6 +347,8 @@ export default function UsagePage() {
         if (provider !== 'all' && fam !== provider) continue;
         const hits = Number(m.hits || 0);
         const misses = Number(m.misses || 0);
+        const pt = Number(m.prompt_tokens || 0);
+        const crt = Number(m.cache_read_tokens || 0);
         const rate =
           m.hit_rate != null
             ? Number(m.hit_rate)
@@ -296,48 +362,83 @@ export default function UsagePage() {
           hits,
           misses,
           hit_rate: rate,
+          token_hit_rate:
+            m.token_hit_rate != null
+              ? Number(m.token_hit_rate)
+              : pt > 0
+                ? crt / pt
+                : null,
+          prompt_tokens: pt,
+          cache_read_tokens: crt,
           bytes_saved: Number(m.bytes_saved || 0),
         });
       }
     }
-    rows.sort((a, b) => b.hits + b.misses - (a.hits + a.misses));
+    rows.sort(
+      (a, b) =>
+        b.prompt_tokens + b.hits + b.misses - (a.prompt_tokens + a.hits + a.misses),
+    );
     return rows;
   }, [cacheModels, cacheFamilies, provider, model]);
 
-  // Filtered totals
   const filteredCost = useMemo(() => {
     let tokens = 0;
     let billable = 0;
     let rounds = 0;
+    let prompt = 0;
+    let cacheRead = 0;
+    let real = 0;
+    let est = 0;
     for (const r of costRows) {
       tokens += r.tokens;
       billable += r.billable;
       rounds += r.rounds;
+      prompt += r.prompt;
+      cacheRead += r.cache_read;
+      real += r.real_rounds;
+      est += r.estimated_rounds;
     }
-    return { tokens, billable, rounds };
+    return {
+      tokens,
+      billable,
+      rounds,
+      prompt,
+      cacheRead,
+      real,
+      est,
+      token_hit: prompt > 0 ? cacheRead / prompt : null,
+    };
   }, [costRows]);
 
   const filteredCache = useMemo(() => {
     let hits = 0;
     let misses = 0;
     let bytes = 0;
+    let pt = 0;
+    let crt = 0;
     for (const r of cacheRows) {
       hits += r.hits;
       misses += r.misses;
       bytes += r.bytes_saved;
+      pt += r.prompt_tokens;
+      crt += r.cache_read_tokens;
     }
     const total = hits + misses;
     return {
       hits,
       misses,
       bytes,
-      hit_rate: total > 0 ? hits / total : null as number | null,
+      hit_rate: total > 0 ? hits / total : (null as number | null),
+      token_hit: pt > 0 ? crt / pt : (null as number | null),
+      prompt_tokens: pt,
+      cache_read_tokens: crt,
     };
   }, [cacheRows]);
 
   const globalTotals = costInner.totals || {};
   const globalCache = cache.totals || {};
-  const summary = (cost as CostPanel).summary || (costQ.data as CostPanel | undefined)?.summary;
+  const summary =
+    (cost as CostPanel).summary || (costQ.data as CostPanel | undefined)?.summary;
   const loading = costQ.isLoading || cacheQ.isLoading;
 
   const th: React.CSSProperties = {
@@ -356,17 +457,47 @@ export default function UsagePage() {
     fontFamily: 'var(--font-mono)',
   };
 
+  const globalTokenHit =
+    summary?.token_cache_hit_rate ??
+    summary?.cache_hit_rate ??
+    globalTotals.token_cache_hit_rate ??
+    (Number(globalTotals.prompt || 0) > 0
+      ? Number(globalTotals.cache_read || 0) / Number(globalTotals.prompt || 1)
+      : null);
+
   return (
-    <div style={{ padding: '20px 24px', maxWidth: 1100, margin: '0 auto' }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 18 }}>
+    <div style={{ padding: '20px 24px', maxWidth: 1200, margin: '0 auto' }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'flex-start',
+          justifyContent: 'space-between',
+          gap: 16,
+          marginBottom: 18,
+        }}
+      >
         <div>
-          <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: 'var(--foreground)' }}>
+          <h1
+            style={{
+              margin: 0,
+              fontSize: 20,
+              fontWeight: 700,
+              color: 'var(--foreground)',
+            }}
+          >
             {zh ? '用量与缓存' : 'Usage & Cache'}
           </h1>
-          <p style={{ margin: '6px 0 0', fontSize: 12.5, color: 'var(--foreground-dim)', lineHeight: 1.5 }}>
+          <p
+            style={{
+              margin: '6px 0 0',
+              fontSize: 12.5,
+              color: 'var(--foreground-dim)',
+              lineHeight: 1.5,
+            }}
+          >
             {zh
-              ? 'Token / 计费用量与 Prompt Cache 命中率。可按供应商与模型筛选。累计写入本机 usage_ledger（kernel 重启不清零）。'
-              : 'Token / billable usage and prompt-cache hit rate. Filter by provider and model. Persisted in local usage_ledger (survives kernel restarts).'}
+              ? '高精度 Token / 计费 / Prompt Cache。主指标为 token 命中率（cache_read÷prompt），用于压缩策略。累计写入本机 usage_ledger。'
+              : 'High-accuracy tokens / billable / prompt cache. Primary metric is token hit rate (cache_read÷prompt) for compression. Persisted in usage_ledger.'}
           </p>
         </div>
         <button
@@ -390,7 +521,6 @@ export default function UsagePage() {
         </button>
       </div>
 
-      {/* Filters */}
       <div
         style={{
           ...card,
@@ -401,7 +531,15 @@ export default function UsagePage() {
           marginBottom: 14,
         }}
       >
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--foreground-muted)' }}>
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            fontSize: 12,
+            color: 'var(--foreground-muted)',
+          }}
+        >
           {zh ? '供应商' : 'Provider'}
           <select
             value={provider}
@@ -419,9 +557,21 @@ export default function UsagePage() {
             ))}
           </select>
         </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--foreground-muted)' }}>
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            fontSize: 12,
+            color: 'var(--foreground-muted)',
+          }}
+        >
           {zh ? '模型' : 'Model'}
-          <select value={model} onChange={(e) => setModel(e.target.value)} style={selectStyle}>
+          <select
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            style={selectStyle}
+          >
             <option value="all">{zh ? '全部' : 'All'}</option>
             {modelOptions.map((m) => (
               <option key={m} value={m}>
@@ -450,22 +600,27 @@ export default function UsagePage() {
             {zh ? '清除筛选' : 'Clear filters'}
           </button>
         )}
-        <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--foreground-dim)' }}>
+        <span
+          style={{
+            marginLeft: 'auto',
+            fontSize: 11,
+            color: 'var(--foreground-dim)',
+          }}
+        >
           {loading
             ? zh
               ? '加载中…'
               : 'Loading…'
             : zh
-              ? `全局 · ${fmtNum(Number(globalTotals.tokens ?? summary?.tokens ?? 0))} tokens`
-              : `global · ${fmtNum(Number(globalTotals.tokens ?? summary?.tokens ?? 0))} tokens`}
+              ? `全局 · ${fmtNum(Number(globalTotals.tokens ?? summary?.tokens ?? 0))} tokens · 命中 ${fmtRate(globalTokenHit == null ? null : Number(globalTokenHit))}`
+              : `global · ${fmtNum(Number(globalTotals.tokens ?? summary?.tokens ?? 0))} tokens · hit ${fmtRate(globalTokenHit == null ? null : Number(globalTokenHit))}`}
         </span>
       </div>
 
-      {/* Summary cards — filtered */}
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
           gap: 10,
           marginBottom: 16,
         }}
@@ -476,19 +631,27 @@ export default function UsagePage() {
             value: fmtNum(filteredCost.tokens),
           },
           {
+            label: zh ? 'Prompt' : 'Prompt',
+            value: fmtNum(filteredCost.prompt),
+          },
+          {
+            label: zh ? 'Cache read' : 'Cache read',
+            value: fmtNum(filteredCost.cacheRead),
+          },
+          {
             label: zh ? '计费 Tokens' : 'Billable',
             value: fmtNum(filteredCost.billable),
           },
           {
-            label: zh ? 'LLM 轮次' : 'LLM rounds',
-            value: fmtNum(filteredCost.rounds),
+            label: zh ? 'Token 命中率' : 'Token hit rate',
+            value: fmtRate(filteredCost.token_hit),
           },
           {
-            label: zh ? '缓存命中率' : 'Cache hit rate',
-            value: fmtRate(filteredCache.hit_rate),
+            label: zh ? '真实/估算轮次' : 'Real / est. rounds',
+            value: `${fmtNum(filteredCost.real)} / ${fmtNum(filteredCost.est)}`,
           },
           {
-            label: zh ? '缓存命中/未中' : 'Hits / Misses',
+            label: zh ? '轮次命中/未中' : 'Round hits/misses',
             value: `${fmtNum(filteredCache.hits)} / ${fmtNum(filteredCache.misses)}`,
           },
           {
@@ -497,22 +660,44 @@ export default function UsagePage() {
           },
         ].map((c) => (
           <div key={c.label} style={card}>
-            <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--foreground)' }}>{c.value}</div>
-            <div style={{ fontSize: 11, color: 'var(--foreground-dim)', marginTop: 4 }}>{c.label}</div>
+            <div
+              style={{ fontSize: 18, fontWeight: 700, color: 'var(--foreground)' }}
+            >
+              {c.value}
+            </div>
+            <div
+              style={{
+                fontSize: 11,
+                color: 'var(--foreground-dim)',
+                marginTop: 4,
+              }}
+            >
+              {c.label}
+            </div>
           </div>
         ))}
       </div>
 
-      {/* Cost table */}
       <div style={{ ...card, marginBottom: 14, padding: 0, overflow: 'hidden' }}>
-        <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border-subtle)' }}>
-          <div style={{ fontSize: 13, fontWeight: 650 }}>{zh ? '用量明细' : 'Usage breakdown'}</div>
-          <div style={{ fontSize: 11, color: 'var(--foreground-dim)', marginTop: 2 }}>
-            GET /api/kernel/cost · by_model / by_family
+        <div
+          style={{
+            padding: '12px 16px',
+            borderBottom: '1px solid var(--border-subtle)',
+          }}
+        >
+          <div style={{ fontSize: 13, fontWeight: 650 }}>
+            {zh ? '用量明细' : 'Usage breakdown'}
+          </div>
+          <div
+            style={{ fontSize: 11, color: 'var(--foreground-dim)', marginTop: 2 }}
+          >
+            GET /api/kernel/cost · by_model · prompt / cache_read / billable
           </div>
         </div>
         {costRows.length === 0 ? (
-          <div style={{ padding: 24, fontSize: 12, color: 'var(--foreground-dim)' }}>
+          <div
+            style={{ padding: 24, fontSize: 12, color: 'var(--foreground-dim)' }}
+          >
             {zh
               ? '暂无用量采样。与员工对话几轮后，token 会按供应商/模型累计。'
               : 'No usage samples yet. Chat a few rounds and totals will appear by provider/model.'}
@@ -525,9 +710,16 @@ export default function UsagePage() {
                   <th style={th}>{zh ? '供应商' : 'Provider'}</th>
                   <th style={th}>{zh ? '模型' : 'Model'}</th>
                   <th style={{ ...th, textAlign: 'right' }}>prompt</th>
+                  <th style={{ ...th, textAlign: 'right' }}>completion</th>
                   <th style={{ ...th, textAlign: 'right' }}>cache_read</th>
                   <th style={{ ...th, textAlign: 'right' }}>billable</th>
+                  <th style={{ ...th, textAlign: 'right' }}>
+                    {zh ? 'token命中' : 'tok hit'}
+                  </th>
                   <th style={{ ...th, textAlign: 'right' }}>rounds</th>
+                  <th style={{ ...th, textAlign: 'right' }}>
+                    {zh ? '真实/估' : 'real/est'}
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -535,14 +727,27 @@ export default function UsagePage() {
                   <tr key={r.key}>
                     <td style={td}>{r.family}</td>
                     <td style={td}>{r.model}</td>
-                    <td style={{ ...td, textAlign: 'right' }}>{fmtNum(r.prompt)}</td>
                     <td style={{ ...td, textAlign: 'right' }}>
-                      {r.family === 'openai-chatgpt-oauth' && !r.cache_read
-                        ? '—'
-                        : fmtNum(r.cache_read)}
+                      {r.prompt > 0 ? fmtNum(r.prompt) : r.estimated_rounds > 0 ? '≈' : '—'}
+                    </td>
+                    <td style={{ ...td, textAlign: 'right' }}>
+                      {r.completion > 0 ? fmtNum(r.completion) : '—'}
+                    </td>
+                    <td style={{ ...td, textAlign: 'right' }}>
+                      {r.cache_read > 0
+                        ? fmtNum(r.cache_read)
+                        : r.prompt > 0
+                          ? '0'
+                          : '—'}
                     </td>
                     <td style={{ ...td, textAlign: 'right' }}>{fmtNum(r.billable)}</td>
+                    <td style={{ ...td, textAlign: 'right' }}>
+                      {fmtRate(r.token_hit)}
+                    </td>
                     <td style={{ ...td, textAlign: 'right' }}>{fmtNum(r.rounds)}</td>
+                    <td style={{ ...td, textAlign: 'right' }}>
+                      {fmtNum(r.real_rounds)}/{fmtNum(r.estimated_rounds)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -551,25 +756,36 @@ export default function UsagePage() {
         )}
       </div>
 
-      {/* Cache table */}
       <div style={{ ...card, marginBottom: 14, padding: 0, overflow: 'hidden' }}>
-        <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border-subtle)' }}>
-          <div style={{ fontSize: 13, fontWeight: 650 }}>{zh ? '缓存命中明细' : 'Cache hit breakdown'}</div>
-          <div style={{ fontSize: 11, color: 'var(--foreground-dim)', marginTop: 2 }}>
-            GET /api/kernel/cache/metrics · models / families
-            {globalCache.hit_rate != null && (
+        <div
+          style={{
+            padding: '12px 16px',
+            borderBottom: '1px solid var(--border-subtle)',
+          }}
+        >
+          <div style={{ fontSize: 13, fontWeight: 650 }}>
+            {zh ? '缓存命中明细' : 'Cache hit breakdown'}
+          </div>
+          <div
+            style={{ fontSize: 11, color: 'var(--foreground-dim)', marginTop: 2 }}
+          >
+            GET /api/kernel/cache/metrics · token_hit_rate = cache_read÷prompt
+            {globalCache.token_hit_rate != null && (
               <span>
                 {' '}
-                · {zh ? '全局' : 'global'} {fmtRate(Number(globalCache.hit_rate))}
+                · {zh ? '全局 token' : 'global tok'}{' '}
+                {fmtRate(Number(globalCache.token_hit_rate))}
               </span>
             )}
           </div>
         </div>
         {cacheRows.length === 0 ? (
-          <div style={{ padding: 24, fontSize: 12, color: 'var(--foreground-dim)' }}>
+          <div
+            style={{ padding: 24, fontSize: 12, color: 'var(--foreground-dim)' }}
+          >
             {zh
-              ? '暂无缓存采样（需 LLM 回填 usage 中的 cache_read）。'
-              : 'No cache samples yet (needs LLM usage with cache_read).'}
+              ? '暂无缓存采样（需 LLM 回填 usage 中的 cache_read；估算轮次不记缓存）。'
+              : 'No cache samples yet (needs provider usage.cache_read; estimated rounds skip cache).'}
           </div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
@@ -578,10 +794,18 @@ export default function UsagePage() {
                 <tr>
                   <th style={th}>{zh ? '供应商' : 'Provider'}</th>
                   <th style={th}>{zh ? '模型' : 'Model'}</th>
-                  <th style={{ ...th, textAlign: 'right' }}>{zh ? '命中' : 'Hits'}</th>
-                  <th style={{ ...th, textAlign: 'right' }}>{zh ? '未中' : 'Misses'}</th>
-                  <th style={th}>{zh ? '命中率' : 'Hit rate'}</th>
-                  <th style={{ ...th, textAlign: 'right' }}>{zh ? '约节省' : 'Saved'}</th>
+                  <th style={{ ...th, textAlign: 'right' }}>promptΣ</th>
+                  <th style={{ ...th, textAlign: 'right' }}>cache_readΣ</th>
+                  <th style={th}>{zh ? 'Token 命中率' : 'Token hit'}</th>
+                  <th style={{ ...th, textAlign: 'right' }}>
+                    {zh ? '轮次命中' : 'Round hits'}
+                  </th>
+                  <th style={{ ...th, textAlign: 'right' }}>
+                    {zh ? '未中' : 'Misses'}
+                  </th>
+                  <th style={{ ...th, textAlign: 'right' }}>
+                    {zh ? '约节省' : 'Saved'}
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -589,15 +813,40 @@ export default function UsagePage() {
                   <tr key={r.key}>
                     <td style={td}>{r.family}</td>
                     <td style={td}>{r.model}</td>
-                    <td style={{ ...td, textAlign: 'right' }}>{fmtNum(r.hits)}</td>
-                    <td style={{ ...td, textAlign: 'right' }}>{fmtNum(r.misses)}</td>
+                    <td style={{ ...td, textAlign: 'right' }}>
+                      {fmtNum(r.prompt_tokens)}
+                    </td>
+                    <td style={{ ...td, textAlign: 'right' }}>
+                      {fmtNum(r.cache_read_tokens)}
+                    </td>
                     <td style={td}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 120 }}>
-                        {hitBar(r.hit_rate)}
-                        <span style={{ flexShrink: 0, width: 48, textAlign: 'right' }}>{fmtRate(r.hit_rate)}</span>
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          minWidth: 120,
+                        }}
+                      >
+                        {hitBar(r.token_hit_rate ?? 0)}
+                        <span
+                          style={{
+                            flexShrink: 0,
+                            width: 48,
+                            textAlign: 'right',
+                          }}
+                        >
+                          {fmtRate(r.token_hit_rate)}
+                        </span>
                       </div>
                     </td>
-                    <td style={{ ...td, textAlign: 'right' }}>{fmtBytes(r.bytes_saved)}</td>
+                    <td style={{ ...td, textAlign: 'right' }}>{fmtNum(r.hits)}</td>
+                    <td style={{ ...td, textAlign: 'right' }}>
+                      {fmtNum(r.misses)}
+                    </td>
+                    <td style={{ ...td, textAlign: 'right' }}>
+                      {fmtBytes(r.bytes_saved)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -606,20 +855,33 @@ export default function UsagePage() {
         )}
       </div>
 
-      <div style={{ fontSize: 11, color: 'var(--foreground-dim)', lineHeight: 1.5 }}>
-        {zh
-          ? '说明：计费 tokens 优先用 billable（未命中缓存的输入 + 输出）。缓存命中依赖供应商返回的 cache_read 字段。'
-          : 'Note: billable prefers uncached input + output. Cache hits require provider usage.cache_read fields.'}
+      <div style={{ fontSize: 11, color: 'var(--foreground-dim)', lineHeight: 1.55 }}>
+        {zh ? (
+          <>
+            <div>
+              <strong>口径</strong>：billable ≈ (prompt − cache_read) + completion；token
+              命中率 = Σcache_read / Σprompt。估算轮次（无 provider usage）只记 tokens/billable，
+              不记 cache，并单独计 estimated_rounds。
+            </div>
+            <div style={{ marginTop: 4 }}>
+              每轮 LLM 只记账一次；family/model 与 cost/cache 共用同一归因。数据源：
+              {summary?.ledger_source || 'durable'}。
+            </div>
+          </>
+        ) : (
+          <>
+            <div>
+              <strong>Metrics</strong>: billable ≈ (prompt − cache_read) + completion;
+              token hit = Σcache_read / Σprompt. Estimated rounds (no provider usage)
+              skip cache and count as estimated_rounds.
+            </div>
+            <div style={{ marginTop: 4 }}>
+              One ledger write per LLM round; cost/cache share attribution. Source:{' '}
+              {summary?.ledger_source || 'durable'}.
+            </div>
+          </>
+        )}
       </div>
-      {(provider === 'openai-chatgpt-oauth' ||
-        costRows.some((r) => r.family === 'openai-chatgpt-oauth') ||
-        cacheRows.some((r) => r.family === 'openai-chatgpt-oauth')) && (
-        <p className="mt-2 text-[10px] text-foreground-dim">
-          {zh
-            ? 'Codex OAuth / Responses 不支持 cache 字段，命中率恒为 —（协议限制，非统计错误）'
-            : 'Codex OAuth / Responses has no cache fields; hit rate stays — (protocol limit, not a metrics bug).'}
-        </p>
-      )}
     </div>
   );
 }

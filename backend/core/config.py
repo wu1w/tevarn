@@ -266,6 +266,11 @@ class Settings(BaseSettings):
     agent_kernel_explicit_capabilities: bool = True
     # 工具被能力集拦截时自动发起提权申请（用户在 /security 批准）
     agent_kernel_auto_escalate: bool = True
+    # 编制：员工因 Identity.capabilities 不足被拦时，由「CEO 策略」自动扩权并放行
+    # （审计 by=ceo:auto_policy；不向主人弹窗）。关闭则仅记 pending_grants，等 CEO 会话 grant_caps。
+    agent_steward_auto_grant: bool = True
+    # 自动扩权是否包含 command/file_rw/git 等高危槽（单用户 AIOS 默认开，便于派单连续执行）
+    agent_steward_auto_grant_high_risk: bool = True
     # 0.5 编制与档案：进程档案/身份/checkpoint 持久化（sink 模式，失败不阻断）
     agent_kernel_persistence: bool = True
     # checkpoint 快照间隔（事件数）：恢复=快照+增量，禁止全量 replay

@@ -320,6 +320,17 @@ pre {
 .tk-trace-step .ok { color: #2f9e6e; }
 .tk-trace-step .run { color: #d97706; }
 .tk-trace-step .fail { color: #e5484d; }
+/* RESULT 头行：与 TRACE 共用虚线框，步骤行内联在 head 中 */
+.tk-trace-head .tk-trace-step {
+  display: inline-flex;
+  flex: 1;
+  min-width: 0;
+  align-items: baseline;
+  font-weight: 400;
+}
+.tk-trace-head .tk-trace-step .nm {
+  font-weight: 600;
+}
 
 /* ═══ Kimi 式思考：微光 + 无痕折叠 ═══ */
 @keyframes tk-shimmer {

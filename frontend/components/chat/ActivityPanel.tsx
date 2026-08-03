@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import type { ToolCallData } from './ToolCallPanel';
+import { resolveToolCallStatus, type ToolCallData } from './ToolCallPanel';
 import { useT } from '@/stores/localeStore';
 
 interface ActivityPanelProps {
@@ -30,9 +30,9 @@ export function ActivityPanel({
     return liveToolCalls.map((tc) => ({
       id: tc.id,
       name: tc.name,
-      status: tc.status || 'running',
+      status: resolveToolCallStatus(tc, isStreaming),
     }));
-  }, [liveToolCalls]);
+  }, [liveToolCalls, isStreaming]);
 
   const running = items.filter((i) => i.status === 'running').length;
   const failed = items.filter((i) => i.status === 'failed').length;

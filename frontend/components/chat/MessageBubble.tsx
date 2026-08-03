@@ -114,17 +114,28 @@ function MessageBubbleInner({
     return message.tool_calls.map((tc) => {
       const dtc = tc as DisplayToolCall;
       const args =
-        dtc.arguments && typeof dtc.arguments === 'object'? (dtc.arguments as Record<string, unknown>)
+        dtc.arguments && typeof dtc.arguments === 'object'
+          ? (dtc.arguments as Record<string, unknown>)
           : {};
+      const hasResult = dtc.result !== undefined && dtc.result !== null;
+      // 非流式历史：禁止残留 running（结果常在独立 tool 消息里，assistant.tool_calls 无 result）
+      let status: ToolCallData['status'] =
+        dtc.status === 'failed'
+          ? 'failed'
+          : dtc.status === 'completed' || hasResult
+            ? 'completed'
+            : streaming
+              ? 'running'
+              : 'completed';
       return {
         id: dtc.id,
         name: dtc.name,
         arguments: args,
         result: dtc.result,
-        status: dtc.status || (dtc.result !== undefined ? 'completed' : 'running'),
+        status,
       };
     });
-  }, [isAssistant, message.tool_calls]);
+  }, [isAssistant, message.tool_calls, streaming]);
 
   const hasToolCalls = !!(toolCallsForPanel && toolCallsForPanel.length > 0);
   const contentStr = message.content ?? '';
@@ -271,7 +282,8 @@ function MessageBubbleInner({
             <div className="mb-2">
               <ToolCallPanel
                 toolCalls={toolCallsForPanel!}
-                pending={streaming && !hasContent}
+                // 仅整轮仍在流式时算 pending；有正文也不代表工具还在跑
+                pending={streaming}
               />
             </div>
           )}
@@ -324,51 +336,64 @@ export const MessageBubble = React.memo(
     prev.onPreviewArtifact === next.onPreviewArtifact,
 );
 
-/** 未配对 tool 消息的兜底展示：可折叠、JSON 美化，不再整墙原始 JSON */
+/** 未配对 tool 消息：与 TRACE 同款虚线 tk-trace 风格 */
 function ToolResultBubble({ message }: { message: Message }) {
   const { name } = extractToolMeta(message);
   const content = message.content || '';
   const formatted = useMemo(() => formatToolResultForDisplay(content), [content]);
   const summary = useMemo(
     () => summarizeToolResult(content, name),
-    [content, name]
+    [content, name],
   );
-  const [expanded, setExpanded] = useState(false); // 默认折叠，与 ToolCallCard 一致
+  const [expanded, setExpanded] = useState(false);
+  const isErr = isErrorContent(content);
 
   return (
-    <div className="overflow-hidden rounded-xl border border-border-subtle/90 bg-card-bg/60">
+    <div className="tk-trace w-full max-w-[min(96%,56rem)]">
       <button
-        type="button"onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-card-bg-hover">
-        <span className="flex-shrink-0">
-          <svg className="h-3.5 w-3.5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-          </svg>
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="tk-trace-head"
+      >
+        <span className="tk-trace-tag">RESULT</span>
+        <span className="tk-trace-step">
+          <span className={isErr ? 'fail' : 'ok'}>■</span>
+          <span className="nm max-w-[10rem] truncate">{name || 'tool'}</span>
+          <span className="shrink-0 text-foreground-dim">结果</span>
+          {summary ? (
+            <span className="min-w-0 flex-1 truncate text-foreground-dim">{summary}</span>
+          ) : (
+            <span className="flex-1" />
+          )}
         </span>
-        <span className="max-w-[40%] truncate text-xs font-medium text-green-400">
-          {name || 'tool'} 结果
-        </span>
-        {summary ? (
-          <span className="min-w-0 flex-1 truncate text-[11px] text-foreground-dim">
-            {summary}
-          </span>
-        ) : (
-          <span className="flex-1" />
-        )}
         {formatted.isJson && (
-          <span className="rounded bg-brand-cyan/10 px-1 text-[9px] text-brand-cyan">JSON</span>
+          <span className="rounded bg-brand-cyan/10 px-1 text-[9px] font-normal text-brand-cyan">
+            JSON
+          </span>
         )}
+        <span className="text-[11px] font-normal text-foreground-dim">
+          {expanded ? '收起' : '点击展开'}
+        </span>
         <svg
           className={`h-3 w-3 flex-shrink-0 text-foreground-dim transition-transform ${
-            expanded ? 'rotate-180' : ''}`}
-          fill="none"viewBox="0 0 24 24"stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            expanded ? 'rotate-180' : ''
+          }`}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M19 9l-7 7-7-7"
+          />
         </svg>
       </button>
 
       {expanded && (
-        <div className="border-t border-border-subtle px-3 py-2">
-          <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border-subtle bg-black/20 p-2 font-mono text-[10px] leading-relaxed text-foreground-dim">
+        <div className="tk-trace-body !pt-2">
+          <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border-subtle bg-black/[0.06] p-2 text-[10px] leading-relaxed dark:bg-black/20">
             {formatted.text}
           </pre>
         </div>

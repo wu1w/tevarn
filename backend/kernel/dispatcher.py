@@ -1028,14 +1028,32 @@ class WorkforceDispatcher:
                 "- 不得把「报告框架/预期结果」当成已执行检查。\n"
             )
         )
+        # 失败批次：附上待批提权，强制 CEO 先 grant 再汇报
+        grant_block = ""
+        try:
+            from backend.agent.steward_auto_grant import format_pending_grants_brief
+
+            pb = format_pending_grants_brief(limit=20)
+            if pb and not all_ok:
+                grant_block = (
+                    "\n\n【提权优先】若失败含 outside_identity_caps / need_cap：\n"
+                    "先 `crew_steward pending_grants` → "
+                    "`grant_caps name=… capabilities=[…] requeue=true`，"
+                    "**禁止**只写「请主人批准」。\n"
+                    + pb
+                    + "\n"
+                )
+        except Exception:
+            grant_block = ""
         prompt = (
             f"【系统·编制自动回调】你派发的「{title}」相关工单已全部结束"
             f"（触发员工：{name or '—'}）。\n"
             f"{honesty}"
+            f"{grant_block}"
             "请**立即**把下列结果汇总成主人可读的中文汇报：\n"
             "1. 总结论（须与批次状态一致）\n"
             "2. 分员工要点（按 [done]/[failed]/[dead] 标签）\n"
-            "3. 风险与建议下一步（失败项如何重派/抬预算/拆单）\n"
+            "3. 风险与建议下一步（失败项如何重派/抬预算/拆单/**grant_caps**）\n"
             "可用 crew_steward action=results 再核对，但**禁止**再次 hire/assign 同一批任务。\n\n"
             + "\n".join(blocks)
         )

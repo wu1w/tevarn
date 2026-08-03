@@ -1770,6 +1770,17 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         ),
                     }
                 )
+                # 每轮注入待批提权，避免 CEO 看不到 pending 而不 grant
+                try:
+                    from backend.agent.steward_auto_grant import (
+                        format_pending_grants_brief,
+                    )
+
+                    pend = format_pending_grants_brief()
+                    if pend:
+                        messages.append({"role": "system", "content": pend})
+                except Exception as _pg:
+                    logger.debug("pending grants brief skip: %s", _pg)
                 logger.info(
                     "steward orchestration injected session=%s contact=%s",
                     session_id,
