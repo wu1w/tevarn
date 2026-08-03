@@ -166,14 +166,18 @@ function MessageBubbleInner({
     <div className="group flex w-full flex-col" id={`msg-${message.id}`} data-message-id={message.id}>
       <div className={`flex w-full ${isUser ? 'justify-end' : 'justify-start'}`}>
         <div
-          className={`chat-surface relative w-full rounded-2xl px-4 py-3.5 ${
+          className={`chat-surface chat-bubble relative w-full rounded-2xl px-4 py-3.5 ${
             isUser
-              ? // 浅色气泡 + 深色字，避免紫底黑字/可读性差
-                'max-w-[min(96%,56rem)] border border-brand-purple/25 bg-brand-purple/[0.10] text-foreground shadow-sm ' +
-                'dark:border-brand-purple/30 dark:bg-brand-purple/15 dark:text-foreground': isErr
-                ? 'max-w-[min(96%,56rem)] border border-red-500/30 bg-red-500/[0.08] text-sm text-red-700 dark:text-red-100/95': isAssistant
-                  ? // 助手气泡随屏宽伸缩：窄屏 96%，宽屏可到 56–72rem
-                    'max-w-[min(96%,72rem)] border border-border-subtle/80 bg-card-bg/90 text-foreground shadow-sm': 'max-w-[min(96%,56rem)] border border-amber-500/20 bg-amber-500/[0.07] text-sm text-amber-900 dark:text-amber-100/90'}`}
+              ? // 用户：尺寸不变，边框更实 + 双层阴影质感
+                'chat-bubble-user max-w-[min(96%,56rem)] bg-brand-purple/[0.10] text-foreground ' +
+                'dark:bg-brand-purple/15 dark:text-foreground'
+              : isErr
+                ? 'chat-bubble-error max-w-[min(96%,56rem)] bg-red-500/[0.08] text-sm text-red-700 dark:text-red-100/95'
+                : isAssistant
+                  ? // 助手：尺寸不变，边框更清晰
+                    'chat-bubble-assistant max-w-[min(96%,72rem)] bg-card-bg/95 text-foreground'
+                  : 'chat-bubble-system max-w-[min(96%,56rem)] bg-amber-500/[0.07] text-sm text-amber-900 dark:text-amber-100/90'
+          }`}
         >
           <button
             onClick={() => setShowMenu(!showMenu)}

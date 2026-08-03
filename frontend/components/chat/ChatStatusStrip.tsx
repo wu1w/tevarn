@@ -162,13 +162,22 @@ export function ChatStatusStrip({
 
         {showSandboxWarn ? (
           <span
-            className="inline-flex h-5 items-center rounded-md border border-amber-500/30 bg-amber-500/10 px-1.5 text-[10px] text-amber-200/90"
+            className={
+              'inline-flex h-5 items-center gap-1 rounded-md border px-1.5 text-[10px] font-semibold ' +
+              // 浅色：深琥珀字 + 实边框，避免 amber-200 在白底不可见
+              'border-amber-700/55 bg-amber-500/18 text-amber-900 ' +
+              'dark:border-amber-400/45 dark:bg-amber-500/15 dark:text-amber-100'
+            }
             title={String(
               data?.sandbox?.note ||
                 data?.sandbox?.label ||
                 (zh ? '非完整隔离' : 'Not full isolation'),
             )}
           >
+            <span
+              className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-700 dark:bg-amber-300"
+              aria-hidden
+            />
             {zh ? '沙箱·限' : 'SBX'}
             {sandLevel && sandLevel !== '—' ? ` ${sandLevel}` : ''}
           </span>

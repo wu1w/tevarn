@@ -123,6 +123,58 @@ pre {
   letter-spacing: -0.01em;
 }
 
+/* 聊天气泡边框质感（尺寸/圆角/内边距由组件控制，此处只负责边与光） */
+.chat-bubble {
+  border-style: solid;
+  border-width: 1px;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--border-default) 55%, transparent),
+    0 1px 2px color-mix(in srgb, var(--foreground) 6%, transparent),
+    0 4px 14px color-mix(in srgb, var(--foreground) 4%, transparent);
+}
+.chat-bubble-user {
+  border-color: color-mix(in srgb, var(--brand-purple) 42%, var(--border-default));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--brand-purple) 22%, transparent),
+    0 1px 2px color-mix(in srgb, var(--brand-purple) 10%, transparent),
+    0 6px 16px color-mix(in srgb, var(--brand-purple) 8%, transparent);
+}
+.chat-bubble-assistant {
+  border-color: color-mix(in srgb, var(--border-default) 88%, var(--foreground) 12%);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--border-default) 70%, transparent),
+    0 1px 2px color-mix(in srgb, var(--foreground) 7%, transparent),
+    0 5px 16px color-mix(in srgb, var(--foreground) 5%, transparent);
+}
+.chat-bubble-error {
+  border-color: color-mix(in srgb, #ef4444 45%, var(--border-default));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, #ef4444 18%, transparent),
+    0 1px 2px color-mix(in srgb, #ef4444 8%, transparent);
+}
+.chat-bubble-system {
+  border-color: color-mix(in srgb, #d97706 40%, var(--border-default));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, #d97706 16%, transparent),
+    0 1px 2px color-mix(in srgb, #d97706 8%, transparent);
+}
+[data-theme='dark'] .chat-bubble-user,
+.dark .chat-bubble-user {
+  border-color: color-mix(in srgb, var(--brand-purple) 48%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--brand-purple) 28%, transparent),
+    0 1px 3px rgba(0, 0, 0, 0.35),
+    0 6px 18px rgba(0, 0, 0, 0.22);
+}
+[data-theme='dark'] .chat-bubble-assistant,
+.dark .chat-bubble-assistant {
+  border-color: color-mix(in srgb, var(--border-default) 100%, #fff 8%);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--border-default) 85%, transparent),
+    0 1px 3px rgba(0, 0, 0, 0.4),
+    0 6px 18px rgba(0, 0, 0, 0.25);
+}
+
 .chat-md {
   line-height: 1.72;
   letter-spacing: -0.01em;
