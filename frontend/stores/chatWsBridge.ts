@@ -36,6 +36,13 @@ export type ChatWsHandlers = {
     created_at?: string | null;
     display_content?: string | null;
   }) => void;
+  onSlashResult?: (payload: {
+    command?: string;
+    reply?: string;
+    message_id?: string;
+    user_message_id?: string;
+    new_session_id?: string;
+  }) => void;
   onToolEvent?: (msg: ToolEventMessage) => void;
   onRunEvent?: (msg: RunEventMessage) => void;
   onGoalUpdate?: (msg: GoalUpdateMessage) => void;

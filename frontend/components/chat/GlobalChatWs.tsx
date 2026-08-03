@@ -46,6 +46,9 @@ export function GlobalChatWs() {
     onUserMessageAck: (payload) => {
       chatWsHandlers().onUserMessageAck?.(payload);
     },
+    onSlashResult: (payload) => {
+      chatWsHandlers().onSlashResult?.(payload);
+    },
     onToolEvent: (msg: ToolEventMessage) => {
       chatWsHandlers().onToolEvent?.(msg);
     },

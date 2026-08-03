@@ -62,6 +62,19 @@ const TOOLS = [
   { key: 'image', toggle: true, group: 'action' },
 ] as const;
 
+/** 输入 / 时弹出的命令菜单（与后端 slash_commands 对齐） */
+const SLASH_COMMANDS: Array<{ name: string; hint: string }> = [
+  { name: 'help', hint: '命令列表' },
+  { name: 'status', hint: '会话/模型状态' },
+  { name: 'stop', hint: '停止当前运行' },
+  { name: 'new', hint: '新建会话' },
+  { name: 'compact', hint: '压缩上下文' },
+  { name: 'model', hint: '切换模型 model_name' },
+  { name: 'tools', hint: 'list | enable | disable' },
+  { name: 'toolset', hint: 'list | coding | safe | …' },
+  { name: 'goal', hint: '目标 show|pause|clear|文本' },
+];
+
 function isImageType(type: string, filename: string): boolean {
   if (type.startsWith('image/')) return true;
   return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(filename);
@@ -101,6 +114,9 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentionFilter, setMentionFilter] = useState('');
   const [mentionIndex, setMentionIndex] = useState(0);
+  const [slashOpen, setSlashOpen] = useState(false);
+  const [slashFilter, setSlashFilter] = useState('');
+  const [slashIndex, setSlashIndex] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const composerRootRef = useRef<HTMLDivElement | null>(null);
@@ -420,7 +436,53 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     }
   }, [isStreaming, disabled]);
 
+  const slashCandidates = SLASH_COMMANDS.filter((c) =>
+    !slashFilter || c.name.startsWith(slashFilter.toLowerCase()),
+  );
+
+  const applySlash = (name: string) => {
+    setContent(`/${name} `);
+    setSlashOpen(false);
+    setSlashFilter('');
+    setSlashIndex(0);
+    window.setTimeout(() => focusComposer(), 0);
+  };
+
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (slashOpen && slashCandidates.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSlashIndex((i) => (i + 1) % slashCandidates.length);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSlashIndex(
+          (i) => (i - 1 + slashCandidates.length) % slashCandidates.length,
+        );
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        // 完整命令如 /help 直接发送；未写完则补全
+        const raw = content.trim();
+        const m = raw.match(/^\/([a-zA-Z][\w-]*)$/);
+        if (m && SLASH_COMMANDS.some((c) => c.name === m[1].toLowerCase())) {
+          setSlashOpen(false);
+          // fall through to send
+        } else {
+          e.preventDefault();
+          applySlash(
+            slashCandidates[slashIndex]?.name || slashCandidates[0].name,
+          );
+          return;
+        }
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setSlashOpen(false);
+        return;
+      }
+    }
     if (mentionOpen && mentionCandidates.length > 0) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
@@ -698,6 +760,21 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
               if (inputLocked) return;
               const v = e.target.value;
               setContent(v);
+              // /命令菜单：仅当整行是 /xxx 草稿时弹出
+              const sm = v.match(/^\/([a-zA-Z][\w-]*)$/);
+              if (sm) {
+                setSlashOpen(true);
+                setSlashFilter(sm[1] || '');
+                setSlashIndex(0);
+                setMentionOpen(false);
+              } else if (v === '/') {
+                setSlashOpen(true);
+                setSlashFilter('');
+                setSlashIndex(0);
+                setMentionOpen(false);
+              } else {
+                setSlashOpen(false);
+              }
               const m = v.match(/@([\w.\-\u4e00-\u9fff]*)$/);
               if (m && devices.length > 0) {
                 setMentionOpen(true);
@@ -735,6 +812,33 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
               userSelect: 'text',
             }}
           />
+          {slashOpen && slashCandidates.length > 0 && (
+            <ul
+              className="absolute bottom-full left-0 z-40 mb-1 max-h-48 w-72 overflow-auto tk-card-solid py-1 shadow-xl"
+              data-no-composer-focus
+            >
+              <li className="px-3 py-1 text-[10px] text-foreground-dim">命令 · Enter 发送</li>
+              {slashCandidates.map((c, i) => (
+                <li key={c.name}>
+                  <button
+                    type="button"
+                    onMouseDown={(ev) => {
+                      ev.preventDefault();
+                      applySlash(c.name);
+                    }}
+                    className={`flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-xs ${
+                      i === slashIndex
+                        ? 'bg-brand-purple/20 text-foreground'
+                        : 'text-foreground-muted hover:bg-card-bg-hover'
+                    }`}
+                  >
+                    <span className="font-mono text-brand-cyan">/{c.name}</span>
+                    <span className="truncate text-[10px] text-foreground-dim">{c.hint}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
           {mentionOpen && mentionCandidates.length > 0 && (
             <ul
               className="absolute bottom-full left-0 z-40 mb-1 max-h-40 w-64 overflow-auto tk-card-solid py-1 shadow-xl"

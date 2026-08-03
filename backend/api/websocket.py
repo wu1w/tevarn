@@ -1138,12 +1138,106 @@ async def websocket_endpoint(
                 if not user_input:
                     continue
 
+                # ── Web 聊天 /命令（与 Channel slash 对齐）──
+                if (not regenerate) and user_input.startswith("/") and not user_input.startswith("//"):
+                    try:
+                        from backend.services.web_slash import try_handle_web_slash
+
+                        slash_reply = await try_handle_web_slash(
+                            session_id=session_id,
+                            user_id=user_id,
+                            text=user_input,
+                        )
+                    except Exception as se:
+                        logger.warning("web slash failed: %s", se, exc_info=True)
+                        slash_reply = f"❌ 命令处理失败: {se}"
+                    if slash_reply is not None:
+                        # 落库 + 推前端（不跑 agent）
+                        try:
+                            u_msg = await message_repo.create(
+                                {
+                                    "session_id": session_id,
+                                    "role": "user",
+                                    "content": user_input,
+                                }
+                            )
+                            a_msg = await message_repo.create(
+                                {
+                                    "session_id": session_id,
+                                    "role": "assistant",
+                                    "content": slash_reply,
+                                }
+                            )
+                            await manager.broadcast(
+                                session_id,
+                                {
+                                    "type": "user_message_ack",
+                                    "id": str(getattr(u_msg, "id", "") or ""),
+                                    "role": "user",
+                                    "content": user_input,
+                                    "created_at": str(
+                                        getattr(u_msg, "created_at", "") or ""
+                                    ),
+                                },
+                            )
+                            await manager.broadcast(
+                                session_id,
+                                {
+                                    "type": "slash_result",
+                                    "command": user_input.split()[0][1:].lower(),
+                                    "reply": slash_reply,
+                                    "message_id": str(getattr(a_msg, "id", "") or ""),
+                                    "user_message_id": str(
+                                        getattr(u_msg, "id", "") or ""
+                                    ),
+                                },
+                            )
+                            # 兼容：也推一条 done stream，旧前端能显示
+                            mid = str(getattr(a_msg, "id", "") or uuid.uuid4())
+                            await manager.broadcast(
+                                session_id,
+                                {
+                                    "type": "stream_delta",
+                                    "content": slash_reply,
+                                    "message_id": mid,
+                                    "done": True,
+                                },
+                            )
+                            await manager.broadcast(
+                                session_id,
+                                {
+                                    "type": "status",
+                                    "state": "idle",
+                                    "detail": "slash command done",
+                                },
+                            )
+                        except Exception as pe:
+                            logger.warning("slash persist/broadcast failed: %s", pe)
+                            await manager.broadcast(
+                                session_id,
+                                {
+                                    "type": "error",
+                                    "detail": f"命令结果发送失败: {pe}",
+                                },
+                            )
+                        continue
+
                 attachments = data.get("attachments", [])
                 mode = data.get("mode", "default")
                 sub_agent_ids = data.get("sub_agent_ids") or data.get("subAgentIds") or []
                 if not isinstance(sub_agent_ids, list):
                     sub_agent_ids = []
                 sub_agent_ids = [str(x) for x in sub_agent_ids if x]
+
+                # 会话级 /goal：注入到本轮输入（与 Channel 行为对齐）
+                try:
+                    sess = await session_repo.get_by_id(session_id)
+                    cfg = dict(getattr(sess, "config", None) or {}) if sess else {}
+                    gtxt = str(cfg.get("goal_text") or "").strip()
+                    if gtxt and not cfg.get("goal_paused"):
+                        user_input = f"[🎯 当前目标: {gtxt}]\n\n{user_input}"
+                except Exception as ge:
+                    logger.debug("goal inject skip: %s", ge)
 
                 # 若上一轮仍在跑：先请求停止并尽量等退出，避免叠跑 / late delta
                 if manager.has_running_agent(session_id):

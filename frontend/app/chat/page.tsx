@@ -921,6 +921,41 @@ const handleUserMessageAck = useCallback(
       onStatusUpdate: handleStatusUpdate,
       onSyncResponse: handleSyncResponse,
       onUserMessageAck: handleUserMessageAck,
+      onSlashResult: (payload) => {
+        // /new → 切换到新会话
+        if (payload.new_session_id) {
+          void switchSession(payload.new_session_id).catch(console.error);
+          addToast(payload.reply || '已新建会话', 'success');
+          return;
+        }
+        // 其余命令：stream_delta 已推正文；这里 idle + 刷新保证落库一致
+        setIsStreaming(false);
+        setStreamingContent('');
+        setLiveToolCalls([]);
+        setStreamStatusDetail(null);
+        const sid = currentSession?.id;
+        if (sid) {
+          streamSessionApi().markIdle(sid);
+          void loadMessages(sid).catch(console.error);
+        }
+        if (payload.reply) {
+          // 若 stream 路径未拼出气泡，补一条 assistant
+          const has = (useSessionStore.getState().messages || []).some(
+            (m) => m.id === payload.message_id,
+          );
+          if (!has && payload.message_id) {
+            addMessage({
+              id: payload.message_id,
+              session_id: sid || '',
+              role: 'assistant',
+              content: payload.reply,
+              tool_calls: null,
+              token_count: null,
+              created_at: new Date().toISOString(),
+            });
+          }
+        }
+      },
       onToolEvent: handleToolEvent,
       onRunEvent: handleRunEvent,
       onGoalUpdate: handleGoalUpdate,
@@ -958,6 +993,11 @@ const handleUserMessageAck = useCallback(
     handleRunEvent,
     handleGoalUpdate,
     toastWsError,
+    switchSession,
+    loadMessages,
+    addMessage,
+    addToast,
+    currentSession?.id,
   ]);
 
   const bridgeApi = useChatWsBridge((s) => s.api);

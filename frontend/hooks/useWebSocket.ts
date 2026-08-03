@@ -187,6 +187,14 @@ interface UseWebSocketOptions {
     content: string;
     created_at?: string | null;
   }) => void;
+  /** Web 聊天 /命令结果（如 /help /status /new） */
+  onSlashResult?: (payload: {
+    command?: string;
+    reply?: string;
+    message_id?: string;
+    user_message_id?: string;
+    new_session_id?: string;
+  }) => void;
   /** 连接成功后自动 sync 时使用的 last message id */
   getLastMessageId?: () => string | undefined;
 }
@@ -526,6 +534,15 @@ export function useWebSocket(options: UseWebSocketOptions) {
             stream_message_id: m.stream_message_id,
             live_tools: m.live_tools,
           });
+        } else if (msg.type === 'slash_result') {
+          const m = msg as unknown as {
+            command?: string;
+            reply?: string;
+            message_id?: string;
+            user_message_id?: string;
+            new_session_id?: string;
+          };
+          optionsRef.current.onSlashResult?.(m);
         } else if (msg.type === 'error') {
           optionsRef.current.onError?.(
             (msg as unknown as { detail: string }).detail || 'Unknown error'

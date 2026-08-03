@@ -87,7 +87,7 @@ def resolve_command(text: str) -> tuple[CommandDef | None, str]:
 
 def build_help_text() -> str:
     """生成 /help 命令的回复文本。"""
-    lines = ["📋 Takton Channel 命令列表", ""]
+    lines = ["📋 Takton 命令列表（Web 聊天 · 通道通用）", ""]
     current_cat = None
     for cmd in COMMAND_REGISTRY:
         if cmd.category != current_cat:
@@ -99,7 +99,7 @@ def build_help_text() -> str:
         args_str = f" {cmd.args_hint}" if cmd.args_hint else ""
         lines.append(f"  /{cmd.name}{args_str}{alias_str} — {cmd.description}")
     lines.append("")
-    lines.append("💡 普通消息直接发送即可与 Takton 对话")
+    lines.append("💡 在输入框输入 / 可弹出命令菜单；普通消息直接发送即可对话")
     return "\n".join(lines)
 
 
