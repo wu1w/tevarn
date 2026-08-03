@@ -349,6 +349,288 @@ def _extract_text_from_codex(data: dict[str, Any]) -> str:
     return str(data.get("content") or data.get("message") or "")
 
 
+def _extract_tool_calls_from_codex(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """从 completed Responses payload 抽出 function_call → OpenAI tool_calls。"""
+    out = data.get("output") or []
+    if not isinstance(out, list):
+        return []
+    tool_calls: list[dict[str, Any]] = []
+    for item in out:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") not in ("function_call", "custom_tool_call"):
+            continue
+        name = str(item.get("name") or "")
+        if not name:
+            continue
+        args = item.get("arguments")
+        if not isinstance(args, str):
+            try:
+                args = json.dumps(args or {}, ensure_ascii=False)
+            except Exception:
+                args = "{}"
+        tool_calls.append(
+            {
+                "id": str(item.get("call_id") or item.get("id") or f"call_{name}"),
+                "type": "function",
+                "function": {"name": name, "arguments": args or "{}"},
+            }
+        )
+    return tool_calls
+
+
+def _sse_chat_chunk(
+    *,
+    model: str,
+    content: str | None = None,
+    tool_calls: list[dict[str, Any]] | None = None,
+    finish_reason: str | None = None,
+    chunk_id: str = "codex-stream",
+) -> str:
+    delta: dict[str, Any] = {}
+    if content:
+        delta["content"] = content
+    if tool_calls:
+        delta["tool_calls"] = tool_calls
+    if content is None and tool_calls is None and finish_reason is None:
+        delta = {}
+    payload = {
+        "id": chunk_id,
+        "object": "chat.completion.chunk",
+        "model": model,
+        "choices": [
+            {
+                "index": 0,
+                "delta": delta,
+                "finish_reason": finish_reason,
+            }
+        ],
+    }
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+class _CodexStreamToChat:
+    """Responses SSE → OpenAI chat.completion.chunk（含 tool_calls）。
+
+    可靠策略：
+    - 文本边收边推
+    - 工具只缓冲，在 completed 时**整包**发出完整 tool_calls
+      （避免参数流式丢片 → 执行时 ``{}`` / required property 失败）
+    """
+
+    def __init__(self, model: str) -> None:
+        self.model = model
+        self.resp_id = "codex-stream"
+        self._id_to_index: dict[str, int] = {}
+        self._calls: dict[int, dict[str, str]] = {}
+        self._next_index = 0
+        self._finished = False
+
+    def _idx_for(self, *, item_id: str = "", call_id: str = "", name: str = "") -> int:
+        for key in (call_id, item_id):
+            if key and key in self._id_to_index:
+                idx = self._id_to_index[key]
+                if name and not self._calls[idx].get("name"):
+                    self._calls[idx]["name"] = name
+                if call_id:
+                    self._calls[idx]["id"] = call_id
+                return idx
+        idx = self._next_index
+        self._next_index += 1
+        if call_id:
+            self._id_to_index[call_id] = idx
+        if item_id:
+            self._id_to_index[item_id] = idx
+        self._calls[idx] = {
+            "id": call_id or item_id or f"call_{idx}",
+            "name": name or "",
+            "arguments": "",
+        }
+        return idx
+
+    def _merge_from_final_output(self, resp: dict[str, Any]) -> None:
+        for tc in _extract_tool_calls_from_codex(resp):
+            fn = tc.get("function") or {}
+            name = str(fn.get("name") or "")
+            call_id = str(tc.get("id") or "")
+            args = str(fn.get("arguments") or "")
+            if not name:
+                continue
+            idx = self._idx_for(call_id=call_id, name=name)
+            self._calls[idx]["name"] = name
+            if call_id:
+                self._calls[idx]["id"] = call_id
+            if args:
+                self._calls[idx]["arguments"] = args
+
+    def _emit_tools_and_finish(self) -> list[str]:
+        out: list[str] = []
+        ready: list[dict[str, Any]] = []
+        for i in sorted(self._calls.keys()):
+            e = self._calls[i]
+            name = (e.get("name") or "").strip()
+            if not name:
+                continue
+            args = (e.get("arguments") or "").strip() or "{}"
+            try:
+                parsed = json.loads(args)
+                if not isinstance(parsed, dict):
+                    args = json.dumps({"value": parsed}, ensure_ascii=False)
+                else:
+                    args = json.dumps(parsed, ensure_ascii=False)
+            except Exception:
+                args = json.dumps({"_raw": args}, ensure_ascii=False)
+            ready.append(
+                {
+                    "index": len(ready),
+                    "id": e.get("id") or f"call_{name}",
+                    "type": "function",
+                    "function": {"name": name, "arguments": args},
+                }
+            )
+        if ready:
+            logger.info(
+                "codex oauth tools finalized n=%s names=%s arg_lens=%s",
+                len(ready),
+                [t["function"]["name"] for t in ready],
+                [len(t["function"]["arguments"]) for t in ready],
+            )
+            out.append(
+                _sse_chat_chunk(
+                    model=self.model, tool_calls=ready, chunk_id=self.resp_id
+                )
+            )
+            fr = "tool_calls"
+        else:
+            fr = "stop"
+        out.append(
+            _sse_chat_chunk(
+                model=self.model, finish_reason=fr, chunk_id=self.resp_id
+            )
+        )
+        out.append("data: [DONE]\n\n")
+        return out
+
+    def feed(self, ev: dict[str, Any]) -> list[str]:
+        if not isinstance(ev, dict):
+            return []
+        et = str(ev.get("type") or "")
+        out: list[str] = []
+
+        if isinstance(ev.get("response"), dict):
+            rid = ev["response"].get("id")
+            if rid:
+                self.resp_id = str(rid)
+        rid = ev.get("response_id")
+        if rid:
+            self.resp_id = str(rid)
+
+        # 文本即时推
+        if et in (
+            "response.output_text.delta",
+            "response.output_text.delta.event",
+        ):
+            delta = str(ev.get("delta") or "")
+            if delta:
+                out.append(
+                    _sse_chat_chunk(
+                        model=self.model, content=delta, chunk_id=self.resp_id
+                    )
+                )
+            return out
+
+        # 工具只缓冲
+        if et in ("response.output_item.added", "response.output_item.done"):
+            item = ev.get("item") if isinstance(ev.get("item"), dict) else {}
+            if item.get("type") in ("function_call", "custom_tool_call"):
+                item_id = str(item.get("id") or "")
+                call_id = str(item.get("call_id") or item_id)
+                name = str(item.get("name") or "")
+                args = item.get("arguments")
+                args_s = ""
+                if isinstance(args, str):
+                    args_s = args
+                elif isinstance(args, dict):
+                    try:
+                        args_s = json.dumps(args, ensure_ascii=False)
+                    except Exception:
+                        args_s = ""
+                idx = self._idx_for(item_id=item_id, call_id=call_id, name=name)
+                if name:
+                    self._calls[idx]["name"] = name
+                if call_id:
+                    self._calls[idx]["id"] = call_id
+                if args_s:
+                    self._calls[idx]["arguments"] = args_s
+            return out
+
+        if et in (
+            "response.function_call_arguments.delta",
+            "response.custom_tool_call_input.delta",
+        ):
+            item_id = str(ev.get("item_id") or "")
+            call_id = str(ev.get("call_id") or "")
+            raw_delta = ev.get("delta")
+            if isinstance(raw_delta, dict):
+                delta = str(
+                    raw_delta.get("partial_json")
+                    or raw_delta.get("arguments")
+                    or raw_delta.get("text")
+                    or ""
+                )
+            else:
+                delta = str(raw_delta or "")
+            if not delta and isinstance(ev.get("partial_json"), str):
+                delta = ev["partial_json"]
+            if delta:
+                idx = self._idx_for(item_id=item_id, call_id=call_id)
+                self._calls[idx]["arguments"] += delta
+            return out
+
+        if et in (
+            "response.function_call_arguments.done",
+            "response.custom_tool_call_input.done",
+        ):
+            item_id = str(ev.get("item_id") or "")
+            call_id = str(ev.get("call_id") or "")
+            args = ev.get("arguments")
+            if isinstance(args, dict):
+                try:
+                    args = json.dumps(args, ensure_ascii=False)
+                except Exception:
+                    args = ""
+            if isinstance(args, str) and args.strip():
+                idx = self._idx_for(item_id=item_id, call_id=call_id)
+                self._calls[idx]["arguments"] = args  # done = 权威完整串
+            return out
+
+        if et in ("response.completed", "response.done"):
+            if self._finished:
+                return out
+            self._finished = True
+            resp = ev.get("response") if isinstance(ev.get("response"), dict) else {}
+            if resp:
+                if resp.get("id"):
+                    self.resp_id = str(resp["id"])
+                self._merge_from_final_output(resp)
+            out.extend(self._emit_tools_and_finish())
+            return out
+
+        if et and "delta" in et and isinstance(ev.get("delta"), str) and ev["delta"]:
+            out.append(
+                _sse_chat_chunk(
+                    model=self.model, content=str(ev["delta"]), chunk_id=self.resp_id
+                )
+            )
+        return out
+
+    def close(self) -> list[str]:
+        if self._finished:
+            return []
+        self._finished = True
+        return self._emit_tools_and_finish()
+
+
 # Codex / ChatGPT 订阅路径模型
 CODEX_OAUTH_MODELS = [
     "gpt-5.6",
@@ -450,10 +732,32 @@ async def chat_completions(request: Request):
                             },
                             status_code=resp.status,
                         )
-                    # 聚合 SSE → 完整文本
+                    # 聚合 SSE → 完整 chat.completion（含 tool_calls）
                     content_parts: list[str] = []
                     usage: dict[str, Any] = {}
                     resp_id = "codex-oauth"
+                    tool_acc: dict[int, dict[str, str]] = {}
+                    next_idx = 0
+                    id_map: dict[str, int] = {}
+
+                    def _idx(call_id: str = "", item_id: str = "", name: str = "") -> int:
+                        nonlocal next_idx
+                        for k in (call_id, item_id):
+                            if k and k in id_map:
+                                return id_map[k]
+                        i = next_idx
+                        next_idx += 1
+                        if call_id:
+                            id_map[call_id] = i
+                        if item_id:
+                            id_map[item_id] = i
+                        tool_acc[i] = {
+                            "id": call_id or item_id or f"call_{i}",
+                            "name": name,
+                            "arguments": "",
+                        }
+                        return i
+
                     async for raw in resp.content:
                         line = raw.decode("utf-8", errors="replace").strip()
                         if not line or not line.startswith("data:"):
@@ -467,28 +771,92 @@ async def chat_completions(request: Request):
                             continue
                         if not isinstance(ev, dict):
                             continue
-                        if ev.get("id"):
-                            resp_id = str(ev.get("id"))
-                        if ev.get("type") in (
-                            "response.output_text.delta",
-                            "response.output_text.delta.event",
-                        ):
-                            content_parts.append(str(ev.get("delta") or ""))
-                        elif isinstance(ev.get("response"), dict):
+                        et = str(ev.get("type") or "")
+                        if isinstance(ev.get("response"), dict):
                             r = ev["response"]
                             if r.get("id"):
                                 resp_id = str(r["id"])
                             if isinstance(r.get("usage"), dict):
                                 usage = r["usage"]
-                            # completed payload
-                            if ev.get("type") in (
-                                "response.completed",
-                                "response.done",
-                            ):
+                            if et in ("response.completed", "response.done"):
                                 t = _extract_text_from_codex(r)
                                 if t and not content_parts:
                                     content_parts.append(t)
+                                for tc in _extract_tool_calls_from_codex(r):
+                                    fn = tc.get("function") or {}
+                                    i = _idx(
+                                        call_id=str(tc.get("id") or ""),
+                                        name=str(fn.get("name") or ""),
+                                    )
+                                    tool_acc[i]["name"] = str(fn.get("name") or "")
+                                    tool_acc[i]["arguments"] = str(
+                                        fn.get("arguments") or "{}"
+                                    )
+                                    tool_acc[i]["id"] = str(tc.get("id") or tool_acc[i]["id"])
+                        if et in (
+                            "response.output_text.delta",
+                            "response.output_text.delta.event",
+                        ):
+                            content_parts.append(str(ev.get("delta") or ""))
+                        elif et in (
+                            "response.output_item.added",
+                            "response.output_item.done",
+                        ):
+                            item = ev.get("item") if isinstance(ev.get("item"), dict) else {}
+                            if item.get("type") in ("function_call", "custom_tool_call"):
+                                i = _idx(
+                                    call_id=str(item.get("call_id") or ""),
+                                    item_id=str(item.get("id") or ""),
+                                    name=str(item.get("name") or ""),
+                                )
+                                if item.get("name"):
+                                    tool_acc[i]["name"] = str(item["name"])
+                                args = item.get("arguments")
+                                if isinstance(args, str) and args:
+                                    tool_acc[i]["arguments"] = args
+                        elif et in (
+                            "response.function_call_arguments.delta",
+                            "response.custom_tool_call_input.delta",
+                        ):
+                            i = _idx(
+                                call_id=str(ev.get("call_id") or ""),
+                                item_id=str(ev.get("item_id") or ""),
+                            )
+                            tool_acc[i]["arguments"] += str(ev.get("delta") or "")
+                        elif et in (
+                            "response.function_call_arguments.done",
+                            "response.custom_tool_call_input.done",
+                        ):
+                            i = _idx(
+                                call_id=str(ev.get("call_id") or ""),
+                                item_id=str(ev.get("item_id") or ""),
+                            )
+                            if isinstance(ev.get("arguments"), str) and ev["arguments"]:
+                                if not tool_acc[i]["arguments"]:
+                                    tool_acc[i]["arguments"] = ev["arguments"]
+
                     content = "".join(content_parts)
+                    tool_calls = []
+                    for i in sorted(tool_acc.keys()):
+                        e = tool_acc[i]
+                        if not (e.get("name") or "").strip():
+                            continue
+                        tool_calls.append(
+                            {
+                                "id": e["id"],
+                                "type": "function",
+                                "function": {
+                                    "name": e["name"],
+                                    "arguments": e.get("arguments") or "{}",
+                                },
+                            }
+                        )
+                    msg: dict[str, Any] = {
+                        "role": "assistant",
+                        "content": content or (None if tool_calls else ""),
+                    }
+                    if tool_calls:
+                        msg["tool_calls"] = tool_calls
                     return {
                         "id": resp_id,
                         "object": "chat.completion",
@@ -496,11 +864,8 @@ async def chat_completions(request: Request):
                         "choices": [
                             {
                                 "index": 0,
-                                "message": {
-                                    "role": "assistant",
-                                    "content": content,
-                                },
-                                "finish_reason": "stop",
+                                "message": msg,
+                                "finish_reason": "tool_calls" if tool_calls else "stop",
                             }
                         ],
                         "usage": usage or {},
@@ -513,6 +878,7 @@ async def chat_completions(request: Request):
             )
 
     async def _gen():
+        conv = _CodexStreamToChat(model)
         try:
             async with outbound_session(timeout=timeout) as (session, proxy):
                 async with session.post(
@@ -525,23 +891,14 @@ async def chat_completions(request: Request):
                             resp.status,
                             err[:400],
                         )
-                        chunk = {
-                            "id": "codex-err",
-                            "object": "chat.completion.chunk",
-                            "choices": [
-                                {
-                                    "index": 0,
-                                    "delta": {
-                                        "content": (
-                                            f"[Codex OAuth error {resp.status}] "
-                                            f"{err[:400]}"
-                                        )
-                                    },
-                                    "finish_reason": "stop",
-                                }
-                            ],
-                        }
-                        yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                        yield _sse_chat_chunk(
+                            model=model,
+                            content=(
+                                f"[Codex OAuth error {resp.status}] {err[:400]}"
+                            ),
+                            finish_reason="stop",
+                            chunk_id="codex-err",
+                        )
                         yield "data: [DONE]\n\n"
                         return
                     async for raw in resp.content:
@@ -550,56 +907,27 @@ async def chat_completions(request: Request):
                             continue
                         data_s = line[5:].strip()
                         if data_s == "[DONE]":
-                            yield "data: [DONE]\n\n"
+                            for part in conv.close():
+                                yield part
                             break
                         try:
                             ev = json.loads(data_s)
                         except Exception:
                             continue
-                        delta = ""
-                        if isinstance(ev, dict):
-                            if ev.get("type") in (
-                                "response.output_text.delta",
-                                "response.output_text.delta.event",
-                            ):
-                                delta = str(ev.get("delta") or "")
-                            elif ev.get("delta"):
-                                d = ev.get("delta")
-                                if isinstance(d, str):
-                                    delta = d
-                                elif isinstance(d, dict):
-                                    delta = str(
-                                        d.get("text") or d.get("content") or ""
-                                    )
-                        if not delta:
+                        if not isinstance(ev, dict):
                             continue
-                        chunk = {
-                            "id": "codex-stream",
-                            "object": "chat.completion.chunk",
-                            "model": model,
-                            "choices": [
-                                {
-                                    "index": 0,
-                                    "delta": {"content": delta},
-                                    "finish_reason": None,
-                                }
-                            ],
-                        }
-                        yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-                    yield "data: [DONE]\n\n"
+                        for part in conv.feed(ev):
+                            yield part
+                    else:
+                        for part in conv.close():
+                            yield part
         except Exception as e:
-            chunk = {
-                "id": "codex-err",
-                "object": "chat.completion.chunk",
-                "choices": [
-                    {
-                        "index": 0,
-                        "delta": {"content": f"[proxy stream error] {e}"},
-                        "finish_reason": "stop",
-                    }
-                ],
-            }
-            yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+            yield _sse_chat_chunk(
+                model=model,
+                content=f"[proxy stream error] {e}",
+                finish_reason="stop",
+                chunk_id="codex-err",
+            )
             yield "data: [DONE]\n\n"
 
     return StreamingResponse(_gen(), media_type="text/event-stream")
