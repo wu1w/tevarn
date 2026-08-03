@@ -6,16 +6,16 @@
 
 # ⚡ Takton
 
-### Governed, self-evolving digital-employee runtime · 带治理内核的可自进化数字员工运行时
+### Personal local open-source AIOS workstation · 个人本地开源 AIOS 工作站
 
-**Local-first · Unified Run · Permission Court · Replay-gated Evolution**
+**Local-first · Windows-first · AI employees · Tools · Knowledge · Jobs · Permission Court**
 
-**本地优先 · 统一 Run · 权限一张网 · 回放门禁进化**
+**本地优先 · Windows 优先 · AI 员工 · 工具 · 知识 · 工单 · 权限治理**
 
 <br/>
 
-[![Version](https://img.shields.io/badge/version-0.5.0--alpha-7C3AED?style=flat-square)](https://github.com/wu1w/takton/tree/feature/agent-kernel)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-06B6D4?style=flat-square)](https://github.com/wu1w/takton/releases)
+[![Version](https://img.shields.io/badge/version-0.5.x--alpha-7C3AED?style=flat-square)](https://github.com/wu1w/takton/tree/feature/agent-kernel)
+[![Platform](https://img.shields.io/badge/platform-Windows%20(primary)%20%7C%20Linux-06B6D4?style=flat-square)](https://github.com/wu1w/takton/releases)
 [![License](https://img.shields.io/badge/license-MIT-22C55E?style=flat-square)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/wu1w/takton?style=flat-square&logo=github)](https://github.com/wu1w/takton/stargazers)
 [![Next.js](https://img.shields.io/badge/Next.js%2016-black?style=flat-square&logo=next.js)](https://nextjs.org/)
@@ -23,37 +23,52 @@
 
 <br/>
 
-[English](#-features) · [中文](#-核心功能) · [技术手册](docs/TECHNICAL_MANUAL.md)
+[English](#-features) · [中文](#-核心功能) · [从旧版升级](#-从旧版升级到-agent-kernel-版) · [技术手册](docs/TECHNICAL_MANUAL.md)
 
 </div>
 
 ---
 
+> ### 这是什么 · What is this?
+>
+> **Takton** is an **open-source AIOS workstation that runs on your PC**: local **AI employees**, tools, knowledge, jobs, and permission controls in one desktop-friendly workbench.
+>
+> **Takton** 是运行在**个人电脑**上的**开源 AIOS 工作站**：把本地 **AI 员工**、工具、知识、任务/工单和权限治理放进一个可控的桌面工作台。
+>
+> | 适合 · For | 不是 · Not |
+> |------------|------------|
+> | 个人开发者 / 研究者 / 自动化爱好者 | 企业多租户 SaaS / 组织级 OA |
+> | 数据默认本机 SQLite · 默认只监听 `127.0.0.1` | 云端 SLA / 集群高可用 |
+> | **Windows 优先**（Linux 可用） | 开箱即用的云托管 |
+>
+> **状态**：`feature/agent-kernel` 上的 **0.5.x-alpha / preview**。尚未作为无说明的 `main` 默认线；请先读下方迁移说明。
+
 > ### ⚠️ 两条产品线（请先读）
 >
 > | 线 | 分支 / 版本 | 是什么 |
 > |----|-------------|--------|
-> | **Kernel 控制平面（当前主开发）** | [`feature/agent-kernel`](https://github.com/wu1w/takton/tree/feature/agent-kernel) · **0.5.4-alpha** | Rust host 权威 · Intent/tool_gate · 进程树 · marathon 门禁 |
+> | **Agent Kernel 新版（当前主开发）** | [`feature/agent-kernel`](https://github.com/wu1w/takton/tree/feature/agent-kernel) · **0.5.x-alpha** | 个人本地 AIOS：Rust Kernel Host · 编制/工单 · 用量与 Cache · CEO 策略 · Permission Court |
 > | **历史产品线** | `main` / GitHub Releases **0.3.x** | 较早的桌面 Agent 工作站；**不含**完整 0.5 Kernel 重写 |
 >
-> - 需要治理内核 / AIOS 控制平面 → **务必** clone `feature/agent-kernel` 并构建 `takton-kernel-host`  
-> - 从 Releases 装到 0.3.x **不会**自动带上 0.5 Kernel  
-> - 详见 [ROADMAP](docs/ROADMAP.md) · [KERNEL_RUST](docs/KERNEL_RUST.md) · [THREAT_MODEL](docs/THREAT_MODEL.md)
+> - 要试用新版 AIOS 工作站 → clone **`feature/agent-kernel`**，并准备 `takton-kernel-host`（预编译或 `cargo build -p takton-kernel-host --release`）
+> - 从 Releases 装到 **0.3.x 不会**自动带上 0.5 Kernel
+> - 详见 [从旧版升级](#-从旧版升级到-agent-kernel-版) · [ROADMAP](docs/ROADMAP.md) · [KERNEL_RUST](docs/KERNEL_RUST.md) · [THREAT_MODEL](docs/THREAT_MODEL.md)
 
 ---
 
 ## 🎯 Why Takton? · 为什么选择 Takton？
 
-> **Takton is not another coding CLI or chat wrapper.** It is a **governed, self-evolving digital-employee runtime** that runs on your machine. Every execution is a recoverable **Run**; tools go through a single **permission court** with explainable audit; skills only ship after **replay validation**. Defaults are light: **SQLite, no Redis, no Qdrant required**.
+> **Takton is not another coding CLI or chat wrapper.** It is a **personal local AIOS workstation**: hire and run **AI employees** on your machine, with jobs, budgets, knowledge, and a single **permission court**. Defaults stay light: **SQLite, loopback-only, no Redis/Qdrant required**.
 >
-> **Takton 不是又一个 coding CLI / 聊天套壳。** 它是**带治理内核的可自进化数字员工运行时**，完全跑在你本机。一切执行都是可恢复的 **Run**；工具经统一 **权限法院** 可解释审计；技能须经 **回放验证** 才能上岗。默认很轻：**SQLite，不强制 Redis / Qdrant**。
+> **Takton 不是又一个 coding CLI / 聊天套壳。** 它是**个人本地 AIOS 工作站**：在本机雇佣并调度 **AI 员工**，带工单、预算、知识库与统一 **权限法院**。默认很轻：**SQLite、仅本机回环、不强制 Redis / Qdrant**。
 
 | Pillar · 支柱 | What · 是什么 |
 |---------------|----------------|
-| **Unified Run** | chat / inbox / cron / cluster share one run model + checkpoint recovery |
+| **Local AIOS workbench** | chat · AI 员工 · jobs · goals · knowledge in one UI |
+| **Unified Run** | chat / inbox / cron share one run model + checkpoint recovery |
 | **Permission court** | one decision path · layer / rule / verdict on the Kernel page |
-| **Replay-gated evolution** | drafts cannot apply when replay fails |
-| **Crew / Identity** | hire employees, budgets, memory bus, growth profile |
+| **Crew / Identity** | hire AI employees, budgets, grants, memory bus |
+| **Usage & cache ledger** | real token / billable / prompt-cache metrics (no mock) |
 
 See also: [Technical Manual · 技术手册](docs/TECHNICAL_MANUAL.md)
 
@@ -196,8 +211,84 @@ pip install -U pip && pip install -e ".[dev]"
 .venv/bin/python start.py
 ```
 
-Open the printed URL (frontend usually http://127.0.0.1:3000 · backend default **8090**).  
+Open the printed URL (frontend usually http://127.0.0.1:3000 · backend default **8090**).
 Details: [docs/TECHNICAL_MANUAL.md](docs/TECHNICAL_MANUAL.md).
+
+**Config template · 配置模板**
+
+| 文件 | 用途 |
+|------|------|
+| [`backend/.env.example`](backend/.env.example) | 后端环境变量模板（复制为 `backend/.env` 或按 `start.py` 说明加载） |
+| 根目录 **没有** `.env.example` | 请不要到仓库根目录找 |
+
+**Dev deps / tests · 开发依赖与测试**
+
+```powershell
+# 干净 venv 后务必装 dev 依赖（含 asgi-lifespan 等）
+pip install -r backend\requirements-dev.txt
+# 或：pip install -e ".[dev]"
+python -m pytest -q backend\tests
+```
+
+**What is tracked vs local · 仓库 vs 本机数据**
+
+| 路径 | 含义 |
+|------|------|
+| 源码 / `docs/` / `.audit-report/` | 项目文档与**历史**审计报告（见报告内 commit 标注） |
+| `AGENTS.md` | 给 Agent/协作者的仓库约定 |
+| `%APPDATA%\takton\` · `.takton/` · 运行日志 | **本机运行数据**，勿提交；已由 `.gitignore` 忽略 |
+| `.env` / API Key | **永不提交**；从 `backend/.env.example` 复制后本地填写 |
+
+默认服务只绑定 **`127.0.0.1`**。不要把端口直接暴露到局域网，除非你清楚风险。
+
+---
+
+## 🔄 从旧版升级到 Agent Kernel 版
+
+| 项 | 说明 |
+|----|------|
+| **旧版标签** | `main` / Releases **v0.3.x**（桌面安装包） |
+| **新版状态** | 分支 `feature/agent-kernel` · **v0.5.x-alpha**（preview，非正式 main） |
+| **推荐发布顺序** | ① 给旧 main 打稳定 tag ② 给本分支打 `v0.5.0-alpha.1` 预发布 ③ 小范围试用 ④ 再合并 main |
+
+### 新旧差异（摘要）
+
+- **Agent Kernel + Rust `takton-kernel-host`**：进程、能力令牌、工具门禁、工单/编制的权威侧。
+- **AI 员工 / 工单 / 目标（OKR）**：编制派单、预算、CEO 策略扩权（非企业多租户）。
+- **用量与 Cache Ledger**：真实 LLM usage 落盘（`usage_ledger`），host 重启不丢累计。
+- **旧 0.3 安装包不会自动升级到 0.5**；需切分支源码运行或等待正式 Release。
+
+### 配置与数据
+
+| 主题 | 行为 |
+|------|------|
+| **LLM / 设置** | 本机设置库与目录约定见技术手册；常见路径 `%APPDATA%\takton\`。升级前**备份**该目录与 SQLite。 |
+| **数据库** | 启动时走 SQLAlchemy/Alembic 类迁移路径；**不能保证**跨大版本零风险。升级前复制数据库文件。 |
+| **密钥** | API Key / OAuth 仍在本机加密或配置中；**不要**把 `.env` 提交进 Git。 |
+| **Kernel** | 新版依赖 Kernel Host（`TAKTON_KERNEL_HOST_BIN` 或自动拉起）。仅起前端不够。 |
+| **不兼容** | 0.3 与 0.5 控制面协议、编制模型、部分 API **不保证**互通；不要假设旧 Electron 安装包能连上 0.5 后端。 |
+
+### 回滚
+
+1. 停掉 0.5 后端 / Kernel / 前端。
+2. 恢复升级前的 `%APPDATA%\takton`（或你的 `TAKTON_DATA_DIR`）备份。
+3. 切回旧标签或安装包：`git checkout <old-tag>` 或重装 **v0.3.x** Release。
+4. 不要用新库文件硬接旧二进制。
+
+### 建议验收（发布前）
+
+```powershell
+# 后端（干净 venv）
+pip install -r backend\requirements-dev.txt
+python -m pytest -q backend\tests
+
+# 前端生产构建（内存紧张时关掉其它重进程）
+cd frontend; npm ci; npm run build; cd ..
+
+# Rust Kernel（普通本机 PowerShell；沙箱内存不足可能失败）
+cargo check -p takton-kernel-host
+# 或：cargo check --workspace
+```
 
 ---
 
@@ -297,7 +388,8 @@ Takton 正从「Agent 工作站」演进为 **Personal Agent OS**，Agent Kernel
 
 ## 🤝 Contributing · 贡献
 
-We welcome Issues and Pull Requests! 
+We welcome Issues and Pull Requests!
+
 
 欢迎提交 Issue 和 Pull Request！
 
