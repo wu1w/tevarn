@@ -23,14 +23,39 @@ type RailItem = {
   badge?: () => number;
 };
 
-function ic(paths: string, extra?: React.ReactNode): React.ReactNode {
+/**
+ * Pixel Console：8-bit 像素图标（rect 阵列 → path，crispEdges 渲染）。
+ * rects: [x, y, w, h][]，24×24 画布，2px 基准格。
+ */
+function pxPath(rects: number[][]): string {
+  return rects.map(([x, y, w, h]) => `M${x} ${y}h${w}v${h}h${-w}z`).join(' ');
+}
+
+function px(rects: number[][], extra?: React.ReactNode): React.ReactNode {
   return (
-    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-      <path strokeLinecap="round" strokeLinejoin="round" d={paths} />
+    <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor" style={{ shapeRendering: 'crispEdges' }}>
+      <path d={pxPath(rects)} />
       {extra}
     </svg>
   );
 }
+
+/* ── 主轨 8-bit 图标集 ── */
+const PX_ICONS = {
+  dashboard: px([[2, 2, 8, 10], [12, 2, 10, 6], [12, 10, 10, 12], [2, 14, 8, 8]]),
+  agents: px([[5, 2, 6, 6], [3, 10, 10, 3], [2, 13, 12, 7], [15, 4, 5, 5], [15, 11, 8, 3], [14, 14, 9, 6]]),
+  approvals: px([[4, 2, 14, 2], [4, 20, 14, 2], [4, 2, 2, 20], [16, 2, 2, 20], [8, 11, 2, 2], [10, 13, 2, 2], [12, 11, 2, 2], [14, 9, 2, 2]]),
+  chat: px([[3, 3, 18, 2], [3, 13, 18, 2], [3, 3, 2, 12], [19, 3, 2, 12], [6, 15, 3, 3], [5, 18, 2, 2], [7, 7, 2, 3], [11, 7, 2, 3], [15, 7, 2, 3]]),
+  usage: px([[3, 3, 2, 16], [3, 19, 18, 2], [7, 13, 3, 6], [12, 9, 3, 10], [17, 11, 3, 8]]),
+  kernel: px([[7, 7, 10, 2], [7, 15, 10, 2], [7, 7, 2, 10], [15, 7, 2, 10], [10, 10, 4, 4], [9, 3, 2, 4], [13, 3, 2, 4], [9, 17, 2, 4], [13, 17, 2, 4], [3, 9, 4, 2], [3, 13, 4, 2], [17, 9, 4, 2], [17, 13, 4, 2]]),
+  sun: px([[9, 9, 6, 6], [11, 3, 2, 3], [11, 18, 2, 3], [3, 11, 3, 2], [18, 11, 3, 2], [5, 5, 2, 2], [17, 5, 2, 2], [5, 17, 2, 2], [17, 17, 2, 2]]),
+  moon: px([[9, 3, 6, 2], [6, 5, 9, 2], [5, 7, 7, 2], [4, 9, 6, 2], [4, 11, 6, 2], [4, 13, 6, 2], [5, 15, 7, 2], [6, 17, 9, 2], [9, 19, 6, 2]]),
+  settings: (
+    <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor" style={{ shapeRendering: 'crispEdges' }}>
+      <path fillRule="evenodd" d={`${pxPath([[10, 2, 4, 2], [8, 4, 8, 2], [6, 6, 12, 2], [2, 10, 2, 4], [4, 8, 4, 8], [16, 8, 4, 8], [20, 10, 2, 4], [6, 16, 12, 2], [8, 18, 8, 2], [10, 20, 4, 2]])} M10 10h4v4h-4z`} />
+    </svg>
+  ),
+};
 
 export function IconRail() {
   const pathname = usePathname() || '/';
@@ -54,61 +79,14 @@ export function IconRail() {
   });
   const unread = (pendingApprovals?.escalations?.length ?? 0) + (pendingEvo?.proposals?.length ?? 0);
 
-  // P1 AI 公司：工作台 → 员工 → 审批 → 联系员工 → 内核
+  // P1 AI 公司：工作台 → 员工 → 审批 → 联系员工 → 内核（Pixel Console 8-bit 图标）
   const ITEMS: RailItem[] = [
-    {
-      href: '/',
-      titleKey: 'nav.dashboard',
-      icon: (
-        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-          <rect x="3" y="3" width="7" height="9" rx="1.5" />
-          <rect x="14" y="3" width="7" height="5" rx="1.5" />
-          <rect x="14" y="12" width="7" height="9" rx="1.5" />
-          <rect x="3" y="16" width="7" height="5" rx="1.5" />
-        </svg>
-      ),
-      match: (p) => p === '/' || p === '',
-    },
-    {
-      href: '/agents',
-      titleKey: 'nav.agents',
-      icon: (
-        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-          <circle cx="9" cy="8" r="3.2" />
-          <path d="M3.5 19c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5" />
-          <circle cx="17" cy="9" r="2.4" />
-          <path d="M15.5 14.6c2.9.3 4.7 1.9 5.2 4.4" />
-        </svg>
-      ),
-    },
-    {
-      href: '/approvals',
-      titleKey: 'nav.approvals',
-      icon: ic('M9 11.5l2 2 4-4.5', <rect x="4" y="3" width="16" height="18" rx="2.5" />),
-      badge: () => unread,
-    },
-    {
-      href: '/chat',
-      titleKey: 'nav.chatContact',
-      icon: ic('M8 10h8M8 14h5', <path d="M21 11.5a8.4 8.4 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.4 8.4 0 01-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.4 8.4 0 013.8-.9h.5a8.5 8.5 0 018 8v.5z" />),
-      match: (p) => p === '/chat' || p.startsWith('/chat/'),
-    },
-    {
-      href: '/usage',
-      titleKey: 'nav.usage',
-      icon: (
-        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M4 19V5M4 19h16" />
-          <path strokeLinecap="round" strokeLinejoin="round" d="M8 16v-5M12 16V8M16 16v-3" />
-        </svg>
-      ),
-      match: (p) => p === '/usage' || p.startsWith('/usage/'),
-    },
-    {
-      href: '/kernel',
-      titleKey: 'nav.kernel',
-      icon: ic('M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3', <rect x="6" y="6" width="12" height="12" rx="2" />),
-    },
+    { href: '/', titleKey: 'nav.dashboard', icon: PX_ICONS.dashboard, match: (p) => p === '/' || p === '' },
+    { href: '/agents', titleKey: 'nav.agents', icon: PX_ICONS.agents },
+    { href: '/approvals', titleKey: 'nav.approvals', icon: PX_ICONS.approvals, badge: () => unread },
+    { href: '/chat', titleKey: 'nav.chatContact', icon: PX_ICONS.chat, match: (p) => p === '/chat' || p.startsWith('/chat/') },
+    { href: '/usage', titleKey: 'nav.usage', icon: PX_ICONS.usage, match: (p) => p === '/usage' || p.startsWith('/usage/') },
+    { href: '/kernel', titleKey: 'nav.kernel', icon: PX_ICONS.kernel },
   ];
 
   const isActive = (item: RailItem) => {
@@ -148,16 +126,7 @@ export function IconRail() {
         title={t('nav.toggleTheme' as never)}
         onClick={() => setTheme(resolved === 'dark' ? 'light' : 'dark')}
       >
-        {resolved === 'dark' ? (
-          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-            <circle cx="12" cy="12" r="4" />
-            <path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
-          </svg>
-        ) : (
-          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-            <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
-          </svg>
-        )}
+        {resolved === 'dark' ? PX_ICONS.sun : PX_ICONS.moon}
       </button>
 
       <Link
@@ -166,10 +135,7 @@ export function IconRail() {
         title={t('nav.settings')}
         className={`tk-rail-btn ${pathname.startsWith('/settings') ? 'active' : ''}`}
       >
-        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-          <circle cx="12" cy="12" r="3" />
-          <path d="M19 12a7 7 0 00-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 00-2-1.2L14 3h-4l-.5 2.6a7 7 0 00-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 005 12a7 7 0 00.1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 002 1.2L10 21h4l.5-2.6a7 7 0 002-1.2l2.4 1 2-3.4-2-1.6A7 7 0 0019 12z" />
-        </svg>
+        {PX_ICONS.settings}
       </Link>
     </nav>
   );

@@ -472,6 +472,7 @@ async def run_tool_round(
                 arguments=args_dict,
                 status="completed",
                 result=tool_result,
+                duration_ms=(_time.monotonic() - _tc_t0) * 1000,
             )
             # 截图推送已退役：前端实时面板改为纯命令流终端（2026-07-26 起），
             # desktop_screenshot 工具本身保留供 agent 视觉感知，仅不再向 WS 推图。
@@ -568,6 +569,7 @@ async def run_tool_round(
                 arguments=args_dict if isinstance(args_dict, dict) else {},
                 status="failed",
                 result=tool_result,
+                duration_ms=(_time.monotonic() - _tc_t0) * 1000,
             )
 
         # Durable Run：记录工具步骤（成功/失败/超时统一在此落库）

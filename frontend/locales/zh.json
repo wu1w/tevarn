@@ -387,6 +387,7 @@
   "chat.sendAutoConnect": "发送消息…（自动连接会话）",
   "chat.send": "发送消息…",
   "chat.thinking": "思考中…",
+  "chat.thoughtSeconds": "已思考 {n} 秒",
   "chat.stopping": "正在停止…",
   "chat.reconnectStopped": "已停止自动快重连，将慢速重试；也可点击重连",
   "chat.streamStuck": "长时间无响应，可停止或使用下方恢复",

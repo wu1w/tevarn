@@ -273,23 +273,23 @@ function MessageBubbleInner({
           )}
 
           {hasContent ? (
-            <MarkdownContent
-              content={contentStr}
-              isUser={isUser}
-              streaming={streaming}
-            />
+            <>
+              <MarkdownContent
+                content={contentStr}
+                isUser={isUser}
+                streaming={streaming}
+              />
+              {streaming && <span className="tk-caret" />}
+            </>
           ) : streaming ? (
-            <MarkdownContent content="" isUser={isUser} streaming />
+            <span className="tk-think-label">{t('chat.thinking')}</span>
           ) : hasToolCalls ? (
-            <span className="inline-flex items-center gap-1.5 text-xs italic text-foreground-dim">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400" />
+            <span className="inline-flex items-center gap-2 text-xs text-foreground-dim">
+              <span className="tk-pxdot" style={{ background: '#d97706' }} />
               工具调用完成，等待后续回复…
             </span>
           ) : (
-            <span className="inline-flex items-center gap-1.5 text-xs italic text-foreground-dim">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-violet-400" />
-              思考中…
-            </span>
+            <span className="tk-think-label">思考中…</span>
           )}
 
           {artifacts.length > 0 && (

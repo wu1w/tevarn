@@ -543,6 +543,8 @@ export interface ToolEventMessage extends WSMessage {
   arguments?: Record<string, unknown>;
   status: 'running' | 'completed' | 'failed';
   result?: string | null;
+  /** end 阶段由后端补充的单步耗时，供 TRACE 卡展示 */
+  duration_ms?: number | null;
 }
 
 export interface RunEventMessage extends WSMessage {

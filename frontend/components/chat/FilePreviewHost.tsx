@@ -15,6 +15,7 @@ import {
 } from '@/lib/filePreviewLoaders';
 import { useT } from '@/stores/localeStore';
 import { useToastStore } from '@/stores/toastStore';
+import { ColResizer } from '@/components/ui/ColResizer';
 
 function getToken(): string | null {
   if (typeof window === 'undefined') return null;
@@ -332,13 +333,68 @@ export function FilePreviewHost({ artifact, onClose }: FilePreviewHostProps) {
     return preview.sheets[preview.active] || preview.sheets[0] || null;
   }, [preview]);
 
+  // 面板宽度可拖拽：默认 min(48vw, 40rem)，拖拽后固定为像素并持久化，双击复位
+  const FP_W_KEY = 'tk-fp-w';
+  const [panelW, setPanelW] = useState<number | null>(null);
+  useEffect(() => {
+    try {
+      const saved = Number(localStorage.getItem(FP_W_KEY));
+      if (saved >= 320) setPanelW(saved);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  const fpDrag = React.useRef({ startX: 0, startW: 0 });
+  const clampFpW = (px: number) =>
+    Math.round(Math.min(window.innerWidth * 0.85, Math.max(320, px)));
+  const handleFpDrag = useCallback(
+    (clientX: number) => {
+      if (!fpDrag.current.startW) {
+        fpDrag.current = {
+          startX: clientX,
+          startW: panelW ?? Math.min(window.innerWidth * 0.48, 640),
+        };
+      }
+      const { startX, startW } = fpDrag.current;
+      setPanelW(clampFpW(startW + (startX - clientX))); // 左缘手柄：向左拖=更宽
+    },
+    [panelW],
+  );
+  const handleFpDragEnd = useCallback(() => {
+    fpDrag.current.startW = 0;
+    setPanelW((w) => {
+      try {
+        if (w) localStorage.setItem(FP_W_KEY, String(w));
+      } catch {
+        /* ignore */
+      }
+      return w;
+    });
+  }, []);
+  const handleFpReset = useCallback(() => {
+    setPanelW(null);
+    try {
+      localStorage.removeItem(FP_W_KEY);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   if (!artifact) return null;
 
   return (
     <aside
-      className="flex h-full w-full max-w-2xl flex-shrink-0 flex-col border-l border-border-subtle bg-card-bg shadow-xl sm:w-[min(48vw,40rem)]"
+      className="relative flex h-full w-full max-w-2xl flex-shrink-0 flex-col border-l border-border-subtle bg-card-bg shadow-xl sm:w-[min(48vw,40rem)]"
+      style={panelW ? { width: panelW, maxWidth: 'none' } : undefined}
       data-testid="file-preview-host"
     >
+      <ColResizer
+        className="tk-fp-resizer"
+        label="调整预览宽度"
+        onDrag={handleFpDrag}
+        onEnd={handleFpDragEnd}
+        onDoubleClick={handleFpReset}
+      />
       <div className="flex items-center gap-2 border-b border-border-subtle px-3 py-2.5">
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold text-foreground">{title}</div>

@@ -16,8 +16,19 @@ import { DangerConfirmDialog } from '@/components/chat/DangerConfirmDialog';
 import { DomainEventBridge } from '@/components/layout/DomainEventBridge';
 import { GlobalChatWs } from '@/components/chat/GlobalChatWs';
 import { useT } from '@/stores/localeStore';
+import { ColResizer } from '@/components/ui/ColResizer';
 
 const SIDEBAR_KEY = 'takton-sidebar-open';
+const SIDEBAR_W_KEY = 'tk-sb-w';
+const SIDEBAR_W_DEFAULT = 260;
+const SIDEBAR_W_MIN = 200;
+const SIDEBAR_W_MAX = 420;
+
+function applySidebarWidth(px: number) {
+  const w = Math.round(Math.min(SIDEBAR_W_MAX, Math.max(SIDEBAR_W_MIN, px)));
+  document.documentElement.style.setProperty('--tk-sb-w', `${w}px`);
+  return w;
+}
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const t = useT();
@@ -40,6 +51,53 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         : 'disconnected';
   const [retryCount, setRetryCount] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  // 侧边栏宽度：挂载时恢复，拖拽实时写入 CSS 变量，松手持久化，双击复位
+  useEffect(() => {
+    try {
+      const saved = Number(localStorage.getItem(SIDEBAR_W_KEY));
+      if (saved) applySidebarWidth(saved);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  const sbDragState = React.useRef({ startX: 0, startW: SIDEBAR_W_DEFAULT });
+  const onSidebarDragStart = useCallback((clientX: number) => {
+    const cur = parseInt(
+      getComputedStyle(document.documentElement).getPropertyValue('--tk-sb-w'),
+    );
+    sbDragState.current = {
+      startX: clientX,
+      startW: Number.isFinite(cur) ? cur : SIDEBAR_W_DEFAULT,
+    };
+  }, []);
+  const handleSidebarDrag = useCallback(
+    (clientX: number) => {
+      if (!sbDragState.current.startX) onSidebarDragStart(clientX);
+      const { startX, startW } = sbDragState.current;
+      applySidebarWidth(startW + (clientX - startX));
+    },
+    [onSidebarDragStart],
+  );
+  const handleSidebarDragEnd = useCallback(() => {
+    try {
+      const cur = parseInt(
+        getComputedStyle(document.documentElement).getPropertyValue('--tk-sb-w'),
+      );
+      if (Number.isFinite(cur)) localStorage.setItem(SIDEBAR_W_KEY, String(cur));
+    } catch {
+      /* ignore */
+    }
+    sbDragState.current.startX = 0;
+  }, []);
+  const handleSidebarReset = useCallback(() => {
+    applySidebarWidth(SIDEBAR_W_DEFAULT);
+    try {
+      localStorage.removeItem(SIDEBAR_W_KEY);
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   useEffect(() => {
     try {
@@ -220,6 +278,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <AgentSidebar />
             </div>
           </div>
+          {sidebarOpen && (
+            <ColResizer
+              className="tk-sb-resizer"
+              label="调整侧边栏宽度"
+              onDrag={handleSidebarDrag}
+              onEnd={handleSidebarDragEnd}
+              onDoubleClick={handleSidebarReset}
+            />
+          )}
           <main className="tk-main main-workbench relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
             <div
               className={`flex min-h-0 flex-1 flex-col self-stretch overflow-x-hidden ${

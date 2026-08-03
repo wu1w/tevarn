@@ -78,6 +78,7 @@ class ToolEvent(WSMessage):
     arguments: dict[str, Any] = Field(default_factory=dict)
     status: Literal["running", "completed", "failed"] = "running"
     result: Optional[str] = None
+    duration_ms: Optional[float] = None  # end 阶段携带，供 TRACE 卡展示每步耗时
 
 
 class SyncRequest(WSMessage):

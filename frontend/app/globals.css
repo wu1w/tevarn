@@ -194,6 +194,129 @@ pre {
   font-feature-settings: "tnum";
 }
 
+/* ═══ 流式输出 / 思考样式（对齐像素控制台 demo） ═══ */
+@keyframes tk-blink {
+  50% { opacity: 0; }
+}
+/* 打字光标：跟随流式文本末尾的闪烁方块 */
+.tk-caret {
+  display: inline-block;
+  width: 8px;
+  height: 14px;
+  margin-left: 2px;
+  vertical-align: -2px;
+  background: var(--brand-purple);
+  animation: tk-blink 0.8s steps(1) infinite;
+}
+/* 像素状态点（思考中 / 运行中） */
+.tk-pxdot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: none;
+  animation: tk-blink 1s steps(2) infinite;
+}
+/* TRACE 工具轨迹卡：虚线框 + 等宽步骤 */
+.tk-trace {
+  border: 1px dashed var(--border-default);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--card-bg);
+}
+.tk-trace-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground-muted);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s ease;
+}
+.tk-trace-head:hover {
+  background: var(--card-bg-hover);
+}
+.tk-trace-tag {
+  font-family: "Silkscreen", ui-monospace, monospace;
+  font-size: 9px;
+  color: var(--brand-purple);
+  letter-spacing: 0.02em;
+}
+.tk-trace-body {
+  border-top: 1px dashed var(--border-subtle);
+  padding: 6px 10px 8px;
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  font-size: 11.5px;
+  line-height: 1.9;
+  color: var(--foreground-muted);
+  font-variant-numeric: tabular-nums;
+}
+.tk-trace-step {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.tk-trace-step .nm {
+  color: var(--foreground);
+  font-weight: 600;
+}
+.tk-trace-step .ok { color: #2f9e6e; }
+.tk-trace-step .run { color: #d97706; }
+.tk-trace-step .fail { color: #e5484d; }
+
+/* ═══ Kimi 式思考：微光 + 无痕折叠 ═══ */
+@keyframes tk-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+/* 思考进行态：一行流动光泽的文字，无框无背景 */
+.tk-think-label {
+  font-size: 13px;
+  font-weight: 500;
+  background: linear-gradient(
+    90deg,
+    var(--foreground-dim) 40%,
+    var(--brand-purple) 50%,
+    var(--foreground-dim) 60%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: tk-shimmer 2.2s linear infinite;
+}
+/* 思考完成态：「已思考 N 秒 ›」一行可折叠小字 */
+.tk-think-done {
+  font-size: 12.5px;
+  color: var(--foreground-dim);
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.15s ease;
+}
+.tk-think-done:hover {
+  color: var(--foreground-muted);
+}
+/* 展开的推理内容：左侧细线 + 浅灰小字（引用感，非卡片） */
+.tk-think-body {
+  margin: 8px 0 4px;
+  padding-left: 12px;
+  border-left: 2px solid var(--border-subtle);
+  font-size: 13px;
+  line-height: 1.75;
+  color: var(--foreground-dim);
+  white-space: pre-wrap;
+  animation: tk-fadein 0.4s ease;
+}
+@keyframes tk-fadein {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
 /* Light Theme — Takton AIOS 暖纸水彩色板（demo v2 定稿） */
 [data-theme="light"] {
   --page-bg: #f6f2e8;
@@ -686,7 +809,8 @@ button {
 /* ═══════════════ Takton v2 Shell (Rail + Sidebar) ═══════════════ */
 .tk-app-body {
   display: grid;
-  grid-template-columns: 56px 260px minmax(0, 1fr);
+  /* 侧边栏宽度可由 --tk-sb-w 拖拽调整（AppShell 手柄写入） */
+  grid-template-columns: 56px var(--tk-sb-w, 260px) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   min-height: 0;
   flex: 1 1 0%;
@@ -1074,4 +1198,260 @@ button {
   [class~="text-[10.5px]"] {
     font-size: 0.75rem !important;
   }
+}
+
+
+/* ═══════════════ Takton UX Polish：动效 / 滚动条 / 手柄 / 终端 ═══════════════ */
+
+/* ── 统一动效令牌（参考 Kimi：轻快、有回弹、不打断输入） ── */
+:root {
+  --tk-ease: cubic-bezier(0.32, 0.72, 0.24, 1);
+  --tk-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --tk-dur-fast: 160ms;
+  --tk-dur: 240ms;
+  --tk-dur-slow: 340ms;
+}
+
+/* ── 开关：所有 role="switch" 统一定律（轨道变色 + 滑块回弹 + 按压拉伸） ── */
+button[role="switch"] {
+  transition:
+    background var(--tk-dur) var(--tk-ease),
+    background-color var(--tk-dur) var(--tk-ease),
+    border-color var(--tk-dur) var(--tk-ease),
+    box-shadow var(--tk-dur) var(--tk-ease),
+    opacity var(--tk-dur-fast) ease;
+  cursor: pointer;
+}
+button[role="switch"]:disabled {
+  cursor: not-allowed;
+}
+button[role="switch"] > span {
+  transition: transform var(--tk-dur) var(--tk-ease), width var(--tk-dur-fast) var(--tk-ease) !important;
+  will-change: transform;
+}
+/* 按压时滑块沿运动方向轻微拉伸，松手回弹——符合直觉的"捏住"感 */
+button[role="switch"]:not(:disabled):active > span {
+  transition-duration: var(--tk-dur-fast) !important;
+  scale: 1.18 0.92;
+}
+button[role="switch"][aria-checked="true"] {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--brand-purple) 30%, transparent),
+              0 2px 10px color-mix(in srgb, var(--brand-purple) 35%, transparent);
+}
+button[role="switch"]:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--brand-purple) 55%, transparent);
+  outline-offset: 2px;
+}
+
+/* 分段选择器（卡片容器内的互斥按钮）hover/选中过渡统一 */
+.tk-card > button {
+  transition: color var(--tk-dur-fast) ease, background-color var(--tk-dur) var(--tk-ease);
+}
+
+/* 通用交互反馈：可点击卡片/按钮 hover 微浮、active 微沉（不动布局） */
+.surface-card, .tk-card, .glass {
+  transition:
+    transform var(--tk-dur) var(--tk-ease-out),
+    box-shadow var(--tk-dur) var(--tk-ease),
+    border-color var(--tk-dur) var(--tk-ease),
+    background-color var(--tk-dur) var(--tk-ease);
+}
+
+/* ── 滚动条：全局细条、半透明、hover 显形（WebKit + Firefox） ── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--foreground-dim) 32%, transparent) transparent;
+}
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--foreground-dim) 26%, transparent);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  transition: background var(--tk-dur-fast) ease;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--brand-purple) 45%, transparent);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ── 拖拽手柄（侧边栏 / 文件预览共用） ── */
+.tk-resizer {
+  flex: none;
+  width: 10px;
+  margin: 0 -5px;           /* 命中区 10px，视觉占位 0 */
+  cursor: col-resize;
+  z-index: 40;
+  position: relative;
+  touch-action: none;
+}
+.tk-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: transparent;
+  transition: background var(--tk-dur-fast) ease, width var(--tk-dur-fast) ease;
+}
+.tk-resizer:hover::after,
+.tk-resizer.active::after {
+  background: color-mix(in srgb, var(--brand-purple) 55%, transparent);
+  width: 3px;
+}
+/* 拖拽期间：关掉布局过渡、禁止文本选择、全局换光标 */
+.tk-resizing,
+.tk-resizing * {
+  transition: none !important;
+  user-select: none !important;
+}
+body.tk-col-resizing {
+  cursor: col-resize !important;
+}
+body.tk-col-resizing * {
+  pointer-events: none !important;
+}
+/* 侧边栏手柄：吸附在 rail(56px) + 侧栏宽的分界线上 */
+.tk-app-body {
+  position: relative;
+}
+.tk-sb-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(56px + var(--tk-sb-w, 260px));
+  margin: 0 0 0 -5px;
+  height: auto;
+}
+.tk-app-body.sidebar-collapsed .tk-sb-resizer {
+  display: none;
+}
+/* 文件预览手柄：吸附在面板左缘 */
+.tk-fp-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -5px;
+}
+
+/* ── 终端：复古赛博朋克（磷光字 + 扫描线 + CRT 暗角 + 像素标签） ── */
+.tk-term {
+  position: relative;
+  background:
+    radial-gradient(120% 100% at 50% 0%, rgba(34, 216, 238, 0.05), transparent 55%),
+    #0a0d12;
+  overflow: hidden;
+}
+/* 扫描线 + 暗角（伪元素，不干扰选择/滚动） */
+.tk-term::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0px,
+    transparent 2px,
+    rgba(0, 0, 0, 0.14) 3px
+  );
+  mix-blend-mode: multiply;
+}
+.tk-term::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 6;
+  box-shadow: inset 0 0 60px rgba(0, 0, 0, 0.45);
+}
+.tk-term-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(34, 216, 238, 0.14);
+  background: rgba(12, 15, 26, 0.85);
+  position: relative;
+  z-index: 10;
+}
+.tk-term-tag {
+  font-family: "Silkscreen", ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  color: #22d8ee;
+  text-shadow: 0 0 8px rgba(34, 216, 238, 0.55);
+}
+.tk-term-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #c9d4e3;
+}
+.tk-term-count {
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: #22d8ee;
+  background: rgba(34, 216, 238, 0.12);
+  border: 1px solid rgba(34, 216, 238, 0.25);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-variant-numeric: tabular-nums;
+}
+.tk-term-btn {
+  font-size: 10px;
+  color: #5c6b82;
+  padding: 2px 8px;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  transition: color var(--tk-dur-fast) ease, border-color var(--tk-dur-fast) ease, background var(--tk-dur-fast) ease;
+}
+.tk-term-btn:hover {
+  color: #22d8ee;
+  border-color: rgba(34, 216, 238, 0.3);
+  background: rgba(34, 216, 238, 0.08);
+}
+.tk-term-body {
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  font-size: 11px;
+  line-height: 1.7;
+  position: relative;
+  z-index: 8;
+  font-variant-numeric: tabular-nums;
+}
+.tk-term-line {
+  animation: tk-term-in 0.25s var(--tk-ease-out);
+}
+@keyframes tk-term-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: none; }
+}
+/* 磷光着色 */
+.tk-term-line .p { color: #3ddc84; text-shadow: 0 0 6px rgba(61, 220, 132, 0.45); }   /* 提示符/成功：磷绿 */
+.tk-term-line .c { color: #22d8ee; text-shadow: 0 0 6px rgba(34, 216, 238, 0.4); }    /* 命令名：青 */
+.tk-term-line .a { color: #8b93a7; }                                                   /* 参数：灰蓝 */
+.tk-term-line .t { color: #3f4a5f; }                                                   /* 时间戳：暗 */
+.tk-term-line .r { color: #ff6e6e; text-shadow: 0 0 6px rgba(255, 110, 110, 0.4); }   /* 失败：霓虹红 */
+.tk-term-line .w { color: #e8b93e; }                                                   /* 运行中：琥珀 */
+.tk-term-line .o { color: #9aa5b8; }                                                   /* 输出：浅灰 */
+/* 运行中光标：闪烁方块 */
+.tk-term-cursor {
+  display: inline-block;
+  width: 7px;
+  height: 12px;
+  vertical-align: -2px;
+  background: #e8b93e;
+  box-shadow: 0 0 8px rgba(232, 185, 62, 0.6);
+  animation: tk-blink 0.9s steps(1) infinite;
 }

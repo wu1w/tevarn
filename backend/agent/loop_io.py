@@ -128,6 +128,7 @@ class LoopIOMixin:
         arguments: dict[str, Any] | None = None,
         status: str = "running",
         result: str | None = None,
+        duration_ms: float | None = None,
     ) -> None:
         """推送工具调用开始/结束事件，供前端实时渲染 tool 卡片"""
         if not self.ws_manager:
@@ -155,6 +156,7 @@ class LoopIOMixin:
                     arguments=safe_args,
                     status=status,  # type: ignore[arg-type]
                     result=res,
+                    duration_ms=duration_ms,
                 ).model_dump(mode="json"),
             )
         except Exception as e:

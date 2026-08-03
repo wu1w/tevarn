@@ -41,32 +41,32 @@ export function formatResultText(result: string | undefined): string {
 
 function TerminalLine({ entry }: { entry: TerminalEntry }) {
   return (
-    <div className="group leading-5">
+    <div className="tk-term-line group">
       <div className="flex items-baseline gap-1.5">
-        <span className="shrink-0 select-none text-emerald-500">$</span>
-        <span className="shrink-0 font-semibold text-cyan-400">{entry.name}</span>
+        <span className="p shrink-0 select-none">$</span>
+        <span className="c shrink-0 font-semibold">{entry.name}</span>
         {entry.argsText && (
-          <span className="min-w-0 truncate text-zinc-400">{entry.argsText}</span>
+          <span className="a min-w-0 truncate">{entry.argsText}</span>
         )}
-        <span className="ml-auto shrink-0 select-none text-[9px] text-zinc-600">
+        <span className="t ml-auto shrink-0 select-none text-[9px]">
           {formatTime(entry.timestamp)}
         </span>
       </div>
       <div className="flex items-baseline gap-1.5 pl-4">
         {entry.status === 'running' ? (
-          <span className="text-amber-400">
-            <span className="inline-block animate-pulse">…</span>
-            <span className="ml-1 text-zinc-500">running</span>
+          <span className="w inline-flex items-center gap-1.5">
+            <span className="tk-term-cursor" />
+            <span>running</span>
           </span>
         ) : entry.status === 'failed' ? (
           <>
-            <span className="shrink-0 text-red-400">✗</span>
-            <span className="min-w-0 break-all text-red-300/80">{entry.resultText || 'failed'}</span>
+            <span className="r shrink-0">✗</span>
+            <span className="r min-w-0 break-all opacity-80">{entry.resultText || 'failed'}</span>
           </>
         ) : (
           <>
-            <span className="shrink-0 text-emerald-500">✓</span>
-            <span className="min-w-0 break-all text-zinc-400">{entry.resultText || 'ok'}</span>
+            <span className="p shrink-0">✓</span>
+            <span className="o min-w-0 break-all">{entry.resultText || 'ok'}</span>
           </>
         )}
       </div>
@@ -87,41 +87,40 @@ export function TerminalPanel() {
 
   if (!panelOpen) return null;
 
+  const runningCount = entries.filter((e) => e.status === 'running').length;
+
   return (
-    <aside className="flex w-80 flex-col border-l border-border-subtle bg-zinc-950">
-      <div className="flex items-center justify-between border-b border-zinc-800 px-3 py-2">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-zinc-200">{t('terminal.title')}</span>
+    <aside className="tk-term flex w-80 flex-col border-l border-border-subtle">
+      <div className="tk-term-head">
+        <span className="tk-term-tag">TERM</span>
+        <span className="tk-term-title">{t('terminal.title')}</span>
+        {entries.length > 0 && (
+          <span className="tk-term-count">{entries.length}</span>
+        )}
+        {runningCount > 0 && <span className="tk-term-cursor" />}
+        <div className="ml-auto flex gap-1">
           {entries.length > 0 && (
-            <span className="rounded-full bg-cyan-500/20 px-1.5 py-0.5 text-[10px] text-cyan-400">
-              {entries.length}
-            </span>
-          )}
-        </div>
-        <div className="flex gap-1">
-          {entries.length > 0 && (
-            <button
-              type="button"
-              onClick={clear}
-              className="rounded px-1.5 py-0.5 text-[10px] text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
-            >
+            <button type="button" onClick={clear} className="tk-term-btn">
               {t('terminal.clear')}
             </button>
           )}
           <button
             type="button"
             onClick={() => setPanelOpen(false)}
-            className="rounded px-1.5 py-0.5 text-[10px] text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
+            className="tk-term-btn"
           >
             {t('terminal.collapse')}
           </button>
         </div>
       </div>
 
-      <div ref={scrollRef} className="flex-1 space-y-2 overflow-y-auto p-2 font-mono text-[11px]">
+      <div
+        ref={scrollRef}
+        className="tk-term-body flex-1 space-y-2 overflow-y-auto p-2"
+      >
         {entries.length === 0 ? (
-          <div className="flex h-full items-center justify-center px-4 text-center text-xs text-zinc-600">
-            {t('terminal.empty')}
+          <div className="flex h-full items-center justify-center px-4 text-center text-xs">
+            <span className="t">{t('terminal.empty')}</span>
           </div>
         ) : (
           entries.map((e) => <TerminalLine key={e.id} entry={e} />)

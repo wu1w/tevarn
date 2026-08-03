@@ -387,6 +387,7 @@
   "chat.sendAutoConnect": "Send message… (auto-connect session)",
   "chat.send": "Send message…",
   "chat.thinking": "Thinking…",
+  "chat.thoughtSeconds": "Thought for {n}s",
   "chat.stopping": "Stopping…",
   "chat.reconnectStopped": "Fast reconnect paused; slow retry active — or click reconnect",
   "chat.streamStuck": "No response for a while — stop or use recovery below",

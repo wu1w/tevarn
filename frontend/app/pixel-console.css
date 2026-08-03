@@ -1,0 +1,364 @@
+/* ═══════════════════════════════════════════════════════════════════
+   Takton · Pixel Console 主题层（方向 A 落地版）
+   ─────────────────────────────────────────────────────────────────
+   用法：在 app/layout.tsx 中 globals.css 之后 import 本文件即可全局生效；
+        删除该 import 即回退原「暖纸水彩」主题，零侵入可回滚。
+   设计来源：demo-a-console.html（像素控制台 PIXEL CONSOLE）
+   原则：
+   1. 只覆盖 CSS 变量 + tk-* 结构类 + 通用元素，不改任何页面逻辑；
+   2. 像素字体仅用于 Logo / 区块标签 / badge —— 数据数字一律用
+      JetBrains Mono（.num / .mono），不用 Silkscreen（可读性差）；
+   3. 浅色为默认，深色同令牌切换。
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── 本地字体：Silkscreen（像素体，仅拉丁/数字，装饰用） ── */
+@font-face {
+  font-family: "Silkscreen";
+  font-style: normal; font-weight: 400; font-display: swap;
+  src: url(/fonts/Silkscreen-Regular.woff2) format("woff2");
+}
+@font-face {
+  font-family: "Silkscreen";
+  font-style: normal; font-weight: 700; font-display: swap;
+  src: url(/fonts/Silkscreen-Bold.woff2) format("woff2");
+}
+/* ── 本地字体：JetBrains Mono（数据/代码/终端） ── */
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal; font-weight: 400; font-display: swap;
+  src: url(/fonts/JetBrainsMono-Regular.woff2) format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal; font-weight: 500; font-display: swap;
+  src: url(/fonts/JetBrainsMono-Medium.woff2) format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal; font-weight: 700; font-display: swap;
+  src: url(/fonts/JetBrainsMono-Bold.woff2) format("woff2");
+}
+
+@theme inline {
+  --color-brand-pink: var(--brand-pink);
+}
+
+/* ═══ Light Theme — 像素控制台 · 冷白机身 ═══ */
+[data-theme="light"] {
+  --page-bg: #f4f6f8;
+  --card-bg: #fbfcfe;
+  --card-bg-hover: #eef1f6;
+  --elevated-bg: #ffffff;
+  --chrome: rgba(244, 246, 248, 0.88);
+  --sidebar: rgba(238, 241, 246, 0.88);
+  --foreground: #1d2330;
+  --foreground-muted: #4a5261;
+  --foreground-dim: #7a8291;
+  /* 品牌色：电紫 × 霓虹青 × 品红（点缀） */
+  --brand-purple: #6d5df6;
+  --brand-cyan: #00a8c0;
+  --brand-pink: #f6489b;
+  --brand-gradient-start: #6d5df6;
+  --brand-gradient-end: #00a8c0;
+  --border-subtle: rgba(29, 35, 48, 0.09);
+  --border-default: rgba(29, 35, 48, 0.16);
+  --border-focus: rgba(109, 93, 246, 0.5);
+  --on-acc: #ffffff;
+  --status-online: #16a34a;
+  --status-offline: #dc4446;
+  --error-bg: rgba(220, 68, 70, 0.08);
+  --error-text: #dc4446;
+  --success-bg: rgba(22, 163, 74, 0.1);
+  --success-text: #16a34a;
+  --input-bg: rgba(29, 35, 48, 0.045);
+  --input-placeholder: #8b92a0;
+  --glass-bg: rgba(251, 252, 254, 0.72);
+  --glass-border: rgba(29, 35, 48, 0.14);
+  --glass-inner: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  /* 像素控制台特征：方正圆角 + 阶梯硬阴影 */
+  --r-sm: 2px;
+  --r-md: 4px;
+  --r-lg: 6px;
+  --r-xl: 8px;
+  --hard: rgba(29, 35, 48, 0.14);
+  --hard-shadow: 3px 3px 0 var(--hard);
+  --hard-shadow-sm: 2px 2px 0 var(--hard);
+  --grid-dot: rgba(29, 35, 48, 0.055);
+}
+
+/* ═══ Dark Theme — 像素控制台 · 近黑蓝机房 ═══ */
+[data-theme="dark"] {
+  --page-bg: #0c0f1a;
+  --card-bg: rgba(148, 163, 199, 0.055);
+  --card-bg-hover: rgba(148, 163, 199, 0.1);
+  --elevated-bg: #151a2e;
+  --chrome: rgba(12, 15, 26, 0.88);
+  --sidebar: rgba(15, 19, 34, 0.88);
+  --foreground: #e6e9f2;
+  --foreground-muted: #a3abc2;
+  --foreground-dim: #6d7590;
+  /* 深色下霓虹提亮，外发光仅深色启用 */
+  --brand-purple: #8b7cff;
+  --brand-cyan: #22d8ee;
+  --brand-pink: #ff6ec7;
+  --brand-gradient-start: #8b7cff;
+  --brand-gradient-end: #22d8ee;
+  --border-subtle: rgba(148, 163, 199, 0.12);
+  --border-default: rgba(148, 163, 199, 0.2);
+  --border-focus: rgba(139, 124, 255, 0.55);
+  --on-acc: #ffffff;
+  --status-online: #4ade80;
+  --status-offline: #f87171;
+  --error-bg: rgba(248, 113, 113, 0.12);
+  --error-text: #f87171;
+  --success-bg: rgba(74, 222, 128, 0.12);
+  --success-text: #4ade80;
+  --input-bg: rgba(148, 163, 199, 0.08);
+  --input-placeholder: #5c657f;
+  --glass-bg: rgba(21, 26, 46, 0.72);
+  --glass-border: rgba(148, 163, 199, 0.16);
+  --glass-inner: inset 0 1px 0 rgba(230, 233, 242, 0.05);
+  --r-sm: 2px;
+  --r-md: 4px;
+  --r-lg: 6px;
+  --r-xl: 8px;
+  --hard: rgba(0, 0, 0, 0.45);
+  --hard-shadow: 3px 3px 0 var(--hard);
+  --hard-shadow-sm: 2px 2px 0 var(--hard);
+  --grid-dot: rgba(148, 163, 199, 0.07);
+}
+
+/* ═══ 字体工具：像素体（装饰）与等宽体（数据） ═══ */
+.px-font,
+.px {
+  font-family: "Silkscreen", "JetBrains Mono", monospace;
+  letter-spacing: 0.02em;
+}
+/* 数据数字统一等宽 + 表格数字对齐 —— 不用像素体 */
+.num,
+.mono {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ═══ 页面底：细点阵网格（替代原水彩颗粒纹理） ═══ */
+body::after {
+  content: none !important; /* 关掉原暖纸水彩 feTurbulence 颗粒 */
+}
+.app-ambient,
+body {
+  background-image: radial-gradient(var(--grid-dot) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* ═══ 结构壳：IconRail ═══ */
+.tk-rail {
+  background: var(--sidebar);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-right: 1px solid var(--border-default);
+}
+.tk-rail::after { content: none; } /* 去掉原渐变罩层，保持机身干净 */
+.tk-rail-logo {
+  border-radius: 6px; /* 原 50% 圆形 → 方像素块 */
+}
+.tk-rail-btn {
+  border-radius: 4px;
+  transition: color 180ms ease, background 180ms ease, box-shadow 180ms ease;
+}
+.tk-rail-btn.active {
+  background: var(--brand-purple);
+  color: #fff;
+  box-shadow: var(--hard-shadow-sm);
+}
+[data-theme="dark"] .tk-rail-btn.active {
+  box-shadow: var(--hard-shadow-sm),
+    0 0 16px color-mix(in srgb, var(--brand-purple) 45%, transparent);
+}
+.tk-rail-btn:hover:not(.active) {
+  color: var(--brand-purple);
+  background: var(--card-bg-hover);
+}
+.tk-rail-btn svg {
+  shape-rendering: crispEdges; /* 8-bit 图标保持锐利 */
+}
+.tk-rail-badge-count {
+  border-radius: 2px;
+  background: var(--brand-pink);
+  font-family: "Silkscreen", monospace;
+  font-size: 9px;
+  font-weight: 400;
+  box-shadow: 2px 2px 0 var(--hard);
+}
+.tk-rail-sep { background: var(--border-default); }
+
+/* ═══ 结构壳：AgentSidebar ═══ */
+.tk-sb-title {
+  font-family: "Silkscreen", monospace;
+  font-size: 15px;
+  letter-spacing: 0.02em;
+}
+.tk-sb-search {
+  border-radius: 4px;
+  border: 1px solid var(--border-subtle);
+  background: var(--input-bg);
+}
+.tk-sb-search:hover { border-color: var(--brand-purple); }
+.tk-sb-new {
+  border-radius: 4px;
+  background: var(--brand-purple);
+  box-shadow: var(--hard-shadow-sm);
+  transition: filter 160ms ease, transform 120ms ease, box-shadow 120ms ease;
+}
+.tk-sb-new:hover { filter: brightness(1.08); }
+.tk-sb-new:active { transform: translate(2px, 2px); box-shadow: 0 0 0 var(--hard); }
+.tk-sb-agent { border-radius: 4px; }
+.tk-sb-avatar { border-radius: 3px; }
+
+/* ═══ 卡片：直角实线 + 阶梯硬阴影（覆盖水彩玻璃卡） ═══ */
+.surface-card {
+  border-radius: var(--r-lg);
+  border: 1px solid var(--border-default);
+  background: var(--card-bg);
+  box-shadow: var(--hard-shadow);
+}
+
+/* 玻璃工具类：像素控制台用更实的底 */
+.glass {
+  background: var(--card-bg);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--border-default);
+}
+.glass-strong {
+  background: var(--elevated-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border-default);
+  box-shadow: var(--hard-shadow);
+}
+
+/* 品牌渐变按钮/文字保留渐变但换品牌色（沿用原类） */
+.gradient-brand {
+  background: var(--brand-purple);
+}
+
+/* ═══ 像素组件工具类（页面可就地取用） ═══ */
+/* 像素徽标：审批计数 / NEW / 状态 */
+.px-badge {
+  display: inline-flex;
+  align-items: center;
+  font-family: "Silkscreen", monospace;
+  font-size: 10px;
+  line-height: 1;
+  padding: 4px 6px 3px;
+  color: #fff;
+  background: var(--brand-purple);
+  border-radius: 2px;
+  box-shadow: 2px 2px 0 var(--hard);
+}
+.px-badge.cyan { background: var(--brand-cyan); }
+.px-badge.pink { background: var(--brand-pink); }
+.px-badge.green { background: var(--status-online); }
+
+/* 像素状态灯：4×4 方块（在线/忙碌/离线/异常） */
+.px-lamp {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 1px;
+  background: var(--foreground-dim);
+  box-shadow: 1px 1px 0 var(--hard);
+  flex: none;
+}
+.px-lamp.on { background: var(--status-online); }
+.px-lamp.busy { background: var(--brand-cyan); }
+.px-lamp.warn { background: #d97706; }
+.px-lamp.off { background: var(--status-offline); }
+.px-lamp.pulse { animation: pxLampPulse 1.6s ease-in-out infinite; }
+@keyframes pxLampPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* 切角卡：像素角切（corner-notch），用于重点卡片/模态 */
+.px-notch {
+  clip-path: polygon(
+    0 8px, 8px 0,
+    calc(100% - 8px) 0, 100% 8px,
+    100% calc(100% - 8px), calc(100% - 8px) 100%,
+    8px 100%, 0 calc(100% - 8px)
+  );
+}
+.px-notch-sm {
+  clip-path: polygon(
+    0 5px, 5px 0,
+    calc(100% - 5px) 0, 100% 5px,
+    100% calc(100% - 5px), calc(100% - 5px) 100%,
+    5px 100%, 0 calc(100% - 5px)
+  );
+}
+
+/* 硬阴影按钮基座（配合现有按钮类或内联样式页迁移用） */
+.px-btn {
+  border-radius: 3px;
+  border: 1px solid transparent;
+  box-shadow: var(--hard-shadow-sm);
+  transition: filter 160ms ease, transform 120ms ease, box-shadow 120ms ease;
+}
+.px-btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: 0 0 0 var(--hard);
+}
+
+/* 区块标签：BRIEF / LIVE / PROC 式像素小标 */
+.px-tag {
+  font-family: "Silkscreen", monospace;
+  font-size: 11px;
+  color: var(--brand-purple);
+  letter-spacing: 0.04em;
+}
+
+/* 像素分隔带：dithering 渐变（页面顶部分隔/区块分隔） */
+.px-dither {
+  height: 6px;
+  border: none;
+  background-image:
+    linear-gradient(90deg, var(--brand-purple), var(--brand-cyan));
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='6'%3E%3Crect x='0' y='0' width='2' height='2' fill='black'/%3E%3Crect x='4' y='2' width='2' height='2' fill='black'/%3E%3Crect x='2' y='4' width='2' height='2' fill='black'/%3E%3Crect x='6' y='0' width='2' height='2' fill='black'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='6'%3E%3Crect x='0' y='0' width='2' height='2' fill='black'/%3E%3Crect x='4' y='2' width='2' height='2' fill='black'/%3E%3Crect x='2' y='4' width='2' height='2' fill='black'/%3E%3Crect x='6' y='0' width='2' height='2' fill='black'/%3E%3C/svg%3E");
+  -webkit-mask-size: 8px 6px;
+  mask-size: 8px 6px;
+  opacity: 0.85;
+}
+
+/* 数据表：像素控制台表格（明细/进程表迁移用） */
+.px-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.px-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--foreground-dim);
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-default);
+}
+.px-table td {
+  padding: 9px 12px;
+  border-bottom: 1px dashed var(--border-subtle);
+  color: var(--foreground);
+}
+.px-table tr:hover td { background: var(--card-bg-hover); }
+.px-table td.num, .px-table td.mono { font-family: "JetBrains Mono", monospace; font-variant-numeric: tabular-nums; }
+
+/* 滚动条：方块手柄 */
+.scrollbar-thin::-webkit-scrollbar-thumb { border-radius: 2px; }
+
+/* 选中色随品牌紫 */
+::selection {
+  background: color-mix(in srgb, var(--brand-purple) 30%, transparent);
+}

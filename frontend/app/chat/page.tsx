@@ -476,6 +476,7 @@ function ChatPageInner() {
             arguments: msg.arguments || (idx >= 0 ? prev[idx].arguments : {}),
             result: msg.result ?? undefined,
             status: msg.status === 'failed' ? 'failed' : 'completed',
+            duration_ms: msg.duration_ms ?? undefined,
           };
           if (idx >= 0) {
             const copy = [...prev];
