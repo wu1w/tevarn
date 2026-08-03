@@ -1821,10 +1821,50 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         if _cluster_result:
             return _cluster_result
 
-        # 6. 获取 LLM 服务（优先子代理覆盖快照 → 会话 LLM 快照 → 配置变更不影响本会话）
+        # 6. 获取 LLM 服务
+        # 优先：子代理/编制 override → 会话 config.llm（可 locked）→ 全局当前选型
+        # 注意：旧会话快照会把用量永远记到创建时模型（如 deepseek），即使用户已在
+        # 设置里切到 gpt-5.6-luna。主会话默认 follow global；仅 locked / 员工覆盖例外。
         llm_snapshot = getattr(self, "_llm_snapshot_override", None) or (
             (config or {}).get("llm") if isinstance(config, dict) else None
         )
+        _is_wf_llm = str(getattr(self, "_agent_key", "") or "").startswith("wf:") or bool(
+            getattr(self, "_workforce", False)
+        )
+        if (
+            not _is_wf_llm
+            and getattr(self, "_llm_snapshot_override", None) is None
+            and isinstance(llm_snapshot, dict)
+            and not bool(llm_snapshot.get("locked"))
+        ):
+            try:
+                g_model = str(getattr(settings, "llm_model", "") or "").strip()
+                g_pid = str(
+                    getattr(settings, "llm_catalog_provider_id", "") or ""
+                ).strip()
+                g_url = str(getattr(settings, "llm_base_url", "") or "").strip().rstrip(
+                    "/"
+                )
+                s_model = str(llm_snapshot.get("model") or "").strip()
+                s_pid = str(llm_snapshot.get("provider_id") or "").strip()
+                s_url = str(llm_snapshot.get("base_url") or "").strip().rstrip("/")
+                stale = bool(g_model) and (
+                    (g_model != s_model)
+                    or (g_pid and s_pid and g_pid != s_pid)
+                    or (g_url and s_url and g_url != s_url)
+                )
+                if stale:
+                    logger.info(
+                        "follow global LLM (session snap stale) "
+                        "session=%s/%s → global=%s/%s",
+                        s_pid or "-",
+                        s_model or "-",
+                        g_pid or "-",
+                        g_model or "-",
+                    )
+                    llm_snapshot = None
+            except Exception as _fs:
+                logger.debug("follow global LLM skip: %s", _fs)
         llm_service = LLMServiceFactory.get_service_for_snapshot(llm_snapshot)
 
         # 6.5 上下文引擎 pipeline（L1/L3/L5）— per-session 隔离 thrash/L5

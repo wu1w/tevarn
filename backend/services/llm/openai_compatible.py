@@ -85,34 +85,51 @@ class OpenAICompatibleService(LLMService):
         return "kimi.com/coding" in b or "api.kimi.com/coding" in b
 
     def _family(self) -> str:
-        """用量/缓存归类键：优先 catalog 供应商 id，其次 profile 厂商族。
+        """用量/缓存归类键：优先 catalog 供应商 id，其次 URL / 模型启发式。
 
-        这样 openai-chatgpt-oauth 与 opencode-go 不会都显示成 generic，
-        且同一供应商下不同 model 在 by_model 里分开累计。
+        显示层必须反映**真实请求路径**（provider_id + model），不能因为
+        会话旧快照或 profile 默认族把 gpt-5.6-luna 记成 deepseek。
         """
-        pid = (self.provider_id or "").strip()
-        if pid and pid.lower() not in (
-            "",
-            "custom",
-            "generic",
-            "openai-compatible",
-            "openai_compatible",
+        # 1) service / settings 上的 catalog id（openai-chatgpt-oauth / opencode-go …）
+        for pid in (
+            (self.provider_id or "").strip(),
+            str(getattr(settings, "llm_catalog_provider_id", "") or "").strip(),
         ):
-            return pid
-        fam = str(getattr(self.profile, "family", "") or "").strip()
-        if fam and fam != "generic":
-            return fam
+            if pid and pid.lower() not in (
+                "",
+                "custom",
+                "generic",
+                "openai-compatible",
+                "openai_compatible",
+            ):
+                return pid
+
+        # 2) URL 特判：本机 Codex 代理 → 固定显示 openai-chatgpt-oauth
+        b = (self.base_url or "").lower()
+        if (
+            "openai-codex" in b
+            or "llm-proxy/openai" in b
+            or "chatgpt.com" in b
+            or "backend-api/codex" in b
+        ):
+            return "openai-chatgpt-oauth"
+
+        # 3) OpenCode 网关：用网关 id，避免把 deepseek/gpt 模型名盖掉供应商
         try:
             from .provider_profiles import _family_from_model, _family_from_url
 
-            by_m = _family_from_model(self.model)
-            if by_m:
-                return by_m
             by_u = _family_from_url(self.base_url)
-            if by_u:
+            if by_u == "opencode":
+                return "opencode-go"
+            if by_u and by_u not in ("generic",):
                 return by_u
+            by_m = _family_from_model(self.model)
+            if by_m and by_m not in ("generic",):
+                return by_m
         except Exception:
             pass
+
+        fam = str(getattr(self.profile, "family", "") or "").strip()
         return fam or "generic"
 
     def _normalize_usage(self, raw: dict[str, Any] | None) -> dict[str, int]:

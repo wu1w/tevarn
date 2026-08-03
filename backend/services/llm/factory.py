@@ -39,6 +39,19 @@ class LLMServiceFactory:
             v = str(getattr(settings, attr, "") or "").strip()
             if v:
                 return v
+        # settings 未写回时，从 base_url 推断常见 catalog id
+        try:
+            b = str(getattr(settings, "llm_base_url", "") or "").lower()
+            if "openai-codex" in b or "llm-proxy/openai" in b:
+                return "openai-chatgpt-oauth"
+            if "opencode.ai" in b or "/zen/" in b or "/go/v1" in b:
+                return "opencode-go"
+            if "api.x.ai" in b:
+                return "xai"
+            if "deepseek" in b:
+                return "deepseek"
+        except Exception:
+            pass
         return ""
 
     @classmethod

@@ -24,6 +24,8 @@ _KEY_MAP: dict[str, str] = {
     "llm_model": "llm_model",
     "llm_base_url": "llm_base_url",
     "llm_api_key": "llm_api_key",
+    # catalog 激活供应商 id（用量 by_family 归因；此前缺失导致永远记成错误厂商）
+    "llm_catalog_provider_id": "llm_catalog_provider_id",
     "default_llm_model": "default_llm_model",
     "max_tokens": "default_max_tokens",
     "temperature": "llm_temperature",
@@ -74,6 +76,7 @@ _LLM_KEYS = {
     "llm_model",
     "llm_base_url",
     "llm_api_key",
+    "llm_catalog_provider_id",
     "max_tokens",
     "temperature",
     "reasoning_effort",

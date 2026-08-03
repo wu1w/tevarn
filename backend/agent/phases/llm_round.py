@@ -366,37 +366,46 @@ async def _run_llm_round_body(
 
         _bill = int(stream_usage.get("billable_tokens") or spent or 0)
         _tok = int(stream_usage.get("total_tokens") or spent or 0)
-        _fam = "default"
-        if hasattr(llm_service, "_family") and callable(llm_service._family):
-            try:
-                _fam = str(llm_service._family() or "default")
-            except Exception:
-                _fam = "default"
-        else:
+        # 归因优先级：真实 service.provider_id → _family() → settings catalog → model 启发
+        # 必须用**本轮 llm_service** 上的 model，禁止回落成 settings 与 service 不一致时的错账
+        _model = str(getattr(llm_service, "model", None) or "").strip()
+        _fam = str(getattr(llm_service, "provider_id", None) or "").strip()
+        if not _fam or _fam.lower() in (
+            "custom",
+            "generic",
+            "openai-compatible",
+            "openai_compatible",
+            "default",
+        ):
+            if hasattr(llm_service, "_family") and callable(llm_service._family):
+                try:
+                    _fam = str(llm_service._family() or "").strip()
+                except Exception:
+                    _fam = ""
+        if not _fam:
             _fam = str(
-                getattr(llm_service, "provider_id", None)
-                or getattr(llm_service, "provider", None)
-                or getattr(settings, "llm_catalog_provider_id", None)
+                getattr(settings, "llm_catalog_provider_id", None)
                 or getattr(settings, "llm_provider", None)
                 or "default"
             )
-        # 避免用量页全部挤在 generic：无 catalog id 时用 model 启发式
-        if (not _fam or _fam in ("default", "generic", "openai-compatible")) and hasattr(
-            llm_service, "model"
-        ):
+        if (not _fam or _fam in ("default", "generic", "openai-compatible")) and _model:
             try:
                 from backend.services.llm.provider_profiles import _family_from_model
 
-                _hint = _family_from_model(str(getattr(llm_service, "model", "") or ""))
+                _hint = _family_from_model(_model)
                 if _hint:
                     _fam = _hint
             except Exception:
                 pass
-        _model = str(
-            getattr(llm_service, "model", None)
-            or getattr(settings, "llm_model", None)
-            or ""
-        ).strip()
+        if not _model:
+            _model = str(getattr(settings, "llm_model", None) or "").strip()
+        logger.info(
+            "usage charge family=%s model=%s tokens=%s billable=%s",
+            _fam,
+            _model or "?",
+            _tok,
+            _bill if _bill > 0 else _tok,
+        )
         report_cost_to_kernel(
             process_id=getattr(kernel_proc, "id", None) if kernel_proc else None,
             family=_fam,
