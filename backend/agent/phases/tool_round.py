@@ -41,6 +41,9 @@ class ToolRoundState:
     timid_write_streak: int
     tool_rounds: int
     last_tool_round_count: int
+    # 工具空转：相同指纹连续轮次
+    thrash_streak: int = 0
+    last_tool_fingerprint: str = ""
 
 
 # T1：可安全并发的只读风险等级。写类/命令类一律串行，避免「并发读 + 写同一文件」竞态。
@@ -669,6 +672,23 @@ async def run_tool_round(
                 _tnames,
                 session_id,
             )
+            # 连续 4 轮单点窥探：强制交卷
+            if state.timid_read_streak >= 4:
+                state.force_final_no_tools = True
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "【强制收束】已连续多轮只做单次只读。"
+                            "下一轮禁止工具：直接输出当前结论与缺口。"
+                        ),
+                    }
+                )
+                logger.warning(
+                    "timid read force_final streak=%s session=%s",
+                    state.timid_read_streak,
+                    session_id,
+                )
         elif is_timid_write_round(_tnames) and not state.force_final_no_tools:
             state.timid_write_streak += 1
             state.timid_read_streak = 0
@@ -691,6 +711,31 @@ async def run_tool_round(
             state.timid_write_streak = 0
     except Exception as _dec_e:
         logger.debug("decisive nudge skipped: %s", _dec_e)
+
+    # 工具空转：连续相同指纹 → 强制收束（禁止再工具）
+    try:
+        from backend.agent.decisive import thrash_force_final_text, tool_round_fingerprint
+
+        fp = tool_round_fingerprint(tool_calls)
+        force_after = max(1, int(getattr(settings, "agent_tool_thrash_force_final", 2) or 2))
+        prev_fp = (state.last_tool_fingerprint or "").strip()
+        if prev_fp and fp == prev_fp:
+            state.thrash_streak = int(state.thrash_streak or 0) + 1
+        else:
+            state.thrash_streak = 0
+        state.last_tool_fingerprint = fp
+        # force_after=2 → 第 2 次撞上相同指纹（连续两轮相同）即收束
+        if prev_fp and fp == prev_fp and state.thrash_streak >= max(1, force_after - 1):
+            state.force_final_no_tools = True
+            messages.append({"role": "system", "content": thrash_force_final_text()})
+            logger.warning(
+                "tool thrash force_final fp=%s streak=%s session=%s",
+                fp,
+                state.thrash_streak,
+                session_id,
+            )
+    except Exception as _th_e:
+        logger.debug("tool thrash guard skipped: %s", _th_e)
 
     # dynamic：use_tool_pack enable → 合并工具 schema 供后续轮次
     try:
@@ -862,9 +907,7 @@ async def run_tool_round(
                 ),
             }
         )
-    # 工具轮后：仅 L1/L3 micro（Claude Code：mid-loop 不跑 full auto-compact/L5）
-    # 全量 L5 摘要只在用户回合边界 / 413 reactiveCompact 触发，避免同轮长任务被
-    # 「只答最新一句」类指令打断成一拨一动。
+    # 工具轮后压缩：默认 L1/L3 micro；消息暴涨时偶发 L5（防 400 条历史空转）
     try:
         from backend.agent.context_compress import compress_history_if_needed
         from backend.agent.context_engine import get_context_engine
@@ -874,24 +917,33 @@ async def run_tool_round(
         if do_l1 and hasattr(eng, "_l1_budget"):
             state.messages, _n = eng._l1_budget(messages)  # type: ignore[attr-defined]
             messages = state.messages
-        # 用当前 messages 估 token，避免全局 last_prompt_tokens 跨 session 污染
-        need_micro = eng.should_compress_preflight(messages)
-        if need_micro:
+        soft_n = int(getattr(settings, "context_max_messages_soft", 48) or 48)
+        l5_every = int(getattr(settings, "context_midloop_l5_every_rounds", 4) or 4)
+        bloat = len(messages) >= soft_n
+        allow_mid_l5 = (
+            bloat
+            and l5_every > 0
+            and state.tool_rounds > 0
+            and state.tool_rounds % l5_every == 0
+        )
+        thr = float(getattr(settings, "context_threshold_percent", 0.55) or 0.55)
+        if bloat:
+            thr = min(thr, 0.45)
+        need = eng.should_compress_preflight(messages) or bloat
+        if need or allow_mid_l5:
             state.messages, mid_meta = await compress_history_if_needed(
                 messages,
                 session_id=session_id,
-                threshold=float(
-                    getattr(settings, "context_threshold_percent", 0.72) or 0.72
-                ),
-                allow_l5=False,
-                micro_only=True,
+                threshold=thr,
+                allow_l5=bool(allow_mid_l5),
+                micro_only=not allow_mid_l5,
             )
             messages = state.messages
             if mid_meta.get("compressed"):
                 await loop._push_status(
                     session_id,
                     "optimizing",
-                    f"工具轮后 micro 压缩 layers={mid_meta.get('layers')}",
+                    f"工具轮后压缩 layers={mid_meta.get('layers')} msgs={len(messages)}",
                 )
     except Exception as e:
         logger.debug("mid-loop context pipeline skipped: %s", e)

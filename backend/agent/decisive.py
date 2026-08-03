@@ -1,6 +1,7 @@
 """Heuristics to reduce hesitant single-tool rounds (efficiency, not new tools)."""
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any, Iterable
 
@@ -112,6 +113,66 @@ def batch_read_nudge_text(*, consecutive_timid: int = 1) -> str:
             "请立即并行多个 tool_calls；若信息足够，直接 edit/file_write，停止继续只读。"
         )
     return base
+
+
+def tool_round_fingerprint(tool_calls: Iterable[Any] | None) -> str:
+    """Stable fingerprint for a tool round (detect thrash / no-progress loops)."""
+    parts: list[str] = []
+    for tc in tool_calls or []:
+        name = getattr(tc, "name", None)
+        if name is None and isinstance(tc, dict):
+            name = (tc.get("function") or {}).get("name") or tc.get("name")
+        args = _tool_args(tc)
+        # keep path-ish keys only (ignore volatile ids)
+        slim: dict[str, Any] = {}
+        for k in (
+            "path",
+            "file",
+            "filepath",
+            "file_path",
+            "pattern",
+            "query",
+            "command",
+            "cmd",
+            "action",
+            "name",
+            "glob",
+            "url",
+        ):
+            if k in args and args[k] is not None:
+                slim[k] = str(args[k])[:200]
+        if not slim and args:
+            # fallback: sorted key names + short values
+            for k in sorted(str(x) for x in args.keys())[:8]:
+                slim[k] = str(args.get(k))[:80]
+        raw = f"{name}|{json.dumps(slim, ensure_ascii=False, sort_keys=True)}"
+        parts.append(raw)
+    parts.sort()
+    blob = "\n".join(parts)
+    return hashlib.sha256(blob.encode("utf-8", errors="replace")).hexdigest()[:20]
+
+
+def is_tool_thrash(
+    prev_fp: str | None,
+    curr_fp: str,
+    *,
+    thrash_streak: int,
+    force_after: int = 2,
+) -> bool:
+    """True when consecutive tool rounds look identical (no progress)."""
+    if not curr_fp or not prev_fp:
+        return False
+    if prev_fp != curr_fp:
+        return False
+    return int(thrash_streak) + 1 >= max(1, int(force_after))
+
+
+def thrash_force_final_text() -> str:
+    return (
+        "【强制收束】你已连续多轮调用**相同工具/相同参数**，信息增益为零。"
+        "下一轮**禁止**再调工具：直接用已有结果给主人完整中文结论"
+        "（做了什么 / 结果 / 风险 / 下一步）。不要再 grep/file_read 同一路径。"
+    )
 
 
 def batch_write_nudge_text(*, consecutive_timid: int = 1) -> str:

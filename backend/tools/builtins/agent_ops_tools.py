@@ -367,6 +367,27 @@ class ClarifyTool(BaseTool):
         q = (kwargs.get("question") or "").strip()
         if not q:
             return "[Error] question required"
+
+        # 用户已明确「直接执行/按我说的」：拒绝 clarify，逼模型动手
+        try:
+            from backend.core.config import settings as _settings
+            from backend.agent.direct_intent import is_direct_execute_intent
+
+            if bool(getattr(_settings, "agent_disable_clarify_on_direct", True)):
+                hint = str(
+                    kwargs.get("_user_input")
+                    or kwargs.get("_last_user_text")
+                    or kwargs.get("user_text")
+                    or ""
+                ).strip()
+                if is_direct_execute_intent(hint):
+                    return (
+                        "[ClarifySkipped] 用户已要求直接执行，禁止再 clarify。"
+                        "请立即用工具完成任务并给出结论，不要再提问。"
+                    )
+        except Exception:
+            pass
+
         raw_opts = kwargs.get("options") or []
         opts: list[str] = []
         if isinstance(raw_opts, list):

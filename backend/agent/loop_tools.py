@@ -201,6 +201,14 @@ class LoopToolsMixin:
         # Agent Computer：agent 身份（主 Agent=main；子代理 loop 实例可自带 key/label）
         arguments.setdefault("_agent_key", getattr(self, "_agent_key", "main"))
         arguments.setdefault("_agent_label", getattr(self, "_agent_label", ""))
+        # 直接执行意图：clarify 等工具可读取
+        try:
+            ut = str(getattr(self, "_last_user_input", "") or "").strip()
+            if ut:
+                arguments.setdefault("_last_user_text", ut)
+                arguments.setdefault("_user_input", ut)
+        except Exception:
+            pass
         # 联系员工会话：注入 contact 名 + identity id/caps（本员工允许后短路弹窗）
         contact = str(getattr(self, "_contact_agent", "") or "").strip()
         if contact:

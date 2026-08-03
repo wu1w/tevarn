@@ -969,12 +969,21 @@ class WorkforceDispatcher:
                     n_dead += 1
                 nm = names.get(str(it.identity_id), str(it.identity_id)[:8])
                 body = (it.result or it.error or "").strip() or "（无正文）"
-                if len(body) > 4500:
-                    body = body[:4500] + "\n…[truncated]"
+                # 短摘要：避免把数千字工单全文塞进 CEO 会话历史
+                try:
+                    from backend.core.config import settings as _cfg
+
+                    max_b = int(
+                        getattr(_cfg, "agent_rollup_max_block_chars", 500) or 500
+                    )
+                except Exception:
+                    max_b = 500
+                if len(body) > max_b:
+                    body = body[:max_b] + "\n…[摘要截断，详情见 crew_steward results]"
                 blocks.append(
                     f"### [{st}] {nm}\n"
-                    f"任务：{(it.instruction or '')[:400]}\n\n"
-                    f"结果：\n{body}\n"
+                    f"任务：{(it.instruction or '')[:160]}\n"
+                    f"结果：{body}\n"
                 )
 
         if not blocks:
@@ -1045,17 +1054,27 @@ class WorkforceDispatcher:
                 )
         except Exception:
             grant_block = ""
+        body_joined = "\n".join(blocks)
+        try:
+            from backend.core.config import settings as _cfg
+
+            max_p = int(getattr(_cfg, "agent_rollup_max_prompt_chars", 2400) or 2400)
+            max_iter = int(getattr(_cfg, "agent_rollup_max_iterations", 4) or 4)
+        except Exception:
+            max_p, max_iter = 2400, 4
+        if len(body_joined) > max_p:
+            body_joined = body_joined[:max_p] + "\n…[批次摘要已截断]"
         prompt = (
             f"【系统·编制自动回调】你派发的「{title}」相关工单已全部结束"
             f"（触发员工：{name or '—'}）。\n"
             f"{honesty}"
             f"{grant_block}"
-            "请**立即**把下列结果汇总成主人可读的中文汇报：\n"
-            "1. 总结论（须与批次状态一致）\n"
-            "2. 分员工要点（按 [done]/[failed]/[dead] 标签）\n"
-            "3. 风险与建议下一步（失败项如何重派/抬预算/拆单/**grant_caps**）\n"
-            "可用 crew_steward action=results 再核对，但**禁止**再次 hire/assign 同一批任务。\n\n"
-            + "\n".join(blocks)
+            "请**立即**用简短中文汇报（勿再开长工具链）：\n"
+            "1. 总结论（与批次状态一致）\n"
+            "2. 分员工一句话要点（[done]/[failed]/[dead]）\n"
+            "3. 失败时的下一步（抬预算 / grant_caps / 拆单）\n"
+            "禁止再次 hire/assign 同一批；勿把下方原文整段复读给主人。\n\n"
+            + body_joined
         )
 
         try:
@@ -1082,9 +1101,11 @@ class WorkforceDispatcher:
                 user_id=owner,
                 notification_repo=AsyncNotificationRepository(),
             )
-            # 汇总轮不宜太长
+            # 汇总轮极短：避免再烧 10 轮工具
             try:
-                loop.max_iterations = min(int(getattr(loop, "max_iterations", 12) or 12), 12)
+                loop.max_iterations = min(
+                    int(getattr(loop, "max_iterations", 12) or 12), max_iter
+                )
             except Exception:
                 pass
             logger.info(

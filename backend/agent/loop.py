@@ -1402,6 +1402,11 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
 
         # 处理附件内容注入
         enriched_input = self._build_user_input_with_attachments(user_input, attachments or [])
+        # 供 clarify 禁用 / 工具注入直接执行意图
+        try:
+            self._last_user_input = str(user_input or enriched_input or "")[:8000]
+        except Exception:
+            self._last_user_input = str(user_input or "")[:8000]
         _max_in = int(getattr(settings, "agent_max_user_input_chars", 100_000) or 100_000)
         if _max_in > 0 and len(enriched_input) > _max_in:
             logger.warning(
@@ -1729,6 +1734,36 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             "ALL" if enabled_tools_filter is None else len(enabled_tools_filter),
         )
 
+        # 直接执行意图：从 schema 去掉 clarify，避免模型「先问再做」
+        try:
+            from backend.agent.direct_intent import (
+                filter_clarify_from_tools,
+                is_direct_execute_intent,
+            )
+
+            if bool(getattr(settings, "agent_disable_clarify_on_direct", True)):
+                before_n = len(tools or [])
+                tools = filter_clarify_from_tools(
+                    tools, user_text=str(user_input or enriched_input or "")
+                )
+                if tools is not None and len(tools) < before_n:
+                    logger.info(
+                        "clarify stripped (direct intent) session=%s",
+                        session_id,
+                    )
+                    if is_direct_execute_intent(str(user_input or "")):
+                        messages.append(
+                            {
+                                "role": "system",
+                                "content": (
+                                    "【直接执行】用户已要求按指令直接做。"
+                                    "禁止 clarify/反问；立即工具落地并交付结论。"
+                                ),
+                            }
+                        )
+        except Exception as _di_e:
+            logger.debug("direct intent tool filter skip: %s", _di_e)
+
         # 短纪律 brief + 场景/扩包提示
         try:
             tool_name_list = [
@@ -1876,24 +1911,20 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     llm_snapshot = None
             except Exception as _fs:
                 logger.debug("follow global LLM skip: %s", _fs)
-        # 会话稳定 prompt_cache_key：同会话多轮落同一 cache namespace
+        # 会话稳定 prompt_cache_key：同会话多轮强制同一 namespace（提高 cache_read）
+        _cache_key = f"takton:{str(session_id).replace('-', '')[:32]}"
         if isinstance(llm_snapshot, dict):
             _snap = dict(llm_snapshot)
             _snap.setdefault("session_id", str(session_id))
-            if not str(_snap.get("prompt_cache_key") or "").strip():
-                _snap["prompt_cache_key"] = f"takton:{str(session_id)[:32]}"
+            _snap["prompt_cache_key"] = _cache_key
             llm_service = LLMServiceFactory.get_service_for_snapshot(_snap)
         else:
             llm_service = LLMServiceFactory.get_service_for_snapshot(llm_snapshot)
-            try:
-                if hasattr(llm_service, "prompt_cache_key"):
-                    setattr(
-                        llm_service,
-                        "prompt_cache_key",
-                        f"takton:{str(session_id)[:32]}",
-                    )
-            except Exception:
-                pass
+        try:
+            if hasattr(llm_service, "prompt_cache_key"):
+                setattr(llm_service, "prompt_cache_key", _cache_key)
+        except Exception:
+            pass
 
         # 本轮实际模型 → 前端状态条（避免 Picker 与真实调用不一致）
         try:
@@ -1960,9 +1991,14 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             except Exception:
                 pass
 
-            thr = float(getattr(settings, "context_threshold_percent", 0.72) or 0.72)
+            thr = float(getattr(settings, "context_threshold_percent", 0.55) or 0.55)
+            # 超长会话更早压
+            if len(messages) >= int(
+                getattr(settings, "context_max_messages_soft", 48) or 48
+            ):
+                thr = min(thr, 0.45)
             messages, compress_meta = await compress_history_if_needed(
-                messages, session_id=session_id, threshold=thr
+                messages, session_id=session_id, threshold=thr, allow_l5=True
             )
             if compress_meta.get("compressed"):
                 layers = compress_meta.get("layers") or []
@@ -2063,6 +2099,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         _last_tool_round_count = 0
         _timid_read_streak = 0
         _timid_write_streak = 0
+        _thrash_streak = 0
+        _last_tool_fingerprint = ""
         _completion_followups = 0
         _tools_used_run: list[str] = []
         self._reactive_compact_used = False
@@ -2391,6 +2429,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     timid_write_streak=_timid_write_streak,
                     tool_rounds=_tool_rounds,
                     last_tool_round_count=_last_tool_round_count,
+                    thrash_streak=_thrash_streak,
+                    last_tool_fingerprint=_last_tool_fingerprint,
                 )
                 await run_tool_round(
                     self,
@@ -2420,6 +2460,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 _timid_write_streak = _tr_state.timid_write_streak
                 _tool_rounds = _tr_state.tool_rounds
                 _last_tool_round_count = _tr_state.last_tool_round_count
+                _thrash_streak = _tr_state.thrash_streak
+                _last_tool_fingerprint = _tr_state.last_tool_fingerprint
                 continue
 
             else:

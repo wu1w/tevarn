@@ -527,15 +527,29 @@ class Settings(BaseSettings):
     agent_block_private_network: bool = False
 
     # Context engine (Claude Code–style pipeline + Hermes meter)
-    context_threshold_percent: float = 0.72
+    # 0.55：长会话更早压；旧 0.72 会拖到 ~10 万 prompt 才动手
+    context_threshold_percent: float = 0.55
     context_protect_first_n: int = 3
-    context_protect_last_n: int = 12
-    context_max_tool_output_chars: int = 12_000
+    context_protect_last_n: int = 8
+    # 消息条数软/硬上限：超软限强制压；超硬限硬截断中间
+    context_max_messages_soft: int = 48
+    context_max_messages_hard: int = 90
+    context_max_tool_output_chars: int = 8_000
     context_enable_l1: bool = True
     context_enable_l3: bool = True
     context_enable_l5: bool = True
+    # 工具轮中消息过多时允许偶发 L5（每 N 个 tool round 最多 1 次）
+    context_midloop_l5_every_rounds: int = 4
     # 空 = 使用主 LLM；可单独指定便宜模型做 L5 摘要
     context_compress_model: str = ""
+    # 用户说「直接执行/按我说的」时禁用 clarify
+    agent_disable_clarify_on_direct: bool = True
+    # 连续相同工具指纹轮次 → force_final（禁止再工具）
+    agent_tool_thrash_force_final: int = 2
+    # 编制回调写入 CEO 会话的正文上限
+    agent_rollup_max_block_chars: int = 500
+    agent_rollup_max_prompt_chars: int = 2400
+    agent_rollup_max_iterations: int = 4
 
     # Prompt-Skill 注入策略（商店安装的 SKILL.md）
     # summary=仅目录摘要 | auto=摘要+相关全文 | full=尽量全文（仍受限额）

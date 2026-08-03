@@ -55,17 +55,36 @@ async def compress_history_if_needed(
     local_meter = TokenMeter(context_window=window, threshold_percent=thr)
 
     tokens = estimate_msgs_tokens(messages)
+    n_msg = len(messages)
+    soft_n = int(getattr(settings, "context_max_messages_soft", 48) or 48)
+    hard_n = int(getattr(settings, "context_max_messages_hard", 90) or 90)
     meta_base: dict[str, Any] = {
         "compressed": False,
         "tokens_before": tokens,
         "context_window": window,
         "budget": getattr(local_meter, "threshold_tokens", 0) or 0,
         "threshold_percent": thr,
+        "message_count": n_msg,
     }
 
+    # 消息条数过多：强制压缩（不等 token 阈值）
+    count_pressure = n_msg >= soft_n
+    if count_pressure and not micro_only:
+        # 长会话优先允许 L5；硬上限时强制 allow
+        allow_l5 = True
+        thr = min(thr, 0.45)
+        local_meter = TokenMeter(context_window=window, threshold_percent=thr)
+        meta_base["count_pressure"] = True
+        meta_base["threshold_percent"] = thr
+
     # always cheap L1; full compress when over threshold or preflight
-    over = local_meter.should_compress(tokens) or engine.should_compress_preflight(messages)
-    if not over and len(messages) < 8:
+    over = (
+        local_meter.should_compress(tokens)
+        or engine.should_compress_preflight(messages)
+        or count_pressure
+        or n_msg >= hard_n
+    )
+    if not over and n_msg < 8:
         # still run L1 only for oversized tool blobs
         if hasattr(engine, "_l1_budget"):
             out, n = engine._l1_budget([dict(m) for m in messages])  # type: ignore[attr-defined]
@@ -80,8 +99,25 @@ async def compress_history_if_needed(
                 return out, meta_base
         return messages, meta_base
 
+    # 超硬上限：先硬砍中间，再走 pipeline
+    work = messages
+    if n_msg >= hard_n and hasattr(engine, "_hard_truncate"):
+        try:
+            # temporarily tighten tail protect for extreme bloat
+            old_tail = getattr(engine, "protect_last_n", 8)
+            try:
+                engine.protect_last_n = min(int(old_tail), 6)  # type: ignore[attr-defined]
+                work, n_drop = engine._hard_truncate([dict(m) for m in work])  # type: ignore[attr-defined]
+            finally:
+                engine.protect_last_n = old_tail  # type: ignore[attr-defined]
+            if n_drop:
+                meta_base["pre_hard_drop"] = n_drop
+                tokens = estimate_msgs_tokens(work)
+        except Exception:
+            work = messages
+
     out, meta = await engine.compress(
-        messages,
+        work,
         current_tokens=tokens,
         session_id=session_id,
         allow_l5=allow_l5,
