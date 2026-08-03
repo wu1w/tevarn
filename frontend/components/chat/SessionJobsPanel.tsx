@@ -53,15 +53,18 @@ export function SessionJobsPanel({
   sessionId,
   zh = true,
   compact = true,
+  /** 浮层内传 false：直接展开列表 */
+  defaultCollapsed,
 }: {
   sessionId: string | null | undefined;
   zh?: boolean;
   compact?: boolean;
+  defaultCollapsed?: boolean;
 }) {
   const qc = useQueryClient();
   const addToast = useToastStore((s) => s.addToast);
   // 默认收起，与运行记录一致；避免展开空列表在会话切换时闪一下
-  const [collapsed, setCollapsed] = useState(true);
+  const [collapsed, setCollapsed] = useState(defaultCollapsed ?? true);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const jobs = useQuery({
@@ -149,14 +152,15 @@ export function SessionJobsPanel({
     cursor: 'pointer',
   };
 
+  const floatMode = defaultCollapsed === false;
   return (
     <div
       style={{
-        border: '1px solid var(--border-subtle)',
-        borderRadius: 12,
-        padding: collapsed ? '6px 10px' : compact ? 10 : 14,
-        background: 'var(--card-bg)',
-        margin: '0 8px 6px',
+        border: floatMode ? 'none' : '1px solid var(--border-subtle)',
+        borderRadius: floatMode ? 0 : 12,
+        padding: floatMode ? 8 : collapsed ? '6px 10px' : compact ? 10 : 14,
+        background: floatMode ? 'transparent' : 'var(--card-bg)',
+        margin: floatMode ? 0 : '0 8px 6px',
       }}
     >
       <div

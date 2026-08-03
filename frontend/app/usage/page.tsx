@@ -18,6 +18,10 @@ type CostModel = {
   tokens?: number;
   billable?: number;
   rounds?: number;
+  prompt?: number;
+  cache_read?: number;
+  input?: number;
+  output?: number;
 };
 type CacheFamily = {
   hits?: number;
@@ -187,6 +191,8 @@ export default function UsagePage() {
       family: string;
       model: string;
       tokens: number;
+      prompt: number;
+      cache_read: number;
       billable: number;
       rounds: number;
     }> = [];
@@ -197,12 +203,21 @@ export default function UsagePage() {
         const mid = m.model || key.split('/').slice(1).join('/') || '(default)';
         if (provider !== 'all' && fam !== provider) continue;
         if (model !== 'all' && `${fam}/${mid}` !== model && key !== model) continue;
+        const tokens = Number(m.tokens || 0);
+        const billable = Number(m.billable || 0);
+        const cacheRead = Number(m.cache_read || 0);
+        // prompt ≈ 输入侧：优先显式 prompt/input，否则 tokens - output 不可得时用 billable+cache
+        const prompt = Number(
+          m.prompt ?? m.input ?? (cacheRead > 0 ? billable + cacheRead : tokens),
+        );
         rows.push({
           key,
           family: fam,
           model: mid,
-          tokens: Number(m.tokens || 0),
-          billable: Number(m.billable || 0),
+          tokens,
+          prompt,
+          cache_read: cacheRead,
+          billable,
           rounds: Number(m.rounds || 0),
         });
       }
@@ -210,12 +225,16 @@ export default function UsagePage() {
       // fallback: family-only data (old host / no model yet)
       for (const [fam, m] of Object.entries(byFamily)) {
         if (provider !== 'all' && fam !== provider) continue;
+        const tokens = Number(m.tokens || 0);
+        const billable = Number(m.billable || 0);
         rows.push({
           key: fam,
           family: fam,
           model: '—',
-          tokens: Number(m.tokens || 0),
-          billable: Number(m.billable || 0),
+          tokens,
+          prompt: tokens,
+          cache_read: 0,
+          billable,
           rounds: Number(m.rounds || 0),
         });
       }
@@ -505,9 +524,10 @@ export default function UsagePage() {
                 <tr>
                   <th style={th}>{zh ? '供应商' : 'Provider'}</th>
                   <th style={th}>{zh ? '模型' : 'Model'}</th>
-                  <th style={{ ...th, textAlign: 'right' }}>Tokens</th>
-                  <th style={{ ...th, textAlign: 'right' }}>{zh ? '计费' : 'Billable'}</th>
-                  <th style={{ ...th, textAlign: 'right' }}>{zh ? '轮次' : 'Rounds'}</th>
+                  <th style={{ ...th, textAlign: 'right' }}>prompt</th>
+                  <th style={{ ...th, textAlign: 'right' }}>cache_read</th>
+                  <th style={{ ...th, textAlign: 'right' }}>billable</th>
+                  <th style={{ ...th, textAlign: 'right' }}>rounds</th>
                 </tr>
               </thead>
               <tbody>
@@ -515,7 +535,12 @@ export default function UsagePage() {
                   <tr key={r.key}>
                     <td style={td}>{r.family}</td>
                     <td style={td}>{r.model}</td>
-                    <td style={{ ...td, textAlign: 'right' }}>{fmtNum(r.tokens)}</td>
+                    <td style={{ ...td, textAlign: 'right' }}>{fmtNum(r.prompt)}</td>
+                    <td style={{ ...td, textAlign: 'right' }}>
+                      {r.family === 'openai-chatgpt-oauth' && !r.cache_read
+                        ? '—'
+                        : fmtNum(r.cache_read)}
+                    </td>
                     <td style={{ ...td, textAlign: 'right' }}>{fmtNum(r.billable)}</td>
                     <td style={{ ...td, textAlign: 'right' }}>{fmtNum(r.rounds)}</td>
                   </tr>
@@ -586,6 +611,15 @@ export default function UsagePage() {
           ? '说明：计费 tokens 优先用 billable（未命中缓存的输入 + 输出）。缓存命中依赖供应商返回的 cache_read 字段。'
           : 'Note: billable prefers uncached input + output. Cache hits require provider usage.cache_read fields.'}
       </div>
+      {(provider === 'openai-chatgpt-oauth' ||
+        costRows.some((r) => r.family === 'openai-chatgpt-oauth') ||
+        cacheRows.some((r) => r.family === 'openai-chatgpt-oauth')) && (
+        <p className="mt-2 text-[10px] text-foreground-dim">
+          {zh
+            ? 'Codex OAuth / Responses 不支持 cache 字段，命中率恒为 —（协议限制，非统计错误）'
+            : 'Codex OAuth / Responses has no cache fields; hit rate stays — (protocol limit, not a metrics bug).'}
+        </p>
+      )}
     </div>
   );
 }

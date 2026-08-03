@@ -40,8 +40,10 @@ class LoopIOMixin:
         *,
         caps_count: int | None = None,
         tools_count: int | None = None,
+        model: str | None = None,
+        provider: str | None = None,
     ) -> None:
-        """推送状态：优先 EventSinkPort（字段与 WS 一致，含 caps/tools），回落 ws_manager。"""
+        """推送状态：优先 EventSinkPort（字段与 WS 一致，含 caps/tools/model），回落 ws_manager。"""
         sink = getattr(self, "event_sink", None)
         if sink is not None:
             try:
@@ -51,6 +53,8 @@ class LoopIOMixin:
                     detail or "",
                     caps_count=caps_count,
                     tools_count=tools_count,
+                    model=model,
+                    provider=provider,
                 )
                 if state == "error" and detail:
                     await self._emit_progress("error", detail)
@@ -61,14 +65,21 @@ class LoopIOMixin:
                     await sink.push_status(session_id, state, detail or "")
                     if state == "error" and detail:
                         await self._emit_progress("error", detail)
-                    # caps 仍走 WS，避免 H2-E 可观测字段丢失
-                    if self.ws_manager and (caps_count is not None or tools_count is not None):
+                    # caps/model 仍走 WS，避免可观测字段丢失
+                    if self.ws_manager and (
+                        caps_count is not None
+                        or tools_count is not None
+                        or model
+                        or provider
+                    ):
                         payload = StatusUpdate(
                             session_id=session_id,
                             state=state,
                             detail=detail,
                             caps_count=caps_count,
                             tools_count=tools_count,
+                            model=model,
+                            provider=provider,
                         ).model_dump(mode="json")
                         await self.ws_manager.broadcast(session_id, payload)
                     return
@@ -83,6 +94,8 @@ class LoopIOMixin:
                 detail=detail,
                 caps_count=caps_count,
                 tools_count=tools_count,
+                model=model,
+                provider=provider,
             ).model_dump(mode="json")
             await self.ws_manager.broadcast(session_id, payload)
         if state == "error" and detail:

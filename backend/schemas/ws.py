@@ -32,6 +32,9 @@ class StatusUpdate(WSMessage):
     # 结构化可观测字段（避免前端解析文案正则）
     caps_count: Optional[int] = None
     tools_count: Optional[int] = None
+    # 本轮实际模型（与设置页 Picker 可能不一致时以这里为准）
+    model: Optional[str] = None
+    provider: Optional[str] = None
 
 
 class MemoryUpdated(WSMessage):

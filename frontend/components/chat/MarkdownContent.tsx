@@ -191,7 +191,8 @@ function FencedCodeBlock({ language, code }: { language: string; code: string })
           {copied ? t('chat._e69') : t('chat._e70')}
         </button>
       </div>
-      <div className="overflow-x-auto">
+      {/* 超长代码块限高，避免撑爆对话区；复制仍用全文 code */}
+      <div className="max-h-64 overflow-auto">
         <pre ref={preRef} className="m-0 p-0 text-[12px] leading-relaxed">
           <code className="block font-mono text-zinc-200">
             {showLines

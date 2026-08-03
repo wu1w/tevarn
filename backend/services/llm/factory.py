@@ -178,7 +178,14 @@ class LLMServiceFactory:
             model=model,
             llm_provider=provider,
         )
-        cache_key = str(snapshot.get("prompt_cache_key") or snapshot.get("session_id") or provider_id or "")[:64] or None
+        # 优先显式 prompt_cache_key；否则按 session 稳定键（同会话多轮同 namespace）
+        _sid = str(snapshot.get("session_id") or "").strip()
+        _pck = str(snapshot.get("prompt_cache_key") or "").strip()
+        if not _pck and _sid:
+            _pck = f"takton:{_sid[:32]}"
+        elif not _pck:
+            _pck = str(provider_id or "")
+        cache_key = _pck[:64] or None
         if provider == "ollama":
             return OllamaService(config)
         elif provider == "vllm":

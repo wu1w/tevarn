@@ -1865,7 +1865,48 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     llm_snapshot = None
             except Exception as _fs:
                 logger.debug("follow global LLM skip: %s", _fs)
-        llm_service = LLMServiceFactory.get_service_for_snapshot(llm_snapshot)
+        # 会话稳定 prompt_cache_key：同会话多轮落同一 cache namespace
+        if isinstance(llm_snapshot, dict):
+            _snap = dict(llm_snapshot)
+            _snap.setdefault("session_id", str(session_id))
+            if not str(_snap.get("prompt_cache_key") or "").strip():
+                _snap["prompt_cache_key"] = f"takton:{str(session_id)[:32]}"
+            llm_service = LLMServiceFactory.get_service_for_snapshot(_snap)
+        else:
+            llm_service = LLMServiceFactory.get_service_for_snapshot(llm_snapshot)
+            try:
+                if hasattr(llm_service, "prompt_cache_key"):
+                    setattr(
+                        llm_service,
+                        "prompt_cache_key",
+                        f"takton:{str(session_id)[:32]}",
+                    )
+            except Exception:
+                pass
+
+        # 本轮实际模型 → 前端状态条（避免 Picker 与真实调用不一致）
+        try:
+            _model = str(
+                getattr(llm_service, "model", None)
+                or (llm_snapshot or {}).get("model")
+                or getattr(settings, "llm_model", "")
+                or ""
+            ).strip()
+            _prov = str(
+                getattr(llm_service, "provider_id", None)
+                or (llm_snapshot or {}).get("provider_id")
+                or ""
+            ).strip()
+            if _model:
+                await self._push_status(
+                    session_id,
+                    "thinking",
+                    detail=f"model={_model}",
+                    model=_model,
+                    provider=_prov or None,
+                )
+        except Exception:
+            pass
 
         # 6.5 上下文引擎 pipeline（L1/L3/L5）— per-session 隔离 thrash/L5
         try:

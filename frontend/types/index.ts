@@ -500,6 +500,9 @@ export interface StatusUpdateMessage extends WSMessage {
   detail?: string;
   caps_count?: number | null;
   tools_count?: number | null;
+  /** 本轮实际模型（loop 选好 LLM 后推送） */
+  model?: string | null;
+  provider?: string | null;
 }
 
 /** 与 confirm_manager 广播 / ConfirmRequest schema 对齐 */

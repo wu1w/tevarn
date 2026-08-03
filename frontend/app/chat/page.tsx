@@ -7,11 +7,10 @@ import { ProjectGroupView } from '@/components/chat/ProjectGroupView';
 import { MessageInput, Attachment, ChatMode, type MessageInputHandle } from '@/components/chat/MessageInput';
 import { FilePreviewHost } from '@/components/chat/FilePreviewHost';
 import { SessionArtifactsBar } from '@/components/chat/SessionArtifactsBar';
-import { SessionRunsPanel } from '@/components/chat/SessionRunsPanel';
-import { SessionJobsPanel } from '@/components/chat/SessionJobsPanel';
 import type { ChatArtifact } from '@/lib/artifacts';
 import { TerminalPanel, formatArgsText, formatResultText } from '@/components/chat/TerminalPanel';
 import { ActivityPanel } from '@/components/chat/ActivityPanel';
+import { ChatStatusStrip } from '@/components/chat/ChatStatusStrip';
 import { TaskPanel } from '@/components/tasks/TaskPanel';
 import { TransparencyPanel } from '@/components/chat/TransparencyPanel';
 import { GlobalSearch } from '@/components/search/GlobalSearch';
@@ -23,8 +22,6 @@ import { Message, StatusUpdateMessage, StreamDeltaMessage, GoalUpdateMessage, Go
 import { useTerminalStore } from '@/stores/terminalStore';
 import { generateImage, type SessionRecoveryPayload } from '@/lib/api';
 import { ChatRecoveryCard } from '@/components/chat/ChatRecoveryCard';
-import { RunCapabilityChip } from '@/components/chat/RunCapabilityChip';
-import { RuntimeHealthBanner } from '@/components/chat/RuntimeHealthBanner';
 import { generateUUID } from '@/lib/uuid';
 import { useRouter, useSearchParams } from 'next/navigation';
 import type { ToolCallData } from '@/components/chat/ToolCallPanel';
@@ -139,6 +136,9 @@ function ChatPageInner() {
     const runCapsCacheRef = useRef<
       Record<string, { caps?: number; tools?: number; soft?: number }>
     >({});
+    /** 本轮实际调用模型（WS status.model） */
+    const [liveModel, setLiveModel] = useState<string | null>(null);
+    const liveModelCacheRef = useRef<Record<string, string>>({});
 
     // 开发冒烟：允许 Playwright 注入消息 / 打开预览
     React.useEffect(() => {
@@ -239,6 +239,7 @@ function ChatPageInner() {
           setIsStopping(isStoppingSid(sid));
           // 恢复该会话上轮能力芯片（已结束会话也能回顾）
           setRunCaps(runCapsCacheRef.current[sid] || null);
+          setLiveModel(liveModelCacheRef.current[sid] || null);
           const cached = streamSessionApi().get(sid);
           // 标记：等 sync 完成后再启假 Resuming 超时（弱网 auth+sync 常 >4s）
           syncSeenForResumeRef.current[sid] = false;
@@ -599,6 +600,19 @@ function ChatPageInner() {
         lastStreamActivityRef.current = Date.now();
         if (msg.detail) {
           setStreamStatusDetail(msg.detail);
+        }
+        // 本轮实际模型（优先结构化字段）
+        const modelFromMsg =
+          (typeof msg.model === 'string' && msg.model.trim()) ||
+          (() => {
+            const m = String(msg.detail || '').match(
+              /(?:model|模型)\s*[=:：]?\s*([^\s,·|]+)/i,
+            );
+            return m ? m[1] : null;
+          })();
+        if (modelFromMsg) {
+          setLiveModel(modelFromMsg);
+          if (sid) liveModelCacheRef.current[sid] = modelFromMsg;
         }
         // 优先结构化 caps/tools；文案正则仅作回落
         const capsN =
@@ -1743,36 +1757,23 @@ const handleUserMessageAck = useCallback(
                         messages={displayMessages}
                         onPreview={setPreviewArtifact}
                       />
+                      {/* 活动流：仅流式时出现，单行 */}
                       <ActivityPanel
                         liveToolCalls={liveToolCalls}
                         streamStatusDetail={streamStatusDetail}
                         isStreaming={isStreaming}
                       />
-                      {/* 有数据才由面板内部渲染；空/加载中不占位，避免切同事时两栏闪一下 */}
-                      {currentSession?.id ? (
-                        <div className="px-2 pb-1 space-y-1 empty:hidden">
-                          <SessionJobsPanel
-                            key={`jobs-${currentSession.id}`}
-                            sessionId={currentSession.id}
-                            compact
-                            zh
-                          />
-                          <SessionRunsPanel
-                            key={`runs-${currentSession.id}`}
-                            sessionId={currentSession.id}
-                            compact
-                          />
-                        </div>
-                      ) : null}
-                      <RuntimeHealthBanner zh />
-                      {(isStreaming || runCaps) && (
-                        <RunCapabilityChip
+                      {/* 统一状态条：健康 / 沙箱 / 能力 / 记录 / 工单 */}
+                      <div className="relative">
+                        <ChatStatusStrip
+                          sessionId={currentSession?.id}
                           capsCount={runCaps?.caps}
                           toolsCount={runCaps?.tools}
                           softRenew={runCaps?.soft}
+                          liveModel={liveModel}
                           zh
                         />
-                      )}
+                      </div>
                       {/* 卡住：优先提示停止，再给恢复卡 */}
                       {streamStuck && isStreaming && !isStopping && (
                         <div className="mx-3 mb-2 flex items-center justify-between gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200">

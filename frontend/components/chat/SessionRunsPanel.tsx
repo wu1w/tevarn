@@ -58,14 +58,16 @@ export function SessionRunsPanel({
   if (runs.isLoading && !runs.data) return null;
   if (items.length === 0) return null;
 
+  // 浮层内（defaultCollapsed=false）去掉外边距，避免与 ChatStatusStrip 叠双重卡片
+  const floatMode = defaultCollapsed === false;
   return (
     <div
       style={{
-        border: '1px solid var(--border-subtle)',
-        borderRadius: 12,
-        padding: collapsed ? '6px 10px' : compact ? 10 : 14,
-        background: 'var(--card-bg)',
-        margin: collapsed ? '0 8px 6px' : undefined,
+        border: floatMode ? 'none' : '1px solid var(--border-subtle)',
+        borderRadius: floatMode ? 0 : 12,
+        padding: floatMode ? 8 : collapsed ? '6px 10px' : compact ? 10 : 14,
+        background: floatMode ? 'transparent' : 'var(--card-bg)',
+        margin: floatMode ? 0 : collapsed ? '0 8px 6px' : undefined,
       }}
     >
       <div

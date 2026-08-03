@@ -164,9 +164,11 @@ class OpenAICompatibleService(LLMService):
         except Exception:
             key_on = True
         if getattr(prof, "openai_prompt_cache_key", False) and key_on:
-            # Prefer explicit session key; else hash stable system prefix so
-            # multi-turn requests stay in the same cache namespace.
+            # Prefer session-stable key (takton:{session_id}); hash only as last resort.
             key = str(self.prompt_cache_key or "").strip()
+            if key and not key.startswith("takton:") and len(key) >= 32:
+                # bare session uuid from older callers → normalize
+                key = f"takton:{key[:32]}"
             if not key:
                 try:
                     import hashlib
