@@ -39,6 +39,9 @@ impl CodingProfile {
                 "clarify".into(),
                 "use_tool_pack".into(),
                 "current_time".into(),
+                // Goals (CEO / steward)
+                "okr_goal".into(),
+                "manage_goal".into(),
             ],
             capabilities: vec![
                 "file_read".into(),
@@ -51,6 +54,8 @@ impl CodingProfile {
                 "clarify".into(),
                 "use_tool_pack".into(),
                 "current_time".into(),
+                "okr_goal".into(),
+                "manage_goal".into(),
             ],
             isolation: IsolationProfile::Interactive.as_str().into(),
             token_budget: 200_000,

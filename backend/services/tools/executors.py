@@ -834,6 +834,7 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
     command = arguments.get("command", "").strip()
     if not command:
         return "[Error] command is required"
+    # Windows 沙箱 JobBackend 走 cmd.exe：裸 echo/dir 有时无输出；统一给可诊断失败信息
 
     if "\x00" in command:
         return "[Security Blocked] NUL bytes are not allowed in command"
@@ -990,19 +991,29 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
             return f"[Timeout] Command exceeded {timeout}s and was terminated"
         out = (r.get("stdout") or "").strip()
         err = (r.get("stderr") or "").strip()
+        code = r.get("code")
         header = (
-            f"[Exit {r.get('code')}"
+            f"[Exit {code}"
             + (f" cwd={cwd}" if cwd else "")
             + (f" mode={r.get('mode')}" if r.get("mode") else "")
             + "]"
         )
         if err:
             return f"{header}\nstdout:\n{out or '(empty)'}\n\nstderr:\n{err}"
-        return out or f"{header}\n[No output]"
+        if out:
+            return out
+        # 禁止返回空串或裸 [Error]——Agent 无法自检
+        if code not in (0, None, "0"):
+            return (
+                f"{header}\n[No output] 命令无 stdout/stderr。"
+                "Windows 请用 `cmd /c echo ok`、`cmd /c dir`、`where python`。"
+            )
+        return f"{header}\n[No output]"
     except FileNotFoundError:
         return f"[Error] Command not found: {command.split()[0] if command else ''}"
     except Exception as e:
-        return f"[Error] {e}"
+        msg = str(e).strip() or type(e).__name__
+        return f"[Error] {msg}"
 
 
 # file_read 分页参数（T3）
@@ -1105,6 +1116,12 @@ async def execute_file_read(config: dict[str, Any], arguments: dict[str, Any]) -
     filepath = arguments.get("filepath", "")
     if not filepath:
         return "[Error] filepath is required"
+    try:
+        from backend.tools.permissions import rewrite_host_path_into_workspace
+
+        filepath = rewrite_host_path_into_workspace(str(filepath))
+    except Exception:
+        pass
 
     # 约定：缺省 / None / 0 一律回落到默认值（模型常用 0 表达「从头开始」）；
     # 负数是明确的调用错误，报错而非静默兜底。
@@ -1124,9 +1141,18 @@ async def execute_file_read(config: dict[str, Any], arguments: dict[str, Any]) -
     base_path = config.get("base_path", "./workspace")
     full_path, base_abs = _resolve_workspace_path(base_path, filepath)
 
-    # 路径安全检查：防止目录遍历
+    # 路径安全检查：防止目录遍历（宿主数据根额外放行）
     if not _is_within(full_path, base_abs):
-        return f"[Security Blocked] Path '{filepath}' is outside the allowed directory"
+        try:
+            from backend.tools.permissions import ToolPermissionManager
+
+            if not ToolPermissionManager().is_path_allowed(full_path):
+                return (
+                    f"[Security Blocked] Path '{filepath}' is outside the allowed "
+                    f"directory (workspace={base_abs})"
+                )
+        except Exception:
+            return f"[Security Blocked] Path '{filepath}' is outside the allowed directory"
 
     if not os.path.exists(full_path):
         return f"[Error] File not found: {filepath}"
@@ -1321,11 +1347,22 @@ async def execute_python(config: dict[str, Any], arguments: dict[str, Any]) -> s
 
     # Windows：shlex.quote 用单引号，cmd/CreateProcess 会报「文件名语法不正确」；
     # 多行 -c 也脆弱。统一写临时 .py 再 exec，argv 列表传参。
+    # 脚本落在 workspace 内（.computers/_tmp），避免沙箱 cwd/可见性与系统 Temp 脱节。
     import tempfile
+    from pathlib import Path
 
     script_path: str | None = None
     try:
-        fd, script_path = tempfile.mkstemp(suffix=".py", prefix="takton_py_")
+        try:
+            from backend.tools.permissions import resolve_agent_workspace_root
+
+            tmp_dir = Path(resolve_agent_workspace_root()) / ".computers" / "_tmp"
+        except Exception:
+            tmp_dir = Path(tempfile.gettempdir()) / "takton_py"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        fd, script_path = tempfile.mkstemp(
+            suffix=".py", prefix="takton_py_", dir=str(tmp_dir)
+        )
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
             f.write(code if code.endswith("\n") else code + "\n")
     except Exception as e:

@@ -85,7 +85,35 @@ class OpenAICompatibleService(LLMService):
         return "kimi.com/coding" in b or "api.kimi.com/coding" in b
 
     def _family(self) -> str:
-        return str(getattr(self.profile, "family", "generic") or "generic")
+        """用量/缓存归类键：优先 catalog 供应商 id，其次 profile 厂商族。
+
+        这样 openai-chatgpt-oauth 与 opencode-go 不会都显示成 generic，
+        且同一供应商下不同 model 在 by_model 里分开累计。
+        """
+        pid = (self.provider_id or "").strip()
+        if pid and pid.lower() not in (
+            "",
+            "custom",
+            "generic",
+            "openai-compatible",
+            "openai_compatible",
+        ):
+            return pid
+        fam = str(getattr(self.profile, "family", "") or "").strip()
+        if fam and fam != "generic":
+            return fam
+        try:
+            from .provider_profiles import _family_from_model, _family_from_url
+
+            by_m = _family_from_model(self.model)
+            if by_m:
+                return by_m
+            by_u = _family_from_url(self.base_url)
+            if by_u:
+                return by_u
+        except Exception:
+            pass
+        return fam or "generic"
 
     def _normalize_usage(self, raw: dict[str, Any] | None) -> dict[str, int]:
         from .usage_normalize import log_cache_usage, normalize_usage
@@ -119,9 +147,30 @@ class OpenAICompatibleService(LLMService):
         except Exception:
             key_on = True
         if getattr(prof, "openai_prompt_cache_key", False) and key_on:
+            # Prefer explicit session key; else hash stable system prefix so
+            # multi-turn requests stay in the same cache namespace.
+            key = str(self.prompt_cache_key or "").strip()
+            if not key:
+                try:
+                    import hashlib
+
+                    sys0 = ""
+                    for m in messages or []:
+                        if isinstance(m, dict) and m.get("role") == "system":
+                            sys0 = str(m.get("content") or "")[:4000]
+                            break
+                    tools_sig = ""
+                    for t in (payload.get("tools") or [])[:40]:
+                        if isinstance(t, dict):
+                            fn = t.get("function") if isinstance(t.get("function"), dict) else t
+                            tools_sig += str((fn or {}).get("name") or "") + ","
+                    raw = f"{self.model}|{sys0[:1500]}|{tools_sig}"
+                    key = hashlib.sha256(raw.encode("utf-8", errors="replace")).hexdigest()[:32]
+                except Exception:
+                    key = ""
             apply_openai_prompt_cache_key(
                 payload,
-                cache_key=str(self.prompt_cache_key or "") or None,
+                cache_key=key or None,
                 enabled=True,
             )
 
@@ -181,6 +230,21 @@ class OpenAICompatibleService(LLMService):
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
+        # ChatGPT OAuth / Codex 订阅路径需要 Account-Id
+        try:
+            aid = str(getattr(settings, "openai_chatgpt_account_id", "") or "").strip()
+            if not aid:
+                from backend.core.config import settings as _s
+
+                aid = str(getattr(_s, "openai_chatgpt_account_id", "") or "").strip()
+            if aid and (
+                "openai-codex" in (self.base_url or "")
+                or "chatgpt.com" in (self.base_url or "")
+                or self.provider_id in ("openai-chatgpt-oauth", "openai-codex-oauth")
+            ):
+                headers["ChatGPT-Account-Id"] = aid
+        except Exception:
+            pass
         return headers
 
     def _chat_completions_url(self) -> str:
@@ -192,12 +256,46 @@ class OpenAICompatibleService(LLMService):
         return f"{base}/v1/chat/completions"
 
     def _normalize_tools(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        normalized = []
-        for t in tools:
-            if t.get("type") == "function" and "function" in t:
-                normalized.append(t)
-            else:
-                normalized.append({"type": "function", "function": t})
+        """Normalize + sort tools for stable automatic prefix cache.
+
+        OpenAI/DeepSeek/xAI automatic caching requires the request prefix
+        (tools + early messages) to be byte-identical across rounds.
+        """
+        normalized: list[dict[str, Any]] = []
+
+        def _stable_params(fn: dict[str, Any]) -> dict[str, Any]:
+            params = fn.get("parameters")
+            if isinstance(params, dict):
+                try:
+                    fn["parameters"] = json.loads(
+                        json.dumps(params, sort_keys=True, ensure_ascii=False)
+                    )
+                except Exception:
+                    pass
+            return fn
+
+        for t in tools or []:
+            if not isinstance(t, dict):
+                continue
+            # Already OpenAI-shaped: {type, function}
+            if isinstance(t.get("function"), dict):
+                fn = _stable_params(dict(t["function"]))
+                normalized.append({"type": "function", "function": fn})
+                continue
+            # Bare function body: {name, description, parameters}
+            if t.get("name"):
+                fn = _stable_params(dict(t))
+                normalized.append({"type": "function", "function": fn})
+                continue
+            # Fallback
+            fn = _stable_params(dict(t))
+            normalized.append({"type": "function", "function": fn})
+
+        def _name(item: dict[str, Any]) -> str:
+            fn = item.get("function") if isinstance(item.get("function"), dict) else {}
+            return str((fn or {}).get("name") or "")
+
+        normalized.sort(key=_name)
         return normalized
 
     # 部分兼容网关（讯飞 MaaS 等）拒绝：assistant 空字符串 content + tool_calls

@@ -39,8 +39,32 @@ import {
 /** 运行时下发的 WS 基址缓存（getRuntimeEndpoints） */
 let _discoveredWsBase: string | null = null;
 
-export function setDiscoveredWsBase(url: string | null | undefined) {
+/** Next dev 默认后端（与 next.config rewrites 一致）；勿回落到历史 8000 */
+const DEV_BACKEND_WS = 'ws://127.0.0.1:8090/api';
+
+function isNextDevFrontendPort(port: string): boolean {
+  return port === '3000' || port === '3001';
+}
+
+/** 丢弃明显错误的发现结果（如 app_port=8000 而本机 API 在 8090） */
+function sanitizeDiscoveredWs(url: string, pagePort: string): string | null {
   const u = (url || '').trim().replace(/\/$/, '');
+  if (!u) return null;
+  // 浏览器 Next dev：页面在 3000，WS 必须直连后端；忽略指到 8000 的旧默认
+  if (isNextDevFrontendPort(pagePort)) {
+    if (/:\/\/(127\.0\.0\.1|localhost):8000(\/|$)/i.test(u)) {
+      return DEV_BACKEND_WS;
+    }
+  }
+  return u;
+}
+
+export function setDiscoveredWsBase(url: string | null | undefined) {
+  let pagePort = '';
+  if (typeof window !== 'undefined') {
+    pagePort = window.location.port || '';
+  }
+  const u = sanitizeDiscoveredWs((url || '').trim().replace(/\/$/, ''), pagePort);
   _discoveredWsBase = u || null;
   if (typeof window !== 'undefined' && u) {
     try {
@@ -60,9 +84,15 @@ function resolveWsBaseUrl(): string {
       (window as unknown as { electronAPI?: unknown }).electronAPI
     );
 
-    const injected = (window as unknown as { __TAKTON_WS_URL__?: string }).__TAKTON_WS_URL__;
-    if (injected) return injected.replace(/\/$/, '');
-    if (_discoveredWsBase) return _discoveredWsBase;
+    const injectedRaw = (window as unknown as { __TAKTON_WS_URL__?: string }).__TAKTON_WS_URL__;
+    const injected = injectedRaw
+      ? sanitizeDiscoveredWs(injectedRaw, port)
+      : null;
+    if (injected) return injected;
+    if (_discoveredWsBase) {
+      const d = sanitizeDiscoveredWs(_discoveredWsBase, port);
+      if (d) return d;
+    }
 
     // Electron 桌面：主进程反代 /api → 真实后端，走同源 WS
     if (hasElectron) {
@@ -82,13 +112,12 @@ function resolveWsBaseUrl(): string {
       return `${wsProto}//${host}/api`;
     }
 
-    // 浏览器 + next dev：Next rewrites 不支持 WS upgrade
-    // 优先 NEXT_PUBLIC_WS_URL / 发现结果，否则 8090（产品 dev 默认）
-    if (isLocalHost && (port === '3000' || port === '3001')) {
+    // 浏览器 + next dev：Next rewrites 不支持 WS upgrade → 直连 8090
+    if (isLocalHost && isNextDevFrontendPort(port)) {
       if (process.env.NEXT_PUBLIC_WS_URL) {
         return process.env.NEXT_PUBLIC_WS_URL.replace(/\/$/, '');
       }
-      return 'ws://127.0.0.1:8090/api';
+      return DEV_BACKEND_WS;
     }
   }
   if (process.env.NEXT_PUBLIC_WS_URL) {
@@ -98,18 +127,18 @@ function resolveWsBaseUrl(): string {
     const hostname = window.location.hostname;
     if (hostname === 'localhost' || hostname === '127.0.0.1') {
       const port = window.location.port;
-      if (port === '3000' || port === '3001') {
-        return 'ws://127.0.0.1:8090/api';
+      if (isNextDevFrontendPort(port)) {
+        return DEV_BACKEND_WS;
       }
       if (port && port !== '8000' && port !== '8090') {
         const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         return `${wsProto}//${hostname}:${port}/api`;
       }
-      return 'ws://127.0.0.1:8090/api';
+      return DEV_BACKEND_WS;
     }
     return `ws://${hostname}/api`;
   }
-  return 'ws://127.0.0.1:8090/api';
+  return DEV_BACKEND_WS;
 }
 
 const RECONNECT_DELAY_BASE = 1000;

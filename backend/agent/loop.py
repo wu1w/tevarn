@@ -44,17 +44,27 @@ def _sanitize_tool_error(tool_name: str, exc: Exception) -> str:
     """工具错误脱敏 + 下一步建议（Phase 4.3）。
 
     生产模式不回传 SQL/堆栈；调试模式带详情。
+    禁止返回无正文的「[Error]」或裸异常类名（Agent 会误判为执行器未注册）。
     """
     import os
 
-    if os.environ.get("TAKTON_DEBUG", "").lower() in ("1", "true", "yes"):
-        return f"[Error] Failed to execute {tool_name}: {exc}"
-
     exc_type = type(exc).__name__
-    msg = str(exc or "")[:200].lower()
+    raw = str(exc or "").strip()
+    if os.environ.get("TAKTON_DEBUG", "").lower() in ("1", "true", "yes"):
+        return f"[Error] Failed to execute {tool_name}: {exc_type}: {raw or '(no message)'}"
+
+    msg = raw[:200].lower()
     hint = _tool_error_next_step(tool_name, exc_type, msg)
+    # NotImplementedError 常见于 _executor 未绑定 / 抽象类未实现
+    if exc_type == "NotImplementedError" or "notimplemented" in msg:
+        return (
+            f"[Error] 工具 {tool_name} 执行路径未就绪（{exc_type}"
+            f"{(': ' + raw) if raw else ''}）。"
+            f"{hint}"
+        )
     return (
-        f"[Error] 工具 {tool_name} 执行失败（{exc_type}）。"
+        f"[Error] 工具 {tool_name} 执行失败（{exc_type}"
+        f"{(': ' + raw[:120]) if raw else ''}）。"
         f"{hint}"
     )
 
@@ -62,8 +72,12 @@ def _sanitize_tool_error(tool_name: str, exc: Exception) -> str:
 def _tool_error_next_step(tool_name: str, exc_type: str, msg_lower: str) -> str:
     """面向用户的下一步建议（不泄内部路径细节）。"""
     name = (tool_name or "").lower()
+    if "notimplemented" in exc_type.lower() or "notimplemented" in msg_lower:
+        return "下一步：重启后端使 ToolRegistry 重新加载；确认用 command/python 而非未实现的别名。"
     if "permission" in msg_lower or "denied" in msg_lower or "not allowed" in msg_lower:
         return "下一步：检查权限规则/员工能力白名单，或在审批中心放行后重试。"
+    if "超出" in msg_lower or "cwd" in msg_lower and ("workspace" in msg_lower or "允许" in msg_lower):
+        return "下一步：在 workspace 内设 cwd，或配置 TAKTON_DEV_ROOT / session workspace_root。"
     if "not found" in msg_lower or "no such file" in msg_lower or "filenotfound" in exc_type.lower():
         return "下一步：用 glob/list 确认路径是否存在，或改用工作区内的相对路径。"
     if "timeout" in msg_lower or "timed out" in msg_lower:
@@ -73,11 +87,15 @@ def _tool_error_next_step(tool_name: str, exc_type: str, msg_lower: str) -> str:
     if name in ("file_read", "file_write", "edit", "glob", "grep"):
         return "下一步：确认路径在 workspace 内，必要时先 file_read/glob 再编辑。"
     if name in ("command", "run_shell", "bash", "shell", "python"):
-        return "下一步：先用只读命令验证环境，避免一次执行过长管道；敏感操作需确认。"
+        return (
+            "下一步：Windows 用 `cmd /c echo ok` / `where python` 自检；"
+            "python 工具传 code= 短片段；勿传空 command。"
+        )
     if "ppt" in name or name == "generate_ppt":
         return "下一步：确认已安装 python-pptx；可先生成大纲 JSON 再导出 pptx。"
     if "network" in msg_lower or "connection" in msg_lower or "http" in name:
         return "下一步：检查网络/URL 是否可达，或改用本地缓存内容。"
+    return "下一步：查看后端日志中的同名工具错误详情后重试。"
     return "下一步：根据工具说明调整参数后重试；仍失败可设 TAKTON_DEBUG=1 查看服务端日志。"
 
 
@@ -1142,6 +1160,67 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                                 caps_now[:16],
                                 applied,
                             )
+                        # CEO/管家：进程能力 + 令牌全开。
+                        # 注意：coding_profile 之后 process.capabilities 已被收窄，
+                        # 直接 issue_token(["*"]) 会被 kernel 以「超出进程能力集」拒绝；
+                        # 必须先 apply_intent / escalate 扩进程，再挂令牌。
+                        try:
+                            from backend.agent.workforce_dispatch import (
+                                ensure_steward_kernel_full_open_async,
+                                is_steward_contact,
+                            )
+
+                            _contact = str(
+                                getattr(self, "_contact_agent", "") or ""
+                            ).strip()
+                            _steward = is_steward_contact(_contact)
+                            if not _steward and isinstance(
+                                getattr(self, "config", None), dict
+                            ):
+                                cfg = self.config  # type: ignore[attr-defined]
+                                _steward = is_steward_contact(
+                                    str(cfg.get("contact_agent") or "")
+                                ) or is_steward_contact(
+                                    str(cfg.get("identity") or "")
+                                )
+                            # session config 也可能只在后面工具加载时解析；这里再查 recorder/session
+                            if not _steward:
+                                try:
+                                    _sess = await self.session_repo.get(session_id)
+                                    sc = (
+                                        getattr(_sess, "config", None) or {}
+                                        if _sess is not None
+                                        else {}
+                                    )
+                                    if isinstance(sc, dict):
+                                        _steward = is_steward_contact(
+                                            str(sc.get("contact_agent") or "")
+                                        ) or is_steward_contact(
+                                            str(sc.get("identity") or "")
+                                        )
+                                except Exception:
+                                    pass
+                            if _steward:
+                                ok_fo = await ensure_steward_kernel_full_open_async(
+                                    kernel, kernel_proc.id
+                                )
+                                fresh2 = kernel.get_process(kernel_proc.id)
+                                if fresh2 is not None:
+                                    kernel_proc = fresh2
+                                    self._kernel_process = kernel_proc
+                                caps_now = list(
+                                    getattr(kernel_proc, "capabilities", None) or []
+                                )
+                                logger.info(
+                                    "steward kernel full-open process=%s ok=%s caps=%s",
+                                    kernel_proc.id[:8],
+                                    ok_fo,
+                                    caps_now[:8],
+                                )
+                        except Exception as _st_cap:
+                            logger.warning(
+                                "steward full-open token skip: %s", _st_cap
+                            )
                         logger.info(
                             "scenario=%s coding_profile=%s process=%s caps=%s",
                             scenario,
@@ -1151,6 +1230,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         )
                 except Exception as _sc:
                     logger.warning("coding profile apply skip: %s", _sc)
+
                 # Track host epoch so tools can rehydrate after host restart
                 try:
                     self._kernel_host_epoch = int(
@@ -1508,11 +1588,18 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         if mode == "report":
             mode_extra.extend(["generate_report", "render_chart"])
         if mode == "goal":
-            mode_extra.extend(["manage_goal", "autopilot"])
+            mode_extra.extend(["manage_goal", "autopilot", "okr_goal"])
         if mode == "cluster":
             mode_extra.extend(
-                ["crew_steward", "manage_sub_agent", "delegate_task", "agent_call"]
+                [
+                    "crew_steward",
+                    "manage_sub_agent",
+                    "delegate_task",
+                    "agent_call",
+                    "okr_goal",
+                ]
             )
+
 
         # 联系 CEO/管家：强制编制工具面（分析→assign 员工，不起子代理闷跑）
         _contact_agent = ""
@@ -1556,6 +1643,31 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         _contact_agent = "大管家"
             if _is_steward_session:
                 mode_extra.extend(STEWARD_FORCE_TOOLS)
+                # 此时才确定是 CEO/管家：扩进程能力 + 令牌全开
+                # （仅 issue_token(["*"]) 会在 coding_profile 后失败）
+                try:
+                    from backend.agent.workforce_dispatch import (
+                        ensure_steward_kernel_full_open_async,
+                    )
+                    from backend.kernel import get_kernel as _gk
+
+                    kp = getattr(self, "_kernel_process", None)
+                    if kp is not None and bool(
+                        getattr(settings, "agent_kernel_enabled", True)
+                    ):
+                        k = _gk()
+                        ok_fo = await ensure_steward_kernel_full_open_async(k, kp.id)
+                        fresh = k.get_process(kp.id)
+                        if fresh is not None:
+                            self._kernel_process = fresh
+                        logger.info(
+                            "steward full-open (post-detect) process=%s ok=%s",
+                            str(kp.id)[:8],
+                            ok_fo,
+                        )
+                except Exception as _fo:
+                    logger.warning("steward full-open post-detect skip: %s", _fo)
+
         except Exception as _st_e:
             logger.debug("steward session detect skipped: %s", _st_e)
 

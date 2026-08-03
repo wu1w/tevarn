@@ -827,8 +827,6 @@ def set_provider_enabled(catalog: dict[str, Any], provider_id: str, enabled: boo
 
 async def ensure_oauth_token_fresh(catalog: dict[str, Any], provider_id: str | None = None) -> dict[str, Any]:
     """若当前 credential 为 OAuth 且即将过期，尝试 refresh。"""
-    from backend.services.xai_oauth import refresh_access_token, token_needs_refresh
-
     cat = normalize_catalog(catalog)
     pid = provider_id or cat.get("active_provider_id") or ""
     p = next((x for x in cat["providers"] if x["id"] == pid), None)
@@ -838,8 +836,22 @@ async def ensure_oauth_token_fresh(catalog: dict[str, Any], provider_id: str | N
     cred = next((c for c in (p.get("credentials") or []) if c.get("id") == active_id), None)
     if not cred:
         return cat
-    if cred.get("auth_mode") != "oauth_device_code":
+    mode = str(cred.get("auth_mode") or "")
+    if mode not in ("oauth_device_code", "oauth_pkce"):
         return cat
+
+    # 按供应商选择 refresh 实现
+    if pid in ("openai-chatgpt-oauth", "openai-codex-oauth") or mode == "oauth_pkce":
+        from backend.services.openai_oauth import (
+            refresh_access_token,
+            token_needs_refresh,
+        )
+    else:
+        from backend.services.xai_oauth import (
+            refresh_access_token,
+            token_needs_refresh,
+        )
+
     if not token_needs_refresh(cred.get("expires_at")):
         return cat
     refresh = cred.get("refresh_token") or ""
@@ -854,6 +866,8 @@ async def ensure_oauth_token_fresh(catalog: dict[str, Any], provider_id: str | N
         cred["refresh_token"] = result["refresh_token"]
     if result.get("expires_at"):
         cred["expires_at"] = result["expires_at"]
+    if result.get("account_id"):
+        cred["account_id"] = result["account_id"]
     p["llm_api_key"] = cred["api_key"]
     return normalize_catalog(cat)
 
@@ -879,6 +893,8 @@ def apply_active_to_runtime(catalog: dict[str, Any]) -> list[str]:
 
     items: dict[str, Any] = {
         "llm_provider": provider["llm_provider"],
+        # 用量页按 catalog 供应商 id 归类（避免全部变成 generic）
+        "llm_catalog_provider_id": str(pid or ""),
     }
     # 非空才覆盖，避免目录中的空值把已配好的 DB 设置洗掉
     if base_url:
@@ -924,6 +940,9 @@ def save_oauth_credential(
     base_url: str = "https://api.x.ai/v1",
     model: str = "grok-4",
     set_active: bool = True,
+    account_id: str = "",
+    auth_mode: str = "oauth_device_code",
+    label: str | None = None,
 ) -> dict[str, Any]:
     """将 OAuth 令牌保存为供应商的 credential。"""
     cat = normalize_catalog(catalog)
@@ -931,13 +950,15 @@ def save_oauth_credential(
     cred_id = _new_cred_id()
     cred = {
         "id": cred_id,
-        "label": "Grok OAuth",
+        "label": label or name or "OAuth",
         "api_key": access_token,
         "refresh_token": refresh_token,
         "expires_at": expires_at,
-        "auth_mode": "oauth_device_code",
+        "auth_mode": auth_mode or "oauth_device_code",
         "enabled": True,
     }
+    if account_id:
+        cred["account_id"] = account_id
     if p is None:
         cat["providers"].append(
             {
@@ -955,8 +976,12 @@ def save_oauth_credential(
             }
         )
     else:
-        # 替换同 label 的 OAuth 凭据，或追加
-        creds = [c for c in (p.get("credentials") or []) if c.get("auth_mode") != "oauth_device_code"]
+        # 替换 OAuth 凭据（device_code / pkce），或追加
+        creds = [
+            c
+            for c in (p.get("credentials") or [])
+            if c.get("auth_mode") not in ("oauth_device_code", "oauth_pkce")
+        ]
         creds.append(cred)
         p["credentials"] = creds
         p["active_credential_id"] = cred_id

@@ -60,9 +60,20 @@ class SkillRegistry:
 
     @classmethod
     def get_tools_schema(cls, enabled_names: list[str] | None = None) -> list[dict[str, Any]]:
-        """获取启用的 Skill 的 JSON Schema 列表（供 LLM 使用）"""
+        """获取启用的 Skill 的 JSON Schema 列表（供 LLM 使用）。
+
+        Sorted by name for stable tools prefix (prompt cache).
+        """
         skills = cls.get_active_skills(enabled_names)
-        return [s.to_json_schema() for s in skills]
+        schemas = [s.to_json_schema() for s in skills]
+        schemas.sort(
+            key=lambda s: str(
+                ((s.get("function") or {}) if isinstance(s, dict) else {}).get("name")
+                or getattr(s, "name", "")
+                or ""
+            )
+        )
+        return schemas
 
     @classmethod
     def clear(cls) -> None:

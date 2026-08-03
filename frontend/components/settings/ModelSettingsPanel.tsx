@@ -12,12 +12,19 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   applySettingsBatch,
+  completeOpenAIOauth,
   deleteCatalogProvider,
   getModelCatalog,
   getProviderPresets,
   listRemoteModels,
+  logoutOpenAIOauth,
+  logoutXaiOauth,
+  pollOpenAIOauth,
+  pollXaiOauth,
   registerCatalogProvider,
   selectCatalogModel,
+  startOpenAIOauth,
+  startXaiOauth,
   upsertCatalogCredential,
   type CatalogProvider,
   type ModelCatalog,
@@ -96,6 +103,15 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
   /** providerId → 是否展开模型 chip 列表（默认：模型>8 时收起） */
   const [expandedProviders, setExpandedProviders] = useState<Record<string, boolean>>({});
   const MODEL_CHIP_COLLAPSE_AT = 8;
+
+  // OAuth（Grok 设备码 / ChatGPT PKCE）
+  const [oauthBusy, setOauthBusy] = useState(false);
+  const [xaiUserCode, setXaiUserCode] = useState('');
+  const [xaiVerifyUrl, setXaiVerifyUrl] = useState('');
+  const [xaiDeviceCode, setXaiDeviceCode] = useState('');
+  const [openaiAuthUrl, setOpenaiAuthUrl] = useState('');
+  const [openaiState, setOpenaiState] = useState('');
+  const [openaiCallback, setOpenaiCallback] = useState('');
 
   const refreshCatalog = useCallback(async (fetchModels = false) => {
     const cat = await getModelCatalog(fetchModels);
@@ -558,6 +574,184 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
     }
   };
 
+  const isOpenaiOauthPreset =
+    selectedProviderId === 'openai-chatgpt-oauth' ||
+    selectedPreset?.oauth_provider === 'openai' ||
+    selectedPreset?.auth_mode === 'oauth_pkce';
+  const isXaiOauthPreset =
+    selectedProviderId === 'xai-oauth' ||
+    selectedPreset?.oauth_provider === 'xai' ||
+    selectedPreset?.auth_mode === 'oauth_device_code';
+
+  const handleStartOpenaiOauth = async () => {
+    setOauthBusy(true);
+    try {
+      const r = await startOpenAIOauth();
+      if (!r.ok || !r.authorization_url) {
+        addToast(r.message || '无法发起 ChatGPT 登录', 'error');
+        return;
+      }
+      setOpenaiAuthUrl(r.authorization_url);
+      setOpenaiState(r.state || '');
+      setOpenaiCallback('');
+      try {
+        window.open(r.authorization_url, '_blank', 'noopener,noreferrer');
+      } catch {
+        /* ignore */
+      }
+      if (r.callback_listening) {
+        addToast(
+          r.message || '已打开浏览器，授权后会自动完成（无需粘贴 URL）',
+          'info',
+        );
+        // 轮询 1455 回调换 token 结果
+        const st = r.state || '';
+        const deadline = Date.now() + (Number(r.expires_in) || 600) * 1000;
+        while (Date.now() < deadline) {
+          await new Promise((res) => setTimeout(res, 2000));
+          const polled = await pollOpenAIOauth(st || undefined);
+          if (polled.ok && polled.status === 'authorized') {
+            if (polled.catalog) setCatalog(polled.catalog);
+            setSelectedProviderId(polled.active_provider_id || 'openai-chatgpt-oauth');
+            setSelectedModel(polled.active_model || 'gpt-5.6');
+            setOpenaiCallback('');
+            addToast(polled.message || 'ChatGPT OAuth 成功', 'success');
+            await onSettingsRefetch();
+            await refreshCatalog(true);
+            notifySettingsChanged(['llm_provider', 'llm_model', 'llm_base_url', 'llm_api_key']);
+            return;
+          }
+          if (polled.status === 'error' || (polled.ok === false && polled.status !== 'pending')) {
+            addToast(polled.message || 'ChatGPT 登录失败', 'error');
+            return;
+          }
+        }
+        addToast('等待授权超时：若浏览器已显示登录成功，可刷新设置页；否则粘贴回调 URL', 'error');
+      } else {
+        addToast(
+          r.message ||
+            '本机未能监听 1455：请授权后复制地址栏完整 URL 粘贴回来',
+          'info',
+        );
+      }
+    } catch (e: unknown) {
+      addToast(e instanceof Error ? e.message : 'OAuth 启动失败', 'error');
+    } finally {
+      setOauthBusy(false);
+    }
+  };
+
+  const handleCompleteOpenaiOauth = async () => {
+    if (!openaiCallback.trim()) {
+      addToast('请粘贴浏览器地址栏完整 URL（含 code=）', 'error');
+      return;
+    }
+    setOauthBusy(true);
+    try {
+      const r = await completeOpenAIOauth(openaiCallback.trim(), openaiState || undefined);
+      if (!r.ok) {
+        addToast(r.message || 'ChatGPT 登录失败', 'error');
+        return;
+      }
+      if (r.catalog) setCatalog(r.catalog);
+      setSelectedProviderId(r.active_provider_id || 'openai-chatgpt-oauth');
+      setSelectedModel(r.active_model || 'gpt-5.6');
+      setOpenaiCallback('');
+      addToast(r.message || 'ChatGPT OAuth 成功', 'success');
+      await onSettingsRefetch();
+      await refreshCatalog(true);
+      notifySettingsChanged(['llm_provider', 'llm_model', 'llm_base_url', 'llm_api_key']);
+    } catch (e: unknown) {
+      addToast(e instanceof Error ? e.message : 'ChatGPT 登录失败', 'error');
+    } finally {
+      setOauthBusy(false);
+    }
+  };
+
+  const handleLogoutOpenaiOauth = async () => {
+    setOauthBusy(true);
+    try {
+      const r = await logoutOpenAIOauth();
+      if (r.catalog) setCatalog(r.catalog);
+      addToast(r.message || '已退出 ChatGPT OAuth', 'success');
+      await onSettingsRefetch();
+      await refreshCatalog(false);
+    } catch (e: unknown) {
+      addToast(e instanceof Error ? e.message : '退出失败', 'error');
+    } finally {
+      setOauthBusy(false);
+    }
+  };
+
+  const handleStartXaiOauth = async () => {
+    setOauthBusy(true);
+    try {
+      const r = await startXaiOauth();
+      if (!r.ok || !r.device_code) {
+        addToast(r.message || '无法发起 Grok 登录', 'error');
+        return;
+      }
+      setXaiDeviceCode(r.device_code);
+      setXaiUserCode(r.user_code || '');
+      setXaiVerifyUrl(r.verification_uri_complete || r.verification_uri || '');
+      try {
+        if (r.verification_uri_complete || r.verification_uri) {
+          window.open(
+            r.verification_uri_complete || r.verification_uri,
+            '_blank',
+            'noopener,noreferrer',
+          );
+        }
+      } catch {
+        /* ignore */
+      }
+      addToast(r.message || '请在浏览器完成 Grok 授权', 'info');
+      // 轮询
+      const code = r.device_code;
+      const intervalMs = Math.max(3, Number(r.interval) || 5) * 1000;
+      const deadline = Date.now() + (Number(r.expires_in) || 600) * 1000;
+      while (Date.now() < deadline) {
+        await new Promise((res) => setTimeout(res, intervalMs));
+        const polled = await pollXaiOauth(code);
+        if (polled.ok && polled.status === 'authorized') {
+          if (polled.catalog) setCatalog(polled.catalog);
+          setSelectedProviderId(polled.active_provider_id || 'xai-oauth');
+          setSelectedModel(polled.active_model || 'grok-4');
+          setXaiDeviceCode('');
+          addToast(polled.message || 'Grok OAuth 成功', 'success');
+          await onSettingsRefetch();
+          await refreshCatalog(true);
+          notifySettingsChanged(['llm_provider', 'llm_model', 'llm_base_url', 'llm_api_key']);
+          return;
+        }
+        if (polled.status && polled.status !== 'pending') {
+          addToast(polled.message || 'Grok 登录失败', 'error');
+          return;
+        }
+      }
+      addToast('Grok 登录超时，请重试', 'error');
+    } catch (e: unknown) {
+      addToast(e instanceof Error ? e.message : 'Grok OAuth 失败', 'error');
+    } finally {
+      setOauthBusy(false);
+    }
+  };
+
+  const handleLogoutXaiOauth = async () => {
+    setOauthBusy(true);
+    try {
+      const r = await logoutXaiOauth();
+      if (r.catalog) setCatalog(r.catalog);
+      addToast(r.message || '已退出 Grok OAuth', 'success');
+      await onSettingsRefetch();
+      await refreshCatalog(false);
+    } catch (e: unknown) {
+      addToast(e instanceof Error ? e.message : '退出失败', 'error');
+    } finally {
+      setOauthBusy(false);
+    }
+  };
+
   const modelOptionsFlat = useMemo(() => {
     const opts: { value: string; label: string; model: string }[] = [];
     for (const p of catalogProviders) {
@@ -609,10 +803,116 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
 
           {needsSetup ? (
             <>
-              {(selectedPreset?.custom ||
-                selectedProviderId === 'custom' ||
-                selectedProviderId === 'ollama' ||
-                !selectedPreset?.llm?.llm_base_url) && (
+              {/* ChatGPT 会员 OAuth */}
+              {isOpenaiOauthPreset && (
+                <div className="flex w-full flex-col gap-2 rounded-xl border border-border-subtle bg-elevated-bg/60 p-3">
+                  <div className="text-xs text-foreground-muted">
+                    用 ChatGPT Plus/Pro 登录走<strong>订阅额度</strong>（Codex 公平使用），不是 platform
+                    按量 API。点登录后浏览器授权，会跳到 localhost:1455 并自动完成。
+                    若提示地区不支持，请给本机/后端配置常规全局代理（
+                    <code className="text-[10px]">HTTPS_PROXY</code> / Clash 系统代理）后
+                    <strong>重启后端</strong>再试——换 token 走后端出口 IP，不是浏览器。
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className={btnPrimary}
+                      disabled={oauthBusy}
+                      onClick={() => void handleStartOpenaiOauth()}
+                    >
+                      {oauthBusy ? '等待授权中…' : 'ChatGPT 登录'}
+                    </button>
+                    {catalogProviders.some((p) => p.id === 'openai-chatgpt-oauth') && (
+                      <button
+                        type="button"
+                        className={btnGhost}
+                        disabled={oauthBusy}
+                        onClick={() => void handleLogoutOpenaiOauth()}
+                      >
+                        退出登录
+                      </button>
+                    )}
+                  </div>
+                  {openaiAuthUrl ? (
+                    <a
+                      href={openaiAuthUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="break-all text-[11px] text-brand-cyan hover:underline"
+                    >
+                      {openaiAuthUrl}
+                    </a>
+                  ) : null}
+                  <details className="text-xs text-foreground-muted">
+                    <summary className="cursor-pointer select-none">备用：手动粘贴回调 URL</summary>
+                    <div className="mt-2 flex flex-col gap-2">
+                      <textarea
+                        className={`${inputCls} min-h-[4rem] font-mono text-[11px]`}
+                        value={openaiCallback}
+                        onChange={(e) => setOpenaiCallback(e.target.value)}
+                        placeholder="仅当自动回调失败时：粘贴 http://localhost:1455/auth/callback?code=..."
+                      />
+                      <button
+                        type="button"
+                        className={btnPrimary}
+                        disabled={oauthBusy || !openaiCallback.trim()}
+                        onClick={() => void handleCompleteOpenaiOauth()}
+                      >
+                        完成登录并激活
+                      </button>
+                    </div>
+                  </details>
+                </div>
+              )}
+              {/* Grok OAuth 设备码 */}
+              {isXaiOauthPreset && (
+                <div className="flex w-full flex-col gap-2 rounded-xl border border-border-subtle bg-elevated-bg/60 p-3">
+                  <div className="text-xs text-foreground-muted">
+                    SuperGrok / X Premium+ 设备码登录，无需 API Key。
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className={btnPrimary}
+                      disabled={oauthBusy}
+                      onClick={() => void handleStartXaiOauth()}
+                    >
+                      {oauthBusy ? '等待授权…' : 'Grok 登录'}
+                    </button>
+                    {catalogProviders.some((p) => p.id === 'xai-oauth') && (
+                      <button
+                        type="button"
+                        className={btnGhost}
+                        disabled={oauthBusy}
+                        onClick={() => void handleLogoutXaiOauth()}
+                      >
+                        退出登录
+                      </button>
+                    )}
+                  </div>
+                  {xaiUserCode ? (
+                    <div className="text-sm font-semibold text-foreground">
+                      验证码：<span className="font-mono text-brand-purple">{xaiUserCode}</span>
+                      {xaiVerifyUrl ? (
+                        <a
+                          href={xaiVerifyUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="ml-2 text-xs font-normal text-brand-cyan hover:underline"
+                        >
+                          打开验证页
+                        </a>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              )}
+              {!isOpenaiOauthPreset &&
+                !isXaiOauthPreset &&
+                (selectedPreset?.custom ||
+                  selectedProviderId === 'custom' ||
+                  selectedProviderId === 'ollama' ||
+                  !selectedPreset?.llm?.llm_base_url) && (
                 <input
                   className={`${inputCls} min-w-[12rem] flex-1 font-mono text-xs`}
                   value={baseUrl}
@@ -620,7 +920,9 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
                   placeholder="https://api.example.com/v1"
                 />
               )}
-              {selectedPreset?.needs_api_key !== false &&
+              {!isOpenaiOauthPreset &&
+                !isXaiOauthPreset &&
+                selectedPreset?.needs_api_key !== false &&
                 (selectedCatalog?.llm_provider || selectedPreset?.llm?.llm_provider) !== 'ollama' && (
                   <div className="relative min-w-[12rem] flex-1">
                     <input

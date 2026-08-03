@@ -168,12 +168,25 @@ def log_cache_usage(model: str, usage: dict[str, int], *, family: str = "") -> N
 def _report_cache_to_kernel(
     *, family: str, hit: bool, bytes_saved: int = 0, model: str = ""
 ) -> None:
+    fam = (family or "default").strip() or "default"
+    mid = (model or "").strip()
+    # Durable first — kernel host memory is wiped on every restart
+    try:
+        from backend.services.usage_ledger import cache_record as durable_cache
+
+        durable_cache(
+            family=fam,
+            hit=bool(hit),
+            bytes_saved=int(bytes_saved or 0),
+            model=mid or None,
+        )
+    except Exception as e:
+        logger.warning("durable cache_record failed: %s", e)
+
     try:
         from backend.kernel import get_kernel
 
         k = get_kernel()
-        fam = (family or "default").strip() or "default"
-        mid = (model or "").strip()
         if hasattr(k, "cache_record"):
             try:
                 k.cache_record(
@@ -191,7 +204,7 @@ def _report_cache_to_kernel(
                 payload["model"] = mid
             k._call("cache_record", payload)
     except Exception as e:
-        logger.debug("cache_record skip: %s", e)
+        logger.debug("kernel cache_record skip: %s", e)
 
 
 def report_cost_to_kernel(
@@ -202,19 +215,40 @@ def report_cost_to_kernel(
     billable: int,
     model: str | None = None,
 ) -> None:
-    """P0.5 R5: charge 3D cost ledger (tokens / billable), keyed by family+model."""
+    """Charge cost ledger (tokens / billable) by family+model.
+
+    Always writes the durable usage_ledger (survives kernel-host restarts).
+    Best-effort also charges the in-memory host ledger for live process views.
+    """
     pid = (process_id or "").strip() or "system"
+    fam = (family or "default").strip() or "default"
+    mid = (model or "").strip()
+    tok = max(0, int(tokens or 0))
+    bill = max(0, int(billable or 0))
+
+    # Durable first — this is what the 用量 page must show after host restarts
+    try:
+        from backend.services.usage_ledger import charge as durable_charge
+
+        durable_charge(
+            process_id=pid,
+            family=fam,
+            tokens=tok,
+            billable=bill,
+            model=mid or None,
+        )
+    except Exception as e:
+        logger.warning("durable cost_charge failed: %s", e)
+
     try:
         from backend.kernel import get_kernel
 
         k = get_kernel()
-        fam = (family or "default").strip() or "default"
-        mid = (model or "").strip()
         params: dict[str, Any] = {
             "process_id": pid,
             "family": fam,
-            "tokens": max(0, int(tokens or 0)),
-            "billable": max(0, int(billable or 0)),
+            "tokens": tok,
+            "billable": bill,
         }
         if mid:
             params["model"] = mid
@@ -232,7 +266,8 @@ def report_cost_to_kernel(
         elif hasattr(k, "_call"):
             k._call("cost_charge", params)
     except Exception as e:
-        logger.debug("cost_charge skip: %s", e)
+        # Host may be mid-restart; durable already has the charge
+        logger.warning("kernel cost_charge skip (durable kept): %s", e)
 
 
 def charge_amount_from_usage(

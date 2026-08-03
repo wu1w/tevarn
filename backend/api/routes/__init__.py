@@ -32,6 +32,7 @@ from . import (
     memory_graph,
     messages,
     notifications,
+    openai_codex_proxy,
     packages,
     protocol,
     runs,
@@ -87,6 +88,8 @@ def register_routes(app, prefix: str = "") -> None:
     app.include_router(memory_graph.router, prefix=p)
     app.include_router(wiki.router, prefix=p)
     app.include_router(settings.router, prefix=p)
+    # ChatGPT OAuth → Codex 订阅后端的本地 OpenAI 兼容代理（无额外鉴权，靠 Bearer token）
+    app.include_router(openai_codex_proxy.router, prefix=p)
     app.include_router(agent_profiles.router, prefix=p)
     app.include_router(audit.router, prefix=p)
     app.include_router(kernel.router, prefix=p)

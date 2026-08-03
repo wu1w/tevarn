@@ -110,7 +110,8 @@ impl ResourceManager {
     pub fn new() -> Self {
         let mut defaults = HashMap::new();
         defaults.insert(ResourceKind::ConcurrencySlots, Some(4));
-        defaults.insert(ResourceKind::ChildProc, Some(16));
+        // 自检/多轮 command 并发时 16 易被租约泄漏占满；放宽到 48 仍属合理并发上限
+        defaults.insert(ResourceKind::ChildProc, Some(48));
         defaults.insert(ResourceKind::MemoryBytes, Some(256 * 1024 * 1024)); // 256 MiB logical
         defaults.insert(ResourceKind::ToolCalls, None);
         defaults.insert(ResourceKind::IoWriteBytes, None);

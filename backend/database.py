@@ -161,6 +161,35 @@ async def _migrate_workforce_columns(conn) -> None:
     await _add_column_if_missing(conn, "cron_jobs", "instruction", "TEXT")
 
 
+async def _migrate_agent_run_columns(conn) -> None:
+    """Phase 2.1 Run 统一：旧库补 origin / identity / parent / checkpoint / budget。
+
+    create_all 不会给已有表加列；Alembic 0002 在部分安装路径未执行时会导致
+    ``no such column: agent_runs.origin``（GET /api/runs/session/* 500）。
+    """
+    await _add_column_if_missing(
+        conn, "agent_runs", "origin", "VARCHAR(20) NOT NULL DEFAULT 'chat'"
+    )
+    await _add_column_if_missing(conn, "agent_runs", "identity_id", "CHAR(36)")
+    await _add_column_if_missing(conn, "agent_runs", "parent_run_id", "CHAR(36)")
+    await _add_column_if_missing(conn, "agent_runs", "checkpoint", "JSON")
+    await _add_column_if_missing(
+        conn, "agent_runs", "token_limit", "INTEGER NOT NULL DEFAULT 0"
+    )
+    await _add_column_if_missing(
+        conn, "agent_runs", "token_used", "INTEGER NOT NULL DEFAULT 0"
+    )
+    await _create_index_if_missing(
+        conn, "ix_agent_runs_origin", "agent_runs", "origin"
+    )
+    await _create_index_if_missing(
+        conn, "ix_agent_runs_identity_id", "agent_runs", "identity_id"
+    )
+    await _create_index_if_missing(
+        conn, "ix_agent_runs_parent_run_id", "agent_runs", "parent_run_id"
+    )
+
+
 async def _create_index_if_missing(conn, name: str, table: str, columns: str) -> None:
     """兼容迁移：为已有库补索引（create_all 不会改旧表索引）。"""
     idx = _assert_sql_ident(name, "index")
@@ -236,4 +265,5 @@ async def init_db() -> None:
         await _migrate_tenant_columns(conn)
         await _migrate_tool_columns(conn)
         await _migrate_workforce_columns(conn)
+        await _migrate_agent_run_columns(conn)
         await _migrate_perf_indexes(conn)

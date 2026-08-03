@@ -817,7 +817,8 @@ button {
   height: 100%;
   max-height: 100%;
   overflow: hidden;
-  transition: grid-template-columns 280ms cubic-bezier(0.4, 0, 0.2, 1);
+  /* grid 列宽动画开销大，侧栏收展用略短曲线减轻卡顿 */
+  transition: grid-template-columns 200ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 .tk-app-body.sidebar-collapsed {
   grid-template-columns: 56px 0px minmax(0, 1fr);
@@ -967,8 +968,12 @@ button {
   flex-direction: column;
   overflow: hidden;
   position: relative;
-  width: 260px;
+  /* 必须吃满 grid 第二列：宽度由 --tk-sb-w 驱动，勿写死 260px
+     （写死会导致拖宽只扩大轨道空隙、分割线悬空，侧栏内容不变宽） */
+  width: 100%;
   min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
   transition: opacity 220ms cubic-bezier(0.4, 0, 0.2, 1), transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 .tk-app-body.sidebar-collapsed .tk-sidebar {
@@ -990,6 +995,8 @@ button {
   display: flex;
   flex-direction: column;
   height: 100%;
+  width: 100%;
+  min-width: 0;
   min-height: 0;
 }
 .tk-main {
@@ -1080,9 +1087,43 @@ button {
   }
 }
 
-/* 主区内容层：避免子树 absolute/fixed 时出现合成层闪烁 */
+/* 主区：不强制 translateZ（会逼整页进合成层，路由切换更卡） */
 .tk-main > div {
-  transform: translateZ(0);
+  min-height: 0;
+}
+
+/* ── 路由入场（全页面统一，含 /chat；纯 CSS，不被 framer reduced-motion 掐死） ── */
+@keyframes tk-route-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+/* fill 页（联系员工 chat）：仅淡入，无位移，避免底栏/flex 布局抖 */
+@keyframes tk-route-enter-fill {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes tk-route-enter-soft {
+  from { opacity: 0.2; }
+  to { opacity: 1; }
+}
+.tk-route-enter {
+  animation: tk-route-enter 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.tk-route-enter-fill {
+  animation: tk-route-enter-fill 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+/* 系统「减少动态效果」：全路由仍短淡入，绝不硬切 */
+@media (prefers-reduced-motion: reduce) {
+  .tk-route-enter,
+  .tk-route-enter-fill {
+    animation: tk-route-enter-soft 0.16s ease-out both;
+  }
 }
 
 
@@ -1205,11 +1246,12 @@ button {
 
 /* ── 统一动效令牌（参考 Kimi：轻快、有回弹、不打断输入） ── */
 :root {
-  --tk-ease: cubic-bezier(0.32, 0.72, 0.24, 1);
+  /* 更柔的 ease-out，少回弹 */
+  --tk-ease: cubic-bezier(0.22, 1, 0.36, 1);
   --tk-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-  --tk-dur-fast: 160ms;
-  --tk-dur: 240ms;
-  --tk-dur-slow: 340ms;
+  --tk-dur-fast: 140ms;
+  --tk-dur: 200ms;
+  --tk-dur-slow: 280ms;
 }
 
 /* ── 开关：所有 role="switch" 统一定律（轨道变色 + 滑块回弹 + 按压拉伸） ── */
@@ -1248,13 +1290,43 @@ button[role="switch"]:focus-visible {
   transition: color var(--tk-dur-fast) ease, background-color var(--tk-dur) var(--tk-ease);
 }
 
-/* 通用交互反馈：可点击卡片/按钮 hover 微浮、active 微沉（不动布局） */
+/* 通用交互：轻柔高亮，不做硬像素位移（硬阴影动画 = 贵 + 手感硬） */
 .surface-card, .tk-card, .glass {
   transition:
-    transform var(--tk-dur) var(--tk-ease-out),
-    box-shadow var(--tk-dur) var(--tk-ease),
-    border-color var(--tk-dur) var(--tk-ease),
-    background-color var(--tk-dur) var(--tk-ease);
+    border-color 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 200ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    filter 160ms ease;
+}
+.surface-card:hover,
+.tk-card:hover,
+.glass:hover {
+  border-color: color-mix(in srgb, var(--brand-purple) 28%, var(--border-default, var(--border-subtle)));
+  box-shadow:
+    0 1px 0 color-mix(in srgb, #fff 6%, transparent) inset,
+    0 8px 24px color-mix(in srgb, var(--foreground-dim, #64748b) 12%, transparent);
+  filter: brightness(1.01);
+}
+.surface-card:active,
+.tk-card:active,
+.glass:active {
+  filter: brightness(0.99);
+  box-shadow:
+    0 1px 0 color-mix(in srgb, #fff 4%, transparent) inset,
+    0 2px 8px color-mix(in srgb, var(--foreground-dim, #64748b) 10%, transparent);
+  transition-duration: 100ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  .surface-card,
+  .tk-card,
+  .glass {
+    transition: none;
+  }
+  .surface-card:hover,
+  .tk-card:hover,
+  .glass:hover {
+    filter: none;
+  }
 }
 
 /* ── 滚动条：全局细条、半透明、hover 显形（WebKit + Firefox） ── */
@@ -1311,9 +1383,13 @@ button[role="switch"]:focus-visible {
   background: color-mix(in srgb, var(--brand-purple) 55%, transparent);
   width: 3px;
 }
-/* 拖拽期间：关掉布局过渡、禁止文本选择、全局换光标 */
+/* 拖拽期间：关掉布局过渡、禁止文本选择、全局换光标
+   ColResizer 给 body 加的是 .tk-col-resizing（不是 .tk-resizing） */
 .tk-resizing,
-.tk-resizing * {
+.tk-resizing *,
+body.tk-col-resizing,
+body.tk-col-resizing .tk-app-body,
+body.tk-col-resizing .tk-app-body * {
   transition: none !important;
   user-select: none !important;
 }

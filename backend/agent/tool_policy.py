@@ -110,11 +110,12 @@ TOOL_PACKS: dict[str, tuple[str, ...]] = {
         "calendar",
         "calendar_read",
     ),
-    "goal": ("manage_goal", "autopilot"),
+    "goal": ("manage_goal", "autopilot", "okr_goal"),
     # 编制派活（产品脊柱）：收件箱工单，不是临时子代理闷跑
-    "crew": ("crew_steward", "delegate_task", "agent_call"),
+    # okr_goal：经营目标 O-KR（目标页），管家改目标必用
+    "crew": ("crew_steward", "delegate_task", "agent_call", "okr_goal"),
     # cluster 保留 manage_sub_agent 作技能包维护；派活优先走 crew
-    "cluster": ("crew_steward", "manage_sub_agent", "delegate_task", "agent_call"),
+    "cluster": ("crew_steward", "manage_sub_agent", "delegate_task", "agent_call", "okr_goal"),
     "data": ("sqlite_query", "http"),
     "github": ("github", "manage_git"),
 }
@@ -575,6 +576,11 @@ def compact_capability_brief(
         lines.append(
             "Workforce: analyze → crew_steward list/hire/assign to employees (inbox). "
             "Do NOT spawn temp subagents for team work."
+        )
+    if tool_names is None or "okr_goal" in set(tool_names or []):
+        lines.append(
+            "Business goals (目标页 O-KR): use okr_goal list/update/create. "
+            "Do NOT use manage_goal (session todos) or grep the repo for goals."
         )
     return "\n".join(lines)
 

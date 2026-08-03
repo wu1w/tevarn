@@ -43,6 +43,135 @@ def get_run_extra_roots() -> list[str]:
     return list(extra) if extra else []
 
 
+def host_data_roots() -> list[str]:
+    """始终允许的宿主数据根（不依赖 session extra_roots）。
+
+    Agent 沙箱 HOME 在 workspace/.computers/<agent>/home，但宿主
+    ``~/.takton`` 与 ``%APPDATA%/takton`` 是真实记忆/技能/日志落点。
+    不放行则 file_read 会 path:workspace 拒掉，自检永远失败。
+    """
+    roots: list[str] = []
+    try:
+        from backend.agent._takton_paths import home_dir, host_home
+
+        roots.append(str(home_dir().resolve()))
+        roots.append(str((host_home() / ".takton").resolve()))
+        # 不要放行整个用户主目录——只放行 Takton 数据树
+    except Exception:
+        try:
+            p = Path.home() / ".takton"
+            roots.append(str(p.resolve()))
+        except OSError:
+            pass
+    # 桌面端数据树：%APPDATA%/takton（含 data/workspace）
+    for env_key in ("APPDATA", "LOCALAPPDATA"):
+        base = (os.environ.get(env_key) or "").strip()
+        if not base:
+            continue
+        try:
+            roots.append(str((Path(base) / "takton").resolve()))
+        except OSError:
+            continue
+    # 开发机常见：显式开发仓路径
+    for env_key in ("TAKTON_DEV_ROOT", "TAKTON_REPO_ROOT"):
+        raw = (os.environ.get(env_key) or "").strip()
+        if raw:
+            try:
+                roots.append(str(Path(raw).expanduser().resolve()))
+            except OSError:
+                pass
+    # 去重保序
+    seen: set[str] = set()
+    out: list[str] = []
+    for r in roots:
+        k = r.replace("/", "\\").lower() if os.name == "nt" else r
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(r)
+    return out
+
+
+def rewrite_host_path_into_workspace(path: str) -> str:
+    """把宿主 ~/.takton 绝对路径改写到 workspace 内 junction（若存在）。
+
+    Rust court 只认单一 workspace_root；改写后 path:workspace 可通过，
+    实际仍落到宿主数据（junction / symlink）。
+    """
+    raw = (path or "").strip()
+    if not raw:
+        return path
+    try:
+        p = Path(raw).expanduser()
+        if not p.is_absolute():
+            return path
+        try:
+            p = p.resolve()
+        except OSError:
+            p = Path(os.path.abspath(str(p)))
+    except Exception:
+        return path
+
+    try:
+        from backend.agent._takton_paths import home_dir, host_home
+
+        host_takton = home_dir().resolve()
+        # also accept Path.home()/.takton
+        candidates = [host_takton, (host_home() / ".takton").resolve()]
+    except Exception:
+        candidates = []
+        try:
+            candidates.append((Path.home() / ".takton").resolve())
+        except OSError:
+            return path
+
+    rel: str | None = None
+    for ht in candidates:
+        try:
+            rel = str(p.relative_to(ht)).replace("\\", "/")
+            break
+        except ValueError:
+            continue
+    if rel is None:
+        return path
+
+    ws = resolve_agent_workspace_root()
+    # Prefer main computer junction; fall back to any existing .computers/*/home/.takton
+    candidates_j: list[Path] = [
+        Path(ws) / ".computers" / "main" / "home" / ".takton",
+    ]
+    try:
+        computers = Path(ws) / ".computers"
+        if computers.is_dir():
+            for child in computers.iterdir():
+                j = child / "home" / ".takton"
+                if j.exists():
+                    candidates_j.append(j)
+    except OSError:
+        pass
+
+    for j in candidates_j:
+        try:
+            if j.exists() or j.is_symlink() or j.is_dir():
+                target = (j / rel).resolve() if rel not in (".", "") else j.resolve()
+                return str(target)
+        except OSError:
+            continue
+    # Ensure junction then retry
+    try:
+        from backend.agent._takton_paths import ensure_sandbox_takton_link, home_dir
+
+        main_home = Path(ws) / ".computers" / "main" / "home"
+        ensure_sandbox_takton_link(main_home, home_dir())
+        j = main_home / ".takton"
+        if j.exists():
+            target = (j / rel).resolve() if rel not in (".", "") else j.resolve()
+            return str(target)
+    except Exception:
+        pass
+    return path
+
+
 @contextmanager
 def run_workspace_context(
     root: str | None = None,
@@ -179,8 +308,9 @@ def bind_run_workspace_from_config(config: dict[str, Any] | None) -> Any:
         r.mkdir(parents=True, exist_ok=True)
         tokens.append((_run_workspace_root, _run_workspace_root.set(str(r))))
         logger.info("session workspace_root override=%s", r)
+    # 始终并入宿主数据根 + session extra
+    cleaned: list[str] = list(host_data_roots())
     if extra:
-        cleaned: list[str] = []
         for e in extra:
             if not e:
                 continue
@@ -191,9 +321,26 @@ def bind_run_workspace_from_config(config: dict[str, Any] | None) -> Any:
                 cleaned.append(str(ep.resolve()))
             except OSError:
                 continue
-        if cleaned:
-            tokens.append((_run_extra_roots, _run_extra_roots.set(tuple(cleaned))))
-            logger.info("session extra_roots=%s", cleaned)
+    if cleaned:
+        # de-dupe
+        seen: set[str] = set()
+        uniq: list[str] = []
+        for c in cleaned:
+            k = c.replace("/", "\\").lower() if os.name == "nt" else c
+            if k in seen:
+                continue
+            seen.add(k)
+            uniq.append(c)
+        tokens.append((_run_extra_roots, _run_extra_roots.set(tuple(uniq))))
+        logger.info("session extra_roots=%s", uniq)
+    # 确保沙箱 junction 存在，便于 path rewrite
+    try:
+        from backend.agent._takton_paths import ensure_sandbox_takton_link, home_dir
+
+        ws = root or resolve_agent_workspace_root()
+        ensure_sandbox_takton_link(Path(str(ws)) / ".computers" / "main" / "home", home_dir())
+    except Exception:
+        pass
 
     def _reset() -> None:
         for var, tok in reversed(tokens):
@@ -222,12 +369,14 @@ class ToolPermissionManager:
     def is_path_allowed(self, path: str, allowed_paths: list[str] | None = None) -> bool:
         """
         检查路径是否允许访问。
-        如果 allowed_paths 为 None，默认只允许 workspace_root。
+        如果 allowed_paths 为 None，默认 workspace_root + 本轮 extra + 宿主数据根。
         """
+        # 宿主 ~/.takton 等 → 优先改写到 workspace junction 再判定
+        path = rewrite_host_path_into_workspace(path)
         if allowed_paths is not None:
             paths = list(allowed_paths)
         else:
-            paths = [self.workspace_root, *get_run_extra_roots()]
+            paths = [self.workspace_root, *get_run_extra_roots(), *host_data_roots()]
         # de-dupe
         seen: set[str] = set()
         uniq: list[str] = []
@@ -323,4 +472,13 @@ def get_default_allowed_paths() -> list[str]:
         detect_project_root(), "uploads"
     )
     uploads = os.path.abspath(uploads)
-    return [workspace, uploads]
+    roots = [workspace, uploads, *host_data_roots()]
+    seen: set[str] = set()
+    out: list[str] = []
+    for r in roots:
+        k = str(r).replace("/", "\\").lower() if os.name == "nt" else str(r)
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(str(r))
+    return out

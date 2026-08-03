@@ -288,14 +288,22 @@ class ComputerManager:
     ) -> AgentComputer:
         """获取（或创建）某 agent 的 computer；label 仅用于展示，后到的非空 label 覆盖"""
         key = agent_key or "main"
-        # cache key includes process isolation context when present
-        cache_key = f"{key}:{process_id}" if process_id else key
+        ws = self._workspace_root()
+        # cache 必须带 workspace：session 切根后若复用旧 JobBackend 会误报 cwd 越界
+        ws_key = ws.replace("\\", "/").lower()
+        cache_key = f"{key}:{process_id or ''}:{ws_key}"
         if rebuild:
-            self._computers.pop(cache_key, None)
-            self._computers.pop(key, None)
-        comp = self._computers.get(cache_key) or (
-            None if process_id else self._computers.get(key)
-        )
+            # 清掉同 agent 旧 workspace 缓存
+            for ck in list(self._computers.keys()):
+                if ck == key or ck.startswith(f"{key}:"):
+                    self._computers.pop(ck, None)
+        comp = self._computers.get(cache_key)
+        if comp is not None:
+            # 后端 workspace 漂移时重建
+            bws = str(getattr(comp.backend, "workspace_root", "") or "")
+            if bws and bws.replace("\\", "/").lower() != ws_key:
+                self._computers.pop(cache_key, None)
+                comp = None
         if comp is None:
             comp = AgentComputer(
                 agent_key=key,
@@ -304,11 +312,12 @@ class ComputerManager:
             )
             self._computers[cache_key] = comp
             logger.info(
-                "agent computer created: key=%s backend=%s sandboxed=%s process=%s",
+                "agent computer created: key=%s backend=%s sandboxed=%s process=%s ws=%s",
                 key,
                 comp.backend.backend_id,
                 comp.sandboxed,
                 (process_id or "")[:8],
+                ws[:80],
             )
         elif agent_label and comp.agent_label != agent_label:
             comp.agent_label = agent_label
@@ -345,9 +354,27 @@ class ComputerManager:
         kpid = process_id or (
             str(getattr(recorder, "kernel_process_id", "") or "") or None
         )
-        comp = self.get_computer(agent_key, agent_label, process_id=kpid)
         ws = self._workspace_root()
+        # 先解析 cwd，再取 computer（cache 含 workspace）
         cwd_eff = cwd or ws
+        try:
+            import os as _os
+
+            if cwd_eff:
+                cwd_eff = _os.path.abspath(str(cwd_eff))
+        except Exception:
+            pass
+        # cwd 不存在时回落 workspace，避免空 [Error]
+        try:
+            import os as _os
+
+            if cwd_eff and not _os.path.isdir(cwd_eff):
+                logger.warning("computer cwd missing %s → workspace %s", cwd_eff, ws)
+                cwd_eff = ws
+        except Exception:
+            cwd_eff = ws
+
+        comp = self.get_computer(agent_key, agent_label, process_id=kpid)
 
         base = {
             "session_id": str(session_id) if session_id else None,
@@ -504,18 +531,37 @@ class ComputerManager:
     @staticmethod
     def _format(result: ExecResult, cwd: str) -> str:
         """与 execute_command 既有输出形态对齐"""
-        if result.error and not result.stdout and result.exit_code in (2, 127) and result.stderr:
-            # 启动级错误：cwd 越界 / bwrap 缺失等，清晰报错
-            return f"[Error] {result.stderr}"
+        out = (result.stdout or "").strip()
+        err = (result.stderr or "").strip()
+        err_tag = str(result.error or "").strip()
+        # 启动级错误：cwd 越界 / bwrap 缺失等
+        if err_tag and not out and int(result.exit_code or 0) in (1, 2, 127, 124):
+            detail = err or err_tag
+            if not detail or detail in ("[Error]", "[Error] "):
+                detail = (
+                    f"command failed exit={result.exit_code} "
+                    f"backend={result.backend} cwd={cwd}"
+                )
+            if not detail.lower().startswith("[error]"):
+                return f"[Error] {detail}"
+            return detail
         tag = f" sandbox={result.backend}" if result.sandboxed else ""
         header = f"[Exit {result.exit_code} cwd={cwd}{tag}]"
-        out, err = result.stdout, result.stderr
-        if result.error == "timeout":
-            return f"[Timeout] {err}"
+        if err_tag == "timeout" or int(result.exit_code or 0) == 124:
+            return f"[Timeout] {err or err_tag or 'command timed out'}"
+        # 禁止返回裸 "[Error]" / 空串（Agent 无法诊断）
+        if not out and not err:
+            if int(result.exit_code or 0) != 0:
+                return (
+                    f"{header}\n[No output] exit={result.exit_code} "
+                    f"backend={result.backend} error={err_tag or 'unknown'}。"
+                    "Windows 内置命令请用 `cmd /c dir` / `cmd /c echo ok`；"
+                    "探测 python 用 `where python` 或 `py -0p`。"
+                )
+            return f"{header}\n[No output]"
         if err:
             return f"{header}\nstdout:\n{out or '(empty)'}\n\nstderr:\n{err}"
-        return out or f"{header}\n[No output]"
-
+        return out
 
 _manager: ComputerManager | None = None
 

@@ -53,14 +53,10 @@ export function SessionRunsPanel({
     }
   }, [running, collapsedDefault]);
 
-  if (!sessionId) {
-    return null;
-  }
-
-  // 无记录且未加载完：不占位
-  if (!runs.isLoading && items.length === 0) {
-    return null;
-  }
+  // 会话切换时：无缓存的加载中 / 空结果 → 完全不渲染，避免「运行记录」空壳闪现
+  if (!sessionId) return null;
+  if (runs.isLoading && !runs.data) return null;
+  if (items.length === 0) return null;
 
   return (
     <div

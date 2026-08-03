@@ -62,12 +62,32 @@ class _BuiltinToolBase(BaseTool):
         return {"base_path": mgr.workspace_root}
 
     async def execute(self, **kwargs):
-        executor = type(self)._executor
+        # 取 executor 时禁止 getattr(self, "_executor")：
+        # 类上挂的函数经实例访问会被 Python 绑成 bound method，多注入 self，
+        # 触发 TypeError: execute_xxx() takes 2 positional arguments but 3 were given。
+        if "_executor" in getattr(self, "__dict__", {}):
+            executor = self.__dict__["_executor"]
+        else:
+            executor = type(self)._executor
         if executor is None:
-            raise NotImplementedError
+            return (
+                f"[Error] 工具 «{self.name}» 未绑定执行器（_executor is None）。"
+                "这是 Takton 内部注册问题：请重启后端；若仍失败请检查 "
+                "backend.tools.builtins.core_tools 是否正确 import executors。"
+            )
         # 注入 workspace root 作为 base_path，而非传空 config
         config = self._get_config()
-        return await executor(config, kwargs)
+        try:
+            return await executor(config, kwargs)
+        except TypeError as e:
+            # 仍可能是签名错配：给出可读说明，勿吞成空 [Error]
+            return (
+                f"[Error] 工具 «{self.name}» 调用签名不匹配（{e}）。"
+                "execute_* 应为 (config, arguments) 两参数。"
+            )
+        except Exception as e:
+            msg = str(e).strip() or type(e).__name__
+            return f"[Error] 工具 «{self.name}» 执行异常（{type(e).__name__}）: {msg}"
 
 
 class FileReadTool(_BuiltinToolBase):

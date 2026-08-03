@@ -33,14 +33,25 @@ class LLMServiceFactory:
         return cls._instance
 
     @classmethod
+    def _active_catalog_provider_id(cls) -> str:
+        """当前 model_catalog 激活供应商 id（用量按供应商拆分）。"""
+        for attr in ("llm_catalog_provider_id", "active_provider_id"):
+            v = str(getattr(settings, attr, "") or "").strip()
+            if v:
+                return v
+        return ""
+
+    @classmethod
     def _create_service(cls) -> LLMService:
         """根据 LLM_PROVIDER 配置创建对应服务"""
         provider = settings.llm_provider
         config = settings.get_llm_config()
+        catalog_pid = cls._active_catalog_provider_id()
 
         from .provider_profiles import resolve_profile
 
         profile = resolve_profile(
+            provider_id=catalog_pid or None,
             base_url=getattr(config, "base_url", None),
             model=getattr(config, "model", None),
             llm_provider=provider,
@@ -53,13 +64,25 @@ class LLMServiceFactory:
             return VLLMService(config)
         elif provider == "openai":
             logger.info(f"Using OpenAI backend: {config.base_url}/{config.model}")
-            return OpenAIService(config, profile=profile, provider_id="openai")
+            return OpenAIService(
+                config, profile=profile, provider_id=catalog_pid or "openai"
+            )
         elif provider == "anthropic":
             logger.info(f"Using Anthropic backend: {config.base_url}/{config.model}")
-            return AnthropicService(config, profile=profile, provider_id="anthropic")
+            return AnthropicService(
+                config, profile=profile, provider_id=catalog_pid or "anthropic"
+            )
         elif provider == "openai-compatible":
-            logger.info(f"Using OpenAI-Compatible backend: {config.base_url}/{config.model}")
-            return OpenAICompatibleService(config, profile=profile)
+            logger.info(
+                "Using OpenAI-Compatible backend: %s/%s catalog=%s family=%s",
+                config.base_url,
+                config.model,
+                catalog_pid or "-",
+                getattr(profile, "family", "?"),
+            )
+            return OpenAICompatibleService(
+                config, profile=profile, provider_id=catalog_pid or None
+            )
         else:
             raise ValueError(f"Unsupported LLM provider: {provider}")
 

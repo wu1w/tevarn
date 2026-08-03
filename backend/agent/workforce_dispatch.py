@@ -173,6 +173,11 @@ def steward_orchestration_prompt(*, contact_name: str = "") -> str:
    - 需要接着干：`grant_caps` 时加 `requeue=true`（可带 inbox_item_id）重新入队；
    - **禁止**让主人点一堆危险确认弹窗；编制改权是你的职责。
    - 可选能力：file_rw, command, web_search, git, browser, calendar, db_read, notify。
+14. **经营目标 / O-KR（目标页）**：
+   - 主人说「改目标 / 定目标 / 目标进度」时用工具 **`okr_goal`**（list/get/create/update）；
+   - **禁止**用 manage_goal（那是会话 Todo 卡，不是目标页）；
+   - **禁止**用 grep/file_read 在前端源码或仓库外路径「找目标」；
+   - 改标题：`okr_goal action=update goal_id=… title=新标题`。
 
 正确示例：
 1. 先 grep/file_read 确认真实模块名（不要编 orchestrator.py）
@@ -181,6 +186,7 @@ def steward_orchestration_prompt(*, contact_name: str = "") -> str:
 4. 完成后 `action=results` → 向主人写汇总（有 failed 就明说）
 5. 撞预算：`set_budget` 或 更高 `token_budget` + requeue
 6. 权限不足：`pending_grants` → `grant_caps … requeue=true`
+7. 改目标：`okr_goal action=list` → `okr_goal action=update goal_id=… title=…`
 """
 
 
@@ -190,4 +196,260 @@ STEWARD_FORCE_TOOLS: tuple[str, ...] = (
     "delegate_task",
     "agent_call",
     "clarify",
+    "okr_goal",
+    "manage_goal",
+    "autopilot",
 )
+
+# CEO/管家 kernel 令牌：全开（*），不再被 coding profile 收成「没有 okr_goal」
+# 审批员工提权是 CEO 的职责；CEO 自己不应再被主人逐工具点通过。
+STEWARD_KERNEL_CAPABILITIES: tuple[str, ...] = ("*",)
+
+# 令牌失败时的兜底能力（与 coding_profile engineering + goal 对齐）
+_STEWARD_FALLBACK_CAPS: tuple[str, ...] = (
+    "file_read",
+    "file_write",
+    "file_edit",
+    "file_rw",
+    "terminal",
+    "command",
+    "crew_steward",
+    "clarify",
+    "use_tool_pack",
+    "current_time",
+    "okr_goal",
+    "manage_goal",
+    "autopilot",
+    "delegate_task",
+    "agent_call",
+    "web_search",
+    "git",
+    "browser",
+    "computer",
+    "memory",
+    "notify",
+)
+
+
+def _token_cap_list(tok: Any) -> list[str]:
+    if tok is None:
+        return []
+    if isinstance(tok, dict):
+        raw = tok.get("capabilities") or []
+        return [str(x) for x in raw]
+    caps = getattr(tok, "capabilities", None)
+    if caps is None:
+        return []
+    return [str(x) for x in caps]
+
+
+def _proc_has_star_or_goals(proc: Any) -> bool:
+    if proc is None:
+        return False
+    caps = list(getattr(proc, "capabilities", None) or [])
+    tok = getattr(proc, "token", None)
+    tok_caps = _token_cap_list(tok)
+    bag = set(str(c) for c in caps) | set(tok_caps)
+    if "*" in bag:
+        return True
+    if "okr_goal" in bag and "manage_goal" in bag:
+        return True
+    if tok is not None and callable(getattr(tok, "allows", None)):
+        try:
+            if tok.allows("okr_goal") and tok.allows("manage_goal"):
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def ensure_steward_kernel_full_open(kernel: Any, process_id: str) -> bool:
+    """Expand CEO/管家 process caps + token (sync paths).
+
+    Why UI「通过」still failed:
+    - PermissionGate / escalation UI ≠ kernel process.token scope
+    - After coding_profile, process.capabilities is narrow; issue_token(['*'])
+      raises 超出进程能力集 and was swallowed
+    - apply_intent(['*']) also fails silently: intent synthesizer **drops**
+      unknown caps including ``*`` (not in DEFAULT_GRANTABLE/RISKY)
+
+    Sync path: apply_intent with an explicit allow_risky cap list that includes
+    okr_goal/manage_goal (must be grantable or we rely on async escalate).
+    Prefer async helper for true ``*`` via escalate+approve.
+    """
+    pid = str(process_id or "").strip()
+    if not pid or kernel is None:
+        return False
+
+    try:
+        proc0 = kernel.get_process(pid) if hasattr(kernel, "get_process") else None
+        caps0 = list(getattr(proc0, "capabilities", None) or []) if proc0 else []
+        if "*" in caps0 or (
+            "okr_goal" in caps0 and "manage_goal" in caps0
+        ):
+            # Ensure token tracks process
+            try:
+                if hasattr(kernel, "issue_token"):
+                    kernel.issue_token(
+                        pid,
+                        capabilities=["*"] if "*" in caps0 else caps0,
+                    )
+            except Exception:
+                pass
+            return True
+    except Exception:
+        pass
+
+    # apply_intent: request concrete caps (NOT bare * — synthesizer drops *)
+    # Note: okr_goal/manage_goal are currently "unknown" to intent whitelist and
+    # get dropped unless host is updated; escalate path (async) still adds them.
+    try:
+        if hasattr(kernel, "apply_intent"):
+            # Use a wide explicit list; allow_risky unlocks terminal/file_write/…
+            want = list(
+                dict.fromkeys(
+                    [
+                        # default grantable + risky + goals + orchestration
+                        "file_read",
+                        "grep",
+                        "glob",
+                        "web_search",
+                        "session_search",
+                        "memory",
+                        "crew_steward",
+                        "clarify",
+                        "use_tool_pack",
+                        "current_time",
+                        "terminal",
+                        "file_write",
+                        "file_edit",
+                        "file_rw",
+                        "command",
+                        "browser",
+                        "computer",
+                        "delegate_task",
+                        "okr_goal",
+                        "manage_goal",
+                        "autopilot",
+                        "agent_call",
+                        "git",
+                        "notify",
+                    ]
+                )
+            )
+            kernel.apply_intent(
+                pid,
+                {
+                    "goal": "steward/CEO full-open (owner agent)",
+                    "capabilities": want,
+                    "constraints": {"allow_risky": True, "steward": True},
+                },
+            )
+            proc = kernel.get_process(pid) if hasattr(kernel, "get_process") else None
+            if _proc_has_star_or_goals(proc):
+                logger.info("steward full-open via apply_intent process=%s", pid[:8])
+                return True
+            # Partial: re-issue whatever process has (engineering may already include goals)
+            pcaps = list(getattr(proc, "capabilities", None) or []) if proc else []
+            if pcaps and hasattr(kernel, "issue_token"):
+                try:
+                    kernel.issue_token(pid, capabilities=pcaps)
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.debug("steward apply_intent full-open skip: %s", e)
+
+    try:
+        proc = kernel.get_process(pid) if hasattr(kernel, "get_process") else None
+        pcaps = list(getattr(proc, "capabilities", None) or []) if proc else []
+        if hasattr(kernel, "issue_token") and pcaps:
+            if "*" in pcaps or ("okr_goal" in pcaps and "manage_goal" in pcaps):
+                kernel.issue_token(
+                    pid, capabilities=["*"] if "*" in pcaps else pcaps
+                )
+                logger.info(
+                    "steward re-issue process caps process=%s n=%s",
+                    pid[:8],
+                    len(pcaps),
+                )
+                return True
+    except Exception as e:
+        logger.warning("steward full-open issue_token failed process=%s: %s", pid[:8], e)
+    return False
+
+
+async def ensure_steward_kernel_full_open_async(kernel: Any, process_id: str) -> bool:
+    """Async: escalate+approve '*' then concrete goal caps (expands process caps).
+
+    ``approve_escalation`` merges requested caps into process.capabilities and
+    re-issues the token — this is the reliable path for ``*`` and for caps that
+    intent synthesizer would drop as unknown (okr_goal/manage_goal).
+    """
+    import inspect
+
+    if ensure_steward_kernel_full_open(kernel, process_id):
+        return True
+
+    pid = str(process_id or "").strip()
+    if not pid or kernel is None:
+        return False
+
+    async def _maybe_await(x: Any) -> Any:
+        if inspect.isawaitable(x):
+            return await x
+        return x
+
+    try:
+        if not (
+            hasattr(kernel, "request_escalation")
+            and hasattr(kernel, "approve_escalation")
+        ):
+            return False
+
+        # Prefer * first (court/token.allows honors *); then explicit list
+        batches = (
+            (["*"], "steward_full_open"),
+            (list(_STEWARD_FALLBACK_CAPS), "steward_fallback_caps"),
+        )
+        for batch, tag in batches:
+            try:
+                req = await _maybe_await(
+                    kernel.request_escalation(
+                        pid,
+                        batch,
+                        reason=f"steward/CEO default authority ({tag})",
+                    )
+                )
+            except Exception as e:
+                logger.debug("steward escalate %s: %s", tag, e)
+                continue
+            rid = getattr(req, "id", None) if req is not None else None
+            status = getattr(req, "status", "") if req is not None else ""
+            if rid and status == "pending":
+                await _maybe_await(
+                    kernel.approve_escalation(rid, by=f"system:{tag}")
+                )
+            proc = (
+                kernel.get_process(pid) if hasattr(kernel, "get_process") else None
+            )
+            if _proc_has_star_or_goals(proc):
+                try:
+                    pcaps = list(getattr(proc, "capabilities", None) or [])
+                    if hasattr(kernel, "issue_token") and pcaps:
+                        kernel.issue_token(
+                            pid,
+                            capabilities=["*"] if "*" in pcaps else pcaps,
+                        )
+                except Exception:
+                    pass
+                logger.info(
+                    "steward full-open async escalate process=%s tag=%s caps=%s",
+                    pid[:8],
+                    tag,
+                    list(getattr(proc, "capabilities", None) or [])[:8],
+                )
+                return True
+    except Exception as e:
+        logger.warning("steward full-open async failed process=%s: %s", pid[:8], e)
+
+    return ensure_steward_kernel_full_open(kernel, process_id)

@@ -53,6 +53,10 @@ pub static TOOL_TO_CREW_CAP: &[(&str, &str)] = &[
     ("clarify", "crew_steward"),
     ("use_tool_pack", "use_tool_pack"),
     ("current_time", "current_time"),
+    // Goals: O-KR (okr_goal) + session todos (manage_goal)
+    ("okr_goal", "okr_goal"),
+    ("manage_goal", "manage_goal"),
+    ("autopilot", "manage_goal"),
 ];
 
 fn map() -> BTreeMap<&'static str, &'static str> {

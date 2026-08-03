@@ -85,10 +85,18 @@ def apply_anthropic_style_cache(
         and tools_payload
         and breakpoints < max_breakpoints
     ):
+        # Prefer sorted order for stable prefix when callers didn't sort yet
+        try:
+            if all(isinstance(t, dict) and t.get("name") for t in tools_payload):
+                tools_payload.sort(key=lambda t: str(t.get("name") or ""))
+                payload["tools"] = tools_payload
+        except Exception:
+            pass
         mark_cache_breakpoint(tools_payload)
         breakpoints += 1
 
     # 3. history — penultimate message (leave latest turn uncached)
+    # Prefer largest non-final content block when penultimate is tiny
     if len(messages) >= 2 and breakpoints < max_breakpoints:
         target = messages[-2]
         if isinstance(target, dict) and _mark_message_content_cache(target):

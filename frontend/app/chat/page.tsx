@@ -40,7 +40,13 @@ import { openSessionTabChannel } from '@/lib/sessionTabChannel';
 
 export default function ChatPage() {
   return (
-    <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-foreground-dim">…</div>}>
+    <Suspense
+      fallback={
+        <div className="tk-route-enter-fill flex h-full min-h-0 flex-1 items-center justify-center text-sm text-foreground-dim">
+          …
+        </div>
+      }
+    >
       <ChatPageInner />
     </Suspense>
   );
@@ -1742,10 +1748,20 @@ const handleUserMessageAck = useCallback(
                         streamStatusDetail={streamStatusDetail}
                         isStreaming={isStreaming}
                       />
+                      {/* 有数据才由面板内部渲染；空/加载中不占位，避免切同事时两栏闪一下 */}
                       {currentSession?.id ? (
-                        <div className="px-2 pb-2 space-y-1">
-                          <SessionJobsPanel sessionId={currentSession.id} compact zh />
-                          <SessionRunsPanel sessionId={currentSession.id} compact />
+                        <div className="px-2 pb-1 space-y-1 empty:hidden">
+                          <SessionJobsPanel
+                            key={`jobs-${currentSession.id}`}
+                            sessionId={currentSession.id}
+                            compact
+                            zh
+                          />
+                          <SessionRunsPanel
+                            key={`runs-${currentSession.id}`}
+                            sessionId={currentSession.id}
+                            compact
+                          />
                         </div>
                       ) : null}
                       <RuntimeHealthBanner zh />

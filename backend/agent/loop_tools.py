@@ -501,25 +501,83 @@ class LoopToolsMixin:
                         "员工路径不向主人发起提权审批。"
                     )
             else:
-                esc_note = ""
-                if bool(getattr(settings, "agent_kernel_auto_escalate", True)):
-                    try:
-                        req = await get_kernel().request_escalation(
-                            kernel_proc.id,
-                            [name],
-                            reason=f"工具调用被能力集拦截：{name}",
+                # CEO/主对话：默认全开，不要求主人逐工具点「通过」
+                # （UI 点通过 ≠ 扩 kernel 令牌；真正需要扩 process.capabilities）
+                try:
+                    from backend.agent.workforce_dispatch import (
+                        ensure_steward_kernel_full_open_async,
+                        is_steward_contact,
+                    )
+
+                    _contact = str(getattr(self, "_contact_agent", "") or "").strip()
+                    _is_ceo = is_steward_contact(_contact)
+                    if not _is_ceo:
+                        _id_caps = getattr(self, "_identity_name", None) or ""
+                        _is_ceo = is_steward_contact(str(_id_caps))
+                    # 无 contact 的主会话 ≈ 主人自己聊（单用户桌面）
+                    if not _is_ceo and not _contact and not agent_key.startswith("wf:"):
+                        _is_ceo = True
+                    if _is_ceo:
+                        k = get_kernel()
+                        ok_fo = await ensure_steward_kernel_full_open_async(
+                            k, kernel_proc.id
                         )
-                        esc_note = (
-                            f"（已自动发起权限申请 {req.id}，"
-                            "用户在权限控制台批准后即可重试；请勿重复调用本工具）"
+                        fresh = (
+                            k.get_process(kernel_proc.id)
+                            if hasattr(k, "get_process")
+                            else None
                         )
-                    except ValueError:
-                        pass
-                    except Exception:
-                        pass
-                if _child_leased:
-                    release_for_tool(name, _lease_pid or kernel_proc.id)
-                return f"Error: Kernel 权限拒绝——{e}{esc_note}"
+                        if fresh is not None:
+                            self._kernel_process = fresh
+                            kernel_proc = fresh
+                            arguments["_kernel_process_id"] = fresh.id
+                        if ok_fo:
+                            arguments.pop("_tool_gate_passed", None)
+                            arguments.pop("_tool_gate_internal", None)
+                            arguments, gate_err2 = await enforce_tool_gate(
+                                name,
+                                arguments,
+                                process_id=kernel_proc.id,
+                            )
+                            if not gate_err2:
+                                logger.info(
+                                    "CEO/main auto full-open re-gate ok tool=%s proc=%s",
+                                    name,
+                                    kernel_proc.id[:8],
+                                )
+                                # fall through to execute
+                                gate_err = None
+                                e = None  # type: ignore[assignment]
+                            else:
+                                gate_err = gate_err2
+                except Exception as _ceo_fo:
+                    logger.debug("CEO auto full-open skip: %s", _ceo_fo)
+
+                if gate_err and "Kernel 权限拒绝" in str(gate_err):
+                    esc_note = ""
+                    if bool(getattr(settings, "agent_kernel_auto_escalate", True)):
+                        try:
+                            req = await get_kernel().request_escalation(
+                                kernel_proc.id,
+                                [name],
+                                reason=f"工具调用被能力集拦截：{name}",
+                            )
+                            esc_note = (
+                                f"（已自动发起权限申请 {req.id}，"
+                                "用户在权限控制台批准后即可重试；请勿重复调用本工具）"
+                            )
+                        except ValueError:
+                            pass
+                        except Exception:
+                            pass
+                    if _child_leased:
+                        release_for_tool(name, _lease_pid or kernel_proc.id)
+                    return f"Error: Kernel 权限拒绝——{e}{esc_note}"
+                if gate_err:
+                    if _child_leased:
+                        release_for_tool(name, _lease_pid or kernel_proc.id)
+                    return gate_err
+                # full-open re-gate succeeded — continue to tool execute below
         elif gate_err:
             if _child_leased:
                 release_for_tool(name, _lease_pid)
@@ -685,8 +743,33 @@ class LoopToolsMixin:
         return self._rag_service
 
     def _append_to_system(self, messages: list[dict[str, Any]], block: str) -> None:
+        """Inject RAG/wiki/etc. without breaking the cacheable system prefix.
+
+        When ``agent_prompt_cache_friendly`` is on, only touch a *trailing*
+        system message (volatile tail) or append a new system at the end.
+        Never mutate messages[0] mid-run — that would invalidate the entire
+        automatic prefix cache (OpenAI/DeepSeek/xAI) every turn.
+        """
         if not block or not block.strip():
             return
+        cache_friendly = True
+        try:
+            from backend.core.config import settings as _st
+
+            cache_friendly = bool(getattr(_st, "agent_prompt_cache_friendly", True))
+        except Exception:
+            cache_friendly = True
+
+        if cache_friendly:
+            if messages and messages[-1].get("role") == "system":
+                messages[-1]["content"] = (
+                    (messages[-1].get("content") or "") + "\n\n" + block
+                )
+            else:
+                messages.append({"role": "system", "content": block})
+            return
+
+        # Legacy: append to last system anywhere (may mutate stable prefix)
         found = False
         for i in range(len(messages) - 1, -1, -1):
             if messages[i].get("role") == "system":

@@ -514,10 +514,25 @@ async def runtime_endpoints_api(
     from backend.core.config import settings
 
     host = request.headers.get("host") or "127.0.0.1:8090"
-    # 真实后端端口：环境变量 > settings.app_port > 8090 产品默认
+    # 真实后端端口优先级：
+    # 1) 本请求实际到达的端口（uvicorn 监听端口，最准）
+    # 2) TAKTON_API_PORT / PORT
+    # 3) settings.app_port（默认 8090）
+    # 注意：settings 若仍为旧默认 8000，而进程在 8090，必须用 request 端口纠正
+    req_port = None
+    try:
+        req_port = int(request.url.port) if request.url.port else None
+    except Exception:
+        req_port = None
+    if not req_port and ":" in str(host):
+        try:
+            req_port = int(str(host).rsplit(":", 1)[-1])
+        except Exception:
+            req_port = None
+    env_port = os.environ.get("TAKTON_API_PORT") or os.environ.get("PORT")
     api_port = int(
-        os.environ.get("TAKTON_API_PORT")
-        or os.environ.get("PORT")
+        req_port
+        or env_port
         or getattr(settings, "app_port", 0)
         or 8090
     )
@@ -2000,8 +2015,19 @@ async def cost_panel(
     current_user: Annotated[UserRead, Depends(get_current_user)],
     process_id: str | None = Query(None),
 ):
-    """P0.5 R5：三维成本面板 — token / billable / resource + cache_hit_rate。"""
+    """P0.5 R5：三维成本面板 — token / billable / resource + cache_hit_rate。
+
+    Aggregates prefer the durable usage_ledger (JSON under TAKTON data dir)
+    so totals survive kernel-host restarts. Host in-memory ledger is still
+    charged best-effort for live process views.
+    """
     from backend.kernel import get_kernel
+    from backend.services.usage_ledger import (
+        merge_cache_panels,
+        merge_cost_panels,
+        snapshot_cache,
+        snapshot_cost,
+    )
 
     k = get_kernel()
     panel: dict[str, Any] = {
@@ -2011,18 +2037,35 @@ async def cost_panel(
         "marathon": {},
         "backend": "none",
     }
+    host_cost: dict[str, Any] = {}
+    host_cache: dict[str, Any] = {}
     if hasattr(k, "_call"):
         panel["backend"] = "rust"
-        panel["tokens_billable"] = k._call("cost_panel") or {}
-        panel["cache"] = k._call("cache_metrics") or {}
-        panel["marathon"] = k._call("marathon_metrics") or {}
+        try:
+            host_cost = k._call("cost_panel") or {}
+        except Exception:
+            host_cost = {}
+        try:
+            host_cache = k._call("cache_metrics") or {}
+        except Exception:
+            host_cache = {}
+        try:
+            panel["marathon"] = k._call("marathon_metrics") or {}
+        except Exception:
+            panel["marathon"] = {}
         if process_id:
-            panel["process_cost"] = (
-                k._call("cost_process", {"process_id": process_id}) or {}
-            )
-            panel["process_resources"] = (
-                k._call("resource_usage", {"process_id": process_id}) or {}
-            )
+            try:
+                panel["process_cost"] = (
+                    k._call("cost_process", {"process_id": process_id}) or {}
+                )
+            except Exception:
+                panel["process_cost"] = {}
+            try:
+                panel["process_resources"] = (
+                    k._call("resource_usage", {"process_id": process_id}) or {}
+                )
+            except Exception:
+                panel["process_resources"] = {}
         # live process token rollup + resource aggregate (R-05)
         try:
             procs = k.list_processes(include_terminal=False) or []
@@ -2064,12 +2107,27 @@ async def cost_panel(
             panel["live_processes"] = {}
     elif hasattr(k, "cost_panel"):
         panel["backend"] = "python"
-        panel["tokens_billable"] = k.cost_panel()
+        try:
+            host_cost = k.cost_panel() or {}
+        except Exception:
+            host_cost = {}
         try:
             if hasattr(k, "cache_metrics"):
-                panel["cache"] = k.cache_metrics() or {}
+                host_cache = k.cache_metrics() or {}
         except Exception:
             pass
+    # Merge durable ledger (authoritative after host restarts)
+    try:
+        durable_cost = snapshot_cost()
+    except Exception:
+        durable_cost = {}
+    try:
+        durable_cache = snapshot_cache()
+    except Exception:
+        durable_cache = {}
+    panel["tokens_billable"] = merge_cost_panels(host_cost, durable_cost)
+    panel["cache"] = merge_cache_panels(host_cache, durable_cache)
+    panel["ledger_source"] = panel["tokens_billable"].get("source") or "empty"
     # single-process resource detail
     if process_id and hasattr(k, "resource_usage"):
         try:
@@ -2102,6 +2160,7 @@ async def cost_panel(
         "resource_kinds": list((panel.get("resources") or {}).keys())
         if isinstance(panel.get("resources"), dict)
         else [],
+        "ledger_source": panel.get("ledger_source"),
     }
     return panel
 
@@ -2110,15 +2169,24 @@ async def cost_panel(
 async def cache_metrics_api(
     current_user: Annotated[UserRead, Depends(get_current_user)],
 ):
-    """P0.5 / R-04：provider family 级 cache_hit_rate。"""
+    """P0.5 / R-04：provider family 级 cache_hit_rate（durable ∪ host）。"""
     from backend.kernel import get_kernel
+    from backend.services.usage_ledger import merge_cache_panels, snapshot_cache
 
-    k = get_kernel()
-    if hasattr(k, "cache_metrics"):
-        return k.cache_metrics()
-    if hasattr(k, "_call"):
-        return k._call("cache_metrics") or {}
-    return {"families": {}, "totals": {}}
+    host: dict[str, Any] = {}
+    try:
+        k = get_kernel()
+        if hasattr(k, "cache_metrics"):
+            host = k.cache_metrics() or {}
+        elif hasattr(k, "_call"):
+            host = k._call("cache_metrics") or {}
+    except Exception:
+        host = {}
+    try:
+        durable = snapshot_cache()
+    except Exception:
+        durable = {}
+    return merge_cache_panels(host, durable)
 
 
 @router.get("/results/{handle_id}")

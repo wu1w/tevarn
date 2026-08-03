@@ -346,8 +346,8 @@ export default function UsagePage() {
           </h1>
           <p style={{ margin: '6px 0 0', fontSize: 12.5, color: 'var(--foreground-dim)', lineHeight: 1.5 }}>
             {zh
-              ? 'Token / 计费用量与 Prompt Cache 命中率。可按供应商与模型筛选。数据来自本机 kernel 进程内累计（重启后清零）。'
-              : 'Token / billable usage and prompt-cache hit rate. Filter by provider and model. In-memory kernel totals (reset on host restart).'}
+              ? 'Token / 计费用量与 Prompt Cache 命中率。可按供应商与模型筛选。累计写入本机 usage_ledger（kernel 重启不清零）。'
+              : 'Token / billable usage and prompt-cache hit rate. Filter by provider and model. Persisted in local usage_ledger (survives kernel restarts).'}
           </p>
         </div>
         <button

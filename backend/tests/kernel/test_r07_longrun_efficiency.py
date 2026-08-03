@@ -122,4 +122,4 @@ async def test_cost_panel_summary_shape(monkeypatch):
 def test_product_version_still_050():
     from backend.core.version import product_version
 
-    assert product_version() == "0.5.0-alpha"
+    assert product_version() == "0.5.4-alpha"

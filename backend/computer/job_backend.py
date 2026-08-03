@@ -180,12 +180,51 @@ class JobBackend:
         except Exception:
             pass
 
+    def _allowed_cwd_roots(self) -> list[str]:
+        """cwd 允许根：workspace + 本轮 extra + 宿主数据根（Job 无完整 FS 隔离）。"""
+        roots = [self.workspace_root]
+        try:
+            from backend.tools.permissions import (
+                get_run_extra_roots,
+                get_run_workspace_root,
+                host_data_roots,
+            )
+
+            run = get_run_workspace_root()
+            if run:
+                roots.append(str(run))
+            roots.extend(get_run_extra_roots() or [])
+            roots.extend(host_data_roots() or [])
+        except Exception:
+            pass
+        # 开发仓显式 env
+        for env_key in ("TAKTON_DEV_ROOT", "TAKTON_REPO_ROOT", "TAKTON_FILE_BROWSER_ROOT"):
+            raw = (os.environ.get(env_key) or "").strip()
+            if raw:
+                roots.append(raw)
+        seen: set[str] = set()
+        out: list[str] = []
+        for r in roots:
+            try:
+                ar = ntpath.abspath(str(r))
+            except Exception:
+                continue
+            key = ar.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(ar)
+        return out
+
     def _check_cwd(self, cwd: str) -> str | None:
         real = ntpath.abspath(cwd)
-        root = self.workspace_root
-        if real == root or real.startswith(root + ntpath.sep):
-            return None
-        return f"cwd 超出沙箱 workspace（{root}）: {real}"
+        for root in self._allowed_cwd_roots():
+            if real == root or real.startswith(root + ntpath.sep):
+                return None
+        return (
+            f"cwd 超出允许范围（workspace={self.workspace_root} 及宿主/开发数据根）: {real}。"
+            "请在 workspace 内执行，或把目录配进 session workspace_root / TAKTON_DEV_ROOT。"
+        )
 
     def _run_sync(self, command: str, cwd: str, timeout: int) -> tuple[str, str, int]:
         """同步执行（在线程中跑）：Job Object 包裹 cmd 进程。"""

@@ -22,15 +22,17 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# 与 loop_tools / ComputerManager 对齐的「会起子进程」工具名
+# 与 loop_tools / ComputerManager 对齐的「会起子进程」工具名。
+# 注意：process（list/poll/kill）不启新 shell，勿占 child_proc 名额。
 CHILD_PROC_TOOLS = frozenset({
     "command",
     "bash",
     "shell",
     "python",
-    "process",
     "terminal",
     "computer",
+    "remote_exec",
+    "shell_session",
 })
 
 # Agent 上下文线索：出现任一即视为「正式 run」，缺 process 时 fail-closed。
@@ -186,6 +188,51 @@ def _release(kernel: Any, process_id: str, kind: str, amount: int = 1) -> None:
     logger.debug("kernel has no resource_release; skip %s/%s", kind, process_id[:12])
 
 
+def force_clear_child_proc(process_id: str | None) -> int:
+    """把某 process 上卡住的 child_proc used 清零（租约泄漏自愈）。
+
+    返回释放次数。release 幂等：used 到 0 后继续 release 仍为 0。
+    """
+    pid = (process_id or "").strip()
+    if not pid:
+        return 0
+    try:
+        from backend.kernel import get_kernel
+
+        k = get_kernel()
+        used = 0
+        try:
+            usage = k.resource_usage(pid) if hasattr(k, "resource_usage") else None
+            if isinstance(usage, dict):
+                cp = usage.get("child_proc") or usage.get("ChildProc") or {}
+                if isinstance(cp, dict):
+                    used = int(cp.get("used") or 0)
+                elif isinstance(cp, (int, float)):
+                    used = int(cp)
+        except Exception:
+            used = 32
+        # 多放一点，覆盖并发竞态
+        n = max(used, 0) + 2
+        cleared = 0
+        for _ in range(min(n, 128)):
+            try:
+                _release(k, pid, "child_proc", 1)
+                cleared += 1
+            except Exception:
+                break
+        if cleared:
+            logger.warning(
+                "force_clear_child_proc pid=%s released≈%s (was used≈%s)",
+                pid[:12],
+                cleared,
+                used,
+            )
+        return cleared
+    except Exception as e:
+        logger.debug("force_clear_child_proc skip: %s", e)
+        return 0
+
+
 def release_for_tool(
     name: str,
     process_id: str | None,
@@ -293,7 +340,16 @@ def charge_for_tool(name: str, process_id: str, arguments: dict[str, Any] | None
         pass
     _charge(k, process_id, "tool_calls", 1)
     if name in CHILD_PROC_TOOLS:
-        _charge(k, process_id, "child_proc", 1)
+        try:
+            _charge(k, process_id, "child_proc", 1)
+        except Exception as ce:
+            # 租约泄漏自愈：清零后重试一次（避免 CEO 永久 16/16）
+            msg = str(ce)
+            if "child_proc" in msg.lower() or "ChildProc" in msg:
+                force_clear_child_proc(process_id)
+                _charge(k, process_id, "child_proc", 1)
+            else:
+                raise
     # T3：按参数体量预扣 io_write_bytes（逻辑账户，防止 runaway 写）
     try:
         raw = json.dumps(

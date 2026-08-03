@@ -374,10 +374,24 @@ async def _run_llm_round_body(
                 _fam = "default"
         else:
             _fam = str(
-                getattr(llm_service, "provider", None)
+                getattr(llm_service, "provider_id", None)
+                or getattr(llm_service, "provider", None)
+                or getattr(settings, "llm_catalog_provider_id", None)
                 or getattr(settings, "llm_provider", None)
                 or "default"
             )
+        # 避免用量页全部挤在 generic：无 catalog id 时用 model 启发式
+        if (not _fam or _fam in ("default", "generic", "openai-compatible")) and hasattr(
+            llm_service, "model"
+        ):
+            try:
+                from backend.services.llm.provider_profiles import _family_from_model
+
+                _hint = _family_from_model(str(getattr(llm_service, "model", "") or ""))
+                if _hint:
+                    _fam = _hint
+            except Exception:
+                pass
         _model = str(
             getattr(llm_service, "model", None)
             or getattr(settings, "llm_model", None)
@@ -390,8 +404,9 @@ async def _run_llm_round_body(
             billable=_bill if _bill > 0 else _tok,
             model=_model or None,
         )
+
     except Exception as _cost_e:
-        logger.debug("cost_charge skip: %s", _cost_e)
+        logger.warning("cost_charge skip: %s", _cost_e)
 
     if kernel_proc is not None and kernel_proc.token_budget is not None:
         from backend.kernel import BudgetExceededError, get_kernel

@@ -17,25 +17,31 @@ import { useAuthStore } from '@/stores/authStore';
 function resolveWsBase(): string {
   if (typeof window === 'undefined') return 'ws://127.0.0.1:8090/api';
 
-  const injected = (window as unknown as { __TAKTON_WS_URL__?: string }).__TAKTON_WS_URL__;
-  if (injected) return injected.replace(/\/$/, '');
-
   const { hostname, port, protocol } = window.location;
   const isLocalHost = hostname === '127.0.0.1' || hostname === 'localhost';
   const hasElectron = Boolean(
     (window as unknown as { electronAPI?: unknown }).electronAPI
   );
 
+  // Next dev：页面在 3000，必须直连 8090；忽略被 TAKTON_APP_PORT=8000 污染的发现结果
+  if (isLocalHost && (port === '3000' || port === '3001') && !hasElectron) {
+    return 'ws://127.0.0.1:8090/api';
+  }
+
+  const injected = (window as unknown as { __TAKTON_WS_URL__?: string }).__TAKTON_WS_URL__;
+  if (injected) {
+    const u = injected.replace(/\/$/, '');
+    if (/:\/\/(127\.0\.0\.1|localhost):8000(\/|$)/i.test(u) && isLocalHost) {
+      return 'ws://127.0.0.1:8090/api';
+    }
+    return u;
+  }
+
   // Electron：走同源反代
   if (hasElectron) {
     const wsProto = protocol === 'https:' ? 'wss:' : 'ws:';
     const host = port ? `${hostname}:${port}` : hostname;
     return `${wsProto}//${host}/api`;
-  }
-
-  // 浏览器 + next dev：直连后端
-  if (isLocalHost && (port === '3000' || port === '3001')) {
-    return 'ws://127.0.0.1:8090/api';
   }
 
   if (process.env.NEXT_PUBLIC_WS_URL) {

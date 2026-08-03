@@ -60,7 +60,8 @@ export function SessionJobsPanel({
 }) {
   const qc = useQueryClient();
   const addToast = useToastStore((s) => s.addToast);
-  const [collapsed, setCollapsed] = useState(false);
+  // 默认收起，与运行记录一致；避免展开空列表在会话切换时闪一下
+  const [collapsed, setCollapsed] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const jobs = useQuery({
@@ -132,10 +133,11 @@ export function SessionJobsPanel({
     onSettled: () => setBusyId(null),
   });
 
+  // 会话切换：加载中且无本会话缓存 → 不渲染空壳，避免「编制工单」闪现
   if (!sessionId) return null;
   if (jobs.data?.enabled === false) return null;
-  // 无工单时不占位（除非加载中且已有缓存）
-  if (!jobs.isLoading && items.length === 0) return null;
+  if (jobs.isLoading && !jobs.data) return null;
+  if (items.length === 0) return null;
 
   const ghost: React.CSSProperties = {
     border: '1px solid var(--border-subtle)',

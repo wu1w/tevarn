@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Script from "next/script";
 import "./globals.css";
-// Pixel Console theme layer
+// Pixel Console 主题层：覆盖令牌 + tk-* 结构类；删除本行即回退原主题
 import "./pixel-console.css";
 import { AppShell } from "@/components/layout/AppShell";
 import { QueryProvider } from "@/components/QueryProvider";
@@ -9,8 +9,9 @@ import Toasts from "@/components/Toasts";
 import { ThemeProvider } from "@/components/ThemeProvider";
 
 /**
- * 瀛椾綋锛氫紭鍏堣嫻鏋滅郴缁熷瓧浣擄紙SF Pro / PingFang锛夛紝璺ㄥ钩鍙板洖閫€
- * 涓嶄緷璧?Google Fonts 鍦ㄧ嚎鎷夊彇锛堢绾?浠ｇ悊鏋勫缓浼氬け璐ワ級銆? */
+ * 字体：优先苹果系统字体（SF Pro / PingFang），跨平台回退
+ * 不依赖 Google Fonts 在线拉取（离线/代理构建会失败）。
+ */
 const fontStyle = {
   ["--font-inter" as string]:
     "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Helvetica Neue', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI', system-ui, sans-serif",
@@ -19,8 +20,8 @@ const fontStyle = {
 } as React.CSSProperties;
 
 export const metadata: Metadata = {
-  title: "Takton - 涓汉涓撳睘 Agent 缁堢",
-  description: "鑷墭绠″紓姝?Agent 鎺у埗鍙?,
+  title: "Takton - Personal Agent Console",
+  description: "Self-hosted async Agent console",
 };
 
 const themeBootScript = `
@@ -68,7 +69,6 @@ export default function RootLayout({
       style={fontStyle}
     >
       <body className="font-sans h-full overflow-hidden flex flex-col bg-page-bg text-foreground text-ui">
-        {/* beforeInteractive锛氶伩鍏嶅湪 React 瀛愭爲閲屽 <script> 瑙﹀彂 client 璀﹀憡 */}
         <Script id="takton-theme-boot" strategy="beforeInteractive">
           {themeBootScript}
         </Script>

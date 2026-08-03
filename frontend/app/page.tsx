@@ -67,33 +67,109 @@ export default function DashboardPage() {
 
       <OrgMorningBrief greet={greet} userName={userName} dateStr={dateStr} />
 
-      {/* 次要：目标预览（P3 升主轨前保持轻量） */}
+      {/* 次要：目标预览（P3 升主轨前保持轻量）— 交互与工单区同构：右上角入口 */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))', gap: 12, marginTop: 4 }}>
-        <Link href="/goals" style={{ ...card, display: 'block', textDecoration: 'none' }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--foreground-dim)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-            {zh ? '目标（经营骨架 · 将升主轨）' : 'Goals (becoming first-class)'}
-          </div>
-          {topGoal ? (
-            <>
-              <div style={{ fontSize: 14, fontWeight: 650, marginTop: 8, color: 'var(--foreground)' }}>{topGoal.title}</div>
-              <div style={{ height: 6, borderRadius: 3, background: 'var(--input-bg)', overflow: 'hidden', marginTop: 10 }}>
-                <div style={{
-                  height: '100%', width: `${Math.min(100, topGoal.progress)}%`, borderRadius: 3,
-                  background: barColor(topGoal.progress),
-                }} />
-              </div>
-              <div style={{ fontSize: 11, color: 'var(--foreground-dim)', marginTop: 6 }}>
-                {Math.round(topGoal.progress)}% · {objectives.length} {zh ? '个进行中' : 'active'}
-              </div>
-            </>
-          ) : (
-            <div style={{ fontSize: 12, color: 'var(--foreground-dim)', marginTop: 8, lineHeight: 1.5 }}>
-              {zh
-                ? '设定经营目标后，会拆成员工工单。现在可先派活跑通班子。'
-                : 'Goals will spawn employee jobs. Dispatch work first if you prefer.'}
+        <div style={card}>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: 8,
+              marginBottom: 4,
+            }}
+          >
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                color: 'var(--foreground-dim)',
+                letterSpacing: '0.04em',
+                textTransform: 'uppercase',
+              }}
+            >
+              {zh ? '目标（经营骨架 · 将升主轨）' : 'Goals (becoming first-class)'}
             </div>
-          )}
-        </Link>
+            <Link
+              href="/goals"
+              title={zh ? '打开目标' : 'Open goals'}
+              aria-label={zh ? '打开目标' : 'Open goals'}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+                flexShrink: 0,
+                fontSize: 11,
+                fontWeight: 600,
+                color: 'var(--brand-purple)',
+                textDecoration: 'none',
+                padding: '2px 4px',
+                borderRadius: 6,
+              }}
+            >
+              <span>{zh ? '目标' : 'Goals'}</span>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                aria-hidden
+                style={{ display: 'block' }}
+              >
+                <path
+                  d="M6 3.5H3.5A1.5 1.5 0 0 0 2 5v7.5A1.5 1.5 0 0 0 3.5 14H11a1.5 1.5 0 0 0 1.5-1.5V10"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                />
+                <path
+                  d="M9 2h5v5M14 2 7.5 8.5"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </Link>
+          </div>
+          <Link href="/goals" style={{ display: 'block', textDecoration: 'none', color: 'inherit' }}>
+            {topGoal ? (
+              <>
+                <div style={{ fontSize: 14, fontWeight: 650, marginTop: 8, color: 'var(--foreground)' }}>
+                  {topGoal.title}
+                </div>
+                <div
+                  style={{
+                    height: 6,
+                    borderRadius: 3,
+                    background: 'var(--input-bg)',
+                    overflow: 'hidden',
+                    marginTop: 10,
+                  }}
+                >
+                  <div
+                    style={{
+                      height: '100%',
+                      width: `${Math.min(100, topGoal.progress)}%`,
+                      borderRadius: 3,
+                      background: barColor(topGoal.progress),
+                    }}
+                  />
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--foreground-dim)', marginTop: 6 }}>
+                  {Math.round(topGoal.progress)}% · {objectives.length}{' '}
+                  {zh ? '个进行中 · 点进目标树' : 'active · open goals'}
+                </div>
+              </>
+            ) : (
+              <div style={{ fontSize: 12, color: 'var(--foreground-dim)', marginTop: 8, lineHeight: 1.5 }}>
+                {zh
+                  ? '设定经营目标后，会拆成员工工单。点右上角「目标」进入管理。'
+                  : 'Goals will spawn employee jobs. Use the Goals link above to manage.'}
+              </div>
+            )}
+          </Link>
+        </div>
 
         {groups.length > 0 ? (
           <div style={card}>

@@ -38,10 +38,21 @@ class BashSkill(BaseSkill):
         kwargs 里 Agent Loop 注入了 _session_id / _ws_manager / user_id，
         透传给 execute_command 用于危险操作确认。
         """
+        try:
+            from backend.tools.permissions import resolve_agent_workspace_root
+
+            base = resolve_agent_workspace_root()
+        except Exception:
+            base = ""
+        # 透传 loop 注入的全部 meta（_kernel_process_id 等），避免沙箱/确认丢失
         arguments = {
-            "command": command,
-            "timeout": timeout,
-            "_session_id": kwargs.get("_session_id"),
-            "_ws_manager": kwargs.get("_ws_manager"),
+            k: v
+            for k, v in kwargs.items()
+            if str(k).startswith("_") or k in ("cwd", "working_dir", "background")
         }
-        return await execute_command({}, arguments)
+        arguments["command"] = command
+        arguments["timeout"] = timeout
+        if base and not arguments.get("cwd"):
+            arguments["cwd"] = base
+        config = {"base_path": base} if base else {}
+        return await execute_command(config, arguments)

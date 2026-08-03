@@ -1,7 +1,7 @@
 # Memory Index
 
 ## 🎯 当前焦点
-- [takton-kernel] feature/agent-kernel 0.5.x-alpha：编制/审批/内核 harden + **用量页** + 审计修复（force 删会话、result_load 绑定、grants TTL、kicked UX）
+- [takton-kernel] feature/agent-kernel **0.5.4-alpha**：ChatGPT OAuth · CEO 全开令牌 · 持久化用量 ledger · prompt cache 稳定化 · okr_goal
 - 知识/契约与真实落盘路径对齐（见下方「路径权威」）
 
 ## 📂 路径权威（Windows · 以实际磁盘为准，勿信过期文档）

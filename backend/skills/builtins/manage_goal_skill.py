@@ -14,9 +14,9 @@ from backend.skills.base import BaseSkill
 class ManageGoalSkill(BaseSkill):
     name = "manage_goal"
     description = (
-        "管理当前复杂任务的 Goal 与 Todo 列表。"
-        "复杂多步任务时：先 create/set_todos 规划，执行过程中 update_todo 标记进度，"
-        "全部完成后 complete。未完成前不要假装结束。"
+        "管理【当前会话】的 Todo 规划卡（聊天过程中的步骤清单）。"
+        "不是目标页的经营 O-KR——改经营目标请用 okr_goal。"
+        "复杂多步任务时：先 create/set_todos 规划，执行中 update_todo，完成后 complete。"
     )
     parameters: dict[str, Any] = {
         "type": "object",

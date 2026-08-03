@@ -1,9 +1,9 @@
 # Takton 技术手册
 
-版本：**0.5.3-alpha**
+版本：**0.5.4-alpha**
 更新：2026-08-02
 
-> **路线图**：[docs/ROADMAP.md](./ROADMAP.md)（当前产品版本 **0.5.3-alpha**；P0 已收口 → 0.7 长程/成本 → 1.0）
+> **路线图**：[docs/ROADMAP.md](./ROADMAP.md)（当前产品版本 **0.5.4-alpha**；P0 已收口 → 0.7 长程/成本 → 1.0）
 >
 > **执行模型（现行）**  
 > **一切执行都是 Run**；Identity 是执行者；Cluster/SubAgent/Hire 是编排形态；Workflow 是 Run 模板。  
@@ -30,7 +30,7 @@
 > - 长 instruction / 马拉松类任务自动抬高开局预算  
 > - 扣费优先 **billable tokens**（cache miss + output；`agent_budget_prefer_billable`）  
 >
-> **审计闭环（0.5.3-alpha · feature/agent-kernel）**
+> **审计闭环（0.5.4-alpha · feature/agent-kernel）**
 > | 域 | 状态 | 要点 |
 > |----|------|------|
 > | 聊天 WS/Stop/ack/generation | ✅ | optimistic id、stop FSM、session 防串流 |

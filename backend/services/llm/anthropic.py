@@ -63,6 +63,10 @@ class AnthropicService(LLMService):
         }
         if self.api_key:
             headers["x-api-key"] = self.api_key
+        # Prompt caching: beta header required on many accounts / older gateways;
+        # GA still accepts it. Without this, cache_control may be ignored.
+        if self._cache_enabled():
+            headers["anthropic-beta"] = "prompt-caching-2024-07-31"
         return headers
 
     def _convert_messages(self, messages: list[dict[str, Any]]) -> tuple[str | None, list[dict[str, Any]]]:
@@ -149,15 +153,31 @@ class AnthropicService(LLMService):
         return system_text, anthropic_messages
 
     def _convert_tools(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """将 OpenAI 格式工具定义转换为 Anthropic 格式"""
+        """将 OpenAI 格式工具定义转换为 Anthropic 格式。
+
+        Sort by name so the tools prefix is byte-stable across rounds (required
+        for cache_control on the last tool to hit).
+        """
         anthropic_tools = []
-        for t in tools:
-            func = t.get("function", t)
+        for t in tools or []:
+            func = t.get("function", t) if isinstance(t, dict) else {}
+            if not isinstance(func, dict):
+                continue
+            name = str(func.get("name") or "")
+            params = func.get("parameters") or func.get("input_schema") or {}
+            if not isinstance(params, dict):
+                params = {}
+            # Stable key order inside schema
+            try:
+                params = json.loads(json.dumps(params, sort_keys=True, ensure_ascii=False))
+            except Exception:
+                pass
             anthropic_tools.append({
-                "name": func.get("name", ""),
-                "description": func.get("description", ""),
-                "input_schema": func.get("parameters", {}),
+                "name": name,
+                "description": str(func.get("description") or ""),
+                "input_schema": params,
             })
+        anthropic_tools.sort(key=lambda x: x.get("name") or "")
         return anthropic_tools
 
     @staticmethod
@@ -210,6 +230,20 @@ class AnthropicService(LLMService):
 
         # T4：prompt caching 断点（system / tools / 历史前缀）
         self._apply_prompt_cache(payload, anthropic_messages)
+        if self._cache_enabled() and logger.isEnabledFor(logging.DEBUG):
+            n_bp = 0
+            sys_b = payload.get("system")
+            if isinstance(sys_b, list) and sys_b and "cache_control" in (sys_b[-1] or {}):
+                n_bp += 1
+            tools_b = payload.get("tools") or []
+            if tools_b and isinstance(tools_b[-1], dict) and "cache_control" in tools_b[-1]:
+                n_bp += 1
+            logger.debug(
+                "anthropic prompt_cache breakpoints≈%s tools=%s msgs=%s",
+                n_bp,
+                len(tools_b) if isinstance(tools_b, list) else 0,
+                len(anthropic_messages),
+            )
 
         message_id = uuid.uuid4()
 

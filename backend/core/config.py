@@ -171,6 +171,22 @@ class Settings(BaseSettings):
     llm_base_url: str = ""
     llm_model: str = ""
     llm_api_key: Optional[str] = None
+    # model_catalog 中当前激活的供应商 id（用量/缓存按供应商+模型拆分用）
+    llm_catalog_provider_id: str = ""
+    # ChatGPT OAuth / Codex 订阅：部分请求需要 Account-Id 头
+    openai_chatgpt_account_id: str = ""
+
+    # 出站 HTTPS 代理（可选覆盖）。常规用户更推荐系统/终端里设 HTTPS_PROXY；
+    # 此项仅在需要单独给 Takton 指定代理时使用。
+    outbound_https_proxy: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "TAKTON_HTTPS_PROXY",
+            "TAKTON_OUTBOUND_PROXY",
+            "outbound_https_proxy",
+        ),
+    )
+
     # 新会话默认模型（学 hermes model.default）：独立选项，创建会话时快照用，
     # 与 provider 连接配置解耦；留空则用当前 provider 配置的 llm_model
     default_llm_model: str = ""
@@ -596,7 +612,8 @@ class Settings(BaseSettings):
 
     # Application
     app_host: str = "127.0.0.1"
-    app_port: int = 8000
+    # 产品 / Next dev 代理默认后端端口（与 next.config rewrites、前端 resolveWsBaseUrl 对齐）
+    app_port: int = 8090
     log_level: str = "info"
     # 设置加密 salt（用于 settings 字段加密的确定性密钥派生）
     settings_encryption_salt: str = ""

@@ -137,6 +137,16 @@ _PROFILES: dict[str, ProviderProfile] = {
             r"deepseek-r1",
         ),
     ),
+    "opencode": ProviderProfile(
+        family="opencode",
+        protocol="openai-compatible",
+        cache_mode="implicit",
+        merge_system_messages=False,
+        default_context_window=128_000,
+        stream_include_usage=True,
+        prefer_billable_tokens=True,
+    ),
+
     "qwen": ProviderProfile(
         family="qwen",
         protocol="openai-compatible",
@@ -267,8 +277,14 @@ _PROVIDER_ID_MAP: dict[str, str] = {
     "xfyun": "xfyun",
     "ollama": "ollama",
     "vllm": "vllm",
-    "opencode-zen": "generic",
-    "opencode-go": "generic",
+    # OpenCode 网关：用量上单独显示；底层协议仍 openai-compatible
+    "opencode-zen": "opencode",
+    "opencode-go": "opencode",
+    "opencode": "opencode",
+    # ChatGPT 会员 OAuth / Codex 订阅路径
+    "openai-chatgpt-oauth": "openai",
+    "openai-codex-oauth": "openai",
+    "openai-chatgpt": "openai",
     "custom": "generic",
 }
 
@@ -292,6 +308,11 @@ def _family_from_url(base_url: str) -> str | None:
         return "anthropic"
     if "api.openai.com" in h or h == "openai.com":
         return "openai"
+    # 本机 Codex / ChatGPT OAuth 代理
+    if "openai-codex" in b or "llm-proxy/openai" in b or "chatgpt.com" in b:
+        return "openai"
+    if "opencode.ai" in h or "opencode.ai" in b or "/zen/" in b or "/go/v1" in b:
+        return "opencode"
     if "api.x.ai" in h or h.endswith(".x.ai") or "x.ai" in h:
         return "xai"
     if "kimi.com" in h or "kimi.com" in b:
@@ -338,7 +359,8 @@ def _family_from_model(model: str) -> str | None:
             return "moonshot"
     if re.search(r"claude", m):
         return "anthropic"
-    if re.search(r"gpt-|o1|o3|o4-mini", m):
+    # GPT-5.x / Codex / o-series
+    if re.search(r"gpt-|codex|o1|o3|o4-mini", m):
         return "openai"
     if re.search(r"grok", m):
         return "xai"
@@ -367,6 +389,9 @@ def resolve_profile(
     """Resolve a ProviderProfile from catalog / snapshot fields."""
     pid = (provider_id or "").strip().lower()
     family: str | None = _PROVIDER_ID_MAP.get(pid) if pid else None
+    # map 到 generic 不算锁定：继续用 url/model 推断真正厂商
+    if family == "generic":
+        family = None
 
     if family is None and llm_provider:
         lp = llm_provider.strip().lower()
@@ -384,6 +409,18 @@ def resolve_profile(
     if family is None:
         family = _family_from_model(model or "")
     if family is None:
+        family = "generic"
+
+    # OpenCode 网关：profile 用 opencode，缓存行为跟 openai-compatible
+    if family == "opencode" and "opencode" not in _PROFILES:
+        # 按模型再细分缓存策略（deepseek/gpt 等）
+        nested = _family_from_model(model or "")
+        if nested and nested in _PROFILES:
+            return replace(
+                _PROFILES[nested],
+                family="opencode",
+                protocol="openai-compatible",
+            )
         family = "generic"
 
     base = _PROFILES.get(family) or _PROFILES["generic"]

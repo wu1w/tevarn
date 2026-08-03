@@ -103,6 +103,48 @@ PROVIDER_PRESETS: list[dict[str, Any]] = [
         "supports_multi_key": True,
     },
     {
+        "id": "openai-chatgpt-oauth",
+        "name": "ChatGPT 会员 (OAuth)",
+        "badge": "订阅登录",
+        "description": (
+            "用 ChatGPT Plus/Pro 浏览器登录（Codex OAuth），走订阅额度，无需 sk- API Key。"
+            "受公平使用限制；适合 Codex/GPT 编码模型。"
+        ),
+        "icon": "💠",
+        "needs_api_key": False,
+        "auth_mode": "oauth_pkce",
+        "oauth_provider": "openai",
+        "help_url": "https://chatgpt.com/",
+        "help_text": (
+            "点击「ChatGPT 登录」→ 浏览器授权 → 复制跳转后的 localhost URL（含 code=）粘贴回来。"
+            "与 platform API Key 计费相互独立。"
+        ),
+        "llm": {
+            "llm_provider": "openai-compatible",
+            "llm_base_url": "http://127.0.0.1:8090/api/llm-proxy/openai-codex/v1",
+            "llm_model": "gpt-5.6",
+            "llm_api_key": "",
+        },
+        "models": [
+            # GPT-5.6 系列（Codex / ChatGPT 订阅；Sol=旗舰，Terra=均衡，Luna=快速）
+            "gpt-5.6",
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
+            # 上一代（部分账号仍可用）
+            "gpt-5.4",
+            "gpt-5.3-codex",
+            "gpt-5.2-codex",
+            "gpt-5.1-codex",
+            "o3",
+            "o4-mini",
+            "gpt-4.1",
+            "gpt-4o",
+        ],
+        "embedding": None,
+        "supports_multi_key": False,
+    },
+    {
         "id": "anthropic",
         "name": "Claude",
         "badge": "Anthropic",
@@ -1393,6 +1435,186 @@ async def xai_oauth_logout(
     return {
         "ok": True,
         "message": "已退出 Grok OAuth",
+        "catalog": model_catalog_mod.mask_catalog_for_client(catalog),
+    }
+
+
+@router.post("/oauth/openai/start")
+async def openai_oauth_start(
+    current_user: Annotated[UserRead, Depends(require_admin)],
+):
+    """发起 ChatGPT 会员 OAuth（PKCE · Codex 客户端），并尽量监听 localhost:1455。"""
+    from backend.services.openai_oauth import start_pkce_login_async
+
+    return await start_pkce_login_async()
+
+
+class OpenAIOauthCompleteBody(BaseModel):
+    callback_url: str
+    state: str | None = None
+
+
+class OpenAIOauthPollBody(BaseModel):
+    state: str | None = None
+
+
+async def _activate_openai_chatgpt_oauth(
+    *,
+    result: dict,
+    request: Request,
+    current_user: UserRead,
+    repo: SettingRepository,
+) -> dict:
+    """把 OAuth 令牌写入 model catalog 并设为当前供应商。"""
+    from backend.services.openai_oauth import OPENAI_CODEX_LOCAL_BASE, mark_result_consumed
+
+    base_url = str(result.get("base_url") or OPENAI_CODEX_LOCAL_BASE)
+    try:
+        host = request.headers.get("host") or "127.0.0.1:8090"
+        if "8090" in base_url and host and "127.0.0.1" in base_url:
+            base_url = f"http://{host.split(',')[0].strip()}/api/llm-proxy/openai-codex/v1"
+    except Exception:
+        pass
+
+    from backend.api.routes.openai_codex_proxy import CODEX_OAUTH_MODELS
+
+    catalog = await model_catalog_mod.load_catalog(repo)
+    catalog = model_catalog_mod.save_oauth_credential(
+        catalog,
+        provider_id="openai-chatgpt-oauth",
+        name="ChatGPT 会员 (OAuth)",
+        icon="💠",
+        access_token=str(result["access_token"]),
+        refresh_token=str(result.get("refresh_token") or ""),
+        expires_at=str(result.get("expires_at") or ""),
+        base_url=base_url,
+        model="gpt-5.6",
+        set_active=True,
+        account_id=str(result.get("account_id") or ""),
+        auth_mode="oauth_pkce",
+        label="ChatGPT OAuth",
+    )
+    # 始终用最新 Codex 型号表刷新缓存（避免只看到登录时的旧列表）
+    catalog = model_catalog_mod.set_provider_cached_models(
+        catalog,
+        "openai-chatgpt-oauth",
+        list(CODEX_OAUTH_MODELS),
+        active_model="gpt-5.6",
+    )
+    await model_catalog_mod.save_catalog(repo, catalog)
+    model_catalog_mod.apply_active_to_runtime(catalog)
+
+    await repo.upsert("llm_provider", "openai-compatible", "llm")
+    await repo.upsert("llm_base_url", base_url, "llm")
+    await repo.upsert("llm_model", catalog.get("active_model") or "gpt-5.6", "llm")
+    await repo.upsert("llm_api_key", str(result["access_token"]), "llm")
+    if result.get("account_id"):
+        await repo.upsert("openai_chatgpt_account_id", str(result["account_id"]), "llm")
+
+    mark_result_consumed(str(result.get("state") or "") or None)
+
+    await log_action(
+        AuditAction.SETTINGS_UPDATE,
+        request=request,
+        user_id=current_user.id,
+        resource_type="model_catalog",
+        resource_id="openai-chatgpt-oauth",
+        details={"action": "oauth_login"},
+    )
+    return {
+        "ok": True,
+        "status": "authorized",
+        "message": "ChatGPT OAuth 登录成功，已设为当前供应商（订阅额度）",
+        "active_provider_id": "openai-chatgpt-oauth",
+        "active_model": catalog.get("active_model") or "gpt-5.6",
+        "catalog": model_catalog_mod.mask_catalog_for_client(catalog),
+    }
+
+
+@router.post("/oauth/openai/poll")
+async def openai_oauth_poll(
+    data: OpenAIOauthPollBody,
+    request: Request,
+    current_user: Annotated[UserRead, Depends(require_admin)],
+    repo: Annotated[SettingRepository, Depends(get_setting_repo)],
+):
+    """轮询 1455 回调是否已换好 token；成功则激活供应商。"""
+    from backend.services.openai_oauth import poll_login_result
+
+    result = poll_login_result(data.state)
+    if result.get("status") == "pending":
+        return result
+    if not result.get("ok") or result.get("status") != "authorized":
+        return result
+    if not result.get("access_token"):
+        return {"ok": False, "status": "error", "message": "缺少 access_token"}
+    return await _activate_openai_chatgpt_oauth(
+        result=result,
+        request=request,
+        current_user=current_user,
+        repo=repo,
+    )
+
+
+@router.post("/oauth/openai/complete")
+async def openai_oauth_complete(
+    data: OpenAIOauthCompleteBody,
+    request: Request,
+    current_user: Annotated[UserRead, Depends(require_admin)],
+    repo: Annotated[SettingRepository, Depends(get_setting_repo)],
+):
+    """用浏览器回调 URL 完成登录，登记 openai-chatgpt-oauth 供应商。"""
+    from backend.services.openai_oauth import complete_pkce_login
+
+    result = await complete_pkce_login(data.callback_url, state=data.state)
+    if not result.get("ok"):
+        return result
+
+    return await _activate_openai_chatgpt_oauth(
+        result=result,
+        request=request,
+        current_user=current_user,
+        repo=repo,
+    )
+
+
+
+@router.post("/oauth/openai/logout")
+async def openai_oauth_logout(
+    request: Request,
+    current_user: Annotated[UserRead, Depends(require_admin)],
+    repo: Annotated[SettingRepository, Depends(get_setting_repo)],
+):
+    """移除 ChatGPT OAuth 供应商。"""
+    catalog = await model_catalog_mod.load_catalog(repo)
+    catalog["providers"] = [
+        p
+        for p in catalog.get("providers") or []
+        if p.get("id") != "openai-chatgpt-oauth"
+    ]
+    if catalog.get("active_provider_id") == "openai-chatgpt-oauth":
+        catalog["active_provider_id"] = ""
+        catalog["active_model"] = ""
+        if catalog["providers"]:
+            p0 = next(
+                (p for p in catalog["providers"] if p.get("enabled")),
+                catalog["providers"][0],
+            )
+            catalog["active_provider_id"] = p0["id"]
+    await model_catalog_mod.save_catalog(repo, catalog)
+    if catalog.get("active_provider_id"):
+        model_catalog_mod.apply_active_to_runtime(catalog)
+    await log_action(
+        AuditAction.SETTINGS_UPDATE,
+        request=request,
+        user_id=current_user.id,
+        resource_type="model_catalog",
+        resource_id="openai-chatgpt-oauth",
+        details={"action": "oauth_logout"},
+    )
+    return {
+        "ok": True,
+        "message": "已退出 ChatGPT OAuth",
         "catalog": model_catalog_mod.mask_catalog_for_client(catalog),
     }
 

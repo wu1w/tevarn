@@ -186,6 +186,10 @@ TOOL_TO_CREW_CAP: dict[str, str] = {
     "crew_steward": "crew_steward",
     "clarify": "crew_steward",
     "use_tool_pack": "use_tool_pack",
+    # 经营目标 / 会话 Todo（CEO 改目标、会话规划）
+    "okr_goal": "okr_goal",
+    "manage_goal": "manage_goal",
+    "autopilot": "manage_goal",
     # 唯一映射：current_time 为独立 cap（勿重复键 F601）
     "current_time": "current_time",
     "result_load": "file_read",  # 外置结果回读，与读权限同级
@@ -214,6 +218,12 @@ def sync_catalog_from_kernel(kernel: Any | None = None) -> bool:
         for p in pairs:
             if isinstance(p, dict) and p.get("tool") and p.get("cap"):
                 TOOL_TO_CREW_CAP[str(p["tool"])] = str(p["cap"])
+        # 旧 host catalog 可能缺 goal 工具映射；补齐避免 CEO 令牌拦截
+        TOOL_TO_CREW_CAP.setdefault("okr_goal", "okr_goal")
+        TOOL_TO_CREW_CAP.setdefault("manage_goal", "manage_goal")
+        TOOL_TO_CREW_CAP.setdefault("autopilot", "manage_goal")
+        TOOL_TO_CREW_CAP.setdefault("crew_steward", "crew_steward")
+        TOOL_TO_CREW_CAP.setdefault("clarify", "crew_steward")
         logger.info("grant_store catalog synced from rust (%s entries)", len(TOOL_TO_CREW_CAP))
         return True
     except Exception as e:

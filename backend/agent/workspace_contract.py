@@ -85,6 +85,29 @@ def load_workspace_contract(
         note = " *(truncated)*" if "…[truncated" in body else ""
         sections.append(f"### {label}{note}\nPath: `{path}`\n\n{body}")
 
+    # 数据地图：避免 Agent 在错误目录搜目标/记忆
+    try:
+        from backend.tools.permissions import (
+            host_data_roots,
+            resolve_agent_workspace_root,
+        )
+
+        ws = resolve_agent_workspace_root()
+        host_roots = host_data_roots()[:6]
+        map_lines = [
+            "### DATA MAP（路径事实 · 必读）",
+            f"- **workspace_root（file_read/grep/command 默认边界）**: `{ws}`",
+            f"- **宿主数据根（已放行）**: " + (", ".join(f"`{r}`" for r in host_roots) if host_roots else "（无）"),
+            f"- **沙箱内宿主数据镜像**: `{ws}/.computers/<agent>/home/.takton` → 指向宿主 `~/.takton`",
+            "- **经营目标 O-KR**: 不在文件里，用工具 **`okr_goal`**（list/update/create），不要 grep 源码",
+            "- **会话 Todo 规划卡**: `manage_goal`（与目标页无关）",
+            "- Windows：`echo`/`dir` 是 cmd 内置；沙箱里优先 `cmd /c echo ok`、`cmd /c dir`",
+        ]
+        sections.insert(0, "\n".join(map_lines))
+        meta["data_map"] = {"workspace_root": ws, "host_roots": host_roots}
+    except Exception as e:
+        logger.debug("data map inject skip: %s", e)
+
     if not sections:
         return "", meta
 

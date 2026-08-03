@@ -49,8 +49,9 @@
   --card-bg: #fbfcfe;
   --card-bg-hover: #eef1f6;
   --elevated-bg: #ffffff;
-  --chrome: rgba(244, 246, 248, 0.88);
-  --sidebar: rgba(238, 241, 246, 0.88);
+  /* 壳层实色（勿用半透明+毛玻璃，弹层/主区会「割裂」） */
+  --chrome: #f4f6f8;
+  --sidebar: #eef1f6;
   --foreground: #1d2330;
   --foreground-muted: #4a5261;
   --foreground-dim: #7a8291;
@@ -72,7 +73,7 @@
   --success-text: #16a34a;
   --input-bg: rgba(29, 35, 48, 0.045);
   --input-placeholder: #8b92a0;
-  --glass-bg: rgba(251, 252, 254, 0.72);
+  --glass-bg: #fbfcfe;
   --glass-border: rgba(29, 35, 48, 0.14);
   --glass-inner: inset 0 1px 0 rgba(255, 255, 255, 0.8);
   /* 像素控制台特征：方正圆角 + 阶梯硬阴影 */
@@ -92,8 +93,8 @@
   --card-bg: rgba(148, 163, 199, 0.055);
   --card-bg-hover: rgba(148, 163, 199, 0.1);
   --elevated-bg: #151a2e;
-  --chrome: rgba(12, 15, 26, 0.88);
-  --sidebar: rgba(15, 19, 34, 0.88);
+  --chrome: #0c0f1a;
+  --sidebar: #111526;
   --foreground: #e6e9f2;
   --foreground-muted: #a3abc2;
   --foreground-dim: #6d7590;
@@ -115,7 +116,7 @@
   --success-text: #4ade80;
   --input-bg: rgba(148, 163, 199, 0.08);
   --input-placeholder: #5c657f;
-  --glass-bg: rgba(21, 26, 46, 0.72);
+  --glass-bg: #151a2e;
   --glass-border: rgba(148, 163, 199, 0.16);
   --glass-inner: inset 0 1px 0 rgba(230, 233, 242, 0.05);
   --r-sm: 2px;
@@ -151,14 +152,26 @@ body {
   background-size: 24px 24px;
 }
 
-/* ═══ 结构壳：IconRail ═══ */
-.tk-rail {
+/* ═══ 结构壳：IconRail + AgentSidebar —— 实色机身，禁毛玻璃 ═══
+   半透明 + backdrop-filter 会与 page 点阵底、弹层遮罩叠出「另一层 UI」，
+   与 Pixel Console 硬边/实色机身不一致。 */
+.tk-rail,
+.tk-sidebar {
   background: var(--sidebar);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
   border-right: 1px solid var(--border-default);
 }
-.tk-rail::after { content: none; } /* 去掉原渐变罩层，保持机身干净 */
+.tk-rail::after,
+.tk-sidebar::after {
+  content: none !important; /* 去掉暖纸渐变罩层 */
+}
+/* 标题栏同样走实色 chrome，避免 /90 + blur 与侧栏割裂 */
+.titlebar {
+  background: var(--chrome) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
 .tk-rail-logo {
   border-radius: 6px; /* 原 50% 圆形 → 方像素块 */
 }
@@ -192,7 +205,7 @@ body {
 }
 .tk-rail-sep { background: var(--border-default); }
 
-/* ═══ 结构壳：AgentSidebar ═══ */
+/* ═══ 结构壳：AgentSidebar 内容 ═══ */
 .tk-sb-title {
   font-family: "Silkscreen", monospace;
   font-size: 15px;
@@ -215,27 +228,77 @@ body {
 .tk-sb-agent { border-radius: 4px; }
 .tk-sb-avatar { border-radius: 3px; }
 
-/* ═══ 卡片：直角实线 + 阶梯硬阴影（覆盖水彩玻璃卡） ═══ */
+/* ═══ 卡片：直角 + 静态硬阴影；交互用柔和高亮（不动画硬阴影/位移） ═══ */
 .surface-card {
   border-radius: var(--r-lg);
   border: 1px solid var(--border-default);
   background: var(--card-bg);
   box-shadow: var(--hard-shadow);
+  transition:
+    border-color 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    filter 160ms ease,
+    background-color 180ms ease;
+}
+.surface-card:hover {
+  border-color: color-mix(in srgb, var(--brand-purple) 32%, var(--border-default));
+  filter: brightness(1.015);
+}
+.surface-card:active {
+  filter: brightness(0.99);
+}
+.tk-card:hover {
+  border-color: color-mix(in srgb, var(--brand-purple) 28%, var(--border-default));
+  filter: brightness(1.01);
+}
+.tk-card:active {
+  filter: brightness(0.99);
+}
+/* 轨按钮：色/影过渡，不做像素位移 */
+.tk-rail-btn {
+  transition:
+    color 160ms cubic-bezier(0.22, 1, 0.36, 1),
+    background 160ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 180ms cubic-bezier(0.22, 1, 0.36, 1) !important;
+}
+.tk-rail-btn:active:not(.active) {
+  filter: brightness(0.96);
+}
+/* 侧栏员工：背景过渡即可，避免 translateX 抖动 */
+.tk-sb-agent {
+  transition:
+    background 160ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* 页头不再单独 CSS 入场（与 PageTransition 叠两层会卡） */
+.tk-page-header,
+.tk-page-title {
+  animation: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .surface-card,
+  .tk-card,
+  .tk-rail-btn,
+  .tk-sb-agent {
+    transition: none !important;
+  }
 }
 
-/* 玻璃工具类：像素控制台用更实的底 */
-.glass {
+/* 玻璃工具类：像素控制台改实色面板（保留类名兼容，去掉 blur） */
+.glass,
+.glass-strong,
+.tk-card,
+.tk-panel {
   background: var(--card-bg);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
   border: 1px solid var(--border-default);
 }
 .glass-strong {
   background: var(--elevated-bg);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid var(--border-default);
   box-shadow: var(--hard-shadow);
+}
+.tk-card {
+  box-shadow: var(--hard-shadow-sm);
 }
 
 /* 品牌渐变按钮/文字保留渐变但换品牌色（沿用原类） */
@@ -298,16 +361,19 @@ body {
   );
 }
 
-/* 硬阴影按钮基座（配合现有按钮类或内联样式页迁移用） */
+/* 硬阴影按钮基座：阴影保持静态，交互只调亮度（更顺） */
 .px-btn {
   border-radius: 3px;
   border: 1px solid transparent;
   box-shadow: var(--hard-shadow-sm);
-  transition: filter 160ms ease, transform 120ms ease, box-shadow 120ms ease;
+  transition: filter 140ms cubic-bezier(0.22, 1, 0.36, 1), opacity 140ms ease;
+}
+.px-btn:hover {
+  filter: brightness(1.06);
 }
 .px-btn:active {
-  transform: translate(2px, 2px);
-  box-shadow: 0 0 0 var(--hard);
+  filter: brightness(0.96);
+  opacity: 0.96;
 }
 
 /* 区块标签：BRIEF / LIVE / PROC 式像素小标 */

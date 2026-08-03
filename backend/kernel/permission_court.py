@@ -223,6 +223,23 @@ def _try_rust_decide_tool(
         pid = str(args.get("_kernel_process_id") or args.get("_process_id") or "") or None
         # Never ship live objects (ConnectionManager / recorder) over JSON-RPC.
         safe_args = sanitize_args_for_kernel(args)
+        # 宿主 ~/.takton → workspace junction，避免 Rust path:workspace 误杀
+        try:
+            from backend.tools.permissions import rewrite_host_path_into_workspace
+
+            for pk in (
+                "path",
+                "filepath",
+                "file",
+                "directory",
+                "dir",
+                "base_path",
+                "database",
+            ):
+                if isinstance(safe_args.get(pk), str) and safe_args[pk].strip():
+                    safe_args[pk] = rewrite_host_path_into_workspace(str(safe_args[pk]))
+        except Exception:
+            pass
         # Keep identity caps for steward layer (strings only)
         if isinstance(args.get("_identity_capabilities"), (list, tuple)):
             safe_args["_identity_capabilities"] = [
@@ -678,6 +695,10 @@ _PATH_ARG_KEYS = (
 
 def _extract_path_candidates(args: dict[str, Any]) -> list[str]:
     out: list[str] = []
+    try:
+        from backend.tools.permissions import rewrite_host_path_into_workspace
+    except Exception:
+        rewrite_host_path_into_workspace = None  # type: ignore[assignment]
     for k in _PATH_ARG_KEYS:
         v = args.get(k)
         if v is None:
@@ -692,6 +713,11 @@ def _extract_path_candidates(args: dict[str, Any]) -> list[str]:
             if s.startswith("/") and len(s) > 2 and s[2] == ":":
                 # file:///C:/...
                 s = s.lstrip("/")
+        if rewrite_host_path_into_workspace is not None:
+            try:
+                s = rewrite_host_path_into_workspace(s)
+            except Exception:
+                pass
         out.append(s)
     return out
 

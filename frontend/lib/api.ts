@@ -1316,10 +1316,19 @@ export async function getGoalTree(): Promise<{ objectives: Goal[]; total: number
   return res.data;
 }
 
+export type GoalDispatchResult = {
+  dispatched: boolean;
+  owner_identity_id?: string | null;
+  job_id?: string | null;
+  reason?: string | null;
+  message?: string;
+};
+
 export async function createGoal(body: {
   title: string; description?: string; kind?: string;
   parent_id?: string; owner_identity_id?: string; due_date?: string; progress?: number;
-}): Promise<Goal> {
+  auto_dispatch?: boolean;
+}): Promise<Goal & { dispatch?: GoalDispatchResult; error?: string }> {
   const res = await api.post('/goals', body);
   return res.data;
 }
@@ -2488,6 +2497,66 @@ export async function pollXaiOauth(deviceCode: string): Promise<{
 
 export async function logoutXaiOauth(): Promise<{ ok: boolean; message: string; catalog?: ModelCatalog }> {
   const res = await api.post('/settings/oauth/xai/logout', {});
+  return res.data;
+}
+
+// ====== OpenAI ChatGPT OAuth（订阅额度 / Codex） ======
+
+export async function startOpenAIOauth(): Promise<{
+  ok: boolean;
+  message?: string;
+  state?: string;
+  authorization_url?: string;
+  redirect_uri?: string;
+  expires_in?: number;
+  callback_listening?: boolean;
+  callback_error?: string;
+  detail?: string;
+}> {
+  const res = await api.post('/settings/oauth/openai/start', {});
+  return res.data;
+}
+
+export async function pollOpenAIOauth(state?: string): Promise<{
+  ok: boolean;
+  status?: string;
+  message?: string;
+  active_provider_id?: string;
+  active_model?: string;
+  catalog?: ModelCatalog;
+  detail?: string;
+}> {
+  const res = await api.post('/settings/oauth/openai/poll', {
+    state: state || undefined,
+  });
+  return res.data;
+}
+
+export async function completeOpenAIOauth(
+  callbackUrl: string,
+  state?: string,
+): Promise<{
+  ok: boolean;
+  status?: string;
+  message?: string;
+  active_provider_id?: string;
+  active_model?: string;
+  catalog?: ModelCatalog;
+  detail?: string;
+}> {
+  const res = await api.post('/settings/oauth/openai/complete', {
+    callback_url: callbackUrl,
+    state: state || undefined,
+  });
+  return res.data;
+}
+
+export async function logoutOpenAIOauth(): Promise<{
+  ok: boolean;
+  message: string;
+  catalog?: ModelCatalog;
+}> {
+  const res = await api.post('/settings/oauth/openai/logout', {});
   return res.data;
 }
 

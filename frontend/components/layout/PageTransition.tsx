@@ -2,51 +2,36 @@
 
 import React from 'react';
 import { usePathname } from 'next/navigation';
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import { MOTION, pageVariants } from '@/lib/motion';
 
 /**
- * 主区路由切换动效（统一）。
+ * 主区路由切换动效（全页面统一）。
  *
- * 注意：
- * - 不用 mode="wait"（先卸后装会「整页闪白」）
- * - 不用 y 位移（transform 会牵动 sticky/overflow，chat 底部会裂）
- * - chat 等 fill 页直接渲染，零动画
- * - 仅 pathname 作 key；query（如 ?id=）变化不重播，避免 Agent 抽屉打开时闪屏
+ * - 所有路由（含 /chat 联系员工）都有入场动画，避免「别的页有、聊天页硬切」
+ * - 纯 CSS：不被系统 Reduced Motion / framer 掐死
+ * - fill 页（chat）：只做淡入，不做 Y 位移，避免底栏/滚动布局抖
+ * - 其它页：淡入 + 轻微上移
+ * - 仅 pathname 作 key；query（?identity=）变化不重播
  */
 export function PageTransition({
   children,
   fill = false,
 }: {
   children: React.ReactNode;
-  /** chat 主页填满高度，跳过动效 */
+  /** 全高布局（chat）：用柔和淡入，不用位移 */
   fill?: boolean;
 }) {
   const pathname = usePathname() || '/';
-  const reduce = useReducedMotion();
 
   const box = fill
     ? 'flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden'
     : 'flex min-h-0 w-full flex-1 flex-col';
 
-  if (fill || reduce) {
-    return <div className={box}>{children}</div>;
-  }
+  // 统一入场：fill 用 soft，其它用 enter（见 globals.css）
+  const enterClass = fill ? 'tk-route-enter-fill' : 'tk-route-enter';
 
   return (
-    <AnimatePresence mode="sync" initial={false}>
-      <motion.div
-        key={pathname}
-        className={box}
-        variants={pageVariants}
-        initial="initial"
-        animate="animate"
-        exit="exit"
-        transition={MOTION.page}
-        style={{ willChange: 'opacity' }}
-      >
-        {children}
-      </motion.div>
-    </AnimatePresence>
+    <div key={pathname} className={`${box} ${enterClass}`}>
+      {children}
+    </div>
   );
 }

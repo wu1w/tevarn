@@ -12,10 +12,69 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useToastStore } from '@/stores/toastStore';
 import {
   getGoalTree, createGoal, updateGoal, deleteGoal,
-  getKernelIdentities, type Goal,
+  getKernelIdentities, enqueueKernelInbox,
+  type Goal, type GoalDispatchResult,
 } from '@/lib/api';
 import { useZh } from '@/hooks/useZh';
 import { LegacyQuiet } from '@/components/layout/LegacyQuiet';
+
+/** 后端若未返回 dispatch（旧进程）或派单失败，前端补一次 inbox 投递 */
+async function ensureGoalDispatched(
+  res: Goal & { dispatch?: GoalDispatchResult },
+  b: { title: string; description: string; owner_identity_id?: string },
+  kind: string,
+): Promise<GoalDispatchResult> {
+  if (res.dispatch?.dispatched) return res.dispatch;
+  const owner = (b.owner_identity_id || '').trim();
+  if (!owner) {
+    return res.dispatch || {
+      dispatched: false,
+      reason: 'no_owner',
+      message: '未指定责任 Agent',
+    };
+  }
+  const lines = [
+    `【${kind === 'key_result' ? '关键结果 KR' : '经营目标'}工单 · 目标系统自动派发】`,
+    `标题：${b.title}`,
+  ];
+  if (b.description?.trim()) lines.push(`说明：${b.description.trim()}`);
+  if (res.id) lines.push(`目标 ID：${res.id}`);
+  lines.push(
+    '请你作为责任人立即推进：拆解步骤、执行可做部分、有阻塞写清依赖，并回报进度。',
+  );
+  try {
+    const job = await enqueueKernelInbox({
+      identity_id: owner,
+      instruction: lines.join('\n'),
+      source: 'manual',
+      priority: 8,
+      payload: {
+        via: 'goal_auto_dispatch_fe',
+        goal_id: res.id,
+        goal_kind: kind,
+        project_title: b.title.slice(0, 80),
+      },
+    });
+    return {
+      dispatched: true,
+      owner_identity_id: owner,
+      job_id: job.id,
+      message: job.message || `已派工 ${job.id}`,
+    };
+  } catch (e: unknown) {
+    const detail =
+      (e as { response?: { data?: { detail?: string } }; message?: string })?.response
+        ?.data?.detail ||
+      (e as { message?: string })?.message ||
+      String(e);
+    return {
+      dispatched: false,
+      owner_identity_id: owner,
+      reason: 'fe_fallback_failed',
+      message: res.dispatch?.message || String(detail),
+    };
+  }
+}
 
 const statusMeta: Record<string, { color: string; zh: string; en: string }> = {
   active: { color: 'var(--status-online)', zh: '进行中', en: 'Active' },
@@ -76,7 +135,9 @@ export default function GoalsPage() {
             {zh ? '目标' : 'Goals'} <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--foreground-dim)' }}>{active.length} {zh ? '个进行中' : 'active'}</span>
           </div>
           <div style={{ fontSize: 12, color: 'var(--foreground-dim)', marginTop: 3 }}>
-            {zh ? '每完成一步，Agent 就往你的目标近一步' : 'Every step moves your agents closer to your goals'}
+            {zh
+              ? '选定责任 Agent 后会自动派工单；Dispatcher 领取后员工才真正开跑'
+              : 'Pick an owner agent to auto-dispatch a job; the dispatcher claims it next'}
           </div>
         </div>
         <button onClick={() => setNewOpen(true)} style={btnPrimary}>+ {zh ? '定个目标' : 'New objective'}</button>
@@ -88,7 +149,7 @@ export default function GoalsPage() {
         <div style={{ ...card, textAlign: 'center', padding: '56px 20px' }}>
           <div style={{ fontSize: 28, marginBottom: 8 }}>🎯</div>
           <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--foreground)' }}>
-            {zh ? '还没有目标。定一个，让 Agent 替你赶路。' : 'No goals yet. Set one and let agents chase it.'}
+            {zh ? '还没有目标。定一个并指定责任人，系统会立刻派工。' : 'No goals yet. Set one with an owner to dispatch work.'}
           </div>
         </div>
       ) : (
@@ -101,12 +162,79 @@ export default function GoalsPage() {
       )}
 
       {newOpen ? (
-        <GoalForm zh={zh} identOptions={idents?.identities ?? []} onClose={() => setNewOpen(false)}
-          onSubmit={async (b) => { await createGoal({ ...b, kind: 'objective' }); addToast(zh ? '目标已定，开工' : 'Goal set'); setNewOpen(false); refresh(); }} />
+        <GoalForm
+          zh={zh}
+          identOptions={idents?.identities ?? []}
+          onClose={() => setNewOpen(false)}
+          onSubmit={async (b) => {
+            const res = await createGoal({ ...b, kind: 'objective' });
+            const d = await ensureGoalDispatched(res, b, 'objective');
+            if (d.dispatched) {
+              addToast(
+                zh
+                  ? `目标已定，已派给责任人（工单 ${d.job_id ? d.job_id.slice(0, 8) : '已入队'}）`
+                  : `Goal set · job queued${d.job_id ? ` ${d.job_id.slice(0, 8)}` : ''}`,
+                'success',
+              );
+            } else if (!b.owner_identity_id) {
+              addToast(
+                zh
+                  ? '目标已保存。未选责任 Agent，不会自动开跑——请编辑指定责任人或去员工页派单。'
+                  : 'Goal saved. No owner — nothing auto-started. Assign an owner or dispatch from Employees.',
+                'info',
+              );
+            } else {
+              addToast(
+                zh
+                  ? `目标已保存，但自动派单失败：${d.message || '收件箱/派活器未就绪'}`
+                  : `Goal saved, auto-dispatch failed: ${d.message || 'inbox/dispatcher unavailable'}`,
+                'error',
+              );
+            }
+            setNewOpen(false);
+            refresh();
+            try {
+              await qc.invalidateQueries({ queryKey: ['kernel-inbox'] });
+              await qc.invalidateQueries({ queryKey: ['workspace-brief'] });
+            } catch {
+              /* ignore */
+            }
+          }}
+        />
       ) : null}
       {krFor ? (
-        <GoalForm zh={zh} identOptions={idents?.identities ?? []} isKr onClose={() => setKrFor(null)}
-          onSubmit={async (b) => { await createGoal({ ...b, kind: 'key_result', parent_id: krFor }); addToast(zh ? 'KR 已加入' : 'KR added'); setKrFor(null); refresh(); }} />
+        <GoalForm
+          zh={zh}
+          identOptions={idents?.identities ?? []}
+          isKr
+          onClose={() => setKrFor(null)}
+          onSubmit={async (b) => {
+            const res = await createGoal({ ...b, kind: 'key_result', parent_id: krFor });
+            const d = await ensureGoalDispatched(res, b, 'key_result');
+            if (d.dispatched) {
+              addToast(
+                zh
+                  ? `KR 已加入并派工（${d.job_id ? d.job_id.slice(0, 8) : 'ok'}）`
+                  : `KR added · job queued`,
+                'success',
+              );
+            } else if (!b.owner_identity_id) {
+              addToast(zh ? 'KR 已加入（未指定责任人，未自动派工）' : 'KR added (no owner, no job)', 'info');
+            } else {
+              addToast(
+                zh ? `KR 已加入，派工失败：${d.message || ''}` : `KR added, dispatch failed: ${d.message || ''}`,
+                'error',
+              );
+            }
+            setKrFor(null);
+            refresh();
+            try {
+              await qc.invalidateQueries({ queryKey: ['kernel-inbox'] });
+            } catch {
+              /* ignore */
+            }
+          }}
+        />
       ) : null}
     </div>
     </LegacyQuiet>
@@ -204,12 +332,23 @@ function GoalForm({ zh, identOptions, isKr, onClose, onSubmit }: {
   const [busy, setBusy] = useState(false);
   return (
     <>
-      <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 96, background: 'rgba(10,9,7,0.6)', backdropFilter: 'blur(4px)' }} />
+      {/* 遮罩用纯色压暗，不用 blur——侧栏/主区已是实色，再毛玻璃会叠成「另一层 UI」 */}
+      <div
+        onClick={onClose}
+        style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 96,
+          background: 'color-mix(in srgb, var(--page-bg) 35%, rgba(12, 15, 26, 0.62))',
+        }}
+      />
       <div style={{
         position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
         width: 460, maxWidth: '94vw', zIndex: 99, background: 'var(--elevated-bg)',
-        border: '1px solid var(--border-default)', borderRadius: 16, padding: '22px 24px',
-        boxShadow: '0 24px 80px rgba(0,0,0,0.6)',
+        border: '1px solid var(--border-default)',
+        borderRadius: 'var(--r-xl, 8px)',
+        padding: '22px 24px',
+        boxShadow: 'var(--hard-shadow, 3px 3px 0 rgba(0,0,0,0.2)), 0 18px 48px rgba(0,0,0,0.28)',
       }}>
         <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--foreground)' }}>
           {isKr ? (zh ? '加一条关键结果' : 'Add key result') : (zh ? '定个目标' : 'New objective')}
@@ -218,15 +357,26 @@ function GoalForm({ zh, identOptions, isKr, onClose, onSubmit }: {
           style={inputStyle} />
         <textarea value={desc} onChange={(e) => setDesc(e.target.value)} placeholder={zh ? '补充说明（可选）' : 'Description (optional)'} rows={2}
           style={{ ...inputStyle, marginTop: 10, resize: 'vertical', fontFamily: 'inherit' }} />
-        {!isKr ? (
-          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-            <select value={owner} onChange={(e) => setOwner(e.target.value)} style={{ ...inputStyle, flex: 1, marginTop: 0 }}>
-              <option value="">{zh ? '责任 Agent（可选）' : 'Owner agent (optional)'}</option>
-              {identOptions.map((i) => <option key={i.id} value={i.id}>@{i.name}</option>)}
-            </select>
+        <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+          <select value={owner} onChange={(e) => setOwner(e.target.value)} style={{ ...inputStyle, flex: 1, marginTop: 0, minWidth: 160 }}>
+            <option value="">
+              {zh ? '责任 Agent（选后自动派工）' : 'Owner agent (auto-dispatch)'}
+            </option>
+            {identOptions.map((i) => <option key={i.id} value={i.id}>@{i.name}</option>)}
+          </select>
+          {!isKr ? (
             <input type="date" value={due} onChange={(e) => setDue(e.target.value)} style={{ ...inputStyle, width: 150, marginTop: 0 }} />
-          </div>
-        ) : null}
+          ) : null}
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--foreground-dim)', marginTop: 8, lineHeight: 1.45 }}>
+          {zh
+            ? owner
+              ? '确定后会立刻给该员工投递工单，由 Dispatcher 自动领取开跑。'
+              : '不选责任人只保存目标，不会有人自动行动——和员工页手动派单是两条路。'
+            : owner
+              ? 'On confirm we enqueue a job for this employee; the dispatcher will claim it.'
+              : 'Without an owner the goal is only saved — no agent starts automatically.'}
+        </div>
         <div style={{ display: 'flex', gap: 8, marginTop: 16, justifyContent: 'flex-end' }}>
           <button onClick={onClose} style={btnGhost}>{zh ? '取消' : 'Cancel'}</button>
           <button disabled={!title.trim() || busy} style={{ ...btnPrimary, opacity: title.trim() ? 1 : 0.5 }}

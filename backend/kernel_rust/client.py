@@ -70,6 +70,12 @@ _SOFT_ONLY_METHODS = frozenset(
         "charge_tokens",
         "resource_release",
         "resource_usage",
+        # usage / cost: never hard-restart host on these (they also dual-write durable)
+        "cost_charge",
+        "cost_panel",
+        "cost_process",
+        "cache_record",
+        "cache_metrics",
     }
 )
 # Dashboard / panel methods: short-timeout side-channel (own socket).
