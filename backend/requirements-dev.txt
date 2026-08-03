@@ -1,6 +1,10 @@
 # Dev / test only - not shipped in desktop installers
 -r requirements-prod.txt
-asyncpg==0.30.0
+# Postgres driver (optional). On Windows + Python 3.14 wheels may be missing
+# and source build can fail — skip if you only use SQLite:
+#   pip install -r backend/requirements-dev.txt --ignore-requires-python
+# or omit asyncpg and install the rest by hand.
+asyncpg==0.30.0; python_version < "3.14"
 pytest==8.3.5
 pytest-asyncio==0.24.0
 pytest-timeout==2.4.0
@@ -8,4 +12,4 @@ asgi-lifespan==2.1.0
 # Linter gate in CI. Pin exactly: a newer ruff may add rules and break green.
 ruff==0.16.0
 # Type-check gate in CI (scoped to a typed core via [tool.mypy] files=...).
-mypy==2.3.0
+mypy==2.3.0; python_version < "3.14"

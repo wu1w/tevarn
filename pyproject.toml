@@ -15,7 +15,7 @@ dependencies = [
   "pydantic==2.13.4",
   "pydantic-settings>=2.2.1",
   "email-validator>=2.2.0",
-  "sqlalchemy[asyncio]==2.0.36",
+  "sqlalchemy[asyncio]==2.0.51",
   "aiosqlite==0.21.0",
   "cryptography>=42.0.0",
   # core/security.py 直接 import jwt —— 必须显式声明，不能靠传递依赖
