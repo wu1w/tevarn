@@ -82,4 +82,30 @@ def test_charge_fills_by_model_day_and_no_double_totals(tmp_path: Path, monkeypa
 
     raw = json.loads(path.read_text(encoding="utf-8"))
     assert "by_model_day" in raw
+    assert raw.get("version") == 3
+    assert raw["by_model_day"][mk][day]["tokens"] == 150
+
+    # Reload from disk must keep by_day / by_model_day (no silent drop on restart)
+    ul.reset_for_tests()
+    snap2 = ul.snapshot_cost()
+    assert snap2["by_day"][day]["tokens"] == 350
+    assert snap2["by_model_day"][mk][day]["tokens"] == 150
+    assert snap2["by_model_day"][mk2][day]["tokens"] == 200
+    assert snap2["by_model"][mk]["tokens"] == 150
+    assert snap2["by_family"]["opencode-go"]["tokens"] == 200
+
+    # Second charge after reload must append same day, not cross models
+    ul.charge(
+        process_id="p3",
+        family="opencode-go",
+        model="deepseek-v4-flash",
+        tokens=10,
+        billable=10,
+        estimated=True,
+    )
+    snap3 = ul.snapshot_cost()
+    assert snap3["by_model"][mk]["tokens"] == 150  # unchanged
+    assert snap3["by_model"][mk2]["tokens"] == 210
+    assert snap3["by_model_day"][mk2][day]["tokens"] == 210
+    assert snap3["by_day"][day]["tokens"] == 360
     ul.reset_for_tests()

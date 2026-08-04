@@ -2166,15 +2166,41 @@ async def cost_panel(
             pt = int(ctot.get("prompt_tokens") or 0)
             cr = int(ctot.get("cache_read_tokens") or 0)
         token_hit = (cr / pt) if pt > 0 else None
-    # Integrity: sum(by_model.tokens) should match totals when models present
+    # Integrity: sum(by_model.tokens) should match totals when models present;
+    # multi-provider families must also sum to totals; daily maps must not exceed.
     model_tok_sum = 0
     model_bill_sum = 0
     for _mk, _mb in (panel.get("by_model") or {}).items():
         if isinstance(_mb, dict):
             model_tok_sum += int(_mb.get("tokens") or 0)
             model_bill_sum += int(_mb.get("billable") or 0)
+    family_tok_sum = 0
+    for _fk, _fb in (panel.get("by_family") or {}).items():
+        if isinstance(_fb, dict):
+            family_tok_sum += int(_fb.get("tokens") or 0)
+    day_tok_sum = 0
+    for _db in (panel.get("by_day") or {}).values():
+        if isinstance(_db, dict):
+            day_tok_sum += int(_db.get("tokens") or 0)
+    model_day_tok_sum = 0
+    for _days in (panel.get("by_model_day") or {}).values():
+        if not isinstance(_days, dict):
+            continue
+        for _db in _days.values():
+            if isinstance(_db, dict):
+                model_day_tok_sum += int(_db.get("tokens") or 0)
     tot_tok = int(totals.get("tokens") or 0)
     tot_bill = int(totals.get("billable") or 0)
+    # by_day may be partial (pre-upgrade lifetime only) — never require day==totals
+    attribution_ok = True
+    if model_tok_sum > 0 and tot_tok > 0 and abs(model_tok_sum - tot_tok) > 1:
+        attribution_ok = False
+    if family_tok_sum > 0 and tot_tok > 0 and abs(family_tok_sum - tot_tok) > 1:
+        attribution_ok = False
+    if day_tok_sum > 0 and model_day_tok_sum > 0 and abs(day_tok_sum - model_day_tok_sum) > 1:
+        attribution_ok = False
+    if day_tok_sum > 0 and tot_tok > 0 and day_tok_sum > tot_tok + 1:
+        attribution_ok = False
     panel["summary"] = {
         "tokens": tot_tok if tot_tok > 0 else int(live.get("tokens_used") or 0),
         "billable": tot_bill,
@@ -2194,11 +2220,11 @@ async def cost_panel(
         "ledger_source": panel.get("ledger_source"),
         "model_tokens_sum": model_tok_sum,
         "model_billable_sum": model_bill_sum,
-        "attribution_ok": (
-            model_tok_sum == 0
-            or abs(model_tok_sum - tot_tok) <= 1
-            or tot_tok == 0
-        ),
+        "family_tokens_sum": family_tok_sum,
+        "day_tokens_sum": day_tok_sum,
+        "model_day_tokens_sum": model_day_tok_sum,
+        "has_by_model_day": bool(panel.get("by_model_day")),
+        "attribution_ok": attribution_ok,
     }
     return panel
 

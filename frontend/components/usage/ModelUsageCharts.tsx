@@ -82,6 +82,11 @@ function heatColor(t: number, max: number): string {
   return 'var(--status-online, #2f8f6e)';
 }
 
+/** SVG id-safe fragment (model keys contain `/`). */
+function safeDomId(s: string): string {
+  return s.replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
 export function ModelUsageCharts({
   modelKey,
   family,
@@ -111,6 +116,7 @@ export function ModelUsageCharts({
     y: number;
     b: DayBucket;
   } | null>(null);
+  const gradId = `ug-${safeDomId(modelKey)}`;
 
   const series = useMemo(() => {
     const today = new Date();
@@ -328,12 +334,12 @@ export function ModelUsageCharts({
               aria-label="usage line chart"
             >
               <defs>
-                <linearGradient id={`ug-${modelKey}`} x1="0" y1="0" x2="0" y2="1">
+                <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="var(--status-online, #3a9a7a)" stopOpacity="0.35" />
                   <stop offset="100%" stopColor="var(--status-online, #3a9a7a)" stopOpacity="0.02" />
                 </linearGradient>
               </defs>
-              <path d={areaD} fill={`url(#ug-${modelKey})`} />
+              <path d={areaD} fill={`url(#${gradId})`} />
               <path
                 d={pathD}
                 fill="none"
@@ -342,17 +348,41 @@ export function ModelUsageCharts({
                 strokeLinejoin="round"
                 strokeLinecap="round"
               />
-              {pts
-                .filter((_, i) => i === 0 || i === pts.length - 1 || pts.length < 14)
-                .map((p) => (
+              {/* Invisible hit targets + visible dots for day tooltip */}
+              {pts.map((p) => (
+                <g key={p.day}>
                   <circle
-                    key={p.day}
                     cx={p.x}
                     cy={p.y}
-                    r={2.5}
+                    r={hover?.day === p.day ? 4 : p.tokens > 0 ? 2.5 : 0}
                     fill="var(--status-online, #3a9a7a)"
+                    style={{ pointerEvents: 'none' }}
                   />
-                ))}
+                  <circle
+                    cx={p.x}
+                    cy={p.y}
+                    r={8}
+                    fill="transparent"
+                    style={{ cursor: 'default' }}
+                    onMouseEnter={(e) => {
+                      const rect = (e.target as SVGCircleElement).getBoundingClientRect();
+                      setHover({
+                        day: p.day,
+                        x: rect.left + rect.width / 2,
+                        y: rect.top,
+                        b: {
+                          tokens: p.tokens,
+                          billable: p.billable,
+                          prompt: p.prompt,
+                          cache_read: p.cache_read,
+                          rounds: p.rounds,
+                        },
+                      });
+                    }}
+                    onMouseLeave={() => setHover(null)}
+                  />
+                </g>
+              ))}
               <text
                 x={pad.l}
                 y={H - 6}

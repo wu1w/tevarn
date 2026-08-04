@@ -195,10 +195,26 @@ def _load_unlocked() -> dict[str, Any]:
                     **data["totals"],
                     **(raw.get("totals") if isinstance(raw.get("totals"), dict) else {}),
                 }
-                for key in ("by_family", "by_model", "by_process"):
+                for key in ("by_family", "by_model", "by_process", "by_day", "by_model_day"):
                     v = raw.get(key)
                     if isinstance(v, dict):
                         data[key] = v
+                # Normalize nested day maps (drop non-dict day buckets)
+                if not isinstance(data.get("by_day"), dict):
+                    data["by_day"] = {}
+                bmd = data.get("by_model_day")
+                if not isinstance(bmd, dict):
+                    data["by_model_day"] = {}
+                else:
+                    cleaned: dict[str, Any] = {}
+                    for mk, days in bmd.items():
+                        if isinstance(days, dict):
+                            cleaned[str(mk)] = {
+                                str(d): bucket
+                                for d, bucket in days.items()
+                                if isinstance(bucket, dict)
+                            }
+                    data["by_model_day"] = cleaned
                 cache = raw.get("cache")
                 if isinstance(cache, dict):
                     ct = cache.get("totals") if isinstance(cache.get("totals"), dict) else {}
@@ -213,7 +229,7 @@ def _load_unlocked() -> dict[str, Any]:
                     if isinstance(cache.get("models"), dict):
                         data["cache"]["models"] = cache["models"]
                 data["updated_at"] = float(raw.get("updated_at") or 0)
-                data["version"] = int(raw.get("version") or 2)
+                data["version"] = int(raw.get("version") or 3)
     except Exception as e:
         logger.warning("usage_ledger load failed (%s): %s", path, e)
         data = _empty()
@@ -226,7 +242,12 @@ def _save_unlocked(data: dict[str, Any]) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         data["updated_at"] = time.time()
-        data["version"] = 2
+        data["version"] = 3
+        # Ensure day maps always persist (even when empty) so reload keeps schema
+        if not isinstance(data.get("by_day"), dict):
+            data["by_day"] = {}
+        if not isinstance(data.get("by_model_day"), dict):
+            data["by_model_day"] = {}
         tmp = path.with_suffix(".json.tmp")
         tmp.write_text(
             json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True),
