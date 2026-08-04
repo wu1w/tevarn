@@ -546,6 +546,10 @@ class Settings(BaseSettings):
     agent_disable_clarify_on_direct: bool = True
     # 连续相同工具指纹轮次 → force_final（禁止再工具）
     agent_tool_thrash_force_final: int = 2
+    # 连续「编制主导 / result_load 主导」轮次 → force_final（参数不同也会收）
+    agent_orch_thrash_force_final: int = 3
+    # 单轮最多执行的编制类工具（crew_steward/delegate/agent_call…），多余跳过
+    agent_max_orch_tools_per_round: int = 2
     # 编制回调写入 CEO 会话的正文上限
     agent_rollup_max_block_chars: int = 500
     agent_rollup_max_prompt_chars: int = 2400

@@ -5,7 +5,11 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from backend.agent.decisive import (
+    family_bucket,
     is_tool_thrash,
+    orchestration_cap_results,
+    thrash_fingerprint,
+    thrash_force_final_text,
     tool_round_fingerprint,
 )
 from backend.agent.direct_intent import (
@@ -60,3 +64,45 @@ def test_is_tool_thrash():
     assert is_tool_thrash("abc", "abc", thrash_streak=1, force_after=2)
     assert not is_tool_thrash("abc", "abc", thrash_streak=0, force_after=2)
     assert not is_tool_thrash("abc", "def", thrash_streak=5, force_after=2)
+
+
+def test_family_bucket_orch_and_result_load():
+    crews = [
+        SimpleNamespace(name="crew_steward", id=f"c{i}", arguments={"name": f"e{i}"})
+        for i in range(7)
+    ]
+    one_read = SimpleNamespace(name="file_read", id="r1", arguments={"path": "a.py"})
+    assert family_bucket(crews + [one_read]) == "orch_heavy"
+    rls = [
+        SimpleNamespace(name="result_load", id=f"l{i}", arguments={"id": f"x{i}"})
+        for i in range(3)
+    ]
+    assert family_bucket(rls) == "result_load_heavy"
+    assert family_bucket([one_read]) == ""
+
+
+def test_thrash_fingerprint_collapses_orch_heavy():
+    a = [
+        SimpleNamespace(name="crew_steward", id="1", arguments={"name": "alice"}),
+        SimpleNamespace(name="crew_steward", id="2", arguments={"name": "bob"}),
+        SimpleNamespace(name="file_read", id="3", arguments={"path": "a.py"}),
+    ]
+    b = [
+        SimpleNamespace(name="crew_steward", id="9", arguments={"name": "carol"}),
+        SimpleNamespace(name="crew_steward", id="8", arguments={"name": "dave"}),
+        SimpleNamespace(name="grep", id="7", arguments={"pattern": "x"}),
+    ]
+    assert thrash_fingerprint(a) == thrash_fingerprint(b) == "fam:orch_heavy"
+    assert thrash_force_final_text(family="fam:orch_heavy").startswith("【强制收束")
+
+
+def test_orchestration_cap_results_keeps_first_n():
+    calls = [
+        SimpleNamespace(name="crew_steward", id=f"c{i}", arguments={"name": f"e{i}"})
+        for i in range(5)
+    ] + [SimpleNamespace(name="file_read", id="r1", arguments={"path": "a.py"})]
+    capped = orchestration_cap_results(calls, max_orch=2)
+    assert set(capped.keys()) == {"c2", "c3", "c4"}
+    assert "c0" not in capped and "c1" not in capped
+    assert "r1" not in capped
+    assert "[Orchestration cap]" in capped["c2"]

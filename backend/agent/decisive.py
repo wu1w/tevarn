@@ -115,6 +115,86 @@ def batch_read_nudge_text(*, consecutive_timid: int = 1) -> str:
     return base
 
 
+# 编制/派活：实测易出现「一轮 7–10 个 crew_steward」空转扇出
+_ORCHESTRATION_TOOLS = frozenset(
+    {
+        "crew_steward",
+        "delegate_task",
+        "agent_call",
+        "manage_sub_agent",
+    }
+)
+
+
+def is_orchestration_tool(name: str | None) -> bool:
+    return str(name or "").strip() in _ORCHESTRATION_TOOLS
+
+
+def family_bucket(tool_calls: Iterable[Any] | None) -> str:
+    """Collapse thrashy orchestration / result_load-heavy rounds into a stable bucket.
+
+    Exact arg fingerprints miss real-world loops: many crew_steward with *different*
+    employee names still make zero product progress. Bucket ≥50% of calls.
+    """
+    names = tool_names_from_calls(tool_calls)
+    if not names:
+        return ""
+    n = len(names)
+    orch = sum(1 for x in names if is_orchestration_tool(x))
+    rl = sum(1 for x in names if x == "result_load")
+    if orch * 2 >= n:  # ≥50%
+        return "orch_heavy"
+    if rl * 2 >= n:
+        return "result_load_heavy"
+    return ""
+
+
+def thrash_fingerprint(
+    tool_calls: Iterable[Any] | None,
+    *,
+    use_family_bucket: bool = True,
+) -> str:
+    """Fingerprint for thrash guard; may be fam:* for soft orchestration loops."""
+    if use_family_bucket:
+        fam = family_bucket(tool_calls)
+        if fam:
+            return f"fam:{fam}"
+    return tool_round_fingerprint(tool_calls)
+
+
+def orchestration_cap_results(
+    tool_calls: list[Any] | None,
+    *,
+    max_orch: int = 2,
+) -> dict[str, str]:
+    """Map tool_call_id → synthetic result for orchestration calls beyond max_orch.
+
+    Call list is **not** truncated: every tool_call_id still needs a tool message
+    for the next LLM round. Excess crew/delegate calls skip real execute.
+    """
+    max_orch = max(0, int(max_orch))
+    out: dict[str, str] = {}
+    if max_orch <= 0:
+        return out
+    orch_seen = 0
+    for tc in tool_calls or []:
+        name = getattr(tc, "name", None)
+        if name is None and isinstance(tc, dict):
+            name = (tc.get("function") or {}).get("name") or tc.get("name")
+        cid = str(getattr(tc, "id", None) or (tc.get("id") if isinstance(tc, dict) else "") or "")
+        if not cid or not is_orchestration_tool(str(name or "")):
+            continue
+        if orch_seen < max_orch:
+            orch_seen += 1
+            continue
+        out[cid] = (
+            f"[Orchestration cap] 本轮 {name} 已达上限 {max_orch}，"
+            "已跳过多余编制调用。请先消化已派工单/result_load 结果，"
+            "用中文推进实质工作（读写文件/命令/目标），勿再批量空派。"
+        )
+    return out
+
+
 def tool_round_fingerprint(tool_calls: Iterable[Any] | None) -> str:
     """Stable fingerprint for a tool round (detect thrash / no-progress loops)."""
     parts: list[str] = []
@@ -138,6 +218,9 @@ def tool_round_fingerprint(tool_calls: Iterable[Any] | None) -> str:
             "name",
             "glob",
             "url",
+            "result_id",
+            "id",
+            "key",
         ):
             if k in args and args[k] is not None:
                 slim[k] = str(args[k])[:200]
@@ -167,7 +250,18 @@ def is_tool_thrash(
     return int(thrash_streak) + 1 >= max(1, int(force_after))
 
 
-def thrash_force_final_text() -> str:
+def thrash_force_final_text(*, family: str = "") -> str:
+    if family == "orch_heavy" or family.startswith("fam:orch"):
+        return (
+            "【强制收束·编制空转】你已连续多轮以 crew_steward/delegate 为主，"
+            "信息增益很低。下一轮**禁止**再调工具：直接汇总已有工单/结果给主人"
+            "（做了什么 / 卡点 / 下一步）。不要再批量派工或重复 result_load。"
+        )
+    if family == "result_load_heavy" or family.startswith("fam:result_load"):
+        return (
+            "【强制收束·结果回读空转】你已连续多轮反复 result_load。"
+            "下一轮**禁止**再调工具：用已读内容直接写结论；缺什么明确列出，不要再转圈回读。"
+        )
     return (
         "【强制收束】你已连续多轮调用**相同工具/相同参数**，信息增益为零。"
         "下一轮**禁止**再调工具：直接用已有结果给主人完整中文结论"

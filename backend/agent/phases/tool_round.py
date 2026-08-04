@@ -197,6 +197,25 @@ async def run_tool_round(
     _rc = getattr(loop, "_run_recorder", None)
     messages = state.messages
 
+    # 编制扇出上限：实测一轮 7–10 个 crew_steward 空转；超出合成结果，仍回 tool 消息。
+    _capped_results: dict[str, str] = {}
+    try:
+        from backend.agent.decisive import orchestration_cap_results
+
+        _max_orch = int(getattr(settings, "agent_max_orch_tools_per_round", 2) or 2)
+        _capped_results = orchestration_cap_results(
+            tool_calls, max_orch=_max_orch
+        )
+        if _capped_results:
+            logger.warning(
+                "orchestration cap: skipped %s crew/delegate calls (max=%s) session=%s",
+                len(_capped_results),
+                _max_orch,
+                session_id,
+            )
+    except Exception as _cap_e:
+        logger.debug("orchestration cap skipped: %s", _cap_e)
+
     # T1：本轮只读工具先并发跑完，结果按 tool_call_id 缓存。
     # 下面的串行主体一行不动地照常走（WS 事件 / 持久化 / messages 顺序全部不变），
     # 只是执行那一步改为取预取结果 —— 把并行的风险面压到最小。
@@ -259,10 +278,14 @@ async def run_tool_round(
             from backend.tools.registry import ToolRegistry as UnifiedToolRegistry
 
             tool = UnifiedToolRegistry.get(tc.name)
+            # 编制 cap：不进真实执行
+            if str(getattr(tc, "id", "") or "") in _capped_results:
+                tool_result = _capped_results[str(tc.id)]
+                query = ""
             # T1：只读工具已在本轮开始时并发跑完，这里直接取结果；
             # 异常原样重抛，交给下面既有的 TimeoutError / Exception 处理分支，
             # 保证并行与串行的失败语义完全一致。
-            if tc.id in prefetched:
+            elif tc.id in prefetched:
                 _res, _exc = prefetched.pop(tc.id)
                 if _exc is not None:
                     raise _exc
@@ -631,7 +654,19 @@ async def run_tool_round(
             else:
                 logger.warning(f"Failed to persist tool result message: {e}")
 
-        logger.info(f"Skill {tc.name} executed, result length: {len(tool_result)}")
+        _tr_s = str(tool_result or "")
+        if _tr_s.startswith(("[Hook Blocked]", "[permission deny]", "[Orchestration cap]")):
+            logger.info(
+                "Skill %s blocked/capped, result length: %s",
+                tc.name,
+                len(_tr_s),
+            )
+        else:
+            logger.info(
+                "Skill %s executed, result length: %s",
+                tc.name,
+                len(_tr_s),
+            )
 
     # 有 tool 后必须继续下一轮 LLM，不能当最终回复
     logger.info(
@@ -713,25 +748,45 @@ async def run_tool_round(
         logger.debug("decisive nudge skipped: %s", _dec_e)
 
     # 工具空转：连续相同指纹 → 强制收束（禁止再工具）
+    # 编制/result_load 主导轮用 family 指纹（参数不同也会收），阈值略宽以免误杀
     try:
-        from backend.agent.decisive import thrash_force_final_text, tool_round_fingerprint
+        from backend.agent.decisive import (
+            family_bucket,
+            thrash_fingerprint,
+            thrash_force_final_text,
+        )
 
-        fp = tool_round_fingerprint(tool_calls)
-        force_after = max(1, int(getattr(settings, "agent_tool_thrash_force_final", 2) or 2))
+        fam = family_bucket(tool_calls)
+        fp = thrash_fingerprint(tool_calls, use_family_bucket=True)
+        if fam:
+            force_after = max(
+                2,
+                int(getattr(settings, "agent_orch_thrash_force_final", 3) or 3),
+            )
+        else:
+            force_after = max(
+                1, int(getattr(settings, "agent_tool_thrash_force_final", 2) or 2)
+            )
         prev_fp = (state.last_tool_fingerprint or "").strip()
         if prev_fp and fp == prev_fp:
             state.thrash_streak = int(state.thrash_streak or 0) + 1
         else:
             state.thrash_streak = 0
         state.last_tool_fingerprint = fp
-        # force_after=2 → 第 2 次撞上相同指纹（连续两轮相同）即收束
+        # force_after=2 → streak>=1 即第 2 轮相同；force_after=3 → streak>=2 即第 3 轮
         if prev_fp and fp == prev_fp and state.thrash_streak >= max(1, force_after - 1):
             state.force_final_no_tools = True
-            messages.append({"role": "system", "content": thrash_force_final_text()})
+            messages.append(
+                {
+                    "role": "system",
+                    "content": thrash_force_final_text(family=fp if fam else ""),
+                }
+            )
             logger.warning(
-                "tool thrash force_final fp=%s streak=%s session=%s",
+                "tool thrash force_final fp=%s streak=%s fam=%s session=%s",
                 fp,
                 state.thrash_streak,
+                fam or "-",
                 session_id,
             )
     except Exception as _th_e:
