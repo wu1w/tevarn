@@ -22,20 +22,34 @@ __pycache__/
 .env.*
 !.env.example
 
-# Node / frontend build junk (keep backend/static for install)
+# Node / frontend build junk
+# backend/static 由 `python -m backend.build_frontend` 从最新 frontend 导出生成并入库（安装态单进程托管）
 node_modules/
 frontend/node_modules/
 frontend/.next/
 frontend/out/
+frontend/dist/
 frontend/release/
 frontend/.asar-stage/
 frontend/e2e/screenshots/
 frontend/e2e/test-results/
 frontend/test-results/
+e2e/report/
+e2e/test-results/
 *.tsbuildinfo
 frontend/next-env.d.ts
 _run_dev_backend.py
 frontend/playwright-report/
+# 历史补丁/根目录垃圾（勿再提交）
+scripts/archive/
+# 本地诊断脚本与 redesign 草稿（仅仓库根目录）
+/_diag_*/
+/_chat_composer_redesign*/
+/_check_*.py
+/_verify_*.py
+/_tmp*/
+/_*.txt
+/_*.py
 **/win-unpacked/
 **/*.asar
 win-python/

@@ -465,6 +465,7 @@ export interface MCPServerFormData {
 // ====== WebSocket 消息类型 ======
 
 export type WSMessageType =
+  | 'slash_result'
   | 'stream_delta'
   | 'status'
   | 'memory_updated'

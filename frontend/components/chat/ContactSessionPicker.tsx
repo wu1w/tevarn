@@ -152,10 +152,11 @@ export function ContactSessionPicker({
 
   useEffect(() => {
     if (!open) return;
-    const onDoc = (e: MouseEvent) => {
+    // document 监听必须用 DOM 原生事件类型，不能用 React.MouseEvent
+    const onDoc = (e: globalThis.MouseEvent) => {
       if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false);
     };
     document.addEventListener('mousedown', onDoc);
@@ -167,7 +168,7 @@ export function ContactSessionPicker({
   }, [open]);
 
   const handleDelete = useCallback(
-    async (e: MouseEvent, sessionId: string) => {
+    async (e: MouseEvent<HTMLButtonElement>, sessionId: string) => {
       e.preventDefault();
       e.stopPropagation();
       if (!sessionId || deletingId) return;
