@@ -2,10 +2,26 @@
 Project Nexus - FastAPI 应用入口
 """
 
+# Windows：必须在创建事件循环前切到 Selector。Proactor + aiohttp 多路 SSE
+# + stdio MCP/子进程 在 3.14 上会无栈硬退（日志停在 codex oauth 中途）。
+import sys
+
+if sys.platform == "win32":
+    import asyncio as _asyncio_boot
+
+    try:
+        _asyncio_boot.set_event_loop_policy(
+            _asyncio_boot.WindowsSelectorEventLoopPolicy()
+        )
+    except Exception:
+        pass
+
 import asyncio
+import faulthandler
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI
@@ -31,6 +47,21 @@ from backend.skills.builtins import *  # noqa: F401 自动注册内置 Skill
 # 使用结构化日志系统替代 basicConfig
 setup_logging()
 logger = logging.getLogger(__name__)
+
+# 原生崩溃时写栈到 logs/faulthandler.log（硬退后可定位）
+try:
+    _fh_dir = Path(__file__).resolve().parents[1] / "logs"
+    _fh_dir.mkdir(parents=True, exist_ok=True)
+    _fh_path = _fh_dir / "faulthandler.log"
+    _fh_fp = open(_fh_path, "a", encoding="utf-8")  # noqa: SIM115 — 进程级常驻
+    faulthandler.enable(file=_fh_fp, all_threads=True)
+    logger.info("faulthandler enabled → %s", _fh_path)
+except Exception as _fh_e:
+    try:
+        faulthandler.enable()
+    except Exception:
+        pass
+    logger.debug("faulthandler setup skip: %s", _fh_e)
 
 # lifespan 后台任务句柄（shutdown 时取消，避免测试/热重载环关闭时报错）
 _bg_tasks: set[asyncio.Task] = set()

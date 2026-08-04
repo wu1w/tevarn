@@ -24,6 +24,7 @@ ChatGPT Codex **不是** 完整 Platform Responses API。硬约束：
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -37,6 +38,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/llm-proxy/openai-codex", tags=["openai-codex-proxy"])
 
 UPSTREAM = "https://chatgpt.com/backend-api/codex"
+
+# 多会话 / crew 子代理并发打 Codex SSE 时，Windows+aiohttp 曾出现进程无栈退出。
+# 串行化上游流式连接（牺牲吞吐换稳定性）；同进程内其它供应商不受影响。
+_codex_upstream_sem: asyncio.Semaphore | None = None
+_CODEX_MAX_CONCURRENT = 1
+
+
+def _codex_sem() -> asyncio.Semaphore:
+    global _codex_upstream_sem
+    if _codex_upstream_sem is None:
+        _codex_upstream_sem = asyncio.Semaphore(_CODEX_MAX_CONCURRENT)
+    return _codex_upstream_sem
 
 # ChatGPT Codex Responses 白名单（allowlist，勿透传 chat.completions 杂字段）
 _CODEX_BODY_ALLOW = frozenset(
@@ -1076,37 +1089,60 @@ async def chat_completions(request: Request):
             "usage": _map_responses_usage(usage) if usage else {},
         }
 
+    def _codex_session_kwargs() -> dict[str, Any]:
+        """Avoid connection reuse across concurrent Codex streams (Windows crash class)."""
+        kw: dict[str, Any] = {}
+        try:
+            from backend.core.outbound_http import proxy_is_socks, resolve_proxy_url
+
+            if not proxy_is_socks(resolve_proxy_url()):
+                kw["connector"] = aiohttp.TCPConnector(
+                    force_close=True,
+                    enable_cleanup_closed=True,
+                    limit=4,
+                    ttl_dns_cache=60,
+                )
+        except Exception:
+            pass
+        return kw
+
     if not client_wants_stream:
         # 上游仍用 stream=true 收集完整输出（Codex 对 stream:false 不友好）
         try:
-            async with outbound_session(timeout=timeout) as (session, proxy):
-                for attempt in range(2):
-                    async with session.post(
-                        url, headers=headers, json=payload, proxy=proxy
-                    ) as resp:
-                        if resp.status >= 400:
-                            err = await resp.text()
-                            logger.warning(
-                                "codex oauth upstream %s: %s", resp.status, err[:400]
-                            )
-                            # 仅 401 值得 refresh；403 多为权限/账号问题，刷 token 无益
-                            if resp.status == 401 and attempt == 0:
-                                new_tok = await _try_refresh_codex_bearer(token)
-                                if new_tok:
-                                    headers["Authorization"] = f"Bearer {new_tok}"
-                                    token = new_tok
-                                    continue
-                            return JSONResponse(
-                                {
-                                    "error": {
-                                        "message": err[:800],
-                                        "type": "upstream_error",
-                                        "status": resp.status,
-                                    }
-                                },
-                                status_code=resp.status,
-                            )
-                        return await _consume_sse_to_completion(resp)
+            async with _codex_sem():
+                logger.debug("codex upstream lock acquired (non-stream)")
+                async with outbound_session(
+                    timeout=timeout, **_codex_session_kwargs()
+                ) as (session, proxy):
+                    for attempt in range(2):
+                        async with session.post(
+                            url, headers=headers, json=payload, proxy=proxy
+                        ) as resp:
+                            if resp.status >= 400:
+                                err = await resp.text()
+                                logger.warning(
+                                    "codex oauth upstream %s: %s",
+                                    resp.status,
+                                    err[:400],
+                                )
+                                # 仅 401 值得 refresh；403 多为权限/账号问题
+                                if resp.status == 401 and attempt == 0:
+                                    new_tok = await _try_refresh_codex_bearer(token)
+                                    if new_tok:
+                                        headers["Authorization"] = f"Bearer {new_tok}"
+                                        token = new_tok
+                                        continue
+                                return JSONResponse(
+                                    {
+                                        "error": {
+                                            "message": err[:800],
+                                            "type": "upstream_error",
+                                            "status": resp.status,
+                                        }
+                                    },
+                                    status_code=resp.status,
+                                )
+                            return await _consume_sse_to_completion(resp)
         except Exception as e:
             logger.warning("openai-codex proxy failed: %s", e)
             return JSONResponse(
@@ -1117,74 +1153,80 @@ async def chat_completions(request: Request):
     async def _gen():
         conv = _CodexStreamToChat(model)
         try:
-            async with outbound_session(timeout=timeout) as (session, proxy):
-                for attempt in range(2):
-                    async with session.post(
-                        url, headers=headers, json=payload, proxy=proxy
-                    ) as resp:
-                        if resp.status >= 400:
-                            err = await resp.text()
-                            logger.warning(
-                                "codex oauth stream upstream %s: %s",
-                                resp.status,
-                                err[:400],
-                            )
-                            if resp.status == 401 and attempt == 0:
-                                new_tok = await _try_refresh_codex_bearer(token)
-                                if new_tok:
-                                    headers["Authorization"] = f"Bearer {new_tok}"
-                                    token = new_tok
-                                    continue
-                            # finish_reason=error：避免 agent 把鉴权失败当正常完成
-                            yield _sse_chat_chunk(
-                                model=model,
-                                content=(
-                                    f"[Codex OAuth error {resp.status}] {err[:400]}"
-                                ),
-                                finish_reason="error",
-                                chunk_id="codex-err",
-                            )
-                            yield "data: [DONE]\n\n"
-                            return
-                        buf = ""
-                        stream_closed = False
-                        async for raw in resp.content:
-                            buf, data_lines = _iter_sse_data_lines(
-                                buf,
-                                raw if isinstance(raw, (bytes, bytearray)) else bytes(raw),
-                            )
-                            done = False
-                            for data_s in data_lines:
-                                if data_s == "[DONE]":
-                                    for part in conv.close():
-                                        yield part
-                                    done = True
-                                    stream_closed = True
-                                    break
-                                try:
-                                    ev = json.loads(data_s)
-                                except Exception:
-                                    continue
-                                if not isinstance(ev, dict):
-                                    continue
-                                for part in conv.feed(ev):
-                                    yield part
-                            if done:
-                                break
-                        if not stream_closed:
-                            for data_s in _flush_sse_data_buffer(buf):
-                                if data_s == "[DONE]":
-                                    break
-                                try:
-                                    ev = json.loads(data_s)
-                                except Exception:
-                                    continue
-                                if isinstance(ev, dict):
+            async with _codex_sem():
+                logger.debug("codex upstream lock acquired (stream)")
+                async with outbound_session(
+                    timeout=timeout, **_codex_session_kwargs()
+                ) as (session, proxy):
+                    for attempt in range(2):
+                        async with session.post(
+                            url, headers=headers, json=payload, proxy=proxy
+                        ) as resp:
+                            if resp.status >= 400:
+                                err = await resp.text()
+                                logger.warning(
+                                    "codex oauth stream upstream %s: %s",
+                                    resp.status,
+                                    err[:400],
+                                )
+                                if resp.status == 401 and attempt == 0:
+                                    new_tok = await _try_refresh_codex_bearer(token)
+                                    if new_tok:
+                                        headers["Authorization"] = f"Bearer {new_tok}"
+                                        token = new_tok
+                                        continue
+                                # finish_reason=error：避免 agent 把鉴权失败当正常完成
+                                yield _sse_chat_chunk(
+                                    model=model,
+                                    content=(
+                                        f"[Codex OAuth error {resp.status}] {err[:400]}"
+                                    ),
+                                    finish_reason="error",
+                                    chunk_id="codex-err",
+                                )
+                                yield "data: [DONE]\n\n"
+                                return
+                            buf = ""
+                            stream_closed = False
+                            async for raw in resp.content:
+                                buf, data_lines = _iter_sse_data_lines(
+                                    buf,
+                                    raw
+                                    if isinstance(raw, (bytes, bytearray))
+                                    else bytes(raw),
+                                )
+                                done = False
+                                for data_s in data_lines:
+                                    if data_s == "[DONE]":
+                                        for part in conv.close():
+                                            yield part
+                                        done = True
+                                        stream_closed = True
+                                        break
+                                    try:
+                                        ev = json.loads(data_s)
+                                    except Exception:
+                                        continue
+                                    if not isinstance(ev, dict):
+                                        continue
                                     for part in conv.feed(ev):
                                         yield part
-                            for part in conv.close():
-                                yield part
-                        return
+                                if done:
+                                    break
+                            if not stream_closed:
+                                for data_s in _flush_sse_data_buffer(buf):
+                                    if data_s == "[DONE]":
+                                        break
+                                    try:
+                                        ev = json.loads(data_s)
+                                    except Exception:
+                                        continue
+                                    if isinstance(ev, dict):
+                                        for part in conv.feed(ev):
+                                            yield part
+                                for part in conv.close():
+                                    yield part
+                            return
         except Exception as e:
             logger.warning("openai-codex stream proxy failed: %s", e)
             yield _sse_chat_chunk(
