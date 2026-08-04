@@ -202,6 +202,9 @@ _PACK_KEYWORDS: dict[str, tuple[str, ...]] = {
         "定时",
         "webhook",
         "mcp",
+        "MCP",
+        "mcp 商店",
+        "MCP商店",
         "配置 takton",
         "configure",
         "频道",
@@ -218,10 +221,21 @@ _PACK_KEYWORDS: dict[str, tuple[str, ...]] = {
         "evo_",
         "自主进化",
         "curator",
+        "skill",
+        "技能",
+        "生成skill",
+        "创建skill",
+        "注册skill",
+        "manage_skill",
+        "写一个skill",
+        "skill 注册",
     ),
     "office": (
         "ppt",
+        "PPT",
         "幻灯片",
+        "幻灯",
+        "周报",
         "报告",
         "docx",
         "表格图",
@@ -231,6 +245,8 @@ _PACK_KEYWORDS: dict[str, tuple[str, ...]] = {
         "calendar",
         "生成图片",
         "image",
+        "pptx",
+        "大纲",
     ),
     "devices": (
         "远程",
@@ -271,7 +287,20 @@ _PACK_KEYWORDS: dict[str, tuple[str, ...]] = {
         "git ",
         "commit",
     ),
-    "goal": ("长期任务", "拆解目标", "autopilot", "里程碑"),
+    "goal": (
+        "长期任务",
+        "拆解目标",
+        "autopilot",
+        "里程碑",
+        "目标",
+        "OKR",
+        "okr",
+        "O-KR",
+        "KR",
+        "key result",
+        "objective",
+        "经营目标",
+    ),
     "crew": (
         "派活",
         "派给",
@@ -491,6 +520,24 @@ def resolve_enabled_tool_names(
     prof = (profile or "dynamic").strip().lower()
     plan = scene or infer_scene(user_input, mode=mode, profile=prof)
 
+    # 专业模式已绑定项目目录 → 默认带 coding pack，减少 use_tool_pack 空转
+    try:
+        from backend.workspace.service import get_any_root
+
+        bound = get_any_root() is not None
+        if not bound:
+            try:
+                from backend.core.config import settings as _s
+                fb = str(getattr(_s, "file_browser_root", "") or "").strip()
+                bound = bool(fb) and fb not in (".", "workspace", "")
+            except Exception:
+                bound = False
+        if bound and "coding" not in plan.packs and "*" not in plan.packs:
+            plan.packs = list(plan.packs) + ["coding"]
+            plan.reasons = list(plan.reasons) + ["workspace_bound"]
+    except Exception:
+        pass
+
     if wants_full_tools(raw_tools, profile=prof) or "*" in plan.packs or "full" in plan.packs:
         plan.profile = "full"
         plan.injection_tier = "rich"
@@ -557,6 +604,10 @@ def compact_capability_brief(
     lines = [
         "Tool discipline: use tools for facts/files/shell/live data "
         f"(this turn: {n}). Never claim a missing capability before trying the matching tool.",
+        "Coding: read → edit/apply_patch/file_write → command/python verify. "
+        "Prefer one coherent multi-hunk apply_patch or full file_write over many tiny edits. "
+        "Never invent 'command unavailable' — command/python are on the list when coding. "
+        "After fix/build, run tests before claiming done. If a patch returns mismatch/error, re-read and re-patch.",
     ]
     if scene and scene.profile != "full":
         lines.append(

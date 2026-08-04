@@ -616,6 +616,21 @@ class ApplyPatchTool(BaseTool):
                 indices = list(range(len(hunks)))
             indices = [int(i) for i in indices]
             new_text, errs = apply_selected_hunks(original, hunks, indices)
+            hard = [e for e in errs if "mismatch" in e or "overlap" in e or "bad hunk" in e]
+            if hard and new_text == original:
+                return (
+                    f"[Error] patch not applied → {fp}\n"
+                    + "\n".join(errs)
+                    + "\nRe-file_read the file and re-issue a correct patch."
+                )
+            if hard and new_text != original:
+                # 部分成功：仍写入，但明确失败 hunk，避免模型以为全绿
+                path.write_text(new_text, encoding="utf-8")
+                return (
+                    f"[Partial] applied with errors → {fp}\n"
+                    + "\n".join(errs)
+                    + "\nfile_read and fix remaining hunks before claiming done."
+                )
             path.write_text(new_text, encoding="utf-8")
             msg = f"OK applied {len(indices)}/{len(hunks)} hunks → {fp}"
             if errs:
@@ -736,6 +751,7 @@ class UseToolPackTool(BaseTool):
                 "动态启用额外工具包。当当前工具列表缺少桌面/管理/进化/办公等能力时调用。"
                 "action=list 查看可用 pack；action=enable 并传入 packs 数组以加载。"
                 "常用 pack: desktop, manage, evolution, office, devices, github, data, goal, cluster, web, coding。"
+                "映射提示：OKR/经营目标→goal；注册/生成 skill→evolution；PPT/报告→office；MCP→manage；派工/雇佣→crew。"
                 "packs=['full'] 启用全部工具（慎用，降低智力密度）。"
             ),
             parameters={

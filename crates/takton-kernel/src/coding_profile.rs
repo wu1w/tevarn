@@ -42,6 +42,9 @@ impl CodingProfile {
                 // Goals (CEO / steward)
                 "okr_goal".into(),
                 "manage_goal".into(),
+                // Skills / MCP management (product spine)
+                "manage_skill".into(),
+                "manage_mcp".into(),
             ],
             capabilities: vec![
                 "file_read".into(),
@@ -56,6 +59,8 @@ impl CodingProfile {
                 "current_time".into(),
                 "okr_goal".into(),
                 "manage_goal".into(),
+                "manage_skill".into(),
+                "manage_mcp".into(),
             ],
             isolation: IsolationProfile::Interactive.as_str().into(),
             token_budget: 200_000,

@@ -17,6 +17,9 @@ from backend.kernel.capability import CapabilityToken
 DEFAULT_GRANTABLE: frozenset[str] = frozenset({
     "file_read", "grep", "glob", "web_search", "web_extract",
     "session_search", "memory", "knowledge_search", "wiki_search",
+    # 与 Rust intent::DEFAULT_GRANTABLE 对齐（主会话编制/目标/技能）
+    "crew_steward", "clarify", "use_tool_pack", "current_time",
+    "okr_goal", "manage_goal", "autopilot", "manage_skill", "manage_mcp",
 })
 
 # 高危能力：需 constraints.allow_risky=True 显式接受

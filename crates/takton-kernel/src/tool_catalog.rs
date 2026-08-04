@@ -57,6 +57,9 @@ pub static TOOL_TO_CREW_CAP: &[(&str, &str)] = &[
     ("okr_goal", "okr_goal"),
     ("manage_goal", "manage_goal"),
     ("autopilot", "manage_goal"),
+    ("manage_skill", "manage_skill"),
+    ("manage_mcp", "manage_mcp"),
+    ("generate_ppt", "file_rw"),
 ];
 
 fn map() -> BTreeMap<&'static str, &'static str> {

@@ -42,7 +42,27 @@ async def bind_workspace(
     current_user: Annotated[UserRead, Depends(get_current_user)],
 ) -> dict[str, Any]:
     try:
-        root = ws.set_root(_uid(current_user), body.root)
+        uid = _uid(current_user)
+        root = ws.set_root(uid, body.root)
+        if uid != "default":
+            try:
+                ws.set_root("default", str(root))
+            except Exception:
+                pass
+        try:
+            from backend.repositories.setting_repo import AsyncSettingRepository
+            from backend.core.runtime_settings import apply_settings_dict
+            from backend.core.config import settings as _settings
+
+            repo = AsyncSettingRepository()
+            await repo.upsert("file_browser_root", str(root), "workspace")
+            apply_settings_dict({"file_browser_root": str(root)}, reset=False)
+            try:
+                _settings.file_browser_root = str(root)
+            except Exception:
+                pass
+        except Exception:
+            pass
     except FileNotFoundError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:

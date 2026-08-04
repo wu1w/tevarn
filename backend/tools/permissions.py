@@ -268,11 +268,13 @@ def resolve_agent_workspace_root(explicit: str | None = None) -> str:
         root.mkdir(parents=True, exist_ok=True)
         return str(root)
 
-    # 用户绑定的专业模式根目录
+    # 用户绑定的专业模式根目录（bind 使用真实 user_id，不可写死 default）
     try:
-        from backend.workspace.service import get_root
+        from backend.workspace.service import get_any_root, get_root
 
         bound = get_root("default")
+        if bound is None:
+            bound = get_any_root()
         if bound is not None:
             return str(bound)
     except Exception:

@@ -24,8 +24,11 @@ _KEY_MAP: dict[str, str] = {
     "llm_model": "llm_model",
     "llm_base_url": "llm_base_url",
     "llm_api_key": "llm_api_key",
+    # ChatGPT OAuth / Codex 订阅需要 Account-Id；此前未入 KEY_MAP 导致运行时永远为空 → 401
+    "openai_chatgpt_account_id": "openai_chatgpt_account_id",
     # catalog 激活供应商 id（用量 by_family 归因；此前缺失导致永远记成错误厂商）
     "llm_catalog_provider_id": "llm_catalog_provider_id",
+    "file_browser_root": "file_browser_root",
     "default_llm_model": "default_llm_model",
     "max_tokens": "default_max_tokens",
     "temperature": "llm_temperature",

@@ -51,6 +51,24 @@ def get_root(user_id: str) -> Path | None:
     return _ROOTS.get(str(user_id))
 
 
+def list_roots() -> dict[str, Path]:
+    """返回所有已绑定的 user_id → root。"""
+    _load_state()
+    return dict(_ROOTS)
+
+
+def get_any_root() -> Path | None:
+    """单用户/无明确 user 时：取任意一个已绑定根（优先 default）。"""
+    _load_state()
+    if "default" in _ROOTS:
+        return _ROOTS["default"]
+    if _ROOTS:
+        key = sorted(_ROOTS.keys())[0]
+        return _ROOTS[key]
+    return None
+
+
+
 def set_root(user_id: str, root: str) -> Path:
     _load_state()
     p = Path(root).expanduser().resolve()

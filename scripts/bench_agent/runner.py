@@ -192,6 +192,39 @@ async def run_task(
     return run
 
 
+
+
+_tools_loaded = False
+
+
+async def _ensure_tools_loaded() -> None:
+    """Bench process does not run FastAPI lifespan — load ToolRegistry like main.py."""
+    global _tools_loaded
+    if _tools_loaded:
+        return
+    from backend.tools.loader import load_all_tools
+    from backend.tools.registry import ToolRegistry
+
+    if not ToolRegistry.get_all():
+        await load_all_tools()
+    _tools_loaded = True
+
+
+async def _bench_user_id():
+    """Resolve a real user for bench sessions (NOT NULL FK)."""
+    from sqlalchemy import select
+    from backend.database import AsyncSessionLocal
+    from backend.models.user import User
+
+    async with AsyncSessionLocal() as db:
+        uid = (
+            await db.execute(select(User.id).order_by(User.created_at.asc()).limit(1))
+        ).scalar_one_or_none()
+    if uid is None:
+        raise RuntimeError("bench: no users in DB — cannot create session")
+    return uid
+
+
 async def _drive_agent(task: dict[str, Any], workspace: Path) -> tuple[str, int]:
     """真跑 agent loop，返回 (最终回复, 迭代轮数)。"""
     from backend.database import get_db_context  # noqa: F401  (确保 DB 初始化)
@@ -204,9 +237,14 @@ async def _drive_agent(task: dict[str, Any], workspace: Path) -> tuple[str, int]
     from backend.repositories.session_repo import AsyncSessionRepository
     from backend.repositories.task_repo import AsyncTaskRepository
 
+    # sessions.user_id 是 NOT NULL：bench 必须绑到真实用户，否则 create 直接 IntegrityError
+    # （此前 user_id=None 导致 0 轮 0 工具，假失败）。
+    await _ensure_tools_loaded()
+    user_id = await _bench_user_id()
+
     session_repo = AsyncSessionRepository()
     session = await session_repo.create(
-        {"user_id": None, "config": {"workspace_root": str(workspace)}}
+        {"user_id": user_id, "config": {"workspace_root": str(workspace)}}
     )
 
     agent = NexusAgentLoop(
@@ -216,7 +254,7 @@ async def _drive_agent(task: dict[str, Any], workspace: Path) -> tuple[str, int]
         ctx_item_repo=AsyncCtxItemRepository(),
         context_flow_repo=AsyncContextFlowRepository(),
         ws_manager=None,  # 无确认通道 → headless 兜底
-        user_id=None,
+        user_id=user_id,
     )
     budget = task.get("budget") or {}
     agent.max_iterations = int(budget.get("max_iterations", 25))

@@ -24,6 +24,12 @@ pub static DEFAULT_GRANTABLE: &[&str] = &[
     "clarify",
     "use_tool_pack",
     "current_time",
+    // Goals / skills (CEO & product spine; safe business ops, not shell)
+    "okr_goal",
+    "manage_goal",
+    "autopilot",
+    "manage_skill",
+    "manage_mcp",
 ];
 
 pub static RISKY_CAPABILITIES: &[&str] = &[
