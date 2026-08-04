@@ -133,11 +133,11 @@ export function ChatStatusStrip({
   }
 
   const chip =
-    'inline-flex h-5 max-w-[9rem] items-center gap-1 truncate rounded-md border border-border-subtle/80 bg-card-bg/60 px-1.5 text-[10px] text-foreground-dim hover:border-brand-cyan/30 hover:text-foreground-muted';
+    'num inline-flex h-5 max-w-[9rem] items-center gap-1 truncate rounded-[3px] border border-border-subtle bg-card-bg px-1.5 text-[10px] text-foreground-dim transition-colors duration-150 hover:border-brand-purple/40 hover:text-foreground-muted';
 
   return (
-    <div ref={rootRef} className="relative border-t border-border-subtle/60 bg-elevated-bg/20">
-      <div className="flex h-[22px] items-center gap-1.5 overflow-hidden px-2">
+    <div ref={rootRef} className="relative border-t border-border-subtle">
+      <div className="flex h-[24px] items-center gap-1.5 overflow-hidden px-3">
         {data ? (
           <button
             type="button"
@@ -146,12 +146,12 @@ export function ChatStatusStrip({
             onClick={() => setPop((p) => (p === 'health' ? null : 'health'))}
           >
             <span
-              className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+              className={`h-2 w-2 shrink-0 rounded-[1px] shadow-[1px_1px_0_var(--hard)] ${
                 unhealthy
                   ? data?.severity === 'error'
-                    ? 'bg-red-400'
-                    : 'bg-amber-400'
-                  : 'bg-emerald-400'
+                    ? 'bg-status-offline'
+                    : 'bg-[var(--sem-warn)]'
+                  : 'bg-status-online'
               }`}
             />
             {unhealthy
@@ -162,12 +162,7 @@ export function ChatStatusStrip({
 
         {showSandboxWarn ? (
           <span
-            className={
-              'inline-flex h-5 items-center gap-1 rounded-md border px-1.5 text-[10px] font-semibold ' +
-              // 浅色：深琥珀字 + 实边框，避免 amber-200 在白底不可见
-              'border-amber-700/55 bg-amber-500/18 text-amber-900 ' +
-              'dark:border-amber-400/45 dark:bg-amber-500/15 dark:text-amber-100'
-            }
+            className="inline-flex h-5 items-center gap-1 rounded-[3px] border border-[var(--sem-warn)]/50 bg-[var(--sem-warn)]/10 px-1.5 text-[10px] font-semibold text-[var(--sem-warn)]"
             title={String(
               data?.sandbox?.note ||
                 data?.sandbox?.label ||
@@ -175,7 +170,7 @@ export function ChatStatusStrip({
             )}
           >
             <span
-              className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-700 dark:bg-amber-300"
+              className="h-2 w-2 shrink-0 rounded-[1px] bg-[var(--sem-warn)] shadow-[1px_1px_0_var(--hard)]"
               aria-hidden
             />
             {zh ? '沙箱·限' : 'SBX'}
@@ -213,7 +208,7 @@ export function ChatStatusStrip({
           >
             {zh ? '记录' : 'Runs'} {runItems.length}
             {runLive ? (
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand-cyan" />
+              <span className="h-2 w-2 animate-pulse rounded-[1px] bg-brand-cyan" />
             ) : null}
           </button>
         ) : null}
@@ -226,7 +221,7 @@ export function ChatStatusStrip({
           >
             {zh ? '工单' : 'Jobs'} {jobItems.length}
             {jobLive ? (
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand-cyan" />
+              <span className="h-2 w-2 animate-pulse rounded-[1px] bg-brand-cyan" />
             ) : null}
           </button>
         ) : null}
@@ -274,7 +269,7 @@ export function ChatStatusStrip({
       ) : null}
 
       {pop === 'runs' && sessionId ? (
-        <div className="absolute bottom-full left-2 right-2 z-30 mb-1 max-h-64 overflow-auto rounded-lg border border-border-subtle bg-card-bg p-2 shadow-lg [&_[style*='margin']]:m-0">
+        <div className="absolute bottom-full left-2 right-2 z-30 mb-1 max-h-64 overflow-auto rounded-md border border-border-default bg-elevated-bg p-2 shadow-[var(--hard-shadow)] [&_[style*='margin']]:m-0">
           <SessionRunsPanel
             sessionId={sessionId}
             compact
@@ -284,7 +279,7 @@ export function ChatStatusStrip({
         </div>
       ) : null}
       {pop === 'jobs' && sessionId ? (
-        <div className="absolute bottom-full left-2 right-2 z-30 mb-1 max-h-72 overflow-auto rounded-lg border border-border-subtle bg-card-bg p-2 shadow-lg">
+        <div className="absolute bottom-full left-2 right-2 z-30 mb-1 max-h-72 overflow-auto rounded-md border border-border-default bg-elevated-bg p-2 shadow-[var(--hard-shadow)]">
           <SessionJobsPanel
             sessionId={sessionId}
             compact

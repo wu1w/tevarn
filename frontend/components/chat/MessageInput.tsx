@@ -619,9 +619,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   return (
     <div
       ref={composerRootRef}
-      className={`chat-composer relative z-30 flex-shrink-0 border-t border-border-subtle bg-[var(--glass-bg,var(--card-bg))] backdrop-blur-xl ${
-        composerDragging ? 'ring-2 ring-inset ring-brand-purple/40' : ''
-      }`}
+      className="chat-composer relative z-30 flex-shrink-0 px-4 pb-2 pt-2"
       data-testid="chat-composer"
       onPointerDown={handleComposerPointerDown}
       onDragEnter={onDragEnter}
@@ -629,22 +627,29 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       onDragOver={onDragOver}
       onDrop={onDropLocal}
     >
-      <div className="px-4 pt-3 pb-2">
       {composerDragging && (
-        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-brand-purple/5 backdrop-blur-[1px]">
-          <p className="rounded-full border border-brand-purple/30 bg-card-bg px-4 py-2 text-xs font-medium text-brand-purple">
+        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-md bg-brand-purple/5">
+          <p className="rounded-[3px] border border-brand-purple/40 bg-elevated-bg px-4 py-2 text-xs font-medium text-brand-purple shadow-[var(--hard-shadow-sm)]">
             {t('chat.dropToAttach')}
           </p>
         </div>
       )}
+
+      {/* ── 统一 composer 卡片：附件 / 集群面板 / textarea / 工具行同处一卡
+             Pixel Console：方角 + 阶梯硬阴影 + 实色面板，无渐变无毛玻璃 ── */}
+      <div
+        className={`rounded-md border bg-elevated-bg shadow-[var(--hard-shadow)] transition-[border-color] duration-150 focus-within:border-border-focus ${
+          composerDragging ? 'border-brand-purple/60' : 'border-border-default'
+        }`}
+      >
       {uploadError && (
-        <div className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+        <div className="mx-3 mt-3 rounded-[3px] border border-error-text/40 bg-error-bg px-3 py-2 text-xs text-error-text">
           {t('chat.uploadFailed')}
           {uploadError}
         </div>
       )}
       {attachments.length > 0 && (
-        <div className="mb-3 flex flex-wrap gap-2" data-testid="composer-attachments">
+        <div className="flex flex-wrap gap-1.5 px-3 pt-3" data-testid="composer-attachments">
           {attachments.map((att, idx) => {
             const img = isImageType(att.type || '', att.filename);
             const src =
@@ -660,19 +665,21 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
               <span
                 key={att.localId || `${att.url}-${idx}`}
                 title={errChip ? att.error : undefined}
-                className={`inline-flex max-w-[220px] items-center gap-1.5 rounded-xl border py-1 pl-1 pr-2 text-xs ${
+                className={`inline-flex max-w-[220px] items-center gap-1.5 rounded-[3px] border py-1 pl-1 pr-2 text-xs ${
                   errChip
-                    ? 'border-red-500/30 bg-red-500/10 text-red-300'
-                    : uploadingChip
-                      ? 'border-brand-purple/20 bg-brand-purple/10 text-brand-purple/80'
-                      : 'border-brand-purple/20 bg-brand-purple/10 text-brand-purple'
+                    ? 'border-error-text/40 bg-error-bg text-error-text'
+                    : 'border-border-subtle bg-card-bg text-foreground-muted'
                 }`}
               >
                 {img && src ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={src} alt="" className="h-8 w-8 flex-shrink-0 rounded-lg object-cover" />
+                  <img src={src} alt="" className="h-7 w-7 flex-shrink-0 rounded-[2px] object-cover" />
                 ) : (
-                  <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-brand-purple/15 text-[10px]">
+                  <span
+                    className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-[2px] text-[9px] font-semibold uppercase tracking-wide ${
+                      errChip ? 'bg-error-bg text-error-text' : 'bg-brand-purple/10 text-brand-purple'
+                    }`}
+                  >
                     {uploadingChip ? '…' : errChip ? '!' : 'FILE'}
                   </span>
                 )}
@@ -683,7 +690,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
                 <button
                   type="button"
                   onClick={() => removeAttachment(idx)}
-                  className="ml-0.5 text-brand-purple/60 transition-colors hover:text-brand-purple"
+                  className="ml-0.5 text-foreground-dim transition-colors hover:text-foreground"
                   aria-label="remove"
                 >
                   ×
@@ -695,7 +702,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       )}
 
       {clusterOn && (
-        <div className="mb-3" data-no-composer-focus>
+        <div className="px-3 pt-3" data-no-composer-focus>
           <ClusterModePanel
             agents={subAgents}
             selectedIds={selectedSubAgentIds}
@@ -705,56 +712,20 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
         </div>
       )}
 
-      <div className="mb-2 flex flex-wrap items-center gap-1.5" data-no-composer-focus>
-        {(['utility', 'think', 'action'] as const).map((group, gi) => (
-          <React.Fragment key={group}>
-            {gi > 0 && (
-              <span className="mx-0.5 hidden h-4 w-px bg-border-subtle/80 sm:inline-block" aria-hidden />
-            )}
-            {TOOLS.filter((tool) => tool.group === group).map((tool) => {
-              const isActive = activeModes.has(tool.key);
-              const ToolIcon = CHAT_TOOL_ICONS[tool.key];
-              return (
-                <button
-                  key={tool.key}
-                  type="button"
-                  onClick={() => handleToolClick(tool.key)}
-                  disabled={inputLocked}
-                  className={`chat-tool-chip inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 transition-all ${
-                    isActive
-                      ? 'border border-brand-purple/25 bg-brand-purple/12 text-brand-cyan shadow-sm'
-                      : 'border border-transparent text-foreground-muted hover:bg-card-bg-hover hover:text-foreground'
-                  } disabled:opacity-40`}
-                  title={t(`chat.tool.${tool.key}` as never)}
-                >
-                  {ToolIcon ? <ToolIcon className="h-3.5 w-3.5" /> : null}
-                  <span className="hidden text-[11px] font-medium lg:inline">
-                    {t(`chat.tool.${tool.key}` as never)}
-                  </span>
-                </button>
-              );
-            })}
-          </React.Fragment>
-        ))}
-        {uploading && (
-          <span className="animate-pulse text-xs text-foreground-dim">{t('chat.uploading')}</span>
-        )}
-      </div>
+      {isEditing && (
+        <div className="flex items-center justify-between px-3.5 pt-2.5">
+          <span className="text-[10px] font-medium text-brand-cyan">{t('chat.editingMsg')}</span>
+          <button
+            type="button"
+            onClick={onClearEdit}
+            className="text-[10px] text-foreground-dim transition-colors hover:text-foreground-muted"
+          >
+            {t('chat.cancelEdit')}
+          </button>
+        </div>
+      )}
 
-      <div className="flex items-end gap-3">
-        <label className="relative min-w-0 flex-1 cursor-text">
-          {isEditing && (
-            <div className="absolute -top-6 left-0 right-0 flex items-center justify-between">
-              <span className="text-[10px] font-medium text-brand-cyan">{t('chat.editingMsg')}</span>
-              <button
-                type="button"
-                onClick={onClearEdit}
-                className="text-[10px] text-foreground-dim transition-colors hover:text-foreground-muted"
-              >
-                {t('chat.cancelEdit')}
-              </button>
-            </div>
-          )}
+      <label className="relative block cursor-text">
           <textarea
             ref={textareaRef}
             aria-label={t('chat.inputHint')}
@@ -805,9 +776,9 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
             readOnly={inputLocked}
             rows={2}
             data-testid="chat-composer-textarea"
-            className="chat-surface chat-composer-textarea block w-full max-w-full resize-none rounded-2xl border border-border-subtle bg-input-bg px-4 py-3 text-foreground placeholder:text-input-placeholder focus:border-brand-purple/40 focus:outline-none focus:ring-1 focus:ring-brand-cyan/25 transition-all"
+            className="chat-surface chat-composer-textarea block w-full max-w-full resize-none border-0 bg-transparent px-3.5 pb-2 pt-3.5 text-[14px] leading-relaxed text-foreground placeholder:text-input-placeholder focus:outline-none focus:ring-0"
             style={{
-              minHeight: '52px',
+              minHeight: '64px',
               maxHeight: '200px',
               width: '100%',
               pointerEvents: 'auto',
@@ -877,29 +848,69 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
             </ul>
           )}
         </label>
-        <button
-          type="button"
-          onClick={isStreaming ? () => onStopStreaming?.() : handleSend}
-          disabled={isStreaming ? !onStopStreaming : !canSend}
-          aria-label={isStreaming ? t('chat.stopGenerating') : t('chat.sendBtn')}
-          className={`inline-flex flex-shrink-0 items-center gap-2 rounded-2xl px-5 py-3 text-[0.8125rem] font-semibold tracking-tight text-white shadow-lg transition-all hover:opacity-90 disabled:opacity-30 ${
-            isStreaming
-              ? 'bg-gradient-to-r from-rose-500 to-orange-500 shadow-rose-500/20'
-              : 'bg-gradient-to-r from-brand-purple to-brand-cyan shadow-brand-cyan/20'
-          }`}
-        >
-          <span>{isStreaming ? t('chat.stopGenerating') : t('chat.sendBtn')}</span>
-          {!isStreaming && <IconSend className="h-4 w-4 opacity-95" />}
-          {isStreaming && (
-            <span className="inline-block h-3.5 w-3.5 rounded-sm bg-white/95" aria-hidden />
+
+        {/* 卡内工具行：左工具 chips，右发送/停止 —— 方角 + 阶梯硬阴影，无渐变 */}
+        <div className="flex flex-wrap items-center gap-1 px-2.5 pb-2.5 pt-1" data-no-composer-focus>
+          {(['utility', 'think', 'action'] as const).map((group, gi) => (
+            <React.Fragment key={group}>
+              {gi > 0 && (
+                <span className="mx-0.5 hidden h-3.5 w-px bg-border-default sm:inline-block" aria-hidden />
+              )}
+              {TOOLS.filter((tool) => tool.group === group).map((tool) => {
+                const isActive = activeModes.has(tool.key);
+                const ToolIcon = CHAT_TOOL_ICONS[tool.key];
+                return (
+                  <button
+                    key={tool.key}
+                    type="button"
+                    onClick={() => handleToolClick(tool.key)}
+                    disabled={inputLocked}
+                    className={`chat-tool-chip inline-flex items-center gap-1.5 rounded-[3px] px-2 py-1 transition-colors duration-150 ${
+                      isActive
+                        ? 'border border-brand-purple/40 bg-brand-purple/10 text-brand-purple'
+                        : 'border border-transparent text-foreground-dim hover:bg-card-bg-hover hover:text-foreground-muted'
+                    } disabled:opacity-40`}
+                    title={t(`chat.tool.${tool.key}` as never)}
+                  >
+                    {ToolIcon ? <ToolIcon className="h-3.5 w-3.5" /> : null}
+                    <span className="hidden text-[11px] font-medium lg:inline">
+                      {t(`chat.tool.${tool.key}` as never)}
+                    </span>
+                  </button>
+                );
+              })}
+            </React.Fragment>
+          ))}
+          {uploading && (
+            <span className="animate-pulse text-[10px] text-foreground-dim">{t('chat.uploading')}</span>
           )}
-        </button>
-      </div>
+          <span className="flex-1" />
+          <button
+            type="button"
+            onClick={isStreaming ? () => onStopStreaming?.() : handleSend}
+            disabled={isStreaming ? !onStopStreaming : !canSend}
+            aria-label={isStreaming ? t('chat.stopGenerating') : t('chat.sendBtn')}
+            className={`px-btn inline-flex h-8 flex-shrink-0 items-center gap-1.5 rounded-[3px] px-3.5 text-xs font-semibold tracking-tight text-white disabled:cursor-not-allowed disabled:opacity-100 ${
+              isStreaming
+                ? 'bg-status-offline hover:brightness-105'
+                : canSend
+                  ? 'bg-brand-purple hover:brightness-105'
+                  : /* 空输入仍保持 demo 实心电紫，仅略降饱和，避免 opacity 洗成淡紫 */
+                    'bg-brand-purple/80'
+            }`}
+          >
+            <span>{isStreaming ? t('chat.stopGenerating') : t('chat.sendBtn')}</span>
+            {!isStreaming && <IconSend className="h-3.5 w-3.5 opacity-90" />}
+            {isStreaming && (
+              <span className="inline-block h-3 w-3 rounded-[1px] bg-current opacity-90" aria-hidden />
+            )}
+          </button>
+        </div>
       </div>
 
-      {/* 底栏：模型选择 + 版本号（贴底，对齐小汐 status-bar；无顶部分割线，保持干净） */}
+      {/* 底栏：模型选择 + 快捷键 + 版本号（JetBrains Mono 数据 / Silkscreen 装饰） */}
       <div
-        className="flex h-8 flex-shrink-0 items-center gap-2 bg-[color-mix(in_srgb,var(--page-bg)_55%,transparent)] px-3 backdrop-blur-md"
+        className="flex h-7 flex-shrink-0 items-center gap-2 px-1.5"
         data-no-composer-focus
       >
         {showModelPicker ? (
@@ -907,11 +918,16 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
         ) : (
           <span className="text-[11px] text-foreground-dim">Takton</span>
         )}
-        <span className="hidden text-[10px] text-foreground-dim sm:inline">Enter 发送</span>
-        <span className="hidden h-2.5 w-px bg-[var(--glass-border,var(--border-subtle))] sm:inline-block" aria-hidden />
-        <span className="hidden text-[10px] text-foreground-dim sm:inline">Shift+Enter 换行</span>
+        <span className="hidden items-center gap-1 text-[10px] text-foreground-dim sm:inline-flex">
+          <kbd className="rounded-[3px] border border-border-subtle bg-card-bg px-1 font-sans text-[9px] leading-4">Enter</kbd>
+          发送
+        </span>
+        <span className="hidden items-center gap-1 text-[10px] text-foreground-dim sm:inline-flex">
+          <kbd className="rounded-[3px] border border-border-subtle bg-card-bg px-1 font-sans text-[9px] leading-4">Shift+Enter</kbd>
+          换行
+        </span>
         <span className="flex-1" />
-        <span className="font-mono text-[10px] tabular-nums text-foreground-dim">
+        <span className="px-font text-[9px] tracking-wide text-foreground-dim">
           Takton v{APP_VERSION}
         </span>
       </div>

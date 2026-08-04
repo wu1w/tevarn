@@ -12,8 +12,8 @@ interface ActivityPanelProps {
 
 const STATUS_COLOR: Record<string, string> = {
   running: 'text-brand-cyan',
-  completed: 'text-emerald-400',
-  failed: 'text-red-400',
+  completed: 'text-status-online',
+  failed: 'text-status-offline',
 };
 
 export function ActivityPanel({
@@ -53,7 +53,7 @@ export function ActivityPanel({
   if (!isStreaming && items.length === 0) return null;
 
   return (
-    <div className="border-t border-border-subtle/50 px-2">
+    <div className="border-t border-border-subtle px-3">
       <button
         type="button"
         onClick={() => {
@@ -64,20 +64,20 @@ export function ActivityPanel({
             return next;
           });
         }}
-        className="flex h-5 w-full items-center gap-1.5 text-left text-[10px] text-foreground-dim hover:text-foreground-muted"
+        className="flex h-6 w-full items-center gap-1.5 text-left text-[10px] text-foreground-dim transition-colors hover:text-foreground-muted"
       >
-        <span className={`transition-transform ${open ? 'rotate-90' : ''}`}>▸</span>
+        <span className={`transition-transform duration-150 ${open ? 'rotate-90' : ''}`}>▸</span>
         <span className="font-medium">{t('activity.title')}</span>
         {items.length > 0 && (
-          <span className="font-mono opacity-80">
+          <span className="num opacity-80">
             {items.length}
             {running > 0 ? `·${running}↑` : ''}
             {failed > 0 ? `·${failed}!` : ''}
           </span>
         )}
         {isStreaming && (
-          <span className="ml-auto flex min-w-0 items-center gap-1 truncate text-brand-cyan">
-            <span className="h-1 w-1 shrink-0 animate-pulse rounded-full bg-brand-cyan" />
+          <span className="ml-auto flex min-w-0 items-center gap-1.5 truncate text-brand-cyan">
+            <span className="h-2 w-2 shrink-0 animate-pulse rounded-[1px] bg-brand-cyan" />
             <span className="truncate">
               {streamStatusDetail || t('chat.aiReplying')}
             </span>
@@ -90,12 +90,12 @@ export function ActivityPanel({
           {items.map((item) => (
             <div key={item.id} className="flex items-center gap-1.5 px-1 text-[10px]">
               <span
-                className={`h-1 w-1 shrink-0 rounded-full ${
+                className={`h-2 w-2 shrink-0 rounded-[1px] ${
                   item.status === 'running'
                     ? 'animate-pulse bg-brand-cyan'
                     : item.status === 'failed'
-                      ? 'bg-red-400'
-                      : 'bg-emerald-400'
+                      ? 'bg-status-offline'
+                      : 'bg-status-online'
                 }`}
               />
               <span className={`truncate ${STATUS_COLOR[item.status] || ''}`}>

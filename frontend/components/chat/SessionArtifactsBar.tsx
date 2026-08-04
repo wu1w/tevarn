@@ -22,29 +22,38 @@ export function SessionArtifactsBar({ messages, onPreview }: SessionArtifactsBar
 
   return (
     <div
-      className="mx-3 mb-2 rounded-xl border border-border-subtle/80 bg-card-bg/70 px-3 py-2"
+      className="mx-3 mb-1.5 rounded-md border border-border-default bg-elevated-bg px-3 py-1.5 shadow-[var(--hard-shadow-sm)]"
       data-testid="session-artifacts-bar"
     >
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between gap-2 text-left"
+        className="flex w-full items-center gap-1.5 text-left"
       >
-        <span className="text-xs font-medium text-foreground">
+        <span
+          className={`text-[9px] text-foreground-dim transition-transform duration-150 ${open ? 'rotate-90' : ''}`}
+          aria-hidden
+        >
+          ▸
+        </span>
+        <span className="text-[11px] font-medium text-foreground-muted">
           {t('chat.sessionFiles').replace('{n}', String(arts.length))}
         </span>
-        <span className="text-[10px] text-foreground-dim">{open ? '▲' : '▼'}</span>
+        <span className="flex-1" />
+        <span className="rounded-[2px] bg-brand-purple px-1.5 font-mono text-[9px] leading-4 text-primary-foreground shadow-[1px_1px_0_var(--hard)]">
+          {arts.length}
+        </span>
       </button>
       {open && (
-        <ul className="mt-2 max-h-40 space-y-1 overflow-auto">
+        <ul className="mt-1.5 max-h-40 space-y-0.5 overflow-auto">
           {arts.map((a) => (
             <li key={a.path}>
               <button
                 type="button"
                 onClick={() => onPreview(a)}
-                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-foreground-muted transition-colors hover:bg-card-bg-hover hover:text-foreground"
+                className="flex w-full items-center gap-2 rounded-[3px] px-2 py-1.5 text-left text-xs text-foreground-muted transition-colors hover:bg-card-bg-hover hover:text-foreground"
               >
-                <span className="w-10 shrink-0 rounded bg-elevated-bg px-1 text-center text-[9px] uppercase text-foreground-dim">
+                <span className="w-10 shrink-0 rounded-[2px] border border-border-subtle bg-elevated-bg px-1 text-center text-[9px] uppercase text-foreground-dim">
                   {(a.kind || 'file').slice(0, 4)}
                 </span>
                 <span className="min-w-0 flex-1 truncate font-medium">{a.name}</span>
