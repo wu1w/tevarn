@@ -1,0 +1,85 @@
+# -*- coding: utf-8 -*-
+"""usage_ledger daily series + model attribution integrity."""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import backend.services.usage_ledger as ul
+
+
+def test_charge_fills_by_model_day_and_no_double_totals(tmp_path: Path, monkeypatch):
+    path = tmp_path / "usage_ledger.json"
+    monkeypatch.setenv("TAKTON_USAGE_LEDGER", str(path))
+    ul.reset_for_tests()
+
+    ul.charge(
+        process_id="p1",
+        family="openai-chatgpt-oauth",
+        model="gpt-5.6-luna",
+        tokens=100,
+        billable=80,
+        prompt=90,
+        completion=10,
+        cache_read=30,
+        estimated=False,
+    )
+    ul.charge(
+        process_id="p1",
+        family="openai-chatgpt-oauth",
+        model="gpt-5.6-luna",
+        tokens=50,
+        billable=40,
+        prompt=40,
+        completion=10,
+        cache_read=10,
+        estimated=False,
+    )
+    ul.charge(
+        process_id="p2",
+        family="opencode-go",
+        model="deepseek-v4-flash",
+        tokens=200,
+        billable=200,
+        prompt=0,
+        completion=0,
+        estimated=True,
+    )
+
+    snap = ul.snapshot_cost()
+    assert snap["totals"]["tokens"] == 350
+    assert snap["totals"]["billable"] == 320
+    assert snap["totals"]["llm_rounds"] == 3
+
+    mk = "openai-chatgpt-oauth/gpt-5.6-luna"
+    assert snap["by_model"][mk]["tokens"] == 150
+    assert snap["by_model"][mk]["cache_read"] == 40
+    assert abs(snap["by_model"][mk]["token_cache_hit_rate"] - 40 / 130) < 1e-9
+
+    mk2 = "opencode-go/deepseek-v4-flash"
+    assert snap["by_model"][mk2]["tokens"] == 200
+    assert snap["by_model"][mk2]["family"] == "opencode-go"
+
+    # no cross-talk
+    assert snap["by_family"]["openai-chatgpt-oauth"]["tokens"] == 150
+    assert snap["by_family"]["opencode-go"]["tokens"] == 200
+
+    # daily
+    assert snap["by_day"]
+    day = next(iter(snap["by_day"].keys()))
+    assert snap["by_day"][day]["tokens"] == 350
+    assert snap["by_model_day"][mk][day]["tokens"] == 150
+    assert snap["by_model_day"][mk2][day]["tokens"] == 200
+
+    # sum models == totals
+    s = sum(int(v.get("tokens") or 0) for v in snap["by_model"].values())
+    assert s == snap["totals"]["tokens"]
+
+    # durable merge does not invent host days
+    merged = ul.merge_cost_panels({"totals": {"tokens": 1}}, snap)
+    assert merged["source"] == "durable"
+    assert merged["by_model_day"][mk][day]["tokens"] == 150
+
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    assert "by_model_day" in raw
+    ul.reset_for_tests()

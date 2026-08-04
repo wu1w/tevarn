@@ -2144,25 +2144,40 @@ async def cost_panel(
     if not isinstance(ctot, dict):
         ctot = {}
     live = panel.get("live_processes") or {}
-    # 提升 by_family / by_model 到顶层，便于用量页筛选
+    # 提升 by_family / by_model / 日序到顶层，便于用量页筛选与热力图
     if isinstance(tb, dict):
         panel["by_family"] = tb.get("by_family") or {}
         panel["by_model"] = tb.get("by_model") or {}
+        panel["by_day"] = tb.get("by_day") or {}
+        panel["by_model_day"] = tb.get("by_model_day") or {}
         panel["totals"] = totals
     if isinstance(cache, dict):
         panel["cache_families"] = cache.get("families") or {}
         panel["cache_models"] = cache.get("models") or {}
     # Prefer token-level cache hit rate (cache_read / prompt) for compression work
-    token_hit = ctot.get("token_hit_rate")
+    # Prefer cost-ledger prompt/cache_read over cache panel when both exist (same charge path)
+    token_hit = totals.get("token_cache_hit_rate")
     if token_hit is None:
-        pt = int(totals.get("prompt") or 0) or int(ctot.get("prompt_tokens") or 0)
-        cr = int(totals.get("cache_read") or 0) or int(
-            ctot.get("cache_read_tokens") or 0
-        )
+        token_hit = ctot.get("token_hit_rate")
+    if token_hit is None:
+        pt = int(totals.get("prompt") or 0)
+        cr = int(totals.get("cache_read") or 0)
+        if pt <= 0:
+            pt = int(ctot.get("prompt_tokens") or 0)
+            cr = int(ctot.get("cache_read_tokens") or 0)
         token_hit = (cr / pt) if pt > 0 else None
+    # Integrity: sum(by_model.tokens) should match totals when models present
+    model_tok_sum = 0
+    model_bill_sum = 0
+    for _mk, _mb in (panel.get("by_model") or {}).items():
+        if isinstance(_mb, dict):
+            model_tok_sum += int(_mb.get("tokens") or 0)
+            model_bill_sum += int(_mb.get("billable") or 0)
+    tot_tok = int(totals.get("tokens") or 0)
+    tot_bill = int(totals.get("billable") or 0)
     panel["summary"] = {
-        "tokens": int(totals.get("tokens") or live.get("tokens_used") or 0),
-        "billable": int(totals.get("billable") or 0),
+        "tokens": tot_tok if tot_tok > 0 else int(live.get("tokens_used") or 0),
+        "billable": tot_bill,
         "prompt": int(totals.get("prompt") or 0),
         "completion": int(totals.get("completion") or 0),
         "cache_read": int(totals.get("cache_read") or 0),
@@ -2177,6 +2192,13 @@ async def cost_panel(
         if isinstance(panel.get("resources"), dict)
         else [],
         "ledger_source": panel.get("ledger_source"),
+        "model_tokens_sum": model_tok_sum,
+        "model_billable_sum": model_bill_sum,
+        "attribution_ok": (
+            model_tok_sum == 0
+            or abs(model_tok_sum - tot_tok) <= 1
+            or tot_tok == 0
+        ),
     }
     return panel
 

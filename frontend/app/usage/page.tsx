@@ -12,6 +12,10 @@ import React, { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getKernelCost, getKernelCacheMetrics } from '@/lib/api';
 import { useZh } from '@/hooks/useZh';
+import {
+  ModelUsageCharts,
+  type DayBucket,
+} from '@/components/usage/ModelUsageCharts';
 
 type CostFamily = {
   tokens?: number;
@@ -68,7 +72,12 @@ type CostPanel = {
     estimated_rounds?: number;
     live_process_count?: number;
     ledger_source?: string;
+    model_tokens_sum?: number;
+    model_billable_sum?: number;
+    attribution_ok?: boolean;
   };
+  by_day?: Record<string, DayBucket>;
+  by_model_day?: Record<string, Record<string, DayBucket>>;
 };
 
 type CachePanel = {
@@ -174,6 +183,14 @@ export default function UsagePage() {
 
   const byFamily = costInner.by_family || {};
   const byModel = costInner.by_model || {};
+  const byModelDay: Record<string, Record<string, DayBucket>> = useMemo(() => {
+    const raw = costQ.data as CostPanel | undefined;
+    const fromInner = (costInner as CostPanel).by_model_day;
+    const fromRoot = raw?.by_model_day;
+    const tb = (raw as { tokens_billable?: CostPanel } | undefined)?.tokens_billable
+      ?.by_model_day;
+    return fromInner || fromRoot || tb || {};
+  }, [costQ.data, costInner]);
   const cacheFamilies =
     (costQ.data as { cache_families?: Record<string, CacheFamily> } | undefined)
       ?.cache_families ||
@@ -677,6 +694,59 @@ export default function UsagePage() {
           </div>
         ))}
       </div>
+
+      {summary?.attribution_ok === false && (
+        <div
+          style={{
+            ...card,
+            marginBottom: 12,
+            borderColor: '#c9a05e',
+            background: 'color-mix(in srgb, #c9a05e 10%, var(--card-bg))',
+            fontSize: 12,
+            color: 'var(--foreground-muted)',
+          }}
+        >
+          {zh
+            ? `归因校验：Σby_model.tokens=${fmtNum(Number(summary.model_tokens_sum || 0))} 与 totals.tokens=${fmtNum(Number(summary.tokens || 0))} 不一致，请检查 ledger。`
+            : `Attribution check: Σby_model.tokens ≠ totals.tokens — inspect usage_ledger.`}
+        </div>
+      )}
+
+      {/* Per-model trend + heatmap (real by_model_day only) */}
+      <div style={{ marginBottom: 8 }}>
+        <div style={{ fontSize: 13, fontWeight: 650, marginBottom: 4 }}>
+          {zh ? '分模型趋势与热力' : 'Per-model trend & heatmap'}
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--foreground-dim)', marginBottom: 10 }}>
+          {zh
+            ? '数据来自 usage_ledger.by_model_day（本地日历日）。升级前历史仅有累计、无按日时图表为空，新对话会开始落日粒度。'
+            : 'From usage_ledger.by_model_day (local calendar day). Pre-upgrade lifetime totals only — daily series fills as new chats charge.'}
+        </div>
+      </div>
+      {costRows.map((row) => {
+        const dayMap =
+          byModelDay[row.key] ||
+          byModelDay[`${row.family}/${row.model}`] ||
+          {};
+        return (
+          <ModelUsageCharts
+            key={`chart-${row.key}`}
+            modelKey={row.key}
+            family={row.family}
+            model={row.model}
+            dayMap={dayMap}
+            zh={zh}
+            totals={{
+              tokens: row.tokens,
+              billable: row.billable,
+              prompt: row.prompt,
+              cache_read: row.cache_read,
+              rounds: row.rounds,
+              token_hit: row.token_hit,
+            }}
+          />
+        );
+      })}
 
       <div style={{ ...card, marginBottom: 14, padding: 0, overflow: 'hidden' }}>
         <div

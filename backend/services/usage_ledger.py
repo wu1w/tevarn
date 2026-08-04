@@ -17,6 +17,7 @@ import logging
 import os
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -73,7 +74,7 @@ def _empty_cache_bucket() -> dict[str, Any]:
 
 def _empty() -> dict[str, Any]:
     return {
-        "version": 2,
+        "version": 3,
         "totals": {
             "tokens": 0,
             "billable": 0,
@@ -88,6 +89,10 @@ def _empty() -> dict[str, Any]:
         "by_family": {},
         "by_model": {},
         "by_process": {},
+        # day -> cost bucket (local calendar day)
+        "by_day": {},
+        # model_key -> day -> cost bucket (+ family/model labels on parent via by_model)
+        "by_model_day": {},
         "cache": {
             "totals": {
                 "hits": 0,
@@ -109,6 +114,42 @@ def _model_key(family: str, model: str) -> str:
     m = (model or "").strip()
     fam = (family or "default").strip() or "default"
     return f"{fam}/(default)" if not m else f"{fam}/{m}"
+
+
+def _day_key(ts: float | None = None) -> str:
+    """Local calendar day for heatmap (user-facing, not UTC-only)."""
+    if ts is None:
+        return datetime.now().astimezone().strftime("%Y-%m-%d")
+    try:
+        return datetime.fromtimestamp(float(ts)).astimezone().strftime("%Y-%m-%d")
+    except Exception:
+        return datetime.now().astimezone().strftime("%Y-%m-%d")
+
+
+def _add_cost(
+    bucket: dict[str, Any],
+    *,
+    tok: int,
+    bill: int,
+    pr: int,
+    co: int,
+    cr: int,
+    cw: int,
+    estimated: bool,
+) -> None:
+    """Single-path accumulator — totals / family / model / day share this."""
+    b = _ensure_cost_fields(bucket)
+    b["tokens"] = int(b.get("tokens") or 0) + tok
+    b["billable"] = int(b.get("billable") or 0) + bill
+    b["rounds"] = int(b.get("rounds") or 0) + 1
+    b["prompt"] = int(b.get("prompt") or 0) + pr
+    b["completion"] = int(b.get("completion") or 0) + co
+    b["cache_read"] = int(b.get("cache_read") or 0) + cr
+    b["cache_write"] = int(b.get("cache_write") or 0) + cw
+    if estimated:
+        b["estimated_rounds"] = int(b.get("estimated_rounds") or 0) + 1
+    else:
+        b["real_rounds"] = int(b.get("real_rounds") or 0) + 1
 
 
 def _ensure_cost_fields(bucket: dict[str, Any]) -> dict[str, Any]:
@@ -226,6 +267,12 @@ def charge(
 
     with _lock:
         data = _load_unlocked()
+        # ensure day maps exist (v2 → v3 migration)
+        if "by_day" not in data or not isinstance(data["by_day"], dict):
+            data["by_day"] = {}
+        if "by_model_day" not in data or not isinstance(data["by_model_day"], dict):
+            data["by_model_day"] = {}
+
         totals = data["totals"]
         totals["tokens"] = int(totals.get("tokens") or 0) + tok
         totals["billable"] = int(totals.get("billable") or 0) + bill
@@ -239,45 +286,42 @@ def charge(
         else:
             totals["real_rounds"] = int(totals.get("real_rounds") or 0) + 1
 
-        fc = _ensure_cost_fields(
-            data["by_family"].setdefault(fam, _empty_cost_bucket())
+        fc = data["by_family"].setdefault(fam, _empty_cost_bucket())
+        _add_cost(
+            fc, tok=tok, bill=bill, pr=pr, co=co, cr=cr, cw=cw, estimated=estimated
         )
-        fc["tokens"] = int(fc.get("tokens") or 0) + tok
-        fc["billable"] = int(fc.get("billable") or 0) + bill
-        fc["rounds"] = int(fc.get("rounds") or 0) + 1
-        fc["prompt"] = int(fc.get("prompt") or 0) + pr
-        fc["completion"] = int(fc.get("completion") or 0) + co
-        fc["cache_read"] = int(fc.get("cache_read") or 0) + cr
-        fc["cache_write"] = int(fc.get("cache_write") or 0) + cw
-        if estimated:
-            fc["estimated_rounds"] = int(fc.get("estimated_rounds") or 0) + 1
-        else:
-            fc["real_rounds"] = int(fc.get("real_rounds") or 0) + 1
 
         mk = _model_key(fam, mid)
-        mc = _ensure_cost_fields(
-            data["by_model"].setdefault(
-                mk,
-                {
-                    **_empty_cost_bucket(),
-                    "family": fam,
-                    "model": mid or "(default)",
-                },
-            )
+        mc = data["by_model"].setdefault(
+            mk,
+            {
+                **_empty_cost_bucket(),
+                "family": fam,
+                "model": mid or "(default)",
+            },
         )
         mc["family"] = fam
         mc["model"] = mid or "(default)"
-        mc["tokens"] = int(mc.get("tokens") or 0) + tok
-        mc["billable"] = int(mc.get("billable") or 0) + bill
-        mc["rounds"] = int(mc.get("rounds") or 0) + 1
-        mc["prompt"] = int(mc.get("prompt") or 0) + pr
-        mc["completion"] = int(mc.get("completion") or 0) + co
-        mc["cache_read"] = int(mc.get("cache_read") or 0) + cr
-        mc["cache_write"] = int(mc.get("cache_write") or 0) + cw
-        if estimated:
-            mc["estimated_rounds"] = int(mc.get("estimated_rounds") or 0) + 1
-        else:
-            mc["real_rounds"] = int(mc.get("real_rounds") or 0) + 1
+        _add_cost(
+            mc, tok=tok, bill=bill, pr=pr, co=co, cr=cr, cw=cw, estimated=estimated
+        )
+
+        # Daily series (same charge, no double-count of totals above)
+        day = _day_key()
+        day_b = data["by_day"].setdefault(day, _empty_cost_bucket())
+        _add_cost(
+            day_b, tok=tok, bill=bill, pr=pr, co=co, cr=cr, cw=cw, estimated=estimated
+        )
+        md_map = data["by_model_day"].setdefault(mk, {})
+        if not isinstance(md_map, dict):
+            md_map = {}
+            data["by_model_day"][mk] = md_map
+        md_day = md_map.setdefault(day, {**_empty_cost_bucket(), "family": fam, "model": mid or "(default)"})
+        md_day["family"] = fam
+        md_day["model"] = mid or "(default)"
+        _add_cost(
+            md_day, tok=tok, bill=bill, pr=pr, co=co, cr=cr, cw=cw, estimated=estimated
+        )
 
         pc = data["by_process"].setdefault(
             pid,
@@ -387,11 +431,21 @@ def snapshot_cost_unlocked(data: dict[str, Any]) -> dict[str, Any]:
     pt = int(totals.get("prompt") or 0)
     cr = int(totals.get("cache_read") or 0)
     totals["token_cache_hit_rate"] = (cr / pt) if pt > 0 else 0.0
+    by_model = dict(data.get("by_model") or {})
+    # per-model token hit for UI consistency
+    for _mk, bucket in by_model.items():
+        if not isinstance(bucket, dict):
+            continue
+        mpt = int(bucket.get("prompt") or 0)
+        mcr = int(bucket.get("cache_read") or 0)
+        bucket["token_cache_hit_rate"] = (mcr / mpt) if mpt > 0 else 0.0
     return {
         "totals": totals,
         "by_family": dict(data.get("by_family") or {}),
-        "by_model": dict(data.get("by_model") or {}),
+        "by_model": by_model,
         "by_process": dict(data.get("by_process") or {}),
+        "by_day": dict(data.get("by_day") or {}),
+        "by_model_day": dict(data.get("by_model_day") or {}),
         "ts": float(data.get("updated_at") or time.time()),
         "source": "durable",
         "path": str(ledger_path()),
@@ -437,6 +491,9 @@ def merge_cost_panels(
             "by_family": dict(d.get("by_family") or {}),
             "by_model": dict(d.get("by_model") or {}),
             "by_process": dict(d.get("by_process") or h.get("by_process") or {}),
+            # daily series only on durable (host has no day map; never merge-sum with host)
+            "by_day": dict(d.get("by_day") or {}),
+            "by_model_day": dict(d.get("by_model_day") or {}),
             "ts": d.get("ts") or time.time(),
             "source": "durable",
             "host_totals": h_tot,
@@ -446,6 +503,8 @@ def merge_cost_panels(
         "by_family": dict(h.get("by_family") or {}),
         "by_model": dict(h.get("by_model") or {}),
         "by_process": dict(h.get("by_process") or {}),
+        "by_day": {},
+        "by_model_day": {},
         "ts": h.get("ts") or time.time(),
         "source": "host" if h_tot else "empty",
     }
