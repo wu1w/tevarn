@@ -264,8 +264,27 @@ async def builtin_permission_before(name: str, arguments: dict[str, Any]) -> Bef
             arguments=args,
         )
 
-    # ── ask 分支（court 未给 session_grant）──
-    # 「本员工允许」短路
+    # ── ask 分支 ──
+    # Rust court 对 command/write 常恒返回 ask，且看不到 Python 进程内 grant_store。
+    # 必须在弹窗前短路：本会话允许 / 本员工允许，否则相同命令会反复弹窗。
+    try:
+        from backend.agent.grant_store import has_session_grant
+
+        sid = str(args.get("_session_id") or "").strip()
+        if sid and has_session_grant(sid, name, args):
+            logger.info(
+                "permission ask→session_grant tool=%s session=%s",
+                name,
+                sid[:8],
+            )
+            args["_confirm_ok"] = True
+            args["_confirm_ok_source"] = "session_grant"
+            args["_session_grant"] = True
+            return BeforeHookResult(arguments=args)
+    except Exception as e:
+        logger.debug("session grant short-circuit skip: %s", e)
+
+    # 「本员工允许」短路（编制 Identity.capabilities 已覆盖该工具）
     try:
         from backend.agent.grant_store import has_identity_tool_grant
 
@@ -482,22 +501,34 @@ async def _interactive_approval(
             str(arguments.get("_identity_id") or arguments.get("identity_id") or "").strip()
             or None
         )
-        agent_name = str(arguments.get("_identity_name") or arguments.get("agent_name") or "").strip() or None
-        # 联系员工会话：config.contact_agent 名字解析（尽力）
+        agent_name = str(
+            arguments.get("_identity_name")
+            or arguments.get("agent_name")
+            or arguments.get("_contact_agent")
+            or ""
+        ).strip() or None
+        # 联系员工 / CEO 会话：解析 Identity，供「本员工允许」按钮与落库
         if not agent_id:
             try:
-                contact = str(arguments.get("_contact_agent") or "").strip()
-                if contact:
-                    agent_name = agent_name or contact
-                    from backend.kernel import get_kernel
+                from backend.agent.grant_store import resolve_identity_id
 
-                    reg = getattr(get_kernel(), "identity_registry", None)
-                    if reg is not None:
-                        for ident in await reg.list(status="active"):
-                            if ident.name == contact:
-                                agent_id = str(ident.id)
-                                agent_name = ident.name
-                                break
+                contact = str(arguments.get("_contact_agent") or agent_name or "").strip()
+                agent_id = await resolve_identity_id(
+                    arguments, contact_name=contact or None
+                )
+                if agent_id and not agent_name:
+                    agent_name = contact or None
+            except Exception:
+                pass
+        # 管家主会话未绑定 contact 时：回落默认 CEO 编制，避免「本员工允许」永久灰掉
+        if not agent_id:
+            try:
+                from backend.agent.grant_store import resolve_ceo_identity
+
+                ceo = await resolve_ceo_identity()
+                if ceo:
+                    agent_id = str(ceo.get("id") or "") or None
+                    agent_name = agent_name or str(ceo.get("name") or "") or None
             except Exception:
                 pass
 
@@ -522,8 +553,15 @@ async def _interactive_approval(
         scope = getattr(outcome, "scope", "once") or "once"
         extra_note = ""
         if approved and scope == "session":
-            add_session_grant(str(session_id) if session_id else None, name, arguments)
-            extra_note = "session_grant"
+            # 「本会话允许」= 本会话内该工具整类放行（command 不限首词），
+            # 否则相同工具换参数会再次弹窗，违背按钮文案。
+            add_session_grant(
+                str(session_id) if session_id else None,
+                name,
+                arguments,
+                whole_tool=True,
+            )
+            extra_note = "session_grant_whole_tool"
         elif approved and scope == "agent":
             # 尽力解析员工 id（联系 TA 会话常只有 contact 名）
             if not agent_id:
@@ -533,6 +571,15 @@ async def _interactive_approval(
                     agent_id = await resolve_identity_id(
                         arguments, contact_name=agent_name
                     )
+                except Exception:
+                    pass
+            if not agent_id:
+                try:
+                    from backend.agent.grant_store import resolve_ceo_identity
+
+                    ceo = await resolve_ceo_identity()
+                    if ceo:
+                        agent_id = str(ceo.get("id") or "") or None
                 except Exception:
                     pass
             ok, msg = await grant_agent_capability(agent_id, name)
@@ -554,6 +601,22 @@ async def _interactive_approval(
                     arguments,
                     whole_tool=True,
                 )
+                # 热更新本轮 args，同轮后续工具立刻命中 identity 短路
+                try:
+                    from backend.agent.grant_store import crew_cap_for_tool
+
+                    cap = crew_cap_for_tool(name) or name
+                    caps = list(arguments.get("_identity_capabilities") or [])
+                    if cap and cap not in caps:
+                        caps.append(cap)
+                    arguments = dict(arguments)
+                    arguments["_identity_capabilities"] = caps
+                    if agent_id:
+                        arguments["_identity_id"] = agent_id
+                    if agent_name:
+                        arguments["_identity_name"] = agent_name
+                except Exception:
+                    pass
 
         await _publish(
             "approval.resolved",

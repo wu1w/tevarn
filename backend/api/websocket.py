@@ -517,6 +517,37 @@ class ConnectionManager:
             return False
         try:
             loop.stop()
+            # 尽快回收该进程 LLM 槽位（cancel 时 acquire 排队/在飞都可能漏 release）
+            try:
+                proc = getattr(loop, "_kernel_process", None)
+                pid = getattr(proc, "id", None) if proc is not None else None
+                if pid:
+                    from backend.kernel import get_kernel
+
+                    k = get_kernel()
+                    if hasattr(k, "_call"):
+                        try:
+                            k._call(
+                                "llm_release_by_process",
+                                {"process_id": str(pid)},
+                            )
+                        except Exception:
+                            # 旧 host 无此 RPC 时忽略；end_process 仍会扫
+                            pass
+                    else:
+                        import asyncio
+
+                        from backend.kernel.llm_admission import get_llm_admission
+
+                        adm = get_llm_admission()
+                        try:
+                            asyncio.get_running_loop().create_task(
+                                adm.release_by_process(str(pid))
+                            )
+                        except RuntimeError:
+                            pass
+            except Exception as re:
+                logger.debug("stop_agent_loop llm release: %s", re)
             return True
         except Exception as e:
             logger.debug("stop_agent_loop: %s", e)

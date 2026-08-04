@@ -374,6 +374,46 @@ class AgentKernel:
         except Exception as re:
             logger.debug("end_process resource drop: %s", re)
 
+        # LLM 租约回收（Python fallback 路径；Rust host 在 end_process 内已做）
+        try:
+            from backend.kernel.llm_admission import get_llm_admission
+
+            adm = get_llm_admission()
+            # sync-friendly: 优先直接调 rust RPC；async 场景由 rust end_process 覆盖
+            k = None
+            try:
+                from backend.kernel.llm_admission import _rust_kernel
+
+                k = _rust_kernel()
+            except Exception:
+                k = None
+            if k is not None and hasattr(k, "_call"):
+                try:
+                    k._call("llm_release_by_process", {"process_id": process_id})
+                    k._call("llm_expire_stale", {"max_hold_secs": 600.0})
+                except Exception as le:
+                    logger.debug("end_process llm release rpc: %s", le)
+            else:
+                # 纯 Python 控制器：同步清 in_flight
+                async def _py_release() -> None:
+                    await adm.release_by_process(process_id)
+
+                try:
+                    import asyncio
+
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        loop = None
+                    if loop and loop.is_running():
+                        loop.create_task(_py_release())
+                    else:
+                        asyncio.run(_py_release())
+                except Exception as le:
+                    logger.debug("end_process llm release py: %s", le)
+        except Exception as le:
+            logger.debug("end_process llm release skip: %s", le)
+
         self._emit("process_ended", proc.id, {
             "state": state,
             "reason": reason,

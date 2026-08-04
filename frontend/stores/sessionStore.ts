@@ -17,9 +17,16 @@ interface SessionState {
   sessionTitles: Record<string, string>;
   // 星标会话 ID 列表
   starredSessionIds: string[];
+  /**
+   * 每个联系人（contact_agent）最后一次选中的 session id。
+   * 切走再点回该员工时恢复，避免 find-or-create 总跳回「最近更新」的老会话。
+   */
+  lastSessionByContact: Record<string, string>;
 
   // Actions
   setCurrentSession: (session: Session | null) => void;
+  /** 记录某员工当前会话；切回员工栏时优先打开 */
+  rememberContactSession: (contactName: string, sessionId: string) => void;
   addMessage: (message: Message) => void;
   updateMessage: (id: string, updates: Partial<Message>) => void;
   /** 移除消息（发送失败清幽灵乐观气泡） */
@@ -63,10 +70,36 @@ export const useSessionStore = create<SessionState>()(
       error: null,
       sessionTitles: {},
       starredSessionIds: [],
+      lastSessionByContact: {},
       _loadSeq: 0,
       recentActivityBySession: {},
 
-      setCurrentSession: (session) => set({ currentSession: session }),
+      setCurrentSession: (session) => {
+        const contact = String(
+          (session?.config as { contact_agent?: string } | null | undefined)
+            ?.contact_agent || '',
+        ).trim();
+        if (session?.id && contact) {
+          set((st) => ({
+            currentSession: session,
+            lastSessionByContact: {
+              ...st.lastSessionByContact,
+              [contact]: session.id,
+            },
+          }));
+          return;
+        }
+        set({ currentSession: session });
+      },
+
+      rememberContactSession: (contactName, sessionId) => {
+        const n = (contactName || '').trim();
+        const sid = (sessionId || '').trim();
+        if (!n || !sid) return;
+        set((st) => ({
+          lastSessionByContact: { ...st.lastSessionByContact, [n]: sid },
+        }));
+      },
 
       touchSessionActivity: (sessionId) => {
         if (!sessionId) return;
@@ -234,7 +267,9 @@ export const useSessionStore = create<SessionState>()(
         set({ isLoading: true, error: null });
         try {
           const session = await api.getSession(sessionId);
-          set({ currentSession: session, isLoading: false });
+          // 走 setCurrentSession 以同步 lastSessionByContact
+          get().setCurrentSession(session);
+          set({ isLoading: false });
         } catch (err) {
           const status = (err as { response?: { status?: number } })?.response?.status;
           // 本地持久化了已删/换库的 session id → 清掉，别反复 404
@@ -495,6 +530,7 @@ export const useSessionStore = create<SessionState>()(
         currentSession: state.currentSession,
         sessionTitles: state.sessionTitles,
         starredSessionIds: state.starredSessionIds,
+        lastSessionByContact: state.lastSessionByContact,
       }),
       onRehydrateStorage: () => () => {
         if (typeof window === 'undefined') return;

@@ -1693,12 +1693,97 @@ impl AgentKernel {
         self.inner.write().llm.cancel_wait(request_id)
     }
 
+    pub fn llm_release_by_process(&self, process_id: &str) -> usize {
+        let mut g = self.inner.write();
+        let n = g.llm.release_by_process(process_id);
+        if n > 0 {
+            Self::emit_locked(
+                &mut g,
+                "llm.released_by_process",
+                process_id,
+                json!({ "count": n }),
+            );
+        }
+        n
+    }
+
+    pub fn llm_expire_stale(&self, max_hold_secs: f64) -> usize {
+        let mut g = self.inner.write();
+        let n = g.llm.expire_stale(max_hold_secs);
+        if n > 0 {
+            Self::emit_locked(
+                &mut g,
+                "llm.expired",
+                "system",
+                json!({ "count": n, "max_hold_secs": max_hold_secs }),
+            );
+        }
+        n
+    }
+
+    /// 回收孤儿 / 过期 LLM 租约（live 进程集合取自 kernel 当前非终态进程）。
+    pub fn llm_reclaim(
+        &self,
+        null_pid_max_hold_secs: f64,
+        max_hold_secs: f64,
+    ) -> Value {
+        let mut g = self.inner.write();
+        let live: Vec<String> = g
+            .processes
+            .values()
+            .filter(|p| !p.is_terminal())
+            .map(|p| p.id.clone())
+            .collect();
+        let n = g
+            .llm
+            .reclaim_orphans(&live, null_pid_max_hold_secs, max_hold_secs);
+        if n > 0 {
+            Self::emit_locked(
+                &mut g,
+                "llm.reclaimed",
+                "system",
+                json!({
+                    "count": n,
+                    "live_processes": live.len(),
+                    "null_pid_max_hold_secs": null_pid_max_hold_secs,
+                    "max_hold_secs": max_hold_secs,
+                }),
+            );
+        }
+        json!({
+            "reclaimed": n,
+            "live_processes": live.len(),
+            "status": g.llm.status(),
+        })
+    }
+
+    pub fn llm_force_clear(&self) -> Value {
+        let mut g = self.inner.write();
+        let n = g.llm.force_clear();
+        Self::emit_locked(
+            &mut g,
+            "llm.force_cleared",
+            "system",
+            json!({ "count": n }),
+        );
+        json!({ "cleared": n, "status": g.llm.status() })
+    }
+
     pub fn llm_charge_quota(&self, identity_id: Option<&str>, amount: i64) {
         self.inner.write().llm.charge_quota(identity_id, amount);
     }
 
     pub fn llm_status(&self) -> Value {
-        self.inner.write().llm.status()
+        // 观测路径也顺带自愈，避免 UI 一直看着僵尸槽
+        let mut g = self.inner.write();
+        let live: Vec<String> = g
+            .processes
+            .values()
+            .filter(|p| !p.is_terminal())
+            .map(|p| p.id.clone())
+            .collect();
+        let _ = g.llm.reclaim_orphans(&live, 120.0, 600.0);
+        g.llm.status()
     }
 
     /// Acquire global run lease + charge per-process concurrency_slots (accounting).

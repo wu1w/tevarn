@@ -5,8 +5,8 @@ PermissionGate 每次 check 都是新实例，session_allows 不能跨调用。
 
 scope:
   - once    —— 仅当前这次（不写入本 store）
-  - session —— 本会话内等价操作（按 tool 签名）
-  - agent   —— 写入员工 Identity.capabilities（持久）
+  - session —— 本会话内该工具整类放行（whole_tool，含 command 任意首词）
+  - agent   —— 写入员工 Identity.capabilities（持久）+ 会话整工具缓存
 """
 
 from __future__ import annotations
@@ -292,8 +292,8 @@ def add_session_grant(
 ) -> None:
     """记录本会话放行。
 
-    whole_tool=True：放行该工具全部调用（「本员工允许」后的会话缓存，避免同轮再问）。
-    默认 False：shell 仍按命令首词细分（「本会话允许」粒度）。
+    whole_tool=True：放行该工具全部调用（「本会话允许」/「本员工允许」后的会话缓存）。
+    默认 False：shell 仍按命令首词细分（仅内部/兼容路径）。
     落盘：单机热重载 / 进程重启后仍可短路确认（非多机权威）。
     """
     if not session_id:
@@ -344,8 +344,56 @@ async def resolve_identity_id(
         for ident in await reg.list(status="active"):
             if str(getattr(ident, "name", "") or "").lower() == low:
                 return str(ident.id)
+        # 管家别名：小白/大管家/CEO 等指向 is_ceo 编制
+        try:
+            from backend.agent.workforce_dispatch import is_steward_contact
+
+            if is_steward_contact(name):
+                ceo = await resolve_ceo_identity()
+                if ceo and ceo.get("id"):
+                    return str(ceo["id"])
+        except Exception:
+            pass
     except Exception as e:
         logger.debug("resolve_identity_id skip: %s", e)
+    return None
+
+
+async def resolve_ceo_identity() -> dict[str, str] | None:
+    """解析默认 CEO/管家编制（供主会话「本员工允许」与能力短路）。
+
+    优先 is_ceo 标记，其次常见管家名。
+    """
+    try:
+        from backend.kernel import get_kernel
+
+        reg = getattr(get_kernel(), "identity_registry", None)
+        if reg is None:
+            return None
+        active = list(await reg.list(status="active") or [])
+        for ident in active:
+            meta = getattr(ident, "meta", None) or getattr(ident, "metadata", None) or {}
+            if isinstance(meta, dict) and (
+                meta.get("is_ceo") is True or str(meta.get("template_id") or "") == "ceo"
+            ):
+                return {"id": str(ident.id), "name": str(ident.name or "CEO")}
+        # 名字启发
+        try:
+            from backend.agent.workforce_dispatch import is_steward_contact
+        except Exception:
+            is_steward_contact = None  # type: ignore[assignment]
+        for ident in active:
+            nm = str(getattr(ident, "name", "") or "")
+            role = str(getattr(ident, "role", "") or "")
+            if is_steward_contact and (
+                is_steward_contact(nm) or is_steward_contact(role)
+            ):
+                return {"id": str(ident.id), "name": nm or "CEO"}
+            low = nm.lower()
+            if low in {"ceo", "小白", "管家", "大管家"} or "ceo" in low:
+                return {"id": str(ident.id), "name": nm or "CEO"}
+    except Exception as e:
+        logger.debug("resolve_ceo_identity skip: %s", e)
     return None
 
 

@@ -186,79 +186,97 @@ class LlmAdmissionController:
             "estimated_tokens": int(req.estimated_tokens or 0),
             "wait_boost": float(req.wait_boost or 0),
         }
-        # audit-fix: async 上下文走 _acall，避免阻塞事件循环
-        r = await k._acall("llm_try_acquire", params) or {}
-        status = r.get("status")
-        if status == "granted":
-            lease = _lease_from_dict(r.get("lease") or {})
-            self._emit(
-                "scheduler.granted",
-                {
-                    "request_id": lease.request_id,
-                    "source": lease.source,
-                    "identity_id": lease.identity_id,
-                    "process_id": lease.process_id,
-                    "priority": lease.priority,
-                    "backend": "rust",
-                },
-            )
-            return lease
-        if status == "rejected":
-            self._emit(
-                "scheduler.rejected",
-                {
-                    "request_id": r.get("request_id"),
-                    "reason": r.get("code") or r.get("reason"),
-                    "identity_id": req.identity_id,
-                    "source": req.source,
-                    "backend": "rust",
-                },
-            )
-            raise LlmAdmissionRejected(
-                str(r.get("reason") or "rejected"),
-                code=str(r.get("code") or "rejected"),
-            )
-
-        # queued — poll
-        rid = str(r.get("request_id") or req.request_id)
-        self._emit(
-            "scheduler.queued",
-            {
-                "request_id": rid,
-                "source": req.source,
-                "identity_id": req.identity_id,
-                "priority": int(req.priority),
-                "queue_len": r.get("queue_len"),
-                "reason": r.get("reason"),
-                "backend": "rust",
-            },
-        )
-        deadline = time.time() + self._grant_timeout
-        while time.time() < deadline:
-            await asyncio.sleep(0.05)
-            polled = await k._acall("llm_poll", {"request_id": rid}) or {}
-            st = polled.get("status")
-            if st == "granted":
-                lease = _lease_from_dict(polled.get("lease") or {})
+        rid = str(req.request_id or "")
+        granted = False
+        try:
+            # audit-fix: async 上下文走 _acall，避免阻塞事件循环
+            r = await k._acall("llm_try_acquire", params) or {}
+            status = r.get("status")
+            rid = str(r.get("request_id") or req.request_id or rid)
+            if status == "granted":
+                lease = _lease_from_dict(r.get("lease") or {})
+                granted = True
                 self._emit(
                     "scheduler.granted",
                     {
                         "request_id": lease.request_id,
                         "source": lease.source,
+                        "identity_id": lease.identity_id,
+                        "process_id": lease.process_id,
+                        "priority": lease.priority,
                         "backend": "rust",
                     },
                 )
                 return lease
-            if st == "rejected":
-                raise LlmAdmissionRejected(
-                    str(polled.get("reason") or "rejected"),
-                    code=str(polled.get("code") or "rejected"),
+            if status == "rejected":
+                self._emit(
+                    "scheduler.rejected",
+                    {
+                        "request_id": r.get("request_id"),
+                        "reason": r.get("code") or r.get("reason"),
+                        "identity_id": req.identity_id,
+                        "source": req.source,
+                        "backend": "rust",
+                    },
                 )
-        try:
-            await k._acall("llm_cancel_wait", {"request_id": rid})
-        except Exception:
-            pass
-        raise LlmAdmissionRejected("等待 LLM 槽位超时", code="wait_timeout")
+                raise LlmAdmissionRejected(
+                    str(r.get("reason") or "rejected"),
+                    code=str(r.get("code") or "rejected"),
+                )
+
+            # queued — poll
+            rid = str(r.get("request_id") or req.request_id)
+            self._emit(
+                "scheduler.queued",
+                {
+                    "request_id": rid,
+                    "source": req.source,
+                    "identity_id": req.identity_id,
+                    "priority": int(req.priority),
+                    "queue_len": r.get("queue_len"),
+                    "reason": r.get("reason"),
+                    "backend": "rust",
+                },
+            )
+            deadline = time.time() + self._grant_timeout
+            while time.time() < deadline:
+                await asyncio.sleep(0.05)
+                polled = await k._acall("llm_poll", {"request_id": rid}) or {}
+                st = polled.get("status")
+                if st == "granted":
+                    lease = _lease_from_dict(polled.get("lease") or {})
+                    granted = True
+                    self._emit(
+                        "scheduler.granted",
+                        {
+                            "request_id": lease.request_id,
+                            "source": lease.source,
+                            "backend": "rust",
+                        },
+                    )
+                    return lease
+                if st == "rejected":
+                    raise LlmAdmissionRejected(
+                        str(polled.get("reason") or "rejected"),
+                        code=str(polled.get("code") or "rejected"),
+                    )
+            raise LlmAdmissionRejected("等待 LLM 槽位超时", code="wait_timeout")
+        finally:
+            # 超时 / CancelledError / 拒绝路径：必须 cancel_wait，
+            # 否则 wake_best 已 grant 的 in_flight 会永久占槽。
+            # shield：外层 task 被 cancel 时 finally 内 await 仍会被打断，导致清槽失败。
+            if not granted and rid:
+                try:
+                    await asyncio.shield(
+                        k._acall("llm_cancel_wait", {"request_id": rid})
+                    )
+                except Exception:
+                    try:
+                        # 最后手段：同步 RPC，避免 cancel 路径漏槽
+                        if hasattr(k, "_call"):
+                            k._call("llm_cancel_wait", {"request_id": rid})
+                    except Exception:
+                        pass
 
     def _score_req(self, req: LlmLeaseRequest, cfg: dict[str, Any]) -> float:
         wait = max(0.0, time.time() - float(req.enqueued_at or time.time()))
@@ -362,11 +380,25 @@ class LlmAdmissionController:
             async with self._cv:
                 self._queued.pop(req.request_id, None)
                 self._waiters.pop(req.request_id, None)
+                # 若 wake 已 grant 进 in_flight 但 future 未取走，一并释放
+                self._in_flight.pop(req.request_id, None)
+                self._wake_best_locked()
+                self._cv.notify_all()
             raise LlmAdmissionRejected("等待 LLM 槽位超时", code="wait_timeout") from None
+        except asyncio.CancelledError:
+            async with self._cv:
+                self._queued.pop(req.request_id, None)
+                self._waiters.pop(req.request_id, None)
+                self._in_flight.pop(req.request_id, None)
+                self._wake_best_locked()
+                self._cv.notify_all()
+            raise
         finally:
             async with self._cv:
                 self._waiters.pop(req.request_id, None)
-                self._queued.pop(req.request_id, None)
+                # 仅清排队；已成功 grant 的 in_flight 由 release() 负责
+                if req.request_id not in self._in_flight:
+                    self._queued.pop(req.request_id, None)
 
         if isinstance(result, BaseException):
             raise result
@@ -395,6 +427,117 @@ class LlmAdmissionController:
             self._in_flight.pop(lease.request_id, None)
             self._wake_best_locked()
             self._cv.notify_all()
+
+    async def release_by_process(self, process_id: str | None) -> int:
+        """进程结束 / 用户 stop 时回收该 process 全部 LLM 租约与排队。"""
+        pid = str(process_id or "").strip()
+        if not pid:
+            return 0
+        k = _rust_kernel()
+        if k is not None:
+            try:
+                r = await k._acall(
+                    "llm_release_by_process", {"process_id": pid}
+                ) or {}
+                n = int(r.get("released") or 0)
+                if n:
+                    self._emit(
+                        "scheduler.released_by_process",
+                        {"process_id": pid, "count": n, "backend": "rust"},
+                    )
+                return n
+            except Exception as e:
+                logger.debug("rust llm_release_by_process: %s", e)
+        async with self._cv:
+            n = 0
+            for rid, lease in list(self._in_flight.items()):
+                if str(lease.process_id or "") == pid:
+                    self._in_flight.pop(rid, None)
+                    n += 1
+            for rid, req in list(self._queued.items()):
+                if str(req.process_id or "") == pid:
+                    self._queued.pop(rid, None)
+                    fut = self._waiters.pop(rid, None)
+                    if fut is not None and not fut.done():
+                        fut.cancel()
+                    n += 1
+            if n:
+                self._wake_best_locked()
+                self._cv.notify_all()
+            return n
+
+    async def reclaim(
+        self,
+        *,
+        null_pid_max_hold_secs: float = 120.0,
+        max_hold_secs: float = 600.0,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        """回收孤儿/过期租约；force=True 清空全部槽位（运维自救）。"""
+        k = _rust_kernel()
+        if k is not None:
+            try:
+                if force:
+                    r = await k._acall("llm_force_clear") or {}
+                    self._emit(
+                        "scheduler.force_cleared",
+                        {"cleared": r.get("cleared"), "backend": "rust"},
+                    )
+                    return dict(r) if isinstance(r, dict) else {"cleared": r}
+                r = await k._acall(
+                    "llm_reclaim",
+                    {
+                        "null_pid_max_hold_secs": float(null_pid_max_hold_secs),
+                        "max_hold_secs": float(max_hold_secs),
+                    },
+                ) or {}
+                if int(r.get("reclaimed") or 0) > 0:
+                    self._emit(
+                        "scheduler.reclaimed",
+                        {
+                            "reclaimed": r.get("reclaimed"),
+                            "backend": "rust",
+                        },
+                    )
+                return dict(r) if isinstance(r, dict) else {"reclaimed": r}
+            except Exception as e:
+                logger.debug("rust llm_reclaim: %s", e)
+        # Python fallback
+        async with self._cv:
+            if force:
+                n = len(self._in_flight) + len(self._queued)
+                self._in_flight.clear()
+                self._queued.clear()
+                for fut in self._waiters.values():
+                    if not fut.done():
+                        fut.cancel()
+                self._waiters.clear()
+                self._cv.notify_all()
+                return {"cleared": n, "backend": "python"}
+            now = time.time()
+            n = 0
+            for rid, lease in list(self._in_flight.items()):
+                # 不可用 `granted_at or now`：0.0 会被当成缺省
+                try:
+                    ga = float(lease.granted_at)
+                except (TypeError, ValueError):
+                    ga = now
+                held = max(0.0, now - ga)
+                pid = str(lease.process_id or "").strip()
+                drop = held > float(max_hold_secs)
+                if not pid and held > float(null_pid_max_hold_secs):
+                    drop = True
+                if drop:
+                    self._in_flight.pop(rid, None)
+                    n += 1
+            if n:
+                self._wake_best_locked()
+                self._cv.notify_all()
+            return {
+                "reclaimed": n,
+                "backend": "python",
+                "status": self.status(),
+            }
 
     def charge_quota(self, identity_id: str | None, amount: int) -> None:
         k = _rust_kernel()
@@ -475,6 +618,20 @@ class LlmAdmissionController:
         self._waiters.clear()
         self.quota = DailyTokenQuota()
         self._rust_config_pushed = False
+        # 仅当明确允许时清 live host，避免 pytest 误伤正在跑的桌面会话
+        import os
+
+        if os.environ.get("TAKTON_LLM_TEST_CLEAR_HOST", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        ):
+            k = _rust_kernel()
+            if k is not None:
+                try:
+                    k._call("llm_force_clear")
+                except Exception as e:
+                    logger.debug("rust llm_force_clear on reset: %s", e)
 
 
 _controller: LlmAdmissionController | None = None

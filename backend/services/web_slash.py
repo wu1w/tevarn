@@ -89,22 +89,48 @@ async def _cmd_stop(session_id: uuid.UUID) -> str:
 
 
 async def _cmd_new(session_id: uuid.UUID, user_id: uuid.UUID | str | None) -> str:
-    """Create a fresh session for the same user and tell UI to switch."""
+    """Create a fresh session for the same user and tell UI to switch.
+
+    继承当前会话的 contact_agent / identity / source，保证「联系 小白」下 /new
+    仍属于该员工的会话线程；否则切走再点员工会 find-or-create 回老会话。
+    """
     try:
         from backend.api.dependencies import get_session_repo
         from backend.api.websocket import manager as ws_manager
 
         repo = await get_session_repo()
+        cur = await repo.get_by_id(session_id)
         uid = user_id
         if uid is None:
-            # fall back: copy owner of current session
-            cur = await repo.get_by_id(session_id)
             uid = getattr(cur, "user_id", None) if cur else None
         if not uid:
             return "⚠️ 无法确定用户，请用侧栏「新建会话」"
-        # create with empty config (inherit nothing toxic)
         uid_s = uid if isinstance(uid, uuid.UUID) else uuid.UUID(str(uid))
-        new_s = await repo.create({"user_id": uid_s, "config": {}})
+
+        # 继承联系人/人设，不继承 llm 快照外的临时态（goal 等按需）
+        new_cfg: dict = {}
+        contact_name = ""
+        if cur is not None:
+            old = getattr(cur, "config", None) or {}
+            if isinstance(old, dict):
+                for k in (
+                    "contact_agent",
+                    "identity",
+                    "source",
+                    "sys_prompt",
+                    "agent_md",
+                    "skills",
+                    "tools",
+                    "llm",
+                ):
+                    if k in old and old[k] is not None:
+                        new_cfg[k] = old[k]
+                contact_name = str(old.get("contact_agent") or "").strip()
+                # 明确标记为人与员工 1:1 线程（与 open_contact_session 一致）
+                if contact_name and not new_cfg.get("source"):
+                    new_cfg["source"] = "human_dm"
+
+        new_s = await repo.create({"user_id": uid_s, "config": new_cfg})
         new_id = getattr(new_s, "id", None) or new_s
         if not isinstance(new_id, uuid.UUID):
             new_id = uuid.UUID(str(new_id))
@@ -113,11 +139,16 @@ async def _cmd_new(session_id: uuid.UUID, user_id: uuid.UUID | str | None) -> st
             {
                 "type": "slash_result",
                 "command": "new",
-                "reply": "✅ 新会话已创建",
+                "reply": (
+                    f"✅ 新会话已创建"
+                    + (f"（继续联系 {contact_name}）" if contact_name else "")
+                ),
                 "new_session_id": str(new_id),
+                "contact_agent": contact_name or None,
             },
         )
-        return f"✅ 新会话已创建\n🆔 {str(new_id)[:8]}…\n（前端将自动切换）"
+        who = f" · {contact_name}" if contact_name else ""
+        return f"✅ 新会话已创建{who}\n🆔 {str(new_id)[:8]}…\n（前端将自动切换）"
     except Exception as e:
         logger.exception("web /new failed: %s", e)
         return f"⚠️ 自动新建失败，请点侧栏新建会话。错误: {e}"

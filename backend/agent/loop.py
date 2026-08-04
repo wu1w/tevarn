@@ -1342,6 +1342,15 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             """释放 run_gate / 结束进程。CancelledError 路径必须走这里（P0）。"""
             if kernel is None or kernel_proc is None:
                 return
+            # 先回收 LLM 租约：cancel 时可能卡在 admission 排队，end_process 前也要清
+            try:
+                from backend.kernel.llm_admission import get_llm_admission
+
+                await get_llm_admission().release_by_process(
+                    str(getattr(kernel_proc, "id", "") or "")
+                )
+            except Exception as le:
+                logger.debug("llm release_by_process on slot release: %s", le)
             try:
                 if hasattr(kernel, "_call"):
                     try:
@@ -1700,23 +1709,6 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 _contact_agent = str(config.get("contact_agent") or "").strip()
             # 供 tool_hooks / 危险确认「本员工允许」使用（写入 loop 后注入工具参数）
             self._contact_agent = _contact_agent
-            # 联系 TA：解析 Identity，后续 command 用编制能力短路（不再反复弹窗）
-            if _contact_agent and not getattr(self, "_identity_id", None):
-                try:
-                    from backend.agent.grant_store import resolve_identity_id
-                    from backend.agent.steward_permission import (
-                        load_identity_capabilities,
-                    )
-
-                    _iid = await resolve_identity_id(contact_name=_contact_agent)
-                    if _iid:
-                        self._identity_id = _iid
-                        self._identity_name = _contact_agent
-                        _caps = await load_identity_capabilities(_iid)
-                        if _caps is not None:
-                            self._identity_capabilities = list(_caps)
-                except Exception as _id_e:
-                    logger.debug("contact identity resolve skip: %s", _id_e)
             _is_steward_session = is_steward_contact(_contact_agent)
             # 无 contact 时：identity 文案里带 CEO/管家也按管家编排
             if not _is_steward_session and isinstance(config, dict):
@@ -1727,6 +1719,46 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     _is_steward_session = True
                     if not _contact_agent:
                         _contact_agent = "大管家"
+                        self._contact_agent = _contact_agent
+            # 联系 TA / CEO：解析 Identity，后续 command 用编制能力短路（不再反复弹窗）
+            # 必须在 steward 判定之后：无 contact 的管家会话也要绑到默认 CEO 编制
+            if not getattr(self, "_identity_id", None):
+                try:
+                    from backend.agent.grant_store import (
+                        resolve_ceo_identity,
+                        resolve_identity_id,
+                    )
+                    from backend.agent.steward_permission import (
+                        load_identity_capabilities,
+                    )
+
+                    _iid = None
+                    _iname = _contact_agent
+                    if _contact_agent:
+                        _iid = await resolve_identity_id(contact_name=_contact_agent)
+                    if not _iid and _is_steward_session:
+                        _ceo = await resolve_ceo_identity()
+                        if _ceo:
+                            _iid = str(_ceo.get("id") or "") or None
+                            _iname = str(_ceo.get("name") or _contact_agent or "CEO")
+                            if not _contact_agent:
+                                _contact_agent = _iname
+                                self._contact_agent = _contact_agent
+                    if _iid:
+                        self._identity_id = _iid
+                        self._identity_name = _iname or _contact_agent
+                        _caps = await load_identity_capabilities(_iid)
+                        if _caps is not None:
+                            self._identity_capabilities = list(_caps)
+                        logger.info(
+                            "session identity bound name=%s id=%s caps=%s steward=%s",
+                            str(self._identity_name or "")[:24],
+                            str(_iid)[:8],
+                            list(_caps or [])[:8] if _caps is not None else None,
+                            _is_steward_session,
+                        )
+                except Exception as _id_e:
+                    logger.debug("contact identity resolve skip: %s", _id_e)
             if _is_steward_session:
                 mode_extra.extend(STEWARD_FORCE_TOOLS)
                 # 此时才确定是 CEO/管家：扩进程能力 + 令牌全开

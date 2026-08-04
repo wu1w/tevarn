@@ -1930,6 +1930,14 @@ export async function createProjectGroup(body: {
   return res.data;
 }
 
+/** 删除项目组（仅聚合视图；inbox 工单保留） */
+export async function deleteProjectGroup(
+  id: string,
+): Promise<{ deleted: boolean; id: string; title?: string }> {
+  const res = await api.delete(`/kernel/project-groups/${id}`);
+  return res.data;
+}
+
 // ── Agent Runs（只读）────────────────────────────────────────
 
 export interface AgentRunSummary {

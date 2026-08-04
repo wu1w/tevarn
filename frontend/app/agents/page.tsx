@@ -51,14 +51,11 @@ function AgentCard({
 }) {
   const st = proc?.state ?? a.status ?? 'idle';
   const budget = a.default_token_budget ?? 0;
-  // 分母用单次预算时，分子应用「当前在跑进程」用量；跨进程累计会永久 100%
-  const usedLive = proc?.tokens_used ?? 0;
-  const used = usedLive > 0 ? usedLive : Math.min(tokensUsed ?? 0, budget || tokensUsed || 0);
+  // 预算条 = 当前在跑用量（live）；工单结束后应为 0。tokensUsed 亦为 live-only。
+  const used = Math.max(proc?.tokens_used ?? 0, tokensUsed ?? 0);
   const pct =
-    budget > 0
-      ? Math.min(100, Math.round((Math.min(used, budget * 3) / budget) * 100))
-      : 0;
-  const over = budget > 0 && usedLive / budget >= 0.85;
+    budget > 0 ? Math.min(100, Math.round((used / Math.max(1, budget)) * 100)) : 0;
+  const over = budget > 0 && used / budget >= 0.85;
   const isCeo =
     Boolean(a.meta && a.meta.is_ceo) ||
     /ceo|管家/i.test(String(a.role || '')) ||

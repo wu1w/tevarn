@@ -68,8 +68,23 @@ def test_permission_before_identity_cap_skips_ask(monkeypatch):
     async def go():
         from backend.agent import tool_hooks
         from backend.agent.permissions_rules import PermissionGate
+        from backend.kernel.permission_court import CourtDecision
 
-        # 强制 gate 返回 ask
+        # 模拟 Rust/court 对 command 恒 ask（真实路径）
+        async def _ask_court(name, arguments=None, **kw):
+            return CourtDecision(
+                tool=name,
+                args_digest="x",
+                verdict="ask",
+                matched_rule="profile:confirm",
+                layer="profile",
+                reason="test",
+            )
+
+        monkeypatch.setattr(
+            "backend.kernel.permission_court.decide_tool",
+            _ask_court,
+        )
         monkeypatch.setattr(
             PermissionGate,
             "check",
@@ -115,6 +130,70 @@ def test_permission_before_identity_cap_skips_ask(monkeypatch):
         result = await tool_hooks.builtin_permission_before("command", args)
         assert not result.block
         assert result.arguments.get("_confirm_ok") is True
+        assert interactive_called["n"] == 0
+
+    asyncio.run(go())
+
+
+def test_permission_before_session_grant_skips_ask(monkeypatch):
+    """本会话允许后：court 再 ask 也不得弹窗（含不同 command 首词）。"""
+
+    async def go():
+        from backend.agent import tool_hooks
+        from backend.kernel.permission_court import CourtDecision
+
+        async def _ask_court(name, arguments=None, **kw):
+            return CourtDecision(
+                tool=name,
+                args_digest="x",
+                verdict="ask",
+                matched_rule="profile:confirm",
+                layer="profile",
+                reason="test",
+            )
+
+        monkeypatch.setattr(
+            "backend.kernel.permission_court.decide_tool",
+            _ask_court,
+        )
+        monkeypatch.setattr(
+            "backend.core.config.settings.agent_permission_enabled",
+            True,
+            raising=False,
+        )
+        monkeypatch.setattr(
+            "backend.agent.steward_permission.is_workforce_context",
+            lambda *a, **k: False,
+        )
+
+        sid = "sess-grant-1"
+        # 模拟 UI「本会话允许」：整工具
+        add_session_grant(
+            sid, "command", {"command": "cmd /c dir"}, whole_tool=True
+        )
+
+        interactive_called = {"n": 0}
+
+        async def _no_interactive(*a, **k):
+            interactive_called["n"] += 1
+            raise AssertionError("should not open interactive dialog")
+
+        monkeypatch.setattr(tool_hooks, "_interactive_approval", _no_interactive)
+
+        # 相同首词
+        r1 = await tool_hooks.builtin_permission_before(
+            "command",
+            {"_session_id": sid, "command": "cmd /c echo 1"},
+        )
+        assert not r1.block
+        assert r1.arguments.get("_confirm_ok") is True
+        # 不同首词也应放行
+        r2 = await tool_hooks.builtin_permission_before(
+            "command",
+            {"_session_id": sid, "command": "npm test"},
+        )
+        assert not r2.block
+        assert r2.arguments.get("_confirm_ok") is True
         assert interactive_called["n"] == 0
 
     asyncio.run(go())

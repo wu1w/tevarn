@@ -93,10 +93,16 @@ export function AgentDrawer({ agent, processes, zh, onClose, onChanged, open = t
     staleTime: 30_000,
     retry: 1,
   });
-  const orgTokens = org.data?.agents?.find((x) => x.identity_key === agent.name)?.tokens_used ?? 0;
-  const tokensUsed = Math.max(procTokens, Number(orgTokens) || 0);
-  const runs = org.data?.agents?.find((x) => x.identity_key === agent.name)?.runs
-    ?? myProcs.length;
+  const orgAgent = org.data?.agents?.find((x) => x.identity_key === agent.name);
+  // 预算条：只看当前在跑进程用量（工单结束后应归零）。历史累计单独展示。
+  const orgLiveTokens = Number(orgAgent?.tokens_used ?? 0) || 0;
+  const orgLifetimeTokens = Number(
+    (orgAgent as { tokens_used_lifetime?: number } | undefined)
+      ?.tokens_used_lifetime ?? orgLiveTokens,
+  ) || 0;
+  const tokensUsed = Math.max(procTokens, orgLiveTokens);
+  const tokensLifetime = Math.max(tokensUsed, orgLifetimeTokens);
+  const runs = orgAgent?.runs ?? myProcs.length;
   const doneJobs = (inbox.data?.items ?? []).filter((i) => i.status === 'done').length;
   const failedJobs = (inbox.data?.items ?? []).filter((i) => i.status === 'failed' || i.status === 'dead').length;
 
@@ -753,16 +759,53 @@ export function AgentDrawer({ agent, processes, zh, onClose, onChanged, open = t
               {agent.default_token_budget ? (
                 <div style={{ ...rowCard, marginTop: 10 }}>
                   <div style={{ fontSize: 12, color: 'var(--foreground-muted)' }}>
-                    {zh ? '默认预算' : 'Default budget'}：{fmtTokens(tokensUsed)} / {fmtTokens(agent.default_token_budget)}
+                    {zh ? '本任务预算（在跑）' : 'Live task budget'}：
+                    {fmtTokens(tokensUsed)} / {fmtTokens(agent.default_token_budget)}
                     {' · '}
-                    {Math.min(100, Math.round((tokensUsed / Math.max(1, agent.default_token_budget)) * 100))}%
+                    {Math.min(
+                      100,
+                      Math.round(
+                        (tokensUsed / Math.max(1, agent.default_token_budget)) * 100,
+                      ),
+                    )}
+                    %
                   </div>
-                  <div style={{ height: 5, borderRadius: 3, background: 'var(--input-bg)', overflow: 'hidden', marginTop: 8 }}>
-                    <div style={{
-                      display: 'block', height: '100%', borderRadius: 3,
-                      width: `${Math.min(100, Math.round((tokensUsed / Math.max(1, agent.default_token_budget)) * 100))}%`,
-                      background: 'linear-gradient(90deg, var(--brand-purple), var(--brand-cyan))',
-                    }} />
+                  <div
+                    style={{
+                      height: 5,
+                      borderRadius: 3,
+                      background: 'var(--input-bg)',
+                      overflow: 'hidden',
+                      marginTop: 8,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'block',
+                        height: '100%',
+                        borderRadius: 3,
+                        width: `${Math.min(
+                          100,
+                          Math.round(
+                            (tokensUsed / Math.max(1, agent.default_token_budget)) *
+                              100,
+                          ),
+                        )}%`,
+                        background:
+                          'linear-gradient(90deg, var(--brand-purple), var(--brand-cyan))',
+                      }}
+                    />
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 10.5,
+                      color: 'var(--foreground-dim)',
+                      marginTop: 6,
+                    }}
+                  >
+                    {zh
+                      ? `历史累计用量 ${fmtTokens(tokensLifetime)}（已完成工单不占当前预算）`
+                      : `Lifetime ${fmtTokens(tokensLifetime)} (finished jobs free the live budget)`}
                   </div>
                 </div>
               ) : null}

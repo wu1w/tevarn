@@ -408,6 +408,8 @@ impl LlmAdmissionController {
 
     /// Try immediate grant or enqueue. Does not block.
     pub fn try_acquire(&mut self, mut req: LlmLeaseRequest) -> LlmAcquireResult {
+        // 自愈：每次 acquire 顺带扫过期租约，避免必须等 end_process 才 expire
+        let _ = self.expire_stale(600.0);
         req.enqueued_at = now_secs();
         if let Some(qerr) = self.quota.would_exceed(
             req.identity_id.as_deref(),
@@ -567,10 +569,98 @@ impl LlmAdmissionController {
         n
     }
 
+    /// 回收孤儿租约：
+    /// - process_id 为空且持有超过 `null_pid_max_hold_secs`（测试/漏绑 pid 泄漏）
+    /// - process_id 不在 live 集合（进程已终态但未 end_process 到 host）
+    /// - 任意租约持有超过 `max_hold_secs`
+    pub fn reclaim_orphans(
+        &mut self,
+        live_process_ids: &[String],
+        null_pid_max_hold_secs: f64,
+        max_hold_secs: f64,
+    ) -> usize {
+        use std::collections::HashSet;
+        let live: HashSet<&str> = live_process_ids.iter().map(|s| s.as_str()).collect();
+        let null_max = if null_pid_max_hold_secs > 0.0 {
+            null_pid_max_hold_secs
+        } else {
+            120.0
+        };
+        let max_hold = if max_hold_secs > 0.0 {
+            max_hold_secs
+        } else {
+            600.0
+        };
+        let now = now_secs();
+        let ids: Vec<String> = self
+            .in_flight
+            .values()
+            .filter(|l| {
+                let held = now - l.granted_at;
+                if held > max_hold {
+                    return true;
+                }
+                match l.process_id.as_deref() {
+                    None | Some("") => held > null_max,
+                    Some(pid) => !live.contains(pid),
+                }
+            })
+            .map(|l| l.request_id.clone())
+            .collect();
+        let mut n = 0usize;
+        for id in &ids {
+            if self.in_flight.remove(id).is_some() {
+                n += 1;
+            }
+            self.pending_grants.remove(id);
+        }
+        // 排队项：绑定已死进程的直接丢弃
+        let qids: Vec<String> = self
+            .queued
+            .values()
+            .filter(|r| match r.process_id.as_deref() {
+                Some(pid) if !pid.is_empty() => !live.contains(pid),
+                _ => false,
+            })
+            .map(|r| r.request_id.clone())
+            .collect();
+        for id in qids {
+            if self.queued.remove(&id).is_some() {
+                n += 1;
+            }
+        }
+        if n > 0 {
+            self.wake_best();
+        }
+        n
+    }
+
+    /// 紧急清空全部 in_flight / 排队（运维自救；测试用）
+    pub fn force_clear(&mut self) -> usize {
+        let n = self.in_flight.len() + self.queued.len() + self.pending_grants.len();
+        self.in_flight.clear();
+        self.queued.clear();
+        self.pending_grants.clear();
+        self.rejected.clear();
+        n
+    }
+
+    /// 取消排队等待。
+    ///
+    /// 关键：wake_best 已 grant 写入 in_flight + pending_grants，但 waiter 在 poll 前被
+    /// cancel 时，旧实现只清 pending/queue，in_flight 永久占槽 → per_identity 死锁。
     pub fn cancel_wait(&mut self, request_id: &str) -> bool {
-        let q = self.queued.remove(request_id).is_some();
-        self.pending_grants.remove(request_id);
-        q
+        let was_queued = self.queued.remove(request_id).is_some();
+        let was_pending = self.pending_grants.remove(request_id).is_some();
+        let mut was_flight = false;
+        // 尚未被 waiter poll 取走的 grant：必须一并释放 in_flight
+        if was_pending {
+            was_flight = self.in_flight.remove(request_id).is_some();
+        }
+        if was_flight {
+            self.wake_best();
+        }
+        was_queued || was_pending || was_flight
     }
 
     pub fn charge_quota(&mut self, identity_id: Option<&str>, amount: i64) {

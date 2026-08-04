@@ -136,6 +136,20 @@ async def build_org_view(session_factory: Any) -> dict[str, Any]:
             key, name_by_id=name_by_id, name_by_sub=name_by_sub
         )
 
+    # 终态进程预算已随工单结束释放；UI「当前预算」只计在跑进程。
+    # 历史累计单独给出，避免「做完一单预算条永远 100%」。
+    _TERMINAL = frozenset(
+        {
+            "completed",
+            "failed",
+            "killed",
+            "interrupted",
+            "cancelled",
+            "dead",
+            "done",
+        }
+    )
+
     by_key: dict[str, dict[str, Any]] = {}
     edges: dict[tuple[str, str], int] = {}
     pid_to_key: dict[str, str] = {}
@@ -149,15 +163,34 @@ async def build_org_view(session_factory: Any) -> dict[str, Any]:
                 "identity_key": disp,
                 "raw_key": p.identity_key,
                 "runs": 0,
+                "live_runs": 0,
+                # 当前在跑用量（预算条用这个）
                 "tokens_used": 0,
+                # 历史累计（含已结束工单，仅观测）
+                "tokens_used_lifetime": 0,
                 "token_budget": None,
+                "token_budget_live": None,
                 "children": {},
             },
         )
+        used = int(p.tokens_used or 0)
+        st = str(getattr(p, "state", "") or "").lower()
+        live = st not in _TERMINAL and not getattr(p, "ended_at", None)
         entry["runs"] += 1
-        entry["tokens_used"] += int(p.tokens_used or 0)
-        if p.token_budget is not None:
-            entry["token_budget"] = (entry["token_budget"] or 0) + p.token_budget
+        entry["tokens_used_lifetime"] += used
+        if live:
+            entry["live_runs"] += 1
+            entry["tokens_used"] += used
+            if p.token_budget is not None:
+                entry["token_budget_live"] = (
+                    entry["token_budget_live"] or 0
+                ) + int(p.token_budget)
+        # 兼容旧字段：token_budget 优先展示在跑进程预算
+        if live and p.token_budget is not None:
+            entry["token_budget"] = entry["token_budget_live"]
+        elif entry["token_budget"] is None and p.token_budget is not None:
+            # 无在跑时不把历史预算加总成「当前顶」
+            pass
         if p.parent_process_id:
             parent_key = pid_to_key.get(p.parent_process_id)
             if parent_key:
@@ -181,9 +214,21 @@ async def build_org_view(session_factory: Any) -> dict[str, Any]:
         and not str(a["identity_key"]).startswith(("sub:", "wf:", "main"))
     ]
     return {
-        "agents": sorted(agents, key=lambda a: -a["tokens_used"]),
+        "agents": sorted(
+            agents,
+            key=lambda a: (
+                -int(a.get("tokens_used") or 0),
+                -int(a.get("tokens_used_lifetime") or 0),
+            ),
+        ),
         "reports_to": reports_to,
         "total_processes": len(procs),
+        "live_processes": sum(
+            1
+            for p in procs
+            if str(getattr(p, "state", "") or "").lower() not in _TERMINAL
+            and not getattr(p, "ended_at", None)
+        ),
     }
 
 

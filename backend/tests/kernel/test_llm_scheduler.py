@@ -176,6 +176,145 @@ def test_fairness_two_identities_alternate(ctrl, monkeypatch):
     asyncio.run(go())
 
 
+def test_cancel_waiter_releases_slot(ctrl, monkeypatch):
+    """排队 waiter 被 cancel 后不得永久占 in_flight。"""
+    monkeypatch.setattr(
+        "backend.core.config.settings.llm_max_in_flight", 1, raising=False
+    )
+    monkeypatch.setattr(
+        "backend.core.config.settings.llm_owner_reserve_slots", 0, raising=False
+    )
+
+    async def go():
+        holder = await ctrl.acquire(
+            LlmLeaseRequest(source="chat", priority=Priority.OWNER_CHAT)
+        )
+        waiter = asyncio.create_task(
+            ctrl.acquire(
+                LlmLeaseRequest(
+                    source="chat",
+                    priority=Priority.OWNER_CHAT,
+                    identity_id="ceo",
+                    process_id="proc-wait",
+                )
+            )
+        )
+        await asyncio.sleep(0.05)
+        assert ctrl.status()["counts"]["queued"] >= 1
+        waiter.cancel()
+        try:
+            await waiter
+        except asyncio.CancelledError:
+            pass
+        await ctrl.release(holder)
+        # cancel 后槽位应干净，新请求可立即拿到
+        nxt = await asyncio.wait_for(
+            ctrl.acquire(
+                LlmLeaseRequest(
+                    source="chat",
+                    priority=Priority.OWNER_CHAT,
+                    identity_id="ceo2",
+                )
+            ),
+            timeout=2,
+        )
+        assert nxt is not None
+        await ctrl.release(nxt)
+        assert ctrl.status()["counts"]["in_flight"] == 0
+        assert ctrl.status()["counts"]["queued"] == 0
+
+    asyncio.run(go())
+
+
+def test_reclaim_force_clears_all(ctrl, monkeypatch):
+    monkeypatch.setattr(
+        "backend.core.config.settings.llm_owner_reserve_slots", 0, raising=False
+    )
+    monkeypatch.setattr(
+        "backend.core.config.settings.llm_max_in_flight", 4, raising=False
+    )
+
+    async def go():
+        await ctrl.acquire(
+            LlmLeaseRequest(
+                source="chat",
+                priority=Priority.OWNER_CHAT,
+                identity_id="a",
+                process_id="p1",
+            )
+        )
+        await ctrl.acquire(
+            LlmLeaseRequest(
+                source="workforce",
+                priority=Priority.WORKFORCE_NORMAL,
+                identity_id="w1",
+                process_id="p2",
+            )
+        )
+        assert ctrl.status()["counts"]["in_flight"] == 2
+        r = await ctrl.reclaim(force=True)
+        assert int(r.get("cleared") or 0) >= 2
+        assert ctrl.status()["counts"]["in_flight"] == 0
+
+    asyncio.run(go())
+
+
+def test_reclaim_expires_null_pid(ctrl, monkeypatch):
+    async def go():
+        lease = await ctrl.acquire(
+            LlmLeaseRequest(source="chat", priority=Priority.OWNER_CHAT)
+        )
+        # 伪造过期
+        lease.granted_at = 0.0
+        ctrl._in_flight[lease.request_id] = lease
+        r = await ctrl.reclaim(null_pid_max_hold_secs=1.0, max_hold_secs=99999.0)
+        assert int(r.get("reclaimed") or 0) >= 1
+        assert ctrl.status()["counts"]["in_flight"] == 0
+
+    asyncio.run(go())
+
+
+def test_release_by_process_clears_identity_slot(ctrl, monkeypatch):
+    monkeypatch.setattr(
+        "backend.core.config.settings.llm_max_in_flight", 2, raising=False
+    )
+    monkeypatch.setattr(
+        "backend.core.config.settings.llm_max_in_flight_per_identity", 1, raising=False
+    )
+    monkeypatch.setattr(
+        "backend.core.config.settings.llm_owner_reserve_slots", 0, raising=False
+    )
+
+    async def go():
+        l1 = await ctrl.acquire(
+            LlmLeaseRequest(
+                source="chat",
+                priority=Priority.OWNER_CHAT,
+                identity_id="e52",
+                process_id="dead-proc",
+            )
+        )
+        assert l1.process_id == "dead-proc"
+        n = await ctrl.release_by_process("dead-proc")
+        assert n >= 1
+        # 同 identity 应能立刻再拿
+        l2 = await asyncio.wait_for(
+            ctrl.acquire(
+                LlmLeaseRequest(
+                    source="chat",
+                    priority=Priority.OWNER_CHAT,
+                    identity_id="e52",
+                    process_id="live-proc",
+                )
+            ),
+            timeout=2,
+        )
+        await ctrl.release(l2)
+        assert ctrl.status()["counts"]["in_flight"] == 0
+
+    asyncio.run(go())
+
+
 def test_daily_quota_rejects(ctrl, monkeypatch):
     monkeypatch.setattr(
         "backend.core.config.settings.llm_daily_token_budget_global", 100, raising=False

@@ -802,6 +802,36 @@ fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: 
             Ok(json!({"ok": kernel.llm_cancel_wait(rid)}))
         }
 
+        "llm_release_by_process" => {
+            let pid = params
+                .get("process_id")
+                .and_then(|v| v.as_str())
+                .ok_or((-32005, "process_id required".into(), json!({})))?;
+            Ok(json!({"released": kernel.llm_release_by_process(pid)}))
+        }
+
+        "llm_expire_stale" => {
+            let max_hold = params
+                .get("max_hold_secs")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(600.0);
+            Ok(json!({"expired": kernel.llm_expire_stale(max_hold)}))
+        }
+
+        "llm_reclaim" => {
+            let null_max = params
+                .get("null_pid_max_hold_secs")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(120.0);
+            let max_hold = params
+                .get("max_hold_secs")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(600.0);
+            Ok(kernel.llm_reclaim(null_max, max_hold))
+        }
+
+        "llm_force_clear" => Ok(kernel.llm_force_clear()),
+
         "llm_charge_quota" => {
             let iid = params.get("identity_id").and_then(|v| v.as_str());
             let amount = params

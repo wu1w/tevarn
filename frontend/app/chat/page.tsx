@@ -29,6 +29,7 @@ import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { WorkspaceDock } from '@/components/workspace/WorkspaceDock';
 import { OpenProjectModal } from '@/components/workspace/OpenProjectModal';
 import { DangerConfirmDialog } from '@/components/chat/DangerConfirmDialog';
+import { ContactSessionPicker } from '@/components/chat/ContactSessionPicker';
 import { useToastStore } from '@/stores/toastStore';
 import { useT } from '@/stores/localeStore';
 import { streamSessionApi } from '@/stores/streamSessionStore';
@@ -922,8 +923,19 @@ const handleUserMessageAck = useCallback(
       onSyncResponse: handleSyncResponse,
       onUserMessageAck: handleUserMessageAck,
       onSlashResult: (payload) => {
-        // /new → 切换到新会话
+        // /new → 切换到新会话，并记为该员工「最后选择」
         if (payload.new_session_id) {
+          const contact =
+            (payload as { contact_agent?: string }).contact_agent ||
+            (useSessionStore.getState().currentSession?.config as
+              | { contact_agent?: string }
+              | undefined)?.contact_agent ||
+            '';
+          if (contact) {
+            useSessionStore
+              .getState()
+              .rememberContactSession(String(contact).trim(), payload.new_session_id);
+          }
           void switchSession(payload.new_session_id).catch(console.error);
           addToast(payload.reply || '已新建会话', 'success');
           return;
@@ -1627,11 +1639,19 @@ const handleUserMessageAck = useCallback(
                     1:1
                   </span>
                 ) : null}
-                {currentSession && (
+                {currentSession && (sessionIdentity || contactIdentity) ? (
+                  <ContactSessionPicker
+                    contactName={sessionIdentity || contactIdentity || ''}
+                    currentSessionId={currentSession.id}
+                    onSelect={(sid) => {
+                      void switchSession(sid).catch(console.error);
+                    }}
+                  />
+                ) : currentSession ? (
                   <span className="chat-meta font-mono text-foreground-dim">
                     {currentSession.id.slice(0, 8)}
                   </span>
-                )}
+                ) : null}
                 {uiMode === 'pro' && (
                   <button
                     type="button"

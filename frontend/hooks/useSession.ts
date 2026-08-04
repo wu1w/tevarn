@@ -239,8 +239,9 @@ export function useSession() {
       const cur = st.currentSession;
       const curContact = (cur?.config as { contact_agent?: string } | undefined)
         ?.contact_agent;
-      // 已在该联系人会话：只确保消息在
+      // 已在该联系人会话：只确保消息在，并记住为该员工的最后会话
       if (cur && curContact === n) {
+        useSessionStore.getState().rememberContactSession(n, cur.id);
         await loadMessages(cur.id);
         return cur;
       }
@@ -248,11 +249,42 @@ export function useSession() {
       if (cur && !isContactConfig(cur.config) && !isContactSessionLocal(cur.id)) {
         await discardCurrentIfEmpty();
       }
+
+      // 优先恢复用户最后一次选择的会话（/new 后切走再回来不会跳回老线程）
+      const preferred = (st.lastSessionByContact || {})[n];
+      if (preferred) {
+        try {
+          const pref = await api.getSession(preferred);
+          const prefContact = String(
+            (pref?.config as { contact_agent?: string } | null | undefined)
+              ?.contact_agent || '',
+          ).trim();
+          if (pref?.id && prefContact === n) {
+            setCurrentSession(pref);
+            setError(null);
+            useSessionStore.getState().setSessionTitle(pref.id, `→ ${n}`);
+            useSessionStore.getState().rememberContactSession(n, pref.id);
+            useSessionStore.setState({
+              _loadSeq: (useSessionStore.getState()._loadSeq || 0) + 1,
+            });
+            try {
+              await loadMessages(pref.id);
+            } catch {
+              /* loadMessages 内部处理 404 */
+            }
+            return pref;
+          }
+        } catch {
+          // 已删 / 不可用 → 回落 find-or-create
+        }
+      }
+
       const session = await api.openContactSession(n);
       setCurrentSession(session);
       // 不先 clearMessages：等 loadMessages 替换，减轻连切闪空
       setError(null);
       useSessionStore.getState().setSessionTitle(session.id, `→ ${n}`);
+      useSessionStore.getState().rememberContactSession(n, session.id);
       // 世代号：丢弃过期的 load 结果
       useSessionStore.setState({
         _loadSeq: (useSessionStore.getState()._loadSeq || 0) + 1,
@@ -303,6 +335,19 @@ export function useSession() {
       }
       // 并发连切：最终 current 已是别人 → 不拉消息
       if (useSessionStore.getState().currentSession?.id !== sessionId) return;
+      // 记住该员工最后会话（含 /new 切到的新线程）
+      try {
+        const sess = useSessionStore.getState().currentSession;
+        const contact = String(
+          (sess?.config as { contact_agent?: string } | null | undefined)
+            ?.contact_agent || '',
+        ).trim();
+        if (contact && sess?.id) {
+          useSessionStore.getState().rememberContactSession(contact, sess.id);
+        }
+      } catch {
+        /* ignore */
+      }
       try {
         await loadMessages(sessionId);
       } catch {

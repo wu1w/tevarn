@@ -20,8 +20,11 @@ import {
   getKernelEscalations,
   getEvolutionProposals,
   listProjectGroups,
+  deleteProjectGroup,
   type KernelIdentity,
 } from '@/lib/api';
+import { useToastStore } from '@/stores/toastStore';
+import { useQueryClient } from '@tanstack/react-query';
 
 const GRADS: Array<[string, string]> = [
   ['#7e9e6a', '#5c7a4c'],
@@ -226,6 +229,8 @@ export function AgentSidebar() {
     staleTime: 15_000,
     enabled: searchOpen,
   });
+  const queryClient = useQueryClient();
+  const addToast = useToastStore((s) => s.addToast);
   const projectGroups = useQuery({
     queryKey: ['project-groups'],
     queryFn: () => listProjectGroups(),
@@ -233,6 +238,45 @@ export function AgentSidebar() {
     refetchInterval: 15_000,
     retry: 1,
   });
+  const [deletingGroupId, setDeletingGroupId] = useState<string | null>(null);
+
+  const handleDeleteProjectGroup = useCallback(
+    async (e: React.MouseEvent, groupId: string, title: string) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!groupId || deletingGroupId) return;
+      const ok = window.confirm(
+        zh
+          ? `删除项目组「${title || groupId.slice(0, 8)}」？\n仅移除侧栏聚合视图，员工工单不会删除。`
+          : `Delete project group "${title || groupId.slice(0, 8)}"?\nOnly removes the board; inbox jobs stay.`,
+      );
+      if (!ok) return;
+      setDeletingGroupId(groupId);
+      try {
+        await deleteProjectGroup(groupId);
+        await queryClient.invalidateQueries({ queryKey: ['project-groups'] });
+        // 若正打开该项目组页，退回聊天
+        if (
+          typeof window !== 'undefined' &&
+          window.location.search.includes(`group=${groupId}`)
+        ) {
+          router.push('/chat');
+        }
+        addToast(zh ? '项目组已删除' : 'Project group deleted', 'success');
+      } catch (err) {
+        console.error(err);
+        addToast(
+          zh
+            ? `删除失败：${(err as Error)?.message || '未知错误'}`
+            : `Delete failed: ${(err as Error)?.message || 'unknown'}`,
+          'error',
+        );
+      } finally {
+        setDeletingGroupId(null);
+      }
+    },
+    [addToast, deletingGroupId, queryClient, router, zh],
+  );
 
   // audit-fix: list 用 useMemo 固定引用，否则每次 render 新数组导致 sortedAgents 的
   // useMemo(deps: [list, ...]) 永远失效
@@ -471,40 +515,94 @@ export function AgentSidebar() {
               </div>
             ) : (
               (projectGroups.data?.groups ?? []).map((g) => (
-                <button
+                <div
                   key={g.id}
-                  type="button"
                   className="tk-sb-agent"
-                  onClick={() => router.push(`/chat?group=${g.id}`)}
                   style={{
                     width: '100%',
-                    border: 'none',
-                    background: 'transparent',
-                    cursor: 'pointer',
-                    textAlign: 'left',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 4,
+                    paddingRight: 4,
                   }}
                 >
-                  <span
-                    className="tk-sb-avatar"
+                  <button
+                    type="button"
+                    onClick={() => router.push(`/chat?group=${g.id}`)}
                     style={{
-                      width: 34,
-                      height: 34,
-                      fontSize: 14,
-                      background: 'linear-gradient(135deg, #6a8caf, #4a6a88)',
+                      flex: 1,
+                      minWidth: 0,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      border: 'none',
+                      background: 'transparent',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      padding: 0,
+                      color: 'inherit',
+                      font: 'inherit',
                     }}
                   >
-                    📁
-                  </span>
-                  <span className="tk-sb-agent-meta" style={{ minWidth: 0 }}>
-                    <span className="tk-sb-agent-name" style={{ fontSize: 12 }}>
-                      {g.title}
+                    <span
+                      className="tk-sb-avatar"
+                      style={{
+                        width: 34,
+                        height: 34,
+                        fontSize: 14,
+                        background: 'linear-gradient(135deg, #6a8caf, #4a6a88)',
+                        flexShrink: 0,
+                      }}
+                    >
+                      📁
                     </span>
-                    <span className="tk-sb-agent-sub">
-                      {g.member_count} {zh ? '人' : ''} · {g.task_count} {zh ? '单' : 'tasks'}
-                      {g.status === 'open' ? '' : ` · ${g.status}`}
+                    <span className="tk-sb-agent-meta" style={{ minWidth: 0 }}>
+                      <span className="tk-sb-agent-name" style={{ fontSize: 12 }}>
+                        {g.title}
+                      </span>
+                      <span className="tk-sb-agent-sub">
+                        {g.member_count} {zh ? '人' : ''} · {g.task_count}{' '}
+                        {zh ? '单' : 'tasks'}
+                        {g.status === 'open' ? '' : ` · ${g.status}`}
+                      </span>
                     </span>
-                  </span>
-                </button>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={deletingGroupId === g.id}
+                    title={zh ? '删除项目组' : 'Delete project group'}
+                    aria-label={zh ? '删除项目组' : 'Delete project group'}
+                    onClick={(e) => void handleDeleteProjectGroup(e, g.id, g.title)}
+                    style={{
+                      flexShrink: 0,
+                      width: 28,
+                      height: 28,
+                      border: '1px solid transparent',
+                      borderRadius: 8,
+                      background: 'transparent',
+                      color: 'var(--foreground-dim)',
+                      cursor: deletingGroupId === g.id ? 'wait' : 'pointer',
+                      opacity: deletingGroupId === g.id ? 0.45 : 0.75,
+                      fontSize: 13,
+                      lineHeight: 1,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.borderColor = 'rgba(239,68,68,0.35)';
+                      e.currentTarget.style.background = 'rgba(239,68,68,0.1)';
+                      e.currentTarget.style.color = '#f87171';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.borderColor = 'transparent';
+                      e.currentTarget.style.background = 'transparent';
+                      e.currentTarget.style.color = 'var(--foreground-dim)';
+                    }}
+                  >
+                    🗑
+                  </button>
+                </div>
               ))
             )}
           </div>

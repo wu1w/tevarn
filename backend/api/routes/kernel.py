@@ -1684,6 +1684,31 @@ async def scheduler_status(
     return st
 
 
+@router.post("/scheduler/reclaim")
+async def scheduler_reclaim(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+    force: bool = Query(False, description="清空全部 LLM 槽位（紧急自救）"),
+    null_pid_max_hold_secs: float = Query(
+        120.0, ge=0, le=3600, description="无 process_id 的租约最长持有秒"
+    ),
+    max_hold_secs: float = Query(
+        600.0, ge=30, le=7200, description="任意租约最长持有秒"
+    ),
+):
+    """回收孤儿/过期 LLM 租约，解除 per_identity / max_in_flight 死锁。
+
+    force=true 时清空全部 in_flight 与排队（会打断进行中的模型调用）。
+    """
+    from backend.kernel.llm_scheduler import get_llm_admission
+
+    result = await get_llm_admission().reclaim(
+        null_pid_max_hold_secs=null_pid_max_hold_secs,
+        max_hold_secs=max_hold_secs,
+        force=force,
+    )
+    return result
+
+
 @router.get("/resources/{process_id}")
 async def process_resources(
     process_id: str,
@@ -4159,6 +4184,40 @@ async def attach_project_group_tasks(
         await session.commit()
         await session.refresh(g)
         return _project_group_detail(g)
+
+
+@router.delete("/project-groups/{group_id}")
+async def delete_project_group(
+    group_id: str,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """删除项目组聚合视图（不删 inbox 工单真源）。"""
+    import uuid as _u
+
+    from sqlalchemy import select
+
+    from backend.database import AsyncSessionLocal
+    from backend.models.project_group import ProjectGroup
+
+    try:
+        gid = _u.UUID(str(group_id))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="invalid group id") from e
+
+    async with AsyncSessionLocal() as session:
+        g = (
+            await session.execute(select(ProjectGroup).where(ProjectGroup.id == gid))
+        ).scalar_one_or_none()
+        if g is None:
+            raise HTTPException(status_code=404, detail="project group not found")
+        # 仅允许删自己的，或无 user_id 的历史遗留组
+        owner = getattr(g, "user_id", None)
+        if owner is not None and str(owner) != str(current_user.id):
+            raise HTTPException(status_code=403, detail="not your project group")
+        title = str(g.title or "")
+        await session.delete(g)
+        await session.commit()
+        return {"deleted": True, "id": str(gid), "title": title}
 
 
 def _project_group_summary(g) -> dict:
