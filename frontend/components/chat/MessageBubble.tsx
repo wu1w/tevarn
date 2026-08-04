@@ -7,6 +7,7 @@ import { MarkdownContent } from './MarkdownContent';
 import { ToolCallPanel, ToolCallData } from './ToolCallPanel';
 import { IconMore } from '@/components/icons/ChatIcons';
 import { useT } from '@/stores/localeStore';
+import { useToastStore } from '@/stores/toastStore';
 import {
   DisplayToolCall,
   extractToolMeta,
@@ -68,6 +69,7 @@ function MessageBubbleInner({
   onPreviewArtifact,
 }: MessageBubbleProps) {
   const t = useT();
+  const addToast = useToastStore((s) => s.addToast);
   const isUser = message.role === 'user';
   const isAssistant = message.role === 'assistant';
   const isTool = message.role === 'tool';
@@ -99,15 +101,25 @@ function MessageBubbleInner({
 
   const handleCopyContent = useCallback(async () => {
     if (message.content) {
-      await navigator.clipboard.writeText(message.content);
+      // audit-fix: clipboard.writeText 会 reject（权限被拒/非安全上下文），失败时 toast
+      try {
+        await navigator.clipboard.writeText(message.content);
+      } catch {
+        addToast(t('store.copyFail'), 'error');
+      }
     }
     setShowMenu(false);
-  }, [message.content]);
+  }, [message.content, addToast, t]);
 
   const handleCopyId = useCallback(async () => {
-    await navigator.clipboard.writeText(message.id);
+    // audit-fix: clipboard.writeText 会 reject（权限被拒/非安全上下文），失败时 toast
+    try {
+      await navigator.clipboard.writeText(message.id);
+    } catch {
+      addToast(t('store.copyFail'), 'error');
+    }
     setShowMenu(false);
-  }, [message.id]);
+  }, [message.id, addToast, t]);
 
   const toolCallsForPanel: ToolCallData[] | null = useMemo(() => {
     if (!isAssistant || !message.tool_calls?.length) return null;

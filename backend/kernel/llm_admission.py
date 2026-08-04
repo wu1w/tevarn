@@ -186,7 +186,8 @@ class LlmAdmissionController:
             "estimated_tokens": int(req.estimated_tokens or 0),
             "wait_boost": float(req.wait_boost or 0),
         }
-        r = k._call("llm_try_acquire", params) or {}
+        # audit-fix: async 上下文走 _acall，避免阻塞事件循环
+        r = await k._acall("llm_try_acquire", params) or {}
         status = r.get("status")
         if status == "granted":
             lease = _lease_from_dict(r.get("lease") or {})
@@ -235,7 +236,7 @@ class LlmAdmissionController:
         deadline = time.time() + self._grant_timeout
         while time.time() < deadline:
             await asyncio.sleep(0.05)
-            polled = k._call("llm_poll", {"request_id": rid}) or {}
+            polled = await k._acall("llm_poll", {"request_id": rid}) or {}
             st = polled.get("status")
             if st == "granted":
                 lease = _lease_from_dict(polled.get("lease") or {})
@@ -254,7 +255,7 @@ class LlmAdmissionController:
                     code=str(polled.get("code") or "rejected"),
                 )
         try:
-            k._call("llm_cancel_wait", {"request_id": rid})
+            await k._acall("llm_cancel_wait", {"request_id": rid})
         except Exception:
             pass
         raise LlmAdmissionRejected("等待 LLM 槽位超时", code="wait_timeout")
@@ -377,7 +378,8 @@ class LlmAdmissionController:
         k = _rust_kernel()
         if k is not None:
             try:
-                k._call("llm_release", {"request_id": lease.request_id})
+                # audit-fix: async 上下文走 _acall，避免阻塞事件循环
+                await k._acall("llm_release", {"request_id": lease.request_id})
                 self._emit(
                     "scheduler.released",
                     {

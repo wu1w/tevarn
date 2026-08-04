@@ -16,6 +16,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -483,7 +484,9 @@ async def enforce_tool_gate(
 
     if charge:
         try:
-            charge_for_tool(name, pid, args)
+            # audit-fix: charge_for_tool 内部为同步 kernel RPC，放线程执行
+            # 避免阻塞事件循环（保持 sync 签名不动其它调用方）
+            await asyncio.to_thread(charge_for_tool, name, pid, args)
             if name in CHILD_PROC_TOOLS:
                 # Lease flag: caller must release_for_tool after execute / early abort
                 args["_child_proc_leased"] = True

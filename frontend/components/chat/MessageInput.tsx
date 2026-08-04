@@ -124,22 +124,25 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   const isEditing = !!initialContent;
   const inputLocked = disabled || uploading;
   const clusterOn = activeModes.has('cluster');
+  // audit-fix: 草稿按会话隔离，避免切会话后草稿串台；
+  // 旧全局 key 'takton-chat-draft' 不再读取（按清单约定不迁移）
+  const draftKey = `takton-chat-draft:${sessionId || 'default'}`;
 
   useEffect(() => {
     if (isEditing) return;
     const timer = setTimeout(() => {
       if (content.trim()) {
-        localStorage.setItem('takton-chat-draft', content);
+        localStorage.setItem(draftKey, content);
       } else {
-        localStorage.removeItem('takton-chat-draft');
+        localStorage.removeItem(draftKey);
       }
     }, 500);
     return () => clearTimeout(timer);
-  }, [content, isEditing]);
+  }, [content, isEditing, draftKey]);
 
   useEffect(() => {
     if (isEditing) return;
-    const draft = localStorage.getItem('takton-chat-draft');
+    const draft = localStorage.getItem(draftKey);
     if (draft && !content) {
       setContent(draft);
     }
@@ -386,7 +389,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       setContent('');
       attachments.forEach((a) => a.previewUrl && URL.revokeObjectURL(a.previewUrl));
       setAttachments([]);
-      localStorage.removeItem('takton-chat-draft');
+      localStorage.removeItem(draftKey);
       setActiveModes((prev) => {
         const next = new Set(prev);
         next.delete('image');
@@ -414,7 +417,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     setContent('');
     attachments.forEach((a) => a.previewUrl && URL.revokeObjectURL(a.previewUrl));
     setAttachments([]);
-    localStorage.removeItem('takton-chat-draft');
+    localStorage.removeItem(draftKey);
     setActiveModes((prev) => {
       const next = new Set(prev);
       next.delete('image');

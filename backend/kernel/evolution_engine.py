@@ -454,8 +454,9 @@ class EvolutionEngine:
         # Hard policy check via Rust (auto_apply must stay false)
         try:
             pol = {}
-            if hasattr(self._kernel, "_call"):
-                pol = self._kernel._call("evolution_policy") or {}
+            if hasattr(self._kernel, "_acall"):
+                # audit-fix: async 上下文走 _acall，避免阻塞事件循环
+                pol = await self._kernel._acall("evolution_policy") or {}
             if pol.get("auto_apply") is True:
                 raise RuntimeError("evolution auto_apply must be false")
         except RuntimeError:

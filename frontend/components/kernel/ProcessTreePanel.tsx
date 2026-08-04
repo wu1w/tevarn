@@ -9,7 +9,7 @@ import type { KernelProcessTreeNode } from '@/lib/api';
 const STATE_COLOR: Record<string, string> = {
   running: 'var(--status-online)',
   created: 'var(--foreground-dim)',
-  suspended: '#c9a05e',
+  suspended: 'var(--sem-warn)',
   completed: 'var(--foreground-dim)',
   failed: 'var(--status-offline)',
   killed: 'var(--status-offline)',
@@ -94,7 +94,7 @@ function NodeRow({
           </span>
         ) : null}
         {(node.soft_renew_count || 0) > 0 ? (
-          <span style={{ fontSize: 10, color: '#c9a05e' }}>
+          <span style={{ fontSize: 10, color: 'var(--sem-warn)' }}>
             soft×{node.soft_renew_count}
           </span>
         ) : null}

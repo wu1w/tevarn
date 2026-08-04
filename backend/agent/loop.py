@@ -235,9 +235,9 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             return await store.save_message(
                 session_id, role, content, tool_calls=tool_calls, token_count=token_count
             )
-        return await self._save_message(
-            session_id, role, content, tool_calls=tool_calls, token_count=token_count
-        )
+        # audit-fix(#8)：原实现 store 为 None 时自递归（无限递归 RecursionError）。
+        # 与 loop_base 同口径改 raise；调用点均有 try/except 兼容吞掉。
+        raise RuntimeError("no message_store; _save_message requires message_store")
 
     async def _load_history(
         self,
@@ -248,9 +248,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         store = getattr(self, "message_store", None)
         if store is not None:
             return await store.get_history(session_id, limit=limit, offset=offset)
-        return await self._load_history(
-            session_id, limit=limit, offset=offset
-        )
+        # audit-fix: 原先自递归导致 RecursionError；与 _save_message 同口径 fail-fast
+        raise RuntimeError("no message_store; _load_history requires message_store")
 
     async def _await_run_gate(
         self,
@@ -276,7 +275,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 )
             return
         try:
-            r = kernel._call(
+            # audit-fix(#10)：async 上下文改走 _acall，避免阻塞事件循环
+            r = await kernel._acall(
                 "run_gate_try",
                 {
                     "process_id": process_id,
@@ -291,7 +291,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         status = r.get("status")
         if status == "granted":
             try:
-                kernel._call(
+                await kernel._acall(
                     "resource_charge",
                     {
                         "process_id": process_id,
@@ -333,14 +333,14 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 raise RuntimeError("run gate wait aborted: stop requested")
             await asyncio.sleep(0.05)
             try:
-                polled = kernel._call("run_gate_poll", {"request_id": rid}) or {}
+                polled = await kernel._acall("run_gate_poll", {"request_id": rid}) or {}
             except Exception as e:
                 logger.debug("run_gate_poll: %s", e)
                 continue
             st = polled.get("status")
             if st == "granted":
                 try:
-                    kernel._call(
+                    await kernel._acall(
                         "resource_charge",
                         {
                             "process_id": process_id,
@@ -1065,7 +1065,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                             _meta.get("workforce")
                         )
                         pclass = "workforce" if is_wf else "foreground"
-                        kernel._call(
+                        await kernel._acall(
                             "schedule_run",
                             {
                                 "process_id": kernel_proc.id,
@@ -1087,7 +1087,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                             )
                         )
                         try:
-                            kernel._call(
+                            await kernel._acall(
                                 "isolation_set_profile",
                                 {
                                     "process_id": kernel_proc.id,
@@ -1130,16 +1130,13 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                             or str(getattr(self, "_run_origin", "") or "")
                             in ("inbox", "cron", "workforce")
                         )
-                        _instr = ""
-                        try:
-                            for _m in reversed(messages or []):
-                                if isinstance(_m, dict) and _m.get("role") == "user":
-                                    _c = _m.get("content")
-                                    if isinstance(_c, str) and _c.strip():
-                                        _instr = _c
-                                        break
-                        except Exception:
-                            pass
+                        # audit-fix(#9)：原实现引用未定义的 messages（NameError 被
+                        # except 吞掉，instruction 恒为空串）。改用函数参数 user_input。
+                        _instr = (
+                            user_input.strip()
+                            if isinstance(user_input, str) and user_input.strip()
+                            else ""
+                        )
                         _cfg = build_loop_guard_config(
                             workforce=_wf,
                             identity_name=str(
@@ -1175,7 +1172,9 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                                     )
                                     or 1
                                 )
-                        configure_for_process(str(kernel_proc.id), _cfg)
+                        await asyncio.to_thread(  # audit-fix: sync RPC → to_thread
+                            configure_for_process, str(kernel_proc.id), _cfg
+                        )
                         # Align Python max_iterations soft ceiling with guard
                         try:
                             _mr = int(_cfg.get("max_tool_rounds") or 0)
@@ -1213,7 +1212,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         "chat",
                     ):
                         if hasattr(kernel, "_call"):
-                            applied = kernel._call(
+                            applied = await kernel._acall(
                                 "coding_profile_apply",
                                 {
                                     "process_id": kernel_proc.id,
@@ -1346,13 +1345,13 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             try:
                 if hasattr(kernel, "_call"):
                     try:
-                        kernel._call(
+                        await kernel._acall(
                             "run_gate_release", {"process_id": kernel_proc.id}
                         )
                     except Exception:
                         pass
                     try:
-                        kernel._call(
+                        await kernel._acall(
                             "run_release", {"process_id": kernel_proc.id}
                         )
                     except Exception:
@@ -2073,12 +2072,22 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             except Exception:
                 pass
 
-            thr = float(getattr(settings, "context_threshold_percent", 0.55) or 0.55)
-            # 超长会话更早压
+            # audit-fix(#1)：阈值默认引用单点常量（0.55 → COMPRESS_THRESHOLD=0.85）；
+            # settings.context_threshold_percent 覆盖机制保留
+            from backend.agent.context_engine import (
+                COMPRESS_THRESHOLD,
+                COMPRESS_THRESHOLD_DEEP,
+            )
+
+            thr = float(
+                getattr(settings, "context_threshold_percent", COMPRESS_THRESHOLD)
+                or COMPRESS_THRESHOLD
+            )
+            # 超长会话更早压（深度阈值 0.45 → COMPRESS_THRESHOLD_DEEP=0.75）
             if len(messages) >= int(
                 getattr(settings, "context_max_messages_soft", 48) or 48
             ):
-                thr = min(thr, 0.45)
+                thr = min(thr, COMPRESS_THRESHOLD_DEEP)
             messages, compress_meta = await compress_history_if_needed(
                 messages, session_id=session_id, threshold=thr, allow_l5=True
             )
@@ -2107,42 +2116,85 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         strengthen_rag = bool(compress_meta.get("compressed")) or (
             total_tokens > int(getattr(settings, "context_window", 128_000) or 128_000) * 0.55
         )
-        if inject_opts.get("rag"):
-            messages = await self._inject_rag_context(
-                messages,
-                enriched_input,
-                top_k=int(inject_opts.get("rag_top_k") or 3),
-                strengthen=strengthen_rag and scene_plan.injection_tier == "rich",
-                min_score=float(inject_opts.get("rag_min_score") or 0.58),
-            )
-        else:
-            logger.debug("RAG skipped tier=%s", scene_plan.injection_tier)
-        if inject_opts.get("wiki"):
-            messages = await self._inject_wiki_context(
-                messages,
-                enriched_input,
-                limit=int(inject_opts.get("wiki_limit") or 4),
-                min_score=float(inject_opts.get("wiki_min_score") or 0.2),
-            )
-        else:
-            logger.debug("Wiki skipped tier=%s", scene_plan.injection_tier)
-        if inject_opts.get("entity"):
-            try:
-                from backend.services.entity_service import get_entity_service
-                es = get_entity_service()
-                recalled = await es.recall(
-                    user_input,
-                    user_id=self.user_id,
-                    limit=int(inject_opts.get("entity_limit") or 3),
+        # audit-fix(#12)：压缩(step 6.5)发生在注入之前——注入本身可能把上下文
+        # 重新顶超阈值。注入完成后补一次 token 估算，超阈值则按 RAG→wiki→entity
+        # 顺序递减条数重注入，直至达标或条数为 0（仅超预算时付出重注入代价）。
+        _rag_k = int(inject_opts.get("rag_top_k") or 3)
+        _wiki_lim = int(inject_opts.get("wiki_limit") or 4)
+        _ent_lim = int(inject_opts.get("entity_limit") or 3)
+        try:
+            from backend.agent.context_compress import estimate_msgs_tokens as _est_inj
+            from backend.agent.context_engine import COMPRESS_THRESHOLD as _INJ_THR
+
+            _inj_budget = int(
+                int(getattr(settings, "context_window", 128_000) or 128_000)
+                * float(
+                    getattr(settings, "context_threshold_percent", _INJ_THR)
+                    or _INJ_THR
                 )
-                if recalled:
-                    ctx = es.format_recall_context(recalled)
-                    if ctx:
-                        self._append_to_system(messages, ctx)
-            except Exception as e:
-                logger.debug("entity recall skipped: %s", e)
-        else:
-            logger.debug("entity skipped tier=%s", scene_plan.injection_tier)
+            )
+        except Exception:
+            _inj_budget = 0  # 估算不可用则保持旧行为（注入一次，不补估算）
+        _msgs_base = [dict(m) for m in messages]
+        for _inj_try in range(10):
+            messages = [dict(m) for m in _msgs_base]
+            if inject_opts.get("rag") and _rag_k > 0:
+                messages = await self._inject_rag_context(
+                    messages,
+                    enriched_input,
+                    top_k=_rag_k,
+                    strengthen=strengthen_rag and scene_plan.injection_tier == "rich",
+                    min_score=float(inject_opts.get("rag_min_score") or 0.58),
+                )
+            else:
+                logger.debug("RAG skipped tier=%s", scene_plan.injection_tier)
+            if inject_opts.get("wiki") and _wiki_lim > 0:
+                messages = await self._inject_wiki_context(
+                    messages,
+                    enriched_input,
+                    limit=_wiki_lim,
+                    min_score=float(inject_opts.get("wiki_min_score") or 0.2),
+                )
+            else:
+                logger.debug("Wiki skipped tier=%s", scene_plan.injection_tier)
+            if inject_opts.get("entity") and _ent_lim > 0:
+                try:
+                    from backend.services.entity_service import get_entity_service
+                    es = get_entity_service()
+                    recalled = await es.recall(
+                        user_input,
+                        user_id=self.user_id,
+                        limit=_ent_lim,
+                    )
+                    if recalled:
+                        ctx = es.format_recall_context(recalled)
+                        if ctx:
+                            self._append_to_system(messages, ctx)
+                except Exception as e:
+                    logger.debug("entity recall skipped: %s", e)
+            else:
+                logger.debug("entity skipped tier=%s", scene_plan.injection_tier)
+            # 注入后补估算：未超预算 / 估算不可用 → 直接用当前结果
+            _inj_over = False
+            if _inj_budget:
+                try:
+                    _inj_over = _est_inj(messages) > _inj_budget
+                except Exception:
+                    _inj_over = False
+            if not _inj_over:
+                break
+            if _rag_k > 0:
+                _rag_k //= 2
+            elif _wiki_lim > 0:
+                _wiki_lim //= 2
+            elif _ent_lim > 0:
+                _ent_lim //= 2
+            else:
+                break
+            logger.info(
+                "post-inject over budget, shrink rag_k=%s wiki=%s entity=%s session=%s",
+                _rag_k, _wiki_lim, _ent_lim, session_id,
+            )
 
         # 8. Agent Loop
         final_content = ""
@@ -2183,6 +2235,9 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         _timid_write_streak = 0
         _thrash_streak = 0
         _last_tool_fingerprint = ""
+        # audit-fix(#5)：同一工具名连续失败熔断计数（跨工具轮保持）
+        _last_failed_tool = ""
+        _same_tool_fail_streak = 0
         _completion_followups = 0
         _tools_used_run: list[str] = []
         self._reactive_compact_used = False
@@ -2195,6 +2250,10 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             max_repeat=int(getattr(settings, "agent_tool_repeat_max", 3) or 3)
         )
         _force_final_no_tools = False
+        # audit-fix(#13)：Goal 停滞检测——连续 3 轮无新工具调用且 goal 状态
+        # 无变化则 force_final，避免 goal 模式空转烧满 100 轮预算
+        _goal_stall_rounds = 0
+        _goal_last_sig: str | None = None
         _iter_budget = IterationBudget(_total_iters)
         # P0.5：同步迭代预算到 Rust policy（权威侧可观测 / 跨重启策略）
         _kpid_iter = str(getattr(getattr(self, "_kernel_process", None), "id", "") or "")
@@ -2206,7 +2265,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 if hasattr(_k_iter, "iteration_set_budget"):
                     _k_iter.iteration_set_budget(_kpid_iter, _total_iters)
                 elif hasattr(_k_iter, "_call"):
-                    _k_iter._call(
+                    await _k_iter._acall(
                         "iteration_set_budget",
                         {"process_id": _kpid_iter, "max_total": _total_iters},
                     )
@@ -2252,7 +2311,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         force_final_message,
                     )
 
-                    _bc = budget_check(_kpid_iter)
+                    _bc = await asyncio.to_thread(budget_check, _kpid_iter)  # audit-fix
                     if isinstance(_bc, dict) and _bc.get("status") == "force_final":
                         _force_final_no_tools = True
                         _loop_exit_reason = str(_bc.get("code") or "budget_ratio")
@@ -2307,7 +2366,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     if hasattr(_k_iter, "iteration_consume"):
                         _ic = _k_iter.iteration_consume(_kpid_iter)
                     elif hasattr(_k_iter, "_call"):
-                        _ic = _k_iter._call(
+                        _ic = await _k_iter._acall(
                             "iteration_consume", {"process_id": _kpid_iter}
                         )
                     else:
@@ -2342,7 +2401,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                             },
                         )
                     elif hasattr(_k_snap, "_call"):
-                        _k_snap._call(
+                        await _k_snap._acall(
                             "process_snapshot",
                             {
                                 "process_id": _kpid_iter,
@@ -2461,6 +2520,42 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             tool_calls = _lr.tool_calls
             if _lr.force_final_no_tools is not None:
                 _force_final_no_tools = _lr.force_final_no_tools
+            # audit-fix(#13)：Goal 停滞检测（保守：仅 goal 模式、仅计数不重构流程）
+            if goal_mode and not _force_final_no_tools:
+                try:
+                    from backend.agent.goal_state import get_goal as _goal_get
+
+                    _g = _goal_get(session_id)
+                    _sig = ""
+                    if _g is not None:
+                        _sig = str(_g.status) + "|" + ",".join(
+                            f"{t.id}:{t.status}" for t in (_g.todos or [])
+                        )
+                    if not tool_calls and _goal_last_sig is not None and _sig == _goal_last_sig:
+                        _goal_stall_rounds += 1
+                    else:
+                        _goal_stall_rounds = 0
+                    _goal_last_sig = _sig
+                    if _goal_stall_rounds >= 3:
+                        _force_final_no_tools = True
+                        _loop_exit_reason = "goal_stalled"
+                        messages.append(
+                            {
+                                "role": "system",
+                                "content": (
+                                    "【Goal 停滞熔断】已连续 3 轮无新工具调用且 goal 状态"
+                                    "无变化。禁止再调用工具：请基于已有进展直接总结"
+                                    "已完成/未完成项与阻塞原因，给出最终答复。"
+                                ),
+                            }
+                        )
+                        logger.warning(
+                            "goal stall force_final rounds=%s session=%s",
+                            _goal_stall_rounds,
+                            session_id,
+                        )
+                except Exception as _gs_e:
+                    logger.debug("goal stall check skipped: %s", _gs_e)
             if _lr.action == "continue":
                 continue
             if _lr.action == "break":
@@ -2550,6 +2645,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     last_tool_round_count=_last_tool_round_count,
                     thrash_streak=_thrash_streak,
                     last_tool_fingerprint=_last_tool_fingerprint,
+                    last_failed_tool=_last_failed_tool,
+                    same_tool_fail_streak=_same_tool_fail_streak,
                 )
                 await run_tool_round(
                     self,
@@ -2581,6 +2678,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 _last_tool_round_count = _tr_state.last_tool_round_count
                 _thrash_streak = _tr_state.thrash_streak
                 _last_tool_fingerprint = _tr_state.last_tool_fingerprint
+                _last_failed_tool = _tr_state.last_failed_tool
+                _same_tool_fail_streak = _tr_state.same_tool_fail_streak
                 continue
 
             else:

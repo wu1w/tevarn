@@ -662,7 +662,12 @@ function AgentsInner() {
                   {zh ? '日报暂不可用（收件箱服务未启或网络错误）' : 'Report unavailable'}
                 </div>
               ) : report.isLoading ? (
-                <div style={{ fontSize: 12, color: 'var(--foreground-dim)' }}>{zh ? '加载中…' : 'Loading…'}</div>
+                /* audit-fix: P2 骨架屏占位条替代纯文字加载态 */
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div className="tk-skeleton" style={{ height: 10, width: '60%' }} />
+                  <div className="tk-skeleton" style={{ height: 10, width: '85%' }} />
+                  <div className="tk-skeleton" style={{ height: 10, width: '45%' }} />
+                </div>
               ) : (
                 <div
                   style={{

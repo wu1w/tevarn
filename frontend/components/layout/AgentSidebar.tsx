@@ -234,7 +234,12 @@ export function AgentSidebar() {
     retry: 1,
   });
 
-  const list = (data?.identities ?? []).filter((a) => a.status !== 'archived');
+  // audit-fix: list 用 useMemo 固定引用，否则每次 render 新数组导致 sortedAgents 的
+  // useMemo(deps: [list, ...]) 永远失效
+  const list = useMemo(
+    () => (data?.identities ?? []).filter((a) => a.status !== 'archived'),
+    [data?.identities]
+  );
   // 项目组默认折叠，避免挤占同事列表
   const [projectsOpen, setProjectsOpen] = useState(() => {
     if (typeof window === 'undefined') return false;

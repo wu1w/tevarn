@@ -5,6 +5,7 @@ Cluster API - 集群模式 API 路由
 
 import asyncio
 import logging
+from collections import OrderedDict  # audit-fix: _active_clusters LRU 需要
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -96,8 +97,18 @@ class ClusterStatusResponse(BaseModel):
 
 # ─────────── 存储（内存，后续可改数据库）───────────
 
-_active_clusters: dict[str, ClusterResult] = {}
+# audit-fix: 完成结果表改为容量 64 的 LRU，超出逐出最旧，防内存无界增长
+_active_clusters: OrderedDict[str, ClusterResult] = OrderedDict()
+_ACTIVE_CLUSTERS_MAX = 64
 _cluster_websockets: dict[str, list[WebSocket]] = {}
+
+
+def _remember_cluster(task_id: str, result: ClusterResult) -> None:
+    """audit-fix: 写入 _active_clusters 并做 LRU 逐出。"""
+    _active_clusters[task_id] = result
+    _active_clusters.move_to_end(task_id)
+    while len(_active_clusters) > _ACTIVE_CLUSTERS_MAX:
+        _active_clusters.popitem(last=False)
 
 
 # ─────────── API 端点 ───────────
@@ -234,7 +245,7 @@ async def _run_cluster_background(
         if _running_clusters.get(task_id, {}).get("cancel_requested"):
             result.status = TaskStatus.CANCELLED
             result.error = result.error or "cancelled by user"
-        _active_clusters[task_id] = result
+        _remember_cluster(task_id, result)
         try:
             await repo.finish_run(
                 task_id,
@@ -267,7 +278,7 @@ async def _run_cluster_background(
             error="cancelled by user",
         )
         failed.completed_at = datetime.now(timezone.utc)
-        _active_clusters[task_id] = failed
+        _remember_cluster(task_id, failed)
         try:
             await repo.finish_run(task_id, status="cancelled", error="cancelled by user")
         except Exception as pe:
@@ -286,7 +297,7 @@ async def _run_cluster_background(
             error=str(e),
         )
         failed.completed_at = datetime.now(timezone.utc)
-        _active_clusters[task_id] = failed
+        _remember_cluster(task_id, failed)
         try:
             await repo.finish_run(task_id, status="failed", error=str(e))
         except Exception as pe:
@@ -711,7 +722,7 @@ async def cancel_cluster(task_id: str):
             error="cancelled by user",
         )
         result.completed_at = datetime.now(timezone.utc)
-        _active_clusters[task_id] = result
+        _remember_cluster(task_id, result)
     else:
         result.status = TaskStatus.CANCELLED
         result.error = (result.error or "") + ("; cancelled by user" if result.error else "cancelled by user")
@@ -768,15 +779,26 @@ async def cluster_websocket(websocket: WebSocket, task_id: str, token: str = Que
         while True:
             # 保持连接，接收客户端消息
             data = await websocket.receive_text()
-            
+
             # 处理心跳
             if data == "ping":
                 await websocket.send_text("pong")
-            
+
     except WebSocketDisconnect:
-        _cluster_websockets[task_id].remove(websocket)
-        if not _cluster_websockets[task_id]:
-            del _cluster_websockets[task_id]
+        pass
+    except Exception as e:
+        # audit-fix: 非断连异常也必须走清理，避免注册表泄漏
+        logger.debug("cluster ws %s error: %s", task_id, e)
+    finally:
+        # audit-fix: 统一清理注册表（此前仅 WebSocketDisconnect 分支清理）
+        conns = _cluster_websockets.get(task_id)
+        if conns is not None:
+            try:
+                conns.remove(websocket)
+            except ValueError:
+                pass
+            if not conns:
+                _cluster_websockets.pop(task_id, None)
 
 
 # ─────────── 辅助函数 ───────────

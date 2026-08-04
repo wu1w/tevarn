@@ -20,6 +20,9 @@ from typing import Any
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.sse import sse_client
+
+# audit-fix: stdio monkeypatch 捕获 proc 的并发互斥锁
+_STDIO_PATCH_LOCK = asyncio.Lock()
 from mcp.client.stdio import stdio_client
 from mcp.types import CallToolResult, ListToolsResult, TextContent
 
@@ -49,6 +52,8 @@ class MCPClient:
         self._session: ClientSession | None = None
         self._exit_stack = AsyncExitStack()
         self._initialized = False
+        # audit-fix: stdio 子进程句柄（aclose 跨 task cancel scope 失败时兜底 terminate）
+        self._proc: Any | None = None
 
     async def connect(self) -> None:
         """建立到 MCP Server 的连接并初始化 session"""
@@ -74,9 +79,30 @@ class MCPClient:
             args=self.config.args or [],
             env=self.config.env,
         )
-        read, write = await self._exit_stack.enter_async_context(
-            stdio_client(server_params)
-        )
+        # audit-fix: stdio_client 不暴露子进程句柄；在 enter 期间临时包裹
+        # SDK 内部的 _create_platform_compatible_process 捕获 proc，
+        # 供 close() 在 aclose 失败时兜底 terminate。SDK 内部名变动时静默回退
+        # （_proc 保持 None，行为与旧版一致）。
+        import mcp.client.stdio as _stdio_mod
+
+        _orig_cpp = getattr(_stdio_mod, "_create_platform_compatible_process", None)
+        # audit-fix: monkeypatch 段加模块级锁，防并发 connect 交错错记/提前还原
+        async with _STDIO_PATCH_LOCK:
+            if callable(_orig_cpp):
+
+                async def _capturing_cpp(*args: Any, **kwargs: Any) -> Any:
+                    proc = await _orig_cpp(*args, **kwargs)
+                    self._proc = proc
+                    return proc
+
+                _stdio_mod._create_platform_compatible_process = _capturing_cpp
+            try:
+                read, write = await self._exit_stack.enter_async_context(
+                    stdio_client(server_params)
+                )
+            finally:
+                if callable(_orig_cpp):
+                    _stdio_mod._create_platform_compatible_process = _orig_cpp
         session = await self._exit_stack.enter_async_context(
             ClientSession(read, write)
         )
@@ -147,7 +173,20 @@ class MCPClient:
 
     async def close(self) -> None:
         """关闭连接并清理资源"""
-        await self._exit_stack.aclose()
+        try:
+            await self._exit_stack.aclose()
+        except Exception as e:
+            # audit-fix: 跨 task 关 anyio cancel scope 会抛 RuntimeError，
+            # 此时 stdio 子进程不会被 SDK 回收，需兜底 terminate 防孤儿进程
+            logger.warning(f"MCP server '{self.name}' aclose failed: {e}")
+            proc = getattr(self, "_proc", None)
+            if proc is not None and getattr(proc, "returncode", None) is None:
+                try:
+                    proc.terminate()
+                    logger.info(f"MCP server '{self.name}' stdio proc terminated (fallback)")
+                except Exception as te:
+                    logger.debug(f"MCP proc terminate skip: {te}")
+            self._proc = None
         self._session = None
         self._initialized = False
         logger.info(f"MCP server '{self.name}' disconnected")

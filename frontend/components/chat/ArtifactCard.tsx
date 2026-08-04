@@ -16,9 +16,8 @@ function getToken(): string | null {
 }
 
 function apiBase(): string {
-  if (typeof window !== 'undefined' && (window as unknown as { electron?: unknown }).electron) {
-    return 'http://127.0.0.1:8000/api';
-  }
+  // audit-fix: 删除 window.electron 死分支（指向已废弃的 8000 端口），
+  // 统一走同源 /api（与 lib/api.ts resolveBaseUrl 一致，Electron 由主进程反代）
   return '/api';
 }
 

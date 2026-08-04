@@ -5,6 +5,13 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
+# audit-fix(#1)：压缩阈值单点定义——原先散落在 loop/tool_round/context_compress/
+# context_engine 四五个地方且口径不一（0.45~0.75）。统一收敛到此：
+#   COMPRESS_THRESHOLD      常规触发线（默认 0.85，仍可被 settings 覆盖）
+#   COMPRESS_THRESHOLD_DEEP 长会话条数压力（≥soft 条数）场景的更深触发线
+COMPRESS_THRESHOLD: float = 0.85
+COMPRESS_THRESHOLD_DEEP: float = 0.75
+
 
 class ContextEngine(ABC):
     """Controls compaction when approaching the model context limit."""
@@ -14,7 +21,8 @@ class ContextEngine(ABC):
     last_total_tokens: int = 0
     compression_count: int = 0
     context_length: int = 0
-    threshold_percent: float = 0.72
+    # audit-fix(#1)：默认阈值抬高到 COMPRESS_THRESHOLD（0.72 → 0.85）
+    threshold_percent: float = COMPRESS_THRESHOLD
     protect_first_n: int = 3
     protect_last_n: int = 12
 

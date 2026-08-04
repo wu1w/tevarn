@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -235,7 +236,8 @@ class ToolRegistry:
                 try:
                     from backend.kernel.tool_gate import release_for_tool
 
-                    release_for_tool(name, _lease_pid or None)
+                    # audit-fix: 同步 kernel RPC 放线程，避免 finally 阻塞事件循环
+                    await asyncio.to_thread(release_for_tool, name, _lease_pid or None)
                 except Exception as re:
                     logger.debug("registry child_proc release skip: %s", re)
 

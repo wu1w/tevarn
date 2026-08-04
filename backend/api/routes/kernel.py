@@ -316,7 +316,7 @@ async def sys_memory_list_api(
     """内核风格 Memory 服务：list keys（经 host RPC）。"""
     k = get_kernel()
     if hasattr(k, "_call"):
-        return k._call("sys_memory_list", {"identity": identity}) or {}
+        return await k._acall("sys_memory_list", {"identity": identity}) or {}
     return {"identity": identity, "keys": []}
 
 
@@ -332,7 +332,7 @@ async def sys_memory_put_api(
         raise HTTPException(status_code=400, detail="key required")
     if hasattr(k, "_call"):
         return (
-            k._call(
+            await k._acall(
                 "sys_memory_put",
                 {"identity": identity, "key": key, "value": body.get("value")},
             )
@@ -353,7 +353,7 @@ async def memory_layers_api(
         params: dict[str, Any] = {"identity": identity}
         if layer:
             params["layer"] = layer
-        return k._call("memory_layer_list", params) or {}
+        return await k._acall("memory_layer_list", params) or {}
     return {"entries": []}
 
 
@@ -365,8 +365,8 @@ async def context_status_api(
     """上下文 VM 状态（配额/页/隔离）。"""
     k = get_kernel()
     if hasattr(k, "_call"):
-        pages = k._call("context_list_pages", {"process_id": process_id}) or {}
-        st = k._call("context_status", {"process_id": process_id}) or {}
+        pages = await k._acall("context_list_pages", {"process_id": process_id}) or {}
+        st = await k._acall("context_status", {"process_id": process_id}) or {}
         return {"process_id": process_id, "pages": pages, "status": st}
     return {"process_id": process_id, "pages": {}, "status": {}}
 
@@ -381,7 +381,7 @@ async def context_schedule_api(
     if not hasattr(k, "_call"):
         raise HTTPException(status_code=503, detail="kernel host required")
     pid = body.get("process_id")
-    return k._call("context_schedule", {"process_id": pid} if pid else {}) or {}
+    return await k._acall("context_schedule", {"process_id": pid} if pid else {}) or {}
 
 
 @router.post("/sys/memory/schedule")
@@ -395,7 +395,7 @@ async def memory_schedule_api(
         raise HTTPException(status_code=503, detail="kernel host required")
     identity = body.get("identity")
     return (
-        k._call("memory_layer_schedule", {"identity": identity} if identity else {})
+        await k._acall("memory_layer_schedule", {"identity": identity} if identity else {})
         or {}
     )
 
@@ -406,7 +406,7 @@ async def device_sync_status_api(
 ):
     k = get_kernel()
     if hasattr(k, "_call"):
-        return k._call("device_sync_status") or {}
+        return await k._acall("device_sync_status") or {}
     return {}
 
 
@@ -416,7 +416,7 @@ async def device_sync_list_api(
 ):
     k = get_kernel()
     if hasattr(k, "_call"):
-        return k._call("device_sync_list") or {}
+        return await k._acall("device_sync_list") or {}
     return {"devices": []}
 
 
@@ -429,7 +429,7 @@ async def device_sync_push_api(
     if not hasattr(k, "_call"):
         raise HTTPException(status_code=503, detail="kernel host required")
     return (
-        k._call(
+        await k._acall(
             "device_sync_push",
             {
                 "identity": body.get("identity") or "main",
@@ -449,7 +449,7 @@ async def device_sync_pull_api(
     if not hasattr(k, "_call"):
         raise HTTPException(status_code=503, detail="kernel host required")
     return (
-        k._call(
+        await k._acall(
             "device_sync_pull",
             {
                 "identity": body.get("identity") or "main",
@@ -469,7 +469,7 @@ async def device_sync_apply_api(
     if not hasattr(k, "_call"):
         raise HTTPException(status_code=503, detail="kernel host required")
     env = body.get("envelope") or body
-    return k._call("device_sync_apply", {"envelope": env}) or {}
+    return await k._acall("device_sync_apply", {"envelope": env}) or {}
 
 
 @router.get("/audit/anchor")
@@ -479,7 +479,7 @@ async def audit_anchor_api(
     """WORM 外部锚点状态 + verify。"""
     k = get_kernel()
     if hasattr(k, "_call"):
-        return k._call("audit_anchor_status") or {}
+        return await k._acall("audit_anchor_status") or {}
     try:
         from backend.kernel.audit_store import AuditEventStore
 
@@ -660,7 +660,7 @@ async def host_watchdog_api(
         return k.host_watchdog_ping()
     if hasattr(k, "_call"):
         try:
-            return {"ok": True, "pong": k._call("ping") or {}}
+            return {"ok": True, "pong": await k._acall("ping") or {}}
         except Exception as e:
             return {"ok": False, "error": str(e)}
     return {"ok": False, "error": "no host client"}
@@ -1678,7 +1678,7 @@ async def scheduler_status(
         if hasattr(k, "scheduler") and hasattr(k.scheduler, "stats"):
             st["run_queue"] = k.scheduler.stats()
         elif hasattr(k, "_call"):
-            st["run_queue"] = k._call("scheduler_stats") or {}
+            st["run_queue"] = await k._acall("scheduler_stats") or {}
     except Exception:
         pass
     return st
@@ -1696,7 +1696,7 @@ async def process_resources(
     if hasattr(k, "resource_usage"):
         usage = k.resource_usage(process_id)
     elif hasattr(k, "_call"):
-        usage = k._call("resource_usage", {"process_id": process_id}) or {}
+        usage = await k._acall("resource_usage", {"process_id": process_id}) or {}
     else:
         usage = {}
     proc = k.get_process(process_id)
@@ -1717,7 +1717,7 @@ async def run_queue_status(
     k = get_kernel()
     if hasattr(k, "_call"):
         return {
-            "stats": k._call("scheduler_stats") or {},
+            "stats": await k._acall("scheduler_stats") or {},
             "backend": "rust",
         }
     if hasattr(k, "scheduler"):
@@ -1736,7 +1736,7 @@ async def decision_trail(
 
     k = get_kernel()
     if hasattr(k, "_call"):
-        return k._call(
+        return await k._acall(
             "export_decision_trail",
             {"process_id": process_id, "limit": limit},
         ) or {"process_id": process_id, "events": [], "total": 0}
@@ -1776,7 +1776,7 @@ async def run_replay(
             logger.debug("export_decision_trail: %s", e)
     elif hasattr(k, "_call"):
         trail = (
-            k._call(
+            await k._acall(
                 "export_decision_trail",
                 {"process_id": process_id, "limit": limit},
             )
@@ -1854,7 +1854,7 @@ async def run_replay(
             resources = {}
     elif hasattr(k, "_call"):
         try:
-            resources = k._call("resource_usage", {"process_id": process_id}) or {}
+            resources = await k._acall("resource_usage", {"process_id": process_id}) or {}
         except Exception:
             resources = {}
 
@@ -1890,10 +1890,10 @@ async def process_policy(
     k = get_kernel()
     out: dict[str, Any] = {"process_id": process_id}
     if hasattr(k, "_call"):
-        out["iteration"] = k._call("iteration_status", {"process_id": process_id}) or {}
-        out["doom"] = k._call("doom_status", {"process_id": process_id}) or {}
-        out["policy"] = k._call("policy_status") or {}
-        out["recovery"] = k._call(
+        out["iteration"] = await k._acall("iteration_status", {"process_id": process_id}) or {}
+        out["doom"] = await k._acall("doom_status", {"process_id": process_id}) or {}
+        out["policy"] = await k._acall("policy_status") or {}
+        out["recovery"] = await k._acall(
             "process_recovery_plan", {"process_id": process_id}
         ) or {}
     else:
@@ -1924,7 +1924,7 @@ async def multi_agent_demo(
     if hasattr(k, "multi_agent_demo"):
         return k.multi_agent_demo()
     if hasattr(k, "_call"):
-        return k._call("multi_agent_demo") or {"ok": False, "error": "rpc empty"}
+        return await k._acall("multi_agent_demo") or {"ok": False, "error": "rpc empty"}
     raise HTTPException(status_code=501, detail="multi_agent_demo requires Rust kernel host")
 
 
@@ -1939,7 +1939,7 @@ async def eval_status_api(
     if hasattr(k, "eval_status"):
         return k.eval_status()
     if hasattr(k, "_call"):
-        return k._call("eval_status") or {}
+        return await k._acall("eval_status") or {}
     return {"runs": 0}
 
 
@@ -1960,7 +1960,7 @@ async def eval_record_api(
     if hasattr(k, "eval_record"):
         return k.eval_record(suite, overall, parts, meta)
     if hasattr(k, "_call"):
-        return k._call(
+        return await k._acall(
             "eval_record",
             {"suite": suite, "overall": overall, "parts": parts, "meta": meta},
         ) or {}
@@ -1982,7 +1982,7 @@ async def eval_gate_api(
         params: dict[str, Any] = {}
         if suite:
             params["suite"] = suite
-        return k._call("eval_gate_check", params) or {}
+        return await k._acall("eval_gate_check", params) or {}
     return {"ok": False, "reason": "no_kernel"}
 
 
@@ -2002,8 +2002,8 @@ async def agent_manifest_validate_api(
         return k.agent_manifest_validate(data.get("manifest") or data)
     if hasattr(k, "_call"):
         if isinstance(data.get("json"), str):
-            return k._call("agent_manifest_validate", {"json": data["json"]}) or {}
-        return k._call(
+            return await k._acall("agent_manifest_validate", {"json": data["json"]}) or {}
+        return await k._acall(
             "agent_manifest_validate",
             {"manifest": data.get("manifest") or data},
         ) or {}
@@ -2042,27 +2042,27 @@ async def cost_panel(
     if hasattr(k, "_call"):
         panel["backend"] = "rust"
         try:
-            host_cost = k._call("cost_panel") or {}
+            host_cost = await k._acall("cost_panel") or {}
         except Exception:
             host_cost = {}
         try:
-            host_cache = k._call("cache_metrics") or {}
+            host_cache = await k._acall("cache_metrics") or {}
         except Exception:
             host_cache = {}
         try:
-            panel["marathon"] = k._call("marathon_metrics") or {}
+            panel["marathon"] = await k._acall("marathon_metrics") or {}
         except Exception:
             panel["marathon"] = {}
         if process_id:
             try:
                 panel["process_cost"] = (
-                    k._call("cost_process", {"process_id": process_id}) or {}
+                    await k._acall("cost_process", {"process_id": process_id}) or {}
                 )
             except Exception:
                 panel["process_cost"] = {}
             try:
                 panel["process_resources"] = (
-                    k._call("resource_usage", {"process_id": process_id}) or {}
+                    await k._acall("resource_usage", {"process_id": process_id}) or {}
                 )
             except Exception:
                 panel["process_resources"] = {}
@@ -2243,7 +2243,7 @@ async def cache_metrics_api(
         if hasattr(k, "cache_metrics"):
             host = k.cache_metrics() or {}
         elif hasattr(k, "_call"):
-            host = k._call("cache_metrics") or {}
+            host = await k._acall("cache_metrics") or {}
     except Exception:
         host = {}
     try:
@@ -2278,11 +2278,11 @@ async def result_load_api(
         try:
             data = k.result_load(hid, process_id=pid) or {}
         except TypeError:
-            data = k._call(
+            data = await k._acall(
                 "result_load", {"handle_id": hid, "process_id": pid}
             ) or {}
     elif hasattr(k, "_call"):
-        data = k._call(
+        data = await k._acall(
             "result_load", {"handle_id": hid, "process_id": pid}
         ) or {}
     else:
@@ -2312,7 +2312,7 @@ async def marathon_metrics_api(
     if hasattr(k, "marathon_metrics"):
         return k.marathon_metrics()
     if hasattr(k, "_call"):
-        return k._call("marathon_metrics") or {}
+        return await k._acall("marathon_metrics") or {}
     return {}
 
 
@@ -2352,10 +2352,11 @@ async def kernel_dashboard(
 
     k = get_kernel()
 
-    def call(method: str, params: dict | None = None) -> Any:
+    async def call(method: str, params: dict | None = None) -> Any:
         try:
-            if hasattr(k, "_call"):
-                return k._call(method, params or {}) or {}
+            # audit-fix: 走 _acall，避免阻塞事件循环
+            if hasattr(k, "_acall"):
+                return await k._acall(method, params or {}) or {}
             fn = getattr(k, method, None)
             return fn() if callable(fn) and not params else {}
         except Exception as e:
@@ -2411,13 +2412,13 @@ async def kernel_dashboard(
         "court_rust_required": bool(
             getattr(settings, "agent_court_rust_required", True)
         ),
-        "run_gate": call("run_gate_status"),
-        "scheduler": call("scheduler_stats"),
-        "cost": call("cost_panel"),
-        "cache": call("cache_metrics"),
-        "marathon": call("marathon_metrics"),
-        "pkg": call("pkg_status"),
-        "wasm": call("wasm_status"),
+        "run_gate": await call("run_gate_status"),
+        "scheduler": await call("scheduler_stats"),
+        "cost": await call("cost_panel"),
+        "cache": await call("cache_metrics"),
+        "marathon": await call("marathon_metrics"),
+        "pkg": await call("pkg_status"),
+        "wasm": await call("wasm_status"),
         "sandbox": sandbox,
         "weekly": weekly_ptr,
         "live_processes": len(k.list_processes(include_terminal=False) or [])
@@ -2575,7 +2576,7 @@ async def collab_get(
     k = get_kernel()
     _require_process(k, process_id, session_id=session_id, require_session=True)
     if hasattr(k, "_call"):
-        return k._call("collab_get", {"process_id": process_id}) or {}
+        return await k._acall("collab_get", {"process_id": process_id}) or {}
     return {}
 
 
@@ -2590,7 +2591,7 @@ async def collab_set_plan(
     if not hasattr(k, "_call"):
         raise HTTPException(status_code=503, detail="kernel host unavailable")
     _require_process(k, body.process_id, session_id=body.session_id, require_session=True)
-    return k._call(
+    return await k._acall(
         "collab_set_plan",
         {"process_id": body.process_id, "steps": body.steps},
     ) or {}
@@ -2607,7 +2608,7 @@ async def collab_interrupt(
     if not hasattr(k, "_call"):
         raise HTTPException(status_code=503, detail="kernel host unavailable")
     _require_process(k, body.process_id, session_id=body.session_id, require_session=True)
-    r = k._call(
+    r = await k._acall(
         "collab_interrupt",
         {"process_id": body.process_id, "reason": body.reason},
     ) or {}
@@ -2629,7 +2630,7 @@ async def collab_resume(
     if not hasattr(k, "_call"):
         raise HTTPException(status_code=503, detail="kernel host unavailable")
     _require_process(k, body.process_id, session_id=body.session_id, require_session=True)
-    r = k._call("collab_resume", {"process_id": body.process_id}) or {}
+    r = await k._acall("collab_resume", {"process_id": body.process_id}) or {}
     try:
         await k.resume_process(body.process_id)
     except Exception:
@@ -2649,7 +2650,7 @@ async def collab_approve(
         raise HTTPException(status_code=503, detail="kernel host unavailable")
     _require_process(k, body.process_id, session_id=body.session_id, require_session=True)
     aid = body.request_id
-    return k._call(
+    return await k._acall(
         "collab_resolve_approval",
         {
             "process_id": body.process_id,
@@ -2718,7 +2719,7 @@ async def wasm_status_api(
 
     k = get_kernel()
     if hasattr(k, "_call"):
-        return k._call("wasm_status") or {}
+        return await k._acall("wasm_status") or {}
     return {}
 
 
@@ -2735,7 +2736,7 @@ async def wasm_explain_api(
         params: dict[str, Any] = {}
         if module_id:
             params["module_id"] = module_id
-        return k._call("wasm_explain", params) or {}
+        return await k._acall("wasm_explain", params) or {}
     return {}
 
 
@@ -2751,7 +2752,7 @@ async def coding_profile_spawn_api(
     if not hasattr(k, "_call"):
         return {"ok": False, "error": "kernel_rpc_unavailable"}
     return (
-        k._call(
+        await k._acall(
             "coding_profile_spawn",
             {
                 "identity": body.get("identity") or "main",
@@ -2772,7 +2773,7 @@ async def abi_compat_api(
 
     k = get_kernel()
     if hasattr(k, "_call"):
-        return k._call("abi_compat") or {}
+        return await k._acall("abi_compat") or {}
     return {}
 
 
@@ -2788,7 +2789,7 @@ async def abi_negotiate_api(
     if not hasattr(k, "_call"):
         return {"compatible": False, "error": "kernel_rpc_unavailable"}
     client = body.get("client_abi") or body.get("abi") or ""
-    return k._call("abi_negotiate", {"client_abi": client}) or {}
+    return await k._acall("abi_negotiate", {"client_abi": client}) or {}
 
 
 @router.post("/packages/require-secure")
@@ -2805,7 +2806,7 @@ async def pkg_require_secure_api(
     require = body.get("require")
     if require is None:
         require = body.get("require_secure", True)
-    return k._call("pkg_set_require_secure", {"require": bool(require)}) or {}
+    return await k._acall("pkg_set_require_secure", {"require": bool(require)}) or {}
 
 
 @router.get("/packages/catalog")
@@ -2817,7 +2818,7 @@ async def kernel_pkg_catalog(
 
     k = get_kernel()
     if hasattr(k, "_call"):
-        return k._call("pkg_catalog") or {}
+        return await k._acall("pkg_catalog") or {}
     return {"items": [], "count": 0}
 
 
@@ -2845,7 +2846,7 @@ async def process_recovery(
     if hasattr(k, "process_recovery_plan"):
         plan = k.process_recovery_plan(process_id) or {}
     elif hasattr(k, "_call"):
-        plan = k._call("process_recovery_plan", {"process_id": process_id}) or {}
+        plan = await k._acall("process_recovery_plan", {"process_id": process_id}) or {}
     return {
         "process_id": process_id,
         "plan": plan,
@@ -2866,7 +2867,7 @@ async def restore_checkpoint(
     if not hasattr(k, "_call"):
         raise HTTPException(status_code=503, detail="Rust kernel host required for restore")
     try:
-        return k._call("checkpoint_restore", {"checkpoint_id": checkpoint_id})
+        return await k._acall("checkpoint_restore", {"checkpoint_id": checkpoint_id})
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -3047,7 +3048,12 @@ async def requeue_inbox_item(
         "id": str(item.id),
         "status": item.status,
         "attempts": item.attempts,
-        "message": "已重放为 pending，dispatcher 将自动领取",
+        # audit-fix: 触顶时 requeue 返回 dead item，文案不得谎报"已重放"
+        "message": (
+            "已重放为 pending，dispatcher 将自动领取"
+            if str(item.status) == "pending"
+            else "requeue 次数已用尽，工单保持 dead，请人工介入"
+        ),
     }
 
 
@@ -3306,7 +3312,9 @@ async def budget_retry_inbox_item(
     if str(item.status) in ("dead", "failed", "dropped"):
         rq = await inbox.requeue(item_id, reset_attempts=True)
         if rq is not None:
-            requeued = True
+            # audit-fix: requeue 触顶返回 status="dead" 的 item（非 None），
+            # 只有真的回到 pending 才算重派成功，避免向 CEO 谎报
+            requeued = str(rq.status) == "pending"
             new_status = str(rq.status)
             # requeue 可能清掉 payload 以外字段；再写一次 token_budget
             try:
@@ -3339,7 +3347,7 @@ async def budget_retry_inbox_item(
         "message": (
             f"已追加预算 +{amount}"
             + (f"，本单 token_budget={payload.get('token_budget')}" if payload.get("token_budget") else "")
-            + ("，工单已重派 pending" if requeued else "（在途进程已 top_up）")
+            + ("，工单已重派 pending" if requeued else ("，requeue 次数已用尽，工单保持 dead，请人工介入" if new_status == "dead" else "（在途进程已 top_up）"))
         ),
     }
 

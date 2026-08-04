@@ -61,6 +61,10 @@
   --brand-pink: #f6489b;
   --brand-gradient-start: #6d5df6;
   --brand-gradient-end: #00a8c0;
+  /* audit-fix: P1 语义色 token 化（保持原 #c9a05e/#c0785e/#7a98b0 色相，调整为更适配品牌） */
+  --sem-warn: #b8860b;
+  --sem-danger: #c0392b;
+  --sem-info: #4a7a9a;
   --border-subtle: rgba(29, 35, 48, 0.09);
   --border-default: rgba(29, 35, 48, 0.16);
   --border-focus: rgba(109, 93, 246, 0.5);
@@ -104,6 +108,10 @@
   --brand-pink: #ff6ec7;
   --brand-gradient-start: #8b7cff;
   --brand-gradient-end: #22d8ee;
+  /* audit-fix: P1 语义色 token 化（深色对应提高饱和度/亮度） */
+  --sem-warn: #e2a63d;
+  --sem-danger: #e0654e;
+  --sem-info: #6fa8cc;
   --border-subtle: rgba(148, 163, 199, 0.12);
   --border-default: rgba(148, 163, 199, 0.2);
   --border-focus: rgba(139, 124, 255, 0.55);
@@ -427,4 +435,28 @@ body {
 /* 选中色随品牌紫 */
 ::selection {
   background: color-mix(in srgb, var(--brand-purple) 30%, transparent);
+}
+
+/* audit-fix: P1 无 tk-/px- 类裸按钮的通用过渡兜底（限定 .tk-main 主区容器，不影响侧栏/开关） */
+.tk-main button:not([class*="tk-"]):not([class*="px-"]):not([role="switch"]) {
+  transition: background-color 160ms var(--tk-ease, ease), color 160ms var(--tk-ease, ease), border-color 160ms var(--tk-ease, ease), filter 140ms ease;
+}
+.tk-main button:not([class*="tk-"]):not([class*="px-"]):hover {
+  filter: brightness(1.04);
+}
+
+/* audit-fix: P2 骨架屏占位条（复用 globals.css 的 tk-shimmer keyframes） */
+.tk-skeleton {
+  border-radius: var(--r-sm, 2px);
+  background: linear-gradient(
+    90deg,
+    var(--card-bg-hover) 25%,
+    var(--elevated-bg) 50%,
+    var(--card-bg-hover) 75%
+  );
+  background-size: 200% 100%;
+  animation: tk-shimmer 1.6s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tk-skeleton { animation: none; }
 }

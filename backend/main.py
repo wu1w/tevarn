@@ -67,6 +67,15 @@ except Exception as _fh_e:
 _bg_tasks: set[asyncio.Task] = set()
 
 
+def _is_test_mode() -> bool:
+    """audit-fix: 统一 TAKTON_TEST_MODE 判定（两处此前口径不一致：缺 .lower()）。"""
+    return str(os.environ.get("TAKTON_TEST_MODE", "") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
 def _spawn_bg(coro, name: str) -> None:
     """Fire-and-forget with logging; track for shutdown cancel."""
     async def _runner():
@@ -420,15 +429,9 @@ async def lifespan(app: FastAPI):
     # 跑完，uvicorn 永远到不了 listen（Waiting for application startup 死锁）。
     # 因此启动时只做 mark；auto-resume 丢到后台任务。
     try:
-        import os as _os
-
         from backend.agent.run_recovery import recover_stale_runs
 
-        _test = str(_os.environ.get("TAKTON_TEST_MODE", "") or "").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-        }
+        _test = _is_test_mode()  # audit-fix: 统一 TEST_MODE 判定
         summary = await recover_stale_runs(auto_resume=False)
         logger.info("agent run recovery (mark): %s", summary)
         # auto_resume_enabled in summary is False because we forced mark-only;
@@ -580,11 +583,7 @@ async def lifespan(app: FastAPI):
 
     # 测试模式：不拉常驻后台（dispatcher/cron/gateway），避免 pytest 多次
     # LifespanManager 启停互锁。生产/开发路径不变。
-    _test_mode = str(os.environ.get("TAKTON_TEST_MODE", "") or "").strip() in {
-        "1",
-        "true",
-        "yes",
-    }
+    _test_mode = _is_test_mode()  # audit-fix: 统一 TEST_MODE 判定（补 .lower()）
 
     # 0.6 自主运转：工具就绪后再拉 dispatcher，避免抢跑空注册表
     # Inbox 权威在 SQLite；dispatcher.tick 内 reclaim_stale_claims
@@ -594,7 +593,9 @@ async def lifespan(app: FastAPI):
             from backend.kernel.kernel import get_kernel
             from backend.kernel.workforce import init_workforce
 
-            kernel = get_kernel()
+            # audit-fix: get_kernel 为同步重调用（可触达 host 启动/RPC），
+            # 放线程避免阻塞 lifespan 事件循环
+            kernel = await asyncio.to_thread(get_kernel)
             if bool(getattr(settings, "agent_kernel_persistence", True)):
                 inbox, dispatcher = init_workforce(kernel, AsyncSessionLocal, settings)
                 if dispatcher is not None:
@@ -686,6 +687,14 @@ async def lifespan(app: FastAPI):
         await get_mcp_manager().close_all()
     except Exception as e:
         logger.warning(f"MCP manager close warning: {e}")
+
+    # audit-fix: 关闭 LLM 共享 aiohttp session（防 Unclosed session 泄漏）
+    try:
+        from backend.services.llm.http_session import close_all_sessions
+
+        await close_all_sessions()
+    except Exception as e:
+        logger.warning(f"LLM shared session close warning: {e}")
 
     # Stop cron scheduler
     try:

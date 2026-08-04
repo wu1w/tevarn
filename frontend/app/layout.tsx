@@ -15,8 +15,9 @@ import { ThemeProvider } from "@/components/ThemeProvider";
 const fontStyle = {
   ["--font-inter" as string]:
     "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Helvetica Neue', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI', system-ui, sans-serif",
+  // audit-fix: P1 首项接入 pixel-console.css 中 @font-face 的本地 JetBrains Mono
   ["--font-jetbrains" as string]:
-    "ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Monaco, 'Cascadia Code', Consolas, 'Liberation Mono', monospace",
+    "'JetBrains Mono', ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Monaco, 'Cascadia Code', Consolas, 'Liberation Mono', monospace",
 } as React.CSSProperties;
 
 export const metadata: Metadata = {

@@ -21,6 +21,7 @@ type State = {
   _ws: WebSocket | null;
   _gen: number;
   _reconnectTimer: ReturnType<typeof setTimeout> | null;
+  _reconnectAttempts: number;
   _opts: { wsBase: string; token: string } | null;
   connect: (opts: { wsBase: string; token: string }) => void;
   disconnect: () => void;
@@ -28,6 +29,15 @@ type State = {
 };
 
 const MAX = 80;
+
+// audit-fix: 重连退避参数（风格对齐 hooks/useWebSocket.ts）
+const RECONNECT_DELAY_BASE = 1000;
+const MAX_RECONNECT_DELAY = 30000;
+/** 连续失败上限；达到后转 60s 慢试 */
+const MAX_FAST_RECONNECT_ATTEMPTS = 10;
+const SLOW_RECONNECT_DELAY = 60000;
+/** 后端鉴权失败关闭码：不再重连 */
+const WS_CLOSE_AUTH_FAILED = 4401;
 
 function pushCapped(list: DomainEvent[], e: DomainEvent): DomainEvent[] {
   const next = [...list, e];
@@ -42,6 +52,7 @@ export const useDomainEventStore = create<State>((set, get) => ({
   _ws: null,
   _gen: 0,
   _reconnectTimer: null,
+  _reconnectAttempts: 0,
   _opts: null,
 
   pushLocal: (e) => {
@@ -114,20 +125,32 @@ export const useDomainEventStore = create<State>((set, get) => ({
 
     ws.onopen = () => {
       if (get()._gen !== gen || get()._ws !== ws) return;
-      set({ connected: true, error: null });
+      set({ connected: true, error: null, _reconnectAttempts: 0 });
     };
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
       // 仅本代 socket 才更新；避免旧连接抹掉新连接
       if (get()._gen !== gen || get()._ws !== ws) return;
       set({ connected: false, _ws: null });
+      // audit-fix: 鉴权失败（4401）不再重连，避免重连风暴
+      if (ev?.code === WS_CLOSE_AUTH_FAILED) {
+        set({ error: 'auth failed (4401), reconnect stopped', _reconnectAttempts: 0 });
+        return;
+      }
       // 自动重连（有 opts 时）
       const opts = get()._opts;
       if (!opts?.token) return;
+      // audit-fix: 指数退避 1s→2s→…→30s 封顶；连续失败 10 次后转 60s 慢试
+      const attempts = get()._reconnectAttempts;
+      const delay =
+        attempts >= MAX_FAST_RECONNECT_ATTEMPTS
+          ? SLOW_RECONNECT_DELAY
+          : Math.min(RECONNECT_DELAY_BASE * Math.pow(2, attempts), MAX_RECONNECT_DELAY);
+      set({ _reconnectAttempts: attempts + 1 });
       const timer = setTimeout(() => {
         if (get()._gen !== gen) return;
         const o = get()._opts;
         if (o?.token) get().connect(o);
-      }, 3000);
+      }, delay);
       set({ _reconnectTimer: timer });
     };
     ws.onerror = () => {

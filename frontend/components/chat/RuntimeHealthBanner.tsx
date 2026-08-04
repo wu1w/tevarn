@@ -84,7 +84,7 @@ export function RuntimeHealthBanner({ zh = true }: { zh?: boolean }) {
         </span>
         <span
           style={{
-            color: fullIso ? undefined : 'var(--status-warn, #c9a05e)',
+            color: fullIso ? undefined : 'var(--sem-warn)', // audit-fix: P1 语义色 token 化（--status-warn 从未定义，原 fallback 恒生效）
           }}
           title={String(data.sandbox?.note || data.sandbox?.label || '')}
         >

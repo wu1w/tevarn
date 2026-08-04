@@ -633,6 +633,9 @@ class ConnectionManager:
             except Exception as e:
                 logger.debug("kick_session close skip session=%s: %s", session_id, e)
         self.disconnect(session_id, user_id=user_id)
+        # audit-fix: 踢线（删会话/强制下线）场景一并清理锁/代际表条目
+        self._send_locks.pop(session_id, None)
+        self._run_generations.pop(session_id, None)
 
     async def connect(
         self,
@@ -1305,7 +1308,14 @@ async def websocket_endpoint(
                 approved = bool(data.get("approved", False))
                 scope = data.get("scope")
                 choice = data.get("choice")
-                if choice is not None and str(choice).strip() and not approved:
+                # audit-fix: choice→approved 转换仅在 kind=='clarify' 时生效
+                # （见 confirm_manager.py:449-458），其它 kind 透传 approved 原值
+                if (
+                    choice is not None
+                    and str(choice).strip()
+                    and not approved
+                    and confirm_manager.get_confirmation_kind(confirm_id) == "clarify"
+                ):
                     approved = True
                 if scope is None and approved:
                     scope = "once"
@@ -1415,19 +1425,49 @@ async def websocket_endpoint(
                 if new_token:
                     payload = decode_access_token(new_token)
                     if payload and "sub" in payload:
+                        new_user_id: uuid.UUID | None
                         try:
                             new_user_id = uuid.UUID(payload["sub"])
+                        except ValueError:
+                            new_user_id = None
+                        # audit-fix: 换绑前校验用户存在且 is_active
+                        # （与连接路径 :908-946 同口径，防止换绑到已删/停用账号）
+                        if new_user_id is not None:
+                            try:
+                                from backend.repositories.user_repo import (
+                                    AsyncUserRepository,
+                                )
+
+                                _auth_repo = AsyncUserRepository()
+                                _auth_user = await _auth_repo.get_by_id(new_user_id)
+                                if not (
+                                    _auth_user
+                                    and getattr(_auth_user, "is_active", True)
+                                ):
+                                    new_user_id = None
+                            except Exception as e:
+                                logger.warning("WS auth rebind user check failed: %s", e)
+                                new_user_id = None
+                        if new_user_id is None:
+                            await manager.broadcast(
+                                session_id, {"type": "error", "detail": "Invalid token"}
+                            )
+                        else:
+                            old_user_id = user_id
                             user_id = new_user_id
+                            # audit-fix: 换绑成功后从旧用户的 session 映射中移除本 session
+                            if old_user_id and old_user_id != new_user_id:
+                                old_set = manager._user_sessions.get(old_user_id)
+                                if old_set is not None:
+                                    old_set.discard(session_id)
+                                    if not old_set:
+                                        manager._user_sessions.pop(old_user_id, None)
                             # 更新用户 session 映射
                             if user_id not in manager._user_sessions:
                                 manager._user_sessions[user_id] = set()
                             manager._user_sessions[user_id].add(session_id)
                             await manager.broadcast(
                                 session_id, {"type": "auth_ok", "user_id": str(user_id)}
-                            )
-                        except ValueError:
-                            await manager.broadcast(
-                                session_id, {"type": "error", "detail": "Invalid token"}
                             )
 
             else:

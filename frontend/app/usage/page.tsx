@@ -132,7 +132,7 @@ function fmtBytes(n: number | undefined | null): string {
 function hitBar(rate: number): React.ReactNode {
   const pct = Math.max(0, Math.min(100, rate * 100));
   const color =
-    pct >= 60 ? 'var(--status-online)' : pct >= 30 ? '#c9a05e' : '#c0785e';
+    pct >= 60 ? 'var(--status-online)' : pct >= 30 ? 'var(--sem-warn)' : 'var(--sem-danger)';
   return (
     <div
       style={{
@@ -625,9 +625,13 @@ export default function UsagePage() {
           }}
         >
           {loading
-            ? zh
-              ? '加载中…'
-              : 'Loading…'
+            ? /* audit-fix: P2 行内骨架条替代纯文字加载态（页头行内上下文，用单条而非三条） */
+              (
+                <span
+                  className="tk-skeleton"
+                  style={{ display: 'inline-block', width: 180, height: 11, verticalAlign: 'middle' }}
+                />
+              )
             : zh
               ? `全局 · ${fmtNum(Number(globalTotals.tokens ?? summary?.tokens ?? 0))} tokens · 命中 ${fmtRate(globalTokenHit == null ? null : Number(globalTokenHit))}`
               : `global · ${fmtNum(Number(globalTotals.tokens ?? summary?.tokens ?? 0))} tokens · hit ${fmtRate(globalTokenHit == null ? null : Number(globalTokenHit))}`}
@@ -678,6 +682,7 @@ export default function UsagePage() {
         ].map((c) => (
           <div key={c.label} style={card}>
             <div
+              className="num" /* audit-fix: P1 KPI 数字等宽+表格数字对齐 */
               style={{ fontSize: 18, fontWeight: 700, color: 'var(--foreground)' }}
             >
               {c.value}
@@ -700,8 +705,8 @@ export default function UsagePage() {
           style={{
             ...card,
             marginBottom: 12,
-            borderColor: '#c9a05e',
-            background: 'color-mix(in srgb, #c9a05e 10%, var(--card-bg))',
+            borderColor: 'var(--sem-warn)',
+            background: 'color-mix(in srgb, var(--sem-warn) 10%, var(--card-bg))',
             fontSize: 12,
             color: 'var(--foreground-muted)',
           }}

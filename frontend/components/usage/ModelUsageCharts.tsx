@@ -70,16 +70,16 @@ function mondayIndex(d: Date): number {
 function heatColor(t: number, max: number): string {
   if (t <= 0 || max <= 0) return 'var(--border-subtle)';
   const r = Math.min(1, t / max);
-  // Takton: cool empty → teal/green high (status-online), not MiniMax pure red
+  // audit-fix: P2 热力色阶改用品牌青（--brand-cyan），高区混入语义告警色
   if (r < 0.2)
-    return 'color-mix(in srgb, var(--status-online, #3a9a7a) 18%, var(--card-bg))';
+    return 'color-mix(in srgb, var(--brand-cyan) 18%, var(--card-bg))';
   if (r < 0.4)
-    return 'color-mix(in srgb, var(--status-online, #3a9a7a) 35%, var(--card-bg))';
+    return 'color-mix(in srgb, var(--brand-cyan) 35%, var(--card-bg))';
   if (r < 0.6)
-    return 'color-mix(in srgb, var(--status-online, #3a9a7a) 55%, #c9a05e 10%)';
+    return 'color-mix(in srgb, var(--brand-cyan) 55%, var(--sem-warn) 10%)';
   if (r < 0.8)
-    return 'color-mix(in srgb, var(--status-online, #3a9a7a) 75%, #c0785e 8%)';
-  return 'var(--status-online, #2f8f6e)';
+    return 'color-mix(in srgb, var(--brand-cyan) 75%, var(--sem-danger) 8%)';
+  return 'var(--brand-cyan)';
 }
 
 /** SVG id-safe fragment (model keys contain `/`). */
@@ -335,15 +335,16 @@ export function ModelUsageCharts({
             >
               <defs>
                 <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="var(--status-online, #3a9a7a)" stopOpacity="0.35" />
-                  <stop offset="100%" stopColor="var(--status-online, #3a9a7a)" stopOpacity="0.02" />
+                  {/* audit-fix: P2 面积渐变改用品牌紫 → transparent */}
+                  <stop offset="0%" stopColor="var(--brand-purple)" stopOpacity="0.35" />
+                  <stop offset="100%" stopColor="var(--brand-purple)" stopOpacity="0.02" />
                 </linearGradient>
               </defs>
               <path d={areaD} fill={`url(#${gradId})`} />
               <path
                 d={pathD}
                 fill="none"
-                stroke="var(--status-online, #3a9a7a)"
+                stroke="var(--brand-cyan)" /* audit-fix: P2 描边改品牌青 */
                 strokeWidth="2"
                 strokeLinejoin="round"
                 strokeLinecap="round"
@@ -355,7 +356,7 @@ export function ModelUsageCharts({
                     cx={p.x}
                     cy={p.y}
                     r={hover?.day === p.day ? 4 : p.tokens > 0 ? 2.5 : 0}
-                    fill="var(--status-online, #3a9a7a)"
+                    fill="var(--brand-cyan)" /* audit-fix: P2 数据点改品牌青 */
                     style={{ pointerEvents: 'none' }}
                   />
                   <circle
@@ -446,7 +447,7 @@ export function ModelUsageCharts({
                   height: 10,
                   marginRight: 4,
                   borderRadius: 2,
-                  background: 'var(--status-online, #3a9)',
+                  background: 'var(--brand-cyan)', // audit-fix: P2 热力图例与 heatColor 色阶一致（品牌青）
                   verticalAlign: 'middle',
                 }}
               />

@@ -117,14 +117,16 @@ export default function ConfigPage() {
         <div className="rounded-lg border border-border-default bg-card-bg p-6">
           {activeTab === 'sys_prompt' && (
             <SysPromptEditor
-              value={configStore.config.sys_prompt}
+              // audit-fix: SessionConfig 字段已改可选，兜底空串
+              value={configStore.config.sys_prompt ?? ''}
               onChange={configStore.updateSysPrompt}
             />
           )}
           {activeTab === 'tools' && (
             <SkillsPanel
               skills={skills}
-              enabledSkills={configStore.config.skills}
+              // audit-fix: SessionConfig 字段已改可选，兜底空数组
+              enabledSkills={configStore.config.skills ?? []}
               onToggle={handleSkillToggle}
             />
           )}

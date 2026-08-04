@@ -551,7 +551,7 @@ export default function MarketPage() {
                 <span style={{
                   fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6,
                   color: urlReview.risk === 'safe' || urlReview.risk === 'low' ? 'var(--status-online)'
-                    : urlReview.risk === 'dangerous' ? 'var(--status-offline)' : '#c9a05e',
+                    : urlReview.risk === 'dangerous' ? 'var(--status-offline)' : 'var(--sem-warn)',
                   background: 'var(--input-bg)',
                 }}>{urlReview.risk || '—'}</span>
                 <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--foreground)' }}>

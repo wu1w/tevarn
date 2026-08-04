@@ -22,7 +22,7 @@ export const ST_TEXT: Record<string, string> = {
 export function stColor(st: string): string {
   if (st === 'running' || st === 'active') return 'var(--status-online)';
   if (st === 'suspended' || st === 'failed') return 'var(--status-offline)';
-  if (st === 'waiting') return '#c9a05e';
+  if (st === 'waiting') return 'var(--sem-warn)'; // audit-fix: P1 语义色 token 化
   return 'var(--foreground-dim)';
 }
 

@@ -953,6 +953,8 @@ class WorkforceDispatcher:
             names = {}
 
         n_done = n_failed = n_dead = 0
+        # audit-fix(#4)：失败回调 prompt 需附带剩余可 requeue 次数
+        _requeue_left: int | None = None
         for st in ("done", "failed", "dead", "cancelled"):
             try:
                 rows = await self._inbox.list_items(status=st, limit=100)
@@ -967,6 +969,18 @@ class WorkforceDispatcher:
                     n_failed += 1
                 elif st == "dead":
                     n_dead += 1
+                if st in ("failed", "dead"):
+                    try:
+                        from backend.kernel.inbox import requeue_remaining_of
+
+                        _left = requeue_remaining_of(it)
+                        _requeue_left = (
+                            _left
+                            if _requeue_left is None
+                            else min(_requeue_left, _left)
+                        )
+                    except Exception:
+                        pass
                 nm = names.get(str(it.identity_id), str(it.identity_id)[:8])
                 body = (it.result or it.error or "").strip() or "（无正文）"
                 # 短摘要：避免把数千字工单全文塞进 CEO 会话历史
@@ -1052,6 +1066,22 @@ class WorkforceDispatcher:
                     + pb
                     + "\n"
                 )
+                # audit-fix(#4)：requeue 建议附剩余次数；用尽则改为建议人工介入
+                if _requeue_left is not None:
+                    if _requeue_left > 0:
+                        grant_block += (
+                            f"（本批失败单剩余可 requeue 次数：{_requeue_left}；"
+                            "用尽后禁止再 requeue，须人工介入）\n"
+                        )
+                    else:
+                        grant_block = (
+                            "\n\n【人工介入】本批失败单的 requeue 次数已用尽"
+                            "（死单防无限复活上限）：**禁止**再 grant_caps requeue "
+                            "或重派同一批工单；请如实汇报失败主因，"
+                            "并建议主人人工排查（指令可行性 / 能力 / 预算）后再手动处理。\n"
+                            + pb
+                            + "\n"
+                        )
         except Exception:
             grant_block = ""
         body_joined = "\n".join(blocks)

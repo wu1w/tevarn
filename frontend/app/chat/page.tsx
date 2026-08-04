@@ -1852,7 +1852,8 @@ const handleUserMessageAck = useCallback(
                       ) : null}
                       <MessageInput
                                               ref={composerRef}
-                                              key={editingContent ?? 'default'}
+                                              // audit-fix: key 带 sessionId，切会话强制 remount，配合 per-session 草稿
+                                              key={`${currentSession?.id ?? 'no-session'}:${editingContent ?? 'default'}`}
                                               onSend={handleSend}
                                               onGenerateImage={handleGenerateImage}
                                               disabled={

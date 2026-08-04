@@ -389,6 +389,19 @@ def list_pending_for_session(session_id: str | None) -> list[dict]:
     return out
 
 
+def get_confirmation_kind(confirm_id: str) -> str | None:
+    """audit-fix: 供 WS 护栏读取 pending kind（choice→approved 仅 clarify 生效）。
+
+    确认不存在时返回 None。
+    """
+    entry = _pending.get(confirm_id)
+    if entry is None:
+        return None
+    _, holder = entry
+    k = holder.get("kind")
+    return str(k) if k is not None else None
+
+
 def resolve_confirmation(
     confirm_id: str,
     approved: bool,

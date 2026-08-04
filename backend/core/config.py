@@ -528,7 +528,7 @@ class Settings(BaseSettings):
 
     # Context engine (Claude Code–style pipeline + Hermes meter)
     # 0.55：长会话更早压；旧 0.72 会拖到 ~10 万 prompt 才动手
-    context_threshold_percent: float = 0.55
+    context_threshold_percent: float = 0.85  # audit-fix: 对齐主流 ~92% 策略，过早压缩导致长任务遗忘
     context_protect_first_n: int = 3
     context_protect_last_n: int = 8
     # 消息条数软/硬上限：超软限强制压；超硬限硬截断中间

@@ -225,9 +225,14 @@ export function useDesktopAgent(options: UseDesktopAgentOptions = {}) {
 
     ws.onopen = () => setIsStreaming(true);
     ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (data.type === 'screenshot') {
-        setScreenFrame(data.data.image);
+      // audit-fix: 畸形帧不得炸掉 handler；image 字段判空
+      try {
+        const data = JSON.parse(event.data);
+        if (data?.type === 'screenshot' && data?.data?.image) {
+          setScreenFrame(data.data.image);
+        }
+      } catch {
+        /* ignore */
       }
     };
     ws.onerror = () => setIsStreaming(false);

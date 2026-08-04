@@ -3,6 +3,7 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -137,6 +138,9 @@ pub struct AuditEventStore {
     keep_segments: u32,
     worm: bool,
     anchor_path: PathBuf,
+    // audit-fix: anchor 降频状态（事件计数 / 上次 anchor 时刻 epoch millis）
+    anchor_events: AtomicU64,
+    anchor_last_ms: AtomicU64,
 }
 
 impl AuditEventStore {
@@ -165,6 +169,8 @@ impl AuditEventStore {
             keep_segments,
             worm,
             anchor_path,
+            anchor_events: AtomicU64::new(0),
+            anchor_last_ms: AtomicU64::new(0),
         }
     }
 
@@ -236,9 +242,20 @@ impl AuditEventStore {
         if writeln!(f, "{line}").is_err() {
             return false;
         }
-        // refresh external anchor tip (best-effort)
+        // audit-fix: anchor 降频——每 32 事件或距上次 >5s 才刷新 anchor 文件；
+        // JSONL append 保持每事件（审计链完整性优先）
         if let Some(h) = event.get("hash").and_then(|v| v.as_str()) {
-            let _ = self.write_anchor(h, event.get("prev_hash").and_then(|v| v.as_str()));
+            let n = self.anchor_events.fetch_add(1, Ordering::Relaxed) + 1;
+            let now_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let last = self.anchor_last_ms.load(Ordering::Relaxed);
+            if n % 32 == 0 || now_ms.saturating_sub(last) > 5000 {
+                self.anchor_last_ms.store(now_ms, Ordering::Relaxed);
+                let _ =
+                    self.write_anchor(h, event.get("prev_hash").and_then(|v| v.as_str()));
+            }
         }
         true
     }

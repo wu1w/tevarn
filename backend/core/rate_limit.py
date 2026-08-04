@@ -42,6 +42,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.exempt_user_ids = exempt_user_ids or set()
         # key -> list of timestamps (key = user_id or ip)
         self._requests: dict[str, list[float]] = {}
+        # audit-fix: 周期性全表扫描计数器（每 _SWEEP_EVERY 次请求触发一次）
+        self._ops_since_sweep = 0
+        self._SWEEP_EVERY = 300
 
     def _is_local_client(self, request: Request) -> bool:
         host = self._get_client_ip(request)
@@ -137,3 +140,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             ]
             if not self._requests[key]:
                 del self._requests[key]
+        # audit-fix: 周期性全表扫描清空过期 key——此前只清当前 key，
+        # 大量一次性 IP（扫描器/爬虫）会让 _requests 无界增长
+        self._ops_since_sweep += 1
+        if self._ops_since_sweep >= self._SWEEP_EVERY:
+            self._ops_since_sweep = 0
+            for k in list(self._requests.keys()):
+                self._requests[k] = [ts for ts in self._requests[k] if ts > cutoff]
+                if not self._requests[k]:
+                    del self._requests[k]

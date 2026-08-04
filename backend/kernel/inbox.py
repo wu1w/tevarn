@@ -26,6 +26,28 @@ INBOX_SOURCES = ("cron", "webhook", "api", "manual")
 _DEFAULT_MAX_PENDING = 200
 _MAX_ATTEMPTS = 3
 
+# audit-fix(#4)：死单 requeue 总上限。requeue(reset_attempts=True) 会清零
+# attempts，没有总上限时同一死单可无限复活。AgentInboxItem 无 requeue_count
+# 列（不改 schema），计数持久化在 payload["_requeue_count"]。
+MAX_REQUEUE_COUNT = 2
+_REQUEUE_COUNT_KEY = "_requeue_count"
+
+
+def requeue_count_of(item: Any) -> int:
+    """读取工单已 requeue 次数（payload JSON 内计数，缺省 0）。"""
+    payload = getattr(item, "payload", None)
+    if isinstance(payload, dict):
+        try:
+            return int(payload.get(_REQUEUE_COUNT_KEY, 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+    return 0
+
+
+def requeue_remaining_of(item: Any) -> int:
+    """剩余可 requeue 次数（供失败回调 prompt 提示）。"""
+    return max(0, MAX_REQUEUE_COUNT - requeue_count_of(item))
+
 
 class InboxService:
     """收件箱服务。由 kernel 装配（身份事件与 kernel 事件同链）。"""
@@ -818,9 +840,38 @@ class InboxService:
                 return None
             if item.status not in ("dead", "failed", "dropped"):
                 return item  # 已在途/完成则不改
+            # audit-fix(#4)：requeue 总上限——超限转 dead 并在结果里注明，
+            # 防止 reset_attempts 清零后死单无限复活
+            _rq = requeue_count_of(item)
+            if _rq >= MAX_REQUEUE_COUNT:
+                item.status = "dead"
+                _note = (
+                    f"[requeue-cap] requeue 次数已用尽（上限 {MAX_REQUEUE_COUNT}），"
+                    "工单转 dead，需人工介入排查后手动处理"
+                )
+                item.error = ((item.error or "") + ("\n" if item.error else "") + _note)[
+                    :4000
+                ]
+                item.result = ((item.result or "") + ("\n" if item.result else "") + _note)[
+                    :4000
+                ]
+                item.finished_at = time.time()
+                await session.commit()
+                await session.refresh(item)
+                self._emit(
+                    "inbox_requeue_capped",
+                    item.identity_id,
+                    {"item_id": str(item.id), "requeue_count": _rq},
+                )
+                return item
             item.status = "pending"
             if reset_attempts:
                 item.attempts = 0
+            # 计数 +1（重新赋值整 dict 以触发 SQLAlchemy JSON 变更检测）
+            item.payload = {
+                **(item.payload if isinstance(item.payload, dict) else {}),
+                _REQUEUE_COUNT_KEY: _rq + 1,
+            }
             item.error = None
             item.result = None
             item.process_id = None

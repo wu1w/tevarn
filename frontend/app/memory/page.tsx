@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useT } from '@/stores/localeStore';
+import { useAuthStore } from '@/stores/authStore';
 import { useConfirm } from '@/components/desktop/ConfirmDialog';
 import { LegacyQuiet } from '@/components/layout/LegacyQuiet';
 import { CrewMemoryHub } from '@/components/memory/CrewMemoryHub';
@@ -43,7 +44,8 @@ export default function MemoryPage() {
 
   const fetchEntities = useCallback(async () => {
     try {
-      const token = localStorage.getItem('takton_token');
+      // audit-fix: takton_token 是死 key，改从 authStore 取
+      const token = useAuthStore.getState().token;
       const params = new URLSearchParams();
       if (filterType) params.set('entity_type', filterType);
       const res = await fetch(`/api/entities?${params.toString()}`, {
@@ -60,18 +62,27 @@ export default function MemoryPage() {
     }
   }, [filterType]);
 
+  // audit-fix: 搜索激活时，filterType 变化触发的全量刷新不得覆盖搜索结果（竞态）
+  const searchQueryRef = useRef('');
+  searchQueryRef.current = searchQuery;
+
   useEffect(() => {
+    if (searchQueryRef.current.trim()) return;
     fetchEntities();
   }, [fetchEntities]);
 
   const handleSearch = async () => {
+    // audit-fix: 搜索结果随后会被 filterType 本地二次过滤（见 filtered），
+    // 触发搜索时先清空 filterType，避免「搜到了却不显示」
+    if (filterType) setFilterType('');
     if (!searchQuery.trim()) {
       fetchEntities();
       return;
     }
     setLoading(true);
     try {
-      const token = localStorage.getItem('takton_token');
+      // audit-fix: takton_token 是死 key，改从 authStore 取
+      const token = useAuthStore.getState().token;
       const res = await fetch(`/api/entities/search?q=${encodeURIComponent(searchQuery)}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
@@ -89,7 +100,8 @@ export default function MemoryPage() {
   const handleDelete = async (id: string) => {
     if (!(await confirm(t('memory.confirmDelete')))) return;
     try {
-      const token = localStorage.getItem('takton_token');
+      // audit-fix: takton_token 是死 key，改从 authStore 取
+      const token = useAuthStore.getState().token;
       await fetch(`/api/entities/${id}`, {
         method: 'DELETE',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -315,7 +327,8 @@ function EntityModal({
     setSaving(true);
     setError('');
     try {
-      const token = localStorage.getItem('takton_token');
+      // audit-fix: takton_token 是死 key，改从 authStore 取
+      const token = useAuthStore.getState().token;
       const url = isEdit ? `/api/entities/${entity.id}` : '/api/entities';
       const method = isEdit ? 'PUT' : 'POST';
       const res = await fetch(url, {

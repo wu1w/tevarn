@@ -206,20 +206,29 @@ def _record(topic: str, payload: dict[str, Any]) -> dict[str, Any]:
 def publish_sync(topic: str, payload: dict[str, Any] | None = None) -> None:
     """同步入口：写缓冲 + 队列 fanout + 调度 async event_bus。"""
     payload = dict(payload or {})
-    evt = _record(topic, payload)
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
+        loop = None
+    if loop is None:
+        # 非事件循环线程：维持原同步行为
+        _record(topic, payload)
         return
-    try:
-        from backend.core.event_bus import event_bus
+    # audit-fix: 事件循环线程内 _record 会走同步 _call 阻塞 loop；
+    # 改走 to_thread + create_task，保持事件最终落盘/广播
+    async def _go() -> None:
+        try:
+            evt = await asyncio.to_thread(_record, topic, payload)
+            from backend.core.event_bus import event_bus
 
-        async def _go() -> None:
             await event_bus.publish(
                 topic,
                 {**payload, "_domain": True, "ts": evt["ts"], "seq": evt["seq"]},
             )
+        except Exception as e:
+            logger.debug("domain_events publish_sync: %s", e)
 
+    try:
         loop.create_task(_go())
     except Exception as e:
         logger.debug("domain_events publish_sync: %s", e)
@@ -253,7 +262,8 @@ def publish_from_kernel_event(
 
 async def publish_async(topic: str, payload: dict[str, Any] | None = None) -> None:
     payload = dict(payload or {})
-    evt = _record(topic, payload)
+    # audit-fix: _record 内部走同步 kernel _call，放到线程避免阻塞事件循环
+    evt = await asyncio.to_thread(_record, topic, payload)
     from backend.core.event_bus import event_bus
 
     await event_bus.publish(

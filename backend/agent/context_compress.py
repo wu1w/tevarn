@@ -13,7 +13,11 @@ import logging
 import uuid
 from typing import Any
 
-from backend.agent.context_engine import get_context_engine
+from backend.agent.context_engine import (
+    COMPRESS_THRESHOLD,
+    COMPRESS_THRESHOLD_DEEP,
+    get_context_engine,
+)
 from backend.agent.token_meter import TokenMeter
 from backend.core.config import settings
 
@@ -31,7 +35,7 @@ async def compress_history_if_needed(
     messages: list[dict[str, Any]],
     *,
     session_id: uuid.UUID | None = None,
-    threshold: float = 0.75,
+    threshold: float = COMPRESS_THRESHOLD,  # audit-fix(#1)：0.75 → 单点常量 0.85
     allow_l5: bool = True,
     micro_only: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -46,7 +50,11 @@ async def compress_history_if_needed(
    （多 session 并发压缩时避免互相踩阈值）。
     """
     engine = get_context_engine(session_id)
-    thr = float(threshold or getattr(engine, "threshold_percent", 0.75) or 0.75)
+    thr = float(
+        threshold
+        or getattr(engine, "threshold_percent", COMPRESS_THRESHOLD)
+        or COMPRESS_THRESHOLD
+    )
     window = int(
         getattr(engine, "context_length", 0)
         or getattr(settings, "context_window", 128_000)
@@ -68,11 +76,20 @@ async def compress_history_if_needed(
     }
 
     # 消息条数过多：强制压缩（不等 token 阈值）
-    count_pressure = n_msg >= soft_n
+    # audit-fix(#11)：条数压力统计排除 system nudge——运行时注入的提示消息
+    # （tool_round 的 timid/thrash/goal 提示等都是非首条 system），它们会
+    # 虚增条数导致过早触发 L5 深度压缩。特征：role=='system' 且非首条。
+    n_effective = sum(
+        1
+        for i, m in enumerate(messages)
+        if not (isinstance(m, dict) and m.get("role") == "system" and i > 0)
+    )
+    count_pressure = n_effective >= soft_n
     if count_pressure and not micro_only:
         # 长会话优先允许 L5；硬上限时强制 allow
         allow_l5 = True
-        thr = min(thr, 0.45)
+        # audit-fix(#1)：深度阈值 0.45 → 单点常量 COMPRESS_THRESHOLD_DEEP(0.75)
+        thr = min(thr, COMPRESS_THRESHOLD_DEEP)
         local_meter = TokenMeter(context_window=window, threshold_percent=thr)
         meta_base["count_pressure"] = True
         meta_base["threshold_percent"] = thr

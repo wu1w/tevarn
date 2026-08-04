@@ -38,7 +38,7 @@ export default function Toasts() {
       {toasts.map((toast) => (
         <div
           key={toast.id}
-          className={`flex items-center gap-3 rounded-2xl border px-4 py-3 shadow-2xl shadow-black/30 backdrop-blur-xl transition-all ${typeStyles[toast.type]}`}
+          className={`flex items-center gap-3 rounded-[var(--r-lg)] border px-4 py-3 shadow-2xl shadow-black/30 backdrop-blur-xl transition-all ${typeStyles[toast.type]}`} /* audit-fix: P1 圆角统一走 --r-lg 令牌 */
           role="alert"
         >
           {typeIcons[toast.type]}

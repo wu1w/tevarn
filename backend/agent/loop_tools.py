@@ -114,7 +114,8 @@ class LoopToolsMixin:
             new_p = None
             if profile and hasattr(k, "_call"):
                 try:
-                    r = k._call(
+                    # audit-fix(#10)：async 函数内改 _acall，避免阻塞事件循环
+                    r = await k._acall(
                         "coding_profile_spawn",
                         {
                             "identity": str(
@@ -148,7 +149,7 @@ class LoopToolsMixin:
                 )
                 if profile and hasattr(k, "_call"):
                     try:
-                        k._call(
+                        await k._acall(
                             "coding_profile_apply",
                             {"process_id": new_p.id, "profile": profile},
                         )

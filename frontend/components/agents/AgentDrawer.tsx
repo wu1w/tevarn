@@ -630,7 +630,7 @@ export function AgentDrawer({ agent, processes, zh, onClose, onChanged, open = t
                     <div key={item.id} style={{ display: 'flex', gap: 10, padding: '8px 0', borderBottom: '1px solid var(--border-subtle)' }}>
                       <span style={{
                         width: 6, height: 6, borderRadius: '50%', marginTop: 7, flexShrink: 0,
-                        background: item.status === 'done' ? 'var(--status-online)' : item.status === 'failed' ? 'var(--status-offline)' : '#c9a05e',
+                        background: item.status === 'done' ? 'var(--status-online)' : item.status === 'failed' ? 'var(--status-offline)' : 'var(--sem-warn)',
                       }} />
                       <div style={{ minWidth: 0, flex: 1 }}>
                         <div style={{ fontSize: 12, color: 'var(--foreground)', lineHeight: 1.45 }}>
@@ -672,7 +672,7 @@ export function AgentDrawer({ agent, processes, zh, onClose, onChanged, open = t
               {/* 进化 proposals */}
               {(proposals.data?.proposals ?? []).length > 0 ? (
                 (proposals.data?.proposals ?? []).map((p) => (
-                  <div key={p.id} style={{ ...rowCard, borderLeft: `3px solid ${p.status === 'pending' ? '#c9a05e' : p.status === 'applied' ? 'var(--status-online)' : 'var(--border-subtle)'}` }}>
+                  <div key={p.id} style={{ ...rowCard, borderLeft: `3px solid ${p.status === 'pending' ? 'var(--sem-warn)' : p.status === 'applied' ? 'var(--status-online)' : 'var(--border-subtle)'}` }}>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                       <span style={kindTag}>{p.kind}</span>
                       <span style={{ fontSize: 10, color: 'var(--foreground-dim)' }}>{p.status}</span>

@@ -959,8 +959,9 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
             from backend.kernel import get_kernel
 
             k = get_kernel()
-            if hasattr(k, "_call"):
-                h = k._call(
+            if hasattr(k, "_acall"):
+                # audit-fix: async 上下文走 _acall，避免阻塞事件循环
+                h = await k._acall(
                     "isolation_spawn",
                     {
                         "process_id": _kpid,
@@ -1408,6 +1409,7 @@ async def execute_python(config: dict[str, Any], arguments: dict[str, Any]) -> s
                     "（未降级本机直跑。可在权限控制台把「执行环境」改为「自动」或「本机直跑」）"
                 )
 
+        proc = None  # audit-fix: spawn 本身失败时 Timeout 分支不得引用未绑定变量
         try:
             proc = await asyncio.create_subprocess_exec(
                 py,
@@ -1424,6 +1426,13 @@ async def execute_python(config: dict[str, Any], arguments: dict[str, Any]) -> s
                 return f"[Exit {proc.returncode}]\nstdout:\n{out}\n\nstderr:\n{err}"
             return out or "[No output]"
         except asyncio.TimeoutError:
+            # audit-fix: 超时后必须杀掉子进程，否则泄漏（参考 workflow_engine.py:932-937）
+            if proc is not None:
+                try:
+                    proc.kill()
+                    await proc.wait()
+                except Exception:
+                    pass
             return f"[Timeout] Execution exceeded {timeout}s"
         except Exception as e:
             return f"[Error] {e}"

@@ -21,7 +21,7 @@ const SEV_STYLE: Record<string, { border: string; bg: string; accent: string }> 
   warn: {
     border: 'rgba(201, 160, 94, 0.45)',
     bg: 'rgba(201, 160, 94, 0.1)',
-    accent: '#c9a05e',
+    accent: 'var(--sem-warn)',
   },
   info: {
     border: 'rgba(124, 92, 255, 0.35)',

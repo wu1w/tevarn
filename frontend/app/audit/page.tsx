@@ -173,7 +173,7 @@ export default function AuditPage() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {decisions.slice().reverse().map((d, i) => {
               const oc = d.outcome || '';
-              const color = oc === 'allow' ? 'var(--status-online)' : oc === 'escalate' ? '#c9a05e' : 'var(--status-offline)';
+              const color = oc === 'allow' ? 'var(--status-online)' : oc === 'escalate' ? 'var(--sem-warn)' : 'var(--status-offline)';
               return (
                 <div key={`${d.ts}-${i}`} style={{ ...card, padding: '10px 14px', borderLeft: `3px solid ${color}` }}>
                   <div style={{ display: 'flex', gap: 8, fontSize: 12, alignItems: 'center' }}>

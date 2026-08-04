@@ -188,7 +188,11 @@ class PipelineContextEngine(ContextEngine):
         self.profile = profile
         family = None
         l1_default = 12_000
-        thr_default = 0.72
+        # audit-fix(#1)：默认阈值引用单点常量（0.72 → COMPRESS_THRESHOLD=0.85）；
+        # settings.context_threshold_percent / profile.l3_threshold_ratio 覆盖机制不变
+        from backend.agent.context_engine import COMPRESS_THRESHOLD
+
+        thr_default = COMPRESS_THRESHOLD
         l5_default = True
         if profile is not None:
             family = getattr(profile, "family", None)
@@ -713,14 +717,27 @@ class PipelineContextEngine(ContextEngine):
 
         if not summary_text:
             # Heuristic fallback — still orientation for continuation, not a ban.
-            user_bits = [
-                (m.get("content") or "")[:200]
-                for m in head
-                if m.get("role") == "user" and isinstance(m.get("content"), str)
-            ]
+            # audit-fix(#2)：保留全部 user 消息原文（而非仅第一条前 200 字符），
+            # 单条截 2000 字符、总上限 20000 字符，防止 fallback 摘要丢失用户意图。
+            user_bits: list[str] = []
+            _ub_total = 0
+            for m in head:
+                if m.get("role") != "user":
+                    continue
+                _c = m.get("content")
+                if not isinstance(_c, str) or not _c.strip():
+                    continue
+                _c = _c[:2000]
+                if _ub_total + len(_c) > 20_000:
+                    break
+                user_bits.append(_c)
+                _ub_total += len(_c)
+            _user_block = (
+                "\n   ---\n   ".join(user_bits) if user_bits else "(unknown)"
+            )
             summary_text = (
                 "1. Primary Request and Intent:\n"
-                f"   {user_bits[0] if user_bits else '(unknown)'}\n\n"
+                f"   {_user_block}\n\n"
                 f"7. Pending Tasks:\n   Continue unfinished work from earlier turns "
                 f"(compressed {len(head)} messages).\n\n"
                 "8. Current Work:\n   Context was compacted due to length; "

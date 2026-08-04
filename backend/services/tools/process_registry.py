@@ -26,6 +26,8 @@ class BgProcess:
 _REGISTRY: dict[str, BgProcess] = {}
 _LOCK = asyncio.Lock()
 _MAX = 32
+# audit-fix: communicate 输出截断阈值（保留尾部 64KB）
+_MAX_OUTPUT_BYTES = 64 * 1024
 
 
 async def start_background(
@@ -40,6 +42,12 @@ async def start_background(
             for k in list(_REGISTRY.keys()):
                 if _REGISTRY[k].done:
                     _REGISTRY.pop(k, None)
+        # audit-fix: 满员且无 done 可清时拒绝新建，防后台进程/注册表无界增长
+        if len(_REGISTRY) >= _MAX:
+            raise RuntimeError(
+                f"background process registry full ({_MAX} still running); "
+                "poll or stop existing bg processes before starting new ones"
+            )
         pid = f"bg_{uuid.uuid4().hex[:10]}"
         item = BgProcess(id=pid, command=command, cwd=cwd, started_at=time.time())
         _REGISTRY[pid] = item
@@ -55,6 +63,11 @@ async def start_background(
             )
             item.proc = proc
             out, err = await proc.communicate()
+            # audit-fix: 输出截断保留尾部 64KB，防大输出撑爆内存
+            if out and len(out) > _MAX_OUTPUT_BYTES:
+                out = out[-_MAX_OUTPUT_BYTES:]
+            if err and len(err) > _MAX_OUTPUT_BYTES:
+                err = err[-_MAX_OUTPUT_BYTES:]
             item.stdout = out.decode("utf-8", errors="replace")
             item.stderr = err.decode("utf-8", errors="replace")
             item.exit_code = proc.returncode

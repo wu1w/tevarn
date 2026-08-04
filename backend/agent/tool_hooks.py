@@ -143,7 +143,8 @@ async def builtin_write_checkpoint_before(name: str, arguments: dict[str, Any]) 
 
             k = get_kernel()
             if hasattr(k, "_call"):
-                cp = k._call(
+                # audit-fix(#10)：async hook 内改 _acall，避免阻塞事件循环
+                cp = await k._acall(
                     "checkpoint_begin",
                     {"process_id": pid, "path": path},
                 )

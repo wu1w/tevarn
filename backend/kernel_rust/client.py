@@ -2112,17 +2112,20 @@ class RustAgentKernel:
         state: Literal["completed", "failed", "killed"] = "completed",
         reason: str | None = None,
     ) -> RustKernelProcess | None:
-        result = self._call(
+        # audit-fix: async 方法走 _acall，避免阻塞事件循环
+        result = await self._acall(
             "end_process",
             {"process_id": process_id, "state": state, "reason": reason},
         )
         return self._proc(result) if result else None
 
     async def mark_running(self, process_id: str) -> None:
-        self._call("mark_running", {"process_id": process_id})
+        # audit-fix: async 方法走 _acall，避免阻塞事件循环
+        await self._acall("mark_running", {"process_id": process_id})
 
     async def suspend_process(self, process_id: str, *, reason: str = "") -> RustKernelProcess:
-        result = self._call("suspend_process", {"process_id": process_id, "reason": reason})
+        # audit-fix: async 方法走 _acall，避免阻塞事件循环
+        result = await self._acall("suspend_process", {"process_id": process_id, "reason": reason})
         p = self._proc(result)
         assert p is not None
         return p
@@ -2134,7 +2137,8 @@ class RustAgentKernel:
         return p
 
     async def resume_process(self, process_id: str) -> RustKernelProcess:
-        result = self._call("resume_process", {"process_id": process_id})
+        # audit-fix: async 方法走 _acall，避免阻塞事件循环
+        result = await self._acall("resume_process", {"process_id": process_id})
         p = self._proc(result)
         assert p is not None
         return p
@@ -2171,7 +2175,8 @@ class RustAgentKernel:
         reason: str = "superseded by new job",
         except_process_id: str | None = None,
     ) -> list[str]:
-        result = self._call(
+        # audit-fix: async 方法走 _acall，避免阻塞事件循环
+        result = await self._acall(
             "retire_live_identity_processes",
             {
                 "identity": identity,
@@ -2506,7 +2511,8 @@ class RustAgentKernel:
         *,
         reason: str = "",
     ) -> EscalationRequest:
-        r = self._call(
+        # audit-fix: async 方法走 _acall，避免阻塞事件循环
+        r = await self._acall(
             "request_escalation",
             {
                 "process_id": process_id,
@@ -2517,11 +2523,13 @@ class RustAgentKernel:
         return EscalationRequest.from_dict(r)
 
     async def approve_escalation(self, request_id: str, *, by: str = "user") -> EscalationRequest:
-        r = self._call("approve_escalation", {"request_id": request_id, "by": by})
+        # audit-fix: async 方法走 _acall，避免阻塞事件循环
+        r = await self._acall("approve_escalation", {"request_id": request_id, "by": by})
         return EscalationRequest.from_dict(r)
 
     async def deny_escalation(self, request_id: str, *, by: str = "user") -> EscalationRequest:
-        r = self._call("deny_escalation", {"request_id": request_id, "by": by})
+        # audit-fix: async 方法走 _acall，避免阻塞事件循环
+        r = await self._acall("deny_escalation", {"request_id": request_id, "by": by})
         return EscalationRequest.from_dict(r)
 
     async def ensure_escalation_loaded(self, request_id: str) -> EscalationRequest | None:

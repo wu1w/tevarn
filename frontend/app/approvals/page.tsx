@@ -37,16 +37,16 @@ function classify(e: KernelEscalation): Cls {
   return 'decision';
 }
 const CLS_META: Record<Cls, { color: string; zh: string; en: string }> = {
-  decision: { color: '#7a98b0', zh: '决策类', en: 'Decision' },
-  perm: { color: '#c9a05e', zh: '权限类', en: 'Permission' },
-  danger: { color: '#c0785e', zh: '高危类', en: 'High-risk' },
+  decision: { color: 'var(--sem-info)', zh: '决策类', en: 'Decision' },
+  perm: { color: 'var(--sem-warn)', zh: '权限类', en: 'Permission' },
+  danger: { color: 'var(--sem-danger)', zh: '高危类', en: 'High-risk' },
 };
 
 const KIND_META: Record<string, { color: string; zh: string; en: string }> = {
   memory_distill: { color: '#80b09b', zh: 'SOP 沉淀', en: 'SOP distill' },
-  tool_deprecate: { color: '#c0785e', zh: '工具淘汰', en: 'Tool deprecate' },
-  caps_adjust: { color: '#c9a05e', zh: '能力入编', en: 'Cap adjust' },
-  planner_tune: { color: '#7a98b0', zh: 'Planner 检讨', en: 'Planner tune' },
+  tool_deprecate: { color: 'var(--sem-danger)', zh: '工具淘汰', en: 'Tool deprecate' },
+  caps_adjust: { color: 'var(--sem-warn)', zh: '能力入编', en: 'Cap adjust' },
+  planner_tune: { color: 'var(--sem-info)', zh: 'Planner 检讨', en: 'Planner tune' },
 };
 
 /** 已等待秒数 → 简写（不在内部读 Date.now，避免 render 杂质） */
@@ -277,7 +277,7 @@ export default function ApprovalsPage() {
           </div>
           <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--foreground)', marginTop: 4 }}>
             {zh ? '等你拍板' : 'Your call'}{' '}
-            <span style={{ fontSize: 12, fontWeight: 500, color: totalPending ? '#c9a05e' : 'var(--foreground-dim)' }}>
+            <span style={{ fontSize: 12, fontWeight: 500, color: totalPending ? 'var(--sem-warn)' : 'var(--foreground-dim)' }}>
               {totalPending} {zh ? '项待决' : 'pending'}
             </span>
           </div>
@@ -320,8 +320,8 @@ export default function ApprovalsPage() {
       ) : (
         <div style={{
           marginBottom: 14, padding: '10px 14px', borderRadius: 10, fontSize: 12, fontWeight: 600,
-          border: '1px solid color-mix(in srgb, #c9a05e 35%, var(--border-subtle))',
-          background: 'color-mix(in srgb, #c9a05e 10%, var(--card-bg))',
+          border: '1px solid color-mix(in srgb, var(--sem-warn) 35%, var(--border-subtle))',
+          background: 'color-mix(in srgb, var(--sem-warn) 10%, var(--card-bg))',
           color: 'var(--foreground)',
         }}>
           {zh

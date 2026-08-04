@@ -12,8 +12,12 @@ def test_file_read_budget_is_deliberately_generous():
         DEFAULT_TOOL_BUDGET,
         TOOL_RESULT_BUDGET,
     )
+    from backend.services.tools.executors import _file_read_char_budget
 
-    assert TOOL_RESULT_BUDGET["file_read"] > 20_000
+    # audit-fix：预算自 21_000 收敛到 12_000（≈8K tokens，对齐主流单次读取量级）。
+    # 真正的不变式不是某个魔法数字，而是「契约预算 > 分页输出（含 footer 余量）」，
+    # 保证按行分好的视图永远不会被二次 head+tail 拼接。
+    assert TOOL_RESULT_BUDGET["file_read"] >= _file_read_char_budget() + 500
     assert TOOL_RESULT_BUDGET["file_read"] > DEFAULT_TOOL_BUDGET * 10
 
     # 分页后的正常读取（远小于预算）必须原样透传，不得截断

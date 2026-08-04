@@ -42,13 +42,34 @@ class KernelPersistence:
         self._session_factory = session_factory
         self._audit_store = audit_store
         self._checkpoint_interval = max(1, int(checkpoint_interval))
-        self._queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        # audit-fix: 有界队列（maxsize=10000），防消费端落后时内存无界增长
+        self._queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=10000)
         self._events_since_checkpoint = 0
         self._total_events = 0
 
     def sink(self) -> Callable[[dict[str, Any]], None]:
         """kernel 同步侧挂载点（put_nowait 是同步方法，零 await）。"""
-        return self._queue.put_nowait
+        q = self._queue
+
+        def _put(op: dict[str, Any]) -> None:
+            try:
+                q.put_nowait(op)
+            except asyncio.QueueFull:
+                # audit-fix: 队列满时丢弃最旧一条再放（持久化是增强不是单点）
+                try:
+                    q.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+                try:
+                    q.put_nowait(op)
+                except asyncio.QueueFull:
+                    pass
+                logger.warning(
+                    "kernel persistence queue full (maxsize=%s)：丢弃最旧操作",
+                    q.maxsize,
+                )
+
+        return _put
 
     @property
     def pending(self) -> int:
@@ -292,6 +313,9 @@ class KernelPersistence:
             try:
                 if hasattr(k, "process_recovery_plan"):
                     plan = k.process_recovery_plan(pid) or {}
+                elif hasattr(k, "_acall"):
+                    # audit-fix: async 上下文走 _acall，避免阻塞事件循环
+                    plan = await k._acall("process_recovery_plan", {"process_id": pid}) or {}
                 else:
                     plan = k._call("process_recovery_plan", {"process_id": pid}) or {}
                 if not isinstance(plan, dict):

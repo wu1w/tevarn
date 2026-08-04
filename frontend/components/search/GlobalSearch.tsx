@@ -52,7 +52,8 @@ export function GlobalSearch({ open, onClose, onSelectSession }: GlobalSearchPro
         onClose();
       } else if (e.key === 'ArrowDown') {
         e.preventDefault();
-        setSelectedIndex((i) => Math.min(i + 1, filtered.length - 1));
+        // audit-fix: 列表只渲染 slice(0, 20)，选中上限同步收窄，避免选中不可见项
+        setSelectedIndex((i) => Math.min(i + 1, Math.min(filtered.length, 20) - 1));
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
         setSelectedIndex((i) => Math.max(i - 1, 0));

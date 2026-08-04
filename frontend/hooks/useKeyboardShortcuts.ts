@@ -12,6 +12,7 @@ interface ShortcutDef {
   ctrl?: boolean;
   meta?: boolean;  // Cmd on Mac, Win on Windows
   shift?: boolean;
+  alt?: boolean;
   handler: ShortcutHandler;
   preventDefault?: boolean;
 }
@@ -20,18 +21,18 @@ export function useKeyboardShortcuts(shortcuts: ShortcutDef[]) {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       for (const sc of shortcuts) {
-        const shiftPressed = sc.shift ? e.shiftKey : false;
-
-        // Support both Cmd (Mac) and Ctrl (Windows/Linux) for meta-like shortcuts
+        // audit-fix: 未声明的修饰键必须未按下才命中（shift/ctrl/meta/alt 全严格匹配）。
+        // meta 保留跨平台别名：声明 meta 时接受 Cmd 或 Ctrl。
         const metaMatch = sc.ctrl
-          ? e.ctrlKey
+          ? e.ctrlKey && !e.metaKey
           : sc.meta
             ? (e.metaKey || e.ctrlKey)
-            : true;
+            : !e.ctrlKey && !e.metaKey;
 
         if (
           metaMatch &&
-          shiftPressed === !!sc.shift &&
+          e.shiftKey === !!sc.shift &&
+          e.altKey === !!sc.alt &&
           e.key.toLowerCase() === sc.key.toLowerCase()
         ) {
           if (sc.preventDefault !== false) {

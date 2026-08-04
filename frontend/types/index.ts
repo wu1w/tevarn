@@ -28,8 +28,10 @@ export interface TokenResponse {
 export interface Session {
   id: string;
   user_id: string | null;
-  status: 'idle' | 'thinking' | 'tool_executing';
-  config: SessionConfig;
+  // audit-fix: 后端会返回枚举外状态（如 running/optimizing），放宽为 string
+  status: string;
+  // audit-fix: 后端可能返回 null config，使用点一律 ?. / || 兜底
+  config: SessionConfig | null;
   created_at: string;
   updated_at: string;
   expires_at?: string | null;
@@ -37,11 +39,11 @@ export interface Session {
 
 export interface SessionConfig {
   /** LLM 人设文案（system identity 层） */
-  identity: string;
-  sys_prompt: string;
-  agent_md: string;
-  skills: string[];
-  tools: string[];
+  identity?: string;
+  sys_prompt?: string;
+  agent_md?: string;
+  skills?: string[];
+  tools?: string[];
   auto_optimize?: boolean;
   optimize_threshold?: number;
   /** AIOS：联系的员工编制名（AgentIdentity.name），与 identity 人设分离 */

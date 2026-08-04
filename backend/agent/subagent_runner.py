@@ -158,13 +158,60 @@ async def run_subagent(
     except Exception:
         child.max_iterations = 12
 
+    # audit-fix(#3)：子代理上下文隔离——此前子 loop 复用父 session_id，
+    # 导致子代理中间工具消息落进父会话历史（上下文污染/膨胀）。
+    # messages.session_id 对 sessions.id 有外键约束，故新建一条轻量 session
+    # 记录（独立 uuid → message store 查不到历史即全新上下文）；Session 模型
+    # 无 is_subagent 列，不改 schema，标记写进 config JSON 并继承父会话配置。
+    child_sid: uuid.UUID = sid
+    _child_session_ok = False
+    try:
+        _child_repo = AsyncSessionRepository()
+        _new_sid = uuid.uuid4()
+        _parent_cfg: dict[str, Any] = {}
+        _parent_user_id: Any = user_id
+        try:
+            _parent = await _child_repo.get_by_id(sid)
+            if _parent is not None:
+                if isinstance(getattr(_parent, "config", None), dict):
+                    _parent_cfg = dict(_parent.config)
+                if _parent_user_id is None:
+                    _parent_user_id = getattr(_parent, "user_id", None)
+        except Exception as _pe:
+            logger.debug("subagent parent session read skip: %s", _pe)
+        if _parent_user_id is not None:
+            _child_cfg = _parent_cfg
+            _child_cfg["is_subagent"] = True
+            _child_cfg["parent_session_id"] = str(sid)
+            await _child_repo.create(
+                {
+                    "id": _new_sid,
+                    "user_id": _parent_user_id,
+                    "config": _child_cfg,
+                }
+            )
+            child_sid = _new_sid
+            _child_session_ok = True
+        else:
+            logger.warning(
+                "subagent child session skipped: no user_id (parent=%s)", sid
+            )
+    except Exception as _ce:
+        # 创建失败回退父 session（保持旧行为，不阻断委派）
+        logger.warning(
+            "subagent child session create failed, fallback to parent session: %s",
+            _ce,
+        )
+        child_sid = sid
+
     logger.info(
-        "subagent mini-run start: agent=%s key=%s depth=%s model_ref=%s",
+        "subagent mini-run start: agent=%s key=%s depth=%s model_ref=%s sid=%s",
         name, child._agent_key, depth, getattr(sub_agent, "model_ref", ""),
+        f"{child_sid}"[:8] + ("(isolated)" if _child_session_ok else "(shared)"),
     )
     try:
         result = await asyncio.wait_for(
-            child.run(sid, prompt, attachments=None, mode="subagent", _nested=True),
+            child.run(child_sid, prompt, attachments=None, mode="subagent", _nested=True),
             timeout=_subagent_timeout(),
         )
     except asyncio.TimeoutError:

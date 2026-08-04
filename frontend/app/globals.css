@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* audit-fix: P0 dark 变体接线 —— app/layout.tsx 的 boot 脚本设置
+   documentElement[data-theme="dark"]（同时加 .dark 类），此处选择器与 data-theme 对齐 */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 @theme inline {
   --color-page-bg: var(--page-bg);
   --color-card-bg: var(--card-bg);
@@ -25,6 +29,19 @@
   --color-success-text: var(--success-text);
   --color-input-bg: var(--input-bg);
   --color-input-placeholder: var(--input-placeholder);
+  /* audit-fix: P0 shadcn 语义 token 映射到 Pixel Console 现有令牌
+     （--brand-purple/--on-acc/--elevated-bg/--card-bg-hover/--status-offline/
+       --border-focus/--border-default/--foreground 均在两个主题中定义） */
+  --color-primary: var(--brand-purple);
+  --color-primary-foreground: var(--on-acc);
+  --color-secondary: var(--elevated-bg);
+  --color-secondary-foreground: var(--foreground);
+  --color-accent: var(--card-bg-hover);
+  --color-accent-foreground: var(--foreground);
+  --color-destructive: var(--status-offline);
+  --color-destructive-foreground: var(--on-acc);
+  --color-ring: var(--border-focus);
+  --color-input: var(--border-default);
   /* ── 字体：苹果优先 + 中文 PingFang / 回退 ── */
   --font-sans: var(--font-inter), -apple-system, BlinkMacSystemFont, "SF Pro Text",
     "SF Pro Display", "Helvetica Neue", "PingFang SC", "Hiragino Sans GB",
@@ -1331,7 +1348,8 @@ button[role="switch"]:disabled {
   cursor: not-allowed;
 }
 button[role="switch"] > span {
-  transition: transform var(--tk-dur) var(--tk-ease), width var(--tk-dur-fast) var(--tk-ease) !important;
+  /* audit-fix: P0 Tailwind v4 的 translate-x-* 与 scale-* 使用独立 CSS 属性，须列入过渡 */
+  transition: transform var(--tk-dur) var(--tk-ease), translate var(--tk-dur) var(--tk-ease), scale var(--tk-dur-fast) var(--tk-ease), width var(--tk-dur-fast) var(--tk-ease) !important;
   will-change: transform;
 }
 /* 按压时滑块沿运动方向轻微拉伸，松手回弹——符合直觉的"捏住"感 */
@@ -1406,7 +1424,7 @@ button[role="switch"]:focus-visible {
 }
 ::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--foreground-dim) 26%, transparent);
-  border-radius: 8px;
+  border-radius: 2px; /* audit-fix: P1 圆角统一为像素控制台方角（--r-sm） */
   border: 2px solid transparent;
   background-clip: padding-box;
   transition: background var(--tk-dur-fast) ease;

@@ -128,9 +128,10 @@ async def should_auto_approve_escalation(
         from backend.kernel import get_kernel
 
         k = get_kernel()
-        if hasattr(k, "_call"):
-            k._call("approval_set_rules", {"rules": rules})
-            r = k._call(
+        if hasattr(k, "_acall"):
+            # audit-fix: async 上下文走 _acall，避免阻塞事件循环
+            await k._acall("approval_set_rules", {"rules": rules})
+            r = await k._acall(
                 "approval_should_auto",
                 {"capabilities": [str(c) for c in capabilities]},
             ) or {}

@@ -25,7 +25,7 @@ const card: React.CSSProperties = {
 
 function barColor(p: number): string {
   if (p >= 80) return 'var(--status-offline)';
-  if (p >= 50) return '#c9a05e';
+  if (p >= 50) return 'var(--sem-warn)';
   return 'var(--status-online)';
 }
 

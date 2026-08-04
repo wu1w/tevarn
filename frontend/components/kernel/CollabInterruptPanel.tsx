@@ -127,7 +127,7 @@ export function CollabInterruptPanel({
             style={{
               fontSize: 11,
               fontWeight: 650,
-              color: '#c9a05e',
+              color: 'var(--sem-warn)',
               padding: '2px 8px',
               borderRadius: 999,
               border: '1px solid rgba(201,160,94,0.4)',

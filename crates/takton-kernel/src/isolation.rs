@@ -319,6 +319,13 @@ impl IsolationSupervisor {
         {
             let mut c = Command::new("sh");
             c.args(["-c", cmd_line]);
+            // audit-fix: 子进程独立进程组（pgid==pid），kill 路径可整组
+            // SIGKILL，防 shell 派生的孙进程泄漏
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::CommandExt;
+                c.process_group(0);
+            }
             Self::scrub_child_env(&mut c);
             c
         }
@@ -429,6 +436,10 @@ impl IsolationSupervisor {
     /// Kill OS child (if owned) then mark ledger killed.
     pub fn kill(&mut self, handle_id: &str) -> Option<IsolationHandle> {
         if let Some(mut child) = self.children.remove(handle_id) {
+            // audit-fix: unix 下先整组 SIGKILL（pgid==child pid），再 kill+wait
+            // 回收组长本体，防孙进程泄漏
+            #[cfg(unix)]
+            Self::kill_process_group(child.id());
             let _ = child.kill();
             let _ = child.wait();
         } else if let Some(h) = self.handles.get(handle_id) {
@@ -466,13 +477,40 @@ impl IsolationSupervisor {
         }
         #[cfg(unix)]
         {
-            let _ = Command::new("kill")
-                .args(["-9", &pid.to_string()])
+            // audit-fix: 优先按进程组整树杀；组不存在（外部登记 pid 非
+            // 进程组长）时回退单 pid
+            let grouped = Command::new("kill")
+                .args(["-9", &format!("-{pid}")])
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .status();
+            match grouped {
+                Ok(s) if s.success() => {}
+                _ => {
+                    let _ = Command::new("kill")
+                        .args(["-9", &pid.to_string()])
+                        .stdin(Stdio::null())
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .status();
+                }
+            }
         }
+    }
+
+    /// audit-fix: unix 整组 SIGKILL（spawn 侧 process_group(0) 使 pgid==pid）。
+    #[cfg(unix)]
+    fn kill_process_group(pgid: u32) {
+        if pgid == 0 {
+            return;
+        }
+        let _ = Command::new("kill")
+            .args(["-9", &format!("-{pgid}")])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
     }
 
     /// OS-level reaper: poll exited children + kill timed-out ones.

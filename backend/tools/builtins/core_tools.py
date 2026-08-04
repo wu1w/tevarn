@@ -528,8 +528,9 @@ async def execute_result_load(config: dict[str, Any], arguments: dict[str, Any])
             except TypeError:
                 # 旧签名兼容（仍传 process_id 进 _call）
                 r = k.result_load(hid) or {}
-        elif hasattr(k, "_call"):
-            r = k._call(
+        elif hasattr(k, "_acall"):
+            # audit-fix: async 上下文走 _acall，避免阻塞事件循环
+            r = await k._acall(
                 "result_load", {"handle_id": hid, "process_id": pid}
             ) or {}
         else:

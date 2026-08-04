@@ -16,12 +16,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import weakref
 
 import aiohttp
 
 from backend.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# audit-fix: 登记所有共享 session（弱引用），供进程 shutdown 统一 close，
+# 避免 "Unclosed client session" 与连接泄漏
+_shared_sessions: "weakref.WeakSet[aiohttp.ClientSession]" = weakref.WeakSet()
 
 # Luna/Codex reasoning 静默期下限：配置更短时仍抬到此值，避免半途 ServerTimeoutError
 _MIN_STREAM_SOCK_READ = 300.0
@@ -82,6 +87,25 @@ def ensure_session(owner: object) -> aiohttp.ClientSession:
 
     connector = aiohttp.TCPConnector(limit=32, ttl_dns_cache=300)
     sess = aiohttp.ClientSession(connector=connector)
+    try:
+        _shared_sessions.add(sess)  # audit-fix: 登记以便 shutdown 统一关闭
+    except Exception:
+        pass
     owner._llm_shared_session = sess  # type: ignore[attr-defined]
     owner._llm_shared_session_loop = loop  # type: ignore[attr-defined]
     return sess
+
+
+async def close_all_sessions() -> None:
+    """audit-fix: 关闭所有登记的共享 session（lifespan shutdown 钩子）。
+
+    单个 session close 失败（如绑定在已消亡 loop）不影响其余清理。
+    """
+    sessions = list(_shared_sessions)
+    _shared_sessions.clear()
+    for sess in sessions:
+        try:
+            if not getattr(sess, "closed", True):
+                await sess.close()
+        except Exception as e:
+            logger.debug("close LLM shared session skip: %s", e)

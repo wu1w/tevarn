@@ -27,7 +27,7 @@ export function RunCapabilityChip({
         {zh ? '工具' : 'tools'} {toolsCount ?? '—'}
       </span>
       {(softRenew || 0) > 0 ? (
-        <span style={{ color: '#c9a05e' }}>
+        <span style={{ color: 'var(--sem-warn)' }}>
           soft×{softRenew}
         </span>
       ) : null}

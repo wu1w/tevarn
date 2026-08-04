@@ -72,6 +72,13 @@ async def list_my_sessions(
 ):
     """获取当前用户会话。kind=human 排除 workforce 工单会话（IM 聊天列表）。"""
     sessions = await repo.list_by_user(current_user.id)
+    # audit-fix: 子代理隔离 session（config.is_subagent=True）是内部实现细节，
+    # 不出现在用户会话列表（防污染 + 防无限累积可见）
+    sessions = [
+        s
+        for s in sessions
+        if not (isinstance(s.config, dict) and s.config.get("is_subagent"))
+    ]
     if (kind or "").strip().lower() == "human":
         sessions = [
             s

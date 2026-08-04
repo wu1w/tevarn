@@ -44,6 +44,9 @@ class ToolRoundState:
     # 工具空转：相同指纹连续轮次
     thrash_streak: int = 0
     last_tool_fingerprint: str = ""
+    # audit-fix(#5)：同一工具名连续失败熔断（不论参数）
+    last_failed_tool: str = ""
+    same_tool_fail_streak: int = 0
 
 
 # T1：可安全并发的只读风险等级。写类/命令类一律串行，避免「并发读 + 写同一文件」竞态。
@@ -188,7 +191,10 @@ async def run_tool_round(
     """执行一轮工具调用并做轮后处理（就地更新 state）"""
     from backend.agent.robust import tool_call_signature
     from backend.agent.run_state import RunStatus as _RS
-    from backend.agent.tool_result_contract import normalize_tool_result
+    from backend.agent.tool_result_contract import (
+        is_tool_error,
+        normalize_tool_result,
+    )
     from backend.agent.turn_retry import RetryKind
     from backend.repositories.skill_repo import AsyncSkillRepository
     from backend.skills import SkillRegistry
@@ -220,6 +226,40 @@ async def run_tool_round(
     # PR1–PR4: Rust loop_guard begin_round + per-tool pre checks
     _kproc_lg = getattr(loop, "_kernel_process", None)
     _kpid_lg = str(getattr(_kproc_lg, "id", "") or "") or ""
+    # audit-fix(#6)：guard 不可用（无 kernel 进程）时 fail-closed——workforce
+    # 会话默认禁止编排类工具（delegate_task/crew_steward 等），非 workforce 保持现状。
+    if (
+        bool(getattr(settings, "agent_loop_guard_enabled", True))
+        and not _kpid_lg
+    ):
+        try:
+            _wf_no_guard = bool(
+                getattr(loop, "_workforce", False)
+                or str(getattr(loop, "_agent_key", "") or "").startswith("wf:")
+            )
+            if _wf_no_guard:
+                from backend.agent.decisive import is_orchestration_tool as _is_orch_fc
+
+                for tc in tool_calls or []:
+                    _cid_fc = str(getattr(tc, "id", "") or "")
+                    _tn_fc = str(getattr(tc, "name", "") or "")
+                    if (
+                        _cid_fc
+                        and _cid_fc not in _capped_results
+                        and _is_orch_fc(_tn_fc)
+                    ):
+                        _capped_results[_cid_fc] = (
+                            "[LoopGuard] guard unavailable (no kernel process): "
+                            f"orchestration tool '{_tn_fc}' denied for workforce "
+                            "session (fail-closed)."
+                        )
+                        logger.warning(
+                            "loop_guard fail-closed: blocked orch tool=%s session=%s",
+                            _tn_fc,
+                            session_id,
+                        )
+        except Exception as _fc_e:
+            logger.debug("loop_guard fail-closed skip: %s", _fc_e)
     if bool(getattr(settings, "agent_loop_guard_enabled", True)) and _kpid_lg:
         try:
             from backend.agent.loop_guard_bridge import (
@@ -232,7 +272,8 @@ async def run_tool_round(
                 str(getattr(tc, "name", None) or "")
                 for tc in (tool_calls or [])
             ]
-            _br = begin_round(_kpid_lg, _names)
+            # audit-fix: sync kernel RPC → to_thread，避免阻塞事件循环
+            _br = await asyncio.to_thread(begin_round, _kpid_lg, _names)
             if isinstance(_br, dict) and _br.get("status") == "force_final":
                 state.force_final_no_tools = True
                 messages.append(
@@ -270,7 +311,8 @@ async def run_tool_round(
                             _args = {"_raw": _args}
                     if not isinstance(_args, dict):
                         _args = {}
-                    _pt = lg_pre_tool(
+                    _pt = await asyncio.to_thread(  # audit-fix: sync RPC → to_thread
+                        lg_pre_tool,
                         _kpid_lg,
                         str(getattr(tc, "name", "") or ""),
                         _args,
@@ -550,7 +592,8 @@ async def run_tool_round(
                 try:
                     from backend.agent.loop_guard_bridge import post_tool as lg_post
 
-                    lg_post(
+                    await asyncio.to_thread(  # audit-fix: sync RPC → to_thread
+                        lg_post,
                         _kpid,
                         _tname,
                         args_dict if isinstance(args_dict, dict) else {},
@@ -733,6 +776,21 @@ async def run_tool_round(
         }
         messages.append(tool_msg)
 
+        # audit-fix(#5)：同一工具名连续失败计数（不论参数）——成功/换工具即清零
+        try:
+            _tn_fail = str(getattr(tc, "name", "") or "")
+            if is_tool_error(str(tool_result or "")):
+                if _tn_fail and _tn_fail == state.last_failed_tool:
+                    state.same_tool_fail_streak = int(state.same_tool_fail_streak or 0) + 1
+                else:
+                    state.last_failed_tool = _tn_fail
+                    state.same_tool_fail_streak = 1
+            else:
+                state.last_failed_tool = ""
+                state.same_tool_fail_streak = 0
+        except Exception:
+            pass
+
         # 持久化 tool 结果（tool_call_id 塞进 tool_calls JSON 旁路字段，保持 list 形态）
         try:
             await loop._save_message(
@@ -900,6 +958,45 @@ async def run_tool_round(
     except Exception as _th_e:
         logger.debug("tool thrash guard skipped: %s", _th_e)
 
+    # audit-fix(#5)：同一工具名连续失败 N 次（不论参数）→ 熔断。
+    # 复用上方 thrash 模式：注入 system 提示 + force_final + 计入 thrash 指纹。
+    try:
+        _fail_cap = max(
+            2, int(getattr(settings, "agent_same_tool_fail_breaker", 4) or 4)
+        )
+        if (
+            state.same_tool_fail_streak >= _fail_cap
+            and state.last_failed_tool
+            and not state.force_final_no_tools
+        ):
+            state.force_final_no_tools = True
+            turn_retry.note_and_decide(
+                RetryKind.THRASH,
+                detail=f"same_tool_fail:{state.last_failed_tool}x{state.same_tool_fail_streak}",
+            )
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        f"【工具熔断】工具 {state.last_failed_tool} 已连续失败 "
+                        f"{state.same_tool_fail_streak} 次（不论参数）。"
+                        "请换方案或停止重试：禁止再调用该工具，"
+                        "仅根据已有信息直接给出最终答复。"
+                    ),
+                }
+            )
+            logger.warning(
+                "same-tool fail breaker: tool=%s streak=%s session=%s",
+                state.last_failed_tool,
+                state.same_tool_fail_streak,
+                session_id,
+            )
+            # 熔断后清零，避免 force_final 被覆盖时每轮重复触发
+            state.same_tool_fail_streak = 0
+            state.last_failed_tool = ""
+    except Exception as _fb_e:
+        logger.debug("same-tool fail breaker skipped: %s", _fb_e)
+
     # dynamic：use_tool_pack enable → 合并工具 schema 供后续轮次
     try:
         from backend.agent.tool_policy import merge_tools_with_packs
@@ -991,7 +1088,8 @@ async def run_tool_round(
                     if hasattr(_kk, "doom_record"):
                         _dr = _kk.doom_record(_kpid, _n or "tool", _args)
                     elif hasattr(_kk, "_call"):
-                        _dr = _kk._call(
+                        # audit-fix(#10)：async 上下文改 _acall，避免阻塞事件循环
+                        _dr = await _kk._acall(
                             "doom_record",
                             {
                                 "process_id": _kpid,
@@ -1097,9 +1195,19 @@ async def run_tool_round(
             and state.tool_rounds > 0
             and state.tool_rounds % l5_every == 0
         )
-        thr = float(getattr(settings, "context_threshold_percent", 0.55) or 0.55)
+        # audit-fix(#1)：阈值默认引用单点常量（0.55/0.45 → 0.85/0.75）；
+        # settings.context_threshold_percent 覆盖机制保留
+        from backend.agent.context_engine import (
+            COMPRESS_THRESHOLD,
+            COMPRESS_THRESHOLD_DEEP,
+        )
+
+        thr = float(
+            getattr(settings, "context_threshold_percent", COMPRESS_THRESHOLD)
+            or COMPRESS_THRESHOLD
+        )
         if bloat:
-            thr = min(thr, 0.45)
+            thr = min(thr, COMPRESS_THRESHOLD_DEEP)
         need = eng.should_compress_preflight(messages) or bloat
         if need or allow_mid_l5:
             state.messages, mid_meta = await compress_history_if_needed(

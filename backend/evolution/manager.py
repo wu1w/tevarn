@@ -415,8 +415,9 @@ class EvolutionManager:
 
                         k = get_kernel()
                         content = str(proposal.get("content") or "")
-                        if hasattr(k, "_call") and content:
-                            pkg = k._call(
+                        if hasattr(k, "_acall") and content:
+                            # audit-fix: async 上下文走 _acall，避免阻塞事件循环
+                            pkg = await k._acall(
                                 "skill_register",
                                 {
                                     "name": proposal["name"],
@@ -434,7 +435,7 @@ class EvolutionManager:
                             pid = pkg.get("id")
                             if pid:
                                 try:
-                                    k._call("skill_verify", {"package_id": pid})
+                                    await k._acall("skill_verify", {"package_id": pid})
                                 except Exception:
                                     pass  # stays draft; activate requires human
                     except Exception:

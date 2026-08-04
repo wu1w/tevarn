@@ -385,8 +385,12 @@ class CronScheduler:
 
     async def stop(self) -> None:
         self._running = False
-        for _job_id, task in list(self._tasks.items()):
+        # audit-fix: cancel 后回收任务，吞掉 CancelledError/异常，避免任务泄漏
+        tasks = [task for _job_id, task in list(self._tasks.items())]
+        for task in tasks:
             task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         self._tasks.clear()
         logger.info("CronScheduler stopped")
 

@@ -34,7 +34,7 @@ import { useToastStore } from '@/stores/toastStore';
 const STATE_COLOR: Record<string, string> = {
   running: 'var(--status-online)', idle: 'var(--status-online)',
   exited: 'var(--foreground-dim)', error: 'var(--status-offline)',
-  waiting: '#c9a05e',
+  waiting: 'var(--sem-warn)',
 };
 
 function fmtTime(ts: number | null | undefined): string {
@@ -257,7 +257,7 @@ export default function KernelPage() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 180px), 1fr))', gap: 10, marginBottom: 18 }}>
         {stats.map((s) => (
           <div key={s.label} style={{ ...card, padding: '14px 16px', textAlign: 'center' }}>
-            <div style={{ fontSize: 22, fontWeight: 700, color: s.warn ? 'var(--status-offline)' : 'var(--foreground)' }}>{s.value}</div>
+            <div className="num" /* audit-fix: P1 大数字等宽+表格数字对齐 */ style={{ fontSize: 22, fontWeight: 700, color: s.warn ? 'var(--status-offline)' : 'var(--foreground)' }}>{s.value}</div>
             <div style={{ fontSize: 10.5, color: 'var(--foreground-dim)', marginTop: 4 }}>{s.label}</div>
           </div>
         ))}
@@ -413,7 +413,7 @@ export default function KernelPage() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {policyDecisions.slice().reverse().map((d, i) => {
               const oc = d.outcome || '';
-              const color = oc === 'allow' ? 'var(--status-online)' : oc === 'escalate' ? '#c9a05e' : 'var(--status-offline)';
+              const color = oc === 'allow' ? 'var(--status-online)' : oc === 'escalate' ? 'var(--sem-warn)' : 'var(--status-offline)';
               return (
                 <div key={`${d.ts}-${i}`} style={{ ...card, padding: '10px 14px', borderLeft: `3px solid ${color}` }}>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12 }}>
@@ -490,17 +490,17 @@ export default function KernelPage() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
             <div style={{ ...card, padding: '14px 16px', textAlign: 'center' }}>
-              <div style={{ fontSize: 22, fontWeight: 700 }}>{sched.data?.counts?.in_flight ?? '—'}</div>
+              <div className="num" /* audit-fix: P1 大数字等宽 */ style={{ fontSize: 22, fontWeight: 700 }}>{sched.data?.counts?.in_flight ?? '—'}</div>
               <div style={{ fontSize: 10.5, color: 'var(--foreground-dim)', marginTop: 4 }}>{zh ? '在飞 LLM' : 'In-flight'}</div>
             </div>
             <div style={{ ...card, padding: '14px 16px', textAlign: 'center' }}>
-              <div style={{ fontSize: 22, fontWeight: 700, color: (sched.data?.counts?.queued ?? 0) > 0 ? '#c9a05e' : 'var(--foreground)' }}>
+              <div className="num" /* audit-fix: P1 大数字等宽；P1 语义色 token 化 */ style={{ fontSize: 22, fontWeight: 700, color: (sched.data?.counts?.queued ?? 0) > 0 ? 'var(--sem-warn)' : 'var(--foreground)' }}>
                 {sched.data?.counts?.queued ?? '—'}
               </div>
               <div style={{ fontSize: 10.5, color: 'var(--foreground-dim)', marginTop: 4 }}>{zh ? '排队' : 'Queued'}</div>
             </div>
             <div style={{ ...card, padding: '14px 16px', textAlign: 'center' }}>
-              <div style={{ fontSize: 18, fontWeight: 700 }}>
+              <div className="num" /* audit-fix: P1 大数字等宽 */ style={{ fontSize: 18, fontWeight: 700 }}>
                 {sched.data?.quota?.global_used_today ?? 0}
                 {sched.data?.quota?.global_limit != null ? ` / ${sched.data.quota.global_limit}` : ''}
               </div>
@@ -536,7 +536,7 @@ export default function KernelPage() {
             ) : (
               (sched.data?.queued ?? []).map((r) => (
                 <div key={String(r.request_id)} style={{ fontSize: 12, padding: '6px 0', borderBottom: '1px solid var(--border-subtle)', color: 'var(--foreground-muted)' }}>
-                  <span style={{ fontWeight: 650, color: '#c9a05e' }}>{String(r.source)}</span>
+                  <span style={{ fontWeight: 650, color: 'var(--sem-warn)' }}>{String(r.source)}</span>
                   {' · '}pri={String(r.priority)} · wait={String(r.wait_ms ?? 0)}ms · score={Number(r.score ?? 0).toFixed(1)}
                 </div>
               ))
@@ -641,7 +641,14 @@ export default function KernelPage() {
             {(() => {
               const fam = (cacheMet.data as { families?: Record<string, { hits?: number; misses?: number; hit_rate?: number }> } | undefined)?.families || {};
               const rows = Object.entries(fam);
-              if (cacheMet.isLoading) return <div style={{ fontSize: 12, color: 'var(--foreground-dim)' }}>{zh ? '加载中…' : 'Loading…'}</div>;
+              // audit-fix: P2 骨架屏占位条替代纯文字加载态
+              if (cacheMet.isLoading) return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div className="tk-skeleton" style={{ height: 10, width: '55%' }} />
+                  <div className="tk-skeleton" style={{ height: 10, width: '80%' }} />
+                  <div className="tk-skeleton" style={{ height: 10, width: '40%' }} />
+                </div>
+              );
               if (!rows.length) return <div style={{ fontSize: 12, color: 'var(--foreground-dim)' }}>{zh ? '暂无采样（需 LLM 回填 usage）' : 'No samples yet'}</div>;
               return (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -692,13 +699,22 @@ export default function KernelPage() {
 
           <div style={{ ...card, padding: '14px 16px' }}>
             <div style={{ fontSize: 13, fontWeight: 650, marginBottom: 8 }}>{zh ? '聚合快照' : 'Dashboard snapshot'}</div>
+            {/* audit-fix: P2 骨架屏占位条替代 pre 内纯文字加载态 */}
+            {dash.isLoading ? (
+              <div style={{
+                padding: 10, borderRadius: 8, background: 'var(--input-bg)',
+                display: 'flex', flexDirection: 'column', gap: 6,
+              }}>
+                <div className="tk-skeleton" style={{ height: 10, width: '70%' }} />
+                <div className="tk-skeleton" style={{ height: 10, width: '45%' }} />
+                <div className="tk-skeleton" style={{ height: 10, width: '60%' }} />
+              </div>
+            ) : (
             <pre style={{
               margin: 0, fontSize: 10.5, fontFamily: 'var(--font-mono)', padding: 10, borderRadius: 8,
               background: 'var(--input-bg)', color: 'var(--foreground-dim)', overflow: 'auto', maxHeight: 280,
             }}>
-              {dash.isLoading
-                ? (zh ? '加载中…' : 'Loading…')
-                : JSON.stringify(
+              {JSON.stringify(
                     {
                       run_gate: (dash.data as { run_gate?: unknown })?.run_gate,
                       sandbox: (dash.data as { sandbox?: unknown })?.sandbox,
@@ -714,6 +730,7 @@ export default function KernelPage() {
                     2,
                   )}
             </pre>
+            )}
             <div style={{ fontSize: 11, color: 'var(--foreground-dim)', marginTop: 8 }}>
               GET /api/kernel/dashboard · GET /api/kernel/sandbox/coverage · cost · cache · weekly
             </div>

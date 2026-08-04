@@ -424,8 +424,9 @@ class ComputerManager:
             from backend.kernel import get_kernel
 
             k = get_kernel()
-            if kpid and hasattr(k, "_call"):
-                iso_handle = k._call(
+            if kpid and hasattr(k, "_acall"):
+                # audit-fix: async 上下文走 _acall，避免阻塞事件循环
+                iso_handle = await k._acall(
                     "isolation_spawn",
                     {
                         "process_id": kpid,
@@ -504,13 +505,16 @@ class ComputerManager:
             try:
                 from backend.kernel import get_kernel
 
-                get_kernel()._call(
-                    "isolation_complete",
-                    {
-                        "handle_id": iso_handle["id"],
-                        "exit_code": int(result.exit_code),
-                    },
-                )
+                # audit-fix: async 上下文走 _acall，避免阻塞事件循环
+                _k = get_kernel()
+                if hasattr(_k, "_acall"):
+                    await _k._acall(
+                        "isolation_complete",
+                        {
+                            "handle_id": iso_handle["id"],
+                            "exit_code": int(result.exit_code),
+                        },
+                    )
             except Exception:
                 pass
 
