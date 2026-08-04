@@ -944,24 +944,32 @@ async def run_tool_round(
             state.suppress_content_stream = False
     except Exception as _thrash_e:
         logger.debug("tool thrash guard skipped: %s", _thrash_e)
-    # 多工具并行时：强制下一轮「聚合」而非并列甩多个答案
-    if state.last_tool_round_count >= 2:
-        state.multi_source_pending = True
-        state.suppress_content_stream = True
-        messages.append(
-            {
-                "role": "system",
-                "content": (
-                    "【多信源聚合】本轮有多个工具结果。请综合为一份给用户的最终中文答复：\n"
-                    "1) 合并重复事实，只保留一份结论；\n"
-                    "2) 数据冲突时说明取舍（时间/来源更可信者优先）；\n"
-                    "3) 禁止「答案1/2/3/4」或按工具原样并排；\n"
-                    "4) 不要粘贴工具 JSON/原始日志；\n"
-                    "5) 结构清晰：先直接回答，必要时再补一句数据来源说明。\n"
-                    "若还需工具再调；否则直接输出最终答复。"
-                ),
-            }
-        )
+    # 仅「多 agent 编制」场景标记 multi_source_pending。
+    # 旧逻辑 last_tool_count>=2 会让单 agent 多工具（读表/写报告）也被二次合并压成纯文字。
+    try:
+        from backend.agent.decisive import is_orchestration_tool, tool_names_from_calls
+
+        _names = tool_names_from_calls(tool_calls)
+        _orch = any(is_orchestration_tool(n) for n in _names)
+        if _orch:
+            state.multi_source_pending = True
+            # 不 suppress_content_stream：流式保留表格/表单，收尾再决定是否轻量整理
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "【多 agent 整理·版式优先】本轮涉及编制/多员工。"
+                        "最终答复请用 Markdown **保留表格（|）、标题、列表、表单字段**；\n"
+                        "1) 可分节汇总各员工结果，或合并到同一张表（追加行，勿删列）；\n"
+                        "2) 禁止压成两三段纯文字摘要；\n"
+                        "3) 去掉明显重复即可，细节与数值尽量保留；\n"
+                        "4) 不要堆砌工具 JSON/原始日志。\n"
+                        "若还需工具再调；否则直接输出带版式的最终答复。"
+                    ),
+                }
+            )
+    except Exception as _ms_e:
+        logger.debug("multi-source pending mark skipped: %s", _ms_e)
     # 工具轮后压缩：默认 L1/L3 micro；消息暴涨时偶发 L5（防 400 条历史空转）
     try:
         from backend.agent.context_compress import compress_history_if_needed

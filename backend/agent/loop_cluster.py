@@ -23,33 +23,57 @@ def _tools_bootstrap_lock_get() -> asyncio.Lock:
 
 class LoopClusterMixin:
 
+    def _pipe_table_score(self, text: str) -> int:
+        """Rough count of Markdown table density (pipes on table-like lines)."""
+        if not text or "|" not in text:
+            return 0
+        n = 0
+        for line in text.splitlines():
+            s = line.strip()
+            if s.count("|") >= 2:
+                n += s.count("|")
+        return n
+
     def _looks_like_structured_report(self, text: str) -> bool:
-        """已是完整报表/审计稿（Markdown 结构），不应再被「多信源合并」压成短摘要。"""
-        if not text or len(text) < 350:
+        """已是完整报表/表单/Markdown 结构，不应被压成纯文字摘要。"""
+        if not text or len(text) < 40:
             return False
+        # 明确 Markdown 表格：短稿也要保住
+        pipes = self._pipe_table_score(text)
+        if pipes >= 6 and ("| ---" in text or "|---" in text or pipes >= 10):
+            return True
+        if pipes >= 8:
+            return True
+
         score = 0
         headers = text.count("\n## ") + text.count("\n### ") + text.count("## ")
         if headers >= 2:
             score += 2
-        if text.count("\n- ") + text.count("\n* ") + text.count("\n1.") >= 6:
+        if headers >= 1 and len(text) >= 400:
             score += 1
-        if text.count("|") >= 6 and text.count("\n") >= 6:
+        if text.count("\n- ") + text.count("\n* ") + text.count("\n1.") >= 4:
             score += 1
+        if pipes >= 6:
+            score += 3
+        elif pipes >= 3:
+            score += 2
+        if "| ---" in text or "|---" in text:
+            score += 2
         report_kw = (
             "审计", "报告", "严重", "风险", "建议", "结论", "发现",
-            "Critical", "High", "Medium", "Low", "汇总", "报表",
+            "Critical", "High", "Medium", "Low", "汇总", "报表", "表单",
         )
         if sum(1 for k in report_kw if k in text) >= 2:
             score += 2
-        if len(text) >= 1200 and headers >= 1:
+        if len(text) >= 800 and headers >= 1:
             score += 1
-        return score >= 3
+        return score >= 2
 
     def _looks_like_multi_answer(self, text: str) -> bool:
         """启发式：模型把多个信源原样并列（非结构化报表）。"""
         if not text or len(text) < 80:
             return False
-        # 完整报表常有多级 ##，不能再当「答案1/2/3」
+        # 完整报表常有多级 ## / 表格，不能再当「答案1/2/3」
         if self._looks_like_structured_report(text):
             return False
         markers = [
@@ -76,59 +100,71 @@ class LoopClusterMixin:
         last_tool_count: int,
         multi_pending: bool,
     ) -> str:
-        """多工具/多信源场景下再调用一次 LLM（无 tools）聚合成单一用户可读答复。
+        """多 *agent* 协同时可选的轻量版式合并；单 agent 永远跳过。
 
-        注意：CEO/审计等「已经写好的长报表」禁止再压缩——历史上 last_tool_count>=2
-        会把流式 3k 字报表收成几百字干巴摘要。
+        历史上 last_tool_count>=2 / multi_pending 过宽，会把表格/表单压成纯文字。
+        现规则：
+        1) 仅 multi_pending（=本 run 用过编制/多 agent 工具）才考虑合并；
+        2) 已有表格/结构化报表 → 直接保留草稿；
+        3) 合并时强制保留 Markdown 表格与标题，禁止摘要化。
         """
         if not draft or not str(draft).strip():
             return draft
 
-        # 已是结构化交付物：直接落库，保留用户看到的流式报表
-        if self._looks_like_structured_report(draft) and not multi_pending:
+        # 单 agent / 未标记多 agent 协同：绝不二次 LLM 改写
+        if not multi_pending:
+            return draft
+
+        # 已有表格、表单、多级结构：原样交付（多 agent 亦然）
+        if self._looks_like_structured_report(draft):
             logger.info(
-                "multi-source skip structured report session=%s draft=%s",
+                "multi-source skip structured/form session=%s draft=%s pipes=%s",
+                session_id,
+                len(draft),
+                self._pipe_table_score(draft),
+            )
+            return draft
+
+        # 多 agent 但草稿不像「答案1/2 并列」：无需合并
+        if not self._looks_like_multi_answer(draft) and len(draft) >= 200:
+            logger.info(
+                "multi-source skip non-juxtaposed draft session=%s len=%s",
                 session_id,
                 len(draft),
             )
             return draft
 
-        # 仅在「真·多答案并列」或显式 multi_pending 时合并
-        # 不再因 last_tool_count>=2 无脑触发（拉 tools 再写报告是常态）
-        need = bool(multi_pending) or self._looks_like_multi_answer(draft)
-        if not need:
-            return draft
-        if len(draft) < 120 and not multi_pending:
+        if len(draft) < 120:
             return draft
 
-        await self._push_status(session_id, "thinking", "正在合并多信源结果…")
+        await self._push_status(session_id, "thinking", "正在整理多 agent 结果（保留版式）…")
         try:
             await self._emit_progress(
                 "thinking",
-                "正在把多个工具结果合并成一份答复…",
+                "整理多员工结果，保留表格与结构…",
             )
         except Exception:
             pass
 
         sys_p = (
-            "你是结果编辑器。用户只应看到一份连贯答复。\n"
-            "任务：把「草稿」改写为单一最终答案。\n"
-            "规则：\n"
-            "- 若草稿已是完整报告/审计/Markdown 结构（多级标题、列表、表格），"
-            "  **原样保留结构与要点**，只去明显重复，禁止压成两三段摘要；\n"
-            "- 仅当草稿是「答案1/答案2」式并列时才合并；\n"
-            "- 保留关键事实，去掉重复；\n"
-            "- 禁止答案1/2/3 并列输出；\n"
-            "- 冲突时选更具体、更新、更一致的说法，可一句说明；\n"
-            "- 不要提及内部工具名堆砌；\n"
-            "- 使用用户语言（通常为中文）；\n"
-            "- 只输出最终正文，不要前言。"
+            "你是「版式保留」编辑器，不是摘要器。\n"
+            "任务：在保留排版的前提下，整理多 agent/多信源草稿。\n"
+            "硬性规则：\n"
+            "1) **必须保留** Markdown 表格（| 列）、表头分隔行、标题（##/###）、"
+            "有序列表/无序列表、加粗、代码块、引用块；\n"
+            "2) **禁止**把表格改写成纯文字段落或「一、二、三」散文；\n"
+            "3) **禁止**压缩成两三段摘要；细节、字段、数值尽量保留；\n"
+            "4) 多员工结果：用分节标题或合并到同一张大表（追加行），不要删列；\n"
+            "5) 仅去掉明显重复段落；冲突时保留更具体者并可一句说明；\n"
+            "6) 不要堆砌内部工具名；使用用户语言（通常中文）；\n"
+            "7) 只输出最终正文，不要前言。\n"
+            "若草稿已有完整表格/表单且只需去重：优先接近原样输出。"
         )
         user_block = (
             "用户问题：\n"
             + str(user_input or "")
-            + "\n\n草稿（可能含多信源重复）：\n"
-            + str(draft)[:12000]
+            + "\n\n草稿（请保留其中的表格与样式）：\n"
+            + str(draft)[:14000]
         )
         msgs = [
             {"role": "system", "content": sys_p},
@@ -150,8 +186,21 @@ class LoopClusterMixin:
         out = (out or "").strip()
         if len(out) < 8:
             return draft
-        # 防收缩：聚合后明显变短则丢弃（流式长文被收成干巴摘要）
-        if len(draft) >= 400 and len(out) < max(120, int(len(draft) * 0.5)):
+
+        # 防表格被吃掉：草稿有表、输出表显著变少 → 保留草稿
+        d_pipes = self._pipe_table_score(draft)
+        o_pipes = self._pipe_table_score(out)
+        if d_pipes >= 6 and o_pipes < max(3, int(d_pipes * 0.5)):
+            logger.info(
+                "multi-source rejected table-loss session=%s pipes %s -> %s (keep draft)",
+                session_id,
+                d_pipes,
+                o_pipes,
+            )
+            return draft
+
+        # 防收缩：聚合后明显变短则丢弃（多 agent 亦不可压成干巴摘要）
+        if len(draft) >= 300 and len(out) < max(150, int(len(draft) * 0.65)):
             logger.info(
                 "multi-source rejected shrink session=%s draft=%s -> out=%s (keep draft)",
                 session_id,
@@ -159,6 +208,15 @@ class LoopClusterMixin:
                 len(out),
             )
             return draft
+
+        # 结构化被抹平（标题/列表大幅减少）
+        if self._looks_like_structured_report(draft) and not self._looks_like_structured_report(out):
+            logger.info(
+                "multi-source rejected structure-loss session=%s (keep draft)",
+                session_id,
+            )
+            return draft
+
         logger.info(
             "multi-source aggregated for session %s: draft=%s -> out=%s",
             session_id,
