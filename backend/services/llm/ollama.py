@@ -59,8 +59,46 @@ class OllamaService(LLMService):
                 async with session.post(url, json=payload, timeout=request_timeout()) as resp:
                     resp.raise_for_status()
                     data = await resp.json()
-                    content = data.get("message", {}).get("content", "")
-                    yield LLMChunk(message_id=message_id, delta=content, finish_reason="stop")
+                    msg = data.get("message") if isinstance(data.get("message"), dict) else {}
+                    content = (msg or {}).get("content", "") or ""
+                    # 与 stream 路径一致：非流式也必须吐出 tool_calls，否则 Ollama
+                    # 供应商在 stream=False 时永远无法闭环工具（其它 OpenAI 兼容族已支持）。
+                    raw_tcs = (msg or {}).get("tool_calls") or []
+                    if isinstance(raw_tcs, list):
+                        for tc in raw_tcs:
+                            if not isinstance(tc, dict):
+                                continue
+                            func = tc.get("function") if isinstance(tc.get("function"), dict) else {}
+                            if not func:
+                                continue
+                            args = func.get("arguments", {})
+                            if isinstance(args, str):
+                                try:
+                                    args = json.loads(args) if args.strip() else {}
+                                except Exception:
+                                    args = {"raw": args}
+                            if not isinstance(args, dict):
+                                args = {"value": args}
+                            yield LLMChunk(
+                                message_id=message_id,
+                                delta="",
+                                tool_call=ToolCall(
+                                    id=str(tc.get("id") or f"call_{uuid.uuid4().hex[:8]}"),
+                                    name=str(func.get("name") or ""),
+                                    arguments=args,
+                                ),
+                            )
+                    finish = "tool_calls" if raw_tcs else "stop"
+                    if content or not raw_tcs:
+                        yield LLMChunk(
+                            message_id=message_id,
+                            delta=content,
+                            finish_reason=finish,
+                        )
+                    elif raw_tcs:
+                        yield LLMChunk(
+                            message_id=message_id, delta="", finish_reason="tool_calls"
+                        )
             except Exception as e:
                 logger.error(f"Ollama chat error: {e}")
                 yield LLMChunk(message_id=message_id, delta="", finish_reason="error")

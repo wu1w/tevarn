@@ -8,7 +8,7 @@
 1. 显式超时（可配）：
    - 非流式：total=llm_request_timeout_seconds（默认 120s）
    - 流式：total=None（长生成合法），sock_read=llm_stream_read_timeout_seconds
-     （默认 180s，停顿检测）+ connect=llm_connect_timeout_seconds（默认 10s）
+     （默认 300s，reasoning 停顿检测）+ connect=llm_connect_timeout_seconds
 2. service 实例级共享 session：同事件循环复用（连接池生效），
    跨 loop / 已关闭自动新建（测试多 loop 场景安全）。
 """
@@ -22,6 +22,9 @@ import aiohttp
 from backend.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Luna/Codex reasoning 静默期下限：配置更短时仍抬到此值，避免半途 ServerTimeoutError
+_MIN_STREAM_SOCK_READ = 300.0
 
 
 def _f(key: str, default: float) -> float:
@@ -40,10 +43,18 @@ def request_timeout() -> aiohttp.ClientTimeout:
 
 
 def stream_timeout() -> aiohttp.ClientTimeout:
-    """流式调用：不限总时长（长生成合法），只卡连接与读停顿"""
+    """流式调用：不限总时长（长生成合法），只卡连接与读停顿。
+
+    Luna/Codex 等 reasoning 模型思考期可能长时间无 delta；默认 sock_read 过短
+    会在「处理到一半」触发 ServerTimeoutError，表现为后端炸了。
+    """
+    sock = _f("llm_stream_read_timeout_seconds", 300.0)
+    # 下限：即使用户/旧配置仍是 180，reasoning 也不至于半途掐断
+    if sock < _MIN_STREAM_SOCK_READ:
+        sock = _MIN_STREAM_SOCK_READ
     return aiohttp.ClientTimeout(
-        connect=_f("llm_connect_timeout_seconds", 10.0),
-        sock_read=_f("llm_stream_read_timeout_seconds", 180.0),
+        connect=_f("llm_connect_timeout_seconds", 15.0),
+        sock_read=sock,
     )
 
 

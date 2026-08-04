@@ -133,7 +133,10 @@ def test_request_timeout_reads_settings(fast_timeout):
 
 
 def test_stream_timeout_no_total_but_sock_read():
-    """流式不限总时长（长生成合法），但必须有停顿检测"""
+    """流式不限总时长（长生成合法），但必须有停顿检测。
+
+    Luna/Codex reasoning 静默期：sock_read 下限 300s，配置更短也会抬到 300。
+    """
     from backend.services.llm.http_session import stream_timeout
 
     old = settings.llm_stream_read_timeout_seconds
@@ -143,7 +146,14 @@ def test_stream_timeout_no_total_but_sock_read():
     finally:
         settings.llm_stream_read_timeout_seconds = old
     assert t.total is None
-    assert t.sock_read == 99.0
+    assert t.sock_read == 300.0
+
+    settings.llm_stream_read_timeout_seconds = 450.0
+    try:
+        t2 = stream_timeout()
+    finally:
+        settings.llm_stream_read_timeout_seconds = old
+    assert t2.sock_read == 450.0
 
 
 def test_default_timeouts_are_finite():

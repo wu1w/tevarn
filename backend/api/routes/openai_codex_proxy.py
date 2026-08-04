@@ -717,6 +717,131 @@ async def list_models():
     }
 
 
+def _codex_upstream_timeout() -> aiohttp.ClientTimeout:
+    """Luna/Codex 思考期可能长时间无字节；禁止 total 卡死整轮。
+
+    旧实现 total=300：多轮 tool + 长思考常在半途 ClientTimeout → 前端表现为「后端炸了」。
+    """
+    try:
+        from backend.core.config import settings as _s
+
+        connect = float(getattr(_s, "llm_connect_timeout_seconds", 15.0) or 15.0)
+        # Codex 路径默认比通用流式更宽（reasoning 静默期）
+        sock_read = float(getattr(_s, "llm_stream_read_timeout_seconds", 180.0) or 180.0)
+        sock_read = max(sock_read, 300.0)
+    except Exception:
+        connect, sock_read = 15.0, 300.0
+    return aiohttp.ClientTimeout(total=None, connect=connect, sock_read=sock_read)
+
+
+async def _try_refresh_codex_bearer(old_token: str) -> str | None:
+    """401 时用 catalog 中 refresh_token 换新 access；成功则写回 runtime/DB。"""
+    try:
+        from backend.core import model_catalog as mc
+        from backend.core.config import settings as _s
+        from backend.core.runtime_settings import apply_settings_dict
+        from backend.repositories.setting_repo import AsyncSettingRepository
+        from backend.services.openai_oauth import refresh_access_token
+
+        repo = AsyncSettingRepository()
+        cat = await mc.load_catalog(repo)
+        # 强制刷新（忽略 expires_at 偏差：JWT 可能已死但 expires_at 仍很远）
+        pid = cat.get("active_provider_id") or "openai-chatgpt-oauth"
+        p = next((x for x in (cat.get("providers") or []) if x.get("id") == pid), None)
+        if not p:
+            p = next(
+                (
+                    x
+                    for x in (cat.get("providers") or [])
+                    if "openai" in str(x.get("id") or "") and "oauth" in str(x.get("id") or "")
+                ),
+                None,
+            )
+        if not p:
+            return None
+        active_id = p.get("active_credential_id") or ""
+        cred = next(
+            (c for c in (p.get("credentials") or []) if c.get("id") == active_id),
+            None,
+        )
+        if not cred:
+            creds = p.get("credentials") or []
+            cred = creds[0] if creds else None
+        if not cred:
+            return None
+        # 若请求带的 token 已不是 catalog 里的，仍尝试 refresh catalog 凭证
+        rt = str(cred.get("refresh_token") or "").strip()
+        if not rt:
+            return None
+        result = await refresh_access_token(rt)
+        if not result.get("ok") or not result.get("access_token"):
+            logger.warning("codex oauth 401 refresh failed: %s", result.get("message"))
+            return None
+        new_tok = str(result["access_token"])
+        cred["api_key"] = new_tok
+        if result.get("refresh_token"):
+            cred["refresh_token"] = result["refresh_token"]
+        if result.get("expires_at"):
+            cred["expires_at"] = result["expires_at"]
+        if result.get("account_id"):
+            try:
+                await repo.upsert(
+                    "openai_chatgpt_account_id",
+                    str(result["account_id"]),
+                    "llm",
+                )
+                apply_settings_dict(
+                    {"openai_chatgpt_account_id": str(result["account_id"])},
+                    reset=False,
+                )
+            except Exception:
+                pass
+        p["llm_api_key"] = new_tok
+        cat = mc.normalize_catalog(cat)
+        # 持久化 catalog + 运行时 key
+        try:
+            await repo.upsert(mc.CATALOG_KEY, cat, mc.CATALOG_CATEGORY)
+        except Exception as e:
+            logger.warning("persist refreshed oauth catalog failed: %s", e)
+        try:
+            await repo.upsert("llm_api_key", new_tok, "llm")
+        except Exception:
+            pass
+        apply_settings_dict({"llm_api_key": new_tok}, reset=False)
+        try:
+            _s.llm_api_key = new_tok
+        except Exception:
+            pass
+        logger.info("codex oauth token refreshed after 401 (len=%s)", len(new_tok))
+        return new_tok
+    except Exception as e:
+        logger.warning("codex oauth refresh path error: %s", e)
+        return None
+
+
+def _iter_sse_data_lines(buffer: str, chunk: bytes) -> tuple[str, list[str]]:
+    """TCP-safe SSE data-line buffer (avoid dropping half-line JSON)."""
+    text = buffer + chunk.decode("utf-8", errors="replace")
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    parts = text.split("\n")
+    buffer = parts.pop()  # last fragment may be incomplete
+    out: list[str] = []
+    for line in parts:
+        s = line.strip()
+        if not s or not s.startswith("data:"):
+            continue
+        out.append(s[5:].strip())
+    return buffer, out
+
+
+def _flush_sse_data_buffer(buffer: str) -> list[str]:
+    """Stream end: treat residual fragment as a full line (providers often omit trailing \\n)."""
+    if not (buffer or "").strip():
+        return []
+    _, lines = _iter_sse_data_lines(buffer, b"\n")
+    return lines
+
+
 @router.post("/v1/chat/completions")
 async def chat_completions(request: Request):
     token = _bearer(request)
@@ -750,11 +875,18 @@ async def chat_completions(request: Request):
         "OpenAI-Beta": "responses=experimental",
     }
     aid = _account_id(request)
+    if not aid:
+        try:
+            from backend.core.config import settings as _s
+
+            aid = str(getattr(_s, "openai_chatgpt_account_id", "") or "").strip()
+        except Exception:
+            aid = ""
     if aid:
         headers["ChatGPT-Account-Id"] = aid
 
     url = f"{UPSTREAM}/responses"
-    timeout = aiohttp.ClientTimeout(total=300)
+    timeout = _codex_upstream_timeout()
 
     from backend.core.outbound_http import outbound_session
 
@@ -766,166 +898,215 @@ async def chat_completions(request: Request):
         bool(payload.get("tools")),
     )
 
+
+    async def _consume_sse_to_completion(resp) -> dict[str, Any]:
+        content_parts: list[str] = []
+        usage: dict[str, Any] = {}
+        resp_id = "codex-oauth"
+        tool_acc: dict[int, dict[str, str]] = {}
+        next_idx = 0
+        id_map: dict[str, int] = {}
+        buf = ""
+
+        def _idx(call_id: str = "", item_id: str = "", name: str = "") -> int:
+            nonlocal next_idx
+            for k in (call_id, item_id):
+                if k and k in id_map:
+                    return id_map[k]
+            i = next_idx
+            next_idx += 1
+            if call_id:
+                id_map[call_id] = i
+            if item_id:
+                id_map[item_id] = i
+            tool_acc[i] = {
+                "id": call_id or item_id or f"call_{i}",
+                "name": name,
+                "arguments": "",
+            }
+            return i
+
+        async for raw in resp.content:
+            buf, data_lines = _iter_sse_data_lines(buf, raw if isinstance(raw, (bytes, bytearray)) else bytes(raw))
+            for data_s in data_lines:
+                if data_s == "[DONE]":
+                    buf = ""
+                    break
+                try:
+                    ev = json.loads(data_s)
+                except Exception:
+                    continue
+                if not isinstance(ev, dict):
+                    continue
+                et = str(ev.get("type") or "")
+                if isinstance(ev.get("response"), dict):
+                    r = ev["response"]
+                    if r.get("id"):
+                        resp_id = str(r["id"])
+                    if isinstance(r.get("usage"), dict):
+                        usage = r["usage"]
+                    if et in ("response.completed", "response.done"):
+                        t = _extract_text_from_codex(r)
+                        if t and not content_parts:
+                            content_parts.append(t)
+                        for tc in _extract_tool_calls_from_codex(r):
+                            fn = tc.get("function") or {}
+                            i = _idx(
+                                call_id=str(tc.get("id") or ""),
+                                name=str(fn.get("name") or ""),
+                            )
+                            tool_acc[i]["name"] = str(fn.get("name") or "")
+                            tool_acc[i]["arguments"] = str(
+                                fn.get("arguments") or "{}"
+                            )
+                            tool_acc[i]["id"] = str(tc.get("id") or tool_acc[i]["id"])
+                if et in (
+                    "response.output_text.delta",
+                    "response.output_text.delta.event",
+                ):
+                    content_parts.append(str(ev.get("delta") or ""))
+                elif et in (
+                    "response.output_item.added",
+                    "response.output_item.done",
+                ):
+                    item = ev.get("item") if isinstance(ev.get("item"), dict) else {}
+                    if item.get("type") in ("function_call", "custom_tool_call"):
+                        i = _idx(
+                            call_id=str(item.get("call_id") or ""),
+                            item_id=str(item.get("id") or ""),
+                            name=str(item.get("name") or ""),
+                        )
+                        if item.get("name"):
+                            tool_acc[i]["name"] = str(item["name"])
+                        args = item.get("arguments")
+                        if isinstance(args, str) and args:
+                            tool_acc[i]["arguments"] = args
+                elif et in (
+                    "response.function_call_arguments.delta",
+                    "response.custom_tool_call_input.delta",
+                ):
+                    i = _idx(
+                        call_id=str(ev.get("call_id") or ""),
+                        item_id=str(ev.get("item_id") or ""),
+                    )
+                    tool_acc[i]["arguments"] += str(ev.get("delta") or "")
+                elif et in (
+                    "response.function_call_arguments.done",
+                    "response.custom_tool_call_input.done",
+                ):
+                    i = _idx(
+                        call_id=str(ev.get("call_id") or ""),
+                        item_id=str(ev.get("item_id") or ""),
+                    )
+                    if isinstance(ev.get("arguments"), str) and ev["arguments"]:
+                        if not tool_acc[i]["arguments"]:
+                            tool_acc[i]["arguments"] = ev["arguments"]
+            else:
+                continue
+            break
+        # Residual buffer (last event without trailing newline)
+        for data_s in _flush_sse_data_buffer(buf):
+            if data_s == "[DONE]":
+                break
+            try:
+                ev = json.loads(data_s)
+            except Exception:
+                continue
+            if not isinstance(ev, dict):
+                continue
+            et = str(ev.get("type") or "")
+            if isinstance(ev.get("response"), dict):
+                r = ev["response"]
+                if r.get("id"):
+                    resp_id = str(r["id"])
+                if isinstance(r.get("usage"), dict):
+                    usage = r["usage"]
+                if et in ("response.completed", "response.done"):
+                    t = _extract_text_from_codex(r)
+                    if t and not content_parts:
+                        content_parts.append(t)
+                    for tc in _extract_tool_calls_from_codex(r):
+                        fn = tc.get("function") or {}
+                        i = _idx(
+                            call_id=str(tc.get("id") or ""),
+                            name=str(fn.get("name") or ""),
+                        )
+                        tool_acc[i]["name"] = str(fn.get("name") or "")
+                        tool_acc[i]["arguments"] = str(fn.get("arguments") or "{}")
+                        tool_acc[i]["id"] = str(tc.get("id") or tool_acc[i]["id"])
+            if et in (
+                "response.output_text.delta",
+                "response.output_text.delta.event",
+            ):
+                content_parts.append(str(ev.get("delta") or ""))
+
+        content = "".join(content_parts)
+        tool_calls = []
+        for i in sorted(tool_acc.keys()):
+            e = tool_acc[i]
+            if not (e.get("name") or "").strip():
+                continue
+            tool_calls.append(
+                {
+                    "id": e["id"],
+                    "type": "function",
+                    "function": {
+                        "name": e["name"],
+                        "arguments": e.get("arguments") or "{}",
+                    },
+                }
+            )
+        msg: dict[str, Any] = {
+            "role": "assistant",
+            "content": content or (None if tool_calls else ""),
+        }
+        if tool_calls:
+            msg["tool_calls"] = tool_calls
+        return {
+            "id": resp_id,
+            "object": "chat.completion",
+            "model": model,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": msg,
+                    "finish_reason": "tool_calls" if tool_calls else "stop",
+                }
+            ],
+            "usage": _map_responses_usage(usage) if usage else {},
+        }
+
     if not client_wants_stream:
         # 上游仍用 stream=true 收集完整输出（Codex 对 stream:false 不友好）
         try:
             async with outbound_session(timeout=timeout) as (session, proxy):
-                async with session.post(
-                    url, headers=headers, json=payload, proxy=proxy
-                ) as resp:
-                    if resp.status >= 400:
-                        err = await resp.text()
-                        logger.warning(
-                            "codex oauth upstream %s: %s", resp.status, err[:400]
-                        )
-                        return JSONResponse(
-                            {
-                                "error": {
-                                    "message": err[:800],
-                                    "type": "upstream_error",
-                                    "status": resp.status,
-                                }
-                            },
-                            status_code=resp.status,
-                        )
-                    # 聚合 SSE → 完整 chat.completion（含 tool_calls）
-                    content_parts: list[str] = []
-                    usage: dict[str, Any] = {}
-                    resp_id = "codex-oauth"
-                    tool_acc: dict[int, dict[str, str]] = {}
-                    next_idx = 0
-                    id_map: dict[str, int] = {}
-
-                    def _idx(call_id: str = "", item_id: str = "", name: str = "") -> int:
-                        nonlocal next_idx
-                        for k in (call_id, item_id):
-                            if k and k in id_map:
-                                return id_map[k]
-                        i = next_idx
-                        next_idx += 1
-                        if call_id:
-                            id_map[call_id] = i
-                        if item_id:
-                            id_map[item_id] = i
-                        tool_acc[i] = {
-                            "id": call_id or item_id or f"call_{i}",
-                            "name": name,
-                            "arguments": "",
-                        }
-                        return i
-
-                    async for raw in resp.content:
-                        line = raw.decode("utf-8", errors="replace").strip()
-                        if not line or not line.startswith("data:"):
-                            continue
-                        data_s = line[5:].strip()
-                        if data_s == "[DONE]":
-                            break
-                        try:
-                            ev = json.loads(data_s)
-                        except Exception:
-                            continue
-                        if not isinstance(ev, dict):
-                            continue
-                        et = str(ev.get("type") or "")
-                        if isinstance(ev.get("response"), dict):
-                            r = ev["response"]
-                            if r.get("id"):
-                                resp_id = str(r["id"])
-                            if isinstance(r.get("usage"), dict):
-                                usage = r["usage"]
-                            if et in ("response.completed", "response.done"):
-                                t = _extract_text_from_codex(r)
-                                if t and not content_parts:
-                                    content_parts.append(t)
-                                for tc in _extract_tool_calls_from_codex(r):
-                                    fn = tc.get("function") or {}
-                                    i = _idx(
-                                        call_id=str(tc.get("id") or ""),
-                                        name=str(fn.get("name") or ""),
-                                    )
-                                    tool_acc[i]["name"] = str(fn.get("name") or "")
-                                    tool_acc[i]["arguments"] = str(
-                                        fn.get("arguments") or "{}"
-                                    )
-                                    tool_acc[i]["id"] = str(tc.get("id") or tool_acc[i]["id"])
-                        if et in (
-                            "response.output_text.delta",
-                            "response.output_text.delta.event",
-                        ):
-                            content_parts.append(str(ev.get("delta") or ""))
-                        elif et in (
-                            "response.output_item.added",
-                            "response.output_item.done",
-                        ):
-                            item = ev.get("item") if isinstance(ev.get("item"), dict) else {}
-                            if item.get("type") in ("function_call", "custom_tool_call"):
-                                i = _idx(
-                                    call_id=str(item.get("call_id") or ""),
-                                    item_id=str(item.get("id") or ""),
-                                    name=str(item.get("name") or ""),
-                                )
-                                if item.get("name"):
-                                    tool_acc[i]["name"] = str(item["name"])
-                                args = item.get("arguments")
-                                if isinstance(args, str) and args:
-                                    tool_acc[i]["arguments"] = args
-                        elif et in (
-                            "response.function_call_arguments.delta",
-                            "response.custom_tool_call_input.delta",
-                        ):
-                            i = _idx(
-                                call_id=str(ev.get("call_id") or ""),
-                                item_id=str(ev.get("item_id") or ""),
+                for attempt in range(2):
+                    async with session.post(
+                        url, headers=headers, json=payload, proxy=proxy
+                    ) as resp:
+                        if resp.status >= 400:
+                            err = await resp.text()
+                            logger.warning(
+                                "codex oauth upstream %s: %s", resp.status, err[:400]
                             )
-                            tool_acc[i]["arguments"] += str(ev.get("delta") or "")
-                        elif et in (
-                            "response.function_call_arguments.done",
-                            "response.custom_tool_call_input.done",
-                        ):
-                            i = _idx(
-                                call_id=str(ev.get("call_id") or ""),
-                                item_id=str(ev.get("item_id") or ""),
-                            )
-                            if isinstance(ev.get("arguments"), str) and ev["arguments"]:
-                                if not tool_acc[i]["arguments"]:
-                                    tool_acc[i]["arguments"] = ev["arguments"]
-
-                    content = "".join(content_parts)
-                    tool_calls = []
-                    for i in sorted(tool_acc.keys()):
-                        e = tool_acc[i]
-                        if not (e.get("name") or "").strip():
-                            continue
-                        tool_calls.append(
-                            {
-                                "id": e["id"],
-                                "type": "function",
-                                "function": {
-                                    "name": e["name"],
-                                    "arguments": e.get("arguments") or "{}",
+                            # 仅 401 值得 refresh；403 多为权限/账号问题，刷 token 无益
+                            if resp.status == 401 and attempt == 0:
+                                new_tok = await _try_refresh_codex_bearer(token)
+                                if new_tok:
+                                    headers["Authorization"] = f"Bearer {new_tok}"
+                                    token = new_tok
+                                    continue
+                            return JSONResponse(
+                                {
+                                    "error": {
+                                        "message": err[:800],
+                                        "type": "upstream_error",
+                                        "status": resp.status,
+                                    }
                                 },
-                            }
-                        )
-                    msg: dict[str, Any] = {
-                        "role": "assistant",
-                        "content": content or (None if tool_calls else ""),
-                    }
-                    if tool_calls:
-                        msg["tool_calls"] = tool_calls
-                    return {
-                        "id": resp_id,
-                        "object": "chat.completion",
-                        "model": model,
-                        "choices": [
-                            {
-                                "index": 0,
-                                "message": msg,
-                                "finish_reason": "tool_calls" if tool_calls else "stop",
-                            }
-                        ],
-                        "usage": _map_responses_usage(usage) if usage else {},
-                    }
+                                status_code=resp.status,
+                            )
+                        return await _consume_sse_to_completion(resp)
         except Exception as e:
             logger.warning("openai-codex proxy failed: %s", e)
             return JSONResponse(
@@ -937,53 +1118,82 @@ async def chat_completions(request: Request):
         conv = _CodexStreamToChat(model)
         try:
             async with outbound_session(timeout=timeout) as (session, proxy):
-                async with session.post(
-                    url, headers=headers, json=payload, proxy=proxy
-                ) as resp:
-                    if resp.status >= 400:
-                        err = await resp.text()
-                        logger.warning(
-                            "codex oauth stream upstream %s: %s",
-                            resp.status,
-                            err[:400],
-                        )
-                        yield _sse_chat_chunk(
-                            model=model,
-                            content=(
-                                f"[Codex OAuth error {resp.status}] {err[:400]}"
-                            ),
-                            finish_reason="stop",
-                            chunk_id="codex-err",
-                        )
-                        yield "data: [DONE]\n\n"
-                        return
-                    async for raw in resp.content:
-                        line = raw.decode("utf-8", errors="replace").strip()
-                        if not line or not line.startswith("data:"):
-                            continue
-                        data_s = line[5:].strip()
-                        if data_s == "[DONE]":
+                for attempt in range(2):
+                    async with session.post(
+                        url, headers=headers, json=payload, proxy=proxy
+                    ) as resp:
+                        if resp.status >= 400:
+                            err = await resp.text()
+                            logger.warning(
+                                "codex oauth stream upstream %s: %s",
+                                resp.status,
+                                err[:400],
+                            )
+                            if resp.status == 401 and attempt == 0:
+                                new_tok = await _try_refresh_codex_bearer(token)
+                                if new_tok:
+                                    headers["Authorization"] = f"Bearer {new_tok}"
+                                    token = new_tok
+                                    continue
+                            # finish_reason=error：避免 agent 把鉴权失败当正常完成
+                            yield _sse_chat_chunk(
+                                model=model,
+                                content=(
+                                    f"[Codex OAuth error {resp.status}] {err[:400]}"
+                                ),
+                                finish_reason="error",
+                                chunk_id="codex-err",
+                            )
+                            yield "data: [DONE]\n\n"
+                            return
+                        buf = ""
+                        stream_closed = False
+                        async for raw in resp.content:
+                            buf, data_lines = _iter_sse_data_lines(
+                                buf,
+                                raw if isinstance(raw, (bytes, bytearray)) else bytes(raw),
+                            )
+                            done = False
+                            for data_s in data_lines:
+                                if data_s == "[DONE]":
+                                    for part in conv.close():
+                                        yield part
+                                    done = True
+                                    stream_closed = True
+                                    break
+                                try:
+                                    ev = json.loads(data_s)
+                                except Exception:
+                                    continue
+                                if not isinstance(ev, dict):
+                                    continue
+                                for part in conv.feed(ev):
+                                    yield part
+                            if done:
+                                break
+                        if not stream_closed:
+                            for data_s in _flush_sse_data_buffer(buf):
+                                if data_s == "[DONE]":
+                                    break
+                                try:
+                                    ev = json.loads(data_s)
+                                except Exception:
+                                    continue
+                                if isinstance(ev, dict):
+                                    for part in conv.feed(ev):
+                                        yield part
                             for part in conv.close():
                                 yield part
-                            break
-                        try:
-                            ev = json.loads(data_s)
-                        except Exception:
-                            continue
-                        if not isinstance(ev, dict):
-                            continue
-                        for part in conv.feed(ev):
-                            yield part
-                    else:
-                        for part in conv.close():
-                            yield part
+                        return
         except Exception as e:
+            logger.warning("openai-codex stream proxy failed: %s", e)
             yield _sse_chat_chunk(
                 model=model,
                 content=f"[proxy stream error] {e}",
-                finish_reason="stop",
+                finish_reason="error",
                 chunk_id="codex-err",
             )
             yield "data: [DONE]\n\n"
 
     return StreamingResponse(_gen(), media_type="text/event-stream")
+

@@ -96,11 +96,37 @@ def check_llm_ready() -> str:
     return model
 
 
+async def _bootstrap_runtime() -> None:
+    """把 DB 里的 LLM 目录/密钥/工具加载进本进程（不依赖 uvicorn lifespan）。
+
+    对 ChatGPT OAuth / xAI OAuth / 任意 catalog 供应商一视同仁：
+    环境变量常为空，真实配置在 SQLite settings 表。
+    """
+    try:
+        from backend.core.runtime_settings import load_settings_from_db
+
+        applied = await load_settings_from_db()
+        print(f"[bench] loaded {len(applied)} runtime settings from DB", flush=True)
+    except Exception as e:
+        print(f"[bench] load_settings_from_db skipped: {e}", flush=True)
+    try:
+        from backend.tools.loader import load_all_tools
+        from backend.tools.registry import ToolRegistry
+
+        if not ToolRegistry.get_all():
+            await load_all_tools()
+        print(f"[bench] ToolRegistry n={len(ToolRegistry.get_all())}", flush=True)
+    except Exception as e:
+        print(f"[bench] load_all_tools skipped: {e}", flush=True)
+
+
 async def main_async(args: argparse.Namespace) -> int:
     tasks = load_tasks(args.tasks.split(",") if args.tasks else None)
     if not tasks:
         raise SystemExit("没有任务可跑")
 
+    if not args.dry_run:
+        await _bootstrap_runtime()
     model = "dry-run" if args.dry_run else check_llm_ready()
 
     runs: list[dict[str, Any]] = []

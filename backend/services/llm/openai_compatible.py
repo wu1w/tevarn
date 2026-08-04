@@ -726,35 +726,50 @@ class OpenAICompatibleService(LLMService):
                 timeout=stream_timeout(),
             ) as resp:
                 resp.raise_for_status()
-                async for line in resp.content:
-                    line = line.decode("utf-8").strip()
-                    if not line or line == "data: [DONE]":
-                        continue
-                    if not line.startswith("data: "):
-                        continue
+                # TCP 分片安全：不能把每个 chunk 当成完整 SSE 行（半行 JSON 会静默丢事件）
+                sse_buf = ""
+                stream_done = False
 
+                def _sse_payload_lines(text: str) -> tuple[str, list[str]]:
+                    text = text.replace("\r\n", "\n").replace("\r", "\n")
+                    parts = text.split("\n")
+                    residual = parts.pop()
+                    out: list[str] = []
+                    for line in parts:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        if line.startswith("data: "):
+                            out.append(line[6:])
+                        elif line.startswith("data:"):
+                            out.append(line[5:].strip())
+                    return residual, out
+
+                def _consume_data_line(payload_s: str) -> tuple[bool, list]:
+                    """Parse one SSE data payload → (stop_stream, chunks_to_yield)."""
+                    nonlocal last_finish_reason
+                    if not payload_s or payload_s == "[DONE]":
+                        return payload_s == "[DONE]", []
                     try:
-                        data = json.loads(line[6:])
+                        data = json.loads(payload_s)
                     except json.JSONDecodeError:
-                        continue
+                        return False, []
 
-                    # Stream usage (OpenAI stream_options.include_usage / DeepSeek etc.)
                     raw_usage = data.get("usage")
                     if isinstance(raw_usage, dict) and raw_usage:
                         stream_usage.update(self._normalize_usage(raw_usage))
 
                     choices = data.get("choices") or []
                     if not choices:
-                        # final usage-only chunk
-                        continue
+                        return False, []
                     choice = choices[0] if isinstance(choices[0], dict) else {}
                     delta = choice.get("delta", {}) or {}
 
+                    chunks_out: list = []
                     content = delta.get("content", "") or ""
                     if content:
-                        yield LLMChunk(message_id=message_id, delta=content)
+                        chunks_out.append(LLMChunk(message_id=message_id, delta=content))
 
-                    # 思考链：DeepSeek/Qwen/部分兼容接口
                     reasoning = (
                         delta.get("reasoning_content")
                         or delta.get("reasoning")
@@ -769,31 +784,59 @@ class OpenAICompatibleService(LLMService):
                             or ""
                         )
                     if reasoning:
-                        yield LLMChunk(
-                            message_id=message_id,
-                            delta="",
-                            reasoning_delta=str(reasoning),
+                        chunks_out.append(
+                            LLMChunk(
+                                message_id=message_id,
+                                delta="",
+                                reasoning_delta=str(reasoning),
+                            )
                         )
 
                     for tc in delta.get("tool_calls") or []:
                         _merge_tool_delta(tc)
 
                     finish_reason = choice.get("finish_reason")
+                    stop = False
                     if finish_reason:
                         last_finish_reason = finish_reason
-                        # 关键：部分兼容服务商用 stop / function_call 结束，但仍带 tool_calls
                         emitted = _emit_tool_calls()
-                        for chunk in emitted:
-                            yield chunk
+                        chunks_out.extend(emitted)
                         effective = "tool_calls" if emitted else finish_reason
-                        yield LLMChunk(
-                            message_id=message_id,
-                            delta="",
-                            finish_reason=effective,
-                            usage=dict(stream_usage) if stream_usage else {},
+                        chunks_out.append(
+                            LLMChunk(
+                                message_id=message_id,
+                                delta="",
+                                finish_reason=effective,
+                                usage=dict(stream_usage) if stream_usage else {},
+                            )
                         )
+                        stop = True
+                    return stop, chunks_out
+
+                async for raw in resp.content:
+                    chunk = raw if isinstance(raw, (bytes, bytearray)) else bytes(raw)
+                    text_s = sse_buf + chunk.decode("utf-8", errors="replace")
+                    sse_buf, payloads = _sse_payload_lines(text_s)
+                    for payload_s in payloads:
+                        stop, chunks_out = _consume_data_line(payload_s)
+                        for c in chunks_out:
+                            yield c
+                        if stop:
+                            stream_done = True
+                            break
+                    if stream_done:
                         break
-                else:
+                # Residual buffer (no trailing newline on last event)
+                if not stream_done and (sse_buf or "").strip():
+                    _, payloads = _sse_payload_lines(sse_buf + "\n")
+                    for payload_s in payloads:
+                        stop, chunks_out = _consume_data_line(payload_s)
+                        for c in chunks_out:
+                            yield c
+                        if stop:
+                            stream_done = True
+                            break
+                if not stream_done:
                     # 流正常结束但没有 finish_reason：仍冲刷工具调用
                     if accumulated_tool_calls:
                         for chunk in _emit_tool_calls():

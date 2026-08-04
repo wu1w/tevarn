@@ -416,7 +416,7 @@ class Settings(BaseSettings):
     # LLM HTTP 超时（压测病灶 B1：此前无显式超时，provider 故障挂 300s）
     llm_request_timeout_seconds: float = 120.0
     llm_connect_timeout_seconds: float = 10.0
-    llm_stream_read_timeout_seconds: float = 180.0
+    llm_stream_read_timeout_seconds: float = 300.0
     # cluster 准入配额（压测病灶 B2：此前全局 semaphore=5 共享、排队无上限无 429）
     # 同时运行的 cluster 上限；超限立即 429（诚实拒绝，不无限排队）
     cluster_max_concurrent: int = 3

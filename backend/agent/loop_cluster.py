@@ -10,6 +10,16 @@ from backend.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+# 并发首请求空表自愈：只 load 一次，避免多 session 同时 await load_all_tools
+_tools_bootstrap_lock: asyncio.Lock | None = None
+
+
+def _tools_bootstrap_lock_get() -> asyncio.Lock:
+    global _tools_bootstrap_lock
+    if _tools_bootstrap_lock is None:
+        _tools_bootstrap_lock = asyncio.Lock()
+    return _tools_bootstrap_lock
+
 
 class LoopClusterMixin:
 
@@ -289,7 +299,36 @@ class LoopClusterMixin:
         try:
             from backend.tools.registry import ToolRegistry as UnifiedToolRegistry
 
+            # 非 FastAPI 进程（bench / headless 脚本 / 单测）可能未跑 lifespan，
+            # 注册表为空时对 *所有* 供应商都会 has_tools=False。启动期自愈一次。
+            if not UnifiedToolRegistry.get_all():
+                async with _tools_bootstrap_lock_get():
+                    if not UnifiedToolRegistry.get_all():
+                        try:
+                            from backend.tools.loader import load_all_tools
+
+                            await load_all_tools()
+                            logger.warning(
+                                "ToolRegistry was empty at _load_tools — called "
+                                "load_all_tools() (n=%s). Prefer FastAPI lifespan "
+                                "in production.",
+                                len(UnifiedToolRegistry.get_all()),
+                            )
+                        except Exception as load_err:
+                            logger.warning(
+                                "auto load_all_tools failed: %s", load_err
+                            )
+
             tools = UnifiedToolRegistry.get_tools_schema(filter_names)
+            if not tools and filter_names:
+                # 过滤后仍空：多半是注册表仍空或名字对不上，记 warning 便于定位
+                logger.warning(
+                    "get_tools_schema returned 0 tools session=%s filter_n=%s "
+                    "registry_n=%s — model will invent tool syntax in text",
+                    session_id,
+                    len(filter_names),
+                    len(UnifiedToolRegistry.get_all()),
+                )
             logger.info(
                 f"Loaded {len(tools)} unified tools for session {session_id} "
                 f"(filter={filter_names})"

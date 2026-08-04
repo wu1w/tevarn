@@ -233,6 +233,24 @@ class LLMServiceFactory:
             async def _load() -> dict | None:
                 repo = AsyncSettingRepository()
                 cat = await mc.load_catalog(repo)
+                key_before = ""
+                # OAuth 临期刷新（settings 页以外的 agent 热路径此前不会 refresh）
+                try:
+                    for _p in cat.get("providers") or []:
+                        if provider_id and _p.get("id") == provider_id:
+                            key_before = str(mc._active_api_key(_p) or "")  # noqa: SLF001
+                            break
+                    if not key_before and cat.get("active_provider_id"):
+                        ap = cat["active_provider_id"]
+                        _p = next(
+                            (x for x in (cat.get("providers") or []) if x.get("id") == ap),
+                            None,
+                        )
+                        if _p:
+                            key_before = str(mc._active_api_key(_p) or "")  # noqa: SLF001
+                    cat = await mc.ensure_oauth_token_fresh(cat, provider_id or None)
+                except Exception as _ref_e:
+                    logger.debug("ensure_oauth_token_fresh skipped: %s", _ref_e)
                 providers = cat.get("providers") or []
                 p = None
                 if provider_id:
@@ -253,6 +271,20 @@ class LLMServiceFactory:
                 if not p:
                     return None
                 key = mc._active_api_key(p)  # noqa: SLF001
+                # refresh 成功：持久化 catalog + 对齐 runtime key，避免下轮仍用旧 token
+                try:
+                    if key and str(key) != str(key_before or ""):
+                        try:
+                            await mc.save_catalog(repo, cat)
+                        except Exception as pe:
+                            logger.debug("persist refreshed oauth catalog failed: %s", pe)
+                        from backend.core.config import settings as _s
+                        from backend.core.runtime_settings import apply_settings_dict
+
+                        if str(getattr(_s, "llm_api_key", "") or "") != str(key):
+                            apply_settings_dict({"llm_api_key": key}, reset=False)
+                except Exception:
+                    pass
                 return {
                     "api_key": key or None,
                     "base_url": (p.get("llm_base_url") or "").rstrip("/") or None,
@@ -263,9 +295,14 @@ class LLMServiceFactory:
                 running = asyncio.get_running_loop()
             except RuntimeError:
                 running = None
+            # OAuth refresh 可能走外网；5s 过短会整段失败并继续用旧 token。
+            # 读 catalog 很快，有 refresh 时给足 25s。
+            _cred_timeout = 25.0
             if running and running.is_running():
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    return pool.submit(lambda: asyncio.run(_load())).result(timeout=5)
+                    return pool.submit(lambda: asyncio.run(_load())).result(
+                        timeout=_cred_timeout
+                    )
             return asyncio.run(_load())
         except Exception as e:
             logger.debug("live credential resolve failed: %s", e)
