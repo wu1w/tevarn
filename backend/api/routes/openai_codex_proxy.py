@@ -470,6 +470,7 @@ class _CodexStreamToChat:
         self._next_index = 0
         self._finished = False
         self._usage: dict[str, Any] = {}
+        self._text: str = ""
 
     def _idx_for(self, *, item_id: str = "", call_id: str = "", name: str = "") -> int:
         for key in (call_id, item_id):
@@ -596,6 +597,7 @@ class _CodexStreamToChat:
         ):
             delta = str(ev.get("delta") or "")
             if delta:
+                self._text += delta
                 out.append(
                     _sse_chat_chunk(
                         model=self.model, content=delta, chunk_id=self.resp_id
@@ -698,6 +700,53 @@ class _CodexStreamToChat:
             return []
         self._finished = True
         return self._emit_tools_and_finish()
+
+    def as_chat_completion(self) -> dict[str, Any]:
+        """Materialize a non-stream chat.completion after feeding all SSE events."""
+        if not self._finished:
+            self.close()
+        tool_calls: list[dict[str, Any]] = []
+        for i in sorted(self._calls.keys()):
+            e = self._calls[i]
+            name = (e.get("name") or "").strip()
+            if not name:
+                continue
+            args = (e.get("arguments") or "").strip() or "{}"
+            try:
+                parsed = json.loads(args)
+                if not isinstance(parsed, dict):
+                    args = json.dumps({"value": parsed}, ensure_ascii=False)
+                else:
+                    args = json.dumps(parsed, ensure_ascii=False)
+            except Exception:
+                args = json.dumps({"_raw": args}, ensure_ascii=False)
+            tool_calls.append(
+                {
+                    "id": e.get("id") or f"call_{name}",
+                    "type": "function",
+                    "function": {"name": name, "arguments": args},
+                }
+            )
+        msg: dict[str, Any] = {
+            "role": "assistant",
+            "content": self._text or (None if tool_calls else ""),
+        }
+        if tool_calls:
+            msg["tool_calls"] = tool_calls
+        usage = _map_responses_usage(self._usage) if self._usage else {}
+        return {
+            "id": self.resp_id or "codex-oauth",
+            "object": "chat.completion",
+            "model": self.model,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": msg,
+                    "finish_reason": "tool_calls" if tool_calls else "stop",
+                }
+            ],
+            "usage": usage,
+        }
 
 
 # Codex / ChatGPT 订阅路径模型
@@ -901,15 +950,45 @@ async def chat_completions(request: Request):
     url = f"{UPSTREAM}/responses"
     timeout = _codex_upstream_timeout()
 
-    from backend.core.outbound_http import outbound_session
+    from backend.core.outbound_http import outbound_session, proxy_is_socks, resolve_proxy_url
+    from backend.services.llm.codex_sse_isolate import (
+        consume_sse_bytes_to_events,
+        isolate_enabled,
+        iter_codex_sse_isolated,
+    )
+
+    # Force log flush so "last line before death" is never stuck in buffers
+    try:
+        for _h in logging.root.handlers:
+            try:
+                _h.flush()
+            except Exception:
+                pass
+    except Exception:
+        pass
 
     logger.info(
-        "codex oauth → upstream model=%s keys=%s input_items=%s has_tools=%s",
+        "codex oauth → upstream model=%s keys=%s input_items=%s has_tools=%s isolate=%s",
         model,
         sorted(payload.keys()),
         len(payload.get("input") or []),
         bool(payload.get("tools")),
+        isolate_enabled()
+        and not proxy_is_socks(resolve_proxy_url()),
     )
+    try:
+        import sys as _sys
+
+        _sys.stderr.flush()
+        _sys.stdout.flush()
+    except Exception:
+        pass
+
+    # Prefer process isolation on Windows (avoids aiohttp/3.14 silent parent death).
+    # SOCKS needs aiohttp-socks → stay in-process.
+    _use_isolate = isolate_enabled() and not proxy_is_socks(resolve_proxy_url())
+    _connect_t = float(getattr(timeout, "sock_connect", None) or timeout.connect or 15.0)
+    _read_t = float(getattr(timeout, "sock_read", None) or 300.0)
 
 
     async def _consume_sse_to_completion(resp) -> dict[str, Any]:
@@ -1110,7 +1189,39 @@ async def chat_completions(request: Request):
         # 上游仍用 stream=true 收集完整输出（Codex 对 stream:false 不友好）
         try:
             async with _codex_sem():
-                logger.debug("codex upstream lock acquired (non-stream)")
+                logger.debug(
+                    "codex upstream lock acquired (non-stream isolate=%s)",
+                    _use_isolate,
+                )
+                if _use_isolate:
+                    conv = _CodexStreamToChat(model)
+                    async for item in consume_sse_bytes_to_events(
+                        iter_codex_sse_isolated(
+                            url=url,
+                            headers=headers,
+                            payload=payload,
+                            timeout_connect=_connect_t,
+                            timeout_read=max(_read_t, 300.0),
+                        )
+                    ):
+                        if item == "[DONE]":
+                            break
+                        if isinstance(item, dict) and item.get("type") == "error":
+                            st = int(item.get("status") or 502)
+                            return JSONResponse(
+                                {
+                                    "error": {
+                                        "message": str(item.get("message") or "")[:800],
+                                        "type": "upstream_error",
+                                        "status": st,
+                                    }
+                                },
+                                status_code=st if 400 <= st < 600 else 502,
+                            )
+                        if isinstance(item, dict):
+                            conv.feed(item)
+                    return conv.as_chat_completion()
+
                 async with outbound_session(
                     timeout=timeout, **_codex_session_kwargs()
                 ) as (session, proxy):
@@ -1154,7 +1265,43 @@ async def chat_completions(request: Request):
         conv = _CodexStreamToChat(model)
         try:
             async with _codex_sem():
-                logger.debug("codex upstream lock acquired (stream)")
+                logger.debug(
+                    "codex upstream lock acquired (stream isolate=%s)", _use_isolate
+                )
+                if _use_isolate:
+                    async for item in consume_sse_bytes_to_events(
+                        iter_codex_sse_isolated(
+                            url=url,
+                            headers=headers,
+                            payload=payload,
+                            timeout_connect=_connect_t,
+                            timeout_read=max(_read_t, 300.0),
+                        )
+                    ):
+                        if item == "[DONE]":
+                            for part in conv.close():
+                                yield part
+                            return
+                        if isinstance(item, dict) and item.get("type") == "error":
+                            st = item.get("status") or 502
+                            yield _sse_chat_chunk(
+                                model=model,
+                                content=(
+                                    f"[Codex OAuth error {st}] "
+                                    f"{str(item.get('message') or '')[:400]}"
+                                ),
+                                finish_reason="error",
+                                chunk_id="codex-err",
+                            )
+                            yield "data: [DONE]\n\n"
+                            return
+                        if isinstance(item, dict):
+                            for part in conv.feed(item):
+                                yield part
+                    for part in conv.close():
+                        yield part
+                    return
+
                 async with outbound_session(
                     timeout=timeout, **_codex_session_kwargs()
                 ) as (session, proxy):

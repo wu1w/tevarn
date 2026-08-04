@@ -1704,6 +1704,14 @@ async def execute_glob(config: dict[str, Any], arguments: dict[str, Any]) -> str
 
     search_path = os.path.join(base_abs, pattern)
     include_heavy = bool(arguments.get("include_heavy") or arguments.get("all"))
+    # Hard cap: recursive ** globs over huge trees (node_modules etc. already
+    # filtered, but scan itself can block 20s+ and stress the process before
+    # Codex SSE). Default 15s; env TAKTON_GLOB_TIMEOUT_SEC overrides.
+    try:
+        _glob_timeout = float(os.environ.get("TAKTON_GLOB_TIMEOUT_SEC") or "15")
+    except Exception:
+        _glob_timeout = 15.0
+    _glob_timeout = max(3.0, min(_glob_timeout, 60.0))
 
     def _scan() -> str:
         matches = glob.glob(search_path, recursive=True)
@@ -1747,7 +1755,13 @@ async def execute_glob(config: dict[str, Any], arguments: dict[str, Any]) -> str
 
     try:
         # 阻塞的目录遍历丢进线程，同轮并发的 tool call 才能真正重叠（T1b）
-        return await asyncio.to_thread(_scan)
+        # 超时保护：避免 ** 扫盘拖死进程后再打 Codex SSE
+        return await asyncio.wait_for(asyncio.to_thread(_scan), timeout=_glob_timeout)
+    except asyncio.TimeoutError:
+        return (
+            f"[Error] glob timed out after {_glob_timeout:.0f}s for pattern={pattern!r}. "
+            "Narrow the pattern (avoid bare **/… over huge trees) or set include_heavy carefully."
+        )
     except Exception as e:
         return f"[Error] {e}"
 
