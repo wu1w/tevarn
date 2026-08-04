@@ -198,11 +198,12 @@ async def run_tool_round(
     messages = state.messages
 
     # 编制扇出上限：实测一轮 7–10 个 crew_steward 空转；超出合成结果，仍回 tool 消息。
+    # PR4: default max_orch=1; Rust loop_guard is authoritative for workers.
     _capped_results: dict[str, str] = {}
     try:
         from backend.agent.decisive import orchestration_cap_results
 
-        _max_orch = int(getattr(settings, "agent_max_orch_tools_per_round", 2) or 2)
+        _max_orch = int(getattr(settings, "agent_max_orch_tools_per_round", 1) or 1)
         _capped_results = orchestration_cap_results(
             tool_calls, max_orch=_max_orch
         )
@@ -215,6 +216,84 @@ async def run_tool_round(
             )
     except Exception as _cap_e:
         logger.debug("orchestration cap skipped: %s", _cap_e)
+
+    # PR1–PR4: Rust loop_guard begin_round + per-tool pre checks
+    _kproc_lg = getattr(loop, "_kernel_process", None)
+    _kpid_lg = str(getattr(_kproc_lg, "id", "") or "") or ""
+    if bool(getattr(settings, "agent_loop_guard_enabled", True)) and _kpid_lg:
+        try:
+            from backend.agent.loop_guard_bridge import (
+                begin_round,
+                force_final_message,
+                pre_tool as lg_pre_tool,
+            )
+
+            _names = [
+                str(getattr(tc, "name", None) or "")
+                for tc in (tool_calls or [])
+            ]
+            _br = begin_round(_kpid_lg, _names)
+            if isinstance(_br, dict) and _br.get("status") == "force_final":
+                state.force_final_no_tools = True
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": force_final_message(
+                            str(_br.get("code") or "max_tool_rounds"),
+                            str(_br.get("reason") or ""),
+                        ),
+                    }
+                )
+                logger.warning(
+                    "loop_guard begin_round force_final process=%s %s",
+                    _kpid_lg[:8],
+                    _br,
+                )
+                # Block all tools this round (Claude max_turns style)
+                for tc in tool_calls or []:
+                    _cid = str(getattr(tc, "id", "") or "")
+                    if _cid:
+                        _capped_results[_cid] = (
+                            f"[LoopGuard] { _br.get('code') }: tools blocked — "
+                            "write final answer only."
+                        )
+            else:
+                for tc in tool_calls or []:
+                    _cid = str(getattr(tc, "id", "") or "")
+                    if not _cid or _cid in _capped_results:
+                        continue
+                    _args = getattr(tc, "arguments", None)
+                    if isinstance(_args, str):
+                        try:
+                            _args = json.loads(_args)
+                        except Exception:
+                            _args = {"_raw": _args}
+                    if not isinstance(_args, dict):
+                        _args = {}
+                    _pt = lg_pre_tool(
+                        _kpid_lg,
+                        str(getattr(tc, "name", "") or ""),
+                        _args,
+                    )
+                    if isinstance(_pt, dict) and _pt.get("status") == "block":
+                        _capped_results[_cid] = str(
+                            _pt.get("message")
+                            or f"[LoopGuard] blocked {getattr(tc, 'name', '')}"
+                        )
+                        logger.info(
+                            "loop_guard pre_tool block tool=%s code=%s process=%s",
+                            getattr(tc, "name", ""),
+                            _pt.get("code"),
+                            _kpid_lg[:8],
+                        )
+                    elif isinstance(_pt, dict) and _pt.get("status") == "force_final":
+                        state.force_final_no_tools = True
+                        _capped_results[_cid] = str(
+                            _pt.get("message")
+                            or force_final_message(str(_pt.get("code") or ""))
+                        )
+        except Exception as _lge:
+            logger.debug("loop_guard pre-round skip: %s", _lge)
 
     # T1：本轮只读工具先并发跑完，结果按 tool_call_id 缓存。
     # 下面的串行主体一行不动地照常走（WS 事件 / 持久化 / messages 顺序全部不变），
@@ -439,6 +518,7 @@ async def run_tool_round(
             _tname = getattr(tc, "name", "") or ""
             _kproc = getattr(loop, "_kernel_process", None)
             _kpid = str(getattr(_kproc, "id", "") or "") or None
+            _raw_before_trunc = tool_result
             tool_result = normalize_tool_result(
                 tool_result, tool_name=_tname, process_id=_kpid
             )
@@ -448,9 +528,37 @@ async def run_tool_round(
             from backend.agent.tool_result_contract import TOOL_RESULT_BUDGET
 
             _cap = max(_max_tr, int(TOOL_RESULT_BUDGET.get(_tname, 0) or 0))
+            _was_truncated = False
             if _cap and len(tool_result) > _cap:
                 from backend.agent.tool_result_contract import truncate_for_llm
                 tool_result = truncate_for_llm(_tname, tool_result, budget=_cap)
+                _was_truncated = True
+            if (
+                isinstance(_raw_before_trunc, str)
+                and isinstance(tool_result, str)
+                and len(tool_result) < len(_raw_before_trunc)
+            ):
+                _was_truncated = True
+            if isinstance(tool_result, str) and (
+                "omitted for LLM" in tool_result
+                or "chars omitted" in tool_result
+                or "persisted-output" in tool_result
+            ):
+                _was_truncated = True
+            # PR3: note truncated file_read paths in Rust loop_guard
+            if bool(getattr(settings, "agent_loop_guard_enabled", True)) and _kpid:
+                try:
+                    from backend.agent.loop_guard_bridge import post_tool as lg_post
+
+                    lg_post(
+                        _kpid,
+                        _tname,
+                        args_dict if isinstance(args_dict, dict) else {},
+                        result=str(tool_result)[:4000],
+                        truncated=_was_truncated,
+                    )
+                except Exception:
+                    pass
             # shell 安全拦截 / 127：记入重试分类，并提示改用 file_write 或修 cwd
             try:
                 from backend.agent.turn_retry import RetryKind as _RK

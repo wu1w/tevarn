@@ -18,6 +18,7 @@ use crate::run_gate::{RunGate, RunGateResult};
 use crate::process_snapshot::ProcessSnapshotStore;
 use crate::result_store::ResultSpillStore;
 use crate::policy::PolicySupervisor;
+use crate::loop_guard::{LoopGuardSupervisor, result_looks_truncated};
 use crate::cache_metrics::CacheMetrics;
 use crate::cost::CostLedger;
 use crate::marathon::MarathonMetrics;
@@ -174,6 +175,7 @@ struct KernelInner {
     process_snapshots: ProcessSnapshotStore,
     result_store: ResultSpillStore,
     policy: PolicySupervisor,
+    loop_guard: LoopGuardSupervisor,
     cache_metrics: CacheMetrics,
     cost_ledger: CostLedger,
     marathon: MarathonMetrics,
@@ -237,6 +239,7 @@ impl AgentKernel {
                 )),
                 result_store: ResultSpillStore::default(),
                 policy: PolicySupervisor::default(),
+                loop_guard: LoopGuardSupervisor::default(),
                 cache_metrics: CacheMetrics::default(),
                 cost_ledger: CostLedger::default(),
                 marathon: MarathonMetrics::default(),
@@ -629,6 +632,7 @@ impl AgentKernel {
             );
         }
         g.policy.drop_process(process_id);
+        g.loop_guard.drop_process(process_id);
         g.result_store.drop_process(process_id);
         g.cost_ledger.drop_process(process_id);
         g.ipc.drop_process(process_id);
@@ -2179,6 +2183,113 @@ impl AgentKernel {
 
     pub fn policy_status(&self) -> Value {
         self.inner.read().policy.status()
+    }
+
+    // ── Loop thrash / fan-out guards (PR1–PR4) ─────────────
+
+    pub fn loop_guard_configure(&self, process_id: &str, config: &Value) -> Value {
+        let mut g = self.inner.write();
+        g.loop_guard.configure_from_value(process_id, config);
+        Self::emit_locked(
+            &mut g,
+            "policy.loop_guard_configure",
+            process_id,
+            config.clone(),
+        );
+        g.loop_guard.status(process_id)
+    }
+
+    pub fn loop_guard_begin_round(&self, process_id: &str, tool_names: &[String]) -> Value {
+        let mut g = self.inner.write();
+        let d = g.loop_guard.begin_round(process_id, tool_names);
+        let out = d.to_dict();
+        if d.is_blocking() {
+            Self::emit_locked(
+                &mut g,
+                "policy.loop_guard_force",
+                process_id,
+                out.clone(),
+            );
+        }
+        out
+    }
+
+    pub fn loop_guard_pre_tool(
+        &self,
+        process_id: &str,
+        tool: &str,
+        args: Option<&Value>,
+    ) -> Value {
+        let empty = json!({});
+        let mut g = self.inner.write();
+        let d = g
+            .loop_guard
+            .pre_tool(process_id, tool, args.unwrap_or(&empty));
+        let out = d.to_dict();
+        if d.is_blocking() {
+            Self::emit_locked(
+                &mut g,
+                "policy.loop_guard_block",
+                process_id,
+                out.clone(),
+            );
+        }
+        out
+    }
+
+    pub fn loop_guard_post_tool(
+        &self,
+        process_id: &str,
+        tool: &str,
+        args: Option<&Value>,
+        result_text: Option<&str>,
+        truncated: Option<bool>,
+    ) -> Value {
+        let empty = json!({});
+        let text = result_text.unwrap_or("");
+        let trunc = truncated.unwrap_or_else(|| result_looks_truncated(text));
+        let mut g = self.inner.write();
+        g.loop_guard.post_tool(
+            process_id,
+            tool,
+            args.unwrap_or(&empty),
+            trunc,
+            text.len() as u64,
+        );
+        g.loop_guard.status(process_id)
+    }
+
+    pub fn loop_guard_budget_check(
+        &self,
+        process_id: &str,
+        tokens_used: Option<i64>,
+        token_budget: Option<i64>,
+    ) -> Value {
+        // Prefer live process counters when caller omits numbers
+        let mut g = self.inner.write();
+        let (used, budget) = if let Some(p) = g.processes.get(process_id) {
+            (
+                tokens_used.unwrap_or(p.tokens_used),
+                token_budget.or(p.token_budget),
+            )
+        } else {
+            (tokens_used.unwrap_or(0), token_budget)
+        };
+        let d = g.loop_guard.budget_check(process_id, used, budget);
+        let out = d.to_dict();
+        if d.is_blocking() {
+            Self::emit_locked(
+                &mut g,
+                "policy.loop_guard_budget",
+                process_id,
+                out.clone(),
+            );
+        }
+        out
+    }
+
+    pub fn loop_guard_status(&self, process_id: &str) -> Value {
+        self.inner.read().loop_guard.status(process_id)
     }
 
     pub fn cache_record(

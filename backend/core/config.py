@@ -547,9 +547,21 @@ class Settings(BaseSettings):
     # 连续相同工具指纹轮次 → force_final（禁止再工具）
     agent_tool_thrash_force_final: int = 2
     # 连续「编制主导 / result_load 主导」轮次 → force_final（参数不同也会收）
-    agent_orch_thrash_force_final: int = 3
+    # PR4: 收紧到 2（滑动窗口仍由 Rust loop_guard 权威）
+    agent_orch_thrash_force_final: int = 2
     # 单轮最多执行的编制类工具（crew_steward/delegate/agent_call…），多余跳过
-    agent_max_orch_tools_per_round: int = 2
+    # PR4 / Grok-style: default 1
+    agent_max_orch_tools_per_round: int = 1
+    # PR1–PR4 loop_guard（Rust 权威；Python bridge 降级）
+    agent_loop_guard_enabled: bool = True
+    # 实现类 worker 工具轮硬顶（0=用 role 默认 20）
+    agent_worker_max_tool_rounds: int = 20
+    # 调研类 worker 工具轮硬顶（0=用 thoroughness 默认）
+    agent_research_max_tool_rounds: int = 0
+    # 主会话/管家 crew_steward 成功次数上限
+    agent_crew_steward_max_per_run: int = 3
+    # Token 使用比 ≥ 此值 → force_final（对齐 Codex turn 收束）
+    agent_budget_force_ratio: float = 0.85
     # 编制回调写入 CEO 会话的正文上限
     agent_rollup_max_block_chars: int = 500
     agent_rollup_max_prompt_chars: int = 2400

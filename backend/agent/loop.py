@@ -1113,6 +1113,88 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     recorder.kernel_process_id = kernel_proc.id
                 except Exception:
                     pass
+                # PR1–PR4: configure Rust loop_guard (max rounds / ban worker orch / crew cap)
+                try:
+                    if bool(getattr(settings, "agent_loop_guard_enabled", True)):
+                        from backend.agent.loop_guard_bridge import (
+                            build_loop_guard_config,
+                            configure_for_process,
+                        )
+
+                        _meta = getattr(kernel_proc, "meta", None) or {}
+                        if not isinstance(_meta, dict):
+                            _meta = {}
+                        _wf = bool(
+                            _meta.get("workforce")
+                            or getattr(self, "_workforce", False)
+                            or str(getattr(self, "_run_origin", "") or "")
+                            in ("inbox", "cron", "workforce")
+                        )
+                        _instr = ""
+                        try:
+                            for _m in reversed(messages or []):
+                                if isinstance(_m, dict) and _m.get("role") == "user":
+                                    _c = _m.get("content")
+                                    if isinstance(_c, str) and _c.strip():
+                                        _instr = _c
+                                        break
+                        except Exception:
+                            pass
+                        _cfg = build_loop_guard_config(
+                            workforce=_wf,
+                            identity_name=str(
+                                getattr(self, "_identity_name", None)
+                                or _meta.get("identity_name")
+                                or ""
+                            ),
+                            identity_role=None,
+                            instruction=_instr
+                            or str(_meta.get("instruction") or ""),
+                            payload=_meta if isinstance(_meta, dict) else None,
+                        )
+                        # Steward full-open chat: allow crew with cap
+                        if not _wf and not str(
+                            getattr(self, "_agent_key", "") or ""
+                        ).startswith("wf:"):
+                            if _cfg.get("role_kind") in ("chat", "steward"):
+                                _cfg["role_kind"] = "steward"
+                                _cfg["ban_worker_orch"] = False
+                                _cfg["max_crew_total"] = int(
+                                    getattr(
+                                        settings,
+                                        "agent_crew_steward_max_per_run",
+                                        3,
+                                    )
+                                    or 3
+                                )
+                                _cfg["max_orch_per_round"] = int(
+                                    getattr(
+                                        settings,
+                                        "agent_max_orch_tools_per_round",
+                                        1,
+                                    )
+                                    or 1
+                                )
+                        configure_for_process(str(kernel_proc.id), _cfg)
+                        # Align Python max_iterations soft ceiling with guard
+                        try:
+                            _mr = int(_cfg.get("max_tool_rounds") or 0)
+                            if _mr > 0:
+                                self.max_iterations = min(
+                                    int(self.max_iterations or _mr),
+                                    max(_mr + 2, _mr),  # small grace for final text
+                                )
+                        except Exception:
+                            pass
+                        logger.info(
+                            "loop_guard configured process=%s role=%s max_rounds=%s ban_orch=%s",
+                            str(kernel_proc.id)[:8],
+                            _cfg.get("role_kind"),
+                            _cfg.get("max_tool_rounds"),
+                            _cfg.get("ban_worker_orch"),
+                        )
+                except Exception as _lg_e:
+                    logger.debug("loop_guard configure skip: %s", _lg_e)
                 # 日用场景收窄：coding_research → 默认 engineering profile
                 try:
                     scenario = str(
@@ -2158,6 +2240,43 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     "Token 预算不足，运行已事前中断（可 top_up / 缩小范围后重试）",
                 )
                 break
+            # PR4: Rust loop_guard budget ratio (85%) → force final before hard kill
+            if (
+                not _force_final_no_tools
+                and bool(getattr(settings, "agent_loop_guard_enabled", True))
+                and _kpid_iter
+            ):
+                try:
+                    from backend.agent.loop_guard_bridge import (
+                        budget_check,
+                        force_final_message,
+                    )
+
+                    _bc = budget_check(_kpid_iter)
+                    if isinstance(_bc, dict) and _bc.get("status") == "force_final":
+                        _force_final_no_tools = True
+                        _loop_exit_reason = str(_bc.get("code") or "budget_ratio")
+                        messages.append(
+                            {
+                                "role": "system",
+                                "content": force_final_message(
+                                    str(_bc.get("code") or "budget_ratio"),
+                                    str(_bc.get("reason") or ""),
+                                ),
+                            }
+                        )
+                        await self._push_status(
+                            session_id,
+                            "thinking",
+                            "预算将尽，强制交卷中…",
+                        )
+                        logger.warning(
+                            "loop_guard budget force_final process=%s %s",
+                            _kpid_iter[:8],
+                            _bc,
+                        )
+                except Exception as _bge:
+                    logger.debug("loop_guard budget_check skip: %s", _bge)
             # 迭代预算：耗尽后最多 1 次 grace（强制无工具终答）
             if _global_iter >= _total_iters:
                 if _budget_grace_call or _force_final_no_tools:

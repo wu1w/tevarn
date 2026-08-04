@@ -1589,8 +1589,12 @@ class WorkforceDispatcher:
         # Phase 2.2：inbox 路径 origin；cron 投递保留 source=cron → origin=cron
         _src = str(getattr(item, "source", "") or "").strip().lower()
         loop._run_origin = "cron" if _src == "cron" else "inbox"
-        # 落地类工单（审计/检索/数据/…）提高迭代 + 轻提示
+        # PR1–PR2: role-based max rounds (Claude max_turns) + research read-only discipline
         try:
+            from backend.agent.loop_guard_bridge import (
+                build_loop_guard_config,
+                classify_role_kind,
+            )
             from backend.agent.task_grounding import (
                 classify_task,
                 extra_iterations_for,
@@ -1598,10 +1602,46 @@ class WorkforceDispatcher:
             )
 
             _instr = str(item.instruction or "")
-            _base = int(getattr(loop, "max_iterations", 12) or 12)
+            _role = classify_role_kind(
+                workforce=True,
+                identity_name=str(getattr(ident, "name", "") or ""),
+                identity_role=str(getattr(ident, "role", "") or ""),
+                instruction=_instr,
+                payload=_item_payload if isinstance(_item_payload, dict) else None,
+            )
+            _lg_cfg = build_loop_guard_config(
+                workforce=True,
+                identity_name=str(getattr(ident, "name", "") or ""),
+                identity_role=str(getattr(ident, "role", "") or ""),
+                instruction=_instr,
+                payload=_item_payload if isinstance(_item_payload, dict) else None,
+            )
+            _mr = int(_lg_cfg.get("max_tool_rounds") or 16)
+            # Python iteration budget ≈ tool rounds + 2 grace for final text
+            loop.max_iterations = max(4, min(_mr + 2, 24))
+            if isinstance(loop._kernel_process_options, dict):
+                _meta = loop._kernel_process_options.setdefault("meta", {})
+                if isinstance(_meta, dict):
+                    _meta["loop_guard"] = _lg_cfg
+                    _meta["role_kind"] = _role
+                    if _lg_cfg.get("thoroughness"):
+                        _meta["thoroughness"] = _lg_cfg["thoroughness"]
+            if _role == "research":
+                prompt += (
+                    "\n【调研模式 / explore】只读取证：优先 grep/glob/file_read(offset)；"
+                    f"thoroughness={_lg_cfg.get('thoroughness') or 'medium'}；"
+                    f"工具轮硬顶约 {_mr}（对齐 Claude Code max_turns）。"
+                    "禁止 crew_steward/delegate；禁止整文件反复重读截断结果。"
+                    "到点必须交卷：结论 + 证据路径 + 未完成项。\n"
+                )
+            else:
+                prompt += (
+                    f"\n【实现工单】工具轮硬顶约 {_mr}；禁止再派工（crew_steward）。"
+                    "截断读后请 offset/grep，勿整文件空转重读。\n"
+                )
             _extra = extra_iterations_for(_instr)
-            if _extra > 0:
-                loop.max_iterations = min(max(_base, 12 + _extra), 28)
+            if _extra > 0 and _role != "research":
+                loop.max_iterations = min(int(loop.max_iterations) + min(_extra, 4), 24)
                 _kind = classify_task(_instr)
                 _spec = get_spec(_kind)
                 _label = _spec.label_zh if _spec else "取证"
@@ -1609,15 +1649,17 @@ class WorkforceDispatcher:
                     f"\n【{_label}】结论尽量可核对：路径/数字优先工具核实；"
                     "拿不准写「未核实」。\n"
                 )
-            else:
-                loop.max_iterations = min(_base, 16)
         except Exception:
-            pass
+            try:
+                loop.max_iterations = min(int(getattr(loop, "max_iterations", 12) or 12), 16)
+            except Exception:
+                pass
         logger.info(
-            "workforce run ident=%s budget=%s instr_chars=%s",
+            "workforce run ident=%s budget=%s instr_chars=%s max_iter=%s",
             str(ident.id)[:8],
             _budget,
             len(str(item.instruction or "")),
+            getattr(loop, "max_iterations", None),
         )
         result = await loop.run(session_id, prompt, attachments=None, mode="workforce")
         # Phase 2.2：工单 payload 记 run_id，便于 /runs 与 inbox 互查

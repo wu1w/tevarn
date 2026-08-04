@@ -1636,6 +1636,87 @@ class RustAgentKernel:
         r = self._call("doom_reset", {"process_id": process_id}) or {}
         return bool(r.get("ok", True))
 
+    def loop_guard_configure(
+        self, process_id: str, config: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"process_id": str(process_id)}
+        if isinstance(config, dict):
+            payload.update(config)
+            payload["process_id"] = str(process_id)
+            payload["config"] = config
+        return self._call("loop_guard_configure", payload) or {}
+
+    def loop_guard_begin_round(
+        self, process_id: str, tool_names: list[str] | None = None
+    ) -> dict[str, Any]:
+        return (
+            self._call(
+                "loop_guard_begin_round",
+                {
+                    "process_id": str(process_id),
+                    "tool_names": list(tool_names or []),
+                },
+            )
+            or {}
+        )
+
+    def loop_guard_pre_tool(
+        self,
+        process_id: str,
+        tool: str,
+        args: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return (
+            self._call(
+                "loop_guard_pre_tool",
+                {
+                    "process_id": str(process_id),
+                    "tool": str(tool or ""),
+                    "args": args or {},
+                },
+            )
+            or {}
+        )
+
+    def loop_guard_post_tool(
+        self,
+        process_id: str,
+        tool: str,
+        args: dict[str, Any] | None = None,
+        *,
+        result: str | None = None,
+        truncated: bool | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "process_id": str(process_id),
+            "tool": str(tool or ""),
+            "args": args or {},
+        }
+        if result is not None:
+            payload["result"] = str(result)[:8000]
+        if truncated is not None:
+            payload["truncated"] = bool(truncated)
+        return self._call("loop_guard_post_tool", payload) or {}
+
+    def loop_guard_budget_check(
+        self,
+        process_id: str,
+        *,
+        tokens_used: int | None = None,
+        token_budget: int | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"process_id": str(process_id)}
+        if tokens_used is not None:
+            payload["tokens_used"] = int(tokens_used)
+        if token_budget is not None:
+            payload["token_budget"] = int(token_budget)
+        return self._call("loop_guard_budget_check", payload) or {}
+
+    def loop_guard_status(self, process_id: str) -> dict[str, Any]:
+        return (
+            self._call("loop_guard_status", {"process_id": str(process_id)}) or {}
+        )
+
     def cache_record(
         self,
         family: str,

@@ -1257,6 +1257,85 @@ fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: 
                 .unwrap_or("");
             Ok(kernel.doom_status(pid))
         }
+        "loop_guard_configure" => {
+            let pid = params
+                .get("process_id")
+                .and_then(|v| v.as_str())
+                .ok_or((-32005, "process_id required".into(), json!({})))?;
+            let cfg = params
+                .get("config")
+                .cloned()
+                .or_else(|| {
+                    let mut m = params.clone();
+                    if let Some(obj) = m.as_object_mut() {
+                        obj.remove("process_id");
+                    }
+                    Some(m)
+                })
+                .unwrap_or_else(|| json!({}));
+            Ok(kernel.loop_guard_configure(pid, &cfg))
+        }
+        "loop_guard_begin_round" => {
+            let pid = params
+                .get("process_id")
+                .and_then(|v| v.as_str())
+                .ok_or((-32005, "process_id required".into(), json!({})))?;
+            let names: Vec<String> = params
+                .get("tool_names")
+                .or_else(|| params.get("tools"))
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            Ok(kernel.loop_guard_begin_round(pid, &names))
+        }
+        "loop_guard_pre_tool" => {
+            let pid = params
+                .get("process_id")
+                .and_then(|v| v.as_str())
+                .ok_or((-32005, "process_id required".into(), json!({})))?;
+            let tool = params
+                .get("tool")
+                .or_else(|| params.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let args = params.get("args");
+            Ok(kernel.loop_guard_pre_tool(pid, tool, args))
+        }
+        "loop_guard_post_tool" => {
+            let pid = params
+                .get("process_id")
+                .and_then(|v| v.as_str())
+                .ok_or((-32005, "process_id required".into(), json!({})))?;
+            let tool = params
+                .get("tool")
+                .or_else(|| params.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let args = params.get("args");
+            let result_text = params.get("result").and_then(|v| v.as_str());
+            let truncated = params.get("truncated").and_then(|v| v.as_bool());
+            Ok(kernel.loop_guard_post_tool(pid, tool, args, result_text, truncated))
+        }
+        "loop_guard_budget_check" => {
+            let pid = params
+                .get("process_id")
+                .and_then(|v| v.as_str())
+                .ok_or((-32005, "process_id required".into(), json!({})))?;
+            let used = params.get("tokens_used").and_then(|v| v.as_i64());
+            let budget = params.get("token_budget").and_then(|v| v.as_i64());
+            Ok(kernel.loop_guard_budget_check(pid, used, budget))
+        }
+        "loop_guard_status" => {
+            let pid = params
+                .get("process_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            Ok(kernel.loop_guard_status(pid))
+        }
         "policy_status" => Ok(kernel.policy_status()),
         "cache_record" => {
             let family = params

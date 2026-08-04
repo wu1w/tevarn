@@ -44,6 +44,7 @@ pub mod llm_admission;
 pub mod isolation;
 pub mod checkpoint;
 pub mod policy;
+pub mod loop_guard;
 pub mod run_gate;
 
 pub use audit::{AuditEventStore, KernelEvent};
@@ -68,6 +69,9 @@ pub use court::CourtPolicy;
 pub use process_snapshot::{ProcessSnapshot, ProcessSnapshotStore};
 pub use result_store::{ResultHandle, ResultSpillStore};
 pub use policy::{IterationBudgetState, PolicyDecision, PolicySupervisor};
+pub use loop_guard::{
+    LoopGuardConfig, LoopGuardSupervisor, RoleKind, Thoroughness, result_looks_truncated,
+};
 pub use cache_metrics::CacheMetrics;
 pub use cost::CostLedger;
 pub use marathon::MarathonMetrics;
@@ -209,6 +213,12 @@ pub const ABI_METHODS: &[&str] = &[
     "doom_reset",
     "doom_status",
     "policy_status",
+    "loop_guard_configure",
+    "loop_guard_begin_round",
+    "loop_guard_pre_tool",
+    "loop_guard_post_tool",
+    "loop_guard_budget_check",
+    "loop_guard_status",
     "cache_record",
     "cache_metrics",
     "cost_charge",

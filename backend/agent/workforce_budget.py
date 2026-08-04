@@ -17,7 +17,8 @@ _KIND_FLOOR: dict[str, int] = {
     "audit": 150_000,
     "health_check": 180_000,
     "diagnose": 120_000,
-    "research": 100_000,
+    # PR2: research workers capped lower (was 100k; thrash burned 180–310k)
+    "research": 80_000,
     "data_stats": 100_000,
     "compare": 100_000,
     "doc_qa": 80_000,
