@@ -496,7 +496,7 @@ function buildBackendEnv(secrets: AppSecrets, port: number, sitePackages?: strin
     ...process.env,
     NODE_ENV: process.env.NODE_ENV || (isDev ? 'development' : 'production'),
     TAKTON_DB_URL: dbUrl,
-    TAKTON_APP_HOST: '127.0.0.1',
+    TAKTON_APP_HOST: process.env.TAKTON_APP_HOST || '0.0.0.0',
     TAKTON_APP_PORT: String(port),
     TAKTON_LOG_LEVEL: isDev ? 'debug' : 'info',
     TAKTON_SINGLE_USER_MODE: 'true',
@@ -688,7 +688,8 @@ async function startBackend(): Promise<void> {
     env.TAKTON_KERNEL_AUTO_START = '0';
   }
 
-  console.log(`[Takton] Starting backend: ${python} -m uvicorn backend.main:app --host 127.0.0.1 --port ${port}`);
+  const bindHost = process.env.TAKTON_APP_HOST || '0.0.0.0';
+  console.log(`[Takton] Starting backend: ${python} -m uvicorn backend.main:app --host ${bindHost} --port ${port}`);
   console.log(`[Takton] DB: ${env.TAKTON_DB_URL}`);
   console.log(`[Takton] Uploads: ${UPLOADS_DIR}`);
   console.log(`[Takton] Workspace: ${WORKSPACE_DIR}`);
@@ -696,7 +697,7 @@ async function startBackend(): Promise<void> {
 
   backendProcess = spawn(python, [
     '-m', 'uvicorn', 'backend.main:app',
-    '--host', '127.0.0.1',
+    '--host', bindHost,
     '--port', String(port),
     '--log-level', isDev ? 'debug' : 'info',
   ], {

@@ -585,6 +585,98 @@ export async function deleteDevice(deviceId: string): Promise<{ deleted: boolean
   return res.data;
 }
 
+
+/** PC → 手机扫码配对（/api/mobile/pair/*） */
+export async function pairStartMobile(data?: {
+  mesh?: string;
+  require_confirm?: boolean;
+  host?: string;
+  port?: number;
+  name?: string;
+}): Promise<{
+  ok: boolean;
+  pair_id: string;
+  code: string;
+  exp: number;
+  ttl_secs: number;
+  qr: string;
+  link?: string;
+  require_confirm?: boolean;
+  mesh?: string;
+  base_url?: string;
+  endpoints?: Array<{ url: string; kind: string }>;
+  lan?: string | null;
+  ts?: string | null;
+  seamless?: boolean;
+  hint?: string;
+  mesh_status?: Record<string, unknown>;
+  error?: string;
+}> {
+  const res = await api.post('/mobile/pair/start', data ?? {});
+  return res.data;
+}
+
+export async function pairStatusMobile(pairId: string): Promise<{
+  ok?: boolean;
+  pair_id: string;
+  remaining_secs: number;
+  confirmed: boolean;
+  claimed: boolean;
+  require_confirm: boolean;
+  mesh?: string;
+  host?: string;
+  port?: number;
+}> {
+  const res = await api.get(`/mobile/pair/status/${pairId}`);
+  return res.data;
+}
+
+export async function pairConfirmMobile(pairId: string): Promise<{ ok: boolean }> {
+  const res = await api.post(`/mobile/pair/confirm/${pairId}`);
+  return res.data;
+}
+
+export async function pairCancelMobile(pairId: string): Promise<{ ok: boolean }> {
+  const res = await api.post(`/mobile/pair/cancel/${pairId}`);
+  return res.data;
+}
+
+export async function pairDevicesMobile(): Promise<{
+  ok: boolean;
+  devices: Array<Record<string, unknown>>;
+}> {
+  const res = await api.get('/mobile/pair/devices');
+  return res.data;
+}
+
+export async function pairRevokeMobile(deviceId: string): Promise<{ ok: boolean }> {
+  const res = await api.post(`/mobile/pair/revoke/${deviceId}`);
+  return res.data;
+}
+
+export async function meshStatusMobile(): Promise<Record<string, unknown>> {
+  const res = await api.get('/mobile/mesh');
+  return res.data;
+}
+
+export async function meshSetMobile(data: {
+  mode?: string;
+  require_pair_confirm?: boolean;
+  hostname?: string;
+}): Promise<Record<string, unknown>> {
+  const res = await api.post('/mobile/mesh', data);
+  return res.data;
+}
+
+export async function meshAuthMobile(authKey: string): Promise<{
+  ok: boolean;
+  auth_key_set?: boolean;
+  detail?: string;
+}> {
+  const res = await api.post('/mobile/mesh/auth', { auth_key: authKey });
+  return res.data;
+}
+
 /** 配对 L1 takton-agent */
 export async function pairDevice(data: {
   name: string;

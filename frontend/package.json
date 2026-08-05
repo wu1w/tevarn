@@ -40,7 +40,8 @@
     "jszip": "^3.10.1",
     "mammoth": "^1.12.0",
     "tailwind-merge": "^3.6.0",
-    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
@@ -69,7 +70,8 @@
     "typescript": "^5.9.3",
     "wait-on": "^9.0.10",
     "zod": "^4.4.3",
-    "zustand": "^5.0.14"
+    "zustand": "^5.0.14",
+    "@types/qrcode": "^1.5.5"
   },
   "build": {
     "appId": "com.takton.agent",

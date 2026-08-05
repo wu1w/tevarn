@@ -31,6 +31,7 @@ from . import (
     mcp_store,
     memory_graph,
     messages,
+    mobile_pair,
     notifications,
     openai_codex_proxy,
     packages,
@@ -81,6 +82,7 @@ def register_routes(app, prefix: str = "") -> None:
     app.include_router(packages.router, prefix=p)
     app.include_router(runs.router, prefix=p)
     app.include_router(devices.router, prefix=p)
+    app.include_router(mobile_pair.router, prefix=p)
     app.include_router(workflows.router, prefix=p)
     app.include_router(cron.router, prefix=p)
     app.include_router(cron_hook.router, prefix=p)

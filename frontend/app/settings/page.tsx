@@ -21,6 +21,7 @@ import { useT } from '@/stores/localeStore';
 import { useZh } from '@/hooks/useZh';
 import { LanguageCard } from '@/components/ui/LanguageSwitcher';
 import { ModelSettingsPanel } from '@/components/settings/ModelSettingsPanel';
+import { RemoteConnectPanel } from '@/components/settings/RemoteConnectPanel';
 import { APP_VERSION } from '@/lib/appVersion';
 
 
@@ -115,7 +116,7 @@ const btnPrimary =
 const btnGhost =
   'rounded-xl border border-border-default bg-card-bg px-4 py-2.5 text-sm text-foreground-muted hover:bg-card-bg-hover hover:text-foreground disabled:opacity-50';
 
-type SettingsPane = 'general' | 'llm' | 'channels' | 'backend' | 'about';
+type SettingsPane = 'general' | 'llm' | 'channels' | 'remote' | 'backend' | 'about';
 
 export default function SettingsPage() {
   const addToast = useToastStore((s) => s.addToast);
@@ -526,6 +527,7 @@ export default function SettingsPage() {
     { id: 'general', zh: '通用', en: 'General' },
     { id: 'llm', zh: 'LLM（模型）', en: 'LLM' },
     { id: 'channels', zh: '对外渠道', en: 'Channels' },
+    { id: 'remote', zh: '远程连接', en: 'Remote' },
     { id: 'backend', zh: '执行后端', en: 'Runtime' },
     { id: 'about', zh: '关于', en: 'About' },
   ];
@@ -1173,6 +1175,10 @@ export default function SettingsPage() {
                               </div>
                             </section>
               </>
+            ) : null}
+
+            {pane === 'remote' ? (
+              <RemoteConnectPanel />
             ) : null}
 
             {pane === 'about' ? (
