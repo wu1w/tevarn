@@ -131,7 +131,18 @@ impl TaktonClient {
     ) -> Result<T> {
         let (status, text) = self.request_raw(method, path, body, auth).await?;
         if !status.is_success() {
-            return Err(Error::http(status.as_u16(), text));
+            // Prefer structured {message|detail|error} over raw HTML/500 body.
+            let friendly = serde_json::from_str::<Value>(&text)
+                .ok()
+                .and_then(|v| {
+                    v.get("message")
+                        .or_else(|| v.get("detail"))
+                        .or_else(|| v.get("error"))
+                        .and_then(|x| x.as_str())
+                        .map(|s| s.to_string())
+                })
+                .unwrap_or_else(|| trunc(&text, 240));
+            return Err(Error::http(status.as_u16(), friendly));
         }
         serde_json::from_str(&text).map_err(|e| {
             Error::Msg(format!(

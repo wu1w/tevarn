@@ -386,6 +386,15 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
 
   bool get _oauth => _isOauth(_cur);
 
+  String _oauthErr(Map<String, dynamic> r, [String fallback = '启动失败']) {
+    for (final k in ['message', 'error', 'detail', 'hint']) {
+      final v = r[k]?.toString().trim() ?? '';
+      if (v.isNotEmpty && v != 'null') return v;
+    }
+    return fallback;
+  }
+
+
   void _applyProviderUi({bool autofillBase = false}) {
     final o = _cur;
     final models = _modelsOf(o);
@@ -731,8 +740,9 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
       if (_oauthKind == 'xai') {
         final r = await c.bridge.oauthXaiStart();
         if (!isOk(r)) {
-          c.showToast(r['error']?.toString() ?? '启动失败');
-          setState(() => _oauthStatus = r['error']?.toString() ?? '失败');
+          final err = _oauthErr(r);
+          c.showToast(err);
+          setState(() => _oauthStatus = err);
           return;
         }
         _oauthDevice = r['device_code']?.toString() ?? '';
@@ -754,8 +764,9 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
       } else {
         final r = await c.bridge.oauthOpenaiStart();
         if (!isOk(r)) {
-          c.showToast(r['error']?.toString() ?? '启动失败');
-          setState(() => _oauthStatus = r['error']?.toString() ?? '失败');
+          final err = _oauthErr(r);
+          c.showToast(err);
+          setState(() => _oauthStatus = err);
           return;
         }
         _oauthState = r['state']?.toString() ?? '';

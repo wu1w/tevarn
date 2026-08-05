@@ -1441,12 +1441,35 @@ async def xai_oauth_logout(
 
 @router.post("/oauth/openai/start")
 async def openai_oauth_start(
-    current_user: Annotated[UserRead, Depends(require_admin)],
+    current_user: Annotated[UserRead, Depends(get_current_user)],
 ):
-    """发起 ChatGPT 会员 OAuth（PKCE · Codex 客户端），并尽量监听 localhost:1455。"""
-    from backend.services.openai_oauth import start_pkce_login_async
+    """发起 ChatGPT 会员 OAuth（PKCE · Codex 客户端），并尽量监听 localhost:1455。
 
-    return await start_pkce_login_async()
+    任意已登录用户可发起（不强制 superuser）。失败返回 ok:false，避免裸 500。
+    """
+    try:
+        from backend.services.openai_oauth import start_pkce_login_async
+    except ImportError as e:
+        logger.exception("openai oauth import failed")
+        return {
+            "ok": False,
+            "status": "error",
+            "message": (
+                "ChatGPT OAuth 依赖未安装（需要 aiohttp）。"
+                "请在 PC 端执行: pip install aiohttp 后重启。"
+            ),
+            "detail": str(e),
+        }
+    try:
+        return await start_pkce_login_async()
+    except Exception as e:
+        logger.exception("openai oauth start failed for user=%s", getattr(current_user, "email", None))
+        return {
+            "ok": False,
+            "status": "error",
+            "message": f"无法发起 ChatGPT 登录：{e}",
+            "detail": str(e),
+        }
 
 
 class OpenAIOauthCompleteBody(BaseModel):
@@ -1535,47 +1558,68 @@ async def _activate_openai_chatgpt_oauth(
 async def openai_oauth_poll(
     data: OpenAIOauthPollBody,
     request: Request,
-    current_user: Annotated[UserRead, Depends(require_admin)],
+    current_user: Annotated[UserRead, Depends(get_current_user)],
     repo: Annotated[SettingRepository, Depends(get_setting_repo)],
 ):
     """轮询 1455 回调是否已换好 token；成功则激活供应商。"""
-    from backend.services.openai_oauth import poll_login_result
-
-    result = poll_login_result(data.state)
-    if result.get("status") == "pending":
-        return result
-    if not result.get("ok") or result.get("status") != "authorized":
-        return result
-    if not result.get("access_token"):
-        return {"ok": False, "status": "error", "message": "缺少 access_token"}
-    return await _activate_openai_chatgpt_oauth(
-        result=result,
-        request=request,
-        current_user=current_user,
-        repo=repo,
-    )
+    try:
+        from backend.services.openai_oauth import poll_login_result
+    except ImportError as e:
+        return {
+            "ok": False,
+            "status": "error",
+            "message": "ChatGPT OAuth 依赖未安装（aiohttp）",
+            "detail": str(e),
+        }
+    try:
+        result = poll_login_result(data.state)
+        if result.get("status") == "pending":
+            return result
+        if not result.get("ok") or result.get("status") != "authorized":
+            return result
+        if not result.get("access_token"):
+            return {"ok": False, "status": "error", "message": "缺少 access_token"}
+        return await _activate_openai_chatgpt_oauth(
+            result=result,
+            request=request,
+            current_user=current_user,
+            repo=repo,
+        )
+    except Exception as e:
+        logger.exception("openai oauth poll failed")
+        return {"ok": False, "status": "error", "message": f"轮询失败：{e}", "detail": str(e)}
 
 
 @router.post("/oauth/openai/complete")
 async def openai_oauth_complete(
     data: OpenAIOauthCompleteBody,
     request: Request,
-    current_user: Annotated[UserRead, Depends(require_admin)],
+    current_user: Annotated[UserRead, Depends(get_current_user)],
     repo: Annotated[SettingRepository, Depends(get_setting_repo)],
 ):
     """用浏览器回调 URL 完成登录，登记 openai-chatgpt-oauth 供应商。"""
-    from backend.services.openai_oauth import complete_pkce_login
-
-    result = await complete_pkce_login(data.callback_url, state=data.state)
-    if not result.get("ok"):
-        return result
-
-    return await _activate_openai_chatgpt_oauth(
-        result=result,
-        request=request,
-        current_user=current_user,
-        repo=repo,
-    )
+    try:
+        from backend.services.openai_oauth import complete_pkce_login
+    except ImportError as e:
+        return {
+            "ok": False,
+            "status": "error",
+            "message": "ChatGPT OAuth 依赖未安装（aiohttp）",
+            "detail": str(e),
+        }
+    try:
+        result = await complete_pkce_login(data.callback_url, state=data.state)
+        if not result.get("ok"):
+            return result
+        return await _activate_openai_chatgpt_oauth(
+            result=result,
+            request=request,
+            current_user=current_user,
+            repo=repo,
+        )
+    except Exception as e:
+        logger.exception("openai oauth complete failed")
+        return {"ok": False, "status": "error", "message": f"完成登录失败：{e}", "detail": str(e)}
 
 
 

@@ -2612,9 +2612,29 @@ export async function startOpenAIOauth(): Promise<{
   callback_listening?: boolean;
   callback_error?: string;
   detail?: string;
+  status?: string;
 }> {
-  const res = await api.post('/settings/oauth/openai/start', {});
-  return res.data;
+  try {
+    const res = await api.post('/settings/oauth/openai/start', {});
+    return res.data;
+  } catch (e: unknown) {
+    const ax = e as {
+      response?: { status?: number; data?: Record<string, unknown> };
+      message?: string;
+    };
+    const data = ax.response?.data || {};
+    const msg =
+      (typeof data.message === 'string' && data.message) ||
+      (typeof data.detail === 'string' && data.detail) ||
+      ax.message ||
+      '无法发起 ChatGPT 登录';
+    return {
+      ok: false,
+      status: 'error',
+      message: msg,
+      detail: typeof data.detail === 'string' ? data.detail : String(ax.response?.status || ''),
+    };
+  }
 }
 
 export async function pollOpenAIOauth(state?: string): Promise<{
