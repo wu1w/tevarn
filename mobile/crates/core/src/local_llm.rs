@@ -122,6 +122,11 @@ impl LocalLlmService {
             .unwrap_or_default()
     }
 
+    pub fn clear_profile(&self) -> Result<()> {
+        self.store.write_json(PROFILE_FILE, &LocalLlmProfile::default())?;
+        Ok(())
+    }
+
     pub fn save_profile(&self, profile: &LocalLlmProfile) -> Result<()> {
         self.store.save_json(PROFILE_FILE, profile)
     }

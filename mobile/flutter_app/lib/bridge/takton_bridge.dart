@@ -61,6 +61,8 @@ abstract class TaktonBridge {
   Future<Map<String, dynamic>> localConfigGet() => call('local_config_get');
   Future<Map<String, dynamic>> localConfigSet(Map<String, dynamic> cfg) =>
       call('local_config_set', cfg);
+  Future<Map<String, dynamic>> localConfigClear() =>
+      call('local_config_clear');
   Future<Map<String, dynamic>> localTest([Map<String, dynamic>? body]) =>
       call('local_test', body ?? {});
   Future<Map<String, dynamic>> localStop() => call('local_stop');

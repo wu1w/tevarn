@@ -90,7 +90,7 @@ PROVIDER_PRESETS: list[dict[str, Any]] = [
         "llm": {
             "llm_provider": "openai",
             "llm_base_url": "https://api.openai.com",
-            "llm_model": "gpt-4o-mini",
+            "llm_model": "",
             "llm_api_key": "",
         },
         "models": [],
@@ -419,7 +419,7 @@ PROVIDER_PRESETS: list[dict[str, Any]] = [
         "llm": {
             "llm_provider": "openai-compatible",
             "llm_base_url": "https://openrouter.ai/api/v1",
-            "llm_model": "openai/gpt-4o-mini",
+            "llm_model": "",
             "llm_api_key": "",
         },
         "models": [],

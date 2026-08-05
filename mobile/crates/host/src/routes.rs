@@ -313,6 +313,7 @@ pub fn api_router() -> Router<AppState> {
             .route("/processes/{id}/resume", post(resume_process))
             .route("/notify", post(set_notify))
             .route("/local/config", get(local_config_get).post(local_config_set))
+            .route("/local/config/clear", post(local_config_clear))
             .route("/local/test", post(local_test))
             .route("/local/history", get(local_history_get).post(local_history_clear))
             .route("/local/chat", post(local_chat_stream))
@@ -1996,6 +1997,21 @@ async fn resume_process(State(st): State<AppState>, Path(id): Path<String>) -> J
 async fn set_notify(State(st): State<AppState>, Json(body): Json<NotifyBody>) -> Json<Value> {
     *st.notify_approvals.write() = body.enabled;
     Json(json!({ "ok": true, "enabled": body.enabled }))
+}
+
+
+async fn local_config_clear(State(st): State<AppState>) -> Json<Value> {
+    match st.local_llm.clear_profile() {
+        Ok(()) => {
+            let profile = st.local_llm.load_profile();
+            Json(json!({
+                "ok": true,
+                "ready": false,
+                "config": profile.masked(),
+            }))
+        }
+        Err(e) => err_json(e),
+    }
 }
 
 async fn local_config_get(State(st): State<AppState>) -> Json<Value> {

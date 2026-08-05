@@ -1423,7 +1423,7 @@ pub fn App() -> Element {
                                     span { class: "lb", "Model" }
                                     input {
                                         class: "inp num",
-                                        placeholder: "gpt-4o-mini",
+                                        placeholder: "model-id",
                                         value: "{llm_model}",
                                         oninput: move |e| llm_model.set(e.value()),
                                     }

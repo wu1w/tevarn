@@ -975,6 +975,27 @@ class AppController extends ChangeNotifier {
     showToast('已复制');
   }
 
+
+  Future<void> clearLocalLlm() async {
+    final r = await bridge.localConfigClear();
+    if (!isOk(r)) {
+      showToast(r['error']?.toString() ?? '清除失败');
+      return;
+    }
+    llmBase = '';
+    llmKey = '';
+    llmModel = '';
+    llmHasKey = false;
+    llmKeyMasked = '';
+    pushStatusCard(
+      title: '本机模型已清除',
+      body: '不再显示直连模型名，请重新配置',
+      kind: StatusCardKind.info,
+    );
+    showToast('已清除本机 LLM 配置');
+    await refreshAll();
+  }
+
   Future<void> newChat() async {
     if (surface == 'local') {
       await bridge.localHistoryClear();

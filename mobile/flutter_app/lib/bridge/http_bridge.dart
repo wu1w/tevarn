@@ -75,6 +75,8 @@ class HttpTaktonBridge extends TaktonBridge {
           return _get('/api/mobile/local/config');
         case 'local_config_set':
           return _post('/api/mobile/local/config', a);
+        case 'local_config_clear':
+          return _post('/api/mobile/local/config/clear', {});
         case 'local_test':
           return _post('/api/mobile/local/test', a);
         case 'local_chat':

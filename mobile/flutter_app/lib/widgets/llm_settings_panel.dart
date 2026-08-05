@@ -295,6 +295,8 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
   List<String> _modelsOfRaw(_Opt o) {
     final raw = o.raw;
     final fromList = <String>[];
+    // Only explicit model lists — never inject preset template llm_model
+    // (preset template defaults) as a fake one-item catalog.
     for (final key in ['models', 'cached_models', 'available_models']) {
       final v = raw[key];
       if (v is List) {
@@ -302,25 +304,32 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
           final s = e is Map
               ? (e['id'] ?? e['model'] ?? e['name'])?.toString()
               : e.toString();
-          if (s != null && s.isNotEmpty) fromList.add(s);
+          if (s != null && s.isNotEmpty && !fromList.contains(s)) {
+            fromList.add(s);
+          }
         }
       }
     }
     final llm = raw['llm'];
     if (llm is Map) {
-      final m = llm['llm_model']?.toString() ?? llm['model']?.toString();
-      if (m != null && m.isNotEmpty && !fromList.contains(m)) fromList.add(m);
       final ms = llm['models'];
       if (ms is List) {
         for (final e in ms) {
-          final s = e.toString();
-          if (s.isNotEmpty && !fromList.contains(s)) fromList.add(s);
+          final s = e is Map
+              ? (e['id'] ?? e['model'] ?? e['name'])?.toString()
+              : e.toString();
+          if (s != null && s.isNotEmpty && !fromList.contains(s)) {
+            fromList.add(s);
+          }
         }
       }
     }
-    final single = raw['llm_model']?.toString() ?? raw['model']?.toString();
-    if (single != null && single.isNotEmpty && !fromList.contains(single)) {
-      fromList.add(single);
+    // Local saved config: surface the saved model only for __custom__ / local
+    if (o.source == _Src.local) {
+      final saved = raw['llm_model']?.toString() ??
+          raw['model']?.toString() ??
+          '';
+      if (saved.isNotEmpty && !fromList.contains(saved)) fromList.add(saved);
     }
     return fromList;
   }
@@ -1036,7 +1045,7 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
         else
           _Inp(
               controller: _modelCustom,
-              hint: '模型 ID，如 gpt-4o-mini',
+              hint: '模型 ID（从供应商拉取或手写）',
               dark: dark),
         if (_models.isNotEmpty && _showCustomModel) ...[
           const SizedBox(height: 6),
@@ -1158,6 +1167,30 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
                 c.showToast('本机配置已保存');
               } catch (e) {
                 c.showToast('$e');
+              } finally {
+                if (mounted) setState(() => _busy = false);
+              }
+            },
+          ),
+          const SizedBox(height: 8),
+          PxGhostBtn(
+            label: '清除本机 LLM 配置',
+            onTap: () async {
+              if (_busy) return;
+              setState(() => _busy = true);
+              try {
+                await c.clearLocalLlm();
+                _base.clear();
+                _key.clear();
+                _modelCustom.clear();
+                setState(() {
+                  _modelId = '';
+                  _models = [];
+                  _hasKey = false;
+                  _keyMasked = '';
+                  _showCustomModel = true;
+                });
+                await _reload(refresh: false);
               } finally {
                 if (mounted) setState(() => _busy = false);
               }
