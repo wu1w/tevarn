@@ -718,14 +718,20 @@ async def fetch_provider_models(
 
 @router.get("/presets")
 async def list_provider_presets(
-    current_user: Annotated[UserRead, Depends(require_admin)],
+    current_user: Annotated[UserRead, Depends(get_current_user)],
 ):
-    """返回面向新手的服务商预设列表（不含 mock 模型列表）"""
-    # 去掉内置 models 假数据，避免前端误用；默认模型名仅保留在 llm.llm_model
+    """返回服务商预设列表。任意已登录用户可读（不再强制 admin）。
+
+    models：仅保留本地类预设的显式列表（如 Ollama）；云端预设 models 为空，
+    由「测试连接 / 拉取模型」从供应商实时获取，避免把模板默认模型当成目录。
+    """
     cleaned = []
     for p in PROVIDER_PRESETS:
         item = dict(p)
-        item["models"] = []
+        pid = str(item.get("id") or "")
+        # Keep ollama / local template names; clear cloud template lists
+        if pid not in ("ollama", "vllm", "lmstudio", "custom"):
+            item["models"] = []
         cleaned.append(item)
     return cleaned
 

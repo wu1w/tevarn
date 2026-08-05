@@ -177,6 +177,11 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
 
     if (!mounted || gen != _searchGen) return;
 
+    // Always keep a usable provider list (PC catalog may be empty / presets 403)
+    if (presets.isEmpty) {
+      presets = _offlinePresets();
+    }
+
     _catalog = catalog;
     _presets = presets;
     _serverModels = serverModels;

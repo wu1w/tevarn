@@ -122,14 +122,38 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [p, cat] = await Promise.all([getProviderPresets(), getModelCatalog(false)]);
-      setPresets(p || []);
+      // Independent loads — one failure must not wipe the other (empty provider list)
+      const [pRes, catRes] = await Promise.allSettled([
+        getProviderPresets(),
+        getModelCatalog(false),
+      ]);
+      const p = pRes.status === 'fulfilled' ? pRes.value || [] : [];
+      const cat =
+        catRes.status === 'fulfilled'
+          ? catRes.value
+          : ({ providers: [], active_provider_id: '', active_model: '' } as ModelCatalog);
+      if (pRes.status === 'rejected') {
+        console.error('presets load failed', pRes.reason);
+        addToast(
+          pRes.reason instanceof Error
+            ? pRes.reason.message
+            : '无法加载供应商预设',
+          'error',
+        );
+      }
+      if (catRes.status === 'rejected') {
+        console.error('catalog load failed', catRes.reason);
+      }
+      setPresets(Array.isArray(p) ? p : []);
       setCatalog(cat);
-      const pid = cat.active_provider_id || cat.providers[0]?.id || p?.[0]?.id || '';
+      const pid =
+        cat.active_provider_id ||
+        cat.providers?.[0]?.id ||
+        (Array.isArray(p) ? p[0]?.id : '') ||
+        '';
       const mid = cat.active_model || '';
       setSelectedProviderId((prev) => prev || pid);
       setSelectedModel((prev) => prev || mid);
-      // background live fetch
       void getModelCatalog(true)
         .then(setCatalog)
         .catch(() => undefined);

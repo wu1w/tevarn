@@ -2284,7 +2284,12 @@ export interface ProviderPreset {
 
 export async function getProviderPresets(): Promise<ProviderPreset[]> {
   const res = await api.get('/settings/presets');
-  return res.data;
+  const data = res.data;
+  if (Array.isArray(data)) return data as ProviderPreset[];
+  if (data && Array.isArray((data as { presets?: unknown }).presets)) {
+    return (data as { presets: ProviderPreset[] }).presets;
+  }
+  return [];
 }
 
 export async function applySettingsBatch(
