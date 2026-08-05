@@ -202,6 +202,75 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
     });
   }
 
+  List<Map<String, dynamic>> _offlinePresets() {
+    return [
+      {
+        'id': 'openai',
+        'name': 'OpenAI',
+        'llm': {
+          'llm_provider': 'openai',
+          'llm_base_url': 'https://api.openai.com/v1',
+          'llm_model': '',
+        },
+        'models': <String>[],
+      },
+      {
+        'id': 'openai-chatgpt-oauth',
+        'name': 'ChatGPT 会员 (OAuth)',
+        'auth_mode': 'oauth_pkce',
+        'oauth_provider': 'openai',
+        'llm': {
+          'llm_provider': 'openai-compatible',
+          'llm_base_url': '',
+          'llm_model': '',
+        },
+        'models': <String>[],
+      },
+      {
+        'id': 'xai',
+        'name': 'xAI Grok',
+        'llm': {
+          'llm_provider': 'openai-compatible',
+          'llm_base_url': 'https://api.x.ai/v1',
+          'llm_model': '',
+        },
+        'models': <String>[],
+      },
+      {
+        'id': 'xai-oauth',
+        'name': 'Grok (OAuth)',
+        'auth_mode': 'oauth_device_code',
+        'oauth_provider': 'xai',
+        'llm': {
+          'llm_provider': 'openai-compatible',
+          'llm_base_url': 'https://api.x.ai/v1',
+          'llm_model': '',
+        },
+        'models': <String>[],
+      },
+      {
+        'id': 'deepseek',
+        'name': 'DeepSeek',
+        'llm': {
+          'llm_provider': 'openai-compatible',
+          'llm_base_url': 'https://api.deepseek.com',
+          'llm_model': '',
+        },
+        'models': <String>[],
+      },
+      {
+        'id': 'ollama',
+        'name': 'Ollama 本地',
+        'llm': {
+          'llm_provider': 'ollama',
+          'llm_base_url': 'http://127.0.0.1:11434',
+          'llm_model': '',
+        },
+        'models': <String>['llama3.2', 'qwen2.5', 'deepseek-r1'],
+      },
+    ];
+  }
+
   void _buildOptions(Map<String, dynamic>? localCfg) {
     final list = <_Opt>[];
     final seen = <String>{};
