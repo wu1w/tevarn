@@ -211,6 +211,82 @@ async fn dispatch(eng: &EngineHandle, method: &str, args: &Value) -> Result<Stri
             .await
         }
         "devices" => eng.invoke("GET", "/api/mobile/devices", None).await,
+        "pair_start" => eng
+            .invoke("POST", "/api/mobile/pair/start", Some(&body()))
+            .await,
+        "pair_status" => {
+            let id = args
+                .get("pair_id")
+                .or_else(|| args.get("id"))
+                .and_then(|x| x.as_str())
+                .unwrap_or("");
+            eng.invoke("GET", &format!("/api/mobile/pair/status/{id}"), None)
+                .await
+        }
+        "pair_confirm" => {
+            let id = args
+                .get("pair_id")
+                .or_else(|| args.get("id"))
+                .and_then(|x| x.as_str())
+                .unwrap_or("");
+            eng.invoke(
+                "POST",
+                &format!("/api/mobile/pair/confirm/{id}"),
+                Some("{}"),
+            )
+            .await
+        }
+        "pair_cancel" => {
+            let id = args
+                .get("pair_id")
+                .or_else(|| args.get("id"))
+                .and_then(|x| x.as_str())
+                .unwrap_or("");
+            eng.invoke(
+                "POST",
+                &format!("/api/mobile/pair/cancel/{id}"),
+                Some("{}"),
+            )
+            .await
+        }
+        "pair_claim" => eng
+            .invoke("POST", "/api/mobile/pair/claim", Some(&body()))
+            .await,
+        "pair_apply" => eng
+            .invoke("POST", "/api/mobile/pair/apply", Some(&body()))
+            .await,
+        "pair_devices" => eng.invoke("GET", "/api/mobile/pair/devices", None).await,
+        "pair_pending" => eng.invoke("GET", "/api/mobile/pair/pending", None).await,
+        "pair_revoke" => {
+            let id = sid();
+            eng.invoke(
+                "POST",
+                &format!("/api/mobile/pair/revoke/{id}"),
+                Some("{}"),
+            )
+            .await
+        }
+        "mesh" | "mesh_status" => eng.invoke("GET", "/api/mobile/mesh", None).await,
+        "mesh_set" => eng.invoke("POST", "/api/mobile/mesh", Some(&body())).await,
+        "mesh_up" => eng.invoke("POST", "/api/mobile/mesh/up", Some(&body())).await,
+        "mesh_down" => eng.invoke("POST", "/api/mobile/mesh/down", Some("{}")).await,
+        "mesh_ifaces" => eng.invoke("POST", "/api/mobile/mesh/ifaces", Some(&body())).await,
+        "mesh_auth" => eng.invoke("POST", "/api/mobile/mesh/auth", Some(&body())).await,
+        "mesh_embed_start" => eng
+            .invoke("POST", "/api/mobile/mesh/embed/start", Some(&body()))
+            .await,
+        "mesh_embed_stop" => eng
+            .invoke("POST", "/api/mobile/mesh/embed/stop", Some("{}"))
+            .await,
+        "mesh_embed" | "mesh_embed_status" => {
+            eng.invoke("GET", "/api/mobile/mesh/embed", None).await
+        }
+        "path" | "path_status" => eng.invoke("GET", "/api/mobile/path", None).await,
+        "path_probe" => eng.invoke("POST", "/api/mobile/path/probe", Some(&body())).await,
+        "path_reconnect" => eng
+            .invoke("POST", "/api/mobile/path/reconnect", Some(&body()))
+            .await,
+        "path_refresh" => eng.invoke("POST", "/api/mobile/path/refresh", Some(&body())).await,
         "processes" => eng.invoke("GET", "/api/mobile/processes", None).await,
         "process_stop" => {
             let id = sid();

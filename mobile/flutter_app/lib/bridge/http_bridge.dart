@@ -89,8 +89,49 @@ class HttpTaktonBridge extends TaktonBridge {
           return _post('/api/mobile/approvals/${a['id']}/decide', a);
         case 'devices':
           return _get('/api/mobile/devices');
+        case 'pair_start':
+          return _post('/api/mobile/pair/start', a);
+        case 'pair_status':
+          return _get('/api/mobile/pair/status/${a['pair_id'] ?? a['id']}');
+        case 'pair_confirm':
+          return _post(
+              '/api/mobile/pair/confirm/${a['pair_id'] ?? a['id']}', {});
+        case 'pair_cancel':
+          return _post(
+              '/api/mobile/pair/cancel/${a['pair_id'] ?? a['id']}', {});
+        case 'pair_claim':
+          return _post('/api/mobile/pair/claim', a);
+        case 'pair_apply':
+          return _post('/api/mobile/pair/apply', a);
+        case 'pair_devices':
+          return _get('/api/mobile/pair/devices');
+        case 'pair_pending':
+          return _get('/api/mobile/pair/pending');
+        case 'pair_revoke':
+          return _post('/api/mobile/pair/revoke/${a['id']}', {});
+        case 'mesh':
+        case 'mesh_status':
+          return _get('/api/mobile/mesh');
+        case 'mesh_set':
+          return _post('/api/mobile/mesh', a);
+        case 'mesh_up':
+          return _post('/api/mobile/mesh/up', a);
+        case 'mesh_down':
+          return _post('/api/mobile/mesh/down', {});
+        case 'mesh_ifaces':
+          return _post('/api/mobile/mesh/ifaces', a);
+        case 'path':
+        case 'path_status':
+          return _get('/api/mobile/path');
+        case 'path_probe':
+          return _post('/api/mobile/path/probe', a);
+        case 'path_reconnect':
+          return _post('/api/mobile/path/reconnect', a);
+        case 'path_refresh':
+          return _post('/api/mobile/path/refresh', a);
         case 'processes':
           return _get('/api/mobile/processes');
+
         case 'process_stop':
           return _post('/api/mobile/processes/${a['id']}/stop', {});
         case 'process_resume':

@@ -11,7 +11,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use futures_util::{SinkExt, Stream};
+use futures_util::Stream;
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -34,7 +34,11 @@ use crate::state::AppState;
 
 #[derive(Debug, Deserialize)]
 pub struct ConnectBody {
-    pub base_url: String,
+    #[serde(default)]
+    pub base_url: Option<String>,
+    /// Extra candidates to probe (LAN/TS/host). Prefer LAN when reachable.
+    #[serde(default)]
+    pub candidates: Option<Vec<String>>,
     #[serde(default)]
     pub email: Option<String>,
     #[serde(default)]
@@ -66,6 +70,93 @@ pub struct PairBody {
     pub host: String,
     pub port: u16,
     pub token: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PairStartBody {
+    #[serde(default)]
+    pub mesh: Option<String>,
+    #[serde(default)]
+    pub require_confirm: Option<bool>,
+    #[serde(default)]
+    pub host: Option<String>,
+    #[serde(default)]
+    pub port: Option<u16>,
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PairClaimBody {
+    pub pair_id: String,
+    pub code: String,
+    #[serde(default)]
+    pub device_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PairApplyBody {
+    pub qr: String,
+    #[serde(default)]
+    pub device_name: Option<String>,
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
+    #[serde(default)]
+    pub claim: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MeshSetBody {
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub hostname: Option<String>,
+    #[serde(default)]
+    pub require_pair_confirm: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MeshAuthBody {
+    #[serde(default)]
+    pub auth_key: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MeshEmbedBody {
+    #[serde(default)]
+    pub role: Option<String>,
+    #[serde(default)]
+    pub hostname: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MeshRuntimeBody {
+    #[serde(default)]
+    pub hostname: Option<String>,
+    #[serde(default)]
+    pub ifaces: Option<Vec<String>>,
+    #[serde(default)]
+    pub auth_key: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PathProbeBody {
+    #[serde(default)]
+    pub candidates: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PathReconnectBody {
+    #[serde(default)]
+    pub candidates: Option<Vec<String>>,
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
+    #[serde(default)]
+    pub claim: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -179,6 +270,30 @@ pub fn api_router() -> Router<AppState> {
             .route("/devices/pair", post(pair_device))
             .route("/devices/{id}/heartbeat", post(device_heartbeat))
             .route("/devices/{id}/ping", post(device_ping))
+            // M1 QR pairing
+            .route("/pair/start", post(pair_start))
+            .route("/pair/status/{id}", get(pair_status))
+            .route("/pair/confirm/{id}", post(pair_confirm))
+            .route("/pair/cancel/{id}", post(pair_cancel))
+            .route("/pair/claim", post(pair_claim))
+            .route("/pair/apply", post(pair_apply))
+            .route("/pair/devices", get(pair_devices))
+            .route("/pair/revoke/{id}", post(pair_revoke))
+            .route("/pair/pending", get(pair_pending))
+            // M2 mesh
+            .route("/mesh", get(mesh_status).post(mesh_set))
+            .route("/mesh/up", post(mesh_up))
+            .route("/mesh/down", post(mesh_down))
+            .route("/mesh/ifaces", post(mesh_ifaces))
+            .route("/mesh/auth", post(mesh_auth))
+            .route("/mesh/embed/start", post(mesh_embed_start))
+            .route("/mesh/embed/stop", post(mesh_embed_stop))
+            .route("/mesh/embed", get(mesh_embed_status))
+            // M4 multi-endpoint path
+            .route("/path", get(path_status))
+            .route("/path/probe", post(path_probe))
+            .route("/path/reconnect", post(path_reconnect))
+            .route("/path/refresh", post(path_refresh))
             .route("/catalog", get(catalog))
             .route("/catalog/select", post(select_model))
             .route("/catalog/register", post(register_provider))
@@ -598,34 +713,15 @@ async fn app_state(State(st): State<AppState>) -> Json<Value> {
 }
 
 async fn connect(State(st): State<AppState>, Json(body): Json<ConnectBody>) -> Json<Value> {
-    st.client.set_base_url(body.base_url.clone());
+    // Multi-endpoint: probe candidates (LAN first) then login.
+    let mut extras = body.candidates.clone().unwrap_or_default();
+    if let Some(b) = body.base_url.clone().filter(|s| !s.trim().is_empty()) {
+        extras.insert(0, b);
+    }
     let email = body.email.unwrap_or_default();
     let password = body.password.unwrap_or_default();
-    if email.is_empty() {
-        // try auto login after base change
-        match st.client.auto_login().await {
-            Ok(s) => {
-                *st.remote_probe.write() = Default::default();
-                return Json(json!({
-                    "ok": true,
-                    "authenticated": true,
-                    "base_url": base_url_of(&st),
-                    "user_email": s.user.email,
-                }));
-            }
-            Err(e) => return err_json(e),
-        }
-    }
-    match st.client.login(&email, &password).await {
-        Ok(s) => {
-            *st.remote_probe.write() = Default::default();
-            Json(json!({
-                "ok": true,
-                "authenticated": true,
-                "base_url": base_url_of(&st),
-                "user_email": s.user.email,
-            }))
-        }
+    match try_connect_best(&st, &extras, &email, &password).await {
+        Ok(v) => Json(v),
         Err(e) => err_json(e),
     }
 }
@@ -925,6 +1021,773 @@ async fn pair_device(State(st): State<AppState>, Json(body): Json<PairBody>) -> 
         Ok(d) => Json(json!({ "ok": true, "device": d })),
         Err(e) => err_json(e),
     }
+}
+
+// ── path helpers ─────────────────────────────────────────────────────────────
+
+async fn try_connect_best(
+    st: &AppState,
+    candidates: &[String],
+    email: &str,
+    password: &str,
+) -> Result<Value, String> {
+    use takton_mobile_core::path::{select_best, Endpoint, EndpointKind};
+
+    let mut extra = candidates.to_vec();
+    // Merge stored path profile
+    for ep in st.path.candidate_urls(&extra) {
+        if !extra.iter().any(|u| u.trim_end_matches('/') == ep.url.trim_end_matches('/')) {
+            extra.push(ep.url.clone());
+        }
+    }
+    if extra.is_empty() {
+        extra.push(st.client.config().base_url);
+    }
+
+    let endpoints: Vec<Endpoint> = extra
+        .iter()
+        .filter_map(|u| Endpoint::from_url(u, EndpointKind::Unknown))
+        .collect();
+    let (best, probes) = select_best(&endpoints).await;
+
+    let try_urls: Vec<String> = if let Some(b) = best {
+        let mut v = vec![b.url.clone()];
+        for e in &endpoints {
+            if e.url != b.url {
+                v.push(e.url.clone());
+            }
+        }
+        v
+    } else {
+        endpoints.iter().map(|e| e.url.clone()).collect()
+    };
+
+    let mut last_err = "no reachable endpoint".to_string();
+    for url in try_urls {
+        st.client.set_base_url(url.clone());
+        let login = if email.is_empty() {
+            st.client.auto_login().await
+        } else {
+            st.client.login(email, password).await
+        };
+        match login {
+            Ok(s) => {
+                *st.remote_probe.write() = Default::default();
+                let kind = takton_mobile_core::path::classify_host(
+                    &takton_mobile_core::config::parse_base_url_parts(&url).1,
+                );
+                let _ = st.path.set_active(&url, kind);
+                // Refresh dual paths from local mesh knowledge (LAN IP drift).
+                let mesh = st.mesh.status();
+                let port = takton_mobile_core::config::parse_base_url_parts(&url).2;
+                let _ = st.path.refresh_candidates(
+                    mesh.lan_ip.as_deref(),
+                    mesh.tailscale_ip.as_deref(),
+                    Some(st.mesh.config().hostname.as_str()),
+                    port,
+                    "http",
+                );
+                return Ok(json!({
+                    "ok": true,
+                    "authenticated": true,
+                    "base_url": base_url_of(st),
+                    "user_email": s.user.email,
+                    "path_kind": kind.as_str(),
+                    "probes": probes,
+                    "path": st.path.profile_json(),
+                }));
+            }
+            Err(e) => {
+                last_err = e.to_string();
+            }
+        }
+    }
+    Err(last_err)
+}
+
+async fn try_deferred_claim(st: &AppState) -> Option<Value> {
+    use takton_mobile_core::path::claim_urls;
+    use takton_mobile_core::pair::PairPayload;
+
+    let profile = st.path.profile();
+    let d = profile.deferred_claim?;
+    if d.exp > 0 {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        if now > d.exp {
+            let _ = st.path.clear_deferred();
+            return None;
+        }
+    }
+    // Rebuild minimal payload for claim URL generation
+    let payload = if !d.qr.is_empty() {
+        PairPayload::parse_uri(&d.qr).ok()?
+    } else {
+        return None;
+    };
+    let shell_port = st.config.read().host_port;
+    let urls = claim_urls(&payload, shell_port);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .ok()?;
+    for claim_url in urls {
+        if let Ok(res) = client
+            .post(&claim_url)
+            .json(&json!({
+                "pair_id": d.pair_id,
+                "code": d.code,
+                "device_name": d.device_name,
+            }))
+            .send()
+            .await
+        {
+            if res.status().is_success() {
+                if let Ok(v) = res.json::<Value>().await {
+                    if v.get("ok") == Some(&json!(true)) {
+                        let token = v
+                            .get("token")
+                            .or_else(|| v.pointer("/device/token"))
+                            .and_then(|x| x.as_str())
+                            .map(|s| s.to_string());
+                        let _ = st.path.merge_from_payload(&payload, token, None);
+                        let _ = st.path.clear_deferred();
+                        return Some(v);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+// ── M1 pairing ──────────────────────────────────────────────────────────────
+
+async fn pair_start(State(st): State<AppState>, Json(body): Json<PairStartBody>) -> Json<Value> {
+    use takton_mobile_core::config::parse_base_url_parts;
+    use takton_mobile_core::mesh::parse_mode;
+    use takton_mobile_core::pair::MeshMode;
+
+    // Product default: auto dual-path, silent mesh bring-up for one-scan pairing.
+    let (_h0, _p0, _s0, mesh_default, _hn0) = st.mesh.pair_endpoint();
+    let mesh = body
+        .mesh
+        .as_deref()
+        .and_then(|m| parse_mode(m).ok())
+        .unwrap_or(if mesh_default == MeshMode::Off {
+            MeshMode::Auto
+        } else {
+            mesh_default
+        });
+
+    let (pc_scheme, pc_host, pc_port) = parse_base_url_parts(&st.client.config().base_url);
+    st.mesh.set_backend_port(pc_port);
+
+    // Spawn PC tsnet if key present; collect dual paths + phone join key (tsk).
+    let (lan_ip, ts_ip, mesh_hn, tsk) = st.mesh.prepare_for_pairing(mesh);
+    let (adv_host, _mesh_port, _scheme0, _, hostname) = st.mesh.pair_endpoint();
+
+    let host = body
+        .host
+        .clone()
+        .filter(|h| !h.trim().is_empty())
+        .unwrap_or_else(|| {
+            if adv_host != "127.0.0.1" && adv_host != "localhost" {
+                adv_host
+            } else if let Some(ref l) = lan_ip {
+                l.clone()
+            } else {
+                pc_host
+            }
+        });
+    let port = body.port.unwrap_or(pc_port);
+    let scheme = pc_scheme;
+    let name = body
+        .name
+        .clone()
+        .filter(|n| !n.trim().is_empty())
+        .or(Some(hostname.clone()));
+    let require = body
+        .require_confirm
+        .unwrap_or_else(|| st.mesh.config().require_pair_confirm);
+
+    let lan = lan_ip.clone();
+    let ts = ts_ip.clone();
+    let hn = Some(mesh_hn).filter(|s| !s.is_empty()).or(name.clone());
+
+    let (_pending, payload) = st.pair.start(
+        &host,
+        port,
+        &scheme,
+        mesh,
+        name,
+        require,
+        lan,
+        ts,
+        hn,
+        tsk.clone(),
+    );
+    // Redact tsk in JSON payload echo (QR string still needs it for the phone).
+    let mut payload_public = serde_json::to_value(&payload).unwrap_or(json!({}));
+    if let Some(obj) = payload_public.as_object_mut() {
+        if obj.get("tsk").and_then(|v| v.as_str()).map(|s| !s.is_empty()).unwrap_or(false) {
+            obj.insert("tsk".into(), json!("***"));
+        }
+    }
+    let seamless = tsk.as_ref().map(|s| !s.is_empty()).unwrap_or(false);
+    let hint = if seamless {
+        "用手机扫码即可连接 · 局域网与外出自动切换"
+    } else if ts_ip.is_some() {
+        "用手机扫码即可连接"
+    } else {
+        "用手机扫码连接（当前局域网）。外出使用请在本机启用一次远程。"
+    };
+    Json(json!({
+        "ok": true,
+        "pair_id": payload.pair_id,
+        "code": payload.code,
+        "exp": payload.exp,
+        "ttl_secs": takton_mobile_core::pair::PAIR_TTL_SECS,
+        "qr": payload.to_uri(),
+        "payload": payload_public,
+        "require_confirm": require,
+        "mesh": mesh.as_str(),
+        "base_url": payload.base_url(),
+        "endpoints": payload.endpoints().iter().map(|e| json!({
+            "url": e.url, "kind": e.kind.as_str()
+        })).collect::<Vec<_>>(),
+        "lan": lan_ip,
+        "ts": ts_ip,
+        "seamless": seamless,
+        "mesh_status": st.mesh.status_json(),
+        "hint": hint,
+    }))
+}
+
+async fn pair_status(State(st): State<AppState>, Path(id): Path<String>) -> Json<Value> {
+    match st.pair.status(&id) {
+        Some(v) => Json(json!({ "ok": true, "status": v })),
+        None => err_json("pair session not found"),
+    }
+}
+
+async fn pair_confirm(State(st): State<AppState>, Path(id): Path<String>) -> Json<Value> {
+    match st.pair.confirm(&id) {
+        Ok(()) => Json(json!({ "ok": true, "pair_id": id, "confirmed": true })),
+        Err(e) => err_json(e),
+    }
+}
+
+async fn pair_cancel(State(st): State<AppState>, Path(id): Path<String>) -> Json<Value> {
+    st.pair.cancel(&id);
+    Json(json!({ "ok": true, "pair_id": id, "cancelled": true }))
+}
+
+async fn pair_claim(State(st): State<AppState>, Json(body): Json<PairClaimBody>) -> Json<Value> {
+    let name = body.device_name.unwrap_or_else(|| "Phone".into());
+    match st.pair.claim(&body.pair_id, &body.code, &name) {
+        Ok((dev, pending)) => {
+            let payload = takton_mobile_core::pair::PairPayload {
+                v: 2,
+                pair_id: pending.pair_id.clone(),
+                code: pending.code.clone(),
+                host: pending.host.clone(),
+                port: pending.port,
+                exp: pending.exp,
+                mesh: pending.mesh,
+                scheme: pending.scheme.clone(),
+                name: pending.name.clone(),
+                lan: pending.lan.clone(),
+                ts: pending.ts.clone(),
+                hn: pending.hn.clone(),
+                tsk: None,
+            };
+            Json(json!({
+                "ok": true,
+                "device": dev,
+                "base_url": format!("{}://{}:{}", pending.scheme, pending.host, pending.port),
+                "mesh": pending.mesh.as_str(),
+                "token": dev.token,
+                "endpoints": payload.endpoints().iter().map(|e| e.url.clone()).collect::<Vec<_>>(),
+            }))
+        }
+        Err(e) => err_json(e),
+    }
+}
+
+/// Phone-side: parse QR → multi-host claim → soft-defer if offline → path select + login.
+async fn pair_apply(State(st): State<AppState>, Json(body): Json<PairApplyBody>) -> Json<Value> {
+    use takton_mobile_core::pair::PairPayload;
+    use takton_mobile_core::path::{claim_urls, DeferredClaim};
+
+    let payload = match PairPayload::parse_uri(&body.qr) {
+        Ok(p) => p,
+        Err(e) => return err_json(e),
+    };
+    // Soft-pair: allow storing past soft expiry for reconnect, but hard reject very old codes
+    let soft_expired = payload.is_expired();
+
+    let device_name = body
+        .device_name
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| {
+            std::env::var("TAKTON_DEVICE_NAME").unwrap_or_else(|_| "Takton Phone".into())
+        });
+
+    // Seamless mesh: if QR carries phone join key, embed tsnet before claim (no UI).
+    let mut mesh_join: Option<Value> = None;
+    if let Some(ref tsk) = payload.tsk {
+        if !tsk.is_empty() {
+            let hn = payload
+                .hn
+                .clone()
+                .map(|_| format!("takton-phone"));
+            match st.mesh.phone_join_from_pair_key(tsk, hn.as_deref()) {
+                Ok(v) => {
+                    mesh_join = Some(v.clone());
+                    // Brief wait so tsnet can assign 100.x before claim probes.
+                    if v.get("joined") == Some(&json!(true))
+                        || v.get("tailscale_ip").and_then(|x| x.as_str()).is_some()
+                    {
+                        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+                    } else {
+                        // Embed starting / binary missing: short wait still helps LAN claim order.
+                        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                    }
+                    // Refresh path with live TS IP if embed came up
+                    if let Some(ip) = st.mesh.status().tailscale_ip {
+                        let _ = st.path.refresh_candidates(
+                            payload.lan.as_deref(),
+                            Some(ip.as_str()),
+                            payload.hn.as_deref().or(payload.name.as_deref()),
+                            payload.port,
+                            &payload.scheme,
+                        );
+                    }
+                }
+                Err(e) => {
+                    mesh_join = Some(json!({"ok": false, "error": e.to_string()}));
+                }
+            }
+        }
+    } else {
+        // Still mark runtime up for path watch (LAN-only QR)
+        let _ = st.mesh.runtime_up(Some("takton-phone"), None, false);
+    }
+
+    let do_claim = body.claim.unwrap_or(true);
+    let mut claim_result: Option<Value> = None;
+    let mut device_token: Option<String> = None;
+    let mut deferred = false;
+    let mut last_err = String::new();
+
+    // Always persist multi-endpoint candidates from QR
+    let _ = st.path.merge_from_payload(&payload, None, None);
+
+    if do_claim && !soft_expired {
+        let shell_port = st.config.read().host_port;
+        let claim_url_list = claim_urls(&payload, shell_port);
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .ok();
+
+        if let Some(http) = client {
+            'urls: for claim_url in &claim_url_list {
+                for _attempt in 0..4 {
+                    let remote = http
+                        .post(claim_url)
+                        .json(&json!({
+                            "pair_id": payload.pair_id,
+                            "code": payload.code,
+                            "device_name": device_name,
+                        }))
+                        .send()
+                        .await;
+                    match remote {
+                        Ok(res) => {
+                            let status = res.status();
+                            let text = res.text().await.unwrap_or_default();
+                            if status.is_success() {
+                                if let Ok(v) = serde_json::from_str::<Value>(&text) {
+                                    if v.get("ok") == Some(&json!(true)) {
+                                        device_token = v
+                                            .get("token")
+                                            .or_else(|| v.pointer("/device/token"))
+                                            .and_then(|x| x.as_str())
+                                            .map(|s| s.to_string());
+                                        claim_result = Some(v);
+                                        last_err.clear();
+                                        break 'urls;
+                                    }
+                                    last_err = v
+                                        .get("error")
+                                        .and_then(|x| x.as_str())
+                                        .unwrap_or("claim failed")
+                                        .to_string();
+                                }
+                            } else if let Ok(v) = serde_json::from_str::<Value>(&text) {
+                                last_err = v
+                                    .get("error")
+                                    .and_then(|x| x.as_str())
+                                    .unwrap_or("claim failed")
+                                    .to_string();
+                            } else {
+                                last_err = format!("HTTP {status}");
+                            }
+                            if last_err.contains("waiting") || last_err.contains("confirm") {
+                                tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+                                continue;
+                            }
+                            break;
+                        }
+                        Err(e) => {
+                            last_err = e.to_string();
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if claim_result.is_none() {
+            match st.pair.claim(&payload.pair_id, &payload.code, &device_name) {
+                Ok((dev, _)) => {
+                    device_token = Some(dev.token.clone());
+                    claim_result = Some(json!({
+                        "ok": true,
+                        "device": dev,
+                        "via": "local",
+                    }));
+                    last_err.clear();
+                }
+                Err(e) => {
+                    if last_err.is_empty() {
+                        last_err = e.to_string();
+                    }
+                }
+            }
+        }
+
+        // Soft-defer: network unreachable / waiting confirm → keep QR for later claim
+        if claim_result.is_none() {
+            let networkish = last_err.contains("error sending")
+                || last_err.contains("Connect")
+                || last_err.contains("timed out")
+                || last_err.contains("Connection")
+                || last_err.contains("unreachable")
+                || last_err.contains("dns")
+                || last_err.contains("waiting")
+                || last_err.contains("not found")
+                || last_err.is_empty();
+            if networkish {
+                deferred = true;
+                let _ = st.path.set_deferred(DeferredClaim {
+                    pair_id: payload.pair_id.clone(),
+                    code: payload.code.clone(),
+                    exp: payload.exp,
+                    device_name: device_name.clone(),
+                    qr: body.qr.clone(),
+                });
+            } else if !last_err.is_empty() {
+                return err_json(last_err);
+            }
+        } else if let Some(t) = device_token.clone() {
+            let _ = st.path.merge_from_payload(&payload, Some(t), None);
+        }
+    } else if soft_expired && do_claim {
+        // Expired QR: still keep endpoints for reconnect if previously claimed
+        deferred = true;
+        last_err = "二维码已过期 · 端点已保存，可稍后在可达网络重试 claim".into();
+    }
+
+    // Path select + login across all QR endpoints
+    let candidates: Vec<String> = payload.endpoints().into_iter().map(|e| e.url).collect();
+    let email = body.email.unwrap_or_default();
+    let password = body.password.unwrap_or_default();
+
+    match try_connect_best(&st, &candidates, &email, &password).await {
+        Ok(mut v) => {
+            if let Some(obj) = v.as_object_mut() {
+                obj.insert("device_token".into(), json!(device_token));
+                obj.insert("claim".into(), json!(claim_result));
+                obj.insert("deferred_claim".into(), json!(deferred));
+                obj.insert("pair_id".into(), json!(payload.pair_id));
+                obj.insert("mesh".into(), json!(payload.mesh.as_str()));
+                obj.insert("endpoints".into(), json!(candidates));
+                obj.insert("mesh_join".into(), json!(mesh_join));
+                obj.insert("seamless".into(), json!(payload.tsk.as_ref().map(|s| !s.is_empty()).unwrap_or(false)));
+            }
+            Json(v)
+        }
+        Err(e) => {
+            // Pairing can succeed without immediate login (e.g. scan on 5G, claim deferred)
+            Json(json!({
+                "ok": true,
+                "authenticated": false,
+                "base_url": candidates.first().cloned().unwrap_or_else(|| payload.base_url()),
+                "mesh": payload.mesh.as_str(),
+                "device_token": device_token,
+                "claim": claim_result,
+                "deferred_claim": deferred,
+                "pair_id": payload.pair_id,
+                "endpoints": candidates,
+                "login_error": e,
+                "claim_error": if last_err.is_empty() { Value::Null } else { json!(last_err) },
+                "mesh_join": mesh_join,
+                "seamless": payload.tsk.as_ref().map(|s| !s.is_empty()).unwrap_or(false),
+                "hint": if deferred {
+                    "已保存连接信息 · 网络可用后将自动完成"
+                } else {
+                    "配对信息已记录 · 可稍后自动重连"
+                },
+                "path": st.path.profile_json(),
+            }))
+        }
+    }
+}
+
+async fn pair_devices(State(st): State<AppState>) -> Json<Value> {
+    let devices = st.pair.list_paired();
+    Json(json!({ "ok": true, "devices": devices }))
+}
+
+async fn pair_revoke(State(st): State<AppState>, Path(id): Path<String>) -> Json<Value> {
+    match st.pair.revoke(&id) {
+        Ok(()) => Json(json!({ "ok": true, "id": id })),
+        Err(e) => err_json(e),
+    }
+}
+
+async fn pair_pending(State(st): State<AppState>) -> Json<Value> {
+    Json(json!({
+        "ok": true,
+        "pending": st.pair.pending_snapshot(),
+    }))
+}
+
+// ── M2 mesh ─────────────────────────────────────────────────────────────────
+
+async fn mesh_status(State(st): State<AppState>) -> Json<Value> {
+    let pc_port = takton_mobile_core::config::parse_base_url_parts(&st.client.config().base_url).2;
+    st.mesh.set_backend_port(pc_port);
+    Json(st.mesh.status_json())
+}
+
+async fn mesh_set(State(st): State<AppState>, Json(body): Json<MeshSetBody>) -> Json<Value> {
+    use takton_mobile_core::mesh::parse_mode;
+    if let Some(m) = body.mode.as_deref() {
+        match parse_mode(m) {
+            Ok(mode) => {
+                if let Err(e) = st.mesh.set_mode(mode) {
+                    return err_json(e);
+                }
+            }
+            Err(e) => return err_json(e),
+        }
+    }
+    if let Some(h) = body.hostname.as_deref() {
+        if let Err(e) = st.mesh.set_hostname(h) {
+            return err_json(e);
+        }
+    }
+    if let Some(v) = body.require_pair_confirm {
+        if let Err(e) = st.mesh.set_require_confirm(v) {
+            return err_json(e);
+        }
+    }
+    let pc_port = takton_mobile_core::config::parse_base_url_parts(&st.client.config().base_url).2;
+    st.mesh.set_backend_port(pc_port);
+    Json(st.mesh.status_json())
+}
+
+async fn mesh_up(State(st): State<AppState>, Json(body): Json<MeshRuntimeBody>) -> Json<Value> {
+    match st.mesh.runtime_up(
+        body.hostname.as_deref(),
+        body.ifaces,
+        body.auth_key.unwrap_or(false),
+    ) {
+        Ok(rt) => Json(json!({
+            "ok": true,
+            "up": rt.up,
+            "hostname": rt.hostname,
+            "backend": rt.backend,
+            "detail": rt.detail,
+            "fingerprint": rt.fingerprint,
+            "ifaces": rt.ifaces,
+            "mesh": st.mesh.status_json(),
+        })),
+        Err(e) => err_json(e),
+    }
+}
+
+async fn mesh_down(State(st): State<AppState>) -> Json<Value> {
+    match st.mesh.runtime_down() {
+        Ok(rt) => Json(json!({ "ok": true, "up": rt.up, "detail": rt.detail })),
+        Err(e) => err_json(e),
+    }
+}
+
+async fn mesh_ifaces(State(st): State<AppState>, Json(body): Json<MeshRuntimeBody>) -> Json<Value> {
+    let ifaces = body.ifaces.unwrap_or_default();
+    match st.mesh.report_ifaces(ifaces) {
+        Ok((changed, rt)) => {
+            // On network change, refresh path candidates from mesh + re-probe best path
+            if changed {
+                let mesh = st.mesh.status();
+                let port = st.mesh.backend_port();
+                let _ = st.path.refresh_candidates(
+                    mesh.lan_ip.as_deref(),
+                    mesh.tailscale_ip.as_deref(),
+                    Some(st.mesh.config().hostname.as_str()),
+                    port,
+                    "http",
+                );
+            }
+            Json(json!({
+                "ok": true,
+                "changed": changed,
+                "fingerprint": rt.fingerprint,
+                "ifaces": rt.ifaces,
+                "last_change_at": rt.last_change_at,
+                "detail": rt.detail,
+            }))
+        }
+        Err(e) => err_json(e),
+    }
+}
+
+// ── Mesh embed / one-time auth ───────────────────────────────────────────────
+
+async fn mesh_auth(State(st): State<AppState>, Json(body): Json<MeshAuthBody>) -> Json<Value> {
+    let key = body.auth_key.unwrap_or_default();
+    if key.trim().is_empty() {
+        // clear
+        return match st.mesh.clear_auth_key() {
+            Ok(()) => Json(json!({"ok": true, "auth_key_set": false, "detail": "已清除"})),
+            Err(e) => err_json(e),
+        };
+    }
+    match st.mesh.set_auth_key(key.trim()) {
+        Ok(v) => Json(v),
+        Err(e) => err_json(e),
+    }
+}
+
+async fn mesh_embed_start(State(st): State<AppState>, Json(body): Json<MeshEmbedBody>) -> Json<Value> {
+    if let Some(role) = body.role.as_deref() {
+        let r = takton_mobile_core::TsnetRole::parse(role);
+        let _ = st.mesh.embed().set_role(r);
+    }
+    if let Some(h) = body.hostname.as_deref() {
+        let _ = st.mesh.set_hostname(h);
+    }
+    match st.mesh.start_embed() {
+        Ok(v) => Json(json!({"ok": true, "embed": v, "mesh": st.mesh.status_json()})),
+        Err(e) => err_json(e),
+    }
+}
+
+async fn mesh_embed_stop(State(st): State<AppState>) -> Json<Value> {
+    match st.mesh.stop_embed() {
+        Ok(v) => Json(json!({"ok": true, "embed": v})),
+        Err(e) => err_json(e),
+    }
+}
+
+async fn mesh_embed_status(State(st): State<AppState>) -> Json<Value> {
+    Json(st.mesh.embed().status_json())
+}
+
+// ── M4 multi-endpoint path ───────────────────────────────────────────────────
+
+async fn path_status(State(st): State<AppState>) -> Json<Value> {
+    Json(st.path.profile_json())
+}
+
+async fn path_probe(State(st): State<AppState>, Json(body): Json<PathProbeBody>) -> Json<Value> {
+    use takton_mobile_core::path::{select_best, Endpoint, EndpointKind};
+    let extras = body.candidates.unwrap_or_default();
+    let endpoints = st.path.candidate_urls(&extras);
+    let eps: Vec<Endpoint> = if endpoints.is_empty() {
+        extras
+            .iter()
+            .filter_map(|u| Endpoint::from_url(u, EndpointKind::Unknown))
+            .collect()
+    } else {
+        endpoints
+    };
+    let (best, probes) = select_best(&eps).await;
+    Json(json!({
+        "ok": true,
+        "best": best.as_ref().map(|e| json!({"url": e.url, "kind": e.kind.as_str()})),
+        "probes": probes,
+        "path": st.path.profile_json(),
+    }))
+}
+
+async fn path_reconnect(
+    State(st): State<AppState>,
+    Json(body): Json<PathReconnectBody>,
+) -> Json<Value> {
+    // Retry deferred claim first (scan on 5G, claim when home / on TS)
+    let claim_res = if body.claim.unwrap_or(true) {
+        try_deferred_claim(&st).await
+    } else {
+        None
+    };
+
+    let extras = body.candidates.unwrap_or_default();
+    let email = body.email.unwrap_or_default();
+    let password = body.password.unwrap_or_default();
+
+    // Refresh candidates from local mesh knowledge (DHCP drift)
+    let mesh = st.mesh.status();
+    let port = st.mesh.backend_port();
+    let _ = st.path.refresh_candidates(
+        mesh.lan_ip.as_deref(),
+        mesh.tailscale_ip.as_deref(),
+        Some(st.mesh.config().hostname.as_str()),
+        port,
+        "http",
+    );
+
+    match try_connect_best(&st, &extras, &email, &password).await {
+        Ok(mut v) => {
+            if let Some(obj) = v.as_object_mut() {
+                obj.insert("deferred_claim_result".into(), json!(claim_res));
+                obj.insert("reconnected".into(), json!(true));
+            }
+            Json(v)
+        }
+        Err(e) => Json(json!({
+            "ok": false,
+            "error": e,
+            "deferred_claim_result": claim_res,
+            "path": st.path.profile_json(),
+            "probes_hint": "all candidates unreachable",
+        })),
+    }
+}
+
+async fn path_refresh(State(st): State<AppState>, Json(body): Json<PathProbeBody>) -> Json<Value> {
+    let mesh = st.mesh.status();
+    let port = st.mesh.backend_port();
+    let _ = st.path.refresh_candidates(
+        mesh.lan_ip.as_deref(),
+        mesh.tailscale_ip.as_deref(),
+        Some(st.mesh.config().hostname.as_str()),
+        port,
+        "http",
+    );
+    if let Some(cands) = body.candidates {
+        let _ = st.path.merge_urls(&cands, takton_mobile_core::path::EndpointKind::Unknown);
+    }
+    Json(st.path.profile_json())
 }
 
 async fn device_heartbeat(State(st): State<AppState>, Path(id): Path<String>) -> Json<Value> {

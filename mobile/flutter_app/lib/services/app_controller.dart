@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../bridge/takton_bridge.dart';
 import '../models/app_models.dart';
+import 'mesh_runtime.dart';
 
 class AppController extends ChangeNotifier {
   AppController(this.bridge);
@@ -52,6 +53,18 @@ class AppController extends ChangeNotifier {
   String oauthCallback = '';
   bool llmHasKey = false;
   String llmKeyMasked = '';
+
+  // M1/M2/M3 pairing + mesh
+  Map<String, dynamic>? activePair; // host-side QR session
+  List<Map<String, dynamic>> pairedDevices = [];
+  Map<String, dynamic> mesh = {};
+  Map<String, dynamic> pathProfile = {};
+  String lastPairQr = '';
+  bool pairBusy = false;
+  bool pathBusy = false;
+  Timer? _pairPoll;
+  Timer? _meshPoll;
+  Timer? _pathPoll;
 
   Timer? _clockTimer;
   Timer? _approvePoll;
@@ -205,16 +218,40 @@ class AppController extends ChangeNotifier {
     dark = prefs.getString('takton-theme') == 'dark';
     voiceOn = prefs.getBool('takton-voice') ?? true;
     cameraOn = prefs.getBool('takton-camera') ?? true;
+    formBase = prefs.getString('takton-form-base') ?? formBase;
+    lastPairQr = prefs.getString('takton-last-pair-qr') ?? '';
     _tickClock();
     _clockTimer =
         Timer.periodic(const Duration(seconds: 30), (_) => _tickClock());
+
+    // M3/M4: bind mesh runtime + network-change failover
+    MeshRuntime.instance.bind(bridge);
+    MeshRuntime.instance.onNetworkChanged = (_) {
+      unawaited(onNetworkPathChanged());
+    };
+    unawaited(MeshRuntime.instance.up(hostname: 'takton-phone'));
+
     await refreshAll();
+    unawaited(refreshPath());
+    // M3: auto-reconnect last paired host when not authenticated
+    if (!pcConnected) {
+      await tryAutoReconnect();
+    }
     if (!pcConnected && surface == 'remote') {
       surface = 'local';
       unawaited(prefs.setString('takton-chat-mode', 'local'));
     }
     // Single Rust round-trip for mode + history
     await _applySwitchSurface(surface, ensureSession: false);
+    unawaited(refreshMesh());
+    unawaited(refreshPairedDevices());
+    // Background path health while remote may be used
+    _pathPoll?.cancel();
+    _pathPoll = Timer.periodic(const Duration(seconds: 45), (_) {
+      if (!pcConnected || surface == 'remote') {
+        unawaited(pathHealthTick());
+      }
+    });
     if (bridgeKind == 'http-fallback') {
       showToast('引擎 FFI 未加载 · 已回落 HTTP（$bridgeKind）');
     }
@@ -921,14 +958,23 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> connectPc() async {
+    final cands = _candidateList(extra: formBase);
     final r = await bridge.connect(
       baseUrl: formBase,
+      candidates: cands,
       email: formEmail.isEmpty ? null : formEmail,
       password: formPass.isEmpty ? null : formPass,
     );
     if (isOk(r)) {
-      showToast('已连接 PC');
+      final base = r['base_url']?.toString();
+      if (base != null && base.isNotEmpty) formBase = base;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('takton-form-base', formBase);
+      await _persistPathFrom(r);
+      final kind = r['path_kind']?.toString() ?? '';
+      showToast(kind.isEmpty ? '已连接 PC' : '已连接 PC · $kind');
       await refreshAll();
+      await refreshPath();
     } else {
       showToast(r['error']?.toString() ?? '连接失败');
     }
@@ -938,6 +984,442 @@ class AppController extends ChangeNotifier {
     await bridge.disconnect();
     showToast('已断开');
     await refreshAll();
+  }
+
+  // ── M1/M2/M3 Pairing ────────────────────────────────────────────────────
+
+  Future<void> refreshMesh() async {
+    try {
+      final r = await bridge.meshStatus();
+      if (isOk(r)) {
+        mesh = Map<String, dynamic>.from(r);
+        _notify();
+      }
+    } catch (_) {}
+  }
+
+  Future<void> setMeshMode(String mode) async {
+    final r = await bridge.meshSet(mode: mode);
+    if (isOk(r)) {
+      mesh = Map<String, dynamic>.from(r);
+      showToast('远程访问: ${r['mode'] ?? mode}');
+      _notify();
+    } else {
+      showToast(r['error']?.toString() ?? '设置失败');
+    }
+  }
+
+  Future<void> refreshPairedDevices() async {
+    try {
+      final r = await bridge.pairDevices();
+      if (isOk(r)) {
+        pairedDevices = ((r['devices'] as List?) ?? [])
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+        _notify();
+      }
+    } catch (_) {}
+  }
+
+
+  /// PC one-time setup: store auth key & start embedded mesh (silent after this).
+  Future<bool> enableRemoteOnce(String authKey) async {
+    final key = authKey.trim();
+    if (key.isEmpty) {
+      showToast('请粘贴远程访问密钥');
+      return false;
+    }
+    try {
+      final r = await bridge.meshAuth(authKey: key);
+      if (!isOk(r)) {
+        showToast(r['error']?.toString() ?? '启用失败');
+        return false;
+      }
+      await bridge.meshSet(mode: 'auto');
+      await bridge.meshEmbedStart(role: 'pc');
+      await refreshMesh();
+      showToast(r['detail']?.toString() ?? '远程已启用 · 之后扫码即可');
+      return true;
+    } catch (e) {
+      showToast('$e');
+      return false;
+    }
+  }
+
+  String _redactPairQr(String raw) {
+    // Drop tsk=… so join keys never linger on disk.
+    var s = raw.trim().replaceAll(RegExp(r'([?&])tsk=[^&]*'), '');
+    s = s.replaceAll('?&', '?');
+    if (s.endsWith('?') || s.endsWith('&')) {
+      s = s.substring(0, s.length - 1);
+    }
+    return s;
+  }
+
+  /// PC host only: generate QR for the phone to scan.
+  /// (Not shown in the phone app UI — kept for PC workbench / host shell.)
+  /// Mesh defaults to auto; tsnet starts silently when a one-time remote key
+  /// was configured (or env). QR may include phone join key.
+  Future<void> startPairing({String? meshMode}) async {
+    pairBusy = true;
+    _notify();
+    try {
+      // Product default: dual path always (LAN prefer, remote fallback).
+      final mode = meshMode ?? 'auto';
+      if (mode != 'off') {
+        try {
+          await bridge.meshSet(mode: mode);
+        } catch (_) {}
+      }
+      final r = await bridge.pairStart(
+        mesh: mode,
+        requireConfirm: mesh['require_pair_confirm'] == true,
+      );
+      if (!isOk(r)) {
+        showToast(r['error']?.toString() ?? '无法生成配对码');
+        return;
+      }
+      activePair = Map<String, dynamic>.from(r);
+      lastPairQr = r['qr']?.toString() ?? '';
+      final prefs = await SharedPreferences.getInstance();
+      // Store redacted form if possible — full QR stays in memory for display only.
+      await prefs.setString('takton-last-pair-qr', _redactPairQr(lastPairQr));
+      await refreshMesh();
+      _pairPoll?.cancel();
+      final pairId = r['pair_id']?.toString() ?? '';
+      _pairPoll = Timer.periodic(const Duration(seconds: 2), (_) async {
+        if (pairId.isEmpty) return;
+        final st = await bridge.pairStatus(pairId);
+        if (!isOk(st)) return;
+        final status = st['status'];
+        if (status is Map) {
+          activePair = {
+            ...?activePair,
+            'status': Map<String, dynamic>.from(status),
+          };
+          if (status['claimed'] == true) {
+            _pairPoll?.cancel();
+            showToast('手机已配对');
+            await refreshPairedDevices();
+            activePair = null;
+          }
+          _notify();
+        }
+      });
+      // Auto-expire UI after TTL (default 300s)
+      final ttl = (r['ttl_secs'] is num) ? (r['ttl_secs'] as num).toInt() : 300;
+      Future.delayed(Duration(seconds: ttl + 5), () {
+        if (activePair?['pair_id'] == pairId) {
+          activePair = null;
+          _pairPoll?.cancel();
+          _notify();
+        }
+      });
+      showToast(r['hint']?.toString() ?? '配对码已生成 · ${ttl}s 内有效');
+    } finally {
+      pairBusy = false;
+      _notify();
+    }
+  }
+
+  Future<void> confirmPair() async {
+    final id = activePair?['pair_id']?.toString();
+    if (id == null || id.isEmpty) return;
+    final r = await bridge.pairConfirm(id);
+    if (isOk(r)) {
+      showToast('已允许此手机');
+      activePair = {...?activePair, 'confirmed': true};
+      _notify();
+    } else {
+      showToast(r['error']?.toString() ?? '确认失败');
+    }
+  }
+
+  Future<void> cancelPair() async {
+    final id = activePair?['pair_id']?.toString();
+    if (id != null && id.isNotEmpty) {
+      await bridge.pairCancel(id);
+    }
+    _pairPoll?.cancel();
+    activePair = null;
+    _notify();
+  }
+
+  /// Phone role: apply scanned / pasted QR (M1 + M3 claim+connect).
+  Future<bool> applyPairQr(String raw) async {
+    final qr = raw.trim();
+    if (qr.isEmpty) {
+      showToast('请粘贴或扫描配对码');
+      return false;
+    }
+    pairBusy = true;
+    _notify();
+    try {
+      // M3: best-effort mesh up before claim (no-op on web)
+      try {
+        // ignore: avoid_dynamic_calls
+        await MeshRuntime.instance.up(hostname: 'takton-phone');
+      } catch (_) {}
+
+      final r = await bridge.pairApply(
+        qr: qr,
+        deviceName: 'Takton Phone',
+        email: formEmail.isEmpty ? null : formEmail,
+        password: formPass.isEmpty ? null : formPass,
+      );
+      if (!isOk(r)) {
+        showToast(r['error']?.toString() ?? '配对失败');
+        return false;
+      }
+      final base = r['base_url']?.toString();
+      if (base != null && base.isNotEmpty) {
+        formBase = base;
+      }
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('takton-form-base', formBase);
+      await prefs.setString('takton-last-pair-qr', qr);
+      if (r['device_token'] != null) {
+        await prefs.setString(
+            'takton-device-token', r['device_token'].toString());
+      }
+      // Never persist phone join key (tsk) to disk after apply.
+      lastPairQr = _redactPairQr(qr);
+      await prefs.setString('takton-last-pair-qr', lastPairQr);
+      await _persistPathFrom(r);
+      // Store multi endpoints for offline reconnect
+      final eps = r['endpoints'];
+      if (eps is List) {
+        await prefs.setStringList(
+          'takton-path-candidates',
+          eps.map((e) => e.toString()).where((s) => s.isNotEmpty).toList(),
+        );
+      }
+      await refreshAll();
+      await refreshPairedDevices();
+      await refreshPath();
+      await refreshMesh();
+      if (r['authenticated'] == true) {
+        final kind = r['path_kind']?.toString() ?? '';
+        final seamless = r['seamless'] == true;
+        showToast(
+          seamless
+              ? (kind.isEmpty ? '已连接 · 外出自动切换' : '已连接 · $kind')
+              : (kind.isEmpty ? '配对成功 · 已连接 PC' : '配对成功 · $kind'),
+        );
+        surface = 'remote';
+        await prefs.setString('takton-chat-mode', 'remote');
+        await _applySwitchSurface('remote', ensureSession: true);
+      } else if (r['deferred_claim'] == true) {
+        showToast(r['hint']?.toString() ?? '已保存 · 网络可用后自动完成');
+      } else {
+        final hint = r['hint']?.toString() ??
+            r['login_error']?.toString() ??
+            '配对完成 · 请登录';
+        showToast(hint);
+      }
+      return true;
+    } finally {
+      pairBusy = false;
+      _notify();
+    }
+  }
+
+  Future<void> revokePaired(String id) async {
+    final r = await bridge.pairRevoke(id);
+    if (isOk(r)) {
+      showToast('已解除配对');
+      await refreshPairedDevices();
+    } else {
+      showToast(r['error']?.toString() ?? '解绑失败');
+    }
+  }
+
+  /// M3/M4: reconnect with multi-endpoint probe (LAN → host → TS).
+  Future<void> tryAutoReconnect() async {
+    final prefs = await SharedPreferences.getInstance();
+    final base = prefs.getString('takton-form-base');
+    final stored = prefs.getStringList('takton-path-candidates') ?? const [];
+    if ((base == null || base.isEmpty) && stored.isEmpty) {
+      // Still try path profile from Rust store
+    } else if (base != null && base.isNotEmpty) {
+      formBase = base;
+    }
+    try {
+      try {
+        await MeshRuntime.instance.up(hostname: 'takton-phone');
+      } catch (_) {}
+      final cands = <String>[
+        if (base != null && base.isNotEmpty) base,
+        ...stored,
+      ];
+      final r = await bridge.pathReconnect(
+        candidates: cands,
+        email: formEmail.isEmpty ? null : formEmail,
+        password: formPass.isEmpty ? null : formPass,
+        claim: true,
+      );
+      if (isOk(r) && r['authenticated'] == true) {
+        final b = r['base_url']?.toString();
+        if (b != null && b.isNotEmpty) {
+          formBase = b;
+          await prefs.setString('takton-form-base', formBase);
+        }
+        await _persistPathFrom(r);
+        final kind = r['path_kind']?.toString() ?? '';
+        showToast(kind.isEmpty ? '已自动重连 PC' : '已重连 · $kind');
+        await refreshAll();
+        await refreshPath();
+        return;
+      }
+      // Fallback: single base connect
+      if (base != null && base.isNotEmpty) {
+        final r2 = await bridge.connect(baseUrl: base, candidates: cands);
+        if (isOk(r2)) {
+          showToast('已自动重连 PC');
+          await refreshAll();
+          return;
+        }
+      }
+      final auto = await bridge.autoLogin();
+      if (isOk(auto)) {
+        showToast('已自动重连 PC');
+        await refreshAll();
+      }
+    } catch (_) {}
+  }
+
+  Future<void> refreshPath() async {
+    try {
+      final r = await bridge.pathStatus();
+      if (isOk(r)) {
+        pathProfile = Map<String, dynamic>.from(r);
+        final active = r['active_url']?.toString();
+        if (active != null && active.isNotEmpty) formBase = active;
+        _notify();
+      }
+    } catch (_) {}
+  }
+
+  List<String> _candidateList({String? extra}) {
+    final out = <String>[];
+    void add(String? s) {
+      final v = s?.trim() ?? '';
+      if (v.isEmpty) return;
+      if (!out.contains(v)) out.add(v);
+    }
+    add(extra);
+    add(formBase);
+    add(pathProfile['active_url']?.toString());
+    final eps = pathProfile['endpoints'];
+    if (eps is List) {
+      for (final e in eps) {
+        if (e is Map) add(e['url']?.toString());
+        else add(e?.toString());
+      }
+    }
+    return out;
+  }
+
+  Future<void> _persistPathFrom(Map<String, dynamic> r) async {
+    final prefs = await SharedPreferences.getInstance();
+    final path = r['path'];
+    if (path is Map) {
+      pathProfile = Map<String, dynamic>.from(path);
+      final eps = path['endpoints'];
+      if (eps is List) {
+        final list = <String>[];
+        for (final e in eps) {
+          if (e is Map && e['url'] != null) list.add(e['url'].toString());
+        }
+        if (list.isNotEmpty) {
+          await prefs.setStringList('takton-path-candidates', list);
+        }
+      }
+    }
+    final eps2 = r['endpoints'];
+    if (eps2 is List) {
+      await prefs.setStringList(
+        'takton-path-candidates',
+        eps2.map((e) => e.toString()).where((s) => s.isNotEmpty).toList(),
+      );
+    }
+  }
+
+  /// Wi‑Fi ↔ 5G / interface change → re-probe endpoints + deferred claim.
+  Future<void> onNetworkPathChanged() async {
+    if (pathBusy) return;
+    pathBusy = true;
+    try {
+      await refreshMesh();
+      final r = await bridge.pathReconnect(
+        candidates: _candidateList(),
+        email: formEmail.isEmpty ? null : formEmail,
+        password: formPass.isEmpty ? null : formPass,
+        claim: true,
+      );
+      if (isOk(r) && r['authenticated'] == true) {
+        final b = r['base_url']?.toString();
+        if (b != null && b.isNotEmpty) {
+          formBase = b;
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('takton-form-base', formBase);
+        }
+        await _persistPathFrom(r);
+        final kind = r['path_kind']?.toString() ?? 'path';
+        if (!pcConnected) {
+          showToast('网络已切换 · 已重连 ($kind)');
+        }
+        await refreshAll();
+      }
+      await refreshPath();
+    } catch (_) {
+    } finally {
+      pathBusy = false;
+      _notify();
+    }
+  }
+
+  /// Periodic health: if remote surface but unauthenticated, try reconnect.
+  Future<void> pathHealthTick() async {
+    if (pathBusy) return;
+    try {
+      await MeshRuntime.instance.checkNow();
+      if (!pcConnected) {
+        await tryAutoReconnect();
+        return;
+      }
+      // Soft probe — if best path differs, flip without full re-login noise
+      final probe = await bridge.pathProbe(candidates: _candidateList());
+      if (!isOk(probe)) return;
+      final best = probe['best'];
+      final bestUrl = best is Map ? best['url']?.toString() : null;
+      if (bestUrl != null &&
+          bestUrl.isNotEmpty &&
+          bestUrl.replaceAll(RegExp(r'/+\$'), '') != formBase.replaceAll(RegExp(r'/+\$'), '')) {
+        // Prefer better path (usually LAN when home)
+        final r = await bridge.pathReconnect(
+          candidates: _candidateList(extra: bestUrl),
+          claim: false,
+        );
+        if (isOk(r) && r['authenticated'] == true) {
+          final b = r['base_url']?.toString();
+          if (b != null && b.isNotEmpty) formBase = b;
+          await _persistPathFrom(r);
+          await refreshAll();
+        }
+      }
+    } catch (_) {}
+  }
+
+  /// App resume / tab focus hook.
+  Future<void> onAppResumed() async {
+    await MeshRuntime.instance.checkNow();
+    if (!pcConnected) {
+      await tryAutoReconnect();
+    } else {
+      await pathHealthTick();
+    }
   }
 
   Future<void> saveLocalLlm() async {
@@ -990,6 +1472,10 @@ class AppController extends ChangeNotifier {
     _clockTimer?.cancel();
     _approvePoll?.cancel();
     _streamNotifyTimer?.cancel();
+    _pairPoll?.cancel();
+    _meshPoll?.cancel();
+    _pathPoll?.cancel();
+    MeshRuntime.instance.dispose();
     bridge.dispose();
     super.dispose();
   }

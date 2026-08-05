@@ -22,13 +22,38 @@ Future<void> main() async {
   runApp(
     ChangeNotifierProvider.value(
       value: ctrl,
-      child: const TaktonApp(),
+      child: TaktonApp(controller: ctrl),
     ),
   );
 }
 
-class TaktonApp extends StatelessWidget {
-  const TaktonApp({super.key});
+class TaktonApp extends StatefulWidget {
+  const TaktonApp({super.key, required this.controller});
+  final AppController controller;
+
+  @override
+  State<TaktonApp> createState() => _TaktonAppState();
+}
+
+class _TaktonAppState extends State<TaktonApp> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      widget.controller.onAppResumed();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {

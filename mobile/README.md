@@ -3,50 +3,58 @@
 像素控制台手机端 · **业务全 Rust** · **壳为 Flutter**
 
 ```
-Flutter UI  (pixel console · 四 Tab · 双模式 · 长按会话)
+Flutter UI  (pixel console · 四 Tab · 双模式 · 扫码配对)
    │  HTTP (web)  /  FFI C ABI (native)
    ▼
-takton-mobile-ffi   暴露方法：takton_call / takton_start_host / takton_mode_offline …
-   │
-   ▼
 takton-mobile-host  (axum · /api/mobile/*)
-   ├── core: 本机 LLM · PC 代理 · ModeSnapshot · session meta · media
+   ├── core: 本机 LLM · PC 代理 · ModeSnapshot · pair · mesh
    └── 静态：Flutter web build
 ```
 
-## 双模式（严格分离）
+## 双模式
 
 | 模式 | 入口 | 需要 | 能力 |
 |------|------|------|------|
-| **本机对话** | 顶栏「本机对话」 | API Key 供应商 | 直连模型 SSE 流式 |
+| **本机对话** | 顶栏「本机对话」 | API Key 供应商 | 直连模型 SSE |
 | **远端 Agent** | 顶栏「远端 Agent」 | 已连 PC | 工具链、审批、OAuth |
 
-不会在本机未就绪时静默改道远端。
+## 扫码配对（M1–M3）
 
-## Flutter 调用 Rust 的方式
+```
+PC 工作台「匹配手机」→ 生成二维码 (takton://pair?…)
+手机 App「连接」→ 扫描 / 粘贴 → claim + login → 自动重连
+```
 
-### Web / 预览
-`HttpTaktonBridge` → 同源 `POST/GET /api/mobile/*`（逻辑全在 host）
+| 端 | 职责 |
+|----|------|
+| **PC** | 出码、mesh 密钥一次配置、允许/取消配对 |
+| **手机 App** | 仅扫码/粘贴与登录，**不**生成二维码 |
 
-### Android / iOS（原生）
-`FfiTaktonBridge` → `libtakton_mobile_ffi`:
+| 阶段 | 能力 | 接口 |
+|------|------|------|
+| **M1** | QR 配对协议、出码/扫码、device token | `/api/mobile/pair/*` |
+| **M2** | 远程访问模式 off/lan/ts · tsnet 侧车 | `/api/mobile/mesh` · `sidecar/tsnet` |
+| **M3** | 配对持久化 · 冷启动自动重连 · mesh facade | SharedPreferences + `MeshRuntime` |
 
-| C ABI | 说明 |
-|-------|------|
-| `takton_start_host(port)` | 启动内嵌 Rust host，返回 `{port,base}` |
-| `takton_attach_host(base)` | 挂到已有 host |
-| `takton_call(method, args_json)` | 统一方法分发（见 `crates/ffi/src/lib.rs`） |
-| `takton_mode_offline(...)` | 纯 Rust ModeSnapshot |
-| `takton_motion()` | 动效 tokens |
-| `takton_free(ptr)` | 释放返回字符串 |
+### 用户路径
+
+1. **推荐 mesh=自动**：QR 同时写入 LAN + Tailscale + 主机名；手机优先局域网，失败再 TS  
+2. **同一 Wi‑Fi**：即使用户只选局域网，出码仍尽量附带 TS（若已检测到）便于出门用  
+3. **无公网 IP / 外网**：PC 跑系统 Tailscale 或 `sidecar/tsnet`；手机侧 mesh 会上报网卡指纹并在 Wi‑Fi↔5G 时自动 `path/reconnect`  
+4. **扫码时网络不可达**：软配对保存端点与 claim，回到可达网络后自动完成（TTL 5 分钟）  
+5. **LAN IP DHCP 漂移**：成功连上后用当前 mesh 状态刷新候选；优先 hostname / TS 稳定地址  
+
+### 配对 URI
+
+```
+takton://pair?v=2&pair_id=…&code=…&host=…&port=8090&exp=…&mesh=auto|lan|ts&scheme=http&lan=…&ts=…&hn=…
+```
 
 ## 运行（预览）
 
 ```bash
-# 1) Flutter web
 cd flutter_app && flutter pub get && flutter build web --release
-# 2) Rust host 托管 Flutter 产物
-export TAKTON_MOBILE_UI=/workspace/takton-mobile/flutter_app/build/web
+export TAKTON_MOBILE_UI=$PWD/build/web
 export TAKTON_BASE_URL=http://127.0.0.1:8090
 cargo run -p takton-mobile-host --release
 ```
@@ -55,8 +63,8 @@ cargo run -p takton-mobile-host --release
 
 ```
 flutter_app/          Flutter 壳
-crates/core/          平台无关业务
+crates/core/          平台无关业务（含 pair / mesh）
 crates/host/          axum API + 静态 UI
 crates/ffi/           C ABI for Flutter
-crates/web/           旧 Dioxus UI（归档参考）
+sidecar/tsnet/        Go tsnet 侧车（M2，PC 上构建）
 ```

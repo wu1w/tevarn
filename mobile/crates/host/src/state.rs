@@ -7,6 +7,9 @@ use std::time::{Duration, Instant};
 use takton_mobile_core::chat::ChatConnection;
 use takton_mobile_core::local_llm::LocalLlmService;
 use takton_mobile_core::media::MediaStore;
+use takton_mobile_core::mesh::MeshService;
+use takton_mobile_core::pair::PairService;
+use takton_mobile_core::path::PathService;
 use takton_mobile_core::session_meta::SessionMetaStore;
 use takton_mobile_core::storage::Store;
 use takton_mobile_core::{AppConfig, TaktonClient};
@@ -64,6 +67,12 @@ pub struct AppState {
     pub meta_store: Arc<Store>,
     /// cached remote catalog/runtime probes
     pub remote_probe: Arc<RwLock<RemoteProbeCache>>,
+    /// QR pairing (M1)
+    pub pair: Arc<PairService>,
+    /// Remote access / mesh (M2)
+    pub mesh: Arc<MeshService>,
+    /// Multi-endpoint path failover (M4)
+    pub path: Arc<PathService>,
     /// Per-session WS stream delta coalescers
     delta_coalesce: Arc<DashMap<String, Arc<Mutex<DeltaCoalesceInner>>>>,
 }
@@ -77,6 +86,13 @@ impl AppState {
         let local_llm = LocalLlmService::new(store);
         let media = MediaStore::open(&config.data_dir).expect("open media store");
         let meta_store = Store::open(&config.data_dir).expect("open meta store");
+        let pair_store = Store::open(config.data_dir.join("pair")).expect("open pair store");
+        let mesh_store = Store::open(config.data_dir.join("mesh")).expect("open mesh store");
+        let path_store = Store::open(config.data_dir.join("path")).expect("open path store");
+        let pair = PairService::open(pair_store);
+        let backend_port = config.backend_port();
+        let mesh = MeshService::open(mesh_store, backend_port);
+        let path = PathService::open(path_store);
         Self {
             client,
             config: Arc::new(RwLock::new(config)),
@@ -88,6 +104,9 @@ impl AppState {
             media: Arc::new(media),
             meta_store: Arc::new(meta_store),
             remote_probe: Arc::new(RwLock::new(RemoteProbeCache::default())),
+            pair: Arc::new(pair),
+            mesh: Arc::new(mesh),
+            path: Arc::new(path),
             delta_coalesce: Arc::new(DashMap::new()),
         }
     }

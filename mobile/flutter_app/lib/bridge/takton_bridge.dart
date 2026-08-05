@@ -27,12 +27,14 @@ abstract class TaktonBridge {
       });
 
   Future<Map<String, dynamic>> connect({
-    required String baseUrl,
+    String? baseUrl,
+    List<String>? candidates,
     String? email,
     String? password,
   }) =>
       call('connect', {
-        'base_url': baseUrl,
+        if (baseUrl != null && baseUrl.isNotEmpty) 'base_url': baseUrl,
+        if (candidates != null && candidates.isNotEmpty) 'candidates': candidates,
         if (email != null) 'email': email,
         if (password != null) 'password': password,
       });
@@ -78,6 +80,120 @@ abstract class TaktonBridge {
         if (scope != null) 'scope': scope,
       });
   Future<Map<String, dynamic>> devices() => call('devices');
+
+  // M1 QR pairing
+  Future<Map<String, dynamic>> pairStart({
+    String? mesh,
+    bool? requireConfirm,
+    String? host,
+    int? port,
+    String? name,
+  }) =>
+      call('pair_start', {
+        if (mesh != null) 'mesh': mesh,
+        if (requireConfirm != null) 'require_confirm': requireConfirm,
+        if (host != null) 'host': host,
+        if (port != null) 'port': port,
+        if (name != null) 'name': name,
+      });
+  Future<Map<String, dynamic>> pairStatus(String pairId) =>
+      call('pair_status', {'pair_id': pairId});
+  Future<Map<String, dynamic>> pairConfirm(String pairId) =>
+      call('pair_confirm', {'pair_id': pairId});
+  Future<Map<String, dynamic>> pairCancel(String pairId) =>
+      call('pair_cancel', {'pair_id': pairId});
+  Future<Map<String, dynamic>> pairClaim({
+    required String pairId,
+    required String code,
+    String? deviceName,
+  }) =>
+      call('pair_claim', {
+        'pair_id': pairId,
+        'code': code,
+        if (deviceName != null) 'device_name': deviceName,
+      });
+  Future<Map<String, dynamic>> pairApply({
+    required String qr,
+    String? deviceName,
+    String? email,
+    String? password,
+    bool claim = true,
+  }) =>
+      call('pair_apply', {
+        'qr': qr,
+        if (deviceName != null) 'device_name': deviceName,
+        if (email != null) 'email': email,
+        if (password != null) 'password': password,
+        'claim': claim,
+      });
+  Future<Map<String, dynamic>> pairDevices() => call('pair_devices');
+  Future<Map<String, dynamic>> pairPending() => call('pair_pending');
+  Future<Map<String, dynamic>> pairRevoke(String id) =>
+      call('pair_revoke', {'id': id});
+
+  // M2 mesh / remote access
+  Future<Map<String, dynamic>> meshStatus() => call('mesh');
+  Future<Map<String, dynamic>> meshSet({
+    String? mode,
+    String? hostname,
+    bool? requirePairConfirm,
+  }) =>
+      call('mesh_set', {
+        if (mode != null) 'mode': mode,
+        if (hostname != null) 'hostname': hostname,
+        if (requirePairConfirm != null)
+          'require_pair_confirm': requirePairConfirm,
+      });
+  Future<Map<String, dynamic>> meshUp({
+    String? hostname,
+    List<String>? ifaces,
+    bool? authKey,
+  }) =>
+      call('mesh_up', {
+        if (hostname != null) 'hostname': hostname,
+        if (ifaces != null) 'ifaces': ifaces,
+        if (authKey != null) 'auth_key': authKey,
+      });
+  Future<Map<String, dynamic>> meshDown() => call('mesh_down');
+  Future<Map<String, dynamic>> meshIfaces(List<String> ifaces) =>
+      call('mesh_ifaces', {'ifaces': ifaces});
+  Future<Map<String, dynamic>> meshAuth({String? authKey}) =>
+      call('mesh_auth', {
+        if (authKey != null) 'auth_key': authKey,
+      });
+  Future<Map<String, dynamic>> meshEmbedStart({
+    String? role,
+    String? hostname,
+  }) =>
+      call('mesh_embed_start', {
+        if (role != null) 'role': role,
+        if (hostname != null) 'hostname': hostname,
+      });
+  Future<Map<String, dynamic>> meshEmbedStop() => call('mesh_embed_stop');
+  Future<Map<String, dynamic>> meshEmbedStatus() => call('mesh_embed');
+
+  Future<Map<String, dynamic>> pathStatus() => call('path');
+  Future<Map<String, dynamic>> pathProbe({List<String>? candidates}) =>
+      call('path_probe', {
+        if (candidates != null) 'candidates': candidates,
+      });
+  Future<Map<String, dynamic>> pathReconnect({
+    List<String>? candidates,
+    String? email,
+    String? password,
+    bool claim = true,
+  }) =>
+      call('path_reconnect', {
+        if (candidates != null) 'candidates': candidates,
+        if (email != null) 'email': email,
+        if (password != null) 'password': password,
+        'claim': claim,
+      });
+  Future<Map<String, dynamic>> pathRefresh({List<String>? candidates}) =>
+      call('path_refresh', {
+        if (candidates != null) 'candidates': candidates,
+      });
+
   Future<Map<String, dynamic>> processes() => call('processes');
   Future<Map<String, dynamic>> processStop(String id) =>
       call('process_stop', {'id': id});
