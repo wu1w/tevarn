@@ -21,3 +21,5 @@ tokio-tungstenite.workspace = true
 tracing.workspace = true
 url.workspace = true
 uuid.workspace = true
+sha2 = "0.10"
+urlencoding = "2"

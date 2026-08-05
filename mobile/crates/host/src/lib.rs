@@ -109,32 +109,40 @@ pub async fn start_host(
     if HOST_RUNNING.swap(true, Ordering::SeqCst) {
         anyhow::bail!("host already running");
     }
-    std::fs::create_dir_all(&config.data_dir).ok();
-    let client = TaktonClient::new(config.clone()).context("init client")?;
-    let state = AppState::new(client, config.clone());
+    let result = async {
+        std::fs::create_dir_all(&config.data_dir).ok();
+        let client = TaktonClient::new(config.clone()).context("init client")?;
+        let state = AppState::new(client, config.clone()).context("init app state")?;
 
-    {
-        let c = state.client.clone();
-        tokio::spawn(async move {
-            if c.is_authenticated() {
-                return;
-            }
-            let _ = c.auto_login().await;
+        {
+            let c = state.client.clone();
+            tokio::spawn(async move {
+                if c.is_authenticated() {
+                    return;
+                }
+                let _ = c.auto_login().await;
+            });
+        }
+
+        let app = build_app(state, ui_dir);
+        let addr = SocketAddr::new(
+            config.host_bind.parse().unwrap_or([0, 0, 0, 0].into()),
+            config.host_port,
+        );
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        let port = listener.local_addr()?.port();
+        let handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+            HOST_RUNNING.store(false, Ordering::SeqCst);
         });
+        Ok((port, handle))
     }
+    .await;
 
-    let app = build_app(state, ui_dir);
-    let addr = SocketAddr::new(
-        config.host_bind.parse().unwrap_or([0, 0, 0, 0].into()),
-        config.host_port,
-    );
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    let port = listener.local_addr()?.port();
-    let handle = tokio::spawn(async move {
-        let _ = axum::serve(listener, app).await;
+    if result.is_err() {
         HOST_RUNNING.store(false, Ordering::SeqCst);
-    });
-    Ok((port, handle))
+    }
+    result
 }
 
 pub fn resolve_ui_dir() -> PathBuf {

@@ -7,6 +7,7 @@ use once_cell::sync::OnceCell;
 use serde_json::{json, Value};
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
+use std::path::PathBuf;
 use std::sync::Mutex;
 use takton_mobile_core::AppConfig;
 use takton_mobile_host::{resolve_ui_dir, start_host, EngineHandle};
@@ -17,6 +18,7 @@ static ENGINE: OnceCell<Mutex<Option<EngineHandle>>> = OnceCell::new();
 fn runtime() -> &'static tokio::runtime::Runtime {
     RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
             .enable_all()
             .build()
             .expect("tokio runtime")
@@ -45,9 +47,21 @@ fn cstr(p: *const c_char) -> Result<String, String> {
         .map_err(|e| e.to_string())
 }
 
-/// Start embedded host on preferred port (0 = OS pick). Returns JSON `{ok, base, port}`.
-#[no_mangle]
-pub extern "C" fn takton_start_host(preferred_port: i32) -> *mut c_char {
+fn start_host_inner(preferred_port: i32, data_dir: Option<PathBuf>) -> *mut c_char {
+    // Already running? Return existing base if we have one.
+    if let Ok(g) = engine_slot().lock() {
+        if let Some(eng) = g.as_ref() {
+            return to_c_string(
+                &json!({
+                    "ok": true,
+                    "base": *eng.base,
+                    "reused": true,
+                })
+                .to_string(),
+            );
+        }
+    }
+
     let rt = runtime();
     match rt.block_on(async {
         let mut config = AppConfig::default();
@@ -58,10 +72,17 @@ pub extern "C" fn takton_start_host(preferred_port: i32) -> *mut c_char {
         } else {
             0
         };
+        if let Some(d) = data_dir {
+            config.data_dir = d;
+        }
+        // Ensure dir exists before host start
+        let _ = std::fs::create_dir_all(&config.data_dir);
+        let data_dir_s = config.data_dir.display().to_string();
         let ui = resolve_ui_dir();
-        start_host(config, ui).await
+        let result = start_host(config, ui).await;
+        result.map(|(port, handle)| (port, handle, data_dir_s))
     }) {
-        Ok((port, _handle)) => {
+        Ok((port, _handle, data_dir_s)) => {
             let eng = EngineHandle::new(port);
             *engine_slot().lock().unwrap() = Some(eng.clone());
             to_c_string(
@@ -69,12 +90,34 @@ pub extern "C" fn takton_start_host(preferred_port: i32) -> *mut c_char {
                     "ok": true,
                     "port": port,
                     "base": *eng.base,
+                    "data_dir": data_dir_s,
                 })
                 .to_string(),
             )
         }
         Err(e) => err_json(e),
     }
+}
+
+/// Start embedded host on preferred port (0 = OS pick). Returns JSON `{ok, base, port}`.
+#[no_mangle]
+pub extern "C" fn takton_start_host(preferred_port: i32) -> *mut c_char {
+    start_host_inner(preferred_port, None)
+}
+
+/// Start host with an explicit writable data directory (required on Android).
+/// `data_dir` is a UTF-8 C string path from Flutter path_provider.
+#[no_mangle]
+pub extern "C" fn takton_start_host2(
+    preferred_port: i32,
+    data_dir: *const c_char,
+) -> *mut c_char {
+    let dir = match cstr(data_dir) {
+        Ok(s) if !s.is_empty() => Some(PathBuf::from(s)),
+        Ok(_) => None,
+        Err(e) => return err_json(e),
+    };
+    start_host_inner(preferred_port, dir)
 }
 
 /// Generic method call: `method` name + JSON `args` object.

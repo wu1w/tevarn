@@ -63,7 +63,7 @@ class SessionDrawer extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const SizedBox(height: 36),
+                  SizedBox(height: MediaQuery.paddingOf(context).top + 8),
                   // Brand row
                   Padding(
                     padding: const EdgeInsets.fromLTRB(14, 8, 8, 4),

@@ -18,9 +18,6 @@ pub struct AppConfig {
 
 impl Default for AppConfig {
     fn default() -> Self {
-        let data_dir = dirs::data_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("takton-mobile");
         Self {
             base_url: std::env::var("TAKTON_BASE_URL")
                 .unwrap_or_else(|_| "http://127.0.0.1:8090".into()),
@@ -30,8 +27,48 @@ impl Default for AppConfig {
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(8080),
             platform: PlatformKind::detect(),
-            data_dir,
+            data_dir: default_data_dir(),
         }
+    }
+}
+
+/// Writable data dir for every platform (Android included).
+///
+/// `dirs::data_dir()` is often `None` on Android → previous code used `.` which
+/// is not writable and caused `Store::open` panics → white screen / crash.
+pub fn default_data_dir() -> PathBuf {
+    if let Ok(p) = std::env::var("TAKTON_DATA_DIR") {
+        let pb = PathBuf::from(p);
+        if !pb.as_os_str().is_empty() {
+            return pb;
+        }
+    }
+
+    // Prefer known-good app-private path on Android when Flutter didn't pass one.
+    #[cfg(target_os = "android")]
+    {
+        let candidates = [
+            PathBuf::from("/data/user/0/dev.takton.takton_mobile/files/takton-mobile"),
+            PathBuf::from("/data/data/dev.takton.takton_mobile/files/takton-mobile"),
+            std::env::temp_dir().join("takton-mobile"),
+        ];
+        for c in candidates {
+            if std::fs::create_dir_all(&c).is_ok() {
+                return c;
+            }
+        }
+        return std::env::temp_dir().join("takton-mobile");
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        if let Some(d) = dirs::data_dir() {
+            return d.join("takton-mobile");
+        }
+        if let Some(h) = dirs::home_dir() {
+            return h.join(".local/share/takton-mobile");
+        }
+        std::env::temp_dir().join("takton-mobile")
     }
 }
 

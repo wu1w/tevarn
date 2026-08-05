@@ -61,7 +61,8 @@ class PhoneShell extends StatelessWidget {
             children: [
               Column(
                 children: [
-                  _StatusBar(clock: c.clock, ink: ink),
+                  // System status bar only — no fake time/signal/battery chrome
+                  SizedBox(height: pad.top),
                   Expanded(
                     child: IndexedStack(
                       sizing: StackFit.expand,
@@ -85,7 +86,7 @@ class PhoneShell extends StatelessWidget {
                 ],
               ),
               Positioned(
-                top: 8,
+                top: pad.top + 4,
                 left: 0,
                 right: 0,
                 child: Center(
@@ -242,7 +243,7 @@ class PhoneShell extends StatelessWidget {
               // Status cards stack (notification / Dynamic Island feed)
               if (c.statusCards.isNotEmpty)
                 Positioned(
-                  top: 44,
+                  top: pad.top + 36,
                   left: 12,
                   right: 12,
                   child: Column(
@@ -260,6 +261,7 @@ class PhoneShell extends StatelessWidget {
                     ],
                   ),
                 ),
+              if (!mobile)
               Positioned(
                 bottom: 5,
                 left: 0,
@@ -283,41 +285,11 @@ class PhoneShell extends StatelessWidget {
     );
 
     return Scaffold(
-      backgroundColor: const Color(0xFFE8EBF0),
+      backgroundColor: mobile ? bg : const Color(0xFFE8EBF0),
+      resizeToAvoidBottomInset: true,
       body: mobile
           ? shell
           : Center(child: shell),
-    );
-  }
-}
-
-class _StatusBar extends StatelessWidget {
-  const _StatusBar({required this.clock, required this.ink});
-  final String clock;
-  final Color ink;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 10, 14, 0),
-      child: Row(
-        children: [
-          Text(
-            clock.isEmpty ? '--:--' : clock,
-            style: PixelTheme.mono.copyWith(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: ink,
-            ),
-          ),
-          const Spacer(),
-          PixelIcon.signal(size: 15, color: ink),
-          const SizedBox(width: 6),
-          PixelIcon.wifi(size: 14, color: ink),
-          const SizedBox(width: 6),
-          PixelIcon.battery(size: 18, color: ink),
-        ],
-      ),
     );
   }
 }

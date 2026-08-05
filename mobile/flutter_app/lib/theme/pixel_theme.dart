@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 /// Pixel Console tokens — matches PC/mobile pixel-console.css
 class PixelColors {
@@ -29,11 +28,13 @@ class PixelColors {
 }
 
 class PixelTheme {
+  /// System fonts only — never fetch fonts.google.com (blocks / white-screen in CN).
   static ThemeData light() {
     final base = ThemeData(
       useMaterial3: true,
       brightness: Brightness.light,
       scaffoldBackgroundColor: PixelColors.bg,
+      fontFamily: 'sans-serif',
       colorScheme: ColorScheme.light(
         primary: PixelColors.purple,
         secondary: PixelColors.cyan,
@@ -44,7 +45,7 @@ class PixelTheme {
       ),
     );
     return base.copyWith(
-      textTheme: GoogleFonts.interTextTheme(base.textTheme).apply(
+      textTheme: base.textTheme.apply(
         bodyColor: PixelColors.ink,
         displayColor: PixelColors.ink,
       ),
@@ -91,6 +92,7 @@ class PixelTheme {
       useMaterial3: true,
       brightness: Brightness.dark,
       scaffoldBackgroundColor: PixelColors.dBg,
+      fontFamily: 'sans-serif',
       colorScheme: ColorScheme.dark(
         primary: PixelColors.dPurple,
         secondary: PixelColors.cyan,
@@ -101,22 +103,25 @@ class PixelTheme {
       ),
     );
     return base.copyWith(
-      textTheme: GoogleFonts.interTextTheme(base.textTheme).apply(
+      textTheme: base.textTheme.apply(
         bodyColor: PixelColors.dInk,
         displayColor: PixelColors.dInk,
       ),
     );
   }
 
-  static TextStyle get pixel => GoogleFonts.silkscreen(
+  static TextStyle get pixel => const TextStyle(
         fontSize: 11,
         color: PixelColors.purple,
         letterSpacing: 0.4,
+        fontWeight: FontWeight.w600,
+        fontFamily: 'monospace',
       );
 
-  static TextStyle get mono => GoogleFonts.jetBrainsMono(
+  static TextStyle get mono => const TextStyle(
         fontSize: 12,
         color: PixelColors.ink2,
+        fontFamily: 'monospace',
       );
 
   /// Hard pixel shadow --hs: 3px 3px 0

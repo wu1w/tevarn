@@ -4,12 +4,15 @@ import 'dart:io' show Platform;
 
 import 'package:ffi/ffi.dart';
 import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
 
 import 'http_bridge.dart';
 import 'takton_bridge.dart';
 
 typedef _StartHostNative = Pointer<Utf8> Function(Int32);
 typedef _StartHostDart = Pointer<Utf8> Function(int);
+typedef _StartHost2Native = Pointer<Utf8> Function(Int32, Pointer<Utf8>);
+typedef _StartHost2Dart = Pointer<Utf8> Function(int, Pointer<Utf8>);
 typedef _CallNative = Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>);
 typedef _CallDart = Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>);
 typedef _FreeNative = Void Function(Pointer<Utf8>);
@@ -39,11 +42,40 @@ class FfiTaktonBridge extends TaktonBridge {
     );
     try {
       final lib = _openLib();
-      final start =
-          lib.lookupFunction<_StartHostNative, _StartHostDart>('takton_start_host');
-      final call = lib.lookupFunction<_CallNative, _CallDart>('takton_call');
       final free = lib.lookupFunction<_FreeNative, _FreeDart>('takton_free');
-      final p = start(preferredPort);
+
+      // Prefer application support dir so Android can write (dirs crate is empty there).
+      String? dataDir;
+      try {
+        final dir = await getApplicationSupportDirectory();
+        dataDir = dir.path;
+      } catch (e) {
+        debugPrint('path_provider failed: $e');
+      }
+
+      Pointer<Utf8> p;
+      if (dataDir != null && dataDir.isNotEmpty) {
+        try {
+          final start2 = lib
+              .lookupFunction<_StartHost2Native, _StartHost2Dart>('takton_start_host2');
+          final dPtr = dataDir.toNativeUtf8();
+          try {
+            p = start2(preferredPort, dPtr);
+          } finally {
+            malloc.free(dPtr);
+          }
+        } catch (_) {
+          // Older .so without takton_start_host2
+          final start =
+              lib.lookupFunction<_StartHostNative, _StartHostDart>('takton_start_host');
+          p = start(preferredPort);
+        }
+      } else {
+        final start =
+            lib.lookupFunction<_StartHostNative, _StartHostDart>('takton_start_host');
+        p = start(preferredPort);
+      }
+
       final raw = p.toDartString();
       free(p);
       final m = decodeMap(raw);
@@ -54,8 +86,10 @@ class FfiTaktonBridge extends TaktonBridge {
         return HttpTaktonBridge(base: envBase, kind: 'http-fallback');
       }
       final base = m['base']?.toString() ?? 'http://127.0.0.1:$preferredPort';
-      lastCreateNote = 'FFI host ok · $base';
+      lastCreateNote = 'FFI host ok · $base · data=${m['data_dir'] ?? dataDir}';
       debugPrint(lastCreateNote);
+
+      final call = lib.lookupFunction<_CallNative, _CallDart>('takton_call');
       return FfiTaktonBridge._(
         HttpTaktonBridge(base: base, kind: 'ffi'),
         call,

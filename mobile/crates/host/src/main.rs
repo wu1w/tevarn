@@ -27,7 +27,7 @@ async fn main() -> anyhow::Result<()> {
 
     std::fs::create_dir_all(&config.data_dir).ok();
     let client = TaktonClient::new(config.clone())?;
-    let state = AppState::new(client, config.clone());
+    let state = AppState::new(client, config.clone())?;
 
     {
         let c = state.client.clone();

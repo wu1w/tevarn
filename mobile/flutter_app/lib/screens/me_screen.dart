@@ -17,7 +17,7 @@ class MeScreen extends StatelessWidget {
     final ink3 = dark ? PixelColors.dInk3 : PixelColors.ink3;
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(14, 28, 14, 28),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
       children: [
         Text(
           '我的',
@@ -131,7 +131,7 @@ class MeScreen extends StatelessWidget {
             children: [
               const PxRow(
                 title: 'Takton Mobile',
-                sub: 'v0.2.0 · Pixel Console · Flutter + Rust',
+                sub: 'v0.3.4 · Pixel Console · Flutter + Rust',
                 borderTop: false,
               ),
               const PxRow(title: '协议', sub: 'MIT · Local-first'),

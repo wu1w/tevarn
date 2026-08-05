@@ -7,6 +7,7 @@ pub mod models;
 pub mod platform;
 pub mod storage;
 pub mod local_llm;
+pub mod local_oauth;
 pub mod chat_mode;
 pub mod media;
 pub mod session_meta;
@@ -25,6 +26,7 @@ pub use error::{Error, Result};
 pub use models::*;
 pub use platform::PlatformKind;
 pub use local_llm::{LocalChatHistory, LocalChatMessage, LocalLlmProfile, LocalLlmService};
+pub use local_oauth::LocalOauth;
 pub use chat_mode::{
     normalize_ui_messages, ChatSurface, ModeSnapshot, SendPath, UiChatMessage,
 };

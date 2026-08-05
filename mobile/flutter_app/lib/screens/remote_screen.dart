@@ -89,7 +89,7 @@ class _RemoteScreenState extends State<RemoteScreen> {
     }
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(14, 28, 14, 28),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
       children: [
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -599,7 +599,8 @@ class _PairScanSheetState extends State<_PairScanSheet> {
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
         child: SafeArea(
           top: false,
-          child: Column(
+          child: SingleChildScrollView(
+            child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -703,6 +704,7 @@ class _PairScanSheetState extends State<_PairScanSheet> {
                 onTap: _submit,
               ),
             ],
+            ),
           ),
         ),
       ),

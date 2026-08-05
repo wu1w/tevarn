@@ -186,7 +186,7 @@ class HttpTaktonBridge extends TaktonBridge {
   }
 
   Future<Map<String, dynamic>> _get(String path) async {
-    final r = await _client.get(_u(path)).timeout(const Duration(seconds: 30));
+    final r = await _client.get(_u(path)).timeout(const Duration(seconds: 8));
     return _parse(r);
   }
 
@@ -198,7 +198,7 @@ class HttpTaktonBridge extends TaktonBridge {
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode(body),
         )
-        .timeout(const Duration(seconds: 60));
+        .timeout(const Duration(seconds: 12));
     return _parse(r);
   }
 
@@ -248,37 +248,69 @@ class HttpTaktonBridge extends TaktonBridge {
     req.headers['Content-Type'] = 'application/json';
     req.body = jsonEncode({'content': content});
     final streamed =
-        await _client.send(req).timeout(const Duration(seconds: 120));
+        await _client.send(req).timeout(const Duration(seconds: 300));
     final lines =
         streamed.stream.transform(utf8.decoder).transform(const LineSplitter());
     var event = '';
+    var acc = '';
     await for (final line in lines) {
       if (line.startsWith('event:')) {
         event = line.substring(6).trim();
         continue;
       }
-      if (line.startsWith('data:')) {
-        final data = line.substring(5).trim();
-        if (data.isEmpty || data == '[DONE]') continue;
-        try {
-          final v = jsonDecode(data);
-          if (v is Map) {
-            if (event == 'error' || v['error'] != null) {
-              throw Exception(v['error']?.toString() ?? 'local LLM error');
-            }
-            final t = v['text']?.toString();
-            if (t != null && t.isNotEmpty) {
-              if (event == 'done') {
-                yield '\x00$t';
-              } else {
-                yield t;
-              }
-            }
-          }
-        } catch (e) {
-          if (e is Exception) rethrow;
+      if (!line.startsWith('data:')) continue;
+      final data = line.substring(5).trim();
+      if (data.isEmpty || data == '[DONE]') continue;
+      Map? v;
+      try {
+        final decoded = jsonDecode(data);
+        if (decoded is Map) v = decoded;
+      } catch (_) {
+        // plain text delta fallback
+        if (data.isNotEmpty) {
+          acc += data;
+          yield data;
         }
+        continue;
       }
+      if (v == null) continue;
+
+      if (event == 'error' || v['error'] != null) {
+        throw Exception(
+            v['error']?.toString() ?? v['message']?.toString() ?? 'local LLM error');
+      }
+
+      // Host coalesced path: {"delta": "..."}
+      final delta = v['delta']?.toString();
+      if (delta != null && delta.isNotEmpty) {
+        acc += delta;
+        yield delta;
+        event = '';
+        continue;
+      }
+
+      // done: {"content": full} or {"text": full}
+      final full = (v['content'] ?? v['text'])?.toString() ?? '';
+      if (event == 'done' || v['done'] == true) {
+        if (full.isNotEmpty) {
+          // Replace with authoritative full text if we missed deltas
+          if (acc.isEmpty || full.length > acc.length) {
+            yield '\x00$full';
+            acc = full;
+          }
+        } else if (acc.isEmpty) {
+          throw Exception('本机 LLM 无输出 · 请确认已 OAuth/配置模型并点「应用模型」');
+        }
+        break;
+      }
+
+      // generic text field mid-stream
+      final t = v['text']?.toString();
+      if (t != null && t.isNotEmpty) {
+        acc += t;
+        yield t;
+      }
+      event = '';
     }
   }
 

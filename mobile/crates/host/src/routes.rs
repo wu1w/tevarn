@@ -198,6 +198,8 @@ pub struct LocalConfigBody {
     pub provider_label: Option<String>,
     #[serde(default)]
     pub chat_path: Option<String>,
+    #[serde(default)]
+    pub account_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1890,18 +1892,33 @@ async fn list_presets(State(st): State<AppState>) -> Json<Value> {
 }
 
 async fn oauth_openai_start(State(st): State<AppState>) -> Json<Value> {
-    match st.client.openai_oauth_start().await {
-        Ok(v) => Json(merge_ok(v)),
-        Err(e) => err_json(e),
+    // Prefer PC when connected; otherwise phone-local OAuth.
+    if st.client.is_authenticated() {
+        match st.client.openai_oauth_start().await {
+            Ok(v) => return Json(merge_ok(v)),
+            Err(e) => {
+                tracing::warn!("PC OAuth start failed, fallback local: {e}");
+            }
+        }
     }
+    Json(st.local_oauth.openai_start())
 }
 
 async fn oauth_openai_poll(State(st): State<AppState>, Json(body): Json<Value>) -> Json<Value> {
     let state = body.get("state").and_then(|v| v.as_str());
-    match st.client.openai_oauth_poll(state).await {
-        Ok(v) => Json(merge_ok(v)),
-        Err(e) => err_json(e),
+    if st.client.is_authenticated() {
+        match st.client.openai_oauth_poll(state).await {
+            Ok(v) => return Json(merge_ok(v)),
+            Err(e) => {
+                tracing::warn!("PC OAuth poll failed, try local: {e}");
+            }
+        }
     }
+    let v = st.local_oauth.openai_poll(state);
+    if v.get("status").and_then(|x| x.as_str()) == Some("authorized") {
+        apply_local_oauth_token(&st, &v);
+    }
+    Json(v)
 }
 
 async fn oauth_openai_complete(State(st): State<AppState>, Json(body): Json<Value>) -> Json<Value> {
@@ -1910,17 +1927,31 @@ async fn oauth_openai_complete(State(st): State<AppState>, Json(body): Json<Valu
         .and_then(|v| v.as_str())
         .unwrap_or("");
     let state = body.get("state").and_then(|v| v.as_str());
-    match st.client.openai_oauth_complete(callback, state).await {
-        Ok(v) => Json(merge_ok(v)),
-        Err(e) => err_json(e),
+    if st.client.is_authenticated() {
+        match st.client.openai_oauth_complete(callback, state).await {
+            Ok(v) => return Json(merge_ok(v)),
+            Err(e) => {
+                tracing::warn!("PC OAuth complete failed, try local: {e}");
+            }
+        }
     }
+    let v = st.local_oauth.openai_complete(callback, state).await;
+    if v.get("ok") == Some(&json!(true)) {
+        apply_local_oauth_token(&st, &v);
+    }
+    Json(v)
 }
 
 async fn oauth_xai_start(State(st): State<AppState>) -> Json<Value> {
-    match st.client.xai_oauth_start().await {
-        Ok(v) => Json(merge_ok(v)),
-        Err(e) => err_json(e),
+    if st.client.is_authenticated() {
+        match st.client.xai_oauth_start().await {
+            Ok(v) => return Json(merge_ok(v)),
+            Err(e) => {
+                tracing::warn!("PC xAI OAuth start failed, fallback local: {e}");
+            }
+        }
     }
+    Json(st.local_oauth.xai_start().await)
 }
 
 async fn oauth_xai_poll(State(st): State<AppState>, Json(body): Json<Value>) -> Json<Value> {
@@ -1928,10 +1959,67 @@ async fn oauth_xai_poll(State(st): State<AppState>, Json(body): Json<Value>) -> 
         .get("device_code")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    match st.client.xai_oauth_poll(code).await {
-        Ok(v) => Json(merge_ok(v)),
-        Err(e) => err_json(e),
+    if st.client.is_authenticated() {
+        match st.client.xai_oauth_poll(code).await {
+            Ok(v) => return Json(merge_ok(v)),
+            Err(e) => {
+                tracing::warn!("PC xAI OAuth poll failed, try local: {e}");
+            }
+        }
     }
+    let v = st.local_oauth.xai_poll(code).await;
+    if v.get("status").and_then(|x| x.as_str()) == Some("authorized") {
+        apply_local_oauth_token(&st, &v);
+    }
+    Json(v)
+}
+
+/// Persist OAuth access_token into local LLM profile for phone-only chat.
+fn apply_local_oauth_token(st: &AppState, v: &Value) {
+    let token = v
+        .get("access_token")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .trim();
+    if token.is_empty() {
+        return;
+    }
+    let label = v
+        .get("provider_label")
+        .and_then(|x| x.as_str())
+        .unwrap_or("OAuth");
+    let is_chatgpt = label.to_lowercase().contains("chatgpt")
+        || v.get("provider_id")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .contains("chatgpt");
+    let base = if is_chatgpt {
+        takton_mobile_core::local_llm::CHATGPT_OAUTH_BASE.to_string()
+    } else {
+        v.get("base_url")
+            .and_then(|x| x.as_str())
+            .unwrap_or("https://api.x.ai/v1")
+            .to_string()
+    };
+    let mut profile = st.local_llm.load_profile();
+    profile.api_key = token.to_string();
+    profile.base_url = base.clone();
+    profile.provider_label = label.to_string();
+    if let Some(aid) = v.get("account_id").and_then(|x| x.as_str()) {
+        if !aid.is_empty() {
+            profile.account_id = aid.to_string();
+        }
+    }
+    if profile.model.trim().is_empty() {
+        if is_chatgpt {
+            profile.model = "gpt-5.6-luna".into();
+        } else if base.contains("x.ai") {
+            profile.model = "grok-3".into();
+        } else {
+            profile.model = "gpt-4o".into();
+        }
+    }
+    let _ = st.local_llm.save_profile(&profile);
 }
 
 async fn test_llm(State(st): State<AppState>, Json(body): Json<Value>) -> Json<Value> {
@@ -2060,6 +2148,11 @@ async fn local_config_set(
     if let Some(v) = body.chat_path {
         profile.chat_path = v;
     }
+    if let Some(v) = body.account_id {
+        if !v.is_empty() {
+            profile.account_id = v;
+        }
+    }
     match st.local_llm.save_profile(&profile) {
         Ok(()) => Json(json!({
             "ok": true,
@@ -2169,6 +2262,7 @@ async fn local_chat_stream(
                                             .event("delta")
                                             .data(json!({
                                                 "delta": chunk,
+                                                "text": chunk,
                                                 "coalesced": true,
                                                 "coalesce_ms": AppState::DELTA_COALESCE_MS,
                                             }).to_string()),
@@ -2187,6 +2281,7 @@ async fn local_chat_stream(
                                     .event("delta")
                                     .data(json!({
                                         "delta": chunk,
+                                        "text": chunk,
                                         "coalesced": true,
                                         "coalesce_ms": AppState::DELTA_COALESCE_MS,
                                     }).to_string()),
@@ -2210,6 +2305,16 @@ async fn local_chat_stream(
 
         match stream_result {
             Ok(full) => {
+                if full.trim().is_empty() {
+                    send(
+                        Event::default()
+                            .event("error")
+                            .data(json!({
+                                "error": "模型返回空内容 · 请确认 ChatGPT/Grok OAuth 令牌有效且已应用模型"
+                            }).to_string()),
+                    );
+                    return;
+                }
                 hist.messages.push(LocalChatMessage {
                     role: "assistant".into(),
                     content: full.clone(),
@@ -2218,7 +2323,11 @@ async fn local_chat_stream(
                 send(
                     Event::default()
                         .event("done")
-                        .data(json!({"content": full}).to_string()),
+                        .data(json!({
+                            "content": full,
+                            "text": full,
+                            "done": true,
+                        }).to_string()),
                 );
             }
             Err(e) => {

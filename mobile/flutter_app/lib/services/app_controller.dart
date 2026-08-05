@@ -218,35 +218,69 @@ class AppController extends ChangeNotifier {
     if (_booted) return;
     _booted = true;
     final prefs = await SharedPreferences.getInstance();
-    surface = prefs.getString('takton-chat-mode') ?? 'local';
+    final preferredSurface = prefs.getString('takton-chat-mode') ?? 'local';
+    surface = preferredSurface;
     dark = prefs.getString('takton-theme') == 'dark';
     voiceOn = prefs.getBool('takton-voice') ?? true;
     cameraOn = prefs.getBool('takton-camera') ?? true;
     formBase = prefs.getString('takton-form-base') ?? formBase;
+    formEmail = prefs.getString('takton-form-email') ?? '';
+    // Password intentionally not stored — auth_session / device_token in Rust.
     lastPairQr = prefs.getString('takton-last-pair-qr') ?? '';
+    final tabName = prefs.getString('takton-tab');
+    if (tabName != null) {
+      for (final t in AppTab.values) {
+        if (t.name == tabName) {
+          tab = t;
+          break;
+        }
+      }
+    }
     _tickClock();
     _clockTimer =
         Timer.periodic(const Duration(seconds: 30), (_) => _tickClock());
 
-    // M3/M4: bind mesh runtime + network-change failover
+    // M3/M4: bind mesh runtime + network-change failover (non-blocking)
     MeshRuntime.instance.bind(bridge);
     MeshRuntime.instance.onNetworkChanged = (_) {
       unawaited(onNetworkPathChanged());
     };
     unawaited(MeshRuntime.instance.up(hostname: 'takton-phone'));
 
-    await refreshAll();
+    // Local UI first — never block first paint on PC reconnect / mesh.
+    try {
+      await refreshAll().timeout(const Duration(seconds: 4));
+    } catch (_) {}
     unawaited(refreshPath());
-    // M3: auto-reconnect last paired host when not authenticated
-    if (!pcConnected) {
-      await tryAutoReconnect();
-    }
-    if (!pcConnected && surface == 'remote') {
+
+    // Soft surface while offline: do NOT wipe preferred mode from prefs.
+    // If preferred remote but not yet connected, stay local until reconnect.
+    final wantRemote = preferredSurface == 'remote';
+    if (!pcConnected && wantRemote) {
       surface = 'local';
-      unawaited(prefs.setString('takton-chat-mode', 'local'));
     }
-    // Single Rust round-trip for mode + history
-    await _applySwitchSurface(surface, ensureSession: false);
+
+    try {
+      await _applySwitchSurface(surface, ensureSession: false)
+          .timeout(const Duration(seconds: 4));
+    } catch (_) {}
+
+    // Auto-reconnect in background; restore remote surface on success.
+    if (!pcConnected) {
+      unawaited(tryAutoReconnect().then((_) async {
+        if (!pcConnected) return;
+        // Restore preferred chat mode after successful reconnect
+        final p = await SharedPreferences.getInstance();
+        final mode = p.getString('takton-chat-mode') ?? preferredSurface;
+        if (mode == 'remote' && surface != 'remote') {
+          await setSurface('remote');
+        } else {
+          await refreshAll();
+          _notify();
+        }
+      }));
+    }
+
     unawaited(refreshMesh());
     unawaited(refreshPairedDevices());
     // Background path health while remote may be used
@@ -256,8 +290,10 @@ class AppController extends ChangeNotifier {
         unawaited(pathHealthTick());
       }
     });
-    if (bridgeKind == 'http-fallback') {
-      showToast('引擎 FFI 未加载 · 已回落 HTTP（$bridgeKind）');
+    if (bridgeKind == 'http-fallback' ||
+        bridgeKind.contains('fallback') ||
+        bridgeKind.contains('timeout')) {
+      showToast('引擎加载中或已降级 · $bridgeKind');
     }
     _notify();
   }
@@ -597,11 +633,19 @@ class AppController extends ChangeNotifier {
   Future<void> goRemoteChatAfterOauth({String? toastMsg}) async {
     await refreshAll();
     if (!pcConnected) {
-      setTab(AppTab.remote);
-      showToast(toastMsg ?? '请先连接 PC');
+      // Phone-local OAuth success path
+      await goLocalChatAfterOauth(toastMsg: toastMsg);
       return;
     }
     await setSurface('remote');
+    setTab(AppTab.chat);
+    if (toastMsg != null && toastMsg.isNotEmpty) showToast(toastMsg);
+  }
+
+  /// After phone-local OAuth: stay on local chat with token in local_config.
+  Future<void> goLocalChatAfterOauth({String? toastMsg}) async {
+    await refreshAll();
+    await setSurface('local');
     setTab(AppTab.chat);
     if (toastMsg != null && toastMsg.isNotEmpty) showToast(toastMsg);
   }
@@ -610,6 +654,10 @@ class AppController extends ChangeNotifier {
     tab = t;
     drawerOpen = false;
     _syncApprovePoll();
+    unawaited(() async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('takton-tab', t.name);
+    }());
     _notify();
   }
 
@@ -1094,6 +1142,9 @@ class AppController extends ChangeNotifier {
       if (base != null && base.isNotEmpty) formBase = base;
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('takton-form-base', formBase);
+      if (formEmail.isNotEmpty) {
+        await prefs.setString('takton-form-email', formEmail);
+      }
       await _persistPathFrom(r);
       final kind = r['path_kind']?.toString() ?? '';
       showToast(kind.isEmpty ? '已连接 PC' : '已连接 PC · $kind');
@@ -1303,6 +1354,9 @@ class AppController extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('takton-form-base', formBase);
       await prefs.setString('takton-last-pair-qr', qr);
+      if (formEmail.isNotEmpty) {
+        await prefs.setString('takton-form-email', formEmail);
+      }
       if (r['device_token'] != null) {
         await prefs.setString(
             'takton-device-token', r['device_token'].toString());

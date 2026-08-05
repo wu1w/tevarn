@@ -12,7 +12,8 @@ use takton_mobile_core::pair::PairService;
 use takton_mobile_core::path::PathService;
 use takton_mobile_core::session_meta::SessionMetaStore;
 use takton_mobile_core::storage::Store;
-use takton_mobile_core::{AppConfig, TaktonClient};
+use takton_mobile_core::{AppConfig, LocalOauth, TaktonClient};
+
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -73,6 +74,8 @@ pub struct AppState {
     pub mesh: Arc<MeshService>,
     /// Multi-endpoint path failover (M4)
     pub path: Arc<PathService>,
+    /// Phone-local OAuth (no PC required)
+    pub local_oauth: Arc<LocalOauth>,
     /// Per-session WS stream delta coalescers
     delta_coalesce: Arc<DashMap<String, Arc<Mutex<DeltaCoalesceInner>>>>,
 }
@@ -80,20 +83,35 @@ pub struct AppState {
 impl AppState {
     pub const DELTA_COALESCE_MS: u64 = 40;
 
-    pub fn new(client: TaktonClient, config: AppConfig) -> Self {
-        let store = takton_mobile_core::storage::Store::open(&config.data_dir)
-            .expect("open data dir");
+    pub fn new(client: TaktonClient, config: AppConfig) -> anyhow::Result<Self> {
+        // Android: ensure writable data dir before opening stores (avoids panic → white screen).
+        std::fs::create_dir_all(&config.data_dir).map_err(|e| {
+            anyhow::anyhow!("create data_dir {:?}: {e}", config.data_dir)
+        })?;
+        let store = Store::open(&config.data_dir).map_err(|e| {
+            anyhow::anyhow!("open data dir {:?}: {e}", config.data_dir)
+        })?;
         let local_llm = LocalLlmService::new(store);
-        let media = MediaStore::open(&config.data_dir).expect("open media store");
-        let meta_store = Store::open(&config.data_dir).expect("open meta store");
-        let pair_store = Store::open(config.data_dir.join("pair")).expect("open pair store");
-        let mesh_store = Store::open(config.data_dir.join("mesh")).expect("open mesh store");
-        let path_store = Store::open(config.data_dir.join("path")).expect("open path store");
+        let media = MediaStore::open(&config.data_dir)
+            .map_err(|e| anyhow::anyhow!("open media store: {e}"))?;
+        let meta_store =
+            Store::open(&config.data_dir).map_err(|e| anyhow::anyhow!("open meta store: {e}"))?;
+        let pair_store = Store::open(config.data_dir.join("pair"))
+            .map_err(|e| anyhow::anyhow!("open pair store: {e}"))?;
+        let mesh_store = Store::open(config.data_dir.join("mesh"))
+            .map_err(|e| anyhow::anyhow!("open mesh store: {e}"))?;
+        let path_store = Store::open(config.data_dir.join("path"))
+            .map_err(|e| anyhow::anyhow!("open path store: {e}"))?;
         let pair = PairService::open(pair_store);
         let backend_port = config.backend_port();
         let mesh = MeshService::open(mesh_store, backend_port);
         let path = PathService::open(path_store);
-        Self {
+        let oauth_dir = config.data_dir.join("oauth");
+        std::fs::create_dir_all(&oauth_dir).ok();
+        let oauth_store = Store::open(&oauth_dir)
+            .or_else(|_| Store::open(&config.data_dir))
+            .map_err(|e| anyhow::anyhow!("open oauth store: {e}"))?;
+        Ok(Self {
             client,
             config: Arc::new(RwLock::new(config)),
             browser_subs: Arc::new(DashMap::new()),
@@ -107,8 +125,9 @@ impl AppState {
             pair: Arc::new(pair),
             mesh: Arc::new(mesh),
             path: Arc::new(path),
+            local_oauth: Arc::new(LocalOauth::open(oauth_store)),
             delta_coalesce: Arc::new(DashMap::new()),
-        }
+        })
     }
 
     pub fn new_sub_id(&self) -> String {

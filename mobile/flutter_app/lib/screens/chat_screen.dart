@@ -345,7 +345,12 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+          padding: EdgeInsets.fromLTRB(
+            10,
+            0,
+            10,
+            10 + MediaQuery.viewInsetsOf(context).bottom,
+          ),
           child: Container(
             padding: const EdgeInsets.all(6),
             decoration: BoxDecoration(
@@ -817,8 +822,8 @@ class _IconBtn extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(4),
         child: Container(
-          width: 36,
-          height: 36,
+          width: 44,
+          height: 44,
           alignment: Alignment.center,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(4),
@@ -850,8 +855,8 @@ class _SquareBtn extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(4),
         child: Container(
-          width: 34,
-          height: 34,
+          width: 44,
+          height: 44,
           alignment: Alignment.center,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(4),
@@ -892,8 +897,8 @@ class _SendBtn extends StatelessWidget {
         onTap: enabled || streaming ? onTap : null,
         borderRadius: BorderRadius.circular(4),
         child: Container(
-          width: 34,
-          height: 34,
+          width: 44,
+          height: 44,
           alignment: Alignment.center,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(4),

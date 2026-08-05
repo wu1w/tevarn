@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../bridge/takton_bridge.dart';
 import '../models/app_models.dart';
@@ -59,7 +60,10 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
   String _oauthState = '';
   String _oauthDevice = '';
   String _oauthKind = ''; // openai | xai | ''
+  /// True after a successful phone/PC OAuth this session (or restored from local config).
+  bool _oauthDone = false;
   Map<String, dynamic>? _catalog;
+
   List<Map<String, dynamic>> _presets = [];
   Timer? _oauthPoll;
   Timer? _searchDebounce;
@@ -269,10 +273,22 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
         'oauth_provider': 'openai',
         'llm': {
           'llm_provider': 'openai-compatible',
-          'llm_base_url': '',
-          'llm_model': '',
+          'llm_base_url': 'codex-oauth://chatgpt',
+          'llm_model': 'gpt-5.6-luna',
         },
-        'models': <String>[],
+        'models': <String>[
+          'gpt-5.6-luna',
+          'gpt-5.6-terra',
+          'gpt-5.6-sol',
+          'gpt-5.4',
+          'gpt-5.3-codex',
+          'gpt-5.2-codex',
+          'gpt-5.1-codex',
+          'gpt-4.1',
+          'gpt-4o',
+          'o3',
+          'o4-mini',
+        ],
       },
       {
         'id': 'xai',
@@ -292,9 +308,16 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
         'llm': {
           'llm_provider': 'openai-compatible',
           'llm_base_url': 'https://api.x.ai/v1',
-          'llm_model': '',
+          'llm_model': 'grok-3',
         },
-        'models': <String>[],
+        'models': <String>[
+          'grok-4',
+          'grok-3',
+          'grok-3-mini',
+          'grok-3-fast',
+          'grok-2',
+          'grok-2-vision-1212',
+        ],
       },
       {
         'id': 'deepseek',
@@ -365,24 +388,170 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
   void _selectInitial(Map<String, dynamic>? localCfg) {
     final activePid = _catalog?['active_provider_id']?.toString() ?? '';
     final activeModel = _catalog?['active_model']?.toString() ?? '';
+    final label = localCfg?['provider_label']?.toString() ?? '';
+    final hasKey = localCfg?['has_key'] == true;
+    _hasKey = hasKey;
+    _keyMasked = localCfg?['api_key_masked']?.toString() ?? '';
+
     _active = activeModel.isNotEmpty
         ? '$activePid · $activeModel'
         : (localCfg?['model']?.toString().isNotEmpty == true
-            ? '本机 · ${localCfg!['model']}'
+            ? '本机 · ${localCfg!['model']}${hasKey ? ' · 已授权' : ''}'
             : '—');
+
+    // Prefer restoring OAuth provider when local profile is from OAuth
+    final oauthId = _oauthProviderIdFromLabel(label);
+    if (oauthId != null && _opts.any((o) => o.id == oauthId)) {
+      _providerId = oauthId;
+      final m = localCfg?['model']?.toString() ?? '';
+      if (m.isNotEmpty) {
+        _modelId = m;
+        _modelCustom.text = m;
+      }
+      if (hasKey) {
+        _oauthDone = true;
+        _oauthStatus = '已登录 · 令牌已保存在本机（$label）\n可直接选模型并「应用模型」';
+      }
+      return;
+    }
 
     if (activePid.isNotEmpty && _opts.any((o) => o.id == activePid)) {
       _providerId = activePid;
       _modelId = activeModel;
     } else if (localCfg != null &&
         (localCfg['base_url']?.toString().isNotEmpty == true)) {
-      _providerId = '__custom__';
-      _modelId = localCfg['model']?.toString() ?? '';
-    } else if (_opts.isNotEmpty) {
+      // Keep current OAuth selection if user mid-flow
+      if (_oauthDone && _opts.any((o) => o.id == _providerId && _isOauth(o))) {
+        // keep
+      } else {
+        _providerId = '__custom__';
+        _modelId = localCfg['model']?.toString() ?? '';
+      }
+    } else if (_opts.isNotEmpty && !_opts.any((o) => o.id == _providerId)) {
       _providerId = _opts.first.id;
     }
-    _hasKey = localCfg?['has_key'] == true;
-    _keyMasked = localCfg?['api_key_masked']?.toString() ?? '';
+  }
+
+  String? _oauthProviderIdFromLabel(String label) {
+    final l = label.toLowerCase();
+    if (l.contains('chatgpt') || l.contains('openai')) {
+      return 'openai-chatgpt-oauth';
+    }
+    if (l.contains('grok') || l.contains('xai')) return 'xai-oauth';
+    if (l.contains('oauth')) {
+      // generic
+      return null;
+    }
+    return null;
+  }
+
+  /// Persist OAuth token to local config and refresh UI **without leaving** this page.
+  Future<void> _finishOauthLocal(
+    Map<String, dynamic> r, {
+    required String kind,
+  }) async {
+    _oauthPoll?.cancel();
+    final base = r['base_url']?.toString().isNotEmpty == true
+        ? r['base_url'].toString()
+        : (kind == 'xai' ? 'https://api.x.ai/v1' : 'codex-oauth://chatgpt');
+    final defaultModel = kind == 'xai' ? 'grok-3' : 'gpt-5.6-luna';
+    final model = _selectedModel.isNotEmpty ? _selectedModel : defaultModel;
+    final token = r['access_token']?.toString() ?? '';
+    final label = r['provider_label']?.toString() ??
+        (kind == 'xai' ? 'Grok OAuth' : 'ChatGPT OAuth');
+    final pid = r['provider_id']?.toString() ??
+        (kind == 'xai' ? 'xai-oauth' : 'openai-chatgpt-oauth');
+
+    final body = <String, dynamic>{
+      'base_url': base,
+      'model': model,
+      'provider_label': label,
+    };
+    if (token.isNotEmpty) body['api_key'] = token;
+    if (r['account_id'] != null && r['account_id'].toString().isNotEmpty) {
+      body['account_id'] = r['account_id'].toString();
+    }
+
+    final setR = await c.bridge.localConfigSet(body);
+    if (!isOk(setR)) {
+      throw Exception(setR['error']?.toString() ?? '本机保存失败');
+    }
+
+    Map<String, dynamic>? localCfg;
+    try {
+      final lr = await c.bridge.localConfigGet();
+      if (isOk(lr) && lr['config'] is Map) {
+        localCfg = Map<String, dynamic>.from(lr['config'] as Map);
+      }
+    } catch (_) {}
+
+    // Seed model list immediately (don't wait for pull)
+    final seed = List<String>.from(_modelsOf(_opts.firstWhere(
+      (o) => o.id == pid,
+      orElse: () => _cur,
+    )));
+    if (seed.isEmpty) {
+      seed.addAll(kind == 'xai'
+          ? const ['grok-4', 'grok-3', 'grok-3-mini', 'grok-2']
+          : const [
+              'gpt-5.6-luna',
+              'gpt-5.6-terra',
+              'gpt-5.6-sol',
+              'gpt-5.4',
+              'gpt-5.3-codex',
+              'gpt-4o',
+              'o3',
+              'o4-mini',
+            ]);
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _oauthDone = true;
+      _providerId = _opts.any((o) => o.id == pid) ? pid : _providerId;
+      _base.text = base;
+      _models = seed;
+      if (model.isNotEmpty) {
+        if (_models.contains(model)) {
+          _modelId = model;
+          _showCustomModel = false;
+        } else {
+          _modelId = '__custom_model__';
+          _showCustomModel = true;
+          _modelCustom.text = model;
+        }
+      } else if (_models.isNotEmpty) {
+        _modelId = _models.first;
+        _showCustomModel = false;
+      }
+      _hasKey = localCfg?['has_key'] == true || token.isNotEmpty;
+      _keyMasked = localCfg?['api_key_masked']?.toString() ??
+          (token.length > 8
+              ? '${token.substring(0, 4)}…${token.substring(token.length - 4)}'
+              : '••••');
+      _active = '本机 · ${_selectedModel.isNotEmpty ? _selectedModel : model} · 已授权';
+      _oauthStatus =
+          '✅ 登录成功 · 令牌已写入本机\n可直接「拉取模型」或选模型后「应用模型」';
+      _oauthCallback.clear();
+    });
+
+    unawaited(c.refreshAll());
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('takton-oauth-state');
+      await prefs.remove('takton-oauth-kind');
+    } catch (_) {}
+
+    // Auto-pull models with stored token (no PC required)
+    unawaited(_fetchModelsAfterOauth());
+    c.showToast(r['message']?.toString() ?? 'OAuth 成功 · 正在拉取模型');
+  }
+
+  Future<void> _fetchModelsAfterOauth() async {
+    if (!mounted) return;
+    try {
+      await _fetchModels(forceLocalOauth: true);
+    } catch (_) {}
   }
 
   _Opt get _cur {
@@ -554,10 +723,13 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
   }
 
   void _updateHint() {
-    if (!c.pcConnected) {
+    if (_oauth && !c.pcConnected) {
+      _hint =
+          'OAuth 本机可用：点登录授权后即可本机对话，无需先连 PC。连上 PC 时也会同步到远端目录。';
+    } else if (!c.pcConnected) {
       _hint = '未连 PC：仅本机直连。填 Base URL + API Key，点「测试连接」从供应商 /models 拉取最新列表。';
     } else if (_oauth) {
-      _hint = 'OAuth 供应商：登录授权后从目录刷新模型列表，应用后自动切到远端对话。';
+      _hint = 'OAuth 供应商：登录授权后从目录刷新模型列表；未连 PC 时写入本机配置。';
     } else {
       _hint = '已连 PC：供应商/模型来自真实目录。可刷新目录或测试连接拉取 /models。';
     }
@@ -575,8 +747,8 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
     _updateHint();
   }
 
-  Future<void> _fetchModels() async {
-    if (_busy) return;
+  Future<void> _fetchModels({bool forceLocalOauth = false}) async {
+    if (_busy && !forceLocalOauth) return;
     final o = _cur;
     final base = _base.text.trim();
     final key = _key.text.trim();
@@ -584,15 +756,78 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
 
     setState(() => _busy = true);
     try {
-      if (_oauth) {
-        if (!c.pcConnected) {
-          c.showToast('OAuth 需先连接 PC');
+      // ── OAuth path: always use local stored token (PC catalog optional) ──
+      if (_oauth || forceLocalOauth) {
+        if (!_oauthDone && !_hasKey && !forceLocalOauth) {
+          c.showToast('请先完成 OAuth 登录（点上方登录按钮）');
           return;
         }
-        await _reload(refresh: true);
-        c.showToast(_models.isEmpty
-            ? '目录已刷新 · 若仍无模型请先完成登录授权'
-            : '已刷新 · ${_models.length} 个模型');
+        final oauthBase = base.isNotEmpty
+            ? base
+            : (_oauthKind == 'xai' || o.id == 'xai-oauth'
+                ? 'https://api.x.ai/v1'
+                : 'codex-oauth://chatgpt');
+        // Ensure base is persisted for local_test (token already in profile)
+        await c.bridge.localConfigSet({
+          'base_url': oauthBase,
+          if (model.isNotEmpty) 'model': model,
+          'provider_label': o.name,
+        });
+        final r = await c.bridge.localTest({
+          'base_url': oauthBase,
+          if (model.isNotEmpty) 'model': model,
+        });
+        if (!isOk(r)) {
+          // Still seed curated list so user can apply
+          final seed = _modelsOf(o);
+          if (seed.isNotEmpty) {
+            setState(() {
+              _models = seed;
+              _showCustomModel = false;
+              if (!_models.contains(_modelId) && _models.isNotEmpty) {
+                _modelId = _models.first;
+              }
+              _base.text = oauthBase;
+              _oauthDone = true;
+            });
+            c.showToast(
+                '${r['error'] ?? '拉取失败'} · 已提供常用模型列表，可直接应用');
+          } else {
+            c.showToast(r['error']?.toString() ?? '拉取失败 · 请重新 OAuth 登录');
+          }
+          return;
+        }
+        final result = r['result'] is Map
+            ? Map<String, dynamic>.from(r['result'] as Map)
+            : r;
+        var models = ((result['models'] as List?) ?? [])
+            .map((e) => e.toString())
+            .where((s) => s.isNotEmpty)
+            .toList();
+        if (models.isEmpty) {
+          models = List<String>.from(_modelsOf(o));
+        }
+        if (models.isEmpty) {
+          c.showToast(result['message']?.toString() ??
+              '已授权，但未返回模型 · 可手写模型名后应用');
+          setState(() {
+            _showCustomModel = true;
+            _oauthDone = true;
+            _base.text = oauthBase;
+          });
+        } else {
+          setState(() {
+            _models = models;
+            _showCustomModel = false;
+            _modelId = models.contains(_modelId) ? _modelId : models.first;
+            _oauthDone = true;
+            _hasKey = true;
+            _base.text = oauthBase;
+          });
+          c.showToast(result['message']?.toString() ??
+              '已拉取 ${models.length} 个模型（OAuth 本机）');
+        }
+        await c.refreshAll();
         return;
       }
 
@@ -641,7 +876,6 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
           'base_url': base,
           if (model.isNotEmpty) 'model': model,
           if (key.isNotEmpty) 'api_key': key,
-          if (key.isEmpty && !_hasKey) 'api_key': 'local',
           'provider_label': o.name,
         });
         final r = await c.bridge.localTest({
@@ -695,11 +929,30 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
     setState(() => _busy = true);
     try {
       if (_oauth) {
-        if (!c.pcConnected) {
-          c.showToast('OAuth 供应商需先连接 PC');
-          c.setTab(AppTab.remote);
+        // Prefer phone-local OAuth profile whenever we have a local token.
+        if (_oauthDone || _hasKey || !c.pcConnected) {
+          final oauthBase = base.isNotEmpty
+              ? base
+              : (_oauthKind == 'xai' || o.id == 'xai-oauth'
+                  ? 'https://api.x.ai/v1'
+                  : 'codex-oauth://chatgpt');
+          // Do NOT pass empty key — keep server-side token
+          await c.bridge.localConfigSet({
+            'base_url': oauthBase,
+            'model': model,
+            'provider_label': o.name,
+            if (key.isNotEmpty) 'api_key': key,
+          });
+          await c.refreshAll();
+          if (!c.llmHasKey && !_hasKey) {
+            c.showToast('本机未保存 OAuth 令牌，请重新登录');
+            return;
+          }
+          await c.goLocalChatAfterOauth(
+              toastMsg: '已应用 OAuth · $model · 本机对话可用');
           return;
         }
+        // PC catalog path: provider must already be activated by PC OAuth
         if (o.source == _Src.preset) {
           c.showToast('请先点「登录授权」完成 OAuth，再应用模型');
           return;
@@ -845,11 +1098,6 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
 
   Future<void> _startOauth() async {
     if (_busy) return;
-    if (!c.pcConnected) {
-      c.showToast('OAuth 需先连接 PC');
-      c.setTab(AppTab.remote);
-      return;
-    }
     if (!_oauth) {
       c.showToast('当前供应商不是 OAuth');
       return;
@@ -873,7 +1121,8 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
             'https://accounts.x.ai/device';
         final code = r['user_code']?.toString() ?? '';
         setState(() {
-          _oauthStatus = '设备码 $code\n请打开 $url 授权';
+          _oauthStatus =
+              '设备码 $code\n请打开 $url 授权${r['local'] == true ? '\n（本机 OAuth · 无需 PC）' : ''}';
         });
         if (code.isNotEmpty) {
           await Clipboard.setData(ClipboardData(text: code));
@@ -892,15 +1141,24 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
           return;
         }
         _oauthState = r['state']?.toString() ?? '';
+        // Persist state so paste-callback works after returning from browser
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('takton-oauth-state', _oauthState);
+          await prefs.setString('takton-oauth-kind', 'openai');
+        } catch (_) {}
         final url = r['authorization_url']?.toString() ??
             r['url']?.toString() ??
             r['auth_url']?.toString() ??
             '';
         setState(() {
+          _oauthDone = false;
           _oauthStatus = r['message']?.toString() ??
-              (url.isNotEmpty
-                  ? '请在浏览器完成授权\n若未自动完成，用下方备用粘贴回调地址'
-                  : '已发起登录，请在浏览器完成授权');
+              '① 打开浏览器登录 ChatGPT\n'
+                  '② 跳转到 localhost 失败 = 正常\n'
+                  '③ 复制地址栏完整 URL\n'
+                  '④ 回到本页粘贴并点「完成登录」\n'
+                  '⑤ 成功后点「应用模型」（不跳转）';
         });
         if (url.isNotEmpty) {
           await _openAuthUrl(url);
@@ -908,9 +1166,7 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
           c.showToast(r['message']?.toString() ?? '请按提示完成授权');
         }
         _startPollLoop();
-        if (r['callback_listening'] != true) {
-          c.showToast('请授权后，若未自动完成则粘贴回调 URL');
-        }
+        c.showToast('授权链接已复制 · 浏览器 localhost 打不开时请复制地址栏 URL');
       }
     } catch (e) {
       c.showToast('登录失败: $e');
@@ -946,15 +1202,14 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
         }
         final r = await c.bridge.oauthXaiPoll(deviceCode: _oauthDevice);
         if (r['status']?.toString() == 'authorized' ||
-            (isOk(r) && r['active_provider_id'] != null)) {
-          _oauthPoll?.cancel();
-          await _reload(refresh: true);
-          await c.goRemoteChatAfterOauth(
-              toastMsg: r['message']?.toString() ?? 'Grok 登录成功 · 已切远端');
+            (isOk(r) && r['access_token'] != null)) {
+          await _finishOauthLocal(r, kind: 'xai');
           return true;
         }
         if (r['status']?.toString() == 'error' ||
-            (r['ok'] == false && r['status']?.toString() != 'pending')) {
+            (r['ok'] == false &&
+                r['status']?.toString() != null &&
+                r['status']?.toString() != 'pending')) {
           if (!silent) {
             c.showToast(
                 r['message']?.toString() ?? r['error']?.toString() ?? '登录失败');
@@ -970,12 +1225,8 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
       } else {
         final r = await c.bridge.oauthOpenaiPoll(state: _oauthState);
         if (r['status']?.toString() == 'authorized' ||
-            (isOk(r) && r['active_provider_id'] != null)) {
-          _oauthPoll?.cancel();
-          await _reload(refresh: true);
-          await c.goRemoteChatAfterOauth(
-              toastMsg:
-                  r['message']?.toString() ?? 'ChatGPT 登录成功 · 已切远端可发送');
+            (isOk(r) && r['access_token'] != null)) {
+          await _finishOauthLocal(r, kind: 'openai');
           return true;
         }
         if (r['status']?.toString() == 'error' ||
@@ -990,7 +1241,8 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
         }
         if (mounted) {
           setState(() {
-            _oauthStatus = r['message']?.toString() ?? '等待 ChatGPT 授权…';
+            _oauthStatus = r['message']?.toString() ??
+                '等待授权…浏览器 localhost 失败请复制地址栏 URL 粘贴到下方';
           });
         }
         return false;
@@ -1003,18 +1255,21 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
 
   Future<void> _completeOauth() async {
     if (_busy) return;
-    if (!c.pcConnected) {
-      c.showToast('请先连接 PC');
-      return;
-    }
     final url = _oauthCallback.text.trim();
     if (url.isEmpty) {
-      c.showToast('请粘贴完整回调地址');
+      c.showToast('请粘贴完整回调地址（浏览器地址栏，含 code=）');
       return;
     }
     if (!url.contains('code=') && !RegExp(r'[?&]code[=%]').hasMatch(url)) {
       c.showToast('URL 里应包含 code= 参数，请复制地址栏完整链接');
       return;
+    }
+    // Restore state from prefs if UI was rebuilt while user was in browser
+    if (_oauthState.isEmpty) {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        _oauthState = prefs.getString('takton-oauth-state') ?? '';
+      } catch (_) {}
     }
     setState(() {
       _busy = true;
@@ -1029,16 +1284,26 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
         throw Exception(
             r['message']?.toString() ?? r['error']?.toString() ?? '失败');
       }
-      _oauthPoll?.cancel();
-      _oauthCallback.clear();
-      setState(() {
-        _oauthStatus = '登录成功 · 已写入 PC';
-      });
-      await _reload(refresh: true);
-      await c.goRemoteChatAfterOauth(
-          toastMsg: r['message']?.toString() ?? 'ChatGPT 登录成功 · 已切远端');
+      // PC path: also stay on page if local flag or access_token present
+      if (r['local'] == true || r['access_token'] != null || !c.pcConnected) {
+        await _finishOauthLocal(r, kind: 'openai');
+      } else {
+        // PC catalog oauth — stay on page, soft reload, no forced chat jump
+        _oauthPoll?.cancel();
+        await _reload(refresh: true);
+        if (mounted) {
+          setState(() {
+            _oauthDone = true;
+            _oauthStatus =
+                '✅ 登录成功 · 已写入 PC\n请选模型后点「应用模型」（不自动跳转）';
+          });
+        }
+        c.showToast(r['message']?.toString() ?? 'ChatGPT 登录成功');
+      }
     } catch (e) {
-      setState(() => _oauthStatus = '失败: $e');
+      if (mounted) {
+        setState(() => _oauthStatus = '失败: $e\n可重新点登录再试，或检查 URL 是否含 code=');
+      }
       c.showToast('完成失败: $e');
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -1064,8 +1329,8 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
       children: [
         Text(
           c.pcConnected
-              ? '供应商与模型来自 PC 实时目录。OAuth 应用后自动切远端对话。'
-              : '未连 PC：仅本机直连。填 Base URL + API Key，点「测试连接」从供应商拉取最新模型列表。',
+              ? '供应商与模型来自 PC 实时目录。OAuth 也可本机独立完成。'
+              : '本机模式：API Key 或 OAuth 均可，无需先连 PC。',
           style: TextStyle(fontSize: 11.5, color: ink3, height: 1.45),
         ),
         const SizedBox(height: 10),
@@ -1229,17 +1494,30 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
               children: [
                 Text(
                   _oauthKind == 'xai'
-                      ? 'Grok OAuth（设备码）'
-                      : 'ChatGPT OAuth（PKCE）',
+                      ? 'Grok OAuth（设备码 · 本机）'
+                      : 'ChatGPT OAuth（PKCE · 本机）',
                   style: const TextStyle(
                     fontSize: 12.5,
                     fontWeight: FontWeight.w800,
                     color: PixelColors.purple,
                   ),
                 ),
+                if (_oauthDone) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    '状态：已登录 · ${_keyMasked.isNotEmpty ? _keyMasked : "令牌已保存"}',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: PixelColors.green,
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 8),
                 PxPrimaryBtn(
-                  label: _oauthKind == 'xai' ? 'Grok 登录' : 'ChatGPT 登录',
+                  label: _oauthDone
+                      ? (_oauthKind == 'xai' ? '重新 Grok 登录' : '重新 ChatGPT 登录')
+                      : (_oauthKind == 'xai' ? 'Grok 登录' : 'ChatGPT 登录'),
                   onTap: _startOauth,
                 ),
                 if (_oauthStatus.isNotEmpty) ...[
@@ -1252,13 +1530,13 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
                 if (_oauthKind != 'xai') ...[
                   const SizedBox(height: 10),
                   Text(
-                    '备用：粘贴浏览器回调地址（含 code=）',
-                    style: TextStyle(fontSize: 11, color: ink3),
+                    '浏览器跳到 localhost 失败时：复制地址栏完整 URL，粘贴到下方（不要重新开始）',
+                    style: TextStyle(fontSize: 11, color: ink3, height: 1.35),
                   ),
                   const SizedBox(height: 4),
                   _Inp(
                     controller: _oauthCallback,
-                    hint: 'https://…?code=…&state=…',
+                    hint: 'http://localhost:1455/auth/callback?code=…&state=…',
                     dark: dark,
                   ),
                   const SizedBox(height: 6),
@@ -1278,7 +1556,11 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
           children: [
             Expanded(
               child: PxGhostBtn(
-                label: c.pcConnected ? '刷新目录 / 拉取模型' : '测试连接 / 拉取模型',
+                label: _oauth
+                    ? (_oauthDone || _hasKey
+                        ? '拉取 OAuth 模型'
+                        : '请先登录 OAuth')
+                    : (c.pcConnected ? '刷新目录 / 拉取模型' : '测试连接 / 拉取模型'),
                 onTap: _fetchModels,
               ),
             ),
