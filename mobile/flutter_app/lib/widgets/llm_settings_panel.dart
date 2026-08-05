@@ -74,6 +74,12 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
   @override
   void initState() {
     super.initState();
+    // Seed providers synchronously — never show an empty dropdown while loading.
+    _presets = _offlinePresets();
+    _buildOptions(null);
+    _providerId = _opts.isNotEmpty ? _opts.first.id : '__custom__';
+    _loading = false;
+    _loaded = true; // keep panel visible during network refresh
     WidgetsBinding.instance.addPostFrameCallback((_) => _reload(refresh: true));
   }
 
@@ -115,7 +121,10 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
 
   Future<void> _reload({bool refresh = false, String? q}) async {
     final gen = ++_searchGen;
-    setState(() => _loading = true);
+    // Only show full-panel loading on first paint; keep dropdown visible on refresh
+    if (!_loaded && mounted) {
+      setState(() => _loading = true);
+    }
     Map<String, dynamic>? localCfg;
     try {
       final lr = await c.bridge.localConfigGet();
@@ -153,12 +162,8 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
             .map((e) => e.toString())
             .where((s) => s.isNotEmpty)
             .toList();
-        if (isOk(preR)) {
-          presets = ((preR['presets'] as List?) ?? [])
-              .whereType<Map>()
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList();
-          if (query.isNotEmpty) {
+        presets = _extractPresets(preR);
+          if (query.isNotEmpty && presets.isNotEmpty) {
             final ql = query.toLowerCase();
             presets = presets.where((p) {
               final id =
@@ -167,7 +172,6 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
               return id.contains(ql) || name.contains(ql);
             }).toList();
           }
-        }
       } catch (e) {
         if (gen == _searchGen) {
           _hint = '目录加载失败: $e';
@@ -177,20 +181,64 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
 
     if (!mounted || gen != _searchGen) return;
 
-    // Always keep a usable provider list (PC catalog may be empty / presets 403)
+    // Always keep a usable provider list
     if (presets.isEmpty) {
       presets = _offlinePresets();
     }
 
-    _catalog = catalog;
-    _presets = presets;
-    _serverModels = serverModels;
-    _buildOptions(localCfg);
-    _selectInitial(localCfg);
+    if (!mounted || gen != _searchGen) return;
+    setState(() {
+      _catalog = catalog;
+      _presets = presets;
+      _serverModels = serverModels;
+      _buildOptions(localCfg);
+      _selectInitial(localCfg);
+      // ensure providerId always valid
+      if (_opts.isEmpty) {
+        _opts = [
+          _Opt(
+            id: '__custom__',
+            name: '自定义 / 本机直连',
+            source: _Src.local,
+            raw: {},
+          ),
+        ];
+      }
+      if (!_opts.any((o) => o.id == _providerId)) {
+        _providerId = _opts.first.id;
+      }
+      _loaded = true;
+      _loading = false;
+    });
+    // fill base/model fields after opts are committed
     _applyProviderUi(autofillBase: true);
     _updateHint();
-    _loaded = true;
-    if (mounted) setState(() => _loading = false);
+  }
+
+  /// Accept multiple host/PC shapes: {presets:[...]}, {result:[...]}, raw list, nested data.
+  List<Map<String, dynamic>> _extractPresets(Map<String, dynamic> preR) {
+    dynamic raw = preR['presets'] ??
+        preR['result'] ??
+        preR['data'] ??
+        preR['items'];
+    if (raw is Map && raw['presets'] is List) {
+      raw = raw['presets'];
+    }
+    // Some proxies wrap the whole PC array under ok envelope already unwrapped
+    if (raw is! List) {
+      // PC may return a top-level list that got stored under a numeric-string key — skip
+      return [];
+    }
+    final out = <Map<String, dynamic>>[];
+    for (final e in raw) {
+      if (e is Map) {
+        final m = Map<String, dynamic>.from(e);
+        if ((m['id'] ?? m['preset_id'] ?? '').toString().isNotEmpty) {
+          out.add(m);
+        }
+      }
+    }
+    return out;
   }
 
   void _onSearchChanged(String _) {
@@ -1082,10 +1130,17 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
         _FieldLabel('供应商', dark),
         const SizedBox(height: 4),
         _Dropdown(
-          value: _opts.any((e) => e.id == _providerId)
-              ? _providerId
-              : (_opts.isNotEmpty ? _opts.first.id : null),
+          value: _opts.isEmpty
+              ? null
+              : (_opts.any((e) => e.id == _providerId)
+                  ? _providerId
+                  : _opts.first.id),
           items: [
+            if (_opts.isEmpty)
+              const DropdownMenuItem(
+                value: '__custom__',
+                child: Text('自定义 / 本机直连'),
+              ),
             for (final opt in _opts)
               DropdownMenuItem(
                 value: opt.id,
@@ -1095,7 +1150,10 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
                 ),
               ),
           ],
-          onChanged: _onProviderChanged,
+          onChanged: (id) {
+            if (id == null) return;
+            _onProviderChanged(id);
+          },
           dark: dark,
         ),
         const SizedBox(height: 10),

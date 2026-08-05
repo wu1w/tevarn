@@ -1865,8 +1865,27 @@ async fn register_provider(State(st): State<AppState>, Json(body): Json<Value>) 
 
 async fn list_presets(State(st): State<AppState>) -> Json<Value> {
     match st.client.list_presets().await {
-        Ok(v) => Json(json!({ "ok": true, "presets": v })),
-        Err(e) => err_json(e),
+        Ok(v) => {
+            // PC may return a bare array or {presets:[...]}/{items:[...]}
+            let list = if let Some(arr) = v.as_array() {
+                Value::Array(arr.clone())
+            } else if let Some(arr) = v.get("presets").and_then(|x| x.as_array()) {
+                Value::Array(arr.clone())
+            } else if let Some(arr) = v.get("items").and_then(|x| x.as_array()) {
+                Value::Array(arr.clone())
+            } else if let Some(arr) = v.get("data").and_then(|x| x.as_array()) {
+                Value::Array(arr.clone())
+            } else {
+                Value::Array(vec![])
+            };
+            Json(json!({ "ok": true, "presets": list }))
+        }
+        // Don't hard-fail UI: empty list lets Flutter show offline templates
+        Err(e) => Json(json!({
+            "ok": true,
+            "presets": [],
+            "hint": e.to_string(),
+        })),
     }
 }
 
