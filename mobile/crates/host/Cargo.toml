@@ -1,0 +1,30 @@
+[package]
+name = "takton-mobile-host"
+version.workspace = true
+edition.workspace = true
+description = "Takton mobile shell: Flutter UI + Rust API bridge (Android / web preview)"
+
+[lib]
+name = "takton_mobile_host"
+path = "src/lib.rs"
+
+[[bin]]
+name = "takton-mobile"
+path = "src/main.rs"
+
+[dependencies]
+takton-mobile-core = { path = "../core" }
+anyhow.workspace = true
+axum.workspace = true
+dashmap.workspace = true
+futures-util.workspace = true
+parking_lot.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true

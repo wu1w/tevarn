@@ -1,0 +1,23 @@
+[package]
+name = "takton-mobile-core"
+version.workspace = true
+edition.workspace = true
+description = "Shared Takton API + WebSocket client for mobile (Android / iOS / Harmony / web host)"
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+chrono.workspace = true
+dirs.workspace = true
+futures-util.workspace = true
+http.workspace = true
+parking_lot.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+tracing.workspace = true
+url.workspace = true
+uuid.workspace = true

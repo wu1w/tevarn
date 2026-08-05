@@ -1,0 +1,569 @@
+
+/* ═══ 像素控制台移动版（与 PC 端 pixel-console.css 同源） ═══ */
+:root{
+  --bg:#f4f6f8; --card:#fbfcfe; --card2:#eef1f6; --elev:#ffffff;
+  --ink:#1d2330; --ink2:#4a5261; --ink3:#7a8291;
+  --purple:#6d5df6; --cyan:#00a8c0; --pink:#f6489b;
+  --green:#16a34a; --amber:#d97706; --red:#dc4446;
+  --line:rgba(29,35,48,.09); --line2:rgba(29,35,48,.16);
+  --hard:rgba(29,35,48,.14); --hs:3px 3px 0 var(--hard); --hs2:2px 2px 0 var(--hard);
+  --dot:rgba(29,35,48,.055);
+  --inp:rgba(29,35,48,.045);
+  /* motion tokens (Rust MotionProfile can override via #fx-motion) */
+  --fx-drawer:260ms; --fx-sheet:220ms; --fx-toast:280ms; --fx-bubble:180ms;
+  --fx-tab:150ms; --fx-press:90ms; --fx-island:380ms;
+  --fx-ease-out:cubic-bezier(0.22, 1, 0.36, 1);
+  --fx-ease-snap:cubic-bezier(0.2, 0.8, 0.2, 1);
+  --fx-ease-soft:cubic-bezier(0.32, 0.72, 0.24, 1);
+  --fx-long-press:480ms;
+  --fx-swipe-del:72px; /* reserved; session mgmt uses long-press sheet */
+}
+[data-theme="dark"]{
+  --bg:#0c0f1a; --card:rgba(148,163,199,.07); --card2:rgba(148,163,199,.11); --elev:#151a2e;
+  --ink:#e6e9f2; --ink2:#a3abc2; --ink3:#6d7590;
+  --purple:#8b7cff; --cyan:#22d8ee; --pink:#ff6ec7;
+  --green:#4ade80; --amber:#fbbf24; --red:#f87171;
+  --line:rgba(148,163,199,.12); --line2:rgba(148,163,199,.2);
+  --hard:rgba(0,0,0,.45);
+  --dot:rgba(148,163,199,.07);
+  --inp:rgba(148,163,199,.08);
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%; width:100%; margin:0}
+body{
+  font-family:Inter,"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  background:#e8ebf0; color:var(--ink); display:flex; flex-direction:column; align-items:stretch;
+  min-height:100vh; overflow:hidden;
+}
+/* Dioxus mounts into #main — must fill viewport or phone collapses to ~content width */
+#main{
+  width:100%; max-width:100vw; min-height:100vh; height:100%;
+  display:flex; flex-direction:column; flex:1; min-width:0;
+}
+#main > #stage{ flex:1; min-height:0; }
+svg{ max-width:100%; display:block; }
+button svg, .iconbtn svg, .tab svg{ flex:none; }
+.px{font-family:"Silkscreen",monospace; letter-spacing:.02em}
+.num,.mono{font-family:"JetBrains Mono",monospace; font-variant-numeric:tabular-nums}
+
+
+
+/* ═══ 舞台与手机壳 ═══ */
+#stage{flex:1; width:100%; display:flex; align-items:center; justify-content:center; gap:44px; padding:18px;
+  background-image:radial-gradient(rgba(29,35,48,.07) 1px,transparent 1px); background-size:24px 24px; min-height:0}
+#side{max-width:300px; display:flex; flex-direction:column; gap:14px}
+#side h1{font-size:22px; letter-spacing:-.02em; color:#1d2330}
+#side h1 .px{font-size:15px; color:var(--purple); display:block; margin-bottom:6px}
+#side p{font-size:13px; line-height:1.8; color:#5a6272}
+#side .tips{font-size:12px; line-height:2; color:#8a91a0; border-top:1px dashed rgba(29,35,48,.2); padding-top:12px}
+#side .tips b{color:#6d5df6; font-weight:600}
+@media(max-width:920px){#side{display:none} #stage{gap:0; padding:0}}
+#phone{
+  width:390px; height:min(844px, calc(100vh - 90px)); min-height:640px;
+  background:var(--bg); border-radius:36px; position:relative; overflow:hidden;
+  border:1px solid var(--line2); box-shadow:0 24px 64px rgba(29,35,48,.14), 0 2px 0 rgba(255,255,255,.6) inset;
+  display:flex; flex-direction:column; color:var(--ink);
+  transition:background .25s ease;
+}
+@media(max-width:920px){
+  body{overflow:hidden}
+  #stage{padding:0; gap:0; width:100%; min-height:100vh}
+  #side{display:none !important}
+  #phone{
+    width:100%; max-width:100%; height:100vh; min-height:100vh;
+    border:none; border-radius:0; box-shadow:none;
+  }
+}
+/* 灵动岛：浅色浮动胶囊，有活动时展开；待机时收起不占位 */
+#notch{position:absolute; top:8px; left:50%; transform:translateX(-50%); width:0; height:26px;
+  background:var(--card); border:1px solid transparent; border-radius:13px; z-index:60;
+  display:flex; align-items:center; justify-content:center;
+  gap:6px; overflow:hidden; cursor:pointer; white-space:nowrap; opacity:0;
+  transition:width var(--fx-island) var(--fx-ease-soft), opacity calc(var(--fx-island) * .8) ease; will-change:width,opacity}
+#notch .il-dot{width:7px; height:7px; border-radius:2px; flex:none; display:none}
+#notch .il-txt{display:none; font-family:"Silkscreen",monospace; font-size:8px; color:var(--ink2); letter-spacing:.02em}
+#notch .il-txt b{color:var(--ink); font-weight:400}
+#notch.live,#notch.big{width:auto; min-width:120px; padding:0 12px; opacity:1;
+  border-color:var(--line2); box-shadow:var(--hs2), 0 6px 20px rgba(29,35,48,.1)}
+#notch.live .il-dot,#notch.live .il-txt,#notch.big .il-dot,#notch.big .il-txt{display:inline-block}
+#notch.big{height:34px; border-radius:17px}
+#notch .il-dot.on{background:#17b26a; box-shadow:0 0 5px #17b26a88}
+#notch .il-dot.cy{background:var(--cyan); box-shadow:0 0 5px #22d8ee88; animation:ilp 1s steps(2) infinite}
+#notch .il-dot.pk{background:var(--pink); box-shadow:0 0 5px #ff6ec788}
+#notch .il-dot.lo{background:#d97706; box-shadow:0 0 5px #d9770688}
+@keyframes ilp{50%{opacity:.25}}
+/* 状态栏：压扁 */
+#statusbar{flex:none; height:30px; display:flex; align-items:center; justify-content:space-between;
+  padding:2px 24px 0; font-size:12px; font-weight:600; z-index:55; opacity:.85}
+#statusbar .sic{display:flex; gap:4px; align-items:center}
+#statusbar .sic svg{width:14px; height:14px}
+
+/* ═══ 屏幕通用 ═══ */
+#screens{flex:1; position:relative; overflow:hidden; display:flex; flex-direction:column}
+.screen{position:absolute; inset:0; display:none; flex-direction:column; overflow:hidden; background:var(--bg);
+  background-image:radial-gradient(var(--dot) 1px,transparent 1px); background-size:24px 24px}
+.screen.act{display:flex}
+.shead{flex:none; display:flex; align-items:center; gap:10px; padding:10px 16px; border-bottom:1px solid var(--line)}
+.shead .tt{font-size:16.5px; font-weight:700; letter-spacing:-.01em}
+.shead .sub{font-size:11.5px; color:var(--ink3); margin-top:1px}
+.iconbtn{width:36px; height:36px; flex:none; display:flex; align-items:center; justify-content:center;
+  border:1px solid var(--line2); background:var(--card); border-radius:4px; cursor:pointer; color:var(--ink2);
+  box-shadow:var(--hs2); transition:all .15s ease}
+.iconbtn:active{transform:translate(2px,2px); box-shadow:none}
+.iconbtn svg{width:19px; height:19px; shape-rendering:crispEdges}
+.sbody{flex:1; overflow-y:auto; padding:14px 14px 20px; display:flex; flex-direction:column; gap:12px}
+.sbody::-webkit-scrollbar{width:0}
+
+/* ═══ 底部 Tab（像素控制台 · 对齐 demo 质感） ═══ */
+#tabbar{
+  flex:none; display:flex; align-items:stretch;
+  border-top:1px solid var(--line2); background:var(--card);
+  padding:4px 6px calc(6px + 12px); gap:2px;
+  box-shadow:0 -1px 0 rgba(255,255,255,.4) inset;
+}
+/* reset button/div .tab — kill UA chrome that makes dioxus <button> look flat */
+button.tab, div.tab, .tab{
+  flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:3px; padding:7px 0 5px; margin:0;
+  color:var(--ink3); cursor:pointer; border-radius:4px; position:relative;
+  transition:color .15s ease, background .15s ease;
+  background:transparent; border:none; box-shadow:none;
+  font-family:inherit; -webkit-appearance:none; appearance:none;
+  outline:none; min-width:0;
+}
+.tab svg{
+  width:22px; height:22px; shape-rendering:crispEdges; flex:none;
+  display:block; image-rendering:pixelated;
+}
+.tab span{font-size:10.5px; font-weight:600; letter-spacing:.01em; line-height:1; white-space:nowrap}
+.tab.act{color:var(--purple)}
+.tab.act svg{filter:none}
+.tab:active{background:var(--card2)}
+.tab .bdg, .tab i.bdg{
+  position:absolute; top:2px; right:calc(50% - 22px); min-width:15px; height:15px; padding:0 3px;
+  background:var(--pink); color:#fff; font-family:"Silkscreen",monospace; font-size:8.5px; line-height:15px;
+  text-align:center; border-radius:2px; box-shadow:1px 1px 0 var(--hard); font-style:normal;
+}
+#homebar{position:absolute; bottom:5px; left:50%; transform:translateX(-50%); width:120px; height:4px;
+  border-radius:2px; background:var(--ink3); opacity:.5; z-index:60; pointer-events:none}
+
+/* ═══ 按钮/卡片通用 ═══ */
+.btn{border:1px solid var(--line2); background:var(--card); color:var(--ink); font-family:inherit;
+  font-size:13.5px; font-weight:600; padding:9px 16px; border-radius:4px; cursor:pointer;
+  box-shadow:var(--hs2); transition:all .15s ease; display:inline-flex; align-items:center; gap:6px; justify-content:center}
+.btn:active{transform:translate(2px,2px); box-shadow:none}
+.btn.pri{background:var(--purple); border-color:var(--purple); color:#fff}
+.btn.cy{background:var(--cyan); border-color:var(--cyan); color:#fff}
+.btn.dan{color:var(--red)}
+.btn.sm{font-size:12.5px; padding:7px 12px}
+.btn.blk{width:100%}
+.btn:disabled{opacity:.45; cursor:not-allowed; transform:none; box-shadow:var(--hs2)}
+.card2{background:var(--card); border:1px solid var(--line2); border-radius:6px; box-shadow:var(--hs); padding:14px}
+.chip{font-size:12px; font-weight:600; padding:6px 12px; border:1px solid var(--line2); border-radius:3px;
+  background:var(--card); color:var(--ink2); cursor:pointer; box-shadow:var(--hs2); white-space:nowrap}
+.chip:active{transform:translate(2px,2px); box-shadow:none}
+.badge{font-family:"Silkscreen",monospace; font-size:9px; line-height:1; padding:4px 5px 3px; color:#fff;
+  background:var(--purple); border-radius:2px; box-shadow:1px 1px 0 var(--hard); display:inline-block}
+.badge.cy{background:var(--cyan)} .badge.pk{background:var(--pink)} .badge.gn{background:var(--green)} .badge.rd{background:var(--red)} .badge.am{background:var(--amber); color:#3a2703}
+.lamp{display:inline-block; width:8px; height:8px; border-radius:1px; background:var(--ink3); box-shadow:1px 1px 0 var(--hard); flex:none}
+.lamp.on{background:var(--green)} .lamp.busy{background:var(--cyan)} .lamp.warn{background:var(--amber)} .lamp.off{background:var(--red)}
+.lamp.pulse{animation:lp 1.6s ease-in-out infinite}
+@keyframes lp{0%,100%{opacity:1}50%{opacity:.35}}
+.mut{color:var(--ink3); font-size:12px}
+
+
+/* ═══ 对话页 ═══ */
+#chat-conn{flex:none; margin:10px 12px 0; display:flex; align-items:center; gap:9px; padding:9px 12px;
+  border:1px solid var(--line2); border-radius:6px; background:var(--card); box-shadow:var(--hs2); font-size:12.5px}
+#chat-conn .nm{font-weight:700}
+#chat-conn .go{margin-left:auto; font-size:12px; font-weight:600; color:var(--purple); cursor:pointer; white-space:nowrap}
+#msgs{flex:1; overflow-y:auto; padding:14px 14px 8px; display:flex; flex-direction:column; gap:14px}
+#msgs::-webkit-scrollbar{width:0}
+.mrow{display:flex; gap:9px; align-items:flex-start}
+.mrow.me{flex-direction:row-reverse}
+.avt{width:32px; height:32px; border-radius:3px; flex:none; box-shadow:var(--hs2); image-rendering:pixelated}
+.bub{max-width:78%; background:var(--card); border:1px solid var(--line2); border-radius:6px;
+  box-shadow:var(--hs); padding:10px 13px; font-size:14px; line-height:1.75; word-break:break-word}
+.mrow.me .bub{background:var(--purple); border-color:var(--purple); color:#fff}
+.bub .who{font-size:11px; font-weight:700; color:var(--ink3); margin-bottom:4px; display:flex; gap:6px; align-items:center}
+.bub .who .num{font-weight:500}
+.bub p{margin:.35em 0}
+.bub p:first-child{margin-top:0}.bub p:last-child{margin-bottom:0}
+.bub ul{margin:.4em 0; padding-left:1.2em}
+.bub li{margin:.25em 0}
+.bub code{font-family:"JetBrains Mono",monospace; font-size:12.5px; background:var(--card2); padding:1px 5px; border-radius:2px}
+.bub pre{font-family:"JetBrains Mono",monospace; font-size:12px; background:var(--card2); border:1px solid var(--line);
+  padding:9px 11px; border-radius:3px; margin-top:6px; overflow-x:auto; line-height:1.6}
+.bub table{width:100%; border-collapse:collapse; font-size:12.5px; margin-top:6px}
+.bub th{text-align:left; font-size:10.5px; color:var(--ink3); text-transform:uppercase; letter-spacing:.04em;
+  padding:5px 8px; border-bottom:1px solid var(--line2)}
+.bub td{padding:6px 8px; border-bottom:1px dashed var(--line); font-family:"JetBrains Mono",monospace}
+/* 工具透明化 mini 卡 */
+.trace{border:1px dashed var(--line2); border-radius:4px; margin-bottom:6px; overflow:hidden}
+.trace .th{display:flex; align-items:center; gap:7px; padding:7px 10px; font-size:11.5px; font-weight:600;
+  color:var(--ink2); cursor:pointer; background:var(--card2)}
+.trace .tb2{display:none; padding:8px 10px; font-family:"JetBrains Mono",monospace; font-size:11.5px; line-height:1.9; color:var(--ink2)}
+.trace.open .tb2{display:block}
+.trace .st{color:var(--green)}
+/* 审批内联卡（远程模式特色：对话里直接批） */
+.appr-inline{border:1px solid var(--line2); border-radius:5px; padding:10px 12px; margin-top:8px; background:var(--card2)}
+.appr-inline .row{display:flex; gap:8px; margin-top:9px}
+/* 打字光标 */
+.caret{display:inline-block; width:8px; height:14px; background:var(--purple); margin-left:2px; vertical-align:-2px;
+  animation:blink .8s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+/* 联想 chips */
+#sugg{flex:none; display:flex; gap:8px; overflow-x:auto; padding:4px 14px 8px; scrollbar-width:none}
+#sugg::-webkit-scrollbar{display:none}
+/* 输入区 — 同行 [+] 输入 发送；圆角/阴影与像素控制台统一（4–6px + hard shadow） */
+#composer{
+  flex:none; padding:8px 12px calc(10px + env(safe-area-inset-bottom,0px));
+  border-top:1px solid var(--line); background:var(--bg);
+}
+#composer .composer-row{
+  display:flex; align-items:flex-end; gap:6px;
+  border:1px solid var(--line2); background:var(--card);
+  border-radius:6px; box-shadow:var(--hs);
+  padding:6px;
+  transition:border-color .15s ease, box-shadow .15s ease;
+}
+#composer .composer-row:focus-within{
+  border-color:var(--purple);
+  box-shadow:var(--hs2);
+}
+#attach-btn{
+  width:34px; height:34px; flex:none;
+  border:1px solid var(--line2); border-radius:4px;
+  background:var(--card2); color:var(--ink2); cursor:pointer;
+  box-shadow:var(--hs2);
+  display:flex; align-items:center; justify-content:center;
+  transition:all .15s ease;
+}
+#attach-btn:active{
+  transform:translate(2px,2px); box-shadow:none; color:var(--ink);
+}
+#attach-btn svg{ width:18px; height:18px; shape-rendering:crispEdges; }
+#composer .ta{
+  flex:1; min-height:34px; max-height:120px; border:none; background:transparent;
+  box-shadow:none; padding:7px 6px; font-size:14.5px; font-family:inherit; color:var(--ink);
+  resize:none; outline:none; line-height:1.45; width:100%;
+}
+#composer .ta:focus{ outline:none; border:none; }
+#composer .ta::placeholder{ color:var(--ink3); }
+#sendbtn{
+  width:34px; height:34px; flex:none;
+  border:1px solid var(--purple); border-radius:4px;
+  background:var(--purple); color:#fff; cursor:pointer;
+  box-shadow:var(--hs2);
+  display:flex; align-items:center; justify-content:center;
+  transition:all .15s ease;
+}
+#sendbtn:active{ transform:translate(2px,2px); box-shadow:none; }
+#sendbtn:disabled{
+  opacity:.45; cursor:not-allowed; transform:none;
+  box-shadow:var(--hs2);
+}
+#sendbtn.stop{
+  background:var(--red); border-color:var(--red); box-shadow:var(--hs2);
+}
+#sendbtn.stop:disabled{ background:var(--red); border-color:var(--red); opacity:.7; }
+#sendbtn svg{ width:16px; height:16px; shape-rendering:crispEdges; }
+#file-input{ display:none; }
+#attach-chips{
+  display:none; flex-wrap:wrap; gap:6px; padding:0 0 8px;
+}
+#attach-chips.has{ display:flex; }
+#attach-chips .chip-file{
+  font-size:11.5px; font-weight:600; max-width:160px;
+  padding:5px 8px; border-radius:3px; border:1px solid var(--line2);
+  background:var(--card); color:var(--ink2); box-shadow:var(--hs2);
+  display:inline-flex; align-items:center; gap:6px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+#attach-chips .chip-file button{
+  border:none; background:transparent; color:var(--ink3); cursor:pointer; font-size:14px; line-height:1; padding:0 2px;
+}
+/* 抽屉 — 支持 .open 切换 或 Dioxus 条件挂载（#drawer-bg + #drawer） */
+#drawer-bg{position:absolute; inset:0; z-index:40; background:rgba(12,15,26,.45)}
+#drawer{
+  position:absolute; top:0; bottom:0; left:0; width:min(290px,78%); z-index:50;
+  background:var(--elev); border-right:1px solid var(--line2);
+  display:flex; flex-direction:column; animation:fx-drawer-in var(--fx-drawer) var(--fx-ease-out) both;
+  box-shadow:var(--hs); overflow:hidden;
+}
+/* legacy full-screen shell with .open */
+#drawer.legacy{position:absolute; inset:0; z-index:40; display:none; background:transparent; border:none; box-shadow:none; width:auto; animation:none}
+#drawer.legacy.open{display:block}
+#drawer .mask{position:absolute; inset:0; background:rgba(12,15,26,.45)}
+#drawer .panel{position:absolute; top:0; bottom:0; left:0; width:290px; background:var(--elev);
+  border-right:1px solid var(--line2); display:flex; flex-direction:column; animation:fx-drawer-in var(--fx-drawer) var(--fx-ease-out) both}
+@keyframes sl{from{transform:translate3d(-28px,0,0); opacity:.35}to{transform:translate3d(0,0,0); opacity:1}}
+@keyframes fx-drawer-in{from{transform:translate3d(-100%,0,0); opacity:.6}to{transform:translate3d(0,0,0); opacity:1}}
+@keyframes fx-sheet-up{from{transform:translate3d(0,16px,0); opacity:0}to{transform:translate3d(0,0,0); opacity:1}}
+@keyframes fx-enter{from{transform:translate3d(0,8px,0); opacity:0}to{transform:translate3d(0,0,0); opacity:1}}
+@keyframes fx-fade{from{opacity:0}to{opacity:1}}
+/* GPU-only enter helpers (driven by Rust class toggles) */
+.fx-enter{animation:fx-enter var(--fx-bubble) var(--fx-ease-out) both}
+.fx-press{transition:transform var(--fx-press) var(--fx-ease-snap), box-shadow var(--fx-press) var(--fx-ease-snap)}
+.fx-press:active{transform:translate3d(1px,1px,0)}
+#drawer-bg{animation:fx-fade calc(var(--fx-drawer) * .7) ease both}
+#sess-sheet-bg{animation:fx-fade calc(var(--fx-sheet) * .6) ease both}
+/* send warn (ready=false but has text) */
+#sendbtn.warn{background:var(--amber); border-color:var(--amber); opacity:1}
+#sendbtn.warn:active{transform:translate(2px,2px); box-shadow:none}
+/* mode-bar smoother */
+#mode-bar .mode-btn{transition:background var(--fx-tab) var(--fx-ease-snap), color var(--fx-tab) ease, transform var(--fx-press) var(--fx-ease-snap)}
+#mode-bar .mode-btn:active{transform:translate3d(1px,1px,0)}
+/* tabbar smooth active */
+.tab{transition:color var(--fx-tab) var(--fx-ease-snap), background var(--fx-tab) ease}
+/* screen switch fade (when .act toggled via dioxus remount abs layers stay) */
+.screen.act{animation:fx-fade var(--fx-tab) ease both}
+
+#drawer .dh{padding:14px 14px 12px; display:flex; align-items:center; gap:9px; border-bottom:1px solid var(--line); flex:none}
+#drawer .dlist{flex:1; overflow-y:auto; padding:8px 12px 16px; display:flex; flex-direction:column; gap:0; min-height:0}
+/* drawer section labels — NEVER use .sect (has negative margin) inside drawer */
+#drawer .dsect,
+#drawer .sect.dsect{
+  font-family:"Silkscreen",monospace; font-size:9px; color:var(--purple); letter-spacing:.04em;
+  padding:14px 4px 8px; margin:0; display:flex; align-items:center; gap:8px;
+  line-height:1.2; flex:none; position:relative; z-index:1;
+}
+#drawer .dsect .dact{margin-left:auto; font-family:Inter,sans-serif; font-size:11px; color:var(--ink3); letter-spacing:0;
+  border:1px solid var(--line2); background:var(--card); border-radius:3px; padding:3px 8px; cursor:pointer; box-shadow:var(--hs2)}
+#drawer .dsect .dact:active{transform:translate(1px,1px); box-shadow:none}
+#drawer .hitem{
+  padding:11px 12px; margin:0 0 8px; border-radius:6px; cursor:pointer;
+  border:1px solid var(--line2); background:var(--card); box-shadow:var(--hs2);
+  flex:none; position:relative; user-select:none; -webkit-user-select:none;
+  transition:border-color .12s, box-shadow .12s, transform .12s;
+}
+#drawer .hitem:active{transform:translate(1px,1px); box-shadow:none}
+#drawer .hitem.act{border-color:var(--purple); background:var(--card)}
+#drawer .hitem.pinned{border-color:var(--amber)}
+#drawer .hitem .t1{font-size:13.5px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:flex; align-items:center; gap:6px}
+#drawer .hitem .t2{font-size:11px; color:var(--ink3); margin-top:3px; display:flex; gap:6px; align-items:center}
+#drawer .hitem .pin-mark{font-family:"Silkscreen",monospace; font-size:8px; color:var(--amber); flex:none}
+#drawer .mut{padding:4px 4px 10px; margin:0}
+#drawer .dft{padding:10px; border-top:1px solid var(--line); display:flex; gap:8px; flex:none}
+/* generic hitem (non-drawer) */
+.hitem{padding:10px 12px; border-radius:4px; cursor:pointer; margin-bottom:2px; border:1px solid transparent}
+.hitem:hover{background:var(--card2)}
+.hitem.act{background:var(--card2); border-color:var(--line2)}
+.hitem .t1{font-size:13.5px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.hitem .t2{font-size:11px; color:var(--ink3); margin-top:2px; display:flex; gap:6px; align-items:center}
+.dsect{font-family:"Silkscreen",monospace; font-size:9px; color:var(--purple); letter-spacing:.04em;
+  padding:12px 8px 6px; display:flex; align-items:center; gap:8px; margin:0}
+.dsect .dact{margin-left:auto; font-family:Inter,sans-serif; font-size:11px; color:var(--ink3); letter-spacing:0;
+  border:1px solid var(--line2); background:var(--card); border-radius:3px; padding:3px 8px; cursor:pointer; box-shadow:var(--hs2)}
+.dsect .dact:active{transform:translate(1px,1px); box-shadow:none}
+/* session action sheet */
+#sess-sheet-bg{position:absolute; inset:0; z-index:70; background:rgba(12,15,26,.4)}
+#sess-sheet{
+  position:absolute; left:12px; right:12px; bottom:88px; z-index:71;
+  background:var(--elev); border:1px solid var(--line2); border-radius:8px; box-shadow:var(--hs);
+  padding:10px; display:flex; flex-direction:column; gap:6px; animation:fx-sheet-up var(--fx-sheet) var(--fx-ease-out) both; will-change:transform,opacity;
+}
+#sess-sheet .ss-title{font-size:12px; font-weight:700; color:var(--ink2); padding:4px 6px 8px;
+  border-bottom:1px dashed var(--line); margin-bottom:2px; word-break:break-all}
+#sess-sheet button{
+  border:1px solid var(--line2); background:var(--card); border-radius:4px; box-shadow:var(--hs2);
+  padding:12px 14px; font:600 13.5px inherit; color:var(--ink); text-align:left; cursor:pointer;
+  display:flex; align-items:center; gap:10px;
+}
+#sess-sheet button:active{transform:translate(2px,2px); box-shadow:none}
+#sess-sheet button.dan{color:var(--red)}
+#sess-sheet button.cancel{justify-content:center; color:var(--ink3)}
+#sess-rename{
+  position:absolute; left:16px; right:16px; top:28%; z-index:72;
+  background:var(--elev); border:1px solid var(--line2); border-radius:8px; box-shadow:var(--hs);
+  padding:14px;
+}
+#sess-rename .lb{margin-bottom:8px}
+#sess-rename .ops{display:flex; gap:8px; margin-top:12px}
+#sess-rename .ops .btn{flex:1}
+.hitem .mode-tag{font-family:"Silkscreen",monospace; font-size:8px; padding:2px 4px; border-radius:2px;
+  background:var(--card2); color:var(--ink3); margin-left:6px}
+.hitem .mode-tag.rm{background:var(--purple); color:#fff}
+.hitem .mode-tag.lo{background:var(--amber); color:#3a2703}
+/* delete confirm sheet */
+#sess-confirm{
+  position:absolute; left:16px; right:16px; top:30%; z-index:73;
+  background:var(--elev); border:1px solid var(--line2); border-radius:8px; box-shadow:var(--hs);
+  padding:14px; animation:fx-sheet-up var(--fx-sheet) var(--fx-ease-out) both;
+}
+#sess-confirm .ss-title{font-size:13px; font-weight:700; color:var(--ink); margin-bottom:6px}
+#sess-confirm .ss-body{font-size:12.5px; color:var(--ink2); line-height:1.55; margin-bottom:12px}
+#sess-confirm .ops{display:flex; gap:8px}
+#sess-confirm .ops .btn{flex:1}
+/* ═══ 审批页 ═══ */
+
+.seg{display:flex; gap:0; border:1px solid var(--line2); border-radius:4px; overflow:hidden; box-shadow:var(--hs2)}
+.seg button{flex:1; border:none; background:var(--card); padding:8px 0; font-size:13px; font-weight:600;
+  color:var(--ink2); cursor:pointer; font-family:inherit}
+.seg button.act{background:var(--purple); color:#fff}
+.appr-card{background:var(--card); border:1px solid var(--line2); border-radius:6px; box-shadow:var(--hs); padding:13px 14px}
+.appr-card .top{display:flex; align-items:center; gap:8px; margin-bottom:7px; flex-wrap:wrap}
+.appr-card .ag{font-size:14px; font-weight:700}
+.appr-card .ds{font-size:12.5px; color:var(--ink2); line-height:1.65}
+.appr-card .ds code{font-family:"JetBrains Mono",monospace; font-size:11.5px; background:var(--card2); padding:1px 5px; border-radius:2px}
+.appr-card .ops{display:flex; gap:8px; margin-top:11px}
+.appr-card.done{opacity:.55}
+.proc-row{display:flex; align-items:center; gap:9px; padding:10px 2px; border-bottom:1px dashed var(--line)}
+.proc-row:last-child{border-bottom:none}
+.proc-row .pn{flex:1; min-width:0}
+.proc-row .pn .p1{font-size:13px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.proc-row .pn .p2{font-size:11px; color:var(--ink3); margin-top:2px; font-family:"JetBrains Mono",monospace}
+.pbar{width:56px; height:6px; background:var(--inp); border-radius:1px; overflow:hidden; flex:none}
+.pbar i{display:block; height:100%; background:var(--cyan)}
+/* ═══ 连接页 ═══ */
+.conn-hero{text-align:center; padding:22px 14px 14px}
+.conn-hero .big{font-size:17px; font-weight:700; margin-top:12px}
+.conn-hero .mut{margin-top:5px}
+.dev{display:flex; align-items:center; gap:11px; background:var(--card); border:1px solid var(--line2);
+  border-radius:6px; box-shadow:var(--hs); padding:13px 14px}
+.dev .di{flex:1; min-width:0}
+.dev .dn{font-size:14px; font-weight:700; display:flex; gap:7px; align-items:center}
+.dev .dm{font-size:11px; color:var(--ink3); margin-top:3px; font-family:"JetBrains Mono",monospace}
+.cap{display:flex; gap:8px; align-items:center; font-size:12.5px; color:var(--ink2); padding:5px 0}
+select.inp{appearance:none;-webkit-appearance:none}
+.inp{width:100%; border:1px solid var(--line2); background:var(--card); border-radius:4px; box-shadow:var(--hs2);
+  padding:10px 12px; font-size:13.5px; font-family:inherit; color:var(--ink); outline:none}
+.inp:focus{border-color:var(--purple)}
+.lb{font-size:12px; font-weight:600; color:var(--ink2); margin-bottom:5px; display:block}
+.fg{margin-bottom:12px}
+/* ═══ 我的页 ═══ */
+.me-card{display:flex; align-items:center; gap:12px}
+.me-card .mn{font-size:16px; font-weight:700}
+.me-card .md{font-size:11.5px; color:var(--ink3); margin-top:2px}
+.sect{font-family:"Silkscreen",monospace; font-size:10px; color:var(--purple); letter-spacing:.05em; margin:6px 2px -4px}
+.row{display:flex; align-items:center; gap:10px; padding:11px 2px; border-bottom:1px dashed var(--line); font-size:13.5px}
+.row:last-child{border-bottom:none}
+.row .rt{flex:1; font-weight:600}
+.row .rd{font-size:11px; color:var(--ink3); margin-top:2px; font-weight:400}
+.sw{width:42px; height:24px; border-radius:3px; background:var(--inp); border:1px solid var(--line2); position:relative;
+  cursor:pointer; flex:none; transition:background .18s}
+.sw::after{content:''; position:absolute; top:2px; left:2px; width:18px; height:18px; border-radius:2px;
+  background:var(--elev); box-shadow:1px 1px 0 var(--hard); transition:left .18s}
+.sw.on{background:var(--purple)}
+.sw.on::after{left:20px}
+.tseg{display:flex; border:1px solid var(--line2); border-radius:4px; overflow:hidden}
+.tseg button{flex:1; border:none; background:var(--card); padding:7px 0; font-size:12px; font-weight:600;
+  color:var(--ink2); cursor:pointer; font-family:inherit}
+.tseg button.act{background:var(--purple); color:#fff}
+/* toast */
+#toast{position:absolute; left:50%; bottom:96px; transform:translate3d(-50%,10px,0); background:#1d2330;
+  color:#fff; font-size:12.5px; padding:9px 16px; border-radius:4px; box-shadow:var(--hs); opacity:0;
+  transition:transform var(--fx-toast) var(--fx-ease-soft), opacity var(--fx-toast) ease;
+  z-index:70; pointer-events:none; max-width:82%; text-align:center; will-change:transform,opacity}
+#toast.show{opacity:1; transform:translate3d(-50%,0,0)}
+[data-theme="dark"] #toast{background:#e6e9f2; color:#1d2330}
+
+/* ═══ 双模式切换条 ═══ */
+#mode-bar{
+  flex:none; display:flex; gap:6px; padding:8px 12px 0; align-items:center;
+}
+#mode-bar .mode-btn{
+  flex:1; border:1px solid var(--line2); background:var(--card); color:var(--ink2);
+  font-family:inherit; font-size:12px; font-weight:700; padding:8px 10px; border-radius:4px;
+  box-shadow:var(--hs2); cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px;
+}
+#mode-bar .mode-btn .dot{width:7px;height:7px;border-radius:1px;background:var(--ink3);box-shadow:1px 1px 0 var(--hard)}
+#mode-bar .mode-btn.act{background:var(--purple); border-color:var(--purple); color:#fff}
+#mode-bar .mode-btn.act .dot{background:#fff}
+#mode-bar .mode-btn.act.local{background:var(--amber); border-color:var(--amber); color:#3a2703}
+#mode-bar .mode-btn.act.local .dot{background:#3a2703}
+#mode-hint{flex:none; padding:4px 14px 0; font-size:11px; color:var(--ink3); line-height:1.4; min-height:16px}
+/* composer extras */
+#voice-btn,#cam-btn{
+  width:34px; height:34px; flex:none;
+  border:1px solid var(--line2); border-radius:4px;
+  background:var(--card2); color:var(--ink2); cursor:pointer;
+  box-shadow:var(--hs2);
+  display:flex; align-items:center; justify-content:center;
+}
+#voice-btn.rec{background:var(--red); border-color:var(--red); color:#fff; animation:lp 1s ease-in-out infinite}
+#voice-btn:active,#cam-btn:active{transform:translate(2px,2px); box-shadow:none}
+#voice-btn svg,#cam-btn svg{width:17px;height:17px;shape-rendering:crispEdges}
+/* attach sheet */
+#media-sheet{
+  display:none; position:absolute; left:12px; right:12px; bottom:88px; z-index:65;
+  background:var(--elev); border:1px solid var(--line2); border-radius:8px; box-shadow:var(--hs);
+  padding:10px; flex-direction:column; gap:6px;
+}
+#media-sheet.show{display:flex}
+#media-sheet button{
+  border:1px solid var(--line2); background:var(--card); border-radius:4px; box-shadow:var(--hs2);
+  padding:12px 14px; font:600 13.5px inherit; color:var(--ink); text-align:left; cursor:pointer;
+  display:flex; align-items:center; gap:10px;
+}
+#media-sheet button:active{transform:translate(2px,2px); box-shadow:none}
+#media-sheet .ms-ico{width:28px;height:28px;border-radius:3px;background:var(--card2);display:flex;align-items:center;justify-content:center;flex:none}
+#media-sheet .ms-sub{font-size:11px;color:var(--ink3);font-weight:500;margin-top:2px}
+/* camera overlay */
+#cam-overlay{
+  display:none; position:absolute; inset:0; z-index:80; background:#000; flex-direction:column;
+}
+#cam-overlay.show{display:flex}
+#cam-overlay video{flex:1; width:100%; object-fit:cover; background:#111}
+#cam-overlay .cam-bar{
+  flex:none; display:flex; gap:12px; justify-content:center; align-items:center;
+  padding:16px 16px calc(20px + env(safe-area-inset-bottom,0px)); background:#0c0f1a;
+}
+#cam-overlay .cam-bar button{
+  width:56px; height:56px; border-radius:50%; border:3px solid #fff; background:var(--purple);
+  color:#fff; font-weight:700; cursor:pointer;
+}
+#cam-overlay .cam-bar .cam-cancel{width:auto; height:auto; border-radius:4px; border:1px solid var(--line2); background:var(--card); color:var(--ink); padding:10px 14px}
+#rec-wave{display:none; font-size:11px; color:var(--red); font-weight:700; padding:0 4px 6px}
+#rec-wave.on{display:block}
+
+/* layout safety — Dioxus SVG / flex shrink */
+.iconbtn{overflow:hidden}
+.iconbtn svg{width:19px !important; height:19px !important}
+.tab svg{width:22px !important; height:22px !important; shape-rendering:crispEdges}
+#attach-btn svg, #cam-btn svg, #voice-btn svg, #sendbtn svg{flex:none}
+#composer .composer-row{min-width:0}
+#composer .ta{min-width:0}
+#phone{min-width:0}
+#screens{min-width:0; width:100%}
+.screen.act{min-width:0; width:100%}
+/* mode bar denser on small screens */
+@media(max-width:400px){
+  #mode-bar .mode-btn{font-size:11px; padding:7px 6px}
+  #chat-conn{font-size:11.5px; padding:8px 10px}
+}
+
+/* ── visual polish pass (post-layout fix) ── */
+#statusbar{position:relative; z-index:55}
+#statusbar .num{font-variant-numeric:tabular-nums; letter-spacing:.02em}
+/* Composer: 相机入口只放在 + 菜单，主行保持 [+] 输入 [mic] [发送] 更接近 demo/Grok */
+#cam-btn{display:none !important}
+/* 抽屉：顶栏已含 dh，不再额外 padding-top 挤内容；背景 elev */
+#drawer{padding-top:0 !important; background:var(--elev) !important}
+#drawer-bg{backdrop-filter:none}
+/* kill any .sect negative-margin leak inside drawer list */
+#drawer .dlist .sect{margin:0 !important; padding:14px 4px 8px !important; line-height:1.2}
+/* 气泡 who 行 */
+.bub .who .num{font-family:"JetBrains Mono",monospace}
+/* 欢迎气泡段落 */
+.bub p{margin:.4em 0}
+.bub p:first-child{margin-top:0}
+/* 连接页 hero 图标尺寸 */
+.conn-hero svg{display:block; margin:0 auto}
+/* 避免 mode 条 + 连接条 过厚挤压消息区 */
+#mode-hint{padding:2px 14px 0; min-height:14px; font-size:10.5px}
+#mode-bar{padding:6px 12px 0}
+#chat-conn{margin-top:8px}
+/* tab 标签不换行 */
+.tab span{white-space:nowrap}
+/* 确保屏幕填满 phone */
+#screens{flex:1 1 auto}
+
+/* pixel avatar placeholder */
+.avt-px{
+  display:flex; align-items:center; justify-content:center;
+  background:linear-gradient(135deg, var(--purple), var(--cyan));
+  color:#fff; font-family:"Silkscreen",monospace; font-size:9px;
+  letter-spacing:-.02em; image-rendering:pixelated;
+  border:1px solid var(--line2);
+}

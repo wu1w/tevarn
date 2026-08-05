@@ -1,0 +1,39 @@
+[workspace]
+# standalone wasm package — isolates web-sys from host/reqwest
+
+[package]
+name = "takton-mobile-web"
+version = "0.1.0"
+edition = "2021"
+description = "Dioxus-web 1:1 Pixel Console UI (DOM renderer, CSS 100% reused)"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+dioxus = { version = "0.6.3", features = ["web"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+gloo-net = { version = "0.6", features = ["http"] }
+gloo-timers = { version = "0.3", features = ["futures"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3.76", features = [
+  "Window", "Document", "Element", "HtmlElement", "HtmlInputElement",
+  "HtmlTextAreaElement", "HtmlCanvasElement", "HtmlVideoElement",
+  "HtmlMediaElement", "CanvasRenderingContext2d", "MediaStream",
+  "MediaDevices", "Navigator", "MediaRecorder", "Blob", "BlobPropertyBag",
+  "Url", "File", "FileList", "console",
+  "MediaStreamConstraints", "BinaryType",
+  "Headers", "Response", "Request", "RequestInit", "RequestMode",
+  "CssStyleDeclaration", "DomTokenList", "Event", "MouseEvent",
+  "PointerEvent", "KeyboardEvent", "HtmlSelectElement",
+  "FormData", "Storage", "HtmlButtonElement", "Location",
+  "MediaStreamTrack", "FilePropertyBag",
+  "WebSocket", "MessageEvent", "BlobEvent", "CloseEvent",
+] }
+futures = "0.3"
+futures-util = "0.3"
+base64 = "0.22"
+console_error_panic_hook = "0.1"

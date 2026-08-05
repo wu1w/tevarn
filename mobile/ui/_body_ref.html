@@ -1,0 +1,323 @@
+<body>
+
+
+<div id="stage">
+  <div id="side">
+    <h1><span class="px">TAKTON MOBILE</span>口袋里的 AI 公司</h1>
+    <p>连接 PC 后可远程接管 agent / 审批 / 进程；LLM 设置与 PC 端一致。未连 PC 时也可直接配置模型对话。</p>
+    <div class="tips">
+      <b>试试这些：</b><br>
+      1. 默认本机模型对话（我的 → LLM 设置）<br>
+      2. 左侧栏切换到「远端 Agent」使用 PC 工具链<br>
+      3. 审批 tab 处理提权 / 进化<br>
+      4. 连接 tab 管理 PC 与设备<br>
+      5. 深色模式在「我的 → 主题」
+    </div>
+  </div>
+
+  <div id="phone">
+    <div id="notch" onclick="islandTap()" title="灵动岛 · 点击查看实时状态">
+      <span class="il-dot" id="il-dot"></span>
+      <span class="il-txt" id="il-txt"></span>
+    </div>
+    <div id="statusbar">
+      <span class="num" id="sb-time">9:41</span>
+      <div class="sic">
+        <svg width="17" height="11" viewBox="0 0 17 11" fill="currentColor" style="shape-rendering:crispEdges"><path d="M0 8h3v3H0zM4.5 5h3v6h-3zM9 3h3v8H9zM13.5 0h3v11h-3z"/></svg>
+        <svg width="15" height="11" viewBox="0 0 15 11" fill="currentColor" style="shape-rendering:crispEdges"><path d="M7 8h1v3H7zM5 6h5v2H5zM3 4h9v2H3zM1 2h13v2H1zM0 0h15v1H0z" opacity=".9"/></svg>
+        <svg width="24" height="11" viewBox="0 0 24 11" fill="none" stroke="currentColor" style="shape-rendering:crispEdges"><rect x="0.5" y="0.5" width="20" height="10"/><rect x="22" y="3" width="2" height="5" fill="currentColor" stroke="none"/><rect x="2" y="2" width="14" height="7" fill="currentColor" stroke="none"/></svg>
+      </div>
+    </div>
+
+    <div id="screens">
+<!-- ═══════ 屏 1：对话 ═══════ -->
+<section class="screen act" id="s-chat">
+  <div class="shead">
+    <button class="iconbtn" onclick="drawer(1)" title="历史会话">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 5h18v3H3zM3 11h18v3H3zM3 17h12v3H3z"/></svg>
+    </button>
+    <div style="flex:1; min-width:0">
+      <div class="tt" id="chat-title">Takton</div>
+      <div class="sub" id="chat-sub">连接后加载会话</div>
+    </div>
+    <button class="iconbtn" title="新建会话" onclick="newChat()">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 4h4v6h6v4h-6v6h-4v-6H4v-4h6z"/></svg>
+    </button>
+  </div>
+
+  <div id="mode-bar">
+    <button type="button" class="mode-btn local act" id="mode-local" onclick="switchSurface('local')">
+      <span class="dot"></span>本机对话
+    </button>
+    <button type="button" class="mode-btn" id="mode-remote" onclick="switchSurface('remote')">
+      <span class="dot"></span>远端 Agent
+    </button>
+  </div>
+  <div id="mode-hint">选择对话通道：本机直连模型 · 或 PC Agent 工具链</div>
+
+  <div id="chat-conn">
+    <span class="lamp on pulse" id="conn-lamp"></span>
+    <div style="min-width:0">
+      <span class="nm" id="conn-name">未连接</span>
+      <span class="mut num" id="conn-meta" style="margin-left:6px">—</span>
+    </div>
+    <span class="go" id="conn-go" onclick="drawer(1)">会话 →</span>
+  </div>
+
+  <div id="msgs"></div>
+  <div id="sugg"></div>
+
+  <div id="composer">
+    <div id="attach-chips"></div>
+    <div id="rec-wave">● 正在录音… 松开发送</div>
+    <div class="composer-row">
+      <button type="button" id="attach-btn" title="附件 / 相机" aria-label="附件" onclick="openMediaSheet()">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></svg>
+      </button>
+      <button type="button" id="cam-btn" title="相机" aria-label="相机" onclick="openCamera()">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 7h4l2-2h6l2 2h4v12H3V7zm9 3a4 4 0 100 8 4 4 0 000-8zm0 2a2 2 0 110 4 2 2 0 010-4z"/></svg>
+      </button>
+      <textarea class="ta" id="inp" rows="1" placeholder="有什么可以帮忙的？"></textarea>
+      <button type="button" id="voice-btn" title="按住说话" aria-label="语音"
+        onpointerdown="voiceDown(event)" onpointerup="voiceUp(event)" onpointercancel="voiceCancel(event)" onpointerleave="voiceCancel(event)">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a3 3 0 00-3 3v6a3 3 0 006 0V5a3 3 0 00-3-3zm-7 9h2a5 5 0 0010 0h2a7 7 0 01-6 6.9V21h-2v-3.1A7 7 0 015 11z"/></svg>
+      </button>
+      <button type="button" id="sendbtn" onclick="sendOrStop()" disabled aria-label="发送">
+        <svg id="sendico" viewBox="0 0 24 24" fill="currentColor"><path d="M3 10h11v4H3zM13 8h3v8h-3zM16 10h5l-2.5 2 2.5 2z"/></svg>
+        <svg id="stopico" viewBox="0 0 24 24" fill="currentColor" style="display:none"><path d="M7 7h10v10H7z"/></svg>
+      </button>
+    </div>
+    <input type="file" id="file-input" multiple accept="image/*,audio/*,.pdf,.txt,.md,.json,.csv,.zip,.py,.ts,.tsx,.js,.rs" />
+    <input type="file" id="gallery-input" accept="image/*" capture="environment" style="display:none" />
+  </div>
+  <div id="media-sheet" onclick="event.stopPropagation()">
+    <button type="button" onclick="sheetPickFile()"><span class="ms-ico">📎</span><span><div>文件</div><div class="ms-sub">文档 / 图片 · 远端上传到 PC</div></span></button>
+    <button type="button" onclick="sheetCamera()"><span class="ms-ico">📷</span><span><div>相机拍照</div><div class="ms-sub">实时预览拍摄 · 真实摄像头</div></span></button>
+    <button type="button" onclick="sheetGallery()"><span class="ms-ico">🖼</span><span><div>相册</div><div class="ms-sub">从相册选择图片</div></span></button>
+    <button type="button" onclick="closeMediaSheet()" style="justify-content:center;color:var(--ink3)">取消</button>
+  </div>
+</section>
+
+<div id="cam-overlay">
+  <video id="cam-video" playsinline autoplay muted></video>
+  <canvas id="cam-canvas" style="display:none"></canvas>
+  <div class="cam-bar">
+    <button type="button" class="cam-cancel" onclick="closeCamera()">取消</button>
+    <button type="button" id="cam-shutter" onclick="capturePhoto()" title="拍照">●</button>
+  </div>
+</div>
+
+<!-- ═══════ 屏 2：审批 ═══════ -->
+<section class="screen" id="s-approve">
+  <div class="shead">
+    <div style="flex:1">
+      <div class="tt">审批中心</div>
+      <div class="sub">提权与进化，路上也能拍板</div>
+    </div>
+    <button class="btn sm" onclick="approveAll()">全部通过</button>
+  </div>
+  <div class="sbody">
+    <div class="seg">
+      <button class="act" id="ap-t1" onclick="apTab(1)">员工扩权 <span class="badge" id="ap-b1" style="display:none">0</span></button>
+      <button id="ap-t2" onclick="apTab(2)">进化提案 <span class="badge cy" id="ap-b2" style="display:none">0</span></button>
+    </div>
+    <div id="ap-list"><div class="mut" style="text-align:center;padding:20px">加载中…</div></div>
+
+    <div class="sect">RUNNING <span class="mut num" id="proc-count"></span></div>
+    <div class="card2" style="padding:6px 14px" id="proc-list">
+      <div class="mut" style="text-align:center;padding:14px">连接 PC 后显示真实进程</div>
+    </div>
+    <div class="mut" style="text-align:center">数据来自 PC 内核 · 无演示条目</div>
+  </div>
+</section>
+
+<!-- ═══════ 屏 3：远程连接 ═══════ -->
+<section class="screen" id="s-remote">
+  <div class="shead">
+    <div style="flex:1">
+      <div class="tt">远程连接</div>
+      <div class="sub">接管 PC 上的 Takton 运行时</div>
+    </div>
+    <span class="badge am" id="rm-state">LOCAL</span>
+  </div>
+  <div class="sbody">
+    <div class="card2 conn-hero">
+      <svg width="56" height="56" viewBox="0 0 24 24" fill="var(--purple)" style="shape-rendering:crispEdges; margin:0 auto; display:block"><path d="M7 7h10v2H7zM7 15h10v2H7zM7 7h2v10H7zM15 7h2v10h-2zM10 10h4v4h-4zM9 3h2v4H9zM13 3h2v4h-2zM9 17h2v4H9zM13 17h2v4h-2zM3 9h4v2H3zM3 13h4v2H3zM17 9h4v2h-4zM17 13h4v2h-4z"/></svg>
+      <div class="big" id="rm-title">未连接</div>
+      <div class="mut num" id="rm-meta">填写地址登录你的 PC Takton</div>
+      <div style="display:flex; gap:8px; justify-content:center; margin-top:14px">
+        <button class="btn sm" id="rm-disc" onclick="disconnect()">断开连接</button>
+        <button class="btn sm cy" onclick="runtimeHeartbeat()">心跳测试</button>
+      </div>
+    </div>
+
+    <div class="sect">DEVICES</div>
+    <div id="dev-list"></div>
+
+    <div class="sect">PAIR</div>
+    <div class="card2">
+      <div style="display:flex; gap:8px">
+        <button class="btn pri" style="flex:1" onclick="pairFromForm()">手动配对</button>
+        <button class="btn" style="flex:1" onclick="document.getElementById('manual').style.display='block'">展开表单</button>
+      </div>
+      <div id="manual" style="display:none; margin-top:12px">
+        <div class="fg"><span class="lb">PC Base URL</span><input class="inp num" id="pair-base" value="http://127.0.0.1:8090"></div>
+        <div class="fg"><span class="lb">登录邮箱</span><input class="inp num" id="pair-email" placeholder="admin@takton.dev"></div>
+        <div class="fg"><span class="lb">密码</span><input class="inp num" id="pair-pass" type="password" placeholder="留空则 loopback auto-login"></div>
+        <button class="btn pri blk" onclick="connectFromPairForm()">连接 PC</button>
+        <div class="mut" style="margin-top:10px">L1 agent 配对（远程执行节点）：</div>
+        <div class="fg"><span class="lb">Agent Host</span><input class="inp num" id="pair-agent-host" value="127.0.0.1"></div>
+        <div class="fg"><span class="lb">Port</span><input class="inp num" id="pair-agent-port" value="19876"></div>
+        <div class="fg"><span class="lb">Token</span><input class="inp num" id="pair-agent-token" type="password" placeholder="≥8 字符"></div>
+        <button class="btn blk" onclick="pairAgentFromForm()">配对 L1 Agent</button>
+      </div>
+    </div>
+
+    <div class="sect">CAPABILITIES</div>
+    <div class="card2" style="padding-top:8px; padding-bottom:8px" id="cap-list">
+      <div class="cap"><span class="lamp off" id="cap-chat"></span>对话 · 会话与 PC 实时同步</div>
+      <div class="cap"><span class="lamp off" id="cap-appr"></span>审批提权 / 进化提案</div>
+      <div class="cap"><span class="lamp off" id="cap-proc"></span>进程查看 / 停止</div>
+      <div class="cap"><span class="lamp off" id="cap-dev"></span>L1 设备配对</div>
+      <div class="cap"><span class="lamp off" id="cap-file"></span>附件上传（随消息）</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════ 屏 4：我的 ═══════ -->
+<section class="screen" id="s-me">
+  <div class="shead"><div class="tt" style="flex:1">我的</div></div>
+  <div class="sbody">
+    <div class="card2 me-card">
+      <canvas class="avt" width="10" height="10" style="width:44px;height:44px" data-avt="boss"></canvas>
+      <div>
+        <div class="mn" id="me-name">未登录</div>
+        <div class="md num" id="me-meta">连接 PC 后显示账号</div>
+      </div>
+      <span class="badge" id="me-role" style="margin-left:auto;display:none">—</span>
+    </div>
+
+    <div class="sect">PC 连接</div>
+    <div class="card2">
+      <div class="mut" style="margin-bottom:10px; line-height:1.6">连接 Takton 后端以使用 agent / 审批 / 进程。局域网外请使用 HTTPS。</div>
+      <div class="fg"><span class="lb">Takton Base URL</span><input class="inp num" id="api-base" value="http://127.0.0.1:8090"></div>
+      <div class="fg"><span class="lb">邮箱</span><input class="inp num" id="api-email" placeholder="admin@takton.dev"></div>
+      <div class="fg"><span class="lb">登录密码</span><input class="inp num" id="api-key" type="password" value="" placeholder="密码；本机 loopback 可留空"></div>
+      <div style="display:flex; gap:8px">
+        <button class="btn pri" style="flex:1" onclick="testApi(this)">连接</button>
+        <button class="btn" onclick="clearApiForm()">清除</button>
+      </div>
+    </div>
+
+    <div class="sect">LLM 设置</div>
+    <div class="card2">
+      <div class="mut" style="margin-bottom:10px; line-height:1.6">与 PC 端相同：选供应商与模型。API 供应商填 Key；ChatGPT / Grok OAuth 点登录授权（不需要 API Key）。未连 PC 时仅支持 API / 本机直连。</div>
+      <div class="fg"><span class="lb">供应商</span>
+        <select class="inp num" id="llm-provider" onchange="onProviderChange()"></select>
+      </div>
+      <div class="fg"><span class="lb">模型</span>
+        <select class="inp num" id="llm-model"></select>
+      </div>
+      <div class="fg" id="fg-custom-model" style="display:none"><span class="lb">自定义模型名</span>
+        <input class="inp num" id="llm-model-custom" placeholder="列表没有时可手写">
+      </div>
+      <div class="fg" id="fg-llm-base"><span class="lb">Base URL</span>
+        <input class="inp num" id="llm-base" placeholder="https://api.openai.com/v1">
+      </div>
+      <div class="fg" id="fg-llm-key"><span class="lb">API Key</span>
+        <input class="inp num" id="llm-key" type="password" placeholder="已保存可留空">
+      </div>
+      <div id="oauth-panel" style="display:none; margin-bottom:12px">
+        <div class="mut" style="margin-bottom:8px;line-height:1.55" id="oauth-help">
+          此供应商使用账号登录，不需要 API Key。
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px">
+          <button type="button" class="btn pri" style="flex:1;min-width:120px" id="oauth-start-btn" onclick="startOauthLogin(this)">登录授权</button>
+          <button type="button" class="btn" style="flex:1;min-width:120px;display:none" id="oauth-poll-btn" onclick="pollOauthLogin(this)">检查登录状态</button>
+        </div>
+        <div class="mut" id="oauth-status" style="margin-bottom:8px"></div>
+        <!-- 手动回调备用：始终可用，自动轮询失败时用 -->
+        <div class="fg" id="fg-oauth-callback">
+          <span class="lb" id="oauth-callback-lb">备用 · 手动粘贴回调地址</span>
+          <div class="mut" id="oauth-callback-hint" style="margin-bottom:6px;line-height:1.5">
+            浏览器授权成功后，若未自动完成，把地址栏完整 URL（含 code=）粘贴到下方。
+          </div>
+          <input class="inp num" id="oauth-callback" placeholder="http://localhost:1455/auth/callback?code=…&state=…" autocomplete="off">
+          <button type="button" class="btn sm" style="margin-top:8px;width:100%" id="oauth-complete-btn" onclick="completeOauthLogin(this)">用回调地址完成登录</button>
+        </div>
+      </div>
+      <div class="fg"><span class="lb">当前活动</span>
+        <input class="inp num" id="api-model" value="" readonly placeholder="—">
+      </div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap">
+        <button class="btn pri" style="flex:1;min-width:110px" onclick="applyLlm(this)">应用模型</button>
+        <button class="btn" style="flex:1;min-width:110px" id="llm-test-btn" onclick="testLlm(this)">测试连接</button>
+      </div>
+      <div class="mut" id="llm-hint" style="margin-top:8px">加载中…</div>
+    </div>
+
+    <div class="sect">GENERAL</div>
+    <div class="card2" style="padding-top:6px; padding-bottom:6px">
+      <div class="row"><div class="rt">主题<div class="rd">跟随系统 / 浅色 / 深色</div></div>
+        <div class="tseg" style="width:150px">
+          <button onclick="themeSeg(this,'system')">跟随</button>
+          <button class="act" onclick="themeSeg(this,'light')">浅色</button>
+          <button onclick="themeSeg(this,'dark')">深色</button>
+        </div>
+      </div>
+      <div class="row"><div class="rt">应用内审批提醒<div class="rd">本机标记，非系统推送</div></div><div class="sw on" id="sw-notify" onclick="toggleNotify(this)"></div></div>
+      <div class="row"><div class="rt">清空本地会话区<div class="rd">不影响 PC 端存档</div></div><button class="btn sm dan" onclick="clearLocalUi()">清空</button></div>
+    </div>
+
+    <div class="sect">ABOUT</div>
+    <div class="card2" style="padding-top:6px; padding-bottom:6px">
+      <div class="row"><div class="rt">Takton Mobile</div><span class="mut num">v0.1.0 · Pixel Console · Rust</span></div>
+      <div class="row"><div class="rt">协议</div><span class="mut">MIT · Local-first</span></div>
+      <div class="row"><div class="rt">后端</div><span class="mut num" id="me-backend">—</span></div>
+    </div>
+  </div>
+</section>
+    </div><!-- /screens -->
+
+    <div id="tabbar">
+      <div class="tab act" data-tab="chat" onclick="goTab('chat')">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 3h18v2H3zM3 13h18v2H3zM3 3h2v12H3zM19 3h2v12h-2zM6 15h3v3H6zM5 18h2v2H5zM7 7h2v3H7zM11 7h2v3h-2zM15 7h2v3h-2z"/></svg>
+        <span>对话</span>
+      </div>
+      <div class="tab" data-tab="approve" onclick="goTab('approve')">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 2h14v2H4zM4 20h14v2H4zM4 2h2v20H4zM16 2h2v20h-2zM8 11h2v2H8zM10 13h2v2h-2zM12 11h2v2h-2zM14 9h2v2h-2z"/></svg>
+        <span>审批</span><i class="bdg" id="tab-bdg" style="display:none">0</i>
+      </div>
+      <div class="tab" data-tab="remote" onclick="goTab('remote')">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 2h6v2H9zM9 20h6v2H9zM7 4h2v16H7zM15 4h2v16h-2zM10 9h4v4h-4zM3 7h2v2H3zM1 5h2v2H1zM19 7h2v2h-2zM21 5h2v2h-2zM3 15h2v2H3zM1 17h2v2H1zM19 15h2v2h-2zM21 17h2v2h-2z"/></svg>
+        <span>连接</span>
+      </div>
+      <div class="tab" data-tab="me" onclick="goTab('me')">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 3h6v6H9zM6 11h12v3H6zM4 14h16v7H4z"/></svg>
+        <span>我的</span>
+      </div>
+    </div>
+    <div id="homebar"></div>
+    <div id="toast"></div>
+
+    <!-- 历史抽屉 -->
+    <div id="drawer">
+      <div class="mask" onclick="drawer(0)"></div>
+      <div class="panel">
+        <div class="dh">
+          <span class="px" style="font-size:13px; color:var(--purple)">TAKTON</span>
+          <span class="mut">会话</span>
+          <button class="iconbtn" style="margin-left:auto; width:30px; height:30px" onclick="newChat()" title="新建当前模式会话">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 4h4v6h6v4h-6v6h-4v-6H4v-4h6z"/></svg>
+          </button>
+        </div>
+        <div class="dlist" id="hist"></div>
+        <div class="dft">
+          <button class="btn sm" style="flex:1" onclick="drawer(0);goTab('remote')">连接 PC</button>
+          <button class="btn sm" style="flex:1" onclick="drawer(0);goTab('me')">LLM 设置</button>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /phone -->
+</div><!-- /stage -->

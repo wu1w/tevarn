@@ -1,0 +1,31 @@
+# Rust
+target/
+**/target/
+**/*.rs.bk
+
+# Flutter / Dart
+flutter_app/.dart_tool/
+flutter_app/.packages
+flutter_app/.flutter-plugins
+flutter_app/.flutter-plugins-dependencies
+flutter_app/.pub-cache/
+flutter_app/.pub/
+flutter_app/build/
+**/*.iml
+**/.idea/
+
+# Android local
+**/local.properties
+**/.gradle/
+**/captures/
+
+# OS / logs
+.DS_Store
+**/*.log
+*.swp
+
+# Secrets
+.env
+.env.*
+!**/.env.example
+**/credentials.json

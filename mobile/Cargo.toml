@@ -1,0 +1,40 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/host",
+    "crates/ffi",
+]
+# crates/web is a separate wasm package (own Cargo.lock) — legacy Dioxus UI, kept for reference
+
+default-members = ["crates/host"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Takton Mobile"]
+repository = "https://github.com/wu1w/takton"
+
+[workspace.dependencies]
+anyhow = "1"
+axum = { version = "0.8", features = ["ws", "macros", "multipart"] }
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "6"
+futures-util = "0.3"
+http = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "multipart"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "cors", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url = "2"
+uuid = { version = "1", features = ["serde", "v4"] }
+parking_lot = "0.12"
+dashmap = "6"
