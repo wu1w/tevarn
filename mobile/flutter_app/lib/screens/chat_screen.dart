@@ -238,7 +238,28 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
         Expanded(
-          child: ListView.builder(
+          child: c.messages.isEmpty
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 28),
+                    child: Text(
+                      c.surface == 'local'
+                          ? (c.mode.localLlmReady
+                              ? '开始对话'
+                              : '在「我的」配置 API Key 后开始对话')
+                          : (c.pcConnected
+                              ? '开始远端对话'
+                              : '连接 PC 后开始远端对话'),
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: ink3,
+                        height: 1.45,
+                      ),
+                    ),
+                  ),
+                )
+              : ListView.builder(
             controller: _scroll,
             padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
             itemCount: c.messages.length,

@@ -453,15 +453,7 @@ class AppController extends ChangeNotifier {
     final h = await bridge.localHistory();
     final list = _parseUiMessages(
         (h['messages'] as List?) ?? (h['history'] as List?) ?? []);
-    if (list.isEmpty) {
-      list.add(ChatMsg(
-        id: 'w-local',
-        role: 'assistant',
-        text:
-            '你好。本机对话已就绪。在「我的 → LLM 设置」配置 API Key 后即可流式聊天；ChatGPT OAuth 请用顶栏「远端 Agent」。',
-        who: '本机 · LLM',
-      ));
-    }
+    // Empty history stays empty — no seeded/mock welcome bubble.
     _applyMessages(list, forSurface: 'local');
     _notify();
   }
@@ -470,14 +462,7 @@ class AppController extends ChangeNotifier {
     final h = await bridge.messages(id);
     final list = _parseUiMessages(
         (h['messages'] as List?) ?? (h['items'] as List?) ?? []);
-    if (list.isEmpty) {
-      list.add(ChatMsg(
-        id: 'w-remote',
-        role: 'assistant',
-        text: '远端会话已打开。消息将经 PC Agent 工具链处理。',
-        who: '远端 Agent',
-      ));
-    }
+    // Empty session stays empty — no seeded/mock bubble.
     _applyMessages(list, forSurface: 'remote');
     _notify();
   }
@@ -545,26 +530,11 @@ class AppController extends ChangeNotifier {
       islandText = '本机';
       islandKind = 'local';
       _loadSurfaceCache('local');
-      if (messages.isEmpty) {
-        messages.add(ChatMsg(
-          id: 'w-local',
-          role: 'assistant',
-          text: '加载本机对话…',
-          who: '本机 · LLM',
-        ));
-      }
+      // Keep empty list while network history loads — no mock loading bubble.
     } else {
       islandText = '已连 PC';
       islandKind = 'conn';
       _loadSurfaceCache('remote');
-      if (messages.isEmpty) {
-        messages.add(ChatMsg(
-          id: 'w-remote',
-          role: 'assistant',
-          text: '加载远端会话…',
-          who: '远端 Agent',
-        ));
-      }
     }
     notifyListeners();
 
@@ -1022,13 +992,7 @@ class AppController extends ChangeNotifier {
             ? (r['session'] as Map)['id']?.toString()
             : r['id']?.toString();
         activeSessionId = id;
-        final welcome = ChatMsg(
-          id: 'w',
-          role: 'assistant',
-          text: '新远端会话已创建。',
-          who: '远端 Agent',
-        );
-        _applyMessages([welcome], forSurface: 'remote');
+        _applyMessages([], forSurface: 'remote');
         // light refresh of session list only
         unawaited(refreshAll());
         activeSessionId ??= id;
@@ -1087,14 +1051,7 @@ class AppController extends ChangeNotifier {
         if (remoteSessions.isNotEmpty) {
           await openSession(remoteSessions.first.id);
         } else {
-          _applyMessages([
-            ChatMsg(
-              id: 'w-remote',
-              role: 'assistant',
-              text: '远端会话已清空。发送消息将自动新建。',
-              who: '远端 Agent',
-            )
-          ], forSurface: 'remote');
+          _applyMessages([], forSurface: 'remote');
         }
       }
       _notify();

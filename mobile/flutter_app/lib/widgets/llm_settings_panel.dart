@@ -922,8 +922,8 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
       children: [
         Text(
           c.pcConnected
-              ? '供应商与模型来自 PC 实时目录（无 mock）。OAuth 应用后自动切远端对话。'
-              : '未连 PC：仅本机直连。填 Base URL + API Key，点「测试连接」从供应商 /models 拉取最新列表（无预置 mock 模型）。',
+              ? '供应商与模型来自 PC 实时目录。OAuth 应用后自动切远端对话。'
+              : '未连 PC：仅本机直连。填 Base URL + API Key，点「测试连接」从供应商拉取最新模型列表。',
           style: TextStyle(fontSize: 11.5, color: ink3, height: 1.45),
         ),
         const SizedBox(height: 10),
