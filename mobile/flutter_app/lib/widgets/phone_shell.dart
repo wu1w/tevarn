@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/app_models.dart';
+import '../models/status_card.dart';
 import '../services/app_controller.dart';
 import '../theme/pixel_theme.dart';
 import '../screens/chat_screen.dart';
@@ -90,53 +91,109 @@ class PhoneShell extends StatelessWidget {
                 child: Center(
                   child: GestureDetector(
                     onTap: () {
-                      c.pulseIsland(
-                        text: c.pcConnected
-                            ? '已连 PC  待办 ${c.state['approvals_pending'] ?? c.approvals.length}'
-                            : '本地模式',
-                        kind: c.pcConnected ? 'conn' : 'local',
+                      if (c.islandLive || c.statusCards.isNotEmpty) {
+                        c.toggleIslandExpanded();
+                      } else {
+                        c.pulseIsland(
+                          text: c.pcConnected
+                              ? '已连 PC  待办 ${c.state['approvals_pending'] ?? c.approvals.length}'
+                              : '本地模式 · 轻量 Agent',
+                          kind: c.pcConnected ? 'conn' : 'local',
+                        );
+                      }
+                    },
+                    onLongPress: () {
+                      c.pushStatusCard(
+                        title: c.pcConnected ? '远端就绪' : '本机 Agent',
+                        body: c.pcConnected
+                            ? '审批 ${c.state['approvals_pending'] ?? c.approvals.length} · 点卡片查看'
+                            : '试试 /help · /status · /time',
+                        kind: c.pcConnected
+                            ? StatusCardKind.conn
+                            : StatusCardKind.agent,
+                        actionLabel: c.pcConnected ? '审批' : '帮助',
+                        actionId: c.pcConnected ? 'open_approve' : null,
                       );
                     },
                     child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 220),
+                      duration: const Duration(milliseconds: 240),
                       curve: Curves.easeOutCubic,
-                      height: 26,
-                      width: c.islandLive ? null : 0,
+                      height: c.islandExpanded ? 52 : 26,
+                      constraints: BoxConstraints(
+                        minWidth: c.islandLive || c.islandExpanded ? 96 : 0,
+                        maxWidth: 280,
+                      ),
                       padding: EdgeInsets.symmetric(
-                        horizontal: c.islandLive ? 14 : 0,
+                        horizontal: (c.islandLive || c.islandExpanded) ? 14 : 0,
+                        vertical: c.islandExpanded ? 8 : 0,
                       ),
                       decoration: BoxDecoration(
                         color: card,
-                        borderRadius: BorderRadius.circular(13),
+                        borderRadius:
+                            BorderRadius.circular(c.islandExpanded ? 16 : 13),
                         border: Border.all(
-                          color: c.islandLive
-                              ? PixelColors.purple.withValues(alpha: 0.35)
+                          color: (c.islandLive || c.islandExpanded)
+                              ? PixelColors.purple.withValues(alpha: 0.4)
                               : Colors.transparent,
                         ),
+                        boxShadow: (c.islandLive || c.islandExpanded)
+                            ? const [
+                                BoxShadow(
+                                  color: Color(0x331D2330),
+                                  blurRadius: 12,
+                                  offset: Offset(0, 4),
+                                ),
+                              ]
+                            : null,
                       ),
-                      child: c.islandLive
+                      child: (c.islandLive || c.islandExpanded)
                           ? Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 Container(
-                                  width: 7,
-                                  height: 7,
+                                  width: 8,
+                                  height: 8,
                                   decoration: BoxDecoration(
                                     color: c.islandKind == 'stream'
                                         ? PixelColors.cyan
                                         : (c.islandKind == 'local'
                                             ? PixelColors.green
                                             : PixelColors.purple),
-                                    borderRadius: BorderRadius.circular(1),
+                                    borderRadius: BorderRadius.circular(2),
                                   ),
                                 ),
-                                const SizedBox(width: 6),
-                                Text(
-                                  c.islandText,
-                                  style: PixelTheme.mono.copyWith(
-                                    fontSize: 10,
-                                    color: ink,
-                                    fontWeight: FontWeight.w600,
+                                const SizedBox(width: 8),
+                                Flexible(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        c.islandText,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: PixelTheme.mono.copyWith(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w700,
+                                          color: ink,
+                                        ),
+                                      ),
+                                      if (c.islandExpanded)
+                                        Text(
+                                          c.streaming
+                                              ? '流式输出中 · 点停止可中断'
+                                              : (c.pcConnected
+                                                  ? '远端 Agent · 工具链可用'
+                                                  : '本机 · /help 查看指令'),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontSize: 10,
+                                            color: ink.withValues(alpha: 0.55),
+                                          ),
+                                        ),
+                                    ],
                                   ),
                                 ),
                               ],
@@ -182,6 +239,27 @@ class PhoneShell extends StatelessWidget {
                   ),
                 ),
               ),
+              // Status cards stack (notification / Dynamic Island feed)
+              if (c.statusCards.isNotEmpty)
+                Positioned(
+                  top: 44,
+                  left: 12,
+                  right: 12,
+                  child: Column(
+                    children: [
+                      for (final card in c.statusCards.take(3))
+                        _StatusCardTile(
+                          card: card,
+                          dark: dark,
+                          onDismiss: () => c.dismissStatusCard(card.id),
+                          onAction: () {
+                            c.handleStatusAction(card.actionId);
+                            c.dismissStatusCard(card.id);
+                          },
+                        ),
+                    ],
+                  ),
+                ),
               Positioned(
                 bottom: 5,
                 left: 0,
@@ -347,6 +425,122 @@ class _TabBar extends StatelessWidget {
                 ),
               );
             }).toList(),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StatusCardTile extends StatelessWidget {
+  const _StatusCardTile({
+    required this.card,
+    required this.dark,
+    required this.onDismiss,
+    required this.onAction,
+  });
+  final StatusCard card;
+  final bool dark;
+  final VoidCallback onDismiss;
+  final VoidCallback onAction;
+
+  Color get _accent {
+    switch (card.kind) {
+      case StatusCardKind.success:
+      case StatusCardKind.agent:
+        return PixelColors.green;
+      case StatusCardKind.warn:
+        return PixelColors.amber;
+      case StatusCardKind.stream:
+        return PixelColors.cyan;
+      case StatusCardKind.conn:
+        return PixelColors.purple;
+      case StatusCardKind.info:
+        return PixelColors.cyan;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ink = dark ? PixelColors.dInk : PixelColors.ink;
+    final bg = dark ? const Color(0xF2151A2E) : PixelColors.card;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: bg,
+        elevation: 6,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: card.actionId != null ? onAction : onDismiss,
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: _accent.withValues(alpha: 0.35)),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  margin: const EdgeInsets.only(top: 4),
+                  decoration: BoxDecoration(
+                    color: _accent,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        card.title,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                          color: ink,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        card.body,
+                        style: TextStyle(
+                          fontSize: 12,
+                          height: 1.35,
+                          color: ink.withValues(alpha: 0.7),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (card.actionLabel != null)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 8, top: 2),
+                    child: Text(
+                      card.actionLabel!,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: _accent,
+                      ),
+                    ),
+                  ),
+                GestureDetector(
+                  onTap: onDismiss,
+                  child: Padding(
+                    padding: const EdgeInsets.only(left: 6, top: 0),
+                    child: Icon(
+                      Icons.close_rounded,
+                      size: 16,
+                      color: ink.withValues(alpha: 0.4),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

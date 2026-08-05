@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
@@ -197,6 +198,45 @@ class _ChatScreenState extends State<ChatScreen> {
             ],
           ),
         ),
+        if (c.surface == 'remote' && !c.pcConnected)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+            child: Material(
+              color: PixelColors.amber.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(6),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(6),
+                onTap: () => c.setTab(AppTab.remote),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  child: Row(
+                    children: [
+                      Icon(Icons.wifi_off_rounded, size: 16, color: PixelColors.amber),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '未连接 PC · 点此去连接或重连',
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                            color: dark ? PixelColors.dInk : PixelColors.ink,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        '连接',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: PixelColors.cyan,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
         Expanded(
           child: ListView.builder(
             controller: _scroll,
@@ -204,6 +244,9 @@ class _ChatScreenState extends State<ChatScreen> {
             itemCount: c.messages.length,
             itemBuilder: (context, i) {
               final m = c.messages[i];
+              final isLastAssistant = !m.streaming &&
+                  m.role == 'assistant' &&
+                  i == c.messages.length - 1;
               return RepaintBoundary(
                 key: ValueKey(m.id),
                 child: _ChatBubble(
@@ -213,6 +256,13 @@ class _ChatScreenState extends State<ChatScreen> {
                   ink3: ink3,
                   card: card,
                   card2: card2,
+                  showActions: !m.streaming && m.text.isNotEmpty,
+                  canRegenerate: isLastAssistant && !c.streaming,
+                  onCopy: () async {
+                    await Clipboard.setData(ClipboardData(text: m.text));
+                    c.showToast('已复制');
+                  },
+                  onRegenerate: isLastAssistant ? () => c.regenerateLast() : null,
                 ),
               );
             },
@@ -565,6 +615,10 @@ class _ChatBubble extends StatelessWidget {
     required this.ink3,
     required this.card,
     required this.card2,
+    this.showActions = false,
+    this.canRegenerate = false,
+    this.onCopy,
+    this.onRegenerate,
   });
 
   final ChatMsg msg;
@@ -573,6 +627,10 @@ class _ChatBubble extends StatelessWidget {
   final Color ink3;
   final Color card;
   final Color card2;
+  final bool showActions;
+  final bool canRegenerate;
+  final VoidCallback? onCopy;
+  final VoidCallback? onRegenerate;
 
   @override
   Widget build(BuildContext context) {
@@ -671,11 +729,54 @@ class _ChatBubble extends StatelessWidget {
                         color: ink,
                       ),
                     ),
+                  if (showActions) ...[
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        _MsgAction(
+                          label: '复制',
+                          onTap: onCopy,
+                        ),
+                        if (canRegenerate && onRegenerate != null) ...[
+                          const SizedBox(width: 8),
+                          _MsgAction(
+                            label: '重新生成',
+                            onTap: onRegenerate,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _MsgAction extends StatelessWidget {
+  const _MsgAction({required this.label, this.onTap});
+  final String label;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(4),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11.5,
+            fontWeight: FontWeight.w700,
+            color: PixelColors.cyan,
+          ),
+        ),
       ),
     );
   }

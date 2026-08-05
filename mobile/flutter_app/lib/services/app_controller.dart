@@ -7,6 +7,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../bridge/takton_bridge.dart';
 import '../models/app_models.dart';
+import '../models/status_card.dart';
+import 'local_agent.dart';
 import 'mesh_runtime.dart';
 
 class AppController extends ChangeNotifier {
@@ -38,6 +40,8 @@ class AppController extends ChangeNotifier {
   String islandText = '本机';
   bool islandLive = false;
   String islandKind = 'local';
+  bool islandExpanded = false;
+  final List<StatusCard> statusCards = [];
   String clock = '';
   bool voiceOn = true;
   bool cameraOn = true;
@@ -650,6 +654,76 @@ class AppController extends ChangeNotifier {
     }
   }
 
+  void pushStatusCard({
+    required String title,
+    required String body,
+    StatusCardKind kind = StatusCardKind.info,
+    String? actionLabel,
+    String? actionId,
+    int ttlMs = 5200,
+  }) {
+    statusCards.removeWhere((c) => c.expired);
+    final card = StatusCard(
+      id: 'sc-${DateTime.now().microsecondsSinceEpoch}',
+      title: title,
+      body: body,
+      kind: kind,
+      actionLabel: actionLabel,
+      actionId: actionId,
+      ttlMs: ttlMs,
+    );
+    statusCards.insert(0, card);
+    while (statusCards.length > 3) {
+      statusCards.removeLast();
+    }
+    islandLive = true;
+    islandText = title;
+    islandKind = switch (kind) {
+      StatusCardKind.stream => 'stream',
+      StatusCardKind.conn => 'conn',
+      StatusCardKind.agent => 'local',
+      StatusCardKind.success => 'local',
+      StatusCardKind.warn => 'conn',
+      StatusCardKind.info => islandKind,
+    };
+    _notify();
+    Future.delayed(Duration(milliseconds: ttlMs + 80), () {
+      statusCards.removeWhere((c) => c.id == card.id || c.expired);
+      _notify();
+    });
+  }
+
+  void dismissStatusCard(String id) {
+    statusCards.removeWhere((c) => c.id == id);
+    _notify();
+  }
+
+  void handleStatusAction(String? actionId) {
+    if (actionId == null) return;
+    switch (actionId) {
+      case 'reconnect':
+        unawaited(onNetworkPathChanged());
+        break;
+      case 'open_approve':
+        setTab(AppTab.approve);
+        break;
+      case 'open_remote':
+        setTab(AppTab.remote);
+        break;
+      case 'open_me':
+        setTab(AppTab.me);
+        break;
+    }
+  }
+
+  void toggleIslandExpanded() {
+    islandExpanded = !islandExpanded;
+    if (islandExpanded) {
+      islandLive = true;
+    }
+    _notify();
+  }
+
   void showToast(String m) {
     toast = m;
     toastShow = true;
@@ -679,6 +753,41 @@ class AppController extends ChangeNotifier {
     if (overrideText != null) input = overrideText;
     final text = input.trim();
     if (text.isEmpty && attachments.isEmpty) return false;
+    // Local lightweight agent: works even when LLM not configured
+    if (surface == 'local' && attachments.isEmpty && text.isNotEmpty) {
+      final localReply = LocalAgent.tryHandle(
+        text,
+        pcConnected: pcConnected,
+        llmReady: mode.localLlmReady || state['local_llm_ready'] == true,
+        pathKind: pathProfile['last_kind']?.toString(),
+        baseUrl: formBase,
+      );
+      if (localReply != null) {
+        input = '';
+        messages.add(ChatMsg(
+          id: 'u-${DateTime.now().microsecondsSinceEpoch}',
+          role: 'user',
+          text: text,
+        ));
+        messages.add(ChatMsg(
+          id: 'a-local-${DateTime.now().microsecondsSinceEpoch}',
+          role: 'assistant',
+          text: localReply,
+          who: '本机 Agent',
+          format: 'markdown',
+        ));
+        _saveSurfaceCache();
+        pushStatusCard(
+          title: '本机 Agent',
+          body: '已处理指令，未请求云端模型',
+          kind: StatusCardKind.agent,
+        );
+        pulseIsland(text: '本机指令', kind: 'local');
+        _notify();
+        return true;
+      }
+    }
+
     if (streaming) {
       await _abortStream();
       _notify();
@@ -702,6 +811,7 @@ class AppController extends ChangeNotifier {
     }
 
     var userText = text.isEmpty ? '（见附件）' : text;
+
     final pending = List<AttachFile>.from(attachments);
     attachments.clear();
 
@@ -764,6 +874,12 @@ class AppController extends ChangeNotifier {
     islandLive = true;
     islandKind = 'stream';
     islandText = '生成中';
+    pushStatusCard(
+      title: surface == 'local' ? '本机生成中' : '远端生成中',
+      body: userText.length > 48 ? '${userText.substring(0, 48)}…' : userText,
+      kind: StatusCardKind.stream,
+      ttlMs: 8000,
+    );
     notifyListeners();
 
     try {
@@ -857,6 +973,36 @@ class AppController extends ChangeNotifier {
       }
     }
     return true;
+  }
+
+  /// Re-send the last user message (ChatGPT-style regenerate).
+  Future<void> regenerateLast() async {
+    if (streaming) {
+      await _abortStream(toastMsg: '已停止');
+    }
+    // Find last user message
+    ChatMsg? lastUser;
+    for (var i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role == 'user') {
+        lastUser = messages[i];
+        break;
+      }
+    }
+    if (lastUser == null || lastUser.text.trim().isEmpty) {
+      showToast('没有可重新生成的消息');
+      return;
+    }
+    // Drop trailing assistant reply if present
+    while (messages.isNotEmpty && messages.last.role == 'assistant') {
+      messages.removeLast();
+    }
+    _saveSurfaceCache();
+    await send(lastUser.text);
+  }
+
+  Future<void> copyMessageText(String text) async {
+    // UI uses Clipboard; controller only toasts for consistency
+    showToast('已复制');
   }
 
   Future<void> newChat() async {
@@ -1207,6 +1353,16 @@ class AppController extends ChangeNotifier {
               ? (kind.isEmpty ? '已连接 · 外出自动切换' : '已连接 · $kind')
               : (kind.isEmpty ? '配对成功 · 已连接 PC' : '配对成功 · $kind'),
         );
+        pushStatusCard(
+          title: seamless ? '已连接 PC' : '配对成功',
+          body: seamless
+              ? (kind.isEmpty ? '外出网络自动切换已就绪' : '路径 $kind')
+              : (kind.isEmpty ? '远端 Agent 可用' : '路径 $kind'),
+          kind: StatusCardKind.success,
+          actionLabel: '对话',
+          actionId: null,
+          ttlMs: 6000,
+        );
         surface = 'remote';
         await prefs.setString('takton-chat-mode', 'remote');
         await _applySwitchSurface('remote', ensureSession: true);
@@ -1370,6 +1526,13 @@ class AppController extends ChangeNotifier {
         if (!pcConnected) {
           showToast('网络已切换 · 已重连 ($kind)');
         }
+        pushStatusCard(
+          title: '网络已切换',
+          body: '已重连 · $kind',
+          kind: StatusCardKind.conn,
+          actionLabel: '刷新',
+          actionId: 'reconnect',
+        );
         await refreshAll();
       }
       await refreshPath();
