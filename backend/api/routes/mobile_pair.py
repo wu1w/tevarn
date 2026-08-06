@@ -11,6 +11,8 @@
   GET  /api/mobile/pair/pending
   GET/POST /api/mobile/mesh
   POST /api/mobile/mesh/auth
+  POST /api/mobile/mesh/vps
+  POST /api/mobile/mesh/vps/test
 """
 
 from __future__ import annotations
@@ -44,6 +46,12 @@ class PairClaimBody(BaseModel):
     device_name: Optional[str] = None
 
 
+class PairSessionBody(BaseModel):
+    """Phone exchanges one-time claim device token for a real JWT session."""
+
+    token: str = Field(..., min_length=8, description="device token from pair/claim")
+
+
 class MeshSetBody(BaseModel):
     mode: Optional[str] = None
     require_pair_confirm: Optional[bool] = None
@@ -52,6 +60,15 @@ class MeshSetBody(BaseModel):
 
 class MeshAuthBody(BaseModel):
     auth_key: str = Field(default="", description="Tailscale auth key (tskey-auth-…)")
+
+
+class MeshVpsBody(BaseModel):
+    host: Optional[str] = None
+    port: Optional[int] = None
+    token: Optional[str] = None
+    enabled: Optional[bool] = None
+    scheme: Optional[str] = None
+    tunnel_id: Optional[str] = None
 
 
 # ── pair ─────────────────────────────────────────────────────────────────────
@@ -123,6 +140,72 @@ async def pair_claim(body: PairClaimBody) -> dict[str, Any]:
         return result
     logger.info("pair_claim ok device=%s", (result.get("device") or {}).get("name"))
     return result
+
+
+@router.post("/pair/session")
+async def pair_session(body: PairSessionBody) -> dict[str, Any]:
+    """手机用 claim 下发的 device token 换 JWT。
+
+    为什么需要这个端点：
+    - `/auth/auto-login` 仅允许 loopback（single_user_mode 安全闸门）
+    - 手机无论走 LAN 还是 VPS，对后端来说都不是「本机」
+    - 过去 VPS 路径靠隧道剥 XFF 伪装 127.0.0.1 才能 auto-login，脆弱且易 403
+    - claim 已经证明手机持有一次性配对码；device token 是合法的会话凭证
+    """
+    from backend.core.security import create_access_token
+    from backend.core.unit_of_work import UnitOfWork
+    from backend.api.dependencies import resolve_default_admin_password
+    from backend.core.security import get_password_hash
+    from backend.schemas import UserRead
+
+    token = (body.token or "").strip()
+    svc = get_pair_service()
+    device = svc.validate_token(token)
+    if not device:
+        raise HTTPException(status_code=401, detail="无效或已撤销的配对令牌")
+
+    try:
+        svc.touch_device_token(token)
+    except Exception as e:
+        logger.debug("pair session last_seen update: %s", e)
+
+    async with UnitOfWork() as uow:
+        existing = await uow.users.get_by_email("admin@takton.dev")
+        if existing:
+            user = existing
+        else:
+            default_pw = resolve_default_admin_password()
+            user = await uow.users.create(
+                {
+                    "email": "admin@takton.dev",
+                    "username": "admin",
+                    "hashed_password": get_password_hash(default_pw),
+                    "is_superuser": True,
+                    "is_active": True,
+                }
+            )
+
+    access = create_access_token(
+        {"sub": str(user.id)},
+        hashed_password=getattr(user, "hashed_password", None),
+    )
+    logger.info(
+        "pair_session ok device=%s user=%s",
+        device.get("name"),
+        getattr(user, "email", None),
+    )
+    return {
+        "access_token": access,
+        "token_type": "bearer",
+        "expires_in": 604800,
+        "user": UserRead.model_validate(user).model_dump(mode="json"),
+        "device": {
+            "id": device.get("id"),
+            "name": device.get("name"),
+            "role": device.get("role"),
+        },
+        "ok": True,
+    }
 
 
 @router.get("/pair/devices")
@@ -197,5 +280,82 @@ async def mesh_embed_status(
         "tailscale_ip": st.get("tailscale_ip"),
         "lan_ip": st.get("lan_ip"),
         "auth_key_set": st.get("auth_key_set"),
+        "vps": st.get("vps"),
         "detail": st.get("detail"),
     }
+
+
+@router.post("/mesh/vps")
+async def mesh_vps_set(
+    body: MeshVpsBody,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+) -> dict[str, Any]:
+    """保存 VPS 中继配置；enabled=true 时拉起出站隧道。"""
+    from backend.services import vps_relay as vps_mod
+    from backend.services.vps_tunnel import get_vps_tunnel
+
+    cfg = vps_mod.set_vps_config(
+        host=body.host,
+        port=body.port,
+        token=body.token,
+        enabled=body.enabled,
+        scheme=body.scheme,
+        tunnel_id=body.tunnel_id,
+    )
+    # restart tunnel according to enabled flag
+    try:
+        await get_vps_tunnel().restart_if_enabled()
+    except Exception as e:
+        logger.warning("vps tunnel restart: %s", e)
+    # brief wait so status can flip online
+    import asyncio
+
+    if cfg.get("enabled"):
+        for _ in range(8):
+            if get_vps_tunnel().online:
+                break
+            await asyncio.sleep(0.35)
+    st = get_pair_service().mesh_status()
+    return {
+        "ok": True,
+        "vps": st.get("vps"),
+        "mesh": st,
+        "detail": (st.get("vps") or {}).get("detail") or "已保存",
+    }
+
+
+@router.post("/mesh/vps/test")
+async def mesh_vps_test(
+    body: MeshVpsBody,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+) -> dict[str, Any]:
+    """探测 VPS 中继 health + token，不强制启用隧道。"""
+    from urllib.parse import urlparse
+
+    from backend.services import vps_relay as vps_mod
+
+    tmp = vps_mod.load_config()
+    if body.host is not None:
+        h = body.host.strip()
+        if "://" in h:
+            u = urlparse(h)
+            tmp["scheme"] = u.scheme or tmp["scheme"]
+            tmp["host"] = u.hostname or ""
+            if u.port:
+                tmp["port"] = u.port
+        elif h.count(":") == 1 and not h.startswith("["):
+            hh, pp = h.rsplit(":", 1)
+            if pp.isdigit():
+                tmp["host"] = hh.strip()
+                tmp["port"] = int(pp)
+            else:
+                tmp["host"] = h
+        else:
+            tmp["host"] = h
+    if body.port is not None:
+        tmp["port"] = int(body.port)
+    if body.token is not None:
+        tmp["master_token"] = body.token.strip()
+    if body.scheme is not None and body.scheme.strip():
+        tmp["scheme"] = body.scheme.strip().lower()
+    return await vps_mod.test_relay(tmp)

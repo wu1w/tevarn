@@ -70,9 +70,25 @@ pub struct MessageInfo {
     pub created_at: Option<String>,
     #[serde(default)]
     pub metadata: Option<Value>,
+    /// Present on intermediate assistant turns that invoke tools.
+    #[serde(default)]
+    pub tool_calls: Option<Value>,
 }
 
 impl MessageInfo {
+    /// True when this assistant message still expects tool results (not final answer).
+    pub fn is_tool_invocation(&self) -> bool {
+        if self.role != "assistant" {
+            return false;
+        }
+        match &self.tool_calls {
+            Some(Value::Array(a)) => !a.is_empty(),
+            Some(Value::Object(o)) => !o.is_empty(),
+            Some(Value::Null) | None => false,
+            Some(_) => true,
+        }
+    }
+
     pub fn text(&self) -> String {
         match &self.content {
             Value::String(s) => s.clone(),

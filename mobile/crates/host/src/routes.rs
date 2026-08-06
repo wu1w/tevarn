@@ -318,6 +318,7 @@ pub fn api_router() -> Router<AppState> {
             .route("/sessions", get(list_sessions).post(create_session))
             .route("/sessions/{id}", get(get_session))
             .route("/sessions/{id}/messages", get(list_messages))
+            .route("/sessions/{id}/turn_status", get(turn_status))
             .route("/sessions/{id}/open", post(open_session))
             .route("/sessions/{id}/pin", post(pin_session))
             .route("/sessions/{id}/rename", post(rename_session))
@@ -697,15 +698,34 @@ async fn remote_messages_as_ui(st: &AppState, id: &str, limit: u32) -> Vec<Value
     }
     match st.client.list_messages(id, limit).await {
         Ok(msgs) => {
+            // Keep tool_calls so Flutter poll / history can detect tool loops
+            // and render Codex-like tool rows (was dropped → early "final" finish).
+            let base = base_url_of(st);
             let raw: Vec<Value> = msgs
                 .into_iter()
                 .map(|m| {
-                    json!({
+                    let text = absolutize_content_media_links(&base, &m.text());
+                    let mut obj = json!({
                         "id": m.id,
                         "role": m.role,
-                        "content": m.text(),
+                        "content": text,
                         "created_at": m.created_at,
-                    })
+                    });
+                    if let Some(tc) = m.tool_calls.clone() {
+                        if !tc.is_null() {
+                            obj.as_object_mut()
+                                .unwrap()
+                                .insert("tool_calls".into(), tc);
+                        }
+                    }
+                    if let Some(meta) = m.metadata.clone() {
+                        if let Some(name) = meta.get("name").and_then(|n| n.as_str()) {
+                            obj.as_object_mut()
+                                .unwrap()
+                                .insert("name".into(), json!(name));
+                        }
+                    }
+                    obj
                 })
                 .collect();
             normalize_ui_messages(&raw, "远端 Agent")
@@ -717,42 +737,602 @@ async fn remote_messages_as_ui(st: &AppState, id: &str, limit: u32) -> Vec<Value
     }
 }
 
+/// Evidence that a *new* turn started on this socket (ignore pre-chat idle/sync).
+fn is_remote_turn_started(v: &Value) -> bool {
+    let ty = v.get("type").and_then(|x| x.as_str()).unwrap_or("");
+    if ty == "user_message_ack" || ty == "stream_delta" {
+        return true;
+    }
+    if ty == "run_event" {
+        let topic = v.get("topic").and_then(|x| x.as_str()).unwrap_or("");
+        return topic.ends_with("created") || topic.contains("status_changed");
+    }
+    if ty == "status" {
+        let state = v.get("state").and_then(|x| x.as_str()).unwrap_or("");
+        return state == "thinking" || state == "running" || state == "tool";
+    }
+    false
+}
+
+fn emit_chat_done(st: &AppState, session_id: &str, reason: &str) {
+    st.broadcast_event_for_session(
+        Some(session_id),
+        &json!({
+            "type": "done",
+            "session_id": session_id,
+            "reason": reason,
+        }),
+    );
+}
+
+fn emit_chat_done_with_text(st: &AppState, session_id: &str, reason: &str, text: &str) {
+    st.broadcast_event_for_session(
+        Some(session_id),
+        &json!({
+            "type": "done",
+            "session_id": session_id,
+            "reason": reason,
+            "content": text,
+            "replace": true,
+        }),
+    );
+}
+
+/// Map PC agent events into mobile-friendly envelopes (Codex-like live status/tools).
+/// Raw event is always forwarded; extras are additive.
+fn mobile_live_overlays(v: &Value) -> Vec<Value> {
+    let mut extra = Vec::new();
+    let ty = v.get("type").and_then(|x| x.as_str()).unwrap_or("");
+    match ty {
+        "status" => {
+            let state = v.get("state").and_then(|x| x.as_str()).unwrap_or("");
+            let detail = v
+                .get("detail")
+                .and_then(|x| x.as_str())
+                .unwrap_or("");
+            // Prefer human detail; fall back to readable state labels.
+            let label = if !detail.is_empty() {
+                detail.to_string()
+            } else {
+                match state {
+                    "thinking" => "思考中…".into(),
+                    "tool" | "tool_executing" => "执行工具…".into(),
+                    "running" => "运行中…".into(),
+                    "idle" => "空闲".into(),
+                    "error" => "出错".into(),
+                    s if !s.is_empty() => s.to_string(),
+                    _ => String::new(),
+                }
+            };
+            if !label.is_empty() {
+                extra.push(json!({
+                    "type": "mobile_status",
+                    "detail": label,
+                    "state": state,
+                }));
+            }
+        }
+        "tool_event" | "tool" | "tool_call" | "tool_result" => {
+            let phase = v
+                .get("phase")
+                .and_then(|x| x.as_str())
+                .unwrap_or(if ty == "tool_result" { "end" } else { "start" });
+            let name = v
+                .get("name")
+                .or_else(|| v.pointer("/function/name"))
+                .or_else(|| v.pointer("/tool/name"))
+                .and_then(|x| x.as_str())
+                .unwrap_or("tool");
+            let status = v
+                .get("status")
+                .and_then(|x| x.as_str())
+                .unwrap_or(if phase == "start" || phase == "running" {
+                    "running"
+                } else {
+                    "completed"
+                });
+            let ok = status != "failed" && status != "error";
+            let preview = v
+                .get("result")
+                .or_else(|| v.get("output"))
+                .or_else(|| v.get("content"))
+                .map(|r| match r {
+                    Value::String(s) => s.chars().take(160).collect::<String>(),
+                    other => {
+                        let s = other.to_string();
+                        s.chars().take(160).collect()
+                    }
+                })
+                .or_else(|| {
+                    v.get("arguments").or_else(|| v.get("args")).map(|a| {
+                        let s = a.to_string();
+                        s.chars().take(100).collect()
+                    })
+                })
+                .unwrap_or_default();
+            let endish = phase == "end"
+                || phase == "completed"
+                || phase == "result"
+                || ty == "tool_result"
+                || status == "completed"
+                || status == "failed"
+                || status == "error";
+            extra.push(json!({
+                "type": "mobile_tool",
+                "phase": if endish { "end" } else { "start" },
+                "name": name,
+                "ok": ok,
+                "preview": preview,
+            }));
+            // Also bump island status so tools are never silent.
+            extra.push(json!({
+                "type": "mobile_status",
+                "detail": if endish {
+                    format!("工具 · {name} {}", if ok { "✓" } else { "✗" })
+                } else {
+                    format!("工具 · {name} …")
+                },
+                "state": if endish { "thinking" } else { "tool_executing" },
+            }));
+        }
+        "run_event" => {
+            let topic = v.get("topic").and_then(|x| x.as_str()).unwrap_or("");
+            let detail = if topic.ends_with("created") {
+                "任务已创建…"
+            } else if topic.contains("status") {
+                "状态更新…"
+            } else if topic.ends_with("completed") {
+                "任务完成"
+            } else if topic.ends_with("failed") {
+                "任务失败"
+            } else if !topic.is_empty() {
+                topic
+            } else {
+                ""
+            };
+            if !detail.is_empty() {
+                extra.push(json!({
+                    "type": "mobile_status",
+                    "detail": detail,
+                    "state": "running",
+                }));
+            }
+        }
+        _ => {}
+    }
+    extra
+}
+
+fn absolutize_media_url(base_url: &str, rel_or_abs: &str) -> String {
+    let u = rel_or_abs.trim();
+    if u.starts_with("http://") || u.starts_with("https://") {
+        return u.to_string();
+    }
+    let base = base_url.trim().trim_end_matches('/');
+    if u.starts_with('/') {
+        format!("{base}{u}")
+    } else {
+        format!("{base}/{u}")
+    }
+}
+
+/// Rewrite relative `/uploads/...` (and similar) markdown links so phone can open/download
+/// through the VPS tunnel the same way Codex surfaces file links.
+fn absolutize_content_media_links(base_url: &str, content: &str) -> String {
+    if base_url.is_empty() || content.is_empty() {
+        return content.to_string();
+    }
+    let mut out = content.to_string();
+    // Markdown href: ](/uploads/...) → ](https://tunnel.../uploads/...)
+    for prefix in ["/uploads/", "/api/uploads/", "/files/", "/api/files/", "/media/"] {
+        let needle = format!("]({prefix}");
+        if !out.contains(&needle) {
+            continue;
+        }
+        let abs_prefix = absolutize_media_url(base_url, prefix);
+        out = out.replace(&needle, &format!("]({abs_prefix}"));
+    }
+    out
+}
+
+fn message_text(content: &Value) -> String {
+    match content {
+        Value::String(s) => s.clone(),
+        Value::Array(arr) => arr
+            .iter()
+            .filter_map(|p| {
+                p.get("text")
+                    .and_then(|t| t.as_str())
+                    .or_else(|| p.as_str())
+            })
+            .collect::<Vec<_>>()
+            .join(""),
+        other => other
+            .get("text")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_string(),
+    }
+}
+
+/// Pick the **final** assistant text for a user turn.
+/// Skips intermediate assistants that only fire tool_calls, and waits while
+/// the last message is still `tool` (tool loop in progress).
+fn final_assistant_after_user(
+    msgs: &[takton_mobile_core::models::MessageInfo],
+    user_idx: usize,
+) -> Option<String> {
+    let after: Vec<&takton_mobile_core::models::MessageInfo> =
+        msgs.iter().skip(user_idx + 1).collect();
+    if after.is_empty() {
+        return None;
+    }
+    let last = *after.last()?;
+    // Still waiting on tool results → not done.
+    if last.role == "tool" || last.role == "function" {
+        return None;
+    }
+    // Intermediate assistant that invoked tools → wait for final answer.
+    if last.role == "assistant" && last.is_tool_invocation() {
+        return None;
+    }
+    if last.role != "assistant" {
+        return None;
+    }
+    let text = message_text(&last.content);
+    if text.trim().is_empty() {
+        return None;
+    }
+    // Prefer last final assistant; if earlier tool-invocation assistants exist,
+    // still return this last final one (correct for multi-step tool turns).
+    Some(text)
+}
+
+/// Emit Codex-like tool/status frames from HTTP history when WS tool_events were lost.
+fn emit_http_tool_progress(
+    st: &AppState,
+    session_id: &str,
+    msgs: &[takton_mobile_core::models::MessageInfo],
+    user_idx: usize,
+    seen_tools: &mut std::collections::HashSet<String>,
+) {
+    for m in msgs.iter().skip(user_idx + 1) {
+        if m.role == "assistant" && m.is_tool_invocation() {
+            if let Some(Value::Array(arr)) = &m.tool_calls {
+                for tc in arr {
+                    let id = tc
+                        .get("id")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let name = tc
+                        .pointer("/function/name")
+                        .or_else(|| tc.get("name"))
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("tool");
+                    let key = if id.is_empty() {
+                        format!("start:{name}")
+                    } else {
+                        format!("start:{id}")
+                    };
+                    if seen_tools.insert(key) {
+                        st.broadcast_event_for_session(
+                            Some(session_id),
+                            &json!({
+                                "type": "mobile_tool",
+                                "phase": "start",
+                                "name": name,
+                                "ok": true,
+                                "preview": "",
+                                "source": "http_progress",
+                            }),
+                        );
+                        st.broadcast_event_for_session(
+                            Some(session_id),
+                            &json!({
+                                "type": "mobile_status",
+                                "detail": format!("工具 · {name} …"),
+                                "state": "tool_executing",
+                                "source": "http_progress",
+                            }),
+                        );
+                    }
+                }
+            }
+        } else if m.role == "tool" || m.role == "function" {
+            let name = m
+                .metadata
+                .as_ref()
+                .and_then(|meta| meta.get("name").and_then(|n| n.as_str()))
+                .unwrap_or("tool");
+            let preview: String = message_text(&m.content).chars().take(120).collect();
+            let key = format!("end:{}:{}", m.id, name);
+            if seen_tools.insert(key) {
+                st.broadcast_event_for_session(
+                    Some(session_id),
+                    &json!({
+                        "type": "mobile_tool",
+                        "phase": "end",
+                        "name": name,
+                        "ok": true,
+                        "preview": preview,
+                        "source": "http_progress",
+                    }),
+                );
+                st.broadcast_event_for_session(
+                    Some(session_id),
+                    &json!({
+                        "type": "mobile_status",
+                        "detail": format!("工具 · {name} ✓"),
+                        "state": "thinking",
+                        "source": "http_progress",
+                    }),
+                );
+            }
+        }
+    }
+}
+
+/// Independent of PC event WS: poll HTTP messages until the **final** assistant
+/// (after any tool loop) is stable, then push full text + done to Flutter.
+fn spawn_turn_completion_watchdog(st: AppState, session_id: String, user_content: String) {
+    tokio::spawn(async move {
+        let needle = user_content.trim();
+        if needle.is_empty() {
+            return;
+        }
+        let needle_prefix: String = needle.chars().take(48).collect();
+        let mut last_push = String::new();
+        let mut stable: u8 = 0;
+        let mut seen_tools: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        let mut last_status = String::new();
+        // ~5 minutes @ 1.2s — faster than before so finals appear without restart.
+        for tick in 0..250u32 {
+            tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+            let msgs = match st.client.list_messages(&session_id, 80).await {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            let mut user_idx: Option<usize> = None;
+            for (i, m) in msgs.iter().enumerate().rev() {
+                if m.role != "user" {
+                    continue;
+                }
+                let t = message_text(&m.content);
+                let tt = t.trim();
+                if tt == needle
+                    || tt.ends_with(needle)
+                    || needle.ends_with(tt)
+                    || (!needle_prefix.is_empty() && tt.contains(&needle_prefix))
+                {
+                    user_idx = Some(i);
+                    break;
+                }
+            }
+            let Some(ui) = user_idx else {
+                continue;
+            };
+
+            // Always surface tool progress from HTTP (Codex-like even if WS lost).
+            emit_http_tool_progress(&st, &session_id, &msgs, ui, &mut seen_tools);
+
+            let Some(text) = final_assistant_after_user(&msgs, ui) else {
+                // Tool loop / intermediate — keep waiting; pulse status occasionally.
+                stable = 0;
+                if tick % 3 == 0 {
+                    let detail = "远端处理中…".to_string();
+                    if detail != last_status {
+                        last_status = detail.clone();
+                        st.broadcast_event_for_session(
+                            Some(&session_id),
+                            &json!({
+                                "type": "mobile_status",
+                                "detail": detail,
+                                "state": "running",
+                                "source": "http_progress",
+                            }),
+                        );
+                    }
+                }
+                continue;
+            };
+            // Push full text (replace) so lossy delta streams still show PC answer.
+            if text != last_push {
+                last_push = text.clone();
+                stable = 0;
+                st.flush_session_deltas(&session_id);
+                st.broadcast_event_for_session(
+                    Some(&session_id),
+                    &json!({
+                        "type": "stream_delta",
+                        "content": text,
+                        "delta": text,
+                        "replace": true,
+                        "session_id": session_id,
+                        "source": "http_watchdog",
+                    }),
+                );
+            } else {
+                stable = stable.saturating_add(1);
+            }
+            // Same final assistant on 2 consecutive polls (~2.4s) → turn finished.
+            // Need stable>=1 so a single snapshot right as tools end doesn't cut off.
+            if stable >= 1 && !last_push.is_empty() {
+                st.flush_session_deltas(&session_id);
+                emit_chat_done_with_text(&st, &session_id, "http_watchdog", &last_push);
+                tracing::info!(%session_id, len = last_push.len(), "turn watchdog completed via HTTP");
+                return;
+            }
+        }
+        // Always unblock UI eventually (include best text if any).
+        if !last_push.is_empty() {
+            emit_chat_done_with_text(&st, &session_id, "watchdog_timeout", &last_push);
+        } else {
+            emit_chat_done(&st, &session_id, "watchdog_timeout");
+        }
+        tracing::warn!(%session_id, "turn watchdog timeout");
+    });
+}
+
+/// Prefer the boss-facing CEO/steward DM session over empty "helpful assistant"
+/// shells created by pair probes / VPS tests.
+fn pick_preferred_remote_session(list: &[takton_mobile_core::models::SessionInfo]) -> Option<String> {
+    if list.is_empty() {
+        return None;
+    }
+    let score = |s: &takton_mobile_core::models::SessionInfo| -> i32 {
+        let cfg = &s.config;
+        let contact = cfg
+            .get("contact_agent")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let identity = cfg
+            .get("identity")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let source = cfg
+            .get("source")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let title = s.display_title().to_ascii_lowercase();
+        let blob = format!("{contact} {identity} {title}");
+
+        let mut sc = 0i32;
+        // Primary product path: human DM with company steward / CEO
+        if source == "human_dm" {
+            sc += 50;
+        }
+        if blob.contains("steward")
+            || blob.contains("ceo")
+            || blob.contains("大管家")
+            || contact.contains("小总")
+            || title.contains("小总")
+        {
+            sc += 100;
+        }
+        // Named contact better than blank test shells
+        if !contact.is_empty() {
+            sc += 20;
+        }
+        // Workforce employee sessions are not the phone default
+        if source == "workforce" {
+            sc -= 40;
+        }
+        // Generic empty assistant (pair/VPS test debris)
+        if identity.contains("helpful assistant") && contact.is_empty() {
+            sc -= 80;
+        }
+        if identity.is_empty() && contact.is_empty() {
+            sc -= 30;
+        }
+        sc
+    };
+
+    let mut ranked: Vec<_> = list.iter().collect();
+    ranked.sort_by(|a, b| {
+        score(b)
+            .cmp(&score(a))
+            .then_with(|| b.updated_at.cmp(&a.updated_at))
+    });
+    let best = ranked.first()?;
+    // If everything is junk, still return the newest so UX isn't empty.
+    Some(best.id.clone())
+}
+
 async fn ensure_chat(st: AppState, session_id: String) -> Result<Arc<ChatConnection>, String> {
     if session_id.is_empty() || session_id == LOCAL_SESSION_ID {
         return Err("invalid remote session".into());
     }
+    // Drop dead cache: VPS WS can close after pair while UI still shows "已连接".
+    // Reusing a dead channel yields "chat channel closed" on every send.
     if let Some(c) = st.chats.get(&session_id) {
-        return Ok(c.clone());
+        if c.is_alive() {
+            return Ok(c.clone());
+        }
+        drop(c);
+        st.chats.remove(&session_id);
+        tracing::info!(%session_id, "dropped dead PC chat socket; reconnecting");
     }
     let (evt_tx, mut evt_rx) = mpsc::unbounded_channel::<ChatEvent>();
     let st_fan = st.clone();
     let sid_fan = session_id.clone();
     tokio::spawn(async move {
+        // Only map idle→done after this socket has seen a real turn start.
+        // Avoids pair/open sync "status:idle" ending a brand-new Flutter stream.
+        let mut turn_active = false;
+        let mut done_emitted = false;
         while let Some(ev) = evt_rx.recv().await {
             match ev {
                 ChatEvent::Json(v) => {
+                    if is_remote_turn_started(&v) {
+                        turn_active = true;
+                        done_emitted = false;
+                    }
                     st_fan.broadcast_event_for_session(Some(&sid_fan), &v);
+                    // Live tool/status overlays for Flutter (Codex-like).
+                    for ov in mobile_live_overlays(&v) {
+                        st_fan.broadcast_event_for_session(Some(&sid_fan), &ov);
+                    }
+                    // Do NOT finish on bare status=idle during tool loops — that
+                    // caused "PC has final answer, phone stuck / only first msg".
+                    // Only hard-finish on run.completed; HTTP watchdog covers the rest.
+                    let ty = v.get("type").and_then(|x| x.as_str()).unwrap_or("");
+                    let run_done = ty == "run_event"
+                        && v.get("topic")
+                            .and_then(|x| x.as_str())
+                            .map(|t| {
+                                t.ends_with("completed")
+                                    || t.ends_with("failed")
+                                    || t.ends_with("cancelled")
+                            })
+                            .unwrap_or(false);
+                    if turn_active && !done_emitted && run_done {
+                        done_emitted = true;
+                        turn_active = false;
+                        emit_chat_done(&st_fan, &sid_fan, "run_finished");
+                    }
                 }
                 ChatEvent::Error(e) => {
                     st_fan.flush_session_deltas(&sid_fan);
+                    st_fan.chats.remove(&sid_fan);
                     st_fan.broadcast_event_for_session(
                         Some(&sid_fan),
                         &json!({"type":"error","error": e, "session_id": sid_fan}),
                     );
+                    // Unblock Flutter even if it only waits on done.
+                    if !done_emitted {
+                        done_emitted = true;
+                        emit_chat_done(&st_fan, &sid_fan, "socket_error");
+                    }
+                    turn_active = false;
                 }
                 ChatEvent::Closed(r) => {
                     st_fan.flush_session_deltas(&sid_fan);
+                    st_fan.chats.remove(&sid_fan);
                     st_fan.broadcast_event_for_session(
                         Some(&sid_fan),
                         &json!({"type":"closed","reason": r, "session_id": sid_fan}),
                     );
+                    if !done_emitted {
+                        done_emitted = true;
+                        emit_chat_done(&st_fan, &sid_fan, "socket_closed");
+                    }
+                    turn_active = false;
                 }
             }
         }
     });
     let conn = ChatConnection::connect(&st.client, &session_id, evt_tx)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            format!(
+                "PC WebSocket 连接失败（{e}）。请确认 VPS 隧道在线且 base_url 含 /t/{{id}}"
+            )
+        })?;
     st.chats.insert(session_id, conn.clone());
     Ok(conn)
 }
@@ -922,6 +1502,109 @@ async fn list_messages(
     }
     let messages = remote_messages_as_ui(&st, &id, limit).await;
     Json(json!({ "ok": true, "messages": messages }))
+}
+
+#[derive(Debug, Deserialize)]
+struct TurnStatusQuery {
+    /// User message text of the current turn (matched from the end of history).
+    #[serde(default)]
+    user: Option<String>,
+}
+
+/// Tool-loop-aware turn probe for Flutter silence/reconcile polls.
+/// `ready=true` only when a **final** assistant (no open tool_calls / trailing tool) exists.
+async fn turn_status(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<TurnStatusQuery>,
+) -> Json<Value> {
+    if id.is_empty() || id == LOCAL_SESSION_ID {
+        return Json(json!({ "ok": true, "ready": false, "text": "", "reason": "local" }));
+    }
+    if !st.client.is_authenticated() {
+        return err_json("not authenticated");
+    }
+    let needle = q.user.unwrap_or_default();
+    let needle_trim = needle.trim().to_string();
+    let msgs = match st.client.list_messages(&id, 80).await {
+        Ok(m) => m,
+        Err(e) => {
+            return Json(json!({
+                "ok": false,
+                "ready": false,
+                "text": "",
+                "error": e.to_string(),
+            }));
+        }
+    };
+    if msgs.is_empty() {
+        return Json(json!({ "ok": true, "ready": false, "text": "", "reason": "empty" }));
+    }
+
+    let mut user_idx: Option<usize> = None;
+    if !needle_trim.is_empty() {
+        let prefix: String = needle_trim.chars().take(48).collect();
+        for (i, m) in msgs.iter().enumerate().rev() {
+            if m.role != "user" {
+                continue;
+            }
+            let t = message_text(&m.content);
+            let tt = t.trim();
+            if tt == needle_trim
+                || tt.ends_with(&needle_trim)
+                || needle_trim.ends_with(tt)
+                || (!prefix.is_empty() && tt.contains(&prefix))
+            {
+                user_idx = Some(i);
+                break;
+            }
+        }
+    } else {
+        // No needle: use last user message.
+        for (i, m) in msgs.iter().enumerate().rev() {
+            if m.role == "user" {
+                user_idx = Some(i);
+                break;
+            }
+        }
+    }
+    let Some(ui) = user_idx else {
+        return Json(json!({
+            "ok": true,
+            "ready": false,
+            "text": "",
+            "reason": "user_not_found",
+        }));
+    };
+
+    // Count open tools after user for live UI.
+    let mut tool_starts = 0u32;
+    let mut tool_ends = 0u32;
+    for m in msgs.iter().skip(ui + 1) {
+        if m.is_tool_invocation() {
+            tool_starts = tool_starts.saturating_add(1);
+        } else if m.role == "tool" || m.role == "function" {
+            tool_ends = tool_ends.saturating_add(1);
+        }
+    }
+
+    match final_assistant_after_user(&msgs, ui) {
+        Some(text) => Json(json!({
+            "ok": true,
+            "ready": true,
+            "text": text,
+            "tools_started": tool_starts,
+            "tools_finished": tool_ends,
+        })),
+        None => Json(json!({
+            "ok": true,
+            "ready": false,
+            "text": "",
+            "reason": "tool_loop_or_pending",
+            "tools_started": tool_starts,
+            "tools_finished": tool_ends,
+        })),
+    }
 }
 
 async fn open_session(State(st): State<AppState>, Path(id): Path<String>) -> Json<Value> {
@@ -1126,59 +1809,134 @@ async fn pair_device(State(st): State<AppState>, Json(body): Json<PairBody>) -> 
 
 // ── path helpers ─────────────────────────────────────────────────────────────
 
+/// Login to the first working base URL.
+/// `preferred` is tried first (e.g. the URL that just won claim over VPS).
 async fn try_connect_best(
     st: &AppState,
     candidates: &[String],
     email: &str,
     password: &str,
 ) -> Result<Value, String> {
+    try_connect_best_pref(st, candidates, email, password, &[], None).await
+}
+
+async fn try_connect_best_pref(
+    st: &AppState,
+    candidates: &[String],
+    email: &str,
+    password: &str,
+    preferred: &[String],
+    device_token: Option<&str>,
+) -> Result<Value, String> {
     use takton_mobile_core::path::{select_best, Endpoint, EndpointKind};
 
-    let mut extra = candidates.to_vec();
-    // Merge stored path profile
+    let mut extra: Vec<String> = Vec::new();
+    for p in preferred {
+        let u = p.trim().trim_end_matches('/').to_string();
+        if !u.is_empty() && !extra.iter().any(|x| x == &u) {
+            extra.push(u);
+        }
+    }
+    for c in candidates {
+        let u = c.trim().trim_end_matches('/').to_string();
+        if !u.is_empty() && !extra.iter().any(|x| x == &u) {
+            extra.push(u);
+        }
+    }
     for ep in st.path.candidate_urls(&extra) {
-        if !extra.iter().any(|u| u.trim_end_matches('/') == ep.url.trim_end_matches('/')) {
-            extra.push(ep.url.clone());
+        let u = ep.url.trim_end_matches('/').to_string();
+        if !extra.iter().any(|x| x == &u) {
+            extra.push(u);
         }
     }
     if extra.is_empty() {
         extra.push(st.client.config().base_url);
     }
 
-    let endpoints: Vec<Endpoint> = extra
-        .iter()
-        .filter_map(|u| Endpoint::from_url(u, EndpointKind::Unknown))
-        .collect();
-    let (best, probes) = select_best(&endpoints).await;
+    // Drop known-unreachable docker/link-local bases early (phone cannot use them).
+    extra.retain(|u| !is_phone_unusable_base(u));
 
-    let try_urls: Vec<String> = if let Some(b) = best {
-        let mut v = vec![b.url.clone()];
-        for e in &endpoints {
-            if e.url != b.url {
-                v.push(e.url.clone());
-            }
+    // Prefer VPS-shaped bases after explicit preferred (claim winner).
+    extra.sort_by_key(|u| {
+        if preferred.iter().any(|p| p.trim_end_matches('/') == u.as_str()) {
+            0u8
+        } else if u.contains("/t/") {
+            1
+        } else {
+            2
         }
-        v
+    });
+
+    // When we already know the claim winner (preferred), skip full probe mesh —
+    // dead LAN hosts cost ~1.2s each and make scan feel frozen.
+    let (best, probes) = if !preferred.is_empty() {
+        (None, vec![])
     } else {
-        endpoints.iter().map(|e| e.url.clone()).collect()
+        let endpoints: Vec<Endpoint> = extra
+            .iter()
+            .filter_map(|u| Endpoint::from_url(u, EndpointKind::Unknown))
+            .collect();
+        select_best(&endpoints).await
     };
+
+    let mut try_urls: Vec<String> = preferred
+        .iter()
+        .map(|s| s.trim().trim_end_matches('/').to_string())
+        .filter(|s| !s.is_empty() && !is_phone_unusable_base(s))
+        .collect();
+    if let Some(b) = best {
+        if !try_urls.iter().any(|u| u == &b.url) {
+            try_urls.push(b.url.clone());
+        }
+    }
+    for u in &extra {
+        if !try_urls.iter().any(|x| x == u) {
+            try_urls.push(u.clone());
+        }
+    }
+    // Hard cap attempts so pair never freezes the UI for a minute.
+    try_urls.truncate(4);
+
+    let token = device_token
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
 
     let mut last_err = "no reachable endpoint".to_string();
     for url in try_urls {
         st.client.set_base_url(url.clone());
-        let login = if email.is_empty() {
-            st.client.auto_login().await
-        } else {
-            st.client.login(email, password).await
+        // Auth order for phone:
+        // 1) pair device token → JWT  (works LAN + VPS; no loopback required)
+        // 2) email/password if user typed them
+        // 3) auto-login last (loopback-only on PC; only works via tunnel spoof)
+        let login_fut = async {
+            if let Some(ref t) = token {
+                match st.client.pair_session_login(t).await {
+                    Ok(s) => return Ok(s),
+                    Err(e) => {
+                        // Fall through — token may be for a different PC path
+                        tracing::debug!("pair_session fail on {url}: {e}");
+                    }
+                }
+            }
+            if !email.is_empty() {
+                st.client.login(email, password).await
+            } else {
+                st.client.auto_login().await
+            }
+        };
+        let login = match tokio::time::timeout(std::time::Duration::from_secs(6), login_fut).await {
+            Ok(r) => r,
+            Err(_) => {
+                last_err = format!("login timeout · {url}");
+                continue;
+            }
         };
         match login {
             Ok(s) => {
                 *st.remote_probe.write() = Default::default();
-                let kind = takton_mobile_core::path::classify_host(
-                    &takton_mobile_core::config::parse_base_url_parts(&url).1,
-                );
+                let kind = path_kind_for_url(&url);
                 let _ = st.path.set_active(&url, kind);
-                // Refresh dual paths from local mesh knowledge (LAN IP drift).
                 let mesh = st.mesh.status();
                 let port = takton_mobile_core::config::parse_base_url_parts(&url).2;
                 let _ = st.path.refresh_candidates(
@@ -1191,9 +1949,10 @@ async fn try_connect_best(
                 return Ok(json!({
                     "ok": true,
                     "authenticated": true,
-                    "base_url": base_url_of(st),
+                    "base_url": url,
                     "user_email": s.user.email,
                     "path_kind": kind.as_str(),
+                    "auth_via": if token.is_some() { "pair_session" } else if email.is_empty() { "auto_login" } else { "password" },
                     "probes": probes,
                     "path": st.path.profile_json(),
                 }));
@@ -1204,6 +1963,49 @@ async fn try_connect_best(
         }
     }
     Err(last_err)
+}
+
+fn is_phone_unusable_base(url: &str) -> bool {
+    let host = takton_mobile_core::config::parse_base_url_parts(url).1;
+    if host == "127.0.0.1" || host == "localhost" || host == "::1" {
+        return true;
+    }
+    // Docker / compose bridges commonly seen on Windows dev PCs
+    if let Ok(ip) = host.parse::<std::net::Ipv4Addr>() {
+        let o = ip.octets();
+        if o[0] == 172 && (17..=20).contains(&o[1]) {
+            return true;
+        }
+        if o[0] == 169 && o[1] == 254 {
+            return true;
+        }
+    }
+    false
+}
+
+fn path_kind_for_url(url: &str) -> takton_mobile_core::path::EndpointKind {
+    use takton_mobile_core::path::{classify_host, EndpointKind};
+    let rest = url
+        .trim()
+        .trim_start_matches("https://")
+        .trim_start_matches("http://");
+    if rest.contains("/t/") {
+        return EndpointKind::Vps;
+    }
+    let host = takton_mobile_core::config::parse_base_url_parts(url).1;
+    classify_host(&host)
+}
+
+fn base_from_claim_url(claim_url: &str) -> String {
+    // http://host/t/id/api/mobile/pair/claim → http://host/t/id
+    let u = claim_url.trim().trim_end_matches('/');
+    if let Some(idx) = u.find("/api/mobile/pair/claim") {
+        return u[..idx].trim_end_matches('/').to_string();
+    }
+    if let Some(idx) = u.find("/api/") {
+        return u[..idx].trim_end_matches('/').to_string();
+    }
+    u.to_string()
 }
 
 async fn try_deferred_claim(st: &AppState) -> Option<Value> {
@@ -1404,6 +2206,11 @@ async fn pair_claim(State(st): State<AppState>, Json(body): Json<PairClaimBody>)
                 ts: pending.ts.clone(),
                 hn: pending.hn.clone(),
                 tsk: None,
+                vps: None,
+                vp: None,
+                vps_path: None,
+                vpt: None,
+                vps_scheme: None,
             };
             Json(json!({
                 "ok": true,
@@ -1492,63 +2299,94 @@ async fn pair_apply(State(st): State<AppState>, Json(body): Json<PairApplyBody>)
         let shell_port = st.config.read().host_port;
         let claim_url_list = claim_urls(&payload, shell_port);
 
+        // Parallel race: dead LAN endpoints must not freeze the phone for 10s×N.
+        // connect 1.5s + total 3.5s per URL; first ok wins.
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_millis(3500))
+            .connect_timeout(std::time::Duration::from_millis(1500))
+            .pool_max_idle_per_host(2)
             .build()
             .ok();
 
         if let Some(http) = client {
-            'urls: for claim_url in &claim_url_list {
-                for _attempt in 0..4 {
-                    let remote = http
-                        .post(claim_url)
-                        .json(&json!({
-                            "pair_id": payload.pair_id,
-                            "code": payload.code,
-                            "device_name": device_name,
-                        }))
-                        .send()
-                        .await;
-                    match remote {
-                        Ok(res) => {
-                            let status = res.status();
-                            let text = res.text().await.unwrap_or_default();
-                            if status.is_success() {
-                                if let Ok(v) = serde_json::from_str::<Value>(&text) {
-                                    if v.get("ok") == Some(&json!(true)) {
-                                        device_token = v
-                                            .get("token")
-                                            .or_else(|| v.pointer("/device/token"))
+            use futures_util::future::FutureExt;
+            let pair_id = payload.pair_id.clone();
+            let code = payload.code.clone();
+            let dname = device_name.clone();
+            let futs: Vec<_> = claim_url_list
+                .iter()
+                .map(|claim_url| {
+                    let http = http.clone();
+                    let claim_url = claim_url.clone();
+                    let pair_id = pair_id.clone();
+                    let code = code.clone();
+                    let dname = dname.clone();
+                    async move {
+                        let remote = http
+                            .post(&claim_url)
+                            .json(&json!({
+                                "pair_id": pair_id,
+                                "code": code,
+                                "device_name": dname,
+                            }))
+                            .send()
+                            .await;
+                        match remote {
+                            Ok(res) => {
+                                let status = res.status();
+                                let text = res.text().await.unwrap_or_default();
+                                if status.is_success() {
+                                    if let Ok(v) = serde_json::from_str::<Value>(&text) {
+                                        if v.get("ok") == Some(&json!(true)) {
+                                            return Ok::<(Value, String), String>((v, claim_url));
+                                        }
+                                        return Err(v
+                                            .get("error")
                                             .and_then(|x| x.as_str())
-                                            .map(|s| s.to_string());
-                                        claim_result = Some(v);
-                                        last_err.clear();
-                                        break 'urls;
+                                            .unwrap_or("claim failed")
+                                            .to_string());
                                     }
-                                    last_err = v
+                                }
+                                if let Ok(v) = serde_json::from_str::<Value>(&text) {
+                                    return Err(v
                                         .get("error")
                                         .and_then(|x| x.as_str())
                                         .unwrap_or("claim failed")
-                                        .to_string();
+                                        .to_string());
                                 }
-                            } else if let Ok(v) = serde_json::from_str::<Value>(&text) {
-                                last_err = v
-                                    .get("error")
-                                    .and_then(|x| x.as_str())
-                                    .unwrap_or("claim failed")
-                                    .to_string();
-                            } else {
-                                last_err = format!("HTTP {status}");
+                                Err(format!("HTTP {status}"))
                             }
-                            if last_err.contains("waiting") || last_err.contains("confirm") {
-                                tokio::time::sleep(std::time::Duration::from_millis(700)).await;
-                                continue;
-                            }
-                            break;
+                            Err(e) => Err(e.to_string()),
                         }
-                        Err(e) => {
-                            last_err = e.to_string();
-                            break;
+                    }
+                    .boxed()
+                })
+                .collect();
+
+            // Prefer first success among concurrent claims (LAN may still win if home Wi‑Fi).
+            let mut remaining = futs;
+            while !remaining.is_empty() {
+                let (result, _idx, rest) = futures_util::future::select_all(remaining).await;
+                remaining = rest;
+                match result {
+                    Ok((v, via)) => {
+                        device_token = v
+                            .get("token")
+                            .or_else(|| v.pointer("/device/token"))
+                            .and_then(|x| x.as_str())
+                            .map(|s| s.to_string());
+                        let mut v = v;
+                        if let Some(obj) = v.as_object_mut() {
+                            obj.insert("claim_via".into(), json!(via));
+                        }
+                        claim_result = Some(v);
+                        last_err.clear();
+                        break;
+                    }
+                    Err(e) => {
+                        // Keep last non-empty error for deferred hint; continue racing others.
+                        if !e.is_empty() {
+                            last_err = e;
                         }
                     }
                 }
@@ -1606,50 +2444,258 @@ async fn pair_apply(State(st): State<AppState>, Json(body): Json<PairApplyBody>)
         last_err = "二维码已过期 · 端点已保存，可稍后在可达网络重试 claim".into();
     }
 
-    // Path select + login across all QR endpoints
-    let candidates: Vec<String> = payload.endpoints().into_iter().map(|e| e.url).collect();
+    // ── Connect + open remote surface (ALL in Rust; Flutter only binds result) ──
+    let candidates: Vec<String> = payload
+        .endpoints()
+        .into_iter()
+        .map(|e| e.url)
+        .filter(|u| !is_phone_unusable_base(u))
+        .collect();
     let email = body.email.unwrap_or_default();
     let password = body.password.unwrap_or_default();
 
-    match try_connect_best(&st, &candidates, &email, &password).await {
+    // Prefer the base that just won claim (usually VPS when off LAN).
+    let mut preferred: Vec<String> = Vec::new();
+    if let Some(ref cr) = claim_result {
+        if let Some(via) = cr.get("claim_via").and_then(|v| v.as_str()) {
+            let base = base_from_claim_url(via);
+            if !base.is_empty() && !is_phone_unusable_base(&base) {
+                preferred.push(base);
+            }
+        }
+    }
+    // Prefer VPS-shaped bases next (phone off-LAN happy path)
+    for c in &candidates {
+        if c.contains("/t/") && !preferred.iter().any(|p| p == c) {
+            preferred.push(c.clone());
+        }
+    }
+
+    let seamless = payload.tsk.as_ref().map(|s| !s.is_empty()).unwrap_or(false)
+        || preferred.iter().any(|u| u.contains("/t/"))
+        || payload.vps.as_ref().map(|s| !s.is_empty()).unwrap_or(false);
+
+    let connect = try_connect_best_pref(
+        &st,
+        &candidates,
+        &email,
+        &password,
+        &preferred,
+        device_token.as_deref(),
+    )
+    .await;
+
+    match connect {
         Ok(mut v) => {
+            // Bootstrap remote chat surface so Flutter does zero extra orchestration.
+            let surface = pair_bootstrap_remote_surface(&st).await;
             if let Some(obj) = v.as_object_mut() {
                 obj.insert("device_token".into(), json!(device_token));
                 obj.insert("claim".into(), json!(claim_result));
-                obj.insert("deferred_claim".into(), json!(deferred));
+                obj.insert("claim_ok".into(), json!(claim_result.is_some()));
+                obj.insert("deferred_claim".into(), json!(false));
                 obj.insert("pair_id".into(), json!(payload.pair_id));
                 obj.insert("mesh".into(), json!(payload.mesh.as_str()));
                 obj.insert("endpoints".into(), json!(candidates));
                 obj.insert("mesh_join".into(), json!(mesh_join));
-                obj.insert("seamless".into(), json!(payload.tsk.as_ref().map(|s| !s.is_empty()).unwrap_or(false)));
+                obj.insert("seamless".into(), json!(seamless));
+                obj.insert("surface".into(), json!("remote"));
+                obj.insert("chat_mode".into(), json!("remote"));
+                obj.insert("toast".into(), json!(if seamless {
+                    "已连接 · 外出自动切换"
+                } else {
+                    "配对成功 · 已连接 PC"
+                }));
+                obj.insert("ui_title".into(), json!("已连接 PC"));
+                obj.insert("ui_body".into(), json!(obj
+                    .get("path_kind")
+                    .and_then(|x| x.as_str())
+                    .map(|k| format!("路径 {k}"))
+                    .unwrap_or_else(|| "远端 Agent 可用".into())));
+                // Flatten surface fields for Flutter bind
+                if let Some(sobj) = surface.as_object() {
+                    for (k, val) in sobj {
+                        if k != "ok" {
+                            obj.insert(k.clone(), val.clone());
+                        }
+                    }
+                }
+                obj.insert("path".into(), st.path.profile_json());
+                obj.insert("mesh_status".into(), st.mesh.status_json());
             }
             Json(v)
         }
         Err(e) => {
-            // Pairing can succeed without immediate login (e.g. scan on 5G, claim deferred)
+            let claim_ok = claim_result.is_some();
+            let base = preferred
+                .first()
+                .cloned()
+                .or_else(|| candidates.first().cloned())
+                .unwrap_or_else(|| payload.base_url());
+            // Persist best base even if login failed so reconnect can retry without re-scan.
+            if !base.is_empty() && !is_phone_unusable_base(&base) {
+                st.client.set_base_url(base.clone());
+            }
+            let (toast, title, body, needs_login) = if deferred {
+                (
+                    "已保存 · 网络可用后自动完成",
+                    "配对已保存",
+                    "回到同一 Wi‑Fi 或待 VPS 隧道在线后自动完成",
+                    false,
+                )
+            } else if claim_ok {
+                (
+                    "配对成功 · 请稍后自动重连或手动登录",
+                    "配对完成",
+                    "设备已登记，登录未完成，可点「立即重试」",
+                    email.is_empty(),
+                )
+            } else {
+                (
+                    "暂时连不上 PC · 已保存端点",
+                    "连接未完成",
+                    "请确认 PC 在线且 VPS 中继已启用",
+                    false,
+                )
+            };
             Json(json!({
                 "ok": true,
                 "authenticated": false,
-                "base_url": candidates.first().cloned().unwrap_or_else(|| payload.base_url()),
+                "base_url": base,
                 "mesh": payload.mesh.as_str(),
                 "device_token": device_token,
                 "claim": claim_result,
+                "claim_ok": claim_ok,
                 "deferred_claim": deferred,
                 "pair_id": payload.pair_id,
                 "endpoints": candidates,
                 "login_error": e,
                 "claim_error": if last_err.is_empty() { Value::Null } else { json!(last_err) },
                 "mesh_join": mesh_join,
-                "seamless": payload.tsk.as_ref().map(|s| !s.is_empty()).unwrap_or(false),
-                "hint": if deferred {
-                    "已保存连接信息 · 网络可用后将自动完成"
-                } else {
-                    "配对信息已记录 · 可稍后自动重连"
-                },
+                "seamless": seamless,
+                "needs_manual_login": needs_login,
+                "surface": "local",
+                "chat_mode": "local",
+                "toast": toast,
+                "ui_title": title,
+                "ui_body": body,
+                "session_id": Value::Null,
+                "messages": [],
                 "path": st.path.profile_json(),
+                "mesh_status": st.mesh.status_json(),
+                "hint": toast,
             }))
         }
     }
+}
+
+/// After PC auth: open remote surface (session + messages + mode) entirely in Rust.
+async fn pair_bootstrap_remote_surface(st: &AppState) -> Value {
+    let t0 = Instant::now();
+    if !st.client.is_authenticated() {
+        return json!({
+            "ok": false,
+            "surface": "remote",
+            "session_id": Value::Null,
+            "messages": [],
+            "mode": Value::Null,
+        });
+    }
+
+    let (pc_model, runtime, cached_kr) = remote_probe(st).await;
+    let mode = build_mode_snapshot(
+        st,
+        ChatSurface::Remote,
+        &pc_model,
+        runtime.as_ref(),
+        cached_kr,
+    );
+
+    let mut session_id = st
+        .active_session
+        .read()
+        .clone()
+        .filter(|s| s != LOCAL_SESSION_ID);
+
+    if session_id.is_none() {
+        if let Ok(Ok(list)) = tokio::time::timeout(
+            std::time::Duration::from_secs(4),
+            st.client.list_sessions(None),
+        )
+        .await
+        {
+            session_id = pick_preferred_remote_session(&list);
+        }
+    }
+
+    // Do NOT create a blank "helpful assistant" session on pair — that stole
+    // the default away from the CEO/steward DM. Only create if PC has zero sessions.
+    if session_id.is_none() {
+        if let Ok(Ok(list)) = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            st.client.list_sessions(None),
+        )
+        .await
+        {
+            if list.is_empty() {
+                if let Ok(Ok(s)) = tokio::time::timeout(
+                    std::time::Duration::from_secs(4),
+                    st.client.create_session(None),
+                )
+                .await
+                {
+                    session_id = Some(s.id);
+                }
+            }
+        }
+    }
+
+    let mut messages: Vec<Value> = Vec::new();
+    if let Some(ref sid) = session_id {
+        *st.active_session.write() = Some(sid.clone());
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            ensure_chat(st.clone(), sid.clone()),
+        )
+        .await;
+        messages = match tokio::time::timeout(
+            std::time::Duration::from_secs(4),
+            remote_messages_as_ui(st, sid, 80),
+        )
+        .await
+        {
+            Ok(m) => m,
+            Err(_) => Vec::new(),
+        };
+    }
+
+    if messages.is_empty() {
+        let text = if session_id.is_some() {
+            "远端会话已打开。消息将经 PC Agent 处理。"
+        } else {
+            "远端 Agent 已连接。发送消息将自动新建会话。"
+        };
+        messages.push(json!({
+            "id": "w-remote-pair",
+            "role": "assistant",
+            "content": text,
+            "text": text,
+            "who": "远端 Agent",
+            "format": "plain",
+        }));
+    }
+
+    json!({
+        "ok": true,
+        "surface": "remote",
+        "session_id": session_id,
+        "messages": messages,
+        "mode": mode,
+        "elapsed_ms": t0.elapsed().as_millis() as u64,
+        "active_session_id": st.active_session.read().clone(),
+        "authenticated": true,
+        "user_email": user_email_of(st),
+    })
 }
 
 async fn pair_devices(State(st): State<AppState>) -> Json<Value> {
@@ -2166,7 +3212,33 @@ async fn upload_file(State(st): State<AppState>, mut multipart: Multipart) -> Js
         .upload_file(&name, bytes, Some(&content_type))
         .await
     {
-        Ok(v) => Json(json!({ "ok": true, "result": v })),
+        Ok(mut v) => {
+            // Rewrite relative /uploads/... to tunnel-public absolute URL so
+            // phone can open/download the same way Codex surfaces attachments.
+            let base = st.client.config().base_url.clone();
+            if let Some(obj) = v.as_object_mut() {
+                for key in ["url", "public_url", "path", "download_url", "href"] {
+                    if let Some(url) = obj.get(key).and_then(|u| u.as_str()).map(|s| s.to_string())
+                    {
+                        if url.starts_with('/') || url.starts_with("uploads/") {
+                            let abs = absolutize_media_url(&base, &url);
+                            obj.insert(key.into(), json!(abs));
+                        }
+                    }
+                }
+                // Always expose public_url for clients that prefer it.
+                if let Some(url) = obj
+                    .get("url")
+                    .and_then(|u| u.as_str())
+                    .map(|s| s.to_string())
+                {
+                    let abs = absolutize_media_url(&base, &url);
+                    obj.insert("url".into(), json!(abs));
+                    obj.insert("public_url".into(), json!(abs));
+                }
+            }
+            Json(json!({ "ok": true, "result": v }))
+        }
         Err(e) => err_json(e),
     }
 }
@@ -2901,9 +3973,7 @@ async fn switch_surface(
 
             if session_id.is_none() {
                 if let Ok(list) = st.client.list_sessions(None).await {
-                    if let Some(first) = list.first() {
-                        session_id = Some(first.id.clone());
-                    }
+                    session_id = pick_preferred_remote_session(&list);
                 }
             }
 
@@ -3034,11 +4104,37 @@ async fn handle_ws_client_msg(st: &AppState, v: &Value) -> Result<(), String> {
             if content.trim().is_empty() {
                 return Err("empty content".into());
             }
-            let chat = ensure_chat(st.clone(), sid.clone()).await?;
             let attachments = v.get("attachments").cloned();
-            chat.user_input(&content, None, attachments.as_ref())
-                .map_err(|e| e.to_string())?;
-            Ok(())
+            // One retry: if cached socket died mid-flight, drop + reconnect.
+            let mut last_err = String::new();
+            for attempt in 0..2 {
+                let chat = match ensure_chat(st.clone(), sid.clone()).await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        last_err = e;
+                        break;
+                    }
+                };
+                match chat.user_input(&content, None, attachments.as_ref()) {
+                    Ok(()) => {
+                        // Backbone: finish the turn via HTTP even if PC event WS dies.
+                        spawn_turn_completion_watchdog(st.clone(), sid.clone(), content.clone());
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        last_err = e.to_string();
+                        let dead = last_err.contains("channel closed")
+                            || last_err.contains("closed")
+                            || last_err.contains("WebSocket");
+                        st.chats.remove(&sid);
+                        if !dead || attempt == 1 {
+                            break;
+                        }
+                        tracing::info!(%sid, attempt, "chat send failed; retry after reconnect");
+                    }
+                }
+            }
+            Err(last_err)
         }
         "stop" | "cancel" | "abort" => {
             let sid = v

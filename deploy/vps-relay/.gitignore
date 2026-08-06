@@ -1,0 +1,4 @@
+﻿.relay-token
+.env
+frpc.local.toml
+*.bak

@@ -13,6 +13,7 @@ import '../services/attach_utils.dart';
 import '../services/app_controller.dart';
 import '../services/voice_service.dart';
 import '../theme/pixel_theme.dart';
+import '../util/open_url.dart';
 import '../widgets/pixel_icons.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -1017,11 +1018,22 @@ class _ChatBubble extends StatelessWidget {
                     MarkdownBody(
                       data: data,
                       selectable: false,
+                      onTapLink: (text, href, title) {
+                        final u = (href ?? text).trim();
+                        if (u.isEmpty) return;
+                        openExternalUrl(u);
+                      },
                       styleSheet: MarkdownStyleSheet(
                         p: TextStyle(
                           fontSize: 14,
                           height: 1.5,
                           color: ink,
+                        ),
+                        a: TextStyle(
+                          fontSize: 14,
+                          height: 1.5,
+                          color: PixelColors.amber,
+                          decoration: TextDecoration.underline,
                         ),
                         code: TextStyle(
                           fontFamily: 'JetBrains Mono',

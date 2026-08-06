@@ -1,0 +1,21 @@
+# Takton VPS Relay — one-click public reverse tunnel
+# Public: host :80 → relay :8080 → PC backend (via outbound WSS from PC)
+services:
+  relay:
+    build: ./relay
+    image: takton-relay:1.0
+    container_name: takton-relay
+    restart: unless-stopped
+    ports:
+      - "${RELAY_PUBLIC_PORT:-80}:8080"
+    environment:
+      RELAY_TOKEN: ${RELAY_TOKEN:?set RELAY_TOKEN in .env}
+      RELAY_HOST: "0.0.0.0"
+      RELAY_PORT: "8080"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/relay/v1/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s

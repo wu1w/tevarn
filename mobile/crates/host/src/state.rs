@@ -286,6 +286,19 @@ fn is_stream_delta(v: &Value) -> bool {
         .unwrap_or("")
         .to_ascii_lowercase();
 
+    // Full-text snapshots (HTTP watchdog / final replace) must NOT be coalesced:
+    // coalesce strips `replace` and would append a full answer as if it were a token.
+    if v.get("replace").and_then(|x| x.as_bool()).unwrap_or(false) {
+        return false;
+    }
+    let source = v
+        .get("source")
+        .and_then(|x| x.as_str())
+        .unwrap_or("");
+    if source == "http_watchdog" || source == "http_progress" {
+        return false;
+    }
+
     // Control / tool / full-message envelopes: always flush + pass through.
     if matches!(
         ty.as_str(),
@@ -300,6 +313,9 @@ fn is_stream_delta(v: &Value) -> bool {
             | "tool"
             | "tool_call"
             | "tool_result"
+            | "tool_event"
+            | "mobile_tool"
+            | "mobile_status"
             | "approval"
             | "escalation"
             | "status"
@@ -309,6 +325,8 @@ fn is_stream_delta(v: &Value) -> bool {
             | "final"
             | "complete"
             | "mobile_hello"
+            | "run_event"
+            | "confirm_request"
     ) {
         return false;
     }
@@ -373,5 +391,24 @@ mod tests {
     fn rejects_bare_content_without_delta_type() {
         assert!(!is_stream_delta(&json!({"content":"full reply"})));
         assert!(!is_stream_delta(&json!({"text":"full reply"})));
+    }
+
+    #[test]
+    fn rejects_replace_and_watchdog_full_text() {
+        assert!(!is_stream_delta(&json!({
+            "type": "stream_delta",
+            "content": "full final answer",
+            "replace": true,
+        })));
+        assert!(!is_stream_delta(&json!({
+            "type": "stream_delta",
+            "content": "full final answer",
+            "source": "http_watchdog",
+        })));
+        assert!(!is_stream_delta(&json!({
+            "type": "tool_event",
+            "name": "shell",
+            "phase": "start",
+        })));
     }
 }

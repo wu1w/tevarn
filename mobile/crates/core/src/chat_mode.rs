@@ -196,45 +196,90 @@ impl UiChatMessage {
 pub fn normalize_ui_messages(raw: &[Value], default_who: &str) -> Vec<UiChatMessage> {
     let mut out = Vec::with_capacity(raw.len());
     for (i, m) in raw.iter().enumerate() {
-        let role = m
+        let mut role = m
             .get("role")
             .and_then(|v| v.as_str())
             .unwrap_or("assistant")
             .to_string();
-        // Hide tool protocol rows from mobile UI history.
+        let mut content = extract_content(m);
+        let mut who = m
+            .get("who")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_default();
+
+        // Codex-like: surface tool protocol as visible status lines (not silent drop).
         if role == "tool" || role == "function" {
-            continue;
-        }
-        let content = extract_content(m);
-        if role == "assistant" && content.trim().is_empty() {
-            // Skip pure tool-call assistants with no visible text.
+            let tname = m
+                .get("name")
+                .or_else(|| m.pointer("/tool_calls/0/name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("tool");
+            let preview = content.chars().take(160).collect::<String>();
+            content = if preview.is_empty() {
+                format!("· `{tname}` ✓")
+            } else {
+                format!("· `{tname}` ✓ {preview}")
+            };
+            role = "assistant".into();
+            who = "工具".into();
+        } else if role == "assistant" {
             let has_tc = m
                 .get("tool_calls")
                 .and_then(|v| v.as_array())
                 .map(|a| !a.is_empty())
                 .unwrap_or(false);
             if has_tc {
+                // Show tool invocation row instead of hiding it.
+                let names: Vec<String> = m
+                    .get("tool_calls")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|tc| {
+                                tc.pointer("/function/name")
+                                    .or_else(|| tc.get("name"))
+                                    .and_then(|n| n.as_str())
+                                    .map(|s| s.to_string())
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let label = if names.is_empty() {
+                    "tool".to_string()
+                } else {
+                    names.join(", ")
+                };
+                let plan = content.trim();
+                content = if plan.is_empty() {
+                    format!("· 调用 `{label}` …")
+                } else {
+                    format!("· 调用 `{label}` …\n{plan}")
+                };
+                who = if who.is_empty() {
+                    "工具".into()
+                } else {
+                    who
+                };
+            } else if content.trim().is_empty() {
                 continue;
             }
         }
+
         let id = m
             .get("id")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| format!("m{i}"));
-        let who = m
-            .get("who")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| {
-                if role == "user" {
-                    String::new()
-                } else {
-                    default_who.to_string()
-                }
-            });
+        if who.is_empty() {
+            who = if role == "user" {
+                String::new()
+            } else {
+                default_who.to_string()
+            };
+        }
         let format = if role == "user" || !looks_like_markdown(&content) {
             "plain".to_string()
         } else {

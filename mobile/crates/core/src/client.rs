@@ -183,6 +183,27 @@ impl TaktonClient {
         Ok(session)
     }
 
+    /// Exchange pair claim device token for a JWT session.
+    ///
+    /// This is the correct phone auth path: `/auth/auto-login` is loopback-only
+    /// under single_user_mode and will 403 from LAN/VPS unless the tunnel
+    /// spoofs 127.0.0.1. Device-token session works on every path.
+    pub async fn pair_session_login(&self, device_token: &str) -> Result<AuthSession> {
+        let tr: TokenResponse = self
+            .request_json(
+                Method::POST,
+                "/mobile/pair/session",
+                Some(json!({ "token": device_token })),
+                false,
+            )
+            .await?;
+        let base_url = self.config.read().base_url.clone();
+        let session = AuthSession::from_token_response(base_url, tr);
+        *self.session.write() = Some(session.clone());
+        self.persist_session(Some(&session))?;
+        Ok(session)
+    }
+
     pub async fn list_sessions(&self, kind: Option<&str>) -> Result<Vec<SessionInfo>> {
         let path = match kind {
             Some(k) => format!("/sessions/my?kind={k}"),

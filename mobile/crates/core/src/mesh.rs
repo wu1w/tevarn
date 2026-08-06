@@ -423,6 +423,16 @@ impl MeshService {
                     )
                 }
             }
+            // VPS path is PC-backend / QR driven; mobile host mesh status stays LAN-first.
+            MeshMode::Vps => {
+                let h = lan.clone().unwrap_or_else(|| "127.0.0.1".into());
+                (
+                    h,
+                    "vps".into(),
+                    lan.is_some(),
+                    "VPS 中继由 PC 出码配置 · 扫码即可".into(),
+                )
+            }
             MeshMode::Auto => {
                 if let (Some(l), Some(_t)) = (lan.clone(), ts_ip.clone()) {
                     (
@@ -757,6 +767,7 @@ pub fn parse_mode(s: &str) -> Result<MeshMode> {
         "off" | "0" | "false" => Ok(MeshMode::Off),
         "lan" | "wifi" | "local" => Ok(MeshMode::Lan),
         "ts" | "tailscale" | "mesh" => Ok(MeshMode::Ts),
+        "vps" | "relay" => Ok(MeshMode::Vps),
         "auto" | "dual" | "both" | "smart" => Ok(MeshMode::Auto),
         other => Err(Error::Msg(format!("unknown mesh mode: {other}"))),
     }

@@ -1,10 +1,12 @@
 //! M1 QR pairing protocol (phone scans PC-generated QR).
 //!
-//! Payload URI (v3 seamless mesh):
+//! Payload URI (v3 seamless mesh / v4 VPS):
 //! `takton://pair?v=3&pair_id=…&code=…&host=…&port=8090&exp=…&mesh=auto&scheme=http&lan=…&ts=…&hn=…&tsk=…`
+//! v4 adds: `&vps=…&vp=443&vps_path=/t/{id}&vpt=…`
 //!
 //! `tsk` is an optional short-window phone join key (same tailnet preauth) so the
 //! phone can embed tsnet with zero UI. Strip from logs after claim when possible.
+//! `vpt` is a short-window pair-scoped token for VPS path (never master token).
 //!
 //! Server stores pending sessions; code is single-use.
 //! Default TTL is 5 minutes so users can scan offline and claim when any path is up.
@@ -33,7 +35,9 @@ pub enum MeshMode {
     Lan,
     /// Tailscale / tsnet mesh
     Ts,
-    /// Advertise all known paths; client prefers LAN then TS
+    /// User-owned VPS reverse relay
+    Vps,
+    /// Advertise all known paths; client prefers LAN → Host → Vps → Ts
     Auto,
 }
 
@@ -43,6 +47,7 @@ impl MeshMode {
             MeshMode::Off => "off",
             MeshMode::Lan => "lan",
             MeshMode::Ts => "ts",
+            MeshMode::Vps => "vps",
             MeshMode::Auto => "auto",
         }
     }
@@ -50,6 +55,7 @@ impl MeshMode {
     pub fn parse(s: &str) -> Self {
         match s.to_ascii_lowercase().as_str() {
             "ts" | "tailscale" | "mesh" => MeshMode::Ts,
+            "vps" | "relay" => MeshMode::Vps,
             "lan" | "wifi" | "local" => MeshMode::Lan,
             "auto" | "dual" | "both" | "smart" => MeshMode::Auto,
             _ => MeshMode::Off,
@@ -84,6 +90,21 @@ pub struct PairPayload {
     /// Never log the full value. Cleared from phone prefs after successful join when possible.
     #[serde(default)]
     pub tsk: Option<String>,
+    /// Optional VPS relay host (v4)
+    #[serde(default)]
+    pub vps: Option<String>,
+    /// Optional VPS public port (default 443/80)
+    #[serde(default)]
+    pub vp: Option<u16>,
+    /// Optional path prefix e.g. `/t/{tunnel_id}`
+    #[serde(default)]
+    pub vps_path: Option<String>,
+    /// Short-window pair-scoped VPS token (never master token)
+    #[serde(default)]
+    pub vpt: Option<String>,
+    /// Optional scheme for VPS endpoint (http/https)
+    #[serde(default)]
+    pub vps_scheme: Option<String>,
 }
 
 impl PairPayload {
@@ -128,6 +149,39 @@ impl PairPayload {
         {
             if !out.iter().any(|e| e.url == ep.url) {
                 out.push(ep);
+            }
+        }
+        if let Some(vps) = self.vps.as_deref().filter(|s| !s.trim().is_empty()) {
+            let vps_scheme = self
+                .vps_scheme
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .unwrap_or(if self.vp.unwrap_or(0) == 443 {
+                    "https"
+                } else {
+                    "http"
+                });
+            let vp = self.vp.unwrap_or(if vps_scheme == "https" { 443 } else { 80 });
+            let path = self
+                .vps_path
+                .as_deref()
+                .unwrap_or("")
+                .trim()
+                .trim_end_matches('/');
+            let url = if path.is_empty() {
+                format!("{vps_scheme}://{vps}:{vp}")
+            } else {
+                let p = if path.starts_with('/') {
+                    path.to_string()
+                } else {
+                    format!("/{path}")
+                };
+                format!("{vps_scheme}://{vps}:{vp}{p}")
+            };
+            if let Some(ep) = Endpoint::from_url(&url, EndpointKind::Vps) {
+                if !out.iter().any(|e| e.url == ep.url) {
+                    out.push(ep);
+                }
             }
         }
         if let Some(ts) = self.ts.as_deref().filter(|s| !s.trim().is_empty()) {
@@ -179,6 +233,29 @@ impl PairPayload {
         if let Some(tsk) = &self.tsk {
             if !tsk.is_empty() {
                 q.push_str(&format!("&tsk={}", urlencoding(tsk)));
+            }
+        }
+        if let Some(vps) = &self.vps {
+            if !vps.is_empty() {
+                q.push_str(&format!("&vps={}", urlencoding(vps)));
+            }
+        }
+        if let Some(vp) = self.vp {
+            q.push_str(&format!("&vp={vp}"));
+        }
+        if let Some(path) = &self.vps_path {
+            if !path.is_empty() {
+                q.push_str(&format!("&vps_path={}", urlencoding(path)));
+            }
+        }
+        if let Some(vpt) = &self.vpt {
+            if !vpt.is_empty() {
+                q.push_str(&format!("&vpt={}", urlencoding(vpt)));
+            }
+        }
+        if let Some(vs) = &self.vps_scheme {
+            if !vs.is_empty() {
+                q.push_str(&format!("&vps_scheme={}", urlencoding(vs)));
             }
         }
         q
@@ -263,6 +340,26 @@ impl PairPayload {
             .or_else(|| map.get("authkey"))
             .cloned()
             .filter(|x| !x.is_empty());
+        let vps = map
+            .get("vps")
+            .or_else(|| map.get("relay"))
+            .cloned()
+            .filter(|x| !x.is_empty());
+        let vp = map.get("vp").and_then(|p| p.parse().ok());
+        let vps_path = map
+            .get("vps_path")
+            .or_else(|| map.get("vpath"))
+            .cloned()
+            .filter(|x| !x.is_empty());
+        let vpt = map
+            .get("vpt")
+            .or_else(|| map.get("vps_token"))
+            .cloned()
+            .filter(|x| !x.is_empty());
+        let vps_scheme = map
+            .get("vps_scheme")
+            .cloned()
+            .filter(|x| !x.is_empty());
         // comma-separated hosts=lan,ts,name
         let mut hosts_extra: Vec<String> = map
             .get("hosts")
@@ -301,6 +398,11 @@ impl PairPayload {
             ts,
             hn,
             tsk,
+            vps,
+            vp,
+            vps_path,
+            vpt,
+            vps_scheme,
         })
     }
 
@@ -310,6 +412,9 @@ impl PairPayload {
         if p.tsk.as_ref().map(|s| !s.is_empty()).unwrap_or(false) {
             p.tsk = Some("***".into());
         }
+        if p.vpt.as_ref().map(|s| !s.is_empty()).unwrap_or(false) {
+            p.vpt = Some("***".into());
+        }
         p.to_uri()
     }
 
@@ -317,6 +422,13 @@ impl PairPayload {
     pub fn without_tsk(&self) -> Self {
         let mut p = self.clone();
         p.tsk = None;
+        p
+    }
+
+    /// Drop short-lived VPS pair token after claim.
+    pub fn without_vpt(&self) -> Self {
+        let mut p = self.clone();
+        p.vpt = None;
         p
     }
 }
@@ -472,6 +584,11 @@ impl PairService {
             ts,
             hn,
             tsk,
+            vps: None,
+            vp: None,
+            vps_path: None,
+            vpt: None,
+            vps_scheme: None,
         };
         (pending, payload)
     }
@@ -563,6 +680,11 @@ impl PairService {
             ts: pending.ts.clone(),
             hn: pending.hn.clone(),
             tsk: None,
+            vps: None,
+            vp: None,
+            vps_path: None,
+            vpt: None,
+            vps_scheme: None,
         };
         let endpoints: Vec<String> = payload_like.endpoints().into_iter().map(|e| e.url).collect();
         let device = PairedDevice {
@@ -840,6 +962,11 @@ mod tests {
             ts: Some("100.64.0.12".into()),
             hn: Some("takton-pc".into()),
             tsk: Some("tskey-auth-demo".into()),
+            vps: None,
+            vp: None,
+            vps_path: None,
+            vpt: None,
+            vps_scheme: None,
         };
         let uri = p.to_uri();
         assert!(uri.contains("tsk="));

@@ -1,0 +1,11 @@
+bindPort = 7000
+# Public HTTP(S)-style TCP tunnel port for DEV (avoid nginx 80/443)
+allowPorts = [
+  { start = 7080, end = 7080 }
+]
+auth.method = "token"
+auth.token = "TAKTON_RELAY_TOKEN_PLACEHOLDER"
+webServer.addr = "127.0.0.1"
+webServer.port = 7500
+log.to = "console"
+log.level = "info"

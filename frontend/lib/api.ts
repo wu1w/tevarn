@@ -710,6 +710,56 @@ export async function meshAuthMobile(authKey: string): Promise<{
   return res.data;
 }
 
+/** VPS 中继配置 / 启用 */
+export async function meshVpsSetMobile(data: {
+  host?: string;
+  port?: number;
+  token?: string;
+  enabled?: boolean;
+  scheme?: string;
+  tunnel_id?: string;
+}): Promise<{
+  ok: boolean;
+  vps?: VpsMeshStatus;
+  mesh?: Record<string, unknown>;
+  detail?: string;
+}> {
+  const res = await api.post('/mobile/mesh/vps', data);
+  return res.data;
+}
+
+/** 探测 VPS 中继（可不落盘） */
+export async function meshVpsTestMobile(data?: {
+  host?: string;
+  port?: number;
+  token?: string;
+  scheme?: string;
+}): Promise<{
+  ok: boolean;
+  error?: string;
+  detail?: string;
+  latency_ms?: number | null;
+  health?: Record<string, unknown>;
+  public_base?: string;
+}> {
+  const res = await api.post('/mobile/mesh/vps/test', data ?? {});
+  return res.data;
+}
+
+export type VpsMeshStatus = {
+  configured?: boolean;
+  enabled?: boolean;
+  online?: boolean;
+  host?: string | null;
+  port?: number;
+  scheme?: string;
+  tunnel_id?: string | null;
+  public_base?: string | null;
+  has_token?: boolean;
+  detail?: string;
+  latency_ms?: number;
+};
+
 /** 配对 L1 takton-agent */
 export async function pairDevice(data: {
   name: string;

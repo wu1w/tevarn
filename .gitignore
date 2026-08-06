@@ -225,3 +225,14 @@ release-win/
 # pack hygiene
 .pack-env-unset
 
+
+mobile/dist/
+
+
+deploy/vps-relay/.env
+deploy/vps-relay/.relay-token
+
+
+_remote_tip/
+_fixed_source_review/
+

@@ -26,6 +26,8 @@ pub enum EndpointKind {
     Lan,
     Ts,
     Host,
+    /// User-owned VPS reverse relay (between Host and Tailscale)
+    Vps,
     Loopback,
     Manual,
 }
@@ -37,20 +39,23 @@ impl EndpointKind {
             EndpointKind::Lan => "lan",
             EndpointKind::Ts => "ts",
             EndpointKind::Host => "host",
+            EndpointKind::Vps => "vps",
             EndpointKind::Loopback => "loopback",
             EndpointKind::Manual => "manual",
         }
     }
 
     /// Lower is better when ranking (LAN first).
+    /// Lan → Host → Vps → Ts → Manual
     pub fn rank(self) -> u8 {
         match self {
             EndpointKind::Lan => 0,
             EndpointKind::Host => 1,
-            EndpointKind::Ts => 2,
-            EndpointKind::Manual => 3,
-            EndpointKind::Unknown => 4,
-            EndpointKind::Loopback => 5,
+            EndpointKind::Vps => 2,
+            EndpointKind::Ts => 3,
+            EndpointKind::Manual => 4,
+            EndpointKind::Unknown => 5,
+            EndpointKind::Loopback => 6,
         }
     }
 
@@ -59,6 +64,7 @@ impl EndpointKind {
             "lan" | "wifi" | "local" => EndpointKind::Lan,
             "ts" | "tailscale" | "mesh" => EndpointKind::Ts,
             "host" | "dns" | "magic" | "name" => EndpointKind::Host,
+            "vps" | "relay" | "tunnel" => EndpointKind::Vps,
             "loopback" | "lo" => EndpointKind::Loopback,
             "manual" => EndpointKind::Manual,
             _ => EndpointKind::Unknown,
@@ -110,8 +116,14 @@ impl Endpoint {
         } else {
             kind
         };
+        // Preserve path prefix (e.g. https://vps/t/{tunnel_id}) for VPS relay bases.
+        let kept = if url.contains("://") {
+            url
+        } else {
+            format!("{scheme}://{host}:{port}")
+        };
         Some(Self {
-            url: format!("{scheme}://{host}:{port}"),
+            url: kept,
             kind,
             host,
             port,
@@ -372,14 +384,24 @@ impl PathService {
 }
 
 /// Probe `/health` or `/api/health` with short timeout. Returns latency.
+///
+/// Keeps path prefixes (e.g. `https://vps/t/{id}`) so VPS relay bases probe correctly.
 pub async fn probe_endpoint(url: &str) -> ProbeResult {
     let (scheme, host, port) = crate::config::parse_base_url_parts(url);
     let kind = classify_host(&host);
-    let base = format!("{scheme}://{host}:{port}");
+    // Prefer original URL (may include /t/{tunnel_id}); fall back to authority-only.
+    let base = {
+        let t = url.trim().trim_end_matches('/');
+        if t.contains("://") {
+            t.to_string()
+        } else {
+            format!("{scheme}://{host}:{port}")
+        }
+    };
     let started = std::time::Instant::now();
     let client = match reqwest::Client::builder()
         .timeout(PROBE_TIMEOUT)
-        .connect_timeout(PROBE_TIMEOUT)
+        .connect_timeout(Duration::from_millis(800))
         .build()
     {
         Ok(c) => c,
@@ -527,23 +549,49 @@ fn sort_endpoints(list: &mut [Endpoint]) {
 }
 
 /// Build claim URL list from payload (all hosts × ports).
+///
+/// Order follows endpoint rank (LAN → Host → Vps → Ts). Path-prefixed bases
+/// (VPS `/t/{id}`) are kept intact; we never invent a shell-port URL that drops
+/// the path (that used to black-hole claims and freeze the phone for 10s+ each).
 pub fn claim_urls(payload: &PairPayload, shell_port: u16) -> Vec<String> {
     let mut urls = Vec::new();
     for ep in payload.endpoints() {
-        urls.push(format!("{}/api/mobile/pair/claim", ep.url.trim_end_matches('/')));
-        if ep.port != shell_port && shell_port != 0 {
+        let base = ep.url.trim_end_matches('/');
+        urls.push(format!("{base}/api/mobile/pair/claim"));
+        // Shell-port alternate only for plain LAN bases (home Wi‑Fi). Never for
+        // VPS path bases or public IPs — those mangles drop /t/{id} and hang phones.
+        let has_path = {
+            let rest = base
+                .strip_prefix("https://")
+                .or_else(|| base.strip_prefix("http://"))
+                .unwrap_or(base);
+            rest.contains('/')
+        };
+        if !has_path
+            && ep.kind == EndpointKind::Lan
+            && ep.port != shell_port
+            && shell_port != 0
+        {
             urls.push(format!(
                 "{}://{}:{}/api/mobile/pair/claim",
                 ep.scheme, ep.host, shell_port
             ));
         }
     }
-    let loop_url = format!("http://127.0.0.1:{shell_port}/api/mobile/pair/claim");
-    if shell_port != 0 && !urls.contains(&loop_url) {
-        urls.push(loop_url);
-    }
+    // Local mobile host is rarely the PC; keep last and short-circuited by parallel race.
+    // Drop loopback claim — phone never reaches PC shell that way in production.
     let mut seen = std::collections::HashSet::new();
     urls.retain(|u| seen.insert(u.clone()));
+    // Prefer path-based VPS claims first (cellular happy path), then LAN, then rest.
+    urls.sort_by_key(|u| {
+        if u.contains("/t/") {
+            0u8
+        } else if u.contains("192.168.") || u.contains("10.") {
+            1
+        } else {
+            2
+        }
+    });
     urls
 }
 
@@ -567,5 +615,45 @@ mod tests {
     fn endpoint_from_parts() {
         let e = Endpoint::from_parts("http", "192.168.1.8", 8090, EndpointKind::Lan).unwrap();
         assert_eq!(e.url, "http://192.168.1.8:8090");
+    }
+
+    #[test]
+    fn claim_urls_keep_vps_path_no_shell_port_mangle() {
+        use crate::pair::{MeshMode, PairPayload};
+        let p = PairPayload {
+            v: 4,
+            pair_id: "p1".into(),
+            code: "123456".into(),
+            host: "150.1.2.3".into(),
+            port: 80,
+            exp: 9_999_999_999,
+            mesh: MeshMode::Auto,
+            scheme: "http".into(),
+            name: None,
+            lan: Some("192.168.1.8".into()),
+            ts: None,
+            hn: None,
+            tsk: None,
+            vps: Some("150.1.2.3".into()),
+            vp: Some(80),
+            vps_path: Some("/t/pc-abc".into()),
+            vpt: Some("tok".into()),
+            vps_scheme: Some("http".into()),
+        };
+        let urls = claim_urls(&p, 8765);
+        assert!(
+            urls.iter().any(|u| u.contains("/t/pc-abc/api/mobile/pair/claim")),
+            "vps path claim missing: {urls:?}"
+        );
+        // Must NOT invent public-IP:8765 claim that drops /t/{id}
+        assert!(
+            !urls.iter().any(|u| u.contains("150.1.2.3:8765")),
+            "shell-port mangle present: {urls:?}"
+        );
+        // LAN may keep shell-port alternate
+        assert!(
+            urls.iter().any(|u| u.contains("192.168.1.8")),
+            "lan claim missing: {urls:?}"
+        );
     }
 }

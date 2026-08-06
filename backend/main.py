@@ -668,10 +668,27 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Channel gateway skipped (TAKTON_TEST_MODE)")
 
+    # VPS reverse-tunnel agent (outbound to user-owned relay)
+    if not _test_mode:
+        try:
+            from backend.services.vps_tunnel import get_vps_tunnel
+
+            await get_vps_tunnel().restart_if_enabled()
+            logger.info("vps tunnel agent lifecycle hooked")
+        except Exception as e:
+            logger.warning(f"vps tunnel startup skipped: {e}")
+
     yield  # 应用运行中
 
     # ---- Shutdown ----
     logger.info("Takton Backend Shutting down...")
+
+    try:
+        from backend.services.vps_tunnel import get_vps_tunnel
+
+        await get_vps_tunnel().stop()
+    except Exception as e:
+        logger.warning(f"vps tunnel stop warning: {e}")
 
     # 停止异步日志 listener（排空队列，防尾部日志丢失）
     try:

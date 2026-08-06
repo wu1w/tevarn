@@ -1,9 +1,15 @@
 //! WebSocket chat session against Takton `WS /api/ws/{session_id}`.
+//!
+//! Robustness notes:
+//! - Writer and reader both signal Closed/Error so the host cache can drop dead sockets.
+//! - Binary frames are accepted (VPS relay historically lost text opcode).
+//! - `is_alive()` lets callers avoid reusing a half-dead channel.
 
 use crate::client::TaktonClient;
 use crate::error::{Error, Result};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
@@ -17,6 +23,7 @@ pub enum ChatEvent {
 
 pub struct ChatConnection {
     tx: mpsc::UnboundedSender<String>,
+    alive: Arc<AtomicBool>,
     _close: Mutex<Option<oneshot::Sender<()>>>,
 }
 
@@ -33,8 +40,11 @@ impl ChatConnection {
         let (mut sink, mut stream) = ws.split();
         let (out_tx, mut out_rx) = mpsc::unbounded_channel::<String>();
         let (close_tx, mut close_rx) = oneshot::channel::<()>();
+        let alive = Arc::new(AtomicBool::new(true));
 
         // writer
+        let alive_w = alive.clone();
+        let event_w = on_event.clone();
         tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -54,24 +64,34 @@ impl ChatConnection {
                     }
                 }
             }
+            alive_w.store(false, Ordering::SeqCst);
+            let _ = event_w.send(ChatEvent::Closed("writer end".into()));
         });
 
         // reader
+        let alive_r = alive.clone();
         let event_tx = on_event.clone();
         tokio::spawn(async move {
             while let Some(item) = stream.next().await {
                 match item {
-                    Ok(Message::Text(t)) => {
-                        match serde_json::from_str::<Value>(&t) {
-                            Ok(v) => {
-                                let _ = event_tx.send(ChatEvent::Json(v));
-                            }
-                            Err(e) => {
-                                let _ = event_tx.send(ChatEvent::Error(e.to_string()));
-                            }
+                    Ok(Message::Text(t)) => match serde_json::from_str::<Value>(&t) {
+                        Ok(v) => {
+                            let _ = event_tx.send(ChatEvent::Json(v));
                         }
-                    }
-                    Ok(Message::Ping(_)) => {}
+                        Err(e) => {
+                            let _ = event_tx.send(ChatEvent::Error(e.to_string()));
+                        }
+                    },
+                    // VPS relay may deliver JSON as binary frames.
+                    Ok(Message::Binary(b)) => match serde_json::from_slice::<Value>(&b) {
+                        Ok(v) => {
+                            let _ = event_tx.send(ChatEvent::Json(v));
+                        }
+                        Err(e) => {
+                            let _ = event_tx.send(ChatEvent::Error(format!("binary frame: {e}")));
+                        }
+                    },
+                    Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => {}
                     Ok(Message::Close(_)) => {
                         let _ = event_tx.send(ChatEvent::Closed("close frame".into()));
                         break;
@@ -83,10 +103,11 @@ impl ChatConnection {
                     }
                 }
             }
+            alive_r.store(false, Ordering::SeqCst);
             let _ = on_event.send(ChatEvent::Closed("stream end".into()));
         });
 
-        // auth message (belt+suspenders if query token ignored)
+        // auth + sync (belt+suspenders if query token ignored)
         if let Some(token) = client.token() {
             let _ = out_tx.send(json!({ "type": "auth", "token": token }).to_string());
         }
@@ -94,11 +115,20 @@ impl ChatConnection {
 
         Ok(Arc::new(Self {
             tx: out_tx,
+            alive,
             _close: Mutex::new(Some(close_tx)),
         }))
     }
 
+    /// False when writer/reader ended — cache must reconnect.
+    pub fn is_alive(&self) -> bool {
+        self.alive.load(Ordering::SeqCst) && !self.tx.is_closed()
+    }
+
     pub fn send_json(&self, v: Value) -> Result<()> {
+        if !self.is_alive() {
+            return Err(Error::Ws("chat channel closed".into()));
+        }
         self.tx
             .send(v.to_string())
             .map_err(|_| Error::Ws("chat channel closed".into()))
@@ -138,6 +168,7 @@ impl ChatConnection {
     }
 
     pub async fn close(&self) {
+        self.alive.store(false, Ordering::SeqCst);
         if let Some(tx) = self._close.lock().await.take() {
             let _ = tx.send(());
         }

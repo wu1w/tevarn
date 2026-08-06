@@ -902,15 +902,33 @@ class AppController extends ChangeNotifier {
                 : Map<String, dynamic>.from(up);
             // Also inject local text extract so PC agent has content even if URL fetch lags
             final textBlock = extractTextBlock(f, bytes);
+            final publicUrl =
+                (result['public_url'] ?? result['url'])?.toString() ?? '';
+            // Codex-like attachment envelope for PC agent (absolute tunnel URL).
             uploaded.add({
               'name': f.name,
               'filename': f.name,
               if (f.mime != null) 'content_type': f.mime,
+              if (f.mime != null) 'mime_type': f.mime,
               if (f.mime != null) 'type': f.mime,
               if (textBlock != null) 'text_content': textBlock,
+              if (publicUrl.isNotEmpty) 'url': publicUrl,
+              if (publicUrl.isNotEmpty) 'public_url': publicUrl,
+              if (f.isImage) 'kind': 'image',
+              if (!f.isImage) 'kind': 'file',
               ...result,
+              // Force absolute URL after spread (result may have relative path).
+              if (publicUrl.isNotEmpty) 'url': publicUrl,
+              if (publicUrl.isNotEmpty) 'public_url': publicUrl,
             });
-            if (textBlock != null) contentBlocks.add(textBlock);
+            if (textBlock != null) {
+              contentBlocks.add(textBlock);
+            } else if (publicUrl.isNotEmpty) {
+              // Non-text: surface downloadable link for PC agent + chat history.
+              final kind = f.isImage ? '图片' : '文件';
+              contentBlocks.add('### $kind · [${f.name}]($publicUrl)');
+            }
+            showToast('已上传 ${f.name}');
           } else {
             failedUploads.add(f.name);
             showToast('上传 ${f.name} 失败: ${up['error'] ?? 'unknown'}');
@@ -1149,12 +1167,14 @@ class AppController extends ChangeNotifier {
               : '${toolTrail.join('\n')}${acc.isEmpty ? '' : '\n\n$acc'}';
           final target =
               streamSurface == 'local' ? _localMsgCache : _remoteMsgCache;
+          final whoLive =
+              streamSurface == 'remote' ? '远端 Agent · 工具' : '本机 Agent';
           if (surface == streamSurface) {
             final i = messages.indexWhere((m) => m.id == aid);
             if (i >= 0) {
               messages[i].text = display;
               messages[i].format = 'markdown';
-              messages[i].who = '本机 Agent';
+              messages[i].who = whoLive;
               _notifyStream();
             }
           } else {
@@ -1162,6 +1182,7 @@ class AppController extends ChangeNotifier {
             if (i >= 0) {
               target[i].text = display;
               target[i].format = 'markdown';
+              target[i].who = whoLive;
             }
           }
           continue;
@@ -1177,6 +1198,9 @@ class AppController extends ChangeNotifier {
         // Apply to the surface cache that owns this stream
         final target =
             streamSurface == 'local' ? _localMsgCache : _remoteMsgCache;
+        final whoStream = streamSurface == 'remote'
+            ? (toolTrail.isEmpty ? '远端 Agent · 流式' : '远端 Agent · 工具')
+            : (toolTrail.isEmpty ? '本机 · LLM' : '本机 Agent');
         // Live list only if still on same surface
         if (surface == streamSurface) {
           final i = messages.indexWhere((m) => m.id == aid);
@@ -1190,9 +1214,7 @@ class AppController extends ChangeNotifier {
                     toolTrail.isNotEmpty)) {
               messages[i].format = 'markdown';
             }
-            if (toolTrail.isNotEmpty) {
-              messages[i].who = '本机 Agent';
-            }
+            messages[i].who = whoStream;
             _notifyStream();
           }
         } else {
@@ -1200,11 +1222,12 @@ class AppController extends ChangeNotifier {
           final i = target.indexWhere((m) => m.id == aid);
           if (i >= 0) {
             target[i].text = display;
+            target[i].who = whoStream;
             target[i].streaming = false;
           }
         }
       }
-      // Keep tool trail above final answer if tools ran
+      // Keep tool trail above final answer if tools ran (local + remote).
       if (toolTrail.isNotEmpty && acc.isNotEmpty) {
         acc = '${toolTrail.join('\n')}\n\n$acc';
         if (surface == streamSurface) {
@@ -1212,7 +1235,8 @@ class AppController extends ChangeNotifier {
           if (i >= 0) {
             messages[i].text = acc;
             messages[i].format = 'markdown';
-            messages[i].who = '本机 Agent';
+            messages[i].who =
+                streamSurface == 'remote' ? '远端 Agent · 工具' : '本机 Agent';
           }
         }
       }
@@ -1228,6 +1252,85 @@ class AppController extends ChangeNotifier {
         }
       }
 
+      // Remote: after stream, reload full PC history so tool-loop turns
+      // (assistant→tool→final assistant) replace the single streaming bubble.
+      // Retry briefly — final assistant can land in DB a beat after done.
+      if (streamSurface == 'remote' &&
+          streamGen == _streamGen &&
+          activeSessionId != null &&
+          activeSessionId!.isNotEmpty) {
+        for (var attempt = 0; attempt < 3; attempt++) {
+          try {
+            final r = await bridge.call('messages', {
+              'id': activeSessionId,
+            });
+            final list = r['messages'];
+            if (list is List && list.isNotEmpty) {
+              final parsed = _parseUiMessages(list);
+              if (parsed.isNotEmpty) {
+                // Prefer history that ends with a non-empty assistant (not tool-only).
+                final last = parsed.last;
+                final looksToolOnly = last.role == 'assistant' &&
+                    (last.who.contains('工具') ||
+                        last.text.trim().startsWith('· 调用') ||
+                        RegExp(r'^·\s*`').hasMatch(last.text.trim()));
+                if (looksToolOnly && attempt < 2) {
+                  await Future<void>.delayed(const Duration(milliseconds: 700));
+                  continue;
+                }
+                _applyMessages(parsed, forSurface: 'remote');
+                if (surface == 'remote') {
+                  messages
+                    ..clear()
+                    ..addAll(
+                        parsed.map((m) => m.copyMeta()..streaming = false));
+                }
+                break;
+              } else {
+                // Fallback: patch last non-tool assistant bubble only.
+                String? lastAsst;
+                for (var i = list.length - 1; i >= 0; i--) {
+                  final m = list[i];
+                  if (m is! Map) continue;
+                  if (m['role']?.toString() != 'assistant') continue;
+                  final who = m['who']?.toString() ?? '';
+                  if (who.contains('工具')) continue;
+                  final tc = m['tool_calls'];
+                  final hasTools = (tc is List && tc.isNotEmpty) ||
+                      (tc is Map && tc.isNotEmpty);
+                  if (hasTools) continue;
+                  final t = (m['content'] ?? m['text'] ?? '').toString();
+                  if (t.trim().startsWith('· 调用') ||
+                      RegExp(r'^·\s*`').hasMatch(t.trim())) {
+                    continue;
+                  }
+                  lastAsst = t;
+                  break;
+                }
+                if (lastAsst != null && lastAsst.isNotEmpty) {
+                  acc = toolTrail.isEmpty
+                      ? lastAsst
+                      : '${toolTrail.join('\n')}\n\n$lastAsst';
+                  final i = messages.indexWhere((m) => m.id == aid);
+                  if (i >= 0 && surface == streamSurface) {
+                    messages[i].text = acc;
+                    messages[i].format = 'markdown';
+                    messages[i].who = toolTrail.isEmpty
+                        ? '远端 Agent'
+                        : '远端 Agent · 工具';
+                  }
+                  break;
+                }
+              }
+            }
+          } catch (_) {}
+          if (attempt < 2) {
+            await Future<void>.delayed(const Duration(milliseconds: 700));
+          }
+        }
+        notifyListeners();
+      }
+
       if (surface == streamSurface) {
         finalize(messages);
         final i = messages.indexWhere((m) => m.id == aid);
@@ -1241,15 +1344,49 @@ class AppController extends ChangeNotifier {
     } catch (e) {
       if (streamGen == _streamGen && surface == streamSurface) {
         final i = messages.indexWhere((m) => m.id == aid);
+        var recovered = false;
         if (i >= 0) {
           messages[i].streaming = false;
-          messages[i].text = e.toString();
+          // If PC already finished, prefer its text over error string.
+          if (streamSurface == 'remote' &&
+              activeSessionId != null &&
+              activeSessionId!.isNotEmpty) {
+            try {
+              final r = await bridge.call('messages', {'id': activeSessionId});
+              final list = r['messages'];
+              if (list is List) {
+                for (var i2 = list.length - 1; i2 >= 0; i2--) {
+                  final m = list[i2];
+                  if (m is Map && m['role']?.toString() == 'assistant') {
+                    final t = (m['content'] ?? m['text'] ?? '').toString();
+                    if (t.trim().isNotEmpty) {
+                      messages[i].text = t;
+                      messages[i].format = 'markdown';
+                      recovered = true;
+                      break;
+                    }
+                  }
+                }
+              }
+            } catch (_) {}
+          }
+          if (!recovered) {
+            messages[i].text = e.toString();
+          }
         }
-        showToast(e.toString());
+        if (!recovered) {
+          showToast(e.toString());
+        }
       }
     } finally {
       if (streamGen == _streamGen) {
         streaming = false;
+        // Ensure assistant bubble not left in streaming spinner state.
+        final i = messages.indexWhere((m) => m.id == aid);
+        if (i >= 0) messages[i].streaming = false;
+        for (final m in _remoteMsgCache) {
+          if (m.id == aid) m.streaming = false;
+        }
         islandLive = false;
         islandKind = surface == 'remote' ? 'conn' : 'local';
         islandText = surface == 'remote' ? '已连 PC 就绪' : '本机 就绪';
@@ -1602,7 +1739,8 @@ class AppController extends ChangeNotifier {
     _notify();
   }
 
-  /// Phone role: apply scanned / pasted QR (M1 + M3 claim+connect).
+  /// Phone role: scan/paste QR → **one** Rust call does claim+login+surface.
+  /// Flutter only binds the result (no mesh/refresh/switch orchestration here).
   Future<bool> applyPairQr(String raw) async {
     final qr = raw.trim();
     if (qr.isEmpty) {
@@ -1610,14 +1748,11 @@ class AppController extends ChangeNotifier {
       return false;
     }
     pairBusy = true;
+    islandLive = true;
+    islandText = '配对中…';
+    islandKind = 'conn';
     _notify();
     try {
-      // M3: best-effort mesh up before claim (no-op on web)
-      try {
-        // ignore: avoid_dynamic_calls
-        await MeshRuntime.instance.up(hostname: 'takton-phone');
-      } catch (_) {}
-
       final r = await bridge.pairApply(
         qr: qr,
         deviceName: 'Takton Phone',
@@ -1628,88 +1763,139 @@ class AppController extends ChangeNotifier {
         showToast(r['error']?.toString() ?? '配对失败');
         return false;
       }
-      final base = r['base_url']?.toString();
-      if (base != null && base.isNotEmpty) {
-        formBase = base;
+      await _bindPairApplyResult(r, rawQr: qr);
+      return true;
+    } catch (e) {
+      showToast('配对异常: $e');
+      return false;
+    } finally {
+      pairBusy = false;
+      islandLive = false;
+      _notify();
+    }
+  }
+
+  /// Bind Rust `pair_apply` one-shot result into UI state. No second network hop.
+  /// Fully defensive: never throws into the scan flow (avoids "registered then crash").
+  Future<void> _bindPairApplyResult(
+    Map<String, dynamic> r, {
+    required String rawQr,
+  }) async {
+    try {
+      final base = r['base_url']?.toString() ?? '';
+      if (base.isNotEmpty) formBase = base;
+
+      lastPairQr = _redactPairQr(rawQr);
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        if (formBase.isNotEmpty) {
+          await prefs.setString('takton-form-base', formBase);
+        }
+        await prefs.setString('takton-last-pair-qr', lastPairQr);
+        if (formEmail.isNotEmpty) {
+          await prefs.setString('takton-form-email', formEmail);
+        }
+        final dt = r['device_token']?.toString();
+        if (dt != null && dt.isNotEmpty) {
+          await prefs.setString('takton-device-token', dt);
+        }
+        final chatMode = r['chat_mode']?.toString() ?? r['surface']?.toString();
+        if (chatMode == 'remote' || chatMode == 'local') {
+          await prefs.setString('takton-chat-mode', chatMode!);
+        }
+        final eps = r['endpoints'];
+        if (eps is List) {
+          await prefs.setStringList(
+            'takton-path-candidates',
+            eps.map((e) => e.toString()).where((s) => s.isNotEmpty).toList(),
+          );
+        }
+      } catch (_) {}
+
+      try {
+        await _persistPathFrom(r);
+      } catch (_) {}
+
+      // Merge Rust-provided connection state (no refreshAll waterfall).
+      state = {
+        ...state,
+        'authenticated': r['authenticated'] == true,
+        if (base.isNotEmpty) 'base_url': base,
+        if (r['user_email'] != null) 'user_email': r['user_email'],
+        if (r['active_session_id'] != null)
+          'active_session_id': r['active_session_id'],
+        if (r['session_id'] != null) 'active_session_id': r['session_id'],
+      };
+
+      if (r['path'] is Map) {
+        try {
+          pathProfile = Map<String, dynamic>.from(r['path'] as Map);
+        } catch (_) {}
       }
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('takton-form-base', formBase);
-      await prefs.setString('takton-last-pair-qr', qr);
-      if (formEmail.isNotEmpty) {
-        await prefs.setString('takton-form-email', formEmail);
+      if (r['mesh_status'] is Map) {
+        try {
+          mesh = Map<String, dynamic>.from(r['mesh_status'] as Map);
+        } catch (_) {}
       }
-      if (r['device_token'] != null) {
-        await prefs.setString(
-            'takton-device-token', r['device_token'].toString());
+      if (r['mode'] is Map) {
+        try {
+          mode = ModeSnap.fromJson(Map<String, dynamic>.from(r['mode'] as Map));
+        } catch (_) {}
       }
-      // Never persist phone join key (tsk) to disk after apply.
-      lastPairQr = _redactPairQr(qr);
-      await prefs.setString('takton-last-pair-qr', lastPairQr);
-      await _persistPathFrom(r);
-      // Store multi endpoints for offline reconnect
-      final eps = r['endpoints'];
-      if (eps is List) {
-        await prefs.setStringList(
-          'takton-path-candidates',
-          eps.map((e) => e.toString()).where((s) => s.isNotEmpty).toList(),
-        );
-      }
-      await refreshAll();
-      await refreshPairedDevices();
-      await refreshPath();
-      await refreshMesh();
-      if (r['authenticated'] == true) {
+
+      final toast = r['toast']?.toString() ??
+          r['hint']?.toString() ??
+          (r['authenticated'] == true ? '配对成功' : '配对未完成');
+      showToast(toast);
+
+      final title = r['ui_title']?.toString() ?? toast;
+      final body = r['ui_body']?.toString() ?? '';
+      final authed = r['authenticated'] == true;
+
+      if (authed) {
         needsManualLogin = false;
-        final kind = r['path_kind']?.toString() ?? '';
-        final seamless = r['seamless'] == true;
-        showToast(
-          seamless
-              ? (kind.isEmpty ? '已连接 · 外出自动切换' : '已连接 · $kind')
-              : (kind.isEmpty ? '配对成功 · 已连接 PC' : '配对成功 · $kind'),
-        );
+        final sid = r['session_id']?.toString();
+        if (sid != null && sid.isNotEmpty && sid != '__local__') {
+          activeSessionId = sid;
+        }
+        try {
+          final msgs = _parseUiMessages(r['messages']);
+          surface = 'remote';
+          if (msgs.isNotEmpty) {
+            _applyMessages(msgs, forSurface: 'remote');
+          }
+        } catch (_) {
+          surface = 'remote';
+        }
         pushStatusCard(
-          title: seamless ? '已连接 PC' : '配对成功',
-          body: seamless
-              ? (kind.isEmpty ? '外出网络自动切换已就绪' : '路径 $kind')
-              : (kind.isEmpty ? '远端 Agent 可用' : '路径 $kind'),
+          title: title,
+          body: body.isEmpty ? '远端 Agent 可用' : body,
           kind: StatusCardKind.success,
           actionLabel: '对话',
           actionId: 'open_chat',
           ttlMs: 6000,
         );
-        surface = 'remote';
-        await prefs.setString('takton-chat-mode', 'remote');
-        await _applySwitchSurface('remote', ensureSession: true);
-      } else if (r['deferred_claim'] == true) {
-        needsManualLogin = false;
-        showToast(r['hint']?.toString() ?? '已保存 · 网络可用后自动完成');
-        pushStatusCard(
-          title: '配对已保存',
-          body: '网络可用后将自动完成连接',
-          kind: StatusCardKind.info,
-          actionLabel: '立即重试',
-          actionId: 'reconnect',
-          ttlMs: 10000,
-        );
+        setTab(AppTab.chat);
       } else {
-        needsManualLogin = true;
-        final hint = r['hint']?.toString() ??
-            r['login_error']?.toString() ??
-            '配对完成 · 请填写账号登录';
-        showToast(hint);
+        needsManualLogin = r['needs_manual_login'] == true;
+        surface = 'local';
+        final loginErr = r['login_error']?.toString() ?? '';
+        final detail = body.isEmpty ? toast : body;
         pushStatusCard(
-          title: '需要登录',
-          body: hint,
-          kind: StatusCardKind.warn,
-          actionLabel: '去登录',
-          actionId: 'open_remote',
-          ttlMs: 12000,
+          title: title,
+          body: loginErr.isEmpty ? detail : '$detail\n$loginErr',
+          kind: r['deferred_claim'] == true
+              ? StatusCardKind.info
+              : StatusCardKind.warn,
+          actionLabel: r['deferred_claim'] == true ? '立即重试' : '连接',
+          actionId: r['deferred_claim'] == true ? 'reconnect' : 'open_remote',
+          ttlMs: 10000,
         );
         setTab(AppTab.remote);
       }
-      return true;
-    } finally {
-      pairBusy = false;
+      _notify();
+    } catch (e) {
+      showToast('配对结果已保存 · $e');
       _notify();
     }
   }

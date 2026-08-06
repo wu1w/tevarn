@@ -431,6 +431,136 @@ class HttpTaktonBridge extends TaktonBridge {
     }
   }
 
+  /// Host-authoritative turn probe (tool-loop aware). Falls back to messages scan.
+  Future<String?> _pollRemoteAssistantText(
+    String sessionId, {
+    required String userContent,
+    required int minLen,
+  }) async {
+    // Prefer dedicated endpoint: knows tool_calls / tool rows that UI normalize hides.
+    try {
+      final q = Uri.encodeQueryComponent(userContent);
+      final r = await _get(
+        '/api/mobile/sessions/$sessionId/turn_status?user=$q',
+      );
+      if (r['ok'] == true) {
+        final ready = r['ready'] == true;
+        final text = (r['text'] ?? '').toString();
+        if (!ready) return null;
+        if (text.trim().isEmpty) return null;
+        if (text.length < minLen && minLen > 0) {
+          if (text.trim().length < 2 && minLen > 8) return null;
+        }
+        return text;
+      }
+    } catch (_) {
+      // fall through to messages scan
+    }
+
+    try {
+      final r = await _get('/api/mobile/sessions/$sessionId/messages');
+      final raw = r['messages'];
+      if (raw is! List || raw.isEmpty) return null;
+      int lastUser = -1;
+      final needle = userContent.trim();
+      for (var i = raw.length - 1; i >= 0; i--) {
+        final m = raw[i];
+        if (m is! Map) continue;
+        if ((m['role']?.toString() ?? '') != 'user') continue;
+        final t = (m['content'] ?? m['text'] ?? '').toString().trim();
+        if (t.isEmpty) continue;
+        final prefixLen = needle.length.clamp(0, 32);
+        final prefix = prefixLen == 0 ? '' : needle.substring(0, prefixLen);
+        if (needle.isEmpty ||
+            t == needle ||
+            t.endsWith(needle) ||
+            needle.endsWith(t) ||
+            (prefix.isNotEmpty && t.contains(prefix))) {
+          lastUser = i;
+          break;
+        }
+      }
+      if (lastUser < 0 || lastUser + 1 >= raw.length) return null;
+
+      final last = raw.last;
+      if (last is! Map) return null;
+      final lastRole = last['role']?.toString() ?? '';
+      // Tool loop still open.
+      if (lastRole == 'tool' || lastRole == 'function') return null;
+      if (lastRole != 'assistant') return null;
+
+      // Normalized UI marks tool protocol as who=工具 — not a final answer.
+      final who = (last['who']?.toString() ?? '');
+      if (who.contains('工具')) return null;
+
+      // Intermediate assistant that only requested tools — wait for final.
+      final tc = last['tool_calls'];
+      final hasTools = (tc is List && tc.isNotEmpty) ||
+          (tc is Map && tc.isNotEmpty);
+      if (hasTools) return null;
+
+      final t = (last['content'] ?? last['text'] ?? '').toString();
+      final trimmed = t.trim();
+      if (trimmed.isEmpty) return null;
+      // Codex-style tool rows produced by host normalize_ui_messages.
+      if (trimmed.startsWith('· 调用') ||
+          RegExp(r'^·\s*`[^`]+`\s*[…✓✗]').hasMatch(trimmed)) {
+        return null;
+      }
+      if (t.length < minLen && minLen > 0) {
+        // Allow short finals ("好的") even if minLen was inflated by partial deltas.
+        if (trimmed.length < 2 && minLen > 8) return null;
+      }
+      return t;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static bool _isRemoteTerminalEvent(Map v, {required bool sawTurn}) {
+    final ty = (v['type']?.toString() ?? '').toLowerCase();
+    if (ty == 'done' ||
+        ty == 'chat_done' ||
+        ty == 'closed' ||
+        ty == 'complete' ||
+        ty == 'final') {
+      return true;
+    }
+    // Do NOT treat status=idle alone as terminal: tool loops can emit idle-ish
+    // statuses; Host HTTP watchdog + run.completed / done are authoritative.
+    if (ty == 'run_event') {
+      final topic = (v['topic']?.toString() ?? '').toLowerCase();
+      if (topic.endsWith('completed') ||
+          topic.endsWith('failed') ||
+          topic.endsWith('cancelled') ||
+          topic.endsWith('interrupted')) {
+        return sawTurn || true;
+      }
+    }
+    return false;
+  }
+
+  static bool _isRemoteTurnStart(Map v) {
+    final ty = (v['type']?.toString() ?? '').toLowerCase();
+    if (ty == 'user_message_ack' ||
+        ty == 'stream_delta' ||
+        ty.contains('delta') ||
+        ty == 'token' ||
+        ty == 'chunk' ||
+        ty == 'stream') {
+      return true;
+    }
+    if (ty == 'run_event') {
+      final topic = (v['topic']?.toString() ?? '').toLowerCase();
+      return topic.endsWith('created') || topic.contains('status_changed');
+    }
+    if (ty == 'status') {
+      final st = (v['state']?.toString() ?? '').toLowerCase();
+      return st == 'thinking' || st == 'running' || st == 'tool';
+    }
+    return false;
+  }
+
   @override
   Stream<String> streamRemoteChat(
     String sessionId,
@@ -446,6 +576,15 @@ class HttpTaktonBridge extends TaktonBridge {
     final host = base.hasPort ? '${base.host}:${base.port}' : base.host;
     final wsUrl = Uri.parse('$scheme://$host/api/mobile/ws');
     final ch = WebSocketChannel.connect(wsUrl);
+    try {
+      await ch.ready.timeout(const Duration(seconds: 8));
+    } catch (e) {
+      try {
+        await ch.sink.close();
+      } catch (_) {}
+      throw Exception('手机本地 WS 未就绪: $e');
+    }
+
     final payload = <String, dynamic>{
       'type': 'chat',
       'session_id': sessionId,
@@ -455,49 +594,249 @@ class HttpTaktonBridge extends TaktonBridge {
       payload['attachments'] = attachments;
     }
     ch.sink.add(jsonEncode(payload));
+
+    var finishedCleanly = false;
+    var sawTurn = false;
+    var accLen = 0;
+    // HTTP silence reconcile must be stable across polls — a single snapshot can
+    // catch intermediate assistant text before tools finish (was finishing early).
+    var pollStable = 0;
+    var lastPolled = '';
+    final started = DateTime.now();
+    const overallLimit = Duration(minutes: 12);
+    // Silence between WS frames before HTTP reconcile (tools can pause longer).
+    const silencePoll = Duration(seconds: 2);
+
     try {
-      // Idle timeout 10 min between frames (long agent tools); resets on each event.
-      await for (final msg
-          in ch.stream.timeout(const Duration(minutes: 10))) {
+      final iter = StreamIterator(ch.stream);
+      Future<bool>? pendingMove;
+
+      while (DateTime.now().difference(started) < overallLimit) {
+        pendingMove ??= iter.moveNext();
+        final winner = await Future.any<Object>([
+          pendingMove.then<_Move>((has) => _Move(has)),
+          Future<Object>.delayed(silencePoll, () => const _Silence()),
+        ]);
+
+        if (winner is _Silence) {
+          // No WS frame for silencePoll — PC may already be done; reconcile via HTTP.
+          // Do not poll before turn start (avoids matching an older same-text turn).
+          if (!sawTurn) continue;
+          final full = await _pollRemoteAssistantText(
+            sessionId,
+            userContent: content,
+            minLen: accLen,
+          );
+          if (full != null && full.isNotEmpty) {
+            if (full != lastPolled) {
+              lastPolled = full;
+              pollStable = 0;
+              if (full.length >= accLen) {
+                accLen = full.length;
+                yield '\x00$full';
+              }
+            } else {
+              pollStable += 1;
+            }
+            // Two identical final polls (~4s silence) → done. Never finish on first hit.
+            if (pollStable >= 1) {
+              finishedCleanly = true;
+              break;
+            }
+          } else {
+            // Still in tool loop (null) — reset stability.
+            pollStable = 0;
+            lastPolled = '';
+          }
+          // Keep waiting on the same pendingMove.
+          continue;
+        }
+
+        final has = (winner as _Move).has;
+        pendingMove = null;
+        if (!has) {
+          // Host WS closed — pull until stable or give best effort (never hang).
+          for (var i = 0; i < 4; i++) {
+            final full = await _pollRemoteAssistantText(
+              sessionId,
+              userContent: content,
+              minLen: accLen,
+            );
+            if (full != null && full.isNotEmpty) {
+              if (full.length >= accLen) {
+                accLen = full.length;
+                yield '\x00$full';
+              }
+              if (full == lastPolled) {
+                finishedCleanly = true;
+                break;
+              }
+              lastPolled = full;
+            }
+            await Future<void>.delayed(const Duration(milliseconds: 800));
+          }
+          break;
+        }
+
+        final msg = iter.current;
         if (msg is! String) continue;
-        final v = jsonDecode(msg);
-        if (v is! Map) continue;
+        Map? v;
+        try {
+          final decoded = jsonDecode(msg);
+          if (decoded is Map) v = decoded;
+        } catch (_) {
+          continue;
+        }
+        if (v == null) continue;
+
         final ty = (v['type']?.toString() ?? '').toLowerCase();
         if (ty == 'error') {
+          final full = await _pollRemoteAssistantText(
+            sessionId,
+            userContent: content,
+            minLen: accLen,
+          );
+          if (full != null && full.isNotEmpty) {
+            yield '\x00$full';
+            finishedCleanly = true;
+            break;
+          }
           throw Exception(
               v['error']?.toString() ?? v['message']?.toString() ?? 'remote error');
         }
-        if (ty == 'done' ||
-            ty == 'chat_done' ||
-            ty == 'closed' ||
-            ty == 'complete' ||
-            ty == 'final') {
-          break;
+
+        if (_isRemoteTurnStart(v)) {
+          sawTurn = true;
         }
-        // Prefer explicit delta field (Host-coalesced tokens).
+
+        // Codex-like live status / tool frames (Host translates PC events).
+        if (ty == 'mobile_status' || ty == 'status') {
+          final detail = (v['detail'] ?? v['state'] ?? '').toString();
+          if (detail.isNotEmpty) {
+            sawTurn = true;
+            yield '\x01STATUS\x01$detail';
+          }
+        }
+        if (ty == 'mobile_tool' || ty == 'tool_event') {
+          final phase = (v['phase']?.toString() ?? 'start').toLowerCase();
+          final name = v['name']?.toString() ?? 'tool';
+          final ok = v['ok'] == true ||
+              (v['status']?.toString() != 'failed' &&
+                  v['status']?.toString() != 'error');
+          final preview = (v['preview'] ?? v['result'] ?? '').toString();
+          final p = phase.contains('end') ||
+                  phase == 'completed' ||
+                  phase == 'result'
+              ? 'end'
+              : 'start';
+          sawTurn = true;
+          yield '\x01TOOL\x01$p\x01$name\x01${ok ? '1' : '0'}\x01$preview';
+        }
+
+        // Host HTTP watchdog may send replace=true with full PC text.
+        // Also treat source=http_watchdog as full replace even if flag lost.
+        final src = (v['source']?.toString() ?? '').toLowerCase();
+        final replace =
+            v['replace'] == true || src == 'http_watchdog';
         final delta = v['delta']?.toString();
+        final contentField = (v['content'] ?? v['text'])?.toString();
         if (delta != null && delta.isNotEmpty) {
-          yield delta;
-          continue;
-        }
-        // Incremental types may carry content/text; ignore full assistant/message.
-        if (ty.contains('delta') ||
+          if (replace || (contentField != null && contentField == delta && delta.length > accLen + 20)) {
+            // Full snapshot: prefer longer of delta/content
+            final full = (contentField != null && contentField.length >= delta.length)
+                ? contentField
+                : delta;
+            accLen = full.length;
+            sawTurn = true;
+            lastPolled = full;
+            pollStable = 0;
+            yield '\x00$full';
+          } else {
+            accLen += delta.length;
+            sawTurn = true;
+            yield delta;
+          }
+          // fall through — may also be terminal in same envelope
+        } else if (ty.contains('delta') ||
             ty.contains('chunk') ||
             ty == 'token' ||
-            ty == 'stream') {
-          final t = (v['content'] ?? v['text'])?.toString();
-          if (t != null && t.isNotEmpty) yield t;
+            ty == 'stream' ||
+            replace) {
+          final t = contentField;
+          if (t != null && t.isNotEmpty) {
+            if (replace || t.length > accLen + 20) {
+              accLen = t.length;
+              sawTurn = true;
+              lastPolled = t;
+              pollStable = 0;
+              yield '\x00$t';
+            } else {
+              accLen += t.length;
+              sawTurn = true;
+              yield t;
+            }
+          }
+        }
+
+        if (_isRemoteTerminalEvent(v, sawTurn: sawTurn)) {
+          // Prefer payload content, then HTTP reconcile (may need a short wait
+          // for the final assistant after tool results to land in DB).
+          final embedded = (v['content'] ?? v['text'])?.toString();
+          if (embedded != null &&
+              embedded.isNotEmpty &&
+              embedded.length >= accLen) {
+            accLen = embedded.length;
+            yield '\x00$embedded';
+            finishedCleanly = true;
+            break;
+          }
+          for (var i = 0; i < 5; i++) {
+            final full = await _pollRemoteAssistantText(
+              sessionId,
+              userContent: content,
+              minLen: accLen,
+            );
+            if (full != null && full.isNotEmpty) {
+              if (full.length >= accLen) {
+                accLen = full.length;
+                yield '\x00$full';
+              }
+              if (full == lastPolled || i >= 2) {
+                finishedCleanly = true;
+                break;
+              }
+              lastPolled = full;
+            }
+            await Future<void>.delayed(const Duration(milliseconds: 600));
+          }
+          finishedCleanly = true;
+          break;
+        }
+      }
+
+      if (!finishedCleanly) {
+        final full = await _pollRemoteAssistantText(
+          sessionId,
+          userContent: content,
+          minLen: accLen,
+        );
+        if (full != null && full.isNotEmpty) {
+          if (full.length > accLen) yield '\x00$full';
+          finishedCleanly = true;
         }
       }
     } finally {
-      // Best-effort cancel if consumer aborted mid-stream.
+      if (!finishedCleanly) {
+        try {
+          ch.sink.add(jsonEncode({
+            'type': 'stop',
+            'session_id': sessionId,
+          }));
+        } catch (_) {}
+      }
       try {
-        ch.sink.add(jsonEncode({
-          'type': 'stop',
-          'session_id': sessionId,
-        }));
+        await ch.sink.close();
       } catch (_) {}
-      await ch.sink.close();
     }
   }
 
@@ -505,4 +844,13 @@ class HttpTaktonBridge extends TaktonBridge {
   void dispose() {
     _client.close();
   }
+}
+
+class _Silence {
+  const _Silence();
+}
+
+class _Move {
+  const _Move(this.has);
+  final bool has;
 }
