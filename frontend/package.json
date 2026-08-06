@@ -1,12 +1,12 @@
 {
   "name": "takton",
-  "version": "0.5.4-alpha",
+  "version": "0.5.5-alpha",
   "private": true,
   "description": "Takton - 个人专属 Agent 终端",
   "author": "developer <developer@takton.dev>",
   "homepage": "https://github.com/wu1w/takton",
   "desktopName": "Takton",
-  "main": "../electron/dist/main.js",
+  "main": "electron/dist/main.js",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -18,9 +18,10 @@
     "pack": "npm run ensure:vendor-host && npm run prepare:win-python && cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder --dir",
     "dist": "npm run ensure:vendor-host && npm run prepare:win-python && cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder",
     "dist:linux": "npm run ensure:vendor-host && cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder --linux",
-    "dist:win": "npm run ensure:vendor-host && npm run prepare:win-python && cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder --win",
+    "dist:win": "node ../scripts/prepare-win-python-cross.js && cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder --win",
     "dist:mac": "npm run ensure:vendor-host && cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder --mac",
     "prepare:win-python": "node ../scripts/prepare-win-python.js",
+    "prepare:win-python-cross": "node ../scripts/prepare-win-python-cross.js",
     "lint": "eslint"
   },
   "dependencies": {
@@ -81,7 +82,11 @@
     },
     "files": [
       "dist/**/*",
-      "../electron/dist/**/*",
+      {
+        "from": "../electron/dist",
+        "to": "electron/dist",
+        "filter": ["**/*"]
+      },
       "package.json",
       "!**/*.{md,map}",
       "!**/node_modules/**"
@@ -99,6 +104,7 @@
           "pyproject.toml",
           "requirements.txt",
           "requirements-prod.txt",
+          "requirements-win.txt",
           "!**/__pycache__/**",
           "!**/tests/**",
           "!**/*.egg-info/**",
@@ -111,44 +117,32 @@
       {
         "from": "tray-icon.png",
         "to": "tray-icon.png"
+      },
+      {
+        "from": "../vendor/takton-kernel-host",
+        "to": "takton-kernel-host",
+        "filter": [
+          "takton-kernel-host*",
+          "README.md",
+          "!**/*.pdb"
+        ]
       }
     ],
     "linux": {
       "target": [
         {
           "target": "AppImage",
-          "arch": [
-            "x64"
-          ]
+          "arch": ["x64"]
         },
         {
           "target": "deb",
-          "arch": [
-            "x64"
-          ]
+          "arch": ["x64"]
         }
       ],
       "category": "Utility",
       "icon": "public/icon.png",
       "syncDesktopName": true,
       "extraResources": [
-        {
-          "from": "../backend",
-          "to": "backend",
-          "filter": [
-            "**/*.py",
-            "pyproject.toml",
-            "requirements.txt",
-            "requirements-prod.txt",
-            "!**/__pycache__/**",
-            "!**/tests/**",
-            "!**/*.egg-info/**",
-            "!**/*.db",
-            "!**/*.db-*",
-            "!**/uploads/**",
-            "!workspace_state.json"
-          ]
-        },
         {
           "from": "../.venv",
           "to": "backend/.venv",
@@ -163,13 +157,20 @@
     "win": {
       "target": [
         {
+          "target": "portable",
+          "arch": ["x64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["x64"]
+        },
+        {
           "target": "nsis",
-          "arch": [
-            "x64"
-          ]
+          "arch": ["x64"]
         }
       ],
       "icon": "public/icon.png",
+      "artifactName": "Takton-${version}-win-${arch}.${ext}",
       "extraResources": [
         {
           "from": "../win-python",
@@ -193,10 +194,7 @@
       "target": [
         {
           "target": "zip",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
+          "arch": ["x64", "arm64"]
         }
       ],
       "category": "public.app-category.utilities",
@@ -211,11 +209,12 @@
       "runAfterFinish": true,
       "shortcutName": "Takton",
       "uninstallDisplayName": "Takton",
-      "deleteAppDataOnUninstall": false
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "Takton-Setup-${version}-${arch}.${ext}"
     },
-    "electronLanguages": [
-      "en-US",
-      "zh-CN"
-    ]
+    "portable": {
+      "artifactName": "Takton-${version}-win-portable.${ext}"
+    },
+    "electronLanguages": ["en-US", "zh-CN"]
   }
 }

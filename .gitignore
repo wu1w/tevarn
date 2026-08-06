@@ -219,3 +219,5 @@ scripts/*dogfood*
 r4_server.pid
 _smoke_*.txt
 _audit*.txt
+release-win/
+.cache/
