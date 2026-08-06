@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../services/app_controller.dart';
 import '../theme/pixel_theme.dart';
+import '../widgets/agent_settings_panel.dart';
 import '../widgets/llm_settings_panel.dart';
 import '../widgets/pixel_widgets.dart';
 
@@ -67,6 +68,35 @@ class MeScreen extends StatelessWidget {
         ),
         const SizedBox(height: 12),
 
+        PxCard(
+          dark: dark,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '本机 Agent 内核',
+                style: TextStyle(
+                  fontSize: 14.5,
+                  fontWeight: FontWeight.w800,
+                  color: ink,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '工具编排 · Skills(SKILL.md) · MCP · 上下文压缩 · 多模型 tool-call 兼容\n'
+                '对标 Codex / 豆包 本机能力子集，大任务自动压缩且保留 tool 配对。',
+                style: TextStyle(fontSize: 12, height: 1.45, color: ink3),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '指令 /agent · /help · /status',
+                style: TextStyle(fontSize: 11.5, color: PixelColors.purple),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+
         // 开关
         PxCard(
           dark: dark,
@@ -75,7 +105,7 @@ class MeScreen extends StatelessWidget {
             children: [
               PxRow(
                 title: '语音输入',
-                sub: '按住说话（真机麦克风）',
+                sub: '对话页麦克风 · 按住说话转文字',
                 borderTop: false,
                 trailing: PxToggle(value: c.voiceOn, onChanged: c.setVoice),
               ),
@@ -100,6 +130,10 @@ class MeScreen extends StatelessWidget {
         // LLM 设置 — PC 样式
         const PxSect('LLM 设置'),
         const LlmSettingsPanel(),
+        const SizedBox(height: 16),
+
+        const PxSect('Agent 工具'),
+        const AgentSettingsPanel(),
         const SizedBox(height: 16),
 
         const PxSect('数据与会话'),
@@ -131,7 +165,7 @@ class MeScreen extends StatelessWidget {
             children: [
               const PxRow(
                 title: 'Takton Mobile',
-                sub: 'v0.3.4 · Pixel Console · Flutter + Rust',
+                sub: 'v0.4.7 · Pixel Console · Flutter + Rust',
                 borderTop: false,
               ),
               const PxRow(title: '协议', sub: 'MIT · Local-first'),

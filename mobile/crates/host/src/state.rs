@@ -6,6 +6,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use takton_mobile_core::chat::ChatConnection;
 use takton_mobile_core::local_llm::LocalLlmService;
+use takton_mobile_core::local_agent::LocalAgent;
+use takton_mobile_core::local_tools::ToolRuntime;
 use takton_mobile_core::media::MediaStore;
 use takton_mobile_core::mesh::MeshService;
 use takton_mobile_core::pair::PairService;
@@ -62,6 +64,8 @@ pub struct AppState {
     pub notify_approvals: Arc<RwLock<bool>>,
     /// local LLM profile for offline direct chat
     pub local_llm: Arc<LocalLlmService>,
+    /// phone-local agent (tools + pruned loop)
+    pub local_agent: Arc<LocalAgent>,
     /// local media captures (voice / camera)
     pub media: Arc<MediaStore>,
     /// titles + pin order
@@ -91,7 +95,9 @@ impl AppState {
         let store = Store::open(&config.data_dir).map_err(|e| {
             anyhow::anyhow!("open data dir {:?}: {e}", config.data_dir)
         })?;
-        let local_llm = LocalLlmService::new(store);
+        let tools = ToolRuntime::new(store.clone());
+        let local_llm = Arc::new(LocalLlmService::new(store.clone()));
+        let local_agent = LocalAgent::new(local_llm.clone(), tools);
         let media = MediaStore::open(&config.data_dir)
             .map_err(|e| anyhow::anyhow!("open media store: {e}"))?;
         let meta_store =
@@ -118,7 +124,8 @@ impl AppState {
             chats: Arc::new(DashMap::new()),
             active_session: Arc::new(RwLock::new(None)),
             notify_approvals: Arc::new(RwLock::new(true)),
-            local_llm: Arc::new(local_llm),
+            local_llm,
+            local_agent: Arc::new(local_agent),
             media: Arc::new(media),
             meta_store: Arc::new(meta_store),
             remote_probe: Arc::new(RwLock::new(RemoteProbeCache::default())),

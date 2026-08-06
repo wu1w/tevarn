@@ -30,7 +30,15 @@ fn engine_slot() -> &'static Mutex<Option<EngineHandle>> {
 }
 
 fn to_c_string(s: &str) -> *mut c_char {
-    CString::new(s).unwrap_or_default().into_raw()
+    match CString::new(s) {
+        Ok(c) => c.into_raw(),
+        Err(_) => {
+            let fallback = r#"{"ok":false,"error":"response contained interior NUL"}"#;
+            CString::new(fallback)
+                .unwrap_or_else(|_| CString::new("{}").expect("static"))
+                .into_raw()
+        }
+    }
 }
 
 fn err_json(e: impl ToString) -> *mut c_char {
@@ -49,7 +57,11 @@ fn cstr(p: *const c_char) -> Result<String, String> {
 
 fn start_host_inner(preferred_port: i32, data_dir: Option<PathBuf>) -> *mut c_char {
     // Already running? Return existing base if we have one.
-    if let Ok(g) = engine_slot().lock() {
+    {
+        let g = match engine_slot().lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
         if let Some(eng) = g.as_ref() {
             return to_c_string(
                 &json!({
@@ -84,7 +96,11 @@ fn start_host_inner(preferred_port: i32, data_dir: Option<PathBuf>) -> *mut c_ch
     }) {
         Ok((port, _handle, data_dir_s)) => {
             let eng = EngineHandle::new(port);
-            *engine_slot().lock().unwrap() = Some(eng.clone());
+            let mut slot = match engine_slot().lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
+            *slot = Some(eng.clone());
             to_c_string(
                 &json!({
                     "ok": true,
@@ -102,7 +118,12 @@ fn start_host_inner(preferred_port: i32, data_dir: Option<PathBuf>) -> *mut c_ch
 /// Start embedded host on preferred port (0 = OS pick). Returns JSON `{ok, base, port}`.
 #[no_mangle]
 pub extern "C" fn takton_start_host(preferred_port: i32) -> *mut c_char {
-    start_host_inner(preferred_port, None)
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        start_host_inner(preferred_port, None)
+    })) {
+        Ok(ptr) => ptr,
+        Err(_) => err_json("native panic in takton_start_host · 请重启应用"),
+    }
 }
 
 /// Start host with an explicit writable data directory (required on Android).
@@ -112,17 +133,31 @@ pub extern "C" fn takton_start_host2(
     preferred_port: i32,
     data_dir: *const c_char,
 ) -> *mut c_char {
-    let dir = match cstr(data_dir) {
-        Ok(s) if !s.is_empty() => Some(PathBuf::from(s)),
-        Ok(_) => None,
-        Err(e) => return err_json(e),
-    };
-    start_host_inner(preferred_port, dir)
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let dir = match cstr(data_dir) {
+            Ok(s) if !s.is_empty() => Some(PathBuf::from(s)),
+            Ok(_) => None,
+            Err(e) => return err_json(e),
+        };
+        start_host_inner(preferred_port, dir)
+    })) {
+        Ok(ptr) => ptr,
+        Err(_) => err_json("native panic in takton_start_host2 · 请重启应用"),
+    }
 }
 
 /// Generic method call: `method` name + JSON `args` object.
 #[no_mangle]
 pub extern "C" fn takton_call(method: *const c_char, args: *const c_char) -> *mut c_char {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        takton_call_inner(method, args)
+    })) {
+        Ok(ptr) => ptr,
+        Err(_) => err_json("native panic · 请重试或重启应用"),
+    }
+}
+
+fn takton_call_inner(method: *const c_char, args: *const c_char) -> *mut c_char {
     let method = match cstr(method) {
         Ok(s) => s,
         Err(e) => return err_json(e),
@@ -133,7 +168,10 @@ pub extern "C" fn takton_call(method: *const c_char, args: *const c_char) -> *mu
     };
     let args_val: Value = serde_json::from_str(&args_raw).unwrap_or(json!({}));
     let eng = {
-        let g = engine_slot().lock().unwrap();
+        let g = match engine_slot().lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
         match g.clone() {
             Some(e) => e,
             None => return err_json("host not started · call takton_start_host first"),
@@ -160,16 +198,34 @@ pub extern "C" fn takton_free(ptr: *mut c_char) {
 /// Offline motion profile (no host needed).
 #[no_mangle]
 pub extern "C" fn takton_mode_offline() -> *mut c_char {
-    let m = takton_mobile_core::MotionProfile::default();
-    match serde_json::to_string(&json!({
-        "ok": true,
-        "motion": m,
-        "css_vars": m.css_vars(),
-        "long_press_ms": m.long_press_ms
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let m = takton_mobile_core::MotionProfile::default();
+        match serde_json::to_string(&json!({
+            "ok": true,
+            "motion": m,
+            "css_vars": m.css_vars(),
+            "long_press_ms": m.long_press_ms
+        })) {
+            Ok(s) => to_c_string(&s),
+            Err(e) => err_json(e.to_string()),
+        }
     })) {
-        Ok(s) => to_c_string(&s),
-        Err(e) => err_json(e.to_string()),
+        Ok(ptr) => ptr,
+        Err(_) => err_json("native panic in takton_mode_offline"),
     }
+}
+
+fn urlencoding_simple(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 2);
+    for b in s.as_bytes() {
+        match *b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(*b as char)
+            }
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
 }
 
 async fn dispatch(eng: &EngineHandle, method: &str, args: &Value) -> Result<String, String> {
@@ -221,6 +277,15 @@ async fn dispatch(eng: &EngineHandle, method: &str, args: &Value) -> Result<Stri
             )
             .await
         }
+        "session_stop" => {
+            let id = sid();
+            eng.invoke(
+                "POST",
+                &format!("/api/mobile/sessions/{id}/stop"),
+                Some("{}"),
+            )
+            .await
+        }
         "messages" => {
             let id = sid();
             eng.invoke("GET", &format!("/api/mobile/sessions/{id}/messages"), None)
@@ -243,7 +308,27 @@ async fn dispatch(eng: &EngineHandle, method: &str, args: &Value) -> Result<Stri
         "local_stop" => eng
             .invoke("POST", "/api/mobile/local/stop", Some("{}"))
             .await,
+        "local_config_clear" => eng
+            .invoke("POST", "/api/mobile/local/config/clear", Some("{}"))
+            .await,
+        "local_agent_config_get" => eng
+            .invoke("GET", "/api/mobile/local/agent_config", None)
+            .await,
+        "local_agent_config_set" => eng
+            .invoke("POST", "/api/mobile/local/agent_config", Some(&body()))
+            .await,
+        "local_mcp_get" => eng.invoke("GET", "/api/mobile/local/mcp", None).await,
+        "local_mcp_set" => eng
+            .invoke("POST", "/api/mobile/local/mcp", Some(&body()))
+            .await,
+        "local_skills" => eng.invoke("GET", "/api/mobile/local/skills", None).await,
+        "local_tools" => eng
+            .invoke("POST", "/api/mobile/local/tools", Some(&body()))
+            .await,
         "approvals" => eng.invoke("GET", "/api/mobile/approvals", None).await,
+        "approvals_summary" => eng
+            .invoke("GET", "/api/mobile/approvals/summary", None)
+            .await,
         "decide" => {
             let id = sid();
             eng.invoke(
@@ -352,13 +437,30 @@ async fn dispatch(eng: &EngineHandle, method: &str, args: &Value) -> Result<Stri
         "motion" => eng.invoke("GET", "/api/mobile/motion", None).await,
         "kernel" => eng.invoke("GET", "/api/mobile/kernel", None).await,
         "catalog" => {
-            let refresh = args.get("refresh").and_then(|x| x.as_bool()).unwrap_or(false);
-            let path = if refresh {
-                "/api/mobile/catalog?refresh=true"
+            let mut params: Vec<String> = Vec::new();
+            if args.get("refresh").and_then(|x| x.as_bool()).unwrap_or(false) {
+                params.push("refresh=true".into());
+            }
+            if let Some(q) = args
+                .get("q")
+                .and_then(|x| x.as_str())
+                .filter(|s| !s.is_empty())
+            {
+                params.push(format!("q={}", urlencoding_simple(q)));
+            }
+            if let Some(pid) = args
+                .get("provider_id")
+                .and_then(|x| x.as_str())
+                .filter(|s| !s.is_empty())
+            {
+                params.push(format!("provider_id={}", urlencoding_simple(pid)));
+            }
+            let path = if params.is_empty() {
+                "/api/mobile/catalog".to_string()
             } else {
-                "/api/mobile/catalog"
+                format!("/api/mobile/catalog?{}", params.join("&"))
             };
-            eng.invoke("GET", path, None).await
+            eng.invoke("GET", &path, None).await
         }
         "presets" => eng.invoke("GET", "/api/mobile/presets", None).await,
         "catalog_select" => eng
@@ -390,6 +492,8 @@ async fn dispatch(eng: &EngineHandle, method: &str, args: &Value) -> Result<Stri
         "oauth_xai_poll" => eng
             .invoke("POST", "/api/mobile/oauth/xai/poll", Some(&body()))
             .await,
+        "notify" => eng.invoke("POST", "/api/mobile/notify", Some(&body())).await,
+        "runtime" => eng.invoke("GET", "/api/mobile/runtime", None).await,
         "host_base" => return Ok(json!({ "ok": true, "base": *eng.base }).to_string()),
         other => return Err(format!("unknown method: {other}")),
     };

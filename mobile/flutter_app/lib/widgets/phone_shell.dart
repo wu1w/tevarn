@@ -112,8 +112,8 @@ class PhoneShell extends StatelessWidget {
                         kind: c.pcConnected
                             ? StatusCardKind.conn
                             : StatusCardKind.agent,
-                        actionLabel: c.pcConnected ? '审批' : '帮助',
-                        actionId: c.pcConnected ? 'open_approve' : null,
+                        actionLabel: c.pcConnected ? '审批' : '设置',
+                        actionId: c.pcConnected ? 'open_approve' : 'open_me',
                       );
                     },
                     child: AnimatedContainer(

@@ -19,7 +19,6 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Instant;
 use takton_mobile_core::chat::{ChatConnection, ChatEvent};
-use takton_mobile_core::local_llm::LocalChatMessage;
 use takton_mobile_core::models::SessionInfo;
 use takton_mobile_core::{
     filter_catalog, normalize_ui_messages, ChatSurface, ModeSnapshot, MotionProfile,
@@ -202,6 +201,17 @@ pub struct LocalConfigBody {
     pub account_id: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+pub struct LocalChatImage {
+    #[serde(default)]
+    pub mime: Option<String>,
+    /// raw base64 (no data: prefix) or full data URL
+    #[serde(default)]
+    pub data_b64: Option<String>,
+    #[serde(default, alias = "b64")]
+    pub base64: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct LocalChatBody {
     #[serde(default)]
@@ -210,6 +220,9 @@ pub struct LocalChatBody {
     pub message: Option<String>,
     #[serde(default)]
     pub reset: Option<bool>,
+    /// Multimodal images for vision models
+    #[serde(default)]
+    pub images: Option<Vec<LocalChatImage>>,
 }
 
 impl LocalChatBody {
@@ -219,6 +232,53 @@ impl LocalChatBody {
             .filter(|s| !s.trim().is_empty())
             .or_else(|| self.message.clone())
             .unwrap_or_default()
+    }
+
+    fn image_parts(&self) -> Vec<takton_mobile_core::LocalImagePart> {
+        let Some(imgs) = &self.images else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for img in imgs.iter().take(6) {
+            let mut raw = img
+                .data_b64
+                .clone()
+                .or_else(|| img.base64.clone())
+                .unwrap_or_default();
+            raw = raw.trim().to_string();
+            if raw.is_empty() {
+                continue;
+            }
+            let mut mime = img
+                .mime
+                .clone()
+                .unwrap_or_else(|| "image/jpeg".into());
+            // Accept data:image/png;base64,XXXX
+            if let Some(rest) = raw.strip_prefix("data:") {
+                if let Some((meta, b64)) = rest.split_once(",") {
+                    if let Some(mt) = meta.split(';').next() {
+                        if mt.starts_with("image/") {
+                            mime = mt.to_string();
+                        }
+                    }
+                    raw = b64.trim().to_string();
+                }
+            }
+            // strip whitespace/newlines from b64
+            raw.retain(|c| !c.is_whitespace());
+            if raw.is_empty() {
+                continue;
+            }
+            // Cap ~4MB base64 (~3MB binary)
+            if raw.len() > 5_500_000 {
+                continue;
+            }
+            out.push(takton_mobile_core::LocalImagePart {
+                mime,
+                data_b64: raw,
+            });
+        }
+        out
     }
 }
 
@@ -317,6 +377,10 @@ pub fn api_router() -> Router<AppState> {
             .route("/local/config", get(local_config_get).post(local_config_set))
             .route("/local/config/clear", post(local_config_clear))
             .route("/local/test", post(local_test))
+            .route("/local/tools", post(local_tools_run))
+            .route("/local/skills", get(local_skills_list))
+            .route("/local/mcp", get(local_mcp_get).post(local_mcp_set))
+            .route("/local/agent_config", get(local_agent_cfg_get).post(local_agent_cfg_set))
             .route("/local/history", get(local_history_get).post(local_history_clear))
             .route("/local/chat", post(local_chat_stream))
             .route("/local/stop", post(local_stop))
@@ -334,6 +398,38 @@ pub fn api_router() -> Router<AppState> {
 
 fn err_json(e: impl ToString) -> Json<Value> {
     Json(json!({ "ok": false, "error": e.to_string() }))
+}
+
+fn mask_secret(s: &str) -> String {
+    let s = s.trim();
+    if s.is_empty() {
+        return String::new();
+    }
+    if s.len() <= 8 {
+        return "••••".into();
+    }
+    format!("{}…{}", &s[..4], &s[s.len().saturating_sub(4)..])
+}
+
+fn agent_config_public(cfg: &takton_mobile_core::AgentConfig) -> Value {
+    json!({
+        "max_iterations": cfg.max_iterations,
+        "context_soft_tokens": cfg.context_soft_tokens,
+        "context_hard_tokens": cfg.context_hard_tokens,
+        "enable_skills": cfg.enable_skills,
+        "enable_mcp": cfg.enable_mcp,
+        "enable_text_tools": cfg.enable_text_tools,
+        "azure_vision_endpoint": cfg.azure_vision_endpoint,
+        "azure_speech_region": cfg.azure_speech_region,
+        "tts_voice": cfg.tts_voice,
+        // Secrets: masked only — UI must not overwrite with empty on save.
+        "azure_vision_key": mask_secret(&cfg.azure_vision_key),
+        "azure_speech_key": mask_secret(&cfg.azure_speech_key),
+        "tavily_api_key": mask_secret(&cfg.tavily_api_key),
+        "has_azure_vision_key": !cfg.azure_vision_key.trim().is_empty(),
+        "has_azure_speech_key": !cfg.azure_speech_key.trim().is_empty(),
+        "has_tavily_api_key": !cfg.tavily_api_key.trim().is_empty(),
+    })
 }
 
 fn chrono_now() -> u64 {
@@ -2163,6 +2259,116 @@ async fn local_config_set(
     }
 }
 
+
+
+async fn local_skills_list(State(st): State<AppState>) -> Json<Value> {
+    Json(json!({ "ok": true, "skills": st.local_agent.tools().skills().list_json() }))
+}
+
+async fn local_mcp_get(State(st): State<AppState>) -> Json<Value> {
+    let cfg = st.local_agent.tools().mcp().load_config();
+    Json(json!({ "ok": true, "config": cfg }))
+}
+
+async fn local_mcp_set(State(st): State<AppState>, Json(body): Json<Value>) -> Json<Value> {
+    let cfg: takton_mobile_core::mcp_client::McpConfigFile =
+        match serde_json::from_value(body.get("config").cloned().unwrap_or(body.clone())) {
+            Ok(c) => c,
+            Err(e) => return Json(json!({"ok": false, "error": e.to_string()})),
+        };
+    match st.local_agent.tools().mcp().save_config(&cfg) {
+        Ok(()) => Json(json!({"ok": true})),
+        Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
+    }
+}
+
+async fn local_agent_cfg_get(State(st): State<AppState>) -> Json<Value> {
+    let cfg = st.local_agent.tools().load_config();
+    Json(json!({ "ok": true, "config": agent_config_public(&cfg) }))
+}
+
+async fn local_agent_cfg_set(State(st): State<AppState>, Json(body): Json<Value>) -> Json<Value> {
+    let mut cfg = st.local_agent.tools().load_config();
+    if let Some(v) = body.get("max_iterations").and_then(|x| x.as_u64()) {
+        cfg.max_iterations = v.clamp(2, 16) as u32;
+    }
+    if let Some(v) = body.get("context_soft_tokens").and_then(|x| x.as_u64()) {
+        cfg.context_soft_tokens = v.clamp(4000, 100_000) as u32;
+    }
+    if let Some(v) = body.get("context_hard_tokens").and_then(|x| x.as_u64()) {
+        cfg.context_hard_tokens = v.clamp(6000, 120_000) as u32;
+    }
+    if let Some(v) = body.get("enable_skills").and_then(|x| x.as_bool()) {
+        cfg.enable_skills = v;
+    }
+    if let Some(v) = body.get("enable_mcp").and_then(|x| x.as_bool()) {
+        cfg.enable_mcp = v;
+    }
+    if let Some(v) = body.get("enable_text_tools").and_then(|x| x.as_bool()) {
+        cfg.enable_text_tools = v;
+    }
+    if let Some(v) = body.get("tavily_api_key").and_then(|x| x.as_str()) {
+        let v = v.trim();
+        // Empty or masked placeholder → keep existing secret
+        if !v.is_empty() && !v.contains('…') && v != "••••" {
+            cfg.tavily_api_key = v.to_string();
+        }
+    }
+    if let Some(v) = body.get("azure_vision_key").and_then(|x| x.as_str()) {
+        let v = v.trim();
+        if !v.is_empty() && !v.contains('…') && v != "••••" {
+            cfg.azure_vision_key = v.to_string();
+        }
+    }
+    if let Some(v) = body.get("azure_vision_endpoint").and_then(|x| x.as_str()) {
+        cfg.azure_vision_endpoint = v.to_string();
+    }
+    if let Some(v) = body.get("azure_speech_key").and_then(|x| x.as_str()) {
+        let v = v.trim();
+        if !v.is_empty() && !v.contains('…') && v != "••••" {
+            cfg.azure_speech_key = v.to_string();
+        }
+    }
+    if let Some(v) = body.get("azure_speech_region").and_then(|x| x.as_str()) {
+        if !v.trim().is_empty() {
+            cfg.azure_speech_region = v.to_string();
+        }
+    }
+    if let Some(v) = body.get("tts_voice").and_then(|x| x.as_str()) {
+        if !v.trim().is_empty() {
+            cfg.tts_voice = v.to_string();
+        }
+    }
+    match st.local_agent.tools().save_config(&cfg) {
+        Ok(()) => Json(json!({"ok": true, "config": agent_config_public(&cfg)})),
+        Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
+    }
+}
+
+/// Direct tool invoke for QA (no LLM). body: { "name": "web_search", "args": { "query": "..." } }
+async fn local_tools_run(State(st): State<AppState>, Json(body): Json<Value>) -> Json<Value> {
+    let name = body
+        .get("name")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .trim();
+    if name.is_empty() {
+        return Json(json!({ "ok": false, "error": "name required" }));
+    }
+    let args = body.get("args").cloned().unwrap_or(json!({}));
+    let started = std::time::Instant::now();
+    let result = st.local_agent.tools().dispatch(name, &args).await;
+    let ms = started.elapsed().as_millis();
+    let ok = !result.starts_with("[tool_error]") && !result.contains("(no results)");
+    Json(json!({
+        "ok": ok,
+        "name": name,
+        "ms": ms,
+        "result": result,
+        "preview": result.chars().take(400).collect::<String>(),
+    }))
+}
+
 async fn local_test(State(st): State<AppState>, Json(body): Json<Value>) -> Json<Value> {
     let mut profile = st.local_llm.load_profile();
     if let Some(b) = body.get("base_url").and_then(|x| x.as_str()) {
@@ -2206,6 +2412,7 @@ async fn local_chat_stream(
     Json(body): Json<LocalChatBody>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let content = body.text().trim().to_string();
+    let images = body.image_parts();
     let reset = body.reset.unwrap_or(false);
     let (tx, rx) = mpsc::unbounded_channel::<Event>();
 
@@ -2214,7 +2421,7 @@ async fn local_chat_stream(
             let _ = tx.send(ev);
         };
 
-        if content.is_empty() {
+        if content.is_empty() && images.is_empty() {
             send(
                 Event::default()
                     .event("error")
@@ -2222,6 +2429,11 @@ async fn local_chat_stream(
             );
             return;
         }
+        let content = if content.is_empty() {
+            "（见图片）".to_string()
+        } else {
+            content
+        };
 
         if reset {
             let _ = st.local_llm.clear_history();
@@ -2229,10 +2441,6 @@ async fn local_chat_stream(
 
         let profile = st.local_llm.load_profile();
         let mut hist = st.local_llm.load_history();
-        hist.messages.push(LocalChatMessage {
-            role: "user".into(),
-            content: content.clone(),
-        });
 
         // Coalesce token deltas ~40ms before SSE fanout (mirrors WS path).
         let (raw_tx, mut raw_rx) = mpsc::unbounded_channel::<String>();
@@ -2244,7 +2452,6 @@ async fn local_chat_stream(
             let period = Duration::from_millis(AppState::DELTA_COALESCE_MS);
             let mut ticker = tokio::time::interval(period);
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            // skip first immediate tick
             ticker.tick().await;
             loop {
                 tokio::select! {
@@ -2294,10 +2501,71 @@ async fn local_chat_stream(
             }
         });
 
+        // Pruned PC-style agent loop (tools + doom guard)
+        let tx_ev = tx.clone();
         let stream_result = st
-            .local_llm
-            .stream_chat(&profile, &hist.messages, |delta| {
-                let _ = raw_tx.send(delta.to_string());
+            .local_agent
+            .run(&profile, &mut hist, &content, &images, |ev| {
+                use takton_mobile_core::AgentEvent;
+                match ev {
+                    AgentEvent::Delta { text } => {
+                        let _ = raw_tx.send(text);
+                    }
+                    AgentEvent::Status { detail } => {
+                        let _ = tx_ev.send(
+                            Event::default()
+                                .event("status")
+                                .data(json!({ "detail": detail }).to_string()),
+                        );
+                    }
+                    AgentEvent::ToolStart { id, name, args } => {
+                        let _ = tx_ev.send(
+                            Event::default().event("tool").data(
+                                json!({
+                                    "phase": "start",
+                                    "id": id,
+                                    "name": name,
+                                    "args": args,
+                                })
+                                .to_string(),
+                            ),
+                        );
+                    }
+                    AgentEvent::ToolEnd {
+                        id,
+                        name,
+                        preview,
+                        ok,
+                    } => {
+                        let _ = tx_ev.send(
+                            Event::default().event("tool").data(
+                                json!({
+                                    "phase": "end",
+                                    "id": id,
+                                    "name": name,
+                                    "preview": preview,
+                                    "ok": ok,
+                                })
+                                .to_string(),
+                            ),
+                        );
+                    }
+                    AgentEvent::Compress { report } => {
+                        let _ = tx_ev.send(
+                            Event::default()
+                                .event("status")
+                                .data(json!({ "detail": report, "compress": true }).to_string()),
+                        );
+                    }
+                    AgentEvent::Done { .. } => {}
+                    AgentEvent::Error { message } => {
+                        let _ = tx_ev.send(
+                            Event::default()
+                                .event("error")
+                                .data(json!({"error": message}).to_string()),
+                        );
+                    }
+                }
             })
             .await;
         drop(raw_tx);
@@ -2310,16 +2578,11 @@ async fn local_chat_stream(
                         Event::default()
                             .event("error")
                             .data(json!({
-                                "error": "模型返回空内容 · 请确认 ChatGPT/Grok OAuth 令牌有效且已应用模型"
+                                "error": "模型返回空内容 · 请确认已配置模型/OAuth 并点应用"
                             }).to_string()),
                     );
                     return;
                 }
-                hist.messages.push(LocalChatMessage {
-                    role: "assistant".into(),
-                    content: full.clone(),
-                });
-                let _ = st.local_llm.save_history(&hist);
                 send(
                     Event::default()
                         .event("done")

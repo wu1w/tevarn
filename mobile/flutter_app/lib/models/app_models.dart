@@ -52,7 +52,7 @@ class ModeSnap {
         fixTab: '',
         pcConnected: false,
         localLlmReady: false,
-        allowAttachments: false,
+        allowAttachments: true,
       );
 }
 
@@ -63,17 +63,95 @@ class ChatMsg {
     required this.text,
     this.who = '',
     this.streaming = false,
-    this.format = 'plain', // plain | markdown (from Rust)
-  });
+    this.format = 'plain',
+    List<Uint8List>? images,
+    List<String>? imageNames,
+    List<String>? attachNames,
+    this.modelText,
+  })  : images = images ?? <Uint8List>[],
+        imageNames = imageNames ?? <String>[],
+        attachNames = attachNames ?? <String>[];
 
   final String id;
-  final String role; // user | assistant
+  final String role;
   String text;
   String who;
   bool streaming;
   String format;
+  final List<Uint8List> images;
+  final List<String> imageNames;
+  /// Non-image attachment labels shown as chips after send.
+  final List<String> attachNames;
+  /// Full payload actually sent to the model (OCR / file text). Used by regenerate.
+  String? modelText;
+
+  bool get hasImages => images.isNotEmpty;
+  bool get hasAttachChips => attachNames.isNotEmpty;
+
+  ChatMsg copyMeta() => ChatMsg(
+        id: id,
+        role: role,
+        text: text,
+        who: who,
+        streaming: streaming,
+        format: format,
+        images: List<Uint8List>.from(images),
+        imageNames: List<String>.from(imageNames),
+        attachNames: List<String>.from(attachNames),
+        modelText: modelText,
+      );
 }
 
+/// Real attachment payload (bytes uploaded / shown as thumbnail).
+class AttachFile {
+  AttachFile({
+    required this.name,
+    this.bytes,
+    this.path,
+    this.mime,
+  });
+
+  final String name;
+  Uint8List? bytes;
+  final String? path;
+  final String? mime;
+
+  bool get hasData =>
+      (bytes != null && bytes!.isNotEmpty) ||
+      (path != null && path!.isNotEmpty);
+
+  bool get isImage {
+    final m = (mime ?? '').toLowerCase();
+    if (m.startsWith('image/')) return true;
+    final n = name.toLowerCase();
+    return n.endsWith('.png') ||
+        n.endsWith('.jpg') ||
+        n.endsWith('.jpeg') ||
+        n.endsWith('.gif') ||
+        n.endsWith('.webp') ||
+        n.endsWith('.heic') ||
+        n.endsWith('.bmp');
+  }
+
+  bool get isTextLike {
+    final m = (mime ?? '').toLowerCase();
+    if (m.startsWith('text/')) return true;
+    if (m == 'application/json' ||
+        m == 'application/xml' ||
+        m == 'application/javascript') {
+      return true;
+    }
+    final n = name.toLowerCase();
+    const exts = [
+      '.txt', '.md', '.markdown', '.json', '.csv', '.tsv', '.xml', '.html',
+      '.htm', '.css', '.js', '.ts', '.tsx', '.jsx', '.py', '.rs', '.go',
+      '.java', '.kt', '.swift', '.c', '.cpp', '.h', '.hpp', '.yaml', '.yml',
+      '.toml', '.ini', '.env', '.sh', '.bash', '.zsh', '.sql', '.log',
+      '.dart', '.rb', '.php', '.vue', '.svelte',
+    ];
+    return exts.any(n.endsWith);
+  }
+}
 
 class SessionItem {
   SessionItem({
@@ -95,25 +173,6 @@ class SessionItem {
         pinned: j['pinned'] == true,
         isLocal: isLocal || j['id']?.toString() == '__local__',
       );
-}
-
-/// Real attachment payload (bytes uploaded on remote send).
-class AttachFile {
-  AttachFile({
-    required this.name,
-    this.bytes,
-    this.path,
-    this.mime,
-  });
-
-  final String name;
-  final Uint8List? bytes;
-  final String? path;
-  final String? mime;
-
-  bool get hasData =>
-      (bytes != null && bytes!.isNotEmpty) ||
-      (path != null && path!.isNotEmpty);
 }
 
 enum AppTab { chat, approve, remote, me }

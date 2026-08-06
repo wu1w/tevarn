@@ -137,7 +137,7 @@ impl ModeSnapshot {
             ),
         };
 
-        let allow_attachments = matches!(surface, ChatSurface::Remote) && pc_connected;
+        let allow_attachments = true; // local + remote: real image bytes & previews
         let allow_camera = true;
         let allow_voice = true;
 
@@ -201,7 +201,22 @@ pub fn normalize_ui_messages(raw: &[Value], default_who: &str) -> Vec<UiChatMess
             .and_then(|v| v.as_str())
             .unwrap_or("assistant")
             .to_string();
+        // Hide tool protocol rows from mobile UI history.
+        if role == "tool" || role == "function" {
+            continue;
+        }
         let content = extract_content(m);
+        if role == "assistant" && content.trim().is_empty() {
+            // Skip pure tool-call assistants with no visible text.
+            let has_tc = m
+                .get("tool_calls")
+                .and_then(|v| v.as_array())
+                .map(|a| !a.is_empty())
+                .unwrap_or(false);
+            if has_tc {
+                continue;
+            }
+        }
         let id = m
             .get("id")
             .and_then(|v| v.as_str())

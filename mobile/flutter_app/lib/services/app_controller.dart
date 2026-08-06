@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
@@ -8,8 +9,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../bridge/takton_bridge.dart';
 import '../models/app_models.dart';
 import '../models/status_card.dart';
+import 'attach_utils.dart';
 import 'local_agent.dart';
 import 'mesh_runtime.dart';
+import 'voice_service.dart';
 
 class AppController extends ChangeNotifier {
   AppController(this.bridge);
@@ -44,6 +47,8 @@ class AppController extends ChangeNotifier {
   final List<StatusCard> statusCards = [];
   String clock = '';
   bool voiceOn = true;
+  /// Pair succeeded but PC login still required — Remote tab expands form.
+  bool needsManualLogin = false;
   bool cameraOn = true;
   /// True while a surface switch network call is in flight (UI already swapped).
   bool surfaceSwitching = false;
@@ -73,10 +78,13 @@ class AppController extends ChangeNotifier {
   Timer? _clockTimer;
   Timer? _approvePoll;
   Timer? _streamNotifyTimer;
+  Timer? _toastTimer;
   bool _booted = false;
   bool _notifyScheduled = false;
   int _switchGen = 0;
   int _streamGen = 0;
+  /// Bumped when Me tab is opened so settings panels re-fetch.
+  int mePanelGen = 0;
   bool _streamDirty = false;
 
 
@@ -110,14 +118,7 @@ class AppController extends ChangeNotifier {
   }
 
   void _saveSurfaceCache() {
-    final snap = messages.map((m) => ChatMsg(
-          id: m.id,
-          role: m.role,
-          text: m.text,
-          who: m.who,
-          streaming: false,
-          format: m.format,
-        ));
+    final snap = messages.map((m) => m.copyMeta()..streaming = false);
     if (surface == 'local') {
       _localMsgCache
         ..clear()
@@ -133,14 +134,7 @@ class AppController extends ChangeNotifier {
     final src = s == 'local' ? _localMsgCache : _remoteMsgCache;
     messages
       ..clear()
-      ..addAll(src.map((m) => ChatMsg(
-            id: m.id,
-            role: m.role,
-            text: m.text,
-            who: m.who,
-            streaming: false,
-            format: m.format,
-          )));
+      ..addAll(src.map((m) => m.copyMeta()..streaming = false));
   }
 
   List<ChatMsg> _parseUiMessages(dynamic list) {
@@ -163,22 +157,16 @@ class AppController extends ChangeNotifier {
     if (forSurface == 'local') {
       _localMsgCache
         ..clear()
-        ..addAll(list);
+        ..addAll(list.map((m) => m.copyMeta()));
     } else {
       _remoteMsgCache
         ..clear()
-        ..addAll(list);
+        ..addAll(list.map((m) => m.copyMeta()));
     }
     if (surface == forSurface) {
       messages
         ..clear()
-        ..addAll(list.map((m) => ChatMsg(
-              id: m.id,
-              role: m.role,
-              text: m.text,
-              who: m.who,
-              format: m.format,
-            )));
+        ..addAll(list.map((m) => m.copyMeta()));
     }
   }
 
@@ -207,11 +195,20 @@ class AppController extends ChangeNotifier {
     if (toastMsg != null && toastMsg.isNotEmpty) {
       toast = toastMsg;
       toastShow = true;
-      Future.delayed(const Duration(milliseconds: 2200), () {
+      _toastTimer?.cancel();
+      _toastTimer = Timer(const Duration(milliseconds: 2200), () {
+        if (!hasListeners) return;
         toastShow = false;
         _notify();
       });
     }
+  }
+
+  /// Explicit stop — do not overload [send].
+  Future<void> stopGeneration({String toastMsg = '已停止生成'}) async {
+    if (!streaming) return;
+    await _abortStream(toastMsg: toastMsg);
+    _notify();
   }
 
   Future<void> boot() async {
@@ -340,8 +337,9 @@ class AppController extends ChangeNotifier {
     _notify();
   }
 
+  @Deprecated('Name-only attach is forbidden — use addAttach with bytes/path')
   void addAttachName(String name) {
-    addAttach(AttachFile(name: name));
+    showToast('无法只附加文件名，请重新选择文件');
   }
 
   void addAttach(AttachFile file) {
@@ -630,29 +628,41 @@ class AppController extends ChangeNotifier {
   }
 
   /// After OAuth login / catalog apply: switch to remote chat surface.
-  Future<void> goRemoteChatAfterOauth({String? toastMsg}) async {
+  /// After OAuth / model apply: refresh state; do NOT force-jump off Me.
+  Future<void> goRemoteChatAfterOauth({String? toastMsg, bool jumpToChat = false}) async {
     await refreshAll();
     if (!pcConnected) {
-      // Phone-local OAuth success path
-      await goLocalChatAfterOauth(toastMsg: toastMsg);
+      await goLocalChatAfterOauth(toastMsg: toastMsg, jumpToChat: jumpToChat);
       return;
     }
-    await setSurface('remote');
-    setTab(AppTab.chat);
+    if (jumpToChat) {
+      await setSurface('remote');
+      setTab(AppTab.chat);
+    }
     if (toastMsg != null && toastMsg.isNotEmpty) showToast(toastMsg);
   }
 
-  /// After phone-local OAuth: stay on local chat with token in local_config.
-  Future<void> goLocalChatAfterOauth({String? toastMsg}) async {
+  /// After phone-local OAuth / apply: keep user on current tab by default.
+  Future<void> goLocalChatAfterOauth({String? toastMsg, bool jumpToChat = false}) async {
     await refreshAll();
-    await setSurface('local');
-    setTab(AppTab.chat);
+    if (jumpToChat) {
+      await setSurface('local');
+      setTab(AppTab.chat);
+    } else {
+      // Ensure local surface for subsequent chat without leaving Me.
+      if (surface != 'local') {
+        await setSurface('local');
+      }
+    }
     if (toastMsg != null && toastMsg.isNotEmpty) showToast(toastMsg);
   }
 
   void setTab(AppTab t) {
     tab = t;
     drawerOpen = false;
+    if (t == AppTab.me) {
+      mePanelGen++;
+    }
     _syncApprovePoll();
     unawaited(() async {
       final prefs = await SharedPreferences.getInstance();
@@ -720,7 +730,7 @@ class AppController extends ChangeNotifier {
     if (actionId == null) return;
     switch (actionId) {
       case 'reconnect':
-        unawaited(onNetworkPathChanged());
+        unawaited(forceReconnect());
         break;
       case 'open_approve':
         setTab(AppTab.approve);
@@ -730,6 +740,9 @@ class AppController extends ChangeNotifier {
         break;
       case 'open_me':
         setTab(AppTab.me);
+        break;
+      case 'open_chat':
+        setTab(AppTab.chat);
         break;
     }
   }
@@ -772,7 +785,8 @@ class AppController extends ChangeNotifier {
     final text = input.trim();
     if (text.isEmpty && attachments.isEmpty) return false;
     // Local lightweight agent: works even when LLM not configured
-    if (surface == 'local' && attachments.isEmpty && text.isNotEmpty) {
+    // Slash-only local shortcuts (e.g. /help) — bare Chinese never steals LLM turns.
+    if (surface == 'local' && attachments.isEmpty && text.startsWith('/')) {
       final localReply = LocalAgent.tryHandle(
         text,
         pcConnected: pcConnected,
@@ -806,10 +820,10 @@ class AppController extends ChangeNotifier {
       }
     }
 
+    // Streaming uses dedicated stopGeneration() — never hijack send.
     if (streaming) {
-      await _abortStream();
-      _notify();
-      return true;
+      showToast('正在生成 · 请点红色停止按钮');
+      return false;
     }
     if (!mode.canSend) {
       final msg = mode.fixHint.isEmpty
@@ -828,58 +842,215 @@ class AppController extends ChangeNotifier {
       }
     }
 
-    var userText = text.isEmpty ? '（见附件）' : text;
+    var userText = text.isEmpty ? '（见图片/附件）' : text;
 
     final pending = List<AttachFile>.from(attachments);
     attachments.clear();
 
+    // Resolve path→bytes for every attachment before any upload/OCR
+    final resolved = <AttachFile>[];
+    for (final f in pending) {
+      final bytes = await resolveAttachBytes(f);
+      if (bytes == null || bytes.isEmpty) {
+        showToast('无法读取 ${f.name} 的内容');
+        continue;
+      }
+      resolved.add(f);
+    }
+    if (pending.isNotEmpty && resolved.isEmpty) {
+      // Put failed attachments back so user can retry
+      attachments.addAll(pending);
+      showToast('附件内容全部无法读取，请重新选择');
+      return false;
+    }
+
+    final previewImages = <Uint8List>[];
+    final previewNames = <String>[];
+    final nonImageNames = <String>[];
+    for (final f in resolved) {
+      if (f.isImage && f.bytes != null && f.bytes!.isNotEmpty) {
+        previewImages.add(f.bytes!);
+        previewNames.add(f.name);
+      } else {
+        nonImageNames.add(f.name);
+      }
+    }
+
     List<Map<String, dynamic>>? uploaded;
-    if (pending.isNotEmpty) {
+    final contentBlocks = <String>[];
+    final failedUploads = <String>[];
+    // Images sent to local vision models as OpenAI/Codex multimodal parts
+    final multimodalImages = <Map<String, dynamic>>[];
+
+    if (resolved.isNotEmpty) {
       if (surface == 'remote' && pcConnected) {
         uploaded = [];
-        for (final f in pending) {
-          Uint8List? bytes = f.bytes;
-          if (bytes != null && bytes.isNotEmpty) {
-            final up = await bridge.uploadFile(
+        for (final f in resolved) {
+          final bytes = f.bytes!;
+          final up = await bridge.uploadFile(
+            name: f.name,
+            bytes: bytes,
+            contentType: f.mime,
+          );
+          if (isOk(up)) {
+            final result = up['result'] is Map
+                ? Map<String, dynamic>.from(up['result'] as Map)
+                : Map<String, dynamic>.from(up);
+            // Also inject local text extract so PC agent has content even if URL fetch lags
+            final textBlock = extractTextBlock(f, bytes);
+            uploaded.add({
+              'name': f.name,
+              'filename': f.name,
+              if (f.mime != null) 'content_type': f.mime,
+              if (f.mime != null) 'type': f.mime,
+              if (textBlock != null) 'text_content': textBlock,
+              ...result,
+            });
+            if (textBlock != null) contentBlocks.add(textBlock);
+          } else {
+            failedUploads.add(f.name);
+            showToast('上传 ${f.name} 失败: ${up['error'] ?? 'unknown'}');
+          }
+        }
+        if (failedUploads.isNotEmpty && uploaded.isEmpty) {
+          // restore all and abort
+          attachments.addAll(resolved);
+          showToast('附件上传全部失败，请检查网络后重试');
+          return false;
+        }
+      } else if (surface == 'local') {
+        final useVision = modelLikelyVision(
+          llmModel,
+          providerLabel: state['local_llm'] is Map
+              ? ((state['local_llm'] as Map)['provider_label']?.toString() ?? '')
+              : '',
+          baseUrl: llmBase,
+        );
+        for (final f in resolved) {
+          final bytes = f.bytes!;
+          String? mediaPath;
+          try {
+            final saved = await bridge.saveMedia(
               name: f.name,
               bytes: bytes,
               contentType: f.mime,
+              kind: f.isImage ? 'image' : 'file',
             );
-            if (isOk(up)) {
-              final result = up['result'] is Map
-                  ? Map<String, dynamic>.from(up['result'] as Map)
-                  : up;
-              uploaded.add({
-                'name': f.name,
-                if (f.mime != null) 'content_type': f.mime,
-                ...result,
+            if (isOk(saved)) {
+              final media = saved['media'] is Map
+                  ? Map<String, dynamic>.from(saved['media'] as Map)
+                  : saved;
+              mediaPath = media['path']?.toString();
+            } else {
+              showToast('保存 ${f.name} 失败: ${saved['error'] ?? ''}');
+            }
+          } catch (e) {
+            showToast('保存 ${f.name} 失败: $e');
+          }
+
+          if (f.isImage) {
+            final b64 = imageToApiBase64(bytes);
+            if (b64 != null) {
+              multimodalImages.add({
+                'mime': f.mime ?? 'image/jpeg',
+                'data_b64': b64,
               });
             } else {
-              showToast('上传 ${f.name} 失败: ${up['error'] ?? 'unknown'}');
+              showToast('${f.name} 过大，请压缩后重试');
+            }
+            if (useVision) {
+              // Vision model receives real pixels via multimodalImages — no forced OCR.
+              contentBlocks.add(
+                  '### 图片 · ${f.name}\n(已作为多模态图片发送，请直接看图)');
+            } else {
+              // Blind models: built-in OCR tool (ocr.space free fallback / Azure if configured)
+              try {
+                islandText = 'OCR · ${f.name}';
+                _notify();
+                final args = <String, dynamic>{
+                  if (mediaPath != null && mediaPath.isNotEmpty)
+                    'media_path': mediaPath
+                  else
+                    'image_base64': base64Encode(bytes),
+                  'hint': f.name,
+                };
+                final ocr = await bridge.runLocalTool('ocr_image', args);
+                final result = ocr['result']?.toString() ?? '';
+                if (result.isNotEmpty && !result.startsWith('[tool_error]')) {
+                  contentBlocks.add('### OCR · ${f.name}\n$result');
+                } else {
+                  final err = ocr['error']?.toString() ?? result;
+                  showToast('OCR ${f.name}: ${err.isEmpty ? "空结果" : err}');
+                  if (mediaPath != null) {
+                    contentBlocks.add(
+                        '### 图片 · ${f.name}\n(OCR 失败) media_path=$mediaPath — 模型可再调 ocr_image');
+                  }
+                }
+              } catch (e) {
+                showToast('OCR ${f.name} 失败: $e');
+              }
             }
           } else {
-            uploaded.add({
-              'name': f.name,
-              if (f.mime != null) 'content_type': f.mime
-            });
+            final textBlock = extractTextBlock(f, bytes);
+            if (textBlock != null) {
+              contentBlocks.add(textBlock);
+            } else {
+              contentBlocks.add(
+                  '### 附件 · ${f.name}\n(二进制文件，已保存${mediaPath != null ? "：$mediaPath" : ""}，无法直接解码文本)');
+            }
           }
         }
-        if (uploaded.isNotEmpty) {
-          userText =
-              '$userText\n\n[附件: ${pending.map((e) => e.name).join('、')}]';
+        if (useVision && multimodalImages.isNotEmpty) {
+          showToast('多模态看图 · ${multimodalImages.length} 张');
         }
       } else {
+        // remote but not connected — still extract text for local-looking bubble
+        for (final f in resolved) {
+          final bytes = f.bytes!;
+          final textBlock = extractTextBlock(f, bytes);
+          if (textBlock != null) {
+            contentBlocks.add(textBlock);
+          } else if (f.isImage) {
+            contentBlocks.add('### 图片 · ${f.name}\n(未连接 PC，图片仅本地预览)');
+          } else {
+            contentBlocks.add('### 附件 · ${f.name}\n(未连接 PC，无法上传)');
+          }
+        }
+      }
+
+      final names = resolved.map((e) => e.name).join('、');
+      if (contentBlocks.isNotEmpty) {
         userText =
-            '$userText\n\n[附件: ${pending.map((e) => e.name).join('、')}]';
+            '$userText\n\n[已附: $names]\n\n${contentBlocks.join('\n\n')}';
+      } else if (previewImages.isNotEmpty) {
+        userText = '$userText\n\n[已附图片: $names · 请结合图片理解用户意图]';
+      } else {
+        userText = '$userText\n\n[附件: $names]';
       }
     }
+
+    // Bubble: short caption + previews; model gets full userText
+    final displayText = text.isEmpty
+        ? (previewImages.isNotEmpty
+            ? '（图片）'
+            : (resolved.isNotEmpty ? '（附件）' : '（见图片/附件）'))
+        : text;
 
     input = '';
     final uid = 'u${DateTime.now().millisecondsSinceEpoch}';
     final aid = 'a${DateTime.now().millisecondsSinceEpoch}';
     final streamSurface = surface;
     final streamGen = ++_streamGen;
-    messages.add(ChatMsg(id: uid, role: 'user', text: userText, format: 'plain'));
+    messages.add(ChatMsg(
+      id: uid,
+      role: 'user',
+      text: displayText,
+      format: 'plain',
+      images: previewImages,
+      imageNames: previewNames,
+      attachNames: nonImageNames,
+      modelText: userText,
+    ));
     messages.add(ChatMsg(
       id: aid,
       role: 'assistant',
@@ -902,13 +1073,17 @@ class AppController extends ChangeNotifier {
 
     try {
       final stream = streamSurface == 'local'
-          ? bridge.streamLocalChat(userText)
+          ? bridge.streamLocalChat(
+              userText,
+              images: multimodalImages.isEmpty ? null : multimodalImages,
+            )
           : bridge.streamRemoteChat(
               activeSessionId!,
               userText,
               attachments: uploaded,
             );
       var acc = '';
+      var toolTrail = <String>[];
       await for (final chunk in stream) {
         // Aborted, switched surface, or a newer stream started
         if (!streaming ||
@@ -916,11 +1091,85 @@ class AppController extends ChangeNotifier {
             surface != streamSurface) {
           break;
         }
+        // Control frames from local agent SSE (status / tool)
+        if (chunk.startsWith('\x01STATUS\x01')) {
+          final detail = chunk.substring(8);
+          if (detail.isNotEmpty) {
+            islandLive = true;
+            islandKind = 'stream';
+            islandText = detail;
+            _notifyStream();
+          }
+          continue;
+        }
+        if (chunk.startsWith('\x01TOOL\x01')) {
+          final parts = chunk.substring(6).split('\x01');
+          // phase | name | ok | preview
+          final phase = parts.isNotEmpty ? parts[0] : '';
+          final name = parts.length > 1 ? parts[1] : 'tool';
+          final okStr = parts.length > 2 ? parts[2] : '';
+          final preview = parts.length > 3 ? parts[3] : '';
+          if (phase == 'start') {
+            islandText = '工具 · $name';
+            toolTrail.add('· `$name` …');
+          } else if (phase == 'end') {
+            final mark = okStr == '0' ? '✗' : '✓';
+            final short = preview.length > 48
+                ? '${preview.substring(0, 48)}…'
+                : preview;
+            final line = short.isEmpty
+                ? '· `$name` $mark'
+                : '· `$name` $mark $short';
+            final idx = toolTrail.lastIndexWhere((e) => e.contains('`$name`'));
+            if (idx >= 0) {
+              toolTrail[idx] = line;
+            } else {
+              toolTrail.add(line);
+            }
+            islandText = '工具 · $name $mark';
+            // Auto-play Microsoft TTS written by voice_speak tool
+            if (voiceOn && name.contains('voice')) {
+              final path = VoiceService.extractTtsPath(preview);
+              if (path != null) {
+                unawaited(VoiceService.instance.playFilePath(path).then((ok) {
+                  if (ok) {
+                    islandText = '正在朗读…';
+                    _notifyStream();
+                  }
+                }));
+              }
+            }
+          }
+          final display = toolTrail.isEmpty
+              ? acc
+              : '${toolTrail.join('\n')}${acc.isEmpty ? '' : '\n\n$acc'}';
+          final target =
+              streamSurface == 'local' ? _localMsgCache : _remoteMsgCache;
+          if (surface == streamSurface) {
+            final i = messages.indexWhere((m) => m.id == aid);
+            if (i >= 0) {
+              messages[i].text = display;
+              messages[i].format = 'markdown';
+              messages[i].who = '本机 Agent';
+              _notifyStream();
+            }
+          } else {
+            final i = target.indexWhere((m) => m.id == aid);
+            if (i >= 0) {
+              target[i].text = display;
+              target[i].format = 'markdown';
+            }
+          }
+          continue;
+        }
         if (chunk.startsWith('\x00')) {
           acc = chunk.substring(1);
         } else {
           acc += chunk;
         }
+        final display = toolTrail.isEmpty
+            ? acc
+            : '${toolTrail.join('\n')}${acc.isEmpty ? '' : '\n\n$acc'}';
         // Apply to the surface cache that owns this stream
         final target =
             streamSurface == 'local' ? _localMsgCache : _remoteMsgCache;
@@ -928,13 +1177,17 @@ class AppController extends ChangeNotifier {
         if (surface == streamSurface) {
           final i = messages.indexWhere((m) => m.id == aid);
           if (i >= 0) {
-            messages[i].text = acc;
+            messages[i].text = display;
             // upgrade to markdown mid-stream if markers appear
             if (messages[i].format != 'markdown' &&
-                (acc.contains('```') ||
-                    acc.contains('**') ||
-                    acc.contains(']('))) {
+                (display.contains('```') ||
+                    display.contains('**') ||
+                    display.contains('](') ||
+                    toolTrail.isNotEmpty)) {
               messages[i].format = 'markdown';
+            }
+            if (toolTrail.isNotEmpty) {
+              messages[i].who = '本机 Agent';
             }
             _notifyStream();
           }
@@ -942,8 +1195,20 @@ class AppController extends ChangeNotifier {
           // still update cache so when user returns they see partial
           final i = target.indexWhere((m) => m.id == aid);
           if (i >= 0) {
-            target[i].text = acc;
+            target[i].text = display;
             target[i].streaming = false;
+          }
+        }
+      }
+      // Keep tool trail above final answer if tools ran
+      if (toolTrail.isNotEmpty && acc.isNotEmpty) {
+        acc = '${toolTrail.join('\n')}\n\n$acc';
+        if (surface == streamSurface) {
+          final i = messages.indexWhere((m) => m.id == aid);
+          if (i >= 0) {
+            messages[i].text = acc;
+            messages[i].format = 'markdown';
+            messages[i].who = '本机 Agent';
           }
         }
       }
@@ -998,7 +1263,6 @@ class AppController extends ChangeNotifier {
     if (streaming) {
       await _abortStream(toastMsg: '已停止');
     }
-    // Find last user message
     ChatMsg? lastUser;
     for (var i = messages.length - 1; i >= 0; i--) {
       if (messages[i].role == 'user') {
@@ -1006,16 +1270,19 @@ class AppController extends ChangeNotifier {
         break;
       }
     }
-    if (lastUser == null || lastUser.text.trim().isEmpty) {
+    final payload = (lastUser?.modelText ?? lastUser?.text ?? '').trim();
+    if (lastUser == null || payload.isEmpty) {
       showToast('没有可重新生成的消息');
       return;
     }
-    // Drop trailing assistant reply if present
-    while (messages.isNotEmpty && messages.last.role == 'assistant') {
+    // Drop last user + trailing assistant so send() doesn't duplicate bubbles
+    while (messages.isNotEmpty &&
+        (messages.last.role == 'assistant' || messages.last.id == lastUser.id)) {
       messages.removeLast();
     }
     _saveSurfaceCache();
-    await send(lastUser.text);
+    // Resend full model payload (includes OCR / file text)
+    await send(payload);
   }
 
   Future<void> copyMessageText(String text) async {
@@ -1045,8 +1312,13 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> newChat() async {
+    if (streaming) {
+      await _abortStream(toastMsg: '已停止生成');
+    }
     if (surface == 'local') {
       await bridge.localHistoryClear();
+      _localMsgCache.clear();
+      messages.clear();
       await loadLocalMsgs();
       showToast('已新建本机对话');
     } else {
@@ -1085,7 +1357,12 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> pinSession(String id, bool pinned) async {
-    await bridge.sessionPin(id, pinned);
+    final r = await bridge.sessionPin(id, pinned);
+    if (isOk(r)) {
+      showToast(pinned ? '已置顶' : '已取消置顶');
+    } else {
+      showToast(r['error']?.toString() ?? '置顶失败');
+    }
     await refreshAll();
   }
 
@@ -1378,6 +1655,7 @@ class AppController extends ChangeNotifier {
       await refreshPath();
       await refreshMesh();
       if (r['authenticated'] == true) {
+        needsManualLogin = false;
         final kind = r['path_kind']?.toString() ?? '';
         final seamless = r['seamless'] == true;
         showToast(
@@ -1392,19 +1670,38 @@ class AppController extends ChangeNotifier {
               : (kind.isEmpty ? '远端 Agent 可用' : '路径 $kind'),
           kind: StatusCardKind.success,
           actionLabel: '对话',
-          actionId: null,
+          actionId: 'open_chat',
           ttlMs: 6000,
         );
         surface = 'remote';
         await prefs.setString('takton-chat-mode', 'remote');
         await _applySwitchSurface('remote', ensureSession: true);
       } else if (r['deferred_claim'] == true) {
+        needsManualLogin = false;
         showToast(r['hint']?.toString() ?? '已保存 · 网络可用后自动完成');
+        pushStatusCard(
+          title: '配对已保存',
+          body: '网络可用后将自动完成连接',
+          kind: StatusCardKind.info,
+          actionLabel: '立即重试',
+          actionId: 'reconnect',
+          ttlMs: 10000,
+        );
       } else {
+        needsManualLogin = true;
         final hint = r['hint']?.toString() ??
             r['login_error']?.toString() ??
-            '配对完成 · 请登录';
+            '配对完成 · 请填写账号登录';
         showToast(hint);
+        pushStatusCard(
+          title: '需要登录',
+          body: hint,
+          kind: StatusCardKind.warn,
+          actionLabel: '去登录',
+          actionId: 'open_remote',
+          ttlMs: 12000,
+        );
+        setTab(AppTab.remote);
       }
       return true;
     } finally {
@@ -1421,6 +1718,24 @@ class AppController extends ChangeNotifier {
     } else {
       showToast(r['error']?.toString() ?? '解绑失败');
     }
+  }
+
+  /// User-triggered reconnect (always toast).
+  Future<void> forceReconnect() async {
+    showToast('正在重试连接…');
+    islandLive = true;
+    islandText = '重连中';
+    islandKind = 'conn';
+    _notify();
+    await tryAutoReconnect();
+    if (!pcConnected) {
+      showToast('仍未连上 · 可扫码或手动登录');
+      needsManualLogin = formBase.isNotEmpty;
+    } else {
+      needsManualLogin = false;
+      showToast('已重新连接 PC');
+    }
+    _notify();
   }
 
   /// M3/M4: reconnect with multi-endpoint probe (LAN → host → TS).
@@ -1657,9 +1972,21 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> clearLocalUi() async {
-    await bridge.localHistoryClear();
-    if (surface == 'local') await loadLocalMsgs();
-    showToast('已清空本机会话区');
+    if (streaming) {
+      await _abortStream(toastMsg: '已停止');
+    }
+    final r = await bridge.localHistoryClear();
+    _localMsgCache.clear();
+    if (surface == 'local') {
+      messages.clear();
+      await loadLocalMsgs();
+    }
+    if (isOk(r) || r['ok'] == null) {
+      showToast('已清空本机会话区');
+    } else {
+      showToast(r['error']?.toString() ?? '清空失败');
+    }
+    _notify();
   }
 
   @override
@@ -1667,6 +1994,7 @@ class AppController extends ChangeNotifier {
     _clockTimer?.cancel();
     _approvePoll?.cancel();
     _streamNotifyTimer?.cancel();
+    _toastTimer?.cancel();
     _pairPoll?.cancel();
     _meshPoll?.cancel();
     _pathPoll?.cancel();

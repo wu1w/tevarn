@@ -181,7 +181,7 @@ class PxPrimaryBtn extends StatelessWidget {
     this.cyan = false,
   });
   final String label;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   final bool block;
   final bool cyan;
 

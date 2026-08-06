@@ -1,7 +1,6 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../models/app_models.dart';
@@ -9,6 +8,7 @@ import '../services/app_controller.dart';
 import '../theme/pixel_theme.dart';
 import '../widgets/pixel_icons.dart';
 import '../widgets/pixel_widgets.dart';
+import 'qr_scanner_page.dart';
 
 /// Phone-side connection: scan / paste PC QR, or manual login.
 /// QR **generation** lives on the PC workbench only — never on the phone app.
@@ -56,7 +56,18 @@ class _RemoteScreenState extends State<RemoteScreen> {
 
   Future<void> _applyQr(AppController c, String raw) async {
     final ok = await c.applyPairQr(raw);
-    if (ok && mounted) setState(() {});
+    if (!mounted) return;
+    if (ok) {
+      // Don't keep redacted/full QR in paste for accidental re-apply
+      if (c.pcConnected || c.needsManualLogin) {
+        _qrPaste.clear();
+      }
+      if (c.needsManualLogin) {
+        setState(() => _showManual = true);
+      } else {
+        setState(() {});
+      }
+    }
   }
 
   /// Opens the phone scan sheet (camera / paste). Host QR is never generated here.
@@ -86,6 +97,11 @@ class _RemoteScreenState extends State<RemoteScreen> {
 
     if (_base.text.isEmpty && c.formBase.isNotEmpty) {
       _base.text = c.formBase;
+    }
+    if (c.needsManualLogin && !_showManual) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _showManual = true);
+      });
     }
 
     return ListView(
@@ -208,43 +224,50 @@ class _RemoteScreenState extends State<RemoteScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // Scanner frame visual
-                Container(
-                  height: 160,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: dark
-                        ? Colors.black.withValues(alpha: 0.35)
-                        : PixelColors.ink.withValues(alpha: 0.04),
+                // Scanner frame visual — tappable
+                Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: c.pairBusy ? null : () => _openScanSheet(c),
                     borderRadius: BorderRadius.circular(4),
-                    border: Border.all(
-                      color: PixelColors.cyan.withValues(alpha: 0.35),
-                      width: 1.5,
-                    ),
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.qr_code_scanner_rounded,
-                        size: 48,
-                        color: PixelColors.cyan.withValues(alpha: 0.9),
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        '对准 PC 屏幕上的二维码',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          color: ink,
+                    child: Container(
+                      height: 160,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: dark
+                            ? Colors.black.withValues(alpha: 0.35)
+                            : PixelColors.ink.withValues(alpha: 0.04),
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(
+                          color: PixelColors.cyan.withValues(alpha: 0.35),
+                          width: 1.5,
                         ),
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '一次扫码 · 自动连入',
-                        style: TextStyle(fontSize: 11.5, color: ink3),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.qr_code_scanner_rounded,
+                            size: 48,
+                            color: PixelColors.cyan.withValues(alpha: 0.9),
+                          ),
+                          const SizedBox(height: 10),
+                          Text(
+                            '对准 PC 屏幕上的二维码',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: ink,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '点此打开摄像头扫码',
+                            style: TextStyle(fontSize: 11.5, color: ink3),
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
                 ),
                 const SizedBox(height: 14),
@@ -308,6 +331,28 @@ class _RemoteScreenState extends State<RemoteScreen> {
             ),
           ),
           const SizedBox(height: 14),
+
+
+          // Retry when we have saved endpoints but not connected
+          if (!pc &&
+              (c.pathProfile.isNotEmpty ||
+                  c.formBase.isNotEmpty ||
+                  c.lastPairQr.isNotEmpty)) ...[
+            const SizedBox(height: 10),
+            PxPrimaryBtn(
+              label: '立即重试连接',
+              cyan: true,
+              onTap: () => c.forceReconnect(),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              c.needsManualLogin
+                  ? '若仍失败，请展开下方手动登录填写账号'
+                  : '已保存端点 · 网络恢复后也可自动重连',
+              style: TextStyle(fontSize: 11.5, color: ink3),
+            ),
+            const SizedBox(height: 8),
+          ],
 
           // Manual login (collapsed)
           GestureDetector(
@@ -388,6 +433,13 @@ class _RemoteScreenState extends State<RemoteScreen> {
                     '当前路径 ${c.pathProfile['active_url'] ?? (c.formBase.isEmpty ? '—' : c.formBase)}'
                     '${c.pathProfile['last_kind'] != null ? ' · ${c.pathProfile['last_kind']}' : ''}',
                     style: TextStyle(fontSize: 12, color: ink3, height: 1.35),
+                  ),
+                ],
+                if (!pc) ...[
+                  const SizedBox(height: 10),
+                  PxGhostBtn(
+                    label: '立即重试连接',
+                    onTap: () => c.forceReconnect(),
                   ),
                 ],
                 if (pc) ...[
@@ -539,12 +591,11 @@ class _PairScanSheetState extends State<_PairScanSheet> {
     Navigator.of(context).pop(t);
   }
 
-  /// Capture with camera (or gallery). True live decode needs device ML;
-  /// if the system returns no text, user pastes the URI from PC.
+  /// Live QR scan (not photo capture). Returns pair URI via bottom sheet.
   Future<void> _openCamera() async {
     if (kIsWeb) {
       setState(() {
-        _hint = '浏览器预览请使用「粘贴配对码」；真机 App 可打开摄像头扫码';
+        _hint = '浏览器预览请使用「粘贴配对码」；真机 App 可实时扫码';
       });
       return;
     }
@@ -553,26 +604,28 @@ class _PairScanSheetState extends State<_PairScanSheet> {
       _hint = null;
     });
     try {
-      final picker = ImagePicker();
-      final file = await picker.pickImage(
-        source: ImageSource.camera,
-        preferredCameraDevice: CameraDevice.rear,
-        imageQuality: 85,
+      final raw = await Navigator.of(context).push<String>(
+        MaterialPageRoute(
+          fullscreenDialog: true,
+          builder: (_) => const QrScannerPage(),
+        ),
       );
-      if (file == null) {
-        setState(() => _hint = '已取消拍照');
+      if (!mounted) return;
+      if (raw == null || raw.trim().isEmpty) {
+        setState(() => _hint = '已取消扫码');
         return;
       }
-      // No on-device barcode decoder bundled in this shell — guide paste
-      // after capture so flow stays one-handed; PC URI is short text.
-      setState(() {
-        _hint =
-            '已拍照。请将 PC 上的配对码粘贴到下方（或点「从剪贴板粘贴」），然后确认。';
-      });
+      final code = raw.trim();
+      _paste.text = code;
+      // Auto-submit pair URI after successful scan
+      if (!mounted) return;
+      Navigator.of(context).pop(code);
     } catch (e) {
-      setState(() {
-        _hint = '无法打开相机，请改用粘贴配对码';
-      });
+      if (mounted) {
+        setState(() {
+          _hint = '扫码失败，请改用粘贴配对码（$e）';
+        });
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -616,7 +669,7 @@ class _PairScanSheetState extends State<_PairScanSheet> {
               ),
               const SizedBox(height: 14),
               Text(
-                '扫描 PC 二维码',
+                '实时扫码配对',
                 style: TextStyle(
                   fontSize: 17,
                   fontWeight: FontWeight.w800,
@@ -659,7 +712,7 @@ class _PairScanSheetState extends State<_PairScanSheet> {
                       Positioned(
                         bottom: 16,
                         child: Text(
-                          _busy ? '打开相机…' : '将二维码放入框内',
+                          _busy ? '正在打开扫码…' : '实时识别 · 对准 PC 二维码',
                           style: TextStyle(
                             fontSize: 12,
                             color: Colors.white.withValues(alpha: 0.75),
@@ -672,7 +725,7 @@ class _PairScanSheetState extends State<_PairScanSheet> {
               ),
               const SizedBox(height: 14),
               PxPrimaryBtn(
-                label: _busy ? '请稍候…' : '打开摄像头扫码',
+                label: _busy ? '扫码中…' : '打开摄像头扫码',
                 cyan: true,
                 onTap: _busy ? () {} : _openCamera,
               ),

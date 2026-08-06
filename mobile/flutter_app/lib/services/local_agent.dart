@@ -14,10 +14,11 @@ class LocalAgent {
     if (t.isEmpty) return null;
 
     final lower = t.toLowerCase();
-    if (lower == '/help' || lower == '帮助' || lower == '/?') {
+    // Only slash commands — bare Chinese words go to the LLM.
+    if (lower == '/help' || lower == '/?') {
       return _help;
     }
-    if (lower == '/status' || lower == '状态') {
+    if (lower == '/status') {
       final buf = StringBuffer()
         ..writeln('**本机状态**')
         ..writeln('- LLM：${llmReady ? '已配置' : '未配置（到「我的」填写）'}')
@@ -31,27 +32,26 @@ class LocalAgent {
       buf.writeln('\n输入 `/help` 查看本机指令。');
       return buf.toString();
     }
-    if (lower == '/time' || lower == '现在几点' || lower == '时间') {
+    if (lower == '/time') {
       final now = DateTime.now();
       final hh = now.hour.toString().padLeft(2, '0');
       final mm = now.minute.toString().padLeft(2, '0');
       final ss = now.second.toString().padLeft(2, '0');
       return '现在是 **${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')} $hh:$mm:$ss**（本机时间）。';
     }
-    if (lower.startsWith('/calc ') || lower.startsWith('计算 ')) {
-      final expr = t.replaceFirst(RegExp(r'^(/calc|计算)\s*'), '');
+    if (lower.startsWith('/calc ')) {
+      final expr = t.replaceFirst(RegExp(r'^/calc\s*'), '');
       final v = _safeCalc(expr);
       if (v == null) return '算不了这道题，试试 `/calc 1+2*3`。';
       return '`$expr` = **$v**';
     }
-    if (lower == '/agent' || lower == '本机能力') {
+    if (lower == '/agent') {
       return _agentBlurb;
     }
     return null;
   }
 
-  static const _help = '''
-**本机轻量 Agent**（不依赖 PC）
+  static const _help = '''**本机 Agent**（不依赖 PC · pi 风格轻循环）
 
 | 指令 | 作用 |
 |------|------|
@@ -61,18 +61,19 @@ class LocalAgent {
 | `/calc 1+2*3` | 简单四则运算 |
 | `/agent` | 本机能力说明 |
 
-普通对话仍走你配置的 API Key。需要工具链、审批时，扫码连 PC 切到「远端 Agent」。
-''';
+普通对话走你配置的 API Key / OAuth，**自动可调用工具 + Skills + MCP（需在「我的→Agent 工具」配置服务器）**。
+大任务会自动压缩上下文。完整审批 / 进程 / 工作区请连 PC「远端 Agent」。''';
 
-  static const _agentBlurb = '''
-本机模式提供：
+  static const _agentBlurb = '''本机 Agent（商用级本机循环 · 对标 Codex / 豆包能力子集）：
 
-1. **对话** — 你自己的 OpenAI 兼容 API  
-2. **轻量指令** — `/status` `/time` `/calc`  
-3. **图片附件** — 相册/相机（随消息发送）  
+1. **工具编排** — 搜索 / 抓取 / OCR / 语音 / 计算 / 备忘 / 任务计划 / HTTP API  
+2. **Skills** — 兼容开源 SKILL.md，自动匹配 research / coding / daily  
+3. **MCP** — 可接社区 MCP 服务器（`mcp__server__tool`）  
+4. **上下文压缩** — 大任务自动压缩，保留 tool 配对，抑制幻觉  
+5. **多模型工具格式** — OpenAI FC + 文本 `<tool_call>`（Codex 兼容）  
+6. **熔断** — 同工具同参数连打 3 次强制终答  
 
-完整工具调用、审批、进程控制请连接 PC 工作台（远端 Agent）。
-''';
+完整审批 / 进程 / 工作区 → 连 PC 远端 Agent。''';
 
   /// Very small expression evaluator: + - * / and parentheses, numbers only.
   static double? _safeCalc(String raw) {

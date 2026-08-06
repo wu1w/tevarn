@@ -61,7 +61,7 @@ class PixelTheme {
           foregroundColor: Colors.white,
           elevation: 0,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(4),
+            borderRadius: BorderRadius.circular(12),
             side: const BorderSide(color: PixelColors.ink, width: 1.2),
           ),
         ),
@@ -70,11 +70,11 @@ class PixelTheme {
         filled: true,
         fillColor: PixelColors.ink.withValues(alpha: 0.045),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide(color: PixelColors.ink.withValues(alpha: 0.16)),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide(color: PixelColors.ink.withValues(alpha: 0.12)),
         ),
         focusedBorder: const OutlineInputBorder(

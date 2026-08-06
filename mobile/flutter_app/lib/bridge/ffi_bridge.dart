@@ -128,7 +128,18 @@ class FfiTaktonBridge extends TaktonBridge {
       final out = _call(mPtr, aPtr);
       final s = out.toDartString();
       _free(out);
-      return decodeMap(s);
+      final map = decodeMap(s);
+      // Safety net: if native whitelist lags host routes, fall back to HTTP.
+      final err = map['error']?.toString() ?? '';
+      if (map['ok'] == false &&
+          (err.startsWith('unknown method') || err.contains('unknown method'))) {
+        debugPrint('FFI unknown method "$method" → HTTP fallback');
+        return _http.call(method, args);
+      }
+      return map;
+    } catch (e) {
+      debugPrint('FFI call "$method" failed: $e → HTTP fallback');
+      return _http.call(method, args);
     } finally {
       malloc.free(mPtr);
       malloc.free(aPtr);
@@ -144,8 +155,29 @@ class FfiTaktonBridge extends TaktonBridge {
       _http.uploadFile(name: name, bytes: bytes, contentType: contentType);
 
   @override
-  Stream<String> streamLocalChat(String content) =>
-      _http.streamLocalChat(content);
+  Future<Map<String, dynamic>> saveMedia({
+    required String name,
+    required List<int> bytes,
+    String? contentType,
+    String kind = 'image',
+  }) =>
+      _http.saveMedia(
+        name: name,
+        bytes: bytes,
+        contentType: contentType,
+        kind: kind,
+      );
+
+  @override
+  Future<Map<String, dynamic>> runLocalTool(
+    String name,
+    Map<String, dynamic> args,
+  ) =>
+      _http.runLocalTool(name, args);
+
+  @override
+  Stream<String> streamLocalChat(String content, {List<Map<String, dynamic>>? images}) =>
+      _http.streamLocalChat(content, images: images);
 
   @override
   Stream<String> streamRemoteChat(

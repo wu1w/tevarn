@@ -142,12 +142,188 @@ impl LocalLlmProfile {
         };
         Ok(format!("{base}{path}"))
     }
+
+    /// Public for agent loop
+    pub fn completions_url_pub(&self) -> Result<String> {
+        self.completions_url()
+    }
 }
 
+/// Inline image for multimodal user turns (base64, no data: prefix).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalImagePart {
+    #[serde(default = "default_image_mime")]
+    pub mime: String,
+    /// Raw standard base64 (not URL-safe).
+    pub data_b64: String,
+}
+
+fn default_image_mime() -> String {
+    "image/jpeg".into()
+}
+
+impl LocalImagePart {
+    pub fn data_url(&self) -> String {
+        let mime = if self.mime.trim().is_empty() {
+            "image/jpeg"
+        } else {
+            self.mime.trim()
+        };
+        format!("data:{mime};base64,{}", self.data_b64.trim())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LocalChatMessage {
     pub role: String,
+    #[serde(default)]
     pub content: String,
+    /// Multimodal images for this turn (user). Not re-sent from disk history after strip.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub images: Option<Vec<LocalImagePart>>,
+    /// OpenAI tool_calls payload (assistant)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+impl LocalChatMessage {
+    pub fn to_openai_json(&self) -> Value {
+        let mut m = json!({
+            "role": self.role,
+        });
+        if self.role == "assistant" {
+            if let Some(tcs) = &self.tool_calls {
+                // Expand to OpenAI shape if compact
+                if let Some(arr) = tcs.as_array() {
+                    let mapped: Vec<Value> = arr
+                        .iter()
+                        .map(|tc| {
+                            if tc.get("function").is_some() {
+                                tc.clone()
+                            } else {
+                                json!({
+                                    "id": tc.get("id").and_then(|x| x.as_str()).unwrap_or("call"),
+                                    "type": "function",
+                                    "function": {
+                                        "name": tc.get("name").and_then(|x| x.as_str()).unwrap_or(""),
+                                        "arguments": tc.get("arguments").and_then(|x| x.as_str()).unwrap_or("{}"),
+                                    }
+                                })
+                            }
+                        })
+                        .collect();
+                    m["tool_calls"] = json!(mapped);
+                    if self.content.is_empty() {
+                        m["content"] = Value::Null;
+                    } else {
+                        m["content"] = json!(self.content);
+                    }
+                    return m;
+                }
+            }
+        }
+        if self.role == "tool" {
+            if let Some(id) = &self.tool_call_id {
+                m["tool_call_id"] = json!(id);
+            }
+            if let Some(n) = &self.name {
+                m["name"] = json!(n);
+            }
+        }
+        // Multimodal user content: text + image_url parts (OpenAI / Grok / compatible)
+        if let Some(imgs) = &self.images {
+            if !imgs.is_empty() && (self.role == "user" || self.role == "developer") {
+                let mut parts: Vec<Value> = Vec::new();
+                let text = if self.content.trim().is_empty() {
+                    "（请结合图片回答）"
+                } else {
+                    self.content.as_str()
+                };
+                parts.push(json!({"type": "text", "text": text}));
+                for img in imgs.iter().take(6) {
+                    if img.data_b64.trim().is_empty() {
+                        continue;
+                    }
+                    parts.push(json!({
+                        "type": "image_url",
+                        "image_url": {
+                            "url": img.data_url(),
+                            "detail": "auto"
+                        }
+                    }));
+                }
+                m["content"] = json!(parts);
+                return m;
+            }
+        }
+        m["content"] = json!(self.content);
+        m
+    }
+
+    /// Drop heavy base64 so history JSON stays small (keep a text marker).
+    pub fn strip_inline_images(&mut self) {
+        if let Some(imgs) = self.images.take() {
+            if !imgs.is_empty() {
+                let n = imgs.len();
+                if !self.content.contains("[已附") {
+                    if self.content.trim().is_empty() {
+                        self.content = format!("（已附 {n} 张图片）");
+                    } else {
+                        self.content = format!("{}
+[已附 {n} 张图片 · 像素仅当轮发送]", self.content);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Heuristic: model can accept image_url / input_image parts.
+pub fn model_supports_vision(profile: &LocalLlmProfile) -> bool {
+    if profile.is_chatgpt_oauth() {
+        return true; // ChatGPT subscription multimodal models
+    }
+    let m = profile.model.to_lowercase();
+    let label = profile.provider_label.to_lowercase();
+    // Explicit blind models (need OCR)
+    if m.contains("deepseek")
+        || m.contains("glm-4")
+        || m.contains("glm4")
+        || (m.contains("qwen") && !m.contains("vl") && !m.contains("vision"))
+        || m.contains("yi-")
+        || m.contains("moonshot")
+    {
+        return false;
+    }
+    if m.contains("vision")
+        || m.contains("gpt-4o")
+        || m.contains("gpt-4.1")
+        || m.contains("gpt-4-turbo")
+        || m.contains("gpt-5")
+        || m.contains("luna")
+        || m.contains("terra")
+        || m.contains("sol")
+        || m.contains("o3")
+        || m.contains("o4")
+        || m.contains("gemini")
+        || m.contains("claude")
+        || m.contains("grok-2")
+        || m.contains("grok-4")
+        || m.contains("grok-3")
+        || label.contains("openai")
+        || label.contains("chatgpt")
+        || label.contains("xai")
+        || label.contains("grok")
+    {
+        return true;
+    }
+    // Default: try vision for OpenAI-compatible bases
+    let base = profile.base_url.to_lowercase();
+    base.contains("openai.com") || base.contains("x.ai") || base.contains("openrouter")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -220,6 +396,14 @@ impl LocalLlmService {
 
     pub fn reset_cancel(&self) {
         self.cancel.store(false, Ordering::SeqCst);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancel.load(Ordering::SeqCst)
+    }
+
+    pub fn http(&self) -> &reqwest::Client {
+        &self.http
     }
 
     /// Non-stream probe: list models or tiny completion.
@@ -362,17 +546,15 @@ impl LocalLlmService {
                 "本地 LLM 未配置完整（需要 base_url / api_key / model）".into(),
             ));
         }
-        self.reset_cancel();
+        // Cancel flag is owned by the caller (agent run / host stop).
+        // Never clear it here — multi-turn loops must honor mid-run stop.
 
         if profile.is_chatgpt_oauth() {
             return self.stream_chatgpt_codex(profile, messages, on_delta).await;
         }
 
         let url = profile.completions_url()?;
-        let msgs: Vec<Value> = messages
-            .iter()
-            .map(|m| json!({"role": m.role, "content": m.content}))
-            .collect();
+        let msgs: Vec<Value> = messages.iter().map(|m| m.to_openai_json()).collect();
         let body = json!({
             "model": profile.model,
             "messages": msgs,
@@ -491,12 +673,36 @@ impl LocalLlmService {
                 }));
                 continue;
             }
-            // user / developer / other
+            // user / developer / other — include input_image for multimodal
             let r = if role == "developer" { "developer" } else { "user" };
+            let mut parts: Vec<Value> = Vec::new();
+            let text = if content.trim().is_empty() && m.images.as_ref().map(|i| !i.is_empty()).unwrap_or(false) {
+                "（请结合图片回答）"
+            } else {
+                content
+            };
+            if !text.is_empty() {
+                parts.push(json!({"type": "input_text", "text": text}));
+            }
+            if let Some(imgs) = &m.images {
+                for img in imgs.iter().take(6) {
+                    if img.data_b64.trim().is_empty() {
+                        continue;
+                    }
+                    parts.push(json!({
+                        "type": "input_image",
+                        "image_url": img.data_url(),
+                        "detail": "auto"
+                    }));
+                }
+            }
+            if parts.is_empty() {
+                parts.push(json!({"type": "input_text", "text": "(empty)"}));
+            }
             input.push(json!({
                 "type": "message",
                 "role": r,
-                "content": [{"type": "input_text", "text": content}],
+                "content": parts,
             }));
         }
 

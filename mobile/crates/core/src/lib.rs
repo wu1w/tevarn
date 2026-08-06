@@ -8,6 +8,12 @@ pub mod platform;
 pub mod storage;
 pub mod local_llm;
 pub mod local_oauth;
+pub mod local_tools;
+pub mod local_agent;
+pub mod mcp_client;
+pub mod skills;
+pub mod tool_format;
+pub mod context_compress;
 pub mod chat_mode;
 pub mod media;
 pub mod session_meta;
@@ -25,8 +31,10 @@ pub use config::{parse_base_url_parts, AppConfig};
 pub use error::{Error, Result};
 pub use models::*;
 pub use platform::PlatformKind;
-pub use local_llm::{LocalChatHistory, LocalChatMessage, LocalLlmProfile, LocalLlmService};
+pub use local_llm::{LocalChatHistory, LocalChatMessage, LocalImagePart, LocalLlmProfile, LocalLlmService, model_supports_vision};
 pub use local_oauth::LocalOauth;
+pub use local_tools::{AgentConfig, ToolRuntime};
+pub use local_agent::{AgentEvent, LocalAgent};
 pub use chat_mode::{
     normalize_ui_messages, ChatSurface, ModeSnapshot, SendPath, UiChatMessage,
 };
@@ -41,3 +49,5 @@ pub use path::{
     claim_urls, probe_endpoint, select_best, DeferredClaim, Endpoint, EndpointKind, PathProfile,
     PathService, ProbeResult,
 };
+
+pub use mcp_client::{McpConfigFile, McpHub, McpServerConfig};

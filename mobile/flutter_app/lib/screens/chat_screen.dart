@@ -9,7 +9,9 @@ import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../models/app_models.dart';
+import '../services/attach_utils.dart';
 import '../services/app_controller.dart';
+import '../services/voice_service.dart';
 import '../theme/pixel_theme.dart';
 import '../widgets/pixel_icons.dart';
 
@@ -24,6 +26,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final _ctrl = TextEditingController();
   final _scroll = ScrollController();
   bool _hasText = false;
+  bool _listening = false;
 
   @override
   void initState() {
@@ -135,7 +138,7 @@ class _ChatScreenState extends State<ChatScreen> {
             padding: const EdgeInsets.all(3),
             decoration: BoxDecoration(
               color: card2,
-              borderRadius: BorderRadius.circular(6),
+              borderRadius: BorderRadius.circular(14),
               border: Border.all(
                 color: dark
                     ? Colors.white.withValues(alpha: 0.1)
@@ -203,9 +206,9 @@ class _ChatScreenState extends State<ChatScreen> {
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
             child: Material(
               color: PixelColors.amber.withValues(alpha: 0.14),
-              borderRadius: BorderRadius.circular(6),
+              borderRadius: BorderRadius.circular(14),
               child: InkWell(
-                borderRadius: BorderRadius.circular(6),
+                borderRadius: BorderRadius.circular(14),
                 onTap: () => c.setTab(AppTab.remote),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -284,6 +287,9 @@ class _ChatScreenState extends State<ChatScreen> {
                     c.showToast('已复制');
                   },
                   onRegenerate: isLastAssistant ? () => c.regenerateLast() : null,
+                  onImageTap: m.hasImages
+                      ? (bytes) => _showImagePreview(context, bytes)
+                      : null,
                 ),
               );
             },
@@ -291,56 +297,110 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
         if (c.attachments.isNotEmpty)
           Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
             child: SizedBox(
-              height: 32,
-              child: ListView(
+              height: 88,
+              child: ListView.separated(
                 scrollDirection: Axis.horizontal,
-                children: [
-                  for (var i = 0; i < c.attachments.length; i++)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 6),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 4),
+                itemCount: c.attachments.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemBuilder: (context, i) {
+                  final f = c.attachments[i];
+                  final isImg =
+                      f.isImage && f.bytes != null && f.bytes!.isNotEmpty;
+                  return Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      Container(
+                        width: isImg ? 88 : 140,
+                        height: 88,
                         decoration: BoxDecoration(
                           color: card2,
-                          borderRadius: BorderRadius.circular(4),
+                          borderRadius: BorderRadius.circular(12),
                           border: Border.all(
                             color: dark
                                 ? Colors.white.withValues(alpha: 0.12)
                                 : PixelColors.ink.withValues(alpha: 0.12),
                           ),
                         ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              c.attachments[i].name,
-                              style: TextStyle(fontSize: 11.5, color: ink2),
-                            ),
-                            if (c.attachments[i].hasData)
-                              Padding(
-                                padding: const EdgeInsets.only(left: 4),
-                                child: Text(
-                                  '·实传',
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    color: PixelColors.green,
-                                    fontWeight: FontWeight.w700,
-                                  ),
+                        clipBehavior: Clip.antiAlias,
+                        child: isImg
+                            ? Image.memory(
+                                f.bytes!,
+                                fit: BoxFit.cover,
+                                width: 88,
+                                height: 88,
+                                gaplessPlayback: true,
+                                errorBuilder: (_, __, ___) => Center(
+                                  child: Icon(Icons.broken_image_outlined,
+                                      size: 28, color: ink3),
+                                ),
+                              )
+                            : Padding(
+                                padding: const EdgeInsets.all(10),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Icon(Icons.insert_drive_file_outlined,
+                                        size: 22, color: ink2),
+                                    const Spacer(),
+                                    Text(
+                                      f.name,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 11.5,
+                                        color: ink2,
+                                        height: 1.25,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
-                            const SizedBox(width: 4),
-                            GestureDetector(
-                              onTap: () => c.removeAttach(i),
+                      ),
+                      Positioned(
+                        top: -4,
+                        right: -4,
+                        child: Material(
+                          color: dark ? const Color(0xFF1A1F33) : Colors.white,
+                          shape: const CircleBorder(),
+                          elevation: 1,
+                          child: InkWell(
+                            customBorder: const CircleBorder(),
+                            onTap: () => c.removeAttach(i),
+                            child: Padding(
+                              padding: const EdgeInsets.all(4),
                               child: Icon(Icons.close, size: 14, color: ink3),
                             ),
-                          ],
+                          ),
                         ),
                       ),
-                    ),
-                ],
+                      if (isImg)
+                        Positioned(
+                          left: 6,
+                          bottom: 6,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.55),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              f.name.length > 12
+                                  ? '${f.name.substring(0, 10)}…'
+                                  : f.name,
+                              style: const TextStyle(
+                                fontSize: 9.5,
+                                color: Colors.white,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  );
+                },
               ),
             ),
           ),
@@ -355,7 +415,7 @@ class _ChatScreenState extends State<ChatScreen> {
             padding: const EdgeInsets.all(6),
             decoration: BoxDecoration(
               color: dark ? const Color(0xFF151A2E) : PixelColors.card,
-              borderRadius: BorderRadius.circular(6),
+              borderRadius: BorderRadius.circular(14),
               border: Border.all(
                 color: dark
                     ? Colors.white.withValues(alpha: 0.12)
@@ -407,6 +467,44 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                   ),
                 ),
+                if (c.voiceOn) ...[
+                  const SizedBox(width: 4),
+                  GestureDetector(
+                    onLongPressStart: (_) => _startVoice(c),
+                    onLongPressEnd: (_) => _stopVoice(c),
+                    onTap: () {
+                      if (_listening) {
+                        _stopVoice(c);
+                      } else {
+                        c.showToast('按住麦克风说话');
+                      }
+                    },
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 120),
+                      width: 36,
+                      height: 36,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: _listening
+                            ? PixelColors.red.withValues(alpha: 0.18)
+                            : card2,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: _listening
+                              ? PixelColors.red.withValues(alpha: 0.5)
+                              : (dark
+                                  ? Colors.white.withValues(alpha: 0.1)
+                                  : PixelColors.ink.withValues(alpha: 0.1)),
+                        ),
+                      ),
+                      child: Icon(
+                        _listening ? Icons.mic : Icons.mic_none_rounded,
+                        size: 20,
+                        color: _listening ? PixelColors.red : ink2,
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(width: 6),
                 _SendBtn(
                   streaming: c.streaming,
@@ -425,7 +523,49 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  Future<void> _startVoice(AppController c) async {
+    if (kIsWeb) {
+      c.showToast('Web 不支持语音输入');
+      return;
+    }
+    if (!c.voiceOn) {
+      c.showToast('请先在「我的」开启语音输入');
+      return;
+    }
+    setState(() => _listening = true);
+    c.pulseIsland(text: '聆听中…', kind: 'local');
+    final text = await VoiceService.instance.listenOnce(
+      onPartial: (p) {
+        if (!mounted) return;
+        _ctrl.text = p;
+        _ctrl.selection = TextSelection.collapsed(offset: _ctrl.text.length);
+        c.setInput(p, notify: false);
+        setState(() => _hasText = p.trim().isNotEmpty);
+      },
+    );
+    if (!mounted) return;
+    setState(() => _listening = false);
+    if (text != null && text.isNotEmpty) {
+      _ctrl.text = text;
+      _ctrl.selection = TextSelection.collapsed(offset: text.length);
+      c.setInput(text, notify: true);
+      setState(() => _hasText = true);
+      c.showToast('已识别 · 可发送');
+    } else {
+      c.showToast('未识别到语音');
+    }
+  }
+
+  Future<void> _stopVoice(AppController c) async {
+    await VoiceService.instance.stopListen();
+    if (mounted) setState(() => _listening = false);
+  }
+
   Future<void> _doSend(AppController c) async {
+    if (c.streaming) {
+      await c.stopGeneration();
+      return;
+    }
     final text = _ctrl.text;
     // Do not clear draft until send accepts it (canSend / empty checks).
     final accepted = await c.send(text);
@@ -457,7 +597,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 title: '文件',
                 sub: c.surface == 'remote'
                     ? '文档 / 图片 · 发送时上传到 PC'
-                    : '本机模式仅附文件名提示',
+                    : '图片会显示预览 · 发送时 OCR 识别文字',
                 onTap: () async {
                   Navigator.pop(ctx);
                   final r = await FilePicker.platform.pickFiles(
@@ -468,19 +608,25 @@ class _ChatScreenState extends State<ChatScreen> {
                   var n = 0;
                   for (final f in r.files) {
                     if (f.name.isEmpty) continue;
-                    c.addAttach(AttachFile(
+                    final af = AttachFile(
                       name: f.name,
                       bytes: f.bytes != null
                           ? Uint8List.fromList(f.bytes!)
                           : null,
                       path: f.path,
                       mime: _guessMime(f.name),
-                    ));
+                    );
+                    final bytes = await resolveAttachBytes(af);
+                    if (bytes == null || bytes.isEmpty) {
+                      c.showToast('无法读取 ${f.name}');
+                      continue;
+                    }
+                    c.addAttach(af);
                     n++;
                   }
                   if (n > 0) {
                     c.showToast(
-                        '已选择 $n 个文件${c.surface == 'remote' ? '（发送时实传）' : ''}');
+                        '已选择 $n 个文件（内容已读入）');
                   }
                 },
               ),
@@ -520,7 +666,7 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
               _SheetTile(
                 title: '相册',
-                sub: '从相册选择图片 · 发送时上传',
+                sub: '从相册选择图片 · 预览后发送',
                 onTap: () async {
                   Navigator.pop(ctx);
                   try {
@@ -546,14 +692,20 @@ class _ChatScreenState extends State<ChatScreen> {
                   if (r != null) {
                     for (final f in r.files) {
                       if (f.name.isEmpty) continue;
-                      c.addAttach(AttachFile(
+                      final af = AttachFile(
                         name: f.name,
                         bytes: f.bytes != null
                             ? Uint8List.fromList(f.bytes!)
                             : null,
                         path: f.path,
                         mime: _guessMime(f.name),
-                      ));
+                      );
+                      final bytes = await resolveAttachBytes(af);
+                      if (bytes == null || bytes.isEmpty) {
+                        c.showToast('无法读取 ${f.name}');
+                        continue;
+                      }
+                      c.addAttach(af);
                     }
                   }
                 },
@@ -576,16 +728,35 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  String _guessMime(String name) {
-    final n = name.toLowerCase();
-    if (n.endsWith('.png')) return 'image/png';
-    if (n.endsWith('.jpg') || n.endsWith('.jpeg')) return 'image/jpeg';
-    if (n.endsWith('.gif')) return 'image/gif';
-    if (n.endsWith('.webp')) return 'image/webp';
-    if (n.endsWith('.pdf')) return 'application/pdf';
-    if (n.endsWith('.txt') || n.endsWith('.md')) return 'text/plain';
-    return 'application/octet-stream';
+  void _showImagePreview(BuildContext context, Uint8List bytes) {
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.black,
+        insetPadding: const EdgeInsets.all(16),
+        child: Stack(
+          children: [
+            InteractiveViewer(
+              child: Center(
+                child: Image.memory(bytes, fit: BoxFit.contain),
+              ),
+            ),
+            Positioned(
+              top: 8,
+              right: 8,
+              child: IconButton(
+                onPressed: () => Navigator.pop(ctx),
+                icon: const Icon(Icons.close, color: Colors.white),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
+
+  String _guessMime(String name, {String? platformMime}) =>
+      guessMime(name, platformMime: platformMime);
 }
 
 class _ModeChip extends StatelessWidget {
@@ -608,13 +779,13 @@ class _ModeChip extends StatelessWidget {
       height: 32,
       decoration: BoxDecoration(
         color: active ? color.withValues(alpha: 0.16) : Colors.transparent,
-        borderRadius: BorderRadius.circular(4),
+        borderRadius: BorderRadius.circular(14),
       ),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(4),
+          borderRadius: BorderRadius.circular(14),
           child: Center(
             child: AnimatedDefaultTextStyle(
               duration: const Duration(milliseconds: 140),
@@ -645,6 +816,7 @@ class _ChatBubble extends StatelessWidget {
     this.canRegenerate = false,
     this.onCopy,
     this.onRegenerate,
+    this.onImageTap,
   });
 
   final ChatMsg msg;
@@ -657,6 +829,7 @@ class _ChatBubble extends StatelessWidget {
   final bool canRegenerate;
   final VoidCallback? onCopy;
   final VoidCallback? onRegenerate;
+  final void Function(Uint8List bytes)? onImageTap;
 
   @override
   Widget build(BuildContext context) {
@@ -679,7 +852,7 @@ class _ChatBubble extends StatelessWidget {
               alignment: Alignment.center,
               decoration: BoxDecoration(
                 color: PixelColors.purple.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(4),
+                borderRadius: BorderRadius.circular(14),
                 border: Border.all(
                   color: PixelColors.purple.withValues(alpha: 0.35),
                 ),
@@ -703,7 +876,7 @@ class _ChatBubble extends StatelessWidget {
                 color: isUser
                     ? PixelColors.purple.withValues(alpha: 0.12)
                     : card,
-                borderRadius: BorderRadius.circular(6),
+                borderRadius: BorderRadius.circular(14),
                 border: Border.all(
                   color: isUser
                       ? PixelColors.purple.withValues(alpha: 0.28)
@@ -728,6 +901,86 @@ class _ChatBubble extends StatelessWidget {
                         ),
                       ),
                     ),
+                  if (msg.hasImages) ...[
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        for (final bytes in msg.images)
+                          GestureDetector(
+                            onTap: onImageTap == null
+                                ? null
+                                : () => onImageTap!(bytes),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(10),
+                              child: Image.memory(
+                                bytes,
+                                width: msg.images.length == 1 ? 200 : 120,
+                                height: msg.images.length == 1 ? 200 : 120,
+                                fit: BoxFit.cover,
+                                gaplessPlayback: true,
+                                errorBuilder: (_, __, ___) => Container(
+                                  width: 120,
+                                  height: 120,
+                                  color: card2,
+                                  alignment: Alignment.center,
+                                  child: Icon(Icons.broken_image_outlined,
+                                      color: ink3),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    if (data.isNotEmpty && data != '…')
+                      const SizedBox(height: 8),
+                  ],
+                                    if (msg.hasAttachChips) ...[
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        for (final name in msg.attachNames)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 5),
+                            decoration: BoxDecoration(
+                              color: card2,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: dark
+                                    ? Colors.white.withValues(alpha: 0.12)
+                                    : PixelColors.ink.withValues(alpha: 0.12),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.insert_drive_file_outlined,
+                                    size: 14, color: ink3),
+                                const SizedBox(width: 4),
+                                ConstrainedBox(
+                                  constraints:
+                                      const BoxConstraints(maxWidth: 160),
+                                  child: Text(
+                                    name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 11.5,
+                                      color: ink,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                    if (data.isNotEmpty && data != '…')
+                      const SizedBox(height: 8),
+                  ],
                   if (useMd)
                     MarkdownBody(
                       data: data,
@@ -792,7 +1045,7 @@ class _MsgAction extends StatelessWidget {
   Widget build(BuildContext context) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(4),
+      borderRadius: BorderRadius.circular(14),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
         child: Text(
@@ -817,16 +1070,16 @@ class _IconBtn extends StatelessWidget {
   Widget build(BuildContext context) {
     return Material(
       color: PixelColors.card,
-      borderRadius: BorderRadius.circular(4),
+      borderRadius: BorderRadius.circular(14),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(4),
+        borderRadius: BorderRadius.circular(14),
         child: Container(
           width: 44,
           height: 44,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(4),
+            borderRadius: BorderRadius.circular(14),
             border: Border.all(
               color: PixelColors.ink.withValues(alpha: 0.16),
             ),
@@ -850,16 +1103,16 @@ class _SquareBtn extends StatelessWidget {
   Widget build(BuildContext context) {
     return Material(
       color: bg,
-      borderRadius: BorderRadius.circular(4),
+      borderRadius: BorderRadius.circular(14),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(4),
+        borderRadius: BorderRadius.circular(14),
         child: Container(
           width: 44,
           height: 44,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(4),
+            borderRadius: BorderRadius.circular(14),
             border: Border.all(
               color: PixelColors.ink.withValues(alpha: 0.12),
             ),
@@ -892,16 +1145,16 @@ class _SendBtn extends StatelessWidget {
             : (enabled ? PixelColors.purple : PixelColors.ink3));
     return Material(
       color: bg,
-      borderRadius: BorderRadius.circular(4),
+      borderRadius: BorderRadius.circular(14),
       child: InkWell(
         onTap: enabled || streaming ? onTap : null,
-        borderRadius: BorderRadius.circular(4),
+        borderRadius: BorderRadius.circular(14),
         child: Container(
           width: 44,
           height: 44,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(4),
+            borderRadius: BorderRadius.circular(14),
             border: Border.all(color: PixelColors.ink, width: 1.1),
             boxShadow: PixelTheme.hardShadowSm,
           ),
@@ -930,10 +1183,10 @@ class _SheetTile extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 6),
       child: Material(
         color: PixelColors.ink.withValues(alpha: 0.04),
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(14),
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: BorderRadius.circular(14),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
             child: Column(

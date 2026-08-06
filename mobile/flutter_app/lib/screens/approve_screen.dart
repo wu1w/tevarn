@@ -194,7 +194,7 @@ class _ApproveScreenState extends State<ApproveScreen> {
                 )
               : list.isEmpty
                   ? _Empty(
-                      title: '暂无待审批提权',
+                      title: seg == 1 ? '暂无进化提案' : '暂无待审批提权',
                       sub: seg == 0
                           ? '高危操作会推送到这里'
                           : '进化提案通过后生效',

@@ -70,6 +70,7 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
   int _searchGen = 0;
   bool? _lastPc;
   bool _loaded = false;
+  int _seenMeGen = -1;
   /// Flat models returned by Rust filter (when q/provider applied).
   List<String> _serverModels = [];
 
@@ -90,7 +91,13 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final pc = context.watch<AppController>().pcConnected;
+    final c = context.watch<AppController>();
+    final pc = c.pcConnected;
+    // Re-fetch when user opens Me tab (IndexedStack keeps State alive).
+    if (_loaded && c.mePanelGen != _seenMeGen) {
+      _seenMeGen = c.mePanelGen;
+      _reload(refresh: false);
+    }
     if (_loaded) {
       _lastPc ??= pc;
       if (_lastPc != pc) {
@@ -768,11 +775,15 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
                 ? 'https://api.x.ai/v1'
                 : 'codex-oauth://chatgpt');
         // Ensure base is persisted for local_test (token already in profile)
-        await c.bridge.localConfigSet({
+        final setR = await c.bridge.localConfigSet({
           'base_url': oauthBase,
           if (model.isNotEmpty) 'model': model,
           'provider_label': o.name,
         });
+        if (!isOk(setR)) {
+          c.showToast(setR['error']?.toString() ?? '保存本机配置失败');
+          return;
+        }
         final r = await c.bridge.localTest({
           'base_url': oauthBase,
           if (model.isNotEmpty) 'model': model,
@@ -872,12 +883,16 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
           c.showToast('请填写 Base URL');
           return;
         }
-        await c.bridge.localConfigSet({
+        final setR = await c.bridge.localConfigSet({
           'base_url': base,
           if (model.isNotEmpty) 'model': model,
           if (key.isNotEmpty) 'api_key': key,
           'provider_label': o.name,
         });
+        if (!isOk(setR)) {
+          c.showToast(setR['error']?.toString() ?? '保存本机配置失败');
+          return;
+        }
         final r = await c.bridge.localTest({
           'base_url': base,
           if (model.isNotEmpty) 'model': model,
@@ -937,12 +952,16 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
                   ? 'https://api.x.ai/v1'
                   : 'codex-oauth://chatgpt');
           // Do NOT pass empty key — keep server-side token
-          await c.bridge.localConfigSet({
+          final setR = await c.bridge.localConfigSet({
             'base_url': oauthBase,
             'model': model,
             'provider_label': o.name,
             if (key.isNotEmpty) 'api_key': key,
           });
+          if (!isOk(setR)) {
+            c.showToast(setR['error']?.toString() ?? 'OAuth 配置保存失败');
+            return;
+          }
           await c.refreshAll();
           if (!c.llmHasKey && !_hasKey) {
             c.showToast('本机未保存 OAuth 令牌，请重新登录');
@@ -968,7 +987,7 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
         }
         await _reload(refresh: true);
         await c.goRemoteChatAfterOauth(
-            toastMsg: '已应用 OAuth 模型 · $model · 已切远端');
+            toastMsg: '已应用 OAuth 模型 · $model · 已就绪');
         return;
       }
 
@@ -1007,7 +1026,7 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
           return;
         }
         await _syncLocal(o, model, base, key);
-        await c.goRemoteChatAfterOauth(toastMsg: '已应用 · $model · 已切远端对话');
+        await c.goRemoteChatAfterOauth(toastMsg: '已应用 · $model · 已就绪');
         return;
       } else if (c.pcConnected && o.source == _Src.preset) {
         final llm = o.raw['llm'] is Map
@@ -1043,7 +1062,7 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
           return;
         }
         await _syncLocal(o, model, regBase, key);
-        await c.goRemoteChatAfterOauth(toastMsg: '已激活预设 · $model · 已切远端');
+        await c.goRemoteChatAfterOauth(toastMsg: '已激活预设 · $model · 已就绪');
         return;
       } else {
         if (base.isEmpty) {
@@ -1057,7 +1076,8 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
         await _syncLocal(o, model, base, key);
         c.showToast('本机模型已就绪 · $model');
         await c.setSurface('local');
-        c.setTab(AppTab.chat);
+        // stay on Me after apply
+        // c.setTab(AppTab.chat);
       }
 
       _key.clear();

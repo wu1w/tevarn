@@ -61,6 +61,14 @@ abstract class TaktonBridge {
   Future<Map<String, dynamic>> localConfigGet() => call('local_config_get');
   Future<Map<String, dynamic>> localConfigSet(Map<String, dynamic> cfg) =>
       call('local_config_set', cfg);
+  
+  Future<Map<String, dynamic>> agentConfigGet() => call('local_agent_config_get');
+  Future<Map<String, dynamic>> agentConfigSet(Map<String, dynamic> cfg) =>
+      call('local_agent_config_set', cfg);
+  Future<Map<String, dynamic>> mcpConfigGet() => call('local_mcp_get');
+  Future<Map<String, dynamic>> mcpConfigSet(Map<String, dynamic> config) =>
+      call('local_mcp_set', {'config': config});
+  Future<Map<String, dynamic>> localSkills() => call('local_skills');
   Future<Map<String, dynamic>> localConfigClear() =>
       call('local_config_clear');
   Future<Map<String, dynamic>> localTest([Map<String, dynamic>? body]) =>
@@ -259,7 +267,21 @@ abstract class TaktonBridge {
     String? contentType,
   });
 
-  Stream<String> streamLocalChat(String content);
+  /// Save media into phone host store (`/api/mobile/media`).
+  Future<Map<String, dynamic>> saveMedia({
+    required String name,
+    required List<int> bytes,
+    String? contentType,
+    String kind = 'image',
+  });
+
+  /// Invoke a local agent tool (OCR / search / …).
+  Future<Map<String, dynamic>> runLocalTool(
+    String name,
+    Map<String, dynamic> args,
+  );
+
+  Stream<String> streamLocalChat(String content, {List<Map<String, dynamic>>? images});
   Stream<String> streamRemoteChat(
     String sessionId,
     String content, {

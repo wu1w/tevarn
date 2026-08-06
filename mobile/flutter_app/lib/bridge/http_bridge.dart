@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'takton_bridge.dart';
@@ -83,6 +84,18 @@ class HttpTaktonBridge extends TaktonBridge {
           return _post('/api/mobile/local/chat', a);
         case 'local_stop':
           return _post('/api/mobile/local/stop', {});
+        case 'local_agent_config_get':
+          return _get('/api/mobile/local/agent_config');
+        case 'local_agent_config_set':
+          return _post('/api/mobile/local/agent_config', a);
+        case 'local_mcp_get':
+          return _get('/api/mobile/local/mcp');
+        case 'local_mcp_set':
+          return _post('/api/mobile/local/mcp', a);
+        case 'local_skills':
+          return _get('/api/mobile/local/skills');
+        case 'local_tools':
+          return _post('/api/mobile/local/tools', a);
         case 'approvals':
           return _get('/api/mobile/approvals');
         case 'approvals_summary':
@@ -122,6 +135,15 @@ class HttpTaktonBridge extends TaktonBridge {
           return _post('/api/mobile/mesh/down', {});
         case 'mesh_ifaces':
           return _post('/api/mobile/mesh/ifaces', a);
+        case 'mesh_auth':
+          return _post('/api/mobile/mesh/auth', a);
+        case 'mesh_embed_start':
+          return _post('/api/mobile/mesh/embed/start', a);
+        case 'mesh_embed_stop':
+          return _post('/api/mobile/mesh/embed/stop', {});
+        case 'mesh_embed':
+        case 'mesh_embed_status':
+          return _get('/api/mobile/mesh/embed');
         case 'path':
         case 'path_status':
           return _get('/api/mobile/path');
@@ -175,6 +197,10 @@ class HttpTaktonBridge extends TaktonBridge {
           return _post('/api/mobile/oauth/xai/start', {});
         case 'oauth_xai_poll':
           return _post('/api/mobile/oauth/xai/poll', a);
+        case 'notify':
+          return _post('/api/mobile/notify', a);
+        case 'runtime':
+          return _get('/api/mobile/runtime');
         case 'host_base':
           return {'ok': true, 'base': hostBase};
         default:
@@ -224,10 +250,17 @@ class HttpTaktonBridge extends TaktonBridge {
   }) async {
     try {
       final req = http.MultipartRequest('POST', _u('/api/mobile/upload'));
+      MediaType? mt;
+      if (contentType != null && contentType.isNotEmpty) {
+        try {
+          mt = MediaType.parse(contentType);
+        } catch (_) {}
+      }
       req.files.add(http.MultipartFile.fromBytes(
         'file',
         bytes,
         filename: name,
+        contentType: mt,
       ));
       if (contentType != null && contentType.isNotEmpty) {
         req.fields['content_type'] = contentType;
@@ -243,10 +276,66 @@ class HttpTaktonBridge extends TaktonBridge {
   }
 
   @override
-  Stream<String> streamLocalChat(String content) async* {
+  Future<Map<String, dynamic>> saveMedia({
+    required String name,
+    required List<int> bytes,
+    String? contentType,
+    String kind = 'image',
+  }) async {
+    try {
+      final req = http.MultipartRequest('POST', _u('/api/mobile/media'));
+      req.fields['kind'] = kind;
+      MediaType? mt;
+      if (contentType != null && contentType.isNotEmpty) {
+        try {
+          mt = MediaType.parse(contentType);
+        } catch (_) {}
+      }
+      req.files.add(http.MultipartFile.fromBytes(
+        'file',
+        bytes,
+        filename: name,
+        contentType: mt,
+      ));
+      if (contentType != null && contentType.isNotEmpty) {
+        req.fields['content_type'] = contentType;
+      }
+      final streamed =
+          await _client.send(req).timeout(const Duration(seconds: 90));
+      final body = await streamed.stream.bytesToString();
+      return _parse(http.Response(body, streamed.statusCode));
+    } catch (e) {
+      return {'ok': false, 'error': e.toString()};
+    }
+  }
+
+  @override
+  Future<Map<String, dynamic>> runLocalTool(
+    String name,
+    Map<String, dynamic> args,
+  ) async {
+    try {
+      final r = await _client
+          .post(
+            _u('/api/mobile/local/tools'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'name': name, 'args': args}),
+          )
+          .timeout(const Duration(seconds: 90));
+      return _parse(r);
+    } catch (e) {
+      return {'ok': false, 'error': e.toString()};
+    }
+  }
+
+  @override
+  Stream<String> streamLocalChat(String content, {List<Map<String, dynamic>>? images}) async* {
     final req = http.Request('POST', _u('/api/mobile/local/chat'));
     req.headers['Content-Type'] = 'application/json';
-    req.body = jsonEncode({'content': content});
+    req.body = jsonEncode({
+      'content': content,
+      if (images != null && images.isNotEmpty) 'images': images,
+    });
     final streamed =
         await _client.send(req).timeout(const Duration(seconds: 300));
     final lines =
@@ -278,6 +367,28 @@ class HttpTaktonBridge extends TaktonBridge {
       if (event == 'error' || v['error'] != null) {
         throw Exception(
             v['error']?.toString() ?? v['message']?.toString() ?? 'local LLM error');
+      }
+
+      // Agent loop status (pi-style turn progress)
+      if (event == 'status') {
+        final detail = v['detail']?.toString() ?? '';
+        if (detail.isNotEmpty) {
+          yield '\x01STATUS\x01$detail';
+        }
+        event = '';
+        continue;
+      }
+
+      // Tool start/end from Rust local_agent
+      if (event == 'tool') {
+        final phase = v['phase']?.toString() ?? '';
+        final name = v['name']?.toString() ?? 'tool';
+        final preview = (v['preview']?.toString() ?? '').replaceAll('\n', ' ');
+        final ok = v['ok'];
+        final okStr = ok == null ? '' : (ok == true ? '1' : '0');
+        yield '\x01TOOL\x01$phase\x01$name\x01$okStr\x01$preview';
+        event = '';
+        continue;
       }
 
       // Host coalesced path: {"delta": "..."}
@@ -339,7 +450,9 @@ class HttpTaktonBridge extends TaktonBridge {
     }
     ch.sink.add(jsonEncode(payload));
     try {
-      await for (final msg in ch.stream.timeout(const Duration(seconds: 90))) {
+      // Idle timeout 10 min between frames (long agent tools); resets on each event.
+      await for (final msg
+          in ch.stream.timeout(const Duration(minutes: 10))) {
         if (msg is! String) continue;
         final v = jsonDecode(msg);
         if (v is! Map) continue;

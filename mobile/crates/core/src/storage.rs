@@ -21,6 +21,10 @@ impl Store {
         Ok(Self { root })
     }
 
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     pub fn path(&self, name: &str) -> PathBuf {
         self.root.join(name)
     }

@@ -198,7 +198,12 @@ impl EngineHandle {
             }
             other => anyhow::bail!("unsupported method {other}"),
         };
+        let status = resp.status();
         let text = resp.text().await?;
+        if !status.is_success() {
+            let snippet: String = text.chars().take(240).collect();
+            anyhow::bail!("HTTP {} · {}", status.as_u16(), snippet);
+        }
         Ok(text)
     }
 }
