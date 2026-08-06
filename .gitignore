@@ -221,3 +221,7 @@ _smoke_*.txt
 _audit*.txt
 release-win/
 .cache/
+
+# pack hygiene
+.pack-env-unset
+

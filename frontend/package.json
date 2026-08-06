@@ -1,6 +1,6 @@
 {
   "name": "takton",
-  "version": "0.5.5-alpha",
+  "version": "0.5.6-alpha",
   "private": true,
   "description": "Takton - 个人专属 Agent 终端",
   "author": "developer <developer@takton.dev>",
@@ -15,14 +15,15 @@
     "electron:dev": "concurrently --kill-others \"cross-env NEXT_PUBLIC_API_URL=http://127.0.0.1:8090/api NEXT_PUBLIC_WS_URL=ws://127.0.0.1:8090/api next dev\" \"wait-on http://localhost:3000 && cross-env ELECTRON_START_URL=http://localhost:3000 electron .\"",
     "electron:prod": "npm run build && npm run build:electron && electron .",
     "ensure:vendor-host": "node ../scripts/ensure-vendor-host.mjs",
-    "pack": "npm run ensure:vendor-host && npm run prepare:win-python && cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder --dir",
-    "dist": "npm run ensure:vendor-host && npm run prepare:win-python && cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder",
-    "dist:linux": "npm run ensure:vendor-host && cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder --linux",
-    "dist:win": "node ../scripts/prepare-win-python-cross.js && cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder --win",
-    "dist:mac": "npm run ensure:vendor-host && cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder --mac",
+    "pack": "node ../scripts/pack-sanitize-env.mjs && npm run ensure:vendor-host && npm run prepare:win-python && cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder --dir",
+    "dist": "node ../scripts/pack-sanitize-env.mjs && npm run ensure:vendor-host && npm run prepare:win-python && cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder",
+    "dist:linux": "node ../scripts/pack-sanitize-env.mjs && npm run ensure:vendor-host && cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder --linux",
+    "dist:win": "node ../scripts/pack-sanitize-env.mjs && node ../scripts/prepare-win-python-cross.js && cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder --win",
+    "dist:mac": "node ../scripts/pack-sanitize-env.mjs && npm run ensure:vendor-host && cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder --mac",
     "prepare:win-python": "node ../scripts/prepare-win-python.js",
     "prepare:win-python-cross": "node ../scripts/prepare-win-python-cross.js",
-    "lint": "eslint"
+    "lint": "eslint",
+    "pack:sanitize": "node ../scripts/pack-sanitize-env.mjs"
   },
   "dependencies": {
     "@radix-ui/react-checkbox": "^1.3.7",
@@ -85,11 +86,17 @@
       {
         "from": "../electron/dist",
         "to": "electron/dist",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       },
       "package.json",
       "!**/*.{md,map}",
-      "!**/node_modules/**"
+      "!**/node_modules/**",
+      "!**/.env",
+      "!**/.env.*",
+      "!**/secrets.json",
+      "!**/*.db"
     ],
     "asar": true,
     "asarUnpack": [
@@ -111,7 +118,18 @@
           "!**/*.db",
           "!**/*.db-*",
           "!**/uploads/**",
-          "!workspace_state.json"
+          "!workspace_state.json",
+          "!**/.env",
+          "!**/.env.*",
+          "!**/*.env",
+          "!**/secrets.json",
+          "!**/*credentials*",
+          "!**/*oauth*token*",
+          "!**/.takton/**",
+          "!**/takton.db",
+          "!**/takton.db-*",
+          "!**/workspace_state.json",
+          "!**/.computers/**"
         ]
       },
       {
@@ -132,11 +150,15 @@
       "target": [
         {
           "target": "AppImage",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "deb",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "category": "Utility",
@@ -158,15 +180,21 @@
       "target": [
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "zip",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "public/icon.png",
@@ -185,7 +213,11 @@
             "!**/numpy/tests/**",
             "!**/numpy/_pyinstaller/**",
             "!**/pytest*/**",
-            "!**/_pytest/**"
+            "!**/_pytest/**",
+            "!**/.env",
+            "!**/.env.*",
+            "!**/*.db",
+            "!**/secrets.json"
           ]
         }
       ]
@@ -194,7 +226,10 @@
       "target": [
         {
           "target": "zip",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         }
       ],
       "category": "public.app-category.utilities",
@@ -215,6 +250,9 @@
     "portable": {
       "artifactName": "Takton-${version}-win-portable.${ext}"
     },
-    "electronLanguages": ["en-US", "zh-CN"]
+    "electronLanguages": [
+      "en-US",
+      "zh-CN"
+    ]
   }
 }

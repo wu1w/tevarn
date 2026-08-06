@@ -1,6 +1,6 @@
 {
   "name": "takton",
-  "version": "0.5.5-alpha",
+  "version": "0.5.6-alpha",
   "private": true,
   "description": "Takton - 个人专属 Agent 终端",
   "author": "developer <developer@takton.dev>",
@@ -15,13 +15,14 @@
     "electron:dev": "concurrently --kill-others \"cross-env NEXT_PUBLIC_API_URL=http://127.0.0.1:8090/api NEXT_PUBLIC_WS_URL=ws://127.0.0.1:8090/api npm run dev --prefix frontend\" \"wait-on http://localhost:3000 && cross-env ELECTRON_START_URL=http://localhost:3000 electron .\"",
     "electron:prod": "npm run build && npm run build:electron && electron .",
     "ensure:vendor-host": "node scripts/ensure-vendor-host.mjs",
-    "pack": "npm run ensure:vendor-host && npm run prepare:win-python && cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder --dir",
-    "dist": "npm run ensure:vendor-host && npm run prepare:win-python && cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder",
-    "dist:linux": "npm run ensure:vendor-host && cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder --linux",
-    "dist:win": "npm run ensure:vendor-host && npm run prepare:win-python && cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder --win",
-    "dist:mac": "npm run ensure:vendor-host && cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder --mac",
+    "pack": "node scripts/pack-sanitize-env.mjs && npm run ensure:vendor-host && npm run prepare:win-python && cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder --dir",
+    "dist": "node scripts/pack-sanitize-env.mjs && npm run ensure:vendor-host && npm run prepare:win-python && cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder",
+    "dist:linux": "node scripts/pack-sanitize-env.mjs && npm run ensure:vendor-host && cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder --linux",
+    "dist:win": "node scripts/pack-sanitize-env.mjs && npm run ensure:vendor-host && npm run prepare:win-python && cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder --win",
+    "dist:mac": "node scripts/pack-sanitize-env.mjs && npm run ensure:vendor-host && cross-env NEXT_EXPORT=1 npm run build && npm run build:electron && electron-builder --mac",
     "prepare:win-python": "node scripts/prepare-win-python.js",
-    "lint": "eslint"
+    "lint": "eslint",
+    "pack:sanitize": "node scripts/pack-sanitize-env.mjs"
   },
   "dependencies": {
     "electron-updater": "^6.8.9"
@@ -65,7 +66,11 @@
       "electron/dist/**/*",
       "package.json",
       "!**/*.{md,map}",
-      "!**/node_modules/**"
+      "!**/node_modules/**",
+      "!**/.env",
+      "!**/.env.*",
+      "!**/secrets.json",
+      "!**/*.db"
     ],
     "asar": true,
     "asarUnpack": [
@@ -86,7 +91,18 @@
           "!**/*.db",
           "!**/*.db-*",
           "!**/uploads/**",
-          "!workspace_state.json"
+          "!workspace_state.json",
+          "!**/.env",
+          "!**/.env.*",
+          "!**/*.env",
+          "!**/secrets.json",
+          "!**/*credentials*",
+          "!**/*oauth*token*",
+          "!**/.takton/**",
+          "!**/takton.db",
+          "!**/takton.db-*",
+          "!**/workspace_state.json",
+          "!**/.computers/**"
         ]
       },
       {
@@ -157,7 +173,11 @@
             "!**/numpy/tests/**",
             "!**/numpy/_pyinstaller/**",
             "!**/pytest*/**",
-            "!**/_pytest/**"
+            "!**/_pytest/**",
+            "!**/.env",
+            "!**/.env.*",
+            "!**/*.db",
+            "!**/secrets.json"
           ]
         }
       ]

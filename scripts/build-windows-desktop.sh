@@ -12,6 +12,20 @@ export ELECTRON_BUILDER_CACHE="${ELECTRON_BUILDER_CACHE:-$ROOT/.cache/electron-b
 export TAKTON_SKIP_VENDOR_HOST="${TAKTON_SKIP_VENDOR_HOST:-1}"
 
 echo "[takton] == Windows desktop pack 0.5.5-alpha =="
+
+# Strip packager/dev API keys & OAuth tokens; refuse secret files in tree
+echo "[takton] pack-sanitize (no developer credentials in artifact)..."
+# Unset common secrets so electron-builder / child processes cannot inherit them
+for k in OPENAI_API_KEY ANTHROPIC_API_KEY AZURE_OPENAI_API_KEY GOOGLE_API_KEY GEMINI_API_KEY \
+  XAI_API_KEY GROK_API_KEY COHERE_API_KEY MISTRAL_API_KEY TOGETHER_API_KEY FIREWORKS_API_KEY \
+  DEEPSEEK_API_KEY HF_TOKEN HUGGINGFACE_HUB_TOKEN TAKTON_LLM_API_KEY TAKTON_EMBEDDING_API_KEY \
+  TAKTON_RERANKER_API_KEY TAKTON_IMAGE_API_KEY TAKTON_OPENAI_CHATGPT_ACCOUNT_ID LLM_API_KEY \
+  TAKTON_ENV_FILE TAKTON_JWT_SECRET TAKTON_API_KEY TAKTON_SETTINGS_ENCRYPTION_SALT; do
+  unset "$k" || true
+done
+export TAKTON_LOAD_DOTENV=0
+node "$ROOT/scripts/pack-sanitize-env.mjs"
+
 echo "[takton] free disk:"; df -h "$ROOT" | tail -1
 
 # 1) Windows embed Python + wheels

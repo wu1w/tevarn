@@ -134,11 +134,36 @@ class AnthropicConfig(LLMConfig):
     api_path: str = "/v1/messages"
 
 
+def _settings_env_file() -> str | None:
+    """Resolve which dotenv file (if any) Settings should load.
+
+    Packaged desktop (Electron) must NOT auto-load a cwd ``.env`` — that is how
+    developer API keys / OAuth tokens get baked into a release when the packager
+    leaves a .env next to resources or the portable exe. Product secrets live in
+    Electron userData (secrets.json + encrypted DB settings).
+
+    - TAKTON_ENV_FILE=/path  → explicit only
+    - TAKTON_PACKAGED=1      → no dotenv
+    - TAKTON_LOAD_DOTENV=0   → no dotenv
+    - else                   → ``.env`` (source-tree / start.py convenience)
+    """
+    explicit = (os.environ.get("TAKTON_ENV_FILE") or "").strip()
+    if explicit:
+        return explicit
+    packaged = (os.environ.get("TAKTON_PACKAGED") or "").strip().lower()
+    if packaged in ("1", "true", "yes", "on"):
+        return None
+    load = (os.environ.get("TAKTON_LOAD_DOTENV") or "1").strip().lower()
+    if load in ("0", "false", "no", "off"):
+        return None
+    return ".env"
+
+
 class Settings(BaseSettings):
     """Nexus 全局配置"""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_settings_env_file(),
         env_file_encoding="utf-8",
         extra="ignore",
         env_prefix="TAKTON_",  # 桌面模式通过 TAKTON_* 环境变量注入

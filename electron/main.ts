@@ -504,6 +504,54 @@ async function ensureDependencies(python: string): Promise<string | undefined> {
   });
 }
 
+
+/** Env keys that must NEVER leak from the packager/developer machine into the
+ *  backend child (API keys, OAuth tokens, cloud credentials). Desktop secrets
+ *  come from userData secrets.json + DB settings — not from the shell. */
+const PACK_STRIP_ENV_RE =
+  /^(?:TAKTON_)?(?:LLM_|OPENAI_|ANTHROPIC_|AZURE_|GEMINI_|GOOGLE_|XAI_|GROK_|COHERE_|MISTRAL_|TOGETHER_|FIREWORKS_|DEEPSEEK_|CLAUDE_|HF_|HUGGINGFACE_)?(?:API_?KEY|ACCESS_TOKEN|REFRESH_TOKEN|CLIENT_SECRET|OAUTH_.*|.*_SECRET|.*_TOKEN)$/i;
+const PACK_STRIP_ENV_EXACT = new Set([
+  'OPENAI_API_KEY',
+  'ANTHROPIC_API_KEY',
+  'AZURE_OPENAI_API_KEY',
+  'GOOGLE_API_KEY',
+  'GEMINI_API_KEY',
+  'XAI_API_KEY',
+  'GROK_API_KEY',
+  'COHERE_API_KEY',
+  'MISTRAL_API_KEY',
+  'TOGETHER_API_KEY',
+  'FIREWORKS_API_KEY',
+  'DEEPSEEK_API_KEY',
+  'HF_TOKEN',
+  'HUGGINGFACE_HUB_TOKEN',
+  'TAKTON_LLM_API_KEY',
+  'TAKTON_EMBEDDING_API_KEY',
+  'TAKTON_RERANKER_API_KEY',
+  'TAKTON_IMAGE_API_KEY',
+  'TAKTON_OPENAI_CHATGPT_ACCOUNT_ID',
+  'LLM_API_KEY',
+  'API_KEY',
+  // developer machine proxy auth / misc
+  'AWS_SECRET_ACCESS_KEY',
+  'AWS_ACCESS_KEY_ID',
+  'AWS_SESSION_TOKEN',
+]);
+
+/** Drop developer/shell secrets before spawning backend or kernel host. */
+function sanitizeInheritedEnv(src: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(src)) {
+    if (v == null) continue;
+    if (PACK_STRIP_ENV_EXACT.has(k)) continue;
+    if (PACK_STRIP_ENV_RE.test(k)) continue;
+    // Never forward a cwd .env path from packager into product
+    if (k === 'TAKTON_ENV_FILE' && !isDev) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
 /** 构建后端进程环境变量 */
 function buildBackendEnv(secrets: AppSecrets, port: number, sitePackages?: string): NodeJS.ProcessEnv {
   // SQLite URL：Windows 路径使用正斜杠
@@ -528,8 +576,10 @@ function buildBackendEnv(secrets: AppSecrets, port: number, sitePackages?: strin
     );
   }
 
+  // Start from sanitized parent env — never forward packager/dev API keys or
+  // OAuth tokens into the product backend (those live in userData DB/settings).
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...sanitizeInheritedEnv(process.env),
     NODE_ENV: process.env.NODE_ENV || (isDev ? 'development' : 'production'),
     TAKTON_DB_URL: dbUrl,
     TAKTON_APP_HOST: appHost,
@@ -551,6 +601,50 @@ function buildBackendEnv(secrets: AppSecrets, port: number, sitePackages?: strin
     ].join(','),
     PYTHONPATH: pythonPathParts.join(path.delimiter),
   };
+
+  // Packaged product: never load a random cwd/.env (would pick up packager secrets).
+  // Desktop secrets/API keys come from Electron userData + DB only.
+  if (!isDev) {
+    env.TAKTON_PACKAGED = '1';
+    env.TAKTON_RESOURCES_PATH = process.resourcesPath;
+    // Block pydantic Settings from reading a leftover .env next to the exe
+    delete env.TAKTON_ENV_FILE;
+    delete env.TAKTON_LOAD_DOTENV;
+  }
+  const hostBinForBackend = process.env.TAKTON_KERNEL_HOST_BIN || findKernelHostBin();
+  if (hostBinForBackend) {
+    env.TAKTON_KERNEL_HOST_BIN = hostBinForBackend;
+    process.env.TAKTON_KERNEL_HOST_BIN = hostBinForBackend;
+  }
+
+  // Strip cloud/provider secrets that may still sit on process.env.
+  // Keep product secrets we just injected (JWT / encryption salt / desktop).
+  const keepProduct = new Set([
+    'TAKTON_JWT_SECRET',
+    'TAKTON_API_KEY',
+    'TAKTON_SETTINGS_ENCRYPTION_SALT',
+    'TAKTON_DESKTOP_PERMISSION_SECRET',
+    'TAKTON_DEFAULT_ADMIN_PASSWORD',
+    'TAKTON_KERNEL_HOST_BIN',
+    'TAKTON_RESOURCES_PATH',
+    'TAKTON_PACKAGED',
+    'TAKTON_DB_URL',
+    'TAKTON_APP_HOST',
+    'TAKTON_APP_PORT',
+    'TAKTON_SINGLE_USER_MODE',
+    'TAKTON_UPLOADS_DIR',
+    'TAKTON_FILE_BROWSER_ROOT',
+    'TAKTON_LOG_LEVEL',
+    'TAKTON_KERNEL_BACKEND',
+    'TAKTON_KERNEL_AUTO_START',
+    'TAKTON_KERNEL_HOST',
+  ]);
+  for (const k of Object.keys(env)) {
+    if (keepProduct.has(k)) continue;
+    if (PACK_STRIP_ENV_EXACT.has(k) || PACK_STRIP_ENV_RE.test(k)) {
+      delete env[k];
+    }
+  }
 
   return env;
 }
@@ -675,11 +769,45 @@ async function startKernelHost(): Promise<void> {
     );
     return;
   }
-  console.log(`[Takton] Starting kernel host: ${bin} --listen ${listen}`);
-  kernelHostProcess = spawn(bin, ['--listen', listen], {
-    cwd: ROOT_DIR,
-    env: process.env,
-    stdio: ['ignore', 'ignore', 'pipe'],
+  // Always export absolute path for backend restart (UI «重启 Host»).
+  process.env.TAKTON_KERNEL_HOST_BIN = bin;
+  if (!isDev) {
+    process.env.TAKTON_RESOURCES_PATH = process.resourcesPath;
+  }
+
+  // Packaged apps use app.asar — ROOT_DIR (= resources/app) is NOT a real
+  // directory on disk. Spawning with cwd=asar path fails on Windows (ENOENT).
+  // Prefer host binary dir, then resourcesPath / userData, never asar.
+  const spawnCwdCandidates = [
+    path.dirname(bin),
+    !isDev ? process.resourcesPath : '',
+    USER_DATA_DIR,
+    DATA_DIR,
+    isDev ? ROOT_DIR : '',
+  ].filter((p) => p && fs.existsSync(p) && fs.statSync(p).isDirectory());
+  const spawnCwd = spawnCwdCandidates[0] || process.cwd();
+
+  console.log(`[Takton] Starting kernel host: ${bin} --listen ${listen} (cwd=${spawnCwd})`);
+  try {
+    const hostEnv = sanitizeInheritedEnv(process.env);
+    hostEnv.TAKTON_KERNEL_HOST_BIN = bin;
+    if (!isDev) {
+      hostEnv.TAKTON_PACKAGED = '1';
+      hostEnv.TAKTON_RESOURCES_PATH = process.resourcesPath;
+    }
+    kernelHostProcess = spawn(bin, ['--listen', listen], {
+      cwd: spawnCwd,
+      env: hostEnv,
+      stdio: ['ignore', 'ignore', 'pipe'],
+      windowsHide: true,
+    });
+  } catch (err) {
+    console.error(`[Takton] Failed to spawn kernel host: ${(err as Error).message}`);
+    return;
+  }
+  kernelHostProcess.on('error', (err) => {
+    console.error(`[Takton] Kernel host process error: ${err.message}`);
+    kernelHostProcess = null;
   });
   kernelHostProcess.stderr?.on('data', (data: Buffer) => {
     console.error(`[KernelHost] ${data.toString().trim()}`);
@@ -688,11 +816,17 @@ async function startKernelHost(): Promise<void> {
     console.log(`[Takton] Kernel host exited code=${code} signal=${signal}`);
     kernelHostProcess = null;
   });
-  for (let i = 0; i < 50; i++) {
+  for (let i = 0; i < 80; i++) {
     if (await kernelHostListening(listen)) {
       console.log(`[Takton] Kernel host ready at ${listen}`);
       process.env.TAKTON_KERNEL_BACKEND = process.env.TAKTON_KERNEL_BACKEND || 'rust';
       process.env.TAKTON_KERNEL_AUTO_START = '0';
+      return;
+    }
+    if (kernelHostProcess && kernelHostProcess.exitCode != null) {
+      console.error(
+        `[Takton] Kernel host exited early code=${kernelHostProcess.exitCode}`,
+      );
       return;
     }
     await new Promise((r) => setTimeout(r, 100));

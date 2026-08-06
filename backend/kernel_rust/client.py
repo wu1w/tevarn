@@ -480,37 +480,48 @@ class _JsonRpcClient:
 def _find_host_bin() -> Path | None:
     """Locate takton-kernel-host binary.
 
-    优先 ``target/release`` / ``target/debug``（当前 ABI），再回落 vendor。
-    在候选中取 **最新 mtime**，避免拉起缺方法的旧 vendor 副本。
+    Prefer ``target/release`` / ``target/debug`` (current ABI), then vendor,
+    then Electron packaged layout (``resources/takton-kernel-host``).
+
+    Ranking: target/* first; within a tier pick newest mtime so an old vendor
+    copy does not shadow a fresher build.
     """
     env = os.environ.get("TAKTON_KERNEL_HOST_BIN")
     if env and Path(env).is_file():
         return Path(env)
     here = Path(__file__).resolve()
-    root = here.parents[2]  # repo root (backend/kernel_rust -> backend -> root)
+    # repo root in source tree; process.resourcesPath in Electron pack
+    # (…/resources/backend/kernel_rust/client.py → parents[2] == resources)
+    root = here.parents[2]
     names = ("takton-kernel-host.exe", "takton-kernel-host")
-    # release/debug 优先于 vendor（旧 vendor 可能缺 pkg_set_signing_key 等）
-    dirs = [
-        root / "target" / "release",
-        root / "target" / "debug",
-        root / "vendor" / "takton-kernel-host",
-        root / "vendor",
-    ]
+
+    def _host_dirs(base: Path) -> list[Path]:
+        return [
+            base / "target" / "release",
+            base / "target" / "debug",
+            base / "vendor" / "takton-kernel-host",
+            base / "vendor",
+            # Electron extraResources → resources/takton-kernel-host/
+            base / "takton-kernel-host",
+            # nested under resources/ when cwd is install root
+            base / "resources" / "takton-kernel-host",
+            base / "resources" / "vendor" / "takton-kernel-host",
+        ]
+
+    dirs: list[Path] = _host_dirs(root)
     extra_roots = [
         Path(os.environ.get("TAKTON_ROOT", "") or ""),
+        Path(os.environ.get("TAKTON_RESOURCES_PATH", "") or ""),
         Path.cwd(),
         here.parents[1],  # backend/
+        here.parents[1].parent,  # resources/ (packaged) or repo root
     ]
     for er in extra_roots:
-        if er and er.is_dir():
-            dirs.extend(
-                [
-                    er / "target" / "release",
-                    er / "target" / "debug",
-                    er / "vendor" / "takton-kernel-host",
-                    er / "vendor",
-                ]
-            )
+        if er and str(er) and er.is_dir():
+            dirs.extend(_host_dirs(er))
+            # Also allow the extra root itself to be the host folder
+            dirs.append(er)
+
     candidates: list[Path] = []
     seen: set[str] = set()
     for d in dirs:
@@ -529,7 +540,7 @@ def _find_host_bin() -> Path | None:
         return None
 
     def _rank(p: Path) -> tuple[int, float]:
-        """target/{release,debug} 优先于 vendor；同档取 mtime 最新（避免旧 release 缺 ABI 方法）。"""
+        """target/{release,debug} first; newest mtime within tier."""
         s = str(p).replace("\\", "/").lower()
         if "/target/release/" in s or "/target/debug/" in s:
             tier = 0
@@ -545,6 +556,7 @@ def _find_host_bin() -> Path | None:
         return min(candidates, key=_rank)
     except OSError:
         return candidates[0]
+
 
 
 _host_proc: subprocess.Popen | None = None

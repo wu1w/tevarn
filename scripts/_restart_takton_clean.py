@@ -15,7 +15,16 @@ HEALTHS = (
     "http://127.0.0.1:8090/api/health",
 )
 
-SKIP_DIRS = {"__pycache__", ".pytest_cache", "node_modules", ".git", "data", "logs", "uploads"}
+SKIP_DIRS = {"__pycache__", ".pytest_cache", "node_modules", ".git", "data", "logs", "uploads", ".takton", ".computers"}
+SKIP_FILES = {
+    ".env",
+    "secrets.json",
+    "takton.db",
+    "initial-credentials.txt",
+    "initial_admin_password",
+    "workspace_state.json",
+}
+SKIP_SUFFIXES = (".db", ".db-wal", ".db-shm", ".pyc", ".pem")
 
 
 def kill() -> None:
@@ -52,6 +61,11 @@ def sync_backend() -> None:
         if not path.is_file():
             continue
         if any(part in SKIP_DIRS for part in path.parts):
+            continue
+        # Never push developer secrets / local DB into the installed product
+        if path.name in SKIP_FILES or path.name.startswith(".env"):
+            continue
+        if path.suffix in SKIP_SUFFIXES or path.name.endswith(SKIP_SUFFIXES):
             continue
         # skip huge static rebuild noise optional - still sync static for UI
         rel = path.relative_to(SRC)
