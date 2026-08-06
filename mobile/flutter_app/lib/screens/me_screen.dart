@@ -165,7 +165,7 @@ class MeScreen extends StatelessWidget {
             children: [
               const PxRow(
                 title: 'Takton Mobile',
-                sub: 'v0.4.7 · Pixel Console · Flutter + Rust',
+                sub: 'v0.4.8 · Pixel Console · Flutter + Rust',
                 borderTop: false,
               ),
               const PxRow(title: '协议', sub: 'MIT · Local-first'),

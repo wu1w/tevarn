@@ -658,9 +658,11 @@ class AppController extends ChangeNotifier {
   }
 
   void setTab(AppTab t) {
+    final wasMe = tab == AppTab.me;
     tab = t;
     drawerOpen = false;
-    if (t == AppTab.me) {
+    // Only reload settings when entering Me from another tab (not re-tap).
+    if (t == AppTab.me && !wasMe) {
       mePanelGen++;
     }
     _syncApprovePoll();
@@ -759,7 +761,9 @@ class AppController extends ChangeNotifier {
     toast = m;
     toastShow = true;
     _notify();
-    Future.delayed(const Duration(milliseconds: 2200), () {
+    _toastTimer?.cancel();
+    _toastTimer = Timer(const Duration(milliseconds: 2200), () {
+      if (!hasListeners) return;
       toastShow = false;
       _notify();
     });

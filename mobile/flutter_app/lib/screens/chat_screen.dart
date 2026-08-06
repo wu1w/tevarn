@@ -27,6 +27,10 @@ class _ChatScreenState extends State<ChatScreen> {
   final _scroll = ScrollController();
   bool _hasText = false;
   bool _listening = false;
+  /// When true, stream/new messages pin the list to the bottom.
+  /// User scroll-up clears this; returning near bottom re-enables.
+  bool _stickBottom = true;
+  int _prevMsgLen = 0;
 
   @override
   void initState() {
@@ -35,24 +39,36 @@ class _ChatScreenState extends State<ChatScreen> {
       final next = _ctrl.text.trim().isNotEmpty;
       if (next != _hasText) setState(() => _hasText = next);
     });
+    _scroll.addListener(_onUserScroll);
+  }
+
+  void _onUserScroll() {
+    if (!_scroll.hasClients) return;
+    final pos = _scroll.position;
+    final dist = pos.maxScrollExtent - pos.pixels;
+    if (dist > 96) {
+      _stickBottom = false;
+    } else if (dist <= 48) {
+      _stickBottom = true;
+    }
   }
 
   @override
   void dispose() {
+    _scroll.removeListener(_onUserScroll);
     _ctrl.dispose();
     _scroll.dispose();
     super.dispose();
   }
 
-  void _scrollEnd() {
+  void _scrollEnd({bool force = false}) {
+    if (!force && !_stickBottom) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scroll.hasClients) {
-        _scroll.animateTo(
-          _scroll.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 140),
-          curve: Curves.easeOut,
-        );
-      }
+      if (!mounted || !_scroll.hasClients) return;
+      if (!force && !_stickBottom) return;
+      final max = _scroll.position.maxScrollExtent;
+      // jumpTo during stream avoids animation fighting user scroll
+      _scroll.jumpTo(max);
     });
   }
 
@@ -68,9 +84,18 @@ class _ChatScreenState extends State<ChatScreen> {
         ? Colors.white.withValues(alpha: 0.06)
         : PixelColors.ink.withValues(alpha: 0.05);
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (c.messages.isNotEmpty) _scrollEnd();
-    });
+    // New bubble → re-stick and scroll; stream updates only if still stuck
+    final len = c.messages.length;
+    if (len > _prevMsgLen) {
+      _stickBottom = true;
+      _prevMsgLen = len;
+      _scrollEnd(force: true);
+    } else if (len < _prevMsgLen) {
+      _prevMsgLen = len;
+    } else if (_stickBottom && len > 0 && c.streaming) {
+      // Only chase the tail while the model is generating
+      _scrollEnd();
+    }
 
     // Sync external clear of input (after send)
     if (c.input.isEmpty && _ctrl.text.isNotEmpty && !c.streaming) {
@@ -441,7 +466,11 @@ class _ChatScreenState extends State<ChatScreen> {
                       maxLines: 5,
                       textInputAction: TextInputAction.send,
                       onChanged: (v) => c.setInput(v, notify: false),
-                      onSubmitted: (_) => _doSend(c),
+                      onSubmitted: (_) {
+                        // Keyboard "send" never stops generation — only the red stop btn does.
+                        if (c.streaming) return;
+                        _doSend(c);
+                      },
                       style: TextStyle(
                         fontSize: 14.5,
                         height: 1.45,
@@ -563,6 +592,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _doSend(AppController c) async {
     if (c.streaming) {
+      // Red stop button path only (keyboard submit is blocked above).
       await c.stopGeneration();
       return;
     }
@@ -570,8 +600,10 @@ class _ChatScreenState extends State<ChatScreen> {
     // Do not clear draft until send accepts it (canSend / empty checks).
     final accepted = await c.send(text);
     if (accepted && mounted) {
+      _stickBottom = true;
       _ctrl.clear();
       setState(() => _hasText = false);
+      _scrollEnd(force: true);
     }
   }
 

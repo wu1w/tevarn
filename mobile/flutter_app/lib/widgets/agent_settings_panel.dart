@@ -27,8 +27,16 @@ class _AgentSettingsPanelState extends State<AgentSettingsPanel> {
   bool _busy = false;
   bool _enableMcp = true;
   bool _enableSkills = true;
+  bool _hasVisionKey = false;
+  bool _hasSpeechKey = false;
+  bool _hasTavily = false;
   List<Map<String, dynamic>> _mcpServers = [];
   String _status = '';
+
+  static bool _isMasked(String? s) {
+    if (s == null || s.isEmpty) return false;
+    return s.contains('…') || s.contains('...') || s == '••••';
+  }
 
   @override
   void didChangeDependencies() {
@@ -71,14 +79,28 @@ class _AgentSettingsPanelState extends State<AgentSettingsPanel> {
       final cfg = r['config'] is Map
           ? Map<String, dynamic>.from(r['config'] as Map)
           : <String, dynamic>{};
-      _visionKey.text = cfg['azure_vision_key']?.toString() ?? '';
+
+      // Secrets: never put masked placeholders into the text field.
+      // Empty field + has_* flag means "keep existing on save".
+      final vk = cfg['azure_vision_key']?.toString() ?? '';
+      final sk = cfg['azure_speech_key']?.toString() ?? '';
+      final tk = cfg['tavily_api_key']?.toString() ?? '';
+      _hasVisionKey = cfg['has_azure_vision_key'] == true ||
+          (vk.isNotEmpty && !_isMasked(vk));
+      _hasSpeechKey = cfg['has_azure_speech_key'] == true ||
+          (sk.isNotEmpty && !_isMasked(sk));
+      _hasTavily =
+          cfg['has_tavily_api_key'] == true || (tk.isNotEmpty && !_isMasked(tk));
+      // If server returned a real (unmasked) key, show it; else leave blank.
+      _visionKey.text = _isMasked(vk) ? '' : vk;
+      _speechKey.text = _isMasked(sk) ? '' : sk;
+      _tavily.text = _isMasked(tk) ? '' : tk;
+
       _visionEp.text = cfg['azure_vision_endpoint']?.toString() ?? '';
-      _speechKey.text = cfg['azure_speech_key']?.toString() ?? '';
       _speechRegion.text =
           (cfg['azure_speech_region']?.toString().isNotEmpty == true)
               ? cfg['azure_speech_region'].toString()
               : 'eastasia';
-      _tavily.text = cfg['tavily_api_key']?.toString() ?? '';
       _ttsVoice.text = (cfg['tts_voice']?.toString().isNotEmpty == true)
           ? cfg['tts_voice'].toString()
           : 'zh-CN-XiaoxiaoNeural';
@@ -110,6 +132,7 @@ class _AgentSettingsPanelState extends State<AgentSettingsPanel> {
   }
 
   Future<void> _saveAgent() async {
+    if (_busy) return;
     final c = context.read<AppController>();
     setState(() => _busy = true);
     try {
@@ -140,6 +163,7 @@ class _AgentSettingsPanelState extends State<AgentSettingsPanel> {
   }
 
   Future<void> _saveMcp() async {
+    if (_busy) return;
     final c = context.read<AppController>();
     final name = _mcpName.text.trim().isEmpty ? 'default' : _mcpName.text.trim();
     final url = _mcpUrl.text.trim();
@@ -184,6 +208,7 @@ class _AgentSettingsPanelState extends State<AgentSettingsPanel> {
   }
 
   Future<void> _removeMcp(String name) async {
+    if (_busy) return;
     final c = context.read<AppController>();
     final prev = List<Map<String, dynamic>>.from(_mcpServers);
     setState(() {
@@ -217,6 +242,11 @@ class _AgentSettingsPanelState extends State<AgentSettingsPanel> {
     return e.isEmpty ? '操作失败' : e;
   }
 
+  String _secretHint(bool has, String emptyHint) {
+    if (has) return '已配置 · 留空则保持原值 · 填新值覆盖';
+    return emptyHint;
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.watch<AppController>();
@@ -242,11 +272,26 @@ class _AgentSettingsPanelState extends State<AgentSettingsPanel> {
             'OCR 已内建（ocr.space 免费回退）；GPT/Grok 等多模态直接看图，不强制 OCR。DeepSeek/GLM 等盲模型发图时自动 OCR。TTS 默认微软 Edge。',
             style: TextStyle(fontSize: 11.5, height: 1.4, color: ink3),
           ),
+          if (_hasVisionKey || _hasSpeechKey || _hasTavily) ...[
+            const SizedBox(height: 8),
+            Text(
+              [
+                if (_hasVisionKey) 'Vision✓',
+                if (_hasSpeechKey) 'Speech✓',
+                if (_hasTavily) 'Tavily✓',
+              ].join(' · '),
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+                color: PixelColors.green,
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           PxField(
             label: 'Azure Vision Key（可选·增强 OCR）',
             controller: _visionKey,
-            hint: '可选 · 空则用免费 OCR 回退',
+            hint: _secretHint(_hasVisionKey, '可选 · 空则用免费 OCR 回退'),
             obscure: true,
           ),
           PxField(
@@ -257,7 +302,7 @@ class _AgentSettingsPanelState extends State<AgentSettingsPanel> {
           PxField(
             label: 'Azure Speech Key（TTS）',
             controller: _speechKey,
-            hint: '可选 · 空则用 Edge 免费 TTS',
+            hint: _secretHint(_hasSpeechKey, '可选 · 空则用 Edge 免费 TTS'),
             obscure: true,
           ),
           PxField(
@@ -273,7 +318,7 @@ class _AgentSettingsPanelState extends State<AgentSettingsPanel> {
           PxField(
             label: 'Tavily API Key（增强搜索）',
             controller: _tavily,
-            hint: '可选 · 空则用 Bing/Wiki 等免费源',
+            hint: _secretHint(_hasTavily, '可选 · 空则用 Bing/Wiki 等免费源'),
             obscure: true,
           ),
           const SizedBox(height: 6),
@@ -340,7 +385,7 @@ class _AgentSettingsPanelState extends State<AgentSettingsPanel> {
                       ),
                     ),
                     GestureDetector(
-                      onTap: () => _removeMcp(name),
+                      onTap: _busy ? null : () => _removeMcp(name),
                       child: Text('删除',
                           style: TextStyle(
                               fontSize: 12,
