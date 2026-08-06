@@ -52,6 +52,34 @@ CURATED: list[UnifiedMCP] = [
         popularity=20000,
     ),
     UnifiedMCP(
+        id="firecrawl",
+        name="firecrawl",
+        display_name="Firecrawl",
+        summary="网页 → 干净 Markdown / 结构化 JSON（Agent 可读）",
+        description=(
+            "官方 Firecrawl MCP（firecrawl-mcp）：scrape / crawl / map / search。"
+            "把任意 URL 洗成 LLM 友好 Markdown，补齐「能搜不能读 JS 脏页」短板。"
+            "需 FIRECRAWL_API_KEY（https://firecrawl.dev）。"
+            "也可自托管后设 FIRECRAWL_API_URL。"
+            "兼容 Claude Code / Hermes / OpenClaw / Codex / Takton。"
+        ),
+        source="curated",
+        source_url="https://github.com/firecrawl/firecrawl-mcp-server",
+        icon="🔥",
+        category="搜索",
+        tags=["search", "web", "scrape", "crawl", "markdown", "firecrawl"],
+        transport="stdio",
+        command="npx",
+        args=["-y", "firecrawl-mcp"],
+        env_hint="FIRECRAWL_API_KEY=\n# optional self-host:\n# FIRECRAWL_API_URL=http://127.0.0.1:3002",
+        risk_level="low",
+        version="latest",
+        registry_type="npm",
+        package_id="firecrawl-mcp",
+        popularity=5400,
+        note="填 FIRECRAWL_API_KEY 后点重载 MCP；自托管可加 FIRECRAWL_API_URL",
+    ),
+    UnifiedMCP(
         id="github",
         name="github",
         display_name="GitHub",

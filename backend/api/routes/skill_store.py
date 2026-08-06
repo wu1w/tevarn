@@ -9,6 +9,8 @@ Skill Store API 路由
 - POST /api/skills/store/uninstall     卸载 skill
 - GET  /api/skills/store/installed     列出已安装的 prompt-skill
 - POST /api/skills/store/refresh       刷新缓存
+- GET  /api/skills/store/packs         一键技能包目录
+- POST /api/skills/store/install-pack  一键安装技能包
 """
 
 from __future__ import annotations
@@ -21,6 +23,9 @@ from pydantic import BaseModel
 
 from backend.api.dependencies import get_current_user
 from backend.schemas.skill_store import (
+    InstallPackRequest,
+    InstallPackResponse,
+    SkillPackInfo,
     SkillSource,
     SkillStoreQuery,
     SkillStoreResponse,
@@ -169,6 +174,25 @@ async def install_skill_from_url(
     if not result.get("success"):
         raise HTTPException(status_code=400, detail=result.get("error") or "install failed")
     return result
+
+
+@router.get("/packs", response_model=list[SkillPackInfo])
+async def list_skill_packs(
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """列出一键技能包（Matt Pocock 等）"""
+    svc = get_skill_store_service()
+    return svc.list_packs()
+
+
+@router.post("/install-pack", response_model=InstallPackResponse)
+async def install_skill_pack(
+    payload: InstallPackRequest,
+    current_user: Annotated[UserRead, Depends(get_current_user)],
+):
+    """一键安装技能包：批量下载 SKILL.md 到 ~/.takton/skills/"""
+    svc = get_skill_store_service()
+    return await svc.install_pack(payload.pack_id, force=bool(payload.force))
 
 
 @router.post("/install", response_model=InstallResponse)

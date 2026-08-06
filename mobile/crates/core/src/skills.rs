@@ -130,7 +130,62 @@ impl SkillStore {
     pub fn list_json(&self) -> Value {
         json!(self.list())
     }
+
+    /// Install / overwrite a skill from full SKILL.md content.
+    pub fn install_content(&self, id: &str, content: &str) -> Result<String> {
+        let id = id
+            .trim()
+            .replace(['/', '\\', ' ', ':'], "-")
+            .trim_matches(|c| c == '.' || c == '-')
+            .to_string();
+        if id.is_empty() {
+            return Err(Error::Msg("empty skill id".into()));
+        }
+        let dir = self.root.join(&id);
+        std::fs::create_dir_all(&dir).map_err(|e| Error::Msg(e.to_string()))?;
+        let path = dir.join("SKILL.md");
+        std::fs::write(&path, content).map_err(|e| Error::Msg(e.to_string()))?;
+        Ok(path.display().to_string())
+    }
+
+    /// Remove an installed skill directory.
+    pub fn uninstall(&self, id: &str) -> Result<bool> {
+        let id = id.trim();
+        let dir = self.root.join(id);
+        if dir.is_dir() {
+            std::fs::remove_dir_all(&dir).map_err(|e| Error::Msg(e.to_string()))?;
+            return Ok(true);
+        }
+        let md = self.root.join(format!("{id}.md"));
+        if md.is_file() {
+            std::fs::remove_file(&md).map_err(|e| Error::Msg(e.to_string()))?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
 }
+
+/// Known Matt Pocock mobile pack: (id, raw github path category/name)
+pub fn mattpocock_mobile_pack() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("grill-me", "productivity/grill-me"),
+        ("handoff", "productivity/handoff"),
+        ("wait-what", "productivity/wait-what"),
+        ("writing-for-agents", "productivity/writing-for-agents"),
+        ("research", "engineering/research"),
+        ("diagnosing-bugs", "engineering/diagnosing-bugs"),
+        ("tdd", "engineering/tdd"),
+        ("code-review", "engineering/code-review"),
+        ("to-spec", "engineering/to-spec"),
+    ]
+}
+
+pub fn mattpocock_raw_url(category_name: &str) -> String {
+    format!(
+        "https://raw.githubusercontent.com/mattpocock/skills/main/skills/{category_name}/SKILL.md"
+    )
+}
+
 
 fn load_skill_file(path: &Path) -> Result<Skill> {
     let raw = std::fs::read_to_string(path).map_err(|e| Error::Msg(e.to_string()))?;
@@ -271,6 +326,23 @@ version: "1.0"
 2. 需要出声用 voice_speak。
 3. 时间相关用 get_datetime。
 4. 回复简短可执行。
+"#,
+        ),
+        (
+            "codex-security/SKILL.md",
+            r#"---
+name: codex-security
+description: 安全扫描指引（OpenAI Codex Security CLI）。用户要求漏洞/AppSec 时使用。
+triggers: [安全扫描, 漏洞, AppSec, security, codex-security, OWASP]
+version: "1.0"
+---
+# Codex Security（手机轻量指引）
+完整扫描优先在 PC 用 `npx -y @openai/codex-security scan .`。
+手机端：
+1. 明确范围与是否允许联网。
+2. 用 file_read / grep 做手工安全清单（注入、鉴权、密钥、SSRF、路径穿越）。
+3. 不要编造扫描报告；若无法跑 CLI 要明确说明。
+4. 修复建议要最小可落地。
 "#,
         ),
     ];

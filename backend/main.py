@@ -536,6 +536,22 @@ async def lifespan(app: FastAPI):
     try:
         await _seed_skills()
         try:
+            from backend.services.skill_store.default_seed import ensure_default_prompt_skills
+
+            seed_result = ensure_default_prompt_skills()
+            if seed_result.get("installed"):
+                logger.info(
+                    "Default prompt-skills installed: %s",
+                    seed_result["installed"],
+                )
+            if seed_result.get("errors"):
+                logger.warning(
+                    "Default prompt-skills errors: %s",
+                    seed_result["errors"],
+                )
+        except Exception as e:
+            logger.warning(f"Default prompt-skill seed skipped: {e}")
+        try:
             await _seed_beginner_knowledge()
         except Exception as e:
             logger.warning(f"Beginner knowledge seeding skipped: {e}")

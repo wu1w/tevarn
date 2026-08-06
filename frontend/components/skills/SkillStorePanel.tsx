@@ -9,10 +9,13 @@ import {
   getStoreSources,
   listStoreSkills,
   installStoreSkill,
+  installStoreSkillPack,
+  listSkillPacks,
   uninstallStoreSkill,
   listInstalledStoreSkills,
   listActivePromptSkills,
   refreshStoreCache,
+  SkillPackInfo,
 } from '@/lib/api';
 import { useToastStore } from '@/stores/toastStore';
 import { useConfirm } from '@/components/desktop/ConfirmDialog';
@@ -56,6 +59,20 @@ const SOURCE_META: Record<
     color: 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/25',
     ring: 'ring-rose-500/30',
     tipKey: 'awesome-hermes-skills · SKILL.md',
+  },
+  mattpocock: {
+    label: 'Matt Pocock',
+    short: 'MP',
+    color: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/25',
+    ring: 'ring-emerald-500/30',
+    tipKey: 'mattpocock/skills · 工程工作流',
+  },
+  openai: {
+    label: 'OpenAI',
+    short: 'OA',
+    color: 'bg-teal-500/15 text-teal-700 dark:text-teal-400 border-teal-500/25',
+    ring: 'ring-teal-500/30',
+    tipKey: 'openai/codex-security · 默认内置',
   },
   custom: {
     label: 'Custom',
@@ -286,15 +303,20 @@ export default function SkillStorePanel() {
   const [search, setSearch] = useState('');
   const [offset, setOffset] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [packs, setPacks] = useState<SkillPackInfo[]>([]);
+  const [packBusy, setPackBusy] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const searchBoxRef = useRef<HTMLInputElement>(null);
 
-  // 源列表（只拉一次）
+  // 源列表 + 技能包（只拉一次）
   useEffect(() => {
     getStoreSources()
       .then(setSources)
       .catch((e) => addToast(t('store.loadSourcesFail').replace('{msg}', String(e?.message || e)), 'error'));
+    listSkillPacks()
+      .then(setPacks)
+      .catch(() => setPacks([]));
   }, [addToast, t]);
 
   const loadInstalled = useCallback(async () => {
@@ -419,6 +441,23 @@ export default function SkillStorePanel() {
     }
   };
 
+  const handleInstallPack = async (packId: string) => {
+    setPackBusy(packId);
+    try {
+      const result = await installStoreSkillPack(packId, false);
+      if (result.success) {
+        addToast(result.message || `已安装技能包 ${packId}`, 'success');
+        await loadInstalled();
+      } else {
+        addToast(result.message || '技能包安装失败', 'error');
+      }
+    } catch (e: any) {
+      addToast(String(e?.response?.data?.detail || e?.message || e), 'error');
+    } finally {
+      setPackBusy(null);
+    }
+  };
+
   const handleUninstall = async (skill: UnifiedSkill | { source: string; name: string; display_name?: string }) => {
     const display = 'display_name' in skill && skill.display_name ? skill.display_name : skill.name;
     const ok = await confirm(
@@ -539,6 +578,32 @@ export default function SkillStorePanel() {
           </div>
         </div>
       </div>
+
+      {/* 一键技能包 */}
+      {packs.length > 0 && viewFilter === 'browse' && (
+        <div className="mb-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2.5">
+          <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">
+            一键技能包 · Matt Pocock / OpenAI 默认
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {packs.map((pk) => (
+              <button
+                key={pk.id}
+                type="button"
+                disabled={!!packBusy}
+                onClick={() => handleInstallPack(pk.id)}
+                title={pk.description}
+                className="rounded-lg border border-emerald-500/30 bg-elevated-bg px-3 py-1.5 text-left text-xs transition-colors hover:border-emerald-500/60 disabled:opacity-50"
+              >
+                <span className="font-semibold text-foreground">
+                  {packBusy === pk.id ? '安装中…' : pk.name}
+                </span>
+                <span className="ml-1.5 text-foreground-muted">{pk.count} skills</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* 工具条 sticky */}
       <div className="sticky top-0 z-10 mb-3 space-y-2 rounded-xl border border-border-subtle/60 bg-background/90 p-2 backdrop-blur-md">

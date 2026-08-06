@@ -378,7 +378,9 @@ pub fn api_router() -> Router<AppState> {
             .route("/local/config/clear", post(local_config_clear))
             .route("/local/test", post(local_test))
             .route("/local/tools", post(local_tools_run))
-            .route("/local/skills", get(local_skills_list))
+            .route("/local/skills", get(local_skills_list).post(local_skills_install))
+            .route("/local/skills/pack", post(local_skills_install_pack))
+            .route("/local/skills/uninstall", post(local_skills_uninstall))
             .route("/local/mcp", get(local_mcp_get).post(local_mcp_set))
             .route("/local/agent_config", get(local_agent_cfg_get).post(local_agent_cfg_set))
             .route("/local/history", get(local_history_get).post(local_history_clear))
@@ -2263,6 +2265,141 @@ async fn local_config_set(
 
 async fn local_skills_list(State(st): State<AppState>) -> Json<Value> {
     Json(json!({ "ok": true, "skills": st.local_agent.tools().skills().list_json() }))
+}
+
+async fn local_skills_install(State(st): State<AppState>, Json(body): Json<Value>) -> Json<Value> {
+    let id = body
+        .get("id")
+        .or_else(|| body.get("name"))
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .trim();
+    let content = body
+        .get("content")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    if id.is_empty() || content.trim().is_empty() {
+        return Json(json!({"ok": false, "error": "id and content required"}));
+    }
+    match st.local_agent.tools().skills().install_content(id, &content) {
+        Ok(path) => Json(json!({"ok": true, "path": path, "id": id})),
+        Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
+    }
+}
+
+async fn local_skills_uninstall(State(st): State<AppState>, Json(body): Json<Value>) -> Json<Value> {
+    let id = body.get("id").and_then(|x| x.as_str()).unwrap_or("").trim();
+    if id.is_empty() {
+        return Json(json!({"ok": false, "error": "id required"}));
+    }
+    match st.local_agent.tools().skills().uninstall(id) {
+        Ok(removed) => Json(json!({"ok": true, "removed": removed})),
+        Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
+    }
+}
+
+/// Install Matt Pocock mobile pack (and optional full productivity) from GitHub raw.
+async fn local_skills_install_pack(
+    State(st): State<AppState>,
+    Json(body): Json<Value>,
+) -> Json<Value> {
+    let pack = body
+        .get("pack_id")
+        .or_else(|| body.get("pack"))
+        .and_then(|x| x.as_str())
+        .unwrap_or("mattpocock-mobile")
+        .trim()
+        .to_string();
+    let force = body.get("force").and_then(|x| x.as_bool()).unwrap_or(false);
+
+    let entries: Vec<(String, String)> = match pack.as_str() {
+        "mattpocock-mobile" | "mattpocock" | "mobile" => takton_mobile_core::skills::mattpocock_mobile_pack()
+            .iter()
+            .map(|(id, path)| (id.to_string(), path.to_string()))
+            .collect(),
+        _ => {
+            return Json(json!({
+                "ok": false,
+                "error": format!("unknown pack_id: {pack} (use mattpocock-mobile)")
+            }));
+        }
+    };
+
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(25))
+        .user_agent("Takton-Mobile/0.4")
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => return Json(json!({"ok": false, "error": e.to_string()})),
+    };
+
+    let mut installed = 0u32;
+    let mut skipped = 0u32;
+    let mut failed = 0u32;
+    let mut items = Vec::new();
+    let store = st.local_agent.tools().skills();
+
+    for (id, cat_path) in entries {
+        // skip if exists and !force
+        if !force {
+            if store.get(&id).is_ok() {
+                skipped += 1;
+                items.push(json!({"skill_id": id, "success": true, "error": "already installed"}));
+                continue;
+            }
+        }
+        let url = takton_mobile_core::skills::mattpocock_raw_url(&cat_path);
+        match client.get(&url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                match resp.text().await {
+                    Ok(content) if content.contains("name:") || content.starts_with('#') => {
+                        match store.install_content(&id, &content) {
+                            Ok(path) => {
+                                installed += 1;
+                                items.push(json!({"skill_id": id, "success": true, "path": path}));
+                            }
+                            Err(e) => {
+                                failed += 1;
+                                items.push(json!({"skill_id": id, "success": false, "error": e.to_string()}));
+                            }
+                        }
+                    }
+                    Ok(_) => {
+                        failed += 1;
+                        items.push(json!({"skill_id": id, "success": false, "error": "empty or invalid SKILL.md"}));
+                    }
+                    Err(e) => {
+                        failed += 1;
+                        items.push(json!({"skill_id": id, "success": false, "error": e.to_string()}));
+                    }
+                }
+            }
+            Ok(resp) => {
+                failed += 1;
+                items.push(json!({
+                    "skill_id": id,
+                    "success": false,
+                    "error": format!("HTTP {}", resp.status())
+                }));
+            }
+            Err(e) => {
+                failed += 1;
+                items.push(json!({"skill_id": id, "success": false, "error": e.to_string()}));
+            }
+        }
+    }
+
+    Json(json!({
+        "ok": failed == 0 || installed > 0,
+        "pack_id": pack,
+        "installed": installed,
+        "skipped": skipped,
+        "failed": failed,
+        "items": items,
+        "message": format!("技能包 {pack}：成功 {installed}，跳过 {skipped}，失败 {failed}"),
+    }))
 }
 
 async fn local_mcp_get(State(st): State<AppState>) -> Json<Value> {

@@ -69,6 +69,11 @@ abstract class TaktonBridge {
   Future<Map<String, dynamic>> mcpConfigSet(Map<String, dynamic> config) =>
       call('local_mcp_set', {'config': config});
   Future<Map<String, dynamic>> localSkills() => call('local_skills');
+  Future<Map<String, dynamic>> localSkillsInstallPack(String packId, {bool force = false}) =>
+      call('local_skills_install_pack', {'pack_id': packId, 'force': force});
+  Future<Map<String, dynamic>> localSkillsInstall(String id, String content) =>
+      call('local_skills_install', {'id': id, 'content': content});
+
   Future<Map<String, dynamic>> localConfigClear() =>
       call('local_config_clear');
   Future<Map<String, dynamic>> localTest([Map<String, dynamic>? body]) =>

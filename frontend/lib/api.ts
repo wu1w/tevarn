@@ -407,7 +407,7 @@ export async function importCommunitySkills(selected: string[], url?: string): P
 
 // ====== Skill Store APIs (multi-source) ======
 
-export type SkillSource = 'takton' | 'clawhub' | 'awesome-claude' | 'awesome-hermes' | 'custom';
+export type SkillSource = 'takton' | 'clawhub' | 'awesome-claude' | 'awesome-hermes' | 'mattpocock' | 'openai' | 'custom';
 
 export interface SkillStats {
   stars: number;
@@ -498,6 +498,39 @@ export async function getStoreSkillDetail(source: SkillSource, skillId: string):
 
 export async function installStoreSkill(source: SkillSource, skillId: string): Promise<InstallResult> {
   const res = await api.post('/skills/store/install', { source, skill_id: skillId });
+  return res.data;
+}
+
+export interface SkillPackInfo {
+  id: string;
+  name: string;
+  description: string;
+  source: SkillSource;
+  skill_ids: string[];
+  count: number;
+  recommended_for: string[];
+}
+
+export interface InstallPackResult {
+  success: boolean;
+  pack_id: string;
+  installed: number;
+  failed: number;
+  skipped: number;
+  items: Array<{ skill_id: string; success: boolean; path?: string; error?: string }>;
+  message: string;
+}
+
+export async function listSkillPacks(): Promise<SkillPackInfo[]> {
+  const res = await api.get('/skills/store/packs');
+  return res.data;
+}
+
+export async function installStoreSkillPack(
+  packId: string,
+  force = false,
+): Promise<InstallPackResult> {
+  const res = await api.post('/skills/store/install-pack', { pack_id: packId, force });
   return res.data;
 }
 

@@ -94,6 +94,12 @@ class HttpTaktonBridge extends TaktonBridge {
           return _post('/api/mobile/local/mcp', a);
         case 'local_skills':
           return _get('/api/mobile/local/skills');
+        case 'local_skills_install':
+          return _post('/api/mobile/local/skills', a);
+        case 'local_skills_install_pack':
+          return _post('/api/mobile/local/skills/pack', a);
+        case 'local_skills_uninstall':
+          return _post('/api/mobile/local/skills/uninstall', a);
         case 'local_tools':
           return _post('/api/mobile/local/tools', a);
         case 'approvals':

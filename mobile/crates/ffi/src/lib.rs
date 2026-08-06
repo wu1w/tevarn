@@ -322,6 +322,15 @@ async fn dispatch(eng: &EngineHandle, method: &str, args: &Value) -> Result<Stri
             .invoke("POST", "/api/mobile/local/mcp", Some(&body()))
             .await,
         "local_skills" => eng.invoke("GET", "/api/mobile/local/skills", None).await,
+        "local_skills_install" => eng
+            .invoke("POST", "/api/mobile/local/skills", Some(&body()))
+            .await,
+        "local_skills_install_pack" => eng
+            .invoke("POST", "/api/mobile/local/skills/pack", Some(&body()))
+            .await,
+        "local_skills_uninstall" => eng
+            .invoke("POST", "/api/mobile/local/skills/uninstall", Some(&body()))
+            .await,
         "local_tools" => eng
             .invoke("POST", "/api/mobile/local/tools", Some(&body()))
             .await,

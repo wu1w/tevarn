@@ -31,6 +31,7 @@ class _AgentSettingsPanelState extends State<AgentSettingsPanel> {
   bool _hasSpeechKey = false;
   bool _hasTavily = false;
   List<Map<String, dynamic>> _mcpServers = [];
+  List<Map<String, dynamic>> _skills = [];
   String _status = '';
 
   static bool _isMasked(String? s) {
@@ -107,6 +108,15 @@ class _AgentSettingsPanelState extends State<AgentSettingsPanel> {
       _enableMcp = cfg['enable_mcp'] != false;
       _enableSkills = cfg['enable_skills'] != false;
 
+      try {
+        final sk = await c.bridge.localSkills();
+        if (sk['ok'] != false && sk['skills'] is List) {
+          _skills = (sk['skills'] as List)
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList();
+        }
+      } catch (_) {}
       final m = await c.bridge.mcpConfigGet();
       if (m['ok'] == false) {
         _status = m['error']?.toString() ?? '加载 MCP 失败';
@@ -231,6 +241,32 @@ class _AgentSettingsPanelState extends State<AgentSettingsPanel> {
     }
   }
 
+  Future<void> _installMattPack() async {
+    if (_busy) return;
+    final c = context.read<AppController>();
+    setState(() {
+      _busy = true;
+      _status = '正在安装 Matt 技能包…';
+    });
+    try {
+      final r = await c.bridge.localSkillsInstallPack('mattpocock-mobile');
+      if (r['ok'] == true) {
+        final msg = r['message']?.toString() ?? '安装完成';
+        _status = msg;
+        c.showToast(msg);
+        await _load();
+      } else {
+        _status = _friendlyErr(r['error']?.toString() ?? '安装失败');
+        c.showToast(_status);
+      }
+    } catch (e) {
+      _status = _friendlyErr('$e');
+      c.showToast(_status);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   String _friendlyErr(String raw) {
     final e = raw.trim();
     if (e.contains('unknown method')) {
@@ -333,7 +369,33 @@ class _AgentSettingsPanelState extends State<AgentSettingsPanel> {
               ),
             ],
           ),
+          const SizedBox(height: 6),
+          Text(
+            '已装 Skills · ${_skills.length} 个（含默认 codex-security）',
+            style: TextStyle(fontSize: 11.5, color: ink3),
+          ),
+          if (_skills.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              _skills
+                  .map((s) => s['name']?.toString() ?? s['id']?.toString() ?? '')
+                  .where((s) => s.isNotEmpty)
+                  .take(12)
+                  .join(' · '),
+              style: TextStyle(fontSize: 11, height: 1.35, color: ink),
+            ),
+          ],
+          const SizedBox(height: 8),
+          PxGhostBtn(
+            label: _busy ? '…' : '安装 Matt 技能包（手机轻量）',
+            onTap: _busy ? () {} : _installMattPack,
+          ),
           const SizedBox(height: 4),
+          Text(
+            '从 GitHub 拉取 grill-me / handoff / tdd / code-review 等 SKILL.md，与 PC 同源。',
+            style: TextStyle(fontSize: 11, height: 1.35, color: ink3),
+          ),
+          const SizedBox(height: 8),
           Row(
             children: [
               Expanded(
@@ -363,7 +425,9 @@ class _AgentSettingsPanelState extends State<AgentSettingsPanel> {
           ),
           const SizedBox(height: 4),
           Text(
-            '兼容社区 streamable HTTP MCP。保存后 agent 可通过 mcp_list / mcp_call 调用。',
+            '兼容社区 streamable HTTP MCP。保存后 agent 可通过 mcp_list / mcp_call 调用。\n'
+            'Firecrawl：PC 端 MCP 商店一键装 stdio（npx firecrawl-mcp + FIRECRAWL_API_KEY）；'
+            '手机可填远程 HTTP MCP URL（若自建 streamable 端点）。',
             style: TextStyle(fontSize: 11.5, height: 1.4, color: ink3),
           ),
           const SizedBox(height: 8),

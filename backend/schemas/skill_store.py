@@ -1,7 +1,7 @@
 """
 统一 Skill 元数据模型
 
-跨生态（takton / clawhub / awesome-claude / awesome-hermes）的 skill 统一表示。
+跨生态（takton / clawhub / awesome-claude / awesome-hermes / mattpocock）的 skill 统一表示。
 所有 fetcher 都将各源原始数据转换为 UnifiedSkill 输出给前端。
 """
 
@@ -12,7 +12,15 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-SkillSource = Literal["takton", "clawhub", "awesome-claude", "awesome-hermes", "custom"]
+SkillSource = Literal[
+    "takton",
+    "clawhub",
+    "awesome-claude",
+    "awesome-hermes",
+    "mattpocock",
+    "openai",
+    "custom",
+]
 
 
 class SkillStats(BaseModel):
@@ -81,3 +89,36 @@ class SkillStoreResponse(BaseModel):
     total: int
     sources: list[SkillSource]             # 本次响应包含的源
     errors: dict[str, str] = Field(default_factory=dict)  # 源 -> 错误信息（部分源失败时）
+
+
+class SkillPackInfo(BaseModel):
+    """一键技能包元信息"""
+    id: str
+    name: str
+    description: str = ""
+    source: SkillSource = "mattpocock"
+    skill_ids: list[str] = Field(default_factory=list)
+    count: int = 0
+    recommended_for: list[str] = Field(default_factory=list)  # pc | mobile
+
+
+class InstallPackRequest(BaseModel):
+    pack_id: str = Field(..., description="mattpocock | mattpocock-engineering | mattpocock-productivity | mattpocock-mobile")
+    force: bool = False
+
+
+class InstallPackItemResult(BaseModel):
+    skill_id: str
+    success: bool
+    path: str = ""
+    error: str = ""
+
+
+class InstallPackResponse(BaseModel):
+    success: bool
+    pack_id: str
+    installed: int = 0
+    failed: int = 0
+    skipped: int = 0
+    items: list[InstallPackItemResult] = Field(default_factory=list)
+    message: str = ""
