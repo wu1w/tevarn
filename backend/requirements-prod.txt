@@ -34,3 +34,4 @@ croniter>=2.0.0
 redis>=5.0.0
 
 tzdata>=2024.1  # Windows ZoneInfo / current_time
+pywin32>=311; sys_platform == "win32"

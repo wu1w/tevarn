@@ -22,6 +22,10 @@ const GET_PIP_URL = 'https://bootstrap.pypa.io/get-pip.py';
 const reqProd = path.join(root, 'backend', 'requirements-prod.txt');
 const reqWin = path.join(root, 'backend', 'requirements-win.txt');
 const wheelsDir = path.join(root, '.cache', 'win-wheels');
+// Platform markers (sys_platform==win32) are evaluated on the *host* during
+// `pip download --platform win_amd64`, so Windows-only deps like pywin32 are
+// skipped on Linux. Always fetch these explicitly for desktop packs.
+const WIN_ONLY_EXTRAS = ['pywin32>=311'];
 
 function log(...a) {
   console.log('[prepare-win-python-cross]', ...a);
@@ -114,14 +118,12 @@ function enableSite(embedDir) {
   fs.mkdirSync(path.join(embedDir, 'Lib', 'site-packages'), { recursive: true });
 }
 
-function installWheelsWithHostPip(reqFile) {
-  fs.mkdirSync(wheelsDir, { recursive: true });
-  log('downloading win_amd64 wheels…');
-  const r = spawnSync(
+function pipDownloadWin(args) {
+  return spawnSync(
     'python3',
     [
       '-m', 'pip', 'download',
-      '-r', reqFile,
+      ...args,
       '-d', wheelsDir,
       '--platform', 'win_amd64',
       '--python-version', '312',
@@ -131,20 +133,76 @@ function installWheelsWithHostPip(reqFile) {
     ],
     { stdio: 'inherit' },
   );
-  if (r.status !== 0) {
-    const r2 = spawnSync(
-      'python3',
-      [
-        '-m', 'pip', 'download',
-        '-r', reqFile,
-        '-d', wheelsDir,
-        '--platform', 'win_amd64',
-        '--python-version', '312',
-        '--only-binary=:all:',
-      ],
-      { stdio: 'inherit' },
+}
+
+/** pywin32 needs .pth + DLL path bootstrap for embeddable Python. */
+function fixupPywin32(site, embedDir) {
+  const pth = path.join(site, 'pywin32.pth');
+  if (!fs.existsSync(pth)) {
+    // Minimal pth matching upstream wheel
+    fs.writeFileSync(
+      pth,
+      ['win32', 'win32\\lib', 'pythonwin', 'import pywin32_bootstrap', ''].join('\n'),
+      'utf8',
     );
-    if (r2.status !== 0) fail('pip download for win_amd64 failed');
+    log('wrote', pth);
+  }
+  const sys32 = path.join(site, 'pywin32_system32');
+  if (fs.existsSync(sys32)) {
+    const init = path.join(sys32, '__init__.py');
+    if (!fs.existsSync(init)) {
+      fs.writeFileSync(init, '', 'utf8');
+    }
+    // Also drop DLLs next to python.exe so the Windows loader finds them even
+    // if add_dll_directory is unavailable in restricted embeds.
+    for (const name of fs.readdirSync(sys32)) {
+      if (name.toLowerCase().endsWith('.dll')) {
+        const src = path.join(sys32, name);
+        const dest = path.join(embedDir, name);
+        try {
+          fs.copyFileSync(src, dest);
+          log('copied', name, '→ embed root');
+        } catch (e) {
+          log('copy dll skip', name, e.message || e);
+        }
+      }
+    }
+  }
+  const pywintypes = path.join(site, 'win32', 'lib', 'pywintypes.py');
+  if (!fs.existsSync(pywintypes)) {
+    fail('pywin32 extract incomplete: missing win32/lib/pywintypes.py (mcp needs this on Windows)');
+  }
+  log('pywin32 ready (pywintypes present)');
+}
+
+function installWheelsWithHostPip(reqFile) {
+  fs.mkdirSync(wheelsDir, { recursive: true });
+  log('downloading win_amd64 wheels…');
+  let r = pipDownloadWin(['-r', reqFile]);
+  if (r.status !== 0) {
+    r = pipDownloadWin(['-r', reqFile]);
+    // second attempt without abi pin already in pipDownloadWin — try looser
+    if (r.status !== 0) {
+      const r2 = spawnSync(
+        'python3',
+        [
+          '-m', 'pip', 'download',
+          '-r', reqFile,
+          '-d', wheelsDir,
+          '--platform', 'win_amd64',
+          '--python-version', '312',
+          '--only-binary=:all:',
+        ],
+        { stdio: 'inherit' },
+      );
+      if (r2.status !== 0) fail('pip download for win_amd64 failed');
+    }
+  }
+  // Force Windows-only deps that markers skip on Linux hosts
+  for (const pkg of WIN_ONLY_EXTRAS) {
+    log('downloading Windows-only extra:', pkg);
+    const er = pipDownloadWin([pkg]);
+    if (er.status !== 0) fail(`pip download extra failed: ${pkg}`);
   }
   const site = path.join(outDir, 'Lib', 'site-packages');
   fs.mkdirSync(site, { recursive: true });
@@ -161,9 +219,14 @@ for whl in sorted(wheels.glob("*.whl")):
     print("extracted", whl.name)
 assert (site / "uvicorn").exists() or (site / "uvicorn.py").exists(), "uvicorn missing"
 assert (site / "fastapi").exists(), "fastapi missing"
+assert (site / "mcp").exists(), "mcp missing"
+# pywin32 (required by mcp on Windows)
+assert (site / "win32" / "lib" / "pywintypes.py").exists(), "pywin32/pywintypes missing"
+assert (site / "pywin32.pth").exists() or True
 print("site-packages ready")
 `;
   run('python3', ['-c', py]);
+  fixupPywin32(site, outDir);
 }
 
 function prune(site) {
@@ -212,10 +275,22 @@ async function main() {
   const force = process.env.TAKTON_FORCE_WIN_PYTHON === '1';
   if (fs.existsSync(marker) && !force) {
     const site = path.join(outDir, 'Lib', 'site-packages');
-    if (fs.existsSync(path.join(site, 'uvicorn')) && fs.existsSync(path.join(site, 'fastapi'))) {
+    const hasPywin =
+      fs.existsSync(path.join(site, 'win32', 'lib', 'pywintypes.py')) ||
+      fs.existsSync(path.join(site, 'pywin32.pth'));
+    if (
+      fs.existsSync(path.join(site, 'uvicorn')) &&
+      fs.existsSync(path.join(site, 'fastapi')) &&
+      fs.existsSync(path.join(site, 'mcp')) &&
+      hasPywin
+    ) {
       log('win-python already prepared; set TAKTON_FORCE_WIN_PYTHON=1 to rebuild');
+      fixupPywin32(site, outDir);
       prune(site);
       process.exit(0);
+    }
+    if (!hasPywin) {
+      log('win-python incomplete (missing pywin32) — rebuilding');
     }
   }
 
