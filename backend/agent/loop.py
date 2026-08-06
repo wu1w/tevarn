@@ -406,8 +406,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         if data and data.get("state") != "suspended":
                             p.state = data["state"]
                             p.resume()
-                except Exception:
-                    pass
+                except Exception as _silent_e:
+                    logger.debug("suppressed: %s", _silent_e, exc_info=False)
 
             ok = await proc.wait_if_suspended(
                 should_stop=lambda: self._should_stop,
@@ -536,8 +536,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                                     _bud = int(proc.token_budget or 0)
                                     if _cap > 0 and _bud + _add > _cap:
                                         _add = max(0, _cap - _bud)
-                                except Exception:
-                                    pass
+                                except Exception as _silent_e:
+                                    logger.debug("suppressed: %s", _silent_e, exc_info=False)
                                 if _add > 0:
                                     get_kernel().top_up_budget(
                                         proc.id,
@@ -550,8 +550,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                                         _meta_p["auto_top_up_count"] = _n + 1
                                         try:
                                             proc.meta = _meta_p  # type: ignore[misc]
-                                        except Exception:
-                                            pass
+                                        except Exception as _silent_e:
+                                            logger.debug("suppressed: %s", _silent_e, exc_info=False)
                                     fresh = get_kernel().get_process(proc.id)
                                     if fresh is not None:
                                         self._kernel_process = fresh
@@ -792,8 +792,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             from backend.agent.goal_state import bind_goal_run_id
 
             bind_goal_run_id(session_id, self._agent_run_id)
-        except Exception:
-            pass
+        except Exception as _silent_e:
+            logger.debug("suppressed: %s", _silent_e, exc_info=False)
 
         # ── Agent Kernel（阶段 1/W1）：本次 run 纳入进程生命周期管理 ──
         kernel = None
@@ -909,8 +909,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                                     ) or is_steward_contact(_id_txt)
                                     if _contact_early:
                                         self._contact_agent = _contact_early
-                            except Exception:
-                                pass
+                            except Exception as _silent_e:
+                                logger.debug("suppressed: %s", _silent_e, exc_info=False)
                         _hist_est = 0
                         try:
                             if self.message_repo is not None:
@@ -1094,8 +1094,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                                     "profile": iso_profile,
                                 },
                             )
-                        except Exception:
-                            pass
+                        except Exception as _silent_e:
+                            logger.debug("suppressed: %s", _silent_e, exc_info=False)
                         # 全局 RunGate：跨会话排队，拿到 lease 再继续（session 锁只保同会话）
                         await self._await_run_gate(
                             kernel,
@@ -1111,8 +1111,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 self._kernel_process = kernel_proc
                 try:
                     recorder.kernel_process_id = kernel_proc.id
-                except Exception:
-                    pass
+                except Exception as _silent_e:
+                    logger.debug("suppressed: %s", _silent_e, exc_info=False)
                 # PR1–PR4: configure Rust loop_guard (max rounds / ban worker orch / crew cap)
                 try:
                     if bool(getattr(settings, "agent_loop_guard_enabled", True)):
@@ -1183,8 +1183,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                                     int(self.max_iterations or _mr),
                                     max(_mr + 2, _mr),  # small grace for final text
                                 )
-                        except Exception:
-                            pass
+                        except Exception as _silent_e:
+                            logger.debug("suppressed: %s", _silent_e, exc_info=False)
                         logger.info(
                             "loop_guard configured process=%s role=%s max_rounds=%s ban_orch=%s",
                             str(kernel_proc.id)[:8],
@@ -1279,8 +1279,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                                         ) or is_steward_contact(
                                             str(sc.get("identity") or "")
                                         )
-                                except Exception:
-                                    pass
+                                except Exception as _silent_e:
+                                    logger.debug("suppressed: %s", _silent_e, exc_info=False)
                             if _steward:
                                 ok_fo = await ensure_steward_kernel_full_open_async(
                                     kernel, kernel_proc.id
@@ -1357,16 +1357,16 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         await kernel._acall(
                             "run_gate_release", {"process_id": kernel_proc.id}
                         )
-                    except Exception:
-                        pass
+                    except Exception as _silent_e:
+                        logger.debug("suppressed: %s", _silent_e, exc_info=False)
                     try:
                         await kernel._acall(
                             "run_release", {"process_id": kernel_proc.id}
                         )
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+                    except Exception as _silent_e:
+                        logger.debug("suppressed: %s", _silent_e, exc_info=False)
+            except Exception as _silent_e:
+                logger.debug("suppressed: %s", _silent_e, exc_info=False)
             try:
                 await kernel.end_process(
                     kernel_proc.id, state=state, reason=reason
@@ -1388,8 +1388,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     recorder._iterations = int(self.last_iterations)
                 if kernel_proc is not None:
                     recorder.set_token_used(int(getattr(kernel_proc, "tokens_used", 0) or 0))
-            except Exception:
-                pass
+            except Exception as _silent_e:
+                logger.debug("suppressed: %s", _silent_e, exc_info=False)
             if self._should_stop:
                 await recorder.cancel("stopped by user")
             else:
@@ -1407,12 +1407,12 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         recorder.set_token_used(
                             int(getattr(kernel_proc, "tokens_used", 0) or 0)
                         )
-                except Exception:
-                    pass
+                except Exception as _silent_e:
+                    logger.debug("suppressed: %s", _silent_e, exc_info=False)
                 try:
                     await recorder.cancel("cancelled")
-                except Exception:
-                    pass
+                except Exception as _silent_e:
+                    logger.debug("suppressed: %s", _silent_e, exc_info=False)
                 await _release_kernel_slot(state="killed", reason="cancelled")
 
             try:
@@ -1429,12 +1429,12 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         recorder.set_token_used(
                             int(getattr(kernel_proc, "tokens_used", 0) or 0)
                         )
-                except Exception:
-                    pass
+                except Exception as _silent_e:
+                    logger.debug("suppressed: %s", _silent_e, exc_info=False)
                 try:
                     await recorder.finish_fail(err_msg)
-                except Exception:
-                    pass
+                except Exception as _silent_e:
+                    logger.debug("suppressed: %s", _silent_e, exc_info=False)
                 await _release_kernel_slot(state="failed", reason=err_msg[:500])
 
             try:
@@ -1470,8 +1470,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 from backend.agent.run_state import RunStatus as _RS
 
                 await _rc.transition(_RS.PLANNING, note=f"mode={mode}")
-            except Exception:
-                pass
+            except Exception as _silent_e:
+                logger.debug("suppressed: %s", _silent_e, exc_info=False)
 
         # @device 远程执行（L1）：命中则短路，不进工具循环（phases/prologue）
         from backend.agent.phases.prologue import (
@@ -1544,8 +1544,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 from backend.api.websocket import manager as ws_manager
 
                 ws_manager.end_run_snapshot(session_id)
-            except Exception:
-                pass
+            except Exception as _silent_e:
+                logger.debug("suppressed: %s", _silent_e, exc_info=False)
             raise ValueError(f"Session {session_id} not found")
 
         config = await self.session_repo.get_config(session_id)
@@ -1836,8 +1836,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     f"场景 {scene_plan.summary()} · 工具 {len(tools)}",
                     tools_count=len(tools),
                 )
-            except Exception:
-                pass
+            except Exception as _silent_e:
+                logger.debug("suppressed: %s", _silent_e, exc_info=False)
         logger.info(
             "Loaded %s tools session=%s profile=%s scene=%s filter=%s",
             len(tools),
@@ -1897,8 +1897,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     brief += "\nUser preferences (honor these): " + json.dumps(
                         prefs, ensure_ascii=False
                     )
-            except Exception:
-                pass
+            except Exception as _silent_e:
+                logger.debug("suppressed: %s", _silent_e, exc_info=False)
             messages.append({"role": "system", "content": brief})
         except Exception as e:
             logger.debug("capability inject skipped: %s", e)
@@ -2036,8 +2036,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         try:
             if hasattr(llm_service, "prompt_cache_key"):
                 setattr(llm_service, "prompt_cache_key", _cache_key)
-        except Exception:
-            pass
+        except Exception as _silent_e:
+            logger.debug("suppressed: %s", _silent_e, exc_info=False)
 
         # 本轮实际模型 → 前端状态条（避免 Picker 与真实调用不一致）
         try:
@@ -2060,8 +2060,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     model=_model,
                     provider=_prov or None,
                 )
-        except Exception:
-            pass
+        except Exception as _silent_e:
+            logger.debug("suppressed: %s", _silent_e, exc_info=False)
 
         # 6.5 上下文引擎 pipeline（L1/L3/L5）— per-session 隔离 thrash/L5
         try:
@@ -2073,15 +2073,15 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             # 每 run 边界重置 L5 计数（同 session 多轮长任务仍可压）
             try:
                 eng.on_session_reset()
-            except Exception:
-                pass
+            except Exception as _silent_e:
+                logger.debug("suppressed: %s", _silent_e, exc_info=False)
             # L5 charge 绑定本 run 进程；摘要用会话模型快照
             try:
                 kp = getattr(self, "_kernel_process", None)
                 eng._charge_process_id = getattr(kp, "id", None)  # type: ignore[attr-defined]
                 eng._llm_snapshot = llm_snapshot if isinstance(llm_snapshot, dict) else None  # type: ignore[attr-defined]
-            except Exception:
-                pass
+            except Exception as _silent_e:
+                logger.debug("suppressed: %s", _silent_e, exc_info=False)
             # 按会话模型窗口 apply_profile
             try:
                 snap = llm_snapshot if isinstance(llm_snapshot, dict) else {}
@@ -2101,8 +2101,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 )
                 if prof is not None and hasattr(eng, "apply_profile"):
                     eng.apply_profile(prof)
-            except Exception:
-                pass
+            except Exception as _silent_e:
+                logger.debug("suppressed: %s", _silent_e, exc_info=False)
 
             # audit-fix(#1)：阈值默认引用单点常量（0.55 → COMPRESS_THRESHOLD=0.85）；
             # settings.context_threshold_percent 覆盖机制保留
@@ -2138,8 +2138,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                      or compress_meta.get("tokens_before")
                      or total_tokens}
                 )
-            except Exception:
-                pass
+            except Exception as _silent_e:
+                logger.debug("suppressed: %s", _silent_e, exc_info=False)
         except Exception as e:
             logger.warning(f"Context compress skipped: {e}")
             compress_meta = {}
@@ -2301,8 +2301,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         "iteration_set_budget",
                         {"process_id": _kpid_iter, "max_total": _total_iters},
                     )
-            except Exception:
-                pass
+            except Exception as _silent_e:
+                logger.debug("suppressed: %s", _silent_e, exc_info=False)
         _turn_retry = TurnRetryState()
         _budget_grace_call = False
         _loop_exit_reason = ""
@@ -2412,8 +2412,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                             "thinking",
                             "内核迭代预算已耗尽，宽限终答中…（见 /kernel/policy）",
                         )
-                except Exception:
-                    pass
+                except Exception as _silent_e:
+                    logger.debug("suppressed: %s", _silent_e, exc_info=False)
             # P0.5：周期 process snapshot（恢复路径 = 快照 + tail_hash 增量）
             if (
                 _kpid_iter
@@ -2522,8 +2522,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 _rc = getattr(self, "_run_recorder", None)
                 if _rc is not None:
                     _rc.bump_iteration(1)
-            except Exception:
-                pass
+            except Exception as _silent_e:
+                logger.debug("suppressed: %s", _silent_e, exc_info=False)
 
             # 更新状态：thinking
             await self._push_status(
@@ -2648,8 +2648,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                                     "detail": "Session deleted — run stopped",
                                 },
                             )
-                        except Exception:
-                            pass
+                        except Exception as _silent_e:
+                            logger.debug("suppressed: %s", _silent_e, exc_info=False)
                         break
                     else:
                         logger.warning(f"Failed to persist assistant tool_calls message: {e}")
@@ -2778,8 +2778,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                             note="budget_exhausted",
                             run_id=str(_rc.run_id) if _rc is not None and _rc.run_id else None,
                         )
-                    except Exception:
-                        pass
+                    except Exception as _silent_e:
+                        logger.debug("suppressed: %s", _silent_e, exc_info=False)
 
         # 收尾聚合（phases/epilogue；行为冻结 tests/test_loop_freeze.py）
         from backend.agent.phases.epilogue import run_epilogue
@@ -2846,8 +2846,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 )
                 if note and note not in final_content:
                     final_content = f"{final_content.rstrip()}\n\n——\n{note}"
-            except Exception:
-                pass
+            except Exception as _silent_e:
+                logger.debug("suppressed: %s", _silent_e, exc_info=False)
         return final_content
 
     # ─────────── P0 helpers ───────────

@@ -646,7 +646,10 @@ class Settings(BaseSettings):
     enable_python_execution: bool = False  # 安全：默认禁用 Python 代码执行节点，防止 RCE
 
     # Application
-    app_host: str = "127.0.0.1"  # 桌面 Electron 通过 TAKTON_APP_HOST=0.0.0.0 放宽，便于手机扫码配对
+    # Default loopback. Desktop Electron uses 127.0.0.1 + single_user so security_check passes.
+    # LAN / mobile pair: TAKTON_APP_HOST=0.0.0.0 requires TAKTON_SINGLE_USER_MODE=false
+    # (Electron auto-sets single_user=false when host is non-loopback unless overridden).
+    app_host: str = "127.0.0.1"
     # 产品 / Next dev 代理默认后端端口（与 next.config rewrites、前端 resolveWsBaseUrl 对齐）
     app_port: int = 8090
     log_level: str = "info"

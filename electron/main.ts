@@ -67,6 +67,32 @@ function isAllowedExternalUrl(rawUrl: string): boolean {
   }
 }
 
+/** Loopback-ish bind targets that pass backend security_check with single_user_mode. */
+function isLoopbackHost(host: string): boolean {
+  const h = (host || '').trim().toLowerCase();
+  if (!h || h === 'localhost' || h === '127.0.0.1' || h === '::1') return true;
+  if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+  return false;
+}
+
+/**
+ * Desktop defaults must pass backend security_check:
+ * non-loopback + single_user_mode = FAIL (process refuses to start).
+ *
+ * Default: 127.0.0.1 + single_user=true (local AIOS).
+ * LAN / mobile pair: set TAKTON_APP_HOST=0.0.0.0 (single_user auto-off unless overridden).
+ */
+function resolveAppHost(): string {
+  return (process.env.TAKTON_APP_HOST || '127.0.0.1').trim() || '127.0.0.1';
+}
+
+function resolveSingleUserMode(appHost: string): string {
+  if (process.env.TAKTON_SINGLE_USER_MODE != null && process.env.TAKTON_SINGLE_USER_MODE !== '') {
+    return process.env.TAKTON_SINGLE_USER_MODE;
+  }
+  return isLoopbackHost(appHost) ? 'true' : 'false';
+}
+
 function assertTrustedIpc(event: IpcMainInvokeEvent): void {
   if (!isTrustedRendererUrl(event.senderFrame?.url || '')) {
     throw new Error('IPC rejected: untrusted renderer origin');
@@ -492,14 +518,24 @@ function buildBackendEnv(secrets: AppSecrets, port: number, sitePackages?: strin
     process.env.PYTHONPATH,
   ].filter(Boolean) as string[];
 
+  // Align host × single_user with backend security_check (non-loopback + single_user = FAIL)
+  const appHost = resolveAppHost();
+  const singleUser = resolveSingleUserMode(appHost);
+  if (!isLoopbackHost(appHost) && singleUser === 'true') {
+    console.warn(
+      `[Takton] TAKTON_APP_HOST=${appHost} with single_user=true will fail security startup. ` +
+        'Set TAKTON_SINGLE_USER_MODE=false for LAN binds, or use 127.0.0.1.',
+    );
+  }
+
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     NODE_ENV: process.env.NODE_ENV || (isDev ? 'development' : 'production'),
     TAKTON_DB_URL: dbUrl,
-    TAKTON_APP_HOST: process.env.TAKTON_APP_HOST || '0.0.0.0',
+    TAKTON_APP_HOST: appHost,
     TAKTON_APP_PORT: String(port),
     TAKTON_LOG_LEVEL: isDev ? 'debug' : 'info',
-    TAKTON_SINGLE_USER_MODE: 'true',
+    TAKTON_SINGLE_USER_MODE: singleUser,
     TAKTON_JWT_SECRET: secrets.jwtSecret,
     TAKTON_API_KEY: secrets.apiKey,
     TAKTON_SETTINGS_ENCRYPTION_SALT: secrets.encryptionSalt,
@@ -688,12 +724,18 @@ async function startBackend(): Promise<void> {
     env.TAKTON_KERNEL_AUTO_START = '0';
   }
 
-  const bindHost = process.env.TAKTON_APP_HOST || '0.0.0.0';
+  const bindHost = env.TAKTON_APP_HOST || resolveAppHost();
   console.log(`[Takton] Starting backend: ${python} -m uvicorn backend.main:app --host ${bindHost} --port ${port}`);
+  console.log(`[Takton] single_user_mode=${env.TAKTON_SINGLE_USER_MODE} bind=${bindHost}`);
   console.log(`[Takton] DB: ${env.TAKTON_DB_URL}`);
   console.log(`[Takton] Uploads: ${UPLOADS_DIR}`);
   console.log(`[Takton] Workspace: ${WORKSPACE_DIR}`);
   console.log(`[Takton] Backend CWD: ${backendCwd}`);
+
+  let backendLogTail = '';
+  const appendBackendLog = (chunk: string) => {
+    backendLogTail = (backendLogTail + chunk).slice(-8000);
+  };
 
   backendProcess = spawn(python, [
     '-m', 'uvicorn', 'backend.main:app',
@@ -707,17 +749,45 @@ async function startBackend(): Promise<void> {
   });
 
   backendProcess.stdout?.on('data', (data: Buffer) => {
-    console.log(`[Backend] ${data.toString().trim()}`);
+    const text = data.toString();
+    appendBackendLog(text);
+    console.log(`[Backend] ${text.trim()}`);
   });
   backendProcess.stderr?.on('data', (data: Buffer) => {
-    console.error(`[Backend] ${data.toString().trim()}`);
+    const text = data.toString();
+    appendBackendLog(text);
+    console.error(`[Backend] ${text.trim()}`);
   });
   backendProcess.on('exit', (code, signal) => {
     console.log(`[Takton] Backend exited with code=${code} signal=${signal}`);
     backendProcess = null;
   });
 
-  await waitForBackend(`http://127.0.0.1:${port}/api/health`);
+  try {
+    await waitForBackend(`http://127.0.0.1:${port}/api/health`);
+  } catch (err) {
+    const securityFail =
+      backendLogTail.includes('Security startup check failed') ||
+      backendLogTail.includes('[SECURITY][FAIL]');
+    const hint = securityFail
+      ? '\n\n安全自检失败：非 loopback 绑定不能与 single_user_mode 同时开启。\n' +
+        '默认请使用 127.0.0.1；局域网/手机配对请设置：\n' +
+        '  TAKTON_APP_HOST=0.0.0.0\n' +
+        '  TAKTON_SINGLE_USER_MODE=false'
+      : '';
+    const msg =
+      (err instanceof Error ? err.message : String(err)) +
+      hint +
+      (backendLogTail
+        ? `\n\n--- backend log (tail) ---\n${backendLogTail.slice(-1500)}`
+        : '');
+    try {
+      dialog.showErrorBox('Takton 后端启动失败', msg.slice(0, 1800));
+    } catch {
+      /* headless / early quit */
+    }
+    throw new Error(msg);
+  }
   console.log(`[Takton] Backend is ready on port ${port}`);
 }
 
@@ -1389,7 +1459,30 @@ ipcMain.handle('show-notification', (_event, { title, body }: { title: string; b
   }
 });
 
-ipcMain.handle('get-dropped-files', (_event, filePaths: string[]) => filePaths);
+ipcMain.handle('get-dropped-files', (event, filePaths: string[]) => {
+  assertTrustedIpc(event);
+  if (!Array.isArray(filePaths)) return [];
+  const out: string[] = [];
+  for (const raw of filePaths) {
+    if (typeof raw !== 'string' || !raw.trim()) continue;
+    if (/[\0\r\n]/.test(raw)) continue;
+    if (!path.isAbsolute(raw)) continue;
+    try {
+      let resolved = path.resolve(raw);
+      try {
+        resolved = fs.realpathSync(resolved);
+      } catch {
+        continue;
+      }
+      const st = fs.statSync(resolved);
+      if (!st.isFile() && !st.isDirectory()) continue;
+      out.push(resolved);
+    } catch {
+      continue;
+    }
+  }
+  return out;
+});
 
 ipcMain.handle(
   'grant-desktop-permission',

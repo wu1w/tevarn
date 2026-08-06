@@ -112,6 +112,8 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
   const [openaiAuthUrl, setOpenaiAuthUrl] = useState('');
   const [openaiState, setOpenaiState] = useState('');
   const [openaiCallback, setOpenaiCallback] = useState('');
+  /** When 1455 callback server is unavailable, force-show paste UI. */
+  const [openaiNeedPaste, setOpenaiNeedPaste] = useState(false);
 
   const refreshCatalog = useCallback(async (fetchModels = false) => {
     const cat = await getModelCatalog(fetchModels);
@@ -609,6 +611,7 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
 
   const handleStartOpenaiOauth = async () => {
     setOauthBusy(true);
+    setOpenaiNeedPaste(false);
     try {
       const r = await startOpenAIOauth();
       if (!r.ok || !r.authorization_url) {
@@ -639,6 +642,7 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
             setSelectedProviderId(polled.active_provider_id || 'openai-chatgpt-oauth');
             setSelectedModel(polled.active_model || 'gpt-5.6');
             setOpenaiCallback('');
+            setOpenaiNeedPaste(false);
             addToast(polled.message || 'ChatGPT OAuth 成功', 'success');
             await onSettingsRefetch();
             await refreshCatalog(true);
@@ -647,19 +651,26 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
           }
           if (polled.status === 'error' || (polled.ok === false && polled.status !== 'pending')) {
             addToast(polled.message || 'ChatGPT 登录失败', 'error');
+            setOpenaiNeedPaste(true);
             return;
           }
         }
-        addToast('等待授权超时：若浏览器已显示登录成功，可刷新设置页；否则粘贴回调 URL', 'error');
+        setOpenaiNeedPaste(true);
+        addToast(
+          '等待授权超时：请在下方粘贴浏览器地址栏完整回调 URL，或刷新设置页后重试',
+          'error',
+        );
       } else {
+        setOpenaiNeedPaste(true);
         addToast(
           r.message ||
-            '本机未能监听 1455：请授权后复制地址栏完整 URL 粘贴回来',
+            '本机未能监听 1455：请授权后复制地址栏完整 URL，粘贴到下方「完成登录」',
           'info',
         );
       }
     } catch (e: unknown) {
       addToast(e instanceof Error ? e.message : 'OAuth 启动失败', 'error');
+      setOpenaiNeedPaste(true);
     } finally {
       setOauthBusy(false);
     }
@@ -681,6 +692,7 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
       setSelectedProviderId(r.active_provider_id || 'openai-chatgpt-oauth');
       setSelectedModel(r.active_model || 'gpt-5.6');
       setOpenaiCallback('');
+      setOpenaiNeedPaste(false);
       addToast(r.message || 'ChatGPT OAuth 成功', 'success');
       await onSettingsRefetch();
       await refreshCatalog(true);
@@ -867,14 +879,25 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
                       {openaiAuthUrl}
                     </a>
                   ) : null}
-                  <details className="text-xs text-foreground-muted">
-                    <summary className="cursor-pointer select-none">备用：手动粘贴回调 URL</summary>
+                  {openaiNeedPaste ? (
+                    <div className="rounded-lg border border-status-offline/40 bg-status-offline/10 p-2 text-[11px] leading-relaxed text-foreground-muted">
+                      <strong className="text-foreground">需要手动粘贴回调</strong>
+                      ：浏览器授权后，复制地址栏完整 URL（含{' '}
+                      <code className="text-[10px]">code=</code>
+                      ），粘贴到下方并点「完成登录并激活」。
+                    </div>
+                  ) : null}
+                  <details className="text-xs text-foreground-muted" open={openaiNeedPaste || undefined}>
+                    <summary className="cursor-pointer select-none">
+                      {openaiNeedPaste ? '粘贴回调 URL（必填）' : '备用：手动粘贴回调 URL'}
+                    </summary>
                     <div className="mt-2 flex flex-col gap-2">
                       <textarea
                         className={`${inputCls} min-h-[4rem] font-mono text-[11px]`}
                         value={openaiCallback}
                         onChange={(e) => setOpenaiCallback(e.target.value)}
                         placeholder="仅当自动回调失败时：粘贴 http://localhost:1455/auth/callback?code=..."
+                        autoFocus={openaiNeedPaste}
                       />
                       <button
                         type="button"
