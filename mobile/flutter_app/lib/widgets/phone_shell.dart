@@ -11,7 +11,6 @@ import '../screens/remote_screen.dart';
 import '../screens/me_screen.dart';
 import 'session_drawer.dart';
 import 'pixel_icons.dart';
-import 'dynamic_island.dart';
 
 class PhoneShell extends StatelessWidget {
   const PhoneShell({super.key});
@@ -83,12 +82,6 @@ class PhoneShell extends StatelessWidget {
                             c.approvals.length),
                   ),
                 ],
-              ),
-              // Camera-embedded island (OEM Super Island / Fluid Cloud style)
-              TaktonDynamicIsland(
-                controller: c,
-                dark: dark,
-                shellWidth: mobile ? null : shellW,
               ),
               if (c.drawerOpen) const SessionDrawer(),
               Positioned(

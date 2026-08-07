@@ -538,6 +538,13 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ),
           ),
+        // Desktop-style activity strip above composer (replaces Dynamic Island)
+        _ComposerStatusStrip(
+          controller: c,
+          listening: _listening,
+          dark: dark,
+          ink3: ink3,
+        ),
         Padding(
           padding: EdgeInsets.fromLTRB(
             10,
@@ -1505,6 +1512,171 @@ class _SheetTile extends StatelessWidget {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Compact status row above the composer — mirrors desktop ActivityPanel.
+class _ComposerStatusStrip extends StatelessWidget {
+  const _ComposerStatusStrip({
+    required this.controller,
+    required this.listening,
+    required this.dark,
+    required this.ink3,
+  });
+
+  final AppController controller;
+  final bool listening;
+  final bool dark;
+  final Color ink3;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = controller;
+    final show = c.streaming || c.islandLive || listening;
+    if (!show) return const SizedBox.shrink();
+
+    final accent = listening
+        ? PixelColors.red
+        : (c.streaming
+            ? PixelColors.cyan
+            : (c.islandKind == 'local'
+                ? PixelColors.green
+                : PixelColors.purple));
+
+    String label;
+    if (listening) {
+      label = '聆听中…';
+    } else if (c.streaming) {
+      final t = c.islandText.trim();
+      label = t.isEmpty || t == '本机' || t == '已连 PC' ? '生成中…' : t;
+    } else {
+      label = c.islandText.trim().isEmpty ? '状态更新' : c.islandText.trim();
+    }
+
+    int toolRun = 0;
+    int toolDone = 0;
+    for (var i = c.messages.length - 1; i >= 0; i--) {
+      final m = c.messages[i];
+      if (m.role != 'assistant') continue;
+      if (m.hasTools) {
+        for (final tc in m.toolCalls) {
+          if (tc.status == ToolCallStatus.running) {
+            toolRun++;
+          } else {
+            toolDone++;
+          }
+        }
+      }
+      break;
+    }
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(10, 0, 10, 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: dark
+            ? Colors.white.withValues(alpha: 0.04)
+            : PixelColors.ink.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: accent.withValues(alpha: 0.28)),
+      ),
+      child: Row(
+        children: [
+          _PulseDot(color: accent, active: c.streaming || listening),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+                color: dark ? PixelColors.dInk2 : PixelColors.ink2,
+                height: 1.2,
+              ),
+            ),
+          ),
+          if (c.streaming && (toolRun + toolDone) > 0) ...[
+            const SizedBox(width: 6),
+            Text(
+              toolRun > 0 ? '工具 $toolRun↑' : '工具 $toolDone',
+              style: TextStyle(
+                fontSize: 10.5,
+                fontWeight: FontWeight.w700,
+                color: accent,
+              ),
+            ),
+          ],
+          if (c.streaming) ...[
+            const SizedBox(width: 8),
+            Text(
+              '点红键停止',
+              style: TextStyle(fontSize: 10, color: ink3),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _PulseDot extends StatefulWidget {
+  const _PulseDot({required this.color, required this.active});
+  final Color color;
+  final bool active;
+
+  @override
+  State<_PulseDot> createState() => _PulseDotState();
+}
+
+class _PulseDotState extends State<_PulseDot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
+    if (widget.active) _ctrl.repeat(reverse: true);
+  }
+
+  @override
+  void didUpdateWidget(covariant _PulseDot oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.active && !_ctrl.isAnimating) {
+      _ctrl.repeat(reverse: true);
+    } else if (!widget.active && _ctrl.isAnimating) {
+      _ctrl.stop();
+      _ctrl.value = 1;
+    }
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: widget.active
+          ? Tween<double>(begin: 0.35, end: 1.0).animate(_ctrl)
+          : const AlwaysStoppedAnimation(1),
+      child: Container(
+        width: 7,
+        height: 7,
+        decoration: BoxDecoration(
+          color: widget.color,
+          borderRadius: BorderRadius.circular(2),
         ),
       ),
     );
