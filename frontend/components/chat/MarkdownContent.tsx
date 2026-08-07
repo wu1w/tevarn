@@ -116,10 +116,10 @@ export function MarkdownContent({
 
     return (
       <div className={isUser ? 'text-foreground' : ''}>
-        {thinking && (
+        {(thinking || (streaming && thinkingOpen)) && (
           <ThinkingBlock
-            content={thinking}
-            streaming={streaming && thinkingOpen}
+            content={thinking || ''}
+            streaming={streaming && (thinkingOpen || !displayBody)}
             defaultOpen={streaming && thinkingOpen}
           />
         )}
@@ -133,7 +133,7 @@ export function MarkdownContent({
               {displayBody}
             </ReactMarkdown>
           </div>
-        ) : !thinking ? (
+        ) : !thinking && !thinkingOpen ? (
           <span className="italic text-foreground-dim">
             {streaming ? t('chat.thinking') : ''}
           </span>

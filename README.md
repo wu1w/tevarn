@@ -52,7 +52,7 @@
 >
 > - 要试用新版 AIOS 工作站 → clone **`feature/agent-kernel`**，并准备 `takton-kernel-host`（预编译或 `cargo build -p takton-kernel-host --release`）
 > - 从 Releases 装到 **0.3.x 不会**自动带上 0.5 Kernel
-> - 详见 [从旧版升级](#-从旧版升级到-agent-kernel-版) · [ROADMAP](docs/ROADMAP.md) · [KERNEL_RUST](docs/KERNEL_RUST.md) · [THREAT_MODEL](docs/THREAT_MODEL.md)
+> - 详见 [从旧版升级](#-从旧版升级到-agent-kernel-版) · [KERNEL_RUST](docs/KERNEL_RUST.md) · [THREAT_MODEL](docs/THREAT_MODEL.md)
 
 ---
 

@@ -485,7 +485,7 @@ class SQLiteQueryTool(_BuiltinToolBase):
 
 
 async def execute_result_load(config: dict[str, Any], arguments: dict[str, Any]) -> str:
-    """加载 kernel result_spill 外置的完整工具结果。
+    """加载 kernel result_spill 外置的完整工具结果（支持 offset 分页）。
 
     必须绑定调用方 process_id（loop 注入 _kernel_process_id），
     防止横向读取其它进程的 spill 全文。
@@ -518,6 +518,16 @@ async def execute_result_load(config: dict[str, Any], arguments: dict[str, Any])
             "(missing _kernel_process_id; call from agent loop only)"
         )
     try:
+        offset = max(0, int(arguments.get("offset") or 0))
+    except (TypeError, ValueError):
+        offset = 0
+    try:
+        max_c = int(arguments.get("max_chars") or 50_000)
+    except (TypeError, ValueError):
+        max_c = 50_000
+    max_c = max(500, min(max_c, 200_000))
+
+    try:
         from backend.kernel import get_kernel
 
         k = get_kernel()
@@ -542,28 +552,45 @@ async def execute_result_load(config: dict[str, Any], arguments: dict[str, Any])
             if msg and "process" in msg.lower() and "content" not in r:
                 return f"[Error] result_load: {msg}"
             # host 可能返回 {content} / {body} / {text}
+            body = ""
             for key in ("content", "body", "text", "result"):
                 if key in r and r[key] is not None:
                     body = str(r[key])
-                    max_c = int(arguments.get("max_chars") or 100_000)
-                    if len(body) > max_c:
-                        return (
-                            body[:max_c]
-                            + f"\n...[truncated at {max_c} chars; "
-                            f"total={len(body)}; call again with higher max_chars]"
-                        )
-                    return body
-            # 整包 dump
-            import json
+                    break
+            if not body and r:
+                import json
 
-            return json.dumps(r, ensure_ascii=False, default=str)[:100_000]
+                body = json.dumps(r, ensure_ascii=False, default=str)
+
+            total = len(body)
+            if offset >= total:
+                return (
+                    f"[result_load id={hid} offset={offset} total={total}]\n"
+                    "(empty — offset past end)"
+                )
+            chunk = body[offset : offset + max_c]
+            end = offset + len(chunk)
+            more = end < total
+            header = (
+                f"[result_load id={hid} offset={offset} end={end} "
+                f"total={total} page_chars={len(chunk)}]\n"
+            )
+            footer = ""
+            if more:
+                footer = (
+                    f"\n...[more available: call result_load "
+                    f"id=\"{hid}\" offset={end} max_chars={max_c}]"
+                )
+            else:
+                footer = f"\n...[end of result id={hid}]"
+            return header + chunk + footer
         return str(r)
     except Exception as e:
         return f"[Error] result_load failed: {e}"
 
 
 class ResultLoadTool(_BuiltinToolBase):
-    """大工具结果外置后的回读（与 kernel result_spill 配对）。"""
+    """大工具结果外置后的回读（与 result_spill 配对；支持 offset 分页）。"""
 
     _executor = execute_result_load
 
@@ -571,10 +598,11 @@ class ResultLoadTool(_BuiltinToolBase):
         super().__init__(
             name="result_load",
             description=(
-                "加载被外置存储的完整工具结果。"
-                "当上一条工具返回含 [tool_result_handle id=…] 或 "
-                "「use result_load id=…」时调用本工具，传入该 id 取全文。"
-                "不要猜测 id；只用来自 spill 句柄的 id。"
+                "加载被外置存储的完整工具结果（长文分析请分页，不要重跑原工具）。"
+                "当上一条工具返回含 [tool_result_handle id=…] 时调用："
+                "result_load(id=…, offset=0, max_chars=20000) 取第一页；"
+                "用返回的 next offset 继续翻页。"
+                "不要猜测 id；不要为「拿全文」重新执行 python/command/http。"
             ),
             parameters={
                 "type": "object",
@@ -587,10 +615,15 @@ class ResultLoadTool(_BuiltinToolBase):
                         "type": "string",
                         "description": "id 的别名",
                     },
+                    "offset": {
+                        "type": "integer",
+                        "description": "字符偏移（分页），默认 0",
+                        "default": 0,
+                    },
                     "max_chars": {
                         "type": "integer",
-                        "description": "返回正文最大字符数，默认 100000",
-                        "default": 100000,
+                        "description": "本页最大字符数，默认 50000，上限 200000",
+                        "default": 50000,
                     },
                 },
                 "required": ["id"],

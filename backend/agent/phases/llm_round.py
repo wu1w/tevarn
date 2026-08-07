@@ -144,6 +144,15 @@ async def _run_llm_round_body(
     accumulated_content = ""
     accumulated_reasoning = ""
     tool_calls: list[Any] = []
+    # Stream native reasoning as <thinking>… so frontend ThinkingBlock can render it
+    _think_stream_open = False
+    _think_stream_closed = False
+
+    async def _close_thinking_stream() -> None:
+        nonlocal _think_stream_open, _think_stream_closed
+        if _think_stream_open and not _think_stream_closed:
+            await loop._push_stream(session_id, message_id, "\n</thinking>\n")
+            _think_stream_closed = True
 
     try:
         logger.info(
@@ -161,21 +170,40 @@ async def _run_llm_round_body(
                 )
                 break
 
-            # 推送流式文本到前端
+            # 思考链增量 → 前端可折叠思考块（始终推送，不受 suppress_content_stream 影响）
+            rdelta = getattr(chunk, "reasoning_delta", None) or ""
+            if rdelta:
+                accumulated_reasoning += rdelta
+                try:
+                    if not _think_stream_open:
+                        await loop._push_stream(
+                            session_id, message_id, "<thinking>\n"
+                        )
+                        _think_stream_open = True
+                    await loop._push_stream(session_id, message_id, str(rdelta))
+                except Exception as _re:
+                    logger.debug("push reasoning stream skipped: %s", _re)
+
+            # 推送流式正文；若思考块仍开着则先闭合
             if chunk.delta:
+                if _think_stream_open and not _think_stream_closed:
+                    try:
+                        await _close_thinking_stream()
+                    except Exception:
+                        pass
                 accumulated_content += chunk.delta
                 if not suppress_content_stream:
                     await loop._push_stream(
                         session_id, message_id, chunk.delta
                     )
 
-            # 思考链增量（不进前端 stream，仅汇总给通道 progress）
-            rdelta = getattr(chunk, "reasoning_delta", None) or ""
-            if rdelta:
-                accumulated_reasoning += rdelta
-
-            # 收集 tool call
+            # 收集 tool call（纯 tool 轮也可能只有 reasoning；出 tool 前先闭合思考块）
             if chunk.tool_call:
+                if _think_stream_open and not _think_stream_closed:
+                    try:
+                        await _close_thinking_stream()
+                    except Exception:
+                        pass
                 tool_calls.append(chunk.tool_call)
 
             # 真实用量（T4）：provider 回填时优先于粗估；合并 partial stream
@@ -195,13 +223,22 @@ async def _run_llm_round_body(
                     err_delta = (chunk.delta or "").strip()
                     body = (accumulated_content or "").strip()
                     if err_delta.startswith("[LLM Error") or not body:
+                        try:
+                            await _close_thinking_stream()
+                        except Exception:
+                            pass
                         accumulated_content = err_delta or (
                             "[LLM Error] 模型返回失败且无正文。"
                             "请检查网络/API Key/模型名后重试。"
                         )
                         result.action = "break"
-                        result.final_content = accumulated_content
+                        from backend.agent.thinking_format import wrap_thinking
+
+                        result.final_content = wrap_thinking(
+                            accumulated_reasoning, accumulated_content
+                        )
                         result.accumulated_content = accumulated_content
+                        result.accumulated_reasoning = accumulated_reasoning
                         result.tool_calls = []
                         # 不落半截为成功 assistant
                         try:
@@ -218,10 +255,18 @@ async def _run_llm_round_body(
                     )
                 break
 
+        # 流结束：若仅有 reasoning（或 tool_calls 无正文），闭合思考标签
+        try:
+            await _close_thinking_stream()
+        except Exception:
+            pass
+
         if loop._should_stop:
             result.action = "break"
+            from backend.agent.thinking_format import wrap_thinking
+
             result.final_content = (
-                accumulated_content
+                wrap_thinking(accumulated_reasoning, accumulated_content)
                 or final_content
                 or "[Stopped] Generation was cancelled"
             )

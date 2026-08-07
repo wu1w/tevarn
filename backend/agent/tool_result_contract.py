@@ -1,9 +1,20 @@
-"""Normalize + budget-truncate tool results before they re-enter the LLM context.
+"""Normalize + budget tool results before they re-enter the LLM context.
 
-Inspired by Claude Code toolResultStorage (deterministic truncation, no Haiku).
+Design (aligned with Claude Code / Codex / Cursor):
+
+1. **Inline small results** — full text under soft per-tool budgets (tens of KB).
+2. **Envelope-artifact for large results** — full body spills to kernel store;
+   context gets a *rich* head+tail preview + handle id, not a 240-char stub.
+3. **On-demand paging** — model calls ``result_load(id, offset, max_chars)``
+   instead of re-running the original tool (re-run wastes tokens and can drift).
+
+Never "just raise the number forever": long-doc analysis should page via
+``file_read`` offset/limit or ``result_load`` slices, not stuff 200KB into one turn.
 """
 from __future__ import annotations
 
+import os as _os
+import re
 from typing import Any
 
 # 按工具类型差异化截断（超出 → head+tail preview）
@@ -33,17 +44,24 @@ TOOL_RESULT_BUDGET: dict[str, int] = {
     "doc_read": 1200,
     "process": 900,
 }
-DEFAULT_TOOL_BUDGET = 800
+DEFAULT_TOOL_BUDGET = 12_000
 
-# Spill to kernel result store at/above this size (chars). Env override.
-import os as _os
-
+# Global floor: do not spill below this even if a tool budget is lower.
+# Env: TAKTON_RESULT_SPILL_THRESHOLD
 SPILL_THRESHOLD = int(
-    _os.environ.get("TAKTON_RESULT_SPILL_THRESHOLD", "800") or 800
+    _os.environ.get("TAKTON_RESULT_SPILL_THRESHOLD", "16000") or 16000
 )
 
-# 写类工具：成功短回执几乎不截断
+# Envelope preview size when spilled (head + tail). Env: TAKTON_RESULT_SPILL_PREVIEW
+SPILL_PREVIEW_CHARS = int(
+    _os.environ.get("TAKTON_RESULT_SPILL_PREVIEW", "8000") or 8000
+)
+
 _WRITE_TOOLS = frozenset({"file_write", "edit", "apply_patch", "desktop_write_file"})
+_HANDLE_ID_RE = re.compile(
+    r"tool_result_handle\s+id=([A-Za-z0-9_-]+)|use result_load id=([A-Za-z0-9_-]+)",
+    re.I,
+)
 
 
 def is_tool_error(result: str | None) -> bool:
@@ -68,26 +86,31 @@ def _is_write_ack(text: str) -> bool:
     )
 
 
+def tool_budget(tool_name: str, *, max_chars: int | None = None) -> int:
+    name = (tool_name or "").strip()
+    lim = int(TOOL_RESULT_BUDGET.get(name, DEFAULT_TOOL_BUDGET))
+    if name in _WRITE_TOOLS:
+        lim = max(lim, 2500)
+    if max_chars is not None:
+        lim = int(max_chars)
+        if name in _WRITE_TOOLS:
+            lim = max(lim, 2500)
+    return max(200, lim)
+
+
 def truncate_for_llm(tool_name: str, raw_result: str, *, budget: int | None = None) -> str:
-    """按工具类型截断 result，只把摘要塞给 LLM。"""
+    """Head+tail truncate when spill is unavailable or result is mid-size."""
     text = raw_result or ""
-    # 后台任务提示不截断
     if "[Background" in text or "process_id=" in text[:200]:
         return text
     if text.startswith("[Security Blocked]") or text.startswith("[Denied]"):
         return text
 
     name = tool_name or ""
-    # 写成功短回执：完整保留（避免丢路径导致重写）
     if name in _WRITE_TOOLS and _is_write_ack(text) and len(text) <= 4000:
         return text
 
-    lim = int(
-        budget
-        if budget is not None
-        else TOOL_RESULT_BUDGET.get(name, DEFAULT_TOOL_BUDGET)
-    )
-    lim = max(200, lim)
+    lim = tool_budget(name) if budget is None else max(200, int(budget))
     if name in _WRITE_TOOLS:
         lim = max(lim, 2500)
 
@@ -95,14 +118,70 @@ def truncate_for_llm(tool_name: str, raw_result: str, *, budget: int | None = No
         return text
 
     head_n = int(lim * 0.7)
-    tail_n = max(80, int(lim * 0.2))
+    tail_n = max(120, int(lim * 0.2))
     head = text[:head_n]
     tail = text[-tail_n:]
     omitted = len(text) - len(head) - len(tail)
     return (
         f"{head}\n"
         f"...[{omitted} chars omitted for LLM context; tool={name or '?'}]...\n"
-        f"{tail}"
+        f"{tail}\n"
+        f"[hint] For full body: re-run with narrower query, or file_read with offset/limit."
+    )
+
+
+def _head_tail_preview(text: str, *, budget: int) -> str:
+    """Rich preview for spill envelopes (Claude Code style head+tail)."""
+    b = max(400, int(budget))
+    if len(text) <= b:
+        return text
+    head_n = int(b * 0.75)
+    tail_n = max(200, int(b * 0.2))
+    omitted = len(text) - head_n - tail_n
+    return (
+        f"{text[:head_n]}\n"
+        f"...[{omitted} chars omitted in preview]...\n"
+        f"{text[-tail_n:]}"
+    )
+
+
+def _extract_handle_id(spill_payload: dict[str, Any], context: str) -> str:
+    h = spill_payload.get("handle")
+    if isinstance(h, dict) and h.get("id"):
+        return str(h["id"])
+    if isinstance(h, str) and h.strip():
+        return h.strip()
+    for key in ("id", "handle_id"):
+        if spill_payload.get(key):
+            return str(spill_payload[key])
+    m = _HANDLE_ID_RE.search(context or "")
+    if m:
+        return (m.group(1) or m.group(2) or "").strip()
+    return ""
+
+
+def format_spill_envelope(
+    *,
+    handle_id: str,
+    tool_name: str,
+    full_text: str,
+    bytes_hint: int | None = None,
+) -> str:
+    """Build model-facing envelope after spill (do not re-run the original tool)."""
+    n = bytes_hint if bytes_hint is not None else len(full_text or "")
+    preview = _head_tail_preview(full_text or "", budget=SPILL_PREVIEW_CHARS)
+    hid = (handle_id or "").strip() or "?"
+    tool = (tool_name or "tool").strip()
+    return (
+        f"[tool_result_handle id={hid} tool={tool} chars={n}]\n"
+        f"FULL BODY is stored externally (not truncated forever — page it).\n"
+        f"NEXT STEPS (pick one):\n"
+        f"  1) result_load(id=\"{hid}\") — full text (or max_chars / offset to page)\n"
+        f"  2) result_load(id=\"{hid}\", offset=0, max_chars=20000) — first page\n"
+        f"  3) Do NOT re-run the same tool just to 'get full data'\n"
+        f"--- preview (head+tail, {SPILL_PREVIEW_CHARS} char budget) ---\n"
+        f"{preview}\n"
+        f"--- end preview; use result_load id={hid} for more ---"
     )
 
 
@@ -113,10 +192,7 @@ def normalize_tool_result(
     tool_name: str = "",
     process_id: str | None = None,
 ) -> str:
-    """Coerce to str, apply per-tool budget (or max_chars override).
-
-    P0.5：超大结果优先经 Rust result_spill 外置，上下文只留句柄。
-    """
+    """Coerce to str; inline if under budget; else spill envelope or head+tail."""
     if result is None:
         text = ""
     elif isinstance(result, str):
@@ -137,51 +213,65 @@ def normalize_tool_result(
     if not text:
         text = f"[Error] Tool '{tool_name or '?'}' returned empty result"
 
-    # Aggressive spill: kernel store keeps full body; LLM sees handle+preview.
+    name = (tool_name or "").strip()
+    budget = tool_budget(name, max_chars=max_chars)
+
+    # Short write acks always inline
+    if name in _WRITE_TOOLS and _is_write_ack(text) and len(text) <= 4000:
+        return text
+
+    # Under soft budget → full inline (weather JSON, short analysis, etc.)
+    if len(text) <= budget:
+        return text
+
+    # Over budget → try spill with *rich* Python-side envelope (ignore tiny Rust preview)
     pid = (process_id or "").strip() or "orphan"
-    thr = int(SPILL_THRESHOLD)
-    # write acks stay inline if short
-    if not (
-        (tool_name or "") in _WRITE_TOOLS
-        and _is_write_ack(text)
-        and len(text) <= 4000
-    ):
-        if len(text) >= thr:
-            try:
-                from backend.kernel import get_kernel
+    thr = max(int(SPILL_THRESHOLD), budget)
+    if len(text) >= thr:
+        try:
+            from backend.kernel import get_kernel
 
-                k = get_kernel()
-                if hasattr(k, "result_spill"):
-                    r = k.result_spill(pid, tool_name or "tool", text)
-                elif hasattr(k, "_call"):
-                    r = k._call(
-                        "result_spill",
-                        {
-                            "process_id": pid,
-                            "tool": tool_name or "tool",
-                            "content": text,
-                        },
+            k = get_kernel()
+            r: Any = None
+            if hasattr(k, "result_spill"):
+                r = k.result_spill(pid, name or "tool", text)
+            elif hasattr(k, "_call"):
+                r = k._call(
+                    "result_spill",
+                    {
+                        "process_id": pid,
+                        "tool": name or "tool",
+                        "content": text,
+                    },
+                )
+            if isinstance(r, dict) and r.get("spilled"):
+                ctx = str(r.get("context") or "")
+                hid = _extract_handle_id(r, ctx)
+                if hid:
+                    return format_spill_envelope(
+                        handle_id=hid,
+                        tool_name=name or "tool",
+                        full_text=text,
+                        bytes_hint=len(text),
                     )
-                else:
-                    r = None
-                if isinstance(r, dict) and r.get("spilled") and r.get("context"):
-                    return str(r["context"])
-            except Exception:
-                pass
+                # spilled but no id — fall back to kernel context if present
+                if ctx:
+                    return ctx
+        except Exception:
+            pass
 
-    if max_chars is not None:
-        # 写工具：max_chars 不得压到 2500 以下
-        if (tool_name or "") in _WRITE_TOOLS:
-            max_chars = max(int(max_chars), 2500)
-        return truncate_for_llm(tool_name, text, budget=int(max_chars))
-    return truncate_for_llm(tool_name, text)
+    # Spill unavailable / mid-size over budget → head+tail only
+    return truncate_for_llm(name, text, budget=budget)
 
 
 __all__ = [
     "TOOL_RESULT_BUDGET",
     "DEFAULT_TOOL_BUDGET",
     "SPILL_THRESHOLD",
+    "SPILL_PREVIEW_CHARS",
+    "tool_budget",
     "truncate_for_llm",
+    "format_spill_envelope",
     "normalize_tool_result",
     "is_tool_error",
 ]

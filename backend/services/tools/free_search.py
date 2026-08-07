@@ -2,9 +2,9 @@
 免 API Key 网络搜索瀑布（开源/公开端点）。
 
 优先级：
-1. ddgs 库（backend=bing → duckduckgo → …）— 无配置
+1. ddgs 库（backend=auto → bing → duckduckgo → …）— 无配置
 2. DuckDuckGo Lite HTML
-3. DuckDuckGo HTML / Bing HTML（aiohttp 解析）
+3. Bing HTML / DuckDuckGo HTML（aiohttp 解析）
 4. Wikipedia OpenSearch（en/zh）+ 摘要
 
 Tavily/Brave 等需 Key 的通道不在此模块；由调用方可选叠加。
@@ -46,46 +46,87 @@ def _has_cjk(s: str) -> bool:
     return bool(re.search(r"[\u4e00-\u9fff]", s or ""))
 
 
+def _import_ddgs():
+    """Import DDGS from ddgs (new) or duckduckgo_search (legacy rename)."""
+    try:
+        from ddgs import DDGS  # type: ignore
+
+        return DDGS, "ddgs"
+    except Exception:
+        pass
+    try:
+        from duckduckgo_search import DDGS  # type: ignore
+
+        return DDGS, "duckduckgo_search"
+    except Exception as e:
+        raise ImportError(
+            "Neither 'ddgs' nor 'duckduckgo_search' is installed. "
+            "pip install ddgs"
+        ) from e
+
+
 async def search_ddgs(query: str, max_results: int = 5) -> tuple[list[dict[str, str]], str]:
-    """ddgs 包：无 Key。按 backend 依次试。"""
+    """ddgs / duckduckgo_search：无 Key。按 backend 依次试。"""
+    try:
+        DDGS, pkg = _import_ddgs()
+    except ImportError as e:
+        logger.info("ddgs unavailable: %s", e)
+        return [], "ddgs-missing"
 
     def _run(backend: str) -> list[dict[str, str]]:
-        from ddgs import DDGS
-
         out: list[dict[str, str]] = []
-        with DDGS() as ddg:
-            rows = list(
-                ddg.text(
-                    query,
-                    max_results=max_results,
-                    backend=backend,
-                )
-            )
-        for row in rows:
+        # DDGS is both context manager and callable depending on version
+        client = DDGS()
+        try:
+            if hasattr(client, "__enter__"):
+                ddg = client.__enter__()
+            else:
+                ddg = client
+            try:
+                kwargs: dict[str, Any] = {"max_results": max_results}
+                # older duckduckgo_search used backend=; newer ddgs same
+                if backend and backend != "default":
+                    kwargs["backend"] = backend
+                rows = list(ddg.text(query, **kwargs))
+            finally:
+                if hasattr(client, "__exit__"):
+                    try:
+                        client.__exit__(None, None, None)
+                    except Exception:
+                        pass
+        except TypeError:
+            # Some versions: DDGS().text(query, max_results=n) without backend
+            with DDGS() as ddg:
+                rows = list(ddg.text(query, max_results=max_results))
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
             out.append(
                 {
                     "title": str(row.get("title") or ""),
-                    "url": str(row.get("href") or row.get("link") or ""),
-                    "body": str(row.get("body") or row.get("description") or ""),
+                    "url": str(row.get("href") or row.get("link") or row.get("url") or ""),
+                    "body": str(
+                        row.get("body") or row.get("description") or row.get("snippet") or ""
+                    ),
                 }
             )
         return [r for r in out if r.get("url") or r.get("title")]
 
-    # bing 在本环境最稳；auto 易踩 yandex 超时
-    backends = ["bing", "duckduckgo", "yahoo", "google"]
+    # bing first (most reliable on CN networks); auto as secondary.
+    backends = ["bing", "auto", "duckduckgo", "yahoo", "google"]
     errors: list[str] = []
     for b in backends:
         try:
-            rows = await asyncio.wait_for(asyncio.to_thread(_run, b), timeout=8)
+            rows = await asyncio.wait_for(asyncio.to_thread(_run, b), timeout=12)
             if rows:
-                return rows[:max_results], f"ddgs/{b}"
+                return rows[:max_results], f"{pkg}/{b}"
         except Exception as e:
-            errors.append(f"{b}:{type(e).__name__}")
+            errors.append(f"{b}:{type(e).__name__}:{e}")
             logger.debug("ddgs %s failed: %s", b, e)
             continue
     if errors:
-        logger.info("ddgs all failed: %s", errors)
-    return [], "ddgs"
+        logger.info("ddgs all failed: %s", errors[:6])
+    return [], pkg
 
 
 async def search_ddg_lite(query: str, max_results: int = 5) -> tuple[list[dict[str, str]], str]:
@@ -100,13 +141,10 @@ async def search_ddg_lite(query: str, max_results: int = 5) -> tuple[list[dict[s
                 return [], "ddg-lite"
 
     results: list[dict[str, str]] = []
-    # lite layout: result-link + snippet in following rows
-    # anchors often: class='result-link'
     link_re = re.compile(
         r"<a[^>]+rel=['\"]nofollow['\"][^>]+href=['\"](https?://[^'\"]+)['\"][^>]*>(.*?)</a>",
         re.I | re.S,
     )
-    # fallback broader
     if not link_re.search(html):
         link_re = re.compile(
             r"<a[^>]+class=['\"]result-link['\"][^>]+href=['\"](https?://[^'\"]+)['\"][^>]*>(.*?)</a>",
@@ -125,7 +163,6 @@ async def search_ddg_lite(query: str, max_results: int = 5) -> tuple[list[dict[s
         if len(results) >= max_results:
             break
 
-    # try snippets near links
     snips = re.findall(
         r"class=['\"]result-snippet['\"][^>]*>(.*?)</(?:td|span|div)",
         html,
@@ -170,7 +207,6 @@ async def search_ddg_html(query: str, max_results: int = 5) -> tuple[list[dict[s
         else:
             href = unescape(title_match.group(1))
             title = re.sub(r"<[^>]+>", "", unescape(title_match.group(2))).strip()
-        # DDG redirect links
         if "uddg=" in href:
             try:
                 href = urllib.parse.unquote(
@@ -197,7 +233,7 @@ async def search_bing_html(query: str, max_results: int = 5) -> tuple[list[dict[
     import aiohttp
 
     url = "https://www.bing.com/search?" + urllib.parse.urlencode({"q": query})
-    headers = {"User-Agent": _UA, "Accept-Language": "en-US,en;q=0.9"}
+    headers = {"User-Agent": _UA, "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8"}
     async with aiohttp.ClientSession() as session:
         async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
             html = await resp.text()
@@ -264,7 +300,6 @@ async def search_wikipedia(query: str, max_results: int = 5) -> tuple[list[dict[
                             "body": descs[i] if i < len(descs) else "",
                         }
                     )
-                # enrich first with summary extract
                 if results:
                     try:
                         t0 = urllib.parse.quote(results[0]["title"].replace(" ", "_"))
@@ -319,7 +354,8 @@ async def free_web_search(query: str, max_results: int = 5) -> str:
     return (
         f"[Error] free web_search failed for «{q}».\n"
         f"tried: {'; '.join(errors)}\n"
-        "No API key required engines succeeded. Check network / try again."
+        "Hint: install search backend with `pip install ddgs` "
+        "(desktop: AppData/Roaming/takton/python-packages) and restart Takton."
     )
 
 

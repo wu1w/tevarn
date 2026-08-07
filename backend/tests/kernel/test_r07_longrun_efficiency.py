@@ -18,7 +18,8 @@ import pytest
 def test_normalize_tool_result_spills_when_process_id(monkeypatch):
     from backend.agent import tool_result_contract as trc
 
-    big = "x" * 5000
+    n = max(trc.SPILL_THRESHOLD, trc.TOOL_RESULT_BUDGET["command"]) + 500
+    big = "x" * n
     called = {}
 
     class K:
@@ -26,13 +27,18 @@ def test_normalize_tool_result_spills_when_process_id(monkeypatch):
             called["pid"] = pid
             called["tool"] = tool
             called["n"] = len(content)
-            return {"spilled": True, "context": f"[handle spilled tool={tool} pid={pid}]"}
+            return {
+                "spilled": True,
+                "handle": {"id": "h-proc-abc"},
+                "context": f"[handle spilled tool={tool} pid={pid}]",
+            }
 
     monkeypatch.setattr("backend.kernel.get_kernel", lambda: K())
     out = trc.normalize_tool_result(big, tool_name="command", process_id="proc-abc")
-    assert "handle" in out or "spilled" in out or "proc-abc" in out
+    assert "handle" in out or "spilled" in out or "proc-abc" in out or "h-proc-abc" in out
+    assert "result_load" in out
     assert called.get("pid") == "proc-abc"
-    assert called.get("n") == 5000
+    assert called.get("n") == n
 
 
 def test_registry_passes_process_id_to_normalize(monkeypatch):

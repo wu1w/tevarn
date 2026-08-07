@@ -2319,6 +2319,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         final_content = ""
         _sft_tools: list = []  # SFT usage log buffer
         accumulated_content = ""
+        accumulated_reasoning = ""
         goal_nudge_count = 0
 
         # 透明化轨迹收集
@@ -2636,6 +2637,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             )
             messages = _lr.messages
             accumulated_content = _lr.accumulated_content
+            accumulated_reasoning = getattr(_lr, "accumulated_reasoning", "") or ""
             tool_calls = _lr.tool_calls
             if _lr.force_final_no_tools is not None:
                 _force_final_no_tools = _lr.force_final_no_tools
@@ -2678,13 +2680,18 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             if _lr.action == "continue":
                 continue
             if _lr.action == "break":
-                final_content = _lr.final_content
+                from backend.agent.thinking_format import wrap_thinking
+
+                final_content = wrap_thinking(
+                    accumulated_reasoning, _lr.final_content or accumulated_content
+                )
                 break
 
             # 判断是否有 tool calls
             if tool_calls:
                 # 将 assistant 的回复（含 tool calls）追加到 messages
                 # content 用 None 兼容部分严格 API（空字符串 + tool_calls 会被拒）
+                # LLM 上下文只带可见正文；UI 持久化可附带 <thinking>
                 assistant_msg: dict[str, Any] = {
                     "role": "assistant",
                     "content": accumulated_content if accumulated_content else None,
@@ -2705,12 +2712,14 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 assistant_msg["tool_calls"] = assistant_tool_calls
                 messages.append(assistant_msg)
 
-                # 持久化中间 assistant（含 tool_calls），便于跨轮续跑
+                # 持久化中间 assistant（含 tool_calls + 思考块），便于跨轮续跑与 UI 回放
                 try:
+                    from backend.agent.thinking_format import wrap_thinking
+
                     await self._save_message(
                         session_id,
                         "assistant",
-                        accumulated_content or "",
+                        wrap_thinking(accumulated_reasoning, accumulated_content or ""),
                         tool_calls=assistant_tool_calls,
                     )
                 except Exception as e:
@@ -2830,7 +2839,12 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     _force_final_no_tools = _nr.force_final_no_tools
                 if _nr.action == "continue":
                     continue
-                final_content = _nr.final_content
+                from backend.agent.thinking_format import wrap_thinking
+
+                # 最终答复附带本轮 reasoning，UI 折叠展示；逻辑层 empty 检查仍用 body
+                final_content = wrap_thinking(
+                    accumulated_reasoning, _nr.final_content or accumulated_content
+                )
                 break
         else:
             # 用尽全部分段预算
@@ -2840,9 +2854,15 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 _seg_size,
                 session_id,
             )
-            final_content = accumulated_content or (
-                f"[提示] 已达最大工具轮次预算 ({_max_seg}×{_seg_size})，任务可能未完成。"
-                "可发送「请继续」或调用 /api/sessions/{id}/resume 续跑。"
+            from backend.agent.thinking_format import wrap_thinking
+
+            final_content = wrap_thinking(
+                accumulated_reasoning,
+                accumulated_content
+                or (
+                    f"[提示] 已达最大工具轮次预算 ({_max_seg}×{_seg_size})，任务可能未完成。"
+                    "可发送「请继续」或调用 /api/sessions/{id}/resume 续跑。"
+                ),
             )
             if goal_mode:
                 from backend.agent.goal_state import get_goal, save_goal_to_db

@@ -381,6 +381,20 @@ pre {
 .tk-think-done:hover {
   color: var(--foreground-muted);
 }
+/* 思考折叠触发（button 重置） */
+.tk-think-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  max-width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
 /* 展开的推理内容：左侧细线 + 浅灰小字（引用感，非卡片） */
 .tk-think-body {
   margin: 8px 0 4px;
@@ -390,6 +404,8 @@ pre {
   line-height: 1.75;
   color: var(--foreground-dim);
   white-space: pre-wrap;
+  max-height: 14rem;
+  overflow-y: auto;
   animation: tk-fadein 0.4s ease;
 }
 @keyframes tk-fadein {

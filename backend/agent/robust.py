@@ -98,8 +98,13 @@ async def async_retry(
     raise last
 
 def is_empty_assistant_content(text: str | None) -> bool:
-    """无可见正文（空白 / 仅不可见字符）。"""
-    return not (text or "").strip()
+    """无可见正文（空白 / 仅不可见字符 / 仅有 thinking 块无 body）。"""
+    try:
+        from backend.agent.thinking_format import is_visible_empty
+
+        return is_visible_empty(text)
+    except Exception:
+        return not (text or "").strip()
 
 
 def tool_call_signature(name: str, arguments: object | None) -> str:

@@ -45,16 +45,17 @@ pub struct ResultSpillStore {
 
 impl Default for ResultSpillStore {
     fn default() -> Self {
-        // Aggressive default: spill early so LLM context keeps handle only.
-        // Override via TAKTON_RESULT_SPILL_THRESHOLD (chars).
+        // Soft defaults (Claude Code–style envelope): keep mid-size results
+        // inline at the Python layer; Rust store still accepts forced spills.
+        // Override: TAKTON_RESULT_SPILL_THRESHOLD / TAKTON_RESULT_SPILL_PREVIEW.
         let thr = std::env::var("TAKTON_RESULT_SPILL_THRESHOLD")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(800);
+            .unwrap_or(16_000);
         let preview = std::env::var("TAKTON_RESULT_SPILL_PREVIEW")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(240);
+            .unwrap_or(8_000);
         Self::new(Self::default_dir(), thr, preview)
     }
 }
@@ -160,14 +161,19 @@ impl ResultSpillStore {
         }
     }
 
-    /// Compact context line for models.
+    /// Compact context line for models (Python layer may replace with richer envelope).
     pub fn handle_summary(h: &ResultHandle) -> String {
         format!(
-            "[tool_result_handle id={} tool={} bytes={} sha256={}…]\npreview:\n{}\n…(full content external; use result_load id={})",
+            "[tool_result_handle id={} tool={} bytes={} sha256={}…]\n\
+FULL BODY external — do NOT re-run the tool; page with:\n\
+  result_load(id=\"{}\", offset=0, max_chars=20000)\n\
+--- preview ---\n{}\n\
+--- end preview; result_load id={} for more ---",
             h.id,
             h.tool,
             h.bytes,
             &h.sha256[..h.sha256.len().min(12)],
+            h.id,
             h.preview,
             h.id
         )
@@ -179,8 +185,8 @@ impl ResultSpillStore {
             "threshold": self.threshold,
             "preview_chars": self.preview_chars,
             "dir": self.dir.display().to_string(),
-            "aggressive_default": true,
-            "policy": "spill when len>=threshold; context keeps handle+preview only",
+            "aggressive_default": false,
+            "policy": "spill when len>=threshold; context keeps handle+head/tail preview; page via result_load",
         })
     }
 }

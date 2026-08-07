@@ -3,8 +3,6 @@
 版本：**0.5.4-alpha**
 更新：2026-08-02
 
-> **路线图**：[docs/ROADMAP.md](./ROADMAP.md)（当前产品版本 **0.5.4-alpha**；P0 已收口 → 0.7 长程/成本 → 1.0）
->
 > **执行模型（现行）**  
 > **一切执行都是 Run**；Identity 是执行者；Cluster/SubAgent/Hire 是编排形态；Workflow 是 Run 模板。  
 > 记忆总线：`backend/services/memory_bus.py` · 权限法院：`backend/kernel/permission_court.py`  
