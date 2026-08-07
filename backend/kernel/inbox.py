@@ -154,6 +154,15 @@ class InboxService:
             priority=priority,
             db_item_id=str(item.id),
         )
+        # P0: event-wake dispatcher so interactive assign is not stuck on poll sleep
+        try:
+            from backend.kernel.workforce import get_workforce_dispatcher
+
+            d = get_workforce_dispatcher()
+            if d is not None and hasattr(d, "nudge"):
+                d.nudge()
+        except Exception as _nudge_e:
+            logger.debug("dispatcher nudge skip: %s", _nudge_e)
         return item
 
     # ── 领取与完成（Dispatcher 用）────────────────────────────

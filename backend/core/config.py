@@ -312,7 +312,9 @@ class Settings(BaseSettings):
     aios_profile: str = ""  # "" | "aios-dev"
     # 0.6 自主运转：收件箱/派遣器
     agent_dispatcher_enabled: bool = True
-    agent_dispatcher_poll_seconds: float = 10.0
+    # Interactive scenes: 2s (was 10s) so assigned work is not an empty 10s wait.
+    # Floor is still 1.0s in WorkforceDispatcher.__init__.
+    agent_dispatcher_poll_seconds: float = 2.0
     agent_inbox_max_pending: int = 200  # 有界红线：超限丢弃最旧 pending
     agent_inbox_item_timeout: float = 600.0  # 单工单执行超时（秒）
     # 数据保留（0 = 不自动清理）

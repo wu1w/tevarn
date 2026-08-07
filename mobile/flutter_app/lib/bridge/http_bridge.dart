@@ -217,21 +217,69 @@ class HttpTaktonBridge extends TaktonBridge {
     }
   }
 
+  /// Critical reads: 1 retry on timeout/network (path blip).
   Future<Map<String, dynamic>> _get(String path) async {
-    final r = await _client.get(_u(path)).timeout(const Duration(seconds: 8));
-    return _parse(r);
+    Object? lastErr;
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        final r =
+            await _client.get(_u(path)).timeout(const Duration(seconds: 8));
+        return _parse(r);
+      } catch (e) {
+        lastErr = e;
+        if (attempt == 0) {
+          await Future<void>.delayed(const Duration(milliseconds: 200));
+          continue;
+        }
+      }
+    }
+    return {'ok': false, 'error': lastErr?.toString() ?? 'GET failed'};
   }
 
+  /// Critical writes: 1 retry only for pure network/timeout (not HTTP 4xx).
   Future<Map<String, dynamic>> _post(
       String path, Map<String, dynamic> body) async {
-    final r = await _client
-        .post(
-          _u(path),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode(body),
-        )
-        .timeout(const Duration(seconds: 12));
-    return _parse(r);
+    Object? lastErr;
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        final r = await _client
+            .post(
+              _u(path),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode(body),
+            )
+            .timeout(const Duration(seconds: 12));
+        return _parse(r);
+      } catch (e) {
+        lastErr = e;
+        if (attempt == 0) {
+          await Future<void>.delayed(const Duration(milliseconds: 250));
+          continue;
+        }
+      }
+    }
+    return {'ok': false, 'error': lastErr?.toString() ?? 'POST failed'};
+  }
+
+  /// Host ring-buffer gap fill (seq strictly greater than [afterSeq]).
+  Future<List<Map>> _eventsAfter(int afterSeq, String sessionId) async {
+    if (afterSeq < 0) return const [];
+    try {
+      final sid = Uri.encodeQueryComponent(sessionId);
+      final r = await _get(
+        '/api/mobile/events?after_seq=$afterSeq&session_id=$sid&limit=200',
+      );
+      if (r['ok'] != true) return const [];
+      final raw = r['events'];
+      if (raw is! List) return const [];
+      final out = <Map>[];
+      for (final e in raw) {
+        if (e is Map) out.add(e);
+      }
+      return out;
+    } catch (_) {
+      return const [];
+    }
   }
 
   Map<String, dynamic> _parse(http.Response r) {
@@ -521,10 +569,17 @@ class HttpTaktonBridge extends TaktonBridge {
     final ty = (v['type']?.toString() ?? '').toLowerCase();
     if (ty == 'done' ||
         ty == 'chat_done' ||
-        ty == 'closed' ||
         ty == 'complete' ||
         ty == 'final') {
       return true;
+    }
+    // Transport `closed` is often path switch / half-dead socket — recoverable.
+    // Only end the turn if host marks it non-recoverable and we already saw work.
+    if (ty == 'closed') {
+      final recoverable = v['recoverable'] == true ||
+          (v['reason']?.toString() ?? '').toLowerCase().contains('path');
+      if (recoverable) return false;
+      return sawTurn;
     }
     // Do NOT treat status=idle alone as terminal: tool loops can emit idle-ish
     // statuses; Host HTTP watchdog + run.completed / done are authoritative.
@@ -534,7 +589,7 @@ class HttpTaktonBridge extends TaktonBridge {
           topic.endsWith('failed') ||
           topic.endsWith('cancelled') ||
           topic.endsWith('interrupted')) {
-        return sawTurn || true;
+        return sawTurn;
       }
     }
     return false;
@@ -598,14 +653,204 @@ class HttpTaktonBridge extends TaktonBridge {
     var finishedCleanly = false;
     var sawTurn = false;
     var accLen = 0;
+    // Host stamps monotonic `seq` on every fan-out frame (ordered merge / drop stale).
+    var lastSeq = 0;
     // HTTP silence reconcile must be stable across polls — a single snapshot can
     // catch intermediate assistant text before tools finish (was finishing early).
     var pollStable = 0;
     var lastPolled = '';
     final started = DateTime.now();
     const overallLimit = Duration(minutes: 12);
-    // Silence between WS frames before HTTP reconcile (tools can pause longer).
-    const silencePoll = Duration(seconds: 2);
+    // Silence → first ring gap-fill, then turn_status (tools can pause longer).
+    const silencePoll = Duration(milliseconds: 1500);
+
+    /// Apply one host event map (state only); returns true if stream should end.
+    /// Caller must [yieldsFor] for UI. On seq gap, call [_eventsAfter] first.
+    Future<bool> applyEvent(Map v) async {
+      final seqRaw = v['seq'];
+      final seq = seqRaw is int
+          ? seqRaw
+          : int.tryParse(seqRaw?.toString() ?? '') ?? 0;
+      final srcEarly = (v['source']?.toString() ?? '').toLowerCase();
+      final replaceEarly =
+          v['replace'] == true || srcEarly == 'http_watchdog';
+      if (seq > 0) {
+        // Drop duplicates and reordered stale frames (except full replace snapshots).
+        if (seq <= lastSeq && !replaceEarly) {
+          return false;
+        }
+        if (seq > lastSeq) lastSeq = seq;
+      }
+      final ty = (v['type']?.toString() ?? '').toLowerCase();
+      if (ty == 'mobile_hello') {
+        final latest = v['latest_seq'];
+        final ls = latest is int
+            ? latest
+            : int.tryParse(latest?.toString() ?? '') ?? 0;
+        // Soft-align so future gap math is correct after reconnect mid-stream.
+        if (ls > lastSeq && lastSeq == 0) {
+          // First hello: do not skip future frames.
+        }
+        return false;
+      }
+      if (ty == 'error') {
+        final full = await _pollRemoteAssistantText(
+          sessionId,
+          userContent: content,
+          minLen: accLen,
+        );
+        if (full != null && full.isNotEmpty) {
+          accLen = full.length;
+          lastPolled = full;
+          return true; // caller yields full
+        }
+        throw Exception(
+            v['error']?.toString() ?? v['message']?.toString() ?? 'remote error');
+      }
+
+      if (_isRemoteTurnStart(v)) {
+        sawTurn = true;
+      }
+
+      if (ty == 'mobile_status' || ty == 'status') {
+        final detail = (v['detail'] ?? v['state'] ?? '').toString();
+        if (detail.isNotEmpty) {
+          sawTurn = true;
+        }
+      }
+      if (ty == 'mobile_tool' || ty == 'tool_event') {
+        sawTurn = true;
+      }
+
+      final src = (v['source']?.toString() ?? '').toLowerCase();
+      final replace = v['replace'] == true || src == 'http_watchdog';
+      final delta = v['delta']?.toString();
+      final contentField = (v['content'] ?? v['text'])?.toString();
+      if (delta != null && delta.isNotEmpty) {
+        if (replace ||
+            (contentField != null &&
+                contentField == delta &&
+                delta.length > accLen + 20)) {
+          final full =
+              (contentField != null && contentField.length >= delta.length)
+                  ? contentField
+                  : delta;
+          accLen = full.length;
+          sawTurn = true;
+          lastPolled = full;
+          pollStable = 0;
+        } else {
+          accLen += delta.length;
+          sawTurn = true;
+        }
+      } else if (ty.contains('delta') ||
+          ty.contains('chunk') ||
+          ty == 'token' ||
+          ty == 'stream' ||
+          replace) {
+        final t = contentField;
+        if (t != null && t.isNotEmpty) {
+          if (replace || t.length > accLen + 20) {
+            accLen = t.length;
+            sawTurn = true;
+            lastPolled = t;
+            pollStable = 0;
+          } else {
+            accLen += t.length;
+            sawTurn = true;
+          }
+        }
+      }
+
+      if (_isRemoteTerminalEvent(v, sawTurn: sawTurn)) {
+        final embedded = (v['content'] ?? v['text'])?.toString();
+        if (embedded != null &&
+            embedded.isNotEmpty &&
+            embedded.length >= accLen) {
+          accLen = embedded.length;
+          lastPolled = embedded;
+        }
+        return true;
+      }
+      return false;
+    }
+
+    /// Yield UI strings for a processed event (status/tool/text). Call after apply*.
+    Iterable<String> yieldsFor(Map v) sync* {
+      final ty = (v['type']?.toString() ?? '').toLowerCase();
+      if (ty == 'mobile_status' || ty == 'status') {
+        final detail = (v['detail'] ?? v['state'] ?? '').toString();
+        final action = (v['action'] ?? '').toString();
+        if (detail.isNotEmpty) {
+          // Encode optional action so island can deep-link (e.g. open_approve).
+          yield action.isEmpty
+              ? '\x01STATUS\x01$detail'
+              : '\x01STATUS\x01$detail\x01$action';
+        }
+      }
+      if (ty == 'mobile_approval_badge') {
+        final n = v['pending']?.toString() ?? '0';
+        yield '\x01BADGE\x01$n';
+      }
+      if (ty == 'mobile_confirm') {
+        final id = (v['confirm_id'] ?? v['id'] ?? '').toString();
+        final detail = (v['detail'] ?? '').toString();
+        final raw = (v['raw_type'] ?? v['kind'] ?? '').toString().toLowerCase();
+        final kind = (raw.contains('escalat') || raw.contains('approval'))
+            ? 'escalation'
+            : (raw.contains('confirm') || raw.contains('permission')
+                ? 'confirm'
+                : 'escalation');
+        yield '\x01CONFIRM\x01$id\x01$kind\x01$detail';
+      }
+      if (ty == 'mobile_tool' || ty == 'tool_event') {
+        final phase = (v['phase']?.toString() ?? 'start').toLowerCase();
+        final name = v['name']?.toString() ?? 'tool';
+        // Prefer explicit ok; missing status must not force success.
+        final status = v['status']?.toString() ?? '';
+        final ok = v.containsKey('ok')
+            ? v['ok'] == true
+            : (status != 'failed' && status != 'error' && status != 'denied');
+        final preview = (v['preview'] ?? v['result'] ?? '').toString();
+        final p = phase.contains('end') ||
+                phase == 'completed' ||
+                phase == 'result'
+            ? 'end'
+            : 'start';
+        yield '\x01TOOL\x01$p\x01$name\x01${ok ? '1' : '0'}\x01$preview';
+      }
+      final src = (v['source']?.toString() ?? '').toLowerCase();
+      final replaceFlag = v['replace'] == true || src == 'http_watchdog';
+      final delta = v['delta']?.toString();
+      final contentField = (v['content'] ?? v['text'])?.toString();
+      bool shouldReplace(String full) =>
+          replaceFlag || full.length > accLen + 20;
+      if (delta != null && delta.isNotEmpty) {
+        final full =
+            (contentField != null && contentField.length >= delta.length)
+                ? contentField
+                : delta;
+        if (shouldReplace(full) ||
+            (contentField != null && contentField == delta && shouldReplace(delta))) {
+          yield '\x00$full';
+        } else {
+          yield delta;
+        }
+      } else if (ty.contains('delta') ||
+          ty.contains('chunk') ||
+          ty == 'token' ||
+          ty == 'stream' ||
+          replaceFlag) {
+        final t = contentField;
+        if (t != null && t.isNotEmpty) {
+          if (shouldReplace(t)) {
+            yield '\x00$t';
+          } else {
+            yield t;
+          }
+        }
+      }
+    }
 
     try {
       final iter = StreamIterator(ch.stream);
@@ -619,9 +864,22 @@ class HttpTaktonBridge extends TaktonBridge {
         ]);
 
         if (winner is _Silence) {
-          // No WS frame for silencePoll — PC may already be done; reconcile via HTTP.
-          // Do not poll before turn start (avoids matching an older same-text turn).
+          // No WS frame — first fill seq gaps from host ring, then turn_status.
           if (!sawTurn) continue;
+          if (lastSeq > 0) {
+            final missing = await _eventsAfter(lastSeq, sessionId);
+            for (final m in missing) {
+              final done = await applyEvent(m);
+              for (final y in yieldsFor(m)) {
+                yield y;
+              }
+              if (done) {
+                finishedCleanly = true;
+                break;
+              }
+            }
+            if (finishedCleanly) break;
+          }
           final full = await _pollRemoteAssistantText(
             sessionId,
             userContent: content,
@@ -638,42 +896,55 @@ class HttpTaktonBridge extends TaktonBridge {
             } else {
               pollStable += 1;
             }
-            // Two identical final polls (~4s silence) → done. Never finish on first hit.
-            if (pollStable >= 1) {
+            // Need 3 identical final polls (~4.5s) so mid-tool snapshots don't end the turn.
+            if (pollStable >= 2) {
               finishedCleanly = true;
               break;
             }
           } else {
-            // Still in tool loop (null) — reset stability.
             pollStable = 0;
             lastPolled = '';
           }
-          // Keep waiting on the same pendingMove.
           continue;
         }
 
         final has = (winner as _Move).has;
         pendingMove = null;
         if (!has) {
-          // Host WS closed — pull until stable or give best effort (never hang).
-          for (var i = 0; i < 4; i++) {
-            final full = await _pollRemoteAssistantText(
-              sessionId,
-              userContent: content,
-              minLen: accLen,
-            );
-            if (full != null && full.isNotEmpty) {
-              if (full.length >= accLen) {
-                accLen = full.length;
-                yield '\x00$full';
+          // Host WS closed — ring gap-fill then HTTP stabilize.
+          if (lastSeq > 0) {
+            final missing = await _eventsAfter(lastSeq, sessionId);
+            for (final m in missing) {
+              final done = await applyEvent(m);
+              for (final y in yieldsFor(m)) {
+                yield y;
               }
-              if (full == lastPolled) {
+              if (done) {
                 finishedCleanly = true;
                 break;
               }
-              lastPolled = full;
             }
-            await Future<void>.delayed(const Duration(milliseconds: 800));
+          }
+          if (!finishedCleanly) {
+            for (var i = 0; i < 4; i++) {
+              final full = await _pollRemoteAssistantText(
+                sessionId,
+                userContent: content,
+                minLen: accLen,
+              );
+              if (full != null && full.isNotEmpty) {
+                if (full.length >= accLen) {
+                  accLen = full.length;
+                  yield '\x00$full';
+                }
+                if (full == lastPolled) {
+                  finishedCleanly = true;
+                  break;
+                }
+                lastPolled = full;
+              }
+              await Future<void>.delayed(const Duration(milliseconds: 800));
+            }
           }
           break;
         }
@@ -689,103 +960,40 @@ class HttpTaktonBridge extends TaktonBridge {
         }
         if (v == null) continue;
 
-        final ty = (v['type']?.toString() ?? '').toLowerCase();
-        if (ty == 'error') {
-          final full = await _pollRemoteAssistantText(
-            sessionId,
-            userContent: content,
-            minLen: accLen,
-          );
-          if (full != null && full.isNotEmpty) {
-            yield '\x00$full';
-            finishedCleanly = true;
-            break;
-          }
-          throw Exception(
-              v['error']?.toString() ?? v['message']?.toString() ?? 'remote error');
-        }
-
-        if (_isRemoteTurnStart(v)) {
-          sawTurn = true;
-        }
-
-        // Codex-like live status / tool frames (Host translates PC events).
-        if (ty == 'mobile_status' || ty == 'status') {
-          final detail = (v['detail'] ?? v['state'] ?? '').toString();
-          if (detail.isNotEmpty) {
-            sawTurn = true;
-            yield '\x01STATUS\x01$detail';
-          }
-        }
-        if (ty == 'mobile_tool' || ty == 'tool_event') {
-          final phase = (v['phase']?.toString() ?? 'start').toLowerCase();
-          final name = v['name']?.toString() ?? 'tool';
-          final ok = v['ok'] == true ||
-              (v['status']?.toString() != 'failed' &&
-                  v['status']?.toString() != 'error');
-          final preview = (v['preview'] ?? v['result'] ?? '').toString();
-          final p = phase.contains('end') ||
-                  phase == 'completed' ||
-                  phase == 'result'
-              ? 'end'
-              : 'start';
-          sawTurn = true;
-          yield '\x01TOOL\x01$p\x01$name\x01${ok ? '1' : '0'}\x01$preview';
-        }
-
-        // Host HTTP watchdog may send replace=true with full PC text.
-        // Also treat source=http_watchdog as full replace even if flag lost.
-        final src = (v['source']?.toString() ?? '').toLowerCase();
-        final replace =
-            v['replace'] == true || src == 'http_watchdog';
-        final delta = v['delta']?.toString();
-        final contentField = (v['content'] ?? v['text'])?.toString();
-        if (delta != null && delta.isNotEmpty) {
-          if (replace || (contentField != null && contentField == delta && delta.length > accLen + 20)) {
-            // Full snapshot: prefer longer of delta/content
-            final full = (contentField != null && contentField.length >= delta.length)
-                ? contentField
-                : delta;
-            accLen = full.length;
-            sawTurn = true;
-            lastPolled = full;
-            pollStable = 0;
-            yield '\x00$full';
-          } else {
-            accLen += delta.length;
-            sawTurn = true;
-            yield delta;
-          }
-          // fall through — may also be terminal in same envelope
-        } else if (ty.contains('delta') ||
-            ty.contains('chunk') ||
-            ty == 'token' ||
-            ty == 'stream' ||
-            replace) {
-          final t = contentField;
-          if (t != null && t.isNotEmpty) {
-            if (replace || t.length > accLen + 20) {
-              accLen = t.length;
-              sawTurn = true;
-              lastPolled = t;
-              pollStable = 0;
-              yield '\x00$t';
-            } else {
-              accLen += t.length;
-              sawTurn = true;
-              yield t;
+        // Seq gap mid-stream → pull ring before applying current frame.
+        final seqRaw = v['seq'];
+        final seqJump = seqRaw is int
+            ? seqRaw
+            : int.tryParse(seqRaw?.toString() ?? '') ?? 0;
+        if (seqJump > lastSeq + 1 && lastSeq > 0) {
+          final missing = await _eventsAfter(lastSeq, sessionId);
+          for (final m in missing) {
+            final ms = m['seq'];
+            final mseq =
+                ms is int ? ms : int.tryParse(ms?.toString() ?? '') ?? 0;
+            if (mseq > 0 && mseq == seqJump) continue;
+            final d = await applyEvent(m);
+            for (final y in yieldsFor(m)) {
+              yield y;
+            }
+            if (d) {
+              finishedCleanly = true;
+              break;
             }
           }
+          if (finishedCleanly) break;
         }
 
-        if (_isRemoteTerminalEvent(v, sawTurn: sawTurn)) {
-          // Prefer payload content, then HTTP reconcile (may need a short wait
-          // for the final assistant after tool results to land in DB).
+        final done = await applyEvent(v);
+        for (final y in yieldsFor(v)) {
+          yield y;
+        }
+        if (done) {
+          // Terminal: short HTTP reconcile so final tool-loop text lands.
           final embedded = (v['content'] ?? v['text'])?.toString();
           if (embedded != null &&
               embedded.isNotEmpty &&
               embedded.length >= accLen) {
-            accLen = embedded.length;
             yield '\x00$embedded';
             finishedCleanly = true;
             break;
@@ -815,6 +1023,15 @@ class HttpTaktonBridge extends TaktonBridge {
       }
 
       if (!finishedCleanly) {
+        if (lastSeq > 0) {
+          final missing = await _eventsAfter(lastSeq, sessionId);
+          for (final m in missing) {
+            await applyEvent(m);
+            for (final y in yieldsFor(m)) {
+              yield y;
+            }
+          }
+        }
         final full = await _pollRemoteAssistantText(
           sessionId,
           userContent: content,

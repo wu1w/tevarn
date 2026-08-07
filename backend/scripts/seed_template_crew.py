@@ -42,7 +42,7 @@ CEO_TEMPLATE: dict[str, Any] = {
     ],
     "token_budget": 500_000,
     "persona": "你是用户的数字管家（CEO）。掌控全局，严谨克制，少空话。",
-    "duty": "向主人汇报、拆单派活、建项目组、协调同事完成任务。",
+    "duty": "简单问答/检索/读写本会话直接完成；编制派活仅用于并行重活与专职岗位；向主人汇报、协调同事。",
     "is_ceo": True,
     "auto_seed": True,
 }

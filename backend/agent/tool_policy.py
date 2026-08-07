@@ -131,16 +131,16 @@ PROFILE_BASE_PACKS: dict[str, tuple[str, ...]] = {
 }
 
 # assistant 额外单工具（不在 pack 内）
+# P0: 普通会话默认单 agent —— 不挂 crew_steward。
+# 编制工具仅：steward 会话 (extra_packs=["crew"]) / mode=cluster / 显式 crew pack。
 PROFILE_EXTRA_TOOLS: dict[str, tuple[str, ...]] = {
-    # crew_steward：对话主路径招人/派活（即使 coding profile 也始终可点）
-    "coding": ("current_time", "clarify", "use_tool_pack", "crew_steward"),
+    "coding": ("current_time", "clarify", "use_tool_pack"),
     "assistant": (
         "current_time",
         "clarify",
         "session_search",
         "doc_read",
         "use_tool_pack",
-        "crew_steward",
     ),
     "ops": (
         "current_time",
@@ -150,10 +150,9 @@ PROFILE_EXTRA_TOOLS: dict[str, tuple[str, ...]] = {
         "use_tool_pack",
         "get_system_status",
         "capability_status",
-        "crew_steward",
     ),
-    "dynamic": ("use_tool_pack", "crew_steward"),
-    "core": ("use_tool_pack", "crew_steward"),
+    "dynamic": ("use_tool_pack",),
+    "core": ("use_tool_pack",),
 }
 
 MODE_TOOL_EXTRAS: dict[str, tuple[str, ...]] = {
@@ -161,7 +160,13 @@ MODE_TOOL_EXTRAS: dict[str, tuple[str, ...]] = {
     "ppt": ("generate_ppt", "doc_read", "doc_write"),
     "report": ("generate_report", "doc_read", "doc_write", "render_chart"),
     "goal": ("manage_goal", "autopilot"),
-    "cluster": ("manage_sub_agent", "delegate_task", "agent_call"),
+    # 显式团队/集群模式才挂派工工具
+    "cluster": (
+        "crew_steward",
+        "manage_sub_agent",
+        "delegate_task",
+        "agent_call",
+    ),
     "deepthink": (),
     "default": (),
 }
@@ -622,16 +627,24 @@ def compact_capability_brief(
         "Prefer file_write/edit over heredoc; batch independent reads."
     )
     lines.append("Prefer tools over speculation; finish the task.")
-    # 编制派活纪律：有 crew_steward 时强制提示，避免闷头起子代理
-    if tool_names is None or "crew_steward" in set(tool_names or []):
+    # 仅当本轮工具面真有 crew_steward 时再注入编制纪律（避免普通会话被诱导派工）
+    name_set = set(tool_names or []) if tool_names is not None else set()
+    if "crew_steward" in name_set:
         lines.append(
-            "Workforce: analyze → crew_steward list/hire/assign to employees (inbox). "
+            "Workforce: multi-step team projects → crew_steward list/hire/assign (inbox). "
+            "Simple Q&A / weather / trending / one-shot search / short facts: "
+            "answer yourself with tools in this session — do NOT hire/assign. "
             "Do NOT spawn temp subagents for team work."
         )
-    if tool_names is None or "okr_goal" in set(tool_names or []):
+    if tool_names is not None and "okr_goal" in name_set:
         lines.append(
             "Business goals (目标页 O-KR): use okr_goal list/update/create. "
             "Do NOT use manage_goal (session todos) or grep the repo for goals."
+        )
+    if tool_names is None:
+        # full-tools 模式：仍提示 okr，但不默认推派工
+        lines.append(
+            "Business goals (目标页 O-KR): use okr_goal list/update/create when relevant."
         )
     return "\n".join(lines)
 

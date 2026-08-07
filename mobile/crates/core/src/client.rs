@@ -103,23 +103,42 @@ impl TaktonClient {
         body: Option<Value>,
         auth: bool,
     ) -> Result<(StatusCode, String)> {
-        let url = format!("{}{}", self.api_root(), path);
-        let mut req = self.http.request(method, &url);
-        if auth {
-            let token = self.token().ok_or(Error::NotAuthenticated)?;
-            req = req.header("Authorization", format!("Bearer {token}"));
+        // GET: one network retry (path blips / half-open TCP). POST not retried (non-idempotent).
+        let max_attempts: u32 = if method == Method::GET { 2 } else { 1 };
+        let mut last_err = Error::Network("request failed".into());
+        for attempt in 0..max_attempts {
+            let url = format!("{}{}", self.api_root(), path);
+            let mut req = self.http.request(method.clone(), &url);
+            if auth {
+                let token = match self.token() {
+                    Some(t) => t,
+                    None => return Err(Error::NotAuthenticated),
+                };
+                req = req.header("Authorization", format!("Bearer {token}"));
+            }
+            req = req.header("Accept", "application/json");
+            if let Some(ref b) = body {
+                req = req.header("Content-Type", "application/json").json(b);
+            }
+            match req.send().await {
+                Ok(res) => {
+                    let status = res.status();
+                    match res.text().await {
+                        Ok(text) => return Ok((status, text)),
+                        Err(e) => {
+                            last_err = Error::Network(e.to_string());
+                        }
+                    }
+                }
+                Err(e) => {
+                    last_err = Error::Network(e.to_string());
+                }
+            }
+            if attempt + 1 < max_attempts {
+                tokio::time::sleep(Duration::from_millis(200 * (attempt as u64 + 1))).await;
+            }
         }
-        req = req.header("Accept", "application/json");
-        if let Some(b) = body {
-            req = req.header("Content-Type", "application/json").json(&b);
-        }
-        let res = req
-            .send()
-            .await
-            .map_err(|e| Error::Network(e.to_string()))?;
-        let status = res.status();
-        let text = res.text().await.map_err(|e| Error::Network(e.to_string()))?;
-        Ok((status, text))
+        Err(last_err)
     }
 
     async fn request_json<T: DeserializeOwned>(

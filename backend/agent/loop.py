@@ -1229,18 +1229,30 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         if fresh is not None:
                             kernel_proc = fresh
                             self._kernel_process = kernel_proc
-                        # Token/tool surface sync: orchestration tools (crew_steward)
-                        # must appear in process.capabilities after profile apply.
+                        # Steward sessions still need crew_steward on the token.
+                        # Normal solo chat no longer expects it (P0 single-agent default).
                         caps_now = list(getattr(kernel_proc, "capabilities", None) or [])
                         if "crew_steward" not in caps_now:
-                            logger.warning(
-                                "coding_profile applied but crew_steward missing "
-                                "from token process=%s caps=%s applied=%s — "
-                                "tool packs will deny orchestration",
-                                kernel_proc.id[:8],
-                                caps_now[:16],
-                                applied,
-                            )
+                            _contact_chk = str(
+                                getattr(self, "_contact_agent", "") or ""
+                            ).strip()
+                            _want_crew = False
+                            try:
+                                from backend.agent.workforce_dispatch import (
+                                    is_steward_contact,
+                                )
+
+                                _want_crew = is_steward_contact(_contact_chk)
+                            except Exception:
+                                _want_crew = False
+                            if _want_crew:
+                                logger.warning(
+                                    "coding_profile applied but crew_steward missing "
+                                    "from steward token process=%s caps=%s applied=%s",
+                                    kernel_proc.id[:8],
+                                    caps_now[:16],
+                                    applied,
+                                )
                         # CEO/管家：进程能力 + 令牌全开。
                         # 注意：coding_profile 之后 process.capabilities 已被收窄，
                         # 直接 issue_token(["*"]) 会被 kernel 以「超出进程能力集」拒绝；
@@ -1877,6 +1889,45 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         except Exception as _di_e:
             logger.debug("direct intent tool filter skip: %s", _di_e)
 
+        # P0: 简单查询硬短路 — 从 schema 去掉派工工具，禁止天气/热搜进 Inbox
+        _simple_turn = False
+        try:
+            from backend.agent.simple_intent import (
+                filter_dispatch_tools_from_schema,
+                is_simple_session_intent,
+                simple_session_system_note,
+            )
+
+            _ut = str(user_input or enriched_input or "")
+            if is_simple_session_intent(_ut):
+                _simple_turn = True
+                before_n = len(tools or [])
+                tools = filter_dispatch_tools_from_schema(tools, user_text=_ut)
+                # Keep filter list in sync so use_tool_pack cannot re-add crew mid-turn
+                if enabled_tools_filter is not None:
+                    enabled_tools_filter = [
+                        n
+                        for n in enabled_tools_filter
+                        if n
+                        not in {
+                            "crew_steward",
+                            "delegate_task",
+                            "agent_call",
+                            "manage_sub_agent",
+                        }
+                    ]
+                stripped = before_n - len(tools or [])
+                messages.append(
+                    {"role": "system", "content": simple_session_system_note()}
+                )
+                logger.info(
+                    "simple intent: stripped %s dispatch tools session=%s",
+                    stripped,
+                    session_id,
+                )
+        except Exception as _si_e:
+            logger.debug("simple intent tool filter skip: %s", _si_e)
+
         # 短纪律 brief + 场景/扩包提示
         try:
             tool_name_list = [
@@ -1903,8 +1954,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         except Exception as e:
             logger.debug("capability inject skipped: %s", e)
 
-        # CEO/管家编排纪律：分析需求 → crew_steward.assign 给编制员工
-        if _is_steward_session:
+        # CEO/管家编排纪律：复杂任务才派工；简单 turn 已注入【单会话】且工具已 strip
+        if _is_steward_session and not _simple_turn:
             try:
                 from backend.agent.workforce_dispatch import (
                     steward_orchestration_prompt,
@@ -1936,6 +1987,11 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 )
             except Exception as e:
                 logger.warning("steward orchestration inject failed: %s", e)
+        elif _is_steward_session and _simple_turn:
+            logger.info(
+                "steward simple turn: skip full orchestration session=%s",
+                session_id,
+            )
 
         # Goal 模式：更高轮次 + 初始化 goal 状态
         goal_mode = mode == "goal"

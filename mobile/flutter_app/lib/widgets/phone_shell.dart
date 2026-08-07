@@ -254,9 +254,22 @@ class PhoneShell extends StatelessWidget {
                           dark: dark,
                           onDismiss: () => c.dismissStatusCard(card.id),
                           onAction: () {
-                            c.handleStatusAction(card.actionId);
-                            c.dismissStatusCard(card.id);
+                            final aid = card.actionId ?? '';
+                            c.handleStatusAction(aid);
+                            // decide: cards are dismissed on success inside handler
+                            if (!aid.startsWith('decide:')) {
+                              c.dismissStatusCard(card.id);
+                            }
                           },
+                          onSecondary: card.secondaryId == null
+                              ? null
+                              : () {
+                                  final sid = card.secondaryId!;
+                                  c.handleStatusAction(sid);
+                                  if (!sid.startsWith('decide:')) {
+                                    c.dismissStatusCard(card.id);
+                                  }
+                                },
                         ),
                     ],
                   ),
@@ -410,11 +423,13 @@ class _StatusCardTile extends StatelessWidget {
     required this.dark,
     required this.onDismiss,
     required this.onAction,
+    this.onSecondary,
   });
   final StatusCard card;
   final bool dark;
   final VoidCallback onDismiss;
   final VoidCallback onAction;
+  final VoidCallback? onSecondary;
 
   Color get _accent {
     switch (card.kind) {
@@ -422,6 +437,7 @@ class _StatusCardTile extends StatelessWidget {
       case StatusCardKind.agent:
         return PixelColors.green;
       case StatusCardKind.warn:
+      case StatusCardKind.approve:
         return PixelColors.amber;
       case StatusCardKind.stream:
         return PixelColors.cyan;
@@ -436,6 +452,7 @@ class _StatusCardTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final ink = dark ? PixelColors.dInk : PixelColors.ink;
     final bg = dark ? const Color(0xF2151A2E) : PixelColors.card;
+    final dual = card.hasDualActions && onSecondary != null;
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Material(
@@ -444,7 +461,9 @@ class _StatusCardTile extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
         child: InkWell(
           borderRadius: BorderRadius.circular(12),
-          onTap: card.actionId != null ? onAction : onDismiss,
+          onTap: dual
+              ? null
+              : (card.actionId != null ? onAction : onDismiss),
           child: Container(
             padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
             decoration: BoxDecoration(
@@ -485,10 +504,28 @@ class _StatusCardTile extends StatelessWidget {
                           color: ink.withValues(alpha: 0.7),
                         ),
                       ),
+                      if (dual) ...[
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            _CardBtn(
+                              label: card.actionLabel ?? '同意',
+                              color: PixelColors.green,
+                              onTap: onAction,
+                            ),
+                            const SizedBox(width: 8),
+                            _CardBtn(
+                              label: card.secondaryLabel ?? '拒绝',
+                              color: PixelColors.red,
+                              onTap: onSecondary!,
+                            ),
+                          ],
+                        ),
+                      ],
                     ],
                   ),
                 ),
-                if (card.actionLabel != null)
+                if (!dual && card.actionLabel != null)
                   Padding(
                     padding: const EdgeInsets.only(left: 8, top: 2),
                     child: Text(
@@ -512,6 +549,40 @@ class _StatusCardTile extends StatelessWidget {
                   ),
                 ),
               ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CardBtn extends StatelessWidget {
+  const _CardBtn({
+    required this.label,
+    required this.color,
+    required this.onTap,
+  });
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: color.withValues(alpha: 0.15),
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+              color: color,
             ),
           ),
         ),

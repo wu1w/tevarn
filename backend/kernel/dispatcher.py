@@ -62,11 +62,23 @@ class WorkforceDispatcher:
         # CEO 汇总：防同一批完成重复唤醒
         self._ceo_rollup_done: set[str] = set()
         self._ceo_rollup_inflight: set[str] = set()
+        # Event wake: inbox.enqueue → nudge() so interactive assign is ~ms not poll floor
+        self._wake: asyncio.Event = asyncio.Event()
+
+    def nudge(self) -> None:
+        """Wake run_forever immediately (safe from any thread/async context)."""
+        try:
+            self._wake.set()
+        except Exception:
+            pass
 
     async def run_forever(self) -> None:
         """后台主循环（lifespan _spawn_bg 拉起）。"""
         self._running = True
-        logger.info("workforce dispatcher started (poll=%.0fs)", self._poll_seconds)
+        logger.info(
+            "workforce dispatcher started (poll=%.0fs, event-wake=on)",
+            self._poll_seconds,
+        )
         # 冷启动：后端重启后 SQL claimed 无 worker → 立即回收，避免等满 600s
         try:
             n = await self._inbox.reclaim_stale_claims(
@@ -83,6 +95,8 @@ class WorkforceDispatcher:
         except Exception as e:
             logger.warning("dispatcher startup reclaim skip: %s", e)
         while self._running:
+            # Clear before tick so wakes during tick still re-arm after sleep wait.
+            self._wake.clear()
             try:
                 await self.tick()
             except asyncio.CancelledError:
@@ -90,12 +104,16 @@ class WorkforceDispatcher:
             except Exception as e:
                 logger.warning("dispatcher tick 失败（下一轮继续）: %s", e)
             try:
-                await asyncio.sleep(self._poll_seconds)
+                # Sleep until poll interval OR inbox.nudge() (assign latency ≈ ms)
+                await asyncio.wait_for(self._wake.wait(), timeout=self._poll_seconds)
+            except asyncio.TimeoutError:
+                pass
             except asyncio.CancelledError:
                 raise
 
     async def stop(self) -> None:
         self._running = False
+        self.nudge()  # unblock wait_for so stop is prompt
 
     async def _worker_for(self, ident: Any) -> Any:
         """WorkforceWorker 池（Alpha Review #2）：per-identity 长生命周期

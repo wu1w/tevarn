@@ -41,9 +41,12 @@ impl ChatConnection {
         let (out_tx, mut out_rx) = mpsc::unbounded_channel::<String>();
         let (close_tx, mut close_rx) = oneshot::channel::<()>();
         let alive = Arc::new(AtomicBool::new(true));
+        // Only the first of reader/writer/heartbeat may emit terminal Closed/Error.
+        let ended = Arc::new(AtomicBool::new(false));
 
         // writer
         let alive_w = alive.clone();
+        let ended_w = ended.clone();
         let event_w = on_event.clone();
         tokio::spawn(async move {
             loop {
@@ -65,13 +68,17 @@ impl ChatConnection {
                 }
             }
             alive_w.store(false, Ordering::SeqCst);
-            let _ = event_w.send(ChatEvent::Closed("writer end".into()));
+            if !ended_w.swap(true, Ordering::SeqCst) {
+                let _ = event_w.send(ChatEvent::Closed("writer end".into()));
+            }
         });
 
-        // reader
+        // reader (clone sender before move — heartbeat also needs a clone)
         let alive_r = alive.clone();
+        let ended_r = ended.clone();
         let event_tx = on_event.clone();
         tokio::spawn(async move {
+            let mut terminal_sent = false;
             while let Some(item) = stream.next().await {
                 match item {
                     Ok(Message::Text(t)) => match serde_json::from_str::<Value>(&t) {
@@ -93,18 +100,26 @@ impl ChatConnection {
                     },
                     Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => {}
                     Ok(Message::Close(_)) => {
-                        let _ = event_tx.send(ChatEvent::Closed("close frame".into()));
+                        if !ended_r.swap(true, Ordering::SeqCst) {
+                            let _ = event_tx.send(ChatEvent::Closed("close frame".into()));
+                            terminal_sent = true;
+                        }
                         break;
                     }
                     Ok(_) => {}
                     Err(e) => {
-                        let _ = event_tx.send(ChatEvent::Error(e.to_string()));
+                        if !ended_r.swap(true, Ordering::SeqCst) {
+                            let _ = event_tx.send(ChatEvent::Error(e.to_string()));
+                            terminal_sent = true;
+                        }
                         break;
                     }
                 }
             }
             alive_r.store(false, Ordering::SeqCst);
-            let _ = on_event.send(ChatEvent::Closed("stream end".into()));
+            if !terminal_sent && !ended_r.swap(true, Ordering::SeqCst) {
+                let _ = event_tx.send(ChatEvent::Closed("stream end".into()));
+            }
         });
 
         // auth + sync (belt+suspenders if query token ignored)
@@ -112,6 +127,36 @@ impl ChatConnection {
             let _ = out_tx.send(json!({ "type": "auth", "token": token }).to_string());
         }
         let _ = out_tx.send(json!({ "type": "sync" }).to_string());
+
+        // App-level keepalive ping on the write channel. Marks dead only if
+        // the local mpsc is closed (writer already gone) — not a half-open probe.
+        let alive_h = alive.clone();
+        let ended_h = ended.clone();
+        let out_tx_h = out_tx.clone();
+        let event_h = on_event;
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(20));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            // Skip the immediate first tick.
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+                if !alive_h.load(Ordering::SeqCst) {
+                    break;
+                }
+                if out_tx_h
+                    .send(json!({ "type": "ping" }).to_string())
+                    .is_err()
+                {
+                    alive_h.store(false, Ordering::SeqCst);
+                    if !ended_h.swap(true, Ordering::SeqCst) {
+                        let _ =
+                            event_h.send(ChatEvent::Closed("heartbeat channel closed".into()));
+                    }
+                    break;
+                }
+            }
+        });
 
         Ok(Arc::new(Self {
             tx: out_tx,

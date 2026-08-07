@@ -4,7 +4,6 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
@@ -13,8 +12,9 @@ import '../services/attach_utils.dart';
 import '../services/app_controller.dart';
 import '../services/voice_service.dart';
 import '../theme/pixel_theme.dart';
-import '../util/open_url.dart';
+import '../widgets/chat_markdown.dart';
 import '../widgets/pixel_icons.dart';
+import '../widgets/tool_trace_panel.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -867,9 +867,12 @@ class _ChatBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isUser = msg.role == 'user';
-    final data = msg.text.isEmpty && msg.streaming ? '…' : msg.text;
-    // format comes from Rust normalize; mid-stream may flip to markdown
-    final useMd = !isUser && msg.format == 'markdown';
+    final data = msg.text.isEmpty && msg.streaming && !msg.hasTools
+        ? '…'
+        : msg.text;
+    // Markdown for assistant when marked, or auto-detect tables/code
+    final useMd = !isUser &&
+        (msg.format == 'markdown' || looksLikeMarkdown(msg.text));
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
@@ -1014,36 +1017,24 @@ class _ChatBubble extends StatelessWidget {
                     if (data.isNotEmpty && data != '…')
                       const SizedBox(height: 8),
                   ],
-                  if (useMd)
-                    MarkdownBody(
+                  // TRACE panel (PC ToolCallPanel parity)
+                  if (!isUser && msg.hasTools)
+                    ToolTracePanel(
+                      tools: msg.toolCalls,
+                      dark: dark,
+                      ink: ink,
+                      ink3: ink3,
+                      card2: card2,
+                      pending: msg.streaming,
+                    ),
+                  if (useMd && data.isNotEmpty && data != '…')
+                    ChatMarkdown(
                       data: data,
-                      selectable: false,
-                      onTapLink: (text, href, title) {
-                        final u = (href ?? text).trim();
-                        if (u.isEmpty) return;
-                        openExternalUrl(u);
-                      },
-                      styleSheet: MarkdownStyleSheet(
-                        p: TextStyle(
-                          fontSize: 14,
-                          height: 1.5,
-                          color: ink,
-                        ),
-                        a: TextStyle(
-                          fontSize: 14,
-                          height: 1.5,
-                          color: PixelColors.amber,
-                          decoration: TextDecoration.underline,
-                        ),
-                        code: TextStyle(
-                          fontFamily: 'JetBrains Mono',
-                          fontSize: 12.5,
-                          backgroundColor: card2,
-                          color: ink,
-                        ),
-                      ),
+                      dark: dark,
+                      ink: ink,
+                      card2: card2,
                     )
-                  else
+                  else if (data.isNotEmpty)
                     Text(
                       data,
                       style: TextStyle(
@@ -1051,6 +1042,11 @@ class _ChatBubble extends StatelessWidget {
                         height: 1.5,
                         color: ink,
                       ),
+                    )
+                  else if (msg.streaming && !msg.hasTools)
+                    Text(
+                      '…',
+                      style: TextStyle(fontSize: 14, height: 1.5, color: ink3),
                     ),
                   if (showActions) ...[
                     const SizedBox(height: 8),

@@ -2,6 +2,8 @@ use axum::extract::ws::Message;
 use dashmap::DashMap;
 use parking_lot::{Mutex, RwLock};
 use serde_json::{json, Value};
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use takton_mobile_core::chat::ChatConnection;
@@ -50,6 +52,9 @@ struct DeltaCoalesceInner {
 
 const COALESCE_FALLBACK_KEY: &str = "__global__";
 
+/// Max fan-out frames retained for after_seq gap fill (WS blip / path switch).
+const EVENT_RING_CAP: usize = 512;
+
 #[derive(Clone)]
 pub struct AppState {
     pub client: TaktonClient,
@@ -82,6 +87,10 @@ pub struct AppState {
     pub local_oauth: Arc<LocalOauth>,
     /// Per-session WS stream delta coalescers
     delta_coalesce: Arc<DashMap<String, Arc<Mutex<DeltaCoalesceInner>>>>,
+    /// Monotonic event sequence for Flutter ordered merge / gap detect.
+    event_seq: Arc<AtomicU64>,
+    /// Recent stamped events for after_seq replay (path switch / WS gap).
+    event_ring: Arc<Mutex<VecDeque<Value>>>,
 }
 
 impl AppState {
@@ -134,11 +143,70 @@ impl AppState {
             path: Arc::new(path),
             local_oauth: Arc::new(LocalOauth::open(oauth_store)),
             delta_coalesce: Arc::new(DashMap::new()),
+            event_seq: Arc::new(AtomicU64::new(0)),
+            event_ring: Arc::new(Mutex::new(VecDeque::with_capacity(EVENT_RING_CAP))),
         })
     }
 
     pub fn new_sub_id(&self) -> String {
         Uuid::new_v4().to_string()
+    }
+
+    /// Latest stamped seq (0 if none yet).
+    pub fn latest_seq(&self) -> u64 {
+        self.event_seq.load(Ordering::SeqCst)
+    }
+
+    /// Drop half-dead PC chat sockets (e.g. after path switch / VPS blip).
+    pub fn prune_dead_chats(&self) -> usize {
+        let mut dead = Vec::new();
+        for e in self.chats.iter() {
+            if !e.value().is_alive() {
+                dead.push(e.key().clone());
+            }
+        }
+        for id in &dead {
+            self.chats.remove(id);
+        }
+        dead.len()
+    }
+
+    /// After path failover, old PC WS is almost certainly wrong path — drop all.
+    pub fn drop_all_chats(&self) -> usize {
+        let n = self.chats.len();
+        self.chats.clear();
+        n
+    }
+
+    /// Events with seq > after_seq (optionally filtered by session_id).
+    pub fn events_after(
+        &self,
+        after_seq: u64,
+        session_id: Option<&str>,
+        limit: usize,
+    ) -> Vec<Value> {
+        let lim = limit.clamp(1, 256);
+        let ring = self.event_ring.lock();
+        let sid = session_id.map(str::trim).filter(|s| !s.is_empty());
+        ring.iter()
+            .filter(|v| {
+                let seq = v.get("seq").and_then(|x| x.as_u64()).unwrap_or(0);
+                if seq <= after_seq {
+                    return false;
+                }
+                if let Some(want) = sid {
+                    match v.get("session_id").and_then(|x| x.as_str()) {
+                        Some(got) if !got.is_empty() => got == want,
+                        // Control / unscoped frames: still useful during stream
+                        _ => true,
+                    }
+                } else {
+                    true
+                }
+            })
+            .take(lim)
+            .cloned()
+            .collect()
     }
 
     /// Fan-out without session affinity (control / unknown).
@@ -152,11 +220,19 @@ impl AppState {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .unwrap_or(COALESCE_FALLBACK_KEY);
-        if is_stream_delta(v) {
-            self.push_delta(key, v);
+        // Ensure session_id rides on the envelope for ring filter + Flutter merge.
+        let mut owned = v.clone();
+        if let Some(sid) = session_id.map(str::trim).filter(|s| !s.is_empty()) {
+            if let Some(obj) = owned.as_object_mut() {
+                obj.entry("session_id")
+                    .or_insert_with(|| json!(sid));
+            }
+        }
+        if is_stream_delta(&owned) {
+            self.push_delta(key, &owned);
         } else {
             self.flush_deltas(key);
-            self.broadcast_json_raw(v);
+            self.broadcast_json_raw(&owned);
         }
     }
 
@@ -169,8 +245,23 @@ impl AppState {
         self.flush_deltas(session_id);
     }
 
-    fn broadcast_json_raw(&self, v: &Value) {
-        let text = v.to_string();
+    fn stamp_and_broadcast(&self, v: &Value) {
+        // Hold ring lock across seq++ / push / fanout so concurrent producers
+        // cannot reorder ring vs WS delivery (Flutter drops late lower seq).
+        let mut ring = self.event_ring.lock();
+        let seq = self.event_seq.fetch_add(1, Ordering::SeqCst) + 1;
+        let mut out = v.clone();
+        if let Some(obj) = out.as_object_mut() {
+            obj.insert("seq".into(), json!(seq));
+        } else {
+            out = json!({ "payload": v, "seq": seq });
+        }
+        ring.push_back(out.clone());
+        while ring.len() > EVENT_RING_CAP {
+            ring.pop_front();
+        }
+        let text = out.to_string();
+        drop(ring); // release before iterating browser_subs (avoid lock inversion)
         let mut dead = Vec::new();
         for entry in self.browser_subs.iter() {
             if entry
@@ -184,6 +275,10 @@ impl AppState {
         for id in dead {
             self.browser_subs.remove(&id);
         }
+    }
+
+    fn broadcast_json_raw(&self, v: &Value) {
+        self.stamp_and_broadcast(v);
     }
 
     fn buf_for(&self, session_key: &str) -> Arc<Mutex<DeltaCoalesceInner>> {
@@ -316,6 +411,8 @@ fn is_stream_delta(v: &Value) -> bool {
             | "tool_event"
             | "mobile_tool"
             | "mobile_status"
+            | "mobile_confirm"
+            | "mobile_approval_badge"
             | "approval"
             | "escalation"
             | "status"

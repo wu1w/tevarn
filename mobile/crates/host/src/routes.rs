@@ -319,6 +319,8 @@ pub fn api_router() -> Router<AppState> {
             .route("/sessions/{id}", get(get_session))
             .route("/sessions/{id}/messages", get(list_messages))
             .route("/sessions/{id}/turn_status", get(turn_status))
+            // Gap fill: events with seq > after_seq (ring buffer, path switch / WS blip)
+            .route("/events", get(list_events_after))
             .route("/sessions/{id}/open", post(open_session))
             .route("/sessions/{id}/pin", post(pin_session))
             .route("/sessions/{id}/rename", post(rename_session))
@@ -898,7 +900,54 @@ fn mobile_live_overlays(v: &Value) -> Vec<Value> {
                 }));
             }
         }
-        _ => {}
+        // Inline approval / confirm — surface to phone island + Approve tab badge.
+        "confirm_request" | "confirm" | "permission_request" | "escalation" | "approval" => {
+            let id = v
+                .get("confirm_id")
+                .or_else(|| v.get("id"))
+                .or_else(|| v.get("request_id"))
+                .and_then(|x| x.as_str())
+                .unwrap_or("");
+            let reason = v
+                .get("reason")
+                .or_else(|| v.get("detail"))
+                .or_else(|| v.get("message"))
+                .or_else(|| v.get("tool"))
+                .and_then(|x| x.as_str())
+                .unwrap_or("需要你的确认");
+            let short: String = reason.chars().take(80).collect();
+            extra.push(json!({
+                "type": "mobile_status",
+                "detail": format!("待审批 · {short}"),
+                "state": "needs_approval",
+                "action": "open_approve",
+            }));
+            if !id.is_empty() {
+                extra.push(json!({
+                    "type": "mobile_confirm",
+                    "confirm_id": id,
+                    "detail": short,
+                    "raw_type": ty,
+                }));
+            }
+        }
+        _ => {
+            // Catch-all: any frame mentioning confirm/approval pending
+            let ty_l = ty.to_ascii_lowercase();
+            if ty_l.contains("confirm") || ty_l.contains("escalat") || ty_l.contains("approval") {
+                let detail = v
+                    .get("detail")
+                    .or_else(|| v.get("message"))
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("有待处理审批");
+                extra.push(json!({
+                    "type": "mobile_status",
+                    "detail": format!("待审批 · {detail}"),
+                    "state": "needs_approval",
+                    "action": "open_approve",
+                }));
+            }
+        }
     }
     extra
 }
@@ -1087,9 +1136,10 @@ fn spawn_turn_completion_watchdog(st: AppState, session_id: String, user_content
         let mut seen_tools: std::collections::HashSet<String> =
             std::collections::HashSet::new();
         let mut last_status = String::new();
-        // ~5 minutes @ 1.2s — faster than before so finals appear without restart.
-        for tick in 0..250u32 {
-            tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+        // ~5 minutes @ 500ms — interactive tool loops need sub-second HTTP backfill
+        // when PC event WS is lossy (still secondary to live WS + seq).
+        for tick in 0..600u32 {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             let msgs = match st.client.list_messages(&session_id, 80).await {
                 Ok(m) => m,
                 Err(_) => continue,
@@ -1156,7 +1206,7 @@ fn spawn_turn_completion_watchdog(st: AppState, session_id: String, user_content
             } else {
                 stable = stable.saturating_add(1);
             }
-            // Same final assistant on 2 consecutive polls (~2.4s) → turn finished.
+            // Same final assistant on 2 consecutive polls (~1.0s @ 500ms) → turn finished.
             // Need stable>=1 so a single snapshot right as tools end doesn't cut off.
             if stable >= 1 && !last_push.is_empty() {
                 st.flush_session_deltas(&session_id);
@@ -1243,6 +1293,66 @@ fn pick_preferred_remote_session(list: &[takton_mobile_core::models::SessionInfo
     Some(best.id.clone())
 }
 
+/// Background: while Flutter shells are connected, push pending approval count
+/// so the island/badge updates without sitting on the Approve tab.
+fn ensure_approval_watch(st: AppState) {
+    use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
+    static STARTED: AtomicBool = AtomicBool::new(false);
+    if STARTED.swap(true, AtomicOrdering::SeqCst) {
+        return;
+    }
+    tokio::spawn(async move {
+        let mut last_pending: i64 = -1;
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            if st.browser_subs.is_empty() {
+                continue;
+            }
+            if !st.client.is_authenticated() {
+                if last_pending != 0 {
+                    last_pending = 0;
+                }
+                continue;
+            }
+            let esc = st.client.list_escalations(Some("pending")).await.ok();
+            let evo = st.client.list_evolution_proposals().await.ok();
+            let count_items = |v: &Value| -> usize {
+                if let Some(a) = v.as_array() {
+                    return a.len();
+                }
+                for key in ["escalations", "proposals", "items", "data", "results"] {
+                    if let Some(a) = v.get(key).and_then(|x| x.as_array()) {
+                        return a.len();
+                    }
+                }
+                0
+            };
+            let esc_n = esc.as_ref().map(count_items).unwrap_or(0);
+            let evo_n = evo.as_ref().map(count_items).unwrap_or(0);
+            let pending = (esc_n + evo_n) as i64;
+            if pending != last_pending {
+                let grew = pending > last_pending && last_pending >= 0;
+                last_pending = pending;
+                st.broadcast_event(&json!({
+                    "type": "mobile_approval_badge",
+                    "pending": pending,
+                    "escalations": esc_n,
+                    "evolution": evo_n,
+                }));
+                if grew && pending > 0 {
+                    st.broadcast_event(&json!({
+                        "type": "mobile_status",
+                        "detail": format!("待审批 {pending} 条 · 点开审批处理"),
+                        "state": "needs_approval",
+                        "action": "open_approve",
+                        "source": "approval_watch",
+                    }));
+                }
+            }
+        }
+    });
+}
+
 async fn ensure_chat(st: AppState, session_id: String) -> Result<Arc<ChatConnection>, String> {
     if session_id.is_empty() || session_id == LOCAL_SESSION_ID {
         return Err("invalid remote session".into());
@@ -1313,11 +1423,20 @@ async fn ensure_chat(st: AppState, session_id: String) -> Result<Arc<ChatConnect
                 ChatEvent::Closed(r) => {
                     st_fan.flush_session_deltas(&sid_fan);
                     st_fan.chats.remove(&sid_fan);
+                    // Path switch: recoverable — do not end Flutter turn (HTTP watchdog continues).
+                    let pathish = r.to_ascii_lowercase().contains("path");
+                    let recoverable = pathish || !turn_active;
                     st_fan.broadcast_event_for_session(
                         Some(&sid_fan),
-                        &json!({"type":"closed","reason": r, "session_id": sid_fan}),
+                        &json!({
+                            "type": "closed",
+                            "reason": r,
+                            "session_id": sid_fan,
+                            "recoverable": recoverable,
+                        }),
                     );
-                    if !done_emitted {
+                    // Hard-finish only when a turn was in flight and this is a hard socket death.
+                    if turn_active && !done_emitted && !pathish {
                         done_emitted = true;
                         emit_chat_done(&st_fan, &sid_fan, "socket_closed");
                     }
@@ -1343,9 +1462,21 @@ async fn healthz(State(st): State<AppState>) -> Json<Value> {
     let authenticated = st.client.is_authenticated();
     let profile = st.local_llm.load_profile();
     let masked = profile.masked();
+    // Prune half-dead so counts match reality (login ≠ link alive).
+    let pruned = st.prune_dead_chats();
+    let chat_alive = st
+        .chats
+        .iter()
+        .filter(|e| e.value().is_alive())
+        .count();
+    let chat_cached = st.chats.len();
     Json(json!({
         "ok": true,
         "authenticated": authenticated,
+        "chat_sockets_alive": chat_alive,
+        "chat_sockets_cached": chat_cached,
+        "chat_pruned": pruned,
+        "latest_seq": st.latest_seq(),
         "base_url": base_url_of(&st),
         "local_llm": masked,
         "backend": if authenticated {
@@ -1357,8 +1488,40 @@ async fn healthz(State(st): State<AppState>) -> Json<Value> {
     }))
 }
 
+#[derive(Debug, Deserialize)]
+struct EventsQuery {
+    /// Return events with seq strictly greater than this.
+    after_seq: Option<u64>,
+    /// Optional session filter (unscoped control frames still included).
+    session_id: Option<String>,
+    limit: Option<usize>,
+}
+
+async fn list_events_after(
+    State(st): State<AppState>,
+    Query(q): Query<EventsQuery>,
+) -> Json<Value> {
+    let after = q.after_seq.unwrap_or(0);
+    let limit = q.limit.unwrap_or(100);
+    let sid = q.session_id.as_deref();
+    let events = st.events_after(after, sid, limit);
+    Json(json!({
+        "ok": true,
+        "after_seq": after,
+        "latest_seq": st.latest_seq(),
+        "count": events.len(),
+        "events": events,
+    }))
+}
+
 async fn app_state(State(st): State<AppState>) -> Json<Value> {
     let authenticated = st.client.is_authenticated();
+    let _ = st.prune_dead_chats();
+    let chat_alive = st
+        .chats
+        .iter()
+        .filter(|e| e.value().is_alive())
+        .count();
     let (sessions, local_session) = collect_session_views(&st).await;
     let active = st.active_session.read().clone();
     let profile = st.local_llm.load_profile();
@@ -1380,6 +1543,9 @@ async fn app_state(State(st): State<AppState>) -> Json<Value> {
     Json(json!({
         "ok": true,
         "authenticated": authenticated,
+        // Link liveness (socket), not just login token
+        "chat_sockets_alive": chat_alive,
+        "latest_seq": st.latest_seq(),
         "base_url": base_url_of(&st),
         "user_email": user_email_of(&st),
         "active_session_id": active,
@@ -2881,6 +3047,30 @@ async fn path_reconnect(
     State(st): State<AppState>,
     Json(body): Json<PathReconnectBody>,
 ) -> Json<Value> {
+    // Flush coalesced tokens + drop PC chat sockets on old path (half-dead risk).
+    // Ring buffer keeps recent events for Flutter after_seq gap fill.
+    if let Some(sid) = st.active_session.read().clone() {
+        st.flush_session_deltas(&sid);
+    }
+    st.broadcast_event(&json!({
+        "type": "mobile_status",
+        "state": "path_switching",
+        "detail": "路径切换中…",
+        "source": "path_reconnect",
+    }));
+    // Quietly drop PC sockets; mark reason path so fanout Closed is recoverable.
+    let dropped_ids: Vec<String> = st.chats.iter().map(|e| e.key().clone()).collect();
+    for id in &dropped_ids {
+        if let Some((_, conn)) = st.chats.remove(id) {
+            // Best-effort async close without blocking path probe too long
+            let c = conn.clone();
+            tokio::spawn(async move {
+                c.close().await;
+            });
+        }
+    }
+    let dropped = dropped_ids.len();
+
     // Retry deferred claim first (scan on 5G, claim when home / on TS)
     let claim_res = if body.claim.unwrap_or(true) {
         try_deferred_claim(&st).await
@@ -2908,16 +3098,33 @@ async fn path_reconnect(
             if let Some(obj) = v.as_object_mut() {
                 obj.insert("deferred_claim_result".into(), json!(claim_res));
                 obj.insert("reconnected".into(), json!(true));
+                obj.insert("chats_dropped".into(), json!(dropped));
+                obj.insert("latest_seq".into(), json!(st.latest_seq()));
             }
+            st.broadcast_event(&json!({
+                "type": "mobile_status",
+                "state": "path_ready",
+                "detail": "路径已恢复",
+                "source": "path_reconnect",
+            }));
             Json(v)
         }
-        Err(e) => Json(json!({
-            "ok": false,
-            "error": e,
-            "deferred_claim_result": claim_res,
-            "path": st.path.profile_json(),
-            "probes_hint": "all candidates unreachable",
-        })),
+        Err(e) => {
+            st.broadcast_event(&json!({
+                "type": "mobile_status",
+                "state": "path_failed",
+                "detail": format!("路径切换失败: {e}"),
+                "source": "path_reconnect",
+            }));
+            Json(json!({
+                "ok": false,
+                "error": e,
+                "deferred_claim_result": claim_res,
+                "chats_dropped": dropped,
+                "path": st.path.profile_json(),
+                "probes_hint": "all candidates unreachable",
+            }))
+        }
     }
 }
 
@@ -4037,12 +4244,19 @@ async fn handle_browser_ws(mut socket: WebSocket, st: AppState) {
     let sub_id = st.new_sub_id();
     let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
     st.browser_subs.insert(sub_id.clone(), tx);
+    // Keep badge fresh while any Flutter shell is connected.
+    ensure_approval_watch(st.clone());
 
+    // Hello carries latest_seq so client can detect ring gaps after reconnect.
     let _ = socket
         .send(Message::Text(
-            json!({ "type": "mobile_hello", "ok": true })
-                .to_string()
-                .into(),
+            json!({
+                "type": "mobile_hello",
+                "ok": true,
+                "latest_seq": st.latest_seq(),
+            })
+            .to_string()
+            .into(),
         ))
         .await;
 

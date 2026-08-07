@@ -1,4 +1,4 @@
-/// Transient status cards (notification-style) for connection, stream, agent, pair.
+/// Transient status cards (notification-style) for connection, stream, agent, pair, approve.
 class StatusCard {
   StatusCard({
     required this.id,
@@ -7,6 +7,8 @@ class StatusCard {
     this.kind = StatusCardKind.info,
     this.actionLabel,
     this.actionId,
+    this.secondaryLabel,
+    this.secondaryId,
     DateTime? createdAt,
     this.ttlMs = 5200,
   }) : createdAt = createdAt ?? DateTime.now();
@@ -15,14 +17,22 @@ class StatusCard {
   final String title;
   final String body;
   final StatusCardKind kind;
-  /// e.g. 'reconnect' | 'open_approve' | 'dismiss'
+  /// Primary action e.g. 'reconnect' | 'open_approve' | 'decide:escalation:id:true'
   final String? actionLabel;
   final String? actionId;
+  /// Secondary action (e.g. Deny on approval cards)
+  final String? secondaryLabel;
+  final String? secondaryId;
   final DateTime createdAt;
   final int ttlMs;
 
   bool get expired =>
       DateTime.now().difference(createdAt).inMilliseconds > ttlMs;
+
+  bool get hasDualActions =>
+      actionId != null &&
+      secondaryId != null &&
+      (actionLabel != null || secondaryLabel != null);
 }
 
 enum StatusCardKind {
@@ -32,4 +42,5 @@ enum StatusCardKind {
   stream,
   conn,
   agent,
+  approve,
 }

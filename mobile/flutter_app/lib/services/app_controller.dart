@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../bridge/takton_bridge.dart';
 import '../models/app_models.dart';
 import '../models/status_card.dart';
+import '../models/tool_call_ui.dart';
 import 'attach_utils.dart';
 import 'local_agent.dart';
 import 'mesh_runtime.dart';
@@ -77,6 +78,7 @@ class AppController extends ChangeNotifier {
 
   Timer? _clockTimer;
   Timer? _approvePoll;
+  Timer? _healthPoll;
   Timer? _streamNotifyTimer;
   Timer? _toastTimer;
   bool _booted = false;
@@ -86,6 +88,8 @@ class AppController extends ChangeNotifier {
   /// Bumped when Me tab is opened so settings panels re-fetch.
   int mePanelGen = 0;
   bool _streamDirty = false;
+  int _lastApprovalPending = -1;
+  int _toolFailStreak = 0;
 
 
   bool get pcConnected => state['authenticated'] == true;
@@ -142,12 +146,51 @@ class AppController extends ChangeNotifier {
     if (list is! List) return out;
     for (final m in list) {
       if (m is! Map) continue;
+      var text = m['content']?.toString() ?? m['text']?.toString() ?? '';
+      var format = m['format']?.toString() == 'markdown' ? 'markdown' : 'plain';
+      final tools = <ToolCallUi>[];
+      final tc = m['tool_calls'];
+      if (tc is List) {
+        for (final t in tc) {
+          if (t is! Map) continue;
+          final name = (t['name'] ??
+                  (t['function'] is Map
+                      ? (t['function'] as Map)['name']
+                      : null) ??
+                  'tool')
+              .toString();
+          final statusRaw = (t['status'] ?? '').toString();
+          final result = (t['result'] ?? t['content'] ?? '').toString();
+          tools.add(ToolCallUi(
+            name: name,
+            status: statusRaw == 'failed' || statusRaw == 'error'
+                ? ToolCallStatus.failed
+                : (result.isNotEmpty || statusRaw == 'completed'
+                    ? ToolCallStatus.completed
+                    : ToolCallStatus.running),
+            summary:
+                result.length > 120 ? '${result.substring(0, 120)}…' : result,
+            result: result,
+          ));
+        }
+      }
+      if (tools.isEmpty && text.contains('· `')) {
+        final split = splitToolTrailFromText(text);
+        if (split.tools.isNotEmpty) {
+          tools.addAll(split.tools);
+          text = split.body;
+        }
+      }
+      if (looksLikeMarkdown(text) || tools.isNotEmpty) {
+        format = 'markdown';
+      }
       out.add(ChatMsg(
         id: '${m['id'] ?? out.length}',
         role: m['role']?.toString() ?? 'assistant',
-        text: m['content']?.toString() ?? m['text']?.toString() ?? '',
+        text: text,
         who: m['who']?.toString() ?? '',
-        format: m['format']?.toString() == 'markdown' ? 'markdown' : 'plain',
+        format: format,
+        toolCalls: tools,
       ));
     }
     return out;
@@ -287,12 +330,46 @@ class AppController extends ChangeNotifier {
         unawaited(pathHealthTick());
       }
     });
+    // Link liveness + approval badge (not only when Approve tab is open)
+    _syncApprovePoll();
+    _healthPoll?.cancel();
+    _healthPoll = Timer.periodic(const Duration(seconds: 20), (_) {
+      unawaited(_healthTick());
+    });
     if (bridgeKind == 'http-fallback' ||
         bridgeKind.contains('fallback') ||
         bridgeKind.contains('timeout')) {
       showToast('引擎加载中或已降级 · $bridgeKind');
     }
     _notify();
+  }
+
+  /// Soften engineering errors for toast / bubble (experience, not new product).
+  static String humanizeError(Object e) {
+    final s = e.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
+    final low = s.toLowerCase();
+    if (low.contains('timeout') || low.contains('timed out')) {
+      return '网络超时 · 请重试，或检查路径/隧道';
+    }
+    if (low.contains('chat channel closed') || low.contains('socket')) {
+      return '与 PC 连接中断 · 可点状态岛重连';
+    }
+    if (low.contains('not authenticated') ||
+        low.contains('401') ||
+        low.contains('unauthorized')) {
+      return '登录已失效 · 请到「连接」重新配对/登录';
+    }
+    if (low.contains('ws') && low.contains('未就绪')) {
+      return '手机引擎未就绪 · 稍候再发';
+    }
+    if (low.contains('connection refused') || low.contains('failed host lookup')) {
+      return '连不上 PC · 检查同网/隧道后重连';
+    }
+    if (low.contains('path') && low.contains('fail')) {
+      return '路径切换失败 · 长按状态岛打开连接页';
+    }
+    if (s.length > 140) return '${s.substring(0, 140)}…';
+    return s;
   }
 
   void _tickClock() {
@@ -417,6 +494,7 @@ class AppController extends ChangeNotifier {
     } catch (_) {}
     await refreshMode();
     await loadApprovals();
+    _syncApprovePoll();
   }
 
   Future<void> refreshMode() async {
@@ -480,6 +558,22 @@ class AppController extends ChangeNotifier {
       ...state,
       'approvals_pending': pending,
     };
+    // New pending items while not on Approve tab → gentle island card
+    if (pending > 0 &&
+        _lastApprovalPending >= 0 &&
+        pending > _lastApprovalPending &&
+        tab != AppTab.approve) {
+      pushStatusCard(
+        title: '待审批 $pending',
+        body: '有新的权限/提权请求 · 点此处理',
+        kind: StatusCardKind.warn,
+        actionLabel: '去审批',
+        actionId: 'open_approve',
+        ttlMs: 10000,
+      );
+      pulseIsland(text: '待审批 $pending', kind: 'conn');
+    }
+    _lastApprovalPending = pending;
     _notify();
   }
 
@@ -676,12 +770,46 @@ class AppController extends ChangeNotifier {
   void _syncApprovePoll() {
     _approvePoll?.cancel();
     _approvePoll = null;
-    if (tab == AppTab.approve && pcConnected) {
-      _approvePoll = Timer.periodic(const Duration(seconds: 4), (_) async {
-        if (tab != AppTab.approve || !pcConnected) return;
-        await loadApprovals();
-      });
-    }
+    if (!pcConnected) return;
+    // Approve tab: 2s (was 4s). Background: 8s so badge stays fresh on Chat.
+    final every = tab == AppTab.approve
+        ? const Duration(seconds: 2)
+        : const Duration(seconds: 8);
+    _approvePoll = Timer.periodic(every, (_) async {
+      if (!pcConnected) return;
+      await loadApprovals();
+    });
+  }
+
+  Future<void> _healthTick() async {
+    if (!pcConnected) return;
+    try {
+      final h = await bridge.health();
+      if (!isOk(h) && h['ok'] != true) return;
+      final alive = (h['chat_sockets_alive'] as num?)?.toInt();
+      final latest = (h['latest_seq'] as num?)?.toInt();
+      state = {
+        ...state,
+        if (alive != null) 'chat_sockets_alive': alive,
+        if (latest != null) 'latest_seq': latest,
+      };
+      // Streaming but no live PC chat socket → half-dead link
+      if (streaming &&
+          surface == 'remote' &&
+          alive != null &&
+          alive == 0 &&
+          _toolFailStreak < 3) {
+        pushStatusCard(
+          title: '链路可能中断',
+          body: '生成中但 PC 会话套接字未存活 · 可点重连',
+          kind: StatusCardKind.warn,
+          actionLabel: '重连',
+          actionId: 'reconnect',
+          ttlMs: 8000,
+        );
+      }
+      _notify();
+    } catch (_) {}
   }
 
   void pushStatusCard({
@@ -690,6 +818,8 @@ class AppController extends ChangeNotifier {
     StatusCardKind kind = StatusCardKind.info,
     String? actionLabel,
     String? actionId,
+    String? secondaryLabel,
+    String? secondaryId,
     int ttlMs = 5200,
   }) {
     statusCards.removeWhere((c) => c.expired);
@@ -700,6 +830,8 @@ class AppController extends ChangeNotifier {
       kind: kind,
       actionLabel: actionLabel,
       actionId: actionId,
+      secondaryLabel: secondaryLabel,
+      secondaryId: secondaryId,
       ttlMs: ttlMs,
     );
     statusCards.insert(0, card);
@@ -714,6 +846,7 @@ class AppController extends ChangeNotifier {
       StatusCardKind.agent => 'local',
       StatusCardKind.success => 'local',
       StatusCardKind.warn => 'conn',
+      StatusCardKind.approve => 'conn',
       StatusCardKind.info => islandKind,
     };
     _notify();
@@ -728,8 +861,20 @@ class AppController extends ChangeNotifier {
     _notify();
   }
 
+  /// Build action id: `decide:<kind>:<id>:<true|false>`
+  static String decideActionId({
+    required String id,
+    required bool approved,
+    String kind = 'escalation',
+  }) =>
+      'decide:$kind:$id:$approved';
+
   void handleStatusAction(String? actionId) {
-    if (actionId == null) return;
+    if (actionId == null || actionId.isEmpty) return;
+    if (actionId.startsWith('decide:')) {
+      unawaited(_handleDecideAction(actionId));
+      return;
+    }
     switch (actionId) {
       case 'reconnect':
         unawaited(forceReconnect());
@@ -747,6 +892,75 @@ class AppController extends ChangeNotifier {
         setTab(AppTab.chat);
         break;
     }
+  }
+
+  Future<void> _handleDecideAction(String actionId) async {
+    // decide:kind:id:true|false  (id may contain ':' — take last as bool, first after decide as kind)
+    final raw = actionId.substring('decide:'.length);
+    final lastColon = raw.lastIndexOf(':');
+    if (lastColon <= 0) return;
+    final approvedStr = raw.substring(lastColon + 1);
+    final rest = raw.substring(0, lastColon);
+    final kindSep = rest.indexOf(':');
+    if (kindSep <= 0) return;
+    final kind = rest.substring(0, kindSep);
+    final id = rest.substring(kindSep + 1);
+    if (id.isEmpty) return;
+    final approved = approvedStr == 'true' || approvedStr == '1';
+    try {
+      final r = await bridge.decide(
+        id,
+        approved: approved,
+        kind: kind.isEmpty ? 'escalation' : kind,
+        scope: 'once',
+      );
+      if (isOk(r)) {
+        showToast(approved ? '已同意' : '已拒绝');
+        // Remove any card that pointed at this decide id
+        statusCards.removeWhere(
+          (c) =>
+              (c.actionId ?? '').contains(id) ||
+              (c.secondaryId ?? '').contains(id),
+        );
+        pushStatusCard(
+          title: approved ? '已放行' : '已拒绝',
+          body: id.length > 24 ? '${id.substring(0, 24)}…' : id,
+          kind: approved ? StatusCardKind.success : StatusCardKind.info,
+          ttlMs: 3500,
+        );
+      } else {
+        showToast(humanizeError(r['error'] ?? '审批失败'));
+        // Keep card for retry — re-push if wiped
+      }
+    } catch (e) {
+      showToast(humanizeError(e));
+    }
+    await loadApprovals();
+  }
+
+  void pushApprovalCard({
+    required String title,
+    required String body,
+    required String decisionId,
+    String kind = 'escalation',
+    int ttlMs = 20000,
+  }) {
+    // Dedup same id
+    statusCards.removeWhere(
+      (c) =>
+          c.actionId == decideActionId(id: decisionId, approved: true, kind: kind) ||
+          (c.kind == StatusCardKind.approve && c.body.contains(decisionId)),
+    );
+    pushStatusCard(
+      title: title,
+      body: body,
+      kind: StatusCardKind.approve,
+      actionLabel: '同意',
+      actionId: decideActionId(id: decisionId, approved: true, kind: kind),
+      secondaryLabel: '拒绝',
+      secondaryId: decideActionId(id: decisionId, approved: false, kind: kind),
+      ttlMs: ttlMs,
+    );
   }
 
   void toggleIslandExpanded() {
@@ -1105,7 +1319,7 @@ class AppController extends ChangeNotifier {
               attachments: uploaded,
             );
       var acc = '';
-      var toolTrail = <String>[];
+      final liveTools = <ToolCallUi>[];
       await for (final chunk in stream) {
         // Aborted, switched surface, or a newer stream started
         if (!streaming ||
@@ -1115,13 +1329,94 @@ class AppController extends ChangeNotifier {
         }
         // Control frames from local agent SSE (status / tool)
         if (chunk.startsWith('\x01STATUS\x01')) {
-          final detail = chunk.substring(8);
+          final rest = chunk.substring(8);
+          final sp = rest.split('\x01');
+          final detail = sp.isNotEmpty ? sp[0] : '';
+          final action = sp.length > 1 ? sp[1] : '';
           if (detail.isNotEmpty) {
             islandLive = true;
             islandKind = 'stream';
             islandText = detail;
+            // Approval / path / compress → durable card (island alone is easy to miss)
+            final low = detail.toLowerCase();
+            if (action == 'open_approve' ||
+                detail.contains('待审批') ||
+                detail.contains('需要确认') ||
+                low.contains('approval')) {
+              // Do NOT invent decision ids from approvals.first (wrong item/kind).
+              // Inline decide comes from mobile_confirm frames; STATUS only deep-links.
+              pushStatusCard(
+                title: '需要审批',
+                body: detail,
+                kind: StatusCardKind.warn,
+                actionLabel: '去审批',
+                actionId: 'open_approve',
+                ttlMs: 12000,
+              );
+              unawaited(loadApprovals());
+            } else if (detail.contains('压缩') || low.contains('compress')) {
+              pushStatusCard(
+                title: '上下文已压缩',
+                body: '较早对话已折叠以腾出空间 · 不是同步丢失',
+                kind: StatusCardKind.info,
+                ttlMs: 6000,
+              );
+            } else if (detail.contains('路径')) {
+              pushStatusCard(
+                title: detail.contains('失败') ? '路径异常' : '路径更新',
+                body: detail,
+                kind: detail.contains('失败')
+                    ? StatusCardKind.warn
+                    : StatusCardKind.conn,
+                actionLabel: detail.contains('失败') ? '重连' : null,
+                actionId: detail.contains('失败') ? 'reconnect' : null,
+                ttlMs: 7000,
+              );
+            }
             _notifyStream();
           }
+          continue;
+        }
+        if (chunk.startsWith('\x01BADGE\x01')) {
+          final n = int.tryParse(chunk.substring(7)) ?? 0;
+          state = {...state, 'approvals_pending': n};
+          if (n > 0 && n > _lastApprovalPending && tab != AppTab.approve) {
+            pulseIsland(text: '待审批 $n', kind: 'conn');
+          }
+          _lastApprovalPending = n;
+          _notifyStream();
+          continue;
+        }
+        if (chunk.startsWith('\x01CONFIRM\x01')) {
+          // \x01CONFIRM\x01id\x01kind\x01detail  (kind optional for legacy)
+          final parts = chunk.substring(9).split('\x01');
+          final cid = parts.isNotEmpty ? parts[0] : '';
+          var kind = 'escalation';
+          var detail = '需要确认';
+          if (parts.length >= 3) {
+            kind = parts[1].isEmpty ? 'escalation' : parts[1];
+            detail = parts[2];
+          } else if (parts.length == 2) {
+            detail = parts[1];
+          }
+          if (cid.isNotEmpty) {
+            pushApprovalCard(
+              title: '需要确认',
+              body: detail.isEmpty ? 'Agent 请求权限' : detail,
+              decisionId: cid,
+              kind: kind,
+            );
+          } else {
+            pushStatusCard(
+              title: '需要确认',
+              body: detail.isEmpty ? 'Agent 请求权限' : detail,
+              kind: StatusCardKind.warn,
+              actionLabel: '去审批',
+              actionId: 'open_approve',
+              ttlMs: 12000,
+            );
+          }
+          unawaited(loadApprovals());
           continue;
         }
         if (chunk.startsWith('\x01TOOL\x01')) {
@@ -1131,25 +1426,48 @@ class AppController extends ChangeNotifier {
           final name = parts.length > 1 ? parts[1] : 'tool';
           final okStr = parts.length > 2 ? parts[2] : '';
           final preview = parts.length > 3 ? parts[3] : '';
+          final short = preview.length > 120
+              ? '${preview.substring(0, 120)}…'
+              : preview;
           if (phase == 'start') {
             islandText = '工具 · $name';
-            toolTrail.add('· `$name` …');
-          } else if (phase == 'end') {
-            final mark = okStr == '0' ? '✗' : '✓';
-            final short = preview.length > 48
-                ? '${preview.substring(0, 48)}…'
-                : preview;
-            final line = short.isEmpty
-                ? '· `$name` $mark'
-                : '· `$name` $mark $short';
-            final idx = toolTrail.lastIndexWhere((e) => e.contains('`$name`'));
-            if (idx >= 0) {
-              toolTrail[idx] = line;
-            } else {
-              toolTrail.add(line);
+            final existing = liveTools.indexWhere((t) => t.name == name && t.status == ToolCallStatus.running);
+            if (existing < 0) {
+              liveTools.add(ToolCallUi(name: name, status: ToolCallStatus.running));
             }
-            islandText = '工具 · $name $mark';
-            // Auto-play Microsoft TTS written by voice_speak tool
+          } else if (phase == 'end') {
+            final failed = okStr == '0';
+            final idx = liveTools.lastIndexWhere((t) => t.name == name);
+            final tc = ToolCallUi(
+              name: name,
+              status: failed ? ToolCallStatus.failed : ToolCallStatus.completed,
+              summary: short,
+              result: preview,
+            );
+            if (idx >= 0) {
+              liveTools[idx] = tc;
+            } else {
+              liveTools.add(tc);
+            }
+            while (liveTools.length > 16) {
+              liveTools.removeAt(0);
+            }
+            islandText = '工具 · $name ${failed ? '✗' : '✓'}';
+            if (failed) {
+              _toolFailStreak++;
+              if (_toolFailStreak >= 3) {
+                pushStatusCard(
+                  title: '工具连续失败',
+                  body: '可在 PC 上检查 Kernel 是否健康，或点重连',
+                  kind: StatusCardKind.warn,
+                  actionLabel: '重连',
+                  actionId: 'reconnect',
+                  ttlMs: 10000,
+                );
+              }
+            } else {
+              _toolFailStreak = 0;
+            }
             if (voiceOn && name.contains('voice')) {
               final path = VoiceService.extractTtsPath(preview);
               if (path != null) {
@@ -1162,28 +1480,24 @@ class AppController extends ChangeNotifier {
               }
             }
           }
-          final display = toolTrail.isEmpty
-              ? acc
-              : '${toolTrail.join('\n')}${acc.isEmpty ? '' : '\n\n$acc'}';
           final target =
               streamSurface == 'local' ? _localMsgCache : _remoteMsgCache;
           final whoLive =
               streamSurface == 'remote' ? '远端 Agent · 工具' : '本机 Agent';
+          void applyTools(List<ChatMsg> list) {
+            final i = list.indexWhere((m) => m.id == aid);
+            if (i < 0) return;
+            list[i].toolCalls = liveTools.map((t) => t.copy()).toList();
+            list[i].text = acc;
+            list[i].format =
+                looksLikeMarkdown(acc) || acc.isNotEmpty ? 'markdown' : list[i].format;
+            list[i].who = whoLive;
+          }
           if (surface == streamSurface) {
-            final i = messages.indexWhere((m) => m.id == aid);
-            if (i >= 0) {
-              messages[i].text = display;
-              messages[i].format = 'markdown';
-              messages[i].who = whoLive;
-              _notifyStream();
-            }
+            applyTools(messages);
+            _notifyStream();
           } else {
-            final i = target.indexWhere((m) => m.id == aid);
-            if (i >= 0) {
-              target[i].text = display;
-              target[i].format = 'markdown';
-              target[i].who = whoLive;
-            }
+            applyTools(target);
           }
           continue;
         }
@@ -1192,49 +1506,41 @@ class AppController extends ChangeNotifier {
         } else {
           acc += chunk;
         }
-        final display = toolTrail.isEmpty
-            ? acc
-            : '${toolTrail.join('\n')}${acc.isEmpty ? '' : '\n\n$acc'}';
         // Apply to the surface cache that owns this stream
         final target =
             streamSurface == 'local' ? _localMsgCache : _remoteMsgCache;
         final whoStream = streamSurface == 'remote'
-            ? (toolTrail.isEmpty ? '远端 Agent · 流式' : '远端 Agent · 工具')
-            : (toolTrail.isEmpty ? '本机 · LLM' : '本机 Agent');
-        // Live list only if still on same surface
+            ? (liveTools.isEmpty ? '远端 Agent · 流式' : '远端 Agent · 工具')
+            : (liveTools.isEmpty ? '本机 · LLM' : '本机 Agent');
+        void applyText(List<ChatMsg> list) {
+          final i = list.indexWhere((m) => m.id == aid);
+          if (i < 0) return;
+          list[i].text = acc;
+          list[i].toolCalls = liveTools.map((t) => t.copy()).toList();
+          if (looksLikeMarkdown(acc) || liveTools.isNotEmpty) {
+            list[i].format = 'markdown';
+          }
+          list[i].who = whoStream;
+        }
         if (surface == streamSurface) {
-          final i = messages.indexWhere((m) => m.id == aid);
-          if (i >= 0) {
-            messages[i].text = display;
-            // upgrade to markdown mid-stream if markers appear
-            if (messages[i].format != 'markdown' &&
-                (display.contains('```') ||
-                    display.contains('**') ||
-                    display.contains('](') ||
-                    toolTrail.isNotEmpty)) {
-              messages[i].format = 'markdown';
-            }
-            messages[i].who = whoStream;
-            _notifyStream();
-          }
+          applyText(messages);
+          _notifyStream();
         } else {
-          // still update cache so when user returns they see partial
+          applyText(target);
           final i = target.indexWhere((m) => m.id == aid);
-          if (i >= 0) {
-            target[i].text = display;
-            target[i].who = whoStream;
-            target[i].streaming = false;
-          }
+          if (i >= 0) target[i].streaming = false;
         }
       }
-      // Keep tool trail above final answer if tools ran (local + remote).
-      if (toolTrail.isNotEmpty && acc.isNotEmpty) {
-        acc = '${toolTrail.join('\n')}\n\n$acc';
-        if (surface == streamSurface) {
-          final i = messages.indexWhere((m) => m.id == aid);
-          if (i >= 0) {
-            messages[i].text = acc;
+      // Finalize structured tools + body (no longer glue trail into text)
+      if (surface == streamSurface) {
+        final i = messages.indexWhere((m) => m.id == aid);
+        if (i >= 0) {
+          messages[i].toolCalls = liveTools.map((t) => t.copy()).toList();
+          messages[i].text = acc;
+          if (looksLikeMarkdown(acc) || liveTools.isNotEmpty) {
             messages[i].format = 'markdown';
+          }
+          if (liveTools.isNotEmpty) {
             messages[i].who =
                 streamSurface == 'remote' ? '远端 Agent · 工具' : '本机 Agent';
           }
@@ -1308,14 +1614,20 @@ class AppController extends ChangeNotifier {
                   break;
                 }
                 if (lastAsst != null && lastAsst.isNotEmpty) {
-                  acc = toolTrail.isEmpty
-                      ? lastAsst
-                      : '${toolTrail.join('\n')}\n\n$lastAsst';
+                  final split = splitToolTrailFromText(lastAsst);
+                  acc = split.body.isNotEmpty ? split.body : lastAsst;
+                  if (split.tools.isNotEmpty) {
+                    liveTools
+                      ..clear()
+                      ..addAll(split.tools);
+                  }
                   final i = messages.indexWhere((m) => m.id == aid);
                   if (i >= 0 && surface == streamSurface) {
                     messages[i].text = acc;
+                    messages[i].toolCalls =
+                        liveTools.map((t) => t.copy()).toList();
                     messages[i].format = 'markdown';
-                    messages[i].who = toolTrail.isEmpty
+                    messages[i].who = liveTools.isEmpty
                         ? '远端 Agent'
                         : '远端 Agent · 工具';
                   }
@@ -1371,11 +1683,20 @@ class AppController extends ChangeNotifier {
             } catch (_) {}
           }
           if (!recovered) {
-            messages[i].text = e.toString();
+            messages[i].text = humanizeError(e);
           }
         }
         if (!recovered) {
-          showToast(e.toString());
+          final msg = humanizeError(e);
+          showToast(msg);
+          pushStatusCard(
+            title: '发送中断',
+            body: msg,
+            kind: StatusCardKind.warn,
+            actionLabel: surface == 'remote' ? '重连' : '重试',
+            actionId: surface == 'remote' ? 'reconnect' : 'open_chat',
+            ttlMs: 9000,
+          );
         }
       }
     } finally {
@@ -2183,6 +2504,7 @@ class AppController extends ChangeNotifier {
   void dispose() {
     _clockTimer?.cancel();
     _approvePoll?.cancel();
+    _healthPoll?.cancel();
     _streamNotifyTimer?.cancel();
     _toastTimer?.cancel();
     _pairPoll?.cancel();

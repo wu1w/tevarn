@@ -1,5 +1,9 @@
 import 'dart:typed_data';
 
+import 'tool_call_ui.dart';
+
+export 'tool_call_ui.dart';
+
 class ModeSnap {
   ModeSnap({
     required this.surface,
@@ -67,10 +71,12 @@ class ChatMsg {
     List<Uint8List>? images,
     List<String>? imageNames,
     List<String>? attachNames,
+    List<ToolCallUi>? toolCalls,
     this.modelText,
   })  : images = images ?? <Uint8List>[],
         imageNames = imageNames ?? <String>[],
-        attachNames = attachNames ?? <String>[];
+        attachNames = attachNames ?? <String>[],
+        toolCalls = toolCalls ?? <ToolCallUi>[];
 
   final String id;
   final String role;
@@ -82,11 +88,14 @@ class ChatMsg {
   final List<String> imageNames;
   /// Non-image attachment labels shown as chips after send.
   final List<String> attachNames;
+  /// Structured TRACE tools (PC ToolCallPanel parity).
+  List<ToolCallUi> toolCalls;
   /// Full payload actually sent to the model (OCR / file text). Used by regenerate.
   String? modelText;
 
   bool get hasImages => images.isNotEmpty;
   bool get hasAttachChips => attachNames.isNotEmpty;
+  bool get hasTools => toolCalls.isNotEmpty;
 
   ChatMsg copyMeta() => ChatMsg(
         id: id,
@@ -98,6 +107,7 @@ class ChatMsg {
         images: List<Uint8List>.from(images),
         imageNames: List<String>.from(imageNames),
         attachNames: List<String>.from(attachNames),
+        toolCalls: toolCalls.map((t) => t.copy()).toList(),
         modelText: modelText,
       );
 }

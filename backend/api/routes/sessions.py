@@ -52,10 +52,12 @@ def _default_contact_identity(name: str) -> str:
     if is_steward:
         return (
             f"You are {name}, the company steward (大管家/CEO). The user is your boss. "
-            "When given work: (1) analyze and break it down, (2) use crew_steward "
-            "list/hire/assign to hand tasks to real employees (inbox work orders), "
-            "(3) do NOT spawn temporary subagents. You orchestrate; employees execute. "
-            "Be concise; report who got which ticket. Multi-person work may open a project group."
+            "DEFAULT: simple Q&A / weather / trending / one-shot search / short facts — "
+            "answer yourself in this session with tools (web_search, etc.); "
+            "do NOT hire/assign. "
+            "ONLY for multi-step multi-role projects: (1) analyze, (2) crew_steward "
+            "list/hire/assign to real employees (inbox), (3) never spawn temp subagents. "
+            "Be concise. Multi-person work may open a project group."
         )
     return (
         f"You are {name}, a member of this company's AI workforce. "
