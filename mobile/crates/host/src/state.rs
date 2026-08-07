@@ -55,7 +55,7 @@ const COALESCE_FALLBACK_KEY: &str = "__global__";
 /// Global fan-out frames retained for gap fill (control + mixed sessions).
 const EVENT_RING_CAP: usize = 512;
 /// Per-session ring so one hot session cannot wipe another's gap-fill buffer.
-const EVENT_RING_PER_SESSION: usize = 160;
+const EVENT_RING_PER_SESSION: usize = 256;
 /// Max concurrent session rings (LRU by last_access).
 const EVENT_RING_MAX_SESSIONS: usize = 40;
 
@@ -384,16 +384,25 @@ impl AppState {
             while entry.events.len() > EVENT_RING_PER_SESSION {
                 entry.events.pop_front();
             }
-            if by_session.len() > EVENT_RING_MAX_SESSIONS + 8 {
+            // Evict cold session rings; never drop the active session.
+            if by_session.len() > EVENT_RING_MAX_SESSIONS {
+                let active_key = active.clone().unwrap_or_default();
                 let mut pairs: Vec<(String, u64)> = by_session
                     .iter()
-                    .filter(|(k, _)| Some(*k) != active.as_ref())
                     .map(|(k, v)| (k.clone(), v.last_access))
                     .collect();
-                pairs.sort_by_key(|(_, acc)| *acc);
-                let drop_n = by_session.len().saturating_sub(EVENT_RING_MAX_SESSIONS);
-                for (k, _) in pairs.into_iter().take(drop_n) {
+                pairs.sort_by_key(|(_, acc)| *acc); // oldest first
+                let overflow = by_session.len().saturating_sub(EVENT_RING_MAX_SESSIONS);
+                let mut removed = 0;
+                for (k, _) in pairs {
+                    if removed >= overflow {
+                        break;
+                    }
+                    if !active_key.is_empty() && k == active_key {
+                        continue; // current session never evicted
+                    }
                     by_session.remove(&k);
+                    removed += 1;
                 }
             }
         }

@@ -209,23 +209,51 @@ async def run_tool_round(
     # PR4: default max_orch=1; Rust loop_guard is authoritative for workers.
     _capped_results: dict[str, str] = {}
     # Hard gate: simple_turn never executes dispatch tools even if schema leaked.
+    # Does NOT require tool_call_id — synthesize a stable key when missing.
     if state.simple_turn:
         try:
-            from backend.agent.simple_intent import DISPATCH_TOOL_NAMES
+            from backend.agent.simple_intent import (
+                DISPATCH_TOOL_NAMES,
+                SIMPLE_NOTE_MARKER,
+            )
 
             for tc in tool_calls or []:
-                _cid = str(getattr(tc, "id", "") or "")
                 _tn = str(getattr(tc, "name", "") or "")
-                if _tn in DISPATCH_TOOL_NAMES and _cid:
-                    _capped_results[_cid] = (
-                        f"[simple_turn] dispatch tool '{_tn}' denied — "
-                        "answer in-session only (no crew_steward/delegate)."
-                    )
-                    logger.warning(
-                        "simple_turn hard-deny tool=%s session=%s",
-                        _tn,
-                        session_id,
-                    )
+                if _tn not in DISPATCH_TOOL_NAMES:
+                    continue
+                _cid = str(getattr(tc, "id", "") or "").strip()
+                if not _cid:
+                    _cid = f"simple-deny-{_tn}-{id(tc)}"
+                    try:
+                        setattr(tc, "id", _cid)
+                    except Exception:
+                        pass
+                _capped_results[_cid] = (
+                    f"[simple_turn] dispatch tool '{_tn}' denied — "
+                    "answer in-session only (no crew_steward/delegate)."
+                )
+                logger.warning(
+                    "simple_turn hard-deny tool=%s id=%s session=%s",
+                    _tn,
+                    _cid,
+                    session_id,
+                )
+            # If the whole round was only dispatch tools, nudge model to final answer
+            # (do NOT force_final — web_search etc. may still be needed next round).
+            if tool_calls and all(
+                str(getattr(tc, "name", "") or "") in DISPATCH_TOOL_NAMES
+                for tc in tool_calls
+            ):
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            f"{SIMPLE_NOTE_MARKER} 本轮编排工具已全部拒绝。"
+                            "请仅用已有信息或 web_search/current_time 直接最终作答，"
+                            "禁止再调用 crew/delegate。"
+                        ),
+                    }
+                )
         except Exception as _st_e:
             logger.debug("simple_turn hard-deny skip: %s", _st_e)
     try:

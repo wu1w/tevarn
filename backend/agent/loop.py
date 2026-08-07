@@ -266,16 +266,29 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         *,
         priority_class: str = "workforce",
         timeout: float = 300.0,
+        session_id: uuid.UUID | None = None,
     ) -> None:
         """跨会话全局 RunGate — 拿到 lease 再继续执行（T2：可配置 fail-closed）。
 
         session 锁只保证同 session 串行；本门闩保证全局并发上限 + 优先级排队。
+        排队时向 session 推 thinking 状态，手机 island 可感知。
         """
         from backend.core.config import settings as _rg_settings
 
         required = bool(
             getattr(_rg_settings, "agent_kernel_run_gate_required", True)
         )
+        _poll = float(getattr(_rg_settings, "agent_run_gate_poll_secs", 0.15) or 0.15)
+        _poll = min(max(_poll, 0.05), 1.0)
+
+        async def _ui(detail: str) -> None:
+            if session_id is None:
+                return
+            try:
+                await self._push_status(session_id, "thinking", detail)
+            except Exception:
+                pass
+
         if not hasattr(kernel, "_call"):
             if required:
                 raise RuntimeError(
@@ -327,19 +340,27 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             raise RuntimeError(
                 f"run gate rejected: {r.get('reason') or r.get('code')}"
             )
-        # queued — poll
+        # queued — poll + user-visible status
         rid = str(r.get("request_id") or "")
+        qlen = r.get("queue_len")
         logger.info(
             "run_gate queued proc=%s request=%s qlen=%s",
             process_id[:8],
             rid[:8],
-            r.get("queue_len"),
+            qlen,
         )
+        await _ui(f"排队等待执行槽（队列 {qlen if qlen is not None else '?'}）…")
         deadline = time.time() + timeout
+        last_ui = 0.0
         while time.time() < deadline:
             if getattr(self, "_should_stop", False):
                 raise RuntimeError("run gate wait aborted: stop requested")
-            await asyncio.sleep(0.05)
+            now = time.time()
+            if now - last_ui >= 2.0:
+                left = max(0, int(deadline - now))
+                await _ui(f"仍在排队… 约剩余等待上限 {left}s")
+                last_ui = now
+            await asyncio.sleep(_poll)
             try:
                 polled = await kernel._acall("run_gate_poll", {"request_id": rid}) or {}
             except Exception as e:
@@ -366,6 +387,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         f"resource_charge concurrency_slots failed: {_ch}"
                     ) from _ch
                 logger.info("run_gate granted after wait proc=%s", process_id[:8])
+                await _ui("已获得执行槽，继续…")
                 return
             if st == "rejected":
                 raise RuntimeError(
@@ -1109,6 +1131,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                             kernel,
                             kernel_proc.id,
                             priority_class=pclass,
+                            session_id=session_id,
                         )
                 except Exception as _sch:
                     # T2：run_gate 硬失败向上抛；其它调度错误可降级

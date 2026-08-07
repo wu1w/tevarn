@@ -216,9 +216,11 @@ class _ChatScreenState extends State<ChatScreen> {
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
-                  c.mode.reason.isNotEmpty
-                      ? c.mode.reason
-                      : (c.surface == 'local' ? '本机通道' : '远端通道'),
+                  c.healthLine.isNotEmpty
+                      ? c.healthLine
+                      : (c.mode.reason.isNotEmpty
+                          ? c.mode.reason
+                          : (c.surface == 'local' ? '本机通道' : '远端通道')),
                   style: TextStyle(fontSize: 11.5, color: ink3),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -227,6 +229,41 @@ class _ChatScreenState extends State<ChatScreen> {
             ],
           ),
         ),
+        if (c.pendingApprovalCount > 0)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+            child: Material(
+              color: PixelColors.amber.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(14),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(14),
+                onTap: () => c.setTab(AppTab.approve),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  child: Row(
+                    children: [
+                      Icon(Icons.fact_check_outlined,
+                          size: 16, color: PixelColors.amber),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '有 ${c.pendingApprovalCount} 项待审批',
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                            color: dark ? PixelColors.dInk : PixelColors.ink,
+                          ),
+                        ),
+                      ),
+                      Icon(Icons.chevron_right,
+                          size: 18, color: PixelColors.cyan),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
         if (c.surface == 'remote' && !c.pcConnected)
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),

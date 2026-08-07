@@ -248,6 +248,8 @@ class Settings(BaseSettings):
     agent_kernel_require_intent: bool = True
     # T2：run_gate 不可用/超时是否 fail-closed（禁止静默跳过全局并发门）
     agent_kernel_run_gate_required: bool = True
+    # RunGate 排队 poll 间隔（秒）；0.05 过密，默认 0.15
+    agent_run_gate_poll_secs: float = 0.15
     # T1：host 可用时 Court 必须以 Rust 为准；失败则 deny（不静默 Python 放宽）
     agent_court_rust_required: bool = True
     # H-03：create_process 失败时 fail-closed（禁止退回无 kernel 工具路径）

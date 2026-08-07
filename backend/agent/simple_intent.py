@@ -102,11 +102,14 @@ _SIMPLE_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     )
 )
 
-# Steward / workforce topics must never be treated as casual Q&A
+# Steward / workforce topics must never be treated as casual Q&A.
+# Bare「员工」 alone is NOT enough (avoid 员工食堂 false under-strip block).
 _CREW_TOPIC = re.compile(
-    r"编制|工单|提权|员工|派工|收件箱|inbox|管家|ceo|grant|budget|预算|"
+    r"编制|工单|提权|派工|收件箱|\binbox\b|管家|\bceo\b|\bgrant\b|预算|"
     r"身份档案|capabilities|令牌|"
-    # Job-role probes (status / bare name after 查/看) — never strip steward tools
+    # 「员工」 only in workforce context
+    r"员工(列表|进度|编制|档案|提权|工单)|"
+    # Job-role probes
     r"(工程师|研究员|文秘|运维|同事|码农|开发)s?(进度|状态|在干嘛|在做什么|忙什么|怎么样|忙不忙)?|"
     r"(进度|状态|在干嘛).{0,12}(工程师|研究员|文秘|运维|同事)|"
     r"(查|看|问).{0,8}(工程师|研究员|文秘|运维|同事|员工)",

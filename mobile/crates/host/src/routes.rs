@@ -825,14 +825,29 @@ fn mobile_live_overlays(v: &Value) -> Vec<Value> {
                 .or_else(|| v.pointer("/tool/name"))
                 .and_then(|x| x.as_str())
                 .unwrap_or("tool");
-            // Prefer explicit tool call ids; avoid event envelope `id` (not a call id).
+            // Prefer explicit tool call ids; fall back to call-ish `id`, else name+seq.
             let tool_call_id = v
                 .get("tool_call_id")
                 .or_else(|| v.get("call_id"))
                 .or_else(|| v.pointer("/tool/id"))
+                .or_else(|| {
+                    // Only use envelope id when it looks like a call id (not pure event uuid noise alone)
+                    v.get("id").filter(|x| {
+                        x.as_str()
+                            .map(|s| s.contains("call") || s.len() >= 8)
+                            .unwrap_or(false)
+                    })
+                })
                 .and_then(|x| x.as_str())
                 .filter(|s| !s.is_empty())
-                .unwrap_or("");
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| {
+                    let seq_hint = v
+                        .get("seq")
+                        .and_then(|x| x.as_u64())
+                        .unwrap_or(0);
+                    format!("{name}-{seq_hint}")
+                });
             let status = v
                 .get("status")
                 .and_then(|x| x.as_str())

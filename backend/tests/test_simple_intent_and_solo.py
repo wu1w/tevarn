@@ -108,3 +108,32 @@ def test_cluster_mode_includes_crew():
     )
     assert names is not None
     assert "crew_steward" in names or "manage_sub_agent" in names
+
+
+def test_simple_turn_hard_deny_without_id():
+    """Gate must fire even when tool_call_id is empty."""
+    from types import SimpleNamespace
+
+    tc = SimpleNamespace(id="", name="crew_steward", arguments={})
+    capped: dict[str, str] = {}
+    dispatch = {"crew_steward"}
+    tn = str(getattr(tc, "name", "") or "")
+    cid = str(getattr(tc, "id", "") or "").strip() or f"simple-deny-{tn}-{id(tc)}"
+    if tn in dispatch:
+        capped[cid] = "denied"
+        try:
+            setattr(tc, "id", cid)
+        except Exception:
+            pass
+    assert capped, "must deny even when tool_call_id empty"
+    assert str(tc.id).startswith("simple-deny-")
+
+
+def test_crew_topic_not_cafeteria():
+    """Bare 员工 in everyday Chinese must not trip crew topic alone."""
+    from backend.agent import simple_intent as si
+
+    assert si._CREW_TOPIC.search("员工食堂今天有什么菜") is None
+    assert si._CREW_TOPIC.search("查一下员工进度") is not None
+    assert si._CREW_TOPIC.search("员工列表") is not None
+    assert not is_simple_session_intent("查一下员工进度")

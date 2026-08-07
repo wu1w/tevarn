@@ -334,6 +334,9 @@ class AppController extends ChangeNotifier {
       pulseIsland(text: '队列 ${offlineQueue.length}', kind: 'conn');
     }
     unawaited(refreshPath());
+    if (pcConnected) {
+      unawaited(syncPendingConfirmsFromApprovals());
+    }
 
     // Soft surface while offline: do NOT wipe preferred mode from prefs.
     // If preferred remote but not yet connected, stay local until reconnect.
@@ -1049,40 +1052,139 @@ class AppController extends ChangeNotifier {
     final mid = 'confirm-$id';
     if (_decideInFlight.contains(id)) return;
     _decideInFlight.add(id);
+
     ChatMsg? saved;
     final ix = messages.indexWhere((m) => m.id == mid);
     if (ix >= 0) saved = messages[ix].copyMeta();
     final savedIndex = ix >= 0 ? ix : messages.length;
+
+    // Optimistic remove (keep deleted on success)
     messages.removeWhere((m) => m.id == mid);
     _remoteMsgCache.removeWhere((m) => m.id == mid);
     _notify();
+
+    void restoreBubble(String reason) {
+      if (saved == null) return;
+      if (!messages.any((m) => m.id == mid)) {
+        final insertAt = savedIndex.clamp(0, messages.length);
+        messages.insert(insertAt, saved!);
+      }
+      if (surface == 'remote' && !_remoteMsgCache.any((m) => m.id == mid)) {
+        _remoteMsgCache.add(saved!.copyMeta());
+      }
+      showToast(reason);
+      pushStatusCard(
+        title: '审批未成功',
+        body: reason,
+        kind: StatusCardKind.warn,
+        actionLabel: '审批列表',
+        actionId: 'open_approve',
+        ttlMs: 8000,
+      );
+    }
 
     try {
       final ok = await _handleDecideAction(
         decideActionId(id: id, approved: approved, kind: kind),
       );
-      if (!ok && saved != null) {
-        final insertAt = savedIndex.clamp(0, messages.length);
-        if (!messages.any((m) => m.id == mid)) {
-          messages.insert(insertAt, saved);
-        }
-        if (surface == 'remote' &&
-            !_remoteMsgCache.any((m) => m.id == mid)) {
-          _remoteMsgCache.add(saved.copyMeta());
-        }
-        pushStatusCard(
-          title: '审批未成功',
-          body: '请重试同意/拒绝，或打开审批列表',
-          kind: StatusCardKind.warn,
-          actionLabel: '审批列表',
-          actionId: 'open_approve',
-          ttlMs: 8000,
-        );
+      if (!ok) {
+        restoreBubble('请重试同意/拒绝，或打开审批列表');
       }
+    } catch (e) {
+      restoreBubble('网络异常，请重试（${humanizeError(e)}）');
     } finally {
       _decideInFlight.remove(id);
       _notify();
     }
+  }
+
+  /// Boot / reconnect: rehydrate in-chat confirm bubbles from pending approvals.
+  Future<void> syncPendingConfirmsFromApprovals() async {
+    try {
+      await loadApprovals();
+    } catch (_) {
+      return;
+    }
+    final pending = <Map<String, dynamic>>[
+      ...approvals,
+      ...evolutions,
+    ];
+    var n = 0;
+    for (final a in pending) {
+      final id = (a['id'] ?? a['decision_id'] ?? a['confirm_id'] ?? '')
+          .toString();
+      if (id.isEmpty) continue;
+      final st = (a['status'] ?? a['state'] ?? 'pending').toString().toLowerCase();
+      if (st.isNotEmpty &&
+          st != 'pending' &&
+          st != 'open' &&
+          st != 'awaiting' &&
+          !st.contains('pend')) {
+        continue;
+      }
+      final mid = 'confirm-$id';
+      if (messages.any((m) => m.id == mid)) continue;
+      final kind = (a['kind'] ?? a['type'] ?? a['raw_type'] ?? 'escalation')
+          .toString();
+      final detail = (a['detail'] ??
+              a['summary'] ??
+              a['title'] ??
+              a['reason'] ??
+              a['message'] ??
+              '待确认权限')
+          .toString();
+      _upsertConfirmBubble(
+        id: id,
+        kind: kind.isEmpty ? 'escalation' : kind,
+        detail: detail.isEmpty ? '待确认权限' : detail,
+      );
+      n++;
+    }
+    if (n > 0 || pendingApprovalCount > 0) {
+      pulseIsland(
+        text: '待审批 ${pendingApprovalCount > 0 ? pendingApprovalCount : n}',
+        kind: 'warn',
+      );
+    }
+  }
+
+  int get pendingApprovalCount {
+    final n = state['approvals_pending'];
+    if (n is num) return n.toInt();
+    return approvals.length + evolutions.length;
+  }
+
+  /// Compact dual-end health line for chat header / island subtitle.
+  String get healthLine {
+    final k = state['kernel_ok'] == true || state['kernel_ready'] == true;
+    final path = pathProfile['last_kind']?.toString() ??
+        pathProfile['path_kind']?.toString() ??
+        '';
+    final q = offlineQueueLength;
+    final bits = <String>[
+      pcConnected ? 'PC' : '离线',
+      if (path.isNotEmpty) path,
+      if (pcConnected) (k ? 'Kernel✓' : 'Kernel?'),
+      if (q > 0) '队列$q',
+      if (pendingApprovalCount > 0) '审$pendingApprovalCount',
+    ];
+    return bits.join(' · ');
+  }
+
+  /// Brief wait for path/network flap before offline enqueue (~2.5s).
+  Future<bool> _waitBriefReconnect() async {
+    if (pcConnected) return true;
+    pulseIsland(text: '重连中…', kind: 'conn');
+    for (var i = 0; i < 10; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      if (pcConnected) return true;
+    }
+    return pcConnected;
+  }
+
+  void onPathSwitching() {
+    pulseIsland(text: '切换线路…', kind: 'conn');
+    showToast('网络切换中，消息不会中断');
   }
 
   void toggleIslandExpanded() {
@@ -1125,10 +1227,23 @@ class AppController extends ChangeNotifier {
     final text = input.trim();
     if (text.isEmpty && attachments.isEmpty) return false;
 
-    // Offline queue: remote mode without PC — park message and flush later.
+    // Offline / flaky path: brief reconnect wait then queue (no attachments).
     if (surface == 'remote' && !pcConnected) {
       if (_fromOfflineFlush) return false;
-      return await _enqueueOfflineSend(text);
+      final recovered = await _waitBriefReconnect();
+      if (!recovered) {
+        if (attachments.isNotEmpty) {
+          showToast('离线暂不支持附件 · 请连上 PC 后再发带图消息');
+          pushStatusCard(
+            title: '离线不支持附件',
+            body: '文字可入队；图片/文件请联网后发送',
+            kind: StatusCardKind.warn,
+            ttlMs: 6000,
+          );
+          return false;
+        }
+        return await _enqueueOfflineSend(text);
+      }
     }
 
     // Single-flight for user + offline flush (no bypass).
@@ -1152,6 +1267,10 @@ class AppController extends ChangeNotifier {
     // Offline queue: remote mode without PC — park message and flush later.
     if (surface == 'remote' && !pcConnected) {
       if (_fromOfflineFlush) return false;
+      if (attachments.isNotEmpty) {
+        showToast('离线暂不支持附件 · 请连上 PC 后再发带图消息');
+        return false;
+      }
       return await _enqueueOfflineSend(text);
     }
 
@@ -1532,7 +1651,12 @@ class AppController extends ChangeNotifier {
                 kind: StatusCardKind.info,
                 ttlMs: 6000,
               );
-            } else if (detail.contains('路径')) {
+            } else if (detail.contains('路径') ||
+                detail.contains('切换线路') ||
+                detail.contains('path')) {
+              if (detail.contains('切换') || detail.contains('switching')) {
+                onPathSwitching();
+              }
               pushStatusCard(
                 title: detail.contains('失败') ? '路径异常' : '路径更新',
                 body: detail,
@@ -1542,6 +1666,15 @@ class AppController extends ChangeNotifier {
                 actionLabel: detail.contains('失败') ? '重连' : null,
                 actionId: detail.contains('失败') ? 'reconnect' : null,
                 ttlMs: 7000,
+              );
+            } else if (detail.contains('挂起') ||
+                detail.contains('排队') ||
+                detail.contains('执行槽')) {
+              pulseIsland(
+                text: detail.length > 24
+                    ? '${detail.substring(0, 24)}…'
+                    : detail,
+                kind: 'warn',
               );
             }
             _notifyStream();
@@ -2546,8 +2679,15 @@ class AppController extends ChangeNotifier {
   Future<bool> _enqueueOfflineSend(String text) async {
     final body = text.trim();
     if (body.isEmpty && attachments.isEmpty) return false;
+    // Attachments: do not store binaries in SharedPreferences
     if (attachments.isNotEmpty) {
-      showToast('离线暂不支持附件 · 请先连接 PC 再发带附件消息');
+      showToast('离线暂不支持附件 · 请连上 PC 后再发带图消息');
+      pushStatusCard(
+        title: '离线不支持附件',
+        body: '文字可入队；图片/文件请联网后发送',
+        kind: StatusCardKind.warn,
+        ttlMs: 6000,
+      );
       return false;
     }
     while (offlineQueue.length >= _offlineQueueMax) {
@@ -2665,8 +2805,11 @@ class AppController extends ChangeNotifier {
           await Future<void>.delayed(Duration(milliseconds: backoffMs));
           backoffMs = (backoffMs * 2).clamp(400, 8000);
           if (!pcConnected) break;
+          // Keep head item; stop after too many consecutive failures this pass
+          if (failed >= 5) break;
           break;
         }
+        await Future<void>.delayed(const Duration(milliseconds: 300));
       }
       await _persistOfflineQueue();
       if (sent > 0 || failed > 0) {
@@ -2737,6 +2880,7 @@ class AppController extends ChangeNotifier {
         showToast(kind.isEmpty ? '已自动重连 PC' : '已重连 · $kind');
         await refreshAll();
         await refreshPath();
+        unawaited(syncPendingConfirmsFromApprovals());
         unawaited(flushOfflineQueue());
         return;
       }
@@ -2746,6 +2890,7 @@ class AppController extends ChangeNotifier {
         if (isOk(r2)) {
           showToast('已自动重连 PC');
           await refreshAll();
+          unawaited(syncPendingConfirmsFromApprovals());
           unawaited(flushOfflineQueue());
           return;
         }
@@ -2754,6 +2899,7 @@ class AppController extends ChangeNotifier {
       if (isOk(auto)) {
         showToast('已自动重连 PC');
         await refreshAll();
+        unawaited(syncPendingConfirmsFromApprovals());
         unawaited(flushOfflineQueue());
       }
     } catch (_) {}

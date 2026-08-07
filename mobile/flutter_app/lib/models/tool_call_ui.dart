@@ -80,7 +80,7 @@ bool looksLikeMarkdown(String text) {
 }
 
 /// Merge tool update into list by id, else name+running, else append.
-/// Parallel same-name tools without id: append new running rows (do not collapse).
+/// Never merge end events into already-completed same-name tools.
 void upsertToolCall(List<ToolCallUi> list, ToolCallUi next) {
   if (next.id.isNotEmpty) {
     final i = list.indexWhere((t) => t.id == next.id);
@@ -92,20 +92,26 @@ void upsertToolCall(List<ToolCallUi> list, ToolCallUi next) {
     list.add(next);
     return;
   }
-  // Synthesize a stable-ish id for nameless parallel starts
+  // Running without id: append with synthetic id (parallel same-name safe)
   if (next.status == ToolCallStatus.running) {
-    final synthetic = 'name:${next.name}#${list.where((t) => t.name == next.name).length}';
+    final synthetic =
+        'name:${next.name}#${list.where((t) => t.name == next.name).length}';
     next.id = synthetic;
     list.add(next);
     return;
   }
-  // End without id: bind to last running same-name
+  // End without id: only merge into last *running* same-name (not completed)
   final i = list.lastIndexWhere(
     (t) => t.name == next.name && t.status == ToolCallStatus.running,
   );
   if (i >= 0) {
-    next.id = list[i].id;
-    list[i] = next;
+    list[i] = ToolCallUi(
+      name: next.name,
+      id: next.id.isNotEmpty ? next.id : list[i].id,
+      status: next.status,
+      summary: next.summary,
+      result: next.result,
+    );
     return;
   }
   list.add(next);
