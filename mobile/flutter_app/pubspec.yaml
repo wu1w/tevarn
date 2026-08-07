@@ -1,7 +1,7 @@
 ﻿name: takton_mobile
 description: Takton Pixel Console �?Flutter shell, Rust engine
 publish_to: "none"
-version: 0.5.7+32
+version: 0.5.8+33
 
 environment:
   sdk: '>=3.10.0 <4.0.0'

@@ -106,14 +106,34 @@ const ROOT_DIR = isDev
 const BACKEND_DIR = isDev
   ? path.join(ROOT_DIR, 'backend')
   : path.join(process.resourcesPath, 'backend');
-// Packaged layout (electron-builder):
-//   app.asar/
-//     electron-dist/main.js   ← __dirname
-//     dist/index.html         ← static export (sibling of electron-dist)
-// Using '..', '..', 'dist' wrongly resolves to resources/dist (outside asar) → black screen.
-const FRONTEND_OUT_DIR = isDev
-  ? path.join(ROOT_DIR, 'frontend', 'dist')
-  : path.join(__dirname, '..', 'dist');
+// Packaged layouts (both seen in the wild):
+//   A) app.asar/electron/dist/main.js  → ../../dist = app.asar/dist  (0.5.7-style)
+//   B) app.asar/electron-dist/main.js  → ../dist    = app.asar/dist  (0.5.8-style)
+// Never hardcode only one; pick the first path that actually has index.html.
+function resolveFrontendOutDir(): string {
+  if (isDev) {
+    return path.join(ROOT_DIR, 'frontend', 'dist');
+  }
+  const candidates = [
+    path.join(__dirname, '..', 'dist'), // electron-dist/main.js
+    path.join(__dirname, '..', '..', 'dist'), // electron/dist/main.js
+    path.join(process.resourcesPath, 'app', 'dist'),
+  ];
+  try {
+    candidates.push(path.join(app.getAppPath(), 'dist'));
+  } catch {
+    /* app path not ready yet */
+  }
+  for (const c of candidates) {
+    try {
+      if (fs.existsSync(path.join(c, 'index.html'))) return c;
+    } catch {
+      /* ignore */
+    }
+  }
+  return candidates[0];
+}
+const FRONTEND_OUT_DIR = resolveFrontendOutDir();
 const USER_DATA_DIR = app.getPath('userData');
 
 // 用户可写目录：DB / 上传 / 工作区 / 额外 Python 包 / 密钥
