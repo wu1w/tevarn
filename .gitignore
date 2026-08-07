@@ -72,6 +72,9 @@ test_extract/
 !docs/**/*.png
 !public/**/*.png
 !frontend/public/**/*.png
+!mobile/flutter_app/assets/**/*.png
+!mobile/flutter_app/android/app/src/main/res/**/*.png
+!mobile/flutter_app/android/app/src/main/ic_launcher-playstore.png
 
 # Secrets / local
 **/secrets.json
