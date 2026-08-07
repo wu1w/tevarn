@@ -8,7 +8,7 @@
 在 **Ubuntu 22.04+** VPS 上以 root 执行：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/wu1w/takton/feature/agent-kernel/deploy/vps-relay/install.sh | sudo bash
+curl -fsSL https://github.com/wu1w/takton/releases/download/v0.5.7-alpha/install-vps-relay.sh | sudo bash
 ```
 
 装完会**自动打印**（并写入 `/opt/takton-vps-relay/INSTALL_INFO.txt`）：
@@ -31,15 +31,18 @@ sudo cat /opt/takton-vps-relay/INSTALL_INFO.txt
 
 ```bash
 # 改端口
-curl -fsSL https://raw.githubusercontent.com/wu1w/takton/feature/agent-kernel/deploy/vps-relay/install.sh \
+curl -fsSL https://github.com/wu1w/takton/releases/download/v0.5.7-alpha/install-vps-relay.sh \
   | sudo env RELAY_PUBLIC_PORT=8080 bash
 
 # 固定令牌（重装时复用）
-curl -fsSL https://raw.githubusercontent.com/wu1w/takton/feature/agent-kernel/deploy/vps-relay/install.sh \
+curl -fsSL https://github.com/wu1w/takton/releases/download/v0.5.7-alpha/install-vps-relay.sh \
   | sudo env RELAY_TOKEN='tr_live_your_token_here' bash
 ```
 
 脚本会自动：安装 Docker（若无）→ 下载中继包 → 生成令牌 → `docker compose up` → 打印 IP/端口/令牌。
+
+> 源码分支同步（开发用）：  
+> `curl -fsSL https://raw.githubusercontent.com/wu1w/takton/feature/agent-kernel/deploy/vps-relay/install.sh | sudo bash`
 
 ---
 

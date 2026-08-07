@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Takton VPS Relay — Ubuntu one-line install
 #
+#   curl -fsSL https://github.com/wu1w/takton/releases/download/v0.5.7-alpha/install-vps-relay.sh | sudo bash
+#
+#   # or from branch (dev):
 #   curl -fsSL https://raw.githubusercontent.com/wu1w/takton/feature/agent-kernel/deploy/vps-relay/install.sh | sudo bash
 #
 # Optional env:
