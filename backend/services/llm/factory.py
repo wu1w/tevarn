@@ -1,6 +1,10 @@
 """
 LLM 服务工厂
 根据配置自动选择 Ollama / vLLM / OpenAI / Anthropic / OpenAI-Compatible 后端
+
+Gemini 原生 generateContent / functionCall 未一等公民适配：请使用 Google 的
+OpenAI 兼容代理 endpoint，或 OpenRouter 等已转 OpenAI tools 的网关。
+OpenRouter 若路由到 Claude 原生路径，应选 anthropic provider 而非仅 OpenAI 形硬打。
 """
 
 from __future__ import annotations

@@ -134,6 +134,7 @@ def test_crew_topic_not_cafeteria():
     from backend.agent import simple_intent as si
 
     assert si._CREW_TOPIC.search("员工食堂今天有什么菜") is None
+    assert si._CREW_TOPIC.search("查一下员工食堂") is None
     assert si._CREW_TOPIC.search("查一下员工进度") is not None
     assert si._CREW_TOPIC.search("员工列表") is not None
     assert not is_simple_session_intent("查一下员工进度")

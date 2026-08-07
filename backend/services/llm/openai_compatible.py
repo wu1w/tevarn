@@ -20,6 +20,32 @@ from .schemas import LLMChunk, LLMResponse, ToolCall
 logger = logging.getLogger(__name__)
 
 
+def merge_stream_tool_delta(
+    accumulated: dict[int, dict[str, Any]], tc: dict[str, Any]
+) -> None:
+    """Merge one OpenAI stream tool_calls[] delta into index-keyed accumulator.
+
+    Official Chat Completions streaming: each delta carries `index`; id/name may
+    arrive on first chunk and arguments are concatenated across chunks.
+    """
+    index = int(tc.get("index", 0) or 0)
+    fn = tc.get("function") or {}
+    if index not in accumulated:
+        accumulated[index] = {
+            "id": tc.get("id") or "",
+            "name": fn.get("name") or "",
+            "arguments": fn.get("arguments") or "",
+        }
+        return
+    entry = accumulated[index]
+    if tc.get("id"):
+        entry["id"] = tc["id"]
+    if fn.get("name"):
+        entry["name"] = fn["name"]
+    if fn.get("arguments"):
+        entry["arguments"] = (entry.get("arguments") or "") + fn["arguments"]
+
+
 class OpenAICompatibleService(LLMService):
     """通用 OpenAI 兼容 LLM 服务"""
 
@@ -673,22 +699,7 @@ class OpenAICompatibleService(LLMService):
 
         def _merge_tool_delta(tc: dict[str, Any]) -> None:
             """合并流式 tool_call 增量（后续 chunk 可能补全 id/name）。"""
-            index = tc.get("index", 0)
-            fn = tc.get("function") or {}
-            if index not in accumulated_tool_calls:
-                accumulated_tool_calls[index] = {
-                    "id": tc.get("id") or "",
-                    "name": fn.get("name") or "",
-                    "arguments": fn.get("arguments") or "",
-                }
-                return
-            entry = accumulated_tool_calls[index]
-            if tc.get("id"):
-                entry["id"] = tc["id"]
-            if fn.get("name"):
-                entry["name"] = fn["name"]
-            if fn.get("arguments"):
-                entry["arguments"] = (entry.get("arguments") or "") + fn["arguments"]
+            merge_stream_tool_delta(accumulated_tool_calls, tc)
 
         def _emit_tool_calls() -> list[LLMChunk]:
             """无论 finish_reason 是 tool_calls 还是 stop，只要有工具调用就发出。"""

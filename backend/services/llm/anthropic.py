@@ -71,9 +71,22 @@ class AnthropicService(LLMService):
         Anthropic 使用 system 为独立字段，messages 中不能有 role=system。
         助手 tool_calls → content 中的 tool_use 块；
         role=tool → user 消息里的 tool_result（必须带 tool_use_id）。
+
+        对齐官方 + OpenAI 兼容层：
+        - tool_result 可带 is_error
+        - 无匹配 tool_use 的孤儿 tool_result 直接丢弃（压缩后常见；合成假 id 会 400）
         """
+        try:
+            from backend.agent.tool_result_contract import is_tool_error
+        except Exception:  # pragma: no cover
+            def is_tool_error(result: str | None) -> bool:  # type: ignore
+                t = (result or "").lstrip()
+                return t.startswith("[Error]") or t.startswith("[error]")
+
         system_parts: list[str] = []
         anthropic_messages: list[dict[str, Any]] = []
+        # tool_use ids emitted so far (for orphan tool_result drop)
+        declared_tool_use_ids: set[str] = set()
 
         def _flush_tool_results(pending: list[dict[str, Any]]) -> None:
             if not pending:
@@ -94,18 +107,25 @@ class AnthropicService(LLMService):
                 continue
 
             if role == "tool":
-                tool_use_id = (
-                    msg.get("tool_call_id")
-                    or msg.get("id")
-                    or f"toolu_{uuid.uuid4().hex[:12]}"
-                )
-                pending_tool_results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": str(tool_use_id),
-                        "content": str(content),
-                    }
-                )
+                tool_use_id = str(
+                    msg.get("tool_call_id") or msg.get("id") or ""
+                ).strip()
+                # Orphan: no matching assistant.tool_use in this history → drop
+                # (do NOT invent toolu_* — Anthropic requires pairing)
+                if not tool_use_id or tool_use_id not in declared_tool_use_ids:
+                    logger.debug(
+                        "dropping orphan tool_result (tool_use_id=%r not declared)",
+                        tool_use_id or "(empty)",
+                    )
+                    continue
+                block: dict[str, Any] = {
+                    "type": "tool_result",
+                    "tool_use_id": tool_use_id,
+                    "content": str(content),
+                }
+                if is_tool_error(str(content)):
+                    block["is_error"] = True
+                pending_tool_results.append(block)
                 continue
 
             _flush_tool_results(pending_tool_results)
@@ -127,10 +147,14 @@ class AnthropicService(LLMService):
                         args = raw_args
                     else:
                         args = {}
+                    tid = str(tc.get("id") or "").strip()
+                    if not tid:
+                        tid = f"toolu_{uuid.uuid4().hex[:12]}"
+                    declared_tool_use_ids.add(tid)
                     blocks.append(
                         {
                             "type": "tool_use",
-                            "id": tc.get("id") or f"toolu_{uuid.uuid4().hex[:12]}",
+                            "id": tid,
                             "name": name,
                             "input": args if isinstance(args, dict) else {"value": args},
                         }
@@ -276,7 +300,8 @@ class AnthropicService(LLMService):
             return
 
         accumulated_content = ""
-        current_tool_call: dict[str, Any] | None = None
+        # Parallel tool_use blocks: track by content_block index (official partial_json path)
+        open_tool_blocks: dict[int, dict[str, Any]] = {}
         tool_calls_list: list[ToolCall] = []
         stream_usage: dict[str, int] = {}
 
@@ -315,6 +340,7 @@ class AnthropicService(LLMService):
                     if event_type == "content_block_delta":
                         delta = data.get("delta", {})
                         delta_type = delta.get("type", "")
+                        block_index = int(data.get("index", 0) or 0)
 
                         if delta_type == "text_delta":
                             text = delta.get("text", "")
@@ -324,33 +350,43 @@ class AnthropicService(LLMService):
 
                         elif delta_type == "input_json_delta":
                             partial_json = delta.get("partial_json", "")
-                            if current_tool_call is not None and partial_json:
-                                current_tool_call["arguments_json"] = current_tool_call.get("arguments_json", "") + partial_json
+                            cur = open_tool_blocks.get(block_index)
+                            if cur is not None and partial_json:
+                                cur["arguments_json"] = (
+                                    cur.get("arguments_json", "") + partial_json
+                                )
 
                     elif event_type == "content_block_start":
                         content_block = data.get("content_block", {})
                         block_type = content_block.get("type", "")
+                        block_index = int(data.get("index", 0) or 0)
                         if block_type == "tool_use":
-                            current_tool_call = {
+                            open_tool_blocks[block_index] = {
                                 "id": content_block.get("id", ""),
                                 "name": content_block.get("name", ""),
                                 "arguments_json": "",
                             }
 
                     elif event_type == "content_block_stop":
+                        block_index = int(data.get("index", 0) or 0)
+                        current_tool_call = open_tool_blocks.pop(block_index, None)
                         if current_tool_call is not None:
                             try:
-                                args = json.loads(current_tool_call.get("arguments_json", "{}"))
+                                args = json.loads(
+                                    current_tool_call.get("arguments_json", "{}")
+                                )
                             except json.JSONDecodeError:
                                 args = {}
+                            if not isinstance(args, dict):
+                                args = {"value": args}
                             tc = ToolCall(
-                                id=current_tool_call.get("id", f"call_{uuid.uuid4().hex[:8]}"),
+                                id=current_tool_call.get("id")
+                                or f"toolu_{uuid.uuid4().hex[:12]}",
                                 name=current_tool_call.get("name", ""),
                                 arguments=args,
                             )
                             tool_calls_list.append(tc)
                             yield LLMChunk(message_id=message_id, delta="", tool_call=tc)
-                            current_tool_call = None
 
                     elif event_type == "message_stop":
                         finish_reason = "tool_calls" if tool_calls_list else "stop"
