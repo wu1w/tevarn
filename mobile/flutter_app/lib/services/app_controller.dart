@@ -249,12 +249,33 @@ class AppController extends ChangeNotifier {
   }
 
   ChatMsg _chatMsgFromMap(Map<String, dynamic> m) {
+    final tools = <ToolCallUi>[];
+    final tc = m['tool_calls'];
+    if (tc is List) {
+      for (final t in tc) {
+        if (t is! Map) continue;
+        final name = (t['name'] ??
+                (t['function'] is Map ? (t['function'] as Map)['name'] : null) ??
+                'tool')
+            .toString();
+        final result = (t['result'] ?? t['content'] ?? '').toString();
+        tools.add(ToolCallUi(
+          name: name,
+          status: result.isNotEmpty
+              ? ToolCallStatus.completed
+              : ToolCallStatus.running,
+          summary: result.length > 120 ? '${result.substring(0, 120)}…' : result,
+          result: result,
+        ));
+      }
+    }
     return ChatMsg(
       id: m['id']?.toString() ?? '',
       role: m['role']?.toString() ?? 'assistant',
       text: m['text']?.toString() ?? m['content']?.toString() ?? '',
       who: m['who']?.toString() ?? '',
       format: m['format']?.toString() == 'markdown' ? 'markdown' : 'plain',
+      toolCalls: tools,
     );
   }
 
@@ -463,10 +484,13 @@ class AppController extends ChangeNotifier {
       _notify();
     }
 
+    final bootGen = _switchGen;
+    final bootSurface = surface;
     unawaited(() async {
       try {
-        await _applySwitchSurface(surface, ensureSession: false)
+        await _applySwitchSurface(bootSurface, ensureSession: false)
             .timeout(const Duration(seconds: 6));
+        if (bootGen != _switchGen || surface != bootSurface) return;
         await _persistDiskMessageCaches();
         _notify();
       } catch (_) {}
@@ -774,21 +798,24 @@ class AppController extends ChangeNotifier {
     final window = list.length > messagePageLimit
         ? list.sublist(list.length - messagePageLimit)
         : list;
-    hasMoreOlder = list.length > messagePageLimit;
+    hasMoreOlder = list.length >= messagePageLimit;
     _applyMessages(window, forSurface: 'local');
     _notify();
   }
 
   /// P1: pull older messages when user scrolls to top.
+  /// Sets [lastPrependCount] so chat UI can preserve scroll anchor.
+  int lastPrependCount = 0;
+
   Future<void> loadOlderMessages() async {
-    if (loadingOlder || !hasMoreOlder || streaming) return;
+    if (loadingOlder || !hasMoreOlder || streaming || _appPaused) return;
     loadingOlder = true;
+    lastPrependCount = 0;
     _notify();
     try {
       if (surface == 'remote') {
         final sid = activeSessionId;
         if (sid == null || sid.isEmpty) return;
-        // Fetch a larger window then prepend missing older rows.
         final want = (messages.length + messagePageLimit).clamp(1, 200);
         final h = await bridge.messages(sid, limit: want);
         final list = await _parseUiMessagesAsync(
@@ -798,24 +825,74 @@ class AppController extends ChangeNotifier {
           return;
         }
         hasMoreOlder = list.length >= want;
-        final existingIds = messages.map((m) => m.id).toSet();
-        final older = list.where((m) => !existingIds.contains(m.id)).toList();
-        if (older.isEmpty) {
-          hasMoreOlder = list.length < want ? false : hasMoreOlder;
-          // Still replace if server window shifted
-          if (list.length > messages.length) {
-            _applyMessages(list, forSurface: 'remote');
+
+        // Anchor: first non-confirm bubble currently shown (may be client id).
+        ChatMsg? head;
+        for (final m in messages) {
+          if (m.role != 'confirm') {
+            head = m;
+            break;
           }
-        } else {
-          final merged = [...older, ...messages.map((m) => m.copyMeta())];
-          _applyMessages(merged, forSurface: 'remote');
         }
+        if (head == null) {
+          _applyMessages(list, forSurface: 'remote');
+          lastPrependCount = list.length;
+          return;
+        }
+        // Prefer server order: everything before the first server id that
+        // matches head by id OR by role+text prefix (post-stream client ids).
+        int anchorIdx = list.indexWhere((m) => m.id == head.id);
+        if (anchorIdx < 0) {
+          final ht = head.text.trim();
+          final prefix = ht.length > 48 ? ht.substring(0, 48) : ht;
+          for (var i = 0; i < list.length; i++) {
+            final m = list[i];
+            if (m.role != head.role) continue;
+            final t = m.text.trim();
+            if (t == ht ||
+                (prefix.isNotEmpty && t.contains(prefix)) ||
+                (prefix.isNotEmpty && ht.contains(
+                    t.length > 48 ? t.substring(0, 48) : t))) {
+              anchorIdx = i;
+              break;
+            }
+          }
+        }
+        if (anchorIdx <= 0) {
+          // No older rows on server for this window
+          if (list.length < want) hasMoreOlder = false;
+          // Remap head→server id for the overlapping tail only
+          if (anchorIdx == 0) {
+            final existingConfirm = messages
+                .where((m) => m.role == 'confirm')
+                .map((m) => m.copyMeta())
+                .toList();
+            final next = [...list.map((m) => m.copyMeta()), ...existingConfirm];
+            _applyMessages(next, forSurface: 'remote');
+          }
+          return;
+        }
+        final older = list.sublist(0, anchorIdx);
+        lastPrependCount = older.length;
+        final existingConfirm = messages
+            .where((m) => m.role == 'confirm')
+            .map((m) => m.copyMeta())
+            .toList();
+        // Rebuild: server older + server from anchor (canonical ids) + confirms
+        final tailServer = list.sublist(anchorIdx);
+        final merged = [
+          ...older.map((m) => m.copyMeta()),
+          ...tailServer.map((m) => m.copyMeta()),
+          ...existingConfirm,
+        ];
+        _applyMessages(merged, forSurface: 'remote');
       } else {
         final h = await bridge.localHistory();
         final list = await _parseUiMessagesAsync(
             (h['messages'] as List?) ?? (h['history'] as List?) ?? []);
         hasMoreOlder = false;
         if (list.length > messages.length) {
+          lastPrependCount = list.length - messages.length;
           _applyMessages(list, forSurface: 'local');
         }
       }
@@ -861,7 +938,7 @@ class AppController extends ChangeNotifier {
       final window = msgs.length > messagePageLimit
           ? msgs.sublist(msgs.length - messagePageLimit)
           : msgs;
-      hasMoreOlder = msgs.length > messagePageLimit;
+      hasMoreOlder = msgs.length >= messagePageLimit;
       _applyMessages(window, forSurface: s);
     } else if (s == 'local' && messages.isEmpty) {
       await loadLocalMsgs();
@@ -950,7 +1027,7 @@ class AppController extends ChangeNotifier {
         final window = msgs.length > messagePageLimit
             ? msgs.sublist(msgs.length - messagePageLimit)
             : msgs;
-        hasMoreOlder = msgs.length > messagePageLimit;
+        hasMoreOlder = msgs.length >= messagePageLimit;
         _applyMessages(window, forSurface: 'remote');
       }
       _notify();
@@ -2110,7 +2187,7 @@ class AppController extends ChangeNotifier {
         try {
           final r = await bridge.messages(
             activeSessionId!,
-            limit: 12,
+            limit: 20,
           );
           final list = r['messages'];
           if (list is List && list.isNotEmpty) {
@@ -3347,14 +3424,22 @@ List<Map<String, dynamic>> _parseUiMessagesIsolate(List<dynamic> raw) {
       format = 'markdown';
     }
     final idVal = map['id']?.toString() ?? out.length.toString();
-    out.add({
+    final row = <String, dynamic>{
       'id': idVal,
       'role': map['role']?.toString() ?? 'assistant',
       'text': text,
       'content': text,
       'who': map['who']?.toString() ?? '',
       'format': format,
-    });
+    };
+    final tc = map['tool_calls'];
+    if (tc is List) {
+      row['tool_calls'] = tc
+          .whereType<Map>()
+          .map((t) => Map<String, dynamic>.from(t))
+          .toList();
+    }
+    out.add(row);
   }
   return out;
 }

@@ -93,12 +93,29 @@ class _ChatScreenState extends State<ChatScreen> {
         ? Colors.white.withValues(alpha: 0.06)
         : PixelColors.ink.withValues(alpha: 0.05);
 
-    // New bubble → re-stick and scroll; stream updates only if still stuck
+    // New tail bubble → re-stick; load-older prepend must NOT jump to bottom.
     final len = c.messages.length;
     if (len > _prevMsgLen) {
-      _stickBottom = true;
-      _prevMsgLen = len;
-      _scrollEnd(force: true);
+      final prepended = c.loadingOlder || c.lastPrependCount > 0;
+      if (prepended) {
+        final added = len - _prevMsgLen;
+        _prevMsgLen = len;
+        _stickBottom = false;
+        // Preserve viewport: after prepend, keep visual position.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || !_scroll.hasClients) return;
+          final pos = _scroll.position;
+          // Rough anchor: keep distance from bottom stable when possible.
+          final target = (pos.pixels + (added * 72.0)).clamp(0.0, pos.maxScrollExtent);
+          _scroll.jumpTo(target);
+          // Consume prepend signal
+          c.lastPrependCount = 0;
+        });
+      } else {
+        _stickBottom = true;
+        _prevMsgLen = len;
+        _scrollEnd(force: true);
+      }
     } else if (len < _prevMsgLen) {
       _prevMsgLen = len;
     } else if (_stickBottom && len > 0 && c.streaming) {
