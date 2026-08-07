@@ -49,16 +49,55 @@ impl TaktonClient {
         self.config.read().clone()
     }
 
+    /// Switch API base URL.
+    ///
+    /// Path hops (LAN↔VPS) keep the in-memory JWT so the next request can try
+    /// the same token on the new URL; caller should re-auth with device_token
+    /// if health/401 fails. Use [`clear_session`] for explicit logout.
     pub fn set_base_url(&self, base_url: String) {
+        self.set_base_url_ex(base_url, false);
+    }
+
+    /// `clear_session=true` drops JWT (hard disconnect). Default path hops use false.
+    pub fn set_base_url_ex(&self, base_url: String, clear_session: bool) {
         let mut cfg = self.config.write();
         let prev = cfg.base_url.clone();
-        cfg.base_url = base_url;
+        cfg.base_url = base_url.clone();
         let changed = prev.trim_end_matches('/') != cfg.base_url.trim_end_matches('/');
         drop(cfg);
-        if changed {
+        if !changed {
+            return;
+        }
+        if clear_session {
             *self.session.write() = None;
             let _ = self.persist_session(None);
+            return;
         }
+        // Keep token; update bound base so persist matches active path.
+        let snap = {
+            let mut g = self.session.write();
+            if let Some(s) = g.as_mut() {
+                s.base_url = base_url;
+                Some(s.clone())
+            } else {
+                None
+            }
+        };
+        if let Some(s) = snap {
+            let _ = self.persist_session(Some(&s));
+        }
+    }
+
+    pub fn clear_session(&self) {
+        *self.session.write() = None;
+        let _ = self.persist_session(None);
+    }
+
+    /// Restore a previously saved session (path hop rollback).
+    pub fn restore_session(&self, s: AuthSession) -> Result<()> {
+        *self.session.write() = Some(s.clone());
+        self.persist_session(Some(&s))?;
+        Ok(())
     }
 
     pub fn session(&self) -> Option<AuthSession> {
@@ -87,9 +126,18 @@ impl TaktonClient {
     }
 
     pub fn logout(&self) -> Result<()> {
-        *self.session.write() = None;
-        self.persist_session(None)?;
+        self.clear_session();
         Ok(())
+    }
+
+    /// Optional short-lived VPS path ticket (HMAC vpt) for /t/{id} edge auth.
+    pub fn set_path_vpt(&self, vpt: Option<String>) {
+        let mut cfg = self.config.write();
+        cfg.path_vpt = vpt.filter(|s| !s.trim().is_empty());
+    }
+
+    pub fn path_vpt(&self) -> Option<String> {
+        self.config.read().path_vpt.clone()
     }
 
     fn api_root(&self) -> String {
@@ -115,6 +163,13 @@ impl TaktonClient {
                     None => return Err(Error::NotAuthenticated),
                 };
                 req = req.header("Authorization", format!("Bearer {token}"));
+            }
+            // VPS edge ticket when talking through /t/{id}
+            let base = self.config.read().base_url.clone();
+            if base.contains("/t/") {
+                if let Some(vpt) = self.path_vpt() {
+                    req = req.header("X-Takton-Vpt", vpt);
+                }
             }
             req = req.header("Accept", "application/json");
             if let Some(ref b) = body {

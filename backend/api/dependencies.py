@@ -107,6 +107,38 @@ def _is_loopback_host(host: str | None) -> bool:
         return False
 
 
+def _is_via_relay(request: Request | None) -> bool:
+    """Traffic arrived through VPS reverse tunnel (PC agent injects this header).
+
+    Must NOT be treated as loopback single_user free-login even though the local
+    socket peer is 127.0.0.1 after the tunnel strips XFF.
+    """
+    if request is None:
+        return False
+    h = getattr(request, "headers", None)
+    if h is None:
+        return False
+    try:
+        raw = (
+            h.get("x-takton-relay")
+            or h.get("x-takton-via-relay")
+            or h.get("X-Takton-Relay")
+            or ""
+        )
+    except Exception:
+        return False
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _may_single_user_free_login(request: Request | None) -> bool:
+    """single_user auto-admin only for true local UI — never relay-proxied traffic."""
+    if request is not None and _is_via_relay(request):
+        return False
+    client = getattr(request, "client", None) if request is not None else None
+    host = getattr(client, "host", None) if client is not None else None
+    return _is_loopback_host(host)
+
+
 def resolve_default_admin_password() -> str:
     """默认 admin 账号的初始密码 —— 唯一事实源。
 
@@ -135,13 +167,13 @@ def assert_local_single_user(request: Request) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Single user mode is disabled",
         )
-    client_host = request.client.host if request.client else None
-    if not _is_loopback_host(client_host):
+    if not _may_single_user_free_login(request):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
-                "single_user_mode allows loopback access only; "
-                "set TAKTON_SINGLE_USER_MODE=false for non-local deployments"
+                "single_user_mode allows loopback access only "
+                "(VPS relay traffic must use JWT / pair session); "
+                "set TAKTON_SINGLE_USER_MODE=false for open multi-user deploys"
             ),
         )
 
@@ -194,15 +226,14 @@ async def get_current_user(
         )
 
     if settings.single_user_mode:
-        # 安全闸门：single_user_mode 的"无 Bearer 放行 admin"仅限 loopback 来源。
-        # 服务若绑定 0.0.0.0（Docker 部署常见），非本机请求必须走真实登录。
-        client_host = request.client.host if request.client else None
-        if not _is_loopback_host(client_host):
+        # 安全闸门：无 Bearer 放行 admin 仅限真本机；VPS 隧道注入 x-takton-relay 一律拒绝。
+        if not _may_single_user_free_login(request):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=(
-                    "single_user_mode allows loopback access only; "
-                    "set TAKTON_SINGLE_USER_MODE=false for non-local deployments"
+                    "single_user_mode allows loopback access only "
+                    "(relay-proxied requests need Bearer JWT); "
+                    "set TAKTON_SINGLE_USER_MODE=false for open multi-user deploys"
                 ),
             )
         # 查找或创建默认用户

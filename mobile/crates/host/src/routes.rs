@@ -587,7 +587,8 @@ fn build_mode_snapshot(
     // optimistically treat `runtime=None` as ready.
     cached_kernel_ready: Option<bool>,
 ) -> ModeSnapshot {
-    let pc_connected = st.client.is_authenticated();
+    // P0-2: reachable within liveness window, not mere JWT presence
+    let pc_connected = st.pc_connected();
     let profile = st.local_llm.load_profile();
     let local_llm_ready = profile.is_ready();
     let kernel_ready = if let Some(k) = cached_kernel_ready {
@@ -632,6 +633,7 @@ async fn remote_probe(
     let mut runtime = None;
     if st.client.is_authenticated() {
         if let Ok(cat) = st.client.model_catalog(false).await {
+            st.mark_pc_reachable();
             let v = serde_json::to_value(&cat).unwrap_or(json!({}));
             pc_model = catalog_active_model(&v).unwrap_or_default();
             if pc_model.is_empty() {
@@ -1611,7 +1613,10 @@ async fn ensure_chat(st: AppState, session_id: String) -> Result<Arc<ChatConnect
 // ── handlers ────────────────────────────────────────────────────────────────
 
 async fn healthz(State(st): State<AppState>) -> Json<Value> {
+    // Refresh PC liveness when JWT present but window stale
+    refresh_pc_liveness(&st).await;
     let authenticated = st.client.is_authenticated();
+    let pc_connected = st.pc_connected();
     let profile = st.local_llm.load_profile();
     let masked = profile.masked();
     // Prune half-dead so counts match reality (login ≠ link alive).
@@ -1625,19 +1630,60 @@ async fn healthz(State(st): State<AppState>) -> Json<Value> {
     Json(json!({
         "ok": true,
         "authenticated": authenticated,
+        "pc_connected": pc_connected,
         "chat_sockets_alive": chat_alive,
         "chat_sockets_cached": chat_cached,
         "chat_pruned": pruned,
         "latest_seq": st.latest_seq(),
         "base_url": base_url_of(&st),
         "local_llm": masked,
-        "backend": if authenticated {
+        "backend": if pc_connected {
             json!({"service":"takton-backend","status":"ok"})
+        } else if authenticated {
+            json!({"service":"takton-backend","status":"stale"})
         } else {
             json!({"service":"takton-backend","status":"disconnected"})
         },
         "ts": chrono_now(),
     }))
+}
+
+/// Probe PC when authenticated but liveness stamp is old (P0-2).
+async fn refresh_pc_liveness(st: &AppState) {
+    if !st.client.is_authenticated() {
+        return;
+    }
+    let last = st.last_pc_reachable_at.load(std::sync::atomic::Ordering::SeqCst);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if last > 0 && now.saturating_sub(last) < 12 {
+        return; // recently probed
+    }
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        st.client.health(),
+    )
+    .await
+    {
+        Ok(Ok(_)) => st.mark_pc_reachable(),
+        _ => {
+            // Try device_token re-ticket once on failure
+            if let Some(t) = st.path.profile().device_token.clone() {
+                if let Ok(_) = tokio::time::timeout(
+                    std::time::Duration::from_secs(4),
+                    st.client.pair_session_login(&t),
+                )
+                .await
+                {
+                    if let Ok(_) = st.client.health().await {
+                        st.mark_pc_reachable();
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1667,7 +1713,9 @@ async fn list_events_after(
 }
 
 async fn app_state(State(st): State<AppState>) -> Json<Value> {
+    refresh_pc_liveness(&st).await;
     let authenticated = st.client.is_authenticated();
+    let pc_connected = st.pc_connected();
     let _ = st.prune_dead_chats();
     let chat_alive = st
         .chats
@@ -1694,7 +1742,10 @@ async fn app_state(State(st): State<AppState>) -> Json<Value> {
     };
     Json(json!({
         "ok": true,
-        "authenticated": authenticated,
+        // Product "已连 PC" = reachable (P0-2), not mere JWT in memory
+        "authenticated": pc_connected,
+        "jwt_present": authenticated,
+        "pc_connected": pc_connected,
         // Link liveness (socket), not just login token
         "chat_sockets_alive": chat_alive,
         "latest_seq": st.latest_seq(),
@@ -1703,7 +1754,7 @@ async fn app_state(State(st): State<AppState>) -> Json<Value> {
         "active_session_id": active,
         "sessions": sessions,
         "local_session": local_session,
-        "mode": if authenticated { "remote" } else { "local" },
+        "mode": if pc_connected { "remote" } else { "local" },
         "local_llm": profile.masked(),
         "local_llm_ready": profile.is_ready(),
         "active_model": active_model,
@@ -1735,11 +1786,15 @@ async fn disconnect(State(st): State<AppState>) -> Json<Value> {
 
 async fn auto_login(State(st): State<AppState>) -> Json<Value> {
     match st.client.auto_login().await {
-        Ok(s) => Json(json!({
-            "ok": true,
-            "authenticated": true,
-            "user_email": s.user.email,
-        })),
+        Ok(s) => {
+            st.mark_pc_reachable();
+            Json(json!({
+                "ok": true,
+                "authenticated": true,
+                "pc_connected": true,
+                "user_email": s.user.email,
+            }))
+        }
         Err(e) => err_json(e),
     }
 }
@@ -2128,6 +2183,7 @@ async fn pair_device(State(st): State<AppState>, Json(body): Json<PairBody>) -> 
 // ── path helpers ─────────────────────────────────────────────────────────────
 
 /// Login to the first working base URL.
+/// Always prefers path profile `device_token` → pair_session (LAN + VPS).
 /// `preferred` is tried first (e.g. the URL that just won claim over VPS).
 async fn try_connect_best(
     st: &AppState,
@@ -2135,7 +2191,16 @@ async fn try_connect_best(
     email: &str,
     password: &str,
 ) -> Result<Value, String> {
-    try_connect_best_pref(st, candidates, email, password, &[], None).await
+    let tok = st
+        .path
+        .profile()
+        .device_token
+        .filter(|s| !s.trim().is_empty());
+    // Restore VPS edge ticket if present
+    if let Some(vpt) = st.path.profile().path_vpt.clone() {
+        st.client.set_path_vpt(Some(vpt));
+    }
+    try_connect_best_pref(st, candidates, email, password, &[], tok.as_deref()).await
 }
 
 async fn try_connect_best_pref(
@@ -2215,24 +2280,51 @@ async fn try_connect_best_pref(
     // Hard cap attempts so pair never freezes the UI for a minute.
     try_urls.truncate(4);
 
+    // Prefer explicit arg, else durable path profile token.
     let token = device_token
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
-        .map(|s| s.to_string());
+        .map(|s| s.to_string())
+        .or_else(|| {
+            st.path
+                .profile()
+                .device_token
+                .filter(|s| !s.trim().is_empty())
+        });
 
     let mut last_err = "no reachable endpoint".to_string();
     for url in try_urls {
-        st.client.set_base_url(url.clone());
+        // Path hop: keep JWT in memory so same-PC token can be tried first.
+        st.client.set_base_url_ex(url.clone(), false);
         // Auth order for phone:
+        // 0) existing JWT on new URL (same PC, path hop) via health
         // 1) pair device token → JWT  (works LAN + VPS; no loopback required)
         // 2) email/password if user typed them
-        // 3) auto-login last (loopback-only on PC; only works via tunnel spoof)
+        // 3) auto-login last (loopback-only on PC; relay traffic must NOT spoof)
         let login_fut = async {
+            // Fast path: still have a JWT — probe health with auth path via model or health
+            if st.client.is_authenticated() {
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(3),
+                    st.client.health(),
+                )
+                .await
+                {
+                    Ok(Ok(_)) => {
+                        // health is unauthenticated; try a cheap authed call
+                        if st.client.list_sessions(None).await.is_ok() {
+                            if let Some(s) = st.client.session() {
+                                return Ok(s);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
             if let Some(ref t) = token {
                 match st.client.pair_session_login(t).await {
                     Ok(s) => return Ok(s),
                     Err(e) => {
-                        // Fall through — token may be for a different PC path
                         tracing::debug!("pair_session fail on {url}: {e}");
                     }
                 }
@@ -2243,7 +2335,7 @@ async fn try_connect_best_pref(
                 st.client.auto_login().await
             }
         };
-        let login = match tokio::time::timeout(std::time::Duration::from_secs(6), login_fut).await {
+        let login = match tokio::time::timeout(std::time::Duration::from_secs(8), login_fut).await {
             Ok(r) => r,
             Err(_) => {
                 last_err = format!("login timeout · {url}");
@@ -2253,8 +2345,15 @@ async fn try_connect_best_pref(
         match login {
             Ok(s) => {
                 *st.remote_probe.write() = Default::default();
+                st.mark_pc_reachable();
                 let kind = path_kind_for_url(&url);
                 let _ = st.path.set_active(&url, kind);
+                // Persist device token if we logged via pair_session
+                if let Some(ref t) = token {
+                    let mut p = st.path.profile();
+                    p.device_token = Some(t.clone());
+                    let _ = st.path.save(&p);
+                }
                 let mesh = st.mesh.status();
                 let port = takton_mobile_core::config::parse_base_url_parts(&url).2;
                 let _ = st.path.refresh_candidates(
@@ -2756,6 +2855,15 @@ async fn pair_apply(State(st): State<AppState>, Json(body): Json<PairApplyBody>)
         } else if let Some(t) = device_token.clone() {
             let _ = st.path.merge_from_payload(&payload, Some(t), None);
         }
+        // Always apply VPS edge ticket from QR when present (HMAC vpt)
+        if let Some(ref v) = payload.vpt {
+            if !v.is_empty() {
+                st.client.set_path_vpt(Some(v.clone()));
+                let mut p = st.path.profile();
+                p.path_vpt = Some(v.clone());
+                let _ = st.path.save(&p);
+            }
+        }
     } else if soft_expired && do_claim {
         // Expired QR: still keep endpoints for reconnect if previously claimed
         deferred = true;
@@ -3199,7 +3307,7 @@ async fn path_reconnect(
     State(st): State<AppState>,
     Json(body): Json<PathReconnectBody>,
 ) -> Json<Value> {
-    // Flush coalesced tokens for active + open chats (all coalesce keys).
+    // Flush coalesced tokens (do NOT drop chats until auth succeeds — P0-3).
     st.flush_all_session_deltas();
     st.broadcast_event(&json!({
         "type": "mobile_status",
@@ -3207,17 +3315,10 @@ async fn path_reconnect(
         "detail": "路径切换中…",
         "source": "path_reconnect",
     }));
-    // Quietly drop PC sockets with path reason (recoverable Closed).
-    let dropped_ids: Vec<String> = st.chats.iter().map(|e| e.key().clone()).collect();
-    for id in &dropped_ids {
-        if let Some((_, conn)) = st.chats.remove(id) {
-            let c = conn.clone();
-            tokio::spawn(async move {
-                c.close_path().await;
-            });
-        }
-    }
-    let dropped = dropped_ids.len();
+
+    // Snapshot for rollback if new path auth fails.
+    let prev_base = st.client.config().base_url.clone();
+    let prev_session = st.client.session();
 
     let claim_res = if body.claim.unwrap_or(true) {
         try_deferred_claim(&st).await
@@ -3239,8 +3340,25 @@ async fn path_reconnect(
         "http",
     );
 
+    // Restore VPS edge ticket before connect
+    if let Some(vpt) = st.path.profile().path_vpt.clone() {
+        st.client.set_path_vpt(Some(vpt));
+    }
+
     match try_connect_best(&st, &extras, &email, &password).await {
         Ok(mut v) => {
+            // Auth OK → now drop old PC sockets (path soft-close for in-flight turns).
+            let dropped_ids: Vec<String> = st.chats.iter().map(|e| e.key().clone()).collect();
+            for id in &dropped_ids {
+                if let Some((_, conn)) = st.chats.remove(id) {
+                    let c = conn.clone();
+                    tokio::spawn(async move {
+                        c.close_path().await;
+                    });
+                }
+            }
+            let dropped = dropped_ids.len();
+
             // Re-ensure active session chat socket so send is ready immediately.
             let active = st.active_session.read().clone();
             let mut chat_ok = false;
@@ -3252,12 +3370,14 @@ async fn path_reconnect(
                     }
                 }
             }
+            st.mark_pc_reachable();
             if let Some(obj) = v.as_object_mut() {
                 obj.insert("deferred_claim_result".into(), json!(claim_res));
                 obj.insert("reconnected".into(), json!(true));
                 obj.insert("chats_dropped".into(), json!(dropped));
                 obj.insert("chat_sockets_alive".into(), json!(if chat_ok { 1 } else { 0 }));
                 obj.insert("latest_seq".into(), json!(st.latest_seq()));
+                obj.insert("pc_connected".into(), json!(st.pc_connected()));
             }
             st.broadcast_event(&json!({
                 "type": "mobile_status",
@@ -3268,6 +3388,12 @@ async fn path_reconnect(
             Json(v)
         }
         Err(e) => {
+            // Rollback base + session so in-flight chats on old path still work.
+            st.client.set_base_url_ex(prev_base, false);
+            if let Some(s) = prev_session {
+                let _ = st.client.restore_session(s);
+                st.mark_pc_reachable();
+            }
             st.broadcast_event(&json!({
                 "type": "mobile_status",
                 "state": "path_failed",
@@ -3278,9 +3404,10 @@ async fn path_reconnect(
                 "ok": false,
                 "error": e,
                 "deferred_claim_result": claim_res,
-                "chats_dropped": dropped,
+                "chats_dropped": 0,
+                "pc_connected": st.pc_connected(),
                 "path": st.path.profile_json(),
-                "probes_hint": "all candidates unreachable",
+                "probes_hint": "all candidates unreachable · old path kept",
             }))
         }
     }

@@ -69,9 +69,13 @@ deploy/vps-relay/
 ## 安全
 
 - `RELAY_TOKEN` 长期密钥，**不要**写进二维码  
-- 二维码里只有短时 `vpt`（≤ 5 分钟）  
+- 二维码里的 `vpt` 是 **HMAC 短时票**（`exp.sig`，密钥=RELAY_TOKEN，TTL≈配对窗 300s）  
+- 公网 `/t/{id}` 默认要求：`Authorization: Bearer …`（配对后 JWT）**或** `X-Takton-Vpt` / `?vpt=`  
+  - 可用 `RELAY_REQUIRE_EDGE_AUTH=0` 关闭（仅可信内网实验）  
+- PC 隧道会注入 `x-takton-relay: 1`，**禁止** single_user 免登录把公网流量当本机 admin  
 - 生产建议域名 + HTTPS（前面再挂 Caddy/nginx 即可）  
-- 轮换 Token：改 `.env` 后 `docker compose up -d`
+- 轮换 Token：改 `.env` 后 `docker compose up -d`，并更新 PC「远程连接」令牌  
+- **不要**把含真实 Token/密码的 `relay-deploy-info.txt` 提交进仓库或打进 release
 
 ## 卸载
 

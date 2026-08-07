@@ -155,6 +155,9 @@ pub struct PathProfile {
     pub pair_id: Option<String>,
     #[serde(default)]
     pub device_token: Option<String>,
+    /// Last VPS path ticket from QR (short TTL HMAC); optional edge auth.
+    #[serde(default)]
+    pub path_vpt: Option<String>,
     #[serde(default)]
     pub hostname: Option<String>,
     #[serde(default)]
@@ -226,6 +229,11 @@ impl PathService {
         if let Some(t) = device_token {
             if !t.is_empty() {
                 p.device_token = Some(t);
+            }
+        }
+        if let Some(ref v) = payload.vpt {
+            if !v.is_empty() {
+                p.path_vpt = Some(v.clone());
             }
         }
         if let Some(d) = deferred {

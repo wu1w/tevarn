@@ -110,6 +110,9 @@ pub struct AppState {
     pub chat_connect_locks: Arc<DashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     /// Watchdog generation per session — bump cancels older watchdogs.
     pub watchdog_gen: Arc<DashMap<String, AtomicU64>>,
+    /// Unix secs of last successful PC reachability probe (health / authed API).
+    /// `pc_connected` requires auth + recent success (not JWT alone).
+    pub last_pc_reachable_at: Arc<AtomicU64>,
 }
 
 impl AppState {
@@ -168,7 +171,36 @@ impl AppState {
             event_ring_access_tick: Arc::new(AtomicU64::new(1)),
             chat_connect_locks: Arc::new(DashMap::new()),
             watchdog_gen: Arc::new(DashMap::new()),
+            last_pc_reachable_at: Arc::new(AtomicU64::new(0)),
         })
+    }
+
+    /// Stamp successful reachability (login, health, catalog probe).
+    pub fn mark_pc_reachable(&self) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        self.last_pc_reachable_at.store(now, Ordering::SeqCst);
+    }
+
+    /// True when JWT exists AND we reached PC within the last 45s.
+    /// Prevents "已连接" while tunnel/PC is dead.
+    pub fn pc_connected(&self) -> bool {
+        if !self.client.is_authenticated() {
+            return false;
+        }
+        let last = self.last_pc_reachable_at.load(Ordering::SeqCst);
+        if last == 0 {
+            // Just logged in this process but no probe yet — optimistic for 10s
+            // after process start is handled by mark on login; if never marked, false.
+            return false;
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        now.saturating_sub(last) <= 45
     }
 
     pub fn new_sub_id(&self) -> String {

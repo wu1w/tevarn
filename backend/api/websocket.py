@@ -103,10 +103,24 @@ async def safe_close_ws(
 
 
 def _ws_client_is_loopback(websocket: WebSocket) -> bool:
-    """WS 对端是否本机。与 dependencies._is_loopback_host 同一口径：
-    只信 socket 对端，不信可伪造的 X-Forwarded-For。"""
+    """WS 对端是否允许 single_user 免登。
+
+    与 HTTP `_may_single_user_free_login` 对齐：真本机 loopback 可以；
+    VPS 隧道注入的 x-takton-relay 一律不可以（即使 socket peer 是 127.0.0.1）。
+    """
     from backend.api.dependencies import _is_loopback_host
 
+    try:
+        h = websocket.headers
+        raw = (
+            h.get("x-takton-relay")
+            or h.get("x-takton-via-relay")
+            or ""
+        ).strip().lower()
+        if raw in ("1", "true", "yes", "on"):
+            return False
+    except Exception:
+        pass
     client = getattr(websocket, "client", None)
     return _is_loopback_host(getattr(client, "host", None) if client else None)
 

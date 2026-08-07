@@ -404,7 +404,17 @@ class MobilePairService:
             vps_scheme = vcfg.get("scheme") or "http"
             tid = vcfg.get("tunnel_id") or ""
             vps_path = f"/t/{tid}" if tid else ""
-            vpt = secrets.token_urlsafe(18)
+            # HMAC short ticket (relay verifies with RELAY_TOKEN / master_token)
+            master = str(vcfg.get("master_token") or "").strip()
+            if master and tid:
+                try:
+                    from backend.services.vps_relay import mint_vpt
+
+                    vpt = mint_vpt(master, tid, ttl_secs=PAIR_TTL_SECS)
+                except Exception:
+                    vpt = secrets.token_urlsafe(18)
+            else:
+                vpt = secrets.token_urlsafe(18)
 
         # Primary host: LAN preferred, then VPS, then TS, then hostname
         if host and host.strip() and host.strip() not in ("127.0.0.1", "localhost"):

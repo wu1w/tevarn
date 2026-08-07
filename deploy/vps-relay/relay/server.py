@@ -36,22 +36,77 @@ logger = logging.getLogger("takton-relay")
 RELAY_TOKEN = (os.environ.get("RELAY_TOKEN") or os.environ.get("TAKTON_RELAY_TOKEN") or "").strip()
 HTTP_TIMEOUT = float(os.environ.get("RELAY_HTTP_TIMEOUT", "120"))
 MAX_BODY = int(os.environ.get("RELAY_MAX_BODY", str(32 * 1024 * 1024)))
+# When true (default), /t/{id} requires Bearer JWT **or** valid short vpt ticket.
+# Set RELAY_REQUIRE_EDGE_AUTH=0 only for trusted lab networks.
+REQUIRE_EDGE_AUTH = os.environ.get("RELAY_REQUIRE_EDGE_AUTH", "1").strip() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
 
-app = FastAPI(title="takton-relay", version="1.0.0")
+app = FastAPI(title="takton-relay", version="1.1.0")
 
 
 def _check_token(auth: Optional[str], query_token: Optional[str] = None) -> bool:
     if not RELAY_TOKEN:
         logger.error("RELAY_TOKEN not set")
         return False
-    if query_token and secrets.compare_digest(query_token, RELAY_TOKEN):
-        return True
+    try:
+        if query_token and secrets.compare_digest(query_token, RELAY_TOKEN):
+            return True
+    except Exception:
+        pass
     if not auth:
         return False
     auth = auth.strip()
     if auth.lower().startswith("bearer "):
         auth = auth[7:].strip()
-    return secrets.compare_digest(auth, RELAY_TOKEN)
+    try:
+        return secrets.compare_digest(auth, RELAY_TOKEN)
+    except Exception:
+        return False
+
+
+def _verify_vpt(tunnel_id: str, vpt: Optional[str]) -> bool:
+    """HMAC ticket mint: exp.sig32hex with key=RELAY_TOKEN, msg=tunnel_id:exp."""
+    import hashlib
+    import hmac as hmac_mod
+
+    if not vpt or not RELAY_TOKEN or not tunnel_id:
+        return False
+    try:
+        exp_s, sig = vpt.strip().split(".", 1)
+        exp = int(exp_s)
+    except Exception:
+        return False
+    if time.time() > exp + 30:
+        return False
+    msg = f"{tunnel_id}:{exp}".encode()
+    expect = hmac_mod.new(RELAY_TOKEN.encode(), msg, hashlib.sha256).hexdigest()[:32]
+    try:
+        return secrets.compare_digest(sig, expect)
+    except Exception:
+        return False
+
+
+def _edge_auth_ok(request: Request, tunnel_id: str) -> bool:
+    """Public /t/{id} access: Bearer JWT (any non-empty) OR valid short vpt.
+
+    JWT is validated by PC backend; relay only checks presence for edge gate.
+    Pair claim during TTL must send X-Takton-Vpt from QR.
+    """
+    if not REQUIRE_EDGE_AUTH:
+        return True
+    auth = (request.headers.get("authorization") or "").strip()
+    if auth.lower().startswith("bearer ") and len(auth) > 20:
+        return True
+    vpt = (
+        request.headers.get("x-takton-vpt")
+        or request.headers.get("X-Takton-Vpt")
+        or request.query_params.get("vpt")
+    )
+    return _verify_vpt(tunnel_id, vpt)
 
 
 @dataclass
@@ -372,6 +427,15 @@ def _resolve_tunnel(tunnel_id: Optional[str]) -> Optional[TunnelSession]:
     methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
 )
 async def proxy_scoped(tunnel_id: str, path: str, request: Request) -> Response:
+    if not _edge_auth_ok(request, tunnel_id):
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "edge auth required",
+                "hint": "send Authorization Bearer (after pair) or X-Takton-Vpt from QR",
+            },
+            status_code=401,
+        )
     session = _resolve_tunnel(tunnel_id)
     if not session:
         return JSONResponse(
@@ -384,6 +448,19 @@ async def proxy_scoped(tunnel_id: str, path: str, request: Request) -> Response:
 
 @app.websocket("/t/{tunnel_id}/{path:path}")
 async def proxy_ws_scoped(websocket: WebSocket, tunnel_id: str, path: str) -> None:
+    # Edge auth for WS: Bearer or vpt query/header
+    auth = (websocket.headers.get("authorization") or "").strip()
+    vpt = (
+        websocket.headers.get("x-takton-vpt")
+        or websocket.query_params.get("vpt")
+    )
+    ok = (not REQUIRE_EDGE_AUTH) or (
+        (auth.lower().startswith("bearer ") and len(auth) > 20)
+        or _verify_vpt(tunnel_id, vpt)
+    )
+    if not ok:
+        await websocket.close(code=4401)
+        return
     session = _resolve_tunnel(tunnel_id)
     if not session:
         await websocket.close(code=1013)

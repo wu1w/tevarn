@@ -14,6 +14,9 @@ pub struct AppConfig {
     pub platform: PlatformKind,
     /// Persist credentials under this dir (platform-specific default)
     pub data_dir: PathBuf,
+    /// Short-lived VPS edge ticket (HMAC); not persisted to disk by default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path_vpt: Option<String>,
 }
 
 impl Default for AppConfig {
@@ -28,6 +31,7 @@ impl Default for AppConfig {
                 .unwrap_or(8080),
             platform: PlatformKind::detect(),
             data_dir: default_data_dir(),
+            path_vpt: None,
         }
     }
 }

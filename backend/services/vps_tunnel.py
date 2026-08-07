@@ -205,11 +205,10 @@ class VpsTunnelAgent:
         headers = msg.get("headers") or {}
         body_b64 = msg.get("body_b64") or ""
         body = base64.b64decode(body_b64) if body_b64 else b""
-        # Strip hop-by-hop AND proxy identity headers.
-        # Critical: uvicorn trusts X-Forwarded-For by default and rewrites
-        # request.client.host. If we forward the phone's public IP, PC
-        # single_user_mode auto-login returns 403 (not loopback) and pair
-        # appears to "register then hang/fail". Local backend must see 127.0.0.1.
+        # Strip hop-by-hop and client IP headers so uvicorn does not rewrite
+        # request.client from the phone's public IP.
+        # KEEP x-takton-relay: PC backend must know this is tunnel traffic and
+        # refuse single_user loopback free-login (P0-5). Phone uses pair JWT.
         _drop = {
             "host",
             "content-length",
@@ -227,9 +226,10 @@ class VpsTunnelAgent:
             "x-real-ip",
             "forwarded",
             "via",
-            "x-takton-relay",
         }
         headers = {k: v for k, v in headers.items() if k.lower() not in _drop}
+        # Always mark relay origin (edge may also set it; overwrite for trust).
+        headers["x-takton-relay"] = "1"
         try:
             t0 = time.perf_counter()
             r = await client.request(method, path, headers=headers, content=body)
@@ -296,7 +296,9 @@ class VpsTunnelAgent:
                     "sec-websocket-protocol",
                 ):
                     extra.append((k, v))
-                # never forward XFF / Real-IP into local backend (same 403 trap)
+                # never forward XFF / Real-IP into local backend
+            # Mark tunnel so single_user free-login is refused on WS path too.
+            extra.append(("x-takton-relay", "1"))
             upstream = await websockets.connect(
                 target,
                 additional_headers=extra or None,

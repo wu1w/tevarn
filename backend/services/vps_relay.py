@@ -96,6 +96,53 @@ def save_config(cfg: dict[str, Any]) -> dict[str, Any]:
     return load_config()
 
 
+def mint_vpt(
+    master_token: str,
+    tunnel_id: str,
+    *,
+    ttl_secs: int = 300,
+) -> str:
+    """Mint short-lived edge ticket for /t/{id} (HMAC over tunnel_id:exp).
+
+    Format: ``{exp}.{sig16hex}`` — VPS verifies with same RELAY_TOKEN without state.
+    """
+    import hashlib
+    import hmac as hmac_mod
+
+    exp = int(time.time()) + max(60, int(ttl_secs))
+    msg = f"{tunnel_id}:{exp}".encode()
+    sig = hmac_mod.new(
+        (master_token or "").encode(),
+        msg,
+        hashlib.sha256,
+    ).hexdigest()[:32]
+    return f"{exp}.{sig}"
+
+
+def verify_vpt(master_token: str, tunnel_id: str, vpt: str | None) -> bool:
+    """Verify mint_vpt ticket (used by relay server — duplicated logic for tests)."""
+    import hashlib
+    import hmac as hmac_mod
+
+    if not vpt or not master_token or not tunnel_id:
+        return False
+    try:
+        exp_s, sig = vpt.strip().split(".", 1)
+        exp = int(exp_s)
+    except Exception:
+        return False
+    # 30s clock skew
+    if time.time() > exp + 30:
+        return False
+    msg = f"{tunnel_id}:{exp}".encode()
+    expect = hmac_mod.new(
+        master_token.encode(),
+        msg,
+        hashlib.sha256,
+    ).hexdigest()[:32]
+    return secrets.compare_digest(sig, expect)
+
+
 def public_base_url(cfg: Optional[dict[str, Any]] = None) -> Optional[str]:
     """Base URL phones use (with tunnel path)."""
     cfg = cfg or load_config()
