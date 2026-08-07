@@ -123,10 +123,13 @@ class _ChatScreenState extends State<ChatScreen> {
       _scrollEnd();
     }
 
-    // Sync external clear of input (after send)
-    if (c.input.isEmpty && _ctrl.text.isNotEmpty && !c.streaming) {
+    // Sync external clear of input (after send / controller reset)
+    if (c.input.isEmpty && _ctrl.text.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && c.input.isEmpty) _ctrl.clear();
+        if (mounted && c.input.isEmpty && _ctrl.text.isNotEmpty) {
+          _ctrl.clear();
+          if (_hasText) setState(() => _hasText = false);
+        }
       });
     }
 
@@ -571,11 +574,16 @@ class _ChatScreenState extends State<ChatScreen> {
                       minLines: 1,
                       maxLines: 5,
                       textInputAction: TextInputAction.send,
+                      // Prevent IME from keeping focus after send action.
+                      onEditingComplete: () {
+                        if (c.streaming) return;
+                        unawaited(_doSend(c));
+                      },
                       onChanged: (v) => c.setInput(v, notify: false),
                       onSubmitted: (_) {
                         // Keyboard "send" never stops generation — only the red stop btn does.
                         if (c.streaming) return;
-                        _doSend(c);
+                        unawaited(_doSend(c));
                       },
                       style: TextStyle(
                         fontSize: 14.5,
@@ -703,13 +711,32 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
     final text = _ctrl.text;
-    // Do not clear draft until send accepts it (canSend / empty checks).
+    if (text.trim().isEmpty && c.attachments.isEmpty) return;
+
+    // Instant UX: dismiss keyboard + clear box before network round-trip.
+    FocusManager.instance.primaryFocus?.unfocus();
+    SystemChannels.textInput.invokeMethod('TextInput.hide');
+    _ctrl.clear();
+    c.setInput('', notify: false);
+    if (mounted) setState(() => _hasText = false);
+
     final accepted = await c.send(text);
-    if (accepted && mounted) {
+    if (!mounted) return;
+    if (accepted) {
       _stickBottom = true;
-      _ctrl.clear();
+      // Ensure controller stays empty even if notify raced.
+      if (_ctrl.text.isNotEmpty) _ctrl.clear();
+      c.setInput('', notify: false);
       setState(() => _hasText = false);
       _scrollEnd(force: true);
+    } else {
+      // Restore draft when blocked (cannot send / empty / busy).
+      _ctrl.value = TextEditingValue(
+        text: text,
+        selection: TextSelection.collapsed(offset: text.length),
+      );
+      c.setInput(text, notify: false);
+      setState(() => _hasText = text.trim().isNotEmpty);
     }
   }
 

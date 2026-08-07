@@ -648,10 +648,16 @@ class AppController extends ChangeNotifier {
 
   void pulseIsland({String? text, String kind = 'local'}) {
     islandLive = true;
-    if (text != null) islandText = text;
+    islandExpanded = false;
+    if (text != null) {
+      islandText = text.length > 16 ? '${text.substring(0, 16)}…' : text;
+    }
     islandKind = kind;
     _notify();
-    Future.delayed(const Duration(seconds: 2), () {
+    Future.delayed(const Duration(milliseconds: 1600), () {
+      // Keep stream island while generating.
+      if (streaming && kind == 'stream') return;
+      if (streaming && islandKind == 'stream') return;
       islandLive = false;
       _notify();
     });
@@ -1265,24 +1271,13 @@ class AppController extends ChangeNotifier {
     String? secondaryId,
     int ttlMs = 5200,
   }) {
-    statusCards.removeWhere((c) => c.expired);
-    final card = StatusCard(
-      id: 'sc-${DateTime.now().microsecondsSinceEpoch}',
-      title: title,
-      body: body,
-      kind: kind,
-      actionLabel: actionLabel,
-      actionId: actionId,
-      secondaryLabel: secondaryLabel,
-      secondaryId: secondaryId,
-      ttlMs: ttlMs,
-    );
-    statusCards.insert(0, card);
-    while (statusCards.length > 3) {
-      statusCards.removeLast();
-    }
+    // Stream / generic info: compact island only — never full-width cards.
+    final islandOnly = kind == StatusCardKind.stream ||
+        kind == StatusCardKind.info ||
+        kind == StatusCardKind.agent ||
+        kind == StatusCardKind.success;
     islandLive = true;
-    islandText = title;
+    islandText = title.length > 18 ? '${title.substring(0, 18)}…' : title;
     islandKind = switch (kind) {
       StatusCardKind.stream => 'stream',
       StatusCardKind.conn => 'conn',
@@ -1292,6 +1287,36 @@ class AppController extends ChangeNotifier {
       StatusCardKind.approve => 'conn',
       StatusCardKind.info => islandKind,
     };
+    islandExpanded = false;
+    if (islandOnly && actionId == null) {
+      _notify();
+      final snap = islandText;
+      Future.delayed(Duration(milliseconds: ttlMs.clamp(1200, 3500)), () {
+        if (!streaming && islandText == snap && kind != StatusCardKind.stream) {
+          islandLive = false;
+          _notify();
+        }
+      });
+      return;
+    }
+    statusCards.removeWhere((c) => c.expired);
+    // Cap body so cards stay short.
+    final shortBody = body.length > 72 ? '${body.substring(0, 72)}…' : body;
+    final card = StatusCard(
+      id: 'sc-${DateTime.now().microsecondsSinceEpoch}',
+      title: title,
+      body: shortBody,
+      kind: kind,
+      actionLabel: actionLabel,
+      actionId: actionId,
+      secondaryLabel: secondaryLabel,
+      secondaryId: secondaryId,
+      ttlMs: ttlMs,
+    );
+    statusCards.insert(0, card);
+    while (statusCards.length > 2) {
+      statusCards.removeLast();
+    }
     _notify();
     Future.delayed(Duration(milliseconds: ttlMs + 80), () {
       statusCards.removeWhere((c) => c.id == card.id || c.expired);
@@ -1697,11 +1722,6 @@ class AppController extends ChangeNotifier {
           format: 'markdown',
         ));
         _saveSurfaceCache();
-        pushStatusCard(
-          title: '本机 Agent',
-          body: '已处理指令，未请求云端模型',
-          kind: StatusCardKind.agent,
-        );
         pulseIsland(text: '本机指令', kind: 'local');
         _notify();
         return true;
@@ -1974,14 +1994,13 @@ class AppController extends ChangeNotifier {
     // Default false until we see a clean finish (abort / gen mismatch keep queue).
     var streamOk = false;
     var sawAssistantChunk = false;
+    // Compact Dynamic Island only — never a full-width "生成中" card.
     islandLive = true;
+    islandExpanded = false;
     islandKind = 'stream';
     islandText = '生成中';
-    pushStatusCard(
-      title: surface == 'local' ? '本机生成中' : '远端生成中',
-      body: userText.length > 48 ? '${userText.substring(0, 48)}…' : userText,
-      kind: StatusCardKind.stream,
-      ttlMs: 8000,
+    statusCards.removeWhere(
+      (c) => c.kind == StatusCardKind.stream || c.kind == StatusCardKind.info,
     );
     notifyListeners();
 

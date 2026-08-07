@@ -20,8 +20,6 @@ class PhoneShell extends StatelessWidget {
     final c = context.watch<AppController>();
     final dark = c.dark;
     final bg = dark ? PixelColors.dBg : PixelColors.bg;
-    final ink = dark ? PixelColors.dInk : PixelColors.ink;
-    final card = dark ? const Color(0xFF151A2E) : PixelColors.card;
     final size = MediaQuery.sizeOf(context);
     final pad = MediaQuery.paddingOf(context);
     final mobile = size.width < 920;
@@ -85,116 +83,101 @@ class PhoneShell extends StatelessWidget {
                   ),
                 ],
               ),
+              // True compact Dynamic Island — small pill, no chat occlusion.
               Positioned(
-                top: pad.top + 4,
+                top: pad.top + 6,
                 left: 0,
                 right: 0,
                 child: Center(
                   child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
                     onTap: () {
-                      if (c.islandLive || c.statusCards.isNotEmpty) {
-                        c.toggleIslandExpanded();
-                      } else {
-                        c.pulseIsland(
-                          text: c.pcConnected
-                              ? '已连 PC  待办 ${c.state['approvals_pending'] ?? c.approvals.length}'
-                              : '本地模式 · 轻量 Agent',
-                          kind: c.pcConnected ? 'conn' : 'local',
-                        );
+                      if (c.streaming) {
+                        c.pulseIsland(text: '生成中…', kind: 'stream');
+                        return;
                       }
-                    },
-                    onLongPress: () {
-                      c.pushStatusCard(
-                        title: c.pcConnected ? '远端就绪' : '本机 Agent',
-                        body: c.pcConnected
-                            ? '审批 ${c.state['approvals_pending'] ?? c.approvals.length} · 点卡片查看'
-                            : '试试 /help · /status · /time',
-                        kind: c.pcConnected
-                            ? StatusCardKind.conn
-                            : StatusCardKind.agent,
-                        actionLabel: c.pcConnected ? '审批' : '设置',
-                        actionId: c.pcConnected ? 'open_approve' : 'open_me',
+                      c.pulseIsland(
+                        text: c.pcConnected
+                            ? '已连 · 待办 ${c.state['approvals_pending'] ?? c.approvals.length}'
+                            : '本机',
+                        kind: c.pcConnected ? 'conn' : 'local',
                       );
                     },
+                    onLongPress: () {
+                      // Long-press opens tab — no giant card.
+                      if (c.pcConnected) {
+                        c.setTab(AppTab.approve);
+                      } else {
+                        c.setTab(AppTab.me);
+                      }
+                    },
                     child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 240),
+                      duration: const Duration(milliseconds: 220),
                       curve: Curves.easeOutCubic,
-                      height: c.islandExpanded ? 52 : 26,
+                      height: c.islandLive ? 28 : 11,
                       constraints: BoxConstraints(
-                        minWidth: c.islandLive || c.islandExpanded ? 96 : 0,
-                        maxWidth: 280,
+                        minWidth: c.islandLive ? 72 : 96,
+                        maxWidth: c.islandLive ? 200 : 120,
                       ),
                       padding: EdgeInsets.symmetric(
-                        horizontal: (c.islandLive || c.islandExpanded) ? 14 : 0,
-                        vertical: c.islandExpanded ? 8 : 0,
+                        horizontal: c.islandLive ? 12 : 0,
                       ),
                       decoration: BoxDecoration(
-                        color: card,
-                        borderRadius:
-                            BorderRadius.circular(c.islandExpanded ? 16 : 13),
+                        color: c.islandLive
+                            ? (dark
+                                ? const Color(0xE60C0F1A)
+                                : const Color(0xF01D2330))
+                            : (dark
+                                ? const Color(0xFF0C0F1A)
+                                : const Color(0xFF1D2330)),
+                        borderRadius: BorderRadius.circular(20),
                         border: Border.all(
-                          color: (c.islandLive || c.islandExpanded)
-                              ? PixelColors.purple.withValues(alpha: 0.4)
+                          color: c.islandLive
+                              ? (c.islandKind == 'stream'
+                                  ? PixelColors.cyan.withValues(alpha: 0.55)
+                                  : PixelColors.purple.withValues(alpha: 0.35))
                               : Colors.transparent,
+                          width: 1,
                         ),
-                        boxShadow: (c.islandLive || c.islandExpanded)
-                            ? const [
+                        boxShadow: c.islandLive
+                            ? [
                                 BoxShadow(
-                                  color: Color(0x331D2330),
-                                  blurRadius: 12,
-                                  offset: Offset(0, 4),
+                                  color: Colors.black.withValues(alpha: 0.22),
+                                  blurRadius: 10,
+                                  offset: const Offset(0, 3),
                                 ),
                               ]
                             : null,
                       ),
-                      child: (c.islandLive || c.islandExpanded)
+                      alignment: Alignment.center,
+                      child: c.islandLive
                           ? Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 Container(
-                                  width: 8,
-                                  height: 8,
+                                  width: 6,
+                                  height: 6,
                                   decoration: BoxDecoration(
                                     color: c.islandKind == 'stream'
                                         ? PixelColors.cyan
                                         : (c.islandKind == 'local'
                                             ? PixelColors.green
                                             : PixelColors.purple),
-                                    borderRadius: BorderRadius.circular(2),
+                                    shape: BoxShape.circle,
                                   ),
                                 ),
-                                const SizedBox(width: 8),
+                                const SizedBox(width: 6),
                                 Flexible(
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        c.islandText,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: PixelTheme.mono.copyWith(
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.w700,
-                                          color: ink,
-                                        ),
-                                      ),
-                                      if (c.islandExpanded)
-                                        Text(
-                                          c.streaming
-                                              ? '流式输出中 · 点停止可中断'
-                                              : (c.pcConnected
-                                                  ? '远端 Agent · 工具链可用'
-                                                  : '本机 · /help 查看指令'),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            fontSize: 10,
-                                            color: ink.withValues(alpha: 0.55),
-                                          ),
-                                        ),
-                                    ],
+                                  child: Text(
+                                    c.islandText,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: PixelTheme.mono.copyWith(
+                                      fontSize: 10.5,
+                                      fontWeight: FontWeight.w700,
+                                      color: Colors.white,
+                                      height: 1.1,
+                                    ),
                                   ),
                                 ),
                               ],
@@ -240,15 +223,22 @@ class PhoneShell extends StatelessWidget {
                   ),
                 ),
               ),
-              // Status cards stack (notification / Dynamic Island feed)
+              // Critical cards only (approve / reconnect / warn) — compact strip.
               if (c.statusCards.isNotEmpty)
                 Positioned(
-                  top: pad.top + 36,
-                  left: 12,
-                  right: 12,
+                  top: pad.top + 40,
+                  left: 28,
+                  right: 28,
                   child: Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      for (final card in c.statusCards.take(3))
+                      for (final card in c.statusCards
+                          .where((x) =>
+                              x.kind == StatusCardKind.warn ||
+                              x.kind == StatusCardKind.approve ||
+                              x.kind == StatusCardKind.conn ||
+                              x.actionId != null)
+                          .take(2))
                         _StatusCardTile(
                           card: card,
                           dark: dark,
@@ -256,7 +246,6 @@ class PhoneShell extends StatelessWidget {
                           onAction: () {
                             final aid = card.actionId ?? '';
                             c.handleStatusAction(aid);
-                            // decide: cards are dismissed on success inside handler
                             if (!aid.startsWith('decide:')) {
                               c.dismissStatusCard(card.id);
                             }
@@ -457,18 +446,18 @@ class _StatusCardTile extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 8),
       child: Material(
         color: bg,
-        elevation: 6,
-        borderRadius: BorderRadius.circular(12),
+        elevation: 3,
+        borderRadius: BorderRadius.circular(10),
         child: InkWell(
           borderRadius: BorderRadius.circular(12),
           onTap: dual
               ? null
               : (card.actionId != null ? onAction : onDismiss),
           child: Container(
-            padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+            padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: _accent.withValues(alpha: 0.35)),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: _accent.withValues(alpha: 0.3)),
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -489,19 +478,23 @@ class _StatusCardTile extends StatelessWidget {
                     children: [
                       Text(
                         card.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          fontSize: 13,
+                          fontSize: 12,
                           fontWeight: FontWeight.w800,
                           color: ink,
                         ),
                       ),
-                      const SizedBox(height: 2),
+                      const SizedBox(height: 1),
                       Text(
                         card.body,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          fontSize: 12,
-                          height: 1.35,
-                          color: ink.withValues(alpha: 0.7),
+                          fontSize: 11,
+                          height: 1.3,
+                          color: ink.withValues(alpha: 0.65),
                         ),
                       ),
                       if (dual) ...[
