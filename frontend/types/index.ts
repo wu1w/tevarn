@@ -484,7 +484,8 @@ export type WSMessageType =
   | 'run_event'
   | 'screenshot'
   | 'user_message_ack'
-  | 'confirm_expired';
+  | 'confirm_expired'
+  | 'slash_result';
 
 export interface WSMessage {
   type: WSMessageType;
