@@ -73,6 +73,7 @@ class ChatMsg {
     List<String>? attachNames,
     List<ToolCallUi>? toolCalls,
     this.modelText,
+    this.createdAt,
   })  : images = images ?? <Uint8List>[],
         imageNames = imageNames ?? <String>[],
         attachNames = attachNames ?? <String>[],
@@ -92,6 +93,8 @@ class ChatMsg {
   List<ToolCallUi> toolCalls;
   /// Full payload actually sent to the model (OCR / file text). Used by regenerate.
   String? modelText;
+  /// ISO timestamp from PC — used as before= cursor for older pages.
+  String? createdAt;
 
   bool get hasImages => images.isNotEmpty;
   bool get hasAttachChips => attachNames.isNotEmpty;
@@ -109,6 +112,7 @@ class ChatMsg {
         attachNames: List<String>.from(attachNames),
         toolCalls: toolCalls.map((t) => t.copy()).toList(),
         modelText: modelText,
+        createdAt: createdAt,
       );
 }
 

@@ -321,8 +321,30 @@ impl TaktonClient {
         self.request_json(Method::PUT, &path, Some(body), true).await
     }
 
-    pub async fn list_messages(&self, session_id: &str, limit: u32) -> Result<Vec<MessageInfo>> {
-        let path = format!("/sessions/{session_id}/messages?limit={limit}");
+    pub async fn list_messages(
+        &self,
+        session_id: &str,
+        limit: u32,
+        before: Option<&str>,
+    ) -> Result<Vec<MessageInfo>> {
+        let mut path = format!("/sessions/{session_id}/messages?limit={limit}");
+        if let Some(b) = before.map(str::trim).filter(|s| !s.is_empty()) {
+            // PC: ISO timestamp → messages with created_at < before (older page).
+            let enc: String = b
+                .bytes()
+                .map(|c| match c {
+                    b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                        (c as char).to_string()
+                    }
+                    b':' => "%3A".into(),
+                    b'+' => "%2B".into(),
+                    b' ' => "%20".into(),
+                    _ => format!("%{c:02X}"),
+                })
+                .collect();
+            path.push_str("&before=");
+            path.push_str(&enc);
+        }
         self.request_json(Method::GET, &path, None, true).await
     }
 

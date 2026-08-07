@@ -70,8 +70,12 @@ class HttpTaktonBridge extends TaktonBridge {
           {
             final id = a['id'];
             final lim = a['limit'];
+            final before = a['before']?.toString();
             final q = <String>[];
             if (lim != null) q.add('limit=$lim');
+            if (before != null && before.isNotEmpty) {
+              q.add('before=${Uri.encodeQueryComponent(before)}');
+            }
             final qs = q.isEmpty ? '' : '?${q.join('&')}';
             return _get('/api/mobile/sessions/$id/messages$qs');
           }
@@ -446,6 +450,7 @@ class HttpTaktonBridge extends TaktonBridge {
       if (event == 'status') {
         final detail = v['detail']?.toString() ?? '';
         if (detail.isNotEmpty) {
+          lastActivity = DateTime.now();
           yield '\x01STATUS\x01$detail';
         }
         event = '';
@@ -682,8 +687,12 @@ class HttpTaktonBridge extends TaktonBridge {
     var pollStable = 0;
     var lastPolled = '';
     final started = DateTime.now();
-    // Hard cap: long tool runs still ok; dead LLM must not spin 12 min → OOM/kill.
-    const overallLimit = Duration(minutes: 5);
+    var lastActivity = started;
+    // Base cap 5 min (dead LLM / no tools). Active tools extend to 30 min.
+    const baseLimit = Duration(minutes: 5);
+    const toolChainLimit = Duration(minutes: 30);
+    // No progress after tools for this long → stall out (still < toolChainLimit).
+    const activityIdleLimit = Duration(minutes: 15);
     // No turn / no text after this → treat as PC LLM/path failure.
     const silentFailAfter = Duration(seconds: 90);
     // Silence → first ring gap-fill, then turn_status (tools can pause longer).
@@ -841,6 +850,7 @@ class HttpTaktonBridge extends TaktonBridge {
         final detail = (v['detail'] ?? v['state'] ?? '').toString();
         final action = (v['action'] ?? '').toString();
         if (detail.isNotEmpty) {
+          lastActivity = DateTime.now();
           yield action.isEmpty
               ? '\x01STATUS\x01$detail'
               : '\x01STATUS\x01$detail\x01$action';
@@ -890,6 +900,7 @@ class HttpTaktonBridge extends TaktonBridge {
         }
         final preview = (v['preview'] ?? v['result'] ?? '').toString();
         sawToolOrText = true;
+        lastActivity = DateTime.now();
         yield '\x01TOOL\x01$p\x01$name\x01$okStr\x01$preview\x01$tid';
       }
       final src = (v['source']?.toString() ?? '').toLowerCase();
@@ -900,6 +911,7 @@ class HttpTaktonBridge extends TaktonBridge {
       final contentField = (v['content'] ?? v['text'])?.toString();
       if (delta != null && delta.isNotEmpty) {
         sawToolOrText = true;
+        lastActivity = DateTime.now();
         final full =
             (contentField != null && contentField.length >= delta.length)
                 ? contentField
@@ -930,7 +942,15 @@ class HttpTaktonBridge extends TaktonBridge {
       Future<bool>? pendingMove;
       var silenceBackoffMs = 2000;
 
-      while (DateTime.now().difference(started) < overallLimit) {
+      while (true) {
+        final now = DateTime.now();
+        final elapsed = now.difference(started);
+        final idle = now.difference(lastActivity);
+        final cap = sawToolOrText ? toolChainLimit : baseLimit;
+        if (elapsed >= cap) break;
+        // Tools started but no activity for 6 min → stall (avoids infinite hang).
+        if (sawToolOrText && idle >= activityIdleLimit) break;
+
         pendingMove ??= iter.moveNext();
         final silence = Duration(milliseconds: silenceBackoffMs);
         final winner = await Future.any<Object>([
@@ -939,8 +959,7 @@ class HttpTaktonBridge extends TaktonBridge {
         ]);
 
         if (winner is _Silence) {
-          // Dead LLM / no events: don't spin until overallLimit with zero feedback.
-          final elapsed = DateTime.now().difference(started);
+          // Dead LLM / no events: don't spin until cap with zero feedback.
           if (!sawTurn && elapsed >= silentFailAfter) {
             break;
           }
@@ -972,6 +991,7 @@ class HttpTaktonBridge extends TaktonBridge {
           );
           if (full != null && full.isNotEmpty) {
             sawToolOrText = true;
+            lastActivity = DateTime.now();
             if (full != lastPolled) {
               lastPolled = full;
               pollStable = 0;

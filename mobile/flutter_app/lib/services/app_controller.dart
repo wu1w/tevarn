@@ -213,6 +213,8 @@ class AppController extends ChangeNotifier {
                   'text': m.text,
                   'who': m.who,
                   'format': m.format,
+                  if (m.createdAt != null && m.createdAt!.isNotEmpty)
+                    'created_at': m.createdAt,
                 })
             .toList();
       }
@@ -276,6 +278,7 @@ class AppController extends ChangeNotifier {
       who: m['who']?.toString() ?? '',
       format: m['format']?.toString() == 'markdown' ? 'markdown' : 'plain',
       toolCalls: tools,
+      createdAt: m['created_at']?.toString() ?? m['createdAt']?.toString(),
     );
   }
 
@@ -329,6 +332,7 @@ class AppController extends ChangeNotifier {
         who: m['who']?.toString() ?? '',
         format: format,
         toolCalls: tools,
+        createdAt: m['created_at']?.toString() ?? m['createdAt']?.toString(),
       ));
     }
     return out;
@@ -785,7 +789,8 @@ class AppController extends ChangeNotifier {
     final h = await bridge.messages(id, limit: messagePageLimit);
     final list = await _parseUiMessagesAsync(
         (h['messages'] as List?) ?? (h['items'] as List?) ?? []);
-    hasMoreOlder = list.length >= messagePageLimit;
+    final hm = h['has_more'];
+    hasMoreOlder = hm is bool ? hm : list.length >= messagePageLimit;
     _applyMessages(list, forSurface: 'remote');
     _notify();
   }
@@ -807,6 +812,23 @@ class AppController extends ChangeNotifier {
   /// Sets [lastPrependCount] so chat UI can preserve scroll anchor.
   int lastPrependCount = 0;
 
+  /// Oldest ISO cursor among currently loaded remote messages.
+  String? get _oldestRemoteCursor {
+    String? best;
+    DateTime? bestDt;
+    for (final m in messages) {
+      final ca = m.createdAt;
+      if (ca == null || ca.isEmpty) continue;
+      final dt = DateTime.tryParse(ca.replaceFirst('Z', '+00:00'));
+      if (dt == null) continue;
+      if (bestDt == null || dt.isBefore(bestDt)) {
+        bestDt = dt;
+        best = ca;
+      }
+    }
+    return best;
+  }
+
   Future<void> loadOlderMessages() async {
     if (loadingOlder || !hasMoreOlder || streaming || _appPaused) return;
     loadingOlder = true;
@@ -816,17 +838,59 @@ class AppController extends ChangeNotifier {
       if (surface == 'remote') {
         final sid = activeSessionId;
         if (sid == null || sid.isEmpty) return;
-        final want = (messages.length + messagePageLimit).clamp(1, 200);
-        final h = await bridge.messages(sid, limit: want);
+
+        final cursor = _oldestRemoteCursor;
+        // Prefer before= cursor (true pagination past 200). Fallback: growing window.
+        final Map<String, dynamic> h;
+        if (cursor != null && cursor.isNotEmpty) {
+          h = await bridge.messages(
+            sid,
+            limit: messagePageLimit,
+            before: cursor,
+          );
+        } else {
+          final want = (messages.length + messagePageLimit).clamp(1, 200);
+          h = await bridge.messages(sid, limit: want);
+        }
+
         final list = await _parseUiMessagesAsync(
             (h['messages'] as List?) ?? (h['items'] as List?) ?? []);
+        final hasMoreFlag = h['has_more'];
         if (list.isEmpty) {
           hasMoreOlder = false;
           return;
         }
-        hasMoreOlder = list.length >= want;
+        if (hasMoreFlag is bool) {
+          hasMoreOlder = hasMoreFlag;
+        } else {
+          hasMoreOlder = list.length >= messagePageLimit;
+        }
 
-        // Anchor: first non-confirm bubble currently shown (may be client id).
+        final existingIds = messages.map((m) => m.id).toSet();
+        // before= page is older-only; prepend new ids in server order.
+        if (cursor != null && cursor.isNotEmpty) {
+          final older = list.where((m) => !existingIds.contains(m.id)).toList();
+          if (older.isEmpty) {
+            hasMoreOlder = false;
+            return;
+          }
+          lastPrependCount = older.length;
+          final confirms = messages
+              .where((m) => m.role == 'confirm')
+              .map((m) => m.copyMeta())
+              .toList();
+          final rest = messages
+              .where((m) => m.role != 'confirm')
+              .map((m) => m.copyMeta())
+              .toList();
+          _applyMessages(
+            [...older.map((m) => m.copyMeta()), ...rest, ...confirms],
+            forSurface: 'remote',
+          );
+          return;
+        }
+
+        // Fallback path (no cursor yet): anchor-based merge
         ChatMsg? head;
         for (final m in messages) {
           if (m.role != 'confirm') {
@@ -839,9 +903,7 @@ class AppController extends ChangeNotifier {
           lastPrependCount = list.length;
           return;
         }
-        // Prefer server order: everything before the first server id that
-        // matches head by id OR by role+text prefix (post-stream client ids).
-        int anchorIdx = list.indexWhere((m) => m.id == head.id);
+        int anchorIdx = list.indexWhere((m) => m.id == head!.id);
         if (anchorIdx < 0) {
           final ht = head.text.trim();
           final prefix = ht.length > 48 ? ht.substring(0, 48) : ht;
@@ -851,23 +913,24 @@ class AppController extends ChangeNotifier {
             final t = m.text.trim();
             if (t == ht ||
                 (prefix.isNotEmpty && t.contains(prefix)) ||
-                (prefix.isNotEmpty && ht.contains(
-                    t.length > 48 ? t.substring(0, 48) : t))) {
+                (prefix.isNotEmpty &&
+                    ht.contains(t.length > 48 ? t.substring(0, 48) : t))) {
               anchorIdx = i;
               break;
             }
           }
         }
         if (anchorIdx <= 0) {
-          // No older rows on server for this window
-          if (list.length < want) hasMoreOlder = false;
-          // Remap head→server id for the overlapping tail only
+          if (list.length < messagePageLimit) hasMoreOlder = false;
           if (anchorIdx == 0) {
             final existingConfirm = messages
                 .where((m) => m.role == 'confirm')
                 .map((m) => m.copyMeta())
                 .toList();
-            final next = [...list.map((m) => m.copyMeta()), ...existingConfirm];
+            final next = [
+              ...list.map((m) => m.copyMeta()),
+              ...existingConfirm,
+            ];
             _applyMessages(next, forSurface: 'remote');
           }
           return;
@@ -878,14 +941,15 @@ class AppController extends ChangeNotifier {
             .where((m) => m.role == 'confirm')
             .map((m) => m.copyMeta())
             .toList();
-        // Rebuild: server older + server from anchor (canonical ids) + confirms
         final tailServer = list.sublist(anchorIdx);
-        final merged = [
-          ...older.map((m) => m.copyMeta()),
-          ...tailServer.map((m) => m.copyMeta()),
-          ...existingConfirm,
-        ];
-        _applyMessages(merged, forSurface: 'remote');
+        _applyMessages(
+          [
+            ...older.map((m) => m.copyMeta()),
+            ...tailServer.map((m) => m.copyMeta()),
+            ...existingConfirm,
+          ],
+          forSurface: 'remote',
+        );
       } else {
         final h = await bridge.localHistory();
         final list = await _parseUiMessagesAsync(
@@ -3431,6 +3495,8 @@ List<Map<String, dynamic>> _parseUiMessagesIsolate(List<dynamic> raw) {
       'content': text,
       'who': map['who']?.toString() ?? '',
       'format': format,
+      if (map['created_at'] != null) 'created_at': map['created_at'].toString(),
+      if (map['createdAt'] != null) 'created_at': map['createdAt'].toString(),
     };
     final tc = map['tool_calls'];
     if (tc is List) {

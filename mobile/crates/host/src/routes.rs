@@ -285,6 +285,8 @@ impl LocalChatBody {
 #[derive(Debug, Deserialize)]
 struct LimitQuery {
     limit: Option<u32>,
+    /// ISO timestamp: fetch messages strictly older than this (PC get_history_before).
+    before: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -693,17 +695,23 @@ fn local_history_as_ui(st: &AppState) -> Vec<Value> {
         .collect()
 }
 
-async fn remote_messages_as_ui(st: &AppState, id: &str, limit: u32) -> Vec<Value> {
+async fn remote_messages_as_ui(
+    st: &AppState,
+    id: &str,
+    limit: u32,
+    before: Option<&str>,
+) -> Vec<Value> {
     if id.is_empty() || id == LOCAL_SESSION_ID {
         return vec![];
     }
     if !st.client.is_authenticated() {
         return vec![];
     }
-    match st.client.list_messages(id, limit).await {
+    match st.client.list_messages(id, limit, before).await {
         Ok(msgs) => {
             // Keep tool_calls so Flutter poll / history can detect tool loops
             // and render Codex-like tool rows (was dropped → early "final" finish).
+            // Also keep created_at for before= cursor pagination.
             let base = base_url_of(st);
             let raw: Vec<Value> = msgs
                 .into_iter()
@@ -732,10 +740,47 @@ async fn remote_messages_as_ui(st: &AppState, id: &str, limit: u32) -> Vec<Value
                     obj
                 })
                 .collect();
-            normalize_ui_messages(&raw, "远端 Agent")
+            // Map id → created_at / tool_calls before normalize may reorder/split.
+            let mut created_map: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
+            let mut tool_map: std::collections::HashMap<String, Value> =
+                std::collections::HashMap::new();
+            for v in &raw {
+                let id = v
+                    .get("id")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if id.is_empty() {
+                    continue;
+                }
+                if let Some(ts) = v.get("created_at").and_then(|c| c.as_str()) {
+                    created_map.insert(id.clone(), ts.to_string());
+                }
+                if let Some(tc) = v.get("tool_calls") {
+                    tool_map.insert(id, tc.clone());
+                }
+            }
+            let mut out: Vec<Value> = normalize_ui_messages(&raw, "远端 Agent")
                 .into_iter()
                 .map(|m| m.to_value())
-                .collect()
+                .collect();
+            for obj in &mut out {
+                let id = obj
+                    .get("id")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if let Some(map) = obj.as_object_mut() {
+                    if let Some(ts) = created_map.get(&id) {
+                        map.insert("created_at".into(), json!(ts));
+                    }
+                    if let Some(tc) = tool_map.get(&id) {
+                        map.insert("tool_calls".into(), tc.clone());
+                    }
+                }
+            }
+            out
         }
         Err(_) => vec![],
     }
@@ -1211,15 +1256,26 @@ fn spawn_turn_completion_watchdog(st: AppState, session_id: String, user_content
         let mut last_status = String::new();
         let mut last_activity = std::time::Instant::now();
         let mut tools_seen_count = 0usize;
-        // Adaptive poll: 500ms while tools progress / no final; back off to 1.2s when
-        // live WS is healthy (browser_subs non-empty) to cut list_messages load.
-        // Cap ~5 min; silent (no tool / no assistant) fails after ~90s so phone
-        // does not spin until process kill when PC LLM is dead.
-        for tick in 0..400u32 {
+        let wd_started = std::time::Instant::now();
+        // Adaptive poll + activity-based overall cap:
+        // - no tools: ~5 min max
+        // - tools active: up to ~30 min (long agent chains)
+        // - silent (no tool / no assistant): 90s hard fail
+        for tick in 0..1200u32 {
             // Cancelled by a newer send on this session
             if st.current_watchdog_gen(&session_id) != gen {
                 return;
             }
+            // Overall wall clock: 5 min quiet / 30 min once tools or text seen.
+            let max_secs: u64 = if tools_seen_count > 0 || !last_push.is_empty() {
+                30 * 60
+            } else {
+                5 * 60
+            };
+            if wd_started.elapsed().as_secs() >= max_secs {
+                break;
+            }
+
             let live_ui = !st.browser_subs.is_empty();
             // P0: back off hard when WS live (Flutter already streams deltas).
             let delay_ms = if live_ui && tick > 2 {
@@ -1259,7 +1315,7 @@ fn spawn_turn_completion_watchdog(st: AppState, session_id: String, user_content
                 continue;
             }
 
-            let msgs = match st.client.list_messages(&session_id, 30).await {
+            let msgs = match st.client.list_messages(&session_id, 30, None).await {
                 Ok(m) => m,
                 Err(_) => continue,
             };
@@ -1922,13 +1978,21 @@ async fn list_messages(
 ) -> Json<Value> {
     let limit = q.limit.unwrap_or(30).min(200);
     if id == LOCAL_SESSION_ID {
-        return Json(json!({ "ok": true, "messages": local_history_as_ui(&st) }));
+        return Json(json!({ "ok": true, "messages": local_history_as_ui(&st), "has_more": false }));
     }
     if !st.client.is_authenticated() {
         return err_json("not authenticated");
     }
-    let messages = remote_messages_as_ui(&st, &id, limit).await;
-    Json(json!({ "ok": true, "messages": messages }))
+    let messages =
+        remote_messages_as_ui(&st, &id, limit, q.before.as_deref()).await;
+    let has_more = messages.len() as u32 >= limit;
+    Json(json!({
+        "ok": true,
+        "messages": messages,
+        "has_more": has_more,
+        "limit": limit,
+        "before": q.before,
+    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -1954,7 +2018,7 @@ async fn turn_status(
     let needle = q.user.unwrap_or_default();
     let needle_trim = needle.trim().to_string();
     // Lightweight window — phone polls this often; keep payload small.
-    let msgs = match st.client.list_messages(&id, 36).await {
+    let msgs = match st.client.list_messages(&id, 36, None).await {
         Ok(m) => m,
         Err(e) => {
             return Json(json!({
@@ -3141,7 +3205,7 @@ async fn pair_bootstrap_remote_surface(st: &AppState) -> Value {
         .await;
         messages = match tokio::time::timeout(
             std::time::Duration::from_secs(4),
-            remote_messages_as_ui(st, sid, 30),
+            remote_messages_as_ui(st, sid, 30, None),
         )
         .await
         {
@@ -4539,7 +4603,7 @@ async fn switch_surface(
             if let Some(ref sid) = session_id {
                 *st.active_session.write() = Some(sid.clone());
                 let _ = ensure_chat(st.clone(), sid.clone()).await;
-                messages = remote_messages_as_ui(&st, sid, 30).await;
+                messages = remote_messages_as_ui(&st, sid, 30, None).await;
             }
 
             if messages.is_empty() {
