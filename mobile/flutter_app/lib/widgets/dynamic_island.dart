@@ -1,19 +1,26 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' show DisplayFeatureType;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/app_models.dart';
 import '../services/app_controller.dart';
 import '../theme/pixel_theme.dart';
 
-/// Camera-cutout Dynamic Island.
+/// Industry-style camera island for center punch-hole Androids.
 ///
-/// Width/height are derived from the **real Android cutout bounds**
-/// (`MediaQuery.displayFeatures` → [DisplayFeatureType.cutout]), so a
-/// center punch-hole drives a tight black capsule that grows with the hole —
-/// same idea as Xiaomi Super Island / OPPO Fluid Cloud / vivo Atomic Island.
-class TaktonDynamicIsland extends StatelessWidget {
+/// Visual language (小米超级岛 / OPPO 流体云 / vivo 原子岛 / 华为实况窗 / Apple DI):
+/// - **小岛**: solid black **stadium capsule** in the status-bar band, sized from
+///   the real [DisplayCutout] (native) or Flutter [DisplayFeatureType.cutout].
+/// - **活跃**: same height, width expands left+right of the hole for a short label.
+/// - **大岛/卡片**: content card hangs **below** the capsule (Fluid Cloud), never
+///   a giant in-bar blob.
+///
+/// Idle is nearly tight to the camera; we never force a fixed 118×28 bar.
+class TaktonDynamicIsland extends StatefulWidget {
   const TaktonDynamicIsland({
     super.key,
     required this.controller,
@@ -26,364 +33,393 @@ class TaktonDynamicIsland extends StatelessWidget {
   final double? shellWidth;
 
   @override
+  State<TaktonDynamicIsland> createState() => _TaktonDynamicIslandState();
+}
+
+class _TaktonDynamicIslandState extends State<TaktonDynamicIsland> {
+  static const _channel = MethodChannel('takton/display_cutout');
+
+  /// Native cutout rects in logical px (empty until first probe).
+  List<Rect> _nativeCutouts = const [];
+  bool _probed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_probeCutouts());
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Re-probe after first frame / rotation.
+    if (_probed) unawaited(_probeCutouts());
+  }
+
+  Future<void> _probeCutouts() async {
+    if (kIsWeb) {
+      _probed = true;
+      return;
+    }
+    try {
+      final raw = await _channel.invokeMethod<List<dynamic>>('getCutouts');
+      final list = <Rect>[];
+      if (raw != null) {
+        for (final e in raw) {
+          if (e is! Map) continue;
+          final m = Map<String, dynamic>.from(e);
+          final l = (m['left'] as num?)?.toDouble();
+          final t = (m['top'] as num?)?.toDouble();
+          final r = (m['right'] as num?)?.toDouble();
+          final b = (m['bottom'] as num?)?.toDouble();
+          if (l == null || t == null || r == null || b == null) continue;
+          if (r <= l || b <= t) continue;
+          list.add(Rect.fromLTRB(l, t, r, b));
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _nativeCutouts = list;
+        _probed = true;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _probed = true);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final c = controller;
+    final c = widget.controller;
     final mq = MediaQuery.of(context);
-    final shellW = shellWidth ?? mq.size.width;
-    final geom = _CutoutGeom.resolve(mq, shellW);
+    final shellW = widget.shellWidth ?? mq.size.width;
+    final geom = _IslandGeom.resolve(
+      mq: mq,
+      shellW: shellW,
+      nativeCutouts: _nativeCutouts,
+    );
 
     final live = c.islandLive || c.streaming || c.islandExpanded;
+    final showCard = c.islandExpanded && live;
     final kind = c.islandKind;
     final accent = kind == 'stream'
         ? PixelColors.cyan
         : (kind == 'local' ? PixelColors.green : PixelColors.purple);
 
-    // ---- Size strictly from cutout ----
-    // cutoutW/H = physical camera region in logical px (device-reported).
-    final cutoutW = geom.bounds.width;
-    final cutoutH = geom.bounds.height;
-    // Thin black rim around the hole (scales with camera size).
-    final rimX = (cutoutW * 0.22).clamp(3.0, 10.0);
-    final rimY = (cutoutH * 0.18).clamp(2.0, 8.0);
+    // --- OEM capsule geometry ---
+    // Height follows the larger of: cutout height, ~status-bar content.
+    // Stadium always: radius = h/2 (胶囊, not circle blob, not full-width bar).
+    final d = geom.cameraDiameter;
+    final hIdle = (d + 6).clamp(26.0, 36.0);
+    // Idle width ≈ camera + small side cheeks (tight wrap of 中置孔).
+    // Cheek scales with d so big holes get slightly wider islands.
+    final cheek = (d * 0.28).clamp(4.0, 12.0);
+    final wIdle = (d + cheek * 2).clamp(hIdle, hIdle * 1.55);
 
-    // Idle: only wrap the camera (+ rim). NO fixed min 118/128.
-    final idleW = cutoutW + rimX * 2;
-    final idleH = cutoutH + rimY * 2;
-
-    // Live: expand left/right wings proportional to camera, not full screen.
-    // wing ≈ one camera-width of text each side (center); corner expands one side.
-    final wing = (cutoutW * 1.35).clamp(28.0, 56.0);
-    final liveWRaw = geom.corner
-        ? cutoutW + rimX * 2 + wing * 2.2 // content mostly to the right
-        : cutoutW + rimX * 2 + wing * 2;
-    // Hard cap still relative to cutout & screen — never 78% screen.
-    final liveW = math
-        .min(liveWRaw, math.min(shellW * 0.52, cutoutW * 7.5))
+    // Active: grow horizontally only (Apple/Xiaomi compact activity).
+    // Extra wing scales with camera — still a pill, not a notification banner.
+    final wing = (d * 2.4).clamp(48.0, 88.0);
+    final wLive = math
+        .min(wIdle + wing * 2, math.min(shellW * 0.58, 220.0))
         .toDouble();
-    final liveH = c.islandExpanded
-        ? idleH + (cutoutH * 0.45).clamp(8.0, 16.0)
-        : idleH + (cutoutH * 0.12).clamp(1.0, 4.0);
+    final hLive = showCard ? hIdle : hIdle;
 
-    final islandW = live ? liveW : idleW;
-    final islandH = live ? liveH : idleH;
+    final islandW = live ? wLive : wIdle;
+    final islandH = hLive;
 
-    // Vertically center on cutout center; stay inside status-bar band when possible.
-    final bandBottom = math.max(mq.viewPadding.top, geom.bounds.bottom + rimY);
-    final top = (geom.bounds.center.dy - islandH / 2)
-        .clamp(0.0, math.max(0.0, bandBottom - islandH * 0.2))
+    // Pin vertically to camera center inside status band.
+    final top = (geom.center.dy - islandH / 2)
+        .clamp(0.0, math.max(0.0, mq.viewPadding.top - 2))
+        .toDouble();
+    final left = (geom.center.dx - islandW / 2)
+        .clamp(4.0, shellW - islandW - 4)
         .toDouble();
 
-    // Horizontally: always track camera center for 中置; corner keeps hole left.
-    final double left;
-    if (geom.corner) {
-      left = (geom.bounds.left - rimX).clamp(2.0, shellW - islandW - 2).toDouble();
-    } else {
-      left = (geom.bounds.center.dx - islandW / 2)
-          .clamp(2.0, shellW - islandW - 2)
-          .toDouble();
-    }
+    final label = _compactLabel(c);
 
-    final leftLabel = _leftLabel(c, live);
-    final rightLabel = _rightLabel(c, live);
-
-    // Camera disc = exact cutout size (no +6 inflation that fights real hole).
-    final discW = cutoutW;
-    final discH = cutoutH;
-
-    return Positioned(
-      top: top,
-      left: left,
-      width: islandW,
-      height: islandH,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: () {
-          if (c.streaming) {
-            c.pulseIsland(text: '生成中', kind: 'stream');
-            return;
-          }
-          if (live && c.statusCards.isNotEmpty) {
-            c.toggleIslandExpanded();
-            return;
-          }
-          c.pulseIsland(
-            text: c.pcConnected
-                ? '已连 · ${c.state['approvals_pending'] ?? c.approvals.length}'
-                : '本机',
-            kind: c.pcConnected ? 'conn' : 'local',
-          );
-        },
-        onLongPress: () {
-          if (c.pcConnected) {
-            c.setTab(AppTab.approve);
-          } else {
-            c.setTab(AppTab.me);
-          }
-        },
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 260),
-          curve: Curves.easeOutCubic,
+    return Stack(
+      children: [
+        // ---- 小岛 capsule ----
+        Positioned(
+          top: top,
+          left: left,
           width: islandW,
           height: islandH,
-          decoration: BoxDecoration(
-            color: Colors.black,
-            borderRadius: BorderRadius.circular(islandH / 2),
-            border: Border.all(
-              color: live
-                  ? accent.withValues(alpha: 0.4)
-                  : Colors.white.withValues(alpha: 0.05),
-              width: 0.7,
-            ),
-            boxShadow: live
-                ? [
-                    BoxShadow(
-                      color: accent.withValues(alpha: 0.16),
-                      blurRadius: 10,
-                    ),
-                  ]
-                : null,
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(islandH / 2),
-            child: Stack(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () {
+              if (c.streaming) {
+                c.pulseIsland(text: '生成中', kind: 'stream');
+                return;
+              }
+              if (live) {
+                c.toggleIslandExpanded();
+              } else {
+                c.pulseIsland(
+                  text: c.pcConnected
+                      ? '已连 · ${c.state['approvals_pending'] ?? c.approvals.length}'
+                      : '本机',
+                  kind: c.pcConnected ? 'conn' : 'local',
+                );
+              }
+            },
+            onLongPress: () {
+              if (c.pcConnected) {
+                c.setTab(AppTab.approve);
+              } else {
+                c.setTab(AppTab.me);
+              }
+            },
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 320),
+              curve: Curves.easeOutCubic,
+              width: islandW,
+              height: islandH,
               alignment: Alignment.center,
-              children: [
-                Row(
-                  children: [
-                    if (!geom.corner)
-                      Expanded(
-                        child: Align(
-                          alignment: Alignment.centerRight,
-                          child: Padding(
-                            padding: EdgeInsets.only(
-                              left: rimX * 0.6,
-                              right: rimX * 0.35,
-                            ),
-                            child: live && leftLabel.isNotEmpty
-                                ? Text(
-                                    leftLabel,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    textAlign: TextAlign.right,
-                                    style: PixelTheme.mono.copyWith(
-                                      fontSize: _fontFor(cutoutH),
-                                      fontWeight: FontWeight.w700,
-                                      color: Colors.white,
-                                      height: 1.0,
-                                    ),
-                                  )
-                                : const SizedBox.shrink(),
-                          ),
-                        ),
-                      )
-                    else
-                      SizedBox(width: rimX),
-                    // Exact cutout window — physical 中置摄像头 sits here.
-                    SizedBox(
-                      width: discW,
-                      height: discH,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF050505),
-                          borderRadius: BorderRadius.circular(
-                            math.min(discW, discH) / 2,
-                          ),
-                          border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.06),
-                            width: 0.5,
-                          ),
-                        ),
-                        child: live
-                            ? Center(
-                                child: Container(
-                                  width: (discW * 0.18).clamp(3.0, 6.0),
-                                  height: (discH * 0.18).clamp(3.0, 6.0),
-                                  decoration: BoxDecoration(
-                                    color: accent,
-                                    shape: BoxShape.circle,
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: accent.withValues(alpha: 0.65),
-                                        blurRadius: 3,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              )
-                            : null,
-                      ),
-                    ),
-                    Expanded(
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: Padding(
-                          padding: EdgeInsets.only(
-                            left: rimX * 0.35,
-                            right: rimX * 0.6,
-                          ),
-                          child: live
-                              ? Text(
-                                  geom.corner
-                                      ? _cornerLabel(leftLabel, rightLabel)
-                                      : rightLabel,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  textAlign: TextAlign.left,
-                                  style: PixelTheme.mono.copyWith(
-                                    fontSize: _fontFor(cutoutH),
-                                    fontWeight: FontWeight.w600,
-                                    color: Colors.white.withValues(alpha: 0.9),
-                                    height: 1.0,
-                                  ),
-                                )
-                              : const SizedBox.shrink(),
-                        ),
-                      ),
-                    ),
-                  ],
+              decoration: BoxDecoration(
+                color: Colors.black,
+                // Perfect stadium / 胶囊
+                borderRadius: BorderRadius.circular(islandH / 2),
+                border: Border.all(
+                  color: live
+                      ? accent.withValues(alpha: 0.42)
+                      : Colors.white.withValues(alpha: 0.04),
+                  width: 0.6,
                 ),
-                if (c.islandExpanded && live)
-                  Positioned(
-                    left: 8,
-                    right: 8,
-                    bottom: 2,
-                    child: Text(
-                      c.streaming
-                          ? '流式 · 点红键停'
-                          : (c.pcConnected ? '远端' : '本机'),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 8.5,
-                        color: Colors.white.withValues(alpha: 0.4),
+                boxShadow: live
+                    ? [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.35),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                        ),
+                      ]
+                    : null,
+              ),
+              child: live
+                  ? Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: (islandH * 0.35).clamp(8.0, 14.0),
                       ),
-                    ),
-                  ),
-              ],
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 6,
+                            height: 6,
+                            margin: const EdgeInsets.only(right: 6),
+                            decoration: BoxDecoration(
+                              color: accent,
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: accent.withValues(alpha: 0.55),
+                                  blurRadius: 3,
+                                ),
+                              ],
+                            ),
+                          ),
+                          Flexible(
+                            child: Text(
+                              label,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: PixelTheme.mono.copyWith(
+                                fontSize: (islandH * 0.34).clamp(9.5, 11.5),
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white,
+                                height: 1.0,
+                                letterSpacing: -0.2,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : null, // idle: pure black capsule over the hole
             ),
           ),
         ),
-      ),
+
+        // ---- 大岛 / Fluid Cloud card below camera ----
+        if (showCard)
+          Positioned(
+            top: top + islandH + 6,
+            left: (shellW - math.min(shellW - 32, 300)) / 2,
+            width: math.min(shellW - 32, 300),
+            child: Material(
+              color: Colors.transparent,
+              child: AnimatedOpacity(
+                opacity: 1,
+                duration: const Duration(milliseconds: 200),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: widget.dark
+                        ? const Color(0xF2151A2E)
+                        : Colors.white.withValues(alpha: 0.96),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: accent.withValues(alpha: 0.28),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.18),
+                        blurRadius: 16,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          color: accent,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              c.streaming
+                                  ? '生成中'
+                                  : (c.pcConnected ? '已连 PC' : '本机模式'),
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w800,
+                                color: widget.dark
+                                    ? Colors.white
+                                    : PixelColors.ink,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              c.islandText.isNotEmpty
+                                  ? c.islandText
+                                  : (c.streaming
+                                      ? '流式输出 · 点红键可停止'
+                                      : '轻点岛收回'),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                height: 1.3,
+                                color: (widget.dark
+                                        ? Colors.white
+                                        : PixelColors.ink)
+                                    .withValues(alpha: 0.55),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      GestureDetector(
+                        onTap: () => c.toggleIslandExpanded(),
+                        child: Icon(
+                          Icons.close_rounded,
+                          size: 18,
+                          color: (widget.dark ? Colors.white : PixelColors.ink)
+                              .withValues(alpha: 0.4),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 
-  static double _fontFor(double cutoutH) =>
-      (cutoutH * 0.32).clamp(9.0, 11.5);
-
-  static String _cornerLabel(String left, String right) {
-    if (left.isEmpty) return right;
-    if (right.isEmpty) return left;
-    return '$left · $right';
-  }
-
-  static String _leftLabel(AppController c, bool live) {
-    if (!live) return '';
-    if (c.streaming) return '生成';
-    final t = c.islandText.trim();
-    if (t.isEmpty) return c.pcConnected ? '已连' : '本机';
-    if (t.contains('·')) return t.split('·').first.trim();
-    if (t.length <= 5) return t;
-    return t.substring(0, 5);
-  }
-
-  static String _rightLabel(AppController c, bool live) {
-    if (!live) return '';
+  static String _compactLabel(AppController c) {
     if (c.streaming) {
       final t = c.islandText.trim();
-      if (t.isNotEmpty && t != '生成中' && t != '生成') {
-        return t.length > 7 ? '${t.substring(0, 7)}…' : t;
+      if (t.isNotEmpty && t != '生成中') {
+        return t.length > 10 ? '${t.substring(0, 10)}…' : t;
       }
-      return '…';
+      return '生成中';
     }
     final t = c.islandText.trim();
-    if (t.contains('·')) {
-      final rest = t.split('·').skip(1).join('·').trim();
-      if (rest.isNotEmpty) {
-        return rest.length > 7 ? '${rest.substring(0, 7)}…' : rest;
-      }
-    }
-    if (c.pcConnected) {
-      final n = c.state['approvals_pending'] ?? c.approvals.length;
-      return '待办 $n';
-    }
-    return '就绪';
+    if (t.isNotEmpty) return t.length > 12 ? '${t.substring(0, 12)}…' : t;
+    return c.pcConnected ? '已连' : '本机';
   }
 }
 
-class _CutoutGeom {
-  const _CutoutGeom({
-    required this.bounds,
-    required this.corner,
+class _IslandGeom {
+  const _IslandGeom({
+    required this.center,
+    required this.cameraDiameter,
     required this.fromSystem,
   });
 
-  /// Exact cutout bounding rect in logical pixels (from Android when possible).
-  final Rect bounds;
-  final bool corner;
+  final Offset center;
+  /// Logical diameter of the front camera hole (or pill short side).
+  final double cameraDiameter;
   final bool fromSystem;
 
-  /// Prefer **center** punch-hole when multiple; use raw bounds width/height
-  /// (no force-square, no min 22) so island width tracks the camera.
-  static _CutoutGeom resolve(MediaQueryData mq, double shellW) {
-    final topBand = mq.viewPadding.top + 12;
-    final cutouts = mq.displayFeatures
-        .where((f) => f.type == DisplayFeatureType.cutout)
-        .map((f) => f.bounds)
-        .where((r) => r.width > 0 && r.height > 0 && r.top < topBand)
-        .toList();
+  static _IslandGeom resolve({
+    required MediaQueryData mq,
+    required double shellW,
+    required List<Rect> nativeCutouts,
+  }) {
+    final band = mq.viewPadding.top;
+    final candidates = <Rect>[
+      ...nativeCutouts,
+      ...mq.displayFeatures
+          .where((f) => f.type == DisplayFeatureType.cutout)
+          .map((f) => f.bounds),
+    ].where((r) => r.width > 0 && r.height > 0 && r.top < band + 16).toList();
 
-    if (cutouts.isNotEmpty) {
-      // 中置优先：取水平中心最靠近屏幕中线的挖孔。
+    if (candidates.isNotEmpty) {
+      // Prefer 中置: closest to horizontal center.
       final mid = shellW / 2;
-      cutouts.sort((a, b) {
+      candidates.sort((a, b) {
         final da = (a.center.dx - mid).abs();
         final db = (b.center.dx - mid).abs();
         return da.compareTo(db);
       });
-      final chosen = cutouts.first;
-      final isCorner = chosen.center.dx < shellW * 0.28 ||
-          chosen.center.dx > shellW * 0.72;
+      var r = candidates.first;
 
-      // Use system rect as-is. Only shrink absurd full-width "notch" bands
-      // (some OEMs report the whole status bar as one cutout).
-      var bounds = chosen;
-      if (bounds.width > shellW * 0.45) {
-        // Collapse to a center hole estimated from height (true camera size).
-        final d = bounds.height.clamp(18.0, 40.0);
-        bounds = Rect.fromCenter(
-          center: Offset(isCorner ? chosen.center.dx : mid, chosen.center.dy),
+      // OEM sometimes reports full-status-bar notch width — collapse to hole by height.
+      if (r.width > shellW * 0.42) {
+        final d = r.height.clamp(20.0, 38.0);
+        r = Rect.fromCenter(
+          center: Offset(mid, r.center.dy),
           width: d,
           height: d,
         );
-      } else if ((bounds.width - bounds.height).abs() > bounds.shortestSide * 0.55) {
-        // Pill-shaped cutout (true Dynamic Island hardware): keep full width.
-        // height stays; width is the island base.
-      } else {
-        // Near-circular punch: keep reported size (may be slightly elliptical).
-        bounds = chosen;
       }
 
-      return _CutoutGeom(
-        bounds: bounds,
-        corner: isCorner && bounds.center.dx < shellW * 0.4,
+      // Pill-shaped hardware (rare dual sensor): use short side as diameter,
+      // keep horizontal center of the pill.
+      final diameter = r.shortestSide.clamp(18.0, 42.0);
+      return _IslandGeom(
+        center: Offset(
+          r.center.dx.clamp(24.0, shellW - 24),
+          r.center.dy.clamp(diameter / 2, math.max(diameter / 2, band)),
+        ),
+        cameraDiameter: diameter,
         fromSystem: true,
       );
     }
 
-    // Fallback when Flutter gets no DisplayFeature (rare after edge-to-edge):
-    // diameter tracks status-bar band — still dynamic, not a fixed 118-wide bar.
-    final band = mq.viewPadding.top > 0 ? mq.viewPadding.top : 32.0;
-    // Typical center hole ≈ 55–70% of status-bar height on modern Androids.
-    final d = (band * 0.62).clamp(22.0, 34.0);
-    final cy = (band * 0.50).clamp(d / 2 + 1, band - 1);
-    return _CutoutGeom(
-      bounds: Rect.fromCenter(
-        center: Offset(shellW / 2, cy),
-        width: d,
-        height: d,
-      ),
-      corner: false,
+    // No cutout API: synthesize center hole from status-bar height
+    // (typical 中置 dig ≈ 55–70% of status bar band).
+    final b = band > 0 ? band : 32.0;
+    final d = (b * 0.58).clamp(22.0, 32.0);
+    final cy = (b * 0.5).clamp(d / 2 + 1, b - 1);
+    return _IslandGeom(
+      center: Offset(shellW / 2, cy),
+      cameraDiameter: d,
       fromSystem: false,
     );
   }

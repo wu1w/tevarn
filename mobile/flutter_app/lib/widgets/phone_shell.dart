@@ -129,9 +129,9 @@ class PhoneShell extends StatelessWidget {
               // Critical cards only (approve / reconnect / warn) — compact strip.
               if (c.statusCards.isNotEmpty)
                 Positioned(
-                  top: pad.top + 8,
-                  left: 28,
-                  right: 28,
+                  top: pad.top + 10,
+                  left: 32,
+                  right: 32,
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
