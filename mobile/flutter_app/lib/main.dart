@@ -14,11 +14,15 @@ import 'widgets/phone_shell.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Draw under status bar so the island can wrap the camera cutout
+  // (same coordinate space as Xiaomi/OPPO/vivo/Huawei punch-hole islands).
+  await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.light,
     systemNavigationBarColor: Color(0xFF0C0F1A),
     systemNavigationBarIconBrightness: Brightness.light,
+    systemNavigationBarContrastEnforced: false,
   ));
 
   // Show UI immediately — never block first frame on FFI/network (Xiaomi white-screen fix).

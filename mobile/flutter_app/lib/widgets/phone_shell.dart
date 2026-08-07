@@ -11,6 +11,7 @@ import '../screens/remote_screen.dart';
 import '../screens/me_screen.dart';
 import 'session_drawer.dart';
 import 'pixel_icons.dart';
+import 'dynamic_island.dart';
 
 class PhoneShell extends StatelessWidget {
   const PhoneShell({super.key});
@@ -83,109 +84,11 @@ class PhoneShell extends StatelessWidget {
                   ),
                 ],
               ),
-              // True compact Dynamic Island — small pill, no chat occlusion.
-              Positioned(
-                top: pad.top + 6,
-                left: 0,
-                right: 0,
-                child: Center(
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () {
-                      if (c.streaming) {
-                        c.pulseIsland(text: '生成中…', kind: 'stream');
-                        return;
-                      }
-                      c.pulseIsland(
-                        text: c.pcConnected
-                            ? '已连 · 待办 ${c.state['approvals_pending'] ?? c.approvals.length}'
-                            : '本机',
-                        kind: c.pcConnected ? 'conn' : 'local',
-                      );
-                    },
-                    onLongPress: () {
-                      // Long-press opens tab — no giant card.
-                      if (c.pcConnected) {
-                        c.setTab(AppTab.approve);
-                      } else {
-                        c.setTab(AppTab.me);
-                      }
-                    },
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 220),
-                      curve: Curves.easeOutCubic,
-                      height: c.islandLive ? 28 : 11,
-                      constraints: BoxConstraints(
-                        minWidth: c.islandLive ? 72 : 96,
-                        maxWidth: c.islandLive ? 200 : 120,
-                      ),
-                      padding: EdgeInsets.symmetric(
-                        horizontal: c.islandLive ? 12 : 0,
-                      ),
-                      decoration: BoxDecoration(
-                        color: c.islandLive
-                            ? (dark
-                                ? const Color(0xE60C0F1A)
-                                : const Color(0xF01D2330))
-                            : (dark
-                                ? const Color(0xFF0C0F1A)
-                                : const Color(0xFF1D2330)),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: c.islandLive
-                              ? (c.islandKind == 'stream'
-                                  ? PixelColors.cyan.withValues(alpha: 0.55)
-                                  : PixelColors.purple.withValues(alpha: 0.35))
-                              : Colors.transparent,
-                          width: 1,
-                        ),
-                        boxShadow: c.islandLive
-                            ? [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.22),
-                                  blurRadius: 10,
-                                  offset: const Offset(0, 3),
-                                ),
-                              ]
-                            : null,
-                      ),
-                      alignment: Alignment.center,
-                      child: c.islandLive
-                          ? Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Container(
-                                  width: 6,
-                                  height: 6,
-                                  decoration: BoxDecoration(
-                                    color: c.islandKind == 'stream'
-                                        ? PixelColors.cyan
-                                        : (c.islandKind == 'local'
-                                            ? PixelColors.green
-                                            : PixelColors.purple),
-                                    shape: BoxShape.circle,
-                                  ),
-                                ),
-                                const SizedBox(width: 6),
-                                Flexible(
-                                  child: Text(
-                                    c.islandText,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: PixelTheme.mono.copyWith(
-                                      fontSize: 10.5,
-                                      fontWeight: FontWeight.w700,
-                                      color: Colors.white,
-                                      height: 1.1,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            )
-                          : const SizedBox.shrink(),
-                    ),
-                  ),
-                ),
+              // Camera-embedded island (OEM Super Island / Fluid Cloud style)
+              TaktonDynamicIsland(
+                controller: c,
+                dark: dark,
+                shellWidth: mobile ? null : shellW,
               ),
               if (c.drawerOpen) const SessionDrawer(),
               Positioned(
@@ -226,7 +129,7 @@ class PhoneShell extends StatelessWidget {
               // Critical cards only (approve / reconnect / warn) — compact strip.
               if (c.statusCards.isNotEmpty)
                 Positioned(
-                  top: pad.top + 40,
+                  top: pad.top + 8,
                   left: 28,
                   right: 28,
                   child: Column(
