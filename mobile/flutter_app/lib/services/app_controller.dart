@@ -72,6 +72,13 @@ class AppController extends ChangeNotifier {
   String lastPairQr = '';
   bool pairBusy = false;
   bool pathBusy = false;
+  /// App in background — pause health/path/approve polls & heavy sync.
+  bool _appPaused = false;
+  /// Older history pagination (remote/local).
+  bool loadingOlder = false;
+  bool hasMoreOlder = true;
+  static const int messagePageLimit = 30;
+  static const int messageDiskCap = 40;
   Timer? _pairPoll;
   Timer? _meshPoll;
   Timer? _pathPoll;
@@ -150,6 +157,105 @@ class AppController extends ChangeNotifier {
     messages
       ..clear()
       ..addAll(src.map((m) => m.copyMeta()..streaming = false));
+  }
+
+  String _diskKeyForSurface(String surf) {
+    if (surf == 'remote') {
+      final sid = activeSessionId ?? 'default';
+      return 'takton-msg-cache-remote-$sid';
+    }
+    return 'takton-msg-cache-local';
+  }
+
+  Future<void> _loadDiskMessageCaches(SharedPreferences prefs) async {
+    try {
+      final localRaw = prefs.getString('takton-msg-cache-local');
+      if (localRaw != null && localRaw.isNotEmpty) {
+        final decoded = jsonDecode(localRaw);
+        if (decoded is List) {
+          final list = await _parseUiMessagesAsync(decoded);
+          _localMsgCache
+            ..clear()
+            ..addAll(list);
+        }
+      }
+      final sid = prefs.getString('takton-active-session') ?? activeSessionId;
+      if (sid != null && sid.isNotEmpty) activeSessionId = sid;
+      final rkey = _diskKeyForSurface('remote');
+      final remoteRaw = prefs.getString(rkey);
+      if (remoteRaw != null && remoteRaw.isNotEmpty) {
+        final decoded = jsonDecode(remoteRaw);
+        if (decoded is List) {
+          final list = await _parseUiMessagesAsync(decoded);
+          _remoteMsgCache
+            ..clear()
+            ..addAll(list);
+        }
+      }
+    } catch (e) {
+      debugPrint('disk msg cache load: $e');
+    }
+  }
+
+  Future<void> _persistDiskMessageCaches() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      List<Map<String, dynamic>> pack(List<ChatMsg> src) {
+        final slice = src.length > messageDiskCap
+            ? src.sublist(src.length - messageDiskCap)
+            : src;
+        return slice
+            .where((m) => m.role != 'confirm')
+            .map((m) => {
+                  'id': m.id,
+                  'role': m.role,
+                  'content': m.text,
+                  'text': m.text,
+                  'who': m.who,
+                  'format': m.format,
+                })
+            .toList();
+      }
+      await prefs.setString(
+        'takton-msg-cache-local',
+        jsonEncode(pack(_localMsgCache)),
+      );
+      if (activeSessionId != null && activeSessionId!.isNotEmpty) {
+        await prefs.setString('takton-active-session', activeSessionId!);
+      }
+      await prefs.setString(
+        _diskKeyForSurface('remote'),
+        jsonEncode(pack(_remoteMsgCache)),
+      );
+    } catch (e) {
+      debugPrint('disk msg cache save: $e');
+    }
+  }
+
+  Future<List<ChatMsg>> _parseUiMessagesAsync(dynamic list) async {
+    if (list is! List) return <ChatMsg>[];
+    if (list.length < 24) return _parseUiMessages(list);
+    // P2: large history off main isolate
+    try {
+      final raw = list
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+      final maps = await compute(_parseUiMessagesIsolate, raw);
+      return maps.map(_chatMsgFromMap).toList();
+    } catch (_) {
+      return _parseUiMessages(list);
+    }
+  }
+
+  ChatMsg _chatMsgFromMap(Map<String, dynamic> m) {
+    return ChatMsg(
+      id: m['id']?.toString() ?? '',
+      role: m['role']?.toString() ?? 'assistant',
+      text: m['text']?.toString() ?? m['content']?.toString() ?? '',
+      who: m['who']?.toString() ?? '',
+      format: m['format']?.toString() == 'markdown' ? 'markdown' : 'plain',
+    );
   }
 
   List<ChatMsg> _parseUiMessages(dynamic list) {
@@ -246,6 +352,8 @@ class AppController extends ChangeNotifier {
         }
       }
     }
+    // Best-effort disk cache (text only); never block UI.
+    unawaited(_persistDiskMessageCaches());
   }
 
   /// Stop in-flight generation and pin partial text into the current surface cache.
@@ -311,20 +419,30 @@ class AppController extends ChangeNotifier {
         }
       }
     }
+    // P1: disk message cache → paint chat before any network.
+    await _loadDiskMessageCaches(prefs);
+    _loadSurfaceCache(surface);
     _tickClock();
     _clockTimer =
-        Timer.periodic(const Duration(seconds: 30), (_) => _tickClock());
+        Timer.periodic(const Duration(seconds: 30), (_) {
+      if (!_appPaused) _tickClock();
+    });
+    _notify();
 
     // M3/M4: bind mesh runtime + network-change failover (non-blocking)
     MeshRuntime.instance.bind(bridge);
     MeshRuntime.instance.onNetworkChanged = (_) {
-      unawaited(onNetworkPathChanged());
+      if (!_appPaused) unawaited(onNetworkPathChanged());
     };
     unawaited(MeshRuntime.instance.up(hostname: 'takton-phone'));
 
-    // Local UI first — never block first paint on PC reconnect / mesh.
+    // All network hydration is background — shell already visible.
+    unawaited(_bootNetwork(preferredSurface));
+  }
+
+  Future<void> _bootNetwork(String preferredSurface) async {
     try {
-      await refreshAll().timeout(const Duration(seconds: 4));
+      await refreshAll().timeout(const Duration(seconds: 6));
     } catch (_) {}
     await _loadOfflineQueue();
     if (offlineQueue.isNotEmpty) {
@@ -338,23 +456,25 @@ class AppController extends ChangeNotifier {
       unawaited(syncPendingConfirmsFromApprovals());
     }
 
-    // Soft surface while offline: do NOT wipe preferred mode from prefs.
-    // If preferred remote but not yet connected, stay local until reconnect.
     final wantRemote = preferredSurface == 'remote';
     if (!pcConnected && wantRemote) {
       surface = 'local';
+      _loadSurfaceCache('local');
+      _notify();
     }
 
-    try {
-      await _applySwitchSurface(surface, ensureSession: false)
-          .timeout(const Duration(seconds: 4));
-    } catch (_) {}
+    unawaited(() async {
+      try {
+        await _applySwitchSurface(surface, ensureSession: false)
+            .timeout(const Duration(seconds: 6));
+        await _persistDiskMessageCaches();
+        _notify();
+      } catch (_) {}
+    }());
 
-    // Auto-reconnect in background; restore remote surface on success.
     if (!pcConnected) {
       unawaited(tryAutoReconnect().then((_) async {
-        if (!pcConnected) return;
-        // Restore preferred chat mode after successful reconnect
+        if (!pcConnected || _appPaused) return;
         final p = await SharedPreferences.getInstance();
         final mode = p.getString('takton-chat-mode') ?? preferredSurface;
         if (mode == 'remote' && surface != 'remote') {
@@ -368,25 +488,40 @@ class AppController extends ChangeNotifier {
 
     unawaited(refreshMesh());
     unawaited(refreshPairedDevices());
-    // Background path health while remote may be used
-    _pathPoll?.cancel();
-    _pathPoll = Timer.periodic(const Duration(seconds: 45), (_) {
-      if (!pcConnected || surface == 'remote') {
-        unawaited(pathHealthTick());
-      }
-    });
-    // Link liveness + approval badge (not only when Approve tab is open)
-    _syncApprovePoll();
-    _healthPoll?.cancel();
-    _healthPoll = Timer.periodic(const Duration(seconds: 20), (_) {
-      unawaited(_healthTick());
-    });
+    _startBackgroundPolls();
     if (bridgeKind == 'http-fallback' ||
         bridgeKind.contains('fallback') ||
         bridgeKind.contains('timeout')) {
       showToast('引擎加载中或已降级 · $bridgeKind');
     }
     _notify();
+  }
+
+  void _startBackgroundPolls() {
+    if (_appPaused) return;
+    _pathPoll?.cancel();
+    _pathPoll = Timer.periodic(const Duration(seconds: 45), (_) {
+      if (_appPaused) return;
+      if (!pcConnected || surface == 'remote') {
+        unawaited(pathHealthTick());
+      }
+    });
+    _syncApprovePoll();
+    _healthPoll?.cancel();
+    _healthPoll = Timer.periodic(const Duration(seconds: 20), (_) {
+      if (!_appPaused) unawaited(_healthTick());
+    });
+  }
+
+  void _stopBackgroundPolls() {
+    _pathPoll?.cancel();
+    _pathPoll = null;
+    _healthPoll?.cancel();
+    _healthPoll = null;
+    _approvePoll?.cancel();
+    _approvePoll = null;
+    _pairPoll?.cancel();
+    _pairPoll = null;
   }
 
   /// Soften engineering errors for toast / bubble (experience, not new product).
@@ -622,22 +757,74 @@ class AppController extends ChangeNotifier {
     _notify();
   }
 
-  Future<void> loadLocalMsgs() async {
-    final h = await bridge.localHistory();
-    final list = _parseUiMessages(
-        (h['messages'] as List?) ?? (h['history'] as List?) ?? []);
-    // Empty history stays empty — no seeded/mock welcome bubble.
-    _applyMessages(list, forSurface: 'local');
+  Future<void> loadRemoteMsgs(String id) async {
+    final h = await bridge.messages(id, limit: messagePageLimit);
+    final list = await _parseUiMessagesAsync(
+        (h['messages'] as List?) ?? (h['items'] as List?) ?? []);
+    hasMoreOlder = list.length >= messagePageLimit;
+    _applyMessages(list, forSurface: 'remote');
     _notify();
   }
 
-  Future<void> loadRemoteMsgs(String id) async {
-    final h = await bridge.messages(id);
-    final list = _parseUiMessages(
-        (h['messages'] as List?) ?? (h['items'] as List?) ?? []);
-    // Empty session stays empty — no seeded/mock bubble.
-    _applyMessages(list, forSurface: 'remote');
+  Future<void> loadLocalMsgs() async {
+    final h = await bridge.localHistory();
+    final list = await _parseUiMessagesAsync(
+        (h['messages'] as List?) ?? (h['history'] as List?) ?? []);
+    // Cap in-memory local window
+    final window = list.length > messagePageLimit
+        ? list.sublist(list.length - messagePageLimit)
+        : list;
+    hasMoreOlder = list.length > messagePageLimit;
+    _applyMessages(window, forSurface: 'local');
     _notify();
+  }
+
+  /// P1: pull older messages when user scrolls to top.
+  Future<void> loadOlderMessages() async {
+    if (loadingOlder || !hasMoreOlder || streaming) return;
+    loadingOlder = true;
+    _notify();
+    try {
+      if (surface == 'remote') {
+        final sid = activeSessionId;
+        if (sid == null || sid.isEmpty) return;
+        // Fetch a larger window then prepend missing older rows.
+        final want = (messages.length + messagePageLimit).clamp(1, 200);
+        final h = await bridge.messages(sid, limit: want);
+        final list = await _parseUiMessagesAsync(
+            (h['messages'] as List?) ?? (h['items'] as List?) ?? []);
+        if (list.isEmpty) {
+          hasMoreOlder = false;
+          return;
+        }
+        hasMoreOlder = list.length >= want;
+        final existingIds = messages.map((m) => m.id).toSet();
+        final older = list.where((m) => !existingIds.contains(m.id)).toList();
+        if (older.isEmpty) {
+          hasMoreOlder = list.length < want ? false : hasMoreOlder;
+          // Still replace if server window shifted
+          if (list.length > messages.length) {
+            _applyMessages(list, forSurface: 'remote');
+          }
+        } else {
+          final merged = [...older, ...messages.map((m) => m.copyMeta())];
+          _applyMessages(merged, forSurface: 'remote');
+        }
+      } else {
+        final h = await bridge.localHistory();
+        final list = await _parseUiMessagesAsync(
+            (h['messages'] as List?) ?? (h['history'] as List?) ?? []);
+        hasMoreOlder = false;
+        if (list.length > messages.length) {
+          _applyMessages(list, forSurface: 'local');
+        }
+      }
+    } catch (e) {
+      debugPrint('loadOlderMessages: $e');
+    } finally {
+      loadingOlder = false;
+      _notify();
+    }
   }
 
   Future<void> _applySwitchSurface(
@@ -668,9 +855,14 @@ class AppController extends ChangeNotifier {
         activeSessionId = sid;
       }
     }
-    final msgs = _parseUiMessages(r['messages']);
+    final msgs = await _parseUiMessagesAsync(r['messages']);
     if (msgs.isNotEmpty) {
-      _applyMessages(msgs, forSurface: s);
+      // Window: keep last page only in memory for first paint.
+      final window = msgs.length > messagePageLimit
+          ? msgs.sublist(msgs.length - messagePageLimit)
+          : msgs;
+      hasMoreOlder = msgs.length > messagePageLimit;
+      _applyMessages(window, forSurface: s);
     } else if (s == 'local' && messages.isEmpty) {
       await loadLocalMsgs();
     }
@@ -753,9 +945,13 @@ class AppController extends ChangeNotifier {
       if (r['mode'] is Map) {
         mode = ModeSnap.fromJson(Map<String, dynamic>.from(r['mode'] as Map));
       }
-      final msgs = _parseUiMessages(r['messages']);
+      final msgs = await _parseUiMessagesAsync(r['messages']);
       if (msgs.isNotEmpty) {
-        _applyMessages(msgs, forSurface: 'remote');
+        final window = msgs.length > messagePageLimit
+            ? msgs.sublist(msgs.length - messagePageLimit)
+            : msgs;
+        hasMoreOlder = msgs.length > messagePageLimit;
+        _applyMessages(window, forSurface: 'remote');
       }
       _notify();
       return activeSessionId != null && activeSessionId!.isNotEmpty;
@@ -815,19 +1011,19 @@ class AppController extends ChangeNotifier {
   void _syncApprovePoll() {
     _approvePoll?.cancel();
     _approvePoll = null;
-    if (!pcConnected) return;
+    if (!pcConnected || _appPaused) return;
     // Approve tab: 2s (was 4s). Background: 8s so badge stays fresh on Chat.
     final every = tab == AppTab.approve
         ? const Duration(seconds: 2)
         : const Duration(seconds: 8);
     _approvePoll = Timer.periodic(every, (_) async {
-      if (!pcConnected) return;
+      if (!pcConnected || _appPaused) return;
       await loadApprovals();
     });
   }
 
   Future<void> _healthTick() async {
-    if (!pcConnected) return;
+    if (!pcConnected || _appPaused) return;
     try {
       final h = await bridge.health();
       if (!isOk(h) && h['ok'] != true) return;
@@ -1906,84 +2102,58 @@ class AppController extends ChangeNotifier {
         );
       }
 
-      // Remote: after stream, reload full PC history so tool-loop turns
-      // (assistant→tool→final assistant) replace the single streaming bubble.
-      // Retry briefly — final assistant can land in DB a beat after done.
+      // P1: after stream — light reconcile only (no 3× full history reload).
       if (streamSurface == 'remote' &&
           streamGen == _streamGen &&
           activeSessionId != null &&
           activeSessionId!.isNotEmpty) {
-        for (var attempt = 0; attempt < 3; attempt++) {
-          try {
-            final r = await bridge.call('messages', {
-              'id': activeSessionId,
-            });
-            final list = r['messages'];
-            if (list is List && list.isNotEmpty) {
-              final parsed = _parseUiMessages(list);
-              if (parsed.isNotEmpty) {
-                // Prefer history that ends with a non-empty assistant (not tool-only).
-                final last = parsed.last;
-                final looksToolOnly = last.role == 'assistant' &&
-                    (last.who.contains('工具') ||
-                        last.text.trim().startsWith('· 调用') ||
-                        RegExp(r'^·\s*`').hasMatch(last.text.trim()));
-                if (looksToolOnly && attempt < 2) {
-                  await Future<void>.delayed(const Duration(milliseconds: 700));
-                  continue;
-                }
-                // Merge PC history but keep client-only confirm / offline placeholders.
-                _applyMessages(parsed, forSurface: 'remote');
-                // Do NOT clear messages again — _applyMessages already applied + preserve.
-                break;
-              } else {
-                // Fallback: patch last non-tool assistant bubble only.
-                String? lastAsst;
-                for (var i = list.length - 1; i >= 0; i--) {
-                  final m = list[i];
-                  if (m is! Map) continue;
-                  if (m['role']?.toString() != 'assistant') continue;
-                  final who = m['who']?.toString() ?? '';
-                  if (who.contains('工具')) continue;
-                  final tc = m['tool_calls'];
-                  final hasTools = (tc is List && tc.isNotEmpty) ||
-                      (tc is Map && tc.isNotEmpty);
-                  if (hasTools) continue;
-                  final t = (m['content'] ?? m['text'] ?? '').toString();
-                  if (t.trim().startsWith('· 调用') ||
-                      RegExp(r'^·\s*`').hasMatch(t.trim())) {
-                    continue;
-                  }
-                  lastAsst = t;
-                  break;
-                }
-                if (lastAsst != null && lastAsst.isNotEmpty) {
-                  final split = splitToolTrailFromText(lastAsst);
-                  acc = split.body.isNotEmpty ? split.body : lastAsst;
-                  if (split.tools.isNotEmpty) {
-                    liveTools
-                      ..clear()
-                      ..addAll(split.tools);
-                  }
-                  final i = messages.indexWhere((m) => m.id == aid);
-                  if (i >= 0 && surface == streamSurface) {
-                    messages[i].text = acc;
-                    messages[i].toolCalls =
-                        liveTools.map((t) => t.copy()).toList();
-                    messages[i].format = 'markdown';
-                    messages[i].who = liveTools.isEmpty
-                        ? '远端 Agent'
-                        : '远端 Agent · 工具';
-                  }
-                  break;
-                }
+        try {
+          final r = await bridge.messages(
+            activeSessionId!,
+            limit: 12,
+          );
+          final list = r['messages'];
+          if (list is List && list.isNotEmpty) {
+            String? lastAsst;
+            for (var i = list.length - 1; i >= 0; i--) {
+              final m = list[i];
+              if (m is! Map) continue;
+              if (m['role']?.toString() != 'assistant') continue;
+              final who = m['who']?.toString() ?? '';
+              if (who.contains('工具')) continue;
+              final tc = m['tool_calls'];
+              final hasTools = (tc is List && tc.isNotEmpty) ||
+                  (tc is Map && tc.isNotEmpty);
+              if (hasTools) continue;
+              final t = (m['content'] ?? m['text'] ?? '').toString();
+              if (t.trim().startsWith('· 调用') ||
+                  RegExp(r'^·\s*`').hasMatch(t.trim())) {
+                continue;
+              }
+              lastAsst = t;
+              break;
+            }
+            if (lastAsst != null && lastAsst.isNotEmpty) {
+              final split = splitToolTrailFromText(lastAsst);
+              acc = split.body.isNotEmpty ? split.body : lastAsst;
+              if (split.tools.isNotEmpty) {
+                liveTools
+                  ..clear()
+                  ..addAll(split.tools);
+              }
+              final i = messages.indexWhere((m) => m.id == aid);
+              if (i >= 0 && surface == streamSurface) {
+                messages[i].text = acc;
+                messages[i].toolCalls =
+                    liveTools.map((t) => t.copy()).toList();
+                messages[i].format = 'markdown';
+                messages[i].who =
+                    liveTools.isEmpty ? '远端 Agent' : '远端 Agent · 工具';
               }
             }
-          } catch (_) {}
-          if (attempt < 2) {
-            await Future<void>.delayed(const Duration(milliseconds: 700));
           }
-        }
+        } catch (_) {}
+        unawaited(_persistDiskMessageCaches());
         notifyListeners();
       }
 
@@ -3030,7 +3200,7 @@ class AppController extends ChangeNotifier {
 
   /// Periodic health: if remote surface but unauthenticated, try reconnect.
   Future<void> pathHealthTick() async {
-    if (pathBusy) return;
+    if (pathBusy || _appPaused) return;
     try {
       await MeshRuntime.instance.checkNow();
       if (!pcConnected) {
@@ -3060,8 +3230,17 @@ class AppController extends ChangeNotifier {
     } catch (_) {}
   }
 
+  /// App backgrounded — stop polls so OS does not kill us mid-sync.
+  void onAppPaused() {
+    _appPaused = true;
+    _stopBackgroundPolls();
+    unawaited(_persistDiskMessageCaches());
+  }
+
   /// App resume / tab focus hook.
   Future<void> onAppResumed() async {
+    _appPaused = false;
+    _startBackgroundPolls();
     await MeshRuntime.instance.checkNow();
     if (!pcConnected) {
       await tryAutoReconnect();
@@ -3129,14 +3308,13 @@ class AppController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _appPaused = true;
+    _stopBackgroundPolls();
     _clockTimer?.cancel();
-    _approvePoll?.cancel();
-    _healthPoll?.cancel();
     _streamNotifyTimer?.cancel();
     _toastTimer?.cancel();
-    _pairPoll?.cancel();
     _meshPoll?.cancel();
-    _pathPoll?.cancel();
+    unawaited(_persistDiskMessageCaches());
     MeshRuntime.instance.dispose();
     bridge.dispose();
     super.dispose();
@@ -3155,4 +3333,28 @@ class _OfflineSend {
   final String text;
   final String surface;
   final DateTime createdAt;
+}
+
+/// Top-level for [compute] — keep free of AppController state.
+List<Map<String, dynamic>> _parseUiMessagesIsolate(List<dynamic> raw) {
+  final out = <Map<String, dynamic>>[];
+  for (final m in raw) {
+    if (m is! Map) continue;
+    final map = Map<String, dynamic>.from(m);
+    final text = map['content']?.toString() ?? map['text']?.toString() ?? '';
+    var format = map['format']?.toString() == 'markdown' ? 'markdown' : 'plain';
+    if (text.contains('**') || text.contains('```') || text.contains('\n- ')) {
+      format = 'markdown';
+    }
+    final idVal = map['id']?.toString() ?? out.length.toString();
+    out.add({
+      'id': idVal,
+      'role': map['role']?.toString() ?? 'assistant',
+      'text': text,
+      'content': text,
+      'who': map['who']?.toString() ?? '',
+      'format': format,
+    });
+  }
+  return out;
 }

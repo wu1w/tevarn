@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
@@ -51,6 +52,13 @@ class _ChatScreenState extends State<ChatScreen> {
       _stickBottom = false;
     } else if (dist <= 48) {
       _stickBottom = true;
+    }
+    // Near top → load older history (P1 pagination).
+    if (pos.pixels <= 48) {
+      final ctrl = context.read<AppController>();
+      if (ctrl.hasMoreOlder && !ctrl.loadingOlder) {
+        unawaited(ctrl.loadOlderMessages());
+      }
     }
   }
 
@@ -328,8 +336,25 @@ class _ChatScreenState extends State<ChatScreen> {
               : ListView.builder(
             controller: _scroll,
             padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-            itemCount: c.messages.length,
+            cacheExtent: 480,
+            addAutomaticKeepAlives: false,
+            itemCount: c.messages.length + (c.loadingOlder ? 1 : 0),
             itemBuilder: (context, i) {
+              if (c.loadingOlder && i == 0) {
+                return const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 10),
+                  child: Center(
+                    child: SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
+                );
+              }
+              if (c.loadingOlder) {
+                i -= 1;
+              }
               final m = c.messages[i];
               if (m.role == 'confirm') {
                 final kind = m.modelText ?? m.who;

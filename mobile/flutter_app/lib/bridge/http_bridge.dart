@@ -67,7 +67,14 @@ class HttpTaktonBridge extends TaktonBridge {
         case 'session_stop':
           return _post('/api/mobile/sessions/${a['id']}/stop', {});
         case 'messages':
-          return _get('/api/mobile/sessions/${a['id']}/messages');
+          {
+            final id = a['id'];
+            final lim = a['limit'];
+            final q = <String>[];
+            if (lim != null) q.add('limit=$lim');
+            final qs = q.isEmpty ? '' : '?${q.join('&')}';
+            return _get('/api/mobile/sessions/$id/messages$qs');
+          }
         case 'local_history':
           return _get('/api/mobile/local/history');
         case 'local_history_clear':
@@ -279,7 +286,7 @@ class HttpTaktonBridge extends TaktonBridge {
     try {
       final sid = Uri.encodeQueryComponent(sessionId);
       final r = await _get(
-        '/api/mobile/events?after_seq=$afterSeq&session_id=$sid&limit=200',
+        '/api/mobile/events?after_seq=$afterSeq&session_id=$sid&limit=80',
       );
       if (r['ok'] != true) return const [];
       final raw = r['events'];
@@ -921,7 +928,7 @@ class HttpTaktonBridge extends TaktonBridge {
     try {
       final iter = StreamIterator(ch.stream);
       Future<bool>? pendingMove;
-      var silenceBackoffMs = 1500;
+      var silenceBackoffMs = 2000;
 
       while (DateTime.now().difference(started) < overallLimit) {
         pendingMove ??= iter.moveNext();
@@ -975,7 +982,7 @@ class HttpTaktonBridge extends TaktonBridge {
             } else {
               pollStable += 1;
               // Adaptive backoff while tools/long runs are quiet.
-              silenceBackoffMs = (silenceBackoffMs + 500).clamp(1500, 5000);
+              silenceBackoffMs = (silenceBackoffMs + 800).clamp(2000, 6000);
             }
             // Need 3 identical final polls so mid-tool snapshots don't end the turn.
             if (pollStable >= 2) {
@@ -985,14 +992,14 @@ class HttpTaktonBridge extends TaktonBridge {
           } else {
             pollStable = 0;
             lastPolled = '';
-            silenceBackoffMs = (silenceBackoffMs + 500).clamp(1500, 5000);
+            silenceBackoffMs = (silenceBackoffMs + 800).clamp(2000, 6000);
           }
           continue;
         }
 
         final has = (winner as _Move).has;
         pendingMove = null;
-        silenceBackoffMs = 1500;
+        silenceBackoffMs = 2000;
         if (!has) {
           // Host WS closed — ring gap-fill then HTTP stabilize.
           {

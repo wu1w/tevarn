@@ -89,28 +89,21 @@ class _BootstrapAppState extends State<_BootstrapApp>
       );
 
       if (!mounted) return;
-      setState(() => _status = '恢复会话');
-
+      // P0: enter shell immediately — boot network work runs in background.
       final ctrl = AppController(bridge);
-      await ctrl.boot().timeout(
-        const Duration(seconds: 12),
-        onTimeout: () {
-          debugPrint('AppController.boot timeout — continuing with partial state');
-        },
-      );
-
-      if (!mounted) return;
-      // Brief settle so exit feels intentional, not a hard cut
-      await Future<void>.delayed(const Duration(milliseconds: 180));
-      if (!mounted) return;
       setState(() {
         _ctrl = ctrl;
         _status = '就绪';
       });
+      unawaited(ctrl.boot().timeout(
+        const Duration(seconds: 20),
+        onTimeout: () {
+          debugPrint('AppController.boot timeout — UI already live');
+        },
+      ));
     } catch (e, st) {
       debugPrint('boot failed: $e\n$st');
       if (!mounted) return;
-      // Last-resort: still try to open UI with a dummy HTTP bridge.
       try {
         final bridge = HttpTaktonBridge(kind: 'http-fallback-error');
         final ctrl = AppController(bridge);
@@ -305,8 +298,14 @@ class _TaktonAppState extends State<TaktonApp> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      widget.controller.onAppResumed();
+    switch (state) {
+      case AppLifecycleState.resumed:
+        widget.controller.onAppResumed();
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.paused:
+      case AppLifecycleState.detached:
+        widget.controller.onAppPaused();
     }
   }
 

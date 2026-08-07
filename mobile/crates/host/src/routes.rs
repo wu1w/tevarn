@@ -1221,7 +1221,14 @@ fn spawn_turn_completion_watchdog(st: AppState, session_id: String, user_content
                 return;
             }
             let live_ui = !st.browser_subs.is_empty();
-            let delay_ms = if live_ui && tick > 4 { 1200u64 } else { 500u64 };
+            // P0: back off hard when WS live (Flutter already streams deltas).
+            let delay_ms = if live_ui && tick > 2 {
+                2500u64
+            } else if tick > 8 {
+                1800u64
+            } else {
+                900u64
+            };
             tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
             if st.current_watchdog_gen(&session_id) != gen {
                 return;
@@ -1247,7 +1254,12 @@ fn spawn_turn_completion_watchdog(st: AppState, session_id: String, user_content
                 return;
             }
 
-            let msgs = match st.client.list_messages(&session_id, 80).await {
+            // Skip full list_messages on alternate ticks when UI is live (WS path).
+            if live_ui && tick > 2 && tick % 2 == 1 {
+                continue;
+            }
+
+            let msgs = match st.client.list_messages(&session_id, 30).await {
                 Ok(m) => m,
                 Err(_) => continue,
             };
@@ -1908,7 +1920,7 @@ async fn list_messages(
     Path(id): Path<String>,
     Query(q): Query<LimitQuery>,
 ) -> Json<Value> {
-    let limit = q.limit.unwrap_or(100).min(500);
+    let limit = q.limit.unwrap_or(30).min(200);
     if id == LOCAL_SESSION_ID {
         return Json(json!({ "ok": true, "messages": local_history_as_ui(&st) }));
     }
@@ -1941,7 +1953,8 @@ async fn turn_status(
     }
     let needle = q.user.unwrap_or_default();
     let needle_trim = needle.trim().to_string();
-    let msgs = match st.client.list_messages(&id, 80).await {
+    // Lightweight window — phone polls this often; keep payload small.
+    let msgs = match st.client.list_messages(&id, 36).await {
         Ok(m) => m,
         Err(e) => {
             return Json(json!({
@@ -3128,7 +3141,7 @@ async fn pair_bootstrap_remote_surface(st: &AppState) -> Value {
         .await;
         messages = match tokio::time::timeout(
             std::time::Duration::from_secs(4),
-            remote_messages_as_ui(st, sid, 80),
+            remote_messages_as_ui(st, sid, 30),
         )
         .await
         {
@@ -4526,7 +4539,7 @@ async fn switch_surface(
             if let Some(ref sid) = session_id {
                 *st.active_session.write() = Some(sid.clone());
                 let _ = ensure_chat(st.clone(), sid.clone()).await;
-                messages = remote_messages_as_ui(&st, sid, 100).await;
+                messages = remote_messages_as_ui(&st, sid, 30).await;
             }
 
             if messages.is_empty() {
