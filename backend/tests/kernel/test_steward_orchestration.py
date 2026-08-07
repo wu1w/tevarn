@@ -35,18 +35,20 @@ def test_steward_prompt_mentions_assign_not_subagent_swarm():
 
 def test_crew_pack_and_profile_extras():
     assert "crew_steward" in TOOL_PACKS["crew"]
-    assert "crew_steward" in PROFILE_EXTRA_TOOLS["coding"]
+    # Solo-default: coding PROFILE_EXTRA must NOT auto-mount crew_steward
+    assert "crew_steward" not in PROFILE_EXTRA_TOOLS["coding"]
     assert "crew_steward" in STEWARD_FORCE_TOOLS
 
 
-def test_coding_profile_always_has_crew_steward():
+def test_coding_profile_solo_no_default_crew_steward():
+    """Breaking: main chat coding profile is solo unless steward pack / cluster."""
     names, plan = resolve_enabled_tool_names(
         mode="default",
         profile="coding",
         user_input="你好",
     )
     assert names is not None
-    assert "crew_steward" in names
+    assert "crew_steward" not in names
 
 
 def test_steward_extra_packs_include_assign_tools():

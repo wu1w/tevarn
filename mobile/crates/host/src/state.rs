@@ -56,6 +56,15 @@ const COALESCE_FALLBACK_KEY: &str = "__global__";
 const EVENT_RING_CAP: usize = 512;
 /// Per-session ring so one hot session cannot wipe another's gap-fill buffer.
 const EVENT_RING_PER_SESSION: usize = 160;
+/// Max concurrent session rings (LRU by last_access).
+const EVENT_RING_MAX_SESSIONS: usize = 40;
+
+/// Per-session event ring with LRU access tracking.
+struct SessionEventRing {
+    events: VecDeque<Value>,
+    /// Monotonic access counter (higher = more recent).
+    last_access: u64,
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -93,8 +102,14 @@ pub struct AppState {
     event_seq: Arc<AtomicU64>,
     /// Global ring (control frames + fallback).
     event_ring: Arc<Mutex<VecDeque<Value>>>,
-    /// Per-session rings for targeted after_seq gap fill.
-    event_ring_by_session: Arc<Mutex<std::collections::HashMap<String, VecDeque<Value>>>>,
+    /// Per-session rings for targeted after_seq gap fill (LRU eviction).
+    event_ring_by_session: Arc<Mutex<std::collections::HashMap<String, SessionEventRing>>>,
+    /// Monotonic counter for LRU session ring access.
+    event_ring_access_tick: Arc<AtomicU64>,
+    /// Per-session connect single-flight (prevents dual PC WS + dual fanout).
+    pub chat_connect_locks: Arc<DashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// Watchdog generation per session — bump cancels older watchdogs.
+    pub watchdog_gen: Arc<DashMap<String, AtomicU64>>,
 }
 
 impl AppState {
@@ -150,6 +165,9 @@ impl AppState {
             event_seq: Arc::new(AtomicU64::new(0)),
             event_ring: Arc::new(Mutex::new(VecDeque::with_capacity(EVENT_RING_CAP))),
             event_ring_by_session: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            event_ring_access_tick: Arc::new(AtomicU64::new(1)),
+            chat_connect_locks: Arc::new(DashMap::new()),
+            watchdog_gen: Arc::new(DashMap::new()),
         })
     }
 
@@ -163,15 +181,28 @@ impl AppState {
     }
 
     /// Drop half-dead PC chat sockets (e.g. after path switch / VPS blip).
+    /// Explicitly close so old fanout tasks shut down cleanly.
     pub fn prune_dead_chats(&self) -> usize {
-        let mut dead = Vec::new();
+        let mut dead: Vec<(String, Arc<ChatConnection>)> = Vec::new();
         for e in self.chats.iter() {
             if !e.value().is_alive() {
-                dead.push(e.key().clone());
+                dead.push((e.key().clone(), e.value().clone()));
             }
         }
-        for id in &dead {
-            self.chats.remove(id);
+        for (id, conn) in dead.iter() {
+            // Only remove if still the same instance (avoid racing a fresh reconnect).
+            let still = self
+                .chats
+                .get(id)
+                .map(|c| c.conn_id() == conn.conn_id())
+                .unwrap_or(false);
+            if still {
+                self.chats.remove(id);
+                let c = conn.clone();
+                tokio::spawn(async move {
+                    c.close().await;
+                });
+            }
         }
         dead.len()
     }
@@ -179,11 +210,35 @@ impl AppState {
     /// After path failover, old PC WS is almost certainly wrong path — drop all.
     pub fn drop_all_chats(&self) -> usize {
         let n = self.chats.len();
+        let all: Vec<Arc<ChatConnection>> = self.chats.iter().map(|e| e.value().clone()).collect();
         self.chats.clear();
+        for c in all {
+            tokio::spawn(async move {
+                c.close_path().await;
+            });
+        }
         n
     }
 
+    /// Bump watchdog generation for session; returns the new generation to hold.
+    pub fn next_watchdog_gen(&self, session_id: &str) -> u64 {
+        let entry = self
+            .watchdog_gen
+            .entry(session_id.to_string())
+            .or_insert_with(|| AtomicU64::new(0));
+        entry.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    pub fn current_watchdog_gen(&self, session_id: &str) -> u64 {
+        self.watchdog_gen
+            .get(session_id)
+            .map(|g| g.load(Ordering::SeqCst))
+            .unwrap_or(0)
+    }
+
     /// Events with seq > after_seq (optionally filtered by session_id).
+    /// Merges per-session ring ∪ global (unscoped control frames + older session frames
+    /// still in the global buffer) so gap-fill is not capped solely at 160.
     pub fn events_after(
         &self,
         after_seq: u64,
@@ -192,39 +247,47 @@ impl AppState {
     ) -> Vec<Value> {
         let lim = limit.clamp(1, 256);
         let sid = session_id.map(str::trim).filter(|s| !s.is_empty());
-        // Prefer per-session ring when available (survives global pressure).
+
+        let mut by_seq: std::collections::BTreeMap<u64, Value> = std::collections::BTreeMap::new();
+
+        // Per-session ring first (updates LRU access).
         if let Some(want) = sid {
-            let by = self.event_ring_by_session.lock();
-            if let Some(ring) = by.get(want) {
-                return ring
-                    .iter()
-                    .filter(|v| {
-                        v.get("seq").and_then(|x| x.as_u64()).unwrap_or(0) > after_seq
-                    })
-                    .take(lim)
-                    .cloned()
-                    .collect();
+            let mut by = self.event_ring_by_session.lock();
+            if let Some(ring) = by.get_mut(want) {
+                ring.last_access = self.event_ring_access_tick.fetch_add(1, Ordering::SeqCst) + 1;
+                for v in ring.events.iter() {
+                    let seq = v.get("seq").and_then(|x| x.as_u64()).unwrap_or(0);
+                    if seq > after_seq {
+                        by_seq.entry(seq).or_insert_with(|| v.clone());
+                    }
+                }
             }
         }
-        let ring = self.event_ring.lock();
-        ring.iter()
-            .filter(|v| {
+
+        // Always merge global: deeper history + unscoped control frames.
+        {
+            let ring = self.event_ring.lock();
+            for v in ring.iter() {
                 let seq = v.get("seq").and_then(|x| x.as_u64()).unwrap_or(0);
                 if seq <= after_seq {
-                    return false;
+                    continue;
                 }
                 if let Some(want) = sid {
                     match v.get("session_id").and_then(|x| x.as_str()) {
-                        Some(got) if !got.is_empty() => got == want,
-                        _ => true,
+                        Some(got) if !got.is_empty() => {
+                            if got != want {
+                                continue;
+                            }
+                        }
+                        // Unscoped control frames (badge, path_status, …) included.
+                        _ => {}
                     }
-                } else {
-                    true
                 }
-            })
-            .take(lim)
-            .cloned()
-            .collect()
+                by_seq.entry(seq).or_insert_with(|| v.clone());
+            }
+        }
+
+        by_seq.into_values().take(lim).collect()
     }
 
     /// Fan-out without session affinity (control / unknown).
@@ -242,8 +305,14 @@ impl AppState {
         let mut owned = v.clone();
         if let Some(sid) = session_id.map(str::trim).filter(|s| !s.is_empty()) {
             if let Some(obj) = owned.as_object_mut() {
-                obj.entry("session_id")
-                    .or_insert_with(|| json!(sid));
+                // Fill missing or empty session_id from host scope (don't overwrite good ids).
+                let need = match obj.get("session_id").and_then(|x| x.as_str()) {
+                    None => true,
+                    Some(s) => s.trim().is_empty(),
+                };
+                if need {
+                    obj.insert("session_id".into(), json!(sid));
+                }
             }
         }
         if is_stream_delta(&owned) {
@@ -263,45 +332,75 @@ impl AppState {
         self.flush_deltas(session_id);
     }
 
+    /// Flush every per-session coalesce buffer (path switch / teardown).
+    pub fn flush_all_session_deltas(&self) {
+        let keys: Vec<String> = self.delta_coalesce.iter().map(|e| e.key().clone()).collect();
+        for k in keys {
+            self.flush_deltas(&k);
+        }
+    }
+
     fn stamp_and_broadcast(&self, v: &Value) {
-        // Serialize seq allocation + ring push so concurrent producers stay ordered.
+        // Read active session BEFORE ring locks to avoid lock-order deadlocks.
+        let active = self.active_session.read().clone();
+        // Hold BOTH ring locks across seq++ + push so concurrent producers cannot
+        // reorder ring entries relative to seq numbers.
+        let mut global = self.event_ring.lock();
+        let mut by_session = self.event_ring_by_session.lock();
         let seq = self.event_seq.fetch_add(1, Ordering::SeqCst) + 1;
         let mut out = v.clone();
         if let Some(obj) = out.as_object_mut() {
             obj.insert("seq".into(), json!(seq));
+            // Empty session_id is useless for gap fill — drop it.
+            if let Some(sid_v) = obj.get("session_id") {
+                if sid_v.as_str().map(|s| s.is_empty()).unwrap_or(false) {
+                    obj.remove("session_id");
+                }
+            }
         } else {
-            // Non-object frames: wrap so Flutter can unwrap `payload`.
             out = json!({ "type": "wrapped", "payload": v, "seq": seq });
         }
         let sid = out
             .get("session_id")
             .and_then(|x| x.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
-        {
-            let mut ring = self.event_ring.lock();
-            ring.push_back(out.clone());
-            while ring.len() > EVENT_RING_CAP {
-                ring.pop_front();
-            }
+
+        global.push_back(out.clone());
+        while global.len() > EVENT_RING_CAP {
+            global.pop_front();
         }
+
         if let Some(sid) = sid {
-            let mut by = self.event_ring_by_session.lock();
-            let q = by
-                .entry(sid)
-                .or_insert_with(|| VecDeque::with_capacity(EVENT_RING_PER_SESSION));
-            q.push_back(out.clone());
-            while q.len() > EVENT_RING_PER_SESSION {
-                q.pop_front();
+            let tick = self.event_ring_access_tick.fetch_add(1, Ordering::SeqCst) + 1;
+            // Protect active session from LRU eviction
+            let entry = by_session.entry(sid.clone()).or_insert_with(|| SessionEventRing {
+                events: VecDeque::with_capacity(EVENT_RING_PER_SESSION),
+                last_access: tick,
+            });
+            entry.last_access = tick;
+            entry.events.push_back(out.clone());
+            while entry.events.len() > EVENT_RING_PER_SESSION {
+                entry.events.pop_front();
             }
-            // Bound number of session rings (drop empty-ish oldest keys if huge)
-            if by.len() > 48 {
-                let keys: Vec<String> = by.keys().cloned().collect();
-                for k in keys.into_iter().take(by.len().saturating_sub(40)) {
-                    by.remove(&k);
+            if by_session.len() > EVENT_RING_MAX_SESSIONS + 8 {
+                let mut pairs: Vec<(String, u64)> = by_session
+                    .iter()
+                    .filter(|(k, _)| Some(*k) != active.as_ref())
+                    .map(|(k, v)| (k.clone(), v.last_access))
+                    .collect();
+                pairs.sort_by_key(|(_, acc)| *acc);
+                let drop_n = by_session.len().saturating_sub(EVENT_RING_MAX_SESSIONS);
+                for (k, _) in pairs.into_iter().take(drop_n) {
+                    by_session.remove(&k);
                 }
             }
         }
         let text = out.to_string();
+        drop(by_session);
+        drop(global);
+
         let mut dead = Vec::new();
         for entry in self.browser_subs.iter() {
             if entry

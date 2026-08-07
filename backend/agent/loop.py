@@ -2743,6 +2743,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     last_tool_fingerprint=_last_tool_fingerprint,
                     last_failed_tool=_last_failed_tool,
                     same_tool_fail_streak=_same_tool_fail_streak,
+                    simple_turn=_simple_turn,
                 )
                 await run_tool_round(
                     self,

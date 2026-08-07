@@ -47,6 +47,8 @@ class ToolRoundState:
     # audit-fix(#5)：同一工具名连续失败熔断（不论参数）
     last_failed_tool: str = ""
     same_tool_fail_streak: int = 0
+    # simple-session turn: block re-adding crew via use_tool_pack
+    simple_turn: bool = False
 
 
 # T1：可安全并发的只读风险等级。写类/命令类一律串行，避免「并发读 + 写同一文件」竞态。
@@ -206,13 +208,34 @@ async def run_tool_round(
     # 编制扇出上限：实测一轮 7–10 个 crew_steward 空转；超出合成结果，仍回 tool 消息。
     # PR4: default max_orch=1; Rust loop_guard is authoritative for workers.
     _capped_results: dict[str, str] = {}
+    # Hard gate: simple_turn never executes dispatch tools even if schema leaked.
+    if state.simple_turn:
+        try:
+            from backend.agent.simple_intent import DISPATCH_TOOL_NAMES
+
+            for tc in tool_calls or []:
+                _cid = str(getattr(tc, "id", "") or "")
+                _tn = str(getattr(tc, "name", "") or "")
+                if _tn in DISPATCH_TOOL_NAMES and _cid:
+                    _capped_results[_cid] = (
+                        f"[simple_turn] dispatch tool '{_tn}' denied — "
+                        "answer in-session only (no crew_steward/delegate)."
+                    )
+                    logger.warning(
+                        "simple_turn hard-deny tool=%s session=%s",
+                        _tn,
+                        session_id,
+                    )
+        except Exception as _st_e:
+            logger.debug("simple_turn hard-deny skip: %s", _st_e)
     try:
         from backend.agent.decisive import orchestration_cap_results
 
         _max_orch = int(getattr(settings, "agent_max_orch_tools_per_round", 1) or 1)
-        _capped_results = orchestration_cap_results(
-            tool_calls, max_orch=_max_orch
-        )
+        _capped_results = {
+            **_capped_results,
+            **orchestration_cap_results(tool_calls, max_orch=_max_orch),
+        }
         if _capped_results:
             logger.warning(
                 "orchestration cap: skipped %s crew/delegate calls (max=%s) session=%s",
@@ -1022,7 +1045,30 @@ async def run_tool_round(
             packs = [str(x).strip().lower() for x in packs if str(x).strip()]
             if action == "list" or not packs:
                 continue
+            # P0: simple turn must not re-arm crew/cluster/full dispatch tools mid-turn
+            if state.simple_turn:
+                blocked = {
+                    "crew",
+                    "cluster",
+                    "workforce",
+                    "subagent",
+                    "delegate",
+                    "full",
+                    "*",
+                    "all",
+                    "everything",
+                }
+                packs = [p for p in packs if p not in blocked]
+                if not packs:
+                    logger.info(
+                        "use_tool_pack: blocked crew/full expand on simple_turn"
+                    )
+                    continue
             new_filter = merge_tools_with_packs(state.enabled_tools_filter, packs)
+            # simple_turn: never accept filter=None (ALL tools)
+            if state.simple_turn and new_filter is None:
+                logger.info("use_tool_pack: rejected ALL expand on simple_turn")
+                continue
             if new_filter is None and state.enabled_tools_filter is not None:
                 state.enabled_tools_filter = None
                 expanded_any = True
@@ -1034,12 +1080,27 @@ async def run_tool_round(
                     if pk not in state.scene_plan.packs:
                         state.scene_plan.packs.append(pk)
         if expanded_any:
+            # Re-strip dispatch tools if simple_turn (merge may have re-added names)
+            if state.simple_turn and state.enabled_tools_filter is not None:
+                from backend.agent.simple_intent import DISPATCH_TOOL_NAMES
+
+                state.enabled_tools_filter = [
+                    n
+                    for n in state.enabled_tools_filter
+                    if n not in DISPATCH_TOOL_NAMES
+                ]
             state.tools = await loop._load_tools(
                 session_id,
                 enabled_skills,
                 state.enabled_tools_filter,
                 user_input=user_input,
             )
+            if state.simple_turn:
+                from backend.agent.simple_intent import filter_dispatch_tools_from_schema
+
+                state.tools = filter_dispatch_tools_from_schema(
+                    state.tools, force=True
+                )
             # K-03：pack 扩容后必须再次按进程能力裁剪（防可见性泄漏）
             try:
                 from backend.agent.cap_tools import filter_tools_for_process

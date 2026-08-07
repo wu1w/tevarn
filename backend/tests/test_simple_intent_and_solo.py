@@ -33,6 +33,10 @@ def test_not_simple_when_team_or_heavy():
     assert not is_simple_session_intent("批一下提权")
     assert not is_simple_session_intent("让工程师改登录页")
     assert not is_simple_session_intent("查一下员工进度")
+    assert not is_simple_session_intent("查一下工程师进度")
+    assert not is_simple_session_intent("看看工程师在干嘛")
+    assert not is_simple_session_intent("查一下工程师")
+    assert not is_simple_session_intent("查一下工程师怎么样")
     assert wants_team_dispatch("让工程师改登录页")
     # Definition about workforce must not strip crew tools
     assert not is_simple_session_intent("什么是编制里的工单机制？")

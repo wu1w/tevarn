@@ -825,11 +825,13 @@ fn mobile_live_overlays(v: &Value) -> Vec<Value> {
                 .or_else(|| v.pointer("/tool/name"))
                 .and_then(|x| x.as_str())
                 .unwrap_or("tool");
+            // Prefer explicit tool call ids; avoid event envelope `id` (not a call id).
             let tool_call_id = v
                 .get("tool_call_id")
-                .or_else(|| v.get("id"))
                 .or_else(|| v.get("call_id"))
+                .or_else(|| v.pointer("/tool/id"))
                 .and_then(|x| x.as_str())
+                .filter(|s| !s.is_empty())
                 .unwrap_or("");
             let status = v
                 .get("status")
@@ -839,7 +841,11 @@ fn mobile_live_overlays(v: &Value) -> Vec<Value> {
                 } else {
                     "completed"
                 });
-            let ok = status != "failed" && status != "error";
+            let ok = if let Some(b) = v.get("ok").and_then(|x| x.as_bool()) {
+                b
+            } else {
+                status != "failed" && status != "error" && status != "denied"
+            };
             let preview = v
                 .get("result")
                 .or_else(|| v.get("output"))
@@ -1103,6 +1109,7 @@ fn emit_http_tool_progress(
                 .and_then(|meta| meta.get("name").and_then(|n| n.as_str()))
                 .unwrap_or("tool");
             let preview: String = message_text(&m.content).chars().take(120).collect();
+            // Prefer metadata tool_call_id; fall back to top-level fields / message id.
             let tid = m
                 .metadata
                 .as_ref()
@@ -1111,10 +1118,38 @@ fn emit_http_tool_progress(
                         .or_else(|| meta.get("call_id"))
                         .and_then(|x| x.as_str())
                 })
+                .or_else(|| {
+                    m.metadata
+                        .as_ref()
+                        .and_then(|meta| meta.get("id").and_then(|x| x.as_str()))
+                })
+                .filter(|s| !s.is_empty())
                 .unwrap_or("")
                 .to_string();
-            let key = format!("end:{}:{}", m.id, name);
+            // Infer success from metadata when present; default true only if no status.
+            let ok = m
+                .metadata
+                .as_ref()
+                .and_then(|meta| {
+                    if let Some(v) = meta.get("ok") {
+                        return Some(v.as_bool().unwrap_or(false));
+                    }
+                    let st = meta
+                        .get("status")
+                        .or_else(|| meta.get("state"))
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_ascii_lowercase();
+                    if st.is_empty() {
+                        None
+                    } else {
+                        Some(!(st.contains("fail") || st.contains("error") || st.contains("denied")))
+                    }
+                })
+                .unwrap_or(true);
+            let key = format!("end:{}:{}:{}", m.id, name, tid);
             if seen_tools.insert(key) {
+                let mark = if ok { "✓" } else { "✗" };
                 st.broadcast_event_for_session(
                     Some(session_id),
                     &json!({
@@ -1122,7 +1157,7 @@ fn emit_http_tool_progress(
                         "phase": "end",
                         "name": name,
                         "tool_call_id": tid,
-                        "ok": true,
+                        "ok": ok,
                         "preview": preview,
                         "source": "http_progress",
                     }),
@@ -1131,7 +1166,7 @@ fn emit_http_tool_progress(
                     Some(session_id),
                     &json!({
                         "type": "mobile_status",
-                        "detail": format!("工具 · {name} ✓"),
+                        "detail": format!("工具 · {name} {mark}"),
                         "state": "thinking",
                         "source": "http_progress",
                     }),
@@ -1143,7 +1178,9 @@ fn emit_http_tool_progress(
 
 /// Independent of PC event WS: poll HTTP messages until the **final** assistant
 /// (after any tool loop) is stable, then push full text + done to Flutter.
+/// One generation per session — newer send cancels older watchdogs.
 fn spawn_turn_completion_watchdog(st: AppState, session_id: String, user_content: String) {
+    let gen = st.next_watchdog_gen(&session_id);
     tokio::spawn(async move {
         let needle = user_content.trim();
         if needle.is_empty() {
@@ -1158,9 +1195,16 @@ fn spawn_turn_completion_watchdog(st: AppState, session_id: String, user_content
         // Adaptive poll: 500ms while tools progress / no final; back off to 1.2s when
         // live WS is healthy (browser_subs non-empty) to cut list_messages load.
         for tick in 0..600u32 {
+            // Cancelled by a newer send on this session
+            if st.current_watchdog_gen(&session_id) != gen {
+                return;
+            }
             let live_ui = !st.browser_subs.is_empty();
             let delay_ms = if live_ui && tick > 4 { 1200u64 } else { 500u64 };
             tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+            if st.current_watchdog_gen(&session_id) != gen {
+                return;
+            }
             let msgs = match st.client.list_messages(&session_id, 80).await {
                 Ok(m) => m,
                 Err(_) => continue,
@@ -1330,26 +1374,52 @@ fn ensure_approval_watch(st: AppState) {
                 continue;
             }
             if !st.client.is_authenticated() {
+                // Push badge clear so UI does not keep a stale pending count.
                 if last_pending != 0 {
                     last_pending = 0;
+                    st.broadcast_event(&json!({
+                        "type": "mobile_approval_badge",
+                        "pending": 0,
+                    }));
                 }
                 continue;
             }
-            let esc = st.client.list_escalations(Some("pending")).await.ok();
-            let evo = st.client.list_evolution_proposals().await.ok();
-            let count_items = |v: &Value| -> usize {
-                if let Some(a) = v.as_array() {
+            let esc = st.client.list_escalations(Some("pending")).await;
+            let evo = st.client.list_evolution_proposals().await;
+            // On API failure keep last_pending (never broadcast a false zero).
+            if esc.is_err() && evo.is_err() {
+                continue;
+            }
+            let count_items = |v: &Value, pending_only: bool| -> usize {
+                let arr: Option<&Vec<Value>> = if let Some(a) = v.as_array() {
+                    Some(a)
+                } else {
+                    ["escalations", "proposals", "items", "data", "results"]
+                        .iter()
+                        .find_map(|key| v.get(*key).and_then(|x| x.as_array()))
+                };
+                let Some(a) = arr else { return 0 };
+                if !pending_only {
                     return a.len();
                 }
-                for key in ["escalations", "proposals", "items", "data", "results"] {
-                    if let Some(a) = v.get(key).and_then(|x| x.as_array()) {
-                        return a.len();
-                    }
-                }
-                0
+                a.iter()
+                    .filter(|item| {
+                        let st = item
+                            .get("status")
+                            .or_else(|| item.get("state"))
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("pending")
+                            .to_ascii_lowercase();
+                        st == "pending"
+                            || st == "open"
+                            || st == "awaiting"
+                            || st.contains("pend")
+                    })
+                    .count()
             };
-            let esc_n = esc.as_ref().map(count_items).unwrap_or(0);
-            let evo_n = evo.as_ref().map(count_items).unwrap_or(0);
+            // Escalations already requested as pending; evolution may include all — filter.
+            let esc_n = esc.as_ref().map(|v| count_items(v, false)).unwrap_or(0);
+            let evo_n = evo.as_ref().map(|v| count_items(v, true)).unwrap_or(0);
             let pending = (esc_n + evo_n) as i64;
             if pending != last_pending {
                 let grew = pending > last_pending && last_pending >= 0;
@@ -1374,43 +1444,98 @@ fn ensure_approval_watch(st: AppState) {
     });
 }
 
+/// Remove chat from map only if `conn_id` still matches (never kill a newer socket).
+fn remove_chat_if_conn(st: &AppState, session_id: &str, conn_id: u64) -> bool {
+    // Atomic predicate remove: check-and-delete under DashMap entry lifecycle.
+    let mut removed = false;
+    st.chats.remove_if(session_id, |_, c| {
+        if c.conn_id() == conn_id {
+            removed = true;
+            true
+        } else {
+            false
+        }
+    });
+    removed
+}
+
+/// Soft close reasons: reconnect / half-open — do not hard-finish an in-flight turn
+/// (HTTP watchdog + gap-fill continue). Hard closes (close frame / stream end / errors)
+/// still finish when turn_active.
+fn is_soft_close_reason(reason: &str) -> bool {
+    let r = reason.to_ascii_lowercase();
+    r.contains("path")
+        || r.contains("pong timeout")
+        || r.contains("idle timeout")
+        || r.contains("half-open")
+        || r.contains("writer end") // path close often surfaces as writer end if reason raced
+}
+
 async fn ensure_chat(st: AppState, session_id: String) -> Result<Arc<ChatConnection>, String> {
     if session_id.is_empty() || session_id == LOCAL_SESSION_ID {
         return Err("invalid remote session".into());
     }
-    // Drop dead cache: VPS WS can close after pair while UI still shows "已连接".
-    // Reusing a dead channel yields "chat channel closed" on every send.
+    // Single-flight connect per session (open_session + WS chat can race).
+    let lock = st
+        .chat_connect_locks
+        .entry(session_id.clone())
+        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+        .clone();
+    let _guard = lock.lock().await;
+
     if let Some(c) = st.chats.get(&session_id) {
         if c.is_alive() {
             return Ok(c.clone());
         }
+        let old = c.clone();
         drop(c);
-        st.chats.remove(&session_id);
+        remove_chat_if_conn(&st, &session_id, old.conn_id());
         tracing::info!(%session_id, "dropped dead PC chat socket; reconnecting");
+        tokio::spawn(async move {
+            old.close().await;
+        });
     }
+
     let (evt_tx, mut evt_rx) = mpsc::unbounded_channel::<ChatEvent>();
     let st_fan = st.clone();
     let sid_fan = session_id.clone();
+    // Fanout starts after connect so we can stamp conn_id into the task.
+    let conn = ChatConnection::connect(&st.client, &session_id, evt_tx)
+        .await
+        .map_err(|e| {
+            format!(
+                "PC WebSocket 连接失败（{e}）。请确认 VPS 隧道在线且 base_url 含 /t/{{id}}"
+            )
+        })?;
+    let conn_id = conn.conn_id();
+    // Insert BEFORE fanout so early sync frames are not dropped by still_mine check.
+    st.chats.insert(session_id.clone(), conn.clone());
+    let st_fan2 = st_fan.clone();
+    let sid_fan2 = sid_fan.clone();
     tokio::spawn(async move {
-        // Only map idle→done after this socket has seen a real turn start.
-        // Avoids pair/open sync "status:idle" ending a brand-new Flutter stream.
         let mut turn_active = false;
         let mut done_emitted = false;
         while let Some(ev) = evt_rx.recv().await {
             match ev {
                 ChatEvent::Json(v) => {
+                    // If this connection is no longer mapped, stop fanning (prevents ghost tokens).
+                    let still_mine = st_fan2
+                        .chats
+                        .get(&sid_fan2)
+                        .map(|c| c.conn_id() == conn_id)
+                        .unwrap_or(false);
+                    if !still_mine {
+                        // Drain silently until channel ends
+                        continue;
+                    }
                     if is_remote_turn_started(&v) {
                         turn_active = true;
                         done_emitted = false;
                     }
-                    st_fan.broadcast_event_for_session(Some(&sid_fan), &v);
-                    // Live tool/status overlays for Flutter (Codex-like).
+                    st_fan2.broadcast_event_for_session(Some(&sid_fan2), &v);
                     for ov in mobile_live_overlays(&v) {
-                        st_fan.broadcast_event_for_session(Some(&sid_fan), &ov);
+                        st_fan2.broadcast_event_for_session(Some(&sid_fan2), &ov);
                     }
-                    // Do NOT finish on bare status=idle during tool loops — that
-                    // caused "PC has final answer, phone stuck / only first msg".
-                    // Only hard-finish on run.completed; HTTP watchdog covers the rest.
                     let ty = v.get("type").and_then(|x| x.as_str()).unwrap_or("");
                     let run_done = ty == "run_event"
                         && v.get("topic")
@@ -1424,56 +1549,47 @@ async fn ensure_chat(st: AppState, session_id: String) -> Result<Arc<ChatConnect
                     if turn_active && !done_emitted && run_done {
                         done_emitted = true;
                         turn_active = false;
-                        emit_chat_done(&st_fan, &sid_fan, "run_finished");
+                        emit_chat_done(&st_fan2, &sid_fan2, "run_finished");
                     }
                 }
                 ChatEvent::Error(e) => {
-                    st_fan.flush_session_deltas(&sid_fan);
-                    st_fan.chats.remove(&sid_fan);
-                    st_fan.broadcast_event_for_session(
-                        Some(&sid_fan),
-                        &json!({"type":"error","error": e, "session_id": sid_fan}),
+                    st_fan2.flush_session_deltas(&sid_fan2);
+                    remove_chat_if_conn(&st_fan2, &sid_fan2, conn_id);
+                    st_fan2.broadcast_event_for_session(
+                        Some(&sid_fan2),
+                        &json!({"type":"error","error": e, "session_id": sid_fan2}),
                     );
-                    // Unblock Flutter even if it only waits on done.
                     if !done_emitted {
                         done_emitted = true;
-                        emit_chat_done(&st_fan, &sid_fan, "socket_error");
+                        emit_chat_done(&st_fan2, &sid_fan2, "socket_error");
                     }
                     turn_active = false;
                 }
                 ChatEvent::Closed(r) => {
-                    st_fan.flush_session_deltas(&sid_fan);
-                    st_fan.chats.remove(&sid_fan);
-                    // Path switch: recoverable — do not end Flutter turn (HTTP watchdog continues).
-                    let pathish = r.to_ascii_lowercase().contains("path");
-                    let recoverable = pathish || !turn_active;
-                    st_fan.broadcast_event_for_session(
-                        Some(&sid_fan),
+                    st_fan2.flush_session_deltas(&sid_fan2);
+                    remove_chat_if_conn(&st_fan2, &sid_fan2, conn_id);
+                    let soft = is_soft_close_reason(&r);
+                    // Path / half-open: recoverable so Flutter HTTP watchdog continues.
+                    let recoverable = soft || !turn_active;
+                    st_fan2.broadcast_event_for_session(
+                        Some(&sid_fan2),
                         &json!({
                             "type": "closed",
                             "reason": r,
-                            "session_id": sid_fan,
+                            "session_id": sid_fan2,
                             "recoverable": recoverable,
                         }),
                     );
-                    // Hard-finish only when a turn was in flight and this is a hard socket death.
-                    if turn_active && !done_emitted && !pathish {
+                    // Hard-finish only on hard socket death with an active turn.
+                    if turn_active && !done_emitted && !soft {
                         done_emitted = true;
-                        emit_chat_done(&st_fan, &sid_fan, "socket_closed");
+                        emit_chat_done(&st_fan2, &sid_fan2, "socket_closed");
                     }
                     turn_active = false;
                 }
             }
         }
     });
-    let conn = ChatConnection::connect(&st.client, &session_id, evt_tx)
-        .await
-        .map_err(|e| {
-            format!(
-                "PC WebSocket 连接失败（{e}）。请确认 VPS 隧道在线且 base_url 含 /t/{{id}}"
-            )
-        })?;
-    st.chats.insert(session_id, conn.clone());
     Ok(conn)
 }
 
@@ -3068,31 +3184,26 @@ async fn path_reconnect(
     State(st): State<AppState>,
     Json(body): Json<PathReconnectBody>,
 ) -> Json<Value> {
-    // Flush coalesced tokens + drop PC chat sockets on old path (half-dead risk).
-    // Ring buffer keeps recent events for Flutter after_seq gap fill.
-    if let Some(sid) = st.active_session.read().clone() {
-        st.flush_session_deltas(&sid);
-    }
+    // Flush coalesced tokens for active + open chats (all coalesce keys).
+    st.flush_all_session_deltas();
     st.broadcast_event(&json!({
         "type": "mobile_status",
         "state": "path_switching",
         "detail": "路径切换中…",
         "source": "path_reconnect",
     }));
-    // Quietly drop PC sockets; mark reason path so fanout Closed is recoverable.
+    // Quietly drop PC sockets with path reason (recoverable Closed).
     let dropped_ids: Vec<String> = st.chats.iter().map(|e| e.key().clone()).collect();
     for id in &dropped_ids {
         if let Some((_, conn)) = st.chats.remove(id) {
-            // Best-effort async close without blocking path probe too long
             let c = conn.clone();
             tokio::spawn(async move {
-                c.close().await;
+                c.close_path().await;
             });
         }
     }
     let dropped = dropped_ids.len();
 
-    // Retry deferred claim first (scan on 5G, claim when home / on TS)
     let claim_res = if body.claim.unwrap_or(true) {
         try_deferred_claim(&st).await
     } else {
@@ -3103,7 +3214,6 @@ async fn path_reconnect(
     let email = body.email.unwrap_or_default();
     let password = body.password.unwrap_or_default();
 
-    // Refresh candidates from local mesh knowledge (DHCP drift)
     let mesh = st.mesh.status();
     let port = st.mesh.backend_port();
     let _ = st.path.refresh_candidates(
@@ -3116,10 +3226,22 @@ async fn path_reconnect(
 
     match try_connect_best(&st, &extras, &email, &password).await {
         Ok(mut v) => {
+            // Re-ensure active session chat socket so send is ready immediately.
+            let active = st.active_session.read().clone();
+            let mut chat_ok = false;
+            if let Some(sid) = active.clone() {
+                match ensure_chat(st.clone(), sid).await {
+                    Ok(_) => chat_ok = true,
+                    Err(err) => {
+                        tracing::warn!(error = %err, "path_reconnect ensure_chat failed");
+                    }
+                }
+            }
             if let Some(obj) = v.as_object_mut() {
                 obj.insert("deferred_claim_result".into(), json!(claim_res));
                 obj.insert("reconnected".into(), json!(true));
                 obj.insert("chats_dropped".into(), json!(dropped));
+                obj.insert("chat_sockets_alive".into(), json!(if chat_ok { 1 } else { 0 }));
                 obj.insert("latest_seq".into(), json!(st.latest_seq()));
             }
             st.broadcast_event(&json!({
@@ -4361,7 +4483,11 @@ async fn handle_ws_client_msg(st: &AppState, v: &Value) -> Result<(), String> {
                         let dead = last_err.contains("channel closed")
                             || last_err.contains("closed")
                             || last_err.contains("WebSocket");
-                        st.chats.remove(&sid);
+                        let cid = chat.conn_id();
+                        remove_chat_if_conn(st, &sid, cid);
+                        tokio::spawn(async move {
+                            chat.close().await;
+                        });
                         if !dead || attempt == 1 {
                             break;
                         }

@@ -1,11 +1,11 @@
 //! WebSocket chat session against Takton `WS /api/ws/{session_id}`.
 //!
-//! Robustness notes:
-//! - Writer and reader both signal Closed/Error so the host cache can drop dead sockets.
-//! - Binary frames are accepted (VPS relay historically lost text opcode).
-//! - App-level `{"type":"ping"}` → PC replies `{"type":"pong"}` (see backend websocket.py).
-//! - Half-open detection: if a ping is not answered by pong within PONG_TIMEOUT_SECS,
-//!   the socket is marked dead (true round-trip, not mere local mpsc health).
+//! Half-open detection (true RTT):
+//! - Send app-level `{"type":"ping"}`; PC replies `{"type":"pong"}` (websocket.py).
+//! - Do **not** re-arm a new ping while one is outstanding.
+//! - If no app pong within PONG_TIMEOUT_SECS → Closed (half-open) + explicit close.
+//! - Protocol WS Ping/Pong only updates last_rx (does not clear app pending).
+//! - Each connection has a unique `conn_id` so host fanout never removes a newer socket.
 
 use crate::client::TaktonClient;
 use crate::error::{Error, Result};
@@ -17,12 +17,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
-/// How often we send an app-level ping.
-const HEARTBEAT_SECS: u64 = 15;
-/// Max time to wait for a pong after sending a ping before declaring half-open.
-const PONG_TIMEOUT_SECS: u64 = 20;
-/// Absolute inbound silence (any frame) — secondary guard.
-const IDLE_DEAD_SECS: u64 = 60;
+const HEARTBEAT_SECS: u64 = 12;
+const PONG_TIMEOUT_SECS: u64 = 18;
+/// Secondary guard; app ping catches half-open sooner. Long tools may idle on WS.
+const IDLE_DEAD_SECS: u64 = 180;
+
+static NEXT_CONN_ID: AtomicU64 = AtomicU64::new(1);
 
 fn now_secs() -> u64 {
     SystemTime::now()
@@ -31,11 +31,16 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-fn is_pong(v: &Value) -> bool {
+fn is_app_pong(v: &Value) -> bool {
     v.get("type")
         .and_then(|t| t.as_str())
         .map(|s| s.eq_ignore_ascii_case("pong"))
         .unwrap_or(false)
+}
+
+enum OutFrame {
+    Text(String),
+    Pong(Vec<u8>),
 }
 
 #[derive(Debug, Clone)]
@@ -46,16 +51,23 @@ pub enum ChatEvent {
 }
 
 pub struct ChatConnection {
-    tx: mpsc::UnboundedSender<String>,
+    conn_id: u64,
+    tx: mpsc::UnboundedSender<OutFrame>,
     alive: Arc<AtomicBool>,
     last_rx: Arc<AtomicU64>,
-    last_pong: Arc<AtomicU64>,
-    /// Unix secs when the outstanding ping was sent; 0 = none awaiting.
     pending_ping_at: Arc<AtomicU64>,
-    _close: Mutex<Option<oneshot::Sender<()>>>,
+    close_reason: Arc<Mutex<Option<String>>>,
+    /// When true, reader/writer terminal reasons are rewritten as path_switch (recoverable).
+    path_closing: Arc<AtomicBool>,
+    /// Shared with heartbeat so timeout can close the sink.
+    close_tx: Arc<Mutex<Option<oneshot::Sender<()>>>>,
 }
 
 impl ChatConnection {
+    pub fn conn_id(&self) -> u64 {
+        self.conn_id
+    }
+
     pub async fn connect(
         client: &TaktonClient,
         session_id: &str,
@@ -66,26 +78,35 @@ impl ChatConnection {
             .await
             .map_err(|e| Error::Ws(format!("connect {url}: {e}")))?;
         let (mut sink, mut stream) = ws.split();
-        let (out_tx, mut out_rx) = mpsc::unbounded_channel::<String>();
-        let (close_tx, mut close_rx) = oneshot::channel::<()>();
+        let (out_tx, mut out_rx) = mpsc::unbounded_channel::<OutFrame>();
+        let (close_tx_raw, mut close_rx) = oneshot::channel::<()>();
         let alive = Arc::new(AtomicBool::new(true));
         let ended = Arc::new(AtomicBool::new(false));
         let t0 = now_secs();
         let last_rx = Arc::new(AtomicU64::new(t0));
-        let last_pong = Arc::new(AtomicU64::new(t0));
         let pending_ping_at = Arc::new(AtomicU64::new(0));
+        let close_reason = Arc::new(Mutex::new(None));
+        let path_closing = Arc::new(AtomicBool::new(false));
+        let close_tx = Arc::new(Mutex::new(Some(close_tx_raw)));
+        let conn_id = NEXT_CONN_ID.fetch_add(1, Ordering::SeqCst);
 
-        // writer
         let alive_w = alive.clone();
         let ended_w = ended.clone();
         let event_w = on_event.clone();
+        let close_reason_w = close_reason.clone();
+        let path_closing_w = path_closing.clone();
         tokio::spawn(async move {
             loop {
                 tokio::select! {
                     msg = out_rx.recv() => {
                         match msg {
-                            Some(s) => {
+                            Some(OutFrame::Text(s)) => {
                                 if sink.send(Message::Text(s.into())).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Some(OutFrame::Pong(p)) => {
+                                if sink.send(Message::Pong(p.into())).await.is_err() {
                                     break;
                                 }
                             }
@@ -100,29 +121,42 @@ impl ChatConnection {
             }
             alive_w.store(false, Ordering::SeqCst);
             if !ended_w.swap(true, Ordering::SeqCst) {
-                let _ = event_w.send(ChatEvent::Closed("writer end".into()));
+                let reason = if path_closing_w.load(Ordering::SeqCst) {
+                    "path_switch".into()
+                } else {
+                    close_reason_w
+                        .lock()
+                        .await
+                        .take()
+                        .unwrap_or_else(|| "writer end".into())
+                };
+                let _ = event_w.send(ChatEvent::Closed(reason));
             }
         });
 
-        // reader
         let alive_r = alive.clone();
         let ended_r = ended.clone();
         let last_rx_r = last_rx.clone();
-        let last_pong_r = last_pong.clone();
         let pending_r = pending_ping_at.clone();
         let event_tx = on_event.clone();
+        let out_tx_r = out_tx.clone();
+        let path_closing_r = path_closing.clone();
         tokio::spawn(async move {
             let mut terminal_sent = false;
+            let terminal_reason = |default: &str| -> String {
+                if path_closing_r.load(Ordering::SeqCst) {
+                    "path_switch".into()
+                } else {
+                    default.into()
+                }
+            };
             while let Some(item) = stream.next().await {
                 last_rx_r.store(now_secs(), Ordering::SeqCst);
                 match item {
                     Ok(Message::Text(t)) => match serde_json::from_str::<Value>(&t) {
                         Ok(v) => {
-                            if is_pong(&v) {
-                                let n = now_secs();
-                                last_pong_r.store(n, Ordering::SeqCst);
+                            if is_app_pong(&v) {
                                 pending_r.store(0, Ordering::SeqCst);
-                                // Do not fan-out pure keepalive pongs to Flutter UI.
                                 continue;
                             }
                             let _ = event_tx.send(ChatEvent::Json(v));
@@ -133,9 +167,7 @@ impl ChatConnection {
                     },
                     Ok(Message::Binary(b)) => match serde_json::from_slice::<Value>(&b) {
                         Ok(v) => {
-                            if is_pong(&v) {
-                                let n = now_secs();
-                                last_pong_r.store(n, Ordering::SeqCst);
+                            if is_app_pong(&v) {
                                 pending_r.store(0, Ordering::SeqCst);
                                 continue;
                             }
@@ -145,18 +177,14 @@ impl ChatConnection {
                             let _ = event_tx.send(ChatEvent::Error(format!("binary frame: {e}")));
                         }
                     },
-                    // Protocol-level WS ping/pong also counts as liveness.
-                    Ok(Message::Ping(_)) => {
-                        last_pong_r.store(now_secs(), Ordering::SeqCst);
-                        pending_r.store(0, Ordering::SeqCst);
+                    Ok(Message::Ping(p)) => {
+                        let _ = out_tx_r.send(OutFrame::Pong(p.to_vec()));
                     }
-                    Ok(Message::Pong(_)) => {
-                        last_pong_r.store(now_secs(), Ordering::SeqCst);
-                        pending_r.store(0, Ordering::SeqCst);
-                    }
+                    Ok(Message::Pong(_)) => {}
                     Ok(Message::Close(_)) => {
                         if !ended_r.swap(true, Ordering::SeqCst) {
-                            let _ = event_tx.send(ChatEvent::Closed("close frame".into()));
+                            let _ = event_tx
+                                .send(ChatEvent::Closed(terminal_reason("close frame")));
                             terminal_sent = true;
                         }
                         break;
@@ -164,7 +192,11 @@ impl ChatConnection {
                     Ok(_) => {}
                     Err(e) => {
                         if !ended_r.swap(true, Ordering::SeqCst) {
-                            let _ = event_tx.send(ChatEvent::Error(e.to_string()));
+                            if path_closing_r.load(Ordering::SeqCst) {
+                                let _ = event_tx.send(ChatEvent::Closed("path_switch".into()));
+                            } else {
+                                let _ = event_tx.send(ChatEvent::Error(e.to_string()));
+                            }
                             terminal_sent = true;
                         }
                         break;
@@ -173,28 +205,29 @@ impl ChatConnection {
             }
             alive_r.store(false, Ordering::SeqCst);
             if !terminal_sent && !ended_r.swap(true, Ordering::SeqCst) {
-                let _ = event_tx.send(ChatEvent::Closed("stream end".into()));
+                let _ = event_tx.send(ChatEvent::Closed(terminal_reason("stream end")));
             }
         });
 
         if let Some(token) = client.token() {
-            let _ = out_tx.send(json!({ "type": "auth", "token": token }).to_string());
+            let _ = out_tx.send(OutFrame::Text(
+                json!({ "type": "auth", "token": token }).to_string(),
+            ));
         }
-        let _ = out_tx.send(json!({ "type": "sync" }).to_string());
+        let _ = out_tx.send(OutFrame::Text(json!({ "type": "sync" }).to_string()));
 
-        // Heartbeat: true round-trip — ping must be answered by pong.
         let alive_h = alive.clone();
         let ended_h = ended.clone();
         let last_rx_h = last_rx.clone();
-        let last_pong_h = last_pong.clone();
         let pending_h = pending_ping_at.clone();
         let out_tx_h = out_tx.clone();
         let event_h = on_event;
+        let close_tx_h = close_tx.clone();
         tokio::spawn(async move {
-            let mut interval =
-                tokio::time::interval(std::time::Duration::from_secs(HEARTBEAT_SECS));
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(3));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             interval.tick().await;
+            let mut last_ping_sent: u64 = now_secs();
             loop {
                 interval.tick().await;
                 if !alive_h.load(Ordering::SeqCst) {
@@ -202,20 +235,23 @@ impl ChatConnection {
                 }
                 let now = now_secs();
 
-                // Outstanding ping never got a pong?
                 let pending = pending_h.load(Ordering::SeqCst);
                 if pending > 0 && now.saturating_sub(pending) > PONG_TIMEOUT_SECS {
                     alive_h.store(false, Ordering::SeqCst);
+                    // Prefer closing sink; writer emits Closed with reason if we set it first.
+                    // Emit Closed here only if writer never runs (ended swap wins once).
                     if !ended_h.swap(true, Ordering::SeqCst) {
                         let _ = event_h.send(ChatEvent::Closed(format!(
                             "pong timeout {}s (half-open)",
                             now.saturating_sub(pending)
                         )));
                     }
+                    if let Some(tx) = close_tx_h.lock().await.take() {
+                        let _ = tx.send(());
+                    }
                     break;
                 }
 
-                // Secondary: no inbound traffic at all (including pongs)
                 let idle = now.saturating_sub(last_rx_h.load(Ordering::SeqCst));
                 if idle > IDLE_DEAD_SECS {
                     alive_h.store(false, Ordering::SeqCst);
@@ -224,46 +260,50 @@ impl ChatConnection {
                             "idle timeout {idle}s (half-open?)"
                         )));
                     }
-                    break;
-                }
-
-                // Send next app-level ping (PC responds with type=pong)
-                let sent_at = now_secs();
-                pending_h.store(sent_at, Ordering::SeqCst);
-                if out_tx_h
-                    .send(
-                        json!({
-                            "type": "ping",
-                            "ts": sent_at,
-                        })
-                        .to_string(),
-                    )
-                    .is_err()
-                {
-                    alive_h.store(false, Ordering::SeqCst);
-                    if !ended_h.swap(true, Ordering::SeqCst) {
-                        let _ =
-                            event_h.send(ChatEvent::Closed("heartbeat channel closed".into()));
+                    if let Some(tx) = close_tx_h.lock().await.take() {
+                        let _ = tx.send(());
                     }
                     break;
                 }
-                // Touch last_pong expectation: if last_pong is ancient and we never
-                // got any pong after first few pings, next loop catches via pending.
-                let _ = last_pong_h.load(Ordering::SeqCst);
+
+                if pending == 0 && now.saturating_sub(last_ping_sent) >= HEARTBEAT_SECS {
+                    let sent_at = now_secs();
+                    if pending_h
+                        .compare_exchange(0, sent_at, Ordering::SeqCst, Ordering::SeqCst)
+                        .is_ok()
+                    {
+                        last_ping_sent = sent_at;
+                        if out_tx_h
+                            .send(OutFrame::Text(
+                                json!({ "type": "ping", "ts": sent_at }).to_string(),
+                            ))
+                            .is_err()
+                        {
+                            pending_h.store(0, Ordering::SeqCst);
+                            alive_h.store(false, Ordering::SeqCst);
+                            if !ended_h.swap(true, Ordering::SeqCst) {
+                                let _ = event_h
+                                    .send(ChatEvent::Closed("heartbeat channel closed".into()));
+                            }
+                            break;
+                        }
+                    }
+                }
             }
         });
 
         Ok(Arc::new(Self {
+            conn_id,
             tx: out_tx,
             alive,
             last_rx,
-            last_pong,
             pending_ping_at,
-            _close: Mutex::new(Some(close_tx)),
+            close_reason,
+            path_closing,
+            close_tx,
         }))
     }
 
-    /// False when closed, write channel dead, pong overdue, or idle too long.
     pub fn is_alive(&self) -> bool {
         if !self.alive.load(Ordering::SeqCst) || self.tx.is_closed() {
             return false;
@@ -274,7 +314,7 @@ impl ChatConnection {
             return false;
         }
         let last_rx = self.last_rx.load(Ordering::SeqCst);
-        if now.saturating_sub(last_rx) > IDLE_DEAD_SECS + HEARTBEAT_SECS {
+        if now.saturating_sub(last_rx) > IDLE_DEAD_SECS {
             return false;
         }
         true
@@ -285,7 +325,7 @@ impl ChatConnection {
             return Err(Error::Ws("chat channel closed".into()));
         }
         self.tx
-            .send(v.to_string())
+            .send(OutFrame::Text(v.to_string()))
             .map_err(|_| Error::Ws("chat channel closed".into()))
     }
 
@@ -320,13 +360,38 @@ impl ChatConnection {
 
     pub fn ping(&self) -> Result<()> {
         let sent_at = now_secs();
-        self.pending_ping_at.store(sent_at, Ordering::SeqCst);
-        self.send_json(json!({ "type": "ping", "ts": sent_at }))
+        if self
+            .pending_ping_at
+            .compare_exchange(0, sent_at, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return Ok(());
+        }
+        match self.send_json(json!({ "type": "ping", "ts": sent_at })) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                self.pending_ping_at.store(0, Ordering::SeqCst);
+                Err(e)
+            }
+        }
     }
 
     pub async fn close(&self) {
         self.alive.store(false, Ordering::SeqCst);
-        if let Some(tx) = self._close.lock().await.take() {
+        if let Some(tx) = self.close_tx.lock().await.take() {
+            let _ = tx.send(());
+        }
+    }
+
+    /// Path switch — any terminal reason becomes path_switch (recoverable for fanout).
+    pub async fn close_path(&self) {
+        self.path_closing.store(true, Ordering::SeqCst);
+        {
+            let mut g = self.close_reason.lock().await;
+            *g = Some("path_switch".into());
+        }
+        self.alive.store(false, Ordering::SeqCst);
+        if let Some(tx) = self.close_tx.lock().await.take() {
             let _ = tx.send(());
         }
     }

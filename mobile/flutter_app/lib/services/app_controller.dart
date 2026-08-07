@@ -96,6 +96,11 @@ class AppController extends ChangeNotifier {
   bool _flushingOffline = false;
   /// When true, send() will not re-enqueue on remote failures (flush path).
   bool _fromOfflineFlush = false;
+  /// Re-enter flush if items were enqueued while a flush was running.
+  bool _offlineQueueDirty = false;
+  final Set<String> _decideInFlight = {};
+  /// Serialize user send vs offline flush (prevents dual streams).
+  bool _sendBusy = false;
 
   bool get pcConnected => state['authenticated'] == true;
   int get offlineQueueLength => offlineQueue.length;
@@ -203,19 +208,43 @@ class AppController extends ChangeNotifier {
   }
 
   void _applyMessages(List<ChatMsg> list, {required String forSurface}) {
+    // Preserve client-only rows (inline confirm, offline placeholders)
+    final preserve = <ChatMsg>[];
+    if (surface == forSurface) {
+      for (final m in messages) {
+        if (m.role == 'confirm' ||
+            m.id.startsWith('u-q-') ||
+            m.id.startsWith('a-q-') ||
+            m.who == '发送队列' ||
+            m.who.contains('入队')) {
+          preserve.add(m.copyMeta());
+        }
+      }
+    }
+    final next = list.map((m) => m.copyMeta()).toList();
     if (forSurface == 'local') {
       _localMsgCache
         ..clear()
-        ..addAll(list.map((m) => m.copyMeta()));
+        ..addAll(next.map((m) => m.copyMeta()));
     } else {
       _remoteMsgCache
         ..clear()
-        ..addAll(list.map((m) => m.copyMeta()));
+        ..addAll(next.map((m) => m.copyMeta()));
+      for (final p in preserve) {
+        if (!_remoteMsgCache.any((m) => m.id == p.id)) {
+          _remoteMsgCache.add(p.copyMeta());
+        }
+      }
     }
     if (surface == forSurface) {
       messages
         ..clear()
-        ..addAll(list.map((m) => m.copyMeta()));
+        ..addAll(next.map((m) => m.copyMeta()));
+      for (final p in preserve) {
+        if (!messages.any((m) => m.id == p.id)) {
+          messages.add(p);
+        }
+      }
     }
   }
 
@@ -297,6 +326,13 @@ class AppController extends ChangeNotifier {
     try {
       await refreshAll().timeout(const Duration(seconds: 4));
     } catch (_) {}
+    await _loadOfflineQueue();
+    if (offlineQueue.isNotEmpty) {
+      showToast(
+        '有 ${offlineQueue.length} 条未发送消息 · 连上 PC 后自动发送',
+      );
+      pulseIsland(text: '队列 ${offlineQueue.length}', kind: 'conn');
+    }
     unawaited(refreshPath());
 
     // Soft surface while offline: do NOT wipe preferred mode from prefs.
@@ -900,18 +936,19 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  Future<void> _handleDecideAction(String actionId) async {
+  /// Returns true on successful decide API call.
+  Future<bool> _handleDecideAction(String actionId) async {
     // decide:kind:id:true|false  (id may contain ':' — take last as bool, first after decide as kind)
     final raw = actionId.substring('decide:'.length);
     final lastColon = raw.lastIndexOf(':');
-    if (lastColon <= 0) return;
+    if (lastColon <= 0) return false;
     final approvedStr = raw.substring(lastColon + 1);
     final rest = raw.substring(0, lastColon);
     final kindSep = rest.indexOf(':');
-    if (kindSep <= 0) return;
+    if (kindSep <= 0) return false;
     final kind = rest.substring(0, kindSep);
     final id = rest.substring(kindSep + 1);
-    if (id.isEmpty) return;
+    if (id.isEmpty) return false;
     final approved = approvedStr == 'true' || approvedStr == '1';
     try {
       final r = await bridge.decide(
@@ -922,7 +959,6 @@ class AppController extends ChangeNotifier {
       );
       if (isOk(r)) {
         showToast(approved ? '已同意' : '已拒绝');
-        // Remove any card that pointed at this decide id
         statusCards.removeWhere(
           (c) =>
               (c.actionId ?? '').contains(id) ||
@@ -934,14 +970,17 @@ class AppController extends ChangeNotifier {
           kind: approved ? StatusCardKind.success : StatusCardKind.info,
           ttlMs: 3500,
         );
-      } else {
-        showToast(humanizeError(r['error'] ?? '审批失败'));
-        // Keep card for retry — re-push if wiped
+        await loadApprovals();
+        return true;
       }
+      showToast('审批失败：${humanizeError(r['error'] ?? '请重试')}');
+      await loadApprovals();
+      return false;
     } catch (e) {
-      showToast(humanizeError(e));
+      showToast('审批失败：${humanizeError(e)}');
+      await loadApprovals();
+      return false;
     }
-    await loadApprovals();
   }
 
   void pushApprovalCard({
@@ -1007,12 +1046,43 @@ class AppController extends ChangeNotifier {
     required bool approved,
     String kind = 'escalation',
   }) async {
-    await _handleDecideAction(
-      decideActionId(id: id, approved: approved, kind: kind),
-    );
-    messages.removeWhere((m) => m.id == 'confirm-$id' || m.role == 'confirm' && m.id.endsWith(id));
-    _remoteMsgCache.removeWhere((m) => m.id == 'confirm-$id');
+    final mid = 'confirm-$id';
+    if (_decideInFlight.contains(id)) return;
+    _decideInFlight.add(id);
+    ChatMsg? saved;
+    final ix = messages.indexWhere((m) => m.id == mid);
+    if (ix >= 0) saved = messages[ix].copyMeta();
+    final savedIndex = ix >= 0 ? ix : messages.length;
+    messages.removeWhere((m) => m.id == mid);
+    _remoteMsgCache.removeWhere((m) => m.id == mid);
     _notify();
+
+    try {
+      final ok = await _handleDecideAction(
+        decideActionId(id: id, approved: approved, kind: kind),
+      );
+      if (!ok && saved != null) {
+        final insertAt = savedIndex.clamp(0, messages.length);
+        if (!messages.any((m) => m.id == mid)) {
+          messages.insert(insertAt, saved);
+        }
+        if (surface == 'remote' &&
+            !_remoteMsgCache.any((m) => m.id == mid)) {
+          _remoteMsgCache.add(saved.copyMeta());
+        }
+        pushStatusCard(
+          title: '审批未成功',
+          body: '请重试同意/拒绝，或打开审批列表',
+          kind: StatusCardKind.warn,
+          actionLabel: '审批列表',
+          actionId: 'open_approve',
+          ttlMs: 8000,
+        );
+      }
+    } finally {
+      _decideInFlight.remove(id);
+      _notify();
+    }
   }
 
   void toggleIslandExpanded() {
@@ -1058,7 +1128,31 @@ class AppController extends ChangeNotifier {
     // Offline queue: remote mode without PC — park message and flush later.
     if (surface == 'remote' && !pcConnected) {
       if (_fromOfflineFlush) return false;
-      return _enqueueOfflineSend(text);
+      return await _enqueueOfflineSend(text);
+    }
+
+    // Single-flight for user + offline flush (no bypass).
+    if (_sendBusy) {
+      if (!_fromOfflineFlush) showToast('正在发送 · 请稍候');
+      return false;
+    }
+    if (streaming) {
+      if (!_fromOfflineFlush) showToast('正在生成 · 请点红色停止按钮');
+      return false;
+    }
+    _sendBusy = true;
+    try {
+      return await _sendBody(text);
+    } finally {
+      _sendBusy = false;
+    }
+  }
+
+  Future<bool> _sendBody(String text) async {
+    // Offline queue: remote mode without PC — park message and flush later.
+    if (surface == 'remote' && !pcConnected) {
+      if (_fromOfflineFlush) return false;
+      return await _enqueueOfflineSend(text);
     }
 
     // Local lightweight agent: works even when LLM not configured
@@ -1116,8 +1210,9 @@ class AppController extends ChangeNotifier {
       final ok = await ensureRemoteSession();
       if (!ok || activeSessionId == null || activeSessionId!.isEmpty) {
         // Session open failed (network) — queue instead of dropping draft
-        if (!pcConnected || (mode.reason.toLowerCase().contains('连'))) {
-          return _enqueueOfflineSend(text);
+        if (!_fromOfflineFlush &&
+            (!pcConnected || mode.reason.toLowerCase().contains('连'))) {
+          return await _enqueueOfflineSend(text);
         }
         return false;
       }
@@ -1359,6 +1454,9 @@ class AppController extends ChangeNotifier {
       format: 'plain',
     ));
     streaming = true;
+    // Default false until we see a clean finish (abort / gen mismatch keep queue).
+    var streamOk = false;
+    var sawAssistantChunk = false;
     islandLive = true;
     islandKind = 'stream';
     islandText = '生成中';
@@ -1384,11 +1482,21 @@ class AppController extends ChangeNotifier {
       var acc = '';
       final liveTools = <ToolCallUi>[];
       await for (final chunk in stream) {
-        // Aborted, switched surface, or a newer stream started
+        // Aborted, switched surface, or a newer stream started → NOT success
         if (!streaming ||
             streamGen != _streamGen ||
             surface != streamSurface) {
+          streamOk = false;
           break;
+        }
+        // Bridge finish honesty mark (remote stream only)
+        if (chunk == '\x01FINISH\x01ok') {
+          streamOk = true;
+          continue;
+        }
+        if (chunk == '\x01FINISH\x01bad') {
+          streamOk = false;
+          continue;
         }
         // Control frames from local agent SSE (status / tool)
         if (chunk.startsWith('\x01STATUS\x01')) {
@@ -1510,6 +1618,7 @@ class AppController extends ChangeNotifier {
               ),
             );
           } else if (phase == 'end') {
+            // okStr '' = unknown → completed (not failed); only '0' is failed
             final failed = okStr == '0';
             upsertToolCall(
               liveTools,
@@ -1576,8 +1685,10 @@ class AppController extends ChangeNotifier {
         }
         if (chunk.startsWith('\x00')) {
           acc = chunk.substring(1);
+          sawAssistantChunk = acc.trim().isNotEmpty;
         } else {
           acc += chunk;
+          if (chunk.trim().isNotEmpty) sawAssistantChunk = true;
         }
         // Apply to the surface cache that owns this stream
         final target =
@@ -1603,6 +1714,20 @@ class AppController extends ChangeNotifier {
           final i = target.indexWhere((m) => m.id == aid);
           if (i >= 0) target[i].streaming = false;
         }
+      }
+      // Remote: streamOk only from FINISH ok mark (set above). Local: normal exhaust = ok.
+      if (streamSurface == 'local' &&
+          streaming &&
+          streamGen == _streamGen &&
+          surface == streamSurface) {
+        streamOk = true;
+      }
+      if (streamGen != _streamGen || !streaming) {
+        streamOk = false;
+      }
+      // Empty remote with FINISH ok still ok (PC may have empty assistant).
+      if (streamSurface == 'remote' && streamOk && !sawAssistantChunk) {
+        // keep streamOk as FINISH said; recovered path below may also set true
       }
       // Finalize structured tools + body (no longer glue trail into text)
       if (surface == streamSurface) {
@@ -1657,13 +1782,9 @@ class AppController extends ChangeNotifier {
                   await Future<void>.delayed(const Duration(milliseconds: 700));
                   continue;
                 }
+                // Merge PC history but keep client-only confirm / offline placeholders.
                 _applyMessages(parsed, forSurface: 'remote');
-                if (surface == 'remote') {
-                  messages
-                    ..clear()
-                    ..addAll(
-                        parsed.map((m) => m.copyMeta()..streaming = false));
-                }
+                // Do NOT clear messages again — _applyMessages already applied + preserve.
                 break;
               } else {
                 // Fallback: patch last non-tool assistant bubble only.
@@ -1727,6 +1848,7 @@ class AppController extends ChangeNotifier {
       }
       finalize(streamSurface == 'local' ? _localMsgCache : _remoteMsgCache);
     } catch (e) {
+      streamOk = false;
       if (streamGen == _streamGen && surface == streamSurface) {
         final i = messages.indexWhere((m) => m.id == aid);
         var recovered = false;
@@ -1742,15 +1864,20 @@ class AppController extends ChangeNotifier {
               if (list is List) {
                 for (var i2 = list.length - 1; i2 >= 0; i2--) {
                   final m = list[i2];
-                  if (m is Map && m['role']?.toString() == 'assistant') {
-                    final t = (m['content'] ?? m['text'] ?? '').toString();
-                    if (t.trim().isNotEmpty) {
-                      messages[i].text = t;
-                      messages[i].format = 'markdown';
-                      recovered = true;
-                      break;
-                    }
+                  if (m is! Map || m['role']?.toString() != 'assistant') {
+                    continue;
                   }
+                  final t = (m['content'] ?? m['text'] ?? '').toString();
+                  if (t.trim().isEmpty) continue;
+                  if (t.trim().startsWith('· 调用') ||
+                      RegExp(r'^·\s*`').hasMatch(t.trim())) {
+                    continue;
+                  }
+                  // UI recover only — does not flip streamOk (offline queue honesty).
+                  messages[i].text = t;
+                  messages[i].format = 'markdown';
+                  recovered = true;
+                  break;
                 }
               }
             } catch (_) {}
@@ -1790,7 +1917,8 @@ class AppController extends ChangeNotifier {
         notifyListeners();
       }
     }
-    return true;
+    // Honest result for offline-queue flush (false = keep item on disk)
+    return streamOk;
   }
 
   /// Re-send the last user message (ChatGPT-style regenerate).
@@ -1810,13 +1938,20 @@ class AppController extends ChangeNotifier {
       showToast('没有可重新生成的消息');
       return;
     }
+    // Offline queue placeholders: do not dual-send with flush
+    if (lastUser.id.startsWith('u-q-') ||
+        lastUser.who.contains('入队') ||
+        lastUser.who.contains('待发送')) {
+      showToast('队列消息请等待自动发送，或删除后重发');
+      if (pcConnected) unawaited(flushOfflineQueue());
+      return;
+    }
     // Drop last user + trailing assistant so send() doesn't duplicate bubbles
     while (messages.isNotEmpty &&
         (messages.last.role == 'assistant' || messages.last.id == lastUser.id)) {
       messages.removeLast();
     }
     _saveSurfaceCache();
-    // Resend full model payload (includes OCR / file text)
     await send(payload);
   }
 
@@ -2323,59 +2458,158 @@ class AppController extends ChangeNotifier {
     _notify();
   }
 
-  bool _enqueueOfflineSend(String text) {
+  static const _offlineQueuePrefsKey = 'takton-offline-send-queue-v1';
+
+  Future<void> _loadOfflineQueue() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_offlineQueuePrefsKey);
+      if (raw == null || raw.isEmpty) return;
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return;
+      offlineQueue.clear();
+      for (final e in decoded) {
+        if (e is! Map) continue;
+        final text = e['text']?.toString() ?? '';
+        if (text.trim().isEmpty) continue;
+        final ms = (e['ts'] as num?)?.toInt() ??
+            DateTime.now().millisecondsSinceEpoch;
+        final id = e['id']?.toString().isNotEmpty == true
+            ? e['id'].toString()
+            : 'q-$ms-${offlineQueue.length}';
+        offlineQueue.add(_OfflineSend(
+          id: id,
+          text: text,
+          surface: e['surface']?.toString() ?? 'remote',
+          createdAt: DateTime.fromMillisecondsSinceEpoch(ms),
+        ));
+      }
+      while (offlineQueue.length > _offlineQueueMax) {
+        offlineQueue.removeAt(0);
+      }
+      _materializeOfflinePlaceholders();
+    } catch (_) {}
+  }
+
+  void _materializeOfflinePlaceholders() {
+    messages.removeWhere(
+      (m) =>
+          m.id.startsWith('u-q-') ||
+          m.id.startsWith('a-q-') ||
+          m.who == '发送队列',
+    );
+    for (var i = 0; i < offlineQueue.length; i++) {
+      final item = offlineQueue[i];
+      final uid = 'u-q-${item.id}';
+      final aid = 'a-q-${item.id}';
+      if (!messages.any((m) => m.id == uid)) {
+        messages.add(ChatMsg(
+          id: uid,
+          role: 'user',
+          text: item.text,
+          who: '已入队 · 待发送',
+        ));
+      }
+      if (!messages.any((m) => m.id == aid)) {
+        messages.add(ChatMsg(
+          id: aid,
+          role: 'assistant',
+          text:
+              '📋 **已入队 · 重连后发送**（${i + 1}/${offlineQueue.length}）\n\n'
+              '消息已落盘本机。连上 PC 后自动按顺序发出。',
+          who: '发送队列',
+          format: 'markdown',
+        ));
+      }
+    }
+    _saveSurfaceCache();
+  }
+
+  Future<bool> _persistOfflineQueue() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final list = offlineQueue
+          .map((e) => {
+                'id': e.id,
+                'text': e.text,
+                'surface': e.surface,
+                'ts': e.createdAt.millisecondsSinceEpoch,
+              })
+          .toList();
+      final ok = await prefs.setString(_offlineQueuePrefsKey, jsonEncode(list));
+      return ok;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> _enqueueOfflineSend(String text) async {
     final body = text.trim();
     if (body.isEmpty && attachments.isEmpty) return false;
-    // Snapshot plain text only (attachments require online upload)
     if (attachments.isNotEmpty) {
       showToast('离线暂不支持附件 · 请先连接 PC 再发带附件消息');
       return false;
     }
     while (offlineQueue.length >= _offlineQueueMax) {
-      offlineQueue.removeAt(0);
+      final dropped = offlineQueue.removeAt(0);
+      messages.removeWhere(
+        (m) => m.id == 'u-q-${dropped.id}' || m.id == 'a-q-${dropped.id}',
+      );
+      showToast('队列已满 · 已丢弃最旧一条');
     }
     final item = _OfflineSend(
+      id: 'q-${DateTime.now().microsecondsSinceEpoch}',
       text: body,
       surface: 'remote',
       createdAt: DateTime.now(),
     );
     offlineQueue.add(item);
+    final persisted = await _persistOfflineQueue();
+    if (!persisted) {
+      offlineQueue.removeWhere((e) => e.id == item.id);
+      showToast('离线队列保存失败 · 请检查存储权限后重试');
+      return false;
+    }
     input = '';
-    // Placeholder bubble so user sees it was accepted
     messages.add(ChatMsg(
-      id: 'u-q-${item.createdAt.microsecondsSinceEpoch}',
+      id: 'u-q-${item.id}',
       role: 'user',
       text: body,
-      who: '排队中',
+      who: '已入队 · 待发送',
     ));
     messages.add(ChatMsg(
-      id: 'a-q-${item.createdAt.microsecondsSinceEpoch}',
+      id: 'a-q-${item.id}',
       role: 'assistant',
-      text: '⏳ 离线已入队（${offlineQueue.length}/$_offlineQueueMax）· 连上 PC 后自动发送',
+      text:
+          '📋 **已入队 · 重连后发送**（${offlineQueue.length}/$_offlineQueueMax）\n\n'
+          '消息保存在本机，杀进程也不会丢。连上 PC 后会自动按顺序发出。',
       who: '发送队列',
-      format: 'plain',
+      format: 'markdown',
     ));
-    showToast('已入队 · 重连后自动发送（${offlineQueue.length}）');
+    showToast('已入队 · 重连后发送（${offlineQueue.length}）');
     pushStatusCard(
-      title: '离线队列 ${offlineQueue.length}',
-      body: body.length > 48 ? '${body.substring(0, 48)}…' : body,
+      title: '已入队 · 重连后发送',
+      body: '${offlineQueue.length} 条待发 · ${body.length > 40 ? '${body.substring(0, 40)}…' : body}',
       kind: StatusCardKind.warn,
       actionLabel: '重连',
       actionId: 'reconnect',
-      ttlMs: 8000,
+      ttlMs: 10000,
     );
     pulseIsland(text: '队列 ${offlineQueue.length}', kind: 'conn');
     _notify();
-    // Best-effort background reconnect
     unawaited(tryAutoReconnect().then((_) {
       if (pcConnected) unawaited(flushOfflineQueue());
     }));
     return true;
   }
 
-  /// Drain offline queue after PC is reachable. Sequential to preserve order.
+  /// Drain offline queue after PC is reachable.
+  /// Durable store is only shortened after each successful send (no premature clear).
   Future<void> flushOfflineQueue() async {
-    if (_flushingOffline) return;
+    if (_flushingOffline) {
+      _offlineQueueDirty = true;
+      return;
+    }
     if (!pcConnected || offlineQueue.isEmpty) return;
     if (surface != 'remote') {
       try {
@@ -2384,58 +2618,87 @@ class AppController extends ChangeNotifier {
     }
     if (!pcConnected) return;
     _flushingOffline = true;
+    _offlineQueueDirty = false;
     var sent = 0;
     var failed = 0;
+    var backoffMs = 400;
     try {
-      messages.removeWhere(
-        (m) => m.who == '发送队列' || m.id.startsWith('a-q-'),
-      );
-      final batch = List<_OfflineSend>.from(offlineQueue);
-      offlineQueue.clear();
-      for (var i = 0; i < batch.length; i++) {
-        final item = batch[i];
-        if (!pcConnected) {
-          offlineQueue.addAll(batch.sublist(i));
-          break;
+      while (offlineQueue.isNotEmpty && pcConnected) {
+        // Stay on remote for each item
+        if (surface != 'remote') {
+          try {
+            await setSurface('remote');
+          } catch (_) {
+            break;
+          }
         }
-        // Wait for previous stream to finish so send() is not blocked
+        final item = offlineQueue.first;
         var wait = 0;
-        while (streaming && wait < 120) {
+        while ((streaming || _sendBusy) && wait < 180) {
           await Future<void>.delayed(const Duration(milliseconds: 500));
           wait++;
         }
+        if (streaming || _sendBusy) {
+          break;
+        }
+        // Remove only this item's placeholders (by id)
         messages.removeWhere(
-          (m) =>
-              m.id.startsWith('u-q-') &&
-              m.text == item.text &&
-              m.who == '排队中',
+          (m) => m.id == 'u-q-${item.id}' || m.id == 'a-q-${item.id}',
         );
         _fromOfflineFlush = true;
         final ok = await send(item.text);
         _fromOfflineFlush = false;
         if (ok) {
+          if (offlineQueue.isNotEmpty && offlineQueue.first.id == item.id) {
+            offlineQueue.removeAt(0);
+          } else {
+            offlineQueue.removeWhere((e) => e.id == item.id);
+          }
+          await _persistOfflineQueue();
           sent++;
+          backoffMs = 400;
+          await Future<void>.delayed(const Duration(milliseconds: 250));
         } else {
           failed++;
-          offlineQueue.add(item);
+          // Rebuild placeholders so user still sees durable queue items
+          _materializeOfflinePlaceholders();
+          await Future<void>.delayed(Duration(milliseconds: backoffMs));
+          backoffMs = (backoffMs * 2).clamp(400, 8000);
+          if (!pcConnected) break;
+          break;
         }
-        await Future<void>.delayed(const Duration(milliseconds: 300));
       }
-      if (sent > 0) {
-        showToast(failed == 0
+      await _persistOfflineQueue();
+      if (sent > 0 || failed > 0) {
+        showToast(failed == 0 && offlineQueue.isEmpty
             ? '离线队列已发送 $sent 条'
-            : '已发送 $sent · 失败 $failed 仍在队列');
+            : '已发送 $sent · 队列剩余 ${offlineQueue.length}');
         pushStatusCard(
-          title: '队列已发送',
-          body: failed == 0 ? '共 $sent 条' : '成功 $sent · 残留 $failed',
-          kind: failed == 0 ? StatusCardKind.success : StatusCardKind.warn,
-          ttlMs: 5000,
+          title: offlineQueue.isEmpty ? '队列已发完' : '队列未清空',
+          body: offlineQueue.isEmpty
+              ? '共 $sent 条已送达'
+              : '成功 $sent · 剩余 ${offlineQueue.length}（已落盘，可重试）',
+          kind: offlineQueue.isEmpty
+              ? StatusCardKind.success
+              : StatusCardKind.warn,
+          actionLabel: offlineQueue.isNotEmpty ? '重试' : null,
+          actionId: offlineQueue.isNotEmpty ? 'reconnect' : null,
+          ttlMs: 6000,
         );
       }
     } finally {
       _fromOfflineFlush = false;
       _flushingOffline = false;
       _notify();
+      // Items enqueued mid-flush, or partial fail with connectivity
+      if (_offlineQueueDirty ||
+          (offlineQueue.isNotEmpty && pcConnected && failed == 0)) {
+        _offlineQueueDirty = false;
+        unawaited(Future<void>.delayed(
+          Duration(milliseconds: failed > 0 ? backoffMs : 800),
+          () => flushOfflineQueue(),
+        ));
+      }
     }
   }
 
@@ -2712,10 +2975,12 @@ class AppController extends ChangeNotifier {
 /// Pending remote text send while offline (no attachments).
 class _OfflineSend {
   _OfflineSend({
+    required this.id,
     required this.text,
     required this.surface,
     required this.createdAt,
   });
+  final String id;
   final String text;
   final String surface;
   final DateTime createdAt;
