@@ -294,6 +294,32 @@ class _ChatScreenState extends State<ChatScreen> {
             itemCount: c.messages.length,
             itemBuilder: (context, i) {
               final m = c.messages[i];
+              if (m.role == 'confirm') {
+                final kind = m.modelText ?? m.who;
+                final rawId = m.id.startsWith('confirm-')
+                    ? m.id.substring('confirm-'.length)
+                    : m.id;
+                return RepaintBoundary(
+                  key: ValueKey(m.id),
+                  child: _ConfirmBubble(
+                    detail: m.text,
+                    dark: dark,
+                    ink: ink,
+                    card: card,
+                    onApprove: () => c.decideFromChat(
+                      id: rawId,
+                      approved: true,
+                      kind: kind.isEmpty ? 'escalation' : kind,
+                    ),
+                    onDeny: () => c.decideFromChat(
+                      id: rawId,
+                      approved: false,
+                      kind: kind.isEmpty ? 'escalation' : kind,
+                    ),
+                    onOpenList: () => c.setTab(AppTab.approve),
+                  ),
+                );
+              }
               final isLastAssistant = !m.streaming &&
                   m.role == 'assistant' &&
                   i == c.messages.length - 1;
@@ -837,6 +863,131 @@ class _ModeChip extends StatelessWidget {
 }
 
 /// Bubble isolated so streaming only repaints the active assistant message.
+class _ConfirmBubble extends StatelessWidget {
+  const _ConfirmBubble({
+    required this.detail,
+    required this.dark,
+    required this.ink,
+    required this.card,
+    required this.onApprove,
+    required this.onDeny,
+    required this.onOpenList,
+  });
+  final String detail;
+  final bool dark;
+  final Color ink;
+  final Color card;
+  final VoidCallback onApprove;
+  final VoidCallback onDeny;
+  final VoidCallback onOpenList;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+        decoration: BoxDecoration(
+          color: PixelColors.amber.withValues(alpha: dark ? 0.12 : 0.1),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: PixelColors.amber.withValues(alpha: 0.45)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.shield_outlined, size: 16, color: PixelColors.amber),
+                const SizedBox(width: 6),
+                Text(
+                  '需要你的确认',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: ink,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              detail,
+              style: TextStyle(
+                fontSize: 13,
+                height: 1.4,
+                color: ink.withValues(alpha: 0.85),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                _ConfirmBtn(
+                  label: '同意',
+                  color: PixelColors.green,
+                  onTap: onApprove,
+                ),
+                const SizedBox(width: 8),
+                _ConfirmBtn(
+                  label: '拒绝',
+                  color: PixelColors.red,
+                  onTap: onDeny,
+                ),
+                const SizedBox(width: 8),
+                TextButton(
+                  onPressed: onOpenList,
+                  child: Text(
+                    '审批列表',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: PixelColors.purple,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ConfirmBtn extends StatelessWidget {
+  const _ConfirmBtn({
+    required this.label,
+    required this.color,
+    required this.onTap,
+  });
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: color.withValues(alpha: 0.16),
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+              color: color,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ChatBubble extends StatelessWidget {
   const _ChatBubble({
     required this.msg,

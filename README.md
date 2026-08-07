@@ -79,6 +79,8 @@ See also: [Technical Manual · 技术手册](docs/TECHNICAL_MANUAL.md)
 ### 🧠 Smart Agent Orchestration
 Simple questions → single agent. Complex tasks → optional parallel draft fan-out (no tool access) with synthesis. Off by default.
 
+**0.5.7+ solo default (breaking):** ordinary coding/assistant chats no longer expose `crew_steward` by default. Hire/assign works in **CEO/steward contact sessions**, **`mode=cluster`**, or explicit crew packs. Casual queries (weather / GitHub trending / short search) stay in-session and never open Inbox tickets.
+
 ### 🔧 Skill Auto-Generation
 Agent writes its own tools when it hits a new task type. 17 builtin skills + infinite extensibility.
 
@@ -90,6 +92,8 @@ File read/write, terminal commands, browser control, SQLite queries — all gate
 
 ### 🧠 智能 Agent 编排
 简单问题 → 单 Agent。复杂任务 → 可选并行草稿扇出（无工具权限）+ 汇总。默认关闭。
+
+**0.5.7+ 默认单会话（行为变更）：** 普通 coding/assistant 对话默认不挂 `crew_steward`。招人/派工请联系 **CEO/大管家**、使用 **cluster 模式**，或显式开启 crew 工具包。天气/热门项目/短检索等走本会话工具，不会进编制 Inbox。
 
 ### 🔧 技能自动生成
 Agent 遇到新任务类型时自动编写新工具。17 个内置技能 + 无限扩展。

@@ -230,6 +230,14 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         tool_calls: list[dict[str, Any]] | None = None,
         token_count: int | None = None,
     ):
+        # Ephemeral simple-session notes must never land in chat history
+        try:
+            from backend.agent.simple_intent import is_ephemeral_system_note
+
+            if role == "system" and is_ephemeral_system_note(content):
+                return None
+        except Exception:
+            pass
         store = getattr(self, "message_store", None)
         if store is not None:
             return await store.save_message(

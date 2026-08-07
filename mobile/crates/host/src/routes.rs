@@ -825,6 +825,12 @@ fn mobile_live_overlays(v: &Value) -> Vec<Value> {
                 .or_else(|| v.pointer("/tool/name"))
                 .and_then(|x| x.as_str())
                 .unwrap_or("tool");
+            let tool_call_id = v
+                .get("tool_call_id")
+                .or_else(|| v.get("id"))
+                .or_else(|| v.get("call_id"))
+                .and_then(|x| x.as_str())
+                .unwrap_or("");
             let status = v
                 .get("status")
                 .and_then(|x| x.as_str())
@@ -863,6 +869,7 @@ fn mobile_live_overlays(v: &Value) -> Vec<Value> {
                 "type": "mobile_tool",
                 "phase": if endish { "end" } else { "start" },
                 "name": name,
+                "tool_call_id": tool_call_id,
                 "ok": ok,
                 "preview": preview,
             }));
@@ -1071,6 +1078,7 @@ fn emit_http_tool_progress(
                                 "type": "mobile_tool",
                                 "phase": "start",
                                 "name": name,
+                                "tool_call_id": id,
                                 "ok": true,
                                 "preview": "",
                                 "source": "http_progress",
@@ -1095,6 +1103,16 @@ fn emit_http_tool_progress(
                 .and_then(|meta| meta.get("name").and_then(|n| n.as_str()))
                 .unwrap_or("tool");
             let preview: String = message_text(&m.content).chars().take(120).collect();
+            let tid = m
+                .metadata
+                .as_ref()
+                .and_then(|meta| {
+                    meta.get("tool_call_id")
+                        .or_else(|| meta.get("call_id"))
+                        .and_then(|x| x.as_str())
+                })
+                .unwrap_or("")
+                .to_string();
             let key = format!("end:{}:{}", m.id, name);
             if seen_tools.insert(key) {
                 st.broadcast_event_for_session(
@@ -1103,6 +1121,7 @@ fn emit_http_tool_progress(
                         "type": "mobile_tool",
                         "phase": "end",
                         "name": name,
+                        "tool_call_id": tid,
                         "ok": true,
                         "preview": preview,
                         "source": "http_progress",
@@ -1136,10 +1155,12 @@ fn spawn_turn_completion_watchdog(st: AppState, session_id: String, user_content
         let mut seen_tools: std::collections::HashSet<String> =
             std::collections::HashSet::new();
         let mut last_status = String::new();
-        // ~5 minutes @ 500ms — interactive tool loops need sub-second HTTP backfill
-        // when PC event WS is lossy (still secondary to live WS + seq).
+        // Adaptive poll: 500ms while tools progress / no final; back off to 1.2s when
+        // live WS is healthy (browser_subs non-empty) to cut list_messages load.
         for tick in 0..600u32 {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let live_ui = !st.browser_subs.is_empty();
+            let delay_ms = if live_ui && tick > 4 { 1200u64 } else { 500u64 };
+            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
             let msgs = match st.client.list_messages(&session_id, 80).await {
                 Ok(m) => m,
                 Err(_) => continue,

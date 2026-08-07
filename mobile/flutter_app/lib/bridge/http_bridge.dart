@@ -806,6 +806,8 @@ class HttpTaktonBridge extends TaktonBridge {
       if (ty == 'mobile_tool' || ty == 'tool_event') {
         final phase = (v['phase']?.toString() ?? 'start').toLowerCase();
         final name = v['name']?.toString() ?? 'tool';
+        final tid =
+            (v['tool_call_id'] ?? v['id'] ?? v['call_id'] ?? '').toString();
         // Prefer explicit ok; missing status must not force success.
         final status = v['status']?.toString() ?? '';
         final ok = v.containsKey('ok')
@@ -817,7 +819,8 @@ class HttpTaktonBridge extends TaktonBridge {
                 phase == 'result'
             ? 'end'
             : 'start';
-        yield '\x01TOOL\x01$p\x01$name\x01${ok ? '1' : '0'}\x01$preview';
+        // phase | name | ok | preview | tool_call_id
+        yield '\x01TOOL\x01$p\x01$name\x01${ok ? '1' : '0'}\x01$preview\x01$tid';
       }
       final src = (v['source']?.toString() ?? '').toLowerCase();
       final replaceFlag = v['replace'] == true || src == 'http_watchdog';
@@ -959,6 +962,15 @@ class HttpTaktonBridge extends TaktonBridge {
           continue;
         }
         if (v == null) continue;
+        // Unwrap non-object host frames: { type: wrapped, payload: ... }
+        if ((v['type']?.toString() ?? '') == 'wrapped' && v['payload'] is Map) {
+          final inner = Map<String, dynamic>.from(v['payload'] as Map);
+          if (v['seq'] != null) inner['seq'] = v['seq'];
+          if (v['session_id'] != null) {
+            inner['session_id'] = v['session_id'];
+          }
+          v = inner;
+        }
 
         // Seq gap mid-stream → pull ring before applying current frame.
         final seqRaw = v['seq'];

@@ -243,6 +243,64 @@ async def _hire_one(
     }
 
 
+_CEO_DUTY_MARKER = "简单问答/检索/读写本会话直接完成"
+
+
+async def soft_update_ceo_duty(registry: Any) -> list[str]:
+    """Refresh duty on existing CEO identities that still have the old dispatch-first text.
+
+    Uses supersede_memory so the version chain stays auditable. Idempotent when
+    current duty already contains the solo-default marker.
+    """
+    updated: list[str] = []
+    try:
+        items = await registry.list(status=None)
+    except Exception as e:
+        logger.debug("soft_update_ceo_duty list skip: %s", e)
+        return updated
+    new_duty = str(CEO_TEMPLATE.get("duty") or "").strip()
+    if not new_duty or _CEO_DUTY_MARKER not in new_duty:
+        return updated
+    for ident in items:
+        try:
+            meta = getattr(ident, "meta", None) or {}
+            role = str(getattr(ident, "role", "") or "").lower()
+            name = str(getattr(ident, "name", "") or "")
+            is_ceo = False
+            if isinstance(meta, dict) and (
+                meta.get("is_ceo") or meta.get("template_id") == "ceo"
+            ):
+                is_ceo = True
+            if name in _LEGACY_CEO_NAMES or "ceo" in role or "管家" in role:
+                is_ceo = True
+            if not is_ceo:
+                continue
+            mems = await registry.current_memory(ident.id, kind="duty")
+            current = " ".join(
+                str(getattr(m, "content", "") or "") for m in (mems or [])
+            )
+            if _CEO_DUTY_MARKER in current:
+                continue
+            if mems:
+                old = mems[0]
+                await registry.supersede_memory(
+                    old.id, new_duty, approved_by="soft_update_ceo_duty"
+                )
+            else:
+                await registry.append_memory(
+                    ident.id,
+                    "duty",
+                    new_duty,
+                    source="system",
+                    approved_by="soft_update_ceo_duty",
+                )
+            updated.append(name or str(ident.id)[:8])
+            logger.info("soft-updated CEO duty name=%s", name[:24])
+        except Exception as e:
+            logger.debug("soft_update_ceo_duty skip: %s", e)
+    return updated
+
+
 async def seed_template_crew(
     registry: Any,
     *,
@@ -252,6 +310,7 @@ async def seed_template_crew(
     """幂等预置：CEO 必有；include_workers 时补全 auto_seed 同事。
 
     兼容旧种子「小白」：若已有旧 CEO 名则视为 CEO 已存在，不再建第二个。
+    Always soft-refreshes CEO duty to solo-default wording when outdated.
     """
     created: list[dict[str, Any]] = []
     skipped: list[str] = []
@@ -330,15 +389,19 @@ async def seed_template_crew(
         except Exception as e:
             logger.warning("seed hire failed %s: %s", t["name"], e)
 
+    duty_updated = await soft_update_ceo_duty(registry)
+
     total = len(await registry.list(status=None))
     return {
         "ok": True,
         "created": created,
         "skipped": skipped,
+        "duty_updated": duty_updated,
         "total_after": total,
         "message": (
             f"hired {len(created)}, skipped {len(skipped)}"
-            if created or skipped
+            + (f", duty refreshed {len(duty_updated)}" if duty_updated else "")
+            if created or skipped or duty_updated
             else "nothing to do"
         ),
     }

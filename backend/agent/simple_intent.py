@@ -1,9 +1,6 @@
 """Simple single-session intents: answer in-session, never dispatch to crew.
 
-P0 product path (Codex-like): weather / trending / short Q&A / one-shot search
-must not become Inbox tickets via crew_steward.assign.
-
-Hard strip is intentionally **narrow** — false positives on steward sessions
+Hard strip is intentionally narrow — false positives on steward sessions
 block grants/assign and are worse than over-dispatch.
 """
 
@@ -14,7 +11,6 @@ from typing import Any
 
 from backend.agent.direct_intent import last_user_text
 
-# Tools that create workforce tickets or multi-agent fan-out
 DISPATCH_TOOL_NAMES: frozenset[str] = frozenset(
     {
         "crew_steward",
@@ -24,7 +20,7 @@ DISPATCH_TOOL_NAMES: frozenset[str] = frozenset(
     }
 )
 
-# Explicit team / dispatch language → never strip dispatch tools
+# Explicit team / dispatch / steward-ops language → never strip
 _TEAM_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     re.compile(p, re.I)
     for p in (
@@ -57,10 +53,13 @@ _TEAM_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
         r"pending_grants",
         r"requeue",
         r"批(准|一下)?提权",
+        r"list\s*(一下)?\s*(员工|编制|同事)",
+        r"员工列表",
+        r"编制列表",
     )
 )
 
-# High-confidence simple single-session patterns only (avoid bare 查/搜)
+# High-confidence casual / factoid / trending search
 _SIMPLE_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     re.compile(p, re.I)
     for p in (
@@ -70,12 +69,21 @@ _SIMPLE_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
         r"\bweather\b",
         r"热搜",
         r"热点",
+        r"热门项目",
+        r"热门\s*(开源|项目|仓库|repo)",
+        r"github.*热门",
+        r"热门.*github",
+        r"trending\s*repo",
+        r"star\s*最多",
+        r"最多\s*star",
         r"\btrending\b",
+        r"开源项目",
         r"现在几点",
         r"几点了",
         r"what\s*time",
         r"翻译",
         r"\btranslate\b",
+        # definitional Q only when NOT about workforce (see _HEAVY / _CREW_TOPIC)
         r"什么是",
         r"what\s+is\b",
         r"who\s+is\b",
@@ -88,10 +96,17 @@ _SIMPLE_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
         r"含义是什么",
         r"解释一下.{0,20}$",
         r"\bdefine\b",
-        # one-shot search only when clearly casual
-        r"^(帮我)?搜(一下|下)\s*.{0,40}$",
-        r"^(帮我)?查(一下|下)\s*.{0,40}$",
+        r"^(帮我)?搜(一下|下)\s*.{0,60}$",
+        r"^(帮我)?查(一下|下)\s*.{0,60}$",
+        r"^(帮我)?看看\s*.{0,60}$",
     )
+)
+
+# Steward / workforce topics must never be treated as casual Q&A
+_CREW_TOPIC = re.compile(
+    r"编制|工单|提权|员工|派工|收件箱|inbox|管家|ceo|grant|budget|预算|"
+    r"身份档案|capabilities|令牌",
+    re.I,
 )
 
 _MULTI_STEP = re.compile(
@@ -104,15 +119,16 @@ _HEAVY = re.compile(
     re.I,
 )
 
-# Greeting / ack only — the only path for "short text is simple"
 _ACK_ONLY = re.compile(
     r"^(好|好的|嗯|哦|谢谢|感谢|收到|ok|okay|thanks|thx|继续|下一个)[\s!！。.~～]*$",
     re.I,
 )
 
+# Ephemeral system note marker — never persist to chat history DB
+SIMPLE_NOTE_MARKER = "【单会话·ephemeral】"
+
 
 def wants_team_dispatch(text: str | None) -> bool:
-    """User explicitly asked for hire/assign/team work."""
     t = (text or "").strip()
     if not t:
         return False
@@ -124,10 +140,7 @@ def is_simple_session_intent(
     *,
     max_chars: int = 200,
 ) -> bool:
-    """True when this turn should stay in the current session (no Inbox).
-
-    Narrow by design: false positives on steward sessions block grants.
-    """
+    """True when this turn should stay in the current session (no Inbox)."""
     t = (text or "").strip()
     if not t:
         return False
@@ -137,18 +150,18 @@ def is_simple_session_intent(
         return False
     if _HEAVY.search(t):
         return False
+    # 「什么是编制里的工单…」等 — 即使命中「什么是」也不 strip
+    if _CREW_TOPIC.search(t):
+        return False
     if _MULTI_STEP.search(t) and len(t) > 40:
         return False
 
-    # Pure ack / greeting — never needs crew
     if _ACK_ONLY.match(t):
         return True
 
-    # High-confidence domain patterns only
     if any(p.search(t) for p in _SIMPLE_PATTERNS):
-        return len(t) <= max(max_chars, 120)
+        return len(t) <= max(max_chars, 160)
 
-    # Do NOT treat arbitrary short text as simple (was over-stripping steward ops).
     return False
 
 
@@ -159,10 +172,6 @@ def filter_dispatch_tools_from_schema(
     messages: list[dict[str, Any]] | None = None,
     force: bool | None = None,
 ) -> list[dict[str, Any]] | None:
-    """Drop crew/delegate/agent_call tools when simple session intent.
-
-    force=True/False overrides intent detection (tests / callers).
-    """
     if not tools:
         return tools
     if force is None:
@@ -187,16 +196,22 @@ def filter_dispatch_tools_from_schema(
 
 def simple_session_system_note() -> str:
     return (
-        "【单会话】本条为简单查询/短任务。"
+        f"{SIMPLE_NOTE_MARKER} 本条为简单查询/短任务。"
         "直接用 web_search / current_time / file_read 等在本会话完成并回答；"
         "禁止 crew_steward hire/assign、delegate_task、agent_call 或任何派工单。"
     )
 
 
+def is_ephemeral_system_note(content: str | None) -> bool:
+    return bool(content and SIMPLE_NOTE_MARKER in str(content))
+
+
 __all__ = [
     "DISPATCH_TOOL_NAMES",
+    "SIMPLE_NOTE_MARKER",
     "wants_team_dispatch",
     "is_simple_session_intent",
     "filter_dispatch_tools_from_schema",
     "simple_session_system_note",
+    "is_ephemeral_system_note",
 ]

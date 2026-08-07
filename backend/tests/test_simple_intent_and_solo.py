@@ -17,6 +17,11 @@ def test_simple_weather_and_trending():
     assert is_simple_session_intent("what time is it")
     assert is_simple_session_intent("搜一下 Python 3.13")
     assert is_simple_session_intent("好的")
+    # User original scenario + variants
+    assert is_simple_session_intent("查一下 github 的热门项目")
+    assert is_simple_session_intent("GitHub 热门项目")
+    assert is_simple_session_intent("看看 trending repos")
+    assert is_simple_session_intent("最近 star 最多的开源项目")
 
 
 def test_not_simple_when_team_or_heavy():
@@ -29,6 +34,9 @@ def test_not_simple_when_team_or_heavy():
     assert not is_simple_session_intent("让工程师改登录页")
     assert not is_simple_session_intent("查一下员工进度")
     assert wants_team_dispatch("让工程师改登录页")
+    # Definition about workforce must not strip crew tools
+    assert not is_simple_session_intent("什么是编制里的工单机制？")
+    assert not is_simple_session_intent("list 一下员工")
 
 
 def test_filter_strips_dispatch_tools():

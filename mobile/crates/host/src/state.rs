@@ -52,8 +52,10 @@ struct DeltaCoalesceInner {
 
 const COALESCE_FALLBACK_KEY: &str = "__global__";
 
-/// Max fan-out frames retained for after_seq gap fill (WS blip / path switch).
+/// Global fan-out frames retained for gap fill (control + mixed sessions).
 const EVENT_RING_CAP: usize = 512;
+/// Per-session ring so one hot session cannot wipe another's gap-fill buffer.
+const EVENT_RING_PER_SESSION: usize = 160;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -89,8 +91,10 @@ pub struct AppState {
     delta_coalesce: Arc<DashMap<String, Arc<Mutex<DeltaCoalesceInner>>>>,
     /// Monotonic event sequence for Flutter ordered merge / gap detect.
     event_seq: Arc<AtomicU64>,
-    /// Recent stamped events for after_seq replay (path switch / WS gap).
+    /// Global ring (control frames + fallback).
     event_ring: Arc<Mutex<VecDeque<Value>>>,
+    /// Per-session rings for targeted after_seq gap fill.
+    event_ring_by_session: Arc<Mutex<std::collections::HashMap<String, VecDeque<Value>>>>,
 }
 
 impl AppState {
@@ -145,6 +149,7 @@ impl AppState {
             delta_coalesce: Arc::new(DashMap::new()),
             event_seq: Arc::new(AtomicU64::new(0)),
             event_ring: Arc::new(Mutex::new(VecDeque::with_capacity(EVENT_RING_CAP))),
+            event_ring_by_session: Arc::new(Mutex::new(std::collections::HashMap::new())),
         })
     }
 
@@ -186,8 +191,22 @@ impl AppState {
         limit: usize,
     ) -> Vec<Value> {
         let lim = limit.clamp(1, 256);
-        let ring = self.event_ring.lock();
         let sid = session_id.map(str::trim).filter(|s| !s.is_empty());
+        // Prefer per-session ring when available (survives global pressure).
+        if let Some(want) = sid {
+            let by = self.event_ring_by_session.lock();
+            if let Some(ring) = by.get(want) {
+                return ring
+                    .iter()
+                    .filter(|v| {
+                        v.get("seq").and_then(|x| x.as_u64()).unwrap_or(0) > after_seq
+                    })
+                    .take(lim)
+                    .cloned()
+                    .collect();
+            }
+        }
+        let ring = self.event_ring.lock();
         ring.iter()
             .filter(|v| {
                 let seq = v.get("seq").and_then(|x| x.as_u64()).unwrap_or(0);
@@ -197,7 +216,6 @@ impl AppState {
                 if let Some(want) = sid {
                     match v.get("session_id").and_then(|x| x.as_str()) {
                         Some(got) if !got.is_empty() => got == want,
-                        // Control / unscoped frames: still useful during stream
                         _ => true,
                     }
                 } else {
@@ -246,22 +264,44 @@ impl AppState {
     }
 
     fn stamp_and_broadcast(&self, v: &Value) {
-        // Hold ring lock across seq++ / push / fanout so concurrent producers
-        // cannot reorder ring vs WS delivery (Flutter drops late lower seq).
-        let mut ring = self.event_ring.lock();
+        // Serialize seq allocation + ring push so concurrent producers stay ordered.
         let seq = self.event_seq.fetch_add(1, Ordering::SeqCst) + 1;
         let mut out = v.clone();
         if let Some(obj) = out.as_object_mut() {
             obj.insert("seq".into(), json!(seq));
         } else {
-            out = json!({ "payload": v, "seq": seq });
+            // Non-object frames: wrap so Flutter can unwrap `payload`.
+            out = json!({ "type": "wrapped", "payload": v, "seq": seq });
         }
-        ring.push_back(out.clone());
-        while ring.len() > EVENT_RING_CAP {
-            ring.pop_front();
+        let sid = out
+            .get("session_id")
+            .and_then(|x| x.as_str())
+            .map(|s| s.to_string());
+        {
+            let mut ring = self.event_ring.lock();
+            ring.push_back(out.clone());
+            while ring.len() > EVENT_RING_CAP {
+                ring.pop_front();
+            }
+        }
+        if let Some(sid) = sid {
+            let mut by = self.event_ring_by_session.lock();
+            let q = by
+                .entry(sid)
+                .or_insert_with(|| VecDeque::with_capacity(EVENT_RING_PER_SESSION));
+            q.push_back(out.clone());
+            while q.len() > EVENT_RING_PER_SESSION {
+                q.pop_front();
+            }
+            // Bound number of session rings (drop empty-ish oldest keys if huge)
+            if by.len() > 48 {
+                let keys: Vec<String> = by.keys().cloned().collect();
+                for k in keys.into_iter().take(by.len().saturating_sub(40)) {
+                    by.remove(&k);
+                }
+            }
         }
         let text = out.to_string();
-        drop(ring); // release before iterating browser_subs (avoid lock inversion)
         let mut dead = Vec::new();
         for entry in self.browser_subs.iter() {
             if entry
