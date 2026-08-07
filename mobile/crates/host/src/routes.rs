@@ -4870,17 +4870,28 @@ async fn handle_ws_client_msg(st: &AppState, v: &Value) -> Result<(), String> {
             Err(last_err)
         }
         "stop" | "cancel" | "abort" => {
+            // WS stop is ignored unless explicit=true.
+            // Old Flutter used to auto-stop on stream finally (killed PC mid-tool).
+            // User Stop button uses HTTP POST /sessions/{id}/stop instead.
             let sid = v
                 .get("session_id")
                 .and_then(|x| x.as_str())
                 .map(|s| s.to_string())
                 .or_else(|| st.active_session.read().clone())
                 .unwrap_or_default();
-            if !sid.is_empty() {
+            let explicit = v.get("explicit").and_then(|x| x.as_bool()).unwrap_or(false);
+            if !sid.is_empty() && explicit {
+                tracing::info!(%sid, "mobile explicit WS stop → PC chat");
                 st.flush_session_deltas(&sid);
                 if let Some(c) = st.chats.get(&sid) {
                     let _ = c.stop();
                 }
+            } else {
+                tracing::warn!(
+                    %sid,
+                    explicit,
+                    "ignored WS stop (use HTTP session stop for user cancel)"
+                );
             }
             Ok(())
         }

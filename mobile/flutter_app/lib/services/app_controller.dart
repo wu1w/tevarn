@@ -428,6 +428,74 @@ class AppController extends ChangeNotifier {
     _notify();
   }
 
+  /// Phone stream closed early but PC was NOT stopped — keep pulling final text.
+  Future<void> _softRecoverRemoteFinal({
+    required String sessionId,
+    required String aid,
+    required int streamGen,
+    required String streamSurface,
+  }) async {
+    // ~2 min @ 3s; tools like weather can take a while after UI stream ends.
+    for (var i = 0; i < 40; i++) {
+      if (streamGen != _streamGen) return;
+      await Future<void>.delayed(const Duration(seconds: 3));
+      if (streamGen != _streamGen) return;
+      try {
+        final r = await bridge.messages(sessionId, limit: 30);
+        final list = r['messages'];
+        if (list is! List || list.isEmpty) continue;
+        String? lastAsst;
+        for (var j = list.length - 1; j >= 0; j--) {
+          final m = list[j];
+          if (m is! Map) continue;
+          if (m['role']?.toString() != 'assistant') continue;
+          final who = m['who']?.toString() ?? '';
+          if (who.contains('工具')) continue;
+          final tc = m['tool_calls'];
+          final hasTools =
+              (tc is List && tc.isNotEmpty) || (tc is Map && tc.isNotEmpty);
+          if (hasTools) continue;
+          final t = (m['content'] ?? m['text'] ?? '').toString().trim();
+          if (t.isEmpty) continue;
+          if (t.startsWith('· 调用') || RegExp(r'^·\s*`').hasMatch(t)) {
+            continue;
+          }
+          lastAsst = t;
+          break;
+        }
+        if (lastAsst == null || lastAsst.isEmpty) continue;
+
+        // Apply to live list or remote cache.
+        void patch(List<ChatMsg> target) {
+          final idx = target.indexWhere((m) => m.id == aid);
+          if (idx < 0) return;
+          target[idx].text = lastAsst!;
+          target[idx].streaming = false;
+          target[idx].format = 'markdown';
+          target[idx].who = '远端 Agent';
+        }
+
+        if (surface == streamSurface) {
+          patch(messages);
+        }
+        patch(_remoteMsgCache);
+        islandLive = false;
+        islandText = '已同步';
+        streaming = false;
+        showToast('已同步 PC 最终回复');
+        notifyListeners();
+        unawaited(_persistDiskMessageCaches());
+        return;
+      } catch (_) {}
+    }
+    if (streamGen == _streamGen) {
+      islandLive = false;
+      streaming = false;
+      showToast('PC 结果同步超时 · 下拉刷新会话可再试');
+      notifyListeners();
+    }
+  }
+
   Future<void> boot() async {
     if (_booted) return;
     _booted = true;
@@ -2305,22 +2373,29 @@ class AppController extends ChangeNotifier {
               : '（无模型输出）PC Agent 可能未就绪 · 请检查 PC 端 LLM 配置';
         }
       }
+      // Phone stream ended without a clean FINISH — PC may still be running
+      // (we no longer auto-stop). Soft-wait + history pull instead of「中断」.
       if (streamSurface == 'remote' &&
           !streamOk &&
           streamGen == _streamGen &&
           streaming) {
-        final tip = acc.trim().isEmpty
-            ? '远端无响应 · 请检查 PC 工作台 LLM 是否可用'
-            : '远端生成未完整结束 · 可重试发送';
-        showToast(tip);
+        islandLive = true;
+        islandKind = 'stream';
+        islandText = 'PC 仍在处理…';
+        showToast('手机展示结束 · PC 继续生成，正在同步结果');
         pushStatusCard(
-          title: '远端中断',
-          body: tip,
-          kind: StatusCardKind.warn,
-          actionLabel: '重试',
-          actionId: 'reconnect',
-          ttlMs: 8000,
+          title: '同步 PC 结果',
+          body: '未向 PC 发送停止；等待本轮工具/模型完成',
+          kind: StatusCardKind.stream,
+          ttlMs: 10000,
         );
+        // Background: pull final for up to ~2 min without killing the run.
+        unawaited(_softRecoverRemoteFinal(
+          sessionId: activeSessionId!,
+          aid: aid,
+          streamGen: streamGen,
+          streamSurface: streamSurface,
+        ));
       }
 
       // P1: after stream — light reconcile only (no 3× full history reload).

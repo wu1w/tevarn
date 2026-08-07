@@ -1181,14 +1181,10 @@ class HttpTaktonBridge extends TaktonBridge {
       // Terminal honesty for offline-queue / streamOk
       yield finishedCleanly ? finishOkMark : finishBadMark;
     } finally {
-      if (!finishedCleanly) {
-        try {
-          ch.sink.add(jsonEncode({
-            'type': 'stop',
-            'session_id': sessionId,
-          }));
-        } catch (_) {}
-      }
+      // CRITICAL: never auto-send type=stop when the phone stream ends uncleanly.
+      // That killed PC agent mid-tool (weather / long runs) while the user never
+      // pressed Stop — UI showed「远端中断」. Only sessionStop / explicit user
+      // abort may cancel the PC run (see AppController.stopGeneration).
       try {
         await ch.sink.close();
       } catch (_) {}
