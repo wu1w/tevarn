@@ -1209,9 +1209,13 @@ fn spawn_turn_completion_watchdog(st: AppState, session_id: String, user_content
         let mut seen_tools: std::collections::HashSet<String> =
             std::collections::HashSet::new();
         let mut last_status = String::new();
+        let mut last_activity = std::time::Instant::now();
+        let mut tools_seen_count = 0usize;
         // Adaptive poll: 500ms while tools progress / no final; back off to 1.2s when
         // live WS is healthy (browser_subs non-empty) to cut list_messages load.
-        for tick in 0..600u32 {
+        // Cap ~5 min; silent (no tool / no assistant) fails after ~90s so phone
+        // does not spin until process kill when PC LLM is dead.
+        for tick in 0..400u32 {
             // Cancelled by a newer send on this session
             if st.current_watchdog_gen(&session_id) != gen {
                 return;
@@ -1222,6 +1226,27 @@ fn spawn_turn_completion_watchdog(st: AppState, session_id: String, user_content
             if st.current_watchdog_gen(&session_id) != gen {
                 return;
             }
+
+            // Early silent fail: no assistant + no tools for 90s → LLM likely dead.
+            let idle = last_activity.elapsed();
+            if last_push.is_empty() && seen_tools.is_empty() && idle.as_secs() >= 90 {
+                let msg = "⚠️ PC 端模型长时间无响应。请检查工作台 LLM/API Key/模型配置后重试。";
+                st.broadcast_event_for_session(
+                    Some(&session_id),
+                    &json!({
+                        "type": "stream_delta",
+                        "content": msg,
+                        "delta": msg,
+                        "replace": true,
+                        "session_id": session_id,
+                        "source": "watchdog_llm_silent",
+                    }),
+                );
+                emit_chat_done_with_text(&st, &session_id, "llm_silent_timeout", msg);
+                tracing::warn!(%session_id, "turn watchdog LLM silent timeout (90s)");
+                return;
+            }
+
             let msgs = match st.client.list_messages(&session_id, 80).await {
                 Ok(m) => m,
                 Err(_) => continue,
@@ -1248,6 +1273,10 @@ fn spawn_turn_completion_watchdog(st: AppState, session_id: String, user_content
 
             // Always surface tool progress from HTTP (Codex-like even if WS lost).
             emit_http_tool_progress(&st, &session_id, &msgs, ui, &mut seen_tools);
+            if seen_tools.len() > tools_seen_count {
+                tools_seen_count = seen_tools.len();
+                last_activity = std::time::Instant::now();
+            }
 
             let Some(text) = final_assistant_after_user(&msgs, ui) else {
                 // Tool loop / intermediate — keep waiting; pulse status occasionally.
@@ -1272,6 +1301,7 @@ fn spawn_turn_completion_watchdog(st: AppState, session_id: String, user_content
             // Push full text (replace) so lossy delta streams still show PC answer.
             if text != last_push {
                 last_push = text.clone();
+                last_activity = std::time::Instant::now();
                 stable = 0;
                 st.flush_session_deltas(&session_id);
                 st.broadcast_event_for_session(
@@ -1301,7 +1331,19 @@ fn spawn_turn_completion_watchdog(st: AppState, session_id: String, user_content
         if !last_push.is_empty() {
             emit_chat_done_with_text(&st, &session_id, "watchdog_timeout", &last_push);
         } else {
-            emit_chat_done(&st, &session_id, "watchdog_timeout");
+            let msg = "⚠️ PC Agent 响应超时。请检查 PC 端 LLM 是否可用后重试。";
+            st.broadcast_event_for_session(
+                Some(&session_id),
+                &json!({
+                    "type": "stream_delta",
+                    "content": msg,
+                    "delta": msg,
+                    "replace": true,
+                    "session_id": session_id,
+                    "source": "watchdog_timeout",
+                }),
+            );
+            emit_chat_done_with_text(&st, &session_id, "watchdog_timeout", msg);
         }
         tracing::warn!(%session_id, "turn watchdog timeout");
     });

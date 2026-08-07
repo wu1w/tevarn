@@ -300,7 +300,11 @@ async def _run_llm_round_body(
         loop._llm_fail_streak = 0
         await loop._push_status(session_id, "error", f"LLM 调用失败: {e}")
         result.action = "break"
-        result.final_content = f"[Error] LLM service failed: {e}"
+        # User-visible on phone + PC; must end turn so mobile stream does not hang.
+        result.final_content = (
+            f"⚠️ 模型不可用：{e}\n"
+            "请在 PC 工作台检查 API Key / 模型 / 网络后重试。"
+        )
         return result
 
     # 引擎层回写：有 provider 真实 usage 就用真值，否则粗估（驱动后续是否再压缩）

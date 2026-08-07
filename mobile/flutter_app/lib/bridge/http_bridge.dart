@@ -123,7 +123,13 @@ class HttpTaktonBridge extends TaktonBridge {
         case 'pair_claim':
           return _post('/api/mobile/pair/claim', a);
         case 'pair_apply':
-          return _post('/api/mobile/pair/apply', a);
+          // Heavy claim+login+bootstrap; never retry (double claim / dual WS crash).
+          return _post(
+            '/api/mobile/pair/apply',
+            a,
+            timeout: const Duration(seconds: 45),
+            maxAttempts: 1,
+          );
         case 'pair_devices':
           return _get('/api/mobile/pair/devices');
         case 'pair_pending':
@@ -236,11 +242,17 @@ class HttpTaktonBridge extends TaktonBridge {
     return {'ok': false, 'error': lastErr?.toString() ?? 'GET failed'};
   }
 
-  /// Critical writes: 1 retry only for pure network/timeout (not HTTP 4xx).
+  /// Critical writes: default 1 retry on network/timeout (not HTTP 4xx).
+  /// [maxAttempts]=1 for non-idempotent heavy ops (pair_apply).
   Future<Map<String, dynamic>> _post(
-      String path, Map<String, dynamic> body) async {
+    String path,
+    Map<String, dynamic> body, {
+    Duration timeout = const Duration(seconds: 12),
+    int maxAttempts = 2,
+  }) async {
     Object? lastErr;
-    for (var attempt = 0; attempt < 2; attempt++) {
+    final attempts = maxAttempts.clamp(1, 3);
+    for (var attempt = 0; attempt < attempts; attempt++) {
       try {
         final r = await _client
             .post(
@@ -248,11 +260,11 @@ class HttpTaktonBridge extends TaktonBridge {
               headers: {'Content-Type': 'application/json'},
               body: jsonEncode(body),
             )
-            .timeout(const Duration(seconds: 12));
+            .timeout(timeout);
         return _parse(r);
       } catch (e) {
         lastErr = e;
-        if (attempt == 0) {
+        if (attempt + 1 < attempts) {
           await Future<void>.delayed(const Duration(milliseconds: 250));
           continue;
         }
@@ -663,9 +675,13 @@ class HttpTaktonBridge extends TaktonBridge {
     var pollStable = 0;
     var lastPolled = '';
     final started = DateTime.now();
-    const overallLimit = Duration(minutes: 12);
+    // Hard cap: long tool runs still ok; dead LLM must not spin 12 min → OOM/kill.
+    const overallLimit = Duration(minutes: 5);
+    // No turn / no text after this → treat as PC LLM/path failure.
+    const silentFailAfter = Duration(seconds: 90);
     // Silence → first ring gap-fill, then turn_status (tools can pause longer).
     const silencePoll = Duration(milliseconds: 1500);
+    var sawToolOrText = false;
 
     /// Snapshot of whether this event should replace UI text (computed before accLen mutates).
     bool _eventWantsReplace(Map v) {
@@ -866,6 +882,7 @@ class HttpTaktonBridge extends TaktonBridge {
           okStr = '1';
         }
         final preview = (v['preview'] ?? v['result'] ?? '').toString();
+        sawToolOrText = true;
         yield '\x01TOOL\x01$p\x01$name\x01$okStr\x01$preview\x01$tid';
       }
       final src = (v['source']?.toString() ?? '').toLowerCase();
@@ -875,6 +892,7 @@ class HttpTaktonBridge extends TaktonBridge {
       final delta = v['delta']?.toString();
       final contentField = (v['content'] ?? v['text'])?.toString();
       if (delta != null && delta.isNotEmpty) {
+        sawToolOrText = true;
         final full =
             (contentField != null && contentField.length >= delta.length)
                 ? contentField
@@ -914,6 +932,16 @@ class HttpTaktonBridge extends TaktonBridge {
         ]);
 
         if (winner is _Silence) {
+          // Dead LLM / no events: don't spin until overallLimit with zero feedback.
+          final elapsed = DateTime.now().difference(started);
+          if (!sawTurn && elapsed >= silentFailAfter) {
+            break;
+          }
+          if (sawTurn &&
+              !sawToolOrText &&
+              elapsed >= silentFailAfter) {
+            break;
+          }
           // No WS frame — first fill seq gaps from host ring, then turn_status.
           if (!sawTurn) continue;
           {
@@ -936,6 +964,7 @@ class HttpTaktonBridge extends TaktonBridge {
             minLen: 0,
           );
           if (full != null && full.isNotEmpty) {
+            sawToolOrText = true;
             if (full != lastPolled) {
               lastPolled = full;
               pollStable = 0;
@@ -1117,6 +1146,9 @@ class HttpTaktonBridge extends TaktonBridge {
           accLen = full.length;
           yield '\x00$full';
           finishedCleanly = true;
+        } else if (accLen == 0) {
+          // Visible error so UI ends streaming instead of silent crash/kill.
+          yield '\x00⚠️ PC Agent 长时间无响应。请检查 PC 工作台 LLM/模型配置是否可用，然后重试。';
         }
       }
       // Terminal honesty for offline-queue / streamOk

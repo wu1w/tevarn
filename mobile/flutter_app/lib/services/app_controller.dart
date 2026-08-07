@@ -1885,8 +1885,25 @@ class AppController extends ChangeNotifier {
         if (list[i].text.isEmpty && streamGen == _streamGen) {
           list[i].text = streamSurface == 'local'
               ? '（无模型输出）请检查本机 LLM 配置或切换远端 Agent'
-              : '（无模型输出）PC Agent 可能未就绪';
+              : '（无模型输出）PC Agent 可能未就绪 · 请检查 PC 端 LLM 配置';
         }
+      }
+      if (streamSurface == 'remote' &&
+          !streamOk &&
+          streamGen == _streamGen &&
+          streaming) {
+        final tip = acc.trim().isEmpty
+            ? '远端无响应 · 请检查 PC 工作台 LLM 是否可用'
+            : '远端生成未完整结束 · 可重试发送';
+        showToast(tip);
+        pushStatusCard(
+          title: '远端中断',
+          body: tip,
+          kind: StatusCardKind.warn,
+          actionLabel: '重试',
+          actionId: 'reconnect',
+          ttlMs: 8000,
+        );
       }
 
       // Remote: after stream, reload full PC history so tool-loop turns
@@ -2415,12 +2432,20 @@ class AppController extends ChangeNotifier {
     islandKind = 'conn';
     _notify();
     try {
-      final r = await bridge.pairApply(
-        qr: qr,
-        deviceName: 'Takton Phone',
-        email: formEmail.isEmpty ? null : formEmail,
-        password: formPass.isEmpty ? null : formPass,
-      );
+      final r = await bridge
+          .pairApply(
+            qr: qr,
+            deviceName: 'Takton Phone',
+            email: formEmail.isEmpty ? null : formEmail,
+            password: formPass.isEmpty ? null : formPass,
+          )
+          .timeout(
+            const Duration(seconds: 50),
+            onTimeout: () => <String, dynamic>{
+              'ok': false,
+              'error': '配对超时 · 请确认与 PC 同一网络或 VPS 中继在线后重试（勿重复扫码）',
+            },
+          );
       if (!isOk(r)) {
         showToast(r['error']?.toString() ?? '配对失败');
         return false;

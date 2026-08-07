@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -13,7 +15,8 @@ class QrScannerPage extends StatefulWidget {
   State<QrScannerPage> createState() => _QrScannerPageState();
 }
 
-class _QrScannerPageState extends State<QrScannerPage> {
+class _QrScannerPageState extends State<QrScannerPage>
+    with WidgetsBindingObserver {
   late final MobileScannerController _controller;
   bool _handled = false;
   bool _torchOn = false;
@@ -22,6 +25,7 @@ class _QrScannerPageState extends State<QrScannerPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _controller = MobileScannerController(
       detectionSpeed: DetectionSpeed.normal,
       facing: CameraFacing.back,
@@ -29,18 +33,51 @@ class _QrScannerPageState extends State<QrScannerPage> {
     );
   }
 
+  Future<void> _releaseCamera() async {
+    try {
+      await _controller.stop();
+    } catch (_) {}
+    try {
+      await _controller.dispose();
+    } catch (_) {}
+  }
+
   @override
   void dispose() {
-    _controller.dispose();
+    WidgetsBinding.instance.removeObserver(this);
+    // Fire-and-forget: stop then dispose native camera (Android crash fix).
+    unawaited(_releaseCamera());
     super.dispose();
   }
 
-  void _onDetect(BarcodeCapture capture) {
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Permission dialogs and backgrounding can leave camera half-open.
+    switch (state) {
+      case AppLifecycleState.resumed:
+        if (!_handled) {
+          unawaited(_controller.start());
+        }
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.paused:
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.detached:
+        unawaited(_controller.stop());
+    }
+  }
+
+  Future<void> _onDetect(BarcodeCapture capture) async {
     if (_handled || !mounted) return;
     for (final b in capture.barcodes) {
       final raw = (b.rawValue ?? b.displayValue ?? '').trim();
       if (raw.isEmpty) continue;
       _handled = true;
+      try {
+        await _controller.stop();
+      } catch (_) {}
+      // Brief settle so camera release does not race pair_apply network work.
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      if (!mounted) return;
       Navigator.of(context).pop(raw);
       return;
     }
@@ -105,7 +142,14 @@ class _QrScannerPageState extends State<QrScannerPage> {
                   child: Row(
                     children: [
                       IconButton(
-                        onPressed: () => Navigator.of(context).pop(),
+                        onPressed: () async {
+                          try {
+                            await _controller.stop();
+                          } catch (_) {}
+                          if (context.mounted) {
+                            Navigator.of(context).pop();
+                          }
+                        },
                         icon: const Icon(Icons.close, color: Colors.white),
                       ),
                       const Expanded(
@@ -128,7 +172,10 @@ class _QrScannerPageState extends State<QrScannerPage> {
                       ),
                       IconButton(
                         onPressed: () => _controller.switchCamera(),
-                        icon: const Icon(Icons.cameraswitch, color: Colors.white),
+                        icon: const Icon(
+                          Icons.cameraswitch,
+                          color: Colors.white,
+                        ),
                       ),
                     ],
                   ),
@@ -148,7 +195,14 @@ class _QrScannerPageState extends State<QrScannerPage> {
                   ),
                 ),
                 TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
+                  onPressed: () async {
+                    try {
+                      await _controller.stop();
+                    } catch (_) {}
+                    if (context.mounted) {
+                      Navigator.of(context).pop();
+                    }
+                  },
                   child: const Text(
                     '改用粘贴配对码',
                     style: TextStyle(color: Colors.white60),
@@ -194,10 +248,14 @@ class _ScanOverlayPainter extends CustomPainter {
     canvas.drawLine(hole.topLeft, hole.topLeft + const Offset(0, L), border);
     canvas.drawLine(hole.topRight, hole.topRight + const Offset(-L, 0), border);
     canvas.drawLine(hole.topRight, hole.topRight + const Offset(0, L), border);
-    canvas.drawLine(hole.bottomLeft, hole.bottomLeft + const Offset(L, 0), border);
-    canvas.drawLine(hole.bottomLeft, hole.bottomLeft + const Offset(0, -L), border);
-    canvas.drawLine(hole.bottomRight, hole.bottomRight + const Offset(-L, 0), border);
-    canvas.drawLine(hole.bottomRight, hole.bottomRight + const Offset(0, -L), border);
+    canvas.drawLine(
+        hole.bottomLeft, hole.bottomLeft + const Offset(L, 0), border);
+    canvas.drawLine(
+        hole.bottomLeft, hole.bottomLeft + const Offset(0, -L), border);
+    canvas.drawLine(
+        hole.bottomRight, hole.bottomRight + const Offset(-L, 0), border);
+    canvas.drawLine(
+        hole.bottomRight, hole.bottomRight + const Offset(0, -L), border);
   }
 
   @override
