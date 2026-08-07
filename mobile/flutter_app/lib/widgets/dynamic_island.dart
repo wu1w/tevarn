@@ -4,20 +4,20 @@ import 'dart:ui' show DisplayFeatureType;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/physics.dart';
 import 'package:flutter/services.dart';
 
 import '../models/app_models.dart';
 import '../services/app_controller.dart';
 import '../theme/pixel_theme.dart';
 
-/// Camera-aware Dynamic Island (中置挖孔).
+/// Center punch-hole Dynamic Island.
 ///
-/// Layout (OEM / Apple DI):
-/// ```
-///  [ left label ] [  camera well  ] [ right label ]
-///  \__________ black stadium capsule __________/
-/// ```
-/// Text never enters the camera well. Expand/collapse is animated.
+/// Constraints that match real OEM / iPhone behaviour on Android:
+/// 1. Capsule **hugs the camera cutout** (well = exact hole size).
+/// 2. Horizontal expand stays inside a **center safe lane** so it never
+///    covers system clock / signal / battery icons.
+/// 3. Open/close uses **spring physics** (rubber-band / 弹弹), not linear ease.
 class TaktonDynamicIsland extends StatefulWidget {
   const TaktonDynamicIsland({
     super.key,
@@ -40,48 +40,44 @@ class _TaktonDynamicIslandState extends State<TaktonDynamicIsland>
 
   List<Rect> _nativeCutouts = const [];
 
-  /// 0 = idle (tight on camera), 1 = live (wings open).
+  /// 0 idle → 1 live (wings). Driven by spring, not fixed duration.
   late final AnimationController _liveCtrl;
-  late final Animation<double> _liveT;
 
-  /// 0 = card hidden, 1 = card shown below island.
+  /// 0 hidden → 1 card shown under status bar.
   late final AnimationController _cardCtrl;
-  late final Animation<double> _cardT;
 
   bool _prevLive = false;
   bool _prevCard = false;
 
+  /// iPhone-like soft spring (slight overshoot = 弹弹).
+  static final _springOpen = SpringDescription(
+    mass: 0.85,
+    stiffness: 220,
+    damping: 14.5,
+  );
+  static final _springClose = SpringDescription(
+    mass: 0.9,
+    stiffness: 280,
+    damping: 20,
+  );
+  static final _springCard = SpringDescription(
+    mass: 0.75,
+    stiffness: 190,
+    damping: 13,
+  );
+
   @override
   void initState() {
     super.initState();
-    _liveCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 380),
-      reverseDuration: const Duration(milliseconds: 300),
-    );
-    _liveT = CurvedAnimation(
-      parent: _liveCtrl,
-      curve: Curves.easeOutCubic,
-      reverseCurve: Curves.easeInCubic,
-    );
-
-    _cardCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 320),
-      reverseDuration: const Duration(milliseconds: 240),
-    );
-    _cardT = CurvedAnimation(
-      parent: _cardCtrl,
-      curve: Curves.easeOutBack,
-      reverseCurve: Curves.easeInCubic,
-    );
+    // Upper bound >1 so spring overshoot is visible, then settles to 1.
+    _liveCtrl = AnimationController.unbounded(vsync: this);
+    _cardCtrl = AnimationController.unbounded(vsync: this);
 
     unawaited(_probeCutouts());
-    // Late probe — cutout sometimes only ready after first frame / edge-to-edge.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_probeCutouts());
     });
-    Future<void>.delayed(const Duration(milliseconds: 400), () {
+    Future<void>.delayed(const Duration(milliseconds: 350), () {
       if (mounted) unawaited(_probeCutouts());
     });
   }
@@ -99,6 +95,11 @@ class _TaktonDynamicIslandState extends State<TaktonDynamicIsland>
     _syncAnims();
   }
 
+  void _springTo(AnimationController c, double target, SpringDescription spring) {
+    final sim = SpringSimulation(spring, c.value, target, c.velocity);
+    c.animateWith(sim);
+  }
+
   void _syncAnims() {
     final c = widget.controller;
     final live = c.islandLive || c.streaming;
@@ -107,34 +108,38 @@ class _TaktonDynamicIslandState extends State<TaktonDynamicIsland>
     if (live != _prevLive) {
       _prevLive = live;
       if (live) {
-        _liveCtrl.forward();
+        _springTo(_liveCtrl, 1.0, _springOpen);
       } else {
-        // Collapse card first if open, then wings.
-        if (_cardCtrl.value > 0) {
-          _cardCtrl.reverse().then((_) {
-            if (mounted && !widget.controller.islandLive) {
-              _liveCtrl.reverse();
+        if (_cardCtrl.value > 0.05) {
+          _springTo(_cardCtrl, 0.0, _springClose);
+          // Collapse wings after card mostly gone.
+          Future<void>.delayed(const Duration(milliseconds: 90), () {
+            if (mounted &&
+                !widget.controller.islandLive &&
+                !widget.controller.streaming) {
+              _springTo(_liveCtrl, 0.0, _springClose);
             }
           });
         } else {
-          _liveCtrl.reverse();
+          _springTo(_liveCtrl, 0.0, _springClose);
         }
       }
     }
     if (card != _prevCard) {
       _prevCard = card;
       if (card) {
-        if (_liveCtrl.value < 1) {
-          _liveCtrl.forward().then((_) {
+        if (_liveCtrl.value < 0.85) {
+          _springTo(_liveCtrl, 1.0, _springOpen);
+          Future<void>.delayed(const Duration(milliseconds: 120), () {
             if (mounted && widget.controller.islandExpanded) {
-              _cardCtrl.forward();
+              _springTo(_cardCtrl, 1.0, _springCard);
             }
           });
         } else {
-          _cardCtrl.forward();
+          _springTo(_cardCtrl, 1.0, _springCard);
         }
       } else {
-        _cardCtrl.reverse();
+        _springTo(_cardCtrl, 0.0, _springClose);
       }
     }
   }
@@ -159,14 +164,11 @@ class _TaktonDynamicIslandState extends State<TaktonDynamicIsland>
       }
       if (!mounted) return;
       setState(() => _nativeCutouts = list);
-    } catch (_) {
-      // Fall back to Flutter displayFeatures / synthetic center hole.
-    }
+    } catch (_) {}
   }
 
   @override
   Widget build(BuildContext context) {
-    // Drive anim when parent rebuilds from ChangeNotifier.
     _syncAnims();
 
     final c = widget.controller;
@@ -183,54 +185,73 @@ class _TaktonDynamicIslandState extends State<TaktonDynamicIsland>
         ? PixelColors.cyan
         : (kind == 'local' ? PixelColors.green : PixelColors.purple);
 
-    // Camera well = physical hole (never put text here).
-    final well = geom.well; // Size
+    final well = geom.well;
     final cx = geom.center.dx;
     final cy = geom.center.dy;
 
-    // Capsule height hugs the hole (+ thin rim).
-    final h = (well.height + 8).clamp(28.0, 38.0);
-    // Idle cheeks: minimal black beside hole so capsule wraps it.
-    final cheekIdle = (well.width * 0.22).clamp(5.0, 11.0);
-    // Live wings: room for short labels, still proportional to hole.
-    final wingLive = (well.width * 2.6).clamp(52.0, 96.0);
+    // ---- Safe lane: never cover system status icons ----
+    // Left: clock / notification icons. Right: signal / battery / wifi.
+    // Most CN ROMs keep ~72–100 logical px per side for status chrome.
+    final leftReserve = (shellW * 0.20).clamp(68.0, 104.0);
+    final rightReserve = (shellW * 0.20).clamp(68.0, 104.0);
+    final maxIslandW =
+        (shellW - leftReserve - rightReserve).clamp(well.width + 16, shellW * 0.55);
+
+    // Capsule height: match hole as tightly as possible (shape 贴合).
+    final h = well.height.clamp(24.0, 36.0);
+    // Idle width: hole + thin cheeks only (almost a rounded rect on the hole).
+    final cheekIdle = (well.width * 0.14).clamp(3.0, 7.0);
+    final wIdle = (well.width + cheekIdle * 2).clamp(h, maxIslandW);
+    // Live: open wings but hard-capped by safe lane (protect system icons).
+    final wingWant = (well.width * 2.1).clamp(40.0, 72.0);
+    final wLive = math.min(wIdle + wingWant * 2, maxIslandW);
 
     final leftLabel = _leftLabel(c);
     final rightLabel = _rightLabel(c);
 
     return AnimatedBuilder(
-      animation: Listenable.merge([_liveT, _cardT]),
+      animation: Listenable.merge([_liveCtrl, _cardCtrl]),
       builder: (context, _) {
-        final t = _liveT.value; // 0 idle → 1 live
-        final wing = cheekIdle + (wingLive - cheekIdle) * t;
-        final islandW = well.width + wing * 2;
+        // Spring can overshoot slightly past 1 — clamp for layout sizes.
+        final rawT = _liveCtrl.value;
+        final tLayout = rawT.clamp(0.0, 1.0);
+
+        final islandW = wIdle + (wLive - wIdle) * tLayout;
         final islandH = h;
-        // Soft scale on open for "pop"
-        final pop = 0.92 + 0.08 * Curves.easeOutBack.transform(t.clamp(0.0, 1.0));
 
+        // Vertical: center on camera. Prefer sitting fully in status band.
         final top = (cy - islandH / 2)
-            .clamp(0.0, math.max(0.0, mq.viewPadding.top))
+            .clamp(0.0, math.max(0.0, mq.viewPadding.top - islandH * 0.15))
             .toDouble();
-        final left = (cx - islandW / 2)
-            .clamp(4.0, shellW - islandW - 4)
-            .toDouble();
+        // Horizontal: lock center to camera (中置), then clamp into safe lane.
+        var left = cx - islandW / 2;
+        left = left.clamp(leftReserve * 0.15, shellW - islandW - rightReserve * 0.15);
 
-        final cardProgress = _cardT.value;
-        final cardW = math.min(shellW - 28, 300.0);
-        final cardLeft = (shellW - cardW) / 2;
-        final cardTop = top + islandH + 4;
+        // Rubber-band scale from spring overshoot (QQ / iPhone DI feel).
+        final scale = 1.0 + (rawT - tLayout) * 0.06;
+        // Extra squash on open start
+        final squash = 1.0 + (1.0 - (rawT - 0.5).abs() * 2).clamp(0.0, 1.0) *
+            (rawT < 1 ? 0.02 : 0);
+
+        final cardRaw = _cardCtrl.value;
+        final cardT = cardRaw.clamp(0.0, 1.0);
+        final cardScale = 0.88 + 0.12 * cardT + (cardRaw - cardT) * 0.04;
+        final cardW = math.min(shellW - leftReserve * 0.5 - rightReserve * 0.5, 280.0);
+        final cardLeft = ((shellW - cardW) / 2)
+            .clamp(leftReserve * 0.35, shellW - cardW - rightReserve * 0.35);
+        final cardTop = mq.viewPadding.top + 4 + (1 - cardT) * -10;
 
         return Stack(
           clipBehavior: Clip.none,
           children: [
-            // ---- Capsule (小岛) ----
+            // ---- Capsule ----
             Positioned(
               top: top,
               left: left,
               width: islandW,
               height: islandH,
               child: Transform.scale(
-                scale: pop,
+                scale: scale + squash * 0.5,
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
                   onTap: () => _onTap(c),
@@ -247,20 +268,24 @@ class _TaktonDynamicIslandState extends State<TaktonDynamicIsland>
                       borderRadius: BorderRadius.circular(islandH / 2),
                       border: Border.all(
                         color: Color.lerp(
-                              Colors.white.withValues(alpha: 0.04),
-                              accent.withValues(alpha: 0.5),
-                              t,
+                              Colors.white.withValues(alpha: 0.05),
+                              accent.withValues(alpha: 0.55),
+                              tLayout,
                             ) ??
                             Colors.black,
-                        width: 0.7,
+                        width: 0.65,
                       ),
-                      boxShadow: t > 0.05
+                      boxShadow: tLayout > 0.08
                           ? [
                               BoxShadow(
-                                color: Colors.black
-                                    .withValues(alpha: 0.28 * t),
-                                blurRadius: 10 * t,
-                                offset: Offset(0, 2 * t),
+                                color: accent.withValues(alpha: 0.12 * tLayout),
+                                blurRadius: 12 * tLayout,
+                                spreadRadius: 0,
+                              ),
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.25 * tLayout),
+                                blurRadius: 8 * tLayout,
+                                offset: Offset(0, 2 * tLayout),
                               ),
                             ]
                           : null,
@@ -269,57 +294,62 @@ class _TaktonDynamicIslandState extends State<TaktonDynamicIsland>
                       borderRadius: BorderRadius.circular(islandH / 2),
                       child: Row(
                         children: [
-                          // LEFT wing — text stays OUTSIDE camera well
+                          // Left wing — only as wide as spring allows
                           Expanded(
-                            child: Opacity(
-                              opacity: t,
-                              child: Align(
-                                alignment: Alignment.centerRight,
-                                child: Padding(
-                                  padding: EdgeInsets.only(
-                                    left: 6,
-                                    right: math.max(3, well.width * 0.08),
+                            child: IgnorePointer(
+                              child: Opacity(
+                                opacity: (tLayout * 1.4).clamp(0.0, 1.0),
+                                child: Align(
+                                  alignment: Alignment.centerRight,
+                                  child: Padding(
+                                    padding: EdgeInsets.only(
+                                      left: 4,
+                                      right: math.max(2, well.width * 0.06),
+                                    ),
+                                    child: tLayout > 0.12
+                                        ? Text(
+                                            leftLabel,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.clip,
+                                            softWrap: false,
+                                            textAlign: TextAlign.right,
+                                            style: _labelStyle(islandH, true),
+                                          )
+                                        : const SizedBox.shrink(),
                                   ),
-                                  child: t > 0.15
-                                      ? Text(
-                                          leftLabel,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          textAlign: TextAlign.right,
-                                          style: _labelStyle(islandH, true),
-                                        )
-                                      : const SizedBox.shrink(),
                                 ),
                               ),
                             ),
                           ),
 
-                          // CAMERA WELL — exact hole size, no text, no widgets
-                          // that draw over the lens. Physical cutout sits here.
-                          // Camera well: reserved empty slot matching cutout.
-                          // Labels only live in the Expanded wings — never here.
-                          SizedBox(width: well.width, height: islandH),
+                          // Exact camera well — never draw text here
+                          SizedBox(
+                            width: well.width,
+                            height: islandH,
+                          ),
 
-                          // RIGHT wing
                           Expanded(
-                            child: Opacity(
-                              opacity: t,
-                              child: Align(
-                                alignment: Alignment.centerLeft,
-                                child: Padding(
-                                  padding: EdgeInsets.only(
-                                    left: math.max(3, well.width * 0.08),
-                                    right: 6,
+                            child: IgnorePointer(
+                              child: Opacity(
+                                opacity: (tLayout * 1.4).clamp(0.0, 1.0),
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Padding(
+                                    padding: EdgeInsets.only(
+                                      left: math.max(2, well.width * 0.06),
+                                      right: 4,
+                                    ),
+                                    child: tLayout > 0.12
+                                        ? Text(
+                                            rightLabel,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.clip,
+                                            softWrap: false,
+                                            textAlign: TextAlign.left,
+                                            style: _labelStyle(islandH, false),
+                                          )
+                                        : const SizedBox.shrink(),
                                   ),
-                                  child: t > 0.15
-                                      ? Text(
-                                          rightLabel,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          textAlign: TextAlign.left,
-                                          style: _labelStyle(islandH, false),
-                                        )
-                                      : const SizedBox.shrink(),
                                 ),
                               ),
                             ),
@@ -332,16 +362,16 @@ class _TaktonDynamicIslandState extends State<TaktonDynamicIsland>
               ),
             ),
 
-            // ---- 大岛 card (Fluid Cloud) — slide + fade ----
-            if (cardProgress > 0.001)
+            // ---- Drop card BELOW status bar (never in icon lanes) ----
+            if (cardT > 0.01)
               Positioned(
-                top: cardTop + (1 - cardProgress) * -12,
+                top: cardTop,
                 left: cardLeft,
                 width: cardW,
                 child: Opacity(
-                  opacity: cardProgress.clamp(0.0, 1.0),
+                  opacity: cardT,
                   child: Transform.scale(
-                    scale: 0.92 + 0.08 * cardProgress,
+                    scale: cardScale.clamp(0.85, 1.08),
                     alignment: Alignment.topCenter,
                     child: _IslandCard(
                       dark: widget.dark,
@@ -362,7 +392,6 @@ class _TaktonDynamicIslandState extends State<TaktonDynamicIsland>
 
   void _onTap(AppController c) {
     if (c.streaming) {
-      // Expand card for streaming detail
       if (!c.islandExpanded) {
         c.islandLive = true;
         c.toggleIslandExpanded();
@@ -385,11 +414,11 @@ class _TaktonDynamicIslandState extends State<TaktonDynamicIsland>
 
   TextStyle _labelStyle(double islandH, bool bold) {
     return PixelTheme.mono.copyWith(
-      fontSize: (islandH * 0.33).clamp(9.5, 11.5),
+      fontSize: (islandH * 0.30).clamp(9.0, 10.5),
       fontWeight: bold ? FontWeight.w700 : FontWeight.w600,
-      color: Colors.white.withValues(alpha: bold ? 1 : 0.9),
+      color: Colors.white.withValues(alpha: bold ? 1 : 0.88),
       height: 1.0,
-      letterSpacing: -0.15,
+      letterSpacing: -0.2,
     );
   }
 
@@ -398,30 +427,30 @@ class _TaktonDynamicIslandState extends State<TaktonDynamicIsland>
     final t = c.islandText.trim();
     if (t.isEmpty) return c.pcConnected ? '已连' : '本机';
     if (t.contains('·')) return t.split('·').first.trim();
-    if (t.length <= 4) return t;
-    return t.substring(0, 4);
+    if (t.length <= 3) return t;
+    return t.substring(0, 3);
   }
 
   static String _rightLabel(AppController c) {
     if (c.streaming) {
       final t = c.islandText.trim();
       if (t.isNotEmpty && t != '生成中' && t != '生成') {
-        return t.length > 6 ? '${t.substring(0, 6)}…' : t;
+        return t.length > 4 ? '${t.substring(0, 4)}…' : t;
       }
-      return '中…';
+      return '中';
     }
     final t = c.islandText.trim();
     if (t.contains('·')) {
       final rest = t.split('·').skip(1).join('·').trim();
       if (rest.isNotEmpty) {
-        return rest.length > 6 ? '${rest.substring(0, 6)}…' : rest;
+        return rest.length > 4 ? '${rest.substring(0, 4)}…' : rest;
       }
     }
     if (c.pcConnected) {
       final n = c.state['approvals_pending'] ?? c.approvals.length;
-      return '待办$n';
+      return '$n';
     }
-    return '就绪';
+    return 'OK';
   }
 }
 
@@ -444,17 +473,18 @@ class _IslandCard extends StatelessWidget {
     final ink = dark ? Colors.white : PixelColors.ink;
     return Material(
       color: Colors.transparent,
+      elevation: 0,
       child: Container(
-        padding: const EdgeInsets.fromLTRB(14, 11, 10, 11),
+        padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
         decoration: BoxDecoration(
-          color: dark ? const Color(0xF2151A2E) : const Color(0xF5FFFFFF),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: accent.withValues(alpha: 0.3)),
+          color: dark ? const Color(0xF2141828) : const Color(0xF7FFFFFF),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: accent.withValues(alpha: 0.28)),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.2),
-              blurRadius: 18,
-              offset: const Offset(0, 8),
+              color: Colors.black.withValues(alpha: 0.22),
+              blurRadius: 20,
+              offset: const Offset(0, 10),
             ),
           ],
         ),
@@ -476,7 +506,7 @@ class _IslandCard extends StatelessWidget {
                         ? '生成中'
                         : (c.pcConnected ? '已连 PC' : '本机模式'),
                     style: TextStyle(
-                      fontSize: 13,
+                      fontSize: 13.5,
                       fontWeight: FontWeight.w800,
                       color: ink,
                     ),
@@ -489,7 +519,7 @@ class _IslandCard extends StatelessWidget {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      fontSize: 11.5,
+                      fontSize: 12,
                       height: 1.3,
                       color: ink.withValues(alpha: 0.55),
                     ),
@@ -499,8 +529,6 @@ class _IslandCard extends StatelessWidget {
             ),
             IconButton(
               visualDensity: VisualDensity.compact,
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
               onPressed: onClose,
               icon: Icon(
                 Icons.close_rounded,
@@ -519,13 +547,10 @@ class _IslandGeom {
   const _IslandGeom({
     required this.center,
     required this.well,
-    required this.fromSystem,
   });
 
   final Offset center;
-  /// Exact camera cutout size (logical px) — text must not enter this box.
   final Size well;
-  final bool fromSystem;
 
   static _IslandGeom resolve({
     required MediaQueryData mq,
@@ -538,21 +563,17 @@ class _IslandGeom {
       ...mq.displayFeatures
           .where((f) => f.type == DisplayFeatureType.cutout)
           .map((f) => f.bounds),
-    ].where((r) => r.width > 0 && r.height > 0 && r.top < band + 20).toList();
+    ].where((r) => r.width > 0 && r.height > 0 && r.top < band + 24).toList();
 
     if (candidates.isNotEmpty) {
       final mid = shellW / 2;
-      // 中置优先
-      candidates.sort((a, b) {
-        final da = (a.center.dx - mid).abs();
-        final db = (b.center.dx - mid).abs();
-        return da.compareTo(db);
-      });
+      candidates.sort((a, b) =>
+          (a.center.dx - mid).abs().compareTo((b.center.dx - mid).abs()));
       var r = candidates.first;
 
-      // Full-width notch band → collapse to height-based circle at center.
-      if (r.width > shellW * 0.42) {
-        final d = r.height.clamp(20.0, 36.0);
+      // Status-bar-wide fake cutout → real hole ≈ height at center.
+      if (r.width > shellW * 0.38) {
+        final d = r.height.clamp(18.0, 34.0);
         r = Rect.fromCenter(
           center: Offset(mid, r.center.dy),
           width: d,
@@ -560,28 +581,32 @@ class _IslandGeom {
         );
       }
 
-      // Keep true aspect (ellipse / pill hole) — don't force square.
-      final well = Size(
-        r.width.clamp(16.0, 48.0),
-        r.height.clamp(16.0, 42.0),
-      );
+      // Prefer near-circular well for punch-hole 贴合.
+      final side = math
+          .min(r.width, r.height)
+          .clamp(18.0, 36.0);
+      // If system reports ellipse, keep aspect but cap difference.
+      final wellW = r.width <= r.height * 1.25
+          ? r.width.clamp(18.0, 40.0)
+          : side;
+      final wellH = r.height.clamp(18.0, 36.0);
+
       return _IslandGeom(
         center: Offset(
-          r.center.dx.clamp(well.width, shellW - well.width),
-          r.center.dy.clamp(well.height / 2, math.max(well.height / 2, band)),
+          r.center.dx.clamp(side, shellW - side),
+          r.center.dy.clamp(wellH / 2 + 0.5, math.max(wellH / 2 + 0.5, band - 1)),
         ),
-        well: well,
-        fromSystem: true,
+        well: Size(wellW, wellH),
       );
     }
 
-    final b = band > 0 ? band : 32.0;
-    final d = (b * 0.56).clamp(22.0, 30.0);
-    final cy = (b * 0.5).clamp(d / 2 + 1, b - 1);
+    // Synthetic center hole from status-bar band.
+    final b = band > 0 ? band : 30.0;
+    final d = (b * 0.52).clamp(20.0, 28.0);
+    final cy = (b * 0.48).clamp(d / 2 + 1, b - 1);
     return _IslandGeom(
       center: Offset(shellW / 2, cy),
       well: Size(d, d),
-      fromSystem: false,
     );
   }
 }

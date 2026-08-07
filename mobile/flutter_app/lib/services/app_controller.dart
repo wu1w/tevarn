@@ -655,7 +655,7 @@ class AppController extends ChangeNotifier {
     islandKind = kind;
     _notify();
     // Keep open long enough for expand animation (~380ms) + readable dwell.
-    Future.delayed(const Duration(milliseconds: 2400), () {
+    Future.delayed(const Duration(milliseconds: 2800), () {
       if (streaming && (kind == 'stream' || islandKind == 'stream')) return;
       if (islandExpanded) return; // user pinned card open
       islandLive = false;
