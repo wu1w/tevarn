@@ -450,7 +450,6 @@ class HttpTaktonBridge extends TaktonBridge {
       if (event == 'status') {
         final detail = v['detail']?.toString() ?? '';
         if (detail.isNotEmpty) {
-          lastActivity = DateTime.now();
           yield '\x01STATUS\x01$detail';
         }
         event = '';

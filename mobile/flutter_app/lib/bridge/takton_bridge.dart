@@ -53,11 +53,11 @@ abstract class TaktonBridge {
   /// Cancel in-flight remote (or local) generation for a session.
   Future<Map<String, dynamic>> sessionStop(String id) =>
       call('session_stop', {'id': id});
-  Future<Map<String, dynamic>> messages(String id, {int? limit, int? before}) =>
+  Future<Map<String, dynamic>> messages(String id, {int? limit, String? before}) =>
       call('messages', {
         'id': id,
         if (limit != null) 'limit': limit,
-        if (before != null) 'before': before,
+        if (before != null && before.isNotEmpty) 'before': before,
       });
 
   Future<Map<String, dynamic>> localHistory() => call('local_history');
