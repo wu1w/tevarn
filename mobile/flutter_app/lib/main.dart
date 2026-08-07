@@ -78,7 +78,7 @@ class _BootstrapAppState extends State<_BootstrapApp>
 
       // Hard timeout so a stuck native host cannot freeze the UI forever.
       final bridge = await createTaktonBridge().timeout(
-        const Duration(seconds: 8),
+        const Duration(seconds: 5),
         onTimeout: () {
           debugPrint('createTaktonBridge timeout → HTTP fallback');
           return HttpTaktonBridge(
@@ -96,7 +96,7 @@ class _BootstrapAppState extends State<_BootstrapApp>
         _status = '就绪';
       });
       unawaited(ctrl.boot().timeout(
-        const Duration(seconds: 20),
+        const Duration(seconds: 12),
         onTimeout: () {
           debugPrint('AppController.boot timeout — UI already live');
         },

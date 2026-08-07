@@ -528,15 +528,21 @@ fn sort_session_views(mut sessions: Vec<Value>) -> Vec<Value> {
 async fn collect_session_views(st: &AppState) -> (Vec<Value>, Value) {
     let meta = st.load_meta();
     let local = local_session_view(&meta);
-    if !st.client.is_authenticated() {
+    // Only hit PC when live; JWT alone must not block UI (PC powered off).
+    if !st.pc_connected() {
         return (vec![], local);
     }
-    match st.client.list_sessions(None).await {
-        Ok(list) => {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        st.client.list_sessions(None),
+    )
+    .await
+    {
+        Ok(Ok(list)) => {
             let views: Vec<Value> = list.iter().map(|s| session_view(s, &meta)).collect();
             (sort_session_views(views), local)
         }
-        Err(_) => (vec![], local),
+        _ => (vec![], local),
     }
 }
 
@@ -633,8 +639,19 @@ async fn remote_probe(
     }
     let mut pc_model = String::new();
     let mut runtime = None;
-    if st.client.is_authenticated() {
-        if let Ok(cat) = st.client.model_catalog(false).await {
+    // Never block on a dead PC for catalog/runtime (each client call can be 60s).
+    if st.pc_connected() || st.client.is_authenticated() {
+        let live = st.pc_connected();
+        if !live {
+            // Soft skip: JWT present but not live — return empty, cache nothing.
+            return (String::new(), None, Some(false));
+        }
+        if let Ok(Ok(cat)) = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            st.client.model_catalog(false),
+        )
+        .await
+        {
             st.mark_pc_reachable();
             let v = serde_json::to_value(&cat).unwrap_or(json!({}));
             pc_model = catalog_active_model(&v).unwrap_or_default();
@@ -654,7 +671,15 @@ async fn remote_probe(
                 }
             }
         }
-        runtime = st.client.runtime_status().await.ok();
+        runtime = match tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            st.client.runtime_status(),
+        )
+        .await
+        {
+            Ok(Ok(r)) => Some(r),
+            _ => None,
+        };
         let kernel_ready = {
             let runtime_ok = runtime
                 .as_ref()
@@ -1759,6 +1784,7 @@ async fn healthz(State(st): State<AppState>) -> Json<Value> {
 }
 
 /// Probe PC when authenticated but liveness stamp is old (P0-2).
+/// Hard-capped (~3s): never block boot /state when PC is powered off.
 async fn refresh_pc_liveness(st: &AppState) {
     if !st.client.is_authenticated() {
         return;
@@ -1769,29 +1795,49 @@ async fn refresh_pc_liveness(st: &AppState) {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     if last > 0 && now.saturating_sub(last) < 12 {
-        return; // recently probed
+        return; // recently probed OK
+    }
+    // Fresh fail backoff: don't re-hammer dead PC every /state call.
+    static LAST_FAIL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let last_fail = LAST_FAIL.load(std::sync::atomic::Ordering::SeqCst);
+    if last_fail > 0 && now.saturating_sub(last_fail) < 20 {
+        return;
     }
     match tokio::time::timeout(
-        std::time::Duration::from_secs(2),
+        std::time::Duration::from_millis(1500),
         st.client.health(),
     )
     .await
     {
-        Ok(Ok(_)) => st.mark_pc_reachable(),
+        Ok(Ok(_)) => {
+            st.mark_pc_reachable();
+            LAST_FAIL.store(0, std::sync::atomic::Ordering::SeqCst);
+        }
         _ => {
-            // Try device_token re-ticket once on failure
-            if let Some(t) = st.path.profile().device_token.clone() {
-                if let Ok(_) = tokio::time::timeout(
-                    std::time::Duration::from_secs(4),
-                    st.client.pair_session_login(&t),
-                )
-                .await
-                {
-                    if let Ok(_) = st.client.health().await {
-                        st.mark_pc_reachable();
+            // One short re-ticket attempt only if we had a recent live window.
+            let had_recent = last > 0 && now.saturating_sub(last) < 120;
+            if had_recent {
+                if let Some(t) = st.path.profile().device_token.clone() {
+                    if let Ok(Ok(_)) = tokio::time::timeout(
+                        std::time::Duration::from_secs(2),
+                        st.client.pair_session_login(&t),
+                    )
+                    .await
+                    {
+                        if let Ok(Ok(_)) = tokio::time::timeout(
+                            std::time::Duration::from_millis(1200),
+                            st.client.health(),
+                        )
+                        .await
+                        {
+                            st.mark_pc_reachable();
+                            LAST_FAIL.store(0, std::sync::atomic::Ordering::SeqCst);
+                            return;
+                        }
                     }
                 }
             }
+            LAST_FAIL.store(now, std::sync::atomic::Ordering::SeqCst);
         }
     }
 }
@@ -1823,6 +1869,8 @@ async fn list_events_after(
 }
 
 async fn app_state(State(st): State<AppState>) -> Json<Value> {
+    // Cap whole handler so Flutter boot never freezes waiting on dead PC.
+    let fut = async {
     refresh_pc_liveness(&st).await;
     let authenticated = st.client.is_authenticated();
     let pc_connected = st.pc_connected();
@@ -1836,21 +1884,24 @@ async fn app_state(State(st): State<AppState>) -> Json<Value> {
     let active = st.active_session.read().clone();
     let profile = st.local_llm.load_profile();
     let mut active_model = String::new();
-    if authenticated {
+    if pc_connected {
         let (m, _, _) = remote_probe(&st).await;
         active_model = m;
     }
-    let approvals_pending = if authenticated {
-        st.client
-            .list_escalations(Some("pending"))
-            .await
-            .ok()
-            .map(|v| normalize_list(&v).len())
-            .unwrap_or(0)
+    let approvals_pending = if pc_connected {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            st.client.list_escalations(Some("pending")),
+        )
+        .await
+        {
+            Ok(Ok(v)) => normalize_list(&v).len(),
+            _ => 0,
+        }
     } else {
         0
     };
-    Json(json!({
+    json!({
         "ok": true,
         // Product "已连 PC" = reachable (P0-2), not mere JWT in memory
         "authenticated": pc_connected,
@@ -1869,7 +1920,38 @@ async fn app_state(State(st): State<AppState>) -> Json<Value> {
         "local_llm_ready": profile.is_ready(),
         "active_model": active_model,
         "approvals_pending": approvals_pending,
-    }))
+    })
+    };
+    match tokio::time::timeout(std::time::Duration::from_secs(6), fut).await {
+        Ok(v) => Json(v),
+        Err(_) => {
+            let authenticated = st.client.is_authenticated();
+            let pc_connected = st.pc_connected();
+            let profile = st.local_llm.load_profile();
+            let meta = st.load_meta();
+            let local_session = local_session_view(&meta);
+            Json(json!({
+                "ok": true,
+                "authenticated": pc_connected,
+                "jwt_present": authenticated,
+                "pc_connected": pc_connected,
+                "chat_sockets_alive": 0,
+                "latest_seq": st.latest_seq(),
+                "base_url": base_url_of(&st),
+                "user_email": user_email_of(&st),
+                "active_session_id": st.active_session.read().clone(),
+                "sessions": [],
+                "local_session": local_session,
+                "mode": if pc_connected { "remote" } else { "local" },
+                "local_llm": profile.masked(),
+                "local_llm_ready": profile.is_ready(),
+                "active_model": "",
+                "approvals_pending": 0,
+                "degraded": true,
+                "error": "state timeout · PC unreachable",
+            }))
+        }
+    }
 }
 
 async fn connect(State(st): State<AppState>, Json(body): Json<ConnectBody>) -> Json<Value> {
@@ -2396,8 +2478,8 @@ async fn try_connect_best_pref(
             try_urls.push(u.clone());
         }
     }
-    // Hard cap attempts so pair never freezes the UI for a minute.
-    try_urls.truncate(4);
+    // Hard cap attempts so pair / PC-off never freezes the UI.
+    try_urls.truncate(3);
 
     // Prefer explicit arg, else durable path profile token.
     let token = device_token
@@ -2431,7 +2513,15 @@ async fn try_connect_best_pref(
                 {
                     Ok(Ok(_)) => {
                         // health is unauthenticated; try a cheap authed call
-                        if st.client.list_sessions(None).await.is_ok() {
+                        let sess_ok = matches!(
+                            tokio::time::timeout(
+                                std::time::Duration::from_secs(2),
+                                st.client.list_sessions(None),
+                            )
+                            .await,
+                            Ok(Ok(_))
+                        );
+                        if sess_ok {
                             if let Some(s) = st.client.session() {
                                 return Ok(s);
                             }
@@ -2454,7 +2544,7 @@ async fn try_connect_best_pref(
                 st.client.auto_login().await
             }
         };
-        let login = match tokio::time::timeout(std::time::Duration::from_secs(8), login_fut).await {
+        let login = match tokio::time::timeout(std::time::Duration::from_secs(5), login_fut).await {
             Ok(r) => r,
             Err(_) => {
                 last_err = format!("login timeout · {url}");
@@ -3425,6 +3515,27 @@ async fn path_probe(State(st): State<AppState>, Json(body): Json<PathProbeBody>)
 async fn path_reconnect(
     State(st): State<AppState>,
     Json(body): Json<PathReconnectBody>,
+) -> Json<Value> {
+    // Overall deadline: PC off must not freeze phone for minutes.
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(12),
+        path_reconnect_inner(st, body),
+    )
+    .await
+    {
+        Ok(v) => v,
+        Err(_) => Json(json!({
+            "ok": false,
+            "error": "path_reconnect timeout · PC may be offline",
+            "pc_connected": false,
+            "chats_dropped": 0,
+        })),
+    }
+}
+
+async fn path_reconnect_inner(
+    st: AppState,
+    body: PathReconnectBody,
 ) -> Json<Value> {
     // Flush coalesced tokens (do NOT drop chats until auth succeeds — P0-3).
     st.flush_all_session_deltas();

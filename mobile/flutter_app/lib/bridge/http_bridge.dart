@@ -173,7 +173,8 @@ class HttpTaktonBridge extends TaktonBridge {
         case 'path_probe':
           return _post('/api/mobile/path/probe', a);
         case 'path_reconnect':
-          return _post('/api/mobile/path/reconnect', a);
+          return _post('/api/mobile/path/reconnect', a,
+              timeout: const Duration(seconds: 12), maxAttempts: 1);
         case 'path_refresh':
           return _post('/api/mobile/path/refresh', a);
         case 'processes':

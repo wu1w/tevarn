@@ -108,6 +108,12 @@ class AppController extends ChangeNotifier {
   final Set<String> _decideInFlight = {};
   /// Serialize user send vs offline flush (prevents dual streams).
   bool _sendBusy = false;
+  /// Serialize path reconnect when PC is offline (prevents stack + crash).
+  bool _reconnectBusy = false;
+  DateTime? _lastReconnectFailAt;
+  DateTime? _lastReconnectOkAt;
+  int _reconnectFailStreak = 0;
+  bool _offlineToastShown = false;
 
   bool get pcConnected => state['authenticated'] == true;
   int get offlineQueueLength => offlineQueue.length;
@@ -466,8 +472,9 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> _bootNetwork(String preferredSurface) async {
+    // Fast local hydrate first — never block shell on dead PC.
     try {
-      await refreshAll().timeout(const Duration(seconds: 6));
+      await refreshAll().timeout(const Duration(seconds: 4));
     } catch (_) {}
     await _loadOfflineQueue();
     if (offlineQueue.isNotEmpty) {
@@ -476,46 +483,78 @@ class AppController extends ChangeNotifier {
       );
       pulseIsland(text: '队列 ${offlineQueue.length}', kind: 'conn');
     }
-    unawaited(refreshPath());
-    if (pcConnected) {
-      unawaited(syncPendingConfirmsFromApprovals());
-    }
+    unawaited(() async {
+      try {
+        await refreshPath().timeout(const Duration(seconds: 3));
+      } catch (_) {}
+    }());
 
     final wantRemote = preferredSurface == 'remote';
     if (!pcConnected && wantRemote) {
       surface = 'local';
+      islandText = 'PC 离线';
+      islandKind = 'conn';
       _loadSurfaceCache('local');
+      if (!_offlineToastShown) {
+        _offlineToastShown = true;
+        showToast('PC 未连接 · 已进本机模式，可稍后重连');
+        pushStatusCard(
+          title: 'PC 未开机或不可达',
+          body: '历史已缓存 · 点状态岛或「连接」页重试',
+          kind: StatusCardKind.warn,
+          actionLabel: '重连',
+          actionId: 'reconnect',
+          ttlMs: 8000,
+        );
+      }
       _notify();
     }
 
+    if (pcConnected) {
+      unawaited(syncPendingConfirmsFromApprovals());
+    }
+
     final bootGen = _switchGen;
-    final bootSurface = surface;
+    // Prefer local surface hydrate when offline — skip remote ensureSession.
+    final bootSurface = (!pcConnected && wantRemote) ? 'local' : surface;
     unawaited(() async {
       try {
         await _applySwitchSurface(bootSurface, ensureSession: false)
-            .timeout(const Duration(seconds: 6));
-        if (bootGen != _switchGen || surface != bootSurface) return;
+            .timeout(const Duration(seconds: 4));
+        if (bootGen != _switchGen) return;
         await _persistDiskMessageCaches();
         _notify();
       } catch (_) {}
     }());
 
+    // Soft one-shot reconnect in background (hard-capped). Never chains.
     if (!pcConnected) {
-      unawaited(tryAutoReconnect().then((_) async {
-        if (!pcConnected || _appPaused) return;
+      unawaited(() async {
+        final ok = await tryAutoReconnect(reason: 'boot');
+        if (!ok || !pcConnected || _appPaused) return;
         final p = await SharedPreferences.getInstance();
         final mode = p.getString('takton-chat-mode') ?? preferredSurface;
         if (mode == 'remote' && surface != 'remote') {
           await setSurface('remote');
         } else {
-          await refreshAll();
+          try {
+            await refreshAll().timeout(const Duration(seconds: 4));
+          } catch (_) {}
           _notify();
         }
-      }));
+      }());
     }
 
-    unawaited(refreshMesh());
-    unawaited(refreshPairedDevices());
+    unawaited(() async {
+      try {
+        await refreshMesh().timeout(const Duration(seconds: 3));
+      } catch (_) {}
+    }());
+    unawaited(() async {
+      try {
+        await refreshPairedDevices().timeout(const Duration(seconds: 3));
+      } catch (_) {}
+    }());
     _startBackgroundPolls();
     if (bridgeKind == 'http-fallback' ||
         bridgeKind.contains('fallback') ||
@@ -528,7 +567,9 @@ class AppController extends ChangeNotifier {
   void _startBackgroundPolls() {
     if (_appPaused) return;
     _pathPoll?.cancel();
-    _pathPoll = Timer.periodic(const Duration(seconds: 45), (_) {
+    // Offline: slow poll (90s). Online remote: 45s. Avoid ANR stacks.
+    final pathEvery = pcConnected ? 45 : 90;
+    _pathPoll = Timer.periodic(Duration(seconds: pathEvery), (_) {
       if (_appPaused) return;
       if (!pcConnected || surface == 'remote') {
         unawaited(pathHealthTick());
@@ -536,7 +577,7 @@ class AppController extends ChangeNotifier {
     });
     _syncApprovePoll();
     _healthPoll?.cancel();
-    _healthPoll = Timer.periodic(const Duration(seconds: 20), (_) {
+    _healthPoll = Timer.periodic(const Duration(seconds: 30), (_) {
       if (!_appPaused) unawaited(_healthTick());
     });
   }
@@ -657,36 +698,50 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> refreshAll() async {
-    final st = await bridge.state();
-    if (isOk(st)) {
-      state = st;
-      formBase = st['base_url']?.toString() ?? formBase;
-      activeSessionId = st['active_session_id']?.toString();
-      if (activeSessionId != null && activeSessionId!.isEmpty) {
-        activeSessionId = null;
+    try {
+      final st = await bridge.state().timeout(const Duration(seconds: 5));
+      if (isOk(st)) {
+        state = st;
+        formBase = st['base_url']?.toString() ?? formBase;
+        activeSessionId = st['active_session_id']?.toString();
+        if (activeSessionId != null && activeSessionId!.isEmpty) {
+          activeSessionId = null;
+        }
+        if (activeSessionId == '__local__') activeSessionId = null;
+        remoteSessions
+          ..clear()
+          ..addAll(((st['sessions'] as List?) ?? [])
+              .whereType<Map>()
+              .map((e) => SessionItem.fromJson(Map<String, dynamic>.from(e))));
+        final ls = st['local_session'];
+        if (ls is Map) {
+          localSession = SessionItem.fromJson(
+              Map<String, dynamic>.from(ls),
+              isLocal: true);
+        } else {
+          localSession ??= SessionItem(
+            id: '__local__',
+            title: '本机对话',
+            pinned: false,
+            isLocal: true,
+          );
+        }
+        _applyLocalLlmFromState();
+        if (st['authenticated'] != true && st['pc_connected'] != true) {
+          if (islandKind == 'conn' && islandText.contains('已连')) {
+            islandText = 'PC 离线';
+          }
+        }
       }
-      if (activeSessionId == '__local__') activeSessionId = null;
-      remoteSessions
-        ..clear()
-        ..addAll(((st['sessions'] as List?) ?? [])
-            .whereType<Map>()
-            .map((e) => SessionItem.fromJson(Map<String, dynamic>.from(e))));
-      final ls = st['local_session'];
-      if (ls is Map) {
-        localSession =
-            SessionItem.fromJson(Map<String, dynamic>.from(ls), isLocal: true);
-      } else {
-        localSession ??= SessionItem(
-          id: '__local__',
-          title: '本机对话',
-          pinned: false,
-          isLocal: true,
-        );
+    } catch (_) {
+      // Keep disk cache UI; mark offline-ish without crashing.
+      if (state['authenticated'] == true) {
+        state = {...state, 'authenticated': false, 'pc_connected': false};
       }
-      _applyLocalLlmFromState();
     }
     try {
-      final lr = await bridge.localConfigGet();
+      final lr =
+          await bridge.localConfigGet().timeout(const Duration(seconds: 3));
       if (isOk(lr) && lr['config'] is Map) {
         final cfg = Map<String, dynamic>.from(lr['config'] as Map);
         llmBase = cfg['base_url']?.toString() ?? llmBase;
@@ -700,8 +755,14 @@ class AppController extends ChangeNotifier {
         };
       }
     } catch (_) {}
-    await refreshMode();
-    await loadApprovals();
+    try {
+      await refreshMode().timeout(const Duration(seconds: 3));
+    } catch (_) {}
+    if (pcConnected) {
+      try {
+        await loadApprovals().timeout(const Duration(seconds: 3));
+      } catch (_) {}
+    }
     _syncApprovePoll();
   }
 
@@ -3182,30 +3243,84 @@ class AppController extends ChangeNotifier {
   }
 
   /// M3/M4: reconnect with multi-endpoint probe (LAN → host → TS).
-  Future<void> tryAutoReconnect() async {
+  /// Hard-capped; safe when PC is powered off (no multi-minute hang / crash).
+  Future<bool> tryAutoReconnect({String reason = 'manual'}) async {
+    if (_reconnectBusy || _appPaused) return false;
+    // Just succeeded — don't re-probe for a few seconds.
+    final okAt = _lastReconnectOkAt;
+    if (okAt != null && DateTime.now().difference(okAt).inSeconds < 8) {
+      return pcConnected;
+    }
+    // Backoff after failures: 15s, 30s, 60s… cap 3min
+    final failAt = _lastReconnectFailAt;
+    if (failAt != null) {
+      final waitSec = (15 * (1 << _reconnectFailStreak.clamp(0, 3))).clamp(15, 180);
+      if (DateTime.now().difference(failAt).inSeconds < waitSec) {
+        return false;
+      }
+    }
+    _reconnectBusy = true;
+    pathBusy = true;
+    _notify();
+    var ok = false;
+    try {
+      ok = await _tryAutoReconnectOnce(reason: reason)
+          .timeout(const Duration(seconds: 12), onTimeout: () => false);
+    } catch (_) {
+      ok = false;
+    } finally {
+      _reconnectBusy = false;
+      pathBusy = false;
+      if (ok) {
+        _lastReconnectOkAt = DateTime.now();
+        _lastReconnectFailAt = null;
+        _reconnectFailStreak = 0;
+        _offlineToastShown = false;
+      } else {
+        _lastReconnectFailAt = DateTime.now();
+        _reconnectFailStreak = (_reconnectFailStreak + 1).clamp(0, 6);
+        if (!_offlineToastShown || reason == 'manual') {
+          _offlineToastShown = true;
+          showToast('PC 不可达 · 已保留本机缓存，可稍后重试');
+          islandText = 'PC 离线';
+          islandKind = 'conn';
+        }
+      }
+      _notify();
+      // Reschedule path poll interval after online/offline flip
+      if (!_appPaused) {
+        _startBackgroundPolls();
+      }
+    }
+    return ok;
+  }
+
+  Future<bool> _tryAutoReconnectOnce({required String reason}) async {
     final prefs = await SharedPreferences.getInstance();
     final base = prefs.getString('takton-form-base');
     final stored = prefs.getStringList('takton-path-candidates') ?? const [];
-    if ((base == null || base.isEmpty) && stored.isEmpty) {
-      // Still try path profile from Rust store
-    } else if (base != null && base.isNotEmpty) {
+    if (base != null && base.isNotEmpty) {
       formBase = base;
     }
     try {
-      try {
-        await MeshRuntime.instance.up(hostname: 'takton-phone');
-      } catch (_) {}
-      final cands = <String>[
-        if (base != null && base.isNotEmpty) base,
-        ...stored,
-      ];
-      final r = await bridge.pathReconnect(
-        candidates: cands,
-        email: formEmail.isEmpty ? null : formEmail,
-        password: formPass.isEmpty ? null : formPass,
-        claim: true,
-      );
-      if (isOk(r) && r['authenticated'] == true) {
+      await MeshRuntime.instance.up(hostname: 'takton-phone')
+          .timeout(const Duration(seconds: 2));
+    } catch (_) {}
+    final cands = <String>[
+      if (base != null && base.isNotEmpty) base,
+      ...stored,
+    ];
+    try {
+      // Single path_reconnect (Rust already probes + caps). No connect+autoLogin chain.
+      final r = await bridge
+          .pathReconnect(
+            candidates: cands,
+            email: formEmail.isEmpty ? null : formEmail,
+            password: formPass.isEmpty ? null : formPass,
+            claim: reason == 'boot' || reason == 'manual',
+          )
+          .timeout(const Duration(seconds: 10));
+      if (isOk(r) && (r['authenticated'] == true || r['pc_connected'] == true)) {
         final b = r['base_url']?.toString();
         if (b != null && b.isNotEmpty) {
           formBase = b;
@@ -3214,31 +3329,17 @@ class AppController extends ChangeNotifier {
         await _persistPathFrom(r);
         final kind = r['path_kind']?.toString() ?? '';
         showToast(kind.isEmpty ? '已自动重连 PC' : '已重连 · $kind');
-        await refreshAll();
-        await refreshPath();
+        pulseIsland(text: kind.isEmpty ? '已连 PC' : kind, kind: 'conn');
+        try {
+          await refreshAll().timeout(const Duration(seconds: 4));
+        } catch (_) {}
+        unawaited(refreshPath());
         unawaited(syncPendingConfirmsFromApprovals());
         unawaited(flushOfflineQueue());
-        return;
-      }
-      // Fallback: single base connect
-      if (base != null && base.isNotEmpty) {
-        final r2 = await bridge.connect(baseUrl: base, candidates: cands);
-        if (isOk(r2)) {
-          showToast('已自动重连 PC');
-          await refreshAll();
-          unawaited(syncPendingConfirmsFromApprovals());
-          unawaited(flushOfflineQueue());
-          return;
-        }
-      }
-      final auto = await bridge.autoLogin();
-      if (isOk(auto)) {
-        showToast('已自动重连 PC');
-        await refreshAll();
-        unawaited(syncPendingConfirmsFromApprovals());
-        unawaited(flushOfflineQueue());
+        return true;
       }
     } catch (_) {}
+    return false;
   }
 
   Future<void> refreshPath() async {
@@ -3300,72 +3401,46 @@ class AppController extends ChangeNotifier {
 
   /// Wi‑Fi ↔ 5G / interface change → re-probe endpoints + deferred claim.
   Future<void> onNetworkPathChanged() async {
-    if (pathBusy) return;
-    pathBusy = true;
-    try {
-      await refreshMesh();
-      final r = await bridge.pathReconnect(
-        candidates: _candidateList(),
-        email: formEmail.isEmpty ? null : formEmail,
-        password: formPass.isEmpty ? null : formPass,
-        claim: true,
-      );
-      if (isOk(r) && r['authenticated'] == true) {
-        final b = r['base_url']?.toString();
-        if (b != null && b.isNotEmpty) {
-          formBase = b;
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setString('takton-form-base', formBase);
-        }
-        await _persistPathFrom(r);
-        final kind = r['path_kind']?.toString() ?? 'path';
-        if (!pcConnected) {
-          showToast('网络已切换 · 已重连 ($kind)');
-        }
-        pushStatusCard(
-          title: '网络已切换',
-          body: '已重连 · $kind',
-          kind: StatusCardKind.conn,
-          actionLabel: '刷新',
-          actionId: 'reconnect',
-        );
-        await refreshAll();
-      }
-      await refreshPath();
-    } catch (_) {
-    } finally {
-      pathBusy = false;
-      _notify();
-    }
+    if (pathBusy || _reconnectBusy) return;
+    // Delegate to capped reconnect (avoids parallel path_reconnect storms).
+    await tryAutoReconnect(reason: 'network');
   }
 
   /// Periodic health: if remote surface but unauthenticated, try reconnect.
   Future<void> pathHealthTick() async {
-    if (pathBusy || _appPaused) return;
+    if (pathBusy || _reconnectBusy || _appPaused) return;
     try {
-      await MeshRuntime.instance.checkNow();
+      await MeshRuntime.instance
+          .checkNow()
+          .timeout(const Duration(seconds: 2));
       if (!pcConnected) {
-        await tryAutoReconnect();
+        await tryAutoReconnect(reason: 'health');
         return;
       }
       // Soft probe — if best path differs, flip without full re-login noise
-      final probe = await bridge.pathProbe(candidates: _candidateList());
+      final probe = await bridge
+          .pathProbe(candidates: _candidateList())
+          .timeout(const Duration(seconds: 4));
       if (!isOk(probe)) return;
       final best = probe['best'];
       final bestUrl = best is Map ? best['url']?.toString() : null;
       if (bestUrl != null &&
           bestUrl.isNotEmpty &&
-          bestUrl.replaceAll(RegExp(r'/+\$'), '') != formBase.replaceAll(RegExp(r'/+\$'), '')) {
-        // Prefer better path (usually LAN when home)
-        final r = await bridge.pathReconnect(
-          candidates: _candidateList(extra: bestUrl),
-          claim: false,
-        );
+          bestUrl.replaceAll(RegExp(r'/+\$'), '') !=
+              formBase.replaceAll(RegExp(r'/+\$'), '')) {
+        final r = await bridge
+            .pathReconnect(
+              candidates: _candidateList(extra: bestUrl),
+              claim: false,
+            )
+            .timeout(const Duration(seconds: 8));
         if (isOk(r) && r['authenticated'] == true) {
           final b = r['base_url']?.toString();
           if (b != null && b.isNotEmpty) formBase = b;
           await _persistPathFrom(r);
-          await refreshAll();
+          try {
+            await refreshAll().timeout(const Duration(seconds: 4));
+          } catch (_) {}
         }
       }
     } catch (_) {}
@@ -3382,12 +3457,17 @@ class AppController extends ChangeNotifier {
   Future<void> onAppResumed() async {
     _appPaused = false;
     _startBackgroundPolls();
-    await MeshRuntime.instance.checkNow();
-    if (!pcConnected) {
-      await tryAutoReconnect();
-    } else {
-      await pathHealthTick();
-    }
+    // Never await long reconnect on resume — freezes UI / causes kill.
+    unawaited(() async {
+      try {
+        await MeshRuntime.instance.checkNow().timeout(const Duration(seconds: 2));
+      } catch (_) {}
+      if (!pcConnected) {
+        await tryAutoReconnect(reason: 'resume');
+      } else {
+        await pathHealthTick();
+      }
+    }());
   }
 
   Future<void> saveLocalLlm() async {
