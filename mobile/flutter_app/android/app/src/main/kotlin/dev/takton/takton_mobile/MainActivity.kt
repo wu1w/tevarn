@@ -6,11 +6,11 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 /**
- * Expose [android.view.DisplayCutout] bounding rects so the Flutter
- * Dynamic Island can size to the real front-camera hole (center punch).
+ * Expose [android.view.DisplayCutout] as **physical pixels**.
  *
- * Industry approach (DynamicSpot / OEM islands): query cutout → draw
- * stadium capsule around those bounds in the status-bar band.
+ * Flutter must convert with [MediaQuery.devicePixelRatio] — NOT
+ * [android.util.DisplayMetrics.density], which can diverge on OEM
+ * "display size" scaling (Huawei / Xiaomi) and makes the island drift.
  */
 class MainActivity : FlutterActivity() {
     private val channelName = "takton/display_cutout"
@@ -26,23 +26,33 @@ class MainActivity : FlutterActivity() {
             }
     }
 
-    private fun readCutouts(): List<Map<String, Double>> {
+    private fun readCutouts(): Map<String, Any> {
+        val metrics = resources.displayMetrics
+        val meta = mapOf(
+            "density" to metrics.density.toDouble(),
+            "densityDpi" to metrics.densityDpi.toDouble(),
+            "widthPx" to metrics.widthPixels.toDouble(),
+            "heightPx" to metrics.heightPixels.toDouble(),
+        )
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
-            return emptyList()
+            return meta + mapOf("rects" to emptyList<Map<String, Double>>())
         }
-        val density = resources.displayMetrics.density.toDouble().coerceAtLeast(0.5)
-        val decor = window?.decorView ?: return emptyList()
-        val insets = decor.rootWindowInsets ?: return emptyList()
-        val cutout = insets.displayCutout ?: return emptyList()
-        return cutout.boundingRects.map { r ->
+        val decor = window?.decorView
+            ?: return meta + mapOf("rects" to emptyList<Map<String, Double>>())
+        val insets = decor.rootWindowInsets
+            ?: return meta + mapOf("rects" to emptyList<Map<String, Double>>())
+        val cutout = insets.displayCutout
+            ?: return meta + mapOf("rects" to emptyList<Map<String, Double>>())
+
+        // Physical px as-is — Flutter divides by devicePixelRatio.
+        val rects = cutout.boundingRects.map { r ->
             mapOf(
-                "left" to r.left / density,
-                "top" to r.top / density,
-                "right" to r.right / density,
-                "bottom" to r.bottom / density,
-                "width" to r.width() / density,
-                "height" to r.height() / density,
+                "l" to r.left.toDouble(),
+                "t" to r.top.toDouble(),
+                "r" to r.right.toDouble(),
+                "b" to r.bottom.toDouble(),
             )
         }
+        return meta + mapOf("rects" to rects)
     }
 }
