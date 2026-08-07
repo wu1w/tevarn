@@ -654,10 +654,10 @@ class AppController extends ChangeNotifier {
     }
     islandKind = kind;
     _notify();
-    Future.delayed(const Duration(milliseconds: 1600), () {
-      // Keep stream island while generating.
-      if (streaming && kind == 'stream') return;
-      if (streaming && islandKind == 'stream') return;
+    // Keep open long enough for expand animation (~380ms) + readable dwell.
+    Future.delayed(const Duration(milliseconds: 2400), () {
+      if (streaming && (kind == 'stream' || islandKind == 'stream')) return;
+      if (islandExpanded) return; // user pinned card open
       islandLive = false;
       _notify();
     });

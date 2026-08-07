@@ -10,16 +10,14 @@ import '../models/app_models.dart';
 import '../services/app_controller.dart';
 import '../theme/pixel_theme.dart';
 
-/// Industry-style camera island for center punch-hole Androids.
+/// Camera-aware Dynamic Island (中置挖孔).
 ///
-/// Visual language (小米超级岛 / OPPO 流体云 / vivo 原子岛 / 华为实况窗 / Apple DI):
-/// - **小岛**: solid black **stadium capsule** in the status-bar band, sized from
-///   the real [DisplayCutout] (native) or Flutter [DisplayFeatureType.cutout].
-/// - **活跃**: same height, width expands left+right of the hole for a short label.
-/// - **大岛/卡片**: content card hangs **below** the capsule (Fluid Cloud), never
-///   a giant in-bar blob.
-///
-/// Idle is nearly tight to the camera; we never force a fixed 118×28 bar.
+/// Layout (OEM / Apple DI):
+/// ```
+///  [ left label ] [  camera well  ] [ right label ]
+///  \__________ black stadium capsule __________/
+/// ```
+/// Text never enters the camera well. Expand/collapse is animated.
 class TaktonDynamicIsland extends StatefulWidget {
   const TaktonDynamicIsland({
     super.key,
@@ -36,31 +34,113 @@ class TaktonDynamicIsland extends StatefulWidget {
   State<TaktonDynamicIsland> createState() => _TaktonDynamicIslandState();
 }
 
-class _TaktonDynamicIslandState extends State<TaktonDynamicIsland> {
+class _TaktonDynamicIslandState extends State<TaktonDynamicIsland>
+    with TickerProviderStateMixin {
   static const _channel = MethodChannel('takton/display_cutout');
 
-  /// Native cutout rects in logical px (empty until first probe).
   List<Rect> _nativeCutouts = const [];
-  bool _probed = false;
+
+  /// 0 = idle (tight on camera), 1 = live (wings open).
+  late final AnimationController _liveCtrl;
+  late final Animation<double> _liveT;
+
+  /// 0 = card hidden, 1 = card shown below island.
+  late final AnimationController _cardCtrl;
+  late final Animation<double> _cardT;
+
+  bool _prevLive = false;
+  bool _prevCard = false;
 
   @override
   void initState() {
     super.initState();
+    _liveCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 380),
+      reverseDuration: const Duration(milliseconds: 300),
+    );
+    _liveT = CurvedAnimation(
+      parent: _liveCtrl,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeInCubic,
+    );
+
+    _cardCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 320),
+      reverseDuration: const Duration(milliseconds: 240),
+    );
+    _cardT = CurvedAnimation(
+      parent: _cardCtrl,
+      curve: Curves.easeOutBack,
+      reverseCurve: Curves.easeInCubic,
+    );
+
     unawaited(_probeCutouts());
+    // Late probe — cutout sometimes only ready after first frame / edge-to-edge.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_probeCutouts());
+    });
+    Future<void>.delayed(const Duration(milliseconds: 400), () {
+      if (mounted) unawaited(_probeCutouts());
+    });
   }
 
   @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    // Re-probe after first frame / rotation.
-    if (_probed) unawaited(_probeCutouts());
+  void dispose() {
+    _liveCtrl.dispose();
+    _cardCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant TaktonDynamicIsland oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncAnims();
+  }
+
+  void _syncAnims() {
+    final c = widget.controller;
+    final live = c.islandLive || c.streaming;
+    final card = c.islandExpanded && live;
+
+    if (live != _prevLive) {
+      _prevLive = live;
+      if (live) {
+        _liveCtrl.forward();
+      } else {
+        // Collapse card first if open, then wings.
+        if (_cardCtrl.value > 0) {
+          _cardCtrl.reverse().then((_) {
+            if (mounted && !widget.controller.islandLive) {
+              _liveCtrl.reverse();
+            }
+          });
+        } else {
+          _liveCtrl.reverse();
+        }
+      }
+    }
+    if (card != _prevCard) {
+      _prevCard = card;
+      if (card) {
+        if (_liveCtrl.value < 1) {
+          _liveCtrl.forward().then((_) {
+            if (mounted && widget.controller.islandExpanded) {
+              _cardCtrl.forward();
+            }
+          });
+        } else {
+          _cardCtrl.forward();
+        }
+      } else {
+        _cardCtrl.reverse();
+      }
+    }
   }
 
   Future<void> _probeCutouts() async {
-    if (kIsWeb) {
-      _probed = true;
-      return;
-    }
+    if (kIsWeb) return;
     try {
       final raw = await _channel.invokeMethod<List<dynamic>>('getCutouts');
       final list = <Rect>[];
@@ -69,27 +149,26 @@ class _TaktonDynamicIslandState extends State<TaktonDynamicIsland> {
           if (e is! Map) continue;
           final m = Map<String, dynamic>.from(e);
           final l = (m['left'] as num?)?.toDouble();
-          final t = (m['top'] as num?)?.toDouble();
+          final top = (m['top'] as num?)?.toDouble();
           final r = (m['right'] as num?)?.toDouble();
           final b = (m['bottom'] as num?)?.toDouble();
-          if (l == null || t == null || r == null || b == null) continue;
-          if (r <= l || b <= t) continue;
-          list.add(Rect.fromLTRB(l, t, r, b));
+          if (l == null || top == null || r == null || b == null) continue;
+          if (r <= l || b <= top) continue;
+          list.add(Rect.fromLTRB(l, top, r, b));
         }
       }
       if (!mounted) return;
-      setState(() {
-        _nativeCutouts = list;
-        _probed = true;
-      });
+      setState(() => _nativeCutouts = list);
     } catch (_) {
-      if (!mounted) return;
-      setState(() => _probed = true);
+      // Fall back to Flutter displayFeatures / synthetic center hole.
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    // Drive anim when parent rebuilds from ChangeNotifier.
+    _syncAnims();
+
     final c = widget.controller;
     final mq = MediaQuery.of(context);
     final shellW = widget.shellWidth ?? mq.size.width;
@@ -99,271 +178,353 @@ class _TaktonDynamicIslandState extends State<TaktonDynamicIsland> {
       nativeCutouts: _nativeCutouts,
     );
 
-    final live = c.islandLive || c.streaming || c.islandExpanded;
-    final showCard = c.islandExpanded && live;
     final kind = c.islandKind;
     final accent = kind == 'stream'
         ? PixelColors.cyan
         : (kind == 'local' ? PixelColors.green : PixelColors.purple);
 
-    // --- OEM capsule geometry ---
-    // Height follows the larger of: cutout height, ~status-bar content.
-    // Stadium always: radius = h/2 (胶囊, not circle blob, not full-width bar).
-    final d = geom.cameraDiameter;
-    final hIdle = (d + 6).clamp(26.0, 36.0);
-    // Idle width ≈ camera + small side cheeks (tight wrap of 中置孔).
-    // Cheek scales with d so big holes get slightly wider islands.
-    final cheek = (d * 0.28).clamp(4.0, 12.0);
-    final wIdle = (d + cheek * 2).clamp(hIdle, hIdle * 1.55);
+    // Camera well = physical hole (never put text here).
+    final well = geom.well; // Size
+    final cx = geom.center.dx;
+    final cy = geom.center.dy;
 
-    // Active: grow horizontally only (Apple/Xiaomi compact activity).
-    // Extra wing scales with camera — still a pill, not a notification banner.
-    final wing = (d * 2.4).clamp(48.0, 88.0);
-    final wLive = math
-        .min(wIdle + wing * 2, math.min(shellW * 0.58, 220.0))
-        .toDouble();
-    final hLive = showCard ? hIdle : hIdle;
+    // Capsule height hugs the hole (+ thin rim).
+    final h = (well.height + 8).clamp(28.0, 38.0);
+    // Idle cheeks: minimal black beside hole so capsule wraps it.
+    final cheekIdle = (well.width * 0.22).clamp(5.0, 11.0);
+    // Live wings: room for short labels, still proportional to hole.
+    final wingLive = (well.width * 2.6).clamp(52.0, 96.0);
 
-    final islandW = live ? wLive : wIdle;
-    final islandH = hLive;
+    final leftLabel = _leftLabel(c);
+    final rightLabel = _rightLabel(c);
 
-    // Pin vertically to camera center inside status band.
-    final top = (geom.center.dy - islandH / 2)
-        .clamp(0.0, math.max(0.0, mq.viewPadding.top - 2))
-        .toDouble();
-    final left = (geom.center.dx - islandW / 2)
-        .clamp(4.0, shellW - islandW - 4)
-        .toDouble();
+    return AnimatedBuilder(
+      animation: Listenable.merge([_liveT, _cardT]),
+      builder: (context, _) {
+        final t = _liveT.value; // 0 idle → 1 live
+        final wing = cheekIdle + (wingLive - cheekIdle) * t;
+        final islandW = well.width + wing * 2;
+        final islandH = h;
+        // Soft scale on open for "pop"
+        final pop = 0.92 + 0.08 * Curves.easeOutBack.transform(t.clamp(0.0, 1.0));
 
-    final label = _compactLabel(c);
+        final top = (cy - islandH / 2)
+            .clamp(0.0, math.max(0.0, mq.viewPadding.top))
+            .toDouble();
+        final left = (cx - islandW / 2)
+            .clamp(4.0, shellW - islandW - 4)
+            .toDouble();
 
-    return Stack(
-      children: [
-        // ---- 小岛 capsule ----
-        Positioned(
-          top: top,
-          left: left,
-          width: islandW,
-          height: islandH,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () {
-              if (c.streaming) {
-                c.pulseIsland(text: '生成中', kind: 'stream');
-                return;
-              }
-              if (live) {
-                c.toggleIslandExpanded();
-              } else {
-                c.pulseIsland(
-                  text: c.pcConnected
-                      ? '已连 · ${c.state['approvals_pending'] ?? c.approvals.length}'
-                      : '本机',
-                  kind: c.pcConnected ? 'conn' : 'local',
-                );
-              }
-            },
-            onLongPress: () {
-              if (c.pcConnected) {
-                c.setTab(AppTab.approve);
-              } else {
-                c.setTab(AppTab.me);
-              }
-            },
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 320),
-              curve: Curves.easeOutCubic,
+        final cardProgress = _cardT.value;
+        final cardW = math.min(shellW - 28, 300.0);
+        final cardLeft = (shellW - cardW) / 2;
+        final cardTop = top + islandH + 4;
+
+        return Stack(
+          clipBehavior: Clip.none,
+          children: [
+            // ---- Capsule (小岛) ----
+            Positioned(
+              top: top,
+              left: left,
               width: islandW,
               height: islandH,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: Colors.black,
-                // Perfect stadium / 胶囊
-                borderRadius: BorderRadius.circular(islandH / 2),
-                border: Border.all(
-                  color: live
-                      ? accent.withValues(alpha: 0.42)
-                      : Colors.white.withValues(alpha: 0.04),
-                  width: 0.6,
-                ),
-                boxShadow: live
-                    ? [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.35),
-                          blurRadius: 8,
-                          offset: const Offset(0, 2),
-                        ),
-                      ]
-                    : null,
-              ),
-              child: live
-                  ? Padding(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: (islandH * 0.35).clamp(8.0, 14.0),
+              child: Transform.scale(
+                scale: pop,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => _onTap(c),
+                  onLongPress: () {
+                    if (c.pcConnected) {
+                      c.setTab(AppTab.approve);
+                    } else {
+                      c.setTab(AppTab.me);
+                    }
+                  },
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Colors.black,
+                      borderRadius: BorderRadius.circular(islandH / 2),
+                      border: Border.all(
+                        color: Color.lerp(
+                              Colors.white.withValues(alpha: 0.04),
+                              accent.withValues(alpha: 0.5),
+                              t,
+                            ) ??
+                            Colors.black,
+                        width: 0.7,
                       ),
+                      boxShadow: t > 0.05
+                          ? [
+                              BoxShadow(
+                                color: Colors.black
+                                    .withValues(alpha: 0.28 * t),
+                                blurRadius: 10 * t,
+                                offset: Offset(0, 2 * t),
+                              ),
+                            ]
+                          : null,
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(islandH / 2),
                       child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          Container(
-                            width: 6,
-                            height: 6,
-                            margin: const EdgeInsets.only(right: 6),
-                            decoration: BoxDecoration(
-                              color: accent,
-                              shape: BoxShape.circle,
-                              boxShadow: [
-                                BoxShadow(
-                                  color: accent.withValues(alpha: 0.55),
-                                  blurRadius: 3,
+                          // LEFT wing — text stays OUTSIDE camera well
+                          Expanded(
+                            child: Opacity(
+                              opacity: t,
+                              child: Align(
+                                alignment: Alignment.centerRight,
+                                child: Padding(
+                                  padding: EdgeInsets.only(
+                                    left: 6,
+                                    right: math.max(3, well.width * 0.08),
+                                  ),
+                                  child: t > 0.15
+                                      ? Text(
+                                          leftLabel,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          textAlign: TextAlign.right,
+                                          style: _labelStyle(islandH, true),
+                                        )
+                                      : const SizedBox.shrink(),
                                 ),
-                              ],
+                              ),
                             ),
                           ),
-                          Flexible(
-                            child: Text(
-                              label,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: PixelTheme.mono.copyWith(
-                                fontSize: (islandH * 0.34).clamp(9.5, 11.5),
-                                fontWeight: FontWeight.w700,
-                                color: Colors.white,
-                                height: 1.0,
-                                letterSpacing: -0.2,
+
+                          // CAMERA WELL — exact hole size, no text, no widgets
+                          // that draw over the lens. Physical cutout sits here.
+                          // Camera well: reserved empty slot matching cutout.
+                          // Labels only live in the Expanded wings — never here.
+                          SizedBox(width: well.width, height: islandH),
+
+                          // RIGHT wing
+                          Expanded(
+                            child: Opacity(
+                              opacity: t,
+                              child: Align(
+                                alignment: Alignment.centerLeft,
+                                child: Padding(
+                                  padding: EdgeInsets.only(
+                                    left: math.max(3, well.width * 0.08),
+                                    right: 6,
+                                  ),
+                                  child: t > 0.15
+                                      ? Text(
+                                          rightLabel,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          textAlign: TextAlign.left,
+                                          style: _labelStyle(islandH, false),
+                                        )
+                                      : const SizedBox.shrink(),
+                                ),
                               ),
                             ),
                           ),
                         ],
                       ),
-                    )
-                  : null, // idle: pure black capsule over the hole
-            ),
-          ),
-        ),
-
-        // ---- 大岛 / Fluid Cloud card below camera ----
-        if (showCard)
-          Positioned(
-            top: top + islandH + 6,
-            left: (shellW - math.min(shellW - 32, 300)) / 2,
-            width: math.min(shellW - 32, 300),
-            child: Material(
-              color: Colors.transparent,
-              child: AnimatedOpacity(
-                opacity: 1,
-                duration: const Duration(milliseconds: 200),
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: widget.dark
-                        ? const Color(0xF2151A2E)
-                        : Colors.white.withValues(alpha: 0.96),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: accent.withValues(alpha: 0.28),
                     ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.18),
-                        blurRadius: 16,
-                        offset: const Offset(0, 6),
-                      ),
-                    ],
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 8,
-                        height: 8,
-                        decoration: BoxDecoration(
-                          color: accent,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              c.streaming
-                                  ? '生成中'
-                                  : (c.pcConnected ? '已连 PC' : '本机模式'),
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w800,
-                                color: widget.dark
-                                    ? Colors.white
-                                    : PixelColors.ink,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              c.islandText.isNotEmpty
-                                  ? c.islandText
-                                  : (c.streaming
-                                      ? '流式输出 · 点红键可停止'
-                                      : '轻点岛收回'),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 11.5,
-                                height: 1.3,
-                                color: (widget.dark
-                                        ? Colors.white
-                                        : PixelColors.ink)
-                                    .withValues(alpha: 0.55),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      GestureDetector(
-                        onTap: () => c.toggleIslandExpanded(),
-                        child: Icon(
-                          Icons.close_rounded,
-                          size: 18,
-                          color: (widget.dark ? Colors.white : PixelColors.ink)
-                              .withValues(alpha: 0.4),
-                        ),
-                      ),
-                    ],
                   ),
                 ),
               ),
             ),
-          ),
-      ],
+
+            // ---- 大岛 card (Fluid Cloud) — slide + fade ----
+            if (cardProgress > 0.001)
+              Positioned(
+                top: cardTop + (1 - cardProgress) * -12,
+                left: cardLeft,
+                width: cardW,
+                child: Opacity(
+                  opacity: cardProgress.clamp(0.0, 1.0),
+                  child: Transform.scale(
+                    scale: 0.92 + 0.08 * cardProgress,
+                    alignment: Alignment.topCenter,
+                    child: _IslandCard(
+                      dark: widget.dark,
+                      accent: accent,
+                      controller: c,
+                      onClose: () {
+                        if (c.islandExpanded) c.toggleIslandExpanded();
+                      },
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 
-  static String _compactLabel(AppController c) {
+  void _onTap(AppController c) {
+    if (c.streaming) {
+      // Expand card for streaming detail
+      if (!c.islandExpanded) {
+        c.islandLive = true;
+        c.toggleIslandExpanded();
+      } else {
+        c.toggleIslandExpanded();
+      }
+      return;
+    }
+    if (c.islandLive) {
+      c.toggleIslandExpanded();
+    } else {
+      c.pulseIsland(
+        text: c.pcConnected
+            ? '已连 · ${c.state['approvals_pending'] ?? c.approvals.length}'
+            : '本机',
+        kind: c.pcConnected ? 'conn' : 'local',
+      );
+    }
+  }
+
+  TextStyle _labelStyle(double islandH, bool bold) {
+    return PixelTheme.mono.copyWith(
+      fontSize: (islandH * 0.33).clamp(9.5, 11.5),
+      fontWeight: bold ? FontWeight.w700 : FontWeight.w600,
+      color: Colors.white.withValues(alpha: bold ? 1 : 0.9),
+      height: 1.0,
+      letterSpacing: -0.15,
+    );
+  }
+
+  static String _leftLabel(AppController c) {
+    if (c.streaming) return '生成';
+    final t = c.islandText.trim();
+    if (t.isEmpty) return c.pcConnected ? '已连' : '本机';
+    if (t.contains('·')) return t.split('·').first.trim();
+    if (t.length <= 4) return t;
+    return t.substring(0, 4);
+  }
+
+  static String _rightLabel(AppController c) {
     if (c.streaming) {
       final t = c.islandText.trim();
-      if (t.isNotEmpty && t != '生成中') {
-        return t.length > 10 ? '${t.substring(0, 10)}…' : t;
+      if (t.isNotEmpty && t != '生成中' && t != '生成') {
+        return t.length > 6 ? '${t.substring(0, 6)}…' : t;
       }
-      return '生成中';
+      return '中…';
     }
     final t = c.islandText.trim();
-    if (t.isNotEmpty) return t.length > 12 ? '${t.substring(0, 12)}…' : t;
-    return c.pcConnected ? '已连' : '本机';
+    if (t.contains('·')) {
+      final rest = t.split('·').skip(1).join('·').trim();
+      if (rest.isNotEmpty) {
+        return rest.length > 6 ? '${rest.substring(0, 6)}…' : rest;
+      }
+    }
+    if (c.pcConnected) {
+      final n = c.state['approvals_pending'] ?? c.approvals.length;
+      return '待办$n';
+    }
+    return '就绪';
+  }
+}
+
+class _IslandCard extends StatelessWidget {
+  const _IslandCard({
+    required this.dark,
+    required this.accent,
+    required this.controller,
+    required this.onClose,
+  });
+
+  final bool dark;
+  final Color accent;
+  final AppController controller;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = controller;
+    final ink = dark ? Colors.white : PixelColors.ink;
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(14, 11, 10, 11),
+        decoration: BoxDecoration(
+          color: dark ? const Color(0xF2151A2E) : const Color(0xF5FFFFFF),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: accent.withValues(alpha: 0.3)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.2),
+              blurRadius: 18,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    c.streaming
+                        ? '生成中'
+                        : (c.pcConnected ? '已连 PC' : '本机模式'),
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      color: ink,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    c.islandText.isNotEmpty
+                        ? c.islandText
+                        : (c.streaming ? '流式输出 · 点红键停止' : '再点一次收起'),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      height: 1.3,
+                      color: ink.withValues(alpha: 0.55),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              onPressed: onClose,
+              icon: Icon(
+                Icons.close_rounded,
+                size: 18,
+                color: ink.withValues(alpha: 0.4),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
 class _IslandGeom {
   const _IslandGeom({
     required this.center,
-    required this.cameraDiameter,
+    required this.well,
     required this.fromSystem,
   });
 
   final Offset center;
-  /// Logical diameter of the front camera hole (or pill short side).
-  final double cameraDiameter;
+  /// Exact camera cutout size (logical px) — text must not enter this box.
+  final Size well;
   final bool fromSystem;
 
   static _IslandGeom resolve({
@@ -377,11 +538,11 @@ class _IslandGeom {
       ...mq.displayFeatures
           .where((f) => f.type == DisplayFeatureType.cutout)
           .map((f) => f.bounds),
-    ].where((r) => r.width > 0 && r.height > 0 && r.top < band + 16).toList();
+    ].where((r) => r.width > 0 && r.height > 0 && r.top < band + 20).toList();
 
     if (candidates.isNotEmpty) {
-      // Prefer 中置: closest to horizontal center.
       final mid = shellW / 2;
+      // 中置优先
       candidates.sort((a, b) {
         final da = (a.center.dx - mid).abs();
         final db = (b.center.dx - mid).abs();
@@ -389,9 +550,9 @@ class _IslandGeom {
       });
       var r = candidates.first;
 
-      // OEM sometimes reports full-status-bar notch width — collapse to hole by height.
+      // Full-width notch band → collapse to height-based circle at center.
       if (r.width > shellW * 0.42) {
-        final d = r.height.clamp(20.0, 38.0);
+        final d = r.height.clamp(20.0, 36.0);
         r = Rect.fromCenter(
           center: Offset(mid, r.center.dy),
           width: d,
@@ -399,27 +560,27 @@ class _IslandGeom {
         );
       }
 
-      // Pill-shaped hardware (rare dual sensor): use short side as diameter,
-      // keep horizontal center of the pill.
-      final diameter = r.shortestSide.clamp(18.0, 42.0);
+      // Keep true aspect (ellipse / pill hole) — don't force square.
+      final well = Size(
+        r.width.clamp(16.0, 48.0),
+        r.height.clamp(16.0, 42.0),
+      );
       return _IslandGeom(
         center: Offset(
-          r.center.dx.clamp(24.0, shellW - 24),
-          r.center.dy.clamp(diameter / 2, math.max(diameter / 2, band)),
+          r.center.dx.clamp(well.width, shellW - well.width),
+          r.center.dy.clamp(well.height / 2, math.max(well.height / 2, band)),
         ),
-        cameraDiameter: diameter,
+        well: well,
         fromSystem: true,
       );
     }
 
-    // No cutout API: synthesize center hole from status-bar height
-    // (typical 中置 dig ≈ 55–70% of status bar band).
     final b = band > 0 ? band : 32.0;
-    final d = (b * 0.58).clamp(22.0, 32.0);
+    final d = (b * 0.56).clamp(22.0, 30.0);
     final cy = (b * 0.5).clamp(d / 2 + 1, b - 1);
     return _IslandGeom(
       center: Offset(shellW / 2, cy),
-      cameraDiameter: d,
+      well: Size(d, d),
       fromSystem: false,
     );
   }
