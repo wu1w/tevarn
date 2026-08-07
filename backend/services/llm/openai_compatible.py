@@ -512,8 +512,10 @@ class OpenAICompatibleService(LLMService):
         # 双向净化（对齐 hermes _sanitize_tool_pairs）：assistant.tool_calls 必须有
         # 对应 tool_result，反之亦然。发到 API 的消息是完整历史，任何 tool_calls 都
         # 应当已完结、有匹配 tool_result；缺结果的孤儿 tool_calls 只可能来自压缩
-        # （L3/L5 丢了 tool_result）或异常中断，必须剥掉，否则严格网关 400。
-        # 剥掉优先于插 stub：stub 可能被下游按 id 不匹配的规则再次丢掉，重新暴露孤儿。
+        # （L3/L5 丢了 tool_result）或异常中断。
+        # OpenAI 兼容：剥掉未配对 tool_calls（stub 易被二次规则丢掉）。
+        # Anthropic 侧改为注入 is_error tool_result（见 anthropic._convert_messages）——
+        # 原生 Messages API 不允许「只有 tool_use、没有 tool_result」。
         # pending_tool_ids 扫描结束后仍非空 = 这些 tool_calls 到结尾都无对应 tool_result。
         if pending_tool_ids:
             stripped = 0

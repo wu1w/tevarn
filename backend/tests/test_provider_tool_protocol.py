@@ -99,6 +99,85 @@ def test_anthropic_keeps_paired_tool_result(anthropic_svc):
     assert "is_error" not in user["content"][0]
 
 
+def test_anthropic_dangling_tool_use_gets_error_stub(anthropic_svc):
+    """Compress left tool_calls but tool rows lost/wrong id → inject is_error results."""
+    messages = [
+        {"role": "user", "content": "search"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "toolu_a",
+                    "function": {"name": "web_search", "arguments": "{}"},
+                },
+                {
+                    "id": "toolu_b",
+                    "function": {"name": "grep", "arguments": "{}"},
+                },
+            ],
+        },
+        # Wrong / empty ids — would be dropped as orphans
+        {"role": "tool", "tool_call_id": "wrong-id", "content": "noise"},
+        {"role": "tool", "tool_call_id": "", "content": "more noise"},
+        {"role": "user", "content": "continue"},
+    ]
+    _sys, amsgs = anthropic_svc._convert_messages(messages)
+    # Find user message that is pure tool_result list (injected stubs)
+    stub_users = [
+        m
+        for m in amsgs
+        if m["role"] == "user"
+        and isinstance(m.get("content"), list)
+        and m["content"]
+        and all(b.get("type") == "tool_result" for b in m["content"])
+    ]
+    assert stub_users, "expected injected tool_result user turn"
+    blocks = stub_users[0]["content"]
+    ids = {b["tool_use_id"] for b in blocks}
+    assert ids == {"toolu_a", "toolu_b"}
+    for b in blocks:
+        assert b.get("is_error") is True
+        assert "compress" in b.get("content", "").lower() or "Error" in b.get(
+            "content", ""
+        )
+    # Must not leave assistant tool_use without a following tool_result turn
+    asst_idx = next(i for i, m in enumerate(amsgs) if m["role"] == "assistant")
+    assert asst_idx + 1 < len(amsgs)
+    nxt = amsgs[asst_idx + 1]
+    assert nxt["role"] == "user"
+    assert isinstance(nxt["content"], list)
+
+
+def test_anthropic_partial_match_stubs_only_missing(anthropic_svc):
+    messages = [
+        {"role": "user", "content": "x"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {"id": "toolu_ok", "function": {"name": "a", "arguments": "{}"}},
+                {"id": "toolu_miss", "function": {"name": "b", "arguments": "{}"}},
+            ],
+        },
+        {"role": "tool", "tool_call_id": "toolu_ok", "content": "real ok"},
+        # toolu_miss never arrives
+        {"role": "user", "content": "next"},
+    ]
+    _sys, amsgs = anthropic_svc._convert_messages(messages)
+    result_turn = next(
+        m
+        for m in amsgs
+        if m["role"] == "user"
+        and isinstance(m.get("content"), list)
+        and any(b.get("type") == "tool_result" for b in m["content"])
+    )
+    by_id = {b["tool_use_id"]: b for b in result_turn["content"]}
+    assert by_id["toolu_ok"]["content"] == "real ok"
+    assert "is_error" not in by_id["toolu_ok"]
+    assert by_id["toolu_miss"].get("is_error") is True
+
+
 def test_openai_stream_tool_merge_by_index_parallel():
     """Two parallel tools stream with interleaved index 0/1 deltas."""
     acc: dict[int, dict] = {}

@@ -65,6 +65,9 @@ class AnthropicService(LLMService):
             headers["anthropic-beta"] = "prompt-caching-2024-07-31"
         return headers
 
+    # Injected when compress/history lost the real tool row (Anthropic requires pairing).
+    _LOST_TOOL_RESULT = "[Error] result lost after context compress"
+
     def _convert_messages(self, messages: list[dict[str, Any]]) -> tuple[str | None, list[dict[str, Any]]]:
         """将 OpenAI 格式消息转换为 Anthropic 格式
 
@@ -72,9 +75,10 @@ class AnthropicService(LLMService):
         助手 tool_calls → content 中的 tool_use 块；
         role=tool → user 消息里的 tool_result（必须带 tool_use_id）。
 
-        对齐官方 + OpenAI 兼容层：
+        对齐官方：
         - tool_result 可带 is_error
-        - 无匹配 tool_use 的孤儿 tool_result 直接丢弃（压缩后常见；合成假 id 会 400）
+        - 无匹配 tool_use 的孤儿 tool_result 丢弃（假 id 会 400）
+        - 仍无 result 的 tool_use → 注入 is_error 占位 result（压缩丢 id 后常见）
         """
         try:
             from backend.agent.tool_result_contract import is_tool_error
@@ -85,17 +89,34 @@ class AnthropicService(LLMService):
 
         system_parts: list[str] = []
         anthropic_messages: list[dict[str, Any]] = []
-        # tool_use ids emitted so far (for orphan tool_result drop)
+        # All tool_use ids ever emitted (orphan result filter)
         declared_tool_use_ids: set[str] = set()
-
-        def _flush_tool_results(pending: list[dict[str, Any]]) -> None:
-            if not pending:
-                return
-            # 合并连续 tool_result 为一条 user 消息，符合 Anthropic 交替角色要求
-            anthropic_messages.append({"role": "user", "content": pending[:]})
-            pending.clear()
-
+        # Current assistant turn: tool_use ids still waiting for a result
+        open_tool_use_ids: list[str] = []
         pending_tool_results: list[dict[str, Any]] = []
+
+        def _close_open_tool_round() -> None:
+            """Flush real results + inject is_error stubs for unanswered tool_use."""
+            results = list(pending_tool_results)
+            pending_tool_results.clear()
+            if open_tool_use_ids:
+                for tid in open_tool_use_ids:
+                    results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tid,
+                            "content": self._LOST_TOOL_RESULT,
+                            "is_error": True,
+                        }
+                    )
+                logger.info(
+                    "anthropic convert: injected %d lost tool_result stub(s) after compress",
+                    len(open_tool_use_ids),
+                )
+                open_tool_use_ids.clear()
+            if results:
+                # One user message with all tool_results (official alternating roles)
+                anthropic_messages.append({"role": "user", "content": results})
 
         for msg in messages:
             role = msg.get("role", "")
@@ -110,8 +131,7 @@ class AnthropicService(LLMService):
                 tool_use_id = str(
                     msg.get("tool_call_id") or msg.get("id") or ""
                 ).strip()
-                # Orphan: no matching assistant.tool_use in this history → drop
-                # (do NOT invent toolu_* — Anthropic requires pairing)
+                # Orphan result (wrong/missing id): drop — do not invent toolu_*
                 if not tool_use_id or tool_use_id not in declared_tool_use_ids:
                     logger.debug(
                         "dropping orphan tool_result (tool_use_id=%r not declared)",
@@ -126,9 +146,14 @@ class AnthropicService(LLMService):
                 if is_tool_error(str(content)):
                     block["is_error"] = True
                 pending_tool_results.append(block)
+                try:
+                    open_tool_use_ids.remove(tool_use_id)
+                except ValueError:
+                    pass
                 continue
 
-            _flush_tool_results(pending_tool_results)
+            # Any non-tool turn closes the previous tool_use round first
+            _close_open_tool_round()
 
             if role == "assistant":
                 blocks: list[dict[str, Any]] = []
@@ -151,6 +176,7 @@ class AnthropicService(LLMService):
                     if not tid:
                         tid = f"toolu_{uuid.uuid4().hex[:12]}"
                     declared_tool_use_ids.add(tid)
+                    open_tool_use_ids.append(tid)
                     blocks.append(
                         {
                             "type": "tool_use",
@@ -165,9 +191,11 @@ class AnthropicService(LLMService):
                 continue
 
             # user / 其他
-            anthropic_messages.append({"role": "user" if role == "user" else role, "content": content})
+            anthropic_messages.append(
+                {"role": "user" if role == "user" else role, "content": content}
+            )
 
-        _flush_tool_results(pending_tool_results)
+        _close_open_tool_round()
 
         system_text = "\n\n".join(system_parts) if system_parts else None
         return system_text, anthropic_messages
