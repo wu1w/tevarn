@@ -6,7 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import 'bridge/create_bridge.dart';
-import 'bridge/http_bridge.dart';
+import 'bridge/ffi_bridge.dart';
 import 'services/app_controller.dart';
 import 'theme/pixel_theme.dart';
 import 'widgets/phone_shell.dart';
@@ -80,15 +80,14 @@ class _BootstrapAppState extends State<_BootstrapApp>
         _error = null;
       });
 
-      // Hard timeout so a stuck native host cannot freeze the UI forever.
+      // Allow slow cold-start on low-end Android; never fake a live 8765 host.
       final bridge = await createTevarnBridge().timeout(
-        const Duration(seconds: 5),
+        const Duration(seconds: 25),
         onTimeout: () {
-          debugPrint('createTevarnBridge timeout → HTTP fallback');
-          return HttpTevarnBridge(
-            base: 'http://127.0.0.1:8765',
-            kind: 'http-fallback-timeout',
-          );
+          debugPrint('createTevarnBridge timeout → engine-dead');
+          FfiTevarnBridge.lastError = '本机引擎启动超时 · 请点「连接」页重试';
+          FfiTevarnBridge.lastCreateNote = 'createTevarnBridge timeout';
+          return EngineDeadBridge(reason: FfiTevarnBridge.lastError);
         },
       );
 
@@ -97,7 +96,12 @@ class _BootstrapAppState extends State<_BootstrapApp>
       final ctrl = AppController(bridge);
       setState(() {
         _ctrl = ctrl;
-        _status = '就绪';
+        _status = bridge.bridgeKind == 'engine-dead' ? '引擎未就绪' : '就绪';
+        if (bridge.bridgeKind == 'engine-dead') {
+          _error = FfiTevarnBridge.lastError.isNotEmpty
+              ? FfiTevarnBridge.lastError
+              : '本机引擎未启动';
+        }
       });
       unawaited(ctrl.boot().timeout(
         const Duration(seconds: 12),
@@ -109,7 +113,7 @@ class _BootstrapAppState extends State<_BootstrapApp>
       debugPrint('boot failed: $e\n$st');
       if (!mounted) return;
       try {
-        final bridge = HttpTevarnBridge(kind: 'http-fallback-error');
+        final bridge = EngineDeadBridge(reason: '本机引擎启动失败 · $e');
         final ctrl = AppController(bridge);
         unawaited(ctrl.boot());
         setState(() {

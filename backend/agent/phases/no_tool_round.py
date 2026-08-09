@@ -56,20 +56,27 @@ async def run_no_tool_round(
         completion_followups=completion_followups,
     )
 
-    # ── Goal 已完成：要求面向用户的完整总结（避免空/极短收束）──
+    # ── Goal 已完成：最多 1 次「完整总结」nudge，禁止短回复死循环复读 ──
+    # 旧逻辑：content < 120 就 continue，且不看 force_final → 每轮短答再 nudge，
+    # 手机端看到同段话反复刷（日志: goal complete summary nudge × N）。
     if not loop._should_stop:
         try:
             from backend.agent.goal_state import get_goal as _gg_done
             from backend.agent.robust import is_empty_assistant_content as _empty_done
 
             _g_done = _gg_done(session_id)
+            _short = _empty_done(accumulated_content) or len(
+                (accumulated_content or "").strip()
+            ) < 120
+            _already_nudged = bool(
+                force_final_no_tools
+                or getattr(loop, "_goal_complete_summary_nudged", False)
+            )
             if (
                 _g_done is not None
                 and _g_done.is_complete()
-                and (
-                    _empty_done(accumulated_content)
-                    or len((accumulated_content or "").strip()) < 120
-                )
+                and _short
+                and not _already_nudged
             ):
                 messages.append(
                     {
@@ -85,10 +92,37 @@ async def run_no_tool_round(
                 )
                 result.force_final_no_tools = True
                 result.action = "continue"
+                try:
+                    loop._goal_complete_summary_nudged = True
+                except Exception:
+                    pass
                 logger.info(
-                    "goal complete summary nudge session=%s",
+                    "goal complete summary nudge session=%s (once)",
                     session_id,
                 )
+                return result
+            # 已 nudge 过仍短：直接定稿，避免 40 轮复读烧 token
+            if (
+                _g_done is not None
+                and _g_done.is_complete()
+                and _short
+                and _already_nudged
+            ):
+                logger.info(
+                    "goal complete summary already nudged — break session=%s len=%s",
+                    session_id,
+                    len((accumulated_content or "").strip()),
+                )
+                result.action = "break"
+                result.final_content = (
+                    accumulated_content
+                    or accumulated_reasoning
+                    or "[Goal complete]"
+                )
+                try:
+                    loop.last_exit_reason = "goal_complete_short_summary"
+                except Exception:
+                    pass
                 return result
         except Exception as _gcd_e:
             logger.debug("goal complete summary nudge skip: %s", _gcd_e)

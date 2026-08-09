@@ -1,4 +1,4 @@
-"""
+﻿"""
 Nexus Agent Loop
 极简 Agent 核心循环，自主实现 User -> LLM -> Tool Call -> 执行 -> LLM -> 回复
 集成 CtxItem 上下文系统、ContextFlow 记录、Task 进度追踪、Auto Optimize、TTL 清理
@@ -147,6 +147,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         self._should_stop = False
         self._llm_fail_streak = 0
         self._reactive_compact_used = False
+        self._goal_complete_summary_nudged = False
 
     # ── Batch3 port helpers（优先 message_store / tool_executor）─────────
     async def _save_message(
@@ -2620,6 +2621,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         _completion_followups = 0
         _tools_used_run: list[str] = []
         self._reactive_compact_used = False
+        self._goal_complete_summary_nudged = False
         _multi_source_pending = False
         _suppress_content_stream = False
         _segment = 0

@@ -158,6 +158,53 @@ class _RemoteScreenState extends State<RemoteScreen> {
         ),
         const SizedBox(height: 16),
 
+        // Local engine health — pair/relay all go through loopback host first.
+        if (!c.engineReady) ...[
+          PxCard(
+            dark: dark,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  '本机引擎未就绪',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                    color: ink,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  c.engineDetail,
+                  style: TextStyle(fontSize: 12, color: ink3, height: 1.4),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  '扫码 / 中继都会先访问手机本机 host。引擎没起来时会报 127.0.0.1 Connection refused。',
+                  style: TextStyle(fontSize: 11.5, color: ink3, height: 1.4),
+                ),
+                const SizedBox(height: 12),
+                PxPrimaryBtn(
+                  label: '重试启动引擎',
+                  onTap: () => c.retryEngine(),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+        ] else ...[
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Text(
+              c.engineStatusLabel +
+                  (c.bridge.hostBase.isNotEmpty
+                      ? ' · ${c.bridge.hostBase}'
+                      : ''),
+              style: TextStyle(fontSize: 11, color: ink3),
+            ),
+          ),
+        ],
+
         // Hero
         PxCard(
           dark: dark,

@@ -1383,7 +1383,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "takton-mobile-core"
+name = "tevarn-mobile-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1407,21 +1407,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "takton-mobile-ffi"
+name = "tevarn-mobile-ffi"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "once_cell",
  "serde",
  "serde_json",
- "takton-mobile-core",
- "takton-mobile-host",
+ "tevarn-mobile-core",
+ "tevarn-mobile-host",
  "tokio",
  "tracing",
 ]
 
 [[package]]
-name = "takton-mobile-host"
+name = "tevarn-mobile-host"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1432,7 +1432,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "takton-mobile-core",
+ "tevarn-mobile-core",
  "tokio",
  "tower",
  "tower-http",

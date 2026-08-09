@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../bridge/ffi_bridge.dart';
 import '../bridge/tevarn_bridge.dart';
 import '../models/app_models.dart';
 import '../models/status_card.dart';
@@ -18,7 +19,8 @@ import 'voice_service.dart';
 class AppController extends ChangeNotifier {
   AppController(this.bridge);
 
-  final TevarnBridge bridge;
+  /// Mutable so [retryEngine] can replace a dead FFI host without full app restart.
+  TevarnBridge bridge;
 
   AppTab tab = AppTab.chat;
   bool dark = false;
@@ -118,12 +120,49 @@ class AppController extends ChangeNotifier {
   bool get pcConnected => state['authenticated'] == true;
   int get offlineQueueLength => offlineQueue.length;
 
-  /// Bridge transport: http-web / ffi / http-fallback
+  /// Bridge transport: http-web / ffi / http-fallback / engine-dead
   String get bridgeKind => bridge.bridgeKind;
+
+  /// True when local mobile host can accept pair/relay API calls.
+  bool get engineReady =>
+      bridgeKind != 'engine-dead' &&
+      !bridgeKind.contains('fallback') &&
+      (bridgeKind == 'ffi' ||
+          bridgeKind == 'http-web' ||
+          bridge.hostBase.isNotEmpty);
+
+  String get engineStatusLabel {
+    switch (bridgeKind) {
+      case 'ffi':
+        return '引擎就绪 · FFI';
+      case 'http-web':
+        return '引擎就绪 · HTTP';
+      case 'engine-dead':
+        return '引擎未启动';
+      default:
+        if (bridgeKind.contains('fallback') || bridgeKind.contains('timeout')) {
+          return '引擎降级 · $bridgeKind';
+        }
+        return '引擎 · $bridgeKind';
+    }
+  }
+
+  String get engineDetail {
+    final note = FfiTevarnBridge.lastCreateNote;
+    final err = FfiTevarnBridge.lastError;
+    final base = bridge.hostBase;
+    final parts = <String>[
+      if (err.isNotEmpty) err,
+      if (note.isNotEmpty) note,
+      if (base.isNotEmpty) 'base=$base',
+    ];
+    return parts.isEmpty ? engineStatusLabel : parts.join('\n');
+  }
 
   List<String> get attachNames => attachments.map((e) => e.name).toList();
 
   String get meMeta {
+    if (!engineReady) return '本机引擎未启动 · 无法配对';
     if (pcConnected) {
       final email = state['user_email']?.toString() ??
           state['email']?.toString() ??
@@ -132,6 +171,46 @@ class AppController extends ChangeNotifier {
       return '已连 PC · 远端就绪';
     }
     return '本机模式 · 未连 PC';
+  }
+
+  bool _engineRetryBusy = false;
+
+  /// Re-create native host after packaging / cold-start failure.
+  Future<bool> retryEngine() async {
+    if (_engineRetryBusy) return engineReady;
+    _engineRetryBusy = true;
+    _notify();
+    try {
+      showToast('正在重启本机引擎…');
+      final next = await FfiTevarnBridge.createWithRetry(attempts: 2)
+          .timeout(const Duration(seconds: 25), onTimeout: () {
+        return EngineDeadBridge(reason: '本机引擎重启超时');
+      });
+      try {
+        bridge.dispose();
+      } catch (_) {}
+      bridge = next;
+      if (engineReady) {
+        showToast('本机引擎已就绪');
+        pulseIsland(text: '引擎 OK', kind: 'conn');
+        try {
+          await refreshAll().timeout(const Duration(seconds: 4));
+        } catch (_) {}
+        _notify();
+        return true;
+      }
+      showToast(FfiTevarnBridge.lastError.isNotEmpty
+          ? FfiTevarnBridge.lastError
+          : '本机引擎仍不可用');
+      _notify();
+      return false;
+    } catch (e) {
+      showToast('引擎重启失败 · $e');
+      return false;
+    } finally {
+      _engineRetryBusy = false;
+      _notify();
+    }
   }
 
   /// Coalesce multiple state changes into one frame rebuild.
@@ -696,10 +775,23 @@ class AppController extends ChangeNotifier {
       } catch (_) {}
     }());
     _startBackgroundPolls();
-    if (bridgeKind == 'http-fallback' ||
-        bridgeKind.contains('fallback') ||
+    if (!engineReady || bridgeKind == 'engine-dead') {
+      showToast(
+        FfiTevarnBridge.lastError.isNotEmpty
+            ? FfiTevarnBridge.lastError
+            : '本机引擎未启动 · 扫码/中继不可用，请到「连接」页点重试',
+      );
+      pushStatusCard(
+        title: '本机引擎未就绪',
+        body: engineDetail,
+        kind: StatusCardKind.warn,
+        actionLabel: '重试引擎',
+        actionId: 'retry_engine',
+        ttlMs: 12000,
+      );
+    } else if (bridgeKind.contains('fallback') ||
         bridgeKind.contains('timeout')) {
-      showToast('引擎加载中或已降级 · $bridgeKind');
+      showToast('引擎异常降级 · $bridgeKind · 请重试');
     }
     _notify();
   }
@@ -1486,6 +1578,9 @@ class AppController extends ChangeNotifier {
     switch (actionId) {
       case 'reconnect':
         unawaited(forceReconnect());
+        break;
+      case 'retry_engine':
+        unawaited(retryEngine());
         break;
       case 'open_approve':
         setTab(AppTab.approve);
@@ -2378,7 +2473,23 @@ class AppController extends ChangeNotifier {
           acc = chunk.substring(1);
           sawAssistantChunk = stripThinkingBlocks(acc).isNotEmpty;
         } else {
-          acc += chunk;
+          // Guard against cumulative snapshots mis-labeled as incremental tokens
+          // (e.g. "你好" then "你好世界" arriving without replace marker → 复读).
+          if (chunk.isNotEmpty &&
+              acc.isNotEmpty &&
+              chunk.startsWith(acc) &&
+              chunk.length > acc.length) {
+            acc = chunk;
+          } else if (chunk.isNotEmpty &&
+              acc.isNotEmpty &&
+              acc.startsWith(chunk) &&
+              acc.length >= chunk.length) {
+            // shorter prefix retransmit — ignore
+          } else if (chunk.isNotEmpty && chunk == acc) {
+            // exact duplicate
+          } else {
+            acc += chunk;
+          }
           if (chunk.trim().isNotEmpty) {
             sawAssistantChunk = stripThinkingBlocks(acc).isNotEmpty ||
                 sawAssistantChunk;
@@ -2993,6 +3104,18 @@ class AppController extends ChangeNotifier {
       showToast('请粘贴或扫描配对码');
       return false;
     }
+    if (!engineReady) {
+      showToast('本机引擎未启动 · 正在尝试拉起…');
+      final ok = await retryEngine();
+      if (!ok) {
+        showToast(
+          FfiTevarnBridge.lastError.isNotEmpty
+              ? FfiTevarnBridge.lastError
+              : '本机引擎仍不可用 · 无法配对/中继',
+        );
+        return false;
+      }
+    }
     pairBusy = true;
     islandLive = true;
     islandText = '配对中…';
@@ -3014,13 +3137,27 @@ class AppController extends ChangeNotifier {
             },
           );
       if (!isOk(r)) {
-        showToast(r['error']?.toString() ?? '配对失败');
+        final err = r['error']?.toString() ?? '配对失败';
+        // Connection refused to loopback → surface as engine problem, not "relay".
+        final low = err.toLowerCase();
+        if (low.contains('connection refused') &&
+            (low.contains('127.0.0.1') || low.contains('localhost'))) {
+          showToast('本机引擎未监听 · 请点「重试引擎」后重新扫码');
+        } else {
+          showToast(err);
+        }
         return false;
       }
       await _bindPairApplyResult(r, rawQr: qr);
       return true;
     } catch (e) {
-      showToast('配对异常: $e');
+      final s = e.toString();
+      if (s.toLowerCase().contains('connection refused') &&
+          s.contains('127.0.0.1')) {
+        showToast('本机引擎连接被拒绝 · 请重试引擎（不是中继 token 问题）');
+      } else {
+        showToast('配对异常: $e');
+      }
       return false;
     } finally {
       pairBusy = false;

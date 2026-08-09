@@ -481,7 +481,10 @@ impl AppState {
                 buf.template = Some(v.clone());
                 buf.field = field;
             }
-            buf.pending.push_str(&piece);
+            // PC may stream *cumulative* snapshots as type=token/stream with content/text
+            // (not true incremental deltas). Concatenating those causes 复读
+            // ("Hello" + "Hello world" → "HelloHello world"). Merge smartly:
+            merge_stream_piece(&mut buf.pending, &piece);
             schedule = !buf.flush_scheduled;
             if schedule {
                 buf.flush_scheduled = true;
@@ -635,6 +638,39 @@ fn extract_delta_piece(v: &Value) -> (String, String) {
     (String::new(), String::new())
 }
 
+/// Merge a stream piece into the coalesce buffer without 复读.
+///
+/// - True incremental token: append.
+/// - Cumulative snapshot (`pending` is a prefix of `piece`): replace with longer text.
+/// - Duplicate / already-contained fragment: keep existing.
+fn merge_stream_piece(pending: &mut String, piece: &str) {
+    if piece.is_empty() {
+        return;
+    }
+    if pending.is_empty() {
+        pending.push_str(piece);
+        return;
+    }
+    if piece == pending.as_str() {
+        return;
+    }
+    // Cumulative full text (common for type=token with content=full_so_far).
+    if piece.starts_with(pending.as_str()) {
+        *pending = piece.to_string();
+        return;
+    }
+    // Already absorbed (out-of-order or retransmit of a shorter prefix).
+    if pending.starts_with(piece) {
+        return;
+    }
+    // Exact suffix retransmit of last chunk.
+    if pending.ends_with(piece) {
+        return;
+    }
+    // True incremental token.
+    pending.push_str(piece);
+}
+
 impl AppState {
     pub fn load_meta(&self) -> SessionMetaStore {
         SessionMetaStore::load(&self.meta_store).unwrap_or_default()
@@ -687,5 +723,31 @@ mod tests {
             "name": "shell",
             "phase": "start",
         })));
+    }
+
+    #[test]
+    fn merge_stream_piece_handles_cumulative_snapshots() {
+        let mut p = String::new();
+        merge_stream_piece(&mut p, "你");
+        merge_stream_piece(&mut p, "你好");
+        merge_stream_piece(&mut p, "你好世界");
+        assert_eq!(p, "你好世界");
+    }
+
+    #[test]
+    fn merge_stream_piece_appends_true_tokens() {
+        let mut p = String::new();
+        merge_stream_piece(&mut p, "你");
+        merge_stream_piece(&mut p, "好");
+        merge_stream_piece(&mut p, "世界");
+        assert_eq!(p, "你好世界");
+    }
+
+    #[test]
+    fn merge_stream_piece_skips_duplicates() {
+        let mut p = String::from("你好");
+        merge_stream_piece(&mut p, "你好");
+        merge_stream_piece(&mut p, "你");
+        assert_eq!(p, "你好");
     }
 }

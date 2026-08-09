@@ -808,8 +808,25 @@ class HttpTevarnBridge extends TevarnBridge {
       final replace = v['replace'] == true || src == 'http_watchdog';
       final delta = v['delta']?.toString();
       final contentField = (v['content'] ?? v['text'])?.toString();
+      // Cumulative snapshots (content grows as full text so far) must replace, not append.
+      final looksCumulative = contentField != null &&
+          contentField.isNotEmpty &&
+          contentField.length >= accLen &&
+          (accLen == 0 ||
+              lastPolled.isEmpty ||
+              contentField.startsWith(lastPolled) ||
+              (lastPolled.length <= contentField.length &&
+                  contentField.contains(lastPolled) &&
+                  contentField.length > lastPolled.length + 0));
       // Store replace decision for yieldsFor (same event) before mutating accLen.
-      v['_ui_replace'] = _eventWantsReplace(v) || replace;
+      v['_ui_replace'] = _eventWantsReplace(v) ||
+          replace ||
+          (looksCumulative &&
+              (delta == null ||
+                  delta.isEmpty ||
+                  (contentField != null &&
+                      contentField.length > delta.length &&
+                      contentField.endsWith(delta))));
       if (delta != null && delta.isNotEmpty) {
         if (v['_ui_replace'] == true) {
           final full =
@@ -823,6 +840,14 @@ class HttpTevarnBridge extends TevarnBridge {
         } else {
           accLen += delta.length;
           sawTurn = true;
+          // Keep lastPolled as best-effort cumulative for next cumulative detect.
+          if (contentField != null &&
+              contentField.length >= accLen &&
+              contentField.endsWith(delta)) {
+            lastPolled = contentField;
+          } else {
+            lastPolled = '$lastPolled$delta';
+          }
         }
       } else if (ty.contains('delta') ||
           ty.contains('chunk') ||
@@ -831,14 +856,20 @@ class HttpTevarnBridge extends TevarnBridge {
           replace) {
         final t = contentField;
         if (t != null && t.isNotEmpty) {
-          if (v['_ui_replace'] == true || replace || t.length > accLen + 20) {
+          // Prefer replace for cumulative full-text frames (prevents 复读).
+          if (v['_ui_replace'] == true ||
+              replace ||
+              looksCumulative ||
+              t.length > accLen + 20) {
             accLen = t.length;
             sawTurn = true;
             lastPolled = t;
             pollStable = 0;
+            v['_ui_replace'] = true;
           } else {
             accLen += t.length;
             sawTurn = true;
+            lastPolled = '$lastPolled$t';
           }
         }
       }
@@ -917,11 +948,32 @@ class HttpTevarnBridge extends TevarnBridge {
         yield '\x01TOOL\x01$p\x01$name\x01$okStr\x01$preview\x01$tid';
       }
       final src = (v['source']?.toString() ?? '').toLowerCase();
-      final replaceFlag = v['_ui_replace'] == true ||
+      var replaceFlag = v['_ui_replace'] == true ||
           v['replace'] == true ||
           src == 'http_watchdog';
       final delta = v['delta']?.toString();
       final contentField = (v['content'] ?? v['text'])?.toString();
+      // If PC sends cumulative full text in content/text (with or without delta),
+      // always replace UI text — never append full snapshots (复读 root cause).
+      if (contentField != null &&
+          contentField.isNotEmpty &&
+          (lastPolled.isEmpty ||
+              contentField.startsWith(lastPolled) ||
+              contentField.length >= lastPolled.length + 8)) {
+        if (delta == null ||
+            delta.isEmpty ||
+            contentField.length > delta.length) {
+          // content looks like full-so-far rather than a tiny token
+          if (contentField.length >= (delta?.length ?? 0) &&
+              contentField.length >= accLen.clamp(0, 1 << 30)) {
+            if (lastPolled.isEmpty ||
+                contentField.startsWith(lastPolled) ||
+                contentField.length > lastPolled.length) {
+              replaceFlag = true;
+            }
+          }
+        }
+      }
       if (delta != null && delta.isNotEmpty) {
         sawToolOrText = true;
         lastActivity = DateTime.now();
@@ -944,7 +996,14 @@ class HttpTevarnBridge extends TevarnBridge {
           if (replaceFlag) {
             yield '\x00$t';
           } else {
-            yield t;
+            // Safety: token/stream without delta field is often cumulative.
+            if ((ty == 'token' || ty == 'stream' || ty.contains('delta')) &&
+                t.length >= accLen &&
+                (lastPolled.isEmpty || t.startsWith(lastPolled))) {
+              yield '\x00$t';
+            } else {
+              yield t;
+            }
           }
         }
       }

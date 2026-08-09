@@ -165,7 +165,7 @@ class MeScreen extends StatelessWidget {
             children: [
               const PxRow(
                 title: 'Tevarn Mobile',
-                sub: 'v0.4.8 · Pixel Console · Flutter + Rust',
+                sub: 'v0.4.0 · Pixel Console · Flutter + Rust',
                 borderTop: false,
               ),
               const PxRow(title: '协议', sub: 'MIT · Local-first'),
@@ -175,6 +175,23 @@ class MeScreen extends StatelessWidget {
                     c.state['engine']?.toString() ??
                     'tevarn-mobile host',
               ),
+              PxRow(
+                title: '本机引擎',
+                sub: c.engineStatusLabel,
+              ),
+              if (c.bridge.hostBase.isNotEmpty)
+                PxRow(
+                  title: 'Host',
+                  sub: c.bridge.hostBase,
+                ),
+              if (!c.engineReady)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(0, 8, 0, 8),
+                  child: PxPrimaryBtn(
+                    label: '重试启动引擎',
+                    onTap: () => c.retryEngine(),
+                  ),
+                ),
             ],
           ),
         ),

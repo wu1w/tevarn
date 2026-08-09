@@ -215,6 +215,40 @@ pub extern "C" fn tevarn_mode_offline() -> *mut c_char {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Legacy Takton ABI aliases
+// ---------------------------------------------------------------------------
+// v0.4.0 APK accidentally shipped `libtakton_mobile_ffi.so` while Dart looked
+// up `tevarn_*` symbols. Keep both names so either packaging side is OK.
+
+#[no_mangle]
+pub extern "C" fn takton_start_host(preferred_port: i32) -> *mut c_char {
+    tevarn_start_host(preferred_port)
+}
+
+#[no_mangle]
+pub extern "C" fn takton_start_host2(
+    preferred_port: i32,
+    data_dir: *const c_char,
+) -> *mut c_char {
+    tevarn_start_host2(preferred_port, data_dir)
+}
+
+#[no_mangle]
+pub extern "C" fn takton_call(method: *const c_char, args: *const c_char) -> *mut c_char {
+    tevarn_call(method, args)
+}
+
+#[no_mangle]
+pub extern "C" fn takton_free(ptr: *mut c_char) {
+    tevarn_free(ptr)
+}
+
+#[no_mangle]
+pub extern "C" fn takton_mode_offline() -> *mut c_char {
+    tevarn_mode_offline()
+}
+
 fn urlencoding_simple(s: &str) -> String {
     let mut out = String::with_capacity(s.len() * 2);
     for b in s.as_bytes() {
