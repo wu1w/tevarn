@@ -12,7 +12,7 @@
 | 线路 | URL |
 |------|-----|
 | 国际 | https://tevarn.com |
-| 大陆镜像 | https://cdn.jsdmirror.com/gh/wu1w/tevarn@main/website/ |
+| 大陆镜像 | https://cdn.jsdmirror.com/gh/wu1w/tevarn@main/website/index.html |
 
 大陆访问说明：[`docs/CHINA_ACCESS.md`](../docs/CHINA_ACCESS.md)
 

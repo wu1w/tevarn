@@ -119,7 +119,7 @@ git checkout v0.4.0
 | 线路 | 地址 |
 |------|------|
 | 国际 | https://tevarn.com |
-| **大陆（推荐）** | **https://cdn.jsdmirror.com/gh/wu1w/tevarn@main/website/** |
+| **大陆（推荐）** | **https://cdn.jsdmirror.com/gh/wu1w/tevarn@main/website/index.html** |
 
 > `tevarn.com` 经 Cloudflare，部分大陆网络会打不开。请用上表「大陆」镜像（公共 CDN，无需备案）。说明见 [docs/CHINA_ACCESS.md](docs/CHINA_ACCESS.md)。
 
@@ -132,7 +132,7 @@ git checkout v0.4.0
 | 压缩包 | `Tevarn-0.4.0-win-x64.zip` |
 | 手机 APK | `Tevarn-Mobile-0.4.0.apk` |
 
-优先打开 [大陆官网下载区](https://cdn.jsdmirror.com/gh/wu1w/tevarn@main/website/#download)；或见 [Releases · v0.4.0](https://github.com/wu1w/tevarn/releases/tag/v0.4.0)。
+优先打开 [大陆官网下载区](https://cdn.jsdmirror.com/gh/wu1w/tevarn@main/website/index.html#download)；或见 [Releases · v0.4.0](https://github.com/wu1w/tevarn/releases/tag/v0.4.0)。
 
 本地构建产物：
 
@@ -266,7 +266,7 @@ npx --yes serve website -p 5173
 大陆镜像（push `main` 后约数分钟生效）：
 
 ```text
-https://cdn.jsdmirror.com/gh/wu1w/tevarn@main/website/
+https://cdn.jsdmirror.com/gh/wu1w/tevarn@main/website/index.html
 ```
 ---
 

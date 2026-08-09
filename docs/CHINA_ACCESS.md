@@ -17,17 +17,16 @@
 ### 官网（大陆）
 
 ```text
-https://cdn.jsdmirror.com/gh/wu1w/tevarn@main/website/
+https://cdn.jsdmirror.com/gh/wu1w/tevarn@main/website/index.html
 ```
 
-请用**带末尾斜杠**的地址（返回 `text/html`，可直接浏览）。
+请打开 **`index.html` 完整路径**（只打开 `.../website/` 会进镜像站目录页，不是官网）。
 
-备用：
+若 `@main` 仍是旧缓存，可钉 commit：
 
 ```text
-https://fastly.jsdelivr.net/gh/wu1w/tevarn@main/website/
+https://cdn.jsdmirror.com/gh/wu1w/tevarn@6cdaeb7/website/index.html
 ```
-
 ### 页面行为
 
 打开上述镜像后，站点会自动识别为国内镜像：
