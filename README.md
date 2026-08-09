@@ -114,9 +114,16 @@ git checkout v0.4.0
 
 ## 下载安装
 
-### Windows 一键包（推荐试用）
+### 官网
 
-在仓库 [Releases](https://github.com/wu1w/tevarn/releases) 下载，或使用本地构建产物：
+| 线路 | 地址 |
+|------|------|
+| 国际 | https://tevarn.com |
+| **大陆（推荐）** | **https://cdn.jsdmirror.com/gh/wu1w/tevarn@main/website/** |
+
+> `tevarn.com` 经 Cloudflare，部分大陆网络会打不开。请用上表「大陆」镜像（公共 CDN，无需备案）。说明见 [docs/CHINA_ACCESS.md](docs/CHINA_ACCESS.md)。
+
+### Windows / Android 安装包
 
 | 类型 | 文件名 |
 |------|--------|
@@ -125,13 +132,14 @@ git checkout v0.4.0
 | 压缩包 | `Tevarn-0.4.0-win-x64.zip` |
 | 手机 APK | `Tevarn-Mobile-0.4.0.apk` |
 
-在 [Releases · v0.4.0](https://github.com/wu1w/tevarn/releases/tag/v0.4.0) 下载，或本地构建输出：
+优先打开 [大陆官网下载区](https://cdn.jsdmirror.com/gh/wu1w/tevarn@main/website/#download)；或见 [Releases · v0.4.0](https://github.com/wu1w/tevarn/releases/tag/v0.4.0)。
+
+本地构建产物：
 
 ```text
 frontend/release/Tevarn-Setup-0.4.0-x64.exe
 mobile/dist/Tevarn-Mobile-0.4.0.apk
 ```
-
 ### 从源码打桌面包
 
 ```bash
@@ -247,6 +255,7 @@ npm run electron:dev
 | [威胁模型](docs/THREAT_MODEL.md) | 安全边界 |
 | [路线图](docs/ROADMAP.md) | 版本规划 |
 | [官网落地页](website/index.html) | 冷白机身 · Light Console 产品页 |
+| [大陆访问说明](docs/CHINA_ACCESS.md) | 国内镜像 / OSS / 灰云 VPS |
 
 本地预览官网：
 
@@ -254,6 +263,11 @@ npm run electron:dev
 npx --yes serve website -p 5173
 ```
 
+大陆镜像（push `main` 后约数分钟生效）：
+
+```text
+https://cdn.jsdmirror.com/gh/wu1w/tevarn@main/website/
+```
 ---
 
 ## 从旧版升级

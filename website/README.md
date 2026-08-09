@@ -7,13 +7,21 @@
 - 电光紫 `#6D5DF6` / `#8B7CFF`
 - 霓虹青 `#00A8C0` / `#22D8EE`
 
+## 线上地址
+
+| 线路 | URL |
+|------|-----|
+| 国际 | https://tevarn.com |
+| 大陆镜像 | https://cdn.jsdmirror.com/gh/wu1w/tevarn@main/website/ |
+
+大陆访问说明：[`docs/CHINA_ACCESS.md`](../docs/CHINA_ACCESS.md)
+
 ## 本地预览
 
 ```bash
 npx --yes serve website -p 5173
 # 浏览器打开 http://127.0.0.1:5173
 ```
-
 ## 文件
 
 | 路径 | 说明 |

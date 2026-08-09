@@ -4,6 +4,17 @@
 <title>Tevarn — 个人本地开源 AIOS 工作站</title>
 <meta name="description" content="Tevarn：运行在个人电脑上的开源 AIOS 工作站。本地 AI 员工、工具、知识、工单与权限治理，一个桌面工作台。"/>
 <link rel="icon" href="assets/logo.png" type="image/png"/>
+<script>
+/* CDN 镜像（如 jsdmirror）下修正相对资源路径 */
+(function () {
+  var p = location.pathname || "";
+  var m = p.match(/^(.*\/website)(?:\/|\/index\.html)?$/i) || p.match(/^(.*\/website)\//i);
+  if (!m) return;
+  var b = document.createElement("base");
+  b.href = location.origin + m[1].replace(/\/?$/, "/") ;
+  document.head.appendChild(b);
+})();
+</script>
 <link rel="preconnect" href="https://fonts.loli.net"/>
 <link rel="preconnect" href="https://gstatic.loli.net" crossorigin=""/>
 <link href="https://fonts.loli.net/css2?family=Silkscreen:wght@400;700&amp;family=JetBrains+Mono:wght@400;500;700&amp;family=Inter:wght@400;500;600;700;800&amp;family=Noto+Sans+SC:wght@400;500;700;900&amp;display=swap" rel="stylesheet"/>
@@ -890,31 +901,44 @@ footer{background:var(--term);color:#A3ABC2;border-top:var(--bd);padding:56px 0 
 </footer>
 
 <script>
-// ---- release download config ----
+// ---- release / mirror config ----
+// tevarn.com 走国际线路；国内镜像站（jsdmirror 等）自动切换下载与脚本地址。
 const RELEASE = {
   version: '0.4.0',
-  cdnBase: 'https://dl.tevarn.com',
   ghTag: 'v0.4.0',
-  ghBase: 'https://github.com/wu1w/tevarn/releases/download/v0.4.0',
   assets: {
-    win: {
-      file: 'Tevarn-Setup-0.4.0-x64.exe',
-      size: '~117 MB',
-      label: 'Windows Setup',
-    },
-    apk: {
-      file: 'Tevarn-Mobile-0.4.0.apk',
-      size: '~40 MB',
-      label: 'Android APK',
-    },
+    win: { file: 'Tevarn-Setup-0.4.0-x64.exe', size: '~117 MB' },
+    apk: { file: 'Tevarn-Mobile-0.4.0.apk', size: '~40 MB' },
   },
 };
 
-(function wireDownloads() {
+function detectChinaMirror() {
+  const h = (location.hostname || '').toLowerCase();
+  const q = location.search || '';
+  if (/[?&]cn=1(?:&|$)/.test(q)) return true;
+  return /jsdmirror|jsdelivr\.net|jsdelivr\.b-cdn|onmicrosoft\.cn|gitee\.io|aliyuncs\.com|myqcloud\.com|qiniucdn|bootcss|staticfile/i.test(h);
+}
+
+function wireDownloads() {
+  const cn = detectChinaMirror();
   const ver = RELEASE.version;
-  const base = `${RELEASE.cdnBase}/v${ver}`;
+  const tag = RELEASE.ghTag;
   const win = RELEASE.assets.win;
   const apk = RELEASE.assets.apk;
+
+  // 国际：dl.tevarn.com；国内镜像页：加速前缀（避免直连 GitHub / CF）
+  const ghRelease = `https://github.com/wu1w/tevarn/releases/download/${tag}`;
+  const cnProxy = 'https://ghfast.top/';
+  const winUrl = cn ? `${cnProxy}${ghRelease}/${win.file}` : `https://dl.tevarn.com/v${ver}/${win.file}`;
+  const apkUrl = cn ? `${cnProxy}${ghRelease}/${apk.file}` : `https://dl.tevarn.com/v${ver}/${apk.file}`;
+  const winAlt = cn ? `https://dl.tevarn.com/v${ver}/${win.file}` : `${ghRelease}/${win.file}`;
+  const apkAlt = cn ? `https://dl.tevarn.com/v${ver}/${apk.file}` : `${ghRelease}/${apk.file}`;
+
+  // 安装脚本：国际官网域名；国内用 jsdmirror 上的同文件
+  const installScript = cn
+    ? 'https://cdn.jsdmirror.com/gh/wu1w/tevarn@main/website/install-vps-relay.sh'
+    : 'https://tevarn.com/install-vps-relay.sh';
+  const vpsCmd = `curl -fsSL ${installScript} | sudo bash`;
 
   const setText = (id, t) => { const el = document.getElementById(id); if (el) el.textContent = t; };
   setText('dlWinVer', `v${ver}`);
@@ -925,18 +949,28 @@ const RELEASE = {
   setText('dlApkSize', apk.size);
 
   const bind = (id, href) => { const a = document.getElementById(id); if (a) a.href = href; };
-  bind('dlWinPrimary', `${base}/${win.file}`);
-  bind('dlApkPrimary', `${base}/${apk.file}`);
-  bind('dlWinGh', `${RELEASE.ghBase}/${win.file}`);
-  bind('dlApkGh', `${RELEASE.ghBase}/${apk.file}`);
-})();
+  bind('dlWinPrimary', winUrl);
+  bind('dlApkPrimary', apkUrl);
+  bind('dlWinGh', winAlt);
+  bind('dlApkGh', apkAlt);
+
+  const vpsCode = document.getElementById('vpsInstallCmd');
+  if (vpsCode) {
+    vpsCode.innerHTML = `<span class="p">$</span> curl -fsSL ${installScript} | sudo bash`;
+  }
+  const vpsDl = document.querySelector('#vps a.btn-primary');
+  if (vpsDl) vpsDl.href = installScript;
+
+  window.__TEVARN_VPS_CMD__ = vpsCmd;
+}
+wireDownloads();
 
 // ---- VPS one-liner copy ----
 const vpsCopyBtn = document.getElementById('vpsCopyBtn');
-const VPS_CMD = 'curl -fsSL https://tevarn.com/install-vps-relay.sh | sudo bash';
 if (vpsCopyBtn) {
   vpsCopyBtn.addEventListener('click', () => {
-    navigator.clipboard.writeText(VPS_CMD).then(() => {
+    const cmd = window.__TEVARN_VPS_CMD__ || 'curl -fsSL https://tevarn.com/install-vps-relay.sh | sudo bash';
+    navigator.clipboard.writeText(cmd).then(() => {
       vpsCopyBtn.textContent = 'COPIED ✓';
       setTimeout(() => { vpsCopyBtn.textContent = 'COPY'; }, 1600);
     }).catch(() => { vpsCopyBtn.textContent = 'FAILED'; });
