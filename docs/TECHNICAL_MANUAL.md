@@ -659,7 +659,7 @@ python backend/main.py
 
 ```bash
 # 克隆仓库
-git clone https://github.com/wu1w/takton.git
+git clone https://github.com/wu1w/tevarn.git
 cd tevarn
 
 # 后端
@@ -781,4 +781,4 @@ npx playwright test
 
 ---
 
-*本文档随版本更新，最新版本请查看 [GitHub](https://github.com/wu1w/takton)*
+*本文档随版本更新，最新版本请查看 [GitHub](https://github.com/wu1w/tevarn)*

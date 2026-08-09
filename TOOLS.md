@@ -31,4 +31,4 @@
 
 ## GitHub
 - `gh` CLI 可能已安装；调用前用非交互方式确认 `gh auth status`（失败则说明未登录，勿强行 `auth login` 卡交互）
-- 本仓库远程：`github.com/wu1w/takton` · 主开发分支常为 `feature/agent-kernel`
+- 本仓库远程：`github.com/wu1w/tevarn` · 主开发分支常为 `feature/agent-kernel`

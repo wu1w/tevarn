@@ -14,7 +14,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 authors = ["Tevarn Mobile"]
-repository = "https://github.com/wu1w/takton"
+repository = "https://github.com/wu1w/tevarn"
 
 [workspace.dependencies]
 anyhow = "1"

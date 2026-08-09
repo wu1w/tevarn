@@ -1,6 +1,6 @@
 # Tevarn 0.5.0-alpha · 2026-07-31 工作摘要
 
-**分支**：[`feature/agent-kernel`](https://github.com/wu1w/takton/tree/feature/agent-kernel)  
+**分支**：[`feature/agent-kernel`](https://github.com/wu1w/tevarn/tree/feature/agent-kernel)  
 **主题**：Agent Kernel 控制平面（Python 脑 + Rust host）硬化与可交付切片
 
 ---

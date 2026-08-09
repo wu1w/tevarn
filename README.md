@@ -14,10 +14,10 @@
 
 <br/>
 
-[![Version](https://img.shields.io/badge/version-0.5.x--alpha-7C3AED?style=flat-square)](https://github.com/wu1w/takton/tree/feature/agent-kernel)
-[![Platform](https://img.shields.io/badge/platform-Windows%20(primary)%20%7C%20Linux-06B6D4?style=flat-square)](https://github.com/wu1w/takton/releases)
+[![Version](https://img.shields.io/badge/version-0.5.x--alpha-7C3AED?style=flat-square)](https://github.com/wu1w/tevarn/tree/feature/agent-kernel)
+[![Platform](https://img.shields.io/badge/platform-Windows%20(primary)%20%7C%20Linux-06B6D4?style=flat-square)](https://github.com/wu1w/tevarn/releases)
 [![License](https://img.shields.io/badge/license-MIT-22C55E?style=flat-square)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/wu1w/tevarn?style=flat-square&logo=github)](https://github.com/wu1w/takton/stargazers)
+[![Stars](https://img.shields.io/github/stars/wu1w/tevarn?style=flat-square&logo=github)](https://github.com/wu1w/tevarn/stargazers)
 [![Next.js](https://img.shields.io/badge/Next.js%2016-black?style=flat-square&logo=next.js)](https://nextjs.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com/)
 
@@ -47,7 +47,7 @@
 >
 > | 线 | 分支 / 版本 | 是什么 |
 > |----|-------------|--------|
-> | **Agent Kernel 新版（当前主开发）** | [`feature/agent-kernel`](https://github.com/wu1w/takton/tree/feature/agent-kernel) · **0.5.x-alpha** | 个人本地 AIOS：Rust Kernel Host · 编制/工单 · 用量与 Cache · CEO 策略 · Permission Court |
+> | **Agent Kernel 新版（当前主开发）** | [`feature/agent-kernel`](https://github.com/wu1w/tevarn/tree/feature/agent-kernel) · **0.5.x-alpha** | 个人本地 AIOS：Rust Kernel Host · 编制/工单 · 用量与 Cache · CEO 策略 · Permission Court |
 > | **历史产品线** | `main` / GitHub Releases **0.3.x** | 较早的桌面 Agent 工作站；**不含**完整 0.5 Kernel 重写 |
 >
 > - 要试用新版 AIOS 工作站 → clone **`feature/agent-kernel`**，并准备 `tevarn-kernel-host`（预编译或 `cargo build -p tevarn-kernel-host --release`）
@@ -185,17 +185,17 @@ curl -fsSL https://raw.githubusercontent.com/wu1w/tevarn/main/scripts/install.sh
 
 | Platform | Package | 下载 |
 |----------|---------|------|
-| Windows | Setup.exe | [Tevarn-Setup-0.3.2.exe](https://github.com/wu1w/takton/releases/download/v0.3.2/Tevarn-Setup-0.3.2.exe) |
-| Windows | Portable.zip | [Tevarn-0.3.2-win-x64-portable.zip](https://github.com/wu1w/takton/releases/download/v0.3.2/Tevarn-0.3.2-win-x64-portable.zip) |
-| Linux | AppImage | v0.3.2 随 release 发布 · 见 [Releases](https://github.com/wu1w/takton/releases) |
-| Linux | deb | v0.3.2 随 release 发布 · 见 [Releases](https://github.com/wu1w/takton/releases) |
+| Windows | Setup.exe | [Tevarn-Setup-0.3.2.exe](https://github.com/wu1w/tevarn/releases/download/v0.3.2/Tevarn-Setup-0.3.2.exe) |
+| Windows | Portable.zip | [Tevarn-0.3.2-win-x64-portable.zip](https://github.com/wu1w/tevarn/releases/download/v0.3.2/Tevarn-0.3.2-win-x64-portable.zip) |
+| Linux | AppImage | v0.3.2 随 release 发布 · 见 [Releases](https://github.com/wu1w/tevarn/releases) |
+| Linux | deb | v0.3.2 随 release 发布 · 见 [Releases](https://github.com/wu1w/tevarn/releases) |
 
-> 一键脚本会自动解析 [最新 Release](https://github.com/wu1w/takton/releases/latest) 资产；上表为固定直链备份。
+> 一键脚本会自动解析 [最新 Release](https://github.com/wu1w/tevarn/releases/latest) 资产；上表为固定直链备份。
 
 ### From Source · 源码运行（`0.5.4-alpha`）
 
 ```powershell
-git clone https://github.com/wu1w/takton.git
+git clone https://github.com/wu1w/tevarn.git
 cd tevarn
 git checkout feature/agent-kernel
 py -3 -m venv .venv
@@ -207,7 +207,7 @@ cd frontend; npm.cmd install; cd ..
 ```
 
 ```bash
-git clone https://github.com/wu1w/takton.git && cd takton
+git clone https://github.com/wu1w/tevarn.git && cd takton
 git checkout feature/agent-kernel
 python3 -m venv .venv && source .venv/bin/activate
 pip install -U pip && pip install -e ".[dev]"
@@ -415,6 +415,6 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 **Tevarn** — 让 AI 成为你的专属工作伙伴 🎯
 
-[⭐ Star us on GitHub](https://github.com/wu1w/takton) · [🐛 Report Bug](https://github.com/wu1w/takton/issues) · [💡 Request Feature](https://github.com/wu1w/takton/issues)
+[⭐ Star us on GitHub](https://github.com/wu1w/tevarn) · [🐛 Report Bug](https://github.com/wu1w/tevarn/issues) · [💡 Request Feature](https://github.com/wu1w/tevarn/issues)
 
 </div>

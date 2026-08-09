@@ -4,7 +4,7 @@
   "private": true,
   "description": "Tevarn - 个人专属 Agent 终端",
   "author": "developer <developer@tevarn.dev>",
-  "homepage": "https://github.com/wu1w/takton",
+  "homepage": "https://github.com/wu1w/tevarn",
   "desktopName": "Tevarn",
   "main": "electron/dist/main.js",
   "scripts": {

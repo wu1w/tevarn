@@ -2,7 +2,7 @@
 
 **产品版本**：`0.5.0-alpha`（`backend/VERSION`，不因本里程碑升号）  
 **路线图里程碑**：§5 · 0.6 最小可用 AIOS Runtime（P0）  
-**分支**：[`feature/agent-kernel`](https://github.com/wu1w/takton/tree/feature/agent-kernel)
+**分支**：[`feature/agent-kernel`](https://github.com/wu1w/tevarn/tree/feature/agent-kernel)
 
 > 文件名保留 `RELEASE_0.6.0-alpha` 仅对应 **路线图阶段名**；对外/安装包版本号以 `0.5.0-alpha` 为准。
 

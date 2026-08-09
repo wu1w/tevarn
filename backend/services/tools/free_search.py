@@ -25,7 +25,7 @@ _UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 )
-_BOT_UA = "TevarnSearch/1.0 (+https://github.com/wu1w/takton; research agent)"
+_BOT_UA = "TevarnSearch/1.0 (+https://github.com/wu1w/tevarn; research agent)"
 
 
 def _fmt(results: list[dict[str, str]], query: str, engine: str) -> str:

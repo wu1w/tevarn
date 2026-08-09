@@ -1,7 +1,7 @@
 # Tevarn 路线图 · 0.5.0-alpha 之后
 
 **版本基准**：`0.5.0-alpha`（`backend/VERSION`）  
-**分支**：[`feature/agent-kernel`](https://github.com/wu1w/takton/tree/feature/agent-kernel)  
+**分支**：[`feature/agent-kernel`](https://github.com/wu1w/tevarn/tree/feature/agent-kernel)  
 **文档版本**：2026-07-31（P0 里程碑收口；**产品版本号维持 0.5.0-alpha**）  
 **定位**：本地优先、可审计、可治理的 **Personal Agent Runtime / 工作站**（Agent OS 方向）。  
 不是聊天套壳，也不是官方 Coding Agent 克隆。

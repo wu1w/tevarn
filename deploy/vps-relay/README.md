@@ -8,7 +8,7 @@
 在 **Ubuntu 22.04+** VPS 上以 root 执行：
 
 ```bash
-curl -fsSL https://github.com/wu1w/takton/releases/download/v0.5.7-alpha/install-vps-relay.sh | sudo bash
+curl -fsSL https://github.com/wu1w/tevarn/releases/download/v0.5.7-alpha/install-vps-relay.sh | sudo bash
 ```
 
 装完会**自动打印**（并写入 `/opt/tevarn-vps-relay/INSTALL_INFO.txt`）：
@@ -31,11 +31,11 @@ sudo cat /opt/tevarn-vps-relay/INSTALL_INFO.txt
 
 ```bash
 # 改端口
-curl -fsSL https://github.com/wu1w/takton/releases/download/v0.5.7-alpha/install-vps-relay.sh \
+curl -fsSL https://github.com/wu1w/tevarn/releases/download/v0.5.7-alpha/install-vps-relay.sh \
   | sudo env RELAY_PUBLIC_PORT=8080 bash
 
 # 固定令牌（重装时复用）
-curl -fsSL https://github.com/wu1w/takton/releases/download/v0.5.7-alpha/install-vps-relay.sh \
+curl -fsSL https://github.com/wu1w/tevarn/releases/download/v0.5.7-alpha/install-vps-relay.sh \
   | sudo env RELAY_TOKEN='tr_live_your_token_here' bash
 ```
 

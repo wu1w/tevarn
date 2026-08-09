@@ -1,6 +1,6 @@
 # Tevarn 0.5.1-alpha · 2026-08-01
 
-**分支**：[`feature/agent-kernel`](https://github.com/wu1w/takton/tree/feature/agent-kernel)  
+**分支**：[`feature/agent-kernel`](https://github.com/wu1w/tevarn/tree/feature/agent-kernel)  
 **主题**：Host/预算/权限稳定性 + LLM 设置可用性 + 默认工作方式
 
 ---
