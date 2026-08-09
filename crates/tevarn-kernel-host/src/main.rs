@@ -2536,25 +2536,41 @@ fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: 
 const PUBLIC_METHODS: &[&str] = &["ping", "health", "list_methods", "abi_version"];
 
 /// 确保存在 RPC secret：env 优先，否则读写 `~/.tevarn/rpc.secret`（仅当前用户可读）。
+/// Soft-migrate Takton leftovers: `TAKTON_KERNEL_RPC_SECRET` / `~/.takton/rpc.secret`.
 fn ensure_rpc_secret() -> String {
-    if let Ok(s) = std::env::var("TEVARN_KERNEL_RPC_SECRET") {
-        let t = s.trim().to_string();
-        if !t.is_empty() {
-            return t;
+    for key in ["TEVARN_KERNEL_RPC_SECRET", "TAKTON_KERNEL_RPC_SECRET"] {
+        if let Ok(s) = std::env::var(key) {
+            let t = s.trim().to_string();
+            if !t.is_empty() {
+                std::env::set_var("TEVARN_KERNEL_RPC_SECRET", &t);
+                return t;
+            }
         }
     }
-    let path = std::env::var_os("USERPROFILE")
+    let home = std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".tevarn")
-        .join("rpc.secret");
-    if let Ok(existing) = std::fs::read_to_string(&path) {
-        let t = existing.trim().to_string();
-        if !t.is_empty() {
-            // 同步到 env，便于同机 Python 客户端读取
-            std::env::set_var("TEVARN_KERNEL_RPC_SECRET", &t);
-            return t;
+        .unwrap_or_else(|| PathBuf::from("."));
+    let path = home.join(".tevarn").join("rpc.secret");
+    // Prefer Tevarn path; fall back to legacy Takton secret so upgrades keep working.
+    for candidate in [&path, &home.join(".takton").join("rpc.secret")] {
+        if let Ok(existing) = std::fs::read_to_string(candidate) {
+            let t = existing.trim().to_string();
+            if !t.is_empty() {
+                // 同步到 env，便于同机 Python 客户端读取
+                std::env::set_var("TEVARN_KERNEL_RPC_SECRET", &t);
+                // Mirror into ~/.tevarn if we only found the legacy file.
+                if candidate != &path {
+                    if let Some(parent) = path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    if std::fs::write(&path, t.as_bytes()).is_ok() {
+                        #[cfg(windows)]
+                        tighten_windows_secret_acl(&path);
+                    }
+                }
+                return t;
+            }
         }
     }
     // CSPRNG：uuid v4 底层走 OS 随机源（审计 P3-5）

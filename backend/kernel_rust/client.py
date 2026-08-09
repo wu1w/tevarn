@@ -963,17 +963,28 @@ class RustAgentKernel:
                 pass
 
     def _inject_rpc_auth(self, params: dict[str, Any] | None) -> dict[str, Any]:
-        """注入 RPC 鉴权：env 或 ~/.tevarn/rpc.secret（与 host ensure_rpc_secret 对齐）。"""
+        """注入 RPC 鉴权：env 或 ~/.tevarn/rpc.secret（与 host ensure_rpc_secret 对齐）。
+
+        Soft-migrate Takton leftovers: TAKTON_KERNEL_RPC_SECRET / ~/.takton/rpc.secret.
+        Packaged hosts built before rebrand still read the Takton paths.
+        """
         p = dict(params or {})
-        secret = (os.environ.get("TEVARN_KERNEL_RPC_SECRET") or "").strip()
+        secret = (
+            os.environ.get("TEVARN_KERNEL_RPC_SECRET")
+            or os.environ.get("TAKTON_KERNEL_RPC_SECRET")
+            or ""
+        ).strip()
         if not secret:
             try:
                 home = os.environ.get("USERPROFILE") or os.environ.get("HOME") or ""
-                sp = Path(home) / ".tevarn" / "rpc.secret"
-                if sp.is_file():
+                for rel in ((".tevarn", "rpc.secret"), (".takton", "rpc.secret")):
+                    sp = Path(home).joinpath(*rel)
+                    if not sp.is_file():
+                        continue
                     secret = sp.read_text(encoding="utf-8", errors="replace").strip()
                     if secret:
                         os.environ["TEVARN_KERNEL_RPC_SECRET"] = secret
+                        break
             except Exception:
                 secret = ""
         if secret:
