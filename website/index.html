@@ -136,12 +136,13 @@ a{text-decoration:none;color:inherit}
 
 /* ---------- download ---------- */
 .dl-grid{
-  display:grid;grid-template-columns:1fr 1fr;gap:22px;max-width:920px;margin:0 auto;
+  display:grid;grid-template-columns:1fr 1fr;gap:22px;max-width:960px;margin:0 auto;
 }
 .dl-card{
   background:var(--white);border:var(--bd);box-shadow:var(--shadow);
   padding:28px 26px 24px;position:relative;display:flex;flex-direction:column;gap:14px;
 }
+.dl-card.dl-wide{grid-column:1 / -1}
 .dl-card:hover{transform:translate(-2px,-2px);box-shadow:6px 6px 0 var(--ink);transition:transform .12s,box-shadow .12s}
 .dl-card .dl-os{
   font-family:var(--px-font);font-size:12px;color:var(--purple);
@@ -160,14 +161,22 @@ a{text-decoration:none;color:inherit}
   display:flex;flex-wrap:wrap;gap:8px 14px;
 }
 .dl-meta b{color:var(--cyan)}
-.dl-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:4px}
-.dl-note{
-  max-width:920px;margin:28px auto 0;padding:16px 18px;
-  background:var(--card);border:var(--bd);box-shadow:3px 3px 0 var(--ink);
-  font-size:13.5px;color:var(--ink2);line-height:1.65;
+.dl-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:4px;align-items:center}
+.dl-cmd{
+  display:flex;align-items:stretch;gap:0;width:100%;
+  border:var(--bd);box-shadow:3px 3px 0 var(--ink);background:var(--term);overflow:hidden;
 }
-.dl-note code{font-family:var(--mono);font-size:12px;background:var(--hover);padding:1px 6px;border:1px solid rgba(29,35,48,.12)}
-.dl-note a{color:var(--purple);font-weight:700;border-bottom:1px dashed rgba(109,93,246,.45)}
+.dl-cmd code{
+  flex:1;font-family:var(--mono);font-size:13px;color:#C7D0E0;
+  padding:12px 14px;overflow-x:auto;white-space:nowrap;
+}
+.dl-cmd code .p{color:var(--neon-cyan)}
+.dl-cmd button{
+  flex:none;border:none;border-left:2px solid var(--ink);
+  background:var(--white);color:var(--ink);font-family:var(--mono);font-size:12px;font-weight:700;
+  padding:0 16px;cursor:pointer;
+}
+.dl-cmd button:hover{background:var(--hover)}
 
 /* ---------- pixel console (hero terminal) ---------- */
 .console{position:relative}
@@ -511,7 +520,7 @@ footer{background:var(--term);color:#A3ABC2;border-top:var(--bd);padding:56px 0 
           快速开始
         </a>
       </div>
-      <p class="dl-hint">大陆用户推荐官网直链（Cloudflare），无需访问 GitHub。</p>
+      <p class="dl-hint">Windows · Android · VPS 中继，一站下载与安装。</p>
     </div>
 
     <div class="console reveal" style="transition-delay:.12s">
@@ -546,9 +555,9 @@ footer{background:var(--term);color:#A3ABC2;border-top:var(--bd);padding:56px 0 
 <section id="download">
   <div class="container">
     <div class="sec-head reveal">
-      <span class="sec-tag">DOWNLOAD / 安装包</span>
-      <h2>官网直链下载，<span class="grad">不经过 GitHub</span></h2>
-      <p>Windows 安装包与 Android APK 经 Cloudflare 边缘节点直链分发（不经过 GitHub），大陆访问更稳。GitHub Release 仅作备用源。</p>
+      <span class="sec-tag">DOWNLOAD / 安装</span>
+      <h2>下载安装，<span class="grad">开箱即用</span></h2>
+      <p>桌面端、手机端与自有 VPS 中继脚本都在这里。装好桌面端后，VPS 一行命令挂出隧道，手机外出也能连回家。</p>
     </div>
     <div class="dl-grid">
       <article class="dl-card reveal">
@@ -562,9 +571,9 @@ footer{background:var(--term);color:#A3ABC2;border-top:var(--bd);padding:56px 0 
         <div class="dl-actions">
           <a class="btn btn-primary" id="dlWinPrimary" href="#" rel="noopener">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 2v8m0 0L5 7m3 3 3-3M3 12h10"></path></svg>
-            官网直链下载
+            下载 Setup
           </a>
-          <a class="btn btn-soft" id="dlWinGh" href="#" rel="noopener" target="_blank">GitHub 备用</a>
+          <a class="btn btn-soft" id="dlWinGh" href="#" rel="noopener" target="_blank">备用下载</a>
         </div>
       </article>
       <article class="dl-card reveal" style="transition-delay:.07s">
@@ -578,17 +587,31 @@ footer{background:var(--term);color:#A3ABC2;border-top:var(--bd);padding:56px 0 
         <div class="dl-actions">
           <a class="btn btn-primary" id="dlApkPrimary" href="#" rel="noopener">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 2v8m0 0L5 7m3 3 3-3M3 12h10"></path></svg>
-            官网直链下载
+            下载 APK
           </a>
-          <a class="btn btn-soft" id="dlApkGh" href="#" rel="noopener" target="_blank">GitHub 备用</a>
+          <a class="btn btn-soft" id="dlApkGh" href="#" rel="noopener" target="_blank">备用下载</a>
         </div>
       </article>
-    </div>
-    <div class="dl-note reveal">
-      <strong>直链说明：</strong>主下载地址为 <code id="dlBaseLabel">https://dl.tevarn.com/v0.4.0/…</code>（Cloudflare 边缘代理，无需备案）。
-      若直链 404，请用旁边的 <strong>GitHub 备用</strong>，或到
-      <a href="https://github.com/wu1w/tevarn/releases/tag/v0.4.0" rel="noopener" target="_blank">Releases v0.4.0</a>。
-      部署说明见仓库 <code>docs/WEBSITE_DOWNLOADS.md</code>。
+      <article class="dl-card dl-wide reveal" style="transition-delay:.1s" id="vps">
+        <div class="dl-os">VPS RELAY <span class="pill">UBUNTU 22.04+</span></div>
+        <h3>自有 VPS 中继 · 一行命令</h3>
+        <p>在公网 Ubuntu VPS 上以 root 执行。装完自动打印 IP / 端口 / Token，填进桌面端「远程连接 → 自有 VPS 中继」，手机外出即可连回家。无需给家里做端口映射。</p>
+        <div class="dl-meta">
+          <span>SCRIPT <b>install-vps-relay.sh</b></span>
+          <span>NEED <b>Docker · 安全组放行 80</b></span>
+        </div>
+        <div class="dl-cmd" aria-label="VPS 一键安装命令">
+          <code id="vpsInstallCmd"><span class="p">$</span> curl -fsSL https://tevarn.com/install-vps-relay.sh | sudo bash</code>
+          <button type="button" id="vpsCopyBtn">COPY</button>
+        </div>
+        <div class="dl-actions">
+          <a class="btn btn-primary" href="https://tevarn.com/install-vps-relay.sh" rel="noopener">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 2v8m0 0L5 7m3 3 3-3M3 12h10"></path></svg>
+            下载脚本
+          </a>
+          <a class="btn btn-soft" href="https://github.com/wu1w/tevarn/tree/main/deploy/vps-relay" rel="noopener" target="_blank">说明文档</a>
+        </div>
+      </article>
     </div>
   </div>
 </section>
@@ -851,7 +874,8 @@ footer{background:var(--term);color:#A3ABC2;border-top:var(--bd);padding:56px 0 
         </div>
         <div>
           <h5>RESOURCES</h5>
-          <a href="#download">下载安装包</a>
+          <a href="#download">下载安装</a>
+          <a href="#vps">VPS 中继</a>
           <a href="#features">核心特性</a>
           <a href="#quickstart">快速开始</a>
           <a href="https://github.com/wu1w/tevarn/blob/main/LICENSE" rel="noopener" target="_blank">License (MIT)</a>
@@ -866,13 +890,10 @@ footer{background:var(--term);color:#A3ABC2;border-top:var(--bd);padding:56px 0 
 </footer>
 
 <script>
-// ---- release download config (CF edge primary, GitHub fallback) ----
-// Primary: dl.tevarn.com Worker proxies/caches installers (mainland users never hit github.com).
+// ---- release download config ----
 const RELEASE = {
   version: '0.4.0',
-  // Primary: Cloudflare Worker custom domain (no ICP)
   cdnBase: 'https://dl.tevarn.com',
-  // Fallback: GitHub Releases
   ghTag: 'v0.4.0',
   ghBase: 'https://github.com/wu1w/tevarn/releases/download/v0.4.0',
   assets: {
@@ -902,7 +923,6 @@ const RELEASE = {
   setText('dlApkName', apk.file);
   setText('dlWinSize', win.size);
   setText('dlApkSize', apk.size);
-  setText('dlBaseLabel', `${base}/…`);
 
   const bind = (id, href) => { const a = document.getElementById(id); if (a) a.href = href; };
   bind('dlWinPrimary', `${base}/${win.file}`);
@@ -910,6 +930,18 @@ const RELEASE = {
   bind('dlWinGh', `${RELEASE.ghBase}/${win.file}`);
   bind('dlApkGh', `${RELEASE.ghBase}/${apk.file}`);
 })();
+
+// ---- VPS one-liner copy ----
+const vpsCopyBtn = document.getElementById('vpsCopyBtn');
+const VPS_CMD = 'curl -fsSL https://tevarn.com/install-vps-relay.sh | sudo bash';
+if (vpsCopyBtn) {
+  vpsCopyBtn.addEventListener('click', () => {
+    navigator.clipboard.writeText(VPS_CMD).then(() => {
+      vpsCopyBtn.textContent = 'COPIED ✓';
+      setTimeout(() => { vpsCopyBtn.textContent = 'COPY'; }, 1600);
+    }).catch(() => { vpsCopyBtn.textContent = 'FAILED'; });
+  });
+}
 
 // ---- mobile nav ----
 const burger = document.getElementById('burger');

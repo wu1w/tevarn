@@ -23,20 +23,19 @@ npx --yes serve website -p 5173
 
 ## 下载区
 
-页面 `#download` 提供两个安装包：
+页面 `#download`：
 
-| 包 | 官网直链（主） | 备用 |
-|----|----------------|------|
-| Windows Setup | `https://dl.tevarn.com/vX.Y.Z/Tevarn-Setup-…exe` | GitHub Release |
-| Android APK | `https://dl.tevarn.com/vX.Y.Z/Tevarn-Mobile-….apk` | GitHub Release |
+| 项 | 地址 |
+|----|------|
+| Windows Setup | `https://dl.tevarn.com/vX.Y.Z/Tevarn-Setup-…exe` |
+| Android APK | `https://dl.tevarn.com/vX.Y.Z/Tevarn-Mobile-….apk` |
+| VPS 一键脚本 | `https://tevarn.com/install-vps-relay.sh` |
 
-直链托管在 **Cloudflare R2**（与域名同账号，**无需 ICP 备案**），避免大陆用户依赖 GitHub。
+```bash
+curl -fsSL https://tevarn.com/install-vps-relay.sh | sudo bash
+```
 
-发版与上传步骤见：[`docs/WEBSITE_DOWNLOADS.md`](../docs/WEBSITE_DOWNLOADS.md)
-
-上传脚本：[`scripts/publish-downloads-r2.ps1`](../scripts/publish-downloads-r2.ps1)
-
-改版本时只需编辑 `index.html` 底部 `RELEASE` 配置对象。
+安装包经 Cloudflare 边缘代理；脚本随 `website/` 静态部署。发版说明见 [`docs/WEBSITE_DOWNLOADS.md`](../docs/WEBSITE_DOWNLOADS.md)。
 
 ## 部署建议
 
