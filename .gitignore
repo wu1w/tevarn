@@ -239,3 +239,12 @@ deploy/vps-relay/.relay-token
 _remote_tip/
 _fixed_source_review/
 
+
+# Product logos (override global *.png ignore)
+!website/assets/
+!website/assets/**
+!website/assets/**/*.png
+!frontend/public/tevarn_logo.png
+!frontend/public/icon.png
+!frontend/tray-icon.png
+
