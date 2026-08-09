@@ -1,5 +1,5 @@
 /**
- * Takton Electron 主进程
+ * Tevarn Electron 主进程
  *
  * 职责：
  * 1. 启动后端子进程（uvicorn）
@@ -35,7 +35,7 @@ try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   autoUpdater = require('electron-updater').autoUpdater as AutoUpdaterLike;
 } catch (e) {
-  console.warn('[Takton] electron-updater not available:', (e as Error).message);
+  console.warn('[Tevarn] electron-updater not available:', (e as Error).message);
 }
 
 // ---- 环境检测 ----
@@ -80,15 +80,15 @@ function isLoopbackHost(host: string): boolean {
  * non-loopback + single_user_mode = FAIL (process refuses to start).
  *
  * Default: 127.0.0.1 + single_user=true (local AIOS).
- * LAN / mobile pair: set TAKTON_APP_HOST=0.0.0.0 (single_user auto-off unless overridden).
+ * LAN / mobile pair: set TEVARN_APP_HOST=0.0.0.0 (single_user auto-off unless overridden).
  */
 function resolveAppHost(): string {
-  return (process.env.TAKTON_APP_HOST || '127.0.0.1').trim() || '127.0.0.1';
+  return (process.env.TEVARN_APP_HOST || '127.0.0.1').trim() || '127.0.0.1';
 }
 
 function resolveSingleUserMode(appHost: string): string {
-  if (process.env.TAKTON_SINGLE_USER_MODE != null && process.env.TAKTON_SINGLE_USER_MODE !== '') {
-    return process.env.TAKTON_SINGLE_USER_MODE;
+  if (process.env.TEVARN_SINGLE_USER_MODE != null && process.env.TEVARN_SINGLE_USER_MODE !== '') {
+    return process.env.TEVARN_SINGLE_USER_MODE;
   }
   return isLoopbackHost(appHost) ? 'true' : 'false';
 }
@@ -145,7 +145,7 @@ const SECRETS_FILE = path.join(USER_DATA_DIR, 'secrets.json');
 const WINDOW_STATE_FILE = path.join(USER_DATA_DIR, 'window-state.json');
 
 let backendProcess: ChildProcess | null = null;
-/** Rust AIOS control plane (takton-kernel-host). */
+/** Rust AIOS control plane (tevarn-kernel-host). */
 let kernelHostProcess: ChildProcess | null = null;
 /** OS: full quit kills Kernel only when true. Default false = detach runtime. */
 let stopRuntimeOnQuit = false;
@@ -154,6 +154,15 @@ let frontendServer: http.Server | null = null;
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
+/** True while we intentionally stop/replace the backend (skip auto-restart). */
+let backendStopIntentional = false;
+/** Auto-restart bookkeeping for silent backend deaths. */
+let backendRestartCount = 0;
+let backendRestartWindowStart = 0;
+let backendRestartTimer: ReturnType<typeof setTimeout> | null = null;
+let backendLastLogTail = '';
+const BACKEND_RESTART_MAX = 8;
+const BACKEND_RESTART_WINDOW_MS = 15 * 60 * 1000;
 
 // ---- 密钥持久化 ----
 interface AppSecrets {
@@ -212,8 +221,8 @@ function loadOrCreateSecrets(): AppSecrets {
       fs.writeFileSync(
         credPath,
         [
-          'Takton first-run credentials (local only)',
-          'Email: admin@takton.dev',
+          'Tevarn first-run credentials (local only)',
+          'Email: admin@tevarn.dev',
           `Password: ${secrets.defaultAdminPassword}`,
           'Please change this password after login.',
           '',
@@ -221,9 +230,9 @@ function loadOrCreateSecrets(): AppSecrets {
         'utf-8',
       );
     }
-    console.log(`[Takton] Generated persistent secrets at ${SECRETS_FILE}`);
+    console.log(`[Tevarn] Generated persistent secrets at ${SECRETS_FILE}`);
   } catch (err) {
-    console.error('[Takton] Failed to persist secrets:', err);
+    console.error('[Tevarn] Failed to persist secrets:', err);
   }
   return secrets;
 }
@@ -276,10 +285,12 @@ function httpGet(url: string, timeoutMs = 1500): Promise<{ status: number; body:
 }
 
 /** 检测是否是带 /api 前缀的本应用后端（旧后端只有 /health 没有 /api/health） */
-async function isTaktonBackend(port: number): Promise<boolean> {
+async function isTevarnBackend(port: number): Promise<boolean> {
   try {
     const res = await httpGet(`http://127.0.0.1:${port}/api/health`, 1200);
-    return res.status === 200 && res.body.includes('takton');
+    // Accept legacy "takton-backend" health body during rebrand transition
+    const b = (res.body || '').toLowerCase();
+    return res.status === 200 && (b.includes('tevarn') || b.includes('takton'));
   } catch {
     return false;
   }
@@ -300,33 +311,33 @@ function isPortFree(port: number): Promise<boolean> {
  * 选择后端端口：
  * - 复用本进程拉起的 backendProcess
  * - OS 化：复用已在跑的 Kernel Host（/api/runtime/status）
- * - 非 Takton 占用端口跳过
+ * - 非 Tevarn 占用端口跳过
  */
 async function resolveBackendPort(): Promise<{ port: number; reuse: boolean }> {
   if (backendProcess && !backendProcess.killed && activeBackendPort) {
-    if (await isTaktonBackend(activeBackendPort)) {
-      console.log(`[Takton] Reusing own backend on port ${activeBackendPort}`);
+    if (await isTevarnBackend(activeBackendPort)) {
+      console.log(`[Tevarn] Reusing own backend on port ${activeBackendPort}`);
       return { port: activeBackendPort, reuse: true };
     }
   }
   for (const port of CANDIDATE_BACKEND_PORTS) {
-    if (await isTaktonRuntimeHost(port)) {
-      console.log(`[Takton] Reusing detached Kernel Host on port ${port}`);
+    if (await isTevarnRuntimeHost(port)) {
+      console.log(`[Tevarn] Reusing detached Kernel Host on port ${port}`);
       activeBackendPort = port;
       return { port, reuse: true };
     }
   }
   for (const port of CANDIDATE_BACKEND_PORTS) {
     if (await isPortFree(port)) {
-      console.log(`[Takton] Selected free backend port ${port}`);
+      console.log(`[Tevarn] Selected free backend port ${port}`);
       return { port, reuse: false };
     }
-    console.warn(`[Takton] Port ${port} busy, not a Takton Host — skip`);
+    console.warn(`[Tevarn] Port ${port} busy, not a Tevarn Host — skip`);
   }
   return { port: DEFAULT_BACKEND_PORT, reuse: false };
 }
 
-function isTaktonRuntimeHost(port: number): Promise<boolean> {
+function isTevarnRuntimeHost(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const req = http.get(`http://127.0.0.1:${port}/api/runtime/status`, (res) => {
       let data = '';
@@ -335,7 +346,7 @@ function isTaktonRuntimeHost(port: number): Promise<boolean> {
         try {
           if (res.statusCode !== 200) return resolve(false);
           const j = JSON.parse(data);
-          resolve(j?.ok === true && (j?.product === 'takton-aios' || j?.role === 'kernel_host'));
+          resolve(j?.ok === true && (j?.product === 'tevarn-aios' || j?.role === 'kernel_host'));
         } catch {
           resolve(false);
         }
@@ -357,8 +368,8 @@ function waitForBackend(url: string, timeoutMs = 60000): Promise<void> {
         let data = '';
         res.on('data', (chunk) => (data += chunk));
         res.on('end', () => {
-          // 必须确认是 takton /api 健康检查，防止误连旧服务
-          if (res.statusCode === 200 && data.includes('takton')) {
+          // 必须确认是 tevarn /api 健康检查，防止误连旧服务
+          if (res.statusCode === 200 && (data.includes('tevarn') || data.includes('takton'))) {
             resolve();
           } else if (Date.now() - start < timeoutMs) {
             setTimeout(poll, 500);
@@ -394,6 +405,262 @@ function pythonHasModule(python: string, moduleName: string, extraEnv?: NodeJS.P
   }
 }
 
+/** Tag file so upgrades / different embed Python never keep foreign ABI wheels. */
+const USER_SITE_TAG_FILE = path.join(USER_SITE_PACKAGES, '.tevarn-python-tag');
+
+/**
+ * One-click packs must work across machines: old AppData, Python 3.11→3.12
+ * upgrades, and partial pip installs. Never trust `import ddgs` alone —
+ * pure-Python packages can import while native deps (lxml/primp cp311) crash.
+ */
+function getPythonRuntimeTag(python: string): string {
+  try {
+    const out = execSync(
+      `"${python}" -c "import sys,sysconfig; v=sys.version_info; print(f'{v[0]}.{v[1]}|cp{v[0]}{v[1]}|{sysconfig.get_platform()}')"`,
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10000 },
+    );
+    return (out || '').trim();
+  } catch {
+    return '';
+  }
+}
+
+function readUserSiteTag(): string {
+  try {
+    if (fs.existsSync(USER_SITE_TAG_FILE)) {
+      return fs.readFileSync(USER_SITE_TAG_FILE, 'utf8').trim();
+    }
+  } catch { /* ignore */ }
+  return '';
+}
+
+function writeUserSiteTag(tag: string): void {
+  try {
+    if (!fs.existsSync(USER_SITE_PACKAGES)) {
+      fs.mkdirSync(USER_SITE_PACKAGES, { recursive: true });
+    }
+    fs.writeFileSync(USER_SITE_TAG_FILE, `${tag}\n`, 'utf8');
+  } catch (e) {
+    console.warn(`[Tevarn] write user-site tag failed: ${e}`);
+  }
+}
+
+/** Scan user site for .pyd / WHEEL tags that don't match current cpXY (e.g. cp311 vs cp312). */
+function userSiteHasForeignAbi(expectedCp: string): string[] {
+  const bad: string[] = [];
+  const want = (expectedCp || '').toLowerCase();
+  if (!fs.existsSync(USER_SITE_PACKAGES) || !want) return bad;
+  const walk = (dir: string, depth: number) => {
+    if (depth > 5) return;
+    let names: string[] = [];
+    try {
+      names = fs.readdirSync(dir);
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      if (name === '__pycache__' || name === '.git' || name === '.tevarn-python-tag') continue;
+      const full = path.join(dir, name);
+      let st: fs.Stats;
+      try {
+        st = fs.statSync(full);
+      } catch {
+        continue;
+      }
+      if (st.isDirectory()) {
+        walk(full, depth + 1);
+        continue;
+      }
+      let tag = '';
+      // e.g. etree.cp311-win_amd64.pyd
+      const fromName = name.match(/\.?(cp\d{2,3})[-_]/i);
+      if (fromName) tag = fromName[1].toLowerCase();
+      if (!tag && name === 'WHEEL') {
+        try {
+          const t = fs.readFileSync(full, 'utf8');
+          const m = t.match(/Tag:\s*(cp\d{2,3})/i);
+          if (m) tag = m[1].toLowerCase();
+        } catch { /* ignore */ }
+      }
+      if (tag && tag !== want) {
+        bad.push(path.relative(USER_SITE_PACKAGES, full));
+      }
+    }
+  };
+  walk(USER_SITE_PACKAGES, 0);
+  return bad;
+}
+
+/**
+ * Real search-stack probe: ddgs must import AND any present lxml/primp must load.
+ * Broken ABI is treated as failure so we reinstall (HTML fallback still works).
+ */
+function searchStackHealthy(python: string, extraEnv?: NodeJS.ProcessEnv): boolean {
+  const probe = [
+    'import sys',
+    'errs=[]',
+    'ok=False',
+    'try:',
+    '  from ddgs import DDGS  # noqa: F401',
+    '  ok=True',
+    'except Exception as e:',
+    '  errs.append("ddgs:"+type(e).__name__+":"+str(e)[:160])',
+    '  try:',
+    '    from duckduckgo_search import DDGS  # noqa: F401',
+    '    ok=True',
+    '  except Exception as e2:',
+    '    errs.append("duckduckgo_search:"+type(e2).__name__+":"+str(e2)[:160])',
+    'if not ok:',
+    '  sys.stderr.write("|".join(errs)); sys.exit(2)',
+    '# Native deps: if present on path they must not be foreign-ABI wreckage',
+    'for mod in ("lxml.etree", "primp"):',
+    '  try:',
+    '    m=__import__(mod)',
+    '  except ImportError:',
+    '    pass',
+    '  except Exception as e:',
+    '    sys.stderr.write("broken-"+mod+":"+type(e).__name__+":"+str(e)[:160]); sys.exit(3)',
+    '  else:',
+    '    if mod=="primp" and not hasattr(m,"Client"):',
+    '      sys.stderr.write("broken-primp:no Client (half-install)"); sys.exit(3)',
+    'print("search-ok")',
+  ].join('\n');
+  try {
+    execSync(`"${python}" -c ${JSON.stringify(probe)}`, {
+      encoding: 'utf8',
+      stdio: 'pipe',
+      env: { ...process.env, ...extraEnv },
+      timeout: 20000,
+    });
+    return true;
+  } catch (e: any) {
+    const msg = (e?.stderr || e?.message || String(e)).toString().slice(0, 300);
+    console.warn(`[Tevarn] search stack unhealthy: ${msg}`);
+    return false;
+  }
+}
+
+/** Wipe user site-packages (keeps directory). Safe: only under userData. */
+function purgeUserSitePackages(reason: string): void {
+  try {
+    if (!fs.existsSync(USER_SITE_PACKAGES)) return;
+    console.log(`[Tevarn] Repairing user python-packages (${reason}) …`);
+    for (const name of fs.readdirSync(USER_SITE_PACKAGES)) {
+      const full = path.join(USER_SITE_PACKAGES, name);
+      try {
+        fs.rmSync(full, { recursive: true, force: true });
+      } catch (e) {
+        console.warn(`[Tevarn] purge skip ${name}: ${e}`);
+      }
+    }
+  } catch (e) {
+    console.warn(`[Tevarn] purgeUserSitePackages failed: ${e}`);
+  }
+}
+
+function pipInstallToUserSite(
+  python: string,
+  args: string[],
+  timeoutMs: number,
+): Promise<number> {
+  if (!fs.existsSync(USER_SITE_PACKAGES)) {
+    fs.mkdirSync(USER_SITE_PACKAGES, { recursive: true });
+  }
+  return new Promise((resolve) => {
+    const proc = spawn(
+      python,
+      [
+        '-m', 'pip', 'install',
+        ...args,
+        '-t', USER_SITE_PACKAGES,
+        '--no-warn-script-location',
+        '--disable-pip-version-check',
+        // Force wheels matching THIS interpreter (never reuse foreign cache blindly)
+        '--only-binary=:all:',
+        // If pure-python only package needs source, allow fallback for those:
+        // actually ddgs deps have wheels on win; if only-binary fails try without
+      ],
+      {
+        cwd: path.dirname(python),
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: {
+          ...process.env,
+          // Isolate from user/global site so we never pick another Python's wheels
+          PYTHONNOUSERSITE: '1',
+          PIP_DISABLE_PIP_VERSION_CHECK: '1',
+        },
+      },
+    );
+    const timer = setTimeout(() => {
+      try { proc.kill(); } catch { /* ignore */ }
+      resolve(-1);
+    }, timeoutMs);
+    proc.stdout?.on('data', (d: Buffer) => console.log(`[pip] ${d.toString().trim()}`));
+    proc.stderr?.on('data', (d: Buffer) => console.error(`[pip] ${d.toString().trim()}`));
+    proc.on('exit', (code) => {
+      clearTimeout(timer);
+      resolve(code ?? 1);
+    });
+    proc.on('error', () => {
+      clearTimeout(timer);
+      resolve(1);
+    });
+  });
+}
+
+async function installSearchBackend(python: string, extraEnv: NodeJS.ProcessEnv): Promise<void> {
+  console.log('[Tevarn] Installing search backend (ddgs) for this Python …');
+  // First try binary-only (fast, ABI-safe). If pip rejects, retry without --only-binary.
+  let code = await pipInstallToUserSite(
+    python,
+    [
+      'ddgs>=9.0.0',
+      'bcrypt>=4.0.1,<4.1',
+    ],
+    180000,
+  );
+  if (code !== 0 || !searchStackHealthy(python, extraEnv)) {
+    console.warn('[Tevarn] binary-only search install incomplete; retrying with source allowed …');
+    // Manual spawn without --only-binary
+    if (!fs.existsSync(USER_SITE_PACKAGES)) {
+      fs.mkdirSync(USER_SITE_PACKAGES, { recursive: true });
+    }
+    await new Promise<void>((resolve) => {
+      const proc = spawn(
+        python,
+        [
+          '-m', 'pip', 'install',
+          'ddgs>=9.0.0',
+          'bcrypt>=4.0.1,<4.1',
+          '-t', USER_SITE_PACKAGES,
+          '--no-warn-script-location',
+          '--disable-pip-version-check',
+        ],
+        {
+          cwd: path.dirname(python),
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: { ...process.env, PYTHONNOUSERSITE: '1' },
+        },
+      );
+      const timer = setTimeout(() => {
+        try { proc.kill(); } catch { /* ignore */ }
+        resolve();
+      }, 180000);
+      proc.stdout?.on('data', (d: Buffer) => console.log(`[pip] ${d.toString().trim()}`));
+      proc.stderr?.on('data', (d: Buffer) => console.error(`[pip] ${d.toString().trim()}`));
+      proc.on('exit', () => { clearTimeout(timer); resolve(); });
+      proc.on('error', () => { clearTimeout(timer); resolve(); });
+    });
+  }
+  if (searchStackHealthy(python, extraEnv)) {
+    console.log('[Tevarn] search backend ready (ddgs + native deps)');
+  } else {
+    console.warn(
+      '[Tevarn] search backend still incomplete — free_search will use HTML/Wikipedia fallbacks (no API key needed)',
+    );
+  }
+}
+
 /**
  * Embedded Windows Python ships with pythonXX._pth which IGNORES PYTHONPATH.
  * Wire userData/python-packages into sys.path via sitecustomize + ._pth so
@@ -410,8 +677,11 @@ function ensureUserSiteOnSysPath(python: string): void {
       path.join(pyDir, 'Lib', 'site-packages', 'sitecustomize.py'),
       path.join(pyDir, 'lib', 'site-packages', 'sitecustomize.py'),
     ];
+    // Packaged backend lives at resources/backend — parent must be on sys.path.
+    // Embeddable Python ignores PYTHONPATH; sitecustomize + ._pth are the only path.
+    const resourcesPath = !isDev ? process.resourcesPath : '';
     const siteBody =
-      '# Auto-generated by Takton — load user-writable python-packages\n' +
+      '# Auto-generated by Tevarn — load user-writable python-packages + resources\n' +
       'import os, sys\n' +
       'from pathlib import Path\n' +
       `_p = r'''${USER_SITE_PACKAGES}'''\n` +
@@ -419,46 +689,69 @@ function ensureUserSiteOnSysPath(python: string): void {
       '    sys.path.insert(0, _p)\n' +
       "_ad = os.environ.get('APPDATA') or ''\n" +
       'if _ad:\n' +
-      "    _q = str(Path(_ad) / 'takton' / 'python-packages')\n" +
+      "    _q = str(Path(_ad) / 'tevarn' / 'python-packages')\n" +
       '    if os.path.isdir(_q) and _q not in sys.path:\n' +
-      '        sys.path.insert(0, _q)\n';
+      '        sys.path.insert(0, _q)\n' +
+      `_res = os.environ.get('TEVARN_RESOURCES_PATH') or r'''${resourcesPath}'''\n` +
+      'if _res and os.path.isdir(_res) and _res not in sys.path:\n' +
+      '    sys.path.insert(0, _res)\n' +
+      'try:\n' +
+      '    _here = Path(__file__).resolve()\n' +
+      '    _resources = _here.parents[3]  # site-packages→Lib→python→resources\n' +
+      "    if (_resources / 'backend').is_dir() and str(_resources) not in sys.path:\n" +
+      '        sys.path.insert(0, str(_resources))\n' +
+      'except Exception:\n' +
+      '    pass\n';
     for (const sc of siteCandidates) {
       try {
         const dir = path.dirname(sc);
         if (!fs.existsSync(dir)) continue;
         fs.writeFileSync(sc, siteBody, 'utf8');
-        console.log(`[Takton] wrote ${sc}`);
+        console.log(`[Tevarn] wrote ${sc}`);
         break;
       } catch (e) {
-        console.warn(`[Takton] sitecustomize write skipped: ${e}`);
+        console.warn(`[Tevarn] sitecustomize write skipped: ${e}`);
       }
     }
-    // 2) pythonXX._pth: list USER_SITE_PACKAGES so it works even without site
+    // 2) pythonXX._pth: list USER_SITE_PACKAGES + resources (embeddable ignores PYTHONPATH)
     try {
       const pthFiles = fs
         .readdirSync(pyDir)
         .filter((n) => n.endsWith('._pth'));
+      const extraPaths = [USER_SITE_PACKAGES, resourcesPath].filter(
+        (p) => Boolean(p) && fs.existsSync(p as string),
+      ) as string[];
       for (const name of pthFiles) {
         const pthPath = path.join(pyDir, name);
         let text = fs.readFileSync(pthPath, 'utf8');
-        if (text.includes(USER_SITE_PACKAGES)) continue;
-        // Insert after the "." line (stdlib root)
-        if (/(^|\n)\.(\r?\n)/.test(text)) {
-          text = text.replace(/(^|\n)\.(\r?\n)/, `$1.$2${USER_SITE_PACKAGES}$2`);
-        } else {
-          text = `${USER_SITE_PACKAGES}\n${text}`;
+        // BOM breaks python312.zip resolution on embeddable CPython
+        if (text.charCodeAt(0) === 0xfeff) {
+          text = text.slice(1);
+        }
+        let changed = false;
+        for (const extra of extraPaths) {
+          if (text.includes(extra)) continue;
+          if (/(^|\n)\.(\r?\n)/.test(text)) {
+            text = text.replace(/(^|\n)\.(\r?\n)/, `$1.$2${extra}$2`);
+          } else {
+            text = `${extra}\n${text}`;
+          }
+          changed = true;
         }
         if (!/^import site\s*$/m.test(text) && !text.includes('import site')) {
           text = `${text.trimEnd()}\nimport site\n`;
+          changed = true;
         }
-        fs.writeFileSync(pthPath, text, 'utf8');
-        console.log(`[Takton] patched ${pthPath} for user site-packages`);
+        if (changed) {
+          fs.writeFileSync(pthPath, text, 'utf8');
+          console.log(`[Tevarn] patched ${pthPath} for user site + resources`);
+        }
       }
     } catch (e) {
-      console.warn(`[Takton] ._pth patch skipped: ${e}`);
+      console.warn(`[Tevarn] ._pth patch skipped: ${e}`);
     }
   } catch (e) {
-    console.warn(`[Takton] ensureUserSiteOnSysPath failed: ${e}`);
+    console.warn(`[Tevarn] ensureUserSiteOnSysPath failed: ${e}`);
   }
 }
 
@@ -468,7 +761,7 @@ function findPython(): string {
     if (platform === 'win32') {
       const embedPath = path.join(process.resourcesPath, 'python', 'python.exe');
       if (fs.existsSync(embedPath)) {
-        console.log(`[Takton] Using embedded Python: ${embedPath}`);
+        console.log(`[Tevarn] Using embedded Python: ${embedPath}`);
         return embedPath;
       }
     }
@@ -477,7 +770,7 @@ function findPython(): string {
       ? path.join(BACKEND_DIR, '.venv', 'Scripts', 'python.exe')
       : path.join(BACKEND_DIR, '.venv', 'bin', 'python');
     if (fs.existsSync(venvPython)) {
-      console.log(`[Takton] Using packaged venv Python: ${venvPython}`);
+      console.log(`[Tevarn] Using packaged venv Python: ${venvPython}`);
       return venvPython;
     }
   }
@@ -494,7 +787,7 @@ function findPython(): string {
 
   for (const p of devCandidates) {
     if (fs.existsSync(p)) {
-      console.log(`[Takton] Using project Python: ${p}`);
+      console.log(`[Tevarn] Using project Python: ${p}`);
       return p;
     }
   }
@@ -503,7 +796,7 @@ function findPython(): string {
   for (const cmd of candidates) {
     try {
       execSync(`${cmd} --version`, { encoding: 'utf8', stdio: 'pipe' });
-      console.log(`[Takton] Using system Python: ${cmd}`);
+      console.log(`[Tevarn] Using system Python: ${cmd}`);
       return cmd;
     } catch {
       continue;
@@ -513,8 +806,15 @@ function findPython(): string {
 }
 
 /**
- * 确保后端依赖可用。
- * 优先检查解释器 site-packages；缺失时安装到 userData/python-packages（可写），避免 Program Files 无写权限。
+ * 确保后端依赖可用（一键包多环境适配）。
+ *
+ * 约束：
+ * - Program Files 只读 → 可写包落在 userData/python-packages
+ * - 嵌入式 Python 忽略 PYTHONPATH → sitecustomize / ._pth
+ * - 用户目录可能残留「上一版 Python」的 cp311 轮子 → 必须按运行时 tag 自愈
+ * - `import ddgs` 不够：纯 Python 包能 import，lxml/primp ABI 错了仍会搜索失败
+ *
+ * 策略：core 优先用打包 site-packages；搜索栈健康检查失败则 purge + 用当前解释器重装。
  */
 async function ensureDependencies(python: string): Promise<string | undefined> {
   // Must run before import checks: embeddable Python ignores PYTHONPATH
@@ -523,68 +823,63 @@ async function ensureDependencies(python: string): Promise<string | undefined> {
   const extraEnv: NodeJS.ProcessEnv = {
     ...process.env,
     PYTHONPATH: [USER_SITE_PACKAGES, process.env.PYTHONPATH || ''].filter(Boolean).join(path.delimiter),
-    TAKTON_PYTHON_PACKAGES: USER_SITE_PACKAGES,
+    TEVARN_PYTHON_PACKAGES: USER_SITE_PACKAGES,
+    PYTHONNOUSERSITE: '1',
   };
 
+  const runtimeTag = getPythonRuntimeTag(python);
+  const expectedCp = (runtimeTag.split('|')[1] || '').toLowerCase(); // e.g. cp312
+  const prevTag = readUserSiteTag();
+
+  // 1) Tag / foreign ABI → wipe user site (upgrade 3.11 pack → 3.12, or mixed machines)
+  if (runtimeTag && prevTag && prevTag !== runtimeTag) {
+    purgeUserSitePackages(`python tag ${prevTag} → ${runtimeTag}`);
+  } else if (expectedCp) {
+    const foreign = userSiteHasForeignAbi(expectedCp);
+    if (foreign.length > 0) {
+      console.warn(
+        `[Tevarn] foreign ABI in user site (want ${expectedCp}): ${foreign.slice(0, 6).join(', ')}${foreign.length > 6 ? '…' : ''}`,
+      );
+      purgeUserSitePackages(`foreign ABI wheels (want ${expectedCp})`);
+    }
+  }
+
+  // 2) Core API stack (usually from embedded site-packages)
   const coreOk =
     pythonHasModule(python, 'uvicorn', extraEnv) &&
     pythonHasModule(python, 'fastapi', extraEnv);
-  // ddgs powers free web_search; missing → agent tool-loops with empty results
-  const searchOk =
-    pythonHasModule(python, 'ddgs', extraEnv) ||
-    pythonHasModule(python, 'duckduckgo_search', extraEnv);
-  if (coreOk && searchOk) {
-    console.log('[Takton] Python dependencies OK (incl. ddgs)');
-    return USER_SITE_PACKAGES;
-  }
-  if (coreOk && !searchOk) {
-    // Lightweight: only pull search backend into user site-packages
-    console.log('[Takton] Installing optional search backend (ddgs) …');
-    if (!fs.existsSync(USER_SITE_PACKAGES)) {
-      fs.mkdirSync(USER_SITE_PACKAGES, { recursive: true });
-    }
-    await new Promise<void>((resolve) => {
-      const proc = spawn(
-        python,
-        [
-          '-m', 'pip', 'install',
-          'ddgs>=9.0.0',
-          // passlib 1.7.4 breaks on bcrypt>=4.1 (__about__ removed)
-          'bcrypt>=4.0.1,<4.1',
-          '-t', USER_SITE_PACKAGES,
-          '--no-warn-script-location',
-          '--disable-pip-version-check',
-        ],
-        {
-          cwd: path.dirname(python),
-          stdio: ['ignore', 'pipe', 'pipe'],
-          env: process.env,
-        },
+
+  // 3) Search stack must be *usable*, not merely importable
+  let searchOk = searchStackHealthy(python, extraEnv);
+  if (!searchOk) {
+    // If a half-broken user site is shadowing good packages, purge then reinstall
+    if (fs.existsSync(USER_SITE_PACKAGES) && fs.readdirSync(USER_SITE_PACKAGES).some((n) => n !== '.tevarn-python-tag')) {
+      // Only purge when we detect search-related debris or no healthy stack
+      const names = fs.readdirSync(USER_SITE_PACKAGES);
+      const hasSearchDebris = names.some((n) =>
+        /^(ddgs|lxml|primp|duckduckgo|brotli|_brotli|httpx|httpcore|h2|hpack|hyperframe|fake_useragent)/i.test(n),
       );
-      const timer = setTimeout(() => {
-        try { proc.kill(); } catch { /* ignore */ }
-        resolve();
-      }, 120000);
-      proc.on('exit', () => {
-        clearTimeout(timer);
-        resolve();
-      });
-      proc.on('error', () => {
-        clearTimeout(timer);
-        resolve();
-      });
-    });
-    if (
-      pythonHasModule(python, 'ddgs', extraEnv) ||
-      pythonHasModule(python, 'duckduckgo_search', extraEnv)
-    ) {
-      console.log('[Takton] ddgs installed for web_search');
-    } else {
-      console.warn('[Takton] ddgs install may have failed; free web_search will use HTML fallbacks');
+      if (hasSearchDebris) {
+        purgeUserSitePackages('broken or incomplete search stack');
+      }
     }
+    await installSearchBackend(python, extraEnv);
+    searchOk = searchStackHealthy(python, extraEnv);
+  }
+
+  if (coreOk && searchOk) {
+    if (runtimeTag) writeUserSiteTag(runtimeTag);
+    console.log(`[Tevarn] Python dependencies OK (search stack healthy${runtimeTag ? `; ${runtimeTag}` : ''})`);
     return USER_SITE_PACKAGES;
   }
 
+  if (coreOk && !searchOk) {
+    // Already tried installSearchBackend; HTML fallbacks remain
+    if (runtimeTag) writeUserSiteTag(runtimeTag);
+    return USER_SITE_PACKAGES;
+  }
+
+  // 4) Core missing — full prod requirements into user site
   const reqCandidates = isDev
     ? [
         path.join(ROOT_DIR, 'backend', 'requirements-prod.txt'),
@@ -597,7 +892,7 @@ async function ensureDependencies(python: string): Promise<string | undefined> {
   const reqPath = reqCandidates.find((p) => fs.existsSync(p));
 
   if (!reqPath) {
-    console.error('[Takton] requirements-prod/requirements.txt not found, backend may fail to start');
+    console.error('[Tevarn] requirements-prod/requirements.txt not found, backend may fail to start');
     return USER_SITE_PACKAGES;
   }
 
@@ -605,7 +900,7 @@ async function ensureDependencies(python: string): Promise<string | undefined> {
     fs.mkdirSync(USER_SITE_PACKAGES, { recursive: true });
   }
 
-  console.log(`[Takton] Installing Python deps into ${USER_SITE_PACKAGES} ...`);
+  console.log(`[Tevarn] Installing Python deps into ${USER_SITE_PACKAGES} ...`);
 
   return new Promise((resolve) => {
     const proc = spawn(
@@ -620,13 +915,14 @@ async function ensureDependencies(python: string): Promise<string | undefined> {
       {
         cwd: path.dirname(python),
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: process.env,
+        env: { ...process.env, PYTHONNOUSERSITE: '1' },
       },
     );
 
     const timer = setTimeout(() => {
-      console.error('[Takton] pip install timed out');
+      console.error('[Tevarn] pip install timed out');
       try { proc.kill(); } catch { /* ignore */ }
+      if (runtimeTag) writeUserSiteTag(runtimeTag);
       resolve(USER_SITE_PACKAGES);
     }, 300000);
 
@@ -640,16 +936,26 @@ async function ensureDependencies(python: string): Promise<string | undefined> {
     proc.on('exit', (code) => {
       clearTimeout(timer);
       if (code === 0) {
-        console.log('[Takton] Dependencies installed successfully');
+        console.log('[Tevarn] Dependencies installed successfully');
       } else {
-        console.error(`[Takton] Dependency install failed with code ${code}`);
+        console.error(`[Tevarn] Dependency install failed with code ${code}`);
       }
+      // After full install, ensure search is actually healthy
+      if (!searchStackHealthy(python, extraEnv)) {
+        void installSearchBackend(python, extraEnv).finally(() => {
+          if (runtimeTag) writeUserSiteTag(runtimeTag);
+          resolve(USER_SITE_PACKAGES);
+        });
+        return;
+      }
+      if (runtimeTag) writeUserSiteTag(runtimeTag);
       resolve(USER_SITE_PACKAGES);
     });
 
     proc.on('error', (err) => {
       clearTimeout(timer);
-      console.error(`[Takton] Dependency install error: ${err.message}`);
+      console.error(`[Tevarn] Dependency install error: ${err.message}`);
+      if (runtimeTag) writeUserSiteTag(runtimeTag);
       resolve(USER_SITE_PACKAGES);
     });
   });
@@ -660,7 +966,7 @@ async function ensureDependencies(python: string): Promise<string | undefined> {
  *  backend child (API keys, OAuth tokens, cloud credentials). Desktop secrets
  *  come from userData secrets.json + DB settings — not from the shell. */
 const PACK_STRIP_ENV_RE =
-  /^(?:TAKTON_)?(?:LLM_|OPENAI_|ANTHROPIC_|AZURE_|GEMINI_|GOOGLE_|XAI_|GROK_|COHERE_|MISTRAL_|TOGETHER_|FIREWORKS_|DEEPSEEK_|CLAUDE_|HF_|HUGGINGFACE_)?(?:API_?KEY|ACCESS_TOKEN|REFRESH_TOKEN|CLIENT_SECRET|OAUTH_.*|.*_SECRET|.*_TOKEN)$/i;
+  /^(?:TEVARN_)?(?:LLM_|OPENAI_|ANTHROPIC_|AZURE_|GEMINI_|GOOGLE_|XAI_|GROK_|COHERE_|MISTRAL_|TOGETHER_|FIREWORKS_|DEEPSEEK_|CLAUDE_|HF_|HUGGINGFACE_)?(?:API_?KEY|ACCESS_TOKEN|REFRESH_TOKEN|CLIENT_SECRET|OAUTH_.*|.*_SECRET|.*_TOKEN)$/i;
 const PACK_STRIP_ENV_EXACT = new Set([
   'OPENAI_API_KEY',
   'ANTHROPIC_API_KEY',
@@ -676,11 +982,11 @@ const PACK_STRIP_ENV_EXACT = new Set([
   'DEEPSEEK_API_KEY',
   'HF_TOKEN',
   'HUGGINGFACE_HUB_TOKEN',
-  'TAKTON_LLM_API_KEY',
-  'TAKTON_EMBEDDING_API_KEY',
-  'TAKTON_RERANKER_API_KEY',
-  'TAKTON_IMAGE_API_KEY',
-  'TAKTON_OPENAI_CHATGPT_ACCOUNT_ID',
+  'TEVARN_LLM_API_KEY',
+  'TEVARN_EMBEDDING_API_KEY',
+  'TEVARN_RERANKER_API_KEY',
+  'TEVARN_IMAGE_API_KEY',
+  'TEVARN_OPENAI_CHATGPT_ACCOUNT_ID',
   'LLM_API_KEY',
   'API_KEY',
   // developer machine proxy auth / misc
@@ -697,7 +1003,7 @@ function sanitizeInheritedEnv(src: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     if (PACK_STRIP_ENV_EXACT.has(k)) continue;
     if (PACK_STRIP_ENV_RE.test(k)) continue;
     // Never forward a cwd .env path from packager into product
-    if (k === 'TAKTON_ENV_FILE' && !isDev) continue;
+    if (k === 'TEVARN_ENV_FILE' && !isDev) continue;
     out[k] = v;
   }
   return out;
@@ -706,7 +1012,7 @@ function sanitizeInheritedEnv(src: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 /** 构建后端进程环境变量 */
 function buildBackendEnv(secrets: AppSecrets, port: number, sitePackages?: string): NodeJS.ProcessEnv {
   // SQLite URL：Windows 路径使用正斜杠
-  const dbPath = path.join(DATA_DIR, 'takton.db').replace(/\\/g, '/');
+  const dbPath = path.join(DATA_DIR, 'tevarn.db').replace(/\\/g, '/');
   const dbUrl = platform === 'win32'
     ? `sqlite+aiosqlite:///${dbPath}`
     : `sqlite+aiosqlite:///${dbPath}`;
@@ -722,8 +1028,8 @@ function buildBackendEnv(secrets: AppSecrets, port: number, sitePackages?: strin
   const singleUser = resolveSingleUserMode(appHost);
   if (!isLoopbackHost(appHost) && singleUser === 'true') {
     console.warn(
-      `[Takton] TAKTON_APP_HOST=${appHost} with single_user=true will fail security startup. ` +
-        'Set TAKTON_SINGLE_USER_MODE=false for LAN binds, or use 127.0.0.1.',
+      `[Tevarn] TEVARN_APP_HOST=${appHost} with single_user=true will fail security startup. ` +
+        'Set TEVARN_SINGLE_USER_MODE=false for LAN binds, or use 127.0.0.1.',
     );
   }
 
@@ -732,19 +1038,24 @@ function buildBackendEnv(secrets: AppSecrets, port: number, sitePackages?: strin
   const env: NodeJS.ProcessEnv = {
     ...sanitizeInheritedEnv(process.env),
     NODE_ENV: process.env.NODE_ENV || (isDev ? 'development' : 'production'),
-    TAKTON_PYTHON_PACKAGES: USER_SITE_PACKAGES,
-    TAKTON_DB_URL: dbUrl,
-    TAKTON_APP_HOST: appHost,
-    TAKTON_APP_PORT: String(port),
-    TAKTON_LOG_LEVEL: isDev ? 'debug' : 'info',
-    TAKTON_SINGLE_USER_MODE: singleUser,
-    TAKTON_JWT_SECRET: secrets.jwtSecret,
-    TAKTON_API_KEY: secrets.apiKey,
-    TAKTON_SETTINGS_ENCRYPTION_SALT: secrets.encryptionSalt,
-    TAKTON_UPLOADS_DIR: UPLOADS_DIR,
-    TAKTON_FILE_BROWSER_ROOT: WORKSPACE_DIR,
-    TAKTON_DEFAULT_ADMIN_PASSWORD: secrets.defaultAdminPassword,
-    TAKTON_DESKTOP_PERMISSION_SECRET: secrets.desktopPermissionSecret,
+    TEVARN_PYTHON_PACKAGES: USER_SITE_PACKAGES,
+    TEVARN_DB_URL: dbUrl,
+    TEVARN_APP_HOST: appHost,
+    TEVARN_APP_PORT: String(port),
+    TEVARN_LOG_LEVEL: isDev ? 'debug' : 'info',
+    TEVARN_SINGLE_USER_MODE: singleUser,
+    TEVARN_JWT_SECRET: secrets.jwtSecret,
+    TEVARN_API_KEY: secrets.apiKey,
+    TEVARN_SETTINGS_ENCRYPTION_SALT: secrets.encryptionSalt,
+    TEVARN_UPLOADS_DIR: UPLOADS_DIR,
+    TEVARN_FILE_BROWSER_ROOT: WORKSPACE_DIR,
+    TEVARN_DEFAULT_ADMIN_PASSWORD: secrets.defaultAdminPassword,
+    TEVARN_DESKTOP_PERMISSION_SECRET: secrets.desktopPermissionSecret,
+    // Crash forensics + Windows Codex isolation (parent survives child death)
+    PYTHONUNBUFFERED: '1',
+    PYTHONFAULTHANDLER: '1',
+    PYTHONUTF8: '1',
+    TEVARN_CODEX_SSE_ISOLATE: process.env.TEVARN_CODEX_SSE_ISOLATE || '1',
     CORS_ALLOWED_ORIGINS: [
       `http://localhost:${FRONTEND_PORT}`,
       `http://127.0.0.1:${FRONTEND_PORT}`,
@@ -757,39 +1068,39 @@ function buildBackendEnv(secrets: AppSecrets, port: number, sitePackages?: strin
   // Packaged product: never load a random cwd/.env (would pick up packager secrets).
   // Desktop secrets/API keys come from Electron userData + DB only.
   if (!isDev) {
-    env.TAKTON_PACKAGED = '1';
-    env.TAKTON_RESOURCES_PATH = process.resourcesPath;
+    env.TEVARN_PACKAGED = '1';
+    env.TEVARN_RESOURCES_PATH = process.resourcesPath;
     // Block pydantic Settings from reading a leftover .env next to the exe
-    delete env.TAKTON_ENV_FILE;
-    delete env.TAKTON_LOAD_DOTENV;
+    delete env.TEVARN_ENV_FILE;
+    delete env.TEVARN_LOAD_DOTENV;
   }
-  const hostBinForBackend = process.env.TAKTON_KERNEL_HOST_BIN || findKernelHostBin();
+  const hostBinForBackend = process.env.TEVARN_KERNEL_HOST_BIN || findKernelHostBin();
   if (hostBinForBackend) {
-    env.TAKTON_KERNEL_HOST_BIN = hostBinForBackend;
-    process.env.TAKTON_KERNEL_HOST_BIN = hostBinForBackend;
+    env.TEVARN_KERNEL_HOST_BIN = hostBinForBackend;
+    process.env.TEVARN_KERNEL_HOST_BIN = hostBinForBackend;
   }
 
   // Strip cloud/provider secrets that may still sit on process.env.
   // Keep product secrets we just injected (JWT / encryption salt / desktop).
   const keepProduct = new Set([
-    'TAKTON_JWT_SECRET',
-    'TAKTON_API_KEY',
-    'TAKTON_SETTINGS_ENCRYPTION_SALT',
-    'TAKTON_DESKTOP_PERMISSION_SECRET',
-    'TAKTON_DEFAULT_ADMIN_PASSWORD',
-    'TAKTON_KERNEL_HOST_BIN',
-    'TAKTON_RESOURCES_PATH',
-    'TAKTON_PACKAGED',
-    'TAKTON_DB_URL',
-    'TAKTON_APP_HOST',
-    'TAKTON_APP_PORT',
-    'TAKTON_SINGLE_USER_MODE',
-    'TAKTON_UPLOADS_DIR',
-    'TAKTON_FILE_BROWSER_ROOT',
-    'TAKTON_LOG_LEVEL',
-    'TAKTON_KERNEL_BACKEND',
-    'TAKTON_KERNEL_AUTO_START',
-    'TAKTON_KERNEL_HOST',
+    'TEVARN_JWT_SECRET',
+    'TEVARN_API_KEY',
+    'TEVARN_SETTINGS_ENCRYPTION_SALT',
+    'TEVARN_DESKTOP_PERMISSION_SECRET',
+    'TEVARN_DEFAULT_ADMIN_PASSWORD',
+    'TEVARN_KERNEL_HOST_BIN',
+    'TEVARN_RESOURCES_PATH',
+    'TEVARN_PACKAGED',
+    'TEVARN_DB_URL',
+    'TEVARN_APP_HOST',
+    'TEVARN_APP_PORT',
+    'TEVARN_SINGLE_USER_MODE',
+    'TEVARN_UPLOADS_DIR',
+    'TEVARN_FILE_BROWSER_ROOT',
+    'TEVARN_LOG_LEVEL',
+    'TEVARN_KERNEL_BACKEND',
+    'TEVARN_KERNEL_AUTO_START',
+    'TEVARN_KERNEL_HOST',
   ]);
   for (const k of Object.keys(env)) {
     if (keepProduct.has(k)) continue;
@@ -826,7 +1137,7 @@ function postDesktopPermissionFromMain(
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(payload),
           Authorization: `Bearer ${token}`,
-          'X-Takton-Desktop-Permission': secret,
+          'X-Tevarn-Desktop-Permission': secret,
         },
       },
       (res) => {
@@ -850,20 +1161,28 @@ function postDesktopPermissionFromMain(
   });
 }
 
-/** P0-A: locate takton-kernel-host binary (docs/kernel-abi-v1.md). */
+/** P0-A: locate tevarn-kernel-host binary (docs/kernel-abi-v1.md). */
 function findKernelHostBin(): string | null {
-  const fromEnv = process.env.TAKTON_KERNEL_HOST_BIN;
+  const fromEnv = process.env.TEVARN_KERNEL_HOST_BIN || process.env.TAKTON_KERNEL_HOST_BIN;
   if (fromEnv && fs.existsSync(fromEnv)) return fromEnv;
   const names =
     platform === 'win32'
-      ? ['takton-kernel-host.exe', 'takton-kernel-host']
-      : ['takton-kernel-host'];
+      ? [
+          'tevarn-kernel-host.exe',
+          'tevarn-kernel-host',
+          'takton-kernel-host.exe',
+          'takton-kernel-host',
+        ]
+      : ['tevarn-kernel-host', 'takton-kernel-host'];
   const roots = [
+    path.join(ROOT_DIR, 'vendor', 'tevarn-kernel-host'),
     path.join(ROOT_DIR, 'vendor', 'takton-kernel-host'),
     path.join(ROOT_DIR, 'target', 'release'),
     path.join(ROOT_DIR, 'target', 'debug'),
   ];
   if (!isDev) {
+    roots.unshift(path.join(process.resourcesPath, 'vendor', 'tevarn-kernel-host'));
+    roots.unshift(path.join(process.resourcesPath, 'tevarn-kernel-host'));
     roots.unshift(path.join(process.resourcesPath, 'vendor', 'takton-kernel-host'));
     roots.unshift(path.join(process.resourcesPath, 'takton-kernel-host'));
   }
@@ -901,30 +1220,30 @@ function kernelHostListening(listen: string): Promise<boolean> {
 
 /** P0-A: start Rust kernel host before FastAPI. */
 async function startKernelHost(): Promise<void> {
-  const backend = (process.env.TAKTON_KERNEL_BACKEND || 'rust').toLowerCase();
+  const backend = (process.env.TEVARN_KERNEL_BACKEND || 'rust').toLowerCase();
   if (backend === 'python') {
-    console.log('[Takton] TAKTON_KERNEL_BACKEND=python — skip kernel host');
+    console.log('[Tevarn] TEVARN_KERNEL_BACKEND=python — skip kernel host');
     return;
   }
-  const listen = process.env.TAKTON_KERNEL_HOST || '127.0.0.1:17890';
+  const listen = process.env.TEVARN_KERNEL_HOST || '127.0.0.1:17890';
   if (await kernelHostListening(listen)) {
-    console.log(`[Takton] Kernel host already up at ${listen}`);
-    process.env.TAKTON_KERNEL_BACKEND = process.env.TAKTON_KERNEL_BACKEND || 'rust';
-    process.env.TAKTON_KERNEL_AUTO_START = '0';
+    console.log(`[Tevarn] Kernel host already up at ${listen}`);
+    process.env.TEVARN_KERNEL_BACKEND = process.env.TEVARN_KERNEL_BACKEND || 'rust';
+    process.env.TEVARN_KERNEL_AUTO_START = '0';
     return;
   }
   const bin = findKernelHostBin();
   if (!bin) {
     console.warn(
-      '[Takton] takton-kernel-host not found — Python kernel fallback. ' +
-        'Build: cargo build -p takton-kernel-host --release',
+      '[Tevarn] tevarn-kernel-host not found — Python kernel fallback. ' +
+        'Build: cargo build -p tevarn-kernel-host --release',
     );
     return;
   }
   // Always export absolute path for backend restart (UI «重启 Host»).
-  process.env.TAKTON_KERNEL_HOST_BIN = bin;
+  process.env.TEVARN_KERNEL_HOST_BIN = bin;
   if (!isDev) {
-    process.env.TAKTON_RESOURCES_PATH = process.resourcesPath;
+    process.env.TEVARN_RESOURCES_PATH = process.resourcesPath;
   }
 
   // Packaged apps use app.asar — ROOT_DIR (= resources/app) is NOT a real
@@ -939,13 +1258,13 @@ async function startKernelHost(): Promise<void> {
   ].filter((p) => p && fs.existsSync(p) && fs.statSync(p).isDirectory());
   const spawnCwd = spawnCwdCandidates[0] || process.cwd();
 
-  console.log(`[Takton] Starting kernel host: ${bin} --listen ${listen} (cwd=${spawnCwd})`);
+  console.log(`[Tevarn] Starting kernel host: ${bin} --listen ${listen} (cwd=${spawnCwd})`);
   try {
     const hostEnv = sanitizeInheritedEnv(process.env);
-    hostEnv.TAKTON_KERNEL_HOST_BIN = bin;
+    hostEnv.TEVARN_KERNEL_HOST_BIN = bin;
     if (!isDev) {
-      hostEnv.TAKTON_PACKAGED = '1';
-      hostEnv.TAKTON_RESOURCES_PATH = process.resourcesPath;
+      hostEnv.TEVARN_PACKAGED = '1';
+      hostEnv.TEVARN_RESOURCES_PATH = process.resourcesPath;
     }
     kernelHostProcess = spawn(bin, ['--listen', listen], {
       cwd: spawnCwd,
@@ -954,36 +1273,148 @@ async function startKernelHost(): Promise<void> {
       windowsHide: true,
     });
   } catch (err) {
-    console.error(`[Takton] Failed to spawn kernel host: ${(err as Error).message}`);
+    console.error(`[Tevarn] Failed to spawn kernel host: ${(err as Error).message}`);
     return;
   }
   kernelHostProcess.on('error', (err) => {
-    console.error(`[Takton] Kernel host process error: ${err.message}`);
+    console.error(`[Tevarn] Kernel host process error: ${err.message}`);
     kernelHostProcess = null;
   });
   kernelHostProcess.stderr?.on('data', (data: Buffer) => {
     console.error(`[KernelHost] ${data.toString().trim()}`);
   });
   kernelHostProcess.on('exit', (code, signal) => {
-    console.log(`[Takton] Kernel host exited code=${code} signal=${signal}`);
+    console.log(`[Tevarn] Kernel host exited code=${code} signal=${signal}`);
     kernelHostProcess = null;
   });
   for (let i = 0; i < 80; i++) {
     if (await kernelHostListening(listen)) {
-      console.log(`[Takton] Kernel host ready at ${listen}`);
-      process.env.TAKTON_KERNEL_BACKEND = process.env.TAKTON_KERNEL_BACKEND || 'rust';
-      process.env.TAKTON_KERNEL_AUTO_START = '0';
+      console.log(`[Tevarn] Kernel host ready at ${listen}`);
+      process.env.TEVARN_KERNEL_BACKEND = process.env.TEVARN_KERNEL_BACKEND || 'rust';
+      process.env.TEVARN_KERNEL_AUTO_START = '0';
       return;
     }
     if (kernelHostProcess && kernelHostProcess.exitCode != null) {
       console.error(
-        `[Takton] Kernel host exited early code=${kernelHostProcess.exitCode}`,
+        `[Tevarn] Kernel host exited early code=${kernelHostProcess.exitCode}`,
       );
       return;
     }
     await new Promise((r) => setTimeout(r, 100));
   }
-  console.warn('[Takton] Kernel host did not become ready in time');
+  console.warn('[Tevarn] Kernel host did not become ready in time');
+}
+
+function backendLifecycleLogPath(): string {
+  return path.join(USER_DATA_DIR, 'backend-lifecycle.log');
+}
+
+function appendBackendLifecycle(line: string): void {
+  try {
+    ensureDataDirs();
+    fs.appendFileSync(
+      backendLifecycleLogPath(),
+      `${new Date().toISOString()} ${line}\n`,
+      'utf-8',
+    );
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Prefer Windows-safe boot module (Selector policy before uvicorn creates the
+ * loop). Fall back to plain uvicorn if win_boot is missing (very old trees).
+ */
+function resolveBackendLaunchArgs(
+  bindHost: string,
+  port: number,
+  logLevel: string,
+): { args: string[]; mode: string } {
+  // Packaged: resources/backend/win_boot.py ; dev: repo/backend/win_boot.py
+  const winBootCandidates = [
+    path.join(BACKEND_DIR, 'win_boot.py'),
+    path.join(BACKEND_DIR, 'backend', 'win_boot.py'),
+  ];
+  const hasWinBoot = winBootCandidates.some((p) => fs.existsSync(p));
+  if (hasWinBoot) {
+    return {
+      mode: 'backend.win_boot',
+      args: [
+        '-m',
+        'backend.win_boot',
+        '--host',
+        bindHost,
+        '--port',
+        String(port),
+        '--log-level',
+        logLevel,
+      ],
+    };
+  }
+  return {
+    mode: 'uvicorn',
+    args: [
+      '-m',
+      'uvicorn',
+      'backend.main:app',
+      '--host',
+      bindHost,
+      '--port',
+      String(port),
+      '--log-level',
+      logLevel,
+    ],
+  };
+}
+
+function scheduleBackendAutoRestart(code: number | null, signal: string | null): void {
+  if (isQuitting || backendStopIntentional || stopRuntimeOnQuit) {
+    appendBackendLifecycle(
+      `exit code=${code} signal=${signal} intentional=${backendStopIntentional} quitting=${isQuitting} — no restart`,
+    );
+    return;
+  }
+  const now = Date.now();
+  if (!backendRestartWindowStart || now - backendRestartWindowStart > BACKEND_RESTART_WINDOW_MS) {
+    backendRestartWindowStart = now;
+    backendRestartCount = 0;
+  }
+  backendRestartCount += 1;
+  appendBackendLifecycle(
+    `UNEXPECTED_EXIT code=${code} signal=${signal} restart#=${backendRestartCount} tail=${backendLastLogTail.slice(-500).replace(/\s+/g, ' ')}`,
+  );
+  if (backendRestartCount > BACKEND_RESTART_MAX) {
+    console.error(
+      `[Tevarn] Backend crashed ${backendRestartCount} times in window — giving up auto-restart`,
+    );
+    try {
+      dialog.showErrorBox(
+        'Tevarn 后端反复崩溃',
+        `后端在 ${Math.round(BACKEND_RESTART_WINDOW_MS / 60000)} 分钟内异常退出 ${backendRestartCount} 次，已停止自动拉起。\n` +
+          `exit code=${code} signal=${signal}\n` +
+          `详情见: ${backendLifecycleLogPath()}\n` +
+          `以及 %USERPROFILE%\\.tevarn\\logs\\process_breadcrumb.jsonl`,
+      );
+    } catch {
+      /* ignore */
+    }
+    return;
+  }
+  const delay = Math.min(30_000, 1000 * 2 ** Math.min(backendRestartCount - 1, 4));
+  console.warn(
+    `[Tevarn] Backend died (code=${code} signal=${signal}); auto-restart in ${delay}ms (#${backendRestartCount})`,
+  );
+  if (backendRestartTimer) {
+    clearTimeout(backendRestartTimer);
+  }
+  backendRestartTimer = setTimeout(() => {
+    backendRestartTimer = null;
+    startBackend().catch((err) => {
+      console.error('[Tevarn] Backend auto-restart failed:', err);
+      appendBackendLifecycle(`auto_restart_failed ${err}`);
+    });
+  }, delay);
 }
 
 async function startBackend(): Promise<void> {
@@ -999,39 +1430,43 @@ async function startBackend(): Promise<void> {
   activeBackendPort = port;
 
   if (reuse) {
-    console.log(`[Takton] Backend already healthy on ${port}, skip spawn`);
+    console.log(`[Tevarn] Backend already healthy on ${port}, skip spawn`);
+    appendBackendLifecycle(`reuse healthy port=${port}`);
     return;
   }
 
   const backendCwd = isDev ? ROOT_DIR : path.dirname(BACKEND_DIR);
   const env = buildBackendEnv(secrets, port, sitePackages);
-  env.TAKTON_KERNEL_BACKEND = env.TAKTON_KERNEL_BACKEND || process.env.TAKTON_KERNEL_BACKEND || 'rust';
-  if (process.env.TAKTON_KERNEL_AUTO_START === '0') {
-    env.TAKTON_KERNEL_AUTO_START = '0';
+  env.TEVARN_KERNEL_BACKEND = env.TEVARN_KERNEL_BACKEND || process.env.TEVARN_KERNEL_BACKEND || 'rust';
+  if (process.env.TEVARN_KERNEL_AUTO_START === '0') {
+    env.TEVARN_KERNEL_AUTO_START = '0';
   }
 
-  const bindHost = env.TAKTON_APP_HOST || resolveAppHost();
-  console.log(`[Takton] Starting backend: ${python} -m uvicorn backend.main:app --host ${bindHost} --port ${port}`);
-  console.log(`[Takton] single_user_mode=${env.TAKTON_SINGLE_USER_MODE} bind=${bindHost}`);
-  console.log(`[Takton] DB: ${env.TAKTON_DB_URL}`);
-  console.log(`[Takton] Uploads: ${UPLOADS_DIR}`);
-  console.log(`[Takton] Workspace: ${WORKSPACE_DIR}`);
-  console.log(`[Takton] Backend CWD: ${backendCwd}`);
+  const bindHost = env.TEVARN_APP_HOST || resolveAppHost();
+  const logLevel = isDev ? 'debug' : 'info';
+  const launch = resolveBackendLaunchArgs(bindHost, port, logLevel);
+  console.log(
+    `[Tevarn] Starting backend: ${python} ${launch.args.join(' ')} (mode=${launch.mode})`,
+  );
+  console.log(`[Tevarn] single_user_mode=${env.TEVARN_SINGLE_USER_MODE} bind=${bindHost}`);
+  console.log(`[Tevarn] DB: ${env.TEVARN_DB_URL}`);
+  console.log(`[Tevarn] Uploads: ${UPLOADS_DIR}`);
+  console.log(`[Tevarn] Workspace: ${WORKSPACE_DIR}`);
+  console.log(`[Tevarn] Backend CWD: ${backendCwd}`);
+  appendBackendLifecycle(`spawn mode=${launch.mode} port=${port} cwd=${backendCwd}`);
 
   let backendLogTail = '';
   const appendBackendLog = (chunk: string) => {
     backendLogTail = (backendLogTail + chunk).slice(-8000);
+    backendLastLogTail = backendLogTail;
   };
 
-  backendProcess = spawn(python, [
-    '-m', 'uvicorn', 'backend.main:app',
-    '--host', bindHost,
-    '--port', String(port),
-    '--log-level', isDev ? 'debug' : 'info',
-  ], {
+  backendStopIntentional = false;
+  backendProcess = spawn(python, launch.args, {
     cwd: backendCwd,
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
   });
 
   backendProcess.stdout?.on('data', (data: Buffer) => {
@@ -1045,8 +1480,9 @@ async function startBackend(): Promise<void> {
     console.error(`[Backend] ${text.trim()}`);
   });
   backendProcess.on('exit', (code, signal) => {
-    console.log(`[Takton] Backend exited with code=${code} signal=${signal}`);
+    console.log(`[Tevarn] Backend exited with code=${code} signal=${signal}`);
     backendProcess = null;
+    scheduleBackendAutoRestart(code, signal);
   });
 
   try {
@@ -1058,8 +1494,8 @@ async function startBackend(): Promise<void> {
     const hint = securityFail
       ? '\n\n安全自检失败：非 loopback 绑定不能与 single_user_mode 同时开启。\n' +
         '默认请使用 127.0.0.1；局域网/手机配对请设置：\n' +
-        '  TAKTON_APP_HOST=0.0.0.0\n' +
-        '  TAKTON_SINGLE_USER_MODE=false'
+        '  TEVARN_APP_HOST=0.0.0.0\n' +
+        '  TEVARN_SINGLE_USER_MODE=false'
       : '';
     const msg =
       (err instanceof Error ? err.message : String(err)) +
@@ -1067,14 +1503,16 @@ async function startBackend(): Promise<void> {
       (backendLogTail
         ? `\n\n--- backend log (tail) ---\n${backendLogTail.slice(-1500)}`
         : '');
+    appendBackendLifecycle(`spawn_health_fail ${msg.slice(0, 400)}`);
     try {
-      dialog.showErrorBox('Takton 后端启动失败', msg.slice(0, 1800));
+      dialog.showErrorBox('Tevarn 后端启动失败', msg.slice(0, 1800));
     } catch {
       /* headless / early quit */
     }
     throw new Error(msg);
   }
-  console.log(`[Takton] Backend is ready on port ${port}`);
+  console.log(`[Tevarn] Backend is ready on port ${port}`);
+  appendBackendLifecycle(`ready port=${port} mode=${launch.mode}`);
 }
 
 /** 启动前端：内置轻量静态服务器托管 Next.js 静态导出 (dist/) */
@@ -1088,7 +1526,7 @@ function startFrontend(): Promise<void> {
       return;
     }
 
-    console.log(`[Takton] Starting frontend static server on port ${frontendPort} (root: ${root})`);
+    console.log(`[Tevarn] Starting frontend static server on port ${frontendPort} (root: ${root})`);
 
     const mimeTypes: Record<string, string> = {
       '.html': 'text/html; charset=utf-8',
@@ -1171,7 +1609,7 @@ function startFrontend(): Promise<void> {
           },
         );
         proxyReq.on('error', (err) => {
-          console.error(`[Takton] API proxy error: ${err.message}`);
+          console.error(`[Tevarn] API proxy error: ${err.message}`);
           res.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8' });
           res.end(JSON.stringify({
             detail: `Backend unavailable (${err.message})。Ensure backend is running on port ${backendPort} `,
@@ -1220,7 +1658,7 @@ function startFrontend(): Promise<void> {
     });
 
     server.listen(frontendPort, '127.0.0.1', () => {
-      console.log(`[Takton] Frontend static server listening on http://127.0.0.1:${frontendPort}`);
+      console.log(`[Tevarn] Frontend static server listening on http://127.0.0.1:${frontendPort}`);
       resolve();
     });
 
@@ -1270,7 +1708,7 @@ function startFrontend(): Promise<void> {
           proxySocket.on('error', () => socket.destroy());
           socket.on('error', () => proxySocket.destroy());
         } catch (err) {
-          console.error('[Takton] WS proxy upgrade write error:', err);
+          console.error('[Tevarn] WS proxy upgrade write error:', err);
           try {
             socket.destroy();
           } catch {
@@ -1284,7 +1722,7 @@ function startFrontend(): Promise<void> {
         }
       });
       proxyReq.on('error', (err) => {
-        console.error(`[Takton] WS proxy error: ${err.message} (backend :${backendPort})`);
+        console.error(`[Tevarn] WS proxy error: ${err.message} (backend :${backendPort})`);
         try {
           socket.write('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n');
         } catch {
@@ -1314,7 +1752,7 @@ function startFrontend(): Promise<void> {
     });
 
     server.on('error', (err) => {
-      console.error(`[Takton] Frontend static server error: ${err.message}`);
+      console.error(`[Tevarn] Frontend static server error: ${err.message}`);
       reject(err);
     });
 
@@ -1350,7 +1788,7 @@ function createTray(): void {
   }
 
   tray = new Tray(trayIcon);
-  tray.setToolTip('Takton · AI Runtime Console');
+  tray.setToolTip('Tevarn · AI Runtime Console');
 
   const contextMenu = Menu.buildFromTemplate([
     {
@@ -1415,7 +1853,7 @@ async function refreshTrayBadge(): Promise<void> {
   try {
     const res = await fetch(`http://127.0.0.1:${activeBackendPort}/api/runtime/status`).catch(() => null);
     if (!res || !res.ok) {
-      tray.setToolTip('Takton · runtime not ready');
+      tray.setToolTip('Tevarn · runtime not ready');
       return;
     }
     const data = (await res.json()) as {
@@ -1426,7 +1864,7 @@ async function refreshTrayBadge(): Promise<void> {
     };
     const badge = data.badge ?? 0;
     tray.setToolTip(
-      `Takton · :${activeBackendPort} · running ${data.jobs_claimed ?? data.processes_live ?? 0} · pending ${data.approvals_pending ?? 0} · close≠stop`,
+      `Tevarn · :${activeBackendPort} · running ${data.jobs_claimed ?? data.processes_live ?? 0} · pending ${data.approvals_pending ?? 0} · close≠stop`,
     );
     if (process.platform === 'darwin') {
       tray.setTitle(badge > 0 ? String(badge > 99 ? '99+' : badge) : '');
@@ -1448,17 +1886,17 @@ function registerGlobalShortcuts(): void {
     }
   });
   if (!registered) {
-    console.warn('[Takton] Failed to register global shortcut Ctrl+Alt+T');
+    console.warn('[Tevarn] Failed to register global shortcut Ctrl+Alt+T');
   }
 }
 
 function setupAutoUpdater(): void {
   if (isDev) {
-    console.log('[Takton] Dev mode: auto-updater disabled');
+    console.log('[Tevarn] Dev mode: auto-updater disabled');
     return;
   }
   if (!autoUpdater) {
-    console.warn('[Takton] auto-updater module missing; skip update checks');
+    console.warn('[Tevarn] auto-updater module missing; skip update checks');
     return;
   }
 
@@ -1466,11 +1904,11 @@ function setupAutoUpdater(): void {
   autoUpdater.autoInstallOnAppQuit = true;
 
   autoUpdater.checkForUpdates().catch((err) => {
-    console.warn('[Takton] Auto-update check failed:', err.message);
+    console.warn('[Tevarn] Auto-update check failed:', err.message);
   });
 
   autoUpdater.on('update-available', (info: UpdateInfo) => {
-    console.log(`[Takton] Update available: ${info.version}`);
+    console.log(`[Tevarn] Update available: ${info.version}`);
     if (mainWindow) {
       mainWindow.webContents.send('update-available', {
         version: info.version,
@@ -1480,12 +1918,12 @@ function setupAutoUpdater(): void {
     }
     if (Notification.isSupported()) {
       new Notification({
-        title: 'Takton update available',
+        title: 'Tevarn update available',
         body: `Version ${info.version} available, downloading...`,
       }).show();
     }
     autoUpdater.downloadUpdate().catch((err) => {
-      console.error('[Takton] Auto-update download failed:', err);
+      console.error('[Tevarn] Auto-update download failed:', err);
     });
   });
 
@@ -1501,10 +1939,10 @@ function setupAutoUpdater(): void {
   });
 
   autoUpdater.on('update-downloaded', (info: UpdateInfo) => {
-    console.log(`[Takton] Update downloaded: ${info.version}`);
+    console.log(`[Tevarn] Update downloaded: ${info.version}`);
     if (Notification.isSupported()) {
       new Notification({
-        title: 'Takton update downloaded',
+        title: 'Tevarn update downloaded',
         body: `Version ${info.version} Downloaded. Restart to install.`,
       }).show();
     }
@@ -1514,7 +1952,7 @@ function setupAutoUpdater(): void {
   });
 
   autoUpdater.on('error', (err) => {
-    console.warn('[Takton] Auto-updater error:', err.message);
+    console.warn('[Tevarn] Auto-updater error:', err.message);
   });
 }
 
@@ -1528,7 +1966,7 @@ function createWindow(): void {
     height: savedState.height,
     minWidth: 960,
     minHeight: 640,
-    title: 'Takton',
+    title: 'Tevarn',
     show: false,
     // 无边框 + 自定义标题栏（ChatGPT / Grok / Codex 风格）
     frame: false,
@@ -1559,21 +1997,21 @@ function createWindow(): void {
 
   const tryLoad = () => {
     loadAttempts += 1;
-    console.log(`[Takton] Loading frontend (attempt ${loadAttempts}): ${frontendUrl}`);
+    console.log(`[Tevarn] Loading frontend (attempt ${loadAttempts}): ${frontendUrl}`);
     mainWindow?.loadURL(frontendUrl).catch((err) => {
-      console.error('[Takton] loadURL failed:', err);
+      console.error('[Tevarn] loadURL failed:', err);
     });
   };
 
   // 页面加载失败时自动重试（静态服偶发未就绪 / 端口竞态），避免纯黑屏
   mainWindow.webContents.on('did-fail-load', (_e, code, desc, url, isMainFrame) => {
     if (!isMainFrame || !mainWindow) return;
-    console.error(`[Takton] did-fail-load code=${code} desc=${desc} url=${url}`);
+    console.error(`[Tevarn] did-fail-load code=${code} desc=${desc} url=${url}`);
     if (loadAttempts < maxLoadAttempts) {
       setTimeout(tryLoad, 800 * loadAttempts);
       return;
     }
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Takton</title>
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Tevarn</title>
       <style>body{margin:0;font-family:system-ui;background:#0a0b10;color:#e4e4e7;display:flex;min-height:100vh;align-items:center;justify-content:center}
       .c{max-width:420px;padding:24px;border:1px solid rgba(255,255,255,.1);border-radius:16px;background:#12141c}
       h1{font-size:16px;margin:0 0 8px}p{font-size:13px;color:#a1a1aa;line-height:1.5}
@@ -1587,7 +2025,7 @@ function createWindow(): void {
   });
 
   mainWindow.webContents.on('render-process-gone', (_e, details) => {
-    console.error('[Takton] render-process-gone', details);
+    console.error('[Tevarn] render-process-gone', details);
   });
 
   tryLoad();
@@ -1601,7 +2039,7 @@ function createWindow(): void {
   // 安全阀：ready-to-show 异常时也不要永远隐藏
   setTimeout(() => {
     if (mainWindow && !mainWindow.isVisible() && !mainWindow.isDestroyed()) {
-      console.warn('[Takton] Force-show window after timeout');
+      console.warn('[Tevarn] Force-show window after timeout');
       mainWindow.show();
     }
   }, 10000);
@@ -1655,7 +2093,7 @@ function createWindow(): void {
   mainWindow.webContents.on('will-redirect', (event, url) => {
     if (isTrustedRendererUrl(url)) return;
     event.preventDefault();
-    console.warn('[Takton] blocked will-redirect:', String(url).slice(0, 120));
+    console.warn('[Tevarn] blocked will-redirect:', String(url).slice(0, 120));
   });
 }
 
@@ -1788,7 +2226,7 @@ ipcMain.handle(
 
     const options = {
       type: 'warning' as const,
-      title: 'Takton 桌面操作确认',
+      title: 'Tevarn 桌面操作确认',
       message: `是否允许桌面操作：${operation}？`,
       detail: String(request?.description || '').slice(0, 500),
       buttons: ['仅本次允许', '本次会话允许', '始终允许', '拒绝'],
@@ -1829,11 +2267,11 @@ ipcMain.handle('select-directory', async (event) => {
 });
 
 /**
- * Launch Takton Code CLI in an external terminal.
+ * Launch Tevarn Code CLI in an external terminal.
  * Desktop is entry-only; Code is a separate process sharing backend via /api/bridge/v1.
  */
 ipcMain.handle(
-  'open-takton-code',
+  'open-tevarn-code',
   async (
     event,
     opts?: { path?: string; mode?: string },
@@ -1842,7 +2280,7 @@ ipcMain.handle(
       assertTrustedIpc(event);
       const requestedPath =
         (opts?.path && String(opts.path).trim()) ||
-        process.env.TAKTON_CODE_DEFAULT_PATH ||
+        process.env.TEVARN_CODE_DEFAULT_PATH ||
         app.getPath('home');
       if (!path.isAbsolute(requestedPath)) {
         return { ok: false, error: 'path must be absolute' };
@@ -1863,15 +2301,15 @@ ipcMain.handle(
       const bridgeUrl = getApiBase(); // e.g. http://127.0.0.1:8000/api
       const env = {
         ...process.env,
-        TAKTON_CODE_BRIDGE_URL: bridgeUrl,
-        TAKTON_CODE_BRIDGE_ENABLED: 'true',
+        TEVARN_CODE_BRIDGE_URL: bridgeUrl,
+        TEVARN_CODE_BRIDGE_ENABLED: 'true',
       };
 
-      // Prefer `takton-code` / `tkc` on PATH; fall back to python -m
+      // Prefer `tevarn-code` / `tkc` on PATH; fall back to python -m
       // shell:false 数组参数，避免 path 注入
       const candidates: { cmd: string; args: string[]; shell?: boolean }[] = [
         {
-          cmd: 'takton-code',
+          cmd: 'tevarn-code',
           args: ['--path', projectPath, '--mode', mode, '--bridge'],
           shell: false,
         },
@@ -1882,7 +2320,7 @@ ipcMain.handle(
         },
         {
           cmd: process.platform === 'win32' ? 'python' : 'python3',
-          args: ['-m', 'takton_code', '--path', projectPath, '--mode', mode, '--bridge'],
+          args: ['-m', 'tevarn_code', '--path', projectPath, '--mode', mode, '--bridge'],
           shell: false,
         },
       ];
@@ -1902,23 +2340,23 @@ ipcMain.handle(
       };
 
       if (process.platform === 'win32') {
-        // Prefer bundled embedded Python (takton_code installed into its site-packages)
+        // Prefer bundled embedded Python (tevarn_code installed into its site-packages)
         const bundledPython = isDev
           ? null
           : path.join(process.resourcesPath, 'python', 'python.exe');
         const hasBundled = bundledPython ? fs.existsSync(bundledPython) : false;
         const batPath = path.join(
           os.tmpdir(),
-          `takton-code-launch-${Date.now()}-${process.pid}.bat`,
+          `tevarn-code-launch-${Date.now()}-${process.pid}.bat`,
         );
         const pyLine = hasBundled
-          ? `"${bundledPython}" -m takton_code --path "%PROJECT_PATH%" --mode ${mode} --bridge`
-          : `takton-code --path "%PROJECT_PATH%" --mode ${mode} --bridge`;
+          ? `"${bundledPython}" -m tevarn_code --path "%PROJECT_PATH%" --mode ${mode} --bridge`
+          : `tevarn-code --path "%PROJECT_PATH%" --mode ${mode} --bridge`;
         const batLines = [
           '@echo off',
           `set "PROJECT_PATH=${projectPath}"`,
-          'set TAKTON_CODE_BRIDGE_ENABLED=true',
-          `set "TAKTON_CODE_BRIDGE_URL=${bridgeUrl}"`,
+          'set TEVARN_CODE_BRIDGE_ENABLED=true',
+          `set "TEVARN_CODE_BRIDGE_URL=${bridgeUrl}"`,
           'cd /d "%PROJECT_PATH%"',
           pyLine,
         ];
@@ -1934,7 +2372,7 @@ ipcMain.handle(
         // quotes as \" which leaked into the command line and broke `start`.
         const launchViaCmdStart = () => {
           // batPath 在 os.tmpdir()，无用户可控字符
-          const p = spawn(`start "Takton Code" cmd /k "${batPath}"`, {
+          const p = spawn(`start "Tevarn Code" cmd /k "${batPath}"`, {
             env,
             detached: true,
             stdio: 'ignore',
@@ -1949,7 +2387,7 @@ ipcMain.handle(
         try {
           const wt = spawn(
             'wt.exe',
-            ['new-tab', '--title', 'Takton Code', '-d', projectPath, 'cmd', '/k', batPath],
+            ['new-tab', '--title', 'Tevarn Code', '-d', projectPath, 'cmd', '/k', batPath],
             { env, detached: true, stdio: 'ignore' },
           );
           // wt.exe missing -> async 'error' event; must listen or it crashes main process
@@ -1988,7 +2426,7 @@ app.whenReady().then(async () => {
   try {
     await startBackend();
   } catch (err) {
-    console.error('[Takton] Failed to start backend:', err);
+    console.error('[Tevarn] Failed to start backend:', err);
   }
 
   try {
@@ -1996,13 +2434,13 @@ app.whenReady().then(async () => {
     if (isDev) {
       try {
         await waitForBackend(`http://127.0.0.1:${FRONTEND_PORT}`, 2000);
-        console.log('[Takton] Dev frontend already running, skip static server');
+        console.log('[Tevarn] Dev frontend already running, skip static server');
       } catch {
         // dist 存在则启动静态服，否则依赖 electron:dev 的 next
         if (fs.existsSync(path.join(FRONTEND_OUT_DIR, 'index.html'))) {
           await startFrontend();
         } else {
-          console.warn('[Takton] No dist/ and no next dev — loadURL may fail until frontend starts');
+          console.warn('[Tevarn] No dist/ and no next dev — loadURL may fail until frontend starts');
         }
       }
     } else {
@@ -2011,12 +2449,12 @@ app.whenReady().then(async () => {
     // 等首页可访问再开窗，减少「纯黑空窗」
     try {
       await waitForBackend(`http://127.0.0.1:${FRONTEND_PORT}/`, 15000);
-      console.log('[Takton] Frontend HTTP ready');
+      console.log('[Tevarn] Frontend HTTP ready');
     } catch (e) {
-      console.warn('[Takton] Frontend not responding yet, opening window anyway:', e);
+      console.warn('[Tevarn] Frontend not responding yet, opening window anyway:', e);
     }
   } catch (err) {
-    console.error('[Takton] Failed to start frontend:', err);
+    console.error('[Tevarn] Failed to start frontend:', err);
   }
 
   createWindow();
@@ -2046,7 +2484,7 @@ app.on('will-quit', () => {
   }
 
   if (stopRuntimeOnQuit && kernelHostProcess && !kernelHostProcess.killed) {
-    console.log('[Takton] Stopping Rust kernel host (user requested)...');
+    console.log('[Tevarn] Stopping Rust kernel host (user requested)...');
     try {
       kernelHostProcess.kill();
     } catch {
@@ -2054,13 +2492,18 @@ app.on('will-quit', () => {
     }
     kernelHostProcess = null;
   } else if (kernelHostProcess && !kernelHostProcess.killed) {
-    console.log('[Takton] Detaching Rust kernel host');
+    console.log('[Tevarn] Detaching Rust kernel host');
     kernelHostProcess.unref?.();
     kernelHostProcess = null;
   }
 
+  if (backendRestartTimer) {
+    clearTimeout(backendRestartTimer);
+    backendRestartTimer = null;
+  }
   if (stopRuntimeOnQuit && backendProcess && !backendProcess.killed) {
-    console.log('[Takton] Stopping FastAPI backend (user requested)...');
+    console.log('[Tevarn] Stopping FastAPI backend (user requested)...');
+    backendStopIntentional = true;
     if (platform === 'win32') {
       backendProcess.kill();
     } else {
@@ -2072,7 +2515,9 @@ app.on('will-quit', () => {
       }
     }, 3000);
   } else if (backendProcess && !backendProcess.killed) {
-    console.log('[Takton] Detaching FastAPI backend — keeps running on', activeBackendPort);
+    console.log('[Tevarn] Detaching FastAPI backend — keeps running on', activeBackendPort);
+    // Detach: do not auto-restart after we drop the handle
+    backendStopIntentional = true;
     backendProcess.unref?.();
     backendProcess = null;
   }

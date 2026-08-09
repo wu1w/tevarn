@@ -4,7 +4,7 @@
 //! - Default mode is **auto** (LAN + TS dual path).
 //! - PC holds auth key once; pair QR carries short-window `tsk` so the phone
 //!   joins the same tailnet with **zero UI**.
-//! - `takton-tsnet` is spawned as a child process by this service — users do
+//! - `tevarn-tsnet` is spawned as a child process by this service — users do
 //!   not install or open system Tailscale on the happy path.
 
 use crate::error::{Error, Result};
@@ -42,12 +42,12 @@ impl Default for MeshConfig {
         Self {
             // Product default: dual path. Offline/LAN-only still works.
             mode: MeshMode::Auto,
-            hostname: std::env::var("TAKTON_MESH_HOSTNAME")
-                .unwrap_or_else(|_| "takton-pc".into()),
+            hostname: std::env::var("TEVARN_MESH_HOSTNAME")
+                .unwrap_or_else(|_| "tevarn-pc".into()),
             require_pair_confirm: false,
-            sidecar_bin: std::env::var("TAKTON_TSNET_BIN").ok(),
+            sidecar_bin: std::env::var("TEVARN_TSNET_BIN").ok(),
             auth_key_set: std::env::var("TS_AUTHKEY").is_ok()
-                || std::env::var("TAKTON_TS_AUTHKEY").is_ok(),
+                || std::env::var("TEVARN_TS_AUTHKEY").is_ok(),
             seamless_qr: true,
         }
     }
@@ -179,7 +179,7 @@ impl MeshService {
         let mut c = self.config.write();
         c.hostname = name.trim().to_string();
         if c.hostname.is_empty() {
-            c.hostname = "takton-pc".into();
+            c.hostname = "tevarn-pc".into();
         }
         let _ = self.embed.set_hostname(&c.hostname);
         self.store.save_json(MESH_FILE, &*c)?;
@@ -283,7 +283,7 @@ impl MeshService {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| {
                 format!(
-                    "takton-phone-{}",
+                    "tevarn-phone-{}",
                     &uuid::Uuid::new_v4().to_string()[..8]
                 )
             });
@@ -553,7 +553,7 @@ impl MeshService {
         let hn = hostname
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "takton-phone".into());
+            .unwrap_or_else(|| "tevarn-phone".into());
         let ifaces = ifaces.unwrap_or_else(detect_local_ifaces);
         let fp = iface_fingerprint(&ifaces);
         let changed = rt.fingerprint != fp;
@@ -673,7 +673,7 @@ impl MeshService {
 }
 
 fn lan_ip() -> Option<String> {
-    if let Ok(h) = std::env::var("TAKTON_PAIR_HOST") {
+    if let Ok(h) = std::env::var("TEVARN_PAIR_HOST") {
         if !h.trim().is_empty() {
             return Some(h.trim().to_string());
         }
@@ -688,7 +688,7 @@ fn lan_ip() -> Option<String> {
 }
 
 fn detect_tailscale_ip() -> Option<String> {
-    if let Ok(ip) = std::env::var("TAKTON_TS_IP") {
+    if let Ok(ip) = std::env::var("TEVARN_TS_IP") {
         if !ip.trim().is_empty() {
             return Some(ip.trim().to_string());
         }
@@ -709,7 +709,7 @@ fn detect_tailscale_ip() -> Option<String> {
 }
 
 fn sidecar_alive() -> bool {
-    if let Ok(p) = std::env::var("TAKTON_TSNET_HEALTH") {
+    if let Ok(p) = std::env::var("TEVARN_TSNET_HEALTH") {
         return std::path::Path::new(&p).exists();
     }
     false
@@ -757,7 +757,7 @@ fn iface_fingerprint(ifaces: &[String]) -> String {
 
 pub fn env_has_auth_key() -> bool {
     std::env::var("TS_AUTHKEY")
-        .or_else(|_| std::env::var("TAKTON_TS_AUTHKEY"))
+        .or_else(|_| std::env::var("TEVARN_TS_AUTHKEY"))
         .map(|s| !s.is_empty())
         .unwrap_or(false)
 }

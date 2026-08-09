@@ -23,7 +23,7 @@ import { useT } from '@/stores/localeStore';
 type TabKey = 'builtin' | 'custom' | 'community' | 'store';
 
 const DEFAULT_COMMUNITY_URL =
-  'https://raw.githubusercontent.com/takton-ai/community-skills/main/index.json';
+  'https://raw.githubusercontent.com/tevarn-ai/community-skills/main/index.json';
 
 const SKILL_BADGE =
   'rounded border border-border-subtle bg-elevated-bg/80 px-1.5 py-0.5 text-[10px] font-medium text-foreground-muted';

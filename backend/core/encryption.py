@@ -2,7 +2,7 @@
 Setting 敏感字段加密工具
 基于 Fernet (AES-128-CBC + HMAC) 对存储在数据库中的 API Key 等敏感值进行加密。
 
-审计 P0-C2：默认使用独立密钥（~/.takton/secrets.json），不再仅由 JWT 派生。
+审计 P0-C2：默认使用独立密钥（~/.tevarn/secrets.json），不再仅由 JWT 派生。
 JWT 派生密钥仅作解密回落，兼容历史数据。
 """
 
@@ -23,10 +23,10 @@ logger = logging.getLogger(__name__)
 
 
 def _secrets_file_path() -> Path:
-    override = os.environ.get("TAKTON_SECRETS_FILE", "").strip()
+    override = os.environ.get("TEVARN_SECRETS_FILE", "").strip()
     if override:
         return Path(override)
-    return Path.home() / ".takton" / "secrets.json"
+    return Path.home() / ".tevarn" / "secrets.json"
 
 
 def _derive_key_from_jwt_secret() -> bytes:
@@ -34,7 +34,7 @@ def _derive_key_from_jwt_secret() -> bytes:
     salt_str = (
         (settings.settings_encryption_salt or "").strip()
         or os.environ.get("SETTINGS_ENCRYPTION_SALT", "").strip()
-        or os.environ.get("TAKTON_SETTINGS_ENCRYPTION_SALT", "").strip()
+        or os.environ.get("TEVARN_SETTINGS_ENCRYPTION_SALT", "").strip()
     )
     if salt_str:
         salt = salt_str.encode("utf-8")
@@ -42,15 +42,15 @@ def _derive_key_from_jwt_secret() -> bytes:
         salt = HKDF(
             algorithm=hashes.SHA256(),
             length=16,
-            salt=b"takton-fallback-salt-v1",
-            info=b"takton-settings-salt-fallback",
+            salt=b"tevarn-fallback-salt-v1",
+            info=b"tevarn-settings-salt-fallback",
         ).derive(settings.jwt_secret.encode("utf-8"))
     return urlsafe_b64encode(
         HKDF(
             algorithm=hashes.SHA256(),
             length=32,
             salt=salt,
-            info=b"takton-settings-encryption-v1",
+            info=b"tevarn-settings-encryption-v1",
         ).derive(settings.jwt_secret.encode("utf-8"))
     )
 
@@ -59,7 +59,7 @@ def _load_or_create_independent_key() -> str:
     """独立加密密钥：env → secrets.json → 生成并持久化。"""
     raw = (
         os.environ.get("SETTINGS_ENCRYPTION_KEY", "").strip()
-        or os.environ.get("TAKTON_SETTINGS_ENCRYPTION_KEY", "").strip()
+        or os.environ.get("TEVARN_SETTINGS_ENCRYPTION_KEY", "").strip()
     )
     if raw:
         # 校验可构造 Fernet

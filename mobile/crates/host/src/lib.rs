@@ -1,4 +1,4 @@
-//! Takton mobile host library — embeddable axum server + API router.
+//! Tevarn mobile host library — embeddable axum server + API router.
 //! Used by the binary and by the Flutter FFI crate.
 
 pub mod routes;
@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::task::{Context as TaskContext, Poll};
-use takton_mobile_core::{AppConfig, TaktonClient};
+use tevarn_mobile_core::{AppConfig, TevarnClient};
 use tower::{Layer, Service};
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
@@ -111,7 +111,7 @@ pub async fn start_host(
     }
     let result = async {
         std::fs::create_dir_all(&config.data_dir).ok();
-        let client = TaktonClient::new(config.clone()).context("init client")?;
+        let client = TevarnClient::new(config.clone()).context("init client")?;
         let state = AppState::new(client, config.clone()).context("init app state")?;
 
         {
@@ -146,7 +146,7 @@ pub async fn start_host(
 }
 
 pub fn resolve_ui_dir() -> PathBuf {
-    if let Ok(p) = std::env::var("TAKTON_MOBILE_UI") {
+    if let Ok(p) = std::env::var("TEVARN_MOBILE_UI") {
         return PathBuf::from(p);
     }
     let candidates = [
@@ -154,11 +154,11 @@ pub fn resolve_ui_dir() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ui/flutter-web"),
         PathBuf::from("flutter_app/build/web"),
         PathBuf::from("ui/flutter-web"),
-        PathBuf::from("/workspace/takton-mobile/flutter_app/build/web"),
-        PathBuf::from("/workspace/takton-mobile/ui/flutter-web"),
+        PathBuf::from("/workspace/tevarn-mobile/flutter_app/build/web"),
+        PathBuf::from("/workspace/tevarn-mobile/ui/flutter-web"),
         // legacy dioxus fallback
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ui/dioxus"),
-        PathBuf::from("/workspace/takton-mobile/ui/dioxus"),
+        PathBuf::from("/workspace/tevarn-mobile/ui/dioxus"),
     ];
     for c in candidates {
         if c.join("index.html").exists() {

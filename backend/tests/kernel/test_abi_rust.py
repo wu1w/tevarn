@@ -1,4 +1,4 @@
-"""ABI v1 golden tests against takton-kernel-host (Rust).
+"""ABI v1 golden tests against tevarn-kernel-host (Rust).
 
 Requires host binary (auto-started). Skip if binary missing and host down.
 """
@@ -16,8 +16,8 @@ _ROOT = Path(__file__).resolve().parents[3]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-os.environ.setdefault("TAKTON_KERNEL_BACKEND", "rust")
-os.environ.setdefault("TAKTON_KERNEL_AUTO_START", "1")
+os.environ.setdefault("TEVARN_KERNEL_BACKEND", "rust")
+os.environ.setdefault("TEVARN_KERNEL_AUTO_START", "1")
 
 
 def _host_ready() -> bool:
@@ -45,7 +45,7 @@ def rust_kernel():
 
     if not _host_ready():
         pytest.skip(
-            "takton-kernel-host binary not found; run: cargo build -p takton-kernel-host"
+            "tevarn-kernel-host binary not found; run: cargo build -p tevarn-kernel-host"
         )
     reset_rust_kernel_for_tests()
     # ensure host still up (previous tests may have disrupted listeners)

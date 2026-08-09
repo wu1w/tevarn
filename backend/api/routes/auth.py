@@ -100,13 +100,13 @@ async def auto_login(
 
     # 查找或创建默认用户
     async with UnitOfWork() as uow:
-        existing = await uow.users.get_by_email("admin@takton.dev")
+        existing = await uow.users.get_by_email("admin@tevarn.dev")
         if existing:
             user = existing
         else:
             default_pw = resolve_default_admin_password()
             user_data = {
-                "email": "admin@takton.dev",
+                "email": "admin@tevarn.dev",
                 "username": "admin",
                 "hashed_password": get_password_hash(default_pw),
                 "is_superuser": True,

@@ -33,7 +33,7 @@ from backend.services.skill_store.mattpocock import (
     lookup_fallback_skill,
     resolve_pack_skill_ids,
 )
-from backend.services.skill_store.takton_community import TaktonCommunityFetcher
+from backend.services.skill_store.tevarn_community import TevarnCommunityFetcher
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ class SkillStoreService:
 
     def __init__(self) -> None:
         self._fetchers: dict[SkillSource, SkillStoreFetcher] = {
-            "takton": TaktonCommunityFetcher(),
+            "tevarn": TevarnCommunityFetcher(),
             "clawhub": ClawHubFetcher(),
             "awesome-claude": GitHubAwesomeFetcher("awesome-claude"),
             "awesome-hermes": GitHubAwesomeFetcher("awesome-hermes"),

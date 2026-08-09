@@ -625,7 +625,7 @@ function ConfigExample() {
       code: `{
   "method": "GET",
   "headers": {
-    "User-Agent": "Takton-Agent/1.0"
+    "User-Agent": "Tevarn-Agent/1.0"
   }
 }`,
     },

@@ -1,4 +1,4 @@
-# Takton Alpha 代码审计报告（本地个人 AIOS 威胁模型）
+# Tevarn Alpha 代码审计报告（本地个人 AIOS 威胁模型）
 
 > **历史审计报告（Historical）**
 > 本文件记录 **2026-08-02** 对提交 **`a9f8912`** 的审计与当轮修复结论。
@@ -53,7 +53,7 @@
 
 ## 1. 校准说明
 
-项目 `README.md` 明确写明 Takton 完全运行在用户本机，是从 Agent 工作站演进中的 Personal Agent OS；`docs/THREAT_MODEL.md` 又进一步把范围限定为“本地优先、单用户工作站上的 Agent 控制平面”，并把多租户 SaaS 列为非范围。默认配置也与此一致：
+项目 `README.md` 明确写明 Tevarn 完全运行在用户本机，是从 Agent 工作站演进中的 Personal Agent OS；`docs/THREAT_MODEL.md` 又进一步把范围限定为“本地优先、单用户工作站上的 Agent 控制平面”，并把多租户 SaaS 列为非范围。默认配置也与此一致：
 
 - `backend/core/config.py:590`：后端默认绑定 `127.0.0.1`。
 - `backend/core/config.py:605`：`single_user_mode=True`。
@@ -108,7 +108,7 @@
 
 **问题本质**
 
-本机 HMAC 签名只能证明“这份内容经过当前 Takton 实例”，不能证明发布者身份或下载过程中的来源完整性。如果没有预先固定的 hash/发布者签名，恶意或被劫持的包在下载后会获得本机签名。扫描和 quarantine 可以降低风险，但不能替代来源认证。
+本机 HMAC 签名只能证明“这份内容经过当前 Tevarn 实例”，不能证明发布者身份或下载过程中的来源完整性。如果没有预先固定的 hash/发布者签名，恶意或被劫持的包在下载后会获得本机签名。扫描和 quarantine 可以降低风险，但不能替代来源认证。
 
 **建议**
 
@@ -120,7 +120,7 @@
 
 - `electron/main.ts:1062-1087`：主窗口加载 preload，但没有发现 `will-navigate`/`will-redirect` 的主框架来源限制。
 - `electron/main.ts:1179-1182`：新窗口 URL 直接交给 `shell.openExternal`，没有 scheme allowlist。
-- `electron/preload.ts`：页面可调用 `openPath`、`openTaktonCode`、`openExternal` 等本机能力。
+- `electron/preload.ts`：页面可调用 `openPath`、`openTevarnCode`、`openExternal` 等本机能力。
 - `electron/main.ts:1200-1210,1263-1388`：IPC handler 没有统一校验 `event.senderFrame.url`。
 - `frontend/components/chat/FilePreviewHost.tsx:417-421` 使用 `dangerouslySetInnerHTML` 展示 DOCX HTML；`frontend/lib/filePreviewLoaders.ts:189-197` 使用正则净化，不是解析器白名单。
 
@@ -152,8 +152,8 @@
 
 **证据**
 
-- `crates/takton-kernel/src/kernel.rs:1603-1605` 返回 `scheduler.status()`，计数位于嵌套 `stats`。
-- `crates/takton-kernel/tests/abi_v1.rs:106-107` 读取顶层 `done`。
+- `crates/tevarn-kernel/src/kernel.rs:1603-1605` 返回 `scheduler.status()`，计数位于嵌套 `stats`。
+- `crates/tevarn-kernel/tests/abi_v1.rs:106-107` 读取顶层 `done`。
 - `backend/tests/kernel/test_abi_rust.py:150-151` 和 `test_p0c_scheduler_resources.py:59-60` 也读取顶层统计字段。
 - Rust workspace 的 `golden_escalation_and_scheduler` 可稳定复现失败；其余 90 个单元测试通过。
 
@@ -255,6 +255,6 @@
 
 ## 8. 最终结论
 
-Takton 的正确审计重点不是阻止机器所有者使用自己的文件、桌面和 package，而是确保 Agent、恶意内容和第三方 skill 不能借这些能力越过用户设置的 Permission Court。按这一标准，项目目前真正需要优先修复的是：配置解析 fail-open、渲染器确认不具备不可伪造性、远程包来源信任不足、Electron 内容边界、Rust ABI 和 Workflow Loop 的静默错误。
+Tevarn 的正确审计重点不是阻止机器所有者使用自己的文件、桌面和 package，而是确保 Agent、恶意内容和第三方 skill 不能借这些能力越过用户设置的 Permission Court。按这一标准，项目目前真正需要优先修复的是：配置解析 fail-open、渲染器确认不具备不可伪造性、远程包来源信任不足、Electron 内容边界、Rust ABI 和 Workflow Loop 的静默错误。
 
 在默认 `127.0.0.1 + single_user_mode=True` 的个人工作站形态下，上述问题以治理完整性、供应链与可靠性为主，而不是传统多租户越权。若未来新增局域网、远程访问或家庭多用户模式，应再单独启用多用户威胁模型，不应把那套结论倒灌到当前产品定位。

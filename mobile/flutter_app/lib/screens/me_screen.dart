@@ -48,7 +48,7 @@ class MeScreen extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'TAKTON',
+                      'TEVARN',
                       style: TextStyle(
                         fontSize: 15.5,
                         fontWeight: FontWeight.w800,
@@ -164,7 +164,7 @@ class MeScreen extends StatelessWidget {
           child: Column(
             children: [
               const PxRow(
-                title: 'Takton Mobile',
+                title: 'Tevarn Mobile',
                 sub: 'v0.4.8 · Pixel Console · Flutter + Rust',
                 borderTop: false,
               ),
@@ -173,7 +173,7 @@ class MeScreen extends StatelessWidget {
                 title: '后端',
                 sub: c.state['version']?.toString() ??
                     c.state['engine']?.toString() ??
-                    'takton-mobile host',
+                    'tevarn-mobile host',
               ),
             ],
           ),

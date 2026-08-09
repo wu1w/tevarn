@@ -190,7 +190,7 @@ async def install_skill_pack(
     payload: InstallPackRequest,
     current_user: Annotated[UserRead, Depends(get_current_user)],
 ):
-    """一键安装技能包：批量下载 SKILL.md 到 ~/.takton/skills/"""
+    """一键安装技能包：批量下载 SKILL.md 到 ~/.tevarn/skills/"""
     svc = get_skill_store_service()
     return await svc.install_pack(payload.pack_id, force=bool(payload.force))
 
@@ -206,11 +206,11 @@ async def install_skill(
     if not skill:
         raise HTTPException(status_code=404, detail=f"Skill not found: {payload.source}/{payload.skill_id}")
 
-    # Takton 原生 skill 走老的 import 流程（schema dict）
-    if payload.source == "takton":
+    # Tevarn 原生 skill 走老的 import 流程（schema dict）
+    if payload.source == "tevarn":
         raise HTTPException(
             status_code=400,
-            detail="Takton 原生 skill 请使用 /api/skills/community/import 接口",
+            detail="Tevarn 原生 skill 请使用 /api/skills/community/import 接口",
         )
 
     storage = get_skill_md_storage()

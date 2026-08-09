@@ -109,7 +109,7 @@ export default function ActivityPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `takton-audit-chain-${Date.now()}.json`;
+    a.download = `tevarn-audit-chain-${Date.now()}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };

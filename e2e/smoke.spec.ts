@@ -33,8 +33,8 @@ async function loginViaApi(page: Page) {
   await page.evaluate(
     ({ token, user }) => {
       const payload = { state: { token, user, isAuthenticated: true, hasHydrated: true }, version: 0 };
-      localStorage.setItem('takton-auth', JSON.stringify(payload));
-      document.cookie = `takton-auth=${token}; path=/; SameSite=Strict`;
+      localStorage.setItem('tevarn-auth', JSON.stringify(payload));
+      document.cookie = `tevarn-auth=${token}; path=/; SameSite=Strict`;
     },
     { token, user }
   );
@@ -84,7 +84,7 @@ const routes = [
   { path: '/tools', name: 'tools' },
 ];
 
-test.describe('Takton smoke E2E', () => {
+test.describe('Tevarn smoke E2E', () => {
   for (const route of routes) {
     test(`${route.name} ${route.path}`, async ({ page }) => {
       await loginViaApi(page);

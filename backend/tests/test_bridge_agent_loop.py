@@ -59,9 +59,9 @@ async def test_loop_push_uses_event_sink():
 
 
 def test_agent_turn_request_model():
-    # takton-code 为独立 repo（跨仓库契约测试）：本机无 checkout 时 skip 而非 fail
-    pytest.importorskip("takton_code.bridge.protocol", reason="takton-code repo not checked out")
-    from takton_code.bridge.protocol import BRIDGE_ROUTES, AgentTurnRequest
+    # tevarn-code 为独立 repo（跨仓库契约测试）：本机无 checkout 时 skip 而非 fail
+    pytest.importorskip("tevarn_code.bridge.protocol", reason="tevarn-code repo not checked out")
+    from tevarn_code.bridge.protocol import BRIDGE_ROUTES, AgentTurnRequest
 
     assert "agent_turn" in BRIDGE_ROUTES
     r = AgentTurnRequest(message="hi", mode="build", project_root="/tmp")
@@ -72,9 +72,9 @@ def test_agent_turn_request_model():
 async def test_runtime_bridge_turn_mock():
     from dataclasses import dataclass
 
-    pytest.importorskip("takton_code.agent.loop", reason="takton-code repo not checked out")
-    from takton_code.agent.loop import AgentRuntime, TurnResult
-    from takton_code.bridge.protocol import AgentTurnResult
+    pytest.importorskip("tevarn_code.agent.loop", reason="tevarn-code repo not checked out")
+    from tevarn_code.agent.loop import AgentRuntime, TurnResult
+    from tevarn_code.bridge.protocol import AgentTurnResult
 
     @dataclass
     class FakeBridge:

@@ -32,11 +32,11 @@ function ensureDir(d) {
 }
 
 async function _setTheme(page, theme) {
-  // themeStore: preference system|light|dark, storage key takton-theme
+  // themeStore: preference system|light|dark, storage key tevarn-theme
   await page.addInitScript((t) => {
     try {
       localStorage.setItem(
-        'takton-theme',
+        'tevarn-theme',
         JSON.stringify({ state: { preference: t }, version: 0 })
       );
     } catch (_) {}
@@ -51,7 +51,7 @@ async function forceTheme(page, theme) {
   await page.evaluate((t) => {
     try {
       localStorage.setItem(
-        'takton-theme',
+        'tevarn-theme',
         JSON.stringify({ state: { preference: t }, version: 0 })
       );
     } catch (_) {}
@@ -117,7 +117,7 @@ async function scrollMain(page, direction) {
 
     await context.addCookies([
       {
-        name: 'takton-auth',
+        name: 'tevarn-auth',
         value: login.access_token,
         domain: '127.0.0.1',
         path: '/',
@@ -128,7 +128,7 @@ async function scrollMain(page, direction) {
     await context.addInitScript(
       (p) => {
         localStorage.setItem(
-          'takton-auth',
+          'tevarn-auth',
           JSON.stringify({
             state: {
               user: p.user,
@@ -140,9 +140,9 @@ async function scrollMain(page, direction) {
           })
         );
         document.cookie =
-          'takton-auth=' + p.token + '; path=/; max-age=604800; SameSite=Lax';
+          'tevarn-auth=' + p.token + '; path=/; max-age=604800; SameSite=Lax';
         localStorage.setItem(
-          'takton-theme',
+          'tevarn-theme',
           JSON.stringify({ state: { preference: p.theme }, version: 0 })
         );
       },

@@ -1,4 +1,4 @@
-"""远程设备状态 — 配合 L1 takton-agent / @device。"""
+"""远程设备状态 — 配合 L1 tevarn-agent / @device。"""
 
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ class DeviceStatusSkill(BaseSkill):
             return (
                 "还没有配对任何设备。\n"
                 "小白步骤：打开「设备」页 → 填写 host/port/token → 配对。\n"
-                "本机示例：先启动 takton-agent，再配对 127.0.0.1:19876。"
+                "本机示例：先启动 tevarn-agent，再配对 127.0.0.1:19876。"
             )
 
         lines = [f"共 {len(devices)} 台设备："]

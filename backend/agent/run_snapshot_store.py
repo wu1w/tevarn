@@ -1,11 +1,11 @@
 """Optional disk persistence for chat run snapshots (crash / multi-worker recovery).
 
 Enabled when settings.agent_run_snapshot_persist is True (default True for durability).
-Files: {TAKTON_HOME or ~/.takton}/run_snapshots/{session_id}.json
+Files: {TEVARN_HOME or ~/.tevarn}/run_snapshots/{session_id}.json
 
 Privacy (P2):
   Disk is **local-first** — not a multi-tenant store. On shared machines / multi-user
-  same HOME, anyone who can read ~/.takton can see in-flight partial text.
+  same HOME, anyone who can read ~/.tevarn can see in-flight partial text.
 
   By default disk writes **redact tool result bodies** and cap partial_content
   (``agent_run_snapshot_disk_full_tools=False``). In-memory snapshots stay full for
@@ -51,11 +51,11 @@ def _full_tools_on_disk() -> bool:
 
 def _dir() -> Path:
     try:
-        from backend.agent._takton_paths import host_home
+        from backend.agent._tevarn_paths import host_home
 
-        root = Path(os.environ.get("TAKTON_HOME") or (host_home() / ".takton"))
+        root = Path(os.environ.get("TEVARN_HOME") or (host_home() / ".tevarn"))
     except Exception:
-        root = Path(os.environ.get("TAKTON_HOME") or Path.home() / ".takton")
+        root = Path(os.environ.get("TEVARN_HOME") or Path.home() / ".tevarn")
     d = root / "run_snapshots"
     d.mkdir(parents=True, exist_ok=True)
     return d

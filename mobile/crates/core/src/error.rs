@@ -4,7 +4,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("not connected to Takton backend")]
+    #[error("not connected to Tevarn backend")]
     NotConnected,
     #[error("not authenticated")]
     NotAuthenticated,

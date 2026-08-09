@@ -1,4 +1,4 @@
-# Takton 路线图 · 0.5.0-alpha 之后
+# Tevarn 路线图 · 0.5.0-alpha 之后
 
 **版本基准**：`0.5.0-alpha`（`backend/VERSION`）  
 **分支**：[`feature/agent-kernel`](https://github.com/wu1w/takton/tree/feature/agent-kernel)  
@@ -108,7 +108,7 @@ L0 Kernel（进程 / cap / 调度 / 隔离）████░░░░░░  ~45
                       API Gateway
                            │
            ┌───────────────┴───────────────┐
-           │     Takton Core (Rust)        │
+           │     Tevarn Core (Rust)        │
            │  Process · Cap · Mediate      │
            │  Scheduler · Resource         │
            │  Audit chain · Event bus      │
@@ -195,7 +195,7 @@ L0 Kernel（进程 / cap / 调度 / 隔离）████░░░░░░  ~45
 - [x] 缺 ABI 方法：连接即 fail-closed（`AbiMismatchError`）  
 - [x] RPC 超时：强杀重启 + 再检 ABI  
 
-逃生舱：`TAKTON_DEV_UNSAFE=1` · `TAKTON_KERNEL_BACKEND=python` · 见 [THREAT_MODEL.md](./THREAT_MODEL.md)。
+逃生舱：`TEVARN_DEV_UNSAFE=1` · `TEVARN_KERNEL_BACKEND=python` · 见 [THREAT_MODEL.md](./THREAT_MODEL.md)。
 
 ### 4.1 Hardening 工程清单
 
@@ -228,7 +228,7 @@ L0 Kernel（进程 / cap / 调度 / 隔离）████░░░░░░  ~45
 
 ### 4.3 0.5.x 出口标准
 
-- [x] 默认 `TAKTON_KERNEL_BACKEND=rust` 可 auto-start 或明确降级提示（`start.py` / client）  
+- [x] 默认 `TEVARN_KERNEL_BACKEND=rust` 可 auto-start 或明确降级提示（`start.py` / client）  
 - [x] tool_gate / process_access / package trust 相关测 + Phase H 单测  
 - [x] 全量 backend CI + **kernel-ci**（cargo ABI）  
 - [x] 包信任 / Court fail-closed 文档（PACKAGE_TRUST · KERNEL_RUST）
@@ -262,7 +262,7 @@ L0 Kernel（进程 / cap / 调度 / 隔离）████░░░░░░  ~45
 - [x] 双 Agent 抢资源：高优先级可先于低优先级获得执行槽（run_gate / scheduler 单测）  
 - [x] 超并发 / 超 child_proc / 超逻辑内存：**拒绝并审计**（`resource_denied` + charge 硬拒）  
 - [x] workforce 任务默认沙箱（平台能力允许时；无能力 fail-closed 文案）  
-- [x] `cargo test -p takton-kernel` + Python 契约/P0 单测（host 缺省时相关用例 skip）  
+- [x] `cargo test -p tevarn-kernel` + Python 契约/P0 单测（host 缺省时相关用例 skip）  
 
 **用户感知出口**  
 > Agent 永远带着「够用权限」干活；超限可解释；后台不饿死前台；危险动作默认在沙箱；Kernel 页能看懂资源与决策。
@@ -293,7 +293,7 @@ L0 Kernel（进程 / cap / 调度 / 隔离）████░░░░░░  ~45
 
 ## 7. 阶段 0.8 — 多 Agent 与进化（产品化）
 
-> **产品版本仍为 `0.5.0-alpha`**。控制平面权威在 **Rust**（`crates/takton-kernel`）；Python 仅 RPC/API 薄封装。
+> **产品版本仍为 `0.5.0-alpha`**。控制平面权威在 **Rust**（`crates/tevarn-kernel`）；Python 仅 RPC/API 薄封装。
 
 0.5 已交付 **切片**；本阶段把多 Agent 路径做成 **默认可演示、可测、可门禁**。
 
@@ -310,7 +310,7 @@ L0 Kernel（进程 / cap / 调度 / 隔离）████░░░░░░  ~45
 
 **验收**
 
-- [x] `cargo test -p takton-kernel`：multi_agent_demo / channel_pub_sub / eval / manifest  
+- [x] `cargo test -p tevarn-kernel`：multi_agent_demo / channel_pub_sub / eval / manifest  
 - [x] `POST /api/kernel/multi-agent/demo` 走 Rust 权威协作样例  
 - [x] skill 未 verify+activate → `skill_require_loadable` 拒绝  
 - [x] Eval gate / agent.json 校验在内核内完成
@@ -329,12 +329,12 @@ L0 Kernel（进程 / cap / 调度 / 隔离）████░░░░░░  ~45
 | E-03 | ABI 版本策略 | `abi_compat` + `abi_negotiate` + `abi_record_break`（`abi_break_count` 目标 0） | ✅ |
 | E-04 | WASM Skill Runtime | `wasm_explain` / `limits_explained`（fuel·memory·ops 可解释） | ✅ |
 | E-05 | HAL 路径/命令/浏览器 | `hal_enforce_path/command/browser` → resolve + mediate | ✅ |
-| E-06 | 包管理 / 签名扫描 | `pkg_set_require_secure` / `TAKTON_PKG_REQUIRE_SECURE`；insecure 不可 verified | ✅ |
+| E-06 | 包管理 / 签名扫描 | `pkg_set_require_secure` / `TEVARN_PKG_REQUIRE_SECURE`；insecure 不可 verified | ✅ |
 | E-07 | 多设备 Instance 迁移 | export 全量 KV；import hydrate identity + memory + skills(draft) | ✅ |
 
 **验收（0.5.0-alpha 下）**
 
-- [x] `cargo test -p takton-kernel`：collab mediate gate / profile spawn / abi / pkg secure / instance hydrate  
+- [x] `cargo test -p tevarn-kernel`：collab mediate gate / profile spawn / abi / pkg secure / instance hydrate  
 - [x] Host RPC：`coding_profile_spawn` · `collab_status` · `hal_enforce_*` · `wasm_explain` · `pkg_set_require_secure` · `abi_negotiate`  
 - [x] 产品版本保持 `0.5.0-alpha`（不因阶段名升 0.6/0.9）
 
@@ -424,8 +424,8 @@ Week 11–12 R-01/H-11       结果落盘 + cache 仪表；0.6 验收清单打�
 
 | 路线图模块 | 主要路径 |
 |------------|----------|
-| Rust Kernel | `crates/takton-kernel` |
-| Runtime / Host | `crates/takton-runtime`, `crates/takton-kernel-host` |
+| Rust Kernel | `crates/tevarn-kernel` |
+| Runtime / Host | `crates/tevarn-runtime`, `crates/tevarn-kernel-host` |
 | Python 适配 | `backend/kernel_rust/`, `backend/kernel/kernel.py` |
 | tool_gate / court | `backend/kernel/tool_gate.py`, `permission_court.py` |
 | Intent / 能力 | `backend/kernel/intent.py`, `capability.py` |
@@ -437,7 +437,7 @@ Week 11–12 R-01/H-11       结果落盘 + cache 仪表；0.6 验收清单打�
 | 进化 | `backend/evolution/*` |
 | 观测 API | `backend/api/routes/kernel.py` |
 | 桌面 | `frontend/`, `electron/` |
-| Eval / smoke | `scripts/takton_eval.py`, `scripts/smoke_*.py` |
+| Eval / smoke | `scripts/tevarn_eval.py`, `scripts/smoke_*.py` |
 
 ---
 

@@ -9,7 +9,7 @@
     <uses-feature android:name="android.hardware.camera" android:required="false"/>
 
     <application
-        android:label="Takton"
+        android:label="Tevarn"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -32,12 +32,12 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
-            <!-- Deep link for PC pairing: takton://pair?... -->
+            <!-- Deep link for PC pairing: tevarn://pair?... -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
-                <data android:scheme="takton" android:host="pair"/>
+                <data android:scheme="tevarn" android:host="pair"/>
             </intent-filter>
         </activity>
         <meta-data

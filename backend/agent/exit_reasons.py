@@ -78,7 +78,7 @@ _EXIT_CATALOG: dict[str, tuple[str, str, str, str]] = {
         "Kernel Host 不可用",
         "Rust 控制平面无响应或未启动，工具与进程治理暂时不可用。",
         "点击「重启 Host」或执行 scripts/ensure-vendor-host；"
-        "重建：cargo build -p takton-kernel-host --release。",
+        "重建：cargo build -p tevarn-kernel-host --release。",
         "error",
     ),
     "host_abi_mismatch": (

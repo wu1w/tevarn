@@ -484,6 +484,24 @@ class WorkforceDispatcher:
         dispatched = 0
         tasks: list[asyncio.Task] = []
         max_global = self._max_global_concurrent()
+        # Soft shrink under host memory pressure (prevents silent OOM of backend
+        # when CEO + multi workforce + cargo peak together on Windows).
+        try:
+            from backend.core.process_guard import memory_pressure
+
+            pressure = memory_pressure()
+            if pressure == "critical":
+                max_global = 1
+                logger.warning(
+                    "dispatcher memory_pressure=critical → cap concurrent=1"
+                )
+            elif pressure == "elevated" and max_global > 2:
+                max_global = 2
+                logger.info(
+                    "dispatcher memory_pressure=elevated → cap concurrent=2"
+                )
+        except Exception:
+            pass
         # F2：身份并发默认 1 → busy 集合即全局并发计数
         while True:
             if max_global > 0 and len(self._busy) >= max_global:
@@ -641,7 +659,7 @@ class WorkforceDispatcher:
         try:
             from backend.repositories.user_repo import AsyncUserRepository
 
-            u = await AsyncUserRepository().get_by_email("admin@takton.dev")
+            u = await AsyncUserRepository().get_by_email("admin@tevarn.dev")
             return u.id if u is not None else None
         except Exception as e:
             logger.debug("notify default admin skip: %s", e)
@@ -1752,11 +1770,11 @@ class WorkforceDispatcher:
             raise
         except Exception:
             pass
-        # 单用户 / 迁移窗口：admin@takton.dev
+        # 单用户 / 迁移窗口：admin@tevarn.dev
         try:
             from backend.repositories.user_repo import AsyncUserRepository
 
-            u = await AsyncUserRepository().get_by_email("admin@takton.dev")
+            u = await AsyncUserRepository().get_by_email("admin@tevarn.dev")
             if u is not None:
                 return u.id
         except Exception as e:

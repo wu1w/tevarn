@@ -24,7 +24,7 @@ if str(ROOT) not in sys.path:
 
 
 STABLE_SYSTEM = (
-    "You are a Takton cache-bench assistant. " * 40
+    "You are a Tevarn cache-bench assistant. " * 40
     + "Rules: reply with a single short word. Do not call tools."
 )
 

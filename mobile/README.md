@@ -1,4 +1,4 @@
-# Takton Mobile
+# Tevarn Mobile
 
 像素控制台手机端 · **业务全 Rust** · **壳为 Flutter**
 
@@ -6,7 +6,7 @@
 Flutter UI  (pixel console · 四 Tab · 双模式 · 扫码配对)
    │  HTTP (web)  /  FFI C ABI (native)
    ▼
-takton-mobile-host  (axum · /api/mobile/*)
+tevarn-mobile-host  (axum · /api/mobile/*)
    ├── core: 本机 LLM · PC 代理 · ModeSnapshot · pair · mesh
    └── 静态：Flutter web build
 ```
@@ -21,7 +21,7 @@ takton-mobile-host  (axum · /api/mobile/*)
 ## 扫码配对（M1–M3）
 
 ```
-PC 工作台「匹配手机」→ 生成二维码 (takton://pair?…)
+PC 工作台「匹配手机」→ 生成二维码 (tevarn://pair?…)
 手机 App「连接」→ 扫描 / 粘贴 → claim + login → 自动重连
 ```
 
@@ -47,16 +47,16 @@ PC 工作台「匹配手机」→ 生成二维码 (takton://pair?…)
 ### 配对 URI
 
 ```
-takton://pair?v=2&pair_id=…&code=…&host=…&port=8090&exp=…&mesh=auto|lan|ts&scheme=http&lan=…&ts=…&hn=…
+tevarn://pair?v=2&pair_id=…&code=…&host=…&port=8090&exp=…&mesh=auto|lan|ts&scheme=http&lan=…&ts=…&hn=…
 ```
 
 ## 运行（预览）
 
 ```bash
 cd flutter_app && flutter pub get && flutter build web --release
-export TAKTON_MOBILE_UI=$PWD/build/web
-export TAKTON_BASE_URL=http://127.0.0.1:8090
-cargo run -p takton-mobile-host --release
+export TEVARN_MOBILE_UI=$PWD/build/web
+export TEVARN_BASE_URL=http://127.0.0.1:8090
+cargo run -p tevarn-mobile-host --release
 ```
 
 ## 目录

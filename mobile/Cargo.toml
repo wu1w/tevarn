@@ -13,7 +13,7 @@ default-members = ["crates/host"]
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-authors = ["Takton Mobile"]
+authors = ["Tevarn Mobile"]
 repository = "https://github.com/wu1w/takton"
 
 [workspace.dependencies]

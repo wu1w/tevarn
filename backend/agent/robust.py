@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import re
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
@@ -17,23 +18,46 @@ CONTINUE_PHRASES = (
     "接着做",
     "接着干",
     "继续完成",
+    "继续推进",
     "continue",
     "resume",
     "go on",
     "keep going",
 )
 
+# 「那你接着下一项工作」类：短句续下一项（与 bare「下一步应该怎么设计」区分）
+_CONTINUE_NEXT_ITEM_RE = re.compile(
+    r"(?i)^[\s\u3000]{0,12}(?:"
+    r"(?:那你|你|请)?接着(?:做|干)?下一项(?:工作|任务)?|"
+    r"(?:请)?继续下一项(?:工作|任务)?|"
+    r"(?:做|干|推进)下一项(?:工作|任务)?|"
+    r"下一项工作|下一项任务|"
+    r"next\s+(?:item|task)\b"
+    r")[\s!！。.~～…]*$"
+)
+
 
 def is_continue_phrase(text: str) -> bool:
-    t = (text or "").strip().lower()
+    """True for short continue / next-item phrases that should resume goal/checkpoint.
+
+    Intentionally does **not** match long free-form work asks or plan questions
+    like 「下一步应该怎么设计」.
+    """
+    t = (text or "").strip()
     if not t:
         return False
     # 短指令更像「续跑」；长文不当续跑
     if len(t) > 80:
         return False
+    tl = t.lower()
     for p in CONTINUE_PHRASES:
-        if t == p.lower() or t.startswith(p.lower()):
+        pl = p.lower()
+        if tl == pl or tl.startswith(pl):
+            # Avoid treating 「继续推进某功能的详细方案讨论…」as bare continue
+            # when it is a long new ask — already gated by len<=80.
             return True
+    if _CONTINUE_NEXT_ITEM_RE.match(t):
+        return True
     return False
 
 

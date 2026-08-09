@@ -2,7 +2,7 @@
 mattpocock/skills 源适配器
 
 https://github.com/mattpocock/skills
-工程向 Agent Skills（SKILL.md），MIT，兼容 Claude Code / Codex / Takton prompt-skill。
+工程向 Agent Skills（SKILL.md），MIT，兼容 Claude Code / Codex / Tevarn prompt-skill。
 
 策略：
 1. 优先 GitHub Trees API 递归扫描 skills/**/SKILL.md
@@ -106,7 +106,7 @@ def _make_skill(name: str, category: str, summary: str = "") -> UnifiedSkill:
         tags=[category, "prompt-skill", "mit"],
         license="MIT",
         author="Matt Pocock",
-        compatibility=["takton", "claude-code", "codex", "hermes", "openclaw"],
+        compatibility=["tevarn", "claude-code", "codex", "hermes", "openclaw"],
         install_command=f"npx skills@latest add mattpocock/skills --skill={name}",
         stats=SkillStats(),
     )
@@ -188,7 +188,7 @@ class MattPocockFetcher(SkillStoreFetcher):
     async def _fetch_from_tree(self, limit: int) -> list[UnifiedSkill]:
         headers = {
             "Accept": "application/vnd.github+json",
-            "User-Agent": "Takton-SkillStore/1.0",
+            "User-Agent": "Tevarn-SkillStore/1.0",
         }
         try:
             async with aiohttp.ClientSession() as session:

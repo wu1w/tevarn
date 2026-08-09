@@ -1,7 +1,7 @@
 //! M1 QR pairing protocol (phone scans PC-generated QR).
 //!
 //! Payload URI (v3 seamless mesh / v4 VPS):
-//! `takton://pair?v=3&pair_id=…&code=…&host=…&port=8090&exp=…&mesh=auto&scheme=http&lan=…&ts=…&hn=…&tsk=…`
+//! `tevarn://pair?v=3&pair_id=…&code=…&host=…&port=8090&exp=…&mesh=auto&scheme=http&lan=…&ts=…&hn=…&tsk=…`
 //! v4 adds: `&vps=…&vp=443&vps_path=/t/{id}&vpt=…`
 //!
 //! `tsk` is an optional short-window phone join key (same tailnet preauth) so the
@@ -200,7 +200,7 @@ impl PairPayload {
 
     pub fn to_uri(&self) -> String {
         let mut q = format!(
-            "takton://pair?v={}&pair_id={}&code={}&host={}&port={}&exp={}&mesh={}&scheme={}",
+            "tevarn://pair?v={}&pair_id={}&code={}&host={}&port={}&exp={}&mesh={}&scheme={}",
             self.v,
             urlencoding(&self.pair_id),
             urlencoding(&self.code),
@@ -265,17 +265,17 @@ impl PairPayload {
         let s = raw.trim();
         // Accept raw URI or full URL-wrapped
         let s = s
-            .strip_prefix("https://takton.local/pair?")
-            .or_else(|| s.strip_prefix("http://takton.local/pair?"))
+            .strip_prefix("https://tevarn.local/pair?")
+            .or_else(|| s.strip_prefix("http://tevarn.local/pair?"))
             .unwrap_or(s);
-        let s = if let Some(rest) = s.strip_prefix("takton://pair?") {
+        let s = if let Some(rest) = s.strip_prefix("tevarn://pair?") {
             rest
-        } else if let Some(rest) = s.strip_prefix("takton:pair?") {
+        } else if let Some(rest) = s.strip_prefix("tevarn:pair?") {
             rest
         } else if s.contains("pair_id=") {
             s.trim_start_matches('?')
         } else {
-            return Err(Error::Msg("invalid pair QR · expected takton://pair?…".into()));
+            return Err(Error::Msg("invalid pair QR · expected tevarn://pair?…".into()));
         };
 
         let mut map: HashMap<String, String> = HashMap::new();
@@ -840,12 +840,12 @@ impl PairService {
 
 /// Advertise host for QR: env override → first non-loopback IPv4 → 127.0.0.1
 pub fn advertise_host() -> String {
-    if let Ok(h) = std::env::var("TAKTON_PAIR_HOST") {
+    if let Ok(h) = std::env::var("TEVARN_PAIR_HOST") {
         if !h.trim().is_empty() {
             return h.trim().to_string();
         }
     }
-    if let Ok(h) = std::env::var("TAKTON_ADVERTISE_HOST") {
+    if let Ok(h) = std::env::var("TEVARN_ADVERTISE_HOST") {
         if !h.trim().is_empty() {
             return h.trim().to_string();
         }
@@ -960,7 +960,7 @@ mod tests {
             name: Some("MyPC".into()),
             lan: Some("192.168.1.8".into()),
             ts: Some("100.64.0.12".into()),
-            hn: Some("takton-pc".into()),
+            hn: Some("tevarn-pc".into()),
             tsk: Some("tskey-auth-demo".into()),
             vps: None,
             vp: None,
@@ -971,7 +971,7 @@ mod tests {
         let uri = p.to_uri();
         assert!(uri.contains("tsk="));
         assert!(!p.to_uri_redacted().contains("tskey-auth-demo"));
-        assert!(uri.starts_with("takton://pair?"));
+        assert!(uri.starts_with("tevarn://pair?"));
         let back = PairPayload::parse_uri(&uri).unwrap();
         assert_eq!(back.pair_id, "abc-123");
         assert_eq!(back.code, "654321");
@@ -981,7 +981,7 @@ mod tests {
         assert_eq!(back.name.as_deref(), Some("MyPC"));
         assert_eq!(back.lan.as_deref(), Some("192.168.1.8"));
         assert_eq!(back.ts.as_deref(), Some("100.64.0.12"));
-        assert_eq!(back.hn.as_deref(), Some("takton-pc"));
+        assert_eq!(back.hn.as_deref(), Some("tevarn-pc"));
         assert_eq!(back.tsk.as_deref(), Some("tskey-auth-demo"));
         let eps = back.endpoints();
         assert!(eps.len() >= 2);
@@ -989,7 +989,7 @@ mod tests {
 
     #[test]
     fn claim_flow() {
-        let dir = temp_dir().join(format!("takton-pair-{}", Uuid::new_v4()));
+        let dir = temp_dir().join(format!("tevarn-pair-{}", Uuid::new_v4()));
         let store = Store::open(&dir).unwrap();
         let svc = PairService::open(store);
         let (_pending, payload) = svc.start(
@@ -1001,7 +1001,7 @@ mod tests {
             false,
             Some("192.168.1.8".into()),
             Some("100.64.0.1".into()),
-            Some("takton-pc".into()),
+            Some("tevarn-pc".into()),
             None,
         );
         let (dev, _) = svc

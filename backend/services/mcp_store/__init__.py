@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 OFFICIAL_REGISTRY = "https://registry.modelcontextprotocol.io"
 CACHE_TTL = 300.0
 
-# ─── Takton 精选（含 Tavily；跨 Claude/Hermes/OpenClaw/Codex 通用） ───
+# ─── Tevarn 精选（含 Tavily；跨 Claude/Hermes/OpenClaw/Codex 通用） ───
 
 CURATED: list[UnifiedMCP] = [
     UnifiedMCP(
@@ -34,7 +34,7 @@ CURATED: list[UnifiedMCP] = [
         description=(
             "Tavily MCP：web search / extract / news。适合 Agent 调研与联网问答。"
             "需配置 TAVILY_API_KEY（https://tavily.com）。"
-            "兼容 Claude Code / Hermes / OpenClaw / Codex / Takton。"
+            "兼容 Claude Code / Hermes / OpenClaw / Codex / Tevarn。"
         ),
         source="curated",
         source_url="https://github.com/tavily-ai/tavily-mcp",
@@ -61,7 +61,7 @@ CURATED: list[UnifiedMCP] = [
             "把任意 URL 洗成 LLM 友好 Markdown，补齐「能搜不能读 JS 脏页」短板。"
             "需 FIRECRAWL_API_KEY（https://firecrawl.dev）。"
             "也可自托管后设 FIRECRAWL_API_URL。"
-            "兼容 Claude Code / Hermes / OpenClaw / Codex / Takton。"
+            "兼容 Claude Code / Hermes / OpenClaw / Codex / Tevarn。"
         ),
         source="curated",
         source_url="https://github.com/firecrawl/firecrawl-mcp-server",
@@ -311,7 +311,7 @@ def _map_official_item(entry: dict[str, Any]) -> UnifiedMCP | None:
             else:
                 note = f"暂不支持 registryType={registry_type} 的一键安装，请自定义配置"
         else:
-            note = f"包 transport={pkg_transport}，Takton 当前主支持 stdio/sse"
+            note = f"包 transport={pkg_transport}，Tevarn 当前主支持 stdio/sse"
     elif remotes:
         remote = remotes[0]
         rtype = (remote.get("type") or "").lower()
@@ -412,7 +412,7 @@ class MCPStoreService:
         return [
             MCPStoreSourceInfo(
                 id="curated",
-                name="Takton 精选",
+                name="Tevarn 精选",
                 description="含 Tavily 等常用 MCP；Claude/Hermes/OpenClaw/Codex 通用",
                 enabled=True,
                 error=self._errors.get("curated"),

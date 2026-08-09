@@ -2,13 +2,13 @@
 PC 端手机扫码配对服务（对标 mobile pair 协议 v2/v3/v4）。
 
 URI v4:
-takton://pair?v=4&pair_id=…&code=…&host=…&port=…&exp=…&mesh=auto
+tevarn://pair?v=4&pair_id=…&code=…&host=…&port=…&exp=…&mesh=auto
   &scheme=http|https&lan=…&ts=…&hn=…&tsk=…
   &vps=…&vp=443&vps_path=/t/{id}&vpt=…
 
 - start：PC 出码（LAN + VPS + Tailscale）
 - claim：手机扫码后无 JWT 调用（靠 pair_id + 一次性 code）
-- 配对设备持久化到 ~/.takton/paired_devices.json
+- 配对设备持久化到 ~/.tevarn/paired_devices.json
 """
 
 from __future__ import annotations
@@ -36,11 +36,11 @@ MESH_AUTH_FILE = "mesh_auth_key"
 MESH_CFG_FILE = "mesh_config.json"
 
 
-def _takton_dir() -> Path:
-    override = os.environ.get("TAKTON_DATA_DIR", "").strip()
+def _tevarn_dir() -> Path:
+    override = os.environ.get("TEVARN_DATA_DIR", "").strip()
     if override:
         return Path(override)
-    return Path.home() / ".takton"
+    return Path.home() / ".tevarn"
 
 
 def _read_json(path: Path, default: Any) -> Any:
@@ -156,13 +156,13 @@ def detect_tailscale_ipv4() -> Optional[str]:
 
 def detect_hostname() -> str:
     try:
-        return socket.gethostname() or "takton-pc"
+        return socket.gethostname() or "tevarn-pc"
     except OSError:
-        return "takton-pc"
+        return "tevarn-pc"
 
 
 def backend_port() -> int:
-    raw = os.environ.get("TAKTON_APP_PORT") or os.environ.get("PORT") or "8090"
+    raw = os.environ.get("TEVARN_APP_PORT") or os.environ.get("PORT") or "8090"
     try:
         return int(raw)
     except ValueError:
@@ -216,7 +216,7 @@ class PairedDevice:
 class MobilePairService:
     def __init__(self) -> None:
         self._pending: dict[str, PendingPair] = {}
-        self._dir = _takton_dir()
+        self._dir = _tevarn_dir()
         self._dir.mkdir(parents=True, exist_ok=True)
 
     # ── mesh config / auth key ────────────────────────────────────────────
@@ -262,7 +262,7 @@ class MobilePairService:
         return self.mesh_status()
 
     def auth_key_set(self) -> bool:
-        if os.environ.get("TS_AUTHKEY") or os.environ.get("TAKTON_TS_AUTHKEY"):
+        if os.environ.get("TS_AUTHKEY") or os.environ.get("TEVARN_TS_AUTHKEY"):
             return True
         path = self._dir / MESH_AUTH_FILE
         try:
@@ -286,7 +286,7 @@ class MobilePairService:
         return self.mesh_status()
 
     def get_auth_key(self) -> Optional[str]:
-        env = (os.environ.get("TS_AUTHKEY") or os.environ.get("TAKTON_TS_AUTHKEY") or "").strip()
+        env = (os.environ.get("TS_AUTHKEY") or os.environ.get("TEVARN_TS_AUTHKEY") or "").strip()
         if env:
             return env
         path = self._dir / MESH_AUTH_FILE
@@ -715,7 +715,7 @@ class MobilePairService:
     @staticmethod
     def _to_uri(payload: dict[str, Any]) -> str:
         q = (
-            f"takton://pair?v={payload['v']}"
+            f"tevarn://pair?v={payload['v']}"
             f"&pair_id={quote(str(payload['pair_id']))}"
             f"&code={quote(str(payload['code']))}"
             f"&host={quote(str(payload['host']))}"

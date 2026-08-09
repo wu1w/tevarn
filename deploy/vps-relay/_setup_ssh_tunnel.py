@@ -6,12 +6,12 @@ import sys
 
 import paramiko
 
-HOST = os.environ.get("TAKTON_VPS_HOST", "150.158.109.231")
-USER = os.environ.get("TAKTON_VPS_USER", "ubuntu")
-PASSWORD = os.environ.get("TAKTON_VPS_PASSWORD", "")
+HOST = os.environ.get("TEVARN_VPS_HOST", "150.158.109.231")
+USER = os.environ.get("TEVARN_VPS_USER", "ubuntu")
+PASSWORD = os.environ.get("TEVARN_VPS_PASSWORD", "")
 
 if not PASSWORD:
-    print("Set TAKTON_VPS_PASSWORD", file=sys.stderr)
+    print("Set TEVARN_VPS_PASSWORD", file=sys.stderr)
     sys.exit(1)
 
 
@@ -33,7 +33,7 @@ def main() -> None:
         "grep -q '^GatewayPorts' /etc/ssh/sshd_config || echo 'GatewayPorts clientspecified' | sudo tee -a /etc/ssh/sshd_config",
         "sudo systemctl reload sshd || sudo service ssh reload || true",
         # optional: stop frps if port conflict later
-        "docker ps --filter name=takton-frps --format '{{.Names}} {{.Status}}' || true",
+        "docker ps --filter name=tevarn-frps --format '{{.Names}} {{.Status}}' || true",
         "ss -lntp | grep -E ':7000|:7080' || true",
     ]
     for cmd in cmds:

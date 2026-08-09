@@ -88,7 +88,7 @@ TOOL_PACKS: dict[str, tuple[str, ...]] = {
         "manage_package",
         "manage_profile",
         "manage_knowledge",
-        "configure_takton",
+        "configure_tevarn",
         "update_config",
         "get_system_status",
         "list_available_models",
@@ -210,7 +210,7 @@ _PACK_KEYWORDS: dict[str, tuple[str, ...]] = {
         "MCP",
         "mcp 商店",
         "MCP商店",
-        "配置 takton",
+        "配置 tevarn",
         "configure",
         "频道",
         "channel",
@@ -256,7 +256,7 @@ _PACK_KEYWORDS: dict[str, tuple[str, ...]] = {
     "devices": (
         "远程",
         "设备",
-        "takton-agent",
+        "tevarn-agent",
         "remote",
         "onboard",
         "ssh",
@@ -623,7 +623,7 @@ def compact_capability_brief(
         "Skill discipline: an installed skill matching the task MUST be followed/loaded before improvising."
     )
     lines.append(
-        "cwd: session workspace_root (else TAKTON_TASK_ROOT); pass command.cwd for subdirs. "
+        "cwd: session workspace_root (else TEVARN_TASK_ROOT); pass command.cwd for subdirs. "
         "Prefer file_write/edit over heredoc; batch independent reads."
     )
     lines.append("Prefer tools over speculation; finish the task.")

@@ -1,4 +1,4 @@
-"""Takton Evolution Engine (TEE) v0.1.1 — HAEE-inspired config.
+"""Tevarn Evolution Engine (TEE) v0.1.1 — HAEE-inspired config.
 
 Phases:
   P1 from_tasks/from_cron  — task/cron outcomes → evolution assets
@@ -63,41 +63,41 @@ class EvolutionConfig:
     @classmethod
     def from_env(cls) -> "EvolutionConfig":
         return cls(
-            enabled=_truthy(os.getenv("TAKTON_EVOLUTION_ENABLED"), False),
-            mode=(os.getenv("TAKTON_EVOLUTION_MODE") or "on_failure").strip(),
-            max_iterations=int(os.getenv("TAKTON_EVOLUTION_MAX_ITERATIONS") or "3"),
-            llm_judge=_truthy(os.getenv("TAKTON_EVOLUTION_LLM_JUDGE"), True),
+            enabled=_truthy(os.getenv("TEVARN_EVOLUTION_ENABLED"), False),
+            mode=(os.getenv("TEVARN_EVOLUTION_MODE") or "on_failure").strip(),
+            max_iterations=int(os.getenv("TEVARN_EVOLUTION_MAX_ITERATIONS") or "3"),
+            llm_judge=_truthy(os.getenv("TEVARN_EVOLUTION_LLM_JUDGE"), True),
             # default false — only explicit env=1 enables (still cannot skip skill-gate)
-            auto_apply_skills=_truthy(os.getenv("TAKTON_EVOLUTION_AUTO_APPLY"), False),
-            max_skill_bytes=int(os.getenv("TAKTON_EVOLUTION_MAX_SKILL_BYTES") or "32000"),
-            defer=_truthy(os.getenv("TAKTON_EVOLUTION_DEFER"), True),
-            db_path=os.getenv("TAKTON_EVOLUTION_DB") or None,
-            from_tasks=_truthy(os.getenv("TAKTON_EVOLUTION_FROM_TASKS"), True),
-            from_cron=_truthy(os.getenv("TAKTON_EVOLUTION_FROM_CRON"), True),
-            write_skill_files=_truthy(os.getenv("TAKTON_EVOLUTION_WRITE_FILES"), True),
-            auto_create_tools=_truthy(os.getenv("TAKTON_EVOLUTION_CREATE_TOOLS"), True),
-            auto_apply_tools=_truthy(os.getenv("TAKTON_EVOLUTION_APPLY_TOOLS"), False),
-            auto_observe=_truthy(os.getenv("TAKTON_EVOLUTION_AUTO_OBSERVE"), True),
-            observe_min_sessions=int(os.getenv("TAKTON_EVOLUTION_OBSERVE_MIN") or "3"),
-            observe_nudge_level=(os.getenv("TAKTON_EVOLUTION_NUDGE") or "notify").strip(),
-            curator_enabled=_truthy(os.getenv("TAKTON_EVOLUTION_CURATOR"), True),
-            curator_stale_days=int(os.getenv("TAKTON_EVOLUTION_STALE_DAYS") or "14"),
-            curator_archive_days=int(os.getenv("TAKTON_EVOLUTION_ARCHIVE_DAYS") or "30"),
-            dedupe_similarity=float(os.getenv("TAKTON_EVOLUTION_DEDUPE") or "0.72"),
-            max_skill_gen=int(os.getenv("TAKTON_EVOLUTION_MAX_GEN") or "20"),
+            auto_apply_skills=_truthy(os.getenv("TEVARN_EVOLUTION_AUTO_APPLY"), False),
+            max_skill_bytes=int(os.getenv("TEVARN_EVOLUTION_MAX_SKILL_BYTES") or "32000"),
+            defer=_truthy(os.getenv("TEVARN_EVOLUTION_DEFER"), True),
+            db_path=os.getenv("TEVARN_EVOLUTION_DB") or None,
+            from_tasks=_truthy(os.getenv("TEVARN_EVOLUTION_FROM_TASKS"), True),
+            from_cron=_truthy(os.getenv("TEVARN_EVOLUTION_FROM_CRON"), True),
+            write_skill_files=_truthy(os.getenv("TEVARN_EVOLUTION_WRITE_FILES"), True),
+            auto_create_tools=_truthy(os.getenv("TEVARN_EVOLUTION_CREATE_TOOLS"), True),
+            auto_apply_tools=_truthy(os.getenv("TEVARN_EVOLUTION_APPLY_TOOLS"), False),
+            auto_observe=_truthy(os.getenv("TEVARN_EVOLUTION_AUTO_OBSERVE"), True),
+            observe_min_sessions=int(os.getenv("TEVARN_EVOLUTION_OBSERVE_MIN") or "3"),
+            observe_nudge_level=(os.getenv("TEVARN_EVOLUTION_NUDGE") or "notify").strip(),
+            curator_enabled=_truthy(os.getenv("TEVARN_EVOLUTION_CURATOR"), True),
+            curator_stale_days=int(os.getenv("TEVARN_EVOLUTION_STALE_DAYS") or "14"),
+            curator_archive_days=int(os.getenv("TEVARN_EVOLUTION_ARCHIVE_DAYS") or "30"),
+            dedupe_similarity=float(os.getenv("TEVARN_EVOLUTION_DEDUPE") or "0.72"),
+            max_skill_gen=int(os.getenv("TEVARN_EVOLUTION_MAX_GEN") or "20"),
         )
 
     def resolve_db_path(self) -> Path:
         if self.db_path:
             return _norm(self.db_path)
 
-        # Prefer same data dir as main takton.db: %APPDATA%/takton/data
+        # Prefer same data dir as main tevarn.db: %APPDATA%/tevarn/data
         candidates: list[Path] = []
         appdata = os.getenv("APPDATA") or os.getenv("LOCALAPPDATA")
         if appdata:
-            candidates.append(_norm(appdata) / "takton" / "data")
-        if os.getenv("TAKTON_HOME"):
-            th = _norm(os.getenv("TAKTON_HOME"))
+            candidates.append(_norm(appdata) / "tevarn" / "data")
+        if os.getenv("TEVARN_HOME"):
+            th = _norm(os.getenv("TEVARN_HOME"))
             candidates.append(th if th.name == "data" else th / "data")
         try:
             from backend.core.config import settings
@@ -109,8 +109,8 @@ class EvolutionConfig:
             pass
         home = os.getenv("USERPROFILE") or os.getenv("HOME")
         if home:
-            candidates.append(_norm(home) / "AppData" / "Roaming" / "takton" / "data")
-            candidates.append(_norm(home) / ".takton")  # legacy
+            candidates.append(_norm(home) / "AppData" / "Roaming" / "tevarn" / "data")
+            candidates.append(_norm(home) / ".tevarn")  # legacy
 
         root = None
         for c in candidates:
@@ -125,9 +125,9 @@ class EvolutionConfig:
             root.mkdir(parents=True, exist_ok=True)
 
         path = root / "evolution.db"
-        # One-time migrate from legacy ~/.takton/evolution.db
+        # One-time migrate from legacy ~/.tevarn/evolution.db
         if not path.exists() and home:
-            legacy = _norm(home) / ".takton" / "evolution.db"
+            legacy = _norm(home) / ".tevarn" / "evolution.db"
             if legacy.exists() and legacy.resolve() != path.resolve():
                 try:
                     import shutil

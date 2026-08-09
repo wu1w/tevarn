@@ -48,14 +48,14 @@ def _electron_userdata_workspace_candidates() -> list[Path]:
     cands: list[Path] = []
     if sys.platform == "win32":
         roaming = os.environ.get("APPDATA") or str(home / "AppData" / "Roaming")
-        cands.append(Path(roaming) / "takton" / "data" / "workspace")
-        cands.append(Path(roaming) / "takton" / "workspace")
+        cands.append(Path(roaming) / "tevarn" / "data" / "workspace")
+        cands.append(Path(roaming) / "tevarn" / "workspace")
     elif sys.platform == "darwin":
         cands.append(
-            home / "Library" / "Application Support" / "takton" / "data" / "workspace"
+            home / "Library" / "Application Support" / "tevarn" / "data" / "workspace"
         )
-    cands.append(home / ".takton" / "data" / "workspace")
-    cands.append(home / ".takton" / "workspace")
+    cands.append(home / ".tevarn" / "data" / "workspace")
+    cands.append(home / ".tevarn" / "workspace")
     return cands
 
 
@@ -451,7 +451,7 @@ def _find_named(root: Path, names: list[str]) -> Path | None:
         p2 = root / "memory" / name
         if p2.is_file():
             return p2
-        p3 = root / ".takton" / name
+        p3 = root / ".tevarn" / name
         if p3.is_file():
             return p3
     return None

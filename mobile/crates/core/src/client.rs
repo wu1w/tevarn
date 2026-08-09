@@ -1,4 +1,4 @@
-//! HTTP client for the Takton PC backend (`/api/*`).
+//! HTTP client for the Tevarn PC backend (`/api/*`).
 
 use crate::auth::AuthSession;
 use crate::config::AppConfig;
@@ -17,14 +17,14 @@ use std::time::Duration;
 const SESSION_FILE: &str = "auth_session.json";
 
 #[derive(Clone)]
-pub struct TaktonClient {
+pub struct TevarnClient {
     http: Client,
     config: Arc<RwLock<AppConfig>>,
     session: Arc<RwLock<Option<AuthSession>>>,
     store: Store,
 }
 
-impl TaktonClient {
+impl TevarnClient {
     pub fn new(config: AppConfig) -> Result<Self> {
         let store = Store::open(&config.data_dir)?;
         let session = store.load_json::<AuthSession>(SESSION_FILE)?.filter(|s| {
@@ -168,7 +168,7 @@ impl TaktonClient {
             let base = self.config.read().base_url.clone();
             if base.contains("/t/") {
                 if let Some(vpt) = self.path_vpt() {
-                    req = req.header("X-Takton-Vpt", vpt);
+                    req = req.header("X-Tevarn-Vpt", vpt);
                 }
             }
             req = req.header("Accept", "application/json");

@@ -189,11 +189,11 @@ class OpenAICompatibleService(LLMService):
         except Exception:
             key_on = True
         if getattr(prof, "openai_prompt_cache_key", False) and key_on:
-            # Prefer session-stable key (takton:{session_id}); hash only as last resort.
+            # Prefer session-stable key (tevarn:{session_id}); hash only as last resort.
             key = str(self.prompt_cache_key or "").strip()
-            if key and not key.startswith("takton:") and len(key) >= 32:
+            if key and not key.startswith("tevarn:") and len(key) >= 32:
                 # bare session uuid from older callers → normalize
-                key = f"takton:{key[:32]}"
+                key = f"tevarn:{key[:32]}"
             if not key:
                 try:
                     import hashlib
@@ -228,7 +228,7 @@ class OpenAICompatibleService(LLMService):
                 enabled=True,
                 mark_tools=False,
             )
-            payload["_takton_explicit_cache"] = True
+            payload["_tevarn_explicit_cache"] = True
 
         if getattr(prof, "tools_before_system", False):
             reorder_tools_before_system_messages(payload)
@@ -548,7 +548,7 @@ class OpenAICompatibleService(LLMService):
             pending_tool_ids.clear()
 
         # llama.cpp / 多数 chat template：system 只能出现在开头且通常只能一条。
-        # Takton 会注入多段 system（主 prompt + 工具说明 + 运行时注记）→ 400
+        # Tevarn 会注入多段 system（主 prompt + 工具说明 + 运行时注记）→ 400
         # 「System message must be at the beginning」。合并为单条置顶。
         system_parts: list[str] = []
         non_system: list[dict[str, Any]] = []
@@ -592,7 +592,7 @@ class OpenAICompatibleService(LLMService):
             payload["tool_choice"] = "auto"
         self._apply_profile_payload_hooks(payload, safe_messages)
         # Do not send internal flags to provider
-        payload.pop("_takton_explicit_cache", None)
+        payload.pop("_tevarn_explicit_cache", None)
 
         message_id = uuid.uuid4()
 

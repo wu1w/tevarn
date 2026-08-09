@@ -37,7 +37,7 @@ class SummarizeWebpageSkill(BaseSkill):
             async with httpx.AsyncClient(
                 timeout=25.0,
                 follow_redirects=True,
-                headers={"User-Agent": "TaktonAgent/0.1 (+local)"},
+                headers={"User-Agent": "TevarnAgent/0.1 (+local)"},
             ) as client:
                 r = await client.get(url.strip())
                 r.raise_for_status()

@@ -1,4 +1,4 @@
-# Auto-restart Takton backend if port 8090 dies (hard-crash recovery).
+# Auto-restart Tevarn backend if port 8090 dies (hard-crash recovery).
 # Usage: powershell -ExecutionPolicy Bypass -File scripts\backend-watchdog.ps1
 $ErrorActionPreference = "Continue"
 $root = Split-Path -Parent $PSScriptRoot
@@ -17,8 +17,8 @@ function Wlog([string]$m) {
 }
 
 $env:PYTHONPATH = $root
-if (-not $env:JWT_SECRET) { $env:JWT_SECRET = "takton-dev-secret-key-2026" }
-if (-not $env:API_KEY) { $env:API_KEY = "takton-dev-api-key-2026" }
+if (-not $env:JWT_SECRET) { $env:JWT_SECRET = "tevarn-dev-secret-key-2026" }
+if (-not $env:API_KEY) { $env:API_KEY = "tevarn-dev-api-key-2026" }
 $env:PYTHONIOENCODING = "utf-8"
 $env:PYTHONUTF8 = "1"
 $env:PYTHONUNBUFFERED = "1"

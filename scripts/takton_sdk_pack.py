@@ -2,8 +2,8 @@
 """Agent SDK pack/validate（T8）。
 
 Usage:
-  python scripts/takton_sdk_pack.py <agent-dir>
-  python scripts/takton_sdk_pack.py <agent-dir> --out dist/
+  python scripts/tevarn_sdk_pack.py <agent-dir>
+  python scripts/tevarn_sdk_pack.py <agent-dir> --out dist/
 """
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ def validate(root: Path) -> dict:
 
 def pack_zip(root: Path, out_dir: Path, meta: dict) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
-    name = f"{meta['name']}-{meta['version']}.takton-agent.zip"
+    name = f"{meta['name']}-{meta['version']}.tevarn-agent.zip"
     dest = out_dir / name
     with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zf:
         for f in sorted(root.rglob("*")):
@@ -71,7 +71,7 @@ def pack_zip(root: Path, out_dir: Path, meta: dict) -> Path:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Validate/pack Takton agent package")
+    ap = argparse.ArgumentParser(description="Validate/pack Tevarn agent package")
     ap.add_argument("agent_dir", type=Path)
     ap.add_argument("--out", type=Path, default=None, help="write zip to directory")
     args = ap.parse_args()

@@ -1,4 +1,4 @@
-# Takton 内嵌 Tailscale（无感 mesh）
+# Tevarn 内嵌 Tailscale（无感 mesh）
 
 用户体验目标：**扫一次二维码即连接**，不装系统 Tailscale、不手填 IP。
 
@@ -6,17 +6,17 @@
 
 | 端 | 角色 | 行为 |
 |----|------|------|
-| PC | `takton-tsnet -role pc` | 进 tailnet，把本机后端反代到 100.x |
-| 手机 | `takton-tsnet -role phone -client-only` | 用 QR 里的一次性入网 key 进同一 tailnet，再 claim PC |
+| PC | `tevarn-tsnet -role pc` | 进 tailnet，把本机后端反代到 100.x |
+| 手机 | `tevarn-tsnet -role phone -client-only` | 用 QR 里的一次性入网 key 进同一 tailnet，再 claim PC |
 
-由 **Takton Host（Rust）自动 spawn**，UI 不出现 Tailscale 字样（高级设置可看状态）。
+由 **Tevarn Host（Rust）自动 spawn**，UI 不出现 Tailscale 字样（高级设置可看状态）。
 
 ## 一次配置（仅 PC）
 
 管理员/用户在 PC **只做一次**：
 
 ```bash
-export TAKTON_TS_AUTHKEY=tskey-auth-…   # Tailscale 控制台可复用 auth key
+export TEVARN_TS_AUTHKEY=tskey-auth-…   # Tailscale 控制台可复用 auth key
 # 或在 App「连接 → 首次启用远程」粘贴
 ```
 
@@ -31,8 +31,8 @@ export TAKTON_TS_AUTHKEY=tskey-auth-…   # Tailscale 控制台可复用 auth ke
 ```bash
 cd sidecar/tsnet
 go mod tidy
-go build -o takton-tsnet .
-# 放到 PATH 或设置 TAKTON_TSNET_BIN
+go build -o tevarn-tsnet .
+# 放到 PATH 或设置 TEVARN_TSNET_BIN
 ```
 
 ## 安全

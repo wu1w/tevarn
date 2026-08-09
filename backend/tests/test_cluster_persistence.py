@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 # cluster 路由已加鉴权；这些用例不测鉴权，用一个固定假用户绕开
 class _FakeUser:
     id = uuid.UUID("00000000-0000-0000-0000-0000000000ff")
-    email = "test@takton.dev"
+    email = "test@tevarn.dev"
     username = "test"
     is_superuser = True
     is_active = True

@@ -1,16 +1,16 @@
 """
-Takton CLI — Kernel Host / 控制台命令
+Tevarn CLI — Kernel Host / 控制台命令
 
 用法:
-  takton start              # Kernel Host + HTTP Adapter
-  takton start --dev        # reload
-  takton runtime            # 同 start（OS 化别名）
-  takton status             # GET /runtime/status
-  takton jobs               # 在跑工单（需 token 或单用户登录）
-  takton job-stop <id>      # 停止工单
-  takton approve <id>       # 通过提权
-  takton build
-  takton version
+  tevarn start              # Kernel Host + HTTP Adapter
+  tevarn start --dev        # reload
+  tevarn runtime            # 同 start（OS 化别名）
+  tevarn status             # GET /runtime/status
+  tevarn jobs               # 在跑工单（需 token 或单用户登录）
+  tevarn job-stop <id>      # 停止工单
+  tevarn approve <id>       # 通过提权
+  tevarn build
+  tevarn version
 """
 
 from __future__ import annotations
@@ -36,13 +36,13 @@ def _ensure_path() -> None:
 
 
 def _base_url(args: argparse.Namespace) -> str:
-    host = getattr(args, "host", None) or os.environ.get("TAKTON_APP_HOST", "127.0.0.1")
-    port = getattr(args, "port", None) or int(os.environ.get("TAKTON_APP_PORT", "8090"))
+    host = getattr(args, "host", None) or os.environ.get("TEVARN_APP_HOST", "127.0.0.1")
+    port = getattr(args, "port", None) or int(os.environ.get("TEVARN_APP_PORT", "8090"))
     return f"http://{host}:{port}"
 
 
 def _token_path() -> Path:
-    home = Path.home() / ".takton"
+    home = Path.home() / ".tevarn"
     home.mkdir(parents=True, exist_ok=True)
     return home / "cli_token"
 
@@ -70,8 +70,8 @@ def _load_saved_token() -> str | None:
 def _token(args: argparse.Namespace) -> str | None:
     return (
         getattr(args, "token", None)
-        or os.environ.get("TAKTON_TOKEN")
-        or os.environ.get("TAKTON_ACCESS_TOKEN")
+        or os.environ.get("TEVARN_TOKEN")
+        or os.environ.get("TEVARN_ACCESS_TOKEN")
         or _load_saved_token()
         or None
     )
@@ -100,7 +100,7 @@ def _http_json(
         detail = e.read().decode("utf-8", errors="replace")[:500]
         raise SystemExit(f"HTTP {e.code}: {detail}") from e
     except urllib.error.URLError as e:
-        raise SystemExit(f"无法连接 Kernel Host: {e.reason}\n请先: takton start 或 python -m backend.runtime") from e
+        raise SystemExit(f"无法连接 Kernel Host: {e.reason}\n请先: tevarn start 或 python -m backend.runtime") from e
 
 
 def cmd_build(_: argparse.Namespace) -> int:
@@ -123,7 +123,7 @@ def cmd_version(_: argparse.Namespace) -> int:
                 ver = vpath.read_text(encoding="utf-8").strip() or ver
         except Exception:
             pass
-    print(f"takton {ver}")
+    print(f"tevarn {ver}")
     print("role: kernel-host / cli-client")
     return 0
 
@@ -136,23 +136,23 @@ def cmd_start(args: argparse.Namespace) -> int:
         if not static_index.is_file():
             frontend = root / "frontend"
             if frontend.is_dir() and (frontend / "package.json").is_file():
-                print("[takton] 前端未构建，正在构建静态资源…")
+                print("[tevarn] 前端未构建，正在构建静态资源…")
                 try:
                     from backend.build_frontend import build_frontend
 
                     build_frontend(force=True)
                 except Exception as e:
-                    print(f"[takton] 自动构建失败: {e}", file=sys.stderr)
+                    print(f"[tevarn] 自动构建失败: {e}", file=sys.stderr)
 
-    os.environ.setdefault("TAKTON_SINGLE_USER_MODE", "true")
-    os.environ.setdefault("TAKTON_AIOS_PROFILE", os.environ.get("TAKTON_AIOS_PROFILE", "aios-dev"))
+    os.environ.setdefault("TEVARN_SINGLE_USER_MODE", "true")
+    os.environ.setdefault("TEVARN_AIOS_PROFILE", os.environ.get("TEVARN_AIOS_PROFILE", "aios-dev"))
     host = args.host
     port = args.port
 
     import uvicorn
 
-    print(f"[takton] Kernel Host + Adapter http://{host}:{port}  (dev={args.dev})")
-    print("[takton] Console 可后连；python -m backend.runtime 等价")
+    print(f"[tevarn] Kernel Host + Adapter http://{host}:{port}  (dev={args.dev})")
+    print("[tevarn] Console 可后连；python -m backend.runtime 等价")
     uvicorn.run(
         "backend.main:app",
         host=host,
@@ -174,7 +174,7 @@ def cmd_brief(args: argparse.Namespace) -> int:
     """AI 公司晨报（需登录）。"""
     token = _token(args)
     if not token:
-        print("需要 takton login 或 --token", file=sys.stderr)
+        print("需要 tevarn login 或 --token", file=sys.stderr)
         return 2
     hours = int(getattr(args, "hours", 24) or 24)
     url = f"{_base_url(args)}/api/kernel/workspace/brief?hours={hours}"
@@ -186,7 +186,7 @@ def cmd_brief(args: argparse.Namespace) -> int:
 def cmd_jobs(args: argparse.Namespace) -> int:
     token = _token(args)
     if not token:
-        print("需要 --token 或环境变量 TAKTON_TOKEN（登录后 access_token）", file=sys.stderr)
+        print("需要 --token 或环境变量 TEVARN_TOKEN（登录后 access_token）", file=sys.stderr)
         return 2
     url = f"{_base_url(args)}/api/kernel/jobs/running"
     data = _http_json("GET", url, token=token)
@@ -197,7 +197,7 @@ def cmd_jobs(args: argparse.Namespace) -> int:
 def cmd_job_stop(args: argparse.Namespace) -> int:
     token = _token(args)
     if not token:
-        print("需要 --token 或 TAKTON_TOKEN", file=sys.stderr)
+        print("需要 --token 或 TEVARN_TOKEN", file=sys.stderr)
         return 2
     body: dict = {"reason": "cli stop"}
     if args.item_id:
@@ -216,7 +216,7 @@ def cmd_job_stop(args: argparse.Namespace) -> int:
 def cmd_approve(args: argparse.Namespace) -> int:
     token = _token(args)
     if not token:
-        print("需要 --token 或 TAKTON_TOKEN", file=sys.stderr)
+        print("需要 --token 或 TEVARN_TOKEN", file=sys.stderr)
         return 2
     action = "approve" if not args.deny else "deny"
     url = f"{_base_url(args)}/api/kernel/escalations/{args.request_id}/{action}"
@@ -228,7 +228,7 @@ def cmd_approve(args: argparse.Namespace) -> int:
 def cmd_events(args: argparse.Namespace) -> int:
     token = _token(args)
     if not token:
-        print("需要 --token 或 TAKTON_TOKEN 或先 takton login", file=sys.stderr)
+        print("需要 --token 或 TEVARN_TOKEN 或先 tevarn login", file=sys.stderr)
         return 2
     q = f"limit={args.limit}"
     if args.prefix:
@@ -246,8 +246,8 @@ def cmd_events(args: argparse.Namespace) -> int:
 def cmd_login(args: argparse.Namespace) -> int:
     import getpass
 
-    email = args.email or os.environ.get("TAKTON_EMAIL") or "admin@takton.dev"
-    password = args.password or os.environ.get("TAKTON_PASSWORD")
+    email = args.email or os.environ.get("TEVARN_EMAIL") or "admin@tevarn.dev"
+    password = args.password or os.environ.get("TEVARN_PASSWORD")
     if not password:
         password = getpass.getpass(f"password for {email}: ")
     url = f"{_base_url(args)}/api/auth/login"
@@ -314,15 +314,15 @@ def cmd_follow(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="takton", description="Takton — Personal Agent OS CLI")
+    p = argparse.ArgumentParser(prog="tevarn", description="Tevarn — Personal Agent OS CLI")
     sub = p.add_subparsers(dest="command")
 
     def add_host(sp: argparse.ArgumentParser) -> None:
-        sp.add_argument("--host", default=os.environ.get("TAKTON_APP_HOST", "127.0.0.1"))
-        sp.add_argument("--port", type=int, default=int(os.environ.get("TAKTON_APP_PORT", "8090")))
+        sp.add_argument("--host", default=os.environ.get("TEVARN_APP_HOST", "127.0.0.1"))
+        sp.add_argument("--port", type=int, default=int(os.environ.get("TEVARN_APP_PORT", "8090")))
 
     def add_auth(sp: argparse.ArgumentParser) -> None:
-        sp.add_argument("--token", default=None, help="JWT access token（或 TAKTON_TOKEN）")
+        sp.add_argument("--token", default=None, help="JWT access token（或 TEVARN_TOKEN）")
 
     sp = sub.add_parser("start", help="启动 Kernel Host + HTTP Adapter")
     sp.add_argument("--dev", action="store_true", help="uvicorn --reload")
@@ -380,7 +380,7 @@ def build_parser() -> argparse.ArgumentParser:
     fo.add_argument("--interval", type=float, default=1.5)
     fo.set_defaults(func=cmd_follow)
 
-    lg = sub.add_parser("login", help="登录并保存 token 到 ~/.takton/cli_token")
+    lg = sub.add_parser("login", help="登录并保存 token 到 ~/.tevarn/cli_token")
     add_host(lg)
     lg.add_argument("--email", default=None)
     lg.add_argument("--password", default=None)

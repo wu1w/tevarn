@@ -69,7 +69,7 @@ async def test_after_hook_transforms():
 def test_file_checkpoint_copies(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     # fake project root via env
-    monkeypatch.setenv("TAKTON_FILE_BROWSER_ROOT", str(tmp_path))
+    monkeypatch.setenv("TEVARN_FILE_BROWSER_ROOT", str(tmp_path))
     f = tmp_path / "sample.txt"
     f.write_text("hello-checkpoint", encoding="utf-8")
     snap = snapshot_path_for_tool("file_write", {"filepath": "sample.txt"})

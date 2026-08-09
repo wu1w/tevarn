@@ -37,7 +37,7 @@ export function getTabId(): string {
 }
 
 function channelName(sessionId: string): string {
-  return `takton-session-${sessionId}`;
+  return `tevarn-session-${sessionId}`;
 }
 
 /** 发送时可省略 tabId/ts（由 channel 注入） */

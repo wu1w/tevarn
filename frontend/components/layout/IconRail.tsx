@@ -96,8 +96,8 @@ export function IconRail() {
 
   return (
     <nav className="tk-rail" aria-label="primary">
-      {/* takton 圆形 logo（点击回驾驶舱） */}
-      <Link href="/" className="tk-rail-logo" title="takton">
+      {/* tevarn 圆形 logo（点击回驾驶舱） */}
+      <Link href="/" className="tk-rail-logo" title="tevarn">
         <AppLogo size="sm" />
       </Link>
 

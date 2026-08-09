@@ -1,7 +1,7 @@
 """Skill 生态市场（Phase 4）：本地包的发布 / 安装 / 卸载。
 
 闭环口径：
-- 发布 export：本地包目录 → `.takton-pkg.zip`（整个目录原样打包，含 manifest/skill.yaml/SYSTEM.md）
+- 发布 export：本地包目录 → `.tevarn-pkg.zip`（整个目录原样打包，含 manifest/skill.yaml/SYSTEM.md）
 - 安装 install：zip 字节流 → 安全校验（防路径穿越/单顶层目录/必须有可识别清单）
   → 解压到可写安装根 → 契约解析 + requires 检测透出 → 立即可被 loader 发现
 - 卸载 uninstall：删除可写安装根内的同名包目录（builtin/examples/virtual 包拒绝动）
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 _PKG_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 # 可识别清单：任一存在即视为合法包
 _MANIFEST_CANDIDATES = (
-    "takton.package.json",
+    "tevarn.package.json",
     "package.json",
     "PACKAGE.yaml",
     "package.yaml",
@@ -79,7 +79,7 @@ def install_root() -> Path:
     appdata = os.environ.get("APPDATA") or os.environ.get("HOME") or ""
     if not appdata:
         raise RuntimeError("no writable package install root")
-    root = Path(appdata) / "takton" / "packages"
+    root = Path(appdata) / "tevarn" / "packages"
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -107,7 +107,7 @@ def export_package_zip(name: str) -> tuple[bytes, str]:
                 continue
             # 以包名为顶层目录，安装端按单顶层目录校验
             zf.write(f, arcname=f"{name}/{f.relative_to(pkg_dir).as_posix()}")
-    return buf.getvalue(), f"{name}.takton-pkg.zip"
+    return buf.getvalue(), f"{name}.tevarn-pkg.zip"
 
 
 def load_packages_sync():

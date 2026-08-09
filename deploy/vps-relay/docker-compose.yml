@@ -1,10 +1,10 @@
-# Takton VPS Relay — one-click public reverse tunnel
+# Tevarn VPS Relay — one-click public reverse tunnel
 # Public: host :80 → relay :8080 → PC backend (via outbound WSS from PC)
 services:
   relay:
     build: ./relay
-    image: takton-relay:1.0
-    container_name: takton-relay
+    image: tevarn-relay:1.0
+    container_name: tevarn-relay
     restart: unless-stopped
     ports:
       - "${RELAY_PUBLIC_PORT:-80}:8080"

@@ -64,7 +64,7 @@ export function GlobalChatWs() {
     getLastMessageId: () => chatWsHandlers().getLastMessageId?.(),
     onSettingsChanged: (keys) => {
       if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('takton:settings-changed', { detail: keys }));
+        window.dispatchEvent(new CustomEvent('tevarn:settings-changed', { detail: keys }));
       }
     },
   });

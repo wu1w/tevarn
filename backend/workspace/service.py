@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 _ROOTS: dict[str, Path] = {}
 
 _STATE_FILE = Path(
-    os.environ.get("TAKTON_WORKSPACE_STATE", "")
-    or str(Path.home() / ".takton" / "workspace_roots.json")
+    os.environ.get("TEVARN_WORKSPACE_STATE", "")
+    or str(Path.home() / ".tevarn" / "workspace_roots.json")
 )
 
 

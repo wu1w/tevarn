@@ -1,5 +1,5 @@
 /**
- * Takton Electron Preload Script
+ * Tevarn Electron Preload Script
  *
  * 通过 contextBridge 安全地暴露 Electron IPC API 给渲染进程。
  * 同步注入 API/WS URL，避免 axios 模块加载时读不到地址。
@@ -13,21 +13,21 @@ try {
   const apiUrl = ipcRenderer.sendSync('get-backend-url-sync') as string | undefined;
   const wsUrl = ipcRenderer.sendSync('get-ws-url-sync') as string | undefined;
   // REST：强制同源，交给主进程静态服反代（避免端口错配 / Network Error）
-  (window as unknown as Record<string, string>).__TAKTON_API_URL__ = '/api';
+  (window as unknown as Record<string, string>).__TEVARN_API_URL__ = '/api';
   // WS：强制同源，避免注入的后端端口过期/被 8000 占用导致一直「正在连接」
-  (window as unknown as Record<string, string>).__TAKTON_WS_URL__ = 'ws://127.0.0.1:3000/api';
+  (window as unknown as Record<string, string>).__TEVARN_WS_URL__ = 'ws://127.0.0.1:3000/api';
   // 保留后端直连地址作调试（页面可覆盖，但 resolve 会优先同源）
   if (wsUrl) {
-    (window as unknown as Record<string, string>).__TAKTON_WS_URL_DIRECT__ = wsUrl;
+    (window as unknown as Record<string, string>).__TEVARN_WS_URL_DIRECT__ = wsUrl;
   } else if (apiUrl) {
     const ws = apiUrl.replace(/^http/, 'ws').replace(/\/$/, '');
-    (window as unknown as Record<string, string>).__TAKTON_WS_URL_DIRECT__ = ws.endsWith('/api')
+    (window as unknown as Record<string, string>).__TEVARN_WS_URL_DIRECT__ = ws.endsWith('/api')
       ? ws
       : `${ws}/api`;
   }
 } catch {
-  (window as unknown as Record<string, string>).__TAKTON_API_URL__ = '/api';
-  (window as unknown as Record<string, string>).__TAKTON_WS_URL__ = 'ws://127.0.0.1:3000/api';
+  (window as unknown as Record<string, string>).__TEVARN_API_URL__ = '/api';
+  (window as unknown as Record<string, string>).__TEVARN_WS_URL__ = 'ws://127.0.0.1:3000/api';
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -60,9 +60,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   /** 系统文件夹选择器（专业模式绑定项目） */
     selectDirectory: (): Promise<string | null> => ipcRenderer.invoke('select-directory'),
 
-    /** 打开 Takton Code CLI（外部终端，后端通过 bridge 互通） */
-    openTaktonCode: (opts?: { path?: string; mode?: string }): Promise<{ ok: boolean; error?: string }> =>
-      ipcRenderer.invoke('open-takton-code', opts),
+    /** 打开 Tevarn Code CLI（外部终端，后端通过 bridge 互通） */
+    openTevarnCode: (opts?: { path?: string; mode?: string }): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('open-tevarn-code', opts),
 
     installUpdate: (): Promise<void> => ipcRenderer.invoke('install-update'),
 
@@ -91,14 +91,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
 // 异步兜底：REST 始终同源 /api；WS 保持同源反代
 (async () => {
   try {
-    (window as unknown as Record<string, string>).__TAKTON_API_URL__ = '/api';
-    (window as unknown as Record<string, string>).__TAKTON_WS_URL__ = 'ws://127.0.0.1:3000/api';
+    (window as unknown as Record<string, string>).__TEVARN_API_URL__ = '/api';
+    (window as unknown as Record<string, string>).__TEVARN_WS_URL__ = 'ws://127.0.0.1:3000/api';
     const wsUrl = await ipcRenderer.invoke('get-ws-url');
     if (wsUrl) {
-      (window as unknown as Record<string, string>).__TAKTON_WS_URL_DIRECT__ = wsUrl;
+      (window as unknown as Record<string, string>).__TEVARN_WS_URL_DIRECT__ = wsUrl;
     }
   } catch {
-    (window as unknown as Record<string, string>).__TAKTON_API_URL__ = '/api';
-    (window as unknown as Record<string, string>).__TAKTON_WS_URL__ = 'ws://127.0.0.1:3000/api';
+    (window as unknown as Record<string, string>).__TEVARN_API_URL__ = '/api';
+    (window as unknown as Record<string, string>).__TEVARN_WS_URL__ = 'ws://127.0.0.1:3000/api';
   }
 })();

@@ -1,6 +1,6 @@
 """Runtime Services 门面：编制 / 工单 / 调度。
 
-Kernel 控制平面默认由 **Rust** ``takton-kernel-host`` 提供（经 ``get_kernel()``）。
+Kernel 控制平面默认由 **Rust** ``tevarn-kernel-host`` 提供（经 ``get_kernel()``）。
 Workforce 装配（Inbox / Dispatcher / Evolution）仍由 Python 适配器完成，
 并注册到 Rust Runtime 的 service registry（若 host 可用）。
 """

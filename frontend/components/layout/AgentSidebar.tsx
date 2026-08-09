@@ -288,7 +288,7 @@ export function AgentSidebar() {
   const [projectsOpen, setProjectsOpen] = useState(() => {
     if (typeof window === 'undefined') return false;
     try {
-      return localStorage.getItem('takton-sb-projects-open') === '1';
+      return localStorage.getItem('tevarn-sb-projects-open') === '1';
     } catch {
       return false;
     }
@@ -297,7 +297,7 @@ export function AgentSidebar() {
     setProjectsOpen((v) => {
       const next = !v;
       try {
-        localStorage.setItem('takton-sb-projects-open', next ? '1' : '0');
+        localStorage.setItem('tevarn-sb-projects-open', next ? '1' : '0');
       } catch {
         /* ignore */
       }
@@ -431,7 +431,7 @@ export function AgentSidebar() {
   return (
     <div className="tk-sb">
       <div className="tk-sb-head">
-        <div className="tk-sb-title">takton</div>
+        <div className="tk-sb-title">tevarn</div>
         <div className="tk-sb-sub">
           {list.length} {t('nav.agentsRunning' as never)}
         </div>

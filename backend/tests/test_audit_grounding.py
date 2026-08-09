@@ -38,7 +38,7 @@ def test_audit_gate_soft_allows_shallow_glob():
 def test_audit_gate_strict_blocks_shallow_glob(monkeypatch):
     from backend.agent.grounding_policy import clear_policy_cache
 
-    monkeypatch.setenv("TAKTON_GROUNDING_MODE", "strict")
+    monkeypatch.setenv("TEVARN_GROUNDING_MODE", "strict")
     clear_policy_cache()
     try:
         v = evaluate_completion(

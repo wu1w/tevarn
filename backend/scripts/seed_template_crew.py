@@ -446,7 +446,7 @@ async def seed_default_crew_on_startup() -> dict[str, Any]:
 
     user_id = None
     try:
-        admin = await AsyncUserRepository().get_by_email("admin@takton.dev")
+        admin = await AsyncUserRepository().get_by_email("admin@tevarn.dev")
         if admin is not None:
             user_id = admin.id
     except Exception:

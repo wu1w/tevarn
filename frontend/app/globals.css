@@ -413,7 +413,7 @@ pre {
   to { opacity: 1; transform: none; }
 }
 
-/* Light Theme — Takton AIOS 暖纸水彩色板（demo v2 定稿） */
+/* Light Theme — Tevarn AIOS 暖纸水彩色板（demo v2 定稿） */
 [data-theme="light"] {
   --page-bg: #f6f2e8;
   --card-bg: #fbf8ef;
@@ -424,8 +424,9 @@ pre {
   --foreground: #33302a;
   --foreground-muted: #6f6958;
   --foreground-dim: #77705e;
-  --brand-purple: #5f7550;
-  --brand-cyan: #4f7d6a;
+  /* Tevarn brand (Demo C · Light Console): electric purple × neon cyan */
+  --brand-purple: #8B7CFF;
+  --brand-cyan: #22D8EE;
   --brand-gradient-start: #5f7550;
   --brand-gradient-end: #4f7d6a;
   --border-subtle: rgba(95, 117, 80, 0.1);
@@ -463,7 +464,7 @@ pre {
   mix-blend-mode: multiply;
 }
 
-/* Dark Theme — Takton AIOS 暖炭水彩色板（demo v2 定稿） */
+/* Dark Theme — Tevarn AIOS 暖炭水彩色板（demo v2 定稿） */
 [data-theme="dark"] {
   --page-bg: #171613;
   --card-bg: rgba(255, 250, 238, 0.03);
@@ -474,8 +475,9 @@ pre {
   --foreground: #ece7d9;
   --foreground-muted: #a8a28f;
   --foreground-dim: #928b78;
-  --brand-purple: #a3bd8b;
-  --brand-cyan: #80b09b;
+  /* Tevarn brand on dark surfaces */
+  --brand-purple: #9B8CFF;
+  --brand-cyan: #3AE0F2;
   --brand-gradient-start: #a3bd8b;
   --brand-gradient-end: #80b09b;
   --border-subtle: rgba(163, 189, 139, 0.1);
@@ -902,7 +904,7 @@ button {
 }
 
 
-/* ═══════════════ Takton v2 Shell (Rail + Sidebar) ═══════════════ */
+/* ═══════════════ Tevarn v2 Shell (Rail + Sidebar) ═══════════════ */
 .tk-app-body {
   display: grid;
   /* 侧边栏宽度可由 --tk-sb-w 拖拽调整（AppShell 手柄写入） */
@@ -1338,7 +1340,7 @@ button {
 }
 
 
-/* ═══════════════ Takton UX Polish：动效 / 滚动条 / 手柄 / 终端 ═══════════════ */
+/* ═══════════════ Tevarn UX Polish：动效 / 滚动条 / 手柄 / 终端 ═══════════════ */
 
 /* ── 统一动效令牌（参考 Kimi：轻快、有回弹、不打断输入） ── */
 :root {

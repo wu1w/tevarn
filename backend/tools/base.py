@@ -1,5 +1,5 @@
 """
-统一工具抽象层（Takton Tool v3.0）
+统一工具抽象层（Tevarn Tool v3.0）
 
 所有 Agent 可调用的能力都通过 BaseTool 抽象：
 - 内置工具（builtin）

@@ -62,11 +62,11 @@ cases:
   - id: shell_echo
     title: command echo
     user: |
-      用 command 工具执行: echo TAKTON_BENCH_OK
-      然后在最终回复里必须包含字符串 TAKTON_BENCH_OK（从 stdout 抄过来）。
+      用 command 工具执行: echo TEVARN_BENCH_OK
+      然后在最终回复里必须包含字符串 TEVARN_BENCH_OK（从 stdout 抄过来）。
     expect:
       tools_any: [command]
-      final_contains_any: ["TAKTON_BENCH_OK"]
+      final_contains_any: ["TEVARN_BENCH_OK"]
     tags: [coding, shell]
 
   - id: explain_after_read

@@ -34,7 +34,7 @@ AWESOME_REPOS: dict[str, dict[str, Any]] = {
             ".github", "composio-skills", "connect-apps-plugin",
             "connect-apps", "document-skills",  # 这些是 plugin 集合而非单 skill
         },
-        "compatibility": ["claude-code", "hermes", "openclaw", "takton"],
+        "compatibility": ["claude-code", "hermes", "openclaw", "tevarn"],
     },
     "awesome-hermes": {
         "repo": "ZeroPointRepo/awesome-hermes-skills",
@@ -42,7 +42,7 @@ AWESOME_REPOS: dict[str, dict[str, Any]] = {
         "display_name": "Awesome Hermes Skills",
         # hermes awesome list 是 README 单文件索引，不是目录结构，特殊处理
         "readme_index": True,
-        "compatibility": ["hermes", "claude-code", "openclaw", "takton"],
+        "compatibility": ["hermes", "claude-code", "openclaw", "tevarn"],
     },
 }
 

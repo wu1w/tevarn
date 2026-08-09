@@ -5,7 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../bridge/takton_bridge.dart';
+import '../bridge/tevarn_bridge.dart';
 import '../models/app_models.dart';
 import '../services/app_controller.dart';
 import '../theme/pixel_theme.dart';
@@ -545,8 +545,8 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
     unawaited(c.refreshAll());
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.remove('takton-oauth-state');
-      await prefs.remove('takton-oauth-kind');
+      await prefs.remove('tevarn-oauth-state');
+      await prefs.remove('tevarn-oauth-kind');
     } catch (_) {}
 
     // Auto-pull models with stored token (no PC required)
@@ -1164,8 +1164,8 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
         // Persist state so paste-callback works after returning from browser
         try {
           final prefs = await SharedPreferences.getInstance();
-          await prefs.setString('takton-oauth-state', _oauthState);
-          await prefs.setString('takton-oauth-kind', 'openai');
+          await prefs.setString('tevarn-oauth-state', _oauthState);
+          await prefs.setString('tevarn-oauth-kind', 'openai');
         } catch (_) {}
         final url = r['authorization_url']?.toString() ??
             r['url']?.toString() ??
@@ -1288,7 +1288,7 @@ class _LlmSettingsPanelState extends State<LlmSettingsPanel> {
     if (_oauthState.isEmpty) {
       try {
         final prefs = await SharedPreferences.getInstance();
-        _oauthState = prefs.getString('takton-oauth-state') ?? '';
+        _oauthState = prefs.getString('tevarn-oauth-state') ?? '';
       } catch (_) {}
     }
     setState(() {

@@ -1,7 +1,7 @@
 """
 统一 Skill 元数据模型
 
-跨生态（takton / clawhub / awesome-claude / awesome-hermes / mattpocock）的 skill 统一表示。
+跨生态（tevarn / clawhub / awesome-claude / awesome-hermes / mattpocock）的 skill 统一表示。
 所有 fetcher 都将各源原始数据转换为 UnifiedSkill 输出给前端。
 """
 
@@ -13,7 +13,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 SkillSource = Literal[
-    "takton",
+    "tevarn",
     "clawhub",
     "awesome-claude",
     "awesome-hermes",
@@ -64,7 +64,7 @@ class UnifiedSkill(BaseModel):
 
     # 安装相关
     install_command: str = ""        # 各源推荐安装命令（展示用）
-    compatibility: list[str] = Field(default_factory=list)  # ["takton","hermes","claude-code","openclaw"]
+    compatibility: list[str] = Field(default_factory=list)  # ["tevarn","hermes","claude-code","openclaw"]
 
     # 时间
     created_at: datetime | None = None

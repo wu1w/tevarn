@@ -3,7 +3,7 @@
 
 MCP 与 Skills 不同：Claude Code / Hermes / OpenClaw / Codex 共享同一 MCP 协议，
 真正的公共池是 Official MCP Registry（registry.modelcontextprotocol.io）。
-Takton 精选目录 + 官方 Registry 一起聚合，安装时映射为本机 stdio/sse 配置。
+Tevarn 精选目录 + 官方 Registry 一起聚合，安装时映射为本机 stdio/sse 配置。
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ class UnifiedMCP(BaseModel):
     category: str = "其他"
     tags: list[str] = Field(default_factory=list)
 
-    # 安装映射（写入 Takton MCP 配置）
+    # 安装映射（写入 Tevarn MCP 配置）
     transport: Literal["stdio", "sse"] = "stdio"
     command: str = ""
     args: list[str] = Field(default_factory=list)
@@ -41,7 +41,7 @@ class UnifiedMCP(BaseModel):
     package_id: str = ""
     popularity: int = 0
     compatibility: list[str] = Field(
-        default_factory=lambda: ["takton", "claude-code", "hermes", "openclaw", "codex"]
+        default_factory=lambda: ["tevarn", "claude-code", "hermes", "openclaw", "codex"]
     )
     installable: bool = True
     note: str = ""

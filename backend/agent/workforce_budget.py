@@ -64,14 +64,14 @@ def _settings_hard_cap() -> int:
             return cap
     except Exception:
         pass
-    return _env_int("TAKTON_WORKFORCE_BUDGET_HARD_CAP", _HARD_CAP)
+    return _env_int("TEVARN_WORKFORCE_BUDGET_HARD_CAP", _HARD_CAP)
 
 
 def kind_budget_floor(kind: str | None) -> int:
     if not kind:
         return 0
     base = _KIND_FLOOR.get(kind, 0)
-    mult = float(os.environ.get("TAKTON_BUDGET_LIFT_MULT") or "1")
+    mult = float(os.environ.get("TEVARN_BUDGET_LIFT_MULT") or "1")
     try:
         mult = max(0.5, min(mult, 3.0))
     except Exception:
@@ -102,13 +102,17 @@ def is_budget_exceeded_result(text: str | None) -> bool:
         return True
     if "kernel_token_budget_exhausted" in t or "kernel_budget_precheck" in t:
         return True
-    # Iteration / round budget — complete normally, do NOT budget-fail
+    # Iteration / round / segment tool-round end — complete normally, do NOT budget-fail
     if (
         "迭代预算" in t
         or "iteration budget" in low
         or "max_total" in low
         or "budget_grace" in t
         or "kernel_iteration_exhausted" in t
+        or "本段工具轮" in t
+        or "工具轮用尽" in t
+        or "max_tool_rounds" in low
+        or "segment_tool_rounds" in low
     ):
         return False
     # Token-specific Chinese
@@ -189,7 +193,7 @@ def suggested_token_budget(
     if base == 0:
         return 0  # explicit unlimited
 
-    fallback = _env_int("TAKTON_WORKFORCE_FALLBACK_BUDGET", _DEFAULT_FALLBACK)
+    fallback = _env_int("TEVARN_WORKFORCE_FALLBACK_BUDGET", _DEFAULT_FALLBACK)
     cap = _settings_hard_cap()
 
     floor = int(base) if base is not None else fallback

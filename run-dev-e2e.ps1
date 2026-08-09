@@ -1,4 +1,4 @@
-# Local backend smoke tests for Takton (Windows)
+# Local backend smoke tests for Tevarn (Windows)
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
@@ -19,17 +19,17 @@ Start-Sleep -Seconds 1
 Write-Host "==> Ensuring backend deps ($Py)"
 & $Py -m pip install -r (Join-Path $Root "backend\requirements.txt") --disable-pip-version-check -q
 
-$env:TAKTON_JWT_SECRET = "takton-local-dev-jwt-secret-32chars-min"
-$env:TAKTON_API_KEY = "takton-local-dev-api-key-32chars-min"
-$env:TAKTON_SETTINGS_ENCRYPTION_SALT = "takton-local-dev-salt-2026"
-$env:TAKTON_DB_URL = "sqlite+aiosqlite:///$($Root.Replace('\','/'))/takton-dev.db"
-$env:TAKTON_APP_HOST = "127.0.0.1"
-$env:TAKTON_APP_PORT = "$Port"
-$env:TAKTON_SINGLE_USER_MODE = "true"
-$env:TAKTON_FILE_BROWSER_ROOT = (Join-Path $Root "workspace")
-$env:TAKTON_UPLOADS_DIR = (Join-Path $Root "uploads")
-$env:TAKTON_DEFAULT_ADMIN_PASSWORD = "admin"
-$env:TAKTON_LOG_LEVEL = "info"
+$env:TEVARN_JWT_SECRET = "tevarn-local-dev-jwt-secret-32chars-min"
+$env:TEVARN_API_KEY = "tevarn-local-dev-api-key-32chars-min"
+$env:TEVARN_SETTINGS_ENCRYPTION_SALT = "tevarn-local-dev-salt-2026"
+$env:TEVARN_DB_URL = "sqlite+aiosqlite:///$($Root.Replace('\','/'))/tevarn-dev.db"
+$env:TEVARN_APP_HOST = "127.0.0.1"
+$env:TEVARN_APP_PORT = "$Port"
+$env:TEVARN_SINGLE_USER_MODE = "true"
+$env:TEVARN_FILE_BROWSER_ROOT = (Join-Path $Root "workspace")
+$env:TEVARN_UPLOADS_DIR = (Join-Path $Root "uploads")
+$env:TEVARN_DEFAULT_ADMIN_PASSWORD = "admin"
+$env:TEVARN_LOG_LEVEL = "info"
 
 Write-Host "==> Starting backend on :$Port"
 $outLog = Join-Path $Root "backend-e2e.log"

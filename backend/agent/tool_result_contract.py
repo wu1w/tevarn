@@ -47,14 +47,14 @@ TOOL_RESULT_BUDGET: dict[str, int] = {
 DEFAULT_TOOL_BUDGET = 12_000
 
 # Global floor: do not spill below this even if a tool budget is lower.
-# Env: TAKTON_RESULT_SPILL_THRESHOLD
+# Env: TEVARN_RESULT_SPILL_THRESHOLD
 SPILL_THRESHOLD = int(
-    _os.environ.get("TAKTON_RESULT_SPILL_THRESHOLD", "16000") or 16000
+    _os.environ.get("TEVARN_RESULT_SPILL_THRESHOLD", "16000") or 16000
 )
 
-# Envelope preview size when spilled (head + tail). Env: TAKTON_RESULT_SPILL_PREVIEW
+# Envelope preview size when spilled (head + tail). Env: TEVARN_RESULT_SPILL_PREVIEW
 SPILL_PREVIEW_CHARS = int(
-    _os.environ.get("TAKTON_RESULT_SPILL_PREVIEW", "8000") or 8000
+    _os.environ.get("TEVARN_RESULT_SPILL_PREVIEW", "8000") or 8000
 )
 
 _WRITE_TOOLS = frozenset({"file_write", "edit", "apply_patch", "desktop_write_file"})
@@ -65,13 +65,31 @@ _HANDLE_ID_RE = re.compile(
 
 
 def is_tool_error(result: str | None) -> bool:
+    """True for failures that should count toward fail-breakers / durable failed.
+
+    Includes outer agent timeout (`[Error] Tool 'x' timed out…`) and inner
+    command/python timeouts (`[Timeout] …`) — the latter used to be treated as
+    success by durable run recording.
+
+    Soft outcomes like `[Background after timeout]` are **not** errors — the
+    process keeps running; model should process poll.
+    """
     t = (result or "").lstrip()
+    if not t:
+        return False
+    if t.startswith("[Background"):
+        return False
+    low = t[:80].lower()
     return (
         t.startswith("[Error]")
         or t.startswith("[error]")
+        or t.startswith("[Timeout]")
+        or t.startswith("[timeout]")
         or t.startswith("[Security")
         or t.startswith("[Denied]")
         or t.startswith("[Hook Blocked]")
+        or "timed out after" in low
+        or ("exceeded" in low and "terminat" in low)
     )
 
 

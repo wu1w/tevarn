@@ -418,10 +418,56 @@ def _map_responses_usage(raw: dict[str, Any] | None) -> dict[str, Any]:
         return out
 
 
+def _coerce_reasoning_text(val: Any) -> str:
+    """Normalize Codex reasoning payloads to plain text for the UI.
+
+    Upstream sometimes sends structured parts like
+    ``[{"type":"summary_text","text":"..."}]`` or dict deltas. Dumping them
+    with ``str()`` polluted ThinkingBlock (``[{'type': 'summary_text'...``).
+    """
+    if val is None:
+        return ""
+    if isinstance(val, str):
+        s = val.strip()
+        if not s:
+            return ""
+        # JSON-encoded structured summary
+        if (s.startswith("{") and s.endswith("}")) or (
+            s.startswith("[") and s.endswith("]")
+        ):
+            try:
+                return _coerce_reasoning_text(json.loads(s))
+            except Exception:
+                # Python-repr style from accidental str(list/dict)
+                import re as _re
+
+                texts = _re.findall(
+                    r"['\"]text['\"]\s*:\s*['\"]([^'\"]*)['\"]", s
+                )
+                if texts:
+                    return "".join(texts)
+                if "summary_text" in s:
+                    return ""
+                return val
+        return val
+    if isinstance(val, list):
+        return "".join(_coerce_reasoning_text(x) for x in val)
+    if isinstance(val, dict):
+        # Responses API summary part
+        if val.get("type") in ("summary_text", "output_text", "text"):
+            return _coerce_reasoning_text(val.get("text") or val.get("summary"))
+        for k in ("text", "summary", "delta", "content"):
+            if k in val and val[k] is not None:
+                return _coerce_reasoning_text(val[k])
+        return ""
+    return str(val)
+
+
 def _sse_chat_chunk(
     *,
     model: str,
     content: str | None = None,
+    reasoning: str | None = None,
     tool_calls: list[dict[str, Any]] | None = None,
     finish_reason: str | None = None,
     chunk_id: str = "codex-stream",
@@ -430,9 +476,20 @@ def _sse_chat_chunk(
     delta: dict[str, Any] = {}
     if content:
         delta["content"] = content
+    # OpenAI-compat field consumed by openai_compatible → LLMChunk.reasoning_delta
+    # → agent streams <thinking> to the UI. Without this, Codex high-effort
+    # rounds look like a frozen「思考中」with zero body until tools flush.
+    if reasoning:
+        delta["reasoning_content"] = reasoning
     if tool_calls:
         delta["tool_calls"] = tool_calls
-    if content is None and tool_calls is None and finish_reason is None and not usage:
+    if (
+        content is None
+        and reasoning is None
+        and tool_calls is None
+        and finish_reason is None
+        and not usage
+    ):
         delta = {}
     payload: dict[str, Any] = {
         "id": chunk_id,
@@ -471,6 +528,8 @@ class _CodexStreamToChat:
         self._finished = False
         self._usage: dict[str, Any] = {}
         self._text: str = ""
+        self._reasoning: str = ""
+        self._tool_announce: set[str] = set()
 
     def _idx_for(self, *, item_id: str = "", call_id: str = "", name: str = "") -> int:
         for key in (call_id, item_id):
@@ -605,10 +664,57 @@ class _CodexStreamToChat:
                 )
             return out
 
-        # 工具只缓冲
+        # Reasoning summary → reasoning_content (UI ThinkingBlock). Without this
+        # gpt-5.x high-effort rounds are silent for 10–60s and the chat only
+        # shows「思考中」until tools flush at response.completed.
+        if et in (
+            "response.reasoning_summary_text.delta",
+            "response.reasoning_summary_text.delta.event",
+            "response.reasoning_text.delta",
+            "response.reasoning.delta",
+        ):
+            delta = _coerce_reasoning_text(ev.get("delta"))
+            if not delta:
+                delta = _coerce_reasoning_text(ev.get("text"))
+            if delta:
+                self._reasoning += delta
+                out.append(
+                    _sse_chat_chunk(
+                        model=self.model,
+                        reasoning=delta,
+                        chunk_id=self.resp_id,
+                    )
+                )
+            return out
+
+        if et in (
+            "response.reasoning_summary_part.added",
+            "response.reasoning_summary_part.done",
+        ):
+            part = ev.get("part") if isinstance(ev.get("part"), dict) else {}
+            text = _coerce_reasoning_text(
+                part.get("text")
+                or part.get("summary")
+                or part
+                or ev.get("delta")
+            )
+            if text:
+                self._reasoning += text
+                out.append(
+                    _sse_chat_chunk(
+                        model=self.model,
+                        reasoning=text,
+                        chunk_id=self.resp_id,
+                    )
+                )
+            return out
+
+        # 工具只缓冲（完整 args 在 completed 时整包发，避免半截 JSON）
+        # 但工具名一旦出现就推一条 reasoning 行，避免前端继续空转「思考中」
         if et in ("response.output_item.added", "response.output_item.done"):
             item = ev.get("item") if isinstance(ev.get("item"), dict) else {}
-            if item.get("type") in ("function_call", "custom_tool_call"):
+            itype = str(item.get("type") or "")
+            if itype in ("function_call", "custom_tool_call"):
                 item_id = str(item.get("id") or "")
                 call_id = str(item.get("call_id") or item_id)
                 name = str(item.get("name") or "")
@@ -628,6 +734,36 @@ class _CodexStreamToChat:
                     self._calls[idx]["id"] = call_id
                 if args_s:
                     self._calls[idx]["arguments"] = args_s
+                # Announce once per call id so UI shows progress mid-reasoning
+                ann_key = call_id or item_id or name
+                if name and ann_key not in self._tool_announce:
+                    self._tool_announce.add(ann_key)
+                    note = f"\n→ {name}\n"
+                    self._reasoning += note
+                    out.append(
+                        _sse_chat_chunk(
+                            model=self.model,
+                            reasoning=note,
+                            chunk_id=self.resp_id,
+                        )
+                    )
+            elif itype in ("reasoning", "reasoning_summary") and et.endswith("done"):
+                # Some gateways only emit full reasoning item at done
+                text = _coerce_reasoning_text(
+                    item.get("summary")
+                    or item.get("text")
+                    or item.get("content")
+                    or item
+                )
+                if text and text not in self._reasoning:
+                    self._reasoning += text
+                    out.append(
+                        _sse_chat_chunk(
+                            model=self.model,
+                            reasoning=text,
+                            chunk_id=self.resp_id,
+                        )
+                    )
             return out
 
         if et in (
@@ -1185,14 +1321,34 @@ async def chat_completions(request: Request):
             pass
         return kw
 
+    async def _acquire_codex_sem(kind: str):
+        """Wait for the global Codex upstream lock; log queue waits (UX / forensics)."""
+        sem = _codex_sem()
+        # asyncio.Semaphore has no non-blocking probe that is portable — time the wait.
+        t0 = asyncio.get_running_loop().time()
+        await sem.acquire()
+        waited = asyncio.get_running_loop().time() - t0
+        if waited >= 0.5:
+            logger.info(
+                "codex upstream lock waited %.1fs (%s isolate=%s max_concurrent=%s)",
+                waited,
+                kind,
+                _use_isolate,
+                _CODEX_MAX_CONCURRENT,
+            )
+        else:
+            logger.debug(
+                "codex upstream lock acquired (%s isolate=%s)",
+                kind,
+                _use_isolate,
+            )
+        return sem
+
     if not client_wants_stream:
         # 上游仍用 stream=true 收集完整输出（Codex 对 stream:false 不友好）
         try:
-            async with _codex_sem():
-                logger.debug(
-                    "codex upstream lock acquired (non-stream isolate=%s)",
-                    _use_isolate,
-                )
+            _sem = await _acquire_codex_sem("non-stream")
+            try:
                 if _use_isolate:
                     conv = _CodexStreamToChat(model)
                     async for item in consume_sse_bytes_to_events(
@@ -1254,6 +1410,8 @@ async def chat_completions(request: Request):
                                     status_code=resp.status,
                                 )
                             return await _consume_sse_to_completion(resp)
+            finally:
+                _sem.release()
         except Exception as e:
             logger.warning("openai-codex proxy failed: %s", e)
             return JSONResponse(
@@ -1264,10 +1422,8 @@ async def chat_completions(request: Request):
     async def _gen():
         conv = _CodexStreamToChat(model)
         try:
-            async with _codex_sem():
-                logger.debug(
-                    "codex upstream lock acquired (stream isolate=%s)", _use_isolate
-                )
+            _sem = await _acquire_codex_sem("stream")
+            try:
                 if _use_isolate:
                     async for item in consume_sse_bytes_to_events(
                         iter_codex_sse_isolated(
@@ -1374,6 +1530,11 @@ async def chat_completions(request: Request):
                                 for part in conv.close():
                                     yield part
                             return
+            finally:
+                try:
+                    _sem.release()
+                except Exception:
+                    pass
         except Exception as e:
             logger.warning("openai-codex stream proxy failed: %s", e)
             yield _sse_chat_chunk(

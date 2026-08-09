@@ -1,4 +1,4 @@
-"""Deploy frps to VPS and print connection info. Token via env TAKTON_RELAY_TOKEN."""
+"""Deploy frps to VPS and print connection info. Token via env TEVARN_RELAY_TOKEN."""
 from __future__ import annotations
 
 import os
@@ -9,17 +9,17 @@ from pathlib import Path
 
 import paramiko
 
-HOST = os.environ.get("TAKTON_VPS_HOST", "150.158.109.231")
-USER = os.environ.get("TAKTON_VPS_USER", "ubuntu")
-PASSWORD = os.environ.get("TAKTON_VPS_PASSWORD", "")
-REMOTE_DIR = "/opt/takton-vps-relay"
+HOST = os.environ.get("TEVARN_VPS_HOST", "150.158.109.231")
+USER = os.environ.get("TEVARN_VPS_USER", "ubuntu")
+PASSWORD = os.environ.get("TEVARN_VPS_PASSWORD", "")
+REMOTE_DIR = "/opt/tevarn-vps-relay"
 HERE = Path(__file__).resolve().parent
 
 if not PASSWORD:
-    print("Set TAKTON_VPS_PASSWORD", file=sys.stderr)
+    print("Set TEVARN_VPS_PASSWORD", file=sys.stderr)
     sys.exit(1)
 
-token = os.environ.get("TAKTON_RELAY_TOKEN") or ("tr_" + secrets.token_urlsafe(24))
+token = os.environ.get("TEVARN_RELAY_TOKEN") or ("tr_" + secrets.token_urlsafe(24))
 
 
 def run(client: paramiko.SSHClient, cmd: str, check: bool = True) -> str:
@@ -39,7 +39,7 @@ def run(client: paramiko.SSHClient, cmd: str, check: bool = True) -> str:
 
 def main() -> None:
     frps = (HERE / "frps.toml").read_text(encoding="utf-8")
-    frps = frps.replace("TAKTON_RELAY_TOKEN_PLACEHOLDER", token)
+    frps = frps.replace("TEVARN_RELAY_TOKEN_PLACEHOLDER", token)
     compose = (HERE / "docker-compose.yml").read_text(encoding="utf-8")
 
     client = paramiko.SSHClient()
@@ -78,8 +78,8 @@ def main() -> None:
         f"cd {REMOTE_DIR} && docker compose pull && docker compose up -d",
     )
     time.sleep(2)
-    run(client, "docker ps --filter name=takton-frps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'")
-    run(client, "docker logs takton-frps 2>&1 | tail -20", check=False)
+    run(client, "docker ps --filter name=tevarn-frps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'")
+    run(client, "docker logs tevarn-frps 2>&1 | tail -20", check=False)
 
     # write local frpc config (not committed)
     local_frpc = HERE / "frpc.local.toml"
@@ -90,7 +90,7 @@ auth.method = "token"
 auth.token = "{token}"
 
 [[proxies]]
-name = "takton-backend"
+name = "tevarn-backend"
 type = "tcp"
 localIP = "127.0.0.1"
 localPort = 8090

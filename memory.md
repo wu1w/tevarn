@@ -1,22 +1,22 @@
 # Memory Index
 
 ## 🎯 当前焦点
-- [takton-kernel] feature/agent-kernel **0.5.4-alpha**：ChatGPT OAuth · CEO 全开令牌 · 持久化用量 ledger · prompt cache 稳定化 · okr_goal
+- [tevarn-kernel] feature/agent-kernel **0.5.4-alpha**：ChatGPT OAuth · CEO 全开令牌 · 持久化用量 ledger · prompt cache 稳定化 · okr_goal
 - 知识/契约与真实落盘路径对齐（见下方「路径权威」）
 
 ## 📂 路径权威（Windows · 以实际磁盘为准，勿信过期文档）
 
 | 角色 | 实际路径 | 说明 |
 |------|----------|------|
-| **源码 / 沙箱 workspace 根** | `C:\Users\wuyw\Documents\kimi\workspace\takton` | Job 沙箱 cwd；git 仓库根 |
-| **桌面 userData workspace（契约/记忆默认查找）** | `%APPDATA%\takton\data\workspace` | Electron/桌面侧会话契约与 memory.md |
-| **Computer 虚拟 home** | `<repo>\.computers\main\home` | 沙箱 HOME；其下 `.takton` 为运行态 |
-| **Skills（实际）** | `<repo>\.computers\main\home\.takton\skills` | 用户/clawhub 技能落盘处 |
-| **Skills（别名）** | `%USERPROFILE%\.takton\skills` | 若存在则为目录或链接；**以 computer home 为准** |
-| **Kernel / grants / tool_results** | `%USERPROFILE%\.takton\` | session_grants.json、tool_results、kernel 旁路状态 |
-| **桌面 DB / 上传** | `%APPDATA%\takton\` | takton.db、uploads、Preferences |
+| **源码 / 沙箱 workspace 根** | `C:\Users\wuyw\Documents\kimi\workspace\tevarn` | Job 沙箱 cwd；git 仓库根 |
+| **桌面 userData workspace（契约/记忆默认查找）** | `%APPDATA%\tevarn\data\workspace` | Electron/桌面侧会话契约与 memory.md |
+| **Computer 虚拟 home** | `<repo>\.computers\main\home` | 沙箱 HOME；其下 `.tevarn` 为运行态 |
+| **Skills（实际）** | `<repo>\.computers\main\home\.tevarn\skills` | 用户/clawhub 技能落盘处 |
+| **Skills（别名）** | `%USERPROFILE%\.tevarn\skills` | 若存在则为目录或链接；**以 computer home 为准** |
+| **Kernel / grants / tool_results** | `%USERPROFILE%\.tevarn\` | session_grants.json、tool_results、kernel 旁路状态 |
+| **桌面 DB / 上传** | `%APPDATA%\tevarn\` | tevarn.db、uploads、Preferences |
 
-> 自查常见误报：`AppData\...\workspace` 或 `~\.takton\skills`「不存在」时，先看 **repo 根** 与 **`.computers\main\home\.takton\skills`**。  
+> 自查常见误报：`AppData\...\workspace` 或 `~\.tevarn\skills`「不存在」时，先看 **repo 根** 与 **`.computers\main\home\.tevarn\skills`**。  
 > **禁止**为演示往 cost/cache ledger 灌 mock 数据。
 
 ## 🖥 执行环境（本机）
@@ -25,13 +25,13 @@
 - 列目录：用 `dir`，**不要** `ls`（除非明确在 Git Bash/WSL）
 - 路径分隔：优先 `\\` 或 pathlib；写 shell 时注意引号
 - 源码开发后端：`127.0.0.1:8090`；前端 Next：`127.0.0.1:3000`（rewrites → 8090）
-- Kernel host：`127.0.0.1:17890`，二进制 `target\\release\\takton-kernel-host.exe`
+- Kernel host：`127.0.0.1:17890`，二进制 `target\\release\\tevarn-kernel-host.exe`
 
 ## 📂 项目清单
 | 项目 | 路径 | 状态 | 最后更新 |
 |------|------|------|----------|
-| takton-kernel (agent-kernel) | 仓库 `feature/agent-kernel` | 进行中 | 2026-08-02 |
-| takton-optimization | projects/takton-optimization.md | 归档/并入 kernel 线 | 2026-07-22 |
+| tevarn-kernel (agent-kernel) | 仓库 `feature/agent-kernel` | 进行中 | 2026-08-02 |
+| tevarn-optimization | projects/tevarn-optimization.md | 归档/并入 kernel 线 | 2026-07-22 |
 
 ## 📋 跨会话待办
 - [ ] GitHub：`gh` 已装（约 2.96.x）→ **待 `gh auth status` 非交互确认**（勿在会话里盲触交互 login）

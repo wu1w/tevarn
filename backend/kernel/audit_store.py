@@ -1,8 +1,8 @@
 """Kernel 审计事件落盘。
 
 .. deprecated:: P0-A
-    Rust host 默认写 JSONL（``AuditEventStore`` in ``takton_kernel::audit``）。
-    Python 路径仅 fallback 使用；新逻辑改 crates/takton-kernel。
+    Rust host 默认写 JSONL（``AuditEventStore`` in ``tevarn_kernel::audit``）。
+    Python 路径仅 fallback 使用；新逻辑改 crates/tevarn-kernel。
 """
 
 from __future__ import annotations
@@ -15,17 +15,17 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_PATH = os.path.expanduser("~/.takton/kernel_events.jsonl")
+_DEFAULT_PATH = os.path.expanduser("~/.tevarn/kernel_events.jsonl")
 _TAIL_LOAD_LIMIT = 200  # 启动时只回放尾部，链验证按需全量读文件
 # H2-C2 rotation defaults
-_MAX_BYTES = int(os.environ.get("TAKTON_AUDIT_MAX_BYTES", str(32 * 1024 * 1024)) or 0) or (
+_MAX_BYTES = int(os.environ.get("TEVARN_AUDIT_MAX_BYTES", str(32 * 1024 * 1024)) or 0) or (
     32 * 1024 * 1024
 )
-_KEEP_SEGMENTS = int(os.environ.get("TAKTON_AUDIT_KEEP_SEGMENTS", "7") or 7)
+_KEEP_SEGMENTS = int(os.environ.get("TEVARN_AUDIT_KEEP_SEGMENTS", "7") or 7)
 
 
 def _worm_enabled() -> bool:
-    v = (os.environ.get("TAKTON_AUDIT_WORM") or "").strip().lower()
+    v = (os.environ.get("TEVARN_AUDIT_WORM") or "").strip().lower()
     return v in ("1", "true", "yes", "on")
 
 
@@ -105,7 +105,7 @@ class AuditEventStore:
                 "path": self._path,
                 "worm": self._worm,
                 "anchored_at": _t.time(),
-                "schema": "takton-audit-anchor-v1",
+                "schema": "tevarn-audit-anchor-v1",
             }
             raw = json.dumps(body, sort_keys=True, ensure_ascii=False)
             body["anchor_hash"] = hashlib.sha256(raw.encode("utf-8")).hexdigest()

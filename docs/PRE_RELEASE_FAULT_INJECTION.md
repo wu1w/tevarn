@@ -45,7 +45,7 @@
 | 8 | 沙箱能力探测 | `GET /api/kernel/runtime-health` 或 security check | `sandbox.level` ∈ full/restricted/none；none 时 issue+可操作 hint |
 | 9 | degraded 文案 | Windows 无 WSL bwrap / Linux 无 bubblewrap | UI 不写「已进完整 OS 沙箱」；提示装 bwrap / WSL 或接受 job restricted |
 
-**相关**：`crates/takton-kernel/src/isolation.rs`、`backend/computer/detect.py`、`backend/services/runtime_health.py`。
+**相关**：`crates/tevarn-kernel/src/isolation.rs`、`backend/computer/detect.py`、`backend/services/runtime_health.py`。
 
 ---
 
@@ -65,7 +65,7 @@
 
 | # | 注入 | 步骤 | 期望 |
 |---|------|------|------|
-| 13 | DEV_UNSAFE 启动 | `TAKTON_DEV_UNSAFE=1` 起后端 | 启动大字警告日志；runtime-health `degraded_modes` 含 dev_unsafe（红项） |
+| 13 | DEV_UNSAFE 启动 | `TEVARN_DEV_UNSAFE=1` 起后端 | 启动大字警告日志；runtime-health `degraded_modes` 含 dev_unsafe（红项） |
 | 14 | Court fail-closed | host 在线且 `agent_court_rust_required=true`，故意断 host 后再 tool | deny / 不静默 Python 放行 |
 | 15 | Python backend 拒绝 | 生产 guard 下 `KERNEL_BACKEND=python` 无 DEV | 拒绝或仅显式降级 + 健康红项 |
 

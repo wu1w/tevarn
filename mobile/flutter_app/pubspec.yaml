@@ -1,7 +1,7 @@
-﻿name: takton_mobile
-description: Takton Pixel Console �?Flutter shell, Rust engine
+﻿name: tevarn_mobile
+description: Tevarn Pixel Console �?Flutter shell, Rust engine
 publish_to: "none"
-version: 0.5.8+33
+version: 0.5.8+35
 
 environment:
   sdk: '>=3.10.0 <4.0.0'
@@ -35,4 +35,4 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - assets/takton_logo.png
+    - assets/tevarn_logo.png

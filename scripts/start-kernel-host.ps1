@@ -12,9 +12,9 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $Root
 $env:PYTHONPATH = $Root
-if (-not $env:TAKTON_AIOS_PROFILE) { $env:TAKTON_AIOS_PROFILE = "aios-dev" }
-$env:TAKTON_SINGLE_USER_MODE = "true"
+if (-not $env:TEVARN_AIOS_PROFILE) { $env:TEVARN_AIOS_PROFILE = "aios-dev" }
+$env:TEVARN_SINGLE_USER_MODE = "true"
 
-Write-Host "[takton] Kernel Host → http://${HostAddr}:${Port}"
-Write-Host "[takton] Console may connect later. Close UI ≠ stop this process."
+Write-Host "[tevarn] Kernel Host → http://${HostAddr}:${Port}"
+Write-Host "[tevarn] Console may connect later. Close UI ≠ stop this process."
 python -m backend.runtime --host $HostAddr --port $Port

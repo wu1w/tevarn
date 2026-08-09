@@ -14,9 +14,9 @@ const { execSync } = require('child_process');
 
 const root = path.resolve(__dirname, '..');
 const outDir = path.join(root, 'win-python');
-const PY_VER = process.env.TAKTON_WIN_PYTHON_VER || '3.12.8';
+const PY_VER = process.env.TEVARN_WIN_PYTHON_VER || '3.12.8';
 const EMBED_URL =
-  process.env.TAKTON_WIN_PYTHON_URL ||
+  process.env.TEVARN_WIN_PYTHON_URL ||
   `https://www.python.org/ftp/python/${PY_VER}/python-${PY_VER}-embed-amd64.zip`;
 const GET_PIP_URL = 'https://bootstrap.pypa.io/get-pip.py';
 const reqProd = path.join(root, 'backend', 'requirements-prod.txt');
@@ -272,7 +272,7 @@ async function main() {
   const reqFile = writeWinRequirements();
 
   const marker = path.join(outDir, 'python.exe');
-  const force = process.env.TAKTON_FORCE_WIN_PYTHON === '1';
+  const force = process.env.TEVARN_FORCE_WIN_PYTHON === '1';
   if (fs.existsSync(marker) && !force) {
     const site = path.join(outDir, 'Lib', 'site-packages');
     const hasPywin =
@@ -284,7 +284,7 @@ async function main() {
       fs.existsSync(path.join(site, 'mcp')) &&
       hasPywin
     ) {
-      log('win-python already prepared; set TAKTON_FORCE_WIN_PYTHON=1 to rebuild');
+      log('win-python already prepared; set TEVARN_FORCE_WIN_PYTHON=1 to rebuild');
       fixupPywin32(site, outDir);
       prune(site);
       process.exit(0);
@@ -321,8 +321,8 @@ async function main() {
   prune(path.join(outDir, 'Lib', 'site-packages'));
 
   fs.writeFileSync(
-    path.join(outDir, 'TAKTON_RUNTIME.txt'),
-    `Takton Windows embed Python ${PY_VER}\nPrepared: ${new Date().toISOString()}\n`,
+    path.join(outDir, 'TEVARN_RUNTIME.txt'),
+    `Tevarn Windows embed Python ${PY_VER}\nPrepared: ${new Date().toISOString()}\n`,
     'utf8',
   );
 

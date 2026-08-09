@@ -16,14 +16,14 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE = os.environ.get("TAKTON_SMOKE_BASE", "http://127.0.0.1:8090/api")
+BASE = os.environ.get("TEVARN_SMOKE_BASE", "http://127.0.0.1:8090/api")
 # Prefer frontend BFF when available
-FE = os.environ.get("TAKTON_SMOKE_FE", "http://127.0.0.1:3000/api")
+FE = os.environ.get("TEVARN_SMOKE_FE", "http://127.0.0.1:3000/api")
 
 LARGE_PROMPT = """
 【冒烟大任务 · Provider Token 优化验收】
 
-请作为 Takton Agent 完成以下多步骤任务（需要用工具，不要只空谈）：
+请作为 Tevarn Agent 完成以下多步骤任务（需要用工具，不要只空谈）：
 
 1. 用工具列出当前工作区 backend/services/llm/ 下的文件名。
 2. 读取 provider_profiles.py 的前 80 行，确认存在 resolve_profile / ProviderProfile。

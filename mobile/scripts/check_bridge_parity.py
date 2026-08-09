@@ -3,7 +3,7 @@
 import re, sys
 from pathlib import Path
 root = Path(__file__).resolve().parents[1]
-tb = (root / "flutter_app/lib/bridge/takton_bridge.dart").read_text()
+tb = (root / "flutter_app/lib/bridge/tevarn_bridge.dart").read_text()
 hb = (root / "flutter_app/lib/bridge/http_bridge.dart").read_text()
 ffi = (root / "crates/ffi/src/lib.rs").read_text()
 calls = set(re.findall(r"call\('([a-z0-9_]+)'", tb))

@@ -1,4 +1,4 @@
-# Takton 前端镜像（Next.js SSR 模式；Electron 打包走的是 output:export，不经此镜像）
+# Tevarn 前端镜像（Next.js SSR 模式；Electron 打包走的是 output:export，不经此镜像）
 FROM node:20-alpine AS deps
 WORKDIR /app
 COPY frontend/package.json frontend/package-lock.json ./

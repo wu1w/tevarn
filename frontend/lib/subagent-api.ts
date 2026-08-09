@@ -1,5 +1,5 @@
 /**
- * Takton 阶段6: 子代理集群 - API 封装
+ * Tevarn 阶段6: 子代理集群 - API 封装
  */
 
 import { apiClient } from './api';

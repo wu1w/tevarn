@@ -18,9 +18,9 @@ use serde_json::{json, Value};
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Instant;
-use takton_mobile_core::chat::{ChatConnection, ChatEvent};
-use takton_mobile_core::models::SessionInfo;
-use takton_mobile_core::{
+use tevarn_mobile_core::chat::{ChatConnection, ChatEvent};
+use tevarn_mobile_core::models::SessionInfo;
+use tevarn_mobile_core::{
     filter_catalog, normalize_ui_messages, ChatSurface, ModeSnapshot, MotionProfile,
     LOCAL_SESSION_ID,
 };
@@ -234,7 +234,7 @@ impl LocalChatBody {
             .unwrap_or_default()
     }
 
-    fn image_parts(&self) -> Vec<takton_mobile_core::LocalImagePart> {
+    fn image_parts(&self) -> Vec<tevarn_mobile_core::LocalImagePart> {
         let Some(imgs) = &self.images else {
             return Vec::new();
         };
@@ -273,7 +273,7 @@ impl LocalChatBody {
             if raw.len() > 5_500_000 {
                 continue;
             }
-            out.push(takton_mobile_core::LocalImagePart {
+            out.push(tevarn_mobile_core::LocalImagePart {
                 mime,
                 data_b64: raw,
             });
@@ -418,7 +418,7 @@ fn mask_secret(s: &str) -> String {
     format!("{}…{}", &s[..4], &s[s.len().saturating_sub(4)..])
 }
 
-fn agent_config_public(cfg: &takton_mobile_core::AgentConfig) -> Value {
+fn agent_config_public(cfg: &tevarn_mobile_core::AgentConfig) -> Value {
     json!({
         "max_iterations": cfg.max_iterations,
         "context_soft_tokens": cfg.context_soft_tokens,
@@ -482,7 +482,7 @@ fn user_email_of(st: &AppState) -> String {
 
 fn session_view(
     s: &SessionInfo,
-    meta: &takton_mobile_core::session_meta::SessionMetaStore,
+    meta: &tevarn_mobile_core::session_meta::SessionMetaStore,
 ) -> Value {
     let id = s.id.clone();
     let title = meta
@@ -496,7 +496,7 @@ fn session_view(
     })
 }
 
-fn local_session_view(meta: &takton_mobile_core::session_meta::SessionMetaStore) -> Value {
+fn local_session_view(meta: &tevarn_mobile_core::session_meta::SessionMetaStore) -> Value {
     let title = meta
         .title_of(LOCAL_SESSION_ID)
         .unwrap_or_else(|| "本机对话".into());
@@ -590,7 +590,7 @@ fn build_mode_snapshot(
     st: &AppState,
     surface: ChatSurface,
     pc_model: &str,
-    runtime: Option<&takton_mobile_core::models::RuntimeStatus>,
+    runtime: Option<&tevarn_mobile_core::models::RuntimeStatus>,
     // When probe cache is fresh, pass stored kernel_ready so we don't
     // optimistically treat `runtime=None` as ready.
     cached_kernel_ready: Option<bool>,
@@ -628,7 +628,7 @@ async fn remote_probe(
     st: &AppState,
 ) -> (
     String,
-    Option<takton_mobile_core::models::RuntimeStatus>,
+    Option<tevarn_mobile_core::models::RuntimeStatus>,
     Option<bool>,
 ) {
     {
@@ -1108,10 +1108,10 @@ fn message_text(content: &Value) -> String {
 /// Skips intermediate assistants that only fire tool_calls, and waits while
 /// the last message is still `tool` (tool loop in progress).
 fn final_assistant_after_user(
-    msgs: &[takton_mobile_core::models::MessageInfo],
+    msgs: &[tevarn_mobile_core::models::MessageInfo],
     user_idx: usize,
 ) -> Option<String> {
-    let after: Vec<&takton_mobile_core::models::MessageInfo> =
+    let after: Vec<&tevarn_mobile_core::models::MessageInfo> =
         msgs.iter().skip(user_idx + 1).collect();
     if after.is_empty() {
         return None;
@@ -1128,7 +1128,11 @@ fn final_assistant_after_user(
     if last.role != "assistant" {
         return None;
     }
-    let text = message_text(&last.content);
+    // Strip <thinking> so phone never treats reasoning as the final answer
+    // (0.5.8+ wrap_thinking; mobile has no ThinkingBlock).
+    let text = tevarn_mobile_core::chat_mode::strip_thinking_blocks(
+        &message_text(&last.content),
+    );
     if text.trim().is_empty() {
         return None;
     }
@@ -1141,7 +1145,7 @@ fn final_assistant_after_user(
 fn emit_http_tool_progress(
     st: &AppState,
     session_id: &str,
-    msgs: &[takton_mobile_core::models::MessageInfo],
+    msgs: &[tevarn_mobile_core::models::MessageInfo],
     user_idx: usize,
     seen_tools: &mut std::collections::HashSet<String>,
 ) {
@@ -1444,11 +1448,11 @@ fn spawn_turn_completion_watchdog(st: AppState, session_id: String, user_content
 
 /// Prefer the boss-facing CEO/steward DM session over empty "helpful assistant"
 /// shells created by pair probes / VPS tests.
-fn pick_preferred_remote_session(list: &[takton_mobile_core::models::SessionInfo]) -> Option<String> {
+fn pick_preferred_remote_session(list: &[tevarn_mobile_core::models::SessionInfo]) -> Option<String> {
     if list.is_empty() {
         return None;
     }
-    let score = |s: &takton_mobile_core::models::SessionInfo| -> i32 {
+    let score = |s: &tevarn_mobile_core::models::SessionInfo| -> i32 {
         let cfg = &s.config;
         let contact = cfg
             .get("contact_agent")
@@ -1773,11 +1777,11 @@ async fn healthz(State(st): State<AppState>) -> Json<Value> {
         "base_url": base_url_of(&st),
         "local_llm": masked,
         "backend": if pc_connected {
-            json!({"service":"takton-backend","status":"ok"})
+            json!({"service":"tevarn-backend","status":"ok"})
         } else if authenticated {
-            json!({"service":"takton-backend","status":"stale"})
+            json!({"service":"tevarn-backend","status":"stale"})
         } else {
-            json!({"service":"takton-backend","status":"disconnected"})
+            json!({"service":"tevarn-backend","status":"disconnected"})
         },
         "ts": chrono_now(),
     }))
@@ -2412,7 +2416,7 @@ async fn try_connect_best_pref(
     preferred: &[String],
     device_token: Option<&str>,
 ) -> Result<Value, String> {
-    use takton_mobile_core::path::{select_best, Endpoint, EndpointKind};
+    use tevarn_mobile_core::path::{select_best, Endpoint, EndpointKind};
 
     let mut extra: Vec<String> = Vec::new();
     for p in preferred {
@@ -2564,7 +2568,7 @@ async fn try_connect_best_pref(
                     let _ = st.path.save(&p);
                 }
                 let mesh = st.mesh.status();
-                let port = takton_mobile_core::config::parse_base_url_parts(&url).2;
+                let port = tevarn_mobile_core::config::parse_base_url_parts(&url).2;
                 let _ = st.path.refresh_candidates(
                     mesh.lan_ip.as_deref(),
                     mesh.tailscale_ip.as_deref(),
@@ -2592,7 +2596,7 @@ async fn try_connect_best_pref(
 }
 
 fn is_phone_unusable_base(url: &str) -> bool {
-    let host = takton_mobile_core::config::parse_base_url_parts(url).1;
+    let host = tevarn_mobile_core::config::parse_base_url_parts(url).1;
     if host == "127.0.0.1" || host == "localhost" || host == "::1" {
         return true;
     }
@@ -2609,8 +2613,8 @@ fn is_phone_unusable_base(url: &str) -> bool {
     false
 }
 
-fn path_kind_for_url(url: &str) -> takton_mobile_core::path::EndpointKind {
-    use takton_mobile_core::path::{classify_host, EndpointKind};
+fn path_kind_for_url(url: &str) -> tevarn_mobile_core::path::EndpointKind {
+    use tevarn_mobile_core::path::{classify_host, EndpointKind};
     let rest = url
         .trim()
         .trim_start_matches("https://")
@@ -2618,7 +2622,7 @@ fn path_kind_for_url(url: &str) -> takton_mobile_core::path::EndpointKind {
     if rest.contains("/t/") {
         return EndpointKind::Vps;
     }
-    let host = takton_mobile_core::config::parse_base_url_parts(url).1;
+    let host = tevarn_mobile_core::config::parse_base_url_parts(url).1;
     classify_host(&host)
 }
 
@@ -2635,8 +2639,8 @@ fn base_from_claim_url(claim_url: &str) -> String {
 }
 
 async fn try_deferred_claim(st: &AppState) -> Option<Value> {
-    use takton_mobile_core::path::claim_urls;
-    use takton_mobile_core::pair::PairPayload;
+    use tevarn_mobile_core::path::claim_urls;
+    use tevarn_mobile_core::pair::PairPayload;
 
     let profile = st.path.profile();
     let d = profile.deferred_claim?;
@@ -2695,9 +2699,9 @@ async fn try_deferred_claim(st: &AppState) -> Option<Value> {
 // ── M1 pairing ──────────────────────────────────────────────────────────────
 
 async fn pair_start(State(st): State<AppState>, Json(body): Json<PairStartBody>) -> Json<Value> {
-    use takton_mobile_core::config::parse_base_url_parts;
-    use takton_mobile_core::mesh::parse_mode;
-    use takton_mobile_core::pair::MeshMode;
+    use tevarn_mobile_core::config::parse_base_url_parts;
+    use tevarn_mobile_core::mesh::parse_mode;
+    use tevarn_mobile_core::pair::MeshMode;
 
     // Product default: auto dual-path, silent mesh bring-up for one-scan pairing.
     let (_h0, _p0, _s0, mesh_default, _hn0) = st.mesh.pair_endpoint();
@@ -2778,7 +2782,7 @@ async fn pair_start(State(st): State<AppState>, Json(body): Json<PairStartBody>)
         "pair_id": payload.pair_id,
         "code": payload.code,
         "exp": payload.exp,
-        "ttl_secs": takton_mobile_core::pair::PAIR_TTL_SECS,
+        "ttl_secs": tevarn_mobile_core::pair::PAIR_TTL_SECS,
         "qr": payload.to_uri(),
         "payload": payload_public,
         "require_confirm": require,
@@ -2818,7 +2822,7 @@ async fn pair_claim(State(st): State<AppState>, Json(body): Json<PairClaimBody>)
     let name = body.device_name.unwrap_or_else(|| "Phone".into());
     match st.pair.claim(&body.pair_id, &body.code, &name) {
         Ok((dev, pending)) => {
-            let payload = takton_mobile_core::pair::PairPayload {
+            let payload = tevarn_mobile_core::pair::PairPayload {
                 v: 2,
                 pair_id: pending.pair_id.clone(),
                 code: pending.code.clone(),
@@ -2853,8 +2857,8 @@ async fn pair_claim(State(st): State<AppState>, Json(body): Json<PairClaimBody>)
 
 /// Phone-side: parse QR → multi-host claim → soft-defer if offline → path select + login.
 async fn pair_apply(State(st): State<AppState>, Json(body): Json<PairApplyBody>) -> Json<Value> {
-    use takton_mobile_core::pair::PairPayload;
-    use takton_mobile_core::path::{claim_urls, DeferredClaim};
+    use tevarn_mobile_core::pair::PairPayload;
+    use tevarn_mobile_core::path::{claim_urls, DeferredClaim};
 
     let payload = match PairPayload::parse_uri(&body.qr) {
         Ok(p) => p,
@@ -2868,7 +2872,7 @@ async fn pair_apply(State(st): State<AppState>, Json(body): Json<PairApplyBody>)
         .clone()
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| {
-            std::env::var("TAKTON_DEVICE_NAME").unwrap_or_else(|_| "Takton Phone".into())
+            std::env::var("TEVARN_DEVICE_NAME").unwrap_or_else(|_| "Tevarn Phone".into())
         });
 
     // Seamless mesh: if QR carries phone join key, embed tsnet before claim (no UI).
@@ -2878,7 +2882,7 @@ async fn pair_apply(State(st): State<AppState>, Json(body): Json<PairApplyBody>)
             let hn = payload
                 .hn
                 .clone()
-                .map(|_| format!("takton-phone"));
+                .map(|_| format!("tevarn-phone"));
             match st.mesh.phone_join_from_pair_key(tsk, hn.as_deref()) {
                 Ok(v) => {
                     mesh_join = Some(v.clone());
@@ -2909,7 +2913,7 @@ async fn pair_apply(State(st): State<AppState>, Json(body): Json<PairApplyBody>)
         }
     } else {
         // Still mark runtime up for path watch (LAN-only QR)
-        let _ = st.mesh.runtime_up(Some("takton-phone"), None, false);
+        let _ = st.mesh.runtime_up(Some("tevarn-phone"), None, false);
     }
 
     let do_claim = body.claim.unwrap_or(true);
@@ -3355,13 +3359,13 @@ async fn pair_pending(State(st): State<AppState>) -> Json<Value> {
 // ── M2 mesh ─────────────────────────────────────────────────────────────────
 
 async fn mesh_status(State(st): State<AppState>) -> Json<Value> {
-    let pc_port = takton_mobile_core::config::parse_base_url_parts(&st.client.config().base_url).2;
+    let pc_port = tevarn_mobile_core::config::parse_base_url_parts(&st.client.config().base_url).2;
     st.mesh.set_backend_port(pc_port);
     Json(st.mesh.status_json())
 }
 
 async fn mesh_set(State(st): State<AppState>, Json(body): Json<MeshSetBody>) -> Json<Value> {
-    use takton_mobile_core::mesh::parse_mode;
+    use tevarn_mobile_core::mesh::parse_mode;
     if let Some(m) = body.mode.as_deref() {
         match parse_mode(m) {
             Ok(mode) => {
@@ -3382,7 +3386,7 @@ async fn mesh_set(State(st): State<AppState>, Json(body): Json<MeshSetBody>) -> 
             return err_json(e);
         }
     }
-    let pc_port = takton_mobile_core::config::parse_base_url_parts(&st.client.config().base_url).2;
+    let pc_port = tevarn_mobile_core::config::parse_base_url_parts(&st.client.config().base_url).2;
     st.mesh.set_backend_port(pc_port);
     Json(st.mesh.status_json())
 }
@@ -3462,7 +3466,7 @@ async fn mesh_auth(State(st): State<AppState>, Json(body): Json<MeshAuthBody>) -
 
 async fn mesh_embed_start(State(st): State<AppState>, Json(body): Json<MeshEmbedBody>) -> Json<Value> {
     if let Some(role) = body.role.as_deref() {
-        let r = takton_mobile_core::TsnetRole::parse(role);
+        let r = tevarn_mobile_core::TsnetRole::parse(role);
         let _ = st.mesh.embed().set_role(r);
     }
     if let Some(h) = body.hostname.as_deref() {
@@ -3492,7 +3496,7 @@ async fn path_status(State(st): State<AppState>) -> Json<Value> {
 }
 
 async fn path_probe(State(st): State<AppState>, Json(body): Json<PathProbeBody>) -> Json<Value> {
-    use takton_mobile_core::path::{select_best, Endpoint, EndpointKind};
+    use tevarn_mobile_core::path::{select_best, Endpoint, EndpointKind};
     let extras = body.candidates.unwrap_or_default();
     let endpoints = st.path.candidate_urls(&extras);
     let eps: Vec<Endpoint> = if endpoints.is_empty() {
@@ -3654,7 +3658,7 @@ async fn path_refresh(State(st): State<AppState>, Json(body): Json<PathProbeBody
         "http",
     );
     if let Some(cands) = body.candidates {
-        let _ = st.path.merge_urls(&cands, takton_mobile_core::path::EndpointKind::Unknown);
+        let _ = st.path.merge_urls(&cands, tevarn_mobile_core::path::EndpointKind::Unknown);
     }
     Json(st.path.profile_json())
 }
@@ -3860,7 +3864,7 @@ fn apply_local_oauth_token(st: &AppState, v: &Value) {
             .unwrap_or("")
             .contains("chatgpt");
     let base = if is_chatgpt {
-        takton_mobile_core::local_llm::CHATGPT_OAUTH_BASE.to_string()
+        tevarn_mobile_core::local_llm::CHATGPT_OAUTH_BASE.to_string()
     } else {
         v.get("base_url")
             .and_then(|x| x.as_str())
@@ -4108,7 +4112,7 @@ async fn local_skills_install_pack(
     let force = body.get("force").and_then(|x| x.as_bool()).unwrap_or(false);
 
     let entries: Vec<(String, String)> = match pack.as_str() {
-        "mattpocock-mobile" | "mattpocock" | "mobile" => takton_mobile_core::skills::mattpocock_mobile_pack()
+        "mattpocock-mobile" | "mattpocock" | "mobile" => tevarn_mobile_core::skills::mattpocock_mobile_pack()
             .iter()
             .map(|(id, path)| (id.to_string(), path.to_string()))
             .collect(),
@@ -4122,7 +4126,7 @@ async fn local_skills_install_pack(
 
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(25))
-        .user_agent("Takton-Mobile/0.4")
+        .user_agent("Tevarn-Mobile/0.4")
         .build()
     {
         Ok(c) => c,
@@ -4144,7 +4148,7 @@ async fn local_skills_install_pack(
                 continue;
             }
         }
-        let url = takton_mobile_core::skills::mattpocock_raw_url(&cat_path);
+        let url = tevarn_mobile_core::skills::mattpocock_raw_url(&cat_path);
         match client.get(&url).send().await {
             Ok(resp) if resp.status().is_success() => {
                 match resp.text().await {
@@ -4202,7 +4206,7 @@ async fn local_mcp_get(State(st): State<AppState>) -> Json<Value> {
 }
 
 async fn local_mcp_set(State(st): State<AppState>, Json(body): Json<Value>) -> Json<Value> {
-    let cfg: takton_mobile_core::mcp_client::McpConfigFile =
+    let cfg: tevarn_mobile_core::mcp_client::McpConfigFile =
         match serde_json::from_value(body.get("config").cloned().unwrap_or(body.clone())) {
             Ok(c) => c,
             Err(e) => return Json(json!({"ok": false, "error": e.to_string()})),
@@ -4437,7 +4441,7 @@ async fn local_chat_stream(
         let stream_result = st
             .local_agent
             .run(&profile, &mut hist, &content, &images, |ev| {
-                use takton_mobile_core::AgentEvent;
+                use tevarn_mobile_core::AgentEvent;
                 match ev {
                     AgentEvent::Delta { text } => {
                         let _ = raw_tx.send(text);

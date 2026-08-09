@@ -52,8 +52,8 @@ def test_logs_written_via_async_listener(tmp_path, root_logger_guard):
     logger.info("hello-async-info")
     logger.error("hello-async-error")
 
-    assert _wait_file_contains(tmp_path / "takton.log", "hello-async-info"), \
-        "takton.log 未收到 INFO（异步落盘失败）"
+    assert _wait_file_contains(tmp_path / "tevarn.log", "hello-async-info"), \
+        "tevarn.log 未收到 INFO（异步落盘失败）"
     assert _wait_file_contains(tmp_path / "error.log", "hello-async-error"), \
         "error.log 未收到 ERROR（respect_handler_level 失效）"
 
@@ -76,20 +76,20 @@ def test_setup_twice_no_duplicate_queue_handlers(tmp_path, root_logger_guard):
 
     # 第二次 setup 的目录真实可用
     logging.getLogger("b3.test2").info("second-setup-works")
-    assert _wait_file_contains(tmp_path / "b" / "takton.log", "second-setup-works")
+    assert _wait_file_contains(tmp_path / "b" / "tevarn.log", "second-setup-works")
 
 
 def test_no_duplicate_log_lines_in_file(tmp_path, root_logger_guard):
-    """根治双写：同一条 message 在 takton.log 中只出现一次。"""
+    """根治双写：同一条 message 在 tevarn.log 中只出现一次。"""
     from backend.core.logging_config import setup_logging
 
     setup_logging(log_dir=str(tmp_path), log_level="INFO", json_output=True)
     marker = "unique-log-line-dedupe-probe-xyz"
     logging.getLogger("b3.dedupe").info(marker)
-    assert _wait_file_contains(tmp_path / "takton.log", marker)
+    assert _wait_file_contains(tmp_path / "tevarn.log", marker)
     # 等 listener 排空
     time.sleep(0.15)
-    with open(tmp_path / "takton.log", encoding="utf-8") as f:
+    with open(tmp_path / "tevarn.log", encoding="utf-8") as f:
         text = f.read()
     assert text.count(marker) == 1, f"日志双写: count={text.count(marker)}"
 
@@ -108,5 +108,5 @@ def test_stop_async_logging_drains_and_stops(tmp_path, root_logger_guard):
 
     assert not _ASYNC_LISTENERS, "listener 注册表未清空"
     # 停止后队列已排空：日志一定已落盘（QueueListener.stop 会 join 并 flush）
-    with open(tmp_path / "takton.log", encoding="utf-8") as f:
+    with open(tmp_path / "tevarn.log", encoding="utf-8") as f:
         assert "before-stop" in f.read()

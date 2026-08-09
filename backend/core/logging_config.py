@@ -146,13 +146,13 @@ def setup_logging(
     """配置全局日志系统
 
     Args:
-        log_dir: 日志目录，默认 ~/.takton/logs
+        log_dir: 日志目录，默认 ~/.tevarn/logs
         log_level: 日志级别，默认从 settings 读取
         json_output: JSON 输出模式，默认生产环境启用
         max_bytes: 单个日志文件最大字节数
         backup_count: 保留的日志文件数
     """
-    log_dir = log_dir or os.path.join(str(Path.home()), ".takton", "logs")
+    log_dir = log_dir or os.path.join(str(Path.home()), ".tevarn", "logs")
     log_level = log_level or getattr(settings, "LOG_LEVEL", "INFO")
     json_output = json_output if json_output is not None else (not sys.stderr.isatty())
 
@@ -175,7 +175,7 @@ def setup_logging(
         console_handler.setFormatter(HumanFormatter())
 
     file_handler = logging.handlers.RotatingFileHandler(
-        filename=os.path.join(log_dir, "takton.log"),
+        filename=os.path.join(log_dir, "tevarn.log"),
         maxBytes=max_bytes,
         backupCount=backup_count,
         encoding="utf-8",

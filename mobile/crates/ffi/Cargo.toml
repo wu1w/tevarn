@@ -1,17 +1,17 @@
 [package]
-name = "takton-mobile-ffi"
+name = "tevarn-mobile-ffi"
 version.workspace = true
 edition.workspace = true
 description = "C ABI / Flutter FFI surface over the Rust mobile engine"
 
 [lib]
-name = "takton_mobile_ffi"
+name = "tevarn_mobile_ffi"
 crate-type = ["cdylib", "staticlib", "rlib"]
 path = "src/lib.rs"
 
 [dependencies]
-takton-mobile-core = { path = "../core" }
-takton-mobile-host = { path = "../host" }
+tevarn-mobile-core = { path = "../core" }
+tevarn-mobile-host = { path = "../host" }
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -53,8 +53,8 @@ def _build_opener(proxy_url: str | None):
 
 def _resolve_proxy() -> str | None:
     for k in (
-        "TAKTON_HTTPS_PROXY",
-        "TAKTON_OUTBOUND_PROXY",
+        "TEVARN_HTTPS_PROXY",
+        "TEVARN_OUTBOUND_PROXY",
         "HTTPS_PROXY",
         "https_proxy",
         "ALL_PROXY",

@@ -97,20 +97,22 @@ def is_timid_write_round(tool_names: list[str]) -> bool:
 def batch_read_nudge_text(*, consecutive_timid: int = 1) -> str:
     """System nudge after a timid single-read round."""
     base = (
-        "【果断批次】你上一轮只做了 1 次信息收集（单文件读或只读 shell）。"
-        "若任务仍未完成：请在本轮一次发出多个 tool_calls——"
-        "并行 file_read/grep/glob 相关文件，或信息已够时直接 edit/file_write/command 验证。"
-        "禁止再「每轮只窥一眼再停」。"
+        "[Batch reads] Last turn did only one info-gather (single file_read "
+        "or read-only shell). If the task is unfinished: emit multiple "
+        "tool_calls this turn — parallel file_read/grep/glob, or if you "
+        "have enough context go straight to edit/file_write/command. "
+        "Do not peek one file per turn."
     )
     if consecutive_timid >= 2:
         base += (
-            " 已连续多轮单点试探：下一轮必须并行读取，"
-            "或开始修改/跑测；读完可编辑内容后请立刻 edit，不要再重复 file_read 同一文件。"
+            " Multiple single-probe rounds already: next turn must batch "
+            "reads or start edit/tests; after enough context, edit immediately "
+            "and do not re-file_read the same file."
         )
     if consecutive_timid >= 3:
         base += (
-            " CRITICAL: 你已连续 3+ 轮只调 1 个工具。"
-            "请立即并行多个 tool_calls；若信息足够，直接 edit/file_write，停止继续只读。"
+            " CRITICAL: 3+ turns with only one tool each. "
+            "Batch tool_calls now; if enough info, edit/file_write and stop pure reads."
         )
     return base
 
@@ -135,6 +137,7 @@ def family_bucket(tool_calls: Iterable[Any] | None) -> str:
 
     Exact arg fingerprints miss real-world loops: many crew_steward with *different*
     employee names still make zero product progress. Bucket ≥50% of calls.
+    Also buckets cargo verify / shell probe families (OpenHands-style stuck detect).
     """
     names = tool_names_from_calls(tool_calls)
     if not names:
@@ -146,6 +149,36 @@ def family_bucket(tool_calls: Iterable[Any] | None) -> str:
         return "orch_heavy"
     if rl * 2 >= n:
         return "result_load_heavy"
+
+    # cargo / shell family (tiny command string changes evade exact thrash)
+    try:
+        from backend.agent.progress_guard import (
+            command_from_tool,
+            is_cargo_verify_command,
+            is_shell_probe_command,
+        )
+
+        cargo_n = 0
+        probe_n = 0
+        process_n = sum(1 for x in names if x == "process")
+        for tc in tool_calls or []:
+            nm = str(getattr(tc, "name", "") or "")
+            if nm == "command":
+                cmd = command_from_tool(tc)
+                if is_cargo_verify_command(cmd):
+                    cargo_n += 1
+                elif is_shell_probe_command(cmd):
+                    probe_n += 1
+            # Do NOT weight bare process as cargo_verify — that forced
+            # must_write + deliver while cargo still running (poll thrash).
+        if cargo_n * 2 >= n and cargo_n > 0:
+            return "cargo_verify"
+        if probe_n * 2 >= n and probe_n > 0:
+            return "shell_probe"
+        if process_n * 2 >= n and process_n > 0:
+            return "process_poll"  # poll-only rounds; hard throttle in process_registry
+    except Exception:
+        pass
     return ""
 
 
@@ -188,9 +221,10 @@ def orchestration_cap_results(
             orch_seen += 1
             continue
         out[cid] = (
-            f"[Orchestration cap] 本轮 {name} 已达上限 {max_orch}，"
-            "已跳过多余编制调用。请先消化已派工单/result_load 结果，"
-            "用中文推进实质工作（读写文件/命令/目标），勿再批量空派。"
+            f"[Orchestration cap] {name} hit the per-round max ({max_orch}); "
+            "extra crew/delegate calls were skipped. Digest existing jobs / "
+            "result_load first, then do real work (files/commands/goal). "
+            "Do not spam empty dispatch. Reply to the user in their language."
         )
     return out
 
@@ -221,9 +255,35 @@ def tool_round_fingerprint(tool_calls: Iterable[Any] | None) -> str:
             "result_id",
             "id",
             "key",
+            # pagination — without these, multi-offset file_read looks like thrash
+            "offset",
+            "start",
+            "start_line",
+            "line",
+            "lines",
+            "limit",
+            "max_lines",
+            "max_chars",
+            "end",
+            "end_line",
+            # python / write payloads — without these, successive python scaffolds
+            # all fingerprint as python|{} → false thrash force_final mid-task
+            "code",
+            "script",
+            "source",
+            "content",
+            "text",
+            "body",
+            "data",
         ):
             if k in args and args[k] is not None:
-                slim[k] = str(args[k])[:200]
+                v = str(args[k])
+                # long code: keep head+len+hash so different scripts differ
+                if k in ("code", "script", "source", "content", "text", "body", "data") and len(v) > 240:
+                    h = hashlib.sha256(v.encode("utf-8", errors="replace")).hexdigest()[:12]
+                    slim[k] = f"{v[:120]}…#{len(v)}:{h}"
+                else:
+                    slim[k] = v[:200]
         if not slim and args:
             # fallback: sorted key names + short values
             for k in sorted(str(x) for x in args.keys())[:8]:
@@ -251,33 +311,47 @@ def is_tool_thrash(
 
 
 def thrash_force_final_text(*, family: str = "") -> str:
+    """Short system injects. Avoid demanding multi-section inventory reports."""
     if family == "orch_heavy" or family.startswith("fam:orch"):
         return (
-            "【强制收束·编制空转】你已连续多轮以 crew_steward/delegate 为主，"
-            "信息增益很低。下一轮**禁止**再调工具：直接汇总已有工单/结果给主人"
-            "（做了什么 / 卡点 / 下一步）。不要再批量派工或重复 result_load。"
+            "[Orch thrash] Many crew_steward/delegate rounds with low gain. "
+            "Prefer a short status in the user's language; avoid long inventories."
         )
     if family == "result_load_heavy" or family.startswith("fam:result_load"):
         return (
-            "【强制收束·结果回读空转】你已连续多轮反复 result_load。"
-            "下一轮**禁止**再调工具：用已读内容直接写结论；缺什么明确列出，不要再转圈回读。"
+            "[Result-load thrash] Many result_load rounds. "
+            "Conclude from what you already have; stop re-paging in a loop."
+        )
+    if family == "cargo_verify" or family.startswith("fam:cargo"):
+        return (
+            "[Cargo thrash] Many cargo check/build rounds without real writes. "
+            "Prefer file_write/edit on error paths before another pure check. "
+            "If check already passed, manage_goal + a short summary."
+        )
+    if family == "shell_probe" or family.startswith("fam:shell"):
+        return (
+            "[Shell probe thrash] Many where/dir/Get-Content scans. "
+            "Prefer file_write on product sources or cargo check; avoid _snap dumps."
         )
     return (
-        "【强制收束】你已连续多轮调用**相同工具/相同参数**，信息增益为零。"
-        "下一轮**禁止**再调工具：直接用已有结果给主人完整中文结论"
-        "（做了什么 / 结果 / 风险 / 下一步）。不要再 grep/file_read 同一路径。"
+        "[Tool thrash] Same tool/args repeated with zero information gain. "
+        "Give a short handoff in the user's language; do not restate long "
+        "status inventories or force-final essays."
     )
 
 
 def batch_write_nudge_text(*, consecutive_timid: int = 1) -> str:
-    """建包/多文件场景：单次 file_write 后催并行写。"""
+    """Package/multi-file: nudge parallel file_write after a single write."""
     base = (
-        "【建包批次写】你上一轮只 file_write/edit 了一个文件。"
-        "若仍在搭建包/多文件骨架：请在本轮一次发出多个 file_write（__init__.py、模块、tests、pyproject 等），"
-        "写齐后再 command 跑一次 pytest。不要一文件一轮。"
+        "[Batch writes] Last turn only file_write/edit one file. "
+        "If still scaffolding a package: emit multiple file_write in one turn "
+        "(__init__.py, modules, tests, pyproject, …), then one pytest. "
+        "Do not write one file per turn."
     )
     if consecutive_timid >= 2:
-        base += " 已连续单文件写入：下一轮必须并行多个 file_write 或直接跑测收官。"
+        base += (
+            " Repeated single-file writes: next turn batch file_write or run tests."
+        )
     return base
 
 

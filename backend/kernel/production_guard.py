@@ -1,7 +1,7 @@
 """H2 production safety guards — 收窄 · 强制 · 可观测.
 
 Production paths must not silently drop to ungoverned Agent mode.
-Explicit escape hatch: ``TAKTON_DEV_UNSAFE=1`` or development env.
+Explicit escape hatch: ``TEVARN_DEV_UNSAFE=1`` or development env.
 """
 
 from __future__ import annotations
@@ -23,20 +23,20 @@ def warn_dev_unsafe_once() -> None:
     _DEV_UNSAFE_WARNED = True
     import logging
 
-    logging.getLogger("takton.production_guard").warning(
+    logging.getLogger("tevarn.production_guard").warning(
         "\n"
         "╔══════════════════════════════════════════════════════════╗\n"
-        "║  TAKTON DEV_UNSAFE / development escape hatch ACTIVE     ║\n"
+        "║  TEVARN DEV_UNSAFE / development escape hatch ACTIVE     ║\n"
         "║  Python kernel fallback & weak guards may be allowed.    ║\n"
-        "║  Do NOT ship this profile. Set TAKTON_FORCE_PRODUCTION   ║\n"
-        "║  _GUARD=1 and clear TAKTON_DEV_UNSAFE for production.    ║\n"
+        "║  Do NOT ship this profile. Set TEVARN_FORCE_PRODUCTION   ║\n"
+        "║  _GUARD=1 and clear TEVARN_DEV_UNSAFE for production.    ║\n"
         "╚══════════════════════════════════════════════════════════╝"
     )
 
 
 def is_dev_unsafe() -> bool:
     """True only when operator explicitly accepts ungoverned / Python fallback."""
-    v = (os.environ.get("TAKTON_DEV_UNSAFE") or "").strip().lower()
+    v = (os.environ.get("TEVARN_DEV_UNSAFE") or "").strip().lower()
     if v in ("1", "true", "yes", "on"):
         return True
     try:
@@ -44,8 +44,8 @@ def is_dev_unsafe() -> bool:
 
         env = str(getattr(settings, "environment", "") or getattr(settings, "env", "") or "").lower()
         if env in ("development", "dev", "test"):
-            # pytest / local dev: allow unless TAKTON_FORCE_PRODUCTION_GUARD=1
-            force = (os.environ.get("TAKTON_FORCE_PRODUCTION_GUARD") or "").strip().lower()
+            # pytest / local dev: allow unless TEVARN_FORCE_PRODUCTION_GUARD=1
+            force = (os.environ.get("TEVARN_FORCE_PRODUCTION_GUARD") or "").strip().lower()
             if force in ("1", "true", "yes", "on"):
                 return False
             # Still treat as "unsafe allowed" for unit tests that use Python kernel
@@ -61,7 +61,7 @@ def is_dev_unsafe() -> bool:
 
 def is_production_guard() -> bool:
     """When True, enforce hard closed-loop (no None caps, no silent kernel off)."""
-    if (os.environ.get("TAKTON_FORCE_PRODUCTION_GUARD") or "").strip().lower() in (
+    if (os.environ.get("TEVARN_FORCE_PRODUCTION_GUARD") or "").strip().lower() in (
         "1",
         "true",
         "yes",
@@ -79,7 +79,7 @@ def allow_kernel_disabled() -> bool:
 def allow_python_kernel_fallback() -> bool:
     """Silent Python AgentKernel fallback only under DEV_UNSAFE / explicit backend=python."""
     forced = (
-        os.environ.get("TAKTON_KERNEL_BACKEND")
+        os.environ.get("TEVARN_KERNEL_BACKEND")
         or os.environ.get("agent_kernel_backend")
         or ""
     ).strip().lower()

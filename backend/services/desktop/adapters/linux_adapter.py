@@ -262,8 +262,8 @@ class LinuxAdapter:
 
     def _finalize_screenshot(self, raw: bytes, tool: str, tmp_path: str) -> DesktopOperationResult:
         """Persist screenshot and return path (avoid megabyte base64 in tool loop)."""
-        out_dir = os.environ.get("TAKTON_DESKTOP_SHOT_DIR") or os.path.join(
-            tempfile.gettempdir(), "takton_desktop_shots"
+        out_dir = os.environ.get("TEVARN_DESKTOP_SHOT_DIR") or os.path.join(
+            tempfile.gettempdir(), "tevarn_desktop_shots"
         )
         os.makedirs(out_dir, exist_ok=True)
         import time

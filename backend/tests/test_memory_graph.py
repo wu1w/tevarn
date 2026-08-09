@@ -148,7 +148,7 @@ def test_remember_with_link_to(repo_db):
     async def _run():
         repo = AsyncMemoryGraphRepository()
         tool = MemoryGraphTool()
-        parent = await repo.add_node({"kind": "knowledge", "title": "Takton 架构"})
+        parent = await repo.add_node({"kind": "knowledge", "title": "Tevarn 架构"})
         out = await tool.execute(
             action="remember", kind="decision", title="单 main 分支",
             content="不用 feature 分支", link_to=str(parent.id),

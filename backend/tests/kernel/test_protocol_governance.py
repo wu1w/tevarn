@@ -51,7 +51,7 @@ def test_agent_card_from_identity() -> None:
     d = card.to_dict()
     assert d["kind"] == "agent_card"
     assert d["name"] == "研究员"
-    assert d["takton"]["product_concept"] == "employee"
+    assert d["tevarn"]["product_concept"] == "employee"
     skill_ids = {s["id"] for s in d["skills"]}
     assert "web_search" in skill_ids
     assert "custom_cap" in skill_ids

@@ -144,7 +144,7 @@ def test_record_round_usage_real_and_estimated(tmp_path: Path, monkeypatch):
     from backend.services import usage_ledger as ul
 
     ledger = tmp_path / "usage_ledger.json"
-    monkeypatch.setenv("TAKTON_USAGE_LEDGER", str(ledger))
+    monkeypatch.setenv("TEVARN_USAGE_LEDGER", str(ledger))
     ul.reset_for_tests()
 
     class Svc:
@@ -218,7 +218,7 @@ def test_ledger_persists(tmp_path: Path, monkeypatch):
     from backend.services import usage_ledger as ul
 
     ledger = tmp_path / "usage_ledger.json"
-    monkeypatch.setenv("TAKTON_USAGE_LEDGER", str(ledger))
+    monkeypatch.setenv("TEVARN_USAGE_LEDGER", str(ledger))
     ul.reset_for_tests()
     ul.charge(
         process_id="x",

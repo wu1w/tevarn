@@ -41,7 +41,7 @@ def test_orphan_prune_keeps_live_only():
 
 
 def test_ttl_prune(monkeypatch):
-    monkeypatch.setenv("TAKTON_SESSION_GRANT_TTL_SECONDS", "1")
+    monkeypatch.setenv("TEVARN_SESSION_GRANT_TTL_SECONDS", "1")
     sid = "ttl-sid"
     add_session_grant(sid, "command", {"command": "echo"}, whole_tool=True)
     assert has_session_grant(sid, "command", {"command": "echo"})

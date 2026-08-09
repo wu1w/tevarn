@@ -14,6 +14,13 @@ def test_continue_phrases():
     assert is_continue_phrase("请继续")
     assert is_continue_phrase("continue")
     assert is_continue_phrase("接着做")
+    # Next-item continues (vague-work research: map to resume, not free invent)
+    assert is_continue_phrase("那你接着下一项工作")
+    assert is_continue_phrase("继续下一项")
+    assert is_continue_phrase("下一项任务")
+    assert is_continue_phrase("next task")
+    # Plan-style questions must NOT be continue
+    assert not is_continue_phrase("下一步应该怎么设计")
     assert not is_continue_phrase("")
     assert not is_continue_phrase("请帮我写一个很长的方案" + "x" * 100)
 

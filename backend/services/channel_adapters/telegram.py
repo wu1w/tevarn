@@ -30,7 +30,7 @@ class TelegramAdapter(BaseChannelAdapter):
         self._token = token
         self._offset = 0
         self._polling = False
-        self._user_agent = "TaktonTelegramBot/1.0"
+        self._user_agent = "TevarnTelegramBot/1.0"
 
     @property
     def _api_url(self) -> str:

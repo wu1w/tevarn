@@ -1,7 +1,7 @@
 """
 PC-side VPS relay configuration + status.
 
-Storage: ~/.takton/vps_relay.json (0600)
+Storage: ~/.tevarn/vps_relay.json (0600)
 """
 
 from __future__ import annotations
@@ -21,15 +21,15 @@ logger = logging.getLogger(__name__)
 VPS_CFG_FILE = "vps_relay.json"
 
 
-def _takton_dir() -> Path:
-    override = os.environ.get("TAKTON_DATA_DIR", "").strip()
+def _tevarn_dir() -> Path:
+    override = os.environ.get("TEVARN_DATA_DIR", "").strip()
     if override:
         return Path(override)
-    return Path.home() / ".takton"
+    return Path.home() / ".tevarn"
 
 
 def _cfg_path() -> Path:
-    return _takton_dir() / VPS_CFG_FILE
+    return _tevarn_dir() / VPS_CFG_FILE
 
 
 def _read_json(path: Path, default: Any) -> Any:
@@ -192,7 +192,7 @@ def ws_tunnel_url(cfg: Optional[dict[str, Any]] = None) -> Optional[str]:
         f"{ws}/relay/v1/tunnel"
         f"?tunnel_id={quote(tunnel_id)}"
         f"&token={quote(token)}"
-        f"&pc_name={quote(os.environ.get('COMPUTERNAME') or os.environ.get('HOSTNAME') or 'takton-pc')}"
+        f"&pc_name={quote(os.environ.get('COMPUTERNAME') or os.environ.get('HOSTNAME') or 'tevarn-pc')}"
     )
 
 
@@ -345,7 +345,7 @@ def public_status(online: bool = False, detail: str = "") -> dict[str, Any]:
 
 # Install command shown in UI (user copies to VPS)
 INSTALL_HINT_ZH = """# 在 Ubuntu 22.04+ VPS 上执行（需 root）
-# 1) 把 takton 仓库里的 deploy/vps-relay 拷到 VPS，或 git clone 后：
+# 1) 把 tevarn 仓库里的 deploy/vps-relay 拷到 VPS，或 git clone 后：
 cd deploy/vps-relay
 sudo bash install.sh
 

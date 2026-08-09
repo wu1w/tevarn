@@ -27,7 +27,7 @@ async def runtime_status(request: Request) -> dict[str, Any]:
     out: dict[str, Any] = {
         "ok": True,
         "role": "kernel_host",
-        "product": "takton-aios",
+        "product": "tevarn-aios",
     }
     try:
         from backend.core.config import settings

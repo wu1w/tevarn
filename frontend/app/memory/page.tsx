@@ -44,7 +44,7 @@ export default function MemoryPage() {
 
   const fetchEntities = useCallback(async () => {
     try {
-      // audit-fix: takton_token 是死 key，改从 authStore 取
+      // audit-fix: tevarn_token 是死 key，改从 authStore 取
       const token = useAuthStore.getState().token;
       const params = new URLSearchParams();
       if (filterType) params.set('entity_type', filterType);
@@ -81,7 +81,7 @@ export default function MemoryPage() {
     }
     setLoading(true);
     try {
-      // audit-fix: takton_token 是死 key，改从 authStore 取
+      // audit-fix: tevarn_token 是死 key，改从 authStore 取
       const token = useAuthStore.getState().token;
       const res = await fetch(`/api/entities/search?q=${encodeURIComponent(searchQuery)}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -100,7 +100,7 @@ export default function MemoryPage() {
   const handleDelete = async (id: string) => {
     if (!(await confirm(t('memory.confirmDelete')))) return;
     try {
-      // audit-fix: takton_token 是死 key，改从 authStore 取
+      // audit-fix: tevarn_token 是死 key，改从 authStore 取
       const token = useAuthStore.getState().token;
       await fetch(`/api/entities/${id}`, {
         method: 'DELETE',
@@ -327,7 +327,7 @@ function EntityModal({
     setSaving(true);
     setError('');
     try {
-      // audit-fix: takton_token 是死 key，改从 authStore 取
+      // audit-fix: tevarn_token 是死 key，改从 authStore 取
       const token = useAuthStore.getState().token;
       const url = isEdit ? `/api/entities/${entity.id}` : '/api/entities';
       const method = isEdit ? 'PUT' : 'POST';

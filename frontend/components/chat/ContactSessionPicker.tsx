@@ -216,7 +216,7 @@ export function ContactSessionPicker({
             useSessionStore.getState().clearMessages();
             try {
               window.dispatchEvent(
-                new CustomEvent('takton:session-invalid', {
+                new CustomEvent('tevarn:session-invalid', {
                   detail: { sessionId },
                 }),
               );

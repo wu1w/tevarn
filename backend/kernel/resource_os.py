@@ -29,7 +29,7 @@ def _settings():
 def cgroup_enabled() -> bool:
     s = _settings()
     if s is None:
-        return bool(os.environ.get("TAKTON_CGROUP_ENABLED", "").lower() in ("1", "true"))
+        return bool(os.environ.get("TEVARN_CGROUP_ENABLED", "").lower() in ("1", "true"))
     return bool(getattr(s, "agent_resource_cgroup_enabled", False))
 
 
@@ -170,7 +170,7 @@ def cgroup_root() -> Path | None:
     """用户可写 cgroup v2 根（若存在）。"""
     candidates = [
         Path("/sys/fs/cgroup"),
-        Path(os.environ.get("TAKTON_CGROUP_ROOT", "") or ""),
+        Path(os.environ.get("TEVARN_CGROUP_ROOT", "") or ""),
     ]
     for p in candidates:
         if not p or str(p) == ".":
@@ -197,7 +197,7 @@ def cgroup_apply(
     if root is None:
         return {"ok": False, "skipped": True, "reason": "no cgroup v2"}
     safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in group_name)[:64]
-    path = root / "takton" / safe
+    path = root / "tevarn" / safe
     try:
         path.mkdir(parents=True, exist_ok=True)
         # enable memory controller in parent if needed

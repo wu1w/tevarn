@@ -20,11 +20,11 @@ const OUT = path.resolve(__dirname, 'screenshots/interactive-qa');
   ).json();
   const token = data.access_token;
   await context.addCookies([
-    { name: 'takton-auth', value: token, domain: '127.0.0.1', path: '/', sameSite: 'Lax' },
+    { name: 'tevarn-auth', value: token, domain: '127.0.0.1', path: '/', sameSite: 'Lax' },
   ]);
   await context.addInitScript((p) => {
     localStorage.setItem(
-      'takton-auth',
+      'tevarn-auth',
       JSON.stringify({
         state: {
           user: p.user,
@@ -35,7 +35,7 @@ const OUT = path.resolve(__dirname, 'screenshots/interactive-qa');
         version: 0,
       })
     );
-    document.cookie = `takton-auth=${p.token}; path=/; max-age=604800; SameSite=Lax`;
+    document.cookie = `tevarn-auth=${p.token}; path=/; max-age=604800; SameSite=Lax`;
   }, { user: data.user, token });
 
   const page = await context.newPage();

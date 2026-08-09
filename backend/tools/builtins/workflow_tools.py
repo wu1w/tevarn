@@ -65,7 +65,7 @@ async def _resolve_default_user_id():
         user_repo = await get_user_repo()
         user = None
         if hasattr(user_repo, "get_by_email"):
-            user = await user_repo.get_by_email("admin@takton.dev")
+            user = await user_repo.get_by_email("admin@tevarn.dev")
         if user is None and hasattr(user_repo, "list_all"):
             try:
                 users = await user_repo.list_all()

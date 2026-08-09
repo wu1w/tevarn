@@ -37,10 +37,10 @@ def package_search_roots() -> list[Path]:
 
         appdata = os.environ.get("APPDATA") or os.environ.get("HOME") or ""
         if appdata:
-            user_pkg = Path(appdata) / "takton" / "packages"
+            user_pkg = Path(appdata) / "tevarn" / "packages"
             if user_pkg.is_dir():
                 roots.append(user_pkg)
-            user_ws = Path(appdata) / "takton" / "data" / "workspace" / "packages"
+            user_ws = Path(appdata) / "tevarn" / "data" / "workspace" / "packages"
             if user_ws.is_dir():
                 roots.append(user_ws)
     except Exception:
@@ -50,9 +50,9 @@ def package_search_roots() -> list[Path]:
 
 def _read_manifest_file(path: Path) -> dict[str, Any] | None:
     try:
-        if path.name in {"package.json", "takton.package.json"}:
+        if path.name in {"package.json", "tevarn.package.json"}:
             return json.loads(path.read_text(encoding="utf-8"))
-        if path.name.lower() in {"package.yaml", "package.yml", "takton.package.yaml"}:
+        if path.name.lower() in {"package.yaml", "package.yml", "tevarn.package.yaml"}:
             try:
                 import yaml  # type: ignore
 
@@ -104,7 +104,7 @@ def load_workspace_packages() -> list[PackageManifest]:
                     continue
                 man_path = None
                 for candidate in (
-                    child / "takton.package.json",
+                    child / "tevarn.package.json",
                     child / "package.json",
                     child / "PACKAGE.yaml",
                     child / "package.yaml",

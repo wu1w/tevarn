@@ -1,7 +1,7 @@
 """
 消息通道 Gateway 管理器
 
-在 Takton 后端启动时自动连接所有 enabled 的通道，
+在 Tevarn 后端启动时自动连接所有 enabled 的通道，
 维持 WebSocket 长连接，收到的消息转发给 agent loop。
 
 支持 /命令：/new /reset /compact /model /goal /status /help /stop
@@ -446,7 +446,7 @@ class ChannelGateway:
             # 优先默认邮箱
             user = None
             if hasattr(user_repo, "get_by_email"):
-                user = await user_repo.get_by_email("admin@takton.dev")
+                user = await user_repo.get_by_email("admin@tevarn.dev")
             if user is None and hasattr(user_repo, "list_all"):
                 try:
                     users = await user_repo.list_all()  # type: ignore[attr-defined]
@@ -745,7 +745,7 @@ class ChannelGateway:
         """查看会话状态。"""
         from backend.core.config import settings
 
-        lines = ["📊 Takton 状态", ""]
+        lines = ["📊 Tevarn 状态", ""]
 
         # 模型信息
         model = getattr(settings, "llm_model", "unknown")

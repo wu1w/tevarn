@@ -4,7 +4,7 @@
 
 H2 强制闭环：
 - 生产路径 ``capabilities is None`` → **空表**（不再静默全开）
-- 仅 ``TAKTON_DEV_UNSAFE`` / test 允许兼容全开
+- 仅 ``TEVARN_DEV_UNSAFE`` / test 允许兼容全开
 """
 
 from __future__ import annotations

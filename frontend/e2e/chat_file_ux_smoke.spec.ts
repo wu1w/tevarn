@@ -9,7 +9,7 @@ import * as path from 'path';
 
 const BASE_URL = process.env.SMOKE_BASE_URL || 'http://127.0.0.1:3015';
 const API_URL = process.env.SMOKE_API_URL || 'http://127.0.0.1:8095';
-const OUT = process.env.SCREENSHOT_DIR || '/tmp/takton-chat-ux-smoke/ui';
+const OUT = process.env.SCREENSHOT_DIR || '/tmp/tevarn-chat-ux-smoke/ui';
 
 type SmokeApi = {
   setPreview: (a: {
@@ -39,8 +39,8 @@ async function loginViaApi(page: Page) {
         state: { token, user, isAuthenticated: true, hasHydrated: true },
         version: 0,
       };
-      localStorage.setItem('takton-auth', JSON.stringify(payload));
-      document.cookie = `takton-auth=${token}; path=/; SameSite=Strict`;
+      localStorage.setItem('tevarn-auth', JSON.stringify(payload));
+      document.cookie = `tevarn-auth=${token}; path=/; SameSite=Strict`;
     },
     { token: body.access_token, user: body.user }
   );
@@ -51,7 +51,7 @@ async function loginViaApi(page: Page) {
 
 async function waitSmoke(page: Page): Promise<void> {
   await page.waitForFunction(
-    () => !!(window as unknown as { __taktonSmoke?: SmokeApi }).__taktonSmoke,
+    () => !!(window as unknown as { __tevarnSmoke?: SmokeApi }).__tevarnSmoke,
     null,
     { timeout: 20_000 }
   );
@@ -84,7 +84,7 @@ test.describe('Chat File UX smoke', () => {
     await page.screenshot({ path: path.join(OUT, '01-home.png'), fullPage: true });
 
     // attach via file input
-    const pngPath = '/tmp/takton-chat-ux-smoke/up.png';
+    const pngPath = '/tmp/tevarn-chat-ux-smoke/up.png';
     if (!fs.existsSync(pngPath)) {
       fs.writeFileSync(
         pngPath,
@@ -110,7 +110,7 @@ test.describe('Chat File UX smoke', () => {
 
     // inject assistant message with multi artifacts
     await page.evaluate(() => {
-      const smoke = (window as unknown as { __taktonSmoke: SmokeApi }).__taktonSmoke;
+      const smoke = (window as unknown as { __tevarnSmoke: SmokeApi }).__tevarnSmoke;
       smoke.setMessages([
         {
           id: 'smoke-user-1',
@@ -172,7 +172,7 @@ test.describe('Chat File UX smoke', () => {
 
     for (const c of cases) {
       await page.evaluate((art) => {
-        const smoke = (window as unknown as { __taktonSmoke: SmokeApi }).__taktonSmoke;
+        const smoke = (window as unknown as { __tevarnSmoke: SmokeApi }).__tevarnSmoke;
         smoke.setPreview({
           path: art.path,
           name: art.name,
@@ -227,7 +227,7 @@ test.describe('Chat File UX smoke', () => {
 
     // open in system button present
     await page.evaluate(() => {
-      const smoke = (window as unknown as { __taktonSmoke: SmokeApi }).__taktonSmoke;
+      const smoke = (window as unknown as { __tevarnSmoke: SmokeApi }).__tevarnSmoke;
       smoke.setPreview({
         path: 'smoke_preview/hello.md',
         name: 'hello.md',
@@ -247,7 +247,7 @@ test.describe('Chat File UX smoke', () => {
 
     // close preview
     await page.evaluate(() => {
-      (window as unknown as { __taktonSmoke: SmokeApi }).__taktonSmoke.setPreview(null);
+      (window as unknown as { __tevarnSmoke: SmokeApi }).__tevarnSmoke.setPreview(null);
     });
 
     fs.writeFileSync(path.join(OUT, 'ui-report.txt'), log.join('\n') + '\n');

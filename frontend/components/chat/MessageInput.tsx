@@ -125,8 +125,8 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   const inputLocked = disabled || uploading;
   const clusterOn = activeModes.has('cluster');
   // audit-fix: 草稿按会话隔离，避免切会话后草稿串台；
-  // 旧全局 key 'takton-chat-draft' 不再读取（按清单约定不迁移）
-  const draftKey = `takton-chat-draft:${sessionId || 'default'}`;
+  // 旧全局 key 'tevarn-chat-draft' 不再读取（按清单约定不迁移）
+  const draftKey = `tevarn-chat-draft:${sessionId || 'default'}`;
 
   useEffect(() => {
     if (isEditing) return;
@@ -916,7 +916,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
         {showModelPicker ? (
           <ModelPicker disabled={inputLocked} onChanged={onModelChanged} sessionId={sessionId} />
         ) : (
-          <span className="text-[11px] text-foreground-dim">Takton</span>
+          <span className="text-[11px] text-foreground-dim">Tevarn</span>
         )}
         <span className="hidden items-center gap-1 text-[10px] text-foreground-dim sm:inline-flex">
           <kbd className="rounded-[3px] border border-border-subtle bg-card-bg px-1 font-sans text-[9px] leading-4">Enter</kbd>
@@ -928,7 +928,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
         </span>
         <span className="flex-1" />
         <span className="px-font text-[9px] tracking-wide text-foreground-dim">
-          Takton v{APP_VERSION}
+          Tevarn v{APP_VERSION}
         </span>
       </div>
 

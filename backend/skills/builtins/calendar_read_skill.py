@@ -1,6 +1,6 @@
 """
 Calendar Read Skill - 读取本地 ICS/JSON 日历
-与 tools.builtins.wave_a_tools.CalendarTool 共享 ~/.takton/calendar 存储。
+与 tools.builtins.wave_a_tools.CalendarTool 共享 ~/.tevarn/calendar 存储。
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ class CalendarReadSkill(BaseSkill):
 
     name = "calendar_read"
     description = (
-        "读取日程安排、会议时间。与 calendar 工具共用 ~/.takton/calendar。"
+        "读取日程安排、会议时间。与 calendar 工具共用 ~/.tevarn/calendar。"
         "写操作请用 calendar action=create|update|delete。"
     )
     parameters = {

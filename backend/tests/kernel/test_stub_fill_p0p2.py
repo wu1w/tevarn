@@ -58,7 +58,7 @@ async def test_calendar_read_uses_shared_store(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_send_email_requires_smtp_config(monkeypatch):
-    monkeypatch.delenv("TAKTON_SMTP_HOST", raising=False)
+    monkeypatch.delenv("TEVARN_SMTP_HOST", raising=False)
     monkeypatch.delenv("SMTP_HOST", raising=False)
     from backend.skills.builtins import send_email_skill as se
 

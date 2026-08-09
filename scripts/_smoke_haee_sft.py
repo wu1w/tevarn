@@ -7,7 +7,7 @@ import shutil
 import sys
 from pathlib import Path
 
-ROOT = Path(r"E:/项目/taktonl-0.1.0")
+ROOT = Path(r"E:/项目/tevarnl-0.1.0")
 sys.path.insert(0, str(ROOT))
 os.chdir(ROOT)
 
@@ -16,14 +16,14 @@ if HOME.exists():
     shutil.rmtree(HOME, ignore_errors=True)
 HOME.mkdir(parents=True, exist_ok=True)
 
-os.environ["TAKTON_HOME"] = str(HOME.resolve())
-os.environ["TAKTON_JWT_SECRET"] = "smoke-jwt-secret-not-default-xx"
-os.environ["TAKTON_API_KEY"] = "smoke-api-key-not-default-yy"
-os.environ["TAKTON_SETTINGS_ENCRYPTION_SALT"] = "smokesalt12"
-os.environ["TAKTON_EVOLUTION_ENABLED"] = "1"
-os.environ["TAKTON_EVOLUTION_AUTO_APPLY"] = "1"
-os.environ.pop("TAKTON_SFT_USAGE_LOG_ENABLED", None)
-os.environ["TAKTON_SFT_CORPUS_DIR"] = str((HOME / "sft_corpus").resolve())
+os.environ["TEVARN_HOME"] = str(HOME.resolve())
+os.environ["TEVARN_JWT_SECRET"] = "smoke-jwt-secret-not-default-xx"
+os.environ["TEVARN_API_KEY"] = "smoke-api-key-not-default-yy"
+os.environ["TEVARN_SETTINGS_ENCRYPTION_SALT"] = "smokesalt12"
+os.environ["TEVARN_EVOLUTION_ENABLED"] = "1"
+os.environ["TEVARN_EVOLUTION_AUTO_APPLY"] = "1"
+os.environ.pop("TEVARN_SFT_USAGE_LOG_ENABLED", None)
+os.environ["TEVARN_SFT_CORPUS_DIR"] = str((HOME / "sft_corpus").resolve())
 
 import backend.evolution.config as ec
 
@@ -113,7 +113,7 @@ async def main() -> int:
     )
     check("sft_noop_when_off", r is None)
 
-    os.environ["TAKTON_SFT_USAGE_LOG_ENABLED"] = "1"
+    os.environ["TEVARN_SFT_USAGE_LOG_ENABLED"] = "1"
     sc.invalidate_enabled_cache()
     r = await sc.collect_if_enabled(
         session_id="s1",

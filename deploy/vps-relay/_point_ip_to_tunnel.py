@@ -7,7 +7,7 @@ import sys
 import paramiko
 
 HOST = "150.158.109.231"
-PASSWORD = os.environ.get("TAKTON_VPS_PASSWORD", "")
+PASSWORD = os.environ.get("TEVARN_VPS_PASSWORD", "")
 
 CONF_HTTP = f"""
 server {{
@@ -34,7 +34,7 @@ server {{
 
 def main() -> None:
     if not PASSWORD:
-        sys.exit("need TAKTON_VPS_PASSWORD")
+        sys.exit("need TEVARN_VPS_PASSWORD")
     c = paramiko.SSHClient()
     c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     c.connect(
@@ -51,7 +51,7 @@ def main() -> None:
     sftp.close()
 
     cmds = [
-        "sudo cp /etc/nginx/sites-available/ip-http-test /etc/nginx/sites-available/ip-http-test.bak.takton || true",
+        "sudo cp /etc/nginx/sites-available/ip-http-test /etc/nginx/sites-available/ip-http-test.bak.tevarn || true",
         "sudo mv /tmp/ip-http-test.conf /etc/nginx/sites-available/ip-http-test",
         # keep SSL vhost as-is (443); only HTTP IP path for DEV
         "sudo nginx -t && sudo systemctl reload nginx",

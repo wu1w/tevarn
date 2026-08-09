@@ -32,7 +32,7 @@ router = APIRouter(prefix="/skills", tags=["Skills"])
 
 # 默认社区 Skill 索引地址（可被 settings.community_skills_index_url 覆盖）
 _DEFAULT_COMMUNITY_INDEX_URL = (
-    "https://raw.githubusercontent.com/takton-ai/community-skills/main/index.json"
+    "https://raw.githubusercontent.com/tevarn-ai/community-skills/main/index.json"
 )
 
 

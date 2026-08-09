@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
-import '../bridge/takton_bridge.dart';
+import '../bridge/tevarn_bridge.dart';
 import 'mesh_ifaces_stub.dart'
     if (dart.library.io) 'mesh_ifaces_io.dart' as ifaces;
 
@@ -29,11 +29,11 @@ class MeshRuntime with WidgetsBindingObserver {
   String? tailscaleIp;
   Timer? _watch;
   void Function(bool changed)? onNetworkChanged;
-  TaktonBridge? _bridge;
+  TevarnBridge? _bridge;
 
   bool get isUp => _up;
 
-  void bind(TaktonBridge bridge) {
+  void bind(TevarnBridge bridge) {
     _bridge = bridge;
     if (!_boundLifecycle) {
       WidgetsBinding.instance.addObserver(this);
@@ -63,7 +63,7 @@ class MeshRuntime with WidgetsBindingObserver {
         await _bridge?.meshEmbedStart(role: 'phone', hostname: hostname);
       }
       final r = await _bridge?.meshUp(
-            hostname: hostname ?? 'takton-phone',
+            hostname: hostname ?? 'tevarn-phone',
             ifaces: list,
             authKey: hasKey,
           ) ??

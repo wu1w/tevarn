@@ -22,7 +22,7 @@ from backend.computer.protocol import ExecResult
 
 logger = logging.getLogger(__name__)
 
-_CONTAINER_PREFIX = "takton-agent-"
+_CONTAINER_PREFIX = "tevarn-agent-"
 _GUEST_WS = "/workspace"
 
 
@@ -93,7 +93,7 @@ class DockerBackend:
         net = [] if self.network else ["--network", "none"]
         code, _, err = await self._docker(
             "run", "-d", "--name", name,
-            "--label", "app=takton",
+            "--label", "app=tevarn",
             "-v", f"{self.workspace_root}:{_GUEST_WS}",
             "-w", _GUEST_WS,
             *net,

@@ -1,4 +1,4 @@
-# Takton 威胁模型（H2 · 0.5.0-alpha）
+# Tevarn 威胁模型（H2 · 0.5.0-alpha）
 
 **范围**：本地优先、单用户工作站上的 **Agent 控制平面**（Capability Token · Permission Court · mediate · 审计）。  
 **非范围**：多租户 SaaS、对抗国家级 APT、防物理接触本机。
@@ -50,14 +50,14 @@
 
 | 控制 | 状态 | 残留风险 |
 |------|------|----------|
-| Capability 单调收窄 + HMAC | ✅ | 密钥与 JWT 同机；优先 `TAKTON_TOKEN_HMAC_SECRET` 解耦 |
+| Capability 单调收窄 + HMAC | ✅ | 密钥与 JWT 同机；优先 `TEVARN_TOKEN_HMAC_SECRET` 解耦 |
 | Permission Court + mediate | ✅ | 路径 key 不全时的旁路（H2 已扩展 key） |
 | Intent → schema 裁剪 | ✅ H2 | DEV_UNSAFE 仍可全开 |
-| 生产禁止 Python fallback | ✅ H2 | 显式 `TAKTON_KERNEL_BACKEND=python` 可绕过 |
-| 审计哈希链 + rotation | ✅ H2 | `TAKTON_AUDIT_WORM=1` 永不删段；外部 `*.anchor.json` 锚定 tip |
+| 生产禁止 Python fallback | ✅ H2 | 显式 `TEVARN_KERNEL_BACKEND=python` 可绕过 |
+| 审计哈希链 + rotation | ✅ H2 | `TEVARN_AUDIT_WORM=1` 永不删段；外部 `*.anchor.json` 锚定 tip |
 | Context/Memory 隔离 | ✅ | process/identity namespace；跨身份 deny |
 | 多设备 sync | ✅ LWW | 需双方在线/传 envelope；非端到端加密通道 |
-| 工具结果 spill | ✅ 激进默认 | 句柄可 `result_load`；磁盘在 `~/.takton/tool_results` |
+| 工具结果 spill | ✅ 激进默认 | 句柄可 `result_load`；磁盘在 `~/.tevarn/tool_results` |
 | 包签名 / require_secure | ✅ | insecure_default 仅开发 |
 
 ---
@@ -66,12 +66,12 @@
 
 | 开关 | 效果 |
 |------|------|
-| `TAKTON_DEV_UNSAFE=1` | 允许 Python kernel fallback、capabilities=None schema、关 kernel |
-| `TAKTON_KERNEL_BACKEND=python` | 强制废弃 Python 权威 |
+| `TEVARN_DEV_UNSAFE=1` | 允许 Python kernel fallback、capabilities=None schema、关 kernel |
+| `TEVARN_KERNEL_BACKEND=python` | 强制废弃 Python 权威 |
 | `agent_kernel_enabled=False` | 生产被忽略；仅 DEV_UNSAFE 生效 |
 | `agent_budget_hard_cap_only=True` | 关闭 soft renew，硬顶语义 |
 | `single_user_mode=True`（**默认**） | 进程/confirm 归属放宽；开多用户必须显式 `False`，否则等于没有进程归属 |
-| `agent_run_snapshot_persist` | 聊天 partial/live_tools 可落盘 `~/.takton/run_snapshots/`；默认截断 tool result（`agent_run_snapshot_disk_full_tools=False`）。共享机注意 HOME 权限 |
+| `agent_run_snapshot_persist` | 聊天 partial/live_tools 可落盘 `~/.tevarn/run_snapshots/`；默认截断 tool result（`agent_run_snapshot_disk_full_tools=False`）。共享机注意 HOME 权限 |
 
 ### 多 worker / Redis
 
@@ -88,14 +88,14 @@
 
 ## 6. 密钥建议
 
-1. 设置 **独立** `TAKTON_TOKEN_HMAC_SECRET`（≥16， entropic）。  
+1. 设置 **独立** `TEVARN_TOKEN_HMAC_SECRET`（≥16， entropic）。  
 2. JWT secret 与 token HMAC **分离**；泄露 JWT 不应自动可伪造 capability。  
-3. 包签名：`TAKTON_PKG_SIGNING_KEY` 或 JWT 派生；生产 `TAKTON_PKG_REQUIRE_SECURE=1`。  
+3. 包签名：`TEVARN_PKG_SIGNING_KEY` 或 JWT 派生；生产 `TEVARN_PKG_REQUIRE_SECURE=1`。  
 4. 轮换：换 secret 后旧 token 失效 → 进程需 re-issue（预期行为）。
 
 ---
 
 ## 7. 对外表述
 
-> Takton 0.5.0-alpha 是 **可治理的本地 Agent 控制平面（alpha）**，不是完整 AIOS，也不是 hardened multi-tenant OS。  
+> Tevarn 0.5.0-alpha 是 **可治理的本地 Agent 控制平面（alpha）**，不是完整 AIOS，也不是 hardened multi-tenant OS。  
 > 默认安全基线在 H2 后变硬；开发逃生舱仍存在且必须显式开启。

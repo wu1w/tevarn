@@ -1,7 +1,7 @@
 //! Embedded Tailscale userspace (tsnet) process manager.
 //!
-//! Both PC and phone run the same `takton-tsnet` binary as a child of the
-//! Takton engine — no separate system Tailscale install required when auth
+//! Both PC and phone run the same `tevarn-tsnet` binary as a child of the
+//! Tevarn engine — no separate system Tailscale install required when auth
 //! key + binary are present.
 //!
 //! Roles:
@@ -52,7 +52,7 @@ impl TsnetRole {
 pub struct TsnetEmbedConfig {
     pub role: TsnetRole,
     pub hostname: String,
-    /// Absolute or relative path to takton-tsnet binary
+    /// Absolute or relative path to tevarn-tsnet binary
     pub binary: Option<String>,
     /// Local backend host:port (PC role)
     pub backend: String,
@@ -68,7 +68,7 @@ pub struct TsnetEmbedConfig {
 
 impl Default for TsnetEmbedConfig {
     fn default() -> Self {
-        let role = match std::env::var("TAKTON_TSNET_ROLE")
+        let role = match std::env::var("TEVARN_TSNET_ROLE")
             .unwrap_or_default()
             .to_ascii_lowercase()
             .as_str()
@@ -77,22 +77,22 @@ impl Default for TsnetEmbedConfig {
             _ => TsnetRole::Pc,
         };
         let default_hn = if role == TsnetRole::Phone {
-            "takton-phone"
+            "tevarn-phone"
         } else {
-            "takton-pc"
+            "tevarn-pc"
         };
         Self {
             role,
-            hostname: std::env::var("TAKTON_TSNET_HOSTNAME")
-                .or_else(|_| std::env::var("TAKTON_MESH_HOSTNAME"))
+            hostname: std::env::var("TEVARN_TSNET_HOSTNAME")
+                .or_else(|_| std::env::var("TEVARN_MESH_HOSTNAME"))
                 .unwrap_or_else(|_| default_hn.into()),
-            binary: std::env::var("TAKTON_TSNET_BIN").ok(),
-            backend: std::env::var("TAKTON_BACKEND")
+            binary: std::env::var("TEVARN_TSNET_BIN").ok(),
+            backend: std::env::var("TEVARN_BACKEND")
                 .unwrap_or_else(|_| "127.0.0.1:8090".into()),
-            listen: std::env::var("TAKTON_TSNET_LISTEN").unwrap_or_else(|_| ":8090".into()),
-            status_addr: std::env::var("TAKTON_TSNET_STATUS")
+            listen: std::env::var("TEVARN_TSNET_LISTEN").unwrap_or_else(|_| ":8090".into()),
+            status_addr: std::env::var("TEVARN_TSNET_STATUS")
                 .unwrap_or_else(|_| DEFAULT_STATUS.into()),
-            auto_start: std::env::var("TAKTON_TSNET_AUTO")
+            auto_start: std::env::var("TEVARN_TSNET_AUTO")
                 .map(|v| v != "0" && v.to_ascii_lowercase() != "false")
                 .unwrap_or(true),
             prefer_system: true,
@@ -150,7 +150,7 @@ impl TsnetEmbed {
             cached_ip: Mutex::new(None),
         };
         if emb.auth_key().is_none() {
-            if let Ok(k) = std::env::var("TS_AUTHKEY").or_else(|_| std::env::var("TAKTON_TS_AUTHKEY"))
+            if let Ok(k) = std::env::var("TS_AUTHKEY").or_else(|_| std::env::var("TEVARN_TS_AUTHKEY"))
             {
                 if !k.trim().is_empty() {
                     let _ = emb.set_auth_key(k.trim());
@@ -172,11 +172,11 @@ impl TsnetEmbed {
     pub fn set_role(&self, role: TsnetRole) -> Result<TsnetEmbedConfig> {
         let mut c = self.config();
         c.role = role;
-        if c.hostname == "takton-pc" && role == TsnetRole::Phone {
-            c.hostname = "takton-phone".into();
+        if c.hostname == "tevarn-pc" && role == TsnetRole::Phone {
+            c.hostname = "tevarn-phone".into();
         }
-        if c.hostname == "takton-phone" && role == TsnetRole::Pc {
-            c.hostname = "takton-pc".into();
+        if c.hostname == "tevarn-phone" && role == TsnetRole::Pc {
+            c.hostname = "tevarn-pc".into();
         }
         // Avoid status-port clash when PC + phone host run on same machine (dev).
         if role == TsnetRole::Phone && c.status_addr.ends_with(":17891") {
@@ -265,7 +265,7 @@ impl TsnetEmbed {
             return Some(t);
         }
         std::env::var("TS_AUTHKEY")
-            .or_else(|_| std::env::var("TAKTON_TS_AUTHKEY"))
+            .or_else(|_| std::env::var("TEVARN_TS_AUTHKEY"))
             .ok()
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
@@ -290,32 +290,32 @@ impl TsnetEmbed {
         if let Some(b) = cfg.binary {
             candidates.push(PathBuf::from(b));
         }
-        if let Ok(b) = std::env::var("TAKTON_TSNET_BIN") {
+        if let Ok(b) = std::env::var("TEVARN_TSNET_BIN") {
             if !b.is_empty() {
                 candidates.push(PathBuf::from(b));
             }
         }
         if let Ok(exe) = std::env::current_exe() {
             if let Some(dir) = exe.parent() {
-                candidates.push(dir.join("takton-tsnet"));
+                candidates.push(dir.join("tevarn-tsnet"));
             }
         }
         candidates.push(PathBuf::from(
-            "/workspace/takton-mobile/sidecar/tsnet/takton-tsnet",
+            "/workspace/tevarn-mobile/sidecar/tsnet/tevarn-tsnet",
         ));
-        candidates.push(PathBuf::from("./sidecar/tsnet/takton-tsnet"));
-        candidates.push(PathBuf::from("./takton-tsnet"));
+        candidates.push(PathBuf::from("./sidecar/tsnet/tevarn-tsnet"));
+        candidates.push(PathBuf::from("./tevarn-tsnet"));
         if let Some(h) = dirs::home_dir() {
-            candidates.push(h.join(".takton/bin/takton-tsnet"));
+            candidates.push(h.join(".tevarn/bin/tevarn-tsnet"));
         }
-        candidates.push(PathBuf::from("/usr/local/bin/takton-tsnet"));
+        candidates.push(PathBuf::from("/usr/local/bin/tevarn-tsnet"));
 
         for c in &candidates {
             if c.is_file() {
                 return Some(c.clone());
             }
         }
-        if let Ok(out) = Command::new("which").arg("takton-tsnet").output() {
+        if let Ok(out) = Command::new("which").arg("tevarn-tsnet").output() {
             if out.status.success() {
                 let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 if !s.is_empty() && Path::new(&s).is_file() {
@@ -343,7 +343,7 @@ impl TsnetEmbed {
     }
 
     fn health_file(&self) -> Option<PathBuf> {
-        if let Ok(p) = std::env::var("TAKTON_TSNET_HEALTH") {
+        if let Ok(p) = std::env::var("TEVARN_TSNET_HEALTH") {
             if !p.is_empty() {
                 return Some(PathBuf::from(p));
             }
@@ -391,7 +391,7 @@ impl TsnetEmbed {
             // refresh IP
             if let Some(ip) = self.probe_status_ip() {
                 *self.cached_ip.lock() = Some(ip.clone());
-                std::env::set_var("TAKTON_TS_IP", &ip);
+                std::env::set_var("TEVARN_TS_IP", &ip);
             }
             return Ok(self.status());
         }
@@ -400,7 +400,7 @@ impl TsnetEmbed {
         if cfg.prefer_system {
             if let Some(ip) = detect_system_ts_ip() {
                 *self.cached_ip.lock() = Some(ip.clone());
-                std::env::set_var("TAKTON_TS_IP", &ip);
+                std::env::set_var("TEVARN_TS_IP", &ip);
                 *self.last_err.lock() = None;
                 return Ok(TsnetEmbedStatus {
                     running: true,
@@ -430,7 +430,7 @@ impl TsnetEmbed {
 
         let bin = self.resolve_binary().ok_or_else(|| {
             Error::Msg(
-                "未找到 takton-tsnet 二进制 · 请在 PC 构建 sidecar/tsnet 或设置 TAKTON_TSNET_BIN"
+                "未找到 tevarn-tsnet 二进制 · 请在 PC 构建 sidecar/tsnet 或设置 TEVARN_TSNET_BIN"
                     .into(),
             )
         })?;
@@ -454,8 +454,8 @@ impl TsnetEmbed {
             .arg("-status")
             .arg(&cfg.status_addr)
             .env("TS_AUTHKEY", &auth)
-            .env("TAKTON_TS_AUTHKEY", &auth)
-            .env("TAKTON_TSNET_HOSTNAME", &cfg.hostname)
+            .env("TEVARN_TS_AUTHKEY", &auth)
+            .env("TEVARN_TSNET_HOSTNAME", &cfg.hostname)
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
 
@@ -486,7 +486,7 @@ impl TsnetEmbed {
             std::thread::sleep(Duration::from_millis(250));
             if let Some(ip) = self.probe_status_ip() {
                 *self.cached_ip.lock() = Some(ip.clone());
-                std::env::set_var("TAKTON_TS_IP", &ip);
+                std::env::set_var("TEVARN_TS_IP", &ip);
                 break;
             }
             self.reap();
@@ -521,9 +521,9 @@ impl TsnetEmbed {
             let _ = fs::remove_file(h);
         }
         *self.cached_ip.lock() = None;
-        // Don't clear TAKTON_TS_IP if system TS still has it
+        // Don't clear TEVARN_TS_IP if system TS still has it
         if detect_system_ts_ip().is_none() {
-            std::env::remove_var("TAKTON_TS_IP");
+            std::env::remove_var("TEVARN_TS_IP");
         }
         Ok(self.status())
     }
@@ -619,7 +619,7 @@ impl TsnetEmbed {
         } else if auth.is_some() && bin.is_some() {
             "已配置 · 可一键启动内嵌 Tailscale".into()
         } else if auth.is_some() {
-            "已配置 auth key · 缺少 takton-tsnet 二进制".into()
+            "已配置 auth key · 缺少 tevarn-tsnet 二进制".into()
         } else if bin.is_some() {
             "已找到二进制 · 请粘贴 auth key".into()
         } else {
@@ -678,7 +678,7 @@ impl TsnetEmbed {
 pub type TsnetEmbedHandle = Arc<TsnetEmbed>;
 
 fn detect_system_ts_ip() -> Option<String> {
-    if let Ok(ip) = std::env::var("TAKTON_TS_IP") {
+    if let Ok(ip) = std::env::var("TEVARN_TS_IP") {
         if !ip.trim().is_empty() && ip.parse::<std::net::Ipv4Addr>().is_ok() {
             // Only trust env if process/system still up — still ok for advertise
             return Some(ip.trim().to_string());

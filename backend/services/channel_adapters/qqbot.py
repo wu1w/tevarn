@@ -1,7 +1,7 @@
 """
 QQ Bot 适配器 — 轻量版
 
-基于 Hermes QQBot adapter 核心逻辑，为 Takton 提供 QQ Channel 连接能力。
+基于 Hermes QQBot adapter 核心逻辑，为 Tevarn 提供 QQ Channel 连接能力。
 支持：获取 access_token、WebSocket Gateway 连接、收发消息。
 
 配置字段（存于 channels 表 extra JSON）：
@@ -72,7 +72,7 @@ class QQBotAdapter(BaseChannelAdapter):
         self._running = False
         self._session_id: Optional[str] = None
         self._seq: Optional[int] = None
-        self._user_agent = "TaktonQQBot/1.0"
+        self._user_agent = "TevarnQQBot/1.0"
 
     # ─── Token ──────────────────────────────────────────────
 

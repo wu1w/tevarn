@@ -1,4 +1,4 @@
-# Takton VPS 中继 — 一行命令安装（Ubuntu）
+# Tevarn VPS 中继 — 一行命令安装（Ubuntu）
 
 把家里的 PC 后端通过**出站隧道**挂到公网 VPS，手机扫码即可在 5G 连回家。  
 **不需要**给家里做端口映射；PC 只出站。
@@ -11,7 +11,7 @@
 curl -fsSL https://github.com/wu1w/takton/releases/download/v0.5.7-alpha/install-vps-relay.sh | sudo bash
 ```
 
-装完会**自动打印**（并写入 `/opt/takton-vps-relay/INSTALL_INFO.txt`）：
+装完会**自动打印**（并写入 `/opt/tevarn-vps-relay/INSTALL_INFO.txt`）：
 
 ```text
 IP / Host :  x.x.x.x
@@ -22,7 +22,7 @@ IP / Host :  x.x.x.x
 再次查看：
 
 ```bash
-sudo cat /opt/takton-vps-relay/INSTALL_INFO.txt
+sudo cat /opt/tevarn-vps-relay/INSTALL_INFO.txt
 ```
 
 **云厂商安全组**请放行 TCP `80`（或你自定义的端口）。
@@ -42,13 +42,13 @@ curl -fsSL https://github.com/wu1w/takton/releases/download/v0.5.7-alpha/install
 脚本会自动：安装 Docker（若无）→ 下载中继包 → 生成令牌 → `docker compose up` → 打印 IP/端口/令牌。
 
 > 源码分支同步（开发用）：  
-> `curl -fsSL https://raw.githubusercontent.com/wu1w/takton/feature/agent-kernel/deploy/vps-relay/install.sh | sudo bash`
+> `curl -fsSL https://raw.githubusercontent.com/wu1w/tevarn/feature/agent-kernel/deploy/vps-relay/install.sh | sudo bash`
 
 ---
 
 ## 装好后：PC + 手机
 
-### ① PC Takton
+### ① PC Tevarn
 
 **设置 → 远程连接 → 自有 VPS 中继**
 
@@ -67,12 +67,12 @@ curl -fsSL https://github.com/wu1w/takton/releases/download/v0.5.7-alpha/install
 
 | 路径 | 说明 |
 |------|------|
-| `/opt/takton-vps-relay` | 安装目录 |
-| `/opt/takton-vps-relay/.env` | Token / 端口（权限 600） |
-| `/opt/takton-vps-relay/INSTALL_INFO.txt` | 安装结果摘要 |
+| `/opt/tevarn-vps-relay` | 安装目录 |
+| `/opt/tevarn-vps-relay/.env` | Token / 端口（权限 600） |
+| `/opt/tevarn-vps-relay/INSTALL_INFO.txt` | 安装结果摘要 |
 
 ```bash
-cd /opt/takton-vps-relay
+cd /opt/tevarn-vps-relay
 docker compose logs -f          # 日志
 docker compose ps               # 状态
 docker compose down             # 停止
@@ -100,22 +100,22 @@ docker compose up -d --build    # 重建启动
 
 - `RELAY_TOKEN` 长期密钥，**不要**写进二维码  
 - 二维码里的 `vpt` 是 **HMAC 短时票**（密钥=`RELAY_TOKEN`）  
-- 公网 `/t/{id}` 默认要求 Bearer JWT 或 `X-Takton-Vpt`  
-- PC 隧道注入 `x-takton-relay`，禁止 single_user 免登录把公网当本机 admin  
+- 公网 `/t/{id}` 默认要求 Bearer JWT 或 `X-Tevarn-Vpt`  
+- PC 隧道注入 `x-tevarn-relay`，禁止 single_user 免登录把公网当本机 admin  
 - 生产建议域名 + HTTPS（前面挂 Caddy/nginx）  
 - 轮换 Token：改 `.env` 后 `docker compose up -d`，并更新 PC 远程连接  
 
 ## 卸载
 
 ```bash
-cd /opt/takton-vps-relay
+cd /opt/tevarn-vps-relay
 docker compose down
-# 可选: rm -rf /opt/takton-vps-relay
+# 可选: rm -rf /opt/tevarn-vps-relay
 ```
 
 ## 离线 / 本地目录安装
 
-若已 clone 仓库或解压了 release 中的 `takton-vps-relay-*.zip`：
+若已 clone 仓库或解压了 release 中的 `tevarn-vps-relay-*.zip`：
 
 ```bash
 cd deploy/vps-relay   # 或解压后的目录

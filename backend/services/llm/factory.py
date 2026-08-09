@@ -186,7 +186,7 @@ class LLMServiceFactory:
         _sid = str(snapshot.get("session_id") or "").strip()
         _pck = str(snapshot.get("prompt_cache_key") or "").strip()
         if not _pck and _sid:
-            _pck = f"takton:{_sid[:32]}"
+            _pck = f"tevarn:{_sid[:32]}"
         elif not _pck:
             _pck = str(provider_id or "")
         cache_key = _pck[:64] or None

@@ -59,7 +59,7 @@ class ConfirmOutcome:
             "no_channel": (
                 "当前运行环境没有确认通道（定时任务 / 渠道机器人 / 无前端连接）；"
                 "已按 headless 策略处理（safe 默认：读写可放行，shell/网络拒绝）。"
-                "全放行可设 TAKTON_HEADLESS_AUTO_APPROVE=1 或 agent_permission_headless=allow"
+                "全放行可设 TEVARN_HEADLESS_AUTO_APPROVE=1 或 agent_permission_headless=allow"
             ),
             "not_connected": (
                 "会话没有活跃的前端连接，确认弹窗无法送达；"
@@ -73,7 +73,7 @@ def _headless_auto_approve_enabled() -> bool:
     """Product flag: allow headless auto-approve when no FE (env or settings)."""
     import os
 
-    env = os.environ.get("TAKTON_HEADLESS_AUTO_APPROVE", "").strip().lower()
+    env = os.environ.get("TEVARN_HEADLESS_AUTO_APPROVE", "").strip().lower()
     if env in ("1", "true", "yes", "on"):
         return True
     if env in ("0", "false", "no", "off"):

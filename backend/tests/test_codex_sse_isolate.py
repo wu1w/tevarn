@@ -17,19 +17,19 @@ from backend.services.llm.codex_sse_isolate import (
 
 
 def test_isolate_default_on_windows():
-    prev = os.environ.pop("TAKTON_CODEX_SSE_ISOLATE", None)
+    prev = os.environ.pop("TEVARN_CODEX_SSE_ISOLATE", None)
     try:
         if sys.platform == "win32":
             assert isolate_enabled() is True
-        os.environ["TAKTON_CODEX_SSE_ISOLATE"] = "0"
+        os.environ["TEVARN_CODEX_SSE_ISOLATE"] = "0"
         assert isolate_enabled() is False
-        os.environ["TAKTON_CODEX_SSE_ISOLATE"] = "1"
+        os.environ["TEVARN_CODEX_SSE_ISOLATE"] = "1"
         assert isolate_enabled() is True
     finally:
         if prev is None:
-            os.environ.pop("TAKTON_CODEX_SSE_ISOLATE", None)
+            os.environ.pop("TEVARN_CODEX_SSE_ISOLATE", None)
         else:
-            os.environ["TAKTON_CODEX_SSE_ISOLATE"] = prev
+            os.environ["TEVARN_CODEX_SSE_ISOLATE"] = prev
 
 
 @pytest.mark.asyncio

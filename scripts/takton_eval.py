@@ -15,8 +15,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-os.environ.setdefault("TAKTON_KERNEL_BACKEND", "rust")
-os.environ.setdefault("TAKTON_KERNEL_AUTO_START", "1")
+os.environ.setdefault("TEVARN_KERNEL_BACKEND", "rust")
+os.environ.setdefault("TEVARN_KERNEL_AUTO_START", "1")
 
 
 def _connect():
@@ -132,7 +132,7 @@ def suite_long(k) -> dict:
     score += 0.25 if plan.get("full_replay") is False else 0.0
 
     # Compressed marathon: N suspend/resume cycles (hard gate input)
-    cycles = int(os.environ.get("TAKTON_MARATHON_EVAL_CYCLES", "5") or 5)
+    cycles = int(os.environ.get("TEVARN_MARATHON_EVAL_CYCLES", "5") or 5)
     cycles = max(2, min(cycles, 32))
     resume_ok = 0
     for i in range(cycles):
@@ -205,9 +205,9 @@ def suite_safety(k) -> dict:
 
 
 def main() -> int:
-    threshold = float(os.environ.get("TAKTON_EVAL_THRESHOLD", "0.75") or 0.75)
+    threshold = float(os.environ.get("TEVARN_EVAL_THRESHOLD", "0.75") or 0.75)
     marathon_min = float(
-        os.environ.get("TAKTON_MARATHON_RESUME_THRESHOLD", "0.95") or 0.95
+        os.environ.get("TEVARN_MARATHON_RESUME_THRESHOLD", "0.95") or 0.95
     )
     k = _connect()
     results = [
@@ -244,7 +244,7 @@ def main() -> int:
             parts,
             {
                 "marathon_resume_success": marathon_rate,
-                "source": "takton_eval",
+                "source": "tevarn_eval",
             },
         )
         gate = k.eval_gate_check("default")

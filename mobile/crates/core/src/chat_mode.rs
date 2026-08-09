@@ -193,6 +193,55 @@ impl UiChatMessage {
 
 /// Normalize heterogeneous history shapes into stable UI messages.
 /// Heavy string/JSON work stays in Rust so Flutter only binds fields.
+/// Strip PC reasoning tags. Mobile has no ThinkingBlock — raw tags must not reach UI.
+pub fn strip_thinking_blocks(raw: &str) -> String {
+    let mut s = raw.to_string();
+    for (open, close) in [
+        ("<thinking", "</thinking>"),
+        ("<think", "</think>"),
+        ("[Thinking]", "[/Thinking]"),
+        ("【思考】", "【/思考】"),
+    ] {
+        loop {
+            let lower = s.to_ascii_lowercase();
+            let open_l = open.to_ascii_lowercase();
+            let close_l = close.to_ascii_lowercase();
+            let Some(start) = lower.find(&open_l) else {
+                break;
+            };
+            let content_start = if open.starts_with('<') {
+                match s[start..].find('>') {
+                    Some(rel) => start + rel + 1,
+                    None => {
+                        s.truncate(start);
+                        break;
+                    }
+                }
+            } else {
+                start + open.len()
+            };
+            let rest_lower = s[content_start..].to_ascii_lowercase();
+            let Some(rel_end) = rest_lower.find(&close_l) else {
+                s.truncate(start);
+                break;
+            };
+            let end = content_start + rel_end + close.len();
+            s.replace_range(start..end, "");
+        }
+    }
+    // Fenced ```thinking ... ```
+    let lower = s.to_ascii_lowercase();
+    if let Some(idx) = lower.find("```thinking") {
+        if let Some(end_rel) = s[idx + 3..].find("```") {
+            let end = idx + 3 + end_rel + 3;
+            s.replace_range(idx..end, "");
+        } else {
+            s.truncate(idx);
+        }
+    }
+    s.trim().to_string()
+}
+
 pub fn normalize_ui_messages(raw: &[Value], default_who: &str) -> Vec<UiChatMessage> {
     let mut out = Vec::with_capacity(raw.len());
     for (i, m) in raw.iter().enumerate() {
@@ -201,7 +250,7 @@ pub fn normalize_ui_messages(raw: &[Value], default_who: &str) -> Vec<UiChatMess
             .and_then(|v| v.as_str())
             .unwrap_or("assistant")
             .to_string();
-        let mut content = extract_content(m);
+        let mut content = strip_thinking_blocks(&extract_content(m));
         let mut who = m
             .get("who")
             .and_then(|v| v.as_str())
@@ -231,7 +280,7 @@ pub fn normalize_ui_messages(raw: &[Value], default_who: &str) -> Vec<UiChatMess
                 .map(|a| !a.is_empty())
                 .unwrap_or(false);
             if has_tc {
-                // Show tool invocation row instead of hiding it.
+                // Tool row only — never glue thinking/plan into message body.
                 let names: Vec<String> = m
                     .get("tool_calls")
                     .and_then(|v| v.as_array())
@@ -251,12 +300,7 @@ pub fn normalize_ui_messages(raw: &[Value], default_who: &str) -> Vec<UiChatMess
                 } else {
                     names.join(", ")
                 };
-                let plan = content.trim();
-                content = if plan.is_empty() {
-                    format!("· 调用 `{label}` …")
-                } else {
-                    format!("· 调用 `{label}` …\n{plan}")
-                };
+                content = format!("· 调用 `{label}` …");
                 who = if who.is_empty() {
                     "工具".into()
                 } else {
@@ -362,5 +406,27 @@ mod tests {
         assert_eq!(msgs[1].format, "plain");
         assert_eq!(msgs[2].content, "a\nb");
         assert_eq!(msgs[3].format, "markdown");
+    }
+
+    #[test]
+    fn strip_thinking_and_tool_row_no_plan_glue() {
+        let raw = strip_thinking_blocks(
+            "<thinking>\nmaybe 3pm\n</thinking>\n\n现在是下午 5 点。",
+        );
+        assert_eq!(raw, "现在是下午 5 点。");
+        assert!(strip_thinking_blocks("<thinking>only</thinking>").is_empty());
+
+        let msgs = normalize_ui_messages(
+            &[json!({
+                "role": "assistant",
+                "content": "<thinking>plan</thinking>\nI will search",
+                "tool_calls": [{"function": {"name": "web_search"}}]
+            })],
+            "Agent",
+        );
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].content, "· 调用 `web_search` …");
+        assert!(!msgs[0].content.contains("thinking"));
+        assert!(!msgs[0].content.contains("I will search"));
     }
 }

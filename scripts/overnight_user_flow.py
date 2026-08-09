@@ -25,8 +25,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 os.environ.setdefault("PYTHONPATH", str(ROOT))
-os.environ.setdefault("TAKTON_KERNEL_BACKEND", "rust")
-os.environ.setdefault("TAKTON_KERNEL_AUTO_START", "1")
+os.environ.setdefault("TEVARN_KERNEL_BACKEND", "rust")
+os.environ.setdefault("TEVARN_KERNEL_AUTO_START", "1")
 
 REPORT_MD = ROOT / "reports" / "overnight_user_flow.md"
 REPORT_JSON = ROOT / "reports" / "overnight_user_flow.json"
@@ -159,8 +159,8 @@ def restart_backend() -> bool:
         time.sleep(2)
         env = os.environ.copy()
         env["PYTHONPATH"] = str(ROOT)
-        env["TAKTON_KERNEL_BACKEND"] = "rust"
-        env["TAKTON_KERNEL_AUTO_START"] = "1"
+        env["TEVARN_KERNEL_BACKEND"] = "rust"
+        env["TEVARN_KERNEL_AUTO_START"] = "1"
         py = ROOT / ".venv" / "Scripts" / "python.exe"
         if not py.is_file():
             py = Path(sys.executable)
@@ -203,7 +203,7 @@ def login(api: str) -> str | None:
     st, body = http(
         "POST",
         f"{api}/auth/login",
-        body={"email": "admin@takton.dev", "password": "admin"},
+        body={"email": "admin@tevarn.dev", "password": "admin"},
     )
     if st == 200 and isinstance(body, dict):
         return body.get("access_token")

@@ -1,6 +1,6 @@
 {
-    "name": "takton_mobile",
-    "short_name": "takton_mobile",
+    "name": "tevarn_mobile",
+    "short_name": "tevarn_mobile",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

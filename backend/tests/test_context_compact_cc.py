@@ -76,7 +76,7 @@ async def test_l5_injects_user_continuation_not_system_ban(monkeypatch):
 
     monkeypatch.setattr(PipelineContextEngine, "_llm_summarize", _fake)
 
-    messages = [{"role": "system", "content": "You are Takton"}]
+    messages = [{"role": "system", "content": "You are Tevarn"}]
     for i in range(5):
         messages.append(
             {

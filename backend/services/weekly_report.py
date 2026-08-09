@@ -23,7 +23,7 @@ def _project_root() -> Path:
 
 
 def eval_data_dir() -> Path:
-    env = os.environ.get("TAKTON_EVAL_DATA_DIR", "").strip()
+    env = os.environ.get("TEVARN_EVAL_DATA_DIR", "").strip()
     if env:
         p = Path(env)
     else:
@@ -239,7 +239,7 @@ def collect_weekly_report(
     Args:
         k: kernel client（RustAgentKernel / get_kernel）
         eval_result: 已有 eval 结果；None 时尝试 load_latest 或 run_eval
-        run_eval: 为 True 时同步跑 scripts.takton_eval suites（需 host）
+        run_eval: 为 True 时同步跑 scripts.tevarn_eval suites（需 host）
         persist: 写入 data/eval/weekly
     """
     if k is None:
@@ -253,7 +253,7 @@ def collect_weekly_report(
 
     if eval_result is None and run_eval:
         try:
-            from scripts import takton_eval as te
+            from scripts import tevarn_eval as te
 
             if k is None:
                 k = te._connect()
@@ -264,7 +264,7 @@ def collect_weekly_report(
                 te.suite_safety(k),
             ]
             overall = sum(r["score"] for r in results) / max(1, len(results))
-            threshold = float(os.environ.get("TAKTON_EVAL_THRESHOLD", "0.75") or 0.75)
+            threshold = float(os.environ.get("TEVARN_EVAL_THRESHOLD", "0.75") or 0.75)
             eval_result = {
                 "overall": round(overall, 4),
                 "threshold": threshold,

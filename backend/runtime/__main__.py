@@ -7,8 +7,8 @@
     python -m backend.runtime --headless   # 仅 Runtime（无 uvicorn，dispatcher 循环）
 
 环境：
-    TAKTON_AIOS_PROFILE=aios-dev
-    TAKTON_SINGLE_USER_MODE=true
+    TEVARN_AIOS_PROFILE=aios-dev
+    TEVARN_SINGLE_USER_MODE=true
 """
 
 from __future__ import annotations
@@ -30,18 +30,18 @@ def _ensure_path() -> None:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="python -m backend.runtime",
-        description="Takton Kernel Host — UI 非必需",
+        description="Tevarn Kernel Host — UI 非必需",
     )
     p.add_argument(
         "--headless",
         action="store_true",
         help="不启 HTTP，仅跑 Dispatcher/后台循环（调试用）",
     )
-    p.add_argument("--host", default=os.environ.get("TAKTON_APP_HOST", "127.0.0.1"))
+    p.add_argument("--host", default=os.environ.get("TEVARN_APP_HOST", "127.0.0.1"))
     p.add_argument(
         "--port",
         type=int,
-        default=int(os.environ.get("TAKTON_APP_PORT", "8090")),
+        default=int(os.environ.get("TEVARN_APP_PORT", "8090")),
     )
     p.add_argument("--reload", action="store_true", help="uvicorn reload（仅非 headless）")
     return p
@@ -49,11 +49,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def run_http(host: str, port: int, *, reload: bool = False) -> None:
     """经 FastAPI Adapter 暴露 Kernel（生产/桌面默认路径）。"""
-    os.environ.setdefault("TAKTON_SINGLE_USER_MODE", "true")
+    os.environ.setdefault("TEVARN_SINGLE_USER_MODE", "true")
     import uvicorn
 
-    print(f"[takton-runtime] Kernel Host + HTTP Adapter http://{host}:{port}")
-    print("[takton-runtime] UI 可后连；关控制台窗口不应依赖本进程退出（见 Electron 退出语义）")
+    print(f"[tevarn-runtime] Kernel Host + HTTP Adapter http://{host}:{port}")
+    print("[tevarn-runtime] UI 可后连；关控制台窗口不应依赖本进程退出（见 Electron 退出语义）")
     uvicorn.run(
         "backend.main:app",
         host=host,
@@ -66,7 +66,7 @@ def run_http(host: str, port: int, *, reload: bool = False) -> None:
 async def _headless_loop() -> None:
     """无 HTTP：初始化 DB + workforce dispatcher 常驻。"""
     logging.basicConfig(level=logging.INFO)
-    log = logging.getLogger("takton.runtime")
+    log = logging.getLogger("tevarn.runtime")
     from backend.core.config import settings
     from backend.database import AsyncSessionLocal, init_db
     from backend.kernel import get_kernel
@@ -90,16 +90,16 @@ async def _headless_loop() -> None:
 
 
 def run_headless() -> None:
-    print("[takton-runtime] headless mode — Ctrl+C 停止")
+    print("[tevarn-runtime] headless mode — Ctrl+C 停止")
     try:
         asyncio.run(_headless_loop())
     except KeyboardInterrupt:
-        print("\n[takton-runtime] stopped")
+        print("\n[tevarn-runtime] stopped")
 
 
 def main(argv: list[str] | None = None) -> None:
     _ensure_path()
-    os.environ.setdefault("TAKTON_AIOS_PROFILE", os.environ.get("TAKTON_AIOS_PROFILE", "aios-dev"))
+    os.environ.setdefault("TEVARN_AIOS_PROFILE", os.environ.get("TEVARN_AIOS_PROFILE", "aios-dev"))
     args = build_parser().parse_args(argv)
     if args.headless:
         run_headless()

@@ -28,7 +28,7 @@ const ROUTES = [
 
 /** 允许出现的汉字（品牌/测试账号/已知未迁文案可逐步收紧） */
 const ALLOW_CJK = [
-  /takton/i,
+  /tevarn/i,
   /WuYiWei/,
   /沈策|陈工|文研|码力|测安|小秘|金算/, // demo 人名若未清库
 ];
@@ -39,7 +39,7 @@ async function apiLogin(): Promise<string> {
   const r = await fetch(`${API}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: 'admin@takton.dev', password: 'admin' }),
+    body: JSON.stringify({ email: 'admin@tevarn.dev', password: 'admin' }),
   });
   const d = (await r.json()) as { access_token?: string };
   if (!d.access_token) throw new Error('login failed ' + JSON.stringify(d));
@@ -51,10 +51,10 @@ async function seedAuth(page: Page, token: string) {
     ({ tok }: { tok: string }) => {
       try {
         localStorage.setItem(
-          'takton-auth',
+          'tevarn-auth',
           JSON.stringify({
             state: {
-              user: { email: 'admin@takton.dev', username: 'admin' },
+              user: { email: 'admin@tevarn.dev', username: 'admin' },
               token: tok,
               isAuthenticated: true,
               hasHydrated: true,
@@ -63,11 +63,11 @@ async function seedAuth(page: Page, token: string) {
           }),
         );
         localStorage.setItem(
-          'takton-locale',
+          'tevarn-locale',
           JSON.stringify({ state: { locale: 'en' }, version: 0 }),
         );
         document.documentElement.lang = 'en';
-        document.cookie = `takton-auth=${tok}; path=/; max-age=604800; SameSite=Strict`;
+        document.cookie = `tevarn-auth=${tok}; path=/; max-age=604800; SameSite=Strict`;
       } catch {
         /* ignore */
       }
@@ -115,7 +115,7 @@ test.describe('i18n EN full-path scan', () => {
         document.documentElement.lang = 'en';
         try {
           localStorage.setItem(
-            'takton-locale',
+            'tevarn-locale',
             JSON.stringify({ state: { locale: 'en' }, version: 0 }),
           );
         } catch {

@@ -24,11 +24,11 @@ def test_h01_find_host_bin_prefers_target_over_vendor(tmp_path, monkeypatch):
 
     root = tmp_path
     release = root / "target" / "release"
-    vendor = root / "vendor" / "takton-kernel-host"
+    vendor = root / "vendor" / "tevarn-kernel-host"
     release.mkdir(parents=True)
     vendor.mkdir(parents=True)
-    rel_bin = release / "takton-kernel-host"
-    ven_bin = vendor / "takton-kernel-host"
+    rel_bin = release / "tevarn-kernel-host"
+    ven_bin = vendor / "tevarn-kernel-host"
     rel_bin.write_text("new")
     ven_bin.write_text("old")
     # make release newer
@@ -39,10 +39,10 @@ def test_h01_find_host_bin_prefers_target_over_vendor(tmp_path, monkeypatch):
     os.utime(rel_bin, (now, now))
     os.utime(ven_bin, (now - 1000, now - 1000))
 
-    monkeypatch.delenv("TAKTON_KERNEL_HOST_BIN", raising=False)
+    monkeypatch.delenv("TEVARN_KERNEL_HOST_BIN", raising=False)
     monkeypatch.setattr(kc, "Path", Path)
     # _find_host_bin uses Path(__file__).parents[2] as root — patch via env bin
-    monkeypatch.setenv("TAKTON_KERNEL_HOST_BIN", str(rel_bin))
+    monkeypatch.setenv("TEVARN_KERNEL_HOST_BIN", str(rel_bin))
     found = kc._find_host_bin()
     assert found is not None
     assert found.resolve() == rel_bin.resolve()
@@ -209,7 +209,7 @@ def test_h13_package_trust_doc_exists():
     doc = root / "docs" / "PACKAGE_TRUST.md"
     assert doc.is_file()
     text = doc.read_text(encoding="utf-8")
-    assert "TAKTON_PKG_SIGNING_KEY" in text or "PKG_SIGNING" in text
+    assert "TEVARN_PKG_SIGNING_KEY" in text or "PKG_SIGNING" in text
     assert "content" in text.lower() and "hash" in text.lower()
 
 

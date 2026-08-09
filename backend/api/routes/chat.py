@@ -82,7 +82,7 @@ async def chat_completion(
                 "id": f"chatcmpl-{uuid.uuid4().hex}",
                 "object": "chat.completion.chunk",
                 "created": int(asyncio.get_event_loop().time()),
-                "model": "takton",
+                "model": "tevarn",
                 "choices": [{
                     "index": 0,
                     "delta": {"role": "assistant", "content": result or ""},

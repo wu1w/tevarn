@@ -15,7 +15,7 @@ class TestSingleUserMode:
 
     @pytest.mark.asyncio
     async def test_auto_login_creates_default_user(self):
-        """POST /auth/auto-login should create admin@takton.dev on first call."""
+        """POST /auth/auto-login should create admin@tevarn.dev on first call."""
         async with LifespanManager(app) as manager:
             async with AsyncClient(
                 transport=ASGITransport(app=manager.app), base_url="http://test"
@@ -24,7 +24,7 @@ class TestSingleUserMode:
                 assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
                 data = resp.json()
                 assert "access_token" in data
-                assert data["user"]["email"] == "admin@takton.dev"
+                assert data["user"]["email"] == "admin@tevarn.dev"
                 assert data["user"]["username"] == "admin"
                 assert data["user"]["is_superuser"] is True
 
@@ -54,7 +54,7 @@ class TestSingleUserMode:
                 resp = await ac.get("/api/auth/me")
                 assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
                 data = resp.json()
-                assert data["email"] == "admin@takton.dev"
+                assert data["email"] == "admin@tevarn.dev"
 
     @pytest.mark.asyncio
     async def test_single_user_mode_disabled_returns_403(self):

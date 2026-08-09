@@ -65,6 +65,62 @@ def needs_shell(command: str) -> bool:
     return False
 
 
+_CMD_WRAPPER_RE = re.compile(
+    r"^(?:cmd(?:\.exe)?)\s+(?:/d\s+)?/c\s+(?P<body>.*)$",
+    re.I | re.S,
+)
+_PS_CMDLET_RE = re.compile(
+    r"^(Get-ChildItem|Get-Content|Get-Item|Select-Object|Where-Object|"
+    r"ForEach-Object|Set-Location|Test-Path|Join-Path|Resolve-Path|"
+    r"Write-Output|Write-Host|\$[A-Za-z_])",
+    re.I,
+)
+
+
+def _unwrap_one_quoted(s: str) -> str:
+    t = (s or "").strip()
+    if len(t) >= 2 and t[0] == t[-1] and t[0] in "\"'":
+        return t[1:-1]
+    return t
+
+
+def normalize_windows_job_command(command: str) -> str:
+    """Normalize model commands for JobBackend which always runs:
+
+        cmd.exe /d /c <command>
+
+    Models often pass ``cmd /c "..."`` already → double wrap produces:
+    ``'\"rustc --version & ...\"' 不是内部或外部命令``.
+
+    Also rewrite bare PowerShell cmdlets (Get-ChildItem …) to powershell.exe.
+    """
+    c = (command or "").strip()
+    if not c:
+        return c
+    # Strip one or two redundant cmd /c wrappers
+    for _ in range(2):
+        m = _CMD_WRAPPER_RE.match(c)
+        if not m:
+            break
+        body = (m.group("body") or "").strip()
+        # cmd /c "inner with &"  → inner with &
+        c = _unwrap_one_quoted(body)
+    c = c.strip()
+    # Bare PowerShell → encoded command (avoids quote hell under cmd /c)
+    if _PS_CMDLET_RE.match(c) and not re.match(r"^(powershell|pwsh)(\.exe)?\b", c, re.I):
+        try:
+            import base64
+
+            # -EncodedCommand expects UTF-16LE
+            b64 = base64.b64encode(c.encode("utf-16-le")).decode("ascii")
+            return f"powershell.exe -NoProfile -NonInteractive -EncodedCommand {b64}"
+        except Exception:
+            # fallback: simple -Command with doubled quotes
+            esc = c.replace('"', '`"')
+            return f'powershell.exe -NoProfile -NonInteractive -Command "{esc}"'
+    return c
+
+
 def split_argv(command: str) -> list[str]:
     """将命令拆成 argv；Windows 用 posix=False，并剥掉 shlex 留下的包围引号。"""
     if sys.platform == "win32":
@@ -107,6 +163,76 @@ def validate_app_name(app_name: str) -> str | None:
     return None
 
 
+async def kill_process_tree(proc: asyncio.subprocess.Process | None) -> None:
+    """Best-effort kill process and children (Windows taskkill / POSIX killpg).
+
+    Outer agent timeouts cancel the asyncio task; without this, children that
+    only hit CancelledError (not TimeoutError) keep running and poison later tools.
+    """
+    if proc is None or proc.returncode is not None:
+        return
+    pid = getattr(proc, "pid", None)
+    try:
+        if sys.platform == "win32" and pid:
+            # /T = tree; /F = force. Avoids orphaned cmd/python grandchildren.
+            killer = await asyncio.create_subprocess_exec(
+                "taskkill",
+                "/PID",
+                str(pid),
+                "/T",
+                "/F",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            try:
+                await asyncio.wait_for(killer.wait(), timeout=5.0)
+            except Exception:
+                try:
+                    killer.kill()
+                except Exception:
+                    pass
+        else:
+            # start_new_session=True below → process group id == pid
+            if pid and hasattr(os, "killpg"):
+                try:
+                    os.killpg(pid, 9)  # SIGKILL
+                except Exception:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+            else:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=3.0)
+        except Exception:
+            pass
+    except Exception as e:
+        logger.debug("kill_process_tree failed: %s", e)
+
+
+def _spawn_kwargs() -> dict[str, Any]:
+    """Platform kwargs so we can kill the whole process group/tree later."""
+    kw: dict[str, Any] = {
+        # Never inherit interactive stdin — hangs until outer 180s cancel.
+        "stdin": asyncio.subprocess.DEVNULL,
+    }
+    if sys.platform == "win32":
+        # CREATE_NEW_PROCESS_GROUP helps Ctrl-break; taskkill /T still kills tree.
+        try:
+            import subprocess as _sp
+
+            kw["creationflags"] = getattr(_sp, "CREATE_NEW_PROCESS_GROUP", 0)
+        except Exception:
+            pass
+    else:
+        kw["start_new_session"] = True
+    return kw
+
+
 async def create_process(
     command: str,
     *,
@@ -130,6 +256,7 @@ async def create_process(
                 "refusing shell command with Windows env-expansion/backtick injection risk"
             )
 
+    spawn = _spawn_kwargs()
     if not use_shell:
         try:
             argv = split_argv(command)
@@ -144,6 +271,7 @@ async def create_process(
             env=env,
             stdout=stdout,
             stderr=stderr,
+            **spawn,
         )
 
     logger.debug("safe_subprocess shell cmd=%s", command[:120])
@@ -153,6 +281,7 @@ async def create_process(
         env=env,
         stdout=stdout,
         stderr=stderr,
+        **spawn,
     )
 
 
@@ -182,18 +311,18 @@ async def run_capture(
             proc.communicate(), timeout=max(1.0, float(timeout))
         )
     except asyncio.TimeoutError:
-        try:
-            proc.kill()
-            await proc.wait()
-        except Exception:
-            pass
+        await kill_process_tree(proc)
         return {
             "ok": False,
             "stdout": "",
-            "stderr": f"command exceeded {timeout}s and was terminated",
+            "stderr": f"[Timeout] command exceeded {timeout}s and was terminated",
             "code": 124,
             "mode": mode,
         }
+    except asyncio.CancelledError:
+        # Outer agent_tool_timeout_seconds cancelled us — must kill OS children.
+        await kill_process_tree(proc)
+        raise
 
     from backend.computer.text_decode import decode_process_bytes
 

@@ -6,17 +6,17 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use takton_mobile_core::chat::ChatConnection;
-use takton_mobile_core::local_llm::LocalLlmService;
-use takton_mobile_core::local_agent::LocalAgent;
-use takton_mobile_core::local_tools::ToolRuntime;
-use takton_mobile_core::media::MediaStore;
-use takton_mobile_core::mesh::MeshService;
-use takton_mobile_core::pair::PairService;
-use takton_mobile_core::path::PathService;
-use takton_mobile_core::session_meta::SessionMetaStore;
-use takton_mobile_core::storage::Store;
-use takton_mobile_core::{AppConfig, LocalOauth, TaktonClient};
+use tevarn_mobile_core::chat::ChatConnection;
+use tevarn_mobile_core::local_llm::LocalLlmService;
+use tevarn_mobile_core::local_agent::LocalAgent;
+use tevarn_mobile_core::local_tools::ToolRuntime;
+use tevarn_mobile_core::media::MediaStore;
+use tevarn_mobile_core::mesh::MeshService;
+use tevarn_mobile_core::pair::PairService;
+use tevarn_mobile_core::path::PathService;
+use tevarn_mobile_core::session_meta::SessionMetaStore;
+use tevarn_mobile_core::storage::Store;
+use tevarn_mobile_core::{AppConfig, LocalOauth, TevarnClient};
 
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -68,7 +68,7 @@ struct SessionEventRing {
 
 #[derive(Clone)]
 pub struct AppState {
-    pub client: TaktonClient,
+    pub client: TevarnClient,
     pub config: Arc<RwLock<AppConfig>>,
     /// browser_ws_id → fanout of chat events
     pub browser_subs: Arc<DashMap<String, mpsc::UnboundedSender<Message>>>,
@@ -118,7 +118,7 @@ pub struct AppState {
 impl AppState {
     pub const DELTA_COALESCE_MS: u64 = 40;
 
-    pub fn new(client: TaktonClient, config: AppConfig) -> anyhow::Result<Self> {
+    pub fn new(client: TevarnClient, config: AppConfig) -> anyhow::Result<Self> {
         // Android: ensure writable data dir before opening stores (avoids panic → white screen).
         std::fs::create_dir_all(&config.data_dir).map_err(|e| {
             anyhow::anyhow!("create data_dir {:?}: {e}", config.data_dir)
@@ -535,11 +535,11 @@ impl AppState {
         self.broadcast_json_raw(&out);
     }
 
-    /// Probe Takton Rust kernel host (default 127.0.0.1:17890 relative to PC).
+    /// Probe Tevarn Rust kernel host (default 127.0.0.1:17890 relative to PC).
     pub fn probe_local_kernel() -> bool {
         use std::net::TcpStream;
         use std::time::Duration;
-        let host = std::env::var("TAKTON_KERNEL_HOST").unwrap_or_else(|_| "127.0.0.1:17890".into());
+        let host = std::env::var("TEVARN_KERNEL_HOST").unwrap_or_else(|_| "127.0.0.1:17890".into());
         let addr = if host.contains(':') {
             host
         } else {

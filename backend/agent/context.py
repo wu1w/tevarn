@@ -232,11 +232,11 @@ class ContextManager:
                 if body:
                     pkg_block_parts.append(f"### {icon} {name}\n{body}")
             if pkg_block_parts:
-                pkg_block = "# Attached Takton Packages\n" + "\n\n".join(pkg_block_parts)
+                pkg_block = "# Attached Tevarn Packages\n" + "\n\n".join(pkg_block_parts)
                 ctx = parts.get("context") or ""
                 parts["context"] = (ctx + "\n\n" + pkg_block).strip() if ctx else pkg_block
 
-        # 挂载已安装的 prompt-skills（~/.takton/skills/ 下的 SKILL.md）到 Context 层
+        # 挂载已安装的 prompt-skills（~/.tevarn/skills/ 下的 SKILL.md）到 Context 层
         # 策略：summary | auto(摘要+相关全文) | full — 见 settings.prompt_skill_*
         try:
             from backend.services.skill_store.prompt_skill_loader import (
@@ -426,21 +426,80 @@ class ContextManager:
     def _truncate_history(
         self, history: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
-        """截断历史消息，保留最新的消息。"""
+        """截断历史消息，保留最新的消息。
+
+        Unlike a pure tail-keep, pin a short digest of dropped *user* intents so
+        L5/compress later is not the only place that remembers prior asks.
+        (Industry: Claude/Codex compact-before-drop; we still need a cheap pin
+        when compress has not yet run.)
+        """
         from backend.core.config import settings
 
         ctx_win = int(getattr(settings, "context_window", 128_000) or 128_000)
-        dynamic_max = max(self.max_messages, (ctx_win * 60 // 100) // 300)
+        # Tighter dynamic cap: old formula kept ~522 msgs on 262k windows —
+        # too fat for mid-session tool thrash; soft/hard message knobs apply.
+        soft_n = int(getattr(settings, "context_max_messages_soft", 40) or 40)
+        hard_n = int(getattr(settings, "context_max_messages_hard", 72) or 72)
+        dynamic_max = max(
+            self.max_messages,
+            min(hard_n + 20, (ctx_win * 50 // 100) // 400),
+        )
+        # Prefer soft ceiling when history is pure tool thrash (high cardinality)
+        tool_ratio = 0.0
+        if history:
+            tool_n = sum(
+                1
+                for m in history
+                if isinstance(m, dict) and m.get("role") == "tool"
+            )
+            tool_ratio = tool_n / max(1, len(history))
+        if tool_ratio >= 0.45:
+            dynamic_max = min(dynamic_max, max(soft_n + 8, hard_n))
 
-        available_slots = dynamic_max - 2
+        available_slots = max(8, dynamic_max - 2)
         if len(history) <= available_slots:
             return history
 
+        dropped = history[:-available_slots]
         truncated = history[-available_slots:]
+
+        # Pin prior user intents from dropped head (not full tool dumps)
+        pins: list[str] = []
+        for m in dropped:
+            if not isinstance(m, dict) or m.get("role") != "user":
+                continue
+            c = m.get("content")
+            if not isinstance(c, str):
+                continue
+            c = c.strip()
+            if not c or c.startswith("【系统") or c.startswith("[System"):
+                continue
+            one = " ".join(c.split())[:160]
+            if one and one not in pins:
+                pins.append(one)
+            if len(pins) >= 6:
+                break
+        pin_block = ""
+        if pins:
+            pin_block = " Prior user asks (oldest→newer): " + " | ".join(pins)
+        marker = {
+            "role": "system",
+            "content": (
+                f"[history truncated: dropped {len(dropped)} older messages;"
+                f" kept last {len(truncated)}."
+                f"{pin_block}"
+                " Continue from the recent turns; re-read files if needed.]"
+            ),
+        }
         logger.info(
-            f"History truncated: {len(history)} -> {len(truncated)} (max={dynamic_max})"
+            "History truncated: %s -> %s (max=%s tool_ratio=%.2f pins=%s)",
+            len(history),
+            len(truncated) + 1,
+            dynamic_max,
+            tool_ratio,
+            len(pins),
         )
-        return truncated
+        return [marker] + truncated
 
     def estimate_tokens(self, messages: list[dict[str, Any]]) -> int:
         """估算 Token 数量。"""

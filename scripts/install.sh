@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
-# Takton one-click installer (Linux) — desktop AppImage client
-#   curl -fsSL https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.sh | tr -d '\r' | bash
+# Tevarn one-click installer (Linux) — desktop AppImage client
+#   curl -fsSL https://raw.githubusercontent.com/wu1w/tevarn/main/scripts/install.sh | tr -d '\r' | bash
 #
-# Downloads AppImage from the latest GitHub Release (or TAKTON_RELEASE_TAG).
+# Downloads AppImage from the latest GitHub Release (or TEVARN_RELEASE_TAG).
 
 set -euo pipefail
 
-REPO="${TAKTON_REPO:-wu1w/takton}"
+REPO="${TEVARN_REPO:-wu1w/tevarn}"
 if [[ "$REPO" =~ github.com[:/]([^/]+)/([^/.]+) ]]; then
   REPO="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
 fi
-TAG_OVERRIDE="${TAKTON_RELEASE_TAG:-}"
-ASSET_OVERRIDE="${TAKTON_APPIMAGE_ASSET:-}"
-NO_START="${TAKTON_NO_START:-0}"
-INSTALL_DIR="${TAKTON_HOME:-$HOME/.local/share/takton}"
-BIN_DIR="${TAKTON_BIN_DIR:-$HOME/.local/bin}"
+TAG_OVERRIDE="${TEVARN_RELEASE_TAG:-}"
+ASSET_OVERRIDE="${TEVARN_APPIMAGE_ASSET:-}"
+NO_START="${TEVARN_NO_START:-0}"
+INSTALL_DIR="${TEVARN_HOME:-$HOME/.local/share/tevarn}"
+BIN_DIR="${TEVARN_BIN_DIR:-$HOME/.local/bin}"
 
-info() { printf '[takton] %s\n' "$*" >&2; }
-ok()   { printf '[takton] OK %s\n' "$*" >&2; }
-err()  { printf '[takton] ERROR: %s\n' "$*" >&2; }
+info() { printf '[tevarn] %s\n' "$*" >&2; }
+ok()   { printf '[tevarn] OK %s\n' "$*" >&2; }
+err()  { printf '[tevarn] ERROR: %s\n' "$*" >&2; }
 bold() { printf '\033[1m%s\033[0m\n' "$*" >&2; }
 
 resolve_latest() {
@@ -29,7 +29,7 @@ resolve_latest() {
     api="https://api.github.com/repos/${REPO}/releases/latest"
   fi
   info "Resolving release via $api"
-  json="$(curl -fsSL -H 'Accept: application/vnd.github+json' -H 'User-Agent: takton-install.sh' "$api")"
+  json="$(curl -fsSL -H 'Accept: application/vnd.github+json' -H 'User-Agent: tevarn-install.sh' "$api")"
   tag="$(printf '%s' "$json" | python3 -c 'import sys,json; print(json.load(sys.stdin)["tag_name"])' 2>/dev/null \
     || printf '%s' "$json" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
   if [[ -n "$ASSET_OVERRIDE" ]]; then
@@ -40,11 +40,11 @@ import sys,json,re
 assets=json.load(sys.stdin).get("assets") or []
 for a in assets:
     n=a.get("name") or ""
-    if re.match(r"Takton-.*\.AppImage$", n):
+    if re.match(r"Tevarn-.*\.AppImage$", n):
         print(n); break
 ' 2>/dev/null || true)"
     if [[ -z "$name" ]]; then
-      name="$(printf '%s' "$json" | grep -oE 'Takton-[^"[:space:]]+\.AppImage' | head -1 || true)"
+      name="$(printf '%s' "$json" | grep -oE 'Tevarn-[^"[:space:]]+\.AppImage' | head -1 || true)"
     fi
   fi
   if [[ -z "$tag" || -z "$name" ]]; then
@@ -54,13 +54,13 @@ for a in assets:
   printf '%s\n%s\n%s\n' "$tag" "$name" "$url"
 }
 
-bold "Takton desktop client — one-click install"
+bold "Tevarn desktop client — one-click install"
 info "Install dir: $INSTALL_DIR"
 mkdir -p "$INSTALL_DIR" "$BIN_DIR"
 
 # Fallback only when GitHub API is unreachable.
 TAG="v0.3.0"
-ASSET="Takton-0.3.0.AppImage"
+ASSET="Tevarn-0.3.0.AppImage"
 URL=""
 if resolved="$(resolve_latest)"; then
   TAG="$(printf '%s\n' "$resolved" | sed -n '1p')"
@@ -112,7 +112,7 @@ fi
 chmod +x "$APP"
 ok "AppImage ready: $APP ($(du -h "$APP" | awk '{print $1}'))"
 
-WRAPPER="$BIN_DIR/takton"
+WRAPPER="$BIN_DIR/tevarn"
 cat >"$WRAPPER" <<EOF
 #!/usr/bin/env bash
 exec "$APP" "\$@"
@@ -122,19 +122,19 @@ ok "Command: $WRAPPER (ensure $BIN_DIR is on PATH)"
 
 APP_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 mkdir -p "$APP_DIR"
-cat >"$APP_DIR/takton.desktop" <<EOF
+cat >"$APP_DIR/tevarn.desktop" <<EOF
 [Desktop Entry]
-Name=Takton
-Comment=Takton Agent desktop client
+Name=Tevarn
+Comment=Tevarn Agent desktop client
 Exec=$APP
 Terminal=false
 Type=Application
 Categories=Utility;
 EOF
-ok "Desktop entry: $APP_DIR/takton.desktop"
+ok "Desktop entry: $APP_DIR/tevarn.desktop"
 
 if [[ "$NO_START" != "1" ]]; then
-  info "Launching Takton..."
+  info "Launching Tevarn..."
   if command -v nohup >/dev/null 2>&1; then
     nohup "$APP" >/dev/null 2>&1 &
   else

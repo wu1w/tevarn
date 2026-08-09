@@ -1,7 +1,7 @@
 """
-Takton Channel Slash Commands
+Tevarn Channel Slash Commands
 
-参考 Hermes COMMAND_REGISTRY，为 Takton Channel 场景裁剪。
+参考 Hermes COMMAND_REGISTRY，为 Tevarn Channel 场景裁剪。
 支持：/new /reset /compact /model /goal /status /help /stop
 """
 
@@ -87,7 +87,7 @@ def resolve_command(text: str) -> tuple[CommandDef | None, str]:
 
 def build_help_text() -> str:
     """生成 /help 命令的回复文本。"""
-    lines = ["📋 Takton 命令列表（Web 聊天 · 通道通用）", ""]
+    lines = ["📋 Tevarn 命令列表（Web 聊天 · 通道通用）", ""]
     current_cat = None
     for cmd in COMMAND_REGISTRY:
         if cmd.category != current_cat:

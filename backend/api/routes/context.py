@@ -398,7 +398,7 @@ async def get_system_layers(
             if body:
                 pkg_block_parts.append(f"### {icon} {name}\n{body}")
         if pkg_block_parts:
-            pkg_block = "# Attached Takton Packages\n" + "\n\n".join(pkg_block_parts)
+            pkg_block = "# Attached Tevarn Packages\n" + "\n\n".join(pkg_block_parts)
             ctx = parts.get("context") or ""
             parts["context"] = (ctx + "\n\n" + pkg_block).strip() if ctx else pkg_block
 

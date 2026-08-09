@@ -1,9 +1,9 @@
-# Takton Kernel ABI v1
+# Tevarn Kernel ABI v1
 
 **ABI 版本**：`1.0.0`  
 **传输**：JSON-RPC 2.0 · 每行一条 JSON（TCP 或 stdio）  
-**默认端点**：`127.0.0.1:17890`（环境变量 `TAKTON_KERNEL_HOST`）  
-**权威实现**：`takton-kernel` + `takton-kernel-host`（Rust）  
+**默认端点**：`127.0.0.1:17890`（环境变量 `TEVARN_KERNEL_HOST`）  
+**权威实现**：`tevarn-kernel` + `tevarn-kernel-host`（Rust）  
 **Python**：`backend/kernel_rust` 客户端；`backend/kernel` 仅为兼容 shim / fallback  
 
 ---
@@ -182,7 +182,7 @@
 
 ### P0-B 语义
 
-- `create_process` 可带 `intent`；host 默认 `require_intent=true`（env `TAKTON_KERNEL_REQUIRE_INTENT`）。
+- `create_process` 可带 `intent`；host 默认 `require_intent=true`（env `TEVARN_KERNEL_REQUIRE_INTENT`）。
 - 无 `capabilities` 且 require_intent → 自动只读 grantable intent（禁止静默全开）。
 - `filter_tools` 用于 LLM tool schema 裁剪；抽象 cap（如 `file_rw`）覆盖具体工具。
 
@@ -304,18 +304,18 @@ Isolation profiles: `off` · `interactive` · `workforce` · `untrusted` · `rea
 
 | 环境变量 | 含义 |
 |----------|------|
-| `TAKTON_KERNEL_BACKEND` | `rust`（默认）\| `python` |
-| `TAKTON_KERNEL_HOST` | `host:port` |
-| `TAKTON_KERNEL_HOST_BIN` | host 可执行文件绝对路径 |
-| `TAKTON_KERNEL_AUTO_START` | `1` 时自动 spawn host |
-| `TAKTON_KERNEL_AUDIT_PATH` | 审计 JSONL 路径 |
+| `TEVARN_KERNEL_BACKEND` | `rust`（默认）\| `python` |
+| `TEVARN_KERNEL_HOST` | `host:port` |
+| `TEVARN_KERNEL_HOST_BIN` | host 可执行文件绝对路径 |
+| `TEVARN_KERNEL_AUTO_START` | `1` 时自动 spawn host |
+| `TEVARN_KERNEL_AUDIT_PATH` | 审计 JSONL 路径 |
 
 二进制查找顺序：
 
-1. `TAKTON_KERNEL_HOST_BIN`  
-2. `vendor/takton-kernel-host/takton-kernel-host[.exe]`  
-3. `target/release/takton-kernel-host[.exe]`  
-4. `target/debug/takton-kernel-host[.exe]`  
+1. `TEVARN_KERNEL_HOST_BIN`  
+2. `vendor/tevarn-kernel-host/tevarn-kernel-host[.exe]`  
+3. `target/release/tevarn-kernel-host[.exe]`  
+4. `target/debug/tevarn-kernel-host[.exe]`  
 
 ---
 

@@ -196,6 +196,9 @@ class RunRecorder:
                 "status": status,
                 "duration_ms": duration_ms,
             })
+            # Mid-run flush so crash/idle doesn't leave total_*=0
+            if self._tool_calls == 1 or self._tool_calls % 5 == 0:
+                await self._flush_counters(repo)
         except Exception as e:
             logger.warning("RunRecorder.tool_step %s failed: %s", name, e)
 
@@ -216,11 +219,45 @@ class RunRecorder:
             logger.warning("RunRecorder.note failed: %s", e)
 
     def bump_iteration(self, n: int = 1) -> None:
-        """loop 每轮迭代调用（内存计数，finish 时落库）。"""
+        """loop 每轮迭代调用（内存计数，定期 flush）。"""
         try:
             self._iterations = max(0, int(self._iterations) + int(n or 1))
         except (TypeError, ValueError):
             self._iterations += 1
+        # Fire-and-forget flush every 5 iters (sync schedule from async loop)
+        if self.run_id is not None and self._iterations % 5 == 0:
+            try:
+                import asyncio
+
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._flush_counters_safe())
+            except Exception:
+                pass
+
+    async def _flush_counters_safe(self) -> None:
+        try:
+            repo = await self._repo()
+            await self._flush_counters(repo)
+        except Exception as e:
+            logger.debug("RunRecorder flush skip: %s", e)
+
+    async def _flush_counters(self, repo: Any = None) -> None:
+        """Persist total_tool_calls / total_iterations without changing status."""
+        if self.run_id is None:
+            return
+        try:
+            if repo is None:
+                repo = await self._repo()
+            await repo.update_run(
+                self.run_id,
+                {
+                    "total_tool_calls": int(self._tool_calls or 0),
+                    "total_iterations": int(self._iterations or 0),
+                    "token_used": int(self._token_used or 0),
+                },
+            )
+        except Exception as e:
+            logger.debug("RunRecorder._flush_counters: %s", e)
 
     def set_token_used(self, used: int) -> None:
         """同步 kernel 进程已用 token（finish 时落库）。"""

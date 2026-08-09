@@ -60,7 +60,7 @@ export function DesktopPermissionDialog({
                     <div>
                       <CardTitle className="text-lg">{t('desktop._e67')}</CardTitle>
                       <CardDescription className="text-sm">
-                        Takton 想要控制您的电脑
+                        Tevarn 想要控制您的电脑
                       </CardDescription>
                     </div>
                   </div>
@@ -154,7 +154,7 @@ export function DesktopPermissionDialog({
                 <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-600 dark:text-amber-400">
                   <AlertTriangle className="mt-0.5 h-3 w-3 flex-shrink-0" />
                   <p>
-                    允许桌面控制后，Takton 可以模拟键盘鼠标操作。
+                    允许桌面控制后，Tevarn 可以模拟键盘鼠标操作。
                     请确保您信任当前任务。
                   </p>
                 </div>

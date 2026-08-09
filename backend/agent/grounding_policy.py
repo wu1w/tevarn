@@ -10,7 +10,7 @@ a light safety net. Default is **soft**:
 | balanced   | + list-only / wrong-bucket once  | + template modules             | short       |
 | strict     | full multi-category budgets      | multi-class poison             | medium      |
 
-Env: ``TAKTON_GROUNDING_MODE=soft|balanced|strict`` (default soft).
+Env: ``TEVARN_GROUNDING_MODE=soft|balanced|strict`` (default soft).
 Optional model name auto-upgrades strict→balanced and balanced→soft for
 known strong families (never upgrades *into* stricter).
 """
@@ -67,7 +67,7 @@ class GroundingPolicy:
 
 
 def _raw_mode() -> Mode:
-    raw = (os.environ.get("TAKTON_GROUNDING_MODE") or "soft").strip().lower()
+    raw = (os.environ.get("TEVARN_GROUNDING_MODE") or "soft").strip().lower()
     if raw in ("soft", "balanced", "strict", "hard"):
         return "strict" if raw == "hard" else raw  # type: ignore[return-value]
     return "soft"

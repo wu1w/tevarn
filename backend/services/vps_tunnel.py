@@ -1,7 +1,7 @@
 """
 In-process VPS reverse-tunnel agent.
 
-Connects outbound WebSocket to takton-relay and serves local backend
+Connects outbound WebSocket to tevarn-relay and serves local backend
 (127.0.0.1:APP_PORT) for HTTP + WebSocket streams.
 """
 
@@ -26,10 +26,10 @@ logger = logging.getLogger(__name__)
 
 
 def _local_backend() -> str:
-    host = os.environ.get("TAKTON_APP_HOST", "127.0.0.1").strip() or "127.0.0.1"
+    host = os.environ.get("TEVARN_APP_HOST", "127.0.0.1").strip() or "127.0.0.1"
     if host in ("0.0.0.0", "::"):
         host = "127.0.0.1"
-    port = os.environ.get("TAKTON_APP_PORT") or os.environ.get("PORT") or "8090"
+    port = os.environ.get("TEVARN_APP_PORT") or os.environ.get("PORT") or "8090"
     return f"http://{host}:{port}"
 
 
@@ -207,7 +207,7 @@ class VpsTunnelAgent:
         body = base64.b64decode(body_b64) if body_b64 else b""
         # Strip hop-by-hop and client IP headers so uvicorn does not rewrite
         # request.client from the phone's public IP.
-        # KEEP x-takton-relay: PC backend must know this is tunnel traffic and
+        # KEEP x-tevarn-relay: PC backend must know this is tunnel traffic and
         # refuse single_user loopback free-login (P0-5). Phone uses pair JWT.
         _drop = {
             "host",
@@ -229,7 +229,7 @@ class VpsTunnelAgent:
         }
         headers = {k: v for k, v in headers.items() if k.lower() not in _drop}
         # Always mark relay origin (edge may also set it; overwrite for trust).
-        headers["x-takton-relay"] = "1"
+        headers["x-tevarn-relay"] = "1"
         try:
             t0 = time.perf_counter()
             r = await client.request(method, path, headers=headers, content=body)
@@ -298,7 +298,7 @@ class VpsTunnelAgent:
                     extra.append((k, v))
                 # never forward XFF / Real-IP into local backend
             # Mark tunnel so single_user free-login is refused on WS path too.
-            extra.append(("x-takton-relay", "1"))
+            extra.append(("x-tevarn-relay", "1"))
             upstream = await websockets.connect(
                 target,
                 additional_headers=extra or None,
@@ -329,7 +329,7 @@ class VpsTunnelAgent:
     async def _pump_upstream(self, relay_ws: Any, stream_id: str, upstream: Any) -> None:
         """Forward local backend WS frames to public client via relay.
 
-        Preserve opcode: Takton chat uses TEXT frames with JSON. Sending those
+        Preserve opcode: Tevarn chat uses TEXT frames with JSON. Sending those
         as binary (old bug) made phone/Rust clients ignore deltas → 远端生成中.
         """
         try:

@@ -23,7 +23,7 @@ cases:
       最终回复必须包含这三个值。若截断，用 grep 搜索 SECRET_VALUE。
     expect:
       tools_any: [file_read, grep]
-      final_contains_any: ["TAKTON_STRESS_OK", "stress_answer_42"]
+      final_contains_any: ["TEVARN_STRESS_OK", "stress_answer_42"]
       final_min_chars: 20
     tags: [stress, large]
 

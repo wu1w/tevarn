@@ -5,7 +5,7 @@ agent 命令在远程主机执行——「agent 活在 $5 VPS 上，人从本地
 
 设计：
 - 依赖系统 ssh 客户端 + 免密（key/agent），不管理凭据（红线：不存私钥/密码）
-- 远端工作目录固定为 agent_computer_ssh_workdir（默认 ~/takton-ws），
+- 远端工作目录固定为 agent_computer_ssh_workdir（默认 ~/tevarn-ws），
   每个 agent_key 一个子目录，首次执行时 mkdir -p
 - BatchMode=yes：任何交互式认证请求直接失败，绝不挂死 loop
 - sandboxed=True 语义：命令不在宿主执行（宿主视角是隔离的）；
@@ -50,12 +50,12 @@ class SshBackend:
             self.host = host or str(getattr(settings, "agent_computer_ssh_host", "") or "")
             self.port = port or int(getattr(settings, "agent_computer_ssh_port", 22) or 22)
             self.workdir = workdir or str(
-                getattr(settings, "agent_computer_ssh_workdir", "") or "~/takton-ws"
+                getattr(settings, "agent_computer_ssh_workdir", "") or "~/tevarn-ws"
             )
         except Exception:
             self.host = host or ""
             self.port = port or 22
-            self.workdir = workdir or "~/takton-ws"
+            self.workdir = workdir or "~/tevarn-ws"
         self._dir_ready = False
 
     def _remote_dir(self) -> str:

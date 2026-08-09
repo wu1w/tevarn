@@ -10,9 +10,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-os.environ.setdefault("TAKTON_KERNEL_BACKEND", "rust")
-os.environ.setdefault("TAKTON_KERNEL_AUTO_START", "1")
-os.environ.setdefault("TAKTON_LLM_ALLOW_PY_FALLBACK", "1")  # smoke only
+os.environ.setdefault("TEVARN_KERNEL_BACKEND", "rust")
+os.environ.setdefault("TEVARN_KERNEL_AUTO_START", "1")
+os.environ.setdefault("TEVARN_LLM_ALLOW_PY_FALLBACK", "1")  # smoke only
 
 
 def fail(m: str) -> None:

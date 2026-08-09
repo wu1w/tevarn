@@ -30,7 +30,7 @@ export function AppLogo({
   glow = false,
   pulse = false,
   className = '',
-  alt = 'Takton',
+  alt = 'Tevarn',
 }: AppLogoProps) {
   const s = SIZE_MAP[size];
 

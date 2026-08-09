@@ -1,6 +1,6 @@
-"""Tests for Takton Code ↔ Desktop bridge API (/bridge/v1/*).
+"""Tests for Tevarn Code ↔ Desktop bridge API (/bridge/v1/*).
 
-Covers the P0 bridge surface that Takton Code consumes:
+Covers the P0 bridge surface that Tevarn Code consumes:
 - health / models catalog
 - chat/completions with K4 session-snapshot lock (the critical path)
 - tools/invoke three-tier dispatch (unified registry → skill → DB)

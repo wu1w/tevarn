@@ -7,7 +7,7 @@ from backend.services.tools.executors import execute_command
 
 @pytest.mark.asyncio
 async def test_pytest_auto_background(tmp_path, monkeypatch):
-    monkeypatch.setenv("TAKTON_FILE_BROWSER_ROOT", str(tmp_path))
+    monkeypatch.setenv("TEVARN_FILE_BROWSER_ROOT", str(tmp_path))
 
     class Item:
         id = "bg-test-1"

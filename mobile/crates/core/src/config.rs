@@ -6,7 +6,7 @@ use crate::platform::PlatformKind;
 /// Runtime configuration for the mobile client.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
-    /// Takton backend base, e.g. `http://192.168.5.32:8090`
+    /// Tevarn backend base, e.g. `http://192.168.5.32:8090`
     pub base_url: String,
     /// Host bind for the mobile shell (web preview / Android local server)
     pub host_bind: String,
@@ -22,10 +22,10 @@ pub struct AppConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            base_url: std::env::var("TAKTON_BASE_URL")
+            base_url: std::env::var("TEVARN_BASE_URL")
                 .unwrap_or_else(|_| "http://127.0.0.1:8090".into()),
-            host_bind: std::env::var("TAKTON_MOBILE_HOST").unwrap_or_else(|_| "0.0.0.0".into()),
-            host_port: std::env::var("TAKTON_MOBILE_PORT")
+            host_bind: std::env::var("TEVARN_MOBILE_HOST").unwrap_or_else(|_| "0.0.0.0".into()),
+            host_port: std::env::var("TEVARN_MOBILE_PORT")
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(8080),
@@ -41,7 +41,7 @@ impl Default for AppConfig {
 /// `dirs::data_dir()` is often `None` on Android → previous code used `.` which
 /// is not writable and caused `Store::open` panics → white screen / crash.
 pub fn default_data_dir() -> PathBuf {
-    if let Ok(p) = std::env::var("TAKTON_DATA_DIR") {
+    if let Ok(p) = std::env::var("TEVARN_DATA_DIR") {
         let pb = PathBuf::from(p);
         if !pb.as_os_str().is_empty() {
             return pb;
@@ -52,27 +52,27 @@ pub fn default_data_dir() -> PathBuf {
     #[cfg(target_os = "android")]
     {
         let candidates = [
-            PathBuf::from("/data/user/0/dev.takton.takton_mobile/files/takton-mobile"),
-            PathBuf::from("/data/data/dev.takton.takton_mobile/files/takton-mobile"),
-            std::env::temp_dir().join("takton-mobile"),
+            PathBuf::from("/data/user/0/dev.tevarn.tevarn_mobile/files/tevarn-mobile"),
+            PathBuf::from("/data/data/dev.tevarn.tevarn_mobile/files/tevarn-mobile"),
+            std::env::temp_dir().join("tevarn-mobile"),
         ];
         for c in candidates {
             if std::fs::create_dir_all(&c).is_ok() {
                 return c;
             }
         }
-        return std::env::temp_dir().join("takton-mobile");
+        return std::env::temp_dir().join("tevarn-mobile");
     }
 
     #[cfg(not(target_os = "android"))]
     {
         if let Some(d) = dirs::data_dir() {
-            return d.join("takton-mobile");
+            return d.join("tevarn-mobile");
         }
         if let Some(h) = dirs::home_dir() {
-            return h.join(".local/share/takton-mobile");
+            return h.join(".local/share/tevarn-mobile");
         }
-        std::env::temp_dir().join("takton-mobile")
+        std::env::temp_dir().join("tevarn-mobile")
     }
 }
 
@@ -104,7 +104,7 @@ impl AppConfig {
 }
 
 /// Parse `http(s)://host[:port]/path` → (scheme, host, port).
-/// Defaults: http + 127.0.0.1 + 8090 (Takton PC backend).
+/// Defaults: http + 127.0.0.1 + 8090 (Tevarn PC backend).
 pub fn parse_base_url_parts(base: &str) -> (String, String, u16) {
     let b = base.trim().trim_end_matches('/');
     if b.is_empty() {
@@ -161,7 +161,7 @@ fn parse_host_port(scheme: &str, rest: &str) -> (String, String, u16) {
 fn default_port(scheme: &str) -> u16 {
     match scheme {
         "https" => 443,
-        // Takton PC backend listens on 8090 when port omitted from base_url
+        // Tevarn PC backend listens on 8090 when port omitted from base_url
         _ => 8090,
     }
 }

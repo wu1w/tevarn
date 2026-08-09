@@ -127,7 +127,7 @@ async def test_tools_api_execute_requires_process(monkeypatch):
     repo = AsyncMock()
     repo.get_by_id = AsyncMock(return_value=tool)
     user = SimpleNamespace(id="u1")
-    monkeypatch.delenv("TAKTON_ALLOW_DEBUG_TOOL_EXECUTE", raising=False)
+    monkeypatch.delenv("TEVARN_ALLOW_DEBUG_TOOL_EXECUTE", raising=False)
 
     with pytest.raises(HTTPException) as ei:
         await tools_route.execute_tool_endpoint(

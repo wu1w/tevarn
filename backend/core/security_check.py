@@ -66,7 +66,7 @@ def collect_security_report() -> SecurityReport:
                 message=(
                     f"服务绑定 {settings.app_host}（非 loopback）且 single_user_mode 开启"
                 ),
-                hint="非本机部署请设置 TAKTON_SINGLE_USER_MODE=false，使用真实账号登录",
+                hint="非本机部署请设置 TEVARN_SINGLE_USER_MODE=false，使用真实账号登录",
             )
         )
     else:
@@ -88,7 +88,7 @@ def collect_security_report() -> SecurityReport:
                 id="jwt_secret_strength",
                 level="fail",
                 message="jwt_secret 长度过短（<16 字符）",
-                hint="设置 TAKTON_JWT_SECRET 为强随机值，或删除 ~/.takton/secrets.json 重新生成",
+                hint="设置 TEVARN_JWT_SECRET 为强随机值，或删除 ~/.tevarn/secrets.json 重新生成",
             )
         )
     else:
@@ -103,7 +103,7 @@ def collect_security_report() -> SecurityReport:
                 id="bridge_token",
                 level="warn",
                 message="非 loopback 部署且未设置 bridge_token",
-                hint="/bridge/v1/* 将回落用户鉴权；共享机场景建议设置 TAKTON_BRIDGE_TOKEN",
+                hint="/bridge/v1/* 将回落用户鉴权；共享机场景建议设置 TEVARN_BRIDGE_TOKEN",
             )
         )
     else:
@@ -124,7 +124,7 @@ def collect_security_report() -> SecurityReport:
                 id="admin_password",
                 level="warn",
                 message="default_admin_password 显式设置为弱值 'admin'",
-                hint="留空则首启自动生成随机密码（写入 ~/.takton/initial_admin_password）",
+                hint="留空则首启自动生成随机密码（写入 ~/.tevarn/initial_admin_password）",
             )
         )
     else:
@@ -190,7 +190,7 @@ def collect_security_report() -> SecurityReport:
                 id="encryption_salt",
                 level="warn",
                 message="settings_encryption_salt 未设置，敏感设置（API Key 等）无法加密落盘",
-                hint="设置 TAKTON_SETTINGS_ENCRYPTION_SALT 为强随机值",
+                hint="设置 TEVARN_SETTINGS_ENCRYPTION_SALT 为强随机值",
             )
         )
     else:

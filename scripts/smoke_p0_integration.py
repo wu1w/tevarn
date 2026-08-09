@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""P0 end-to-end integration smoke against takton-kernel-host.
+"""P0 end-to-end integration smoke against tevarn-kernel-host.
 
 Covers A–D critical paths in one sequential scenario:
   host up → abi → create+intent → schema filter → mediate
@@ -18,9 +18,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-os.environ.setdefault("TAKTON_KERNEL_BACKEND", "rust")
-os.environ.setdefault("TAKTON_KERNEL_AUTO_START", "1")
-os.environ.setdefault("TAKTON_KERNEL_REQUIRE_INTENT", "true")
+os.environ.setdefault("TEVARN_KERNEL_BACKEND", "rust")
+os.environ.setdefault("TEVARN_KERNEL_AUTO_START", "1")
+os.environ.setdefault("TEVARN_KERNEL_REQUIRE_INTENT", "true")
 
 
 def fail(msg: str) -> None:
@@ -232,7 +232,7 @@ def main() -> int:
     from backend.kernel.kernel import reset_kernel_for_tests
 
     reset_kernel_for_tests()
-    os.environ["TAKTON_KERNEL_AUTO_START"] = "0"  # already up
+    os.environ["TEVARN_KERNEL_AUTO_START"] = "0"  # already up
     gk = get_kernel()
     backend = get_kernel_backend()
     if backend != "rust":

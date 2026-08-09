@@ -143,7 +143,7 @@ function resolveWsUrl(path: string): string {
   if (typeof window === 'undefined') return path;
   const { hostname, port, protocol } = window.location;
   const isLocalHost = hostname === '127.0.0.1' || hostname === 'localhost';
-  const injected = (window as unknown as { __TAKTON_WS_URL__?: string }).__TAKTON_WS_URL__;
+  const injected = (window as unknown as { __TEVARN_WS_URL__?: string }).__TEVARN_WS_URL__;
   let base: string;
   if (injected) {
     base = injected.replace(/\/$/, '');

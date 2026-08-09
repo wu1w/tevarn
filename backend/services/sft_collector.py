@@ -50,13 +50,13 @@ def _normalize_fs_path(p: str | Path) -> Path:
 
 def corpus_root() -> Path:
     """Resolved local directory for SFT markdown/jsonl."""
-    override = os.getenv("TAKTON_SFT_CORPUS_DIR", "").strip()
+    override = os.getenv("TEVARN_SFT_CORPUS_DIR", "").strip()
     if override:
         p = _normalize_fs_path(override)
         p.mkdir(parents=True, exist_ok=True)
         return p.resolve()
 
-    home = os.getenv("TAKTON_HOME")
+    home = os.getenv("TEVARN_HOME")
     if home:
         p = _normalize_fs_path(home) / "sft_corpus"
     else:
@@ -71,7 +71,7 @@ def corpus_root() -> Path:
                 p = Path.cwd() / "data" / "sft_corpus"
         except Exception:
             user = os.getenv("USERPROFILE") or os.getenv("HOME") or "."
-            p = _normalize_fs_path(user) / ".takton" / "sft_corpus"
+            p = _normalize_fs_path(user) / ".tevarn" / "sft_corpus"
     p.mkdir(parents=True, exist_ok=True)
     return p.resolve()
 
@@ -81,7 +81,7 @@ def corpus_path_display() -> str:
 
 
 def _env_enabled() -> bool | None:
-    v = os.getenv("TAKTON_SFT_USAGE_LOG_ENABLED")
+    v = os.getenv("TEVARN_SFT_USAGE_LOG_ENABLED")
     if v is None or v == "":
         return None
     return v.strip().lower() in {"1", "true", "yes", "on"}
@@ -159,7 +159,7 @@ def format_sample_md(
     lines += ["", "### system", ""]
     lines.append(
         _redact(system_hint)
-        or "You are Takton, a helpful local agent. Follow tools and produce a final user-facing answer."
+        or "You are Tevarn, a helpful local agent. Follow tools and produce a final user-facing answer."
     )
     lines += ["", "### user", "", _redact(user_input or "").strip() or "(empty)", ""]
 
@@ -239,7 +239,7 @@ def append_sample(
     with _lock:
         if not md_path.exists():
             header = (
-                f"# Takton SFT 语料 · {day}\n\n"
+                f"# Tevarn SFT 语料 · {day}\n\n"
                 f"> 由「收集使用日志」功能生成。仅存本机：`{root}`\n\n"
                 f"可用于指令微调（SFT）。请勿上传含隐私的日志。\n\n---\n\n"
             )

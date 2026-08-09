@@ -13,7 +13,7 @@ from backend.agent.system_prompt import build_system_prompt, merge_prompt_parts
 
 def _parts(**kw):
     return build_system_prompt(
-        identity="You are Takton.",
+        identity="You are Tevarn.",
         tools_enabled=["file_read"],
         model="claude-opus-5",
         session_id="abcdef12-0000-0000-0000-000000000000",
@@ -53,7 +53,7 @@ def test_merged_system_is_byte_stable_without_volatile():
     assert a == b
     assert "Current time:" not in a
     # 稳定层内容不能被一起丢掉
-    assert "Takton" in a
+    assert "Tevarn" in a
 
 
 def test_memory_block_also_kept_out_of_cached_prefix():

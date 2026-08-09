@@ -3,7 +3,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-echo "[takton] root=$ROOT"
+echo "[tevarn] root=$ROOT"
 if [[ ! -x .venv/bin/python ]]; then
   python3 -m venv .venv
 fi
@@ -16,5 +16,5 @@ fi
 if [[ -f frontend/package.json ]]; then
   (cd frontend && npm install)
 fi
-echo "[takton] bootstrap done. Next: .venv/bin/python start.py"
-echo "[takton] version: $(tr -d '[:space:]' < backend/VERSION)"
+echo "[tevarn] bootstrap done. Next: .venv/bin/python start.py"
+echo "[tevarn] version: $(tr -d '[:space:]' < backend/VERSION)"

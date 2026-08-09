@@ -1,4 +1,4 @@
-"""Takton 后端全量压测（本地，无 LLM 付费调用）
+"""Tevarn 后端全量压测（本地，无 LLM 付费调用）
 
 场景矩阵：6 端点 × 并发梯度 [1, 10, 25, 50]（health/tools 加测 100）。
 指标：RPS / p50 / p95 / p99 / 错误率 / 最大延迟。
@@ -136,7 +136,7 @@ async def main() -> None:
                     f"p99={r['p99']:>8}ms max={r['max']:>8}ms err={r['errors']} {r['status']}"
                 )
 
-    out = "/tmp/takton_load_results.json"
+    out = "/tmp/tevarn_load_results.json"
     with open(out, "w") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
     print(f"\n结果已存 {out}")

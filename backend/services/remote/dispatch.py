@@ -1,4 +1,4 @@
-"""@device dispatch: run command on paired takton-agent and format reply card."""
+"""@device dispatch: run command on paired tevarn-agent and format reply card."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ async def try_handle_at_device(user_id: uuid.UUID, message: str) -> str | None:
             f"🤖 @{parsed.device_name}\n"
             f"────────────────\n"
             f"❌ 未找到设备「{parsed.device_name}」。\n"
-            f"请先在 /devices 配对 takton-agent（POST /api/devices/pair）。"
+            f"请先在 /devices 配对 tevarn-agent（POST /api/devices/pair）。"
         )
 
     body = parsed.body.strip()

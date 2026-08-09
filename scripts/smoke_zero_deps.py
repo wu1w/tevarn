@@ -12,11 +12,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-os.environ.setdefault("TAKTON_TEST_MODE", "1")
-os.environ.setdefault("TAKTON_AGENT_DISPATCHER_ENABLED", "false")
-os.environ.setdefault("TAKTON_AGENT_KERNEL_REDIS_SHARED", "false")
-os.environ.setdefault("TAKTON_REDIS_URL", "")
-os.environ.setdefault("TAKTON_QDRANT_URL", "")
+os.environ.setdefault("TEVARN_TEST_MODE", "1")
+os.environ.setdefault("TEVARN_AGENT_DISPATCHER_ENABLED", "false")
+os.environ.setdefault("TEVARN_AGENT_KERNEL_REDIS_SHARED", "false")
+os.environ.setdefault("TEVARN_REDIS_URL", "")
+os.environ.setdefault("TEVARN_QDRANT_URL", "")
 
 
 def main() -> int:

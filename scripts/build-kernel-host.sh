@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build takton-kernel-host and stage vendor/ for product discovery.
+# Build tevarn-kernel-host and stage vendor/ for product discovery.
 # Usage: ./scripts/build-kernel-host.sh [--release]
 
 set -euo pipefail
@@ -13,18 +13,18 @@ if [[ "${1:-}" == "--release" || "${1:-}" == "-Release" ]]; then
   CARGO_FLAG="--release"
 fi
 
-cargo build -p takton-kernel-host $CARGO_FLAG
+cargo build -p tevarn-kernel-host $CARGO_FLAG
 
-BUILT="$ROOT/target/$PROFILE/takton-kernel-host"
+BUILT="$ROOT/target/$PROFILE/tevarn-kernel-host"
 if [[ ! -f "$BUILT" ]]; then
-  BUILT="$ROOT/target/$PROFILE/takton-kernel-host.exe"
+  BUILT="$ROOT/target/$PROFILE/tevarn-kernel-host.exe"
 fi
 if [[ ! -f "$BUILT" ]]; then
   echo "build finished but binary missing under target/$PROFILE" >&2
   exit 1
 fi
 
-VENDOR="$ROOT/vendor/takton-kernel-host"
+VENDOR="$ROOT/vendor/tevarn-kernel-host"
 mkdir -p "$VENDOR"
 DEST_NAME="$(basename "$BUILT")"
 cp -f "$BUILT" "$VENDOR/$DEST_NAME"

@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const NOTES_FILE: &str = "local_agent_notes.json";
 const AGENT_CFG: &str = "local_agent_config.json";
-const UA: &str = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/122.0.0.0 Mobile Safari/537.36 TaktonMobile/1.0";
+const UA: &str = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/122.0.0.0 Mobile Safari/537.36 TevarnMobile/1.0";
 const EDGE_TTS_TOKEN: &str = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
 
 #[derive(Clone)]
@@ -882,7 +882,7 @@ impl ToolRuntime {
                 "X-Microsoft-OutputFormat",
                 "audio-16khz-128kbitrate-mono-mp3",
             )
-            .header("User-Agent", "TaktonMobile")
+            .header("User-Agent", "TevarnMobile")
             .body(ssml)
             .send()
             .await
@@ -930,7 +930,7 @@ impl ToolRuntime {
                     "X-Microsoft-OutputFormat",
                     "audio-16khz-32kbitrate-mono-mp3",
                 )
-                .header("User-Agent", "TaktonMobile")
+                .header("User-Agent", "TevarnMobile")
                 .body(ssml.clone())
                 .send()
                 .await;

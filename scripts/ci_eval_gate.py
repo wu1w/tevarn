@@ -25,11 +25,11 @@ sys.path.insert(0, str(ROOT))
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", action="store_true", help="run live eval against host")
-    ap.add_argument("--min-overall", type=float, default=float(os.environ.get("TAKTON_EVAL_THRESHOLD", "0.75")))
+    ap.add_argument("--min-overall", type=float, default=float(os.environ.get("TEVARN_EVAL_THRESHOLD", "0.75")))
     ap.add_argument(
         "--min-marathon",
         type=float,
-        default=float(os.environ.get("TAKTON_MARATHON_RESUME_THRESHOLD", "0.95")),
+        default=float(os.environ.get("TEVARN_MARATHON_RESUME_THRESHOLD", "0.95")),
         help="hard floor for marathon_resume_success (0.7 productization)",
     )
     ap.add_argument("--max-health-drop", type=float, default=0.2)
@@ -37,7 +37,7 @@ def main() -> int:
     ap.add_argument(
         "--require-marathon",
         action="store_true",
-        default=os.environ.get("TAKTON_REQUIRE_MARATHON", "").strip() in ("1", "true", "yes"),
+        default=os.environ.get("TEVARN_REQUIRE_MARATHON", "").strip() in ("1", "true", "yes"),
         help="fail when marathon metrics missing (hard gate mode)",
     )
     args = ap.parse_args()
@@ -51,15 +51,15 @@ def main() -> int:
 
     eval_result = load_latest_eval()
     if args.run:
-        os.environ.setdefault("TAKTON_KERNEL_BACKEND", "rust")
-        os.environ.setdefault("TAKTON_KERNEL_AUTO_START", "1")
+        os.environ.setdefault("TEVARN_KERNEL_BACKEND", "rust")
+        os.environ.setdefault("TEVARN_KERNEL_AUTO_START", "1")
         # Delegate to full harness (includes marathon hard gate + kernel ledger)
-        from scripts.takton_eval import main as eval_main
+        from scripts.tevarn_eval import main as eval_main
 
         rc = eval_main()
         eval_result = load_latest_eval()
         if rc != 0:
-            print("FAIL: live takton_eval hard gate")
+            print("FAIL: live tevarn_eval hard gate")
             return rc
         if eval_result is not None:
             try:
@@ -73,7 +73,7 @@ def main() -> int:
                 print(f"WARN: weekly collect skipped: {e}")
 
     if eval_result is None:
-        msg = "no eval artifact (run takton_eval.py or pass --run)"
+        msg = "no eval artifact (run tevarn_eval.py or pass --run)"
         if args.require_eval:
             print(f"FAIL: {msg}")
             return 1

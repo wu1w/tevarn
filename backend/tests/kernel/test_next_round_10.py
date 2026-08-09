@@ -45,7 +45,7 @@ def test_sdk_pack_validate_and_zip(tmp_path):
         ),
         encoding="utf-8",
     )
-    from scripts.takton_sdk_pack import pack_zip, validate
+    from scripts.tevarn_sdk_pack import pack_zip, validate
 
     meta = validate(agent)
     assert meta["ok"] is True

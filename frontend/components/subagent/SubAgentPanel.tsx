@@ -511,8 +511,8 @@ export default function SubAgentPanel() {
           void loadData();
         }
       };
-      window.addEventListener('takton:settings-changed', onSettings);
-      return () => window.removeEventListener('takton:settings-changed', onSettings);
+      window.addEventListener('tevarn:settings-changed', onSettings);
+      return () => window.removeEventListener('tevarn:settings-changed', onSettings);
     }, [loadData]);
 
   const handleToggle = async (id: string, enabled: boolean) => {

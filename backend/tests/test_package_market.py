@@ -32,10 +32,10 @@ def installed_name():
 
 def test_export_example_package():
     content, filename = publisher.export_package_zip("code-review-lite")
-    assert filename == "code-review-lite.takton-pkg.zip"
+    assert filename == "code-review-lite.tevarn-pkg.zip"
     with zipfile.ZipFile(io.BytesIO(content)) as zf:
         names = set(zf.namelist())
-    assert "code-review-lite/takton.package.json" in names
+    assert "code-review-lite/tevarn.package.json" in names
     assert "code-review-lite/skill.yaml" in names
 
 
@@ -52,7 +52,7 @@ def test_export_invalid_name():
 def test_install_roundtrip_and_loader_discovers(installed_name):
     """安装 → loader 发现 → 详情含契约 → 卸载后消失"""
     data = _mk_zip(installed_name, {
-        "takton.package.json": json.dumps({
+        "tevarn.package.json": json.dumps({
             "name": installed_name,
             "version": "1.2.3",
             "description": "roundtrip test pkg",

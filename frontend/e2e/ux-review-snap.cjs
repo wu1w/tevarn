@@ -14,18 +14,18 @@ fs.mkdirSync(OUT, { recursive: true });
     })
   ).json();
   await c.addCookies([
-    { name: 'takton-auth', value: d.access_token, domain: '127.0.0.1', path: '/', sameSite: 'Lax' },
+    { name: 'tevarn-auth', value: d.access_token, domain: '127.0.0.1', path: '/', sameSite: 'Lax' },
   ]);
   await c.addInitScript(
     (p) => {
       localStorage.setItem(
-        'takton-auth',
+        'tevarn-auth',
         JSON.stringify({
           state: { user: p.user, token: p.token, isAuthenticated: true, hasHydrated: true },
           version: 0,
         })
       );
-      document.cookie = 'takton-auth=' + p.token + '; path=/; max-age=604800; SameSite=Lax';
+      document.cookie = 'tevarn-auth=' + p.token + '; path=/; max-age=604800; SameSite=Lax';
     },
     { user: d.user, token: d.access_token }
   );

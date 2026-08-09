@@ -17,7 +17,7 @@ from backend.agent.task_grounding import (
 
 @pytest.fixture(autouse=True)
 def _soft_mode(monkeypatch):
-    monkeypatch.setenv("TAKTON_GROUNDING_MODE", "soft")
+    monkeypatch.setenv("TEVARN_GROUNDING_MODE", "soft")
     clear_policy_cache()
     yield
     clear_policy_cache()

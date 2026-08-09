@@ -22,7 +22,7 @@ import pytest
 def evo_db(tmp_path, monkeypatch):
     """隔离的 evolution sqlite + store 缓存复位。"""
     db_file = tmp_path / "evo_test.db"
-    monkeypatch.setenv("TAKTON_EVOLUTION_DB", str(db_file))
+    monkeypatch.setenv("TEVARN_EVOLUTION_DB", str(db_file))
 
     from backend.evolution import config as evo_config
     from backend.evolution import store
@@ -50,7 +50,7 @@ def test_render_skill_md_frontmatter():
     assert lines[0] == "---"
     assert "name: my_skill" in lines
     assert "description: 何时使用一句话" in lines
-    assert "source: takton-evolution" in md
+    assert "source: tevarn-evolution" in md
     assert md.rstrip().endswith("1. 做事")
 
 
@@ -221,8 +221,8 @@ def test_docker_guest_cwd_containment(tmp_path):
 def test_docker_container_name_sanitized():
     from backend.computer.docker_backend import _container_name
 
-    assert _container_name("wf:1234/abc") == "takton-agent-wf-1234-abc"
-    assert _container_name("") == "takton-agent-main"
+    assert _container_name("wf:1234/abc") == "tevarn-agent-wf-1234-abc"
+    assert _container_name("") == "tevarn-agent-main"
 
 
 # ─────────── ssh backend（纯逻辑，不需要 ssh 服务器）───────────

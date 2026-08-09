@@ -1,7 +1,7 @@
 """Runtime 层：Kernel-first 宿主 + 编制编排门面。
 
-- 控制平面：**Rust** ``takton-kernel`` / ``takton-kernel-host``
-- 入口：``python -m backend.runtime``（HTTP Adapter）或 ``takton-kernel-host``
+- 控制平面：**Rust** ``tevarn-kernel`` / ``tevarn-kernel-host``
+- 入口：``python -m backend.runtime``（HTTP Adapter）或 ``tevarn-kernel-host``
 - 编排门面：``backend.runtime.facade``（Identity/Inbox/Dispatcher 访问点）
 - Workforce 业务适配仍在 ``backend.kernel.*``（DB/Agent Loop 胶水）
 """

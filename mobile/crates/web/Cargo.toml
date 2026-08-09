@@ -2,7 +2,7 @@
 # standalone wasm package — isolates web-sys from host/reqwest
 
 [package]
-name = "takton-mobile-web"
+name = "tevarn-mobile-web"
 version = "0.1.0"
 edition = "2021"
 description = "Dioxus-web 1:1 Pixel Console UI (DOM renderer, CSS 100% reused)"

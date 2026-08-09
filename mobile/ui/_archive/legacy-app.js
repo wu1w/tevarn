@@ -1,5 +1,5 @@
 
-/* ═══ Takton Mobile · real backend (no mock data) ═══ */
+/* ═══ Tevarn Mobile · real backend (no mock data) ═══ */
 const AVCOLORS=[['#6d5df6','#b8b0ff'],['#00a8c0','#7ee7f5'],['#f6489b','#ffb3d9'],['#16a34a','#86efac'],['#d97706','#fcd34d']];
 function drawAvt(cv,seed){
   const ctx=cv.getContext('2d'); let hash=0;
@@ -124,7 +124,7 @@ function applyModeUI(){
   // Force chat mode validity
   if(CHAT_MODE==='remote' && MODE!=='remote'){
     CHAT_MODE = 'local';
-    localStorage.setItem('takton-chat-mode', 'local');
+    localStorage.setItem('tevarn-chat-mode', 'local');
   }
 
   // Connection strip (PC link status, independent of chat surface)
@@ -140,7 +140,7 @@ function applyModeUI(){
     $('conn-meta').textContent = (live!=null?`进程 ${live} · `:'') + lat;
     $('conn-go').textContent = '会话 →';
     $('rm-title').textContent = '已连接 · ' + (STATE?.base_url || '');
-    $('rm-meta').textContent = `takton · ${STATE?.user?.email||''} · 设备 ${DEVICES.length}`;
+    $('rm-meta').textContent = `tevarn · ${STATE?.user?.email||''} · 设备 ${DEVICES.length}`;
     $('rm-state').textContent='ONLINE'; $('rm-state').className='badge';
     $('rm-disc').textContent='断开连接';
   } else {
@@ -204,7 +204,7 @@ function applyModeUI(){
 
 function currentSessionTitle(){
   const s = SESSIONS.find(x=>x.id===ACTIVE_SESSION);
-  return s?.title || 'Takton 会话';
+  return s?.title || 'Tevarn 会话';
 }
 
 async function refreshState(){
@@ -237,7 +237,7 @@ async function refreshState(){
     if($('me-backend')){
       const bh = STATE.backend_health;
       $('me-backend').textContent = STATE.authenticated
-        ? ((bh?.service||'takton') + (bh?.status?(' · '+bh.status):'') + ' · ' + (STATE.base_url||''))
+        ? ((bh?.service||'tevarn') + (bh?.status?(' · '+bh.status):'') + ' · ' + (STATE.base_url||''))
         : '未连接';
     }
     if($('sw-notify')){
@@ -575,7 +575,7 @@ function renderHist(){
 
 function setChatMode(mode){
   CHAT_MODE = mode;
-  localStorage.setItem('takton-chat-mode', mode);
+  localStorage.setItem('tevarn-chat-mode', mode);
 }
 
 async function enterLocalChat(reset){
@@ -1323,7 +1323,7 @@ function handleWs(msg){
           const why = detail && detail!=='Ready'
             ? detail
             : (detail==='Ready'
-              ? 'Agent 结束但未产出文本（检查 PC：takton-kernel-host 是否运行、模型是否可用）'
+              ? 'Agent 结束但未产出文本（检查 PC：tevarn-kernel-host 是否运行、模型是否可用）'
               : '无模型输出');
           finishStream(true, why);
         } else {
@@ -1982,13 +1982,13 @@ renderSugg();
 syncBadge();
 wireStaticActions();
 ensureWs();
-CHAT_MODE = localStorage.getItem('takton-chat-mode') || 'local';
+CHAT_MODE = localStorage.getItem('tevarn-chat-mode') || 'local';
 if(CHAT_MODE!=='remote') CHAT_MODE = 'local';
 // Default surface is 本机; drawer switches to 远端
 refreshState().then(async ()=>{
   await loadLlmPanel().catch(()=>{});
   // 严格按用户选择：默认本机；仅当记忆为 remote 且已连 PC 时进远端
-  const wantRemote = (localStorage.getItem('takton-chat-mode') === 'remote') && pcAgentReady();
+  const wantRemote = (localStorage.getItem('tevarn-chat-mode') === 'remote') && pcAgentReady();
   if(wantRemote){
     await ensurePcAgentReady({ silent: true });
   } else {
@@ -2009,7 +2009,7 @@ function tickStatusbar(){
   el.textContent = d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
 }
 (function initTheme(){
-  const mode = localStorage.getItem('takton-theme-mode') || localStorage.getItem('takton-theme') || 'light';
+  const mode = localStorage.getItem('tevarn-theme-mode') || localStorage.getItem('tevarn-theme') || 'light';
   const map = { system: 0, light: 1, dark: 2 };
   const buttons = document.querySelectorAll('.tseg button');
   const idx = map[mode] ?? 1;

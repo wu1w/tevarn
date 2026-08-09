@@ -217,7 +217,7 @@ class GeneratePPTSkill(BaseSkill):
             root = resolve_agent_workspace_root()
         except Exception:
             root = os.getcwd()
-        d = os.path.join(root, ".takton", "ppt_work")
+        d = os.path.join(root, ".tevarn", "ppt_work")
         os.makedirs(d, exist_ok=True)
         return d
 

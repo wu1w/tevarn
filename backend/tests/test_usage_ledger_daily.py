@@ -10,7 +10,7 @@ import backend.services.usage_ledger as ul
 
 def test_charge_fills_by_model_day_and_no_double_totals(tmp_path: Path, monkeypatch):
     path = tmp_path / "usage_ledger.json"
-    monkeypatch.setenv("TAKTON_USAGE_LEDGER", str(path))
+    monkeypatch.setenv("TEVARN_USAGE_LEDGER", str(path))
     ul.reset_for_tests()
 
     ul.charge(

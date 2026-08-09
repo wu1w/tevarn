@@ -1,12 +1,12 @@
 //! Smoke-test phone web_search backends (Bing RSS / Google News / Wiki / HN).
 use serde_json::json;
 use std::path::PathBuf;
-use takton_mobile_core::local_tools::ToolRuntime;
-use takton_mobile_core::storage::Store;
+use tevarn_mobile_core::local_tools::ToolRuntime;
+use tevarn_mobile_core::storage::Store;
 
 #[tokio::main]
 async fn main() {
-    let dir = std::env::temp_dir().join(format!("takton-smoke-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("tevarn-smoke-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&dir);
     let store = Store::open(&dir).expect("store");
     let tools = ToolRuntime::new(store);

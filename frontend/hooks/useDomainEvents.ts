@@ -23,12 +23,12 @@ function resolveWsBase(): string {
     (window as unknown as { electronAPI?: unknown }).electronAPI
   );
 
-  // Next dev：页面在 3000，必须直连 8090；忽略被 TAKTON_APP_PORT=8000 污染的发现结果
+  // Next dev：页面在 3000，必须直连 8090；忽略被 TEVARN_APP_PORT=8000 污染的发现结果
   if (isLocalHost && (port === '3000' || port === '3001') && !hasElectron) {
     return 'ws://127.0.0.1:8090/api';
   }
 
-  const injected = (window as unknown as { __TAKTON_WS_URL__?: string }).__TAKTON_WS_URL__;
+  const injected = (window as unknown as { __TEVARN_WS_URL__?: string }).__TEVARN_WS_URL__;
   if (injected) {
     const u = injected.replace(/\/$/, '');
     if (/:\/\/(127\.0\.0\.1|localhost):8000(\/|$)/i.test(u) && isLocalHost) {

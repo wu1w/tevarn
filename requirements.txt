@@ -1,4 +1,4 @@
-# Takton backend dependencies
+# Tevarn backend dependencies
 # Pin versions for reproducible desktop packaging
 # NOTE: comments must stay ASCII-only - pip decodes this file with the OS
 # locale encoding (GBK on zh-CN Windows), non-ASCII bytes can crash install.

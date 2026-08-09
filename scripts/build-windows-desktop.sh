@@ -9,50 +9,50 @@ cd "$ROOT"
 
 export CSC_IDENTITY_AUTO_DISCOVERY=false
 export ELECTRON_BUILDER_CACHE="${ELECTRON_BUILDER_CACHE:-$ROOT/.cache/electron-builder}"
-export TAKTON_SKIP_VENDOR_HOST="${TAKTON_SKIP_VENDOR_HOST:-1}"
+export TEVARN_SKIP_VENDOR_HOST="${TEVARN_SKIP_VENDOR_HOST:-1}"
 
-echo "[takton] == Windows desktop pack 0.5.5-alpha =="
+echo "[tevarn] == Windows desktop pack 0.5.5-alpha =="
 
 # Strip packager/dev API keys & OAuth tokens; refuse secret files in tree
-echo "[takton] pack-sanitize (no developer credentials in artifact)..."
+echo "[tevarn] pack-sanitize (no developer credentials in artifact)..."
 # Unset common secrets so electron-builder / child processes cannot inherit them
 for k in OPENAI_API_KEY ANTHROPIC_API_KEY AZURE_OPENAI_API_KEY GOOGLE_API_KEY GEMINI_API_KEY \
   XAI_API_KEY GROK_API_KEY COHERE_API_KEY MISTRAL_API_KEY TOGETHER_API_KEY FIREWORKS_API_KEY \
-  DEEPSEEK_API_KEY HF_TOKEN HUGGINGFACE_HUB_TOKEN TAKTON_LLM_API_KEY TAKTON_EMBEDDING_API_KEY \
-  TAKTON_RERANKER_API_KEY TAKTON_IMAGE_API_KEY TAKTON_OPENAI_CHATGPT_ACCOUNT_ID LLM_API_KEY \
-  TAKTON_ENV_FILE TAKTON_JWT_SECRET TAKTON_API_KEY TAKTON_SETTINGS_ENCRYPTION_SALT; do
+  DEEPSEEK_API_KEY HF_TOKEN HUGGINGFACE_HUB_TOKEN TEVARN_LLM_API_KEY TEVARN_EMBEDDING_API_KEY \
+  TEVARN_RERANKER_API_KEY TEVARN_IMAGE_API_KEY TEVARN_OPENAI_CHATGPT_ACCOUNT_ID LLM_API_KEY \
+  TEVARN_ENV_FILE TEVARN_JWT_SECRET TEVARN_API_KEY TEVARN_SETTINGS_ENCRYPTION_SALT; do
   unset "$k" || true
 done
-export TAKTON_LOAD_DOTENV=0
+export TEVARN_LOAD_DOTENV=0
 node "$ROOT/scripts/pack-sanitize-env.mjs"
 
-echo "[takton] free disk:"; df -h "$ROOT" | tail -1
+echo "[tevarn] free disk:"; df -h "$ROOT" | tail -1
 
 # 1) Windows embed Python + wheels
-echo "[takton] preparing win-python (cross)..."
+echo "[tevarn] preparing win-python (cross)..."
 node scripts/prepare-win-python-cross.js
 
 if [[ ! -f win-python/python.exe ]]; then
-  echo "[takton] ERROR: win-python/python.exe missing" >&2
+  echo "[tevarn] ERROR: win-python/python.exe missing" >&2
   exit 1
 fi
 if [[ ! -d win-python/Lib/site-packages/uvicorn ]]; then
-  echo "[takton] ERROR: uvicorn not in win-python site-packages" >&2
+  echo "[tevarn] ERROR: uvicorn not in win-python site-packages" >&2
   exit 1
 fi
 
 # 2) Optional kernel host (Windows .exe). Skip if absent — backend falls back to python kernel.
-if [[ ! -f vendor/takton-kernel-host/takton-kernel-host.exe ]]; then
-  echo "[takton] note: no Windows kernel host exe — packing with TAKTON_SKIP_VENDOR_HOST=1 (python kernel)"
-  export TAKTON_SKIP_VENDOR_HOST=1
-  mkdir -p vendor/takton-kernel-host
-  echo "Python kernel fallback for this build" > vendor/takton-kernel-host/README.md
+if [[ ! -f vendor/tevarn-kernel-host/tevarn-kernel-host.exe ]]; then
+  echo "[tevarn] note: no Windows kernel host exe — packing with TEVARN_SKIP_VENDOR_HOST=1 (python kernel)"
+  export TEVARN_SKIP_VENDOR_HOST=1
+  mkdir -p vendor/tevarn-kernel-host
+  echo "Python kernel fallback for this build" > vendor/tevarn-kernel-host/README.md
 fi
 
 # 3) Frontend deps + static export + electron main
 cd "$ROOT/frontend"
 if [[ ! -d node_modules/electron-builder ]] || [[ ! -d node_modules/next ]]; then
-  echo "[takton] npm ci/install in frontend..."
+  echo "[tevarn] npm ci/install in frontend..."
   if [[ -f package-lock.json ]]; then
     npm ci --no-audit --no-fund || npm install --no-audit --no-fund
   else
@@ -70,19 +70,19 @@ fs.writeFileSync(p, JSON.stringify(d,null,2)+'\n');
 console.log('frontend version', d.version);
 "
 
-echo "[takton] NEXT_EXPORT static build..."
+echo "[tevarn] NEXT_EXPORT static build..."
 cross_env() { npx cross-env "$@"; }
 NEXT_EXPORT=1 npx cross-env NEXT_EXPORT=1 npm run build
 
-echo "[takton] compile electron main..."
+echo "[tevarn] compile electron main..."
 npx tsc -p ../electron/tsconfig.json
 
 if [[ ! -f dist/index.html ]]; then
-  echo "[takton] ERROR: frontend/dist/index.html missing" >&2
+  echo "[tevarn] ERROR: frontend/dist/index.html missing" >&2
   exit 1
 fi
 if [[ ! -f ../electron/dist/main.js ]]; then
-  echo "[takton] ERROR: electron/dist/main.js missing" >&2
+  echo "[tevarn] ERROR: electron/dist/main.js missing" >&2
   exit 1
 fi
 
@@ -90,21 +90,21 @@ fi
 # Prefer nsis (one-click) + portable. On Linux, nsis needs wine — fall back to portable+zip.
 TARGETS="nsis,portable"
 if ! command -v wine64 >/dev/null 2>&1 && ! command -v wine >/dev/null 2>&1; then
-  echo "[takton] wine not found — building portable + zip (still double-clickable .exe)"
+  echo "[tevarn] wine not found — building portable + zip (still double-clickable .exe)"
   TARGETS="portable,zip"
 fi
 
-echo "[takton] electron-builder --win $TARGETS ..."
+echo "[tevarn] electron-builder --win $TARGETS ..."
 npx electron-builder --win --x64 -c.win.target=portable -c.win.target=zip || {
-  echo "[takton] multi-target failed, try portable only..."
+  echo "[tevarn] multi-target failed, try portable only..."
   npx electron-builder --win portable --x64
 }
 
-echo "[takton] artifacts:"
+echo "[tevarn] artifacts:"
 ls -lah release/ 2>/dev/null || true
 # copy to repo-level release for convenience
 mkdir -p "$ROOT/release-win"
 cp -a release/* "$ROOT/release-win/" 2>/dev/null || true
 ls -lah "$ROOT/release-win" 2>/dev/null || ls -lah release/
 
-echo "[takton] DONE. Give users the portable .exe or zip; no Python install required."
+echo "[tevarn] DONE. Give users the portable .exe or zip; no Python install required."

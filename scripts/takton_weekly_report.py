@@ -2,9 +2,9 @@
 """AIOS 债 #2：生成观测 / Eval 周报。
 
 用法：
-  python scripts/takton_weekly_report.py
-  python scripts/takton_weekly_report.py --run-eval
-  python scripts/takton_weekly_report.py --week 2026-W31
+  python scripts/tevarn_weekly_report.py
+  python scripts/tevarn_weekly_report.py --run-eval
+  python scripts/tevarn_weekly_report.py --week 2026-W31
 """
 from __future__ import annotations
 
@@ -17,12 +17,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-os.environ.setdefault("TAKTON_KERNEL_BACKEND", "rust")
-os.environ.setdefault("TAKTON_KERNEL_AUTO_START", "1")
+os.environ.setdefault("TEVARN_KERNEL_BACKEND", "rust")
+os.environ.setdefault("TEVARN_KERNEL_AUTO_START", "1")
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Takton weekly observability report")
+    ap = argparse.ArgumentParser(description="Tevarn weekly observability report")
     ap.add_argument("--run-eval", action="store_true", help="run eval harness first")
     ap.add_argument("--week", default=None, help="load existing week id (e.g. 2026-W31)")
     ap.add_argument("--no-persist", action="store_true")

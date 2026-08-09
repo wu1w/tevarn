@@ -72,7 +72,7 @@ class _BuiltinToolBase(BaseTool):
         if executor is None:
             return (
                 f"[Error] 工具 «{self.name}» 未绑定执行器（_executor is None）。"
-                "这是 Takton 内部注册问题：请重启后端；若仍失败请检查 "
+                "这是 Tevarn 内部注册问题：请重启后端；若仍失败请检查 "
                 "backend.tools.builtins.core_tools 是否正确 import executors。"
             )
         # 注入 workspace root 作为 base_path，而非传空 config
@@ -340,7 +340,7 @@ class ListDevicesTool(_BuiltinToolBase):
         super().__init__(
             name="list_devices_tool",
             description=(
-                "列出本机 local 与已配对远程设备（takton-agent）。"
+                "列出本机 local 与已配对远程设备（tevarn-agent）。"
                 "操作远程前先调用；也可用 chat @设备名 命令。"
             ),
             parameters={"type": "object", "properties": {}, "required": []},

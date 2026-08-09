@@ -1,7 +1,7 @@
 """Intent Declaration —— 意图 → 最小权限（P0-B）。
 
 .. deprecated:: P0-B
-    **权威合成在 Rust** ``takton_kernel::intent`` / host ``apply_intent``。
+    **权威合成在 Rust** ``tevarn_kernel::intent`` / host ``apply_intent``。
     ``apply_intent_to_process`` 优先走 Rust RPC；失败才用本文件本地逻辑（fallback）。
 """
 

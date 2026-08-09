@@ -96,7 +96,7 @@ def test_greeting_minimal_tier():
 
 
 def test_knowledge_rich_tier():
-    plan = infer_scene("知识库里 Takton 是什么架构？", profile="dynamic")
+    plan = infer_scene("知识库里 Tevarn 是什么架构？", profile="dynamic")
     assert plan.injection_tier == "rich"
 
 

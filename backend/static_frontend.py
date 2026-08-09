@@ -2,7 +2,7 @@
 Mount Next.js static export (if present) so one uvicorn process serves API + UI.
 
 Static candidates (first hit wins among *valid* trees):
-  - TAKTON_FRONTEND_STATIC  env override
+  - TEVARN_FRONTEND_STATIC  env override
   - ../frontend/out         (next export)
   - ../frontend/dist
   - backend/static          (legacy pip / monorepo build output)
@@ -63,7 +63,7 @@ def _route_coverage(root: Path) -> int:
 
 
 def resolve_frontend_static() -> Path | None:
-    env = (os.environ.get("TAKTON_FRONTEND_STATIC") or "").strip()
+    env = (os.environ.get("TEVARN_FRONTEND_STATIC") or "").strip()
     candidates: list[Path] = []
     if env:
         candidates.append(Path(env).expanduser().resolve())

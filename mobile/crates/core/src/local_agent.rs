@@ -17,7 +17,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-const SYSTEM_PROMPT: &str = r#"你是 Takton 手机本机 Agent（对标 Codex / 豆包助手的本机能力）。
+const SYSTEM_PROMPT: &str = r#"你是 Tevarn 手机本机 Agent（对标 Codex / 豆包助手的本机能力）。
 你可以使用工具，并组合调用。规则：
 1. 实时事实/新闻/不确定知识 → web_search；已知 URL → web_fetch 或 http_get(API)。
 2. 多步大任务 → 先 task_plan.set 拆解，再逐步执行，完成后更新计划。

@@ -179,7 +179,7 @@ export function useSession() {
         });
         try {
           window.dispatchEvent(
-            new CustomEvent('takton:session-invalid', { detail: { sessionId } })
+            new CustomEvent('tevarn:session-invalid', { detail: { sessionId } })
           );
         } catch {
           /* ignore */

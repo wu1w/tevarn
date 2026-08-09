@@ -17,7 +17,7 @@ def test_package_manifest_files_exist():
 
 def test_workspace_example_package():
     # 示例包随仓库分发（workspace/ 被 gitignore，不能作为分发位置）
-    p = ROOT / "backend/packages/examples/code-review-lite/takton.package.json"
+    p = ROOT / "backend/packages/examples/code-review-lite/tevarn.package.json"
     assert p.is_file()
     text = p.read_text(encoding="utf-8")
     assert "code-review-lite" in text
@@ -36,7 +36,7 @@ def test_routes_registered():
 def test_context_injects_packages():
     src = (ROOT / "backend/agent/context.py").read_text(encoding="utf-8")
     assert "resolve_attached_snippets" in src
-    assert "Attached Takton Packages" in src
+    assert "Attached Tevarn Packages" in src
     assert "last_system_layers" in src
     compile(src, "context.py", "exec")
 
@@ -52,7 +52,7 @@ def test_frontend_panel_and_api():
     assert panel.is_file()
     text = panel.read_text(encoding="utf-8")
     assert "System 分层" in text
-    assert "Takton Packages" in text
+    assert "Tevarn Packages" in text
     api = (ROOT / "frontend/lib/api.ts").read_text(encoding="utf-8")
     assert "getSystemLayers" in api
     assert "listPackages" in api

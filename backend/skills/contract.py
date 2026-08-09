@@ -32,7 +32,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 logger = logging.getLogger(__name__)
 
-CONTRACT_FILENAMES = ("skill.yaml", "skill.yml", "takton.skill.yaml")
+CONTRACT_FILENAMES = ("skill.yaml", "skill.yml", "tevarn.skill.yaml")
 
 
 class SkillRequires(BaseModel):

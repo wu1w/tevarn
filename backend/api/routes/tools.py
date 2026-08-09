@@ -141,7 +141,7 @@ async def execute_tool_endpoint(
     """手动执行工具（调试用）。
 
     P0 验收：生产路径必须带 kernel process 上下文，经 tool_gate mediate。
-    无 process 时拒绝（禁止匿名绕过 ABI）。测试可设 ``TAKTON_ALLOW_DEBUG_TOOL_EXECUTE=1``。
+    无 process 时拒绝（禁止匿名绕过 ABI）。测试可设 ``TEVARN_ALLOW_DEBUG_TOOL_EXECUTE=1``。
     """
     import os
 
@@ -153,7 +153,7 @@ async def execute_tool_endpoint(
     pid = str(
         args.get("_kernel_process_id") or args.get("_process_id") or ""
     ).strip()
-    allow_debug = os.environ.get("TAKTON_ALLOW_DEBUG_TOOL_EXECUTE", "").strip() in (
+    allow_debug = os.environ.get("TEVARN_ALLOW_DEBUG_TOOL_EXECUTE", "").strip() in (
         "1",
         "true",
         "True",
@@ -164,7 +164,7 @@ async def execute_tool_endpoint(
             detail=(
                 "P0: tool execute requires _kernel_process_id (ABI mediate). "
                 "Agent runs inject process automatically; debug-only without process: "
-                "set TAKTON_ALLOW_DEBUG_TOOL_EXECUTE=1."
+                "set TEVARN_ALLOW_DEBUG_TOOL_EXECUTE=1."
             ),
         )
     if pid:

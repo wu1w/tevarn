@@ -570,9 +570,10 @@ class LoopIOMixin:
 
             parts.append(f"\n\n[附件 {i}: {filename}]")
             if text_content:
-                # 文本文件直接附内容
-                content_preview = text_content[:8000]
-                if len(text_content) > 8000:
+                # 文本文件直接附内容（提高上限，避免 PRD 被截断后模型反复 file_read）
+                _att_cap = 50000
+                content_preview = text_content[:_att_cap]
+                if len(text_content) > _att_cap:
                     content_preview += "\n...（内容已截断）"
                 parts.append(content_preview)
             elif file_type in {"jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"}:

@@ -9,7 +9,7 @@
 工作区根解析（优先级从高到低）：
 1. 构造参数 workspace_root
 2. 本轮 run 上下文（session config: workspace_root / file_browser_root / cwd）
-3. 环境变量 TAKTON_FILE_BROWSER_ROOT
+3. 环境变量 TEVARN_FILE_BROWSER_ROOT
 4. settings.file_browser_root（相对路径相对「项目根」解析）
 5. workspace 服务用户绑定 get_root("default")
 6. 自动探测项目根（含 backend/ 的目录）或 cwd
@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
@@ -27,10 +28,78 @@ from backend.tools.base import BaseTool, ToolRiskLevel
 
 logger = logging.getLogger(__name__)
 
+# User paste "E:\项目\guardian" / "D:/work/foo" — auto-allow as extra root for this run.
+_WIN_ABS_PATH_RE = re.compile(
+    r"(?P<p>[A-Za-z]:[\\/](?:[^\s\"'<>|*?\r\n\\/]+[\\/])*[^\s\"'<>|*?\r\n\\/]*)"
+)
+_UNC_ABS_PATH_RE = re.compile(
+    r"(?P<p>\\\\[^\s\"'<>|*?\r\n]+(?:\\[^\s\"'<>|*?\r\n]+)*)"
+)
+
+
+def extract_absolute_paths_from_user_text(text: str) -> list[str]:
+    """Pull absolute filesystem paths the user mentioned (Windows-focused)."""
+    t = text or ""
+    if not t.strip():
+        return []
+    found: list[str] = []
+    for rx in (_WIN_ABS_PATH_RE, _UNC_ABS_PATH_RE):
+        for m in rx.finditer(t):
+            raw = (m.group("p") or "").strip().rstrip(".,;:，。；：)）]")
+            if not raw or len(raw) < 3:
+                continue
+            # drive root alone (E:\) is too broad — require at least one segment
+            norm = raw.replace("/", "\\")
+            parts = [x for x in norm.split("\\") if x and not x.endswith(":")]
+            if len(parts) < 1 and not norm.startswith("\\\\"):
+                continue
+            if re.fullmatch(r"[A-Za-z]:\\?", norm):
+                continue
+            found.append(raw)
+    # de-dupe
+    out: list[str] = []
+    seen: set[str] = set()
+    for p in found:
+        k = p.replace("/", "\\").lower()
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(p)
+    return out
+
+
+def normalize_extra_root(path: str) -> str | None:
+    """Resolve user-mentioned path to a directory root for allowlist."""
+    if not path:
+        return None
+    try:
+        p = Path(str(path).strip()).expanduser()
+        if not p.is_absolute():
+            return None
+        # Prefer existing path; if file, allow parent dir
+        try:
+            if p.exists():
+                p = p.resolve()
+                if p.is_file():
+                    p = p.parent
+                return str(p)
+        except OSError:
+            pass
+        # Not existing yet — still allow the path prefix if parent exists
+        try:
+            parent = p.parent
+            if parent.exists():
+                return str(p.resolve() if p.exists() else p)
+        except OSError:
+            pass
+        return str(p)
+    except Exception:
+        return None
+
 # 本轮 Agent run 覆盖（session 可配 workspace_root / cwd）
-_run_workspace_root: ContextVar[str | None] = ContextVar("takton_run_workspace_root", default=None)
+_run_workspace_root: ContextVar[str | None] = ContextVar("tevarn_run_workspace_root", default=None)
 _run_extra_roots: ContextVar[tuple[str, ...] | None] = ContextVar(
-    "takton_run_extra_roots", default=None
+    "tevarn_run_extra_roots", default=None
 )
 
 
@@ -47,33 +116,33 @@ def host_data_roots() -> list[str]:
     """始终允许的宿主数据根（不依赖 session extra_roots）。
 
     Agent 沙箱 HOME 在 workspace/.computers/<agent>/home，但宿主
-    ``~/.takton`` 与 ``%APPDATA%/takton`` 是真实记忆/技能/日志落点。
+    ``~/.tevarn`` 与 ``%APPDATA%/tevarn`` 是真实记忆/技能/日志落点。
     不放行则 file_read 会 path:workspace 拒掉，自检永远失败。
     """
     roots: list[str] = []
     try:
-        from backend.agent._takton_paths import home_dir, host_home
+        from backend.agent._tevarn_paths import home_dir, host_home
 
         roots.append(str(home_dir().resolve()))
-        roots.append(str((host_home() / ".takton").resolve()))
-        # 不要放行整个用户主目录——只放行 Takton 数据树
+        roots.append(str((host_home() / ".tevarn").resolve()))
+        # 不要放行整个用户主目录——只放行 Tevarn 数据树
     except Exception:
         try:
-            p = Path.home() / ".takton"
+            p = Path.home() / ".tevarn"
             roots.append(str(p.resolve()))
         except OSError:
             pass
-    # 桌面端数据树：%APPDATA%/takton（含 data/workspace）
+    # 桌面端数据树：%APPDATA%/tevarn（含 data/workspace）
     for env_key in ("APPDATA", "LOCALAPPDATA"):
         base = (os.environ.get(env_key) or "").strip()
         if not base:
             continue
         try:
-            roots.append(str((Path(base) / "takton").resolve()))
+            roots.append(str((Path(base) / "tevarn").resolve()))
         except OSError:
             continue
     # 开发机常见：显式开发仓路径
-    for env_key in ("TAKTON_DEV_ROOT", "TAKTON_REPO_ROOT"):
+    for env_key in ("TEVARN_DEV_ROOT", "TEVARN_REPO_ROOT"):
         raw = (os.environ.get(env_key) or "").strip()
         if raw:
             try:
@@ -93,10 +162,17 @@ def host_data_roots() -> list[str]:
 
 
 def rewrite_host_path_into_workspace(path: str) -> str:
-    """把宿主 ~/.takton 绝对路径改写到 workspace 内 junction（若存在）。
+    """Normalize tool paths so Rust path:workspace and Python gates agree.
 
-    Rust court 只认单一 workspace_root；改写后 path:workspace 可通过，
-    实际仍落到宿主数据（junction / symlink）。
+    Essential bug (prod logs): model writes
+      C:\\Users\\…\\AppData\\Roaming\\tevarn\\data\\workspace\\foo.md
+    Rust court treats absolute paths with starts_with(workspace) and often
+    **denies** (Win canonicalize / root mismatch). Relative ``foo.md`` works.
+
+    Strategy:
+    1. Relative paths: leave as-is.
+    2. Absolute path **inside** agent workspace → **relative** path (preferred).
+    3. Absolute under ~/.tevarn / host data → rewrite via junction, then (2).
     """
     raw = (path or "").strip()
     if not raw:
@@ -112,18 +188,89 @@ def rewrite_host_path_into_workspace(path: str) -> str:
     except Exception:
         return path
 
+    # --- Prefer: strip workspace root to relative (fixes absolute-in-workspace deny) ---
     try:
-        from backend.agent._takton_paths import home_dir, host_home
+        ws = Path(resolve_agent_workspace_root())
+        try:
+            ws_r = ws.resolve()
+        except OSError:
+            ws_r = Path(os.path.abspath(str(ws)))
+        try:
+            rel_ws = p.relative_to(ws_r)
+            rel_s = str(rel_ws).replace("\\", "/")
+            if rel_s in (".", ""):
+                return "."
+            # If "workspace" is wrongly home (C:\Users\x), do not return
+            # AppData/Roaming/tevarn/data/workspace/... as relative — strip known suffix.
+            marker = "appdata/roaming/tevarn/data/workspace/"
+            low = rel_s.lower().replace("\\", "/")
+            if marker in low:
+                return rel_s[low.index(marker) + len(marker) :] or "."
+            marker2 = "tevarn/data/workspace/"
+            if marker2 in low:
+                return rel_s[low.index(marker2) + len(marker2) :] or "."
+            return rel_s
+        except ValueError:
+            pass
+        # Also match un-resolved forms (different drive letter case, etc.)
+        try:
+            p_abs = os.path.normcase(os.path.abspath(str(p)))
+            w_abs = os.path.normcase(os.path.abspath(str(ws)))
+            if p_abs == w_abs:
+                return "."
+            prefix = w_abs.rstrip("\\/") + os.sep
+            if p_abs.startswith(prefix):
+                rel_s = p_abs[len(prefix) :].replace("\\", "/")
+                low = rel_s.lower()
+                for marker in (
+                    "appdata/roaming/tevarn/data/workspace/",
+                    "tevarn/data/workspace/",
+                ):
+                    if marker in low:
+                        return rel_s[low.index(marker) + len(marker) :] or "."
+                return rel_s
+        except Exception:
+            pass
+    except Exception:
+        pass
 
-        host_takton = home_dir().resolve()
-        # also accept Path.home()/.takton
-        candidates = [host_takton, (host_home() / ".takton").resolve()]
+    # Desktop default workspace absolute (even if resolve_agent_workspace_root differs)
+    try:
+        appdata = os.environ.get("APPDATA") or ""
+        if appdata:
+            desk_ws = Path(appdata) / "tevarn" / "data" / "workspace"
+            try:
+                desk_r = desk_ws.resolve()
+            except OSError:
+                desk_r = Path(os.path.abspath(str(desk_ws)))
+            try:
+                rel_d = str(p.relative_to(desk_r)).replace("\\", "/")
+                return "." if rel_d in (".", "") else rel_d
+            except ValueError:
+                pass
+    except Exception:
+        pass
+
+    # --- Host ~/.tevarn → workspace junction (existing) ---
+    try:
+        from backend.agent._tevarn_paths import home_dir, host_home
+
+        host_tevarn = home_dir().resolve()
+        candidates = [host_tevarn, (host_home() / ".tevarn").resolve()]
     except Exception:
         candidates = []
         try:
-            candidates.append((Path.home() / ".takton").resolve())
+            candidates.append((Path.home() / ".tevarn").resolve())
         except OSError:
             return path
+
+    # Roaming app data tree (desktop install): %APPDATA%/tevarn/...
+    try:
+        appdata = os.environ.get("APPDATA") or ""
+        if appdata:
+            candidates.append((Path(appdata) / "tevarn").resolve())
+    except Exception:
+        pass
 
     rel: str | None = None
     for ht in candidates:
@@ -135,16 +282,21 @@ def rewrite_host_path_into_workspace(path: str) -> str:
     if rel is None:
         return path
 
+    # data/workspace/... under APPDATA/tevarn → relative under workspace
+    if rel.startswith("data/workspace/") or rel == "data/workspace":
+        sub = rel[len("data/workspace/") :] if rel.startswith("data/workspace/") else ""
+        return sub if sub else "."
+
     ws = resolve_agent_workspace_root()
-    # Prefer main computer junction; fall back to any existing .computers/*/home/.takton
+    # Prefer main computer junction; fall back to any existing .computers/*/home/.tevarn
     candidates_j: list[Path] = [
-        Path(ws) / ".computers" / "main" / "home" / ".takton",
+        Path(ws) / ".computers" / "main" / "home" / ".tevarn",
     ]
     try:
         computers = Path(ws) / ".computers"
         if computers.is_dir():
             for child in computers.iterdir():
-                j = child / "home" / ".takton"
+                j = child / "home" / ".tevarn"
                 if j.exists():
                     candidates_j.append(j)
     except OSError:
@@ -154,22 +306,48 @@ def rewrite_host_path_into_workspace(path: str) -> str:
         try:
             if j.exists() or j.is_symlink() or j.is_dir():
                 target = (j / rel).resolve() if rel not in (".", "") else j.resolve()
-                return str(target)
+                # Prefer relative if still under workspace
+                try:
+                    return str(target.relative_to(Path(ws).resolve())).replace("\\", "/")
+                except Exception:
+                    return str(target)
         except OSError:
             continue
     # Ensure junction then retry
     try:
-        from backend.agent._takton_paths import ensure_sandbox_takton_link, home_dir
+        from backend.agent._tevarn_paths import ensure_sandbox_tevarn_link, home_dir
 
         main_home = Path(ws) / ".computers" / "main" / "home"
-        ensure_sandbox_takton_link(main_home, home_dir())
-        j = main_home / ".takton"
+        ensure_sandbox_tevarn_link(main_home, home_dir())
+        j = main_home / ".tevarn"
         if j.exists():
             target = (j / rel).resolve() if rel not in (".", "") else j.resolve()
-            return str(target)
+            try:
+                return str(target.relative_to(Path(ws).resolve())).replace("\\", "/")
+            except Exception:
+                return str(target)
     except Exception:
         pass
     return path
+
+
+def normalize_tool_path_args(arguments: dict[str, Any] | None) -> dict[str, Any]:
+    """Rewrite filepath/path/… in-place for tool calls (court + executor)."""
+    args = dict(arguments or {})
+    for k in (
+        "filepath",
+        "path",
+        "file",
+        "file_path",
+        "directory",
+        "dir",
+        "base_path",
+        "database",
+    ):
+        v = args.get(k)
+        if isinstance(v, str) and v.strip():
+            args[k] = rewrite_host_path_into_workspace(v.strip())
+    return args
 
 
 @contextmanager
@@ -241,7 +419,7 @@ def resolve_agent_workspace_root(explicit: str | None = None) -> str:
     if run_root:
         return str(Path(run_root).resolve())
 
-    env = (os.environ.get("TAKTON_FILE_BROWSER_ROOT") or "").strip()
+    env = (os.environ.get("TEVARN_FILE_BROWSER_ROOT") or "").strip()
     if env:
         root = Path(env).expanduser()
         if not root.is_absolute():
@@ -286,15 +464,18 @@ def resolve_agent_workspace_root(explicit: str | None = None) -> str:
 
 
 
-def bind_run_workspace_from_config(config: dict[str, Any] | None) -> Any:
-    """从 session config 绑定本轮 workspace；返回 reset 回调。"""
+def bind_run_workspace_from_config(
+    config: dict[str, Any] | None,
+    user_text: str | None = None,
+) -> Any:
+    """从 session config + 用户消息中的绝对路径绑定本轮 workspace；返回 reset 回调。"""
     cfg = config if isinstance(config, dict) else {}
     root = (
         cfg.get("workspace_root")
         or cfg.get("file_browser_root")
         or cfg.get("cwd")
         or cfg.get("work_dir")
-        or (os.environ.get("TAKTON_TASK_ROOT") or "").strip()
+        or (os.environ.get("TEVARN_TASK_ROOT") or "").strip()
         or None
     )
     extra = cfg.get("allowed_roots") or cfg.get("extra_workspace_roots") or []
@@ -310,7 +491,7 @@ def bind_run_workspace_from_config(config: dict[str, Any] | None) -> Any:
         r.mkdir(parents=True, exist_ok=True)
         tokens.append((_run_workspace_root, _run_workspace_root.set(str(r))))
         logger.info("session workspace_root override=%s", r)
-    # 始终并入宿主数据根 + session extra
+    # 始终并入宿主数据根 + session extra + 用户消息里点名的绝对路径
     cleaned: list[str] = list(host_data_roots())
     if extra:
         for e in extra:
@@ -323,6 +504,11 @@ def bind_run_workspace_from_config(config: dict[str, Any] | None) -> Any:
                 cleaned.append(str(ep.resolve()))
             except OSError:
                 continue
+    mentioned = extract_absolute_paths_from_user_text(user_text or "")
+    for raw in mentioned:
+        nr = normalize_extra_root(raw)
+        if nr:
+            cleaned.append(nr)
     if cleaned:
         # de-dupe
         seen: set[str] = set()
@@ -334,13 +520,17 @@ def bind_run_workspace_from_config(config: dict[str, Any] | None) -> Any:
             seen.add(k)
             uniq.append(c)
         tokens.append((_run_extra_roots, _run_extra_roots.set(tuple(uniq))))
-        logger.info("session extra_roots=%s", uniq)
+        logger.info(
+            "session extra_roots=%s user_mentioned=%s",
+            uniq,
+            mentioned or [],
+        )
     # 确保沙箱 junction 存在，便于 path rewrite
     try:
-        from backend.agent._takton_paths import ensure_sandbox_takton_link, home_dir
+        from backend.agent._tevarn_paths import ensure_sandbox_tevarn_link, home_dir
 
         ws = root or resolve_agent_workspace_root()
-        ensure_sandbox_takton_link(Path(str(ws)) / ".computers" / "main" / "home", home_dir())
+        ensure_sandbox_tevarn_link(Path(str(ws)) / ".computers" / "main" / "home", home_dir())
     except Exception:
         pass
 
@@ -373,7 +563,7 @@ class ToolPermissionManager:
         检查路径是否允许访问。
         如果 allowed_paths 为 None，默认 workspace_root + 本轮 extra + 宿主数据根。
         """
-        # 宿主 ~/.takton 等 → 优先改写到 workspace junction 再判定
+        # 宿主 ~/.tevarn 等 → 优先改写到 workspace junction 再判定
         path = rewrite_host_path_into_workspace(path)
         if allowed_paths is not None:
             paths = list(allowed_paths)
@@ -470,7 +660,7 @@ class ToolPermissionManager:
 def get_default_allowed_paths() -> list[str]:
     """获取默认允许路径"""
     workspace = resolve_agent_workspace_root()
-    uploads = os.environ.get("TAKTON_UPLOADS_DIR") or os.path.join(
+    uploads = os.environ.get("TEVARN_UPLOADS_DIR") or os.path.join(
         detect_project_root(), "uploads"
     )
     uploads = os.path.abspath(uploads)

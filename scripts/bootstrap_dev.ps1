@@ -4,9 +4,9 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $Root
 
-Write-Host "[takton] root=$Root"
+Write-Host "[tevarn] root=$Root"
 if (-not (Test-Path ".venv\Scripts\python.exe")) {
-  Write-Host "[takton] creating .venv"
+  Write-Host "[tevarn] creating .venv"
   py -3 -m venv .venv
 }
 & .\.venv\Scripts\python.exe -m pip install -U pip
@@ -20,5 +20,5 @@ if (Test-Path "frontend\package.json") {
   npm.cmd install
   Pop-Location
 }
-Write-Host "[takton] bootstrap done. Next: .\.venv\Scripts\python.exe start.py"
-Write-Host "[takton] version: $((Get-Content backend\VERSION -Raw).Trim())"
+Write-Host "[tevarn] bootstrap done. Next: .\.venv\Scripts\python.exe start.py"
+Write-Host "[tevarn] version: $((Get-Content backend\VERSION -Raw).Trim())"

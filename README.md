@@ -2,9 +2,9 @@
 
 <br/>
 
-<img src="https://img.shields.io/badge/Takton-Agent%20Terminal-7C3AED?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0xMiAyQzYuNDggMiAyIDYuNDggMiAxMnM0LjQ4IDEwIDEwIDEwIDEwLTQuNDggMTAtMTBTMTcuNTIgMiAxMiAyem0wIDE4Yy00LjQyIDAtOC0zLjU4LTgtOHMzLjU4LTggOC04IDggMy41OCA4IDgtMy41OCA4LTggOHoiLz48L3N2Zz4=" alt="Takton" />
+<img src="https://img.shields.io/badge/Tevarn-Agent%20Terminal-7C3AED?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0xMiAyQzYuNDggMiAyIDYuNDggMiAxMnM0LjQ4IDEwIDEwIDEwIDEwLTQuNDggMTAtMTBTMTcuNTIgMiAxMiAyem0wIDE4Yy00LjQyIDAtOC0zLjU4LTgtOHMzLjU4LTggOC04IDggMy41OCA4IDgtMy41OCA4LTggOHoiLz48L3N2Zz4=" alt="Tevarn" />
 
-# ⚡ Takton
+# ⚡ Tevarn
 
 ### Personal local open-source AIOS workstation · 个人本地开源 AIOS 工作站
 
@@ -17,7 +17,7 @@
 [![Version](https://img.shields.io/badge/version-0.5.x--alpha-7C3AED?style=flat-square)](https://github.com/wu1w/takton/tree/feature/agent-kernel)
 [![Platform](https://img.shields.io/badge/platform-Windows%20(primary)%20%7C%20Linux-06B6D4?style=flat-square)](https://github.com/wu1w/takton/releases)
 [![License](https://img.shields.io/badge/license-MIT-22C55E?style=flat-square)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/wu1w/takton?style=flat-square&logo=github)](https://github.com/wu1w/takton/stargazers)
+[![Stars](https://img.shields.io/github/stars/wu1w/tevarn?style=flat-square&logo=github)](https://github.com/wu1w/takton/stargazers)
 [![Next.js](https://img.shields.io/badge/Next.js%2016-black?style=flat-square&logo=next.js)](https://nextjs.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com/)
 
@@ -31,9 +31,9 @@
 
 > ### 这是什么 · What is this?
 >
-> **Takton** is an **open-source AIOS workstation that runs on your PC**: local **AI employees**, tools, knowledge, jobs, and permission controls in one desktop-friendly workbench.
+> **Tevarn** is an **open-source AIOS workstation that runs on your PC**: local **AI employees**, tools, knowledge, jobs, and permission controls in one desktop-friendly workbench.
 >
-> **Takton** 是运行在**个人电脑**上的**开源 AIOS 工作站**：把本地 **AI 员工**、工具、知识、任务/工单和权限治理放进一个可控的桌面工作台。
+> **Tevarn** 是运行在**个人电脑**上的**开源 AIOS 工作站**：把本地 **AI 员工**、工具、知识、任务/工单和权限治理放进一个可控的桌面工作台。
 >
 > | 适合 · For | 不是 · Not |
 > |------------|------------|
@@ -50,17 +50,17 @@
 > | **Agent Kernel 新版（当前主开发）** | [`feature/agent-kernel`](https://github.com/wu1w/takton/tree/feature/agent-kernel) · **0.5.x-alpha** | 个人本地 AIOS：Rust Kernel Host · 编制/工单 · 用量与 Cache · CEO 策略 · Permission Court |
 > | **历史产品线** | `main` / GitHub Releases **0.3.x** | 较早的桌面 Agent 工作站；**不含**完整 0.5 Kernel 重写 |
 >
-> - 要试用新版 AIOS 工作站 → clone **`feature/agent-kernel`**，并准备 `takton-kernel-host`（预编译或 `cargo build -p takton-kernel-host --release`）
+> - 要试用新版 AIOS 工作站 → clone **`feature/agent-kernel`**，并准备 `tevarn-kernel-host`（预编译或 `cargo build -p tevarn-kernel-host --release`）
 > - 从 Releases 装到 **0.3.x 不会**自动带上 0.5 Kernel
 > - 详见 [从旧版升级](#-从旧版升级到-agent-kernel-版) · [KERNEL_RUST](docs/KERNEL_RUST.md) · [THREAT_MODEL](docs/THREAT_MODEL.md)
 
 ---
 
-## 🎯 Why Takton? · 为什么选择 Takton？
+## 🎯 Why Tevarn? · 为什么选择 Tevarn？
 
-> **Takton is not another coding CLI or chat wrapper.** It is a **personal local AIOS workstation**: hire and run **AI employees** on your machine, with jobs, budgets, knowledge, and a single **permission court**. Defaults stay light: **SQLite, loopback-only, no Redis/Qdrant required**.
+> **Tevarn is not another coding CLI or chat wrapper.** It is a **personal local AIOS workstation**: hire and run **AI employees** on your machine, with jobs, budgets, knowledge, and a single **permission court**. Defaults stay light: **SQLite, loopback-only, no Redis/Qdrant required**.
 >
-> **Takton 不是又一个 coding CLI / 聊天套壳。** 它是**个人本地 AIOS 工作站**：在本机雇佣并调度 **AI 员工**，带工单、预算、知识库与统一 **权限法院**。默认很轻：**SQLite、仅本机回环、不强制 Redis / Qdrant**。
+> **Tevarn 不是又一个 coding CLI / 聊天套壳。** 它是**个人本地 AIOS 工作站**：在本机雇佣并调度 **AI 员工**，带工单、预算、知识库与统一 **权限法院**。默认很轻：**SQLite、仅本机回环、不强制 Redis / Qdrant**。
 
 | Pillar · 支柱 | What · 是什么 |
 |---------------|----------------|
@@ -172,21 +172,21 @@ Agent 遇到新任务类型时自动编写新工具。17 个内置技能 + 无�
 **Windows**
 ```powershell
 # One-liner install · 一行安装
-iex ((irm https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.ps1) -replace '^\uFEFF','')
+iex ((irm https://raw.githubusercontent.com/wu1w/tevarn/main/scripts/install.ps1) -replace '^\uFEFF','')
 ```
 
 **Linux**
 ```bash
 # One-liner install · 一行安装
-curl -fsSL https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.sh | tr -d '\015' | bash
+curl -fsSL https://raw.githubusercontent.com/wu1w/tevarn/main/scripts/install.sh | tr -d '\015' | bash
 ```
 
 **Manual Download · 手动下载**
 
 | Platform | Package | 下载 |
 |----------|---------|------|
-| Windows | Setup.exe | [Takton-Setup-0.3.2.exe](https://github.com/wu1w/takton/releases/download/v0.3.2/Takton-Setup-0.3.2.exe) |
-| Windows | Portable.zip | [Takton-0.3.2-win-x64-portable.zip](https://github.com/wu1w/takton/releases/download/v0.3.2/Takton-0.3.2-win-x64-portable.zip) |
+| Windows | Setup.exe | [Tevarn-Setup-0.3.2.exe](https://github.com/wu1w/takton/releases/download/v0.3.2/Tevarn-Setup-0.3.2.exe) |
+| Windows | Portable.zip | [Tevarn-0.3.2-win-x64-portable.zip](https://github.com/wu1w/takton/releases/download/v0.3.2/Tevarn-0.3.2-win-x64-portable.zip) |
 | Linux | AppImage | v0.3.2 随 release 发布 · 见 [Releases](https://github.com/wu1w/takton/releases) |
 | Linux | deb | v0.3.2 随 release 发布 · 见 [Releases](https://github.com/wu1w/takton/releases) |
 
@@ -196,7 +196,7 @@ curl -fsSL https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.sh
 
 ```powershell
 git clone https://github.com/wu1w/takton.git
-cd takton
+cd tevarn
 git checkout feature/agent-kernel
 py -3 -m venv .venv
 .\.venv\Scripts\Activate.ps1
@@ -240,7 +240,7 @@ python -m pytest -q backend\tests
 |------|------|
 | 源码 / `docs/` / `.audit-report/` | 项目文档与**历史**审计报告（见报告内 commit 标注） |
 | `AGENTS.md` | 给 Agent/协作者的仓库约定 |
-| `%APPDATA%\takton\` · `.takton/` · 运行日志 | **本机运行数据**，勿提交；已由 `.gitignore` 忽略 |
+| `%APPDATA%\tevarn\` · `.tevarn/` · 运行日志 | **本机运行数据**，勿提交；已由 `.gitignore` 忽略 |
 | `.env` / API Key | **永不提交**；从 `backend/.env.example` 复制后本地填写 |
 
 默认服务只绑定 **`127.0.0.1`**。不要把端口直接暴露到局域网，除非你清楚风险。
@@ -257,7 +257,7 @@ python -m pytest -q backend\tests
 
 ### 新旧差异（摘要）
 
-- **Agent Kernel + Rust `takton-kernel-host`**：进程、能力令牌、工具门禁、工单/编制的权威侧。
+- **Agent Kernel + Rust `tevarn-kernel-host`**：进程、能力令牌、工具门禁、工单/编制的权威侧。
 - **AI 员工 / 工单 / 目标（OKR）**：编制派单、预算、CEO 策略扩权（非企业多租户）。
 - **用量与 Cache Ledger**：真实 LLM usage 落盘（`usage_ledger`），host 重启不丢累计。
 - **旧 0.3 安装包不会自动升级到 0.5**；需切分支源码运行或等待正式 Release。
@@ -266,16 +266,16 @@ python -m pytest -q backend\tests
 
 | 主题 | 行为 |
 |------|------|
-| **LLM / 设置** | 本机设置库与目录约定见技术手册；常见路径 `%APPDATA%\takton\`。升级前**备份**该目录与 SQLite。 |
+| **LLM / 设置** | 本机设置库与目录约定见技术手册；常见路径 `%APPDATA%\tevarn\`。升级前**备份**该目录与 SQLite。 |
 | **数据库** | 启动时走 SQLAlchemy/Alembic 类迁移路径；**不能保证**跨大版本零风险。升级前复制数据库文件。 |
 | **密钥** | API Key / OAuth 仍在本机加密或配置中；**不要**把 `.env` 提交进 Git。 |
-| **Kernel** | 新版依赖 Kernel Host（`TAKTON_KERNEL_HOST_BIN` 或自动拉起）。仅起前端不够。 |
+| **Kernel** | 新版依赖 Kernel Host（`TEVARN_KERNEL_HOST_BIN` 或自动拉起）。仅起前端不够。 |
 | **不兼容** | 0.3 与 0.5 控制面协议、编制模型、部分 API **不保证**互通；不要假设旧 Electron 安装包能连上 0.5 后端。 |
 
 ### 回滚
 
 1. 停掉 0.5 后端 / Kernel / 前端。
-2. 恢复升级前的 `%APPDATA%\takton`（或你的 `TAKTON_DATA_DIR`）备份。
+2. 恢复升级前的 `%APPDATA%\tevarn`（或你的 `TEVARN_DATA_DIR`）备份。
 3. 切回旧标签或安装包：`git checkout <old-tag>` 或重装 **v0.3.x** Release。
 4. 不要用新库文件硬接旧二进制。
 
@@ -290,7 +290,7 @@ python -m pytest -q backend\tests
 cd frontend; npm ci; npm run build; cd ..
 
 # Rust Kernel（普通本机 PowerShell；沙箱内存不足可能失败）
-cargo check -p takton-kernel-host
+cargo check -p tevarn-kernel-host
 # 或：cargo check --workspace
 ```
 
@@ -349,11 +349,11 @@ cargo check -p takton-kernel-host
 
 ### 🧠 Agent Kernel（v0.4.0-alpha，`feature/agent-kernel` 分支）
 
-Takton is evolving from an agent workstation into a **Personal Agent OS**.
+Tevarn is evolving from an agent workstation into a **Personal Agent OS**.
 The Agent Kernel is its control plane — currently in alpha on the
 `feature/agent-kernel` branch, not yet merged to `main`.
 
-Takton 正从「Agent 工作站」演进为 **Personal Agent OS**，Agent Kernel
+Tevarn 正从「Agent 工作站」演进为 **Personal Agent OS**，Agent Kernel
 是其控制平面——当前为 alpha 测试版，位于 `feature/agent-kernel` 分支。
 
 - **AgentProcess · 进程抽象**：每次 agent 运行是一个进程
@@ -397,9 +397,9 @@ We welcome Issues and Pull Requests!
 
 欢迎提交 Issue 和 Pull Request！
 
-If Takton helps you, please give us a ⭐ — it means the world to us!
+If Tevarn helps you, please give us a ⭐ — it means the world to us!
 
-如果 Takton 对你有帮助，请给我们一个 ⭐ — 这对我们意义重大！
+如果 Tevarn 对你有帮助，请给我们一个 ⭐ — 这对我们意义重大！
 
 ---
 
@@ -411,9 +411,9 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 <div align="center">
 
-**Takton** — Let AI be your dedicated work partner 🎯
+**Tevarn** — Let AI be your dedicated work partner 🎯
 
-**Takton** — 让 AI 成为你的专属工作伙伴 🎯
+**Tevarn** — 让 AI 成为你的专属工作伙伴 🎯
 
 [⭐ Star us on GitHub](https://github.com/wu1w/takton) · [🐛 Report Bug](https://github.com/wu1w/takton/issues) · [💡 Request Feature](https://github.com/wu1w/takton/issues)
 

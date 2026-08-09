@@ -34,11 +34,11 @@ jobs:
         with:
           workspaces: "."
 
-      - name: cargo test -p takton-kernel
-        run: cargo test -p takton-kernel --all-targets
+      - name: cargo test -p tevarn-kernel
+        run: cargo test -p tevarn-kernel --all-targets
 
       - name: cargo build host (release)
-        run: cargo build -p takton-kernel-host --release
+        run: cargo build -p tevarn-kernel-host --release
 
       - name: Setup Python for ABI host tests
         uses: actions/setup-python@v5
@@ -53,15 +53,15 @@ jobs:
 
       - name: Python ABI / kernel hardening tests (with host binary)
         env:
-          TAKTON_DB_URL: "sqlite+aiosqlite:///./ci-kernel.db"
-          TAKTON_TEST_MODE: "1"
-          TAKTON_AGENT_DISPATCHER_ENABLED: "false"
-          TAKTON_AGENT_KERNEL_PERSISTENCE: "false"
-          TAKTON_JWT_SECRET: "ci-jwt-secret-not-for-production-use-32b"
-          TAKTON_API_KEY: "ci-api-key-not-for-production-use-32bxxxx"
-          TAKTON_KERNEL_BACKEND: "rust"
-          TAKTON_KERNEL_AUTO_START: "1"
-          TAKTON_KERNEL_HOST_BIN: "${{ github.workspace }}/target/release/takton-kernel-host"
+          TEVARN_DB_URL: "sqlite+aiosqlite:///./ci-kernel.db"
+          TEVARN_TEST_MODE: "1"
+          TEVARN_AGENT_DISPATCHER_ENABLED: "false"
+          TEVARN_AGENT_KERNEL_PERSISTENCE: "false"
+          TEVARN_JWT_SECRET: "ci-jwt-secret-not-for-production-use-32b"
+          TEVARN_API_KEY: "ci-api-key-not-for-production-use-32bxxxx"
+          TEVARN_KERNEL_BACKEND: "rust"
+          TEVARN_KERNEL_AUTO_START: "1"
+          TEVARN_KERNEL_HOST_BIN: "${{ github.workspace }}/target/release/tevarn-kernel-host"
         run: |
           python -m pytest backend/tests/kernel/test_abi_rust.py \
             backend/tests/kernel/test_hardening_tool_gate.py \

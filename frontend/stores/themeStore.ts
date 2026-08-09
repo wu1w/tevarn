@@ -70,7 +70,7 @@ export const useThemeStore = create<ThemeStore>()(
       },
     }),
     {
-      name: 'takton-theme',
+      name: 'tevarn-theme',
       // 只持久化用户偏好，不持久化 resolved
       partialize: (s) => ({ theme: s.theme }),
       onRehydrateStorage: () => (state) => {
@@ -83,13 +83,13 @@ export const useThemeStore = create<ThemeStore>()(
           applyToDom('system');
         }
         window.addEventListener('storage', (e) => {
-          if (e.key === 'takton-theme' && e.newValue) {
+          if (e.key === 'tevarn-theme' && e.newValue) {
             try {
               const parsed = JSON.parse(e.newValue);
               const pref = (parsed?.state?.theme || 'system') as ThemePreference;
               const resolved = applyToDom(pref);
               useThemeStore.setState({ theme: pref, resolved });
-              window.dispatchEvent(new CustomEvent('takton:theme-sync', { detail: pref }));
+              window.dispatchEvent(new CustomEvent('tevarn:theme-sync', { detail: pref }));
             } catch (err) {
               console.error('theme sync parse failed:', err);
             }

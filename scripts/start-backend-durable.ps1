@@ -1,4 +1,4 @@
-# Durable Takton backend launcher (survives parent shell / job exit).
+# Durable Tevarn backend launcher (survives parent shell / job exit).
 # Usage: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\start-backend-durable.ps1
 
 $ErrorActionPreference = "Stop"
@@ -32,11 +32,11 @@ if (Test-Path (Join-Path $Root ".env")) {
 }
 
 $env:PYTHONPATH = $Root
-$env:TAKTON_KERNEL_BACKEND = "rust"
-$env:TAKTON_KERNEL_AUTO_START = "0"
-$env:TAKTON_KERNEL_HOST = "127.0.0.1:17890"
-$env:TAKTON_APP_HOST = "127.0.0.1"
-$env:TAKTON_APP_PORT = "8090"
+$env:TEVARN_KERNEL_BACKEND = "rust"
+$env:TEVARN_KERNEL_AUTO_START = "0"
+$env:TEVARN_KERNEL_HOST = "127.0.0.1:17890"
+$env:TEVARN_APP_HOST = "127.0.0.1"
+$env:TEVARN_APP_PORT = "8090"
 
 $logDir = Join-Path $Root "logs"
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
@@ -48,7 +48,7 @@ $pidFile = Join-Path $logDir "backend-durable.pid"
 # Process.Start with CreateNoWindow — still can die with parent job.
 # Prefer cmd start /b with independent process group:
 $arg = "-m uvicorn backend.main:app --host 127.0.0.1 --port 8090"
-$cmd = "set PYTHONPATH=$Root&& set TAKTON_KERNEL_BACKEND=rust&& set TAKTON_KERNEL_AUTO_START=0&& set TAKTON_KERNEL_HOST=127.0.0.1:17890&& set TAKTON_APP_HOST=127.0.0.1&& set TAKTON_APP_PORT=8090&& `"$venvPy`" $arg >> `"$outLog`" 2>> `"$errLog`""
+$cmd = "set PYTHONPATH=$Root&& set TEVARN_KERNEL_BACKEND=rust&& set TEVARN_KERNEL_AUTO_START=0&& set TEVARN_KERNEL_HOST=127.0.0.1:17890&& set TEVARN_APP_HOST=127.0.0.1&& set TEVARN_APP_PORT=8090&& `"$venvPy`" $arg >> `"$outLog`" 2>> `"$errLog`""
 
 # start detached via WMI (outside many job objects)
 $proc = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{

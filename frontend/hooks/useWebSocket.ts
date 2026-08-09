@@ -68,7 +68,7 @@ export function setDiscoveredWsBase(url: string | null | undefined) {
   _discoveredWsBase = u || null;
   if (typeof window !== 'undefined' && u) {
     try {
-      (window as unknown as { __TAKTON_WS_URL__?: string }).__TAKTON_WS_URL__ = u;
+      (window as unknown as { __TEVARN_WS_URL__?: string }).__TEVARN_WS_URL__ = u;
     } catch {
       /* ignore */
     }
@@ -84,7 +84,7 @@ function resolveWsBaseUrl(): string {
       (window as unknown as { electronAPI?: unknown }).electronAPI
     );
 
-    const injectedRaw = (window as unknown as { __TAKTON_WS_URL__?: string }).__TAKTON_WS_URL__;
+    const injectedRaw = (window as unknown as { __TEVARN_WS_URL__?: string }).__TEVARN_WS_URL__;
     const injected = injectedRaw
       ? sanitizeDiscoveredWs(injectedRaw, port)
       : null;

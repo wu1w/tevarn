@@ -25,7 +25,7 @@ _UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 )
-_BOT_UA = "TaktonSearch/1.0 (+https://github.com/wu1w/takton; research agent)"
+_BOT_UA = "TevarnSearch/1.0 (+https://github.com/wu1w/takton; research agent)"
 
 
 def _fmt(results: list[dict[str, str]], query: str, engine: str) -> str:
@@ -46,8 +46,33 @@ def _has_cjk(s: str) -> bool:
     return bool(re.search(r"[\u4e00-\u9fff]", s or ""))
 
 
+def _native_dep_broken() -> str | None:
+    """Return reason if a present native dep is unusable (wrong ABI / half install).
+
+    One-click packs often keep AppData python-packages across upgrades; a
+    leftover cp311 lxml on Python 3.12 imports as a package but crashes on
+    etree — ddgs then fails every backend. Detect early so HTML fallbacks run.
+
+    Also detect half-installed primp (only .pyd, missing __init__.py) which
+    imports as an empty namespace without Client.
+    """
+    for mod in ("lxml.etree", "primp"):
+        try:
+            m = __import__(mod)
+        except ImportError:
+            continue
+        except Exception as e:
+            return f"{mod}:{type(e).__name__}:{e}"
+        if mod == "primp" and not hasattr(m, "Client"):
+            return "primp:AttributeError:module 'primp' has no attribute 'Client'"
+    return None
+
+
 def _import_ddgs():
     """Import DDGS from ddgs (new) or duckduckgo_search (legacy rename)."""
+    broken = _native_dep_broken()
+    if broken:
+        raise ImportError(f"native dep broken ({broken}); use HTML fallbacks") from None
     try:
         from ddgs import DDGS  # type: ignore
 
@@ -60,8 +85,8 @@ def _import_ddgs():
         return DDGS, "duckduckgo_search"
     except Exception as e:
         raise ImportError(
-            "Neither 'ddgs' nor 'duckduckgo_search' is installed. "
-            "pip install ddgs"
+            "Neither 'ddgs' nor 'duckduckgo_search' is available "
+            "(desktop will auto-repair on restart; HTML fallbacks still work)."
         ) from e
 
 
@@ -71,7 +96,7 @@ async def search_ddgs(query: str, max_results: int = 5) -> tuple[list[dict[str, 
         DDGS, pkg = _import_ddgs()
     except ImportError as e:
         logger.info("ddgs unavailable: %s", e)
-        return [], "ddgs-missing"
+        return [], "ddgs-skip"
 
     def _run(backend: str) -> list[dict[str, str]]:
         out: list[dict[str, str]] = []
@@ -112,16 +137,22 @@ async def search_ddgs(query: str, max_results: int = 5) -> tuple[list[dict[str, 
             )
         return [r for r in out if r.get("url") or r.get("title")]
 
-    # bing first (most reliable on CN networks); auto as secondary.
-    backends = ["bing", "auto", "duckduckgo", "yahoo", "google"]
+    # ddgs≥9 removed "bing"; use auto/brave first. Cap list to fail fast to HTML.
+    backends = ["auto", "brave", "duckduckgo"]
     errors: list[str] = []
     for b in backends:
         try:
-            rows = await asyncio.wait_for(asyncio.to_thread(_run, b), timeout=12)
+            rows = await asyncio.wait_for(asyncio.to_thread(_run, b), timeout=10)
             if rows:
                 return rows[:max_results], f"{pkg}/{b}"
         except Exception as e:
-            errors.append(f"{b}:{type(e).__name__}:{e}")
+            msg = f"{b}:{type(e).__name__}:{e}"
+            errors.append(msg)
+            # ABI / native crash → stop trying other ddgs backends
+            low = str(e).lower()
+            if "etree" in low or "dll" in low or "module" in low and "lxml" in low:
+                logger.info("ddgs native failure, skip remaining backends: %s", e)
+                break
             logger.debug("ddgs %s failed: %s", b, e)
             continue
     if errors:
@@ -325,20 +356,38 @@ async def search_wikipedia(query: str, max_results: int = 5) -> tuple[list[dict[
 
 
 async def free_web_search(query: str, max_results: int = 5) -> str:
-    """免 Key 瀑布（短超时）。有 Key 时请走 web_search_unified。"""
+    """免 Key 瀑布（短超时）。适配一键包多网络环境。
+
+    顺序原则：
+    1. ddgs（若原生依赖 ABI 完好）
+    2. 纯 regex HTML 通道（无 lxml，CN 友好：Bing → DDG Lite）
+    3. Wikipedia OpenSearch（JSON，防火墙友好、无 Key）
+    """
     q = (query or "").strip()
     if not q:
         return "[Error] query is required"
     n = max(1, min(int(max_results or 5), 15))
     errors: list[str] = []
 
-    pipeline = [
-        ("ddgs", search_ddgs),
-        ("ddg-lite", search_ddg_lite),
-        ("bing-html", search_bing_html),
-        ("ddg-html", search_ddg_html),
-        ("wikipedia", search_wikipedia),
-    ]
+    # CJK queries: Bing HTML + Wikipedia-zh usually beat DDG from mainland CN.
+    # Non-CJK: keep ddgs first when healthy.
+    cjk = _has_cjk(q)
+    if cjk:
+        pipeline = [
+            ("ddgs", search_ddgs),
+            ("bing-html", search_bing_html),
+            ("wikipedia", search_wikipedia),
+            ("ddg-lite", search_ddg_lite),
+            ("ddg-html", search_ddg_html),
+        ]
+    else:
+        pipeline = [
+            ("ddgs", search_ddgs),
+            ("ddg-lite", search_ddg_lite),
+            ("bing-html", search_bing_html),
+            ("ddg-html", search_ddg_html),
+            ("wikipedia", search_wikipedia),
+        ]
     for name, fn in pipeline:
         try:
             rows, engine = await fn(q, n)
@@ -354,8 +403,8 @@ async def free_web_search(query: str, max_results: int = 5) -> str:
     return (
         f"[Error] free web_search failed for «{q}».\n"
         f"tried: {'; '.join(errors)}\n"
-        "Hint: install search backend with `pip install ddgs` "
-        "(desktop: AppData/Roaming/takton/python-packages) and restart Takton."
+        "Hint: check network / proxy; restart Tevarn once to auto-repair "
+        "search packages (desktop one-click). HTML/Wikipedia fallbacks need no API key."
     )
 
 

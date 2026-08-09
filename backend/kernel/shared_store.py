@@ -13,15 +13,15 @@ A 上 create 的进程 B 上 mediate 会「未知进程」。
 - 未配置 / 默认关闭 → ``create_shared_store_from_settings()`` 返回 **None**（单进程）
 
 Key：
-  takton:kernel:v1:proc:{id}
-  takton:kernel:v1:procs
-  takton:kernel:v1:esc:{id}
-  takton:kernel:v1:esc:pending
-  takton:kernel:v1:esc:claim:{process}:{fp}
-  takton:kernel:v1:events
-  takton:kernel:v1:daily:{YYYY-MM-DD}
-  takton:kernel:v1:daily_runs:{YYYY-MM-DD}
-  takton:kernel:v1:wf_busy:{identity_id}   # 编制分布式 busy（SETNX）
+  tevarn:kernel:v1:proc:{id}
+  tevarn:kernel:v1:procs
+  tevarn:kernel:v1:esc:{id}
+  tevarn:kernel:v1:esc:pending
+  tevarn:kernel:v1:esc:claim:{process}:{fp}
+  tevarn:kernel:v1:events
+  tevarn:kernel:v1:daily:{YYYY-MM-DD}
+  tevarn:kernel:v1:daily_runs:{YYYY-MM-DD}
+  tevarn:kernel:v1:wf_busy:{identity_id}   # 编制分布式 busy（SETNX）
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_PREFIX = "takton:kernel:v1"
+_PREFIX = "tevarn:kernel:v1"
 _PROC_TTL = 86400 * 2
 _ESC_TTL = 86400 * 7
 # claim 与 pending 提权同寿：120s 过期会在人审窗口内释放，同 caps 可再开第二单

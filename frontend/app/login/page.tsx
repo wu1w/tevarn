@@ -146,7 +146,7 @@ export default function LoginPage() {
           <div className="mx-auto mb-4 flex justify-center">
             <AppLogo size="lg" glow pulse />
           </div>
-          <h1 className="text-xl font-bold text-foreground">Takton</h1>
+          <h1 className="text-xl font-bold text-foreground">Tevarn</h1>
           <p className="mt-1 text-sm text-foreground-dim">{t('login.title')}</p>
         </div>
 

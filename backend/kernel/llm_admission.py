@@ -1,6 +1,6 @@
 """LLM admission controller.
 
-P0-C: **权威实现在 Rust** ``takton_kernel::llm_admission``。
+P0-C: **权威实现在 Rust** ``tevarn_kernel::llm_admission``。
 本模块：
 - 生产路径：经 ``get_kernel()`` RPC 代理到 host（``llm_try_acquire`` / poll / release）
 - fallback：进程内 Python 实现（host 不可用时）
@@ -40,8 +40,8 @@ def _rust_kernel() -> Any | None:
 def _prefer_rust_only() -> bool:
     import os
 
-    # default true; set TAKTON_LLM_ALLOW_PY_FALLBACK=1 only for unit tests without host
-    return os.environ.get("TAKTON_LLM_ALLOW_PY_FALLBACK", "0") not in (
+    # default true; set TEVARN_LLM_ALLOW_PY_FALLBACK=1 only for unit tests without host
+    return os.environ.get("TEVARN_LLM_ALLOW_PY_FALLBACK", "0") not in (
         "1",
         "true",
         "True",
@@ -167,7 +167,7 @@ class LlmAdmissionController:
         if _prefer_rust_only():
             logger.error(
                 "LLM admission: Rust host unavailable and Py fallback disabled "
-                "(set TAKTON_LLM_ALLOW_PY_FALLBACK=1 only for offline tests)"
+                "(set TEVARN_LLM_ALLOW_PY_FALLBACK=1 only for offline tests)"
             )
             raise LlmAdmissionRejected(
                 "rust kernel host required for llm admission"
@@ -621,7 +621,7 @@ class LlmAdmissionController:
         # 仅当明确允许时清 live host，避免 pytest 误伤正在跑的桌面会话
         import os
 
-        if os.environ.get("TAKTON_LLM_TEST_CLEAR_HOST", "").lower() in (
+        if os.environ.get("TEVARN_LLM_TEST_CLEAR_HOST", "").lower() in (
             "1",
             "true",
             "yes",

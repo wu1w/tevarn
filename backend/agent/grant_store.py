@@ -28,9 +28,9 @@ _session_grant_ts: dict[str, float] = {}
 _grants_lock = threading.RLock()
 _persist_loaded = False
 
-# Default 7d; override with TAKTON_SESSION_GRANT_TTL_SECONDS (0 = no TTL)
+# Default 7d; override with TEVARN_SESSION_GRANT_TTL_SECONDS (0 = no TTL)
 def _grant_ttl_seconds() -> float:
-    raw = (os.environ.get("TAKTON_SESSION_GRANT_TTL_SECONDS") or "").strip()
+    raw = (os.environ.get("TEVARN_SESSION_GRANT_TTL_SECONDS") or "").strip()
     if raw:
         try:
             return max(0.0, float(raw))
@@ -42,14 +42,14 @@ def _grant_ttl_seconds() -> float:
 def _grants_path() -> Path:
     """会话授权落盘路径（热重载 / 单机重启可恢复；非跨机权威）。"""
     base = (
-        os.environ.get("TAKTON_DATA_DIR")
-        or os.environ.get("TAKTON_HOME")
+        os.environ.get("TEVARN_DATA_DIR")
+        or os.environ.get("TEVARN_HOME")
         or ""
     ).strip()
     if not base:
-        # 与其它本机状态对齐：~/.takton
+        # 与其它本机状态对齐：~/.tevarn
         home = os.environ.get("USERPROFILE") or os.environ.get("HOME") or "."
-        base = str(Path(home) / ".takton")
+        base = str(Path(home) / ".tevarn")
     p = Path(base) / "session_grants.json"
     try:
         p.parent.mkdir(parents=True, exist_ok=True)

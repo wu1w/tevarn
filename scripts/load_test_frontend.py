@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Takton 全链路压测——从前端（:3001 Next rewrites 代理）发起
+"""Tevarn 全链路压测——从前端（:3001 Next rewrites 代理）发起
 
 覆盖：页面 HTML + 全部核心 API（读）+ goals CRUD 写循环。
 阶段：1 → 10 → 50 → 100 并发梯度。
@@ -223,7 +223,7 @@ async def main():
     (outdir / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False))
 
     # markdown 摘要
-    lines = [f"# Takton 全链路压测报告 {ts}", f"base: {args.base}", ""]
+    lines = [f"# Tevarn 全链路压测报告 {ts}", f"base: {args.base}", ""]
     for stage, buckets in report["stages"].items():
         total = sum(b.get("count", 0) for b in buckets.values())
         errs = sum(b.get("errors", 0) for b in buckets.values())

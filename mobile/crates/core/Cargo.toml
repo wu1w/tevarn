@@ -1,8 +1,8 @@
 [package]
-name = "takton-mobile-core"
+name = "tevarn-mobile-core"
 version.workspace = true
 edition.workspace = true
-description = "Shared Takton API + WebSocket client for mobile (Android / iOS / Harmony / web host)"
+description = "Shared Tevarn API + WebSocket client for mobile (Android / iOS / Harmony / web host)"
 
 [dependencies]
 anyhow.workspace = true

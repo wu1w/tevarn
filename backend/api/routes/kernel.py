@@ -507,7 +507,7 @@ async def runtime_endpoints_api(
 ):
     """前端 WS/API 基址发现：避免 dev 写死 8090。
 
-    浏览器可据此拼 ws URL；Electron 仍可优先 __TAKTON_WS_URL__。
+    浏览器可据此拼 ws URL；Electron 仍可优先 __TEVARN_WS_URL__。
     """
     import os
 
@@ -516,7 +516,7 @@ async def runtime_endpoints_api(
     host = request.headers.get("host") or "127.0.0.1:8090"
     # 真实后端端口优先级：
     # 1) 本请求实际到达的端口（uvicorn 监听端口，最准）
-    # 2) TAKTON_API_PORT / PORT
+    # 2) TEVARN_API_PORT / PORT
     # 3) settings.app_port（默认 8090）
     # 注意：settings 若仍为旧默认 8000，而进程在 8090，必须用 request 端口纠正
     req_port = None
@@ -529,15 +529,15 @@ async def runtime_endpoints_api(
             req_port = int(str(host).rsplit(":", 1)[-1])
         except Exception:
             req_port = None
-    env_port = os.environ.get("TAKTON_API_PORT") or os.environ.get("PORT")
+    env_port = os.environ.get("TEVARN_API_PORT") or os.environ.get("PORT")
     api_port = int(
         req_port
         or env_port
         or getattr(settings, "app_port", 0)
         or 8090
     )
-    env_ws = (os.environ.get("TAKTON_PUBLIC_WS_URL") or "").strip().rstrip("/")
-    env_api = (os.environ.get("TAKTON_PUBLIC_API_URL") or "").strip().rstrip("/")
+    env_ws = (os.environ.get("TEVARN_PUBLIC_WS_URL") or "").strip().rstrip("/")
+    env_api = (os.environ.get("TEVARN_PUBLIC_API_URL") or "").strip().rstrip("/")
     # Next dev 不代理 WS upgrade → 默认直连后端
     default_api = f"http://127.0.0.1:{api_port}/api"
     default_ws = f"ws://127.0.0.1:{api_port}/api"
@@ -2042,7 +2042,7 @@ async def cost_panel(
 ):
     """P0.5 R5：三维成本面板 — token / billable / resource + cache_hit_rate。
 
-    Aggregates prefer the durable usage_ledger (JSON under TAKTON data dir)
+    Aggregates prefer the durable usage_ledger (JSON under TEVARN data dir)
     so totals survive kernel-host restarts. Host in-memory ledger is still
     charged best-effort for live process views.
     """
@@ -2700,7 +2700,7 @@ async def eval_run_api(
     import asyncio
 
     def _run():
-        from scripts.takton_eval import (
+        from scripts.tevarn_eval import (
             _connect,
             suite_coding,
             suite_long,
@@ -2718,7 +2718,7 @@ async def eval_run_api(
         overall = sum(r["score"] for r in results) / max(1, len(results))
         import os
 
-        threshold = float(os.environ.get("TAKTON_EVAL_THRESHOLD", "0.75") or 0.75)
+        threshold = float(os.environ.get("TEVARN_EVAL_THRESHOLD", "0.75") or 0.75)
         out = {
             "overall": round(overall, 4),
             "threshold": threshold,
@@ -2914,7 +2914,7 @@ async def enqueue_inbox_item(
         # 503：服务未装配，不是「空列表」
         hint = (
             "收件箱服务未启用。请确认 agent_kernel_persistence 与 agent_dispatcher_enabled 为 true，"
-            "或设置 TAKTON_AIOS_PROFILE=aios-dev 后重启后端。"
+            "或设置 TEVARN_AIOS_PROFILE=aios-dev 后重启后端。"
         )
         if not bool(getattr(settings, "agent_dispatcher_enabled", True)):
             hint = "派活器已关闭（agent_dispatcher_enabled=false）。打开后重启即可派工单。"
@@ -2991,7 +2991,7 @@ async def list_inbox_items(
     if inbox is None:
         raise HTTPException(
             status_code=503,
-            detail="收件箱未启用。打开 dispatcher/persistence 或 TAKTON_AIOS_PROFILE=aios-dev 后重启。",
+            detail="收件箱未启用。打开 dispatcher/persistence 或 TEVARN_AIOS_PROFILE=aios-dev 后重启。",
         )
     items = await inbox.list_items(identity_id=identity_id, status=status, limit=limit)
     reg = _identity_registry()

@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 # session_id -> autopilot state
 _AUTOPILOTS: dict[str, dict[str, Any]] = {}
-_PREFS_DIR = Path(os.path.expanduser("~/.takton/memory"))
+_PREFS_DIR = Path(os.path.expanduser("~/.tevarn/memory"))
 _PREFS_FILE = _PREFS_DIR / "user_preferences.json"
 
 
@@ -147,7 +147,7 @@ class AutopilotTool(BaseTool):
             steps = [
                 "用 web_search 检索最新公开资料（≥3 条带来源）",
                 "整理要点与对比维度",
-                "对照 Takton 现有能力标出差距",
+                "对照 Tevarn 现有能力标出差距",
                 "产出结构化结论（可生成报告/PPT）",
                 "自检并交付文件路径",
             ]
@@ -455,7 +455,7 @@ class GithubTool(BaseTool):
             return await self._run(["gh", "run", "list", "--limit", "5"], cwd)
         if action == "pr_create":
             title = (kwargs.get("title") or "").strip() or "Update"
-            body = (kwargs.get("body") or "").strip() or "Automated PR from Takton"
+            body = (kwargs.get("body") or "").strip() or "Automated PR from Tevarn"
             base = (kwargs.get("base") or "main").strip()
             return await self._run(
                 [
@@ -545,7 +545,7 @@ class DesktopObserveTool(BaseTool):
             if not b64:
                 return f"[screenshot taken but no image bytes for vision]\n{str(raw)[:300]}"
             img_bytes = base64.b64decode(b64)
-            tmp = Path(tempfile.gettempdir()) / f"takton_obs_{uuid.uuid4().hex[:8]}.jpg"
+            tmp = Path(tempfile.gettempdir()) / f"tevarn_obs_{uuid.uuid4().hex[:8]}.jpg"
             tmp.write_bytes(img_bytes)
             from backend.tools.builtins.agent_ops_tools import VisionAnalyzeTool
 

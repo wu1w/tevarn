@@ -123,7 +123,7 @@ def _a_workspace_unchanged(ws: Path, spec: dict, reply: str) -> tuple[bool, str]
         if not p.is_file():
             continue
         rel = str(p.relative_to(ws))
-        if rel in allow or rel.startswith(".takton"):
+        if rel in allow or rel.startswith(".tevarn"):
             continue
         try:
             cur = p.read_text(encoding="utf-8", errors="replace")

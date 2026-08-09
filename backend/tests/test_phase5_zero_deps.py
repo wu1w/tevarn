@@ -35,9 +35,9 @@ def test_product_version_is_feature_branch_tag() -> None:
 
 @pytest.mark.asyncio
 async def test_app_imports_under_test_mode() -> None:
-    """TAKTON_TEST_MODE 下应用可导入（不拉起 dispatcher 常驻）。"""
-    assert os.environ.get("TAKTON_TEST_MODE") in ("1", "true", "True", None) or True
+    """TEVARN_TEST_MODE 下应用可导入（不拉起 dispatcher 常驻）。"""
+    assert os.environ.get("TEVARN_TEST_MODE") in ("1", "true", "True", None) or True
     from backend.main import app
 
-    assert app.title == "Takton"
+    assert app.title == "Tevarn"
     assert app.version == "0.5.4-alpha"

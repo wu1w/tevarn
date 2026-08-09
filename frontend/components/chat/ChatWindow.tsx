@@ -35,10 +35,10 @@ const EXAMPLE_KEYS = [1, 2, 3, 4] as const;
 const NEAR_BOTTOM_PX = 160;
 
 function scrollStorageKey(sessionId: string) {
-  return `takton:chat-scroll:${sessionId}`;
+  return `tevarn:chat-scroll:${sessionId}`;
 }
 function nearBottomStorageKey(sessionId: string) {
-  return `takton:chat-scroll-near:${sessionId}`;
+  return `tevarn:chat-scroll-near:${sessionId}`;
 }
 
 function readSavedScroll(sessionId: string | null | undefined): {
@@ -314,7 +314,7 @@ export function ChatWindow({
         <div className="flex flex-1 flex-col items-center justify-center text-center">
           <AppLogo className="mb-5 h-14 w-14 text-foreground-dim/30" />
           <h2 className="mb-1 text-xl font-semibold text-foreground">
-            {contactName || 'Takton'}
+            {contactName || 'Tevarn'}
           </h2>
           <p className="mb-6 max-w-md text-sm text-foreground-dim">
             {contactName

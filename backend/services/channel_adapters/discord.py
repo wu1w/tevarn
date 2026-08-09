@@ -53,7 +53,7 @@ class DiscordAdapter(BaseChannelAdapter):
             "d": {
                 "token": self._token,
                 "intents": 524288,  # GUILD_MESSAGES (1<<9) + MESSAGE_CONTENT (1<<15)
-                "properties": {"os": "linux", "browser": "takton", "device": "takton"},
+                "properties": {"os": "linux", "browser": "tevarn", "device": "tevarn"},
             },
         })
 

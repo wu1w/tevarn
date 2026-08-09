@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * Ensure vendor/takton-kernel-host binary is staged before Electron pack.
+ * Ensure vendor/tevarn-kernel-host binary is staged before Electron pack.
  * Does not commit binaries (gitignored). Fails pack if missing unless
- * TAKTON_SKIP_VENDOR_HOST=1.
+ * TEVARN_SKIP_VENDOR_HOST=1.
  */
 import { existsSync, readdirSync, statSync, writeFileSync, mkdirSync, copyFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -11,8 +11,8 @@ import { spawnSync } from 'node:child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, '..');
-const vendorDir = join(root, 'vendor', 'takton-kernel-host');
-const names = ['takton-kernel-host.exe', 'takton-kernel-host'];
+const vendorDir = join(root, 'vendor', 'tevarn-kernel-host');
+const names = ['tevarn-kernel-host.exe', 'tevarn-kernel-host'];
 
 function findVendorBin() {
   for (const n of names) {
@@ -34,7 +34,7 @@ function findTargetBin() {
 
 function stageFrom(src) {
   mkdirSync(vendorDir, { recursive: true });
-  const destName = src.endsWith('.exe') ? 'takton-kernel-host.exe' : 'takton-kernel-host';
+  const destName = src.endsWith('.exe') ? 'tevarn-kernel-host.exe' : 'tevarn-kernel-host';
   const dest = join(vendorDir, destName);
   copyFileSync(src, dest);
   const meta = {
@@ -48,7 +48,7 @@ function stageFrom(src) {
   return dest;
 }
 
-const skip = process.env.TAKTON_SKIP_VENDOR_HOST === '1';
+const skip = process.env.TEVARN_SKIP_VENDOR_HOST === '1';
 let bin = findVendorBin();
 if (!bin) {
   const target = findTargetBin();
@@ -79,10 +79,10 @@ if (!bin) {
 
 if (!bin) {
   const msg =
-    'takton-kernel-host not found under vendor/ or target/.\n' +
+    'tevarn-kernel-host not found under vendor/ or target/.\n' +
     '  Build: .\\scripts\\build-kernel-host.ps1 -Release\n' +
-    '  Or:    cargo build -p takton-kernel-host --release\n' +
-    '  Skip:  TAKTON_SKIP_VENDOR_HOST=1 (dev only)';
+    '  Or:    cargo build -p tevarn-kernel-host --release\n' +
+    '  Skip:  TEVARN_SKIP_VENDOR_HOST=1 (dev only)';
   if (skip) {
     console.warn('WARN:', msg);
     process.exit(0);

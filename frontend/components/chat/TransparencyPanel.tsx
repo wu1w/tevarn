@@ -54,7 +54,7 @@ export function TransparencyPanel({ sessionId, visible, onClose }: TransparencyP
     if (!sessionId) return;
     setLoading(true);
     try {
-      // audit-fix: takton_token 是死 key，改从 authStore 取
+      // audit-fix: tevarn_token 是死 key，改从 authStore 取
       const token = useAuthStore.getState().token;
       const res = await fetch(`/api/traces/session/${sessionId}/latest`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},

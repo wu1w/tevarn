@@ -53,8 +53,8 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   // 跨标签页自定义事件
   useEffect(() => {
     const onSync = () => applyResolved();
-    window.addEventListener('takton:theme-sync', onSync);
-    return () => window.removeEventListener('takton:theme-sync', onSync);
+    window.addEventListener('tevarn:theme-sync', onSync);
+    return () => window.removeEventListener('tevarn:theme-sync', onSync);
   }, [applyResolved]);
 
   return <>{children}</>;

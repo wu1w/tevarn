@@ -1,11 +1,11 @@
 {
-  "name": "takton",
+  "name": "tevarn",
   "version": "0.5.8-alpha",
   "private": true,
-  "description": "Takton - 个人专属 Agent 终端",
-  "author": "developer <developer@takton.dev>",
+  "description": "Tevarn - 个人专属 Agent 终端",
+  "author": "developer <developer@tevarn.dev>",
   "homepage": "https://github.com/wu1w/takton",
-  "desktopName": "Takton",
+  "desktopName": "Tevarn",
   "main": "electron/dist/main.js",
   "scripts": {
     "dev": "next dev",
@@ -56,8 +56,8 @@
     "zustand": "^5.0.14"
   },
   "build": {
-    "appId": "com.takton.agent",
-    "productName": "Takton",
+    "appId": "com.tevarn.agent",
+    "productName": "Tevarn",
     "directories": {
       "output": "release"
     },
@@ -98,9 +98,9 @@
           "!**/secrets.json",
           "!**/*credentials*",
           "!**/*oauth*token*",
-          "!**/.takton/**",
-          "!**/takton.db",
-          "!**/takton.db-*",
+          "!**/.tevarn/**",
+          "!**/tevarn.db",
+          "!**/tevarn.db-*",
           "!**/workspace_state.json",
           "!**/.computers/**"
         ]
@@ -110,10 +110,10 @@
         "to": "tray-icon.png"
       },
       {
-        "from": "../vendor/takton-kernel-host",
-        "to": "takton-kernel-host",
+        "from": "../vendor/tevarn-kernel-host",
+        "to": "tevarn-kernel-host",
         "filter": [
-          "takton-kernel-host*",
+          "tevarn-kernel-host*",
           "README.md",
           "!**/*.pdb"
         ]
@@ -202,8 +202,8 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "runAfterFinish": true,
-      "shortcutName": "Takton",
-      "uninstallDisplayName": "Takton",
+      "shortcutName": "Tevarn",
+      "uninstallDisplayName": "Tevarn",
       "deleteAppDataOnUninstall": false
     },
     "electronLanguages": [

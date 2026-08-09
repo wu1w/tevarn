@@ -10,7 +10,7 @@
 
     <application
         android:allowBackup="false"
-        android:label="Takton"
+        android:label="Tevarn"
         android:networkSecurityConfig="@xml/network_security_config"
         android:usesCleartextTraffic="false"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">

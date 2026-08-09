@@ -15,9 +15,9 @@ def test_absolute_under_userdata_workspace(tmp_path, monkeypatch):
     primary = tmp_path / "project"
     primary.mkdir()
     # electron userData workspace with the artifact
-    ud = tmp_path / "Roaming" / "takton" / "data" / "workspace"
+    ud = tmp_path / "Roaming" / "tevarn" / "data" / "workspace"
     (ud / "projects").mkdir(parents=True)
-    f = ud / "projects" / "takton-audit-handoff.md"
+    f = ud / "projects" / "tevarn-audit-handoff.md"
     f.write_text("# handoff\n", encoding="utf-8")
 
     monkeypatch.setattr(files_mod.settings, "file_browser_root", str(primary), raising=False)

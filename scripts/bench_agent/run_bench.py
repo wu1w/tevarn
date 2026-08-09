@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Takton Agent Bench —— 回答「这次改动让 agent 变强还是变弱」（T6）。
+"""Tevarn Agent Bench —— 回答「这次改动让 agent 变强还是变弱」（T6）。
 
 此前 docs/CORE_RUNTIME.md 引用了本文件但它并不存在；73 个单测全是结构性的
 （freeze / 契约 / 单元），没有一个能度量 agent 的实际能力。
@@ -130,7 +130,7 @@ async def main_async(args: argparse.Namespace) -> int:
     model = "dry-run" if args.dry_run else check_llm_ready()
 
     runs: list[dict[str, Any]] = []
-    with tempfile.TemporaryDirectory(prefix="takton-bench-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="tevarn-bench-") as tmp:
         tmp_root = Path(tmp)
         for task in tasks:
             for i in range(args.repeat):
@@ -209,7 +209,7 @@ async def main_async(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Takton Agent Bench")
+    ap = argparse.ArgumentParser(description="Tevarn Agent Bench")
     ap.add_argument("--tasks", default="", help="逗号分隔的任务名，默认全部")
     ap.add_argument("--repeat", type=int, default=1, help="每个任务重复次数（建议 3）")
     ap.add_argument("--label", default="", help="本次运行的标签")

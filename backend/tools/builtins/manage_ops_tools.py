@@ -486,7 +486,7 @@ class ManageGit(BaseTool):
             return ToolResult(
                 success=False,
                 data={"is_repo": False, "reason": "no_git_repo"},
-                message="当前工作区不是 git 仓库（也未配置 TAKTON_GIT_REPO），Git 功能不可用",
+                message="当前工作区不是 git 仓库（也未配置 TEVARN_GIT_REPO），Git 功能不可用",
             )
 
         if action == "status":

@@ -10,15 +10,15 @@ import time
 
 import paramiko
 
-HOST = os.environ.get("TAKTON_VPS_HOST", "150.158.109.231")
-USER = os.environ.get("TAKTON_VPS_USER", "ubuntu")
-PASSWORD = os.environ.get("TAKTON_VPS_PASSWORD", "")
-REMOTE_PORT = int(os.environ.get("TAKTON_RELAY_PUBLIC_PORT", "7080"))
+HOST = os.environ.get("TEVARN_VPS_HOST", "150.158.109.231")
+USER = os.environ.get("TEVARN_VPS_USER", "ubuntu")
+PASSWORD = os.environ.get("TEVARN_VPS_PASSWORD", "")
+REMOTE_PORT = int(os.environ.get("TEVARN_RELAY_PUBLIC_PORT", "7080"))
 LOCAL_HOST = "127.0.0.1"
-LOCAL_PORT = int(os.environ.get("TAKTON_APP_PORT", "8090"))
+LOCAL_PORT = int(os.environ.get("TEVARN_APP_PORT", "8090"))
 
 if not PASSWORD:
-    print("Set TAKTON_VPS_PASSWORD", file=sys.stderr)
+    print("Set TEVARN_VPS_PASSWORD", file=sys.stderr)
     sys.exit(1)
 
 

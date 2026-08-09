@@ -181,7 +181,7 @@ class ToolRegistry:
                 )
                 return (
                     f"[Security Blocked] 权限检查未能执行（{type(e).__name__}: {e}），"
-                    f"已拒绝调用 '{name}'。这是 Takton 内部错误，请查看后端日志。"
+                    f"已拒绝调用 '{name}'。这是 Tevarn 内部错误，请查看后端日志。"
                 )
 
             if before.block:

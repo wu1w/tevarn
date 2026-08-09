@@ -23,7 +23,7 @@ class AgentLoopBase:
         message_store: MessageStorePort | None = None,
         event_sink: EventSinkPort | None = None,
         tool_executor: ToolExecutorPort | None = None,
-        agent_name: str = "Takton",
+        agent_name: str = "Tevarn",
         user_id: UUID | None = None,
     ) -> None:
         self.message_store = message_store

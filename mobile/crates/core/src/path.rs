@@ -615,7 +615,7 @@ mod tests {
     fn classify_ts_cgnat() {
         assert_eq!(classify_host("100.64.1.2"), EndpointKind::Ts);
         assert_eq!(classify_host("192.168.1.8"), EndpointKind::Lan);
-        assert_eq!(classify_host("takton-pc"), EndpointKind::Host);
+        assert_eq!(classify_host("tevarn-pc"), EndpointKind::Host);
         assert_eq!(classify_host("127.0.0.1"), EndpointKind::Loopback);
     }
 

@@ -8,7 +8,7 @@ def _good_skill_md(name: str = "demo_skill") -> str:
     return f"""---
 name: {name}
 description: 演示用可复用流程
-source: takton-evolution
+source: tevarn-evolution
 ---
 
 ## 适用场景

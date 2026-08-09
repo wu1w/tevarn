@@ -33,12 +33,12 @@ async function loginToken(): Promise<{ token: string; user: unknown }> {
     r = await fetch(`${API}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'admin@takton.dev', password: 'admin' }),
+      body: JSON.stringify({ email: 'admin@tevarn.dev', password: 'admin' }),
     });
   }
   if (!r.ok) throw new Error(`login failed ${r.status}`);
   const body = (await r.json()) as { access_token: string; user?: unknown };
-  return { token: body.access_token, user: body.user ?? { email: 'admin@takton.dev' } };
+  return { token: body.access_token, user: body.user ?? { email: 'admin@tevarn.dev' } };
 }
 
 async function injectAuth(page: Page, token: string, user: unknown) {
@@ -48,8 +48,8 @@ async function injectAuth(page: Page, token: string, user: unknown) {
         state: { token: tok, user, isAuthenticated: true, hasHydrated: true },
         version: 0,
       };
-      localStorage.setItem('takton-auth', JSON.stringify(payload));
-      document.cookie = `takton-auth=${tok}; path=/; max-age=604800; SameSite=Strict`;
+      localStorage.setItem('tevarn-auth', JSON.stringify(payload));
+      document.cookie = `tevarn-auth=${tok}; path=/; max-age=604800; SameSite=Strict`;
     },
     { tok: token, user },
   );

@@ -43,7 +43,7 @@ export function RuntimeHealthBanner({ zh = true }: { zh?: boolean }) {
       lastEpochRef.current = epoch;
       try {
         window.dispatchEvent(
-          new CustomEvent('takton:host-epoch', { detail: { host_epoch: epoch } })
+          new CustomEvent('tevarn:host-epoch', { detail: { host_epoch: epoch } })
         );
       } catch {
         /* ignore */

@@ -1,7 +1,7 @@
-"""Takton Code ↔ Desktop bridge API.
+"""Tevarn Code ↔ Desktop bridge API.
 
 Exposes models / chat / skills / tools / MCP / RAG under /bridge/v1/*
-so the independent Takton Code CLI can call the full desktop backend.
+so the independent Tevarn Code CLI can call the full desktop backend.
 """
 
 from __future__ import annotations
@@ -117,7 +117,7 @@ async def bridge_health(
         "ok": True,
         "enabled": True,
         "version": getattr(settings, "version", None) or "0.4.6-alpha",
-        "product": "takton",
+        "product": "tevarn",
         "user": str(current_user.id),
         "capabilities": ["models", "skills", "tools", "mcp", "rag", "sessions", "settings", "agent_turn"],
         "llm_provider": getattr(settings, "llm_provider", None),
@@ -610,7 +610,7 @@ async def bridge_settings(
 
 
 # ---------------------------------------------------------------------------
-# Agent turn — full NexusAgentLoop for Takton Code TUI (bridge loop mode)
+# Agent turn — full NexusAgentLoop for Tevarn Code TUI (bridge loop mode)
 # ---------------------------------------------------------------------------
 
 
@@ -650,7 +650,7 @@ async def bridge_agent_turn(
 
             root = Path(body.project_root).expanduser().resolve()
             if root.is_dir():
-                os.environ["TAKTON_WORKSPACE_ROOT"] = str(root)
+                os.environ["TEVARN_WORKSPACE_ROOT"] = str(root)
                 # also settings if present
                 try:
                     settings.file_browser_root = str(root)  # type: ignore[attr-defined]
@@ -678,14 +678,14 @@ async def bridge_agent_turn(
                 {
                     "id": sid,
                     "user_id": current_user.id,
-                    "config": {"source": "takton-code-bridge", "title": body.title or "code"},
+                    "config": {"source": "tevarn-code-bridge", "title": body.title or "code"},
                 }
             )
     else:
         created = await session_repo.create(
             {
                 "user_id": current_user.id,
-                "config": {"source": "takton-code-bridge", "title": body.title or "code"},
+                "config": {"source": "tevarn-code-bridge", "title": body.title or "code"},
             }
         )
         sid = created.id if hasattr(created, "id") else uuid.UUID(str(created["id"]))
@@ -712,7 +712,7 @@ async def bridge_agent_turn(
         ctx_item_repo=ctx_item_repo,
         context_flow_repo=context_flow_repo,
         ws_manager=None,  # headless for code bridge
-        agent_name="Takton",
+        agent_name="Tevarn",
         user_id=current_user.id,
         notification_repo=notification_repo,
     )
@@ -737,7 +737,7 @@ async def bridge_agent_turn(
 
 
 # ---------------------------------------------------------------------------
-# Evolution bridge — let Takton Code read engine state and feed outcomes back.
+# Evolution bridge — let Tevarn Code read engine state and feed outcomes back.
 # 与主路由 /evolution/* 同一 manager，契约收敛在 /bridge/v1/* 下，Code 侧
 # 只需一套前缀与凭证。
 # ---------------------------------------------------------------------------
@@ -748,7 +748,7 @@ class BridgeTaskOutcomeBody(BaseModel):
     success: bool = True
     detail: str = ""
     failure_codes: list[str] = Field(default_factory=list)
-    source: str = "takton-code"
+    source: str = "tevarn-code"
 
 
 @router.get("/evolution/status")
@@ -785,6 +785,6 @@ async def bridge_evolution_from_task(
         success=body.success,
         detail=body.detail,
         failure_codes=body.failure_codes,
-        source=body.source or "takton-code",
+        source=body.source or "tevarn-code",
     )
     return res or {"ok": False, "reason": "evolution_disabled"}

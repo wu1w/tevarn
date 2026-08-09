@@ -79,10 +79,10 @@ def test_nexus_inherits_base():
     assert issubclass(NexusAgentLoop, AgentLoopBase)
 
 
-def test_takton_code_compat_import():
-    # monorepo: backend available（takton-code 独立 repo，无 checkout 时 skip）
-    pytest.importorskip("takton_code.compat.backend_core", reason="takton-code repo not checked out")
-    from takton_code.compat.backend_core import (
+def test_tevarn_code_compat_import():
+    # monorepo: backend available（tevarn-code 独立 repo，无 checkout 时 skip）
+    pytest.importorskip("tevarn_code.compat.backend_core", reason="tevarn-code repo not checked out")
+    from tevarn_code.compat.backend_core import (
         HAS_BACKEND,
         DoomLoopGuard,
         PermissionGate,

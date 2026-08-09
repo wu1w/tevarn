@@ -2,7 +2,7 @@
 
 竞品教训：Claude Code 把「You are Claude」硬编码进 system prompt，
 经网关转发到非 Anthropic 模型时造成身份污染。
-Takton 的身份必须模型中立：固定为「You are Takton」，model 仅作为
+Tevarn 的身份必须模型中立：固定为「You are Tevarn」，model 仅作为
 volatile 层的一行元数据，绝不构成身份指令。
 """
 
@@ -29,7 +29,7 @@ def _full_prompt(**kwargs) -> str:
 
 
 def test_default_identity_is_neutral() -> None:
-    assert "Takton" in DEFAULT_IDENTITY
+    assert "Tevarn" in DEFAULT_IDENTITY
     low = DEFAULT_IDENTITY.lower()
     for term in _FORBIDDEN_IDENTITY_TERMS:
         assert term not in low, f"DEFAULT_IDENTITY 含厂商身份污染词: {term}"
@@ -42,8 +42,8 @@ def test_stable_layer_has_no_vendor_identity() -> None:
         stable = parts["stable"].lower()
         for term in _FORBIDDEN_IDENTITY_TERMS:
             assert term not in stable, f"model={model} 时 stable 层含污染词: {term}"
-        # 身份仍是 Takton
-        assert "takton" in stable
+        # 身份仍是 Tevarn
+        assert "tevarn" in stable
 
 
 def test_model_is_metadata_not_identity() -> None:

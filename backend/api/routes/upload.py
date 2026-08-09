@@ -18,7 +18,7 @@ router = APIRouter(prefix="/upload", tags=["Upload"])
 
 
 def _resolve_upload_dir() -> str:
-    env_dir = os.environ.get("TAKTON_UPLOADS_DIR", "").strip()
+    env_dir = os.environ.get("TEVARN_UPLOADS_DIR", "").strip()
     if env_dir:
         path = os.path.abspath(env_dir)
     else:

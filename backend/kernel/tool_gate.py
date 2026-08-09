@@ -154,7 +154,7 @@ def _kernel_enabled() -> bool:
             return False
         logger.error(
             "H2: agent_kernel_enabled=False ignored in production — "
-            "set TAKTON_DEV_UNSAFE=1 to allow ungoverned mode"
+            "set TEVARN_DEV_UNSAFE=1 to allow ungoverned mode"
         )
         return True
     except Exception:
@@ -382,6 +382,13 @@ async def enforce_tool_gate(
         - 成功时 args 可能被注入 ``_kernel_process_id`` / ``_tool_gate_passed``。
     """
     args = dict(arguments or {})
+    # Absolute workspace paths → relative (file_write deny root cause)
+    try:
+        from backend.tools.permissions import normalize_tool_path_args
+
+        args = normalize_tool_path_args(args)
+    except Exception:
+        pass
     # 安全：_tool_gate_passed 仅信任本进程内部标记，拒绝模型/客户端注入
     # （LLM 若在 arguments 里塞 True 会绕过 mediate）
     client_claimed_passed = bool(args.pop("_tool_gate_passed", None))

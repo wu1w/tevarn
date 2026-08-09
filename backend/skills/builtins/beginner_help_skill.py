@@ -3,7 +3,7 @@
 from ..base import BaseSkill
 
 _TOPICS = {
-    "start": """# 第一次用 Takton
+    "start": """# 第一次用 Tevarn
 
 1. 首页输入框直接打字提问，点「发送」（未开会话会自动连上）。
 2. 想改电脑上的文件/命令：点侧栏「设备」，配对后说：`@设备名 你的命令`。
@@ -20,7 +20,7 @@ _TOPICS = {
 """,
     "devices": """# 远程设备（@设备）
 
-1. 在目标电脑运行 takton-agent（端口默认 19876）。
+1. 在目标电脑运行 tevarn-agent（端口默认 19876）。
 2. 本机「设备」页填写 host、端口、token → 配对。
 3. 对话：`@remote-pc 磁盘还剩多少` 或 `@win-local dir`。
 4. 设备页可看延迟、目录、跑命令。
@@ -47,7 +47,7 @@ _TOPICS = {
 class BeginnerHelpSkill(BaseSkill):
     name = "beginner_help"
     description = (
-        "输出 Takton 新手说明（上手、安全、设备、工具区别、示例说法）。"
+        "输出 Tevarn 新手说明（上手、安全、设备、工具区别、示例说法）。"
         "当用户说「我不会用」「怎么开始」「有什么功能」「小白教程」时调用。"
     )
     parameters = {

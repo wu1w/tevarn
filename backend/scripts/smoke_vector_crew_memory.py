@@ -2,14 +2,14 @@
 
 用法（本机）::
 
-    set TAKTON_EMBEDDING_PROVIDER=openai-compatible
-    set TAKTON_EMBEDDING_BASE_URL=http://192.168.5.27:8086
-    set TAKTON_EMBEDDING_MODEL=Qwen3-Embedding-4B
-    set TAKTON_QDRANT_URL=http://192.168.5.27:6333
-    set TAKTON_RERANKER_PROVIDER=local
-    set TAKTON_RERANKER_BASE_URL=http://192.168.5.27:8087
-    set TAKTON_RERANKER_MODEL=Qwen3-Reranker-4B
-    set TAKTON_RAG_ENABLED=true
+    set TEVARN_EMBEDDING_PROVIDER=openai-compatible
+    set TEVARN_EMBEDDING_BASE_URL=http://192.168.5.27:8086
+    set TEVARN_EMBEDDING_MODEL=Qwen3-Embedding-4B
+    set TEVARN_QDRANT_URL=http://192.168.5.27:6333
+    set TEVARN_RERANKER_PROVIDER=local
+    set TEVARN_RERANKER_BASE_URL=http://192.168.5.27:8087
+    set TEVARN_RERANKER_MODEL=Qwen3-Reranker-4B
+    set TEVARN_RAG_ENABLED=true
     python -m backend.scripts.smoke_vector_crew_memory
 
 不写入仓库密钥；仅联调。
@@ -27,25 +27,25 @@ from pathlib import Path
 def _ensure_env_defaults() -> None:
     """若未设置，填入局域网默认（可被环境变量覆盖）。"""
     defaults = {
-        "TAKTON_EMBEDDING_PROVIDER": "openai-compatible",
-        "TAKTON_EMBEDDING_BASE_URL": "http://192.168.5.27:8086",
-        "TAKTON_EMBEDDING_MODEL": "Qwen3-Embedding-4B",
+        "TEVARN_EMBEDDING_PROVIDER": "openai-compatible",
+        "TEVARN_EMBEDDING_BASE_URL": "http://192.168.5.27:8086",
+        "TEVARN_EMBEDDING_MODEL": "Qwen3-Embedding-4B",
         # Qwen3-Embedding-4B 实测 2560 维；建 collection 必须对齐
-        "TAKTON_EMBEDDING_DIMENSIONS": "2560",
-        "TAKTON_QDRANT_URL": "http://192.168.5.27:6333",
-        "TAKTON_RERANKER_PROVIDER": "local",
-        "TAKTON_RERANKER_BASE_URL": "http://192.168.5.27:8087",
-        "TAKTON_RERANKER_MODEL": "Qwen3-Reranker-4B",
-        "TAKTON_RAG_ENABLED": "true",
+        "TEVARN_EMBEDDING_DIMENSIONS": "2560",
+        "TEVARN_QDRANT_URL": "http://192.168.5.27:6333",
+        "TEVARN_RERANKER_PROVIDER": "local",
+        "TEVARN_RERANKER_BASE_URL": "http://192.168.5.27:8087",
+        "TEVARN_RERANKER_MODEL": "Qwen3-Reranker-4B",
+        "TEVARN_RAG_ENABLED": "true",
         # 避免 smoke 被弱密钥校验挡住
-        "TAKTON_JWT_SECRET": os.environ.get(
-            "TAKTON_JWT_SECRET", "dev-jwt-secret-for-local-alpha-testing-only-32b"
+        "TEVARN_JWT_SECRET": os.environ.get(
+            "TEVARN_JWT_SECRET", "dev-jwt-secret-for-local-alpha-testing-only-32b"
         ),
-        "TAKTON_API_KEY": os.environ.get(
-            "TAKTON_API_KEY", "dev-api-key-for-local-alpha-testing-only-32bxx"
+        "TEVARN_API_KEY": os.environ.get(
+            "TEVARN_API_KEY", "dev-api-key-for-local-alpha-testing-only-32bxx"
         ),
-        "TAKTON_SETTINGS_ENCRYPTION_SALT": os.environ.get(
-            "TAKTON_SETTINGS_ENCRYPTION_SALT", "local-dev-salt-not-for-prod-use-xx"
+        "TEVARN_SETTINGS_ENCRYPTION_SALT": os.environ.get(
+            "TEVARN_SETTINGS_ENCRYPTION_SALT", "local-dev-salt-not-for-prod-use-xx"
         ),
     }
     for k, v in defaults.items():
@@ -120,7 +120,7 @@ async def main() -> int:
     from backend.kernel.identity import IdentityRegistry
     from backend.models.base import Base
 
-    tmp = Path(tempfile.mkdtemp(prefix="takton-vec-smoke-"))
+    tmp = Path(tempfile.mkdtemp(prefix="tevarn-vec-smoke-"))
     db = tmp / "smoke.db"
     engine = create_async_engine(f"sqlite+aiosqlite:///{db}", future=True)
     SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -177,7 +177,7 @@ async def main() -> int:
 
     asm = CrewMemoryAssembler(reg)
     # force cap=2
-    os.environ["TAKTON_CREW_MEMORY_EXPERIENCE_MAX_INJECT"] = "2"
+    os.environ["TEVARN_CREW_MEMORY_EXPERIENCE_MAX_INJECT"] = "2"
     # settings already loaded — patch attribute
     try:
         object.__setattr__(settings, "crew_memory_experience_max_inject", 2)

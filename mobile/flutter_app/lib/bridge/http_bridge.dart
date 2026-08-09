@@ -5,10 +5,11 @@ import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
-import 'takton_bridge.dart';
+import '../models/tool_call_ui.dart';
+import 'tevarn_bridge.dart';
 
-class HttpTaktonBridge extends TaktonBridge {
-  HttpTaktonBridge({String? base, this.kind = 'http-web'})
+class HttpTevarnBridge extends TevarnBridge {
+  HttpTevarnBridge({String? base, this.kind = 'http-web'})
       : _base = _normalize(base ?? '');
 
   String _base;
@@ -78,6 +79,15 @@ class HttpTaktonBridge extends TaktonBridge {
             }
             final qs = q.isEmpty ? '' : '?${q.join('&')}';
             return _get('/api/mobile/sessions/$id/messages$qs');
+          }
+        case 'turn_status':
+          {
+            final id = a['id'];
+            final user = a['user']?.toString() ?? '';
+            final q = user.isEmpty
+                ? ''
+                : '?user=${Uri.encodeQueryComponent(user)}';
+            return _get('/api/mobile/sessions/$id/turn_status$q');
           }
         case 'local_history':
           return _get('/api/mobile/local/history');
@@ -517,7 +527,8 @@ class HttpTaktonBridge extends TaktonBridge {
       );
       if (r['ok'] == true) {
         final ready = r['ready'] == true;
-        final text = (r['text'] ?? '').toString();
+        // Host may still include tags on older builds — strip for mobile body.
+        final text = stripThinkingBlocks((r['text'] ?? '').toString());
         if (!ready) return null;
         if (text.trim().isEmpty) return null;
         if (text.length < minLen && minLen > 0) {
@@ -571,7 +582,9 @@ class HttpTaktonBridge extends TaktonBridge {
           (tc is Map && tc.isNotEmpty);
       if (hasTools) return null;
 
-      final t = (last['content'] ?? last['text'] ?? '').toString();
+      final contentRaw = (last['content'] ?? last['text'] ?? '').toString();
+      // Never treat thinking-only or tool-protocol rows as final answer.
+      final t = stripThinkingBlocks(contentRaw);
       final trimmed = t.trim();
       if (trimmed.isEmpty) return null;
       // Codex-style tool rows produced by host normalize_ui_messages.

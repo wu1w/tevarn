@@ -249,7 +249,7 @@ class AsyncMemoryGraphRepository(AsyncBaseRepository):
                     continue
                 score = 2 * len(my_tags & {str(t).lower() for t in (cand.tags or [])})
                 score += len(my_words & _tokens(f"{cand.title} {cand.content}"))
-                # 中文无空格分词弱，title 互含兜底（如 "Takton 部署" vs "Takton 部署规范"）
+                # 中文无空格分词弱，title 互含兜底（如 "Tevarn 部署" vs "Tevarn 部署规范"）
                 if cand.title and node.title and (cand.title in node.title or node.title in cand.title):
                     score += 2
                 if score >= min_score:

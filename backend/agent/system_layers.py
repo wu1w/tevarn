@@ -213,7 +213,7 @@ def build_system_layers_report(
         "legend": [
             {"id": "core", "desc": "不可配置的底层准则，保持短小稳定"},
             {"id": "profile", "desc": "用户人格 / SOUL / 自定义 system"},
-            {"id": "packages", "desc": "会话挂载的 Takton Package 片段"},
+            {"id": "packages", "desc": "会话挂载的 Tevarn Package 片段"},
             {"id": "dynamic", "desc": "本轮运行时注入（集群名册、RAG 等）"},
             {"id": "volatile", "desc": "每轮重建：记忆快照与元信息"},
         ],

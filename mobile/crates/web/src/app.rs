@@ -16,7 +16,7 @@ pub fn App() -> Element {
     let mut tab = use_signal(|| Tab::Chat);
     let mut drawer_open = use_signal(|| false);
     let mut chat_surface = use_signal(|| {
-        if storage_get("takton-chat-mode").as_deref() == Some("remote") {
+        if storage_get("tevarn-chat-mode").as_deref() == Some("remote") {
             ChatSurface::Remote
         } else {
             ChatSurface::Local
@@ -31,7 +31,7 @@ pub fn App() -> Element {
     let mut toast_show = use_signal(|| false);
     let mut clock = use_signal(now_hm);
     let mut theme_dark = use_signal(|| {
-        storage_get("takton-theme").as_deref() == Some("dark")
+        storage_get("tevarn-theme").as_deref() == Some("dark")
     });
     let mut island_kind = use_signal(|| String::from("local"));
     let mut island_html = use_signal(|| String::from("<b>本机</b>&nbsp;…"));
@@ -225,7 +225,7 @@ pub fn App() -> Element {
         div { id: "stage",
             div { id: "side",
                 h1 {
-                    span { class: "px", "TAKTON MOBILE" }
+                    span { class: "px", "TEVARN MOBILE" }
                     "口袋里的 AI 公司"
                 }
                 p { "连接 PC 后可远程接管 agent / 审批 / 进程；LLM 设置与 PC 端一致。未连 PC 时也可直接配置模型对话。" }
@@ -357,7 +357,7 @@ pub fn App() -> Element {
                                 id: "mode-local",
                                 onclick: move |_| {
                                     chat_surface.set(ChatSurface::Local);
-                                    storage_set("takton-chat-mode", "local");
+                                    storage_set("tevarn-chat-mode", "local");
                                     let mut toast = toast.clone();
                                     spawn(async move {
                                         let _ = refresh_mode(chat_surface, mode_snap).await;
@@ -381,7 +381,7 @@ pub fn App() -> Element {
                                         return;
                                     }
                                     chat_surface.set(ChatSurface::Remote);
-                                    storage_set("takton-chat-mode", "remote");
+                                    storage_set("tevarn-chat-mode", "remote");
                                     let mut toast = toast.clone();
                                     spawn(async move {
                                         let _ = refresh_mode(chat_surface, mode_snap).await;
@@ -1099,7 +1099,7 @@ pub fn App() -> Element {
                         div { class: "shead",
                             div { style: "flex:1",
                                 div { class: "tt", "远程连接" }
-                                div { class: "sub", "接管 PC 上的 Takton 运行时" }
+                                div { class: "sub", "接管 PC 上的 Tevarn 运行时" }
                             }
                             span {
                                 class: if pc { "badge" } else { "badge am" },
@@ -1129,7 +1129,7 @@ pub fn App() -> Element {
                                         if pc {
                                             app_state().user.as_ref().and_then(|u| u.get("email")).and_then(|e| e.as_str()).unwrap_or("").to_string()
                                         } else {
-                                            "填写地址登录你的 PC Takton".to_string()
+                                            "填写地址登录你的 PC Tevarn".to_string()
                                         }
                                     }
                                 }
@@ -1221,7 +1221,7 @@ pub fn App() -> Element {
                                             input {
                                                 class: "inp num",
                                                 id: "pair-email",
-                                                placeholder: "admin@takton.dev",
+                                                placeholder: "admin@tevarn.dev",
                                                 value: "{form_email}",
                                                 oninput: move |e| form_email.set(e.value()),
                                             }
@@ -1330,10 +1330,10 @@ pub fn App() -> Element {
                             div { class: "sect", "PC 连接" }
                             div { class: "card2",
                                 div { class: "mut", style: "margin-bottom:10px; line-height:1.6",
-                                    "连接 Takton 后端以使用 agent / 审批 / 进程。"
+                                    "连接 Tevarn 后端以使用 agent / 审批 / 进程。"
                                 }
                                 div { class: "fg",
-                                    span { class: "lb", "Takton Base URL" }
+                                    span { class: "lb", "Tevarn Base URL" }
                                     input {
                                         class: "inp num", id: "api-base",
                                         value: "{form_base}",
@@ -1344,7 +1344,7 @@ pub fn App() -> Element {
                                     span { class: "lb", "邮箱" }
                                     input {
                                         class: "inp num", id: "api-email",
-                                        placeholder: "admin@takton.dev",
+                                        placeholder: "admin@tevarn.dev",
                                         value: "{form_email}",
                                         oninput: move |e| form_email.set(e.value()),
                                     }
@@ -1467,7 +1467,7 @@ pub fn App() -> Element {
                                         class: if !theme_dark() { "act" } else { "" },
                                         onclick: move |_| {
                                             theme_dark.set(false);
-                                            storage_set("takton-theme", "light");
+                                            storage_set("tevarn-theme", "light");
                                         },
                                         "浅色"
                                     }
@@ -1475,7 +1475,7 @@ pub fn App() -> Element {
                                         class: if theme_dark() { "act" } else { "" },
                                         onclick: move |_| {
                                             theme_dark.set(true);
-                                            storage_set("takton-theme", "dark");
+                                            storage_set("tevarn-theme", "dark");
                                         },
                                         "深色"
                                     }
@@ -1669,7 +1669,7 @@ pub fn App() -> Element {
                                                 return;
                                             }
                                             chat_surface.set(ChatSurface::Local);
-                                            storage_set("takton-chat-mode", "local");
+                                            storage_set("tevarn-chat-mode", "local");
                                             drawer_open.set(false);
                                             spawn(async move {
                                                 let _ = refresh_mode(chat_surface, mode_snap).await;
@@ -1752,7 +1752,7 @@ pub fn App() -> Element {
                                                         }
                                                         active_session.set(Some(id_up.clone()));
                                                         chat_surface.set(ChatSurface::Remote);
-                                                        storage_set("takton-chat-mode", "remote");
+                                                        storage_set("tevarn-chat-mode", "remote");
                                                         drawer_open.set(false);
                                                         let id = id_up.clone();
                                                         spawn(async move {
@@ -2036,9 +2036,9 @@ fn session_title(st: &AppStateDto, active: &Option<String>) -> String {
                 return t.to_string();
             }
         }
-        return "Takton 会话".into();
+        return "Tevarn 会话".into();
     }
-    "Takton 会话".into()
+    "Tevarn 会话".into()
 }
 
 async fn refresh_mode(surface: Signal<ChatSurface>, mut mode_snap: Signal<ModeSnap>) -> Result<(), String> {
@@ -2151,7 +2151,7 @@ async fn bootstrap(
         }
     }
     // default surface
-    let want_remote = storage_get("takton-chat-mode").as_deref() == Some("remote")
+    let want_remote = storage_get("tevarn-chat-mode").as_deref() == Some("remote")
         && app_state().authenticated;
     if want_remote {
         chat_surface.set(ChatSurface::Remote);

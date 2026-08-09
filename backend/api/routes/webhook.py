@@ -135,7 +135,7 @@ async def test_webhook(
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
                 obj.url,
-                json={"event": "test", "payload": {"source": "takton-test"}},
+                json={"event": "test", "payload": {"source": "tevarn-test"}},
                 headers=obj.headers or {},
             )
             resp_status = resp.status_code
@@ -153,7 +153,7 @@ async def test_webhook(
         "event": "test",
         "status": status,
         "request_url": obj.url,
-        "request_body": {"event": "test", "payload": {"source": "takton-test"}},
+        "request_body": {"event": "test", "payload": {"source": "tevarn-test"}},
         "response_status": resp_status,
         "response_body": resp_body,
         "error_message": error_msg,

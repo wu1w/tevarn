@@ -1,5 +1,5 @@
 #![allow(non_snake_case)]
-//! Takton Mobile — Dioxus-web UI (DOM renderer).
+//! Tevarn Mobile — Dioxus-web UI (DOM renderer).
 //! CSS: 100% reuse of `/pixel-console.css` (legacy pixel tokens).
 
 mod api;

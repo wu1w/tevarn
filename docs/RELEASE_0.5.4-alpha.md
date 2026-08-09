@@ -1,4 +1,4 @@
-# Takton 0.5.4-alpha · 2026-08-03
+# Tevarn 0.5.4-alpha · 2026-08-03
 
 **分支**：`feature/agent-kernel`  
 **版本权威**：`backend/VERSION` · `frontend/lib/appVersion.ts` · root/`frontend` `package.json`
@@ -7,7 +7,7 @@
 
 ### ChatGPT OAuth / 订阅配额
 - OpenAI ChatGPT OAuth（PKCE）+ Codex 兼容代理，走 Plus/Pro 订阅额度（非 sk 平台计费）
-- 出站 HTTPS 尊重系统代理（`HTTPS_PROXY` / `TAKTON_HTTPS_PROXY`），修复 country 限制与死代码端口
+- 出站 HTTPS 尊重系统代理（`HTTPS_PROXY` / `TEVARN_HTTPS_PROXY`），修复 country 限制与死代码端口
 - 模型面暴露 GPT-5.6 系列
 
 ### Kernel / 工具
@@ -17,7 +17,7 @@
 - core tools 3-arg executor 修复
 
 ### 用量与缓存
-- **持久化用量账本** `%APPDATA%/takton/data/usage_ledger.json`（kernel host 重启不清零）
+- **持久化用量账本** `%APPDATA%/tevarn/data/usage_ledger.json`（kernel host 重启不清零）
 - 按供应商 family + model 累计；缓存命中 dual-write durable
 - Anthropic prompt caching：`anthropic-beta` 头 + 稳定 tools 排序
 - OpenAI-compatible：tools 排序/参数键序稳定、`prompt_cache_key` 派生

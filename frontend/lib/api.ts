@@ -57,7 +57,7 @@ function resolveBaseUrl(): string {
     if (isLocalHost && (port === '3000' || port === '3001' || port === '')) {
       return '/api';
     }
-    const injected = (window as unknown as { __TAKTON_API_URL__?: string }).__TAKTON_API_URL__;
+    const injected = (window as unknown as { __TEVARN_API_URL__?: string }).__TEVARN_API_URL__;
     if (injected) {
       const url = injected.replace(/\/$/, '');
       // 保证以 /api 结尾
@@ -90,7 +90,7 @@ export { api as apiClient };
 api.interceptors.request.use((config) => {
   config.baseURL = resolveBaseUrl();
   if (typeof window !== 'undefined') {
-    const auth = localStorage.getItem('takton-auth');
+    const auth = localStorage.getItem('tevarn-auth');
     if (auth) {
       try {
         const parsed = JSON.parse(auth);
@@ -159,7 +159,7 @@ function formatApiError(error: {
 
   if (!error.response) {
     if (error.code === 'ECONNABORTED') return t('api._e5');
-    return `Cannot connect to backend (${base}${path})。Ensure the app has started, or restart Takton.`;
+    return `Cannot connect to backend (${base}${path})。Ensure the app has started, or restart Tevarn.`;
   }
 
   if (status === 404) return 'API not found (404)';
@@ -180,7 +180,7 @@ api.interceptors.response.use(
     const ct = String(response.headers?.['content-type'] || '');
     if (ct.includes('text/html') || (typeof response.data === 'string' && response.data.includes('<!DOCTYPE'))) {
       const err = new Error('API returned HTML instead of JSON');
-      useToastStore.getState().addToast('API address misconfigured — restart Takton', 'error');
+      useToastStore.getState().addToast('API address misconfigured — restart Tevarn', 'error');
       return Promise.reject(err);
     }
     return response;
@@ -197,9 +197,9 @@ api.interceptors.response.use(
       !_isLoggingOut
     ) {
       _isLoggingOut = true;
-      localStorage.removeItem('takton-auth');
-      localStorage.removeItem('takton-session');
-      document.cookie = 'takton-auth=; path=/; max-age=0; SameSite=Strict';
+      localStorage.removeItem('tevarn-auth');
+      localStorage.removeItem('tevarn-session');
+      document.cookie = 'tevarn-auth=; path=/; max-age=0; SameSite=Strict';
       // 延迟重置标志，避免并发401重复触发
       setTimeout(() => { _isLoggingOut = false; }, 1000);
       window.location.href = '/login';
@@ -407,7 +407,7 @@ export async function importCommunitySkills(selected: string[], url?: string): P
 
 // ====== Skill Store APIs (multi-source) ======
 
-export type SkillSource = 'takton' | 'clawhub' | 'awesome-claude' | 'awesome-hermes' | 'mattpocock' | 'openai' | 'custom';
+export type SkillSource = 'tevarn' | 'clawhub' | 'awesome-claude' | 'awesome-hermes' | 'mattpocock' | 'openai' | 'custom';
 
 export interface SkillStats {
   stars: number;
@@ -760,7 +760,7 @@ export type VpsMeshStatus = {
   latency_ms?: number;
 };
 
-/** 配对 L1 takton-agent */
+/** 配对 L1 tevarn-agent */
 export async function pairDevice(data: {
   name: string;
   host: string;
@@ -2898,7 +2898,7 @@ export async function getSystemLayers(params?: {
   return res.data;
 }
 
-export interface TaktonPackageItem {
+export interface TevarnPackageItem {
   name: string;
   version: string;
   type: string;
@@ -2914,7 +2914,7 @@ export interface TaktonPackageItem {
 }
 
 export async function listPackages(sessionId?: string, source?: string): Promise<{
-  packages: TaktonPackageItem[];
+  packages: TevarnPackageItem[];
   attached: string[];
   count: number;
 }> {
@@ -2958,12 +2958,12 @@ export interface PackageInstallResult {
   error?: string;
 }
 
-/** 发布：本地包导出为 .takton-pkg.zip 的下载 URL（浏览器直接触发下载） */
+/** 发布：本地包导出为 .tevarn-pkg.zip 的下载 URL（浏览器直接触发下载） */
 export function exportPackageUrl(name: string): string {
   return `${resolveBaseUrl()}/packages/export/${encodeURIComponent(name)}`;
 }
 
-/** 安装：上传 .takton-pkg.zip */
+/** 安装：上传 .tevarn-pkg.zip */
 export async function installPackageFile(file: File, overwrite = false): Promise<PackageInstallResult> {
   const form = new FormData();
   form.append('file', file);

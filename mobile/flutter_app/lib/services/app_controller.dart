@@ -6,7 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../bridge/takton_bridge.dart';
+import '../bridge/tevarn_bridge.dart';
 import '../models/app_models.dart';
 import '../models/status_card.dart';
 import '../models/tool_call_ui.dart';
@@ -18,7 +18,7 @@ import 'voice_service.dart';
 class AppController extends ChangeNotifier {
   AppController(this.bridge);
 
-  final TaktonBridge bridge;
+  final TevarnBridge bridge;
 
   AppTab tab = AppTab.chat;
   bool dark = false;
@@ -168,14 +168,14 @@ class AppController extends ChangeNotifier {
   String _diskKeyForSurface(String surf) {
     if (surf == 'remote') {
       final sid = activeSessionId ?? 'default';
-      return 'takton-msg-cache-remote-$sid';
+      return 'tevarn-msg-cache-remote-$sid';
     }
-    return 'takton-msg-cache-local';
+    return 'tevarn-msg-cache-local';
   }
 
   Future<void> _loadDiskMessageCaches(SharedPreferences prefs) async {
     try {
-      final localRaw = prefs.getString('takton-msg-cache-local');
+      final localRaw = prefs.getString('tevarn-msg-cache-local');
       if (localRaw != null && localRaw.isNotEmpty) {
         final decoded = jsonDecode(localRaw);
         if (decoded is List) {
@@ -185,7 +185,7 @@ class AppController extends ChangeNotifier {
             ..addAll(list);
         }
       }
-      final sid = prefs.getString('takton-active-session') ?? activeSessionId;
+      final sid = prefs.getString('tevarn-active-session') ?? activeSessionId;
       if (sid != null && sid.isNotEmpty) activeSessionId = sid;
       final rkey = _diskKeyForSurface('remote');
       final remoteRaw = prefs.getString(rkey);
@@ -225,11 +225,11 @@ class AppController extends ChangeNotifier {
             .toList();
       }
       await prefs.setString(
-        'takton-msg-cache-local',
+        'tevarn-msg-cache-local',
         jsonEncode(pack(_localMsgCache)),
       );
       if (activeSessionId != null && activeSessionId!.isNotEmpty) {
-        await prefs.setString('takton-active-session', activeSessionId!);
+        await prefs.setString('tevarn-active-session', activeSessionId!);
       }
       await prefs.setString(
         _diskKeyForSurface('remote'),
@@ -277,10 +277,23 @@ class AppController extends ChangeNotifier {
         ));
       }
     }
+    var text = m['text']?.toString() ?? m['content']?.toString() ?? '';
+    // History may still carry · tool lines + <thinking> from host normalize.
+    if (tools.isEmpty && text.contains('· `')) {
+      final split = splitToolTrailFromText(text);
+      if (split.tools.isNotEmpty) {
+        tools.addAll(split.tools);
+        text = split.body;
+      } else {
+        text = stripThinkingBlocks(text);
+      }
+    } else {
+      text = stripThinkingBlocks(text);
+    }
     return ChatMsg(
       id: m['id']?.toString() ?? '',
       role: m['role']?.toString() ?? 'assistant',
-      text: m['text']?.toString() ?? m['content']?.toString() ?? '',
+      text: text,
       who: m['who']?.toString() ?? '',
       format: m['format']?.toString() == 'markdown' ? 'markdown' : 'plain',
       toolCalls: tools,
@@ -326,7 +339,11 @@ class AppController extends ChangeNotifier {
         if (split.tools.isNotEmpty) {
           tools.addAll(split.tools);
           text = split.body;
+        } else {
+          text = stripThinkingBlocks(text);
         }
+      } else {
+        text = stripThinkingBlocks(text);
       }
       if (looksLikeMarkdown(text) || tools.isNotEmpty) {
         format = 'markdown';
@@ -429,11 +446,15 @@ class AppController extends ChangeNotifier {
   }
 
   /// Phone stream closed early but PC was NOT stopped — keep pulling final text.
+  ///
+  /// Critical: only accept **this turn's** final via [turnStatus] (tool-loop aware).
+  /// Never grab the previous assistant bubble (that broke time/search after tools).
   Future<void> _softRecoverRemoteFinal({
     required String sessionId,
     required String aid,
     required int streamGen,
     required String streamSurface,
+    String userContent = '',
   }) async {
     // ~2 min @ 3s; tools like weather can take a while after UI stream ends.
     for (var i = 0; i < 40; i++) {
@@ -441,38 +462,89 @@ class AppController extends ChangeNotifier {
       await Future<void>.delayed(const Duration(seconds: 3));
       if (streamGen != _streamGen) return;
       try {
-        final r = await bridge.messages(sessionId, limit: 30);
-        final list = r['messages'];
-        if (list is! List || list.isEmpty) continue;
-        String? lastAsst;
-        for (var j = list.length - 1; j >= 0; j--) {
-          final m = list[j];
-          if (m is! Map) continue;
-          if (m['role']?.toString() != 'assistant') continue;
-          final who = m['who']?.toString() ?? '';
-          if (who.contains('工具')) continue;
-          final tc = m['tool_calls'];
-          final hasTools =
-              (tc is List && tc.isNotEmpty) || (tc is Map && tc.isNotEmpty);
-          if (hasTools) continue;
-          final t = (m['content'] ?? m['text'] ?? '').toString().trim();
-          if (t.isEmpty) continue;
-          if (t.startsWith('· 调用') || RegExp(r'^·\s*`').hasMatch(t)) {
-            continue;
-          }
-          lastAsst = t;
-          break;
+        // Prefer host turn_status: ready only after tools finish for this user turn.
+        final status = await bridge.turnStatus(
+          sessionId,
+          user: userContent,
+        );
+        if (status['ok'] != true) {
+          // Host/PC unreachable — keep waiting, do not scrape previous-turn history.
+          continue;
         }
-        if (lastAsst == null || lastAsst.isEmpty) continue;
+        if (status['ready'] != true) {
+          final started = status['tools_started'];
+          final finished = status['tools_finished'];
+          if (started is num && started > 0) {
+            islandText = 'PC 工具 ${finished ?? 0}/${started}…';
+            islandLive = true;
+            _notifyStream();
+          }
+          continue;
+        }
 
-        // Apply to live list or remote cache.
+        String? rawText = (status['text'] ?? '').toString();
+        // Fallback: messages scan still gated by tool-loop markers.
+        if (rawText.trim().isEmpty) {
+          final r = await bridge.messages(sessionId, limit: 30);
+          final list = r['messages'];
+          if (list is! List || list.isEmpty) continue;
+          for (var j = list.length - 1; j >= 0; j--) {
+            final m = list[j];
+            if (m is! Map) continue;
+            if (m['role']?.toString() != 'assistant') continue;
+            final who = m['who']?.toString() ?? '';
+            if (who.contains('工具')) continue;
+            final tc = m['tool_calls'];
+            final hasTools =
+                (tc is List && tc.isNotEmpty) || (tc is Map && tc.isNotEmpty);
+            if (hasTools) continue;
+            final t = (m['content'] ?? m['text'] ?? '').toString().trim();
+            if (t.isEmpty) continue;
+            if (t.startsWith('· 调用') || RegExp(r'^·\s*`').hasMatch(t)) {
+              continue;
+            }
+            // Skip thinking-only intermediates (not a final answer).
+            if (isVisibleBodyEmpty(t)) continue;
+            rawText = t;
+            break;
+          }
+        }
+        if (rawText == null || rawText.trim().isEmpty) continue;
+
+        final split = splitToolTrailFromText(rawText);
+        final body = split.body.isNotEmpty
+            ? split.body
+            : stripThinkingBlocks(rawText);
+        if (body.trim().isEmpty) continue;
+
+        // Apply to live list or remote cache — never glue tool trail into body.
         void patch(List<ChatMsg> target) {
           final idx = target.indexWhere((m) => m.id == aid);
           if (idx < 0) return;
-          target[idx].text = lastAsst!;
+          final cur = target[idx].text;
+          // Don't clobber a longer live body with a worse/shorter recover
+          // unless current is placeholder / empty / pure tool lines.
+          final curBody = stripThinkingBlocks(cur);
+          final curLooksBad = curBody.isEmpty ||
+              curBody.startsWith('（无模型输出）') ||
+              curBody.startsWith('⚠️') ||
+              curBody.trim().startsWith('· 调用') ||
+              RegExp(r'^·\s*`').hasMatch(curBody.trim());
+          if (!curLooksBad &&
+              curBody.length > body.length + 40 &&
+              split.tools.isEmpty) {
+            target[idx].streaming = false;
+            return;
+          }
+          target[idx].text = body;
+          if (split.tools.isNotEmpty) {
+            target[idx].toolCalls = split.tools;
+          }
           target[idx].streaming = false;
           target[idx].format = 'markdown';
-          target[idx].who = '远端 Agent';
+          target[idx].who = target[idx].toolCalls.isNotEmpty
+              ? '远端 Agent · 工具'
+              : '远端 Agent';
         }
 
         if (surface == streamSurface) {
@@ -500,16 +572,16 @@ class AppController extends ChangeNotifier {
     if (_booted) return;
     _booted = true;
     final prefs = await SharedPreferences.getInstance();
-    final preferredSurface = prefs.getString('takton-chat-mode') ?? 'local';
+    final preferredSurface = prefs.getString('tevarn-chat-mode') ?? 'local';
     surface = preferredSurface;
-    dark = prefs.getString('takton-theme') == 'dark';
-    voiceOn = prefs.getBool('takton-voice') ?? true;
-    cameraOn = prefs.getBool('takton-camera') ?? true;
-    formBase = prefs.getString('takton-form-base') ?? formBase;
-    formEmail = prefs.getString('takton-form-email') ?? '';
+    dark = prefs.getString('tevarn-theme') == 'dark';
+    voiceOn = prefs.getBool('tevarn-voice') ?? true;
+    cameraOn = prefs.getBool('tevarn-camera') ?? true;
+    formBase = prefs.getString('tevarn-form-base') ?? formBase;
+    formEmail = prefs.getString('tevarn-form-email') ?? '';
     // Password intentionally not stored — auth_session / device_token in Rust.
-    lastPairQr = prefs.getString('takton-last-pair-qr') ?? '';
-    final tabName = prefs.getString('takton-tab');
+    lastPairQr = prefs.getString('tevarn-last-pair-qr') ?? '';
+    final tabName = prefs.getString('tevarn-tab');
     if (tabName != null) {
       for (final t in AppTab.values) {
         if (t.name == tabName) {
@@ -533,7 +605,7 @@ class AppController extends ChangeNotifier {
     MeshRuntime.instance.onNetworkChanged = (_) {
       if (!_appPaused) unawaited(onNetworkPathChanged());
     };
-    unawaited(MeshRuntime.instance.up(hostname: 'takton-phone'));
+    unawaited(MeshRuntime.instance.up(hostname: 'tevarn-phone'));
 
     // All network hydration is background — shell already visible.
     unawaited(_bootNetwork(preferredSurface));
@@ -601,7 +673,7 @@ class AppController extends ChangeNotifier {
         final ok = await tryAutoReconnect(reason: 'boot');
         if (!ok || !pcConnected || _appPaused) return;
         final p = await SharedPreferences.getInstance();
-        final mode = p.getString('takton-chat-mode') ?? preferredSurface;
+        final mode = p.getString('tevarn-chat-mode') ?? preferredSurface;
         if (mode == 'remote' && surface != 'remote') {
           await setSurface('remote');
         } else {
@@ -751,14 +823,14 @@ class AppController extends ChangeNotifier {
   Future<void> setVoice(bool v) async {
     voiceOn = v;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('takton-voice', v);
+    await prefs.setBool('tevarn-voice', v);
     _notify();
   }
 
   Future<void> setCamera(bool v) async {
     cameraOn = v;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('takton-camera', v);
+    await prefs.setBool('tevarn-camera', v);
     _notify();
   }
 
@@ -1181,7 +1253,7 @@ class AppController extends ChangeNotifier {
 
     unawaited(() async {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('takton-chat-mode', s);
+      await prefs.setString('tevarn-chat-mode', s);
     }());
 
     try {
@@ -1279,7 +1351,7 @@ class AppController extends ChangeNotifier {
     _syncApprovePoll();
     unawaited(() async {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('takton-tab', t.name);
+      await prefs.setString('tevarn-tab', t.name);
     }());
     _notify();
   }
@@ -2288,9 +2360,10 @@ class AppController extends ChangeNotifier {
             final i = list.indexWhere((m) => m.id == aid);
             if (i < 0) return;
             list[i].toolCalls = liveTools.map((t) => t.copy()).toList();
-            list[i].text = acc;
+            list[i].text = stripThinkingBlocks(acc);
+            final body = list[i].text;
             list[i].format =
-                looksLikeMarkdown(acc) || acc.isNotEmpty ? 'markdown' : list[i].format;
+                looksLikeMarkdown(body) || body.isNotEmpty ? 'markdown' : list[i].format;
             list[i].who = whoLive;
           }
           if (surface == streamSurface) {
@@ -2303,11 +2376,16 @@ class AppController extends ChangeNotifier {
         }
         if (chunk.startsWith('\x00')) {
           acc = chunk.substring(1);
-          sawAssistantChunk = acc.trim().isNotEmpty;
+          sawAssistantChunk = stripThinkingBlocks(acc).isNotEmpty;
         } else {
           acc += chunk;
-          if (chunk.trim().isNotEmpty) sawAssistantChunk = true;
+          if (chunk.trim().isNotEmpty) {
+            sawAssistantChunk = stripThinkingBlocks(acc).isNotEmpty ||
+                sawAssistantChunk;
+          }
         }
+        // Visible body only — never show <thinking> or tool protocol in bubble.
+        final displayBody = stripThinkingBlocks(acc);
         // Apply to the surface cache that owns this stream
         final target =
             streamSurface == 'local' ? _localMsgCache : _remoteMsgCache;
@@ -2317,9 +2395,9 @@ class AppController extends ChangeNotifier {
         void applyText(List<ChatMsg> list) {
           final i = list.indexWhere((m) => m.id == aid);
           if (i < 0) return;
-          list[i].text = acc;
+          list[i].text = displayBody;
           list[i].toolCalls = liveTools.map((t) => t.copy()).toList();
-          if (looksLikeMarkdown(acc) || liveTools.isNotEmpty) {
+          if (looksLikeMarkdown(displayBody) || liveTools.isNotEmpty) {
             list[i].format = 'markdown';
           }
           list[i].who = whoStream;
@@ -2347,13 +2425,14 @@ class AppController extends ChangeNotifier {
       if (streamSurface == 'remote' && streamOk && !sawAssistantChunk) {
         // keep streamOk as FINISH said; recovered path below may also set true
       }
-      // Finalize structured tools + body (no longer glue trail into text)
+      // Finalize structured tools + body (no trail/thinking in text)
       if (surface == streamSurface) {
         final i = messages.indexWhere((m) => m.id == aid);
         if (i >= 0) {
           messages[i].toolCalls = liveTools.map((t) => t.copy()).toList();
-          messages[i].text = acc;
-          if (looksLikeMarkdown(acc) || liveTools.isNotEmpty) {
+          final body = stripThinkingBlocks(acc);
+          messages[i].text = body;
+          if (looksLikeMarkdown(body) || liveTools.isNotEmpty) {
             messages[i].format = 'markdown';
           }
           if (liveTools.isNotEmpty) {
@@ -2395,6 +2474,7 @@ class AppController extends ChangeNotifier {
           aid: aid,
           streamGen: streamGen,
           streamSurface: streamSurface,
+          userContent: userText,
         ));
       }
 
@@ -2431,20 +2511,33 @@ class AppController extends ChangeNotifier {
             }
             if (lastAsst != null && lastAsst.isNotEmpty) {
               final split = splitToolTrailFromText(lastAsst);
-              acc = split.body.isNotEmpty ? split.body : lastAsst;
-              if (split.tools.isNotEmpty) {
-                liveTools
-                  ..clear()
-                  ..addAll(split.tools);
-              }
-              final i = messages.indexWhere((m) => m.id == aid);
-              if (i >= 0 && surface == streamSurface) {
-                messages[i].text = acc;
-                messages[i].toolCalls =
-                    liveTools.map((t) => t.copy()).toList();
-                messages[i].format = 'markdown';
-                messages[i].who =
-                    liveTools.isEmpty ? '远端 Agent' : '远端 Agent · 工具';
+              final body = split.body.isNotEmpty
+                  ? split.body
+                  : stripThinkingBlocks(lastAsst);
+              // Only upgrade bubble when history has real visible body.
+              if (body.isNotEmpty) {
+                final curBody = stripThinkingBlocks(acc);
+                final shouldReplace = curBody.isEmpty ||
+                    curBody.startsWith('（无模型输出）') ||
+                    body.length >= curBody.length ||
+                    split.tools.isNotEmpty;
+                if (shouldReplace) {
+                  acc = body;
+                  if (split.tools.isNotEmpty) {
+                    liveTools
+                      ..clear()
+                      ..addAll(split.tools);
+                  }
+                  final i = messages.indexWhere((m) => m.id == aid);
+                  if (i >= 0 && surface == streamSurface) {
+                    messages[i].text = body;
+                    messages[i].toolCalls =
+                        liveTools.map((t) => t.copy()).toList();
+                    messages[i].format = 'markdown';
+                    messages[i].who =
+                        liveTools.isEmpty ? '远端 Agent' : '远端 Agent · 工具';
+                  }
+                }
               }
             }
           }
@@ -2489,8 +2582,16 @@ class AppController extends ChangeNotifier {
                       RegExp(r'^·\s*`').hasMatch(t.trim())) {
                     continue;
                   }
+                  final split = splitToolTrailFromText(t);
+                  final body = split.body.isNotEmpty
+                      ? split.body
+                      : stripThinkingBlocks(t);
+                  if (body.isEmpty) continue;
                   // UI recover only — does not flip streamOk (offline queue honesty).
-                  messages[i].text = t;
+                  messages[i].text = body;
+                  if (split.tools.isNotEmpty) {
+                    messages[i].toolCalls = split.tools;
+                  }
                   messages[i].format = 'markdown';
                   recovered = true;
                   break;
@@ -2704,9 +2805,9 @@ class AppController extends ChangeNotifier {
       final base = r['base_url']?.toString();
       if (base != null && base.isNotEmpty) formBase = base;
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('takton-form-base', formBase);
+      await prefs.setString('tevarn-form-base', formBase);
       if (formEmail.isNotEmpty) {
-        await prefs.setString('takton-form-email', formEmail);
+        await prefs.setString('tevarn-form-email', formEmail);
       }
       await _persistPathFrom(r);
       final kind = r['path_kind']?.toString() ?? '';
@@ -2822,7 +2923,7 @@ class AppController extends ChangeNotifier {
       lastPairQr = r['qr']?.toString() ?? '';
       final prefs = await SharedPreferences.getInstance();
       // Store redacted form if possible — full QR stays in memory for display only.
-      await prefs.setString('takton-last-pair-qr', _redactPairQr(lastPairQr));
+      await prefs.setString('tevarn-last-pair-qr', _redactPairQr(lastPairQr));
       await refreshMesh();
       _pairPoll?.cancel();
       final pairId = r['pair_id']?.toString() ?? '';
@@ -2901,7 +3002,7 @@ class AppController extends ChangeNotifier {
       final r = await bridge
           .pairApply(
             qr: qr,
-            deviceName: 'Takton Phone',
+            deviceName: 'Tevarn Phone',
             email: formEmail.isEmpty ? null : formEmail,
             password: formPass.isEmpty ? null : formPass,
           )
@@ -2942,24 +3043,24 @@ class AppController extends ChangeNotifier {
       try {
         final prefs = await SharedPreferences.getInstance();
         if (formBase.isNotEmpty) {
-          await prefs.setString('takton-form-base', formBase);
+          await prefs.setString('tevarn-form-base', formBase);
         }
-        await prefs.setString('takton-last-pair-qr', lastPairQr);
+        await prefs.setString('tevarn-last-pair-qr', lastPairQr);
         if (formEmail.isNotEmpty) {
-          await prefs.setString('takton-form-email', formEmail);
+          await prefs.setString('tevarn-form-email', formEmail);
         }
         final dt = r['device_token']?.toString();
         if (dt != null && dt.isNotEmpty) {
-          await prefs.setString('takton-device-token', dt);
+          await prefs.setString('tevarn-device-token', dt);
         }
         final chatMode = r['chat_mode']?.toString() ?? r['surface']?.toString();
         if (chatMode == 'remote' || chatMode == 'local') {
-          await prefs.setString('takton-chat-mode', chatMode!);
+          await prefs.setString('tevarn-chat-mode', chatMode!);
         }
         final eps = r['endpoints'];
         if (eps is List) {
           await prefs.setStringList(
-            'takton-path-candidates',
+            'tevarn-path-candidates',
             eps.map((e) => e.toString()).where((s) => s.isNotEmpty).toList(),
           );
         }
@@ -3082,7 +3183,7 @@ class AppController extends ChangeNotifier {
     _notify();
   }
 
-  static const _offlineQueuePrefsKey = 'takton-offline-send-queue-v1';
+  static const _offlineQueuePrefsKey = 'tevarn-offline-send-queue-v1';
 
   Future<void> _loadOfflineQueue() async {
     try {
@@ -3391,13 +3492,13 @@ class AppController extends ChangeNotifier {
 
   Future<bool> _tryAutoReconnectOnce({required String reason}) async {
     final prefs = await SharedPreferences.getInstance();
-    final base = prefs.getString('takton-form-base');
-    final stored = prefs.getStringList('takton-path-candidates') ?? const [];
+    final base = prefs.getString('tevarn-form-base');
+    final stored = prefs.getStringList('tevarn-path-candidates') ?? const [];
     if (base != null && base.isNotEmpty) {
       formBase = base;
     }
     try {
-      await MeshRuntime.instance.up(hostname: 'takton-phone')
+      await MeshRuntime.instance.up(hostname: 'tevarn-phone')
           .timeout(const Duration(seconds: 2));
     } catch (_) {}
     final cands = <String>[
@@ -3418,7 +3519,7 @@ class AppController extends ChangeNotifier {
         final b = r['base_url']?.toString();
         if (b != null && b.isNotEmpty) {
           formBase = b;
-          await prefs.setString('takton-form-base', formBase);
+          await prefs.setString('tevarn-form-base', formBase);
         }
         await _persistPathFrom(r);
         final kind = r['path_kind']?.toString() ?? '';
@@ -3480,14 +3581,14 @@ class AppController extends ChangeNotifier {
           if (e is Map && e['url'] != null) list.add(e['url'].toString());
         }
         if (list.isNotEmpty) {
-          await prefs.setStringList('takton-path-candidates', list);
+          await prefs.setStringList('tevarn-path-candidates', list);
         }
       }
     }
     final eps2 = r['endpoints'];
     if (eps2 is List) {
       await prefs.setStringList(
-        'takton-path-candidates',
+        'tevarn-path-candidates',
         eps2.map((e) => e.toString()).where((s) => s.isNotEmpty).toList(),
       );
     }
@@ -3599,7 +3700,7 @@ class AppController extends ChangeNotifier {
   Future<void> toggleTheme() async {
     dark = !dark;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('takton-theme', dark ? 'dark' : 'light');
+    await prefs.setString('tevarn-theme', dark ? 'dark' : 'light');
     _notify();
   }
 

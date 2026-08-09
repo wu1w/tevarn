@@ -21,7 +21,7 @@ const fontStyle = {
 } as React.CSSProperties;
 
 export const metadata: Metadata = {
-  title: "Takton - Personal Agent Console",
+  title: "Tevarn - Personal Agent Console",
   description: "Self-hosted async Agent console",
 };
 
@@ -29,7 +29,7 @@ const themeBootScript = `
 (function() {
   try {
     var pref = 'system';
-    var raw = localStorage.getItem('takton-theme');
+    var raw = localStorage.getItem('tevarn-theme');
     if (raw) {
       try {
         var parsed = JSON.parse(raw);
@@ -70,7 +70,7 @@ export default function RootLayout({
       style={fontStyle}
     >
       <body className="font-sans h-full overflow-hidden flex flex-col bg-page-bg text-foreground text-ui">
-        <Script id="takton-theme-boot" strategy="beforeInteractive">
+        <Script id="tevarn-theme-boot" strategy="beforeInteractive">
           {themeBootScript}
         </Script>
         <ThemeProvider>

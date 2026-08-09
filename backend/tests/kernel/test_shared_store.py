@@ -337,10 +337,10 @@ def test_list_process_ids_lazy_gc():
     store.put_process({"id": "live", "identity": "main", "capabilities": []})
     store.put_process({"id": "dead", "identity": "main", "capabilities": []})
     # 模拟 hash TTL 过期（FakeRedis 不实现真 TTL，直接删底层 hash）
-    del store._r._h["takton:kernel:v1:proc:dead"]
+    del store._r._h["tevarn:kernel:v1:proc:dead"]
     assert store.list_process_ids() == ["live"]
     # 死 id 已从 Set 索引剔除，不会反复扫描
-    assert b"dead" not in store._r.smembers("takton:kernel:v1:procs")
+    assert b"dead" not in store._r.smembers("tevarn:kernel:v1:procs")
 
 
 def test_escalation_pending_set():

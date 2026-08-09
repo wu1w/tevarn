@@ -72,7 +72,7 @@ async def assign_to_employee(
     inbox = get_workforce_inbox()
     if inbox is None:
         return (
-            "[Error] 收件箱未启用。请设置 TAKTON_AIOS_PROFILE=aios-dev 并重启后端，"
+            "[Error] 收件箱未启用。请设置 TEVARN_AIOS_PROFILE=aios-dev 并重启后端，"
             "确保 agent_dispatcher_enabled / persistence 打开。"
         )
     payload: dict[str, Any] = {"via": via, "assigned_name": ident.name}

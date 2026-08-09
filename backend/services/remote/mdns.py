@@ -9,11 +9,11 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-SERVICE_TYPE = "_takton-agent._tcp.local."
+SERVICE_TYPE = "_tevarn-agent._tcp.local."
 
 
 async def browse_agents(timeout_ms: int = 2500) -> list[dict[str, Any]]:
-    """Browse LAN for takton-agent services. Returns [] if zeroconf unavailable."""
+    """Browse LAN for tevarn-agent services. Returns [] if zeroconf unavailable."""
     try:
         from zeroconf import ServiceBrowser, ServiceListener, Zeroconf
     except ImportError:

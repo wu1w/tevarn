@@ -20,7 +20,7 @@ export const useLocaleStore = create<LocaleStore>()(
       toggle: () => set({ locale: get().locale === 'zh' ? 'en' : 'zh' }),
     }),
     {
-      name: 'takton-locale',
+      name: 'tevarn-locale',
       // SSR/首屏与 localStorage 语言不一致会 hydration mismatch
       skipHydration: true,
     }

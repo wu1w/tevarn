@@ -60,7 +60,7 @@ def main() -> int:
         st, login = req(
             "POST",
             "/auth/login",
-            body={"email": "admin@takton.dev", "password": "admin"},
+            body={"email": "admin@tevarn.dev", "password": "admin"},
         )
     token = login.get("access_token") if isinstance(login, dict) else None
     ok("login", bool(token), f"status={st}")

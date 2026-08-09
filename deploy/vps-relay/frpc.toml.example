@@ -1,10 +1,10 @@
 serverAddr = "150.158.109.231"
 serverPort = 7000
 auth.method = "token"
-auth.token = "TAKTON_RELAY_TOKEN_PLACEHOLDER"
+auth.token = "TEVARN_RELAY_TOKEN_PLACEHOLDER"
 
 [[proxies]]
-name = "takton-backend"
+name = "tevarn-backend"
 type = "tcp"
 localIP = "127.0.0.1"
 localPort = 8090

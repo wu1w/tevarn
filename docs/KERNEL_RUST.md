@@ -1,6 +1,6 @@
-# Takton Kernel / Runtime — Rust 化说明
+# Tevarn Kernel / Runtime — Rust 化说明
 
-版本：0.1.0（与 `crates/takton-kernel` 同步）  
+版本：0.1.0（与 `crates/tevarn-kernel` 同步）  
 **ABI**：`1.0.0` — 见 [`kernel-abi-v1.md`](./kernel-abi-v1.md)（P0-A）
 
 ## 架构
@@ -9,7 +9,7 @@
 Python (FastAPI / Agent Loop / Tools / Workforce DB)
         │  JSON-RPC (line-delimited) over TCP 127.0.0.1:17890
         ▼
-takton-kernel-host  ──►  takton-runtime  ──►  takton-kernel
+tevarn-kernel-host  ──►  tevarn-runtime  ──►  tevarn-kernel
                                               (process · capability · mediate
                                                · budget · audit · resources
                                                · scheduler)
@@ -17,18 +17,18 @@ takton-kernel-host  ──►  takton-runtime  ──►  takton-kernel
 
 | Crate | 职责 |
 |-------|------|
-| `takton-kernel` | 控制平面纯库：进程表、能力令牌、中介、预算账本、哈希链审计、调度、资源账户 |
-| `takton-runtime` | Runtime 门面：单例装配、service registry、health |
-| `takton-kernel-host` | 独立进程：JSON-RPC 宿主 |
+| `tevarn-kernel` | 控制平面纯库：进程表、能力令牌、中介、预算账本、哈希链审计、调度、资源账户 |
+| `tevarn-runtime` | Runtime 门面：单例装配、service registry、health |
+| `tevarn-kernel-host` | 独立进程：JSON-RPC 宿主 |
 
 Python 侧：
 
 - `backend/kernel_rust/` — RPC 客户端，API 兼容原 `AgentKernel`
 - `backend/kernel/kernel.py::get_kernel()` — **生产必须 Rust host**；失败时：
   - 默认 **raise**（H2）
-  - 仅 `TAKTON_DEV_UNSAFE=1` 或 `TAKTON_KERNEL_BACKEND=python` 才回退废弃 Python 实现
+  - 仅 `TEVARN_DEV_UNSAFE=1` 或 `TEVARN_KERNEL_BACKEND=python` 才回退废弃 Python 实现
 - `backend/kernel/*.py` 中 **Identity / Inbox / Dispatcher / Evolution** 仍为 Python（依赖 SQLAlchemy / Agent Loop），作为 Runtime 适配器挂到 kernel
-- **禁止**在 `backend/kernel/kernel.py` 增加新权威业务逻辑（改 `crates/takton-kernel`）
+- **禁止**在 `backend/kernel/kernel.py` 增加新权威业务逻辑（改 `crates/tevarn-kernel`）
 
 ### 权威边界（H2）
 
@@ -49,22 +49,22 @@ Python 侧：
 
 ```bash
 # 需安装 Rust toolchain (rustup)
-cd takton-feature-agent-kernel
-cargo build -p takton-kernel-host --release
-cargo test -p takton-kernel
+cd tevarn-feature-agent-kernel
+cargo build -p tevarn-kernel-host --release
+cargo test -p tevarn-kernel
 ```
 
-产物：`target/release/takton-kernel-host`（Windows 为 `.exe`）。
+产物：`target/release/tevarn-kernel-host`（Windows 为 `.exe`）。
 
 ## 运行
 
 ```bash
 # 单独启动 kernel host
-./target/release/takton-kernel-host --listen 127.0.0.1:17890
+./target/release/tevarn-kernel-host --listen 127.0.0.1:17890
 
 # 或由 Python 自动拉起（找到 debug/release 二进制后）
-set TAKTON_KERNEL_BACKEND=rust
-set TAKTON_KERNEL_AUTO_START=1
+set TEVARN_KERNEL_BACKEND=rust
+set TEVARN_KERNEL_AUTO_START=1
 python start.py
 ```
 
@@ -72,16 +72,16 @@ python start.py
 
 | 变量 | 说明 |
 |------|------|
-| `TAKTON_KERNEL_BACKEND` | `rust`（默认）/ `python`（仅 fixture） |
-| `TAKTON_KERNEL_HOST` | 默认 `127.0.0.1:17890` |
-| `TAKTON_KERNEL_HOST_BIN` | host 可执行文件路径 |
-| `TAKTON_KERNEL_AUTO_START` | `1` 时自动 spawn host |
-| `TAKTON_DEV_UNSAFE` | `1` 允许 Python fallback / 兼容全开（开发 only） |
-| `TAKTON_FORCE_PRODUCTION_GUARD` | `1` 在 test 中也强制生产守卫 |
-| `TAKTON_TOKEN_HMAC_SECRET` | CapabilityToken HMAC（与 JWT 解耦） |
-| `TAKTON_KERNEL_AUDIT_PATH` | 审计 JSONL 路径 |
-| `TAKTON_PKG_SIGNING_KEY` | 包市场签名密钥（生产必设，见 [PACKAGE_TRUST.md](./PACKAGE_TRUST.md)） |
-| `TAKTON_KERNEL_HOST_BIN` | host 可执行文件绝对路径 |
+| `TEVARN_KERNEL_BACKEND` | `rust`（默认）/ `python`（仅 fixture） |
+| `TEVARN_KERNEL_HOST` | 默认 `127.0.0.1:17890` |
+| `TEVARN_KERNEL_HOST_BIN` | host 可执行文件路径 |
+| `TEVARN_KERNEL_AUTO_START` | `1` 时自动 spawn host |
+| `TEVARN_DEV_UNSAFE` | `1` 允许 Python fallback / 兼容全开（开发 only） |
+| `TEVARN_FORCE_PRODUCTION_GUARD` | `1` 在 test 中也强制生产守卫 |
+| `TEVARN_TOKEN_HMAC_SECRET` | CapabilityToken HMAC（与 JWT 解耦） |
+| `TEVARN_KERNEL_AUDIT_PATH` | 审计 JSONL 路径 |
+| `TEVARN_PKG_SIGNING_KEY` | 包市场签名密钥（生产必设，见 [PACKAGE_TRUST.md](./PACKAGE_TRUST.md)） |
+| `TEVARN_KERNEL_HOST_BIN` | host 可执行文件绝对路径 |
 
 ### Court fail-closed（H-04）
 
@@ -96,7 +96,7 @@ python start.py
 强制 Python（测试 / 未编译）：
 
 ```bash
-set TAKTON_KERNEL_BACKEND=python
+set TEVARN_KERNEL_BACKEND=python
 ```
 
 ## RPC 方法（节选）
@@ -119,14 +119,14 @@ Python：`kernel.resource_charge(pid, "tool_calls", 1)` / `kernel.resource_usage
 
 ```bash
 # Rust 单元测试
-cargo test -p takton-kernel
+cargo test -p tevarn-kernel
 
 # Python 基础测试仍直接实例化 Python AgentKernel()（不依赖 host）
-set TAKTON_KERNEL_BACKEND=python
+set TEVARN_KERNEL_BACKEND=python
 pytest backend/tests/kernel/test_kernel_basic.py -q
 
 # 集成：host 启动后
-cargo build -p takton-kernel-host
+cargo build -p tevarn-kernel-host
 # 再对 get_kernel() 路径做 smoke
 ```
 

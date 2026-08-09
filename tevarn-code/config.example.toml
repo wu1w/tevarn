@@ -1,0 +1,30 @@
+# Example config — copy to ~/.tevarn-code/config.toml
+
+[llm]
+base_url = "http://127.0.0.1:8088/v1"
+api_key = "no-key"
+model = "<your-model.gguf>"
+temperature = 0.2
+max_tokens = 4096
+context_window = 65536
+compress_threshold = 0.55
+compress_keep_recent = 8
+
+[agent]
+max_iterations = 40
+auto_plan_complex = true
+simple_task_max_chars = 80
+allow_git_commit = true
+allow_git_push = false
+permission_profile = "cautious"
+checkpoint_every = 3
+
+[bridge]
+enabled = false
+base_url = "http://127.0.0.1:8090/api"
+api_token = ""
+use_desktop_models = true
+use_desktop_skills = true
+use_desktop_tools = true
+use_desktop_mcp = true
+use_desktop_rag = true

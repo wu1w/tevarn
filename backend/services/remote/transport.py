@@ -1,4 +1,4 @@
-"""L1 remote transport: control plane dials takton-agent WebSocket."""
+"""L1 remote transport: control plane dials tevarn-agent WebSocket."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ class RemoteAgentError(Exception):
 
 
 class RemoteTransport:
-    """One-shot or short-lived WS client to a takton-agent."""
+    """One-shot or short-lived WS client to a tevarn-agent."""
 
     def __init__(
         self,

@@ -36,7 +36,7 @@ def test_vpt_expiry():
 
 def test_via_relay_blocks_single_user_free_login():
     req = MagicMock()
-    req.headers = {"x-takton-relay": "1"}
+    req.headers = {"x-tevarn-relay": "1"}
     req.client = MagicMock()
     req.client.host = "127.0.0.1"
     assert _is_via_relay(req) is True

@@ -22,8 +22,8 @@ def _require_desktop_marker(request):
     # 若用户未 -m desktop，仍可能收集到本文件 → 无条件 skip，除非 env 放开
     import os
 
-    if os.environ.get("TAKTON_RUN_DESKTOP_TESTS", "").strip() not in {"1", "true", "yes"}:
-        pytest.skip("desktop integration: set TAKTON_RUN_DESKTOP_TESTS=1 to run")
+    if os.environ.get("TEVARN_RUN_DESKTOP_TESTS", "").strip() not in {"1", "true", "yes"}:
+        pytest.skip("desktop integration: set TEVARN_RUN_DESKTOP_TESTS=1 to run")
 
 
 @pytest.mark.asyncio

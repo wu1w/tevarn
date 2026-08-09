@@ -12,9 +12,9 @@ _ROOT = Path(__file__).resolve().parents[3]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-os.environ.setdefault("TAKTON_KERNEL_BACKEND", "rust")
-os.environ.setdefault("TAKTON_KERNEL_AUTO_START", "1")
-os.environ.setdefault("TAKTON_KERNEL_REQUIRE_INTENT", "true")
+os.environ.setdefault("TEVARN_KERNEL_BACKEND", "rust")
+os.environ.setdefault("TEVARN_KERNEL_AUTO_START", "1")
+os.environ.setdefault("TEVARN_KERNEL_REQUIRE_INTENT", "true")
 
 
 def _host_ready() -> bool:
@@ -34,7 +34,7 @@ def _host_ready() -> bool:
 @pytest.fixture(scope="module")
 def k():
     if not _host_ready():
-        pytest.skip("takton-kernel-host missing")
+        pytest.skip("tevarn-kernel-host missing")
     from backend.kernel_rust.client import RustAgentKernel, reset_rust_kernel_for_tests
 
     reset_rust_kernel_for_tests()

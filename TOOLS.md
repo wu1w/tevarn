@@ -4,12 +4,12 @@
 - 默认 shell：**Windows cmd**（`command` / Job 沙箱）
 - 沙箱 workspace 根 = 当前绑定项目目录（源码开发时常为仓库根）
 - 虚拟 home：`<workspace>\\.computers\\main\\home`
-- `TAKTON_HOME` / computer 内 `.takton`：技能、evolution、部分运行态
+- `TEVARN_HOME` / computer 内 `.tevarn`：技能、evolution、部分运行态
 
 ## 技能 Skills
 - 查找顺序以运行时注册表为准；磁盘常见于：
-  1. `<repo>\\.computers\\main\\home\\.takton\\skills\\...\\SKILL.md`
-  2. `%USERPROFILE%\\.takton\\skills`（若存在）
+  1. `<repo>\\.computers\\main\\home\\.tevarn\\skills\\...\\SKILL.md`
+  2. `%USERPROFILE%\\.tevarn\\skills`（若存在）
   3. 仓库内 `backend/skills/builtins`
 - 进化技能：`evo_*`，与「自主进化」列表同步
 
@@ -21,7 +21,7 @@
 | `memory/YYYY-MM-DD.md` 或 `memory-YYYY-MM-DD.md` | 按日短记忆 |
 | `AGENTS.md` / `SOUL.md` / `USER.md` / `TOOLS.md` | 启动契约 |
 
-查找根（`file_context`）：session workspace → env → **APPDATA takton/data/workspace** → cwd → 仓库根 → **`.computers/*/home`**
+查找根（`file_context`）：session workspace → env → **APPDATA tevarn/data/workspace** → cwd → 仓库根 → **`.computers/*/home`**
 
 ## 用量与缓存（只读观测）
 - UI：`/usage`（侧栏「用量」）

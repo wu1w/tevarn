@@ -6,8 +6,8 @@ import pytest
 
 
 def test_has_capability_none_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("TAKTON_FORCE_PRODUCTION_GUARD", "1")
-    monkeypatch.delenv("TAKTON_DEV_UNSAFE", raising=False)
+    monkeypatch.setenv("TEVARN_FORCE_PRODUCTION_GUARD", "1")
+    monkeypatch.delenv("TEVARN_DEV_UNSAFE", raising=False)
 
     from backend.kernel.process import AgentProcess
 
@@ -16,8 +16,8 @@ def test_has_capability_none_fail_closed(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_has_capability_none_open_dev(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("TAKTON_DEV_UNSAFE", "1")
-    monkeypatch.delenv("TAKTON_FORCE_PRODUCTION_GUARD", raising=False)
+    monkeypatch.setenv("TEVARN_DEV_UNSAFE", "1")
+    monkeypatch.delenv("TEVARN_FORCE_PRODUCTION_GUARD", raising=False)
 
     from backend.kernel.process import AgentProcess
 

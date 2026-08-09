@@ -1,5 +1,5 @@
 """
-Takton 系统提示词组装
+Tevarn 系统提示词组装
 
 参考 Hermes 三层架构 + Claude Code 底层硬编码：
 - Stable 层（不可变）：身份 + 核心行为准则 + 工具使用指导 + 任务完成指导
@@ -22,12 +22,22 @@ logger = logging.getLogger(__name__)
 # ═══════════════════════════════════════════════════════════════
 
 DEFAULT_IDENTITY = (
-    "You are Takton, an intelligent AI assistant. "
+    "You are Tevarn, an intelligent AI assistant. "
     "You are helpful, knowledgeable, and direct. You assist users with a wide "
     "range of tasks including answering questions, writing and editing code, "
     "analyzing information, creative work, and executing actions via your tools. "
     "You communicate clearly, admit uncertainty when appropriate, and prioritize "
     "being genuinely useful over being verbose."
+)
+
+# User-facing language: mirror the user; never force a fixed locale.
+USER_LANGUAGE_RULE = (
+    "# User language\n"
+    "Reply to the user in the same language they use in their messages. "
+    "If they write in Chinese, reply in Chinese; if they write in English, "
+    "reply in English; if they mix languages, follow their primary language. "
+    "Internal system/tool notes may be English — that does not change the "
+    "language of your visible reply to the user."
 )
 
 TOOL_USE_ENFORCEMENT = (
@@ -126,7 +136,7 @@ SKILLS_GUIDANCE = (
 
 EVOLUTION_GUIDANCE = (
     "# Autonomous Evolution (only when evolution tools are available)\n"
-    "Takton can draft skills from task experience (backend/evolution). "
+    "Tevarn can draft skills from task experience (backend/evolution). "
     "When manage_evolution / query_evolution is in your tool list, use those "
     "tools for 自主进化 questions — do not claim the feature is missing. "
     "If those tools are NOT listed this turn, do not invent evolution APIs; "
@@ -161,6 +171,7 @@ PROFESSIONAL_OBJECTIVITY = (
     "rigorous standards to all ideas and disagree when necessary."
 )
 
+# For models WITHOUT native reasoning_content — teach collapsible tags.
 THINKING_GUIDANCE = (
     "# Reasoning transparency\n"
     "When tasks are complex, put your internal reasoning in <thinking>...</thinking> "
@@ -168,6 +179,22 @@ THINKING_GUIDANCE = (
     "tags. This keeps your reasoning visible without cluttering the response.\n"
     "For diagrams and architecture: prefer ```mermaid code blocks for flowcharts "
     "and sequence diagrams. Use fenced code blocks with language tags for code."
+)
+
+# For models WITH native reasoning streams — do NOT also write <thinking> in content
+# (backend already streams reasoning_content as a ThinkingBlock). Avoid double-thinking.
+THINKING_GUIDANCE_NATIVE = (
+    "# Reasoning transparency\n"
+    "Your provider streams internal reasoning separately — do **not** wrap replies "
+    "in <thinking>...</thinking> or restate long chain-of-thought in the visible body.\n"
+    "Visible text: short progress notes + final answers only.\n"
+    "For diagrams: prefer ```mermaid; for code: fenced blocks with language tags."
+)
+
+# Diagram / formatting only (goal/code when native reasoning already active)
+DIAGRAM_CODE_HINT = (
+    "For diagrams and architecture: prefer ```mermaid code blocks. "
+    "Use fenced code blocks with language tags for code."
 )
 
 # 触发 tool-use enforcement 的模型名子串
@@ -223,12 +250,19 @@ PLATFORM_HINTS = {
     ),
 }
 
-# 运行模式提示词
+# 运行模式提示词（native_reasoning=True 时用无 <thinking> 变体，防双通道思考）
 MODE_PROMPTS = {
     "deepthink": (
         "# Deep Think Mode\n"
         "Analyze each question step by step in depth. Put reasoning in "
         "<thinking>...</thinking> tags, final conclusion outside.\n"
+        "Process: 1) Decompose dimensions 2) Analyze possibilities and "
+        "constraints 3) Reason and verify 4) Draw conclusion."
+    ),
+    "deepthink_native": (
+        "# Deep Think Mode\n"
+        "Analyze each question step by step in depth. Reasoning is streamed "
+        "separately by the provider — keep the visible reply as the conclusion only.\n"
         "Process: 1) Decompose dimensions 2) Analyze possibilities and "
         "constraints 3) Reason and verify 4) Draw conclusion."
     ),
@@ -245,14 +279,31 @@ MODE_PROMPTS = {
         "2. Advance 1-3 todos per turn; update status as you go\n"
         "3. Before responding, confirm all todos are done\n"
         "4. Do not stop until finished; if blocked, explain what you need\n"
-        "5. Put reasoning in <thinking>...</thinking>, final answer outside\n"
-        "6. Use ```mermaid for diagrams; fenced code blocks with language tags for code"
+        "5. Mid-work turns with tools: a short progress line in the user's language is enough\n"
+        "6. When tools are disabled this turn, the goal completes, or a segment ends: "
+        "write a **full user-facing summary** (done / remaining / evidence / next steps) "
+        "— not an empty body and not a tool-call inventory dump\n"
+        "7. Use ```mermaid for diagrams; fenced code blocks with language tags for code"
+    ),
+    "goal_native": (
+        "# Goal Mode — Autonomous Task Execution\n"
+        "You are executing a complex goal that may require multiple tool calls.\n"
+        "1. Break the goal into an actionable todo list\n"
+        "2. Advance 1-3 todos per turn; update status as you go\n"
+        "3. Before responding, confirm all todos are done\n"
+        "4. Do not stop until finished; if blocked, explain what you need\n"
+        "5. Do **not** write <thinking> tags or restate chain-of-thought in the body\n"
+        "6. Mid-work + tools: short progress line (user language) is fine\n"
+        "7. Segment end / goal complete / tools disabled: full user-facing summary "
+        "(done / remaining / checks / next steps); never leave the body empty\n"
+        "8. Use ```mermaid for diagrams; fenced code blocks with language tags for code"
     ),
     "code": (
         "# Code Mode\n"
         "Focus on writing, reviewing, and debugging code. Give complete, "
         "runnable implementations — no placeholders. Test before declaring "
-        "done. Follow existing project conventions and style."
+        "done. Follow existing project conventions and style. "
+        "Keep visible narration short; do not dump multi-line status inventories."
     ),
 }
 
@@ -288,6 +339,8 @@ def build_system_prompt(
 
     # 1. 身份（用户可覆盖，但底层有默认值）
     stable_parts.append(identity or DEFAULT_IDENTITY)
+    # Reply language follows the user (no fixed locale)
+    stable_parts.append(USER_LANGUAGE_RULE)
 
     # 2. 工具使用指导
     # tools_enabled is None = 调用方未传名单（默认仍有工具）→ 注入纪律
@@ -327,6 +380,21 @@ def build_system_prompt(
                 stable_parts.append(decisive_coding_guidance())
             except Exception:
                 pass
+            # Short progress discipline (soft); hard gates still enforce
+            try:
+                from backend.core.config import settings as _st_pd
+
+                if bool(getattr(_st_pd, "agent_progress_discipline_prompt", True)):
+                    stable_parts.append(
+                        "# Progress discipline\n"
+                        "- On [Blocked]/Poll throttle: follow the NEXT menu only; "
+                        "never retry the same blocked command.\n"
+                        "- Background cargo: wait for [bg_complete]; do not spam process poll.\n"
+                        "- Compile error[E…]: edit the --> path, then one cargo check.\n"
+                        "- cwd: absolute under project workspace; never install-dir relative paths."
+                    )
+            except Exception:
+                pass
         # 多类目落地纪律：审计/检索/数据/统计/文档/清单/排查/对比/计算…
         try:
             from backend.agent.task_grounding import grounding_prompt_block
@@ -335,8 +403,19 @@ def build_system_prompt(
         except Exception:
             pass
 
-    # 3. 思考指导（始终注入，轻量）
-    stable_parts.append(THINKING_GUIDANCE)
+    # 3. 思考指导：原生 reasoning 模型不再教写 <thinking>（防双通道）
+    _native_reason = False
+    try:
+        from backend.services.llm.reasoning_effort import supports_reasoning_control
+
+        _native_reason = bool(supports_reasoning_control(model=model))
+    except Exception:
+        _native_reason = False
+    # grok / o-series / reasoner 等：用 NATIVE 变体
+    if _native_reason:
+        stable_parts.append(THINKING_GUIDANCE_NATIVE)
+    else:
+        stable_parts.append(THINKING_GUIDANCE)
 
     # 4. 专业客观性（始终注入，防止过度讨好）
     stable_parts.append(PROFESSIONAL_OBJECTIVITY)
@@ -356,9 +435,13 @@ def build_system_prompt(
     if platform and platform in PLATFORM_HINTS:
         context_parts.append(PLATFORM_HINTS[platform])
 
-    # 模式提示
-    if mode and mode in MODE_PROMPTS:
-        context_parts.append(MODE_PROMPTS[mode])
+    # 模式提示（native 变体优先，避免 goal/deepthink 再要求手写 thinking 标签）
+    if mode:
+        mode_key = str(mode).strip().lower()
+        if _native_reason and f"{mode_key}_native" in MODE_PROMPTS:
+            context_parts.append(MODE_PROMPTS[f"{mode_key}_native"])
+        elif mode_key in MODE_PROMPTS:
+            context_parts.append(MODE_PROMPTS[mode_key])
 
     # ── Volatile 层 ────────────────────────────────────────
     volatile_parts: list[str] = []

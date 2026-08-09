@@ -1,7 +1,7 @@
 """Alembic env —— 复用 backend 的 async engine 配置与模型元数据。
 
 设计约定：
-- URL 从 settings.db_url 读取（TAKTON_DB_URL 环境变量可覆盖），alembic.ini 不写死
+- URL 从 settings.db_url 读取（TEVARN_DB_URL 环境变量可覆盖），alembic.ini 不写死
 - import backend.models 触发全部模型注册进 Base.metadata（与 database.py 同一约定）
 - sqlite 下 render_as_batch=True：ALTER TABLE 受限，批量模式重建表
 """

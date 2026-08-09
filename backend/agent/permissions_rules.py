@@ -40,7 +40,7 @@ class PermissionRule:
     pattern: str = "*"  # path/command glob; * = any
 
 
-# Map Takton tools → OpenCode-like permission keys
+# Map Tevarn tools → OpenCode-like permission keys
 TOOL_TO_KEY: dict[str, str] = {
     "file_write": PERM_EDIT,
     "edit_file": PERM_EDIT,

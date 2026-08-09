@@ -81,11 +81,11 @@ class _BootstrapAppState extends State<_BootstrapApp>
       });
 
       // Hard timeout so a stuck native host cannot freeze the UI forever.
-      final bridge = await createTaktonBridge().timeout(
+      final bridge = await createTevarnBridge().timeout(
         const Duration(seconds: 5),
         onTimeout: () {
-          debugPrint('createTaktonBridge timeout → HTTP fallback');
-          return HttpTaktonBridge(
+          debugPrint('createTevarnBridge timeout → HTTP fallback');
+          return HttpTevarnBridge(
             base: 'http://127.0.0.1:8765',
             kind: 'http-fallback-timeout',
           );
@@ -109,7 +109,7 @@ class _BootstrapAppState extends State<_BootstrapApp>
       debugPrint('boot failed: $e\n$st');
       if (!mounted) return;
       try {
-        final bridge = HttpTaktonBridge(kind: 'http-fallback-error');
+        final bridge = HttpTevarnBridge(kind: 'http-fallback-error');
         final ctrl = AppController(bridge);
         unawaited(ctrl.boot());
         setState(() {
@@ -128,7 +128,7 @@ class _BootstrapAppState extends State<_BootstrapApp>
     if (ctrl != null) {
       return ChangeNotifierProvider.value(
         value: ctrl,
-        child: TaktonApp(controller: ctrl, bootNote: _error),
+        child: TevarnApp(controller: ctrl, bootNote: _error),
       );
     }
     return MaterialApp(
@@ -181,7 +181,7 @@ class _BootstrapAppState extends State<_BootstrapApp>
                           ),
                           clipBehavior: Clip.antiAlias,
                           child: Image.asset(
-                            'assets/takton_logo.png',
+                            'assets/tevarn_logo.png',
                             width: 64,
                             height: 64,
                             fit: BoxFit.cover,
@@ -202,7 +202,7 @@ class _BootstrapAppState extends State<_BootstrapApp>
                       ),
                       const SizedBox(height: 20),
                       const Text(
-                        'Takton',
+                        'Tevarn',
                         style: TextStyle(
                           color: Colors.white,
                           fontSize: 18,
@@ -272,16 +272,16 @@ class _BootstrapAppState extends State<_BootstrapApp>
   }
 }
 
-class TaktonApp extends StatefulWidget {
-  const TaktonApp({super.key, required this.controller, this.bootNote});
+class TevarnApp extends StatefulWidget {
+  const TevarnApp({super.key, required this.controller, this.bootNote});
   final AppController controller;
   final String? bootNote;
 
   @override
-  State<TaktonApp> createState() => _TaktonAppState();
+  State<TevarnApp> createState() => _TevarnAppState();
 }
 
-class _TaktonAppState extends State<TaktonApp> with WidgetsBindingObserver {
+class _TevarnAppState extends State<TevarnApp> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
@@ -328,7 +328,7 @@ class _TaktonAppState extends State<TaktonApp> with WidgetsBindingObserver {
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: overlay,
       child: MaterialApp(
-        title: 'Takton',
+        title: 'Tevarn',
         debugShowCheckedModeBanner: false,
         theme: PixelTheme.light(),
         darkTheme: PixelTheme.dark(),

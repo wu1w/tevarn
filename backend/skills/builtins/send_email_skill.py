@@ -20,12 +20,12 @@ logger = logging.getLogger(__name__)
 def _smtp_config() -> dict[str, Any]:
     """合并 env + settings + config。"""
     cfg: dict[str, Any] = {
-        "host": os.environ.get("TAKTON_SMTP_HOST") or os.environ.get("SMTP_HOST") or "",
-        "port": int(os.environ.get("TAKTON_SMTP_PORT") or os.environ.get("SMTP_PORT") or "587"),
-        "user": os.environ.get("TAKTON_SMTP_USER") or os.environ.get("SMTP_USER") or "",
-        "password": os.environ.get("TAKTON_SMTP_PASSWORD") or os.environ.get("SMTP_PASSWORD") or "",
-        "from_addr": os.environ.get("TAKTON_SMTP_FROM") or os.environ.get("SMTP_FROM") or "",
-        "use_tls": (os.environ.get("TAKTON_SMTP_TLS") or os.environ.get("SMTP_TLS") or "1")
+        "host": os.environ.get("TEVARN_SMTP_HOST") or os.environ.get("SMTP_HOST") or "",
+        "port": int(os.environ.get("TEVARN_SMTP_PORT") or os.environ.get("SMTP_PORT") or "587"),
+        "user": os.environ.get("TEVARN_SMTP_USER") or os.environ.get("SMTP_USER") or "",
+        "password": os.environ.get("TEVARN_SMTP_PASSWORD") or os.environ.get("SMTP_PASSWORD") or "",
+        "from_addr": os.environ.get("TEVARN_SMTP_FROM") or os.environ.get("SMTP_FROM") or "",
+        "use_tls": (os.environ.get("TEVARN_SMTP_TLS") or os.environ.get("SMTP_TLS") or "1")
         not in ("0", "false", "False", "no"),
     }
     try:
@@ -69,7 +69,7 @@ class SendEmailSkill(BaseSkill):
     name = "send_email"
     description = (
         "当需要向用户或其他人发送邮件通知、报告或摘要时，"
-        "调用此工具发送邮件。需配置 SMTP（环境变量 TAKTON_SMTP_* 或设置项）。"
+        "调用此工具发送邮件。需配置 SMTP（环境变量 TEVARN_SMTP_* 或设置项）。"
     )
     parameters = {
         "type": "object",
@@ -102,12 +102,12 @@ class SendEmailSkill(BaseSkill):
         if not cfg["host"]:
             return (
                 "[Error] 未配置 SMTP。请设置环境变量 "
-                "TAKTON_SMTP_HOST / TAKTON_SMTP_PORT / TAKTON_SMTP_USER / "
-                "TAKTON_SMTP_PASSWORD / TAKTON_SMTP_FROM，或在设置中写入同名项。"
+                "TEVARN_SMTP_HOST / TEVARN_SMTP_PORT / TEVARN_SMTP_USER / "
+                "TEVARN_SMTP_PASSWORD / TEVARN_SMTP_FROM，或在设置中写入同名项。"
             )
         from_addr = cfg["from_addr"] or cfg["user"]
         if not from_addr:
-            return "[Error] 缺少发件人地址（TAKTON_SMTP_FROM 或 SMTP 用户）"
+            return "[Error] 缺少发件人地址（TEVARN_SMTP_FROM 或 SMTP 用户）"
 
         recipients = [x.strip() for x in to.replace(";", ",").split(",") if x.strip()]
         if not recipients:

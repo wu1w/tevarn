@@ -119,7 +119,7 @@ async def _eval_one(
         import os
 
         default_port = (
-            os.getenv("TAKTON_PORT")
+            os.getenv("TEVARN_PORT")
             or os.getenv("PORT")
             or os.getenv("BACKEND_PORT")
             or "8000"
@@ -178,7 +178,7 @@ async def _eval_command(c: dict[str, Any]) -> tuple[bool, str, str, float]:
 async def _eval_remote(
     c: dict[str, Any], ctx: dict[str, Any]
 ) -> tuple[bool, str, str, float]:
-    """Run command on paired device via takton-agent."""
+    """Run command on paired device via tevarn-agent."""
     device_name = (c.get("device") or c.get("device_name") or "").strip()
     command = (c.get("command") or "").strip()
     expect = c.get("contains") or c.get("pattern") or ""

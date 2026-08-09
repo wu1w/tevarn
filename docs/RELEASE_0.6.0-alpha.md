@@ -22,7 +22,7 @@
 
 ## 测试
 
-- `cargo test -p takton-kernel --lib` — 绿  
+- `cargo test -p tevarn-kernel --lib` — 绿  
 - Phase H + P0 acceptance 单测 — 绿  
 - 全量 `backend/tests`（无 host 时 ABI 相关 skip）  
 

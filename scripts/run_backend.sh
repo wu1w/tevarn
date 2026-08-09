@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Takton 后端启动脚本（dev/local）
+# Tevarn 后端启动脚本（dev/local）
 #
 # ⚠️  WORKERS 默认 1，不要随手调大：
 #     kernel 的 escalations / processes / events 是进程内存态
@@ -9,9 +9,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-WORKERS="${TAKTON_UVICORN_WORKERS:-1}"
+WORKERS="${TEVARN_UVICORN_WORKERS:-1}"
 if [ "$WORKERS" != "1" ]; then
-  echo "⚠️  TAKTON_UVICORN_WORKERS=$WORKERS —— kernel 内存态将在多 worker 间分裂，确认你知道在做什么" >&2
+  echo "⚠️  TEVARN_UVICORN_WORKERS=$WORKERS —— kernel 内存态将在多 worker 间分裂，确认你知道在做什么" >&2
 fi
 
 exec .venv311/bin/python -m uvicorn backend.main:app \

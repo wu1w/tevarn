@@ -24,7 +24,7 @@ async function apiLogin(): Promise<{
     r = await fetch(`${API}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'admin@takton.dev', password: 'admin' }),
+      body: JSON.stringify({ email: 'admin@tevarn.dev', password: 'admin' }),
     });
   }
   const d = (await r.json()) as { access_token?: string; expires_in?: number; user?: unknown };
@@ -73,7 +73,7 @@ test.describe('nav + interrupt conversation', () => {
       ({ tok, user, expiresIn }: { tok: string; user: unknown; expiresIn: number }) => {
         try {
           localStorage.setItem(
-            'takton-auth',
+            'tevarn-auth',
             JSON.stringify({
               state: {
                 user: user || null,
@@ -84,7 +84,7 @@ test.describe('nav + interrupt conversation', () => {
               version: 0,
             })
           );
-          document.cookie = `takton-auth=${tok}; path=/; max-age=${expiresIn || 604800}; SameSite=Strict`;
+          document.cookie = `tevarn-auth=${tok}; path=/; max-age=${expiresIn || 604800}; SameSite=Strict`;
         } catch {
           /* ignore */
         }

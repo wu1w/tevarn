@@ -145,19 +145,19 @@ function ChatPageInner() {
     React.useEffect(() => {
       if (process.env.NODE_ENV === 'production') return;
       const w = window as unknown as {
-        __taktonSmoke?: {
+        __tevarnSmoke?: {
           setPreview: (a: ChatArtifact | null) => void;
           addMessage: typeof addMessage;
           setMessages: (msgs: Message[]) => void;
         };
       };
-      w.__taktonSmoke = {
+      w.__tevarnSmoke = {
         setPreview: setPreviewArtifact,
         addMessage,
         setMessages: useSessionStore.getState().setMessages,
       };
       return () => {
-        delete w.__taktonSmoke;
+        delete w.__tevarnSmoke;
       };
     }, [addMessage]);
 
@@ -165,10 +165,10 @@ function ChatPageInner() {
   // 设备页「用此设备对话」带入的草稿
   React.useEffect(() => {
     try {
-      const d = sessionStorage.getItem('takton-compose-draft');
+      const d = sessionStorage.getItem('tevarn-compose-draft');
       if (d) {
         setEditingContent(d);
-        sessionStorage.removeItem('takton-compose-draft');
+        sessionStorage.removeItem('tevarn-compose-draft');
       }
     } catch { /* ignore */ }
   }, []);
@@ -293,7 +293,7 @@ function ChatPageInner() {
             useSessionStore.getState().clearMessages();
             try {
               window.dispatchEvent(
-                new CustomEvent('takton:session-invalid', { detail: { sessionId: sid } })
+                new CustomEvent('tevarn:session-invalid', { detail: { sessionId: sid } })
               );
             } catch {
               /* ignore */
@@ -309,7 +309,7 @@ function ChatPageInner() {
           if (status === 404) {
             try {
               window.dispatchEvent(
-                new CustomEvent('takton:session-invalid', { detail: { sessionId: sid } })
+                new CustomEvent('tevarn:session-invalid', { detail: { sessionId: sid } })
               );
             } catch {
               /* ignore */
@@ -401,7 +401,7 @@ function ChatPageInner() {
         setStreamStatusDetail(null);
       }
     };
-    window.addEventListener('takton:session-invalid', onInvalid);
+    window.addEventListener('tevarn:session-invalid', onInvalid);
     // 启动时拉一次 endpoints，覆盖魔法 8090
     void import('@/lib/api')
       .then(({ getRuntimeEndpoints }) => getRuntimeEndpoints())
@@ -413,7 +413,7 @@ function ChatPageInner() {
         }
       })
       .catch(() => undefined);
-    return () => window.removeEventListener('takton:session-invalid', onInvalid);
+    return () => window.removeEventListener('tevarn:session-invalid', onInvalid);
   }, []);
 
   const handleStreamDelta = useCallback((msg: StreamDeltaMessage) => {
@@ -579,14 +579,14 @@ function ChatPageInner() {
         }
         if (epoch != null) {
           try {
-            sessionStorage.setItem('takton:last_host_epoch', String(epoch));
+            sessionStorage.setItem('tevarn:last_host_epoch', String(epoch));
           } catch {
             /* ignore */
           }
         }
       };
-      window.addEventListener('takton:host-epoch', onEpoch);
-      return () => window.removeEventListener('takton:host-epoch', onEpoch);
+      window.addEventListener('tevarn:host-epoch', onEpoch);
+      return () => window.removeEventListener('tevarn:host-epoch', onEpoch);
     }, [t]);
 
     const handleStatusUpdate = useCallback((msg: StatusUpdateMessage) => {

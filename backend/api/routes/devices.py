@@ -114,7 +114,7 @@ async def pair_remote_agent(
     current_user: Annotated[UserRead, Depends(get_current_user)],
     repo: Annotated[DeviceRepository, Depends(get_device_repo)],
 ):
-    """配对局域网/本机 takton-agent：写入连接信息并尝试 hello+ping。"""
+    """配对局域网/本机 tevarn-agent：写入连接信息并尝试 hello+ping。"""
     from backend.services.remote.transport import RemoteAgentError, RemoteTransport
 
     transport = RemoteTransport(
@@ -168,7 +168,7 @@ async def discover_agents(
     current_user: Annotated[UserRead, Depends(get_current_user)],
     timeout_ms: int = 2500,
 ):
-    """mDNS 浏览 `_takton-agent._tcp.local`（无 zeroconf 时返回空列表）。"""
+    """mDNS 浏览 `_tevarn-agent._tcp.local`（无 zeroconf 时返回空列表）。"""
     from backend.services.remote.mdns import browse_agents
 
     agents = await browse_agents(timeout_ms=min(max(timeout_ms, 500), 8000))

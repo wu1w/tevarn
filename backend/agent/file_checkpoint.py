@@ -1,6 +1,6 @@
 """Minimal file checkpoints before write tools.
 
-Copies existing files into ``.takton/checkpoints/<timestamp>/...`` under project root.
+Copies existing files into ``.tevarn/checkpoints/<timestamp>/...`` under project root.
 """
 from __future__ import annotations
 
@@ -56,11 +56,11 @@ def snapshot_path_for_tool(name: str, arguments: dict[str, Any]) -> str | None:
     try:
         rel = target.relative_to(root)
     except ValueError:
-        # outside root — still checkpoint under .takton with flat name
+        # outside root — still checkpoint under .tevarn with flat name
         rel = Path("_external") / target.name
 
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    dest_root = root / ".takton" / "checkpoints" / ts
+    dest_root = root / ".tevarn" / "checkpoints" / ts
     dest = dest_root / rel
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(target, dest)
@@ -72,7 +72,7 @@ def snapshot_path_for_tool(name: str, arguments: dict[str, Any]) -> str | None:
 
 
 def list_recent_checkpoints(limit: int = 20) -> list[str]:
-    root = _project_root() / ".takton" / "checkpoints"
+    root = _project_root() / ".tevarn" / "checkpoints"
     if not root.is_dir():
         return []
     dirs = sorted([p for p in root.iterdir() if p.is_dir()], reverse=True)

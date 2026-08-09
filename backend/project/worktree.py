@@ -1,12 +1,12 @@
 """Git worktree management for isolated coding sessions (Grok-style).
 
 Layout (under main repo root):
-  .takton/worktrees/<name>/   ← git worktree path
-  .takton/worktrees.json      ← registry metadata (optional cache)
+  .tevarn/worktrees/<name>/   ← git worktree path
+  .tevarn/worktrees.json      ← registry metadata (optional cache)
 
 CLI parity with Grok:
-  takton-code --worktree [name] [--worktree-ref REF]
-  takton-code worktree list|show|rm|gc|add
+  tevarn-code --worktree [name] [--worktree-ref REF]
+  tevarn-code worktree list|show|rm|gc|add
 """
 
 from __future__ import annotations
@@ -92,11 +92,11 @@ def find_git_root(start: Path) -> Path | None:
 
 
 def worktrees_base(main_repo: Path) -> Path:
-    return (main_repo / ".takton" / "worktrees").resolve()
+    return (main_repo / ".tevarn" / "worktrees").resolve()
 
 
 def registry_path(main_repo: Path) -> Path:
-    return main_repo / ".takton" / "worktrees.json"
+    return main_repo / ".tevarn" / "worktrees.json"
 
 
 def _slugify(name: str) -> str:
@@ -215,7 +215,7 @@ def add_worktree(
     session_id: str | None = None,
     force: bool = False,
 ) -> WorktreeInfo:
-    """Create a linked worktree under .takton/worktrees/<name>."""
+    """Create a linked worktree under .tevarn/worktrees/<name>."""
     root = find_git_root(Path(repo_path).expanduser().resolve())
     if not root:
         raise WorktreeError(f"not a git repository: {repo_path}")
@@ -223,7 +223,7 @@ def add_worktree(
     wt_name = _slugify(name or f"tkc-{time.strftime('%Y%m%d-%H%M%S')}")
     base = worktrees_base(root)
     base.mkdir(parents=True, exist_ok=True)
-    # ensure .takton/worktrees is gitignored at repo level if possible
+    # ensure .tevarn/worktrees is gitignored at repo level if possible
     _ensure_gitignore(root)
 
     dest = base / wt_name
@@ -341,7 +341,7 @@ def gc_worktrees(repo_path: str | Path) -> list[str]:
     if changed:
         _save_registry(root, reg)
 
-    # prune empty dirs under .takton/worktrees
+    # prune empty dirs under .tevarn/worktrees
     base = worktrees_base(root)
     if base.is_dir():
         for child in list(base.iterdir()):
@@ -409,17 +409,17 @@ def resolve_session_root(
 
 def _ensure_gitignore(main_repo: Path) -> None:
     gi = main_repo / ".gitignore"
-    line = ".takton/worktrees/"
+    line = ".tevarn/worktrees/"
     try:
         if gi.is_file():
             text = gi.read_text(encoding="utf-8", errors="replace")
-            if line not in text and ".takton/" not in text:
+            if line not in text and ".tevarn/" not in text:
                 with gi.open("a", encoding="utf-8") as f:
                     if not text.endswith("\n"):
                         f.write("\n")
-                    f.write(f"\n# Takton Code worktrees\n{line}\n")
+                    f.write(f"\n# Tevarn Code worktrees\n{line}\n")
         else:
-            # don't force-create .gitignore at repo root silently if missing — only when .takton exists
+            # don't force-create .gitignore at repo root silently if missing — only when .tevarn exists
             pass
     except OSError:
         pass

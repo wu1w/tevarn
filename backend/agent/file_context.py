@@ -33,7 +33,7 @@ def _candidate_roots(extra_roots: list[str | Path] | None = None) -> list[Path]:
     """记忆/契约查找根（Windows 桌面 + 源码仓 + computer 虚拟 home）。
 
     权威落盘常不一致：
-    - Electron userData：``%APPDATA%/takton/data/workspace``
+    - Electron userData：``%APPDATA%/tevarn/data/workspace``
     - 源码开发：仓库根 / cwd
     - Job 沙箱 skills/home：``<workspace>/.computers/<id>/home``
     """
@@ -41,10 +41,10 @@ def _candidate_roots(extra_roots: list[str | Path] | None = None) -> list[Path]:
     for r in extra_roots or []:
         roots.append(Path(r))
     for env_key in (
-        "TAKTON_FILE_BROWSER_ROOT",
-        "TAKTON_WORKSPACE_DIR",
-        "TAKTON_PROJECT_ROOT",
-        "TAKTON_HOME",
+        "TEVARN_FILE_BROWSER_ROOT",
+        "TEVARN_WORKSPACE_DIR",
+        "TEVARN_PROJECT_ROOT",
+        "TEVARN_HOME",
     ):
         v = (os.environ.get(env_key) or "").strip()
         if v:
@@ -52,12 +52,12 @@ def _candidate_roots(extra_roots: list[str | Path] | None = None) -> list[Path]:
     # userData workspace (desktop)
     appdata = os.environ.get("APPDATA") or os.environ.get("HOME") or ""
     if appdata:
-        roots.append(Path(appdata) / "takton" / "data" / "workspace")
-        roots.append(Path(appdata) / "Takton" / "data" / "workspace")
-    # user profile ~/.takton (skills / grants 旁路；可能是目录或 junction)
+        roots.append(Path(appdata) / "tevarn" / "data" / "workspace")
+        roots.append(Path(appdata) / "Tevarn" / "data" / "workspace")
+    # user profile ~/.tevarn (skills / grants 旁路；可能是目录或 junction)
     home = os.environ.get("USERPROFILE") or os.environ.get("HOME") or ""
     if home:
-        roots.append(Path(home) / ".takton")
+        roots.append(Path(home) / ".tevarn")
     roots.append(Path.cwd())
     repo_root: Path | None = None
     try:
@@ -125,7 +125,7 @@ def find_memory_md(extra_roots: list[str | Path] | None = None) -> Path | None:
             p = root / name
             if p.is_file():
                 return p
-            for sub in ("memory", "docs", ".takton", "config"):
+            for sub in ("memory", "docs", ".tevarn", "config"):
                 p2 = root / sub / name
                 if p2.is_file():
                     return p2
@@ -268,7 +268,7 @@ def _find_named_md(names: tuple[str, ...], extra_roots: list[str | Path] | None 
             p = root / name
             if p.is_file():
                 return p
-            for sub in ("config", ".takton", "docs", "persona", "profile"):
+            for sub in ("config", ".tevarn", "docs", "persona", "profile"):
                 p2 = root / sub / name
                 if p2.is_file():
                     return p2

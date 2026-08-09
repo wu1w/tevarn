@@ -8,7 +8,7 @@ import * as path from 'path';
 
 const BASE = process.env.SMOKE_BASE_URL || 'http://127.0.0.1:3015';
 const API = process.env.SMOKE_API_URL || 'http://127.0.0.1:8095';
-const OUT = process.env.SCREENSHOT_DIR || '/tmp/takton-ui-v2-shots';
+const OUT = process.env.SCREENSHOT_DIR || '/tmp/tevarn-ui-v2-shots';
 
 const PAGES: { path: string; name: string }[] = [
   { path: '/', name: '01-chat' },
@@ -44,17 +44,17 @@ async function login(page: Page) {
   await page.evaluate(
     ({ token, user }) => {
       localStorage.setItem(
-        'takton-auth',
+        'tevarn-auth',
         JSON.stringify({
           state: { token, user, isAuthenticated: true, hasHydrated: true },
           version: 0,
         })
       );
-      localStorage.setItem('takton-sidebar-open', '1');
-      document.cookie = `takton-auth=${token}; path=/; SameSite=Strict`;
+      localStorage.setItem('tevarn-sidebar-open', '1');
+      document.cookie = `tevarn-auth=${token}; path=/; SameSite=Strict`;
       // force dark theme for consistent shots
       document.documentElement.setAttribute('data-theme', 'dark');
-      localStorage.setItem('takton-theme', JSON.stringify({ state: { theme: 'dark' }, version: 0 }));
+      localStorage.setItem('tevarn-theme', JSON.stringify({ state: { theme: 'dark' }, version: 0 }));
     },
     { token: body.access_token, user: body.user }
   );
@@ -93,7 +93,7 @@ test('ui v2 page gallery', async ({ page }) => {
   await page.goto(`${BASE}/`);
   await page.evaluate(() => {
     document.documentElement.setAttribute('data-theme', 'dark');
-    localStorage.setItem('takton-sidebar-open', '0');
+    localStorage.setItem('tevarn-sidebar-open', '0');
   });
   await page.reload();
   await page.waitForTimeout(800);

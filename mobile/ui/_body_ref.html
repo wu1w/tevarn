@@ -3,7 +3,7 @@
 
 <div id="stage">
   <div id="side">
-    <h1><span class="px">TAKTON MOBILE</span>口袋里的 AI 公司</h1>
+    <h1><span class="px">TEVARN MOBILE</span>口袋里的 AI 公司</h1>
     <p>连接 PC 后可远程接管 agent / 审批 / 进程；LLM 设置与 PC 端一致。未连 PC 时也可直接配置模型对话。</p>
     <div class="tips">
       <b>试试这些：</b><br>
@@ -37,7 +37,7 @@
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 5h18v3H3zM3 11h18v3H3zM3 17h12v3H3z"/></svg>
     </button>
     <div style="flex:1; min-width:0">
-      <div class="tt" id="chat-title">Takton</div>
+      <div class="tt" id="chat-title">Tevarn</div>
       <div class="sub" id="chat-sub">连接后加载会话</div>
     </div>
     <button class="iconbtn" title="新建会话" onclick="newChat()">
@@ -136,7 +136,7 @@
   <div class="shead">
     <div style="flex:1">
       <div class="tt">远程连接</div>
-      <div class="sub">接管 PC 上的 Takton 运行时</div>
+      <div class="sub">接管 PC 上的 Tevarn 运行时</div>
     </div>
     <span class="badge am" id="rm-state">LOCAL</span>
   </div>
@@ -144,7 +144,7 @@
     <div class="card2 conn-hero">
       <svg width="56" height="56" viewBox="0 0 24 24" fill="var(--purple)" style="shape-rendering:crispEdges; margin:0 auto; display:block"><path d="M7 7h10v2H7zM7 15h10v2H7zM7 7h2v10H7zM15 7h2v10h-2zM10 10h4v4h-4zM9 3h2v4H9zM13 3h2v4h-2zM9 17h2v4H9zM13 17h2v4h-2zM3 9h4v2H3zM3 13h4v2H3zM17 9h4v2h-4zM17 13h4v2h-4z"/></svg>
       <div class="big" id="rm-title">未连接</div>
-      <div class="mut num" id="rm-meta">填写地址登录你的 PC Takton</div>
+      <div class="mut num" id="rm-meta">填写地址登录你的 PC Tevarn</div>
       <div style="display:flex; gap:8px; justify-content:center; margin-top:14px">
         <button class="btn sm" id="rm-disc" onclick="disconnect()">断开连接</button>
         <button class="btn sm cy" onclick="runtimeHeartbeat()">心跳测试</button>
@@ -162,7 +162,7 @@
       </div>
       <div id="manual" style="display:none; margin-top:12px">
         <div class="fg"><span class="lb">PC Base URL</span><input class="inp num" id="pair-base" value="http://127.0.0.1:8090"></div>
-        <div class="fg"><span class="lb">登录邮箱</span><input class="inp num" id="pair-email" placeholder="admin@takton.dev"></div>
+        <div class="fg"><span class="lb">登录邮箱</span><input class="inp num" id="pair-email" placeholder="admin@tevarn.dev"></div>
         <div class="fg"><span class="lb">密码</span><input class="inp num" id="pair-pass" type="password" placeholder="留空则 loopback auto-login"></div>
         <button class="btn pri blk" onclick="connectFromPairForm()">连接 PC</button>
         <div class="mut" style="margin-top:10px">L1 agent 配对（远程执行节点）：</div>
@@ -199,9 +199,9 @@
 
     <div class="sect">PC 连接</div>
     <div class="card2">
-      <div class="mut" style="margin-bottom:10px; line-height:1.6">连接 Takton 后端以使用 agent / 审批 / 进程。局域网外请使用 HTTPS。</div>
-      <div class="fg"><span class="lb">Takton Base URL</span><input class="inp num" id="api-base" value="http://127.0.0.1:8090"></div>
-      <div class="fg"><span class="lb">邮箱</span><input class="inp num" id="api-email" placeholder="admin@takton.dev"></div>
+      <div class="mut" style="margin-bottom:10px; line-height:1.6">连接 Tevarn 后端以使用 agent / 审批 / 进程。局域网外请使用 HTTPS。</div>
+      <div class="fg"><span class="lb">Tevarn Base URL</span><input class="inp num" id="api-base" value="http://127.0.0.1:8090"></div>
+      <div class="fg"><span class="lb">邮箱</span><input class="inp num" id="api-email" placeholder="admin@tevarn.dev"></div>
       <div class="fg"><span class="lb">登录密码</span><input class="inp num" id="api-key" type="password" value="" placeholder="密码；本机 loopback 可留空"></div>
       <div style="display:flex; gap:8px">
         <button class="btn pri" style="flex:1" onclick="testApi(this)">连接</button>
@@ -271,7 +271,7 @@
 
     <div class="sect">ABOUT</div>
     <div class="card2" style="padding-top:6px; padding-bottom:6px">
-      <div class="row"><div class="rt">Takton Mobile</div><span class="mut num">v0.1.0 · Pixel Console · Rust</span></div>
+      <div class="row"><div class="rt">Tevarn Mobile</div><span class="mut num">v0.1.0 · Pixel Console · Rust</span></div>
       <div class="row"><div class="rt">协议</div><span class="mut">MIT · Local-first</span></div>
       <div class="row"><div class="rt">后端</div><span class="mut num" id="me-backend">—</span></div>
     </div>
@@ -305,7 +305,7 @@
       <div class="mask" onclick="drawer(0)"></div>
       <div class="panel">
         <div class="dh">
-          <span class="px" style="font-size:13px; color:var(--purple)">TAKTON</span>
+          <span class="px" style="font-size:13px; color:var(--purple)">TEVARN</span>
           <span class="mut">会话</span>
           <button class="iconbtn" style="margin-left:auto; width:30px; height:30px" onclick="newChat()" title="新建当前模式会话">
             <svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 4h4v6h6v4h-6v6h-4v-6H4v-4h6z"/></svg>

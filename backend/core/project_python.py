@@ -1,7 +1,7 @@
-"""解析 Takton 项目 Python 解释器，避免 PATH 上 hermes/其它 venv 污染编制 command。
+"""解析 Tevarn 项目 Python 解释器，避免 PATH 上 hermes/其它 venv 污染编制 command。
 
 优先级：
-1. 环境变量 TAKTON_PYTHON
+1. 环境变量 TEVARN_PYTHON
 2. 当前进程 sys.executable（backend 已在项目 venv 内时）
 3. 仓库根 .venv/Scripts/python.exe 或 .venv/bin/python
 4. sys.executable 兜底
@@ -28,7 +28,7 @@ def project_root() -> Path:
 
 
 def resolve_project_python() -> str:
-    env = (os.environ.get("TAKTON_PYTHON") or "").strip()
+    env = (os.environ.get("TEVARN_PYTHON") or "").strip()
     if env and Path(env).is_file():
         return str(Path(env).resolve())
 

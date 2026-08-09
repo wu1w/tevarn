@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "dev.takton.takton_mobile"
+    namespace = "dev.tevarn.tevarn_mobile"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = "28.2.13676358"
 
@@ -19,7 +19,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "dev.takton.takton_mobile"
+        applicationId = "dev.tevarn.tevarn_mobile"
         minSdk = maxOf(flutter.minSdkVersion, 23)
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode

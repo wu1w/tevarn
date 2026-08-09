@@ -1,4 +1,4 @@
-﻿# Takton Alpha 打包说明
+﻿# Tevarn Alpha 打包说明
 
 - 报告：reports/AIOS_0.6_NIGHT_SPRINT_REPORT_2026-07-29.md
 - 冲刺清单：docs/internal/AUTONOMOUS_SPRINT_0.5_to_0.6.md

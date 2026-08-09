@@ -177,7 +177,7 @@ function extractMdLinks(content: string, map: Map<string, ChatArtifact>) {
 function extractBarePaths(content: string, map: Map<string, ChatArtifact>) {
   // workspace/foo/bar.xlsx 或 ./out/a.csv 或 path with chinese
   const re =
-    /(?:^|[\s"'`(]|=)((?:[\w.-]+\/)+[\w.-]+\.[A-Za-z0-9]{1,10}|(?:workspace|uploads|\.takton)\/[^\s"'`)\]]+\.[A-Za-z0-9]{1,10}|[A-Za-z]:\\[^\s"'`]+\.[A-Za-z0-9]{1,10})/g;
+    /(?:^|[\s"'`(]|=)((?:[\w.-]+\/)+[\w.-]+\.[A-Za-z0-9]{1,10}|(?:workspace|uploads|\.tevarn)\/[^\s"'`)\]]+\.[A-Za-z0-9]{1,10}|[A-Za-z]:\\[^\s"'`]+\.[A-Za-z0-9]{1,10})/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(content)) !== null) {
     let raw = m[1];

@@ -38,11 +38,11 @@ async function loginViaApi(page: Page, token: string) {
   await page.waitForLoadState('domcontentloaded');
   await page.evaluate((tok) => {
     const payload = {
-      state: { token: tok, user: { email: 'admin@takton.dev' }, isAuthenticated: true, hasHydrated: true },
+      state: { token: tok, user: { email: 'admin@tevarn.dev' }, isAuthenticated: true, hasHydrated: true },
       version: 0,
     };
-    localStorage.setItem('takton-auth', JSON.stringify(payload));
-    document.cookie = `takton-auth=${tok}; path=/; SameSite=Strict`;
+    localStorage.setItem('tevarn-auth', JSON.stringify(payload));
+    document.cookie = `tevarn-auth=${tok}; path=/; SameSite=Strict`;
   }, token);
 }
 

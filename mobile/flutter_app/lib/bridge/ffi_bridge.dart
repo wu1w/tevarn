@@ -7,7 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'http_bridge.dart';
-import 'takton_bridge.dart';
+import 'tevarn_bridge.dart';
 
 typedef _StartHostNative = Pointer<Utf8> Function(Int32);
 typedef _StartHostDart = Pointer<Utf8> Function(int);
@@ -18,12 +18,12 @@ typedef _CallDart = Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>);
 typedef _FreeNative = Void Function(Pointer<Utf8>);
 typedef _FreeDart = void Function(Pointer<Utf8>);
 
-/// Native FFI bridge → `libtakton_mobile_ffi`.
-/// Falls back to [HttpTaktonBridge] with **explicit** kind when the .so is missing.
-class FfiTaktonBridge extends TaktonBridge {
-  FfiTaktonBridge._(this._http, this._call, this._free, this._kind);
+/// Native FFI bridge → `libtevarn_mobile_ffi`.
+/// Falls back to [HttpTevarnBridge] with **explicit** kind when the .so is missing.
+class FfiTevarnBridge extends TevarnBridge {
+  FfiTevarnBridge._(this._http, this._call, this._free, this._kind);
 
-  final HttpTaktonBridge _http;
+  final HttpTevarnBridge _http;
   final _CallDart? _call;
   final _FreeDart? _free;
   final String _kind;
@@ -31,18 +31,18 @@ class FfiTaktonBridge extends TaktonBridge {
   /// Last create note (for island / debug).
   static String lastCreateNote = '';
 
-  static Future<TaktonBridge> create({int preferredPort = 8765}) async {
+  static Future<TevarnBridge> create({int preferredPort = 8765}) async {
     if (kIsWeb) {
-      lastCreateNote = 'web → HttpTaktonBridge';
-      return HttpTaktonBridge(kind: 'http-web');
+      lastCreateNote = 'web → HttpTevarnBridge';
+      return HttpTevarnBridge(kind: 'http-web');
     }
     const envBase = String.fromEnvironment(
-      'TAKTON_HOST',
+      'TEVARN_HOST',
       defaultValue: 'http://127.0.0.1:8765',
     );
     try {
       final lib = _openLib();
-      final free = lib.lookupFunction<_FreeNative, _FreeDart>('takton_free');
+      final free = lib.lookupFunction<_FreeNative, _FreeDart>('tevarn_free');
 
       // Prefer application support dir so Android can write (dirs crate is empty there).
       String? dataDir;
@@ -57,7 +57,7 @@ class FfiTaktonBridge extends TaktonBridge {
       if (dataDir != null && dataDir.isNotEmpty) {
         try {
           final start2 = lib
-              .lookupFunction<_StartHost2Native, _StartHost2Dart>('takton_start_host2');
+              .lookupFunction<_StartHost2Native, _StartHost2Dart>('tevarn_start_host2');
           final dPtr = dataDir.toNativeUtf8();
           try {
             p = start2(preferredPort, dPtr);
@@ -65,14 +65,14 @@ class FfiTaktonBridge extends TaktonBridge {
             malloc.free(dPtr);
           }
         } catch (_) {
-          // Older .so without takton_start_host2
+          // Older .so without tevarn_start_host2
           final start =
-              lib.lookupFunction<_StartHostNative, _StartHostDart>('takton_start_host');
+              lib.lookupFunction<_StartHostNative, _StartHostDart>('tevarn_start_host');
           p = start(preferredPort);
         }
       } else {
         final start =
-            lib.lookupFunction<_StartHostNative, _StartHostDart>('takton_start_host');
+            lib.lookupFunction<_StartHostNative, _StartHostDart>('tevarn_start_host');
         p = start(preferredPort);
       }
 
@@ -83,15 +83,15 @@ class FfiTaktonBridge extends TaktonBridge {
         lastCreateNote =
             'FFI host start failed: ${m['error'] ?? raw} → HTTP fallback $envBase';
         debugPrint(lastCreateNote);
-        return HttpTaktonBridge(base: envBase, kind: 'http-fallback');
+        return HttpTevarnBridge(base: envBase, kind: 'http-fallback');
       }
       final base = m['base']?.toString() ?? 'http://127.0.0.1:$preferredPort';
       lastCreateNote = 'FFI host ok · $base · data=${m['data_dir'] ?? dataDir}';
       debugPrint(lastCreateNote);
 
-      final call = lib.lookupFunction<_CallNative, _CallDart>('takton_call');
-      return FfiTaktonBridge._(
-        HttpTaktonBridge(base: base, kind: 'ffi'),
+      final call = lib.lookupFunction<_CallNative, _CallDart>('tevarn_call');
+      return FfiTevarnBridge._(
+        HttpTevarnBridge(base: base, kind: 'ffi'),
         call,
         free,
         'ffi',
@@ -100,15 +100,15 @@ class FfiTaktonBridge extends TaktonBridge {
       lastCreateNote = 'FFI load failed: $e → HTTP fallback $envBase';
       debugPrint(lastCreateNote);
       debugPrint('$st');
-      return HttpTaktonBridge(base: envBase, kind: 'http-fallback');
+      return HttpTevarnBridge(base: envBase, kind: 'http-fallback');
     }
   }
 
   static DynamicLibrary _openLib() {
-    if (Platform.isAndroid) return DynamicLibrary.open('libtakton_mobile_ffi.so');
+    if (Platform.isAndroid) return DynamicLibrary.open('libtevarn_mobile_ffi.so');
     if (Platform.isIOS) return DynamicLibrary.process();
-    if (Platform.isLinux) return DynamicLibrary.open('libtakton_mobile_ffi.so');
-    if (Platform.isMacOS) return DynamicLibrary.open('libtakton_mobile_ffi.dylib');
+    if (Platform.isLinux) return DynamicLibrary.open('libtevarn_mobile_ffi.so');
+    if (Platform.isMacOS) return DynamicLibrary.open('libtevarn_mobile_ffi.dylib');
     throw UnsupportedError('platform');
   }
 

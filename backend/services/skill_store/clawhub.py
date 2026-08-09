@@ -96,7 +96,7 @@ class ClawHubFetcher(SkillStoreFetcher):
         
         return UnifiedSkill(
             id=slug,
-            name=slug.replace("-", "_").replace("/", "__"),  # takton skill name 只允许 [a-zA-Z0-9_]
+            name=slug.replace("-", "_").replace("/", "__"),  # tevarn skill name 只允许 [a-zA-Z0-9_]
             display_name=_safe_str(item.get("displayName") or slug),
             summary=_safe_str(item.get("summary")),
             description=_safe_str(item.get("description")),

@@ -120,9 +120,9 @@ def _is_via_relay(request: Request | None) -> bool:
         return False
     try:
         raw = (
-            h.get("x-takton-relay")
-            or h.get("x-takton-via-relay")
-            or h.get("X-Takton-Relay")
+            h.get("x-tevarn-relay")
+            or h.get("x-tevarn-via-relay")
+            or h.get("X-Tevarn-Relay")
             or ""
         )
     except Exception:
@@ -145,13 +145,13 @@ def resolve_default_admin_password() -> str:
     此前 auth.auto_login、websocket、dependencies 各写了一份，其中两份用
     `or "admin"` 兜底，把 config.get_or_create_initial_admin_password() 那套
     随机密码机制架空了：哪条路径先创建用户就用哪个密码，而实际部署里
-    WS / auto-login 往往先触发，于是 admin@takton.dev 的密码就是 "admin"。
+    WS / auto-login 往往先触发，于是 admin@tevarn.dev 的密码就是 "admin"。
     """
     import os
 
     return (
         (settings.default_admin_password or "").strip()
-        or os.environ.get("TAKTON_DEFAULT_ADMIN_PASSWORD", "").strip()
+        or os.environ.get("TEVARN_DEFAULT_ADMIN_PASSWORD", "").strip()
         or get_or_create_initial_admin_password()
     )
 
@@ -173,7 +173,7 @@ def assert_local_single_user(request: Request) -> None:
             detail=(
                 "single_user_mode allows loopback access only "
                 "(VPS relay traffic must use JWT / pair session); "
-                "set TAKTON_SINGLE_USER_MODE=false for open multi-user deploys"
+                "set TEVARN_SINGLE_USER_MODE=false for open multi-user deploys"
             ),
         )
 
@@ -187,7 +187,7 @@ async def get_current_user(
 
     - 有 Bearer 且有效 → 对应用户
     - 有 Bearer 但无效/过期 → 401（禁止静默回落，避免会话 403 身份错乱）
-    - 无 Bearer 且 single_user_mode → 默认 admin@takton.dev（仅 loopback）
+    - 无 Bearer 且 single_user_mode → 默认 admin@tevarn.dev（仅 loopback）
     """
     has_bearer = bool(authorization and authorization.startswith("Bearer "))
     if has_bearer:
@@ -226,21 +226,21 @@ async def get_current_user(
         )
 
     if settings.single_user_mode:
-        # 安全闸门：无 Bearer 放行 admin 仅限真本机；VPS 隧道注入 x-takton-relay 一律拒绝。
+        # 安全闸门：无 Bearer 放行 admin 仅限真本机；VPS 隧道注入 x-tevarn-relay 一律拒绝。
         if not _may_single_user_free_login(request):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=(
                     "single_user_mode allows loopback access only "
                     "(relay-proxied requests need Bearer JWT); "
-                    "set TAKTON_SINGLE_USER_MODE=false for open multi-user deploys"
+                    "set TEVARN_SINGLE_USER_MODE=false for open multi-user deploys"
                 ),
             )
         # 查找或创建默认用户
-        default = await user_repo.get_by_email("admin@takton.dev")
+        default = await user_repo.get_by_email("admin@tevarn.dev")
         if default:
             return UserRead.model_validate(default)
-        # 数据库尚未初始化用户，创建默认用户（密码可由 TAKTON_DEFAULT_ADMIN_PASSWORD 注入）
+        # 数据库尚未初始化用户，创建默认用户（密码可由 TEVARN_DEFAULT_ADMIN_PASSWORD 注入）
         from sqlalchemy.exc import IntegrityError
 
         from backend.core.security import get_password_hash
@@ -249,7 +249,7 @@ async def get_current_user(
         try:
             user = await user_repo.create(
                 {
-                    "email": "admin@takton.dev",
+                    "email": "admin@tevarn.dev",
                     "username": "admin",
                     "hashed_password": get_password_hash(default_pw),
                     "is_superuser": True,
@@ -259,7 +259,7 @@ async def get_current_user(
             return UserRead.model_validate(user)
         except IntegrityError:
             # 并发创建导致唯一约束冲突，回滚后重新获取
-            default = await user_repo.get_by_email("admin@takton.dev")
+            default = await user_repo.get_by_email("admin@tevarn.dev")
             if default:
                 return UserRead.model_validate(default)
             raise

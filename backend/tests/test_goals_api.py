@@ -2,7 +2,7 @@
 
 ⚠️ 隔离要点：goals 路由的 repo 走全局 `backend.database.AsyncSessionLocal`
 （不经过 get_db 依赖注入），conftest 的 override_get_db 对它无效——不隔离
-就会写真实库（2026-07-27 实际踩过：takton.db 混入 20 条测试行）。
+就会写真实库（2026-07-27 实际踩过：tevarn.db 混入 20 条测试行）。
 因此 monkeypatch repo 层 session 工厂到 conftest 的内存引擎。
 """
 

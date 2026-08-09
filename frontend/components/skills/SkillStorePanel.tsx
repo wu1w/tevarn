@@ -32,12 +32,12 @@ const SOURCE_META: Record<
   string,
   { label: string; short: string; color: string; ring: string; tipKey: string }
 > = {
-  takton: {
-    label: 'Takton',
+  tevarn: {
+    label: 'Tevarn',
     short: 'Tk',
     color: 'bg-sky-500/15 text-sky-600 dark:text-sky-400 border-sky-500/25',
     ring: 'ring-sky-500/30',
-    tipKey: 'store.src.takton',
+    tipKey: 'store.src.tevarn',
   },
   clawhub: {
     label: 'ClawHub',
@@ -147,13 +147,13 @@ const SkillCard = memo(function SkillCard({
   const meta = SOURCE_META[skill.source] || SOURCE_META.custom;
   // Claude/Hermes 有 skill_md_url 可直装；ClawHub 走后端「元数据→SKILL.md」转换安装
   const canInstall =
-    skill.source !== 'takton' &&
+    skill.source !== 'tevarn' &&
     (skill.source === 'clawhub' ||
       !!skill.skill_md_url ||
       skill.source === 'awesome-claude' ||
       skill.source === 'awesome-hermes');
   const isClawhub = skill.source === 'clawhub';
-  const isTakton = skill.source === 'takton';
+  const isTevarn = skill.source === 'tevarn';
 
   return (
     <article
@@ -241,10 +241,10 @@ const SkillCard = memo(function SkillCard({
             className="flex-1 rounded-lg bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-500/20 disabled:opacity-50">
             {busy ? t('store.busy') : t('store.uninstall')}
           </button>
-        ) : isTakton ? (
+        ) : isTevarn ? (
           <button
             type="button"disabled
-            title={t('store.taktonTip')}
+            title={t('store.tevarnTip')}
             className="flex-1 cursor-not-allowed rounded-lg border border-border-subtle bg-elevated-bg px-3 py-1.5 text-xs font-medium text-foreground-muted opacity-80">
             {t('store.useCommunity')}
           </button>
@@ -978,7 +978,7 @@ export default function SkillStorePanel() {
                     className="flex-1 rounded-lg bg-red-500/10 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-500/20">
                     {t('store.uninstall')}
                   </button>
-                ) : selectedSkill.source === 'takton' ? (
+                ) : selectedSkill.source === 'tevarn' ? (
                   <button
                     type="button"disabled
                     className="flex-1 cursor-not-allowed rounded-lg border border-border-subtle bg-elevated-bg px-4 py-2 text-sm text-foreground-muted opacity-80">

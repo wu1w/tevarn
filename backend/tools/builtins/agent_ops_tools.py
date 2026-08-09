@@ -115,7 +115,7 @@ class DeviceOnboardTool(BaseTool):
             name="device_onboard",
             description=(
                 "远程设备开箱：action=guide|discover|status。"
-                "说明如何安装/配对 takton-agent；discover 扫描局域网；status 看已配对设备。"
+                "说明如何安装/配对 tevarn-agent；discover 扫描局域网；status 看已配对设备。"
             ),
             parameters={
                 "type": "object",
@@ -137,8 +137,8 @@ class DeviceOnboardTool(BaseTool):
         action = str(kwargs.get("action") or "guide").lower()
         if action == "guide":
             return (
-                "# 远程设备开箱（takton-agent）\n"
-                "1. 在目标机器安装并启动 takton-agent（L1），记下 host:port 与 token。\n"
+                "# 远程设备开箱（tevarn-agent）\n"
+                "1. 在目标机器安装并启动 tevarn-agent（L1），记下 host:port 与 token。\n"
                 "2. 本机 UI 打开 /devices，或 API：\n"
                 "   POST /api/devices/pair  {\"name\":\"remote-pc\",\"host\":\"192.168.x.x\",\"port\":7xxx,\"token\":\"...\"}\n"
                 "3. 验证：list_devices_tool 或 device_onboard action=status\n"
@@ -154,7 +154,7 @@ class DeviceOnboardTool(BaseTool):
 
                 found = await browse_agents(timeout_ms=int(kwargs.get("timeout_ms") or 2500))
                 if not found:
-                    return "No agents discovered on LAN (mDNS). Start takton-agent or pair manually."
+                    return "No agents discovered on LAN (mDNS). Start tevarn-agent or pair manually."
                 return json.dumps(found, ensure_ascii=False, indent=2)
             except Exception as e:
                 return f"[Error] discover failed: {e}"
@@ -503,14 +503,14 @@ class SessionSearchTool(BaseTool):
 
         # try common db paths
         cands = [
-            Path("backend/takton.db"),
-            Path("takton.db"),
-            Path(os.path.expandvars(r"%APPDATA%/takton/data/takton.db")),
-            Path(os.path.expanduser("~/.takton/data/takton.db")),
+            Path("backend/tevarn.db"),
+            Path("tevarn.db"),
+            Path(os.path.expandvars(r"%APPDATA%/tevarn/data/tevarn.db")),
+            Path(os.path.expanduser("~/.tevarn/data/tevarn.db")),
         ]
         dbp = next((p for p in cands if p.exists()), None)
         if not dbp:
-            return f"[Error] session_search failed ({err}); no local takton.db found"
+            return f"[Error] session_search failed ({err}); no local tevarn.db found"
 
         def _run() -> str:
             con = sqlite3.connect(str(dbp))

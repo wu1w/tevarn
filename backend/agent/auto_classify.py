@@ -1,13 +1,13 @@
 """Lightweight auto-mode permission classifier — configurable rules.
 
-Claude auto mode uses a cloud LLM classifier. Takton uses local heuristics
+Claude auto mode uses a cloud LLM classifier. Tevarn uses local heuristics
 plus optional TOML rules (no phone-home).
 
 Load order (later overrides / extends):
   1. built-in defaults
-  2. ~/.takton/auto_rules.toml
-  3. <project>/.takton/auto_rules.toml
-  4. TAKTON_AUTO_RULES path if set
+  2. ~/.tevarn/auto_rules.toml
+  3. <project>/.tevarn/auto_rules.toml
+  4. TEVARN_AUTO_RULES path if set
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from typing import Any, Literal
 Verdict = Literal["allow", "ask", "deny"]
 
 DEFAULT_RULES_TOML = """\
-# Takton Code auto-mode rules (local, no cloud)
+# Tevarn Code auto-mode rules (local, no cloud)
 # Docs: deny > ask > allow within each match; first matching custom rule wins by order
 # for tool-specific overrides; shell patterns scanned deny-first then ask.
 
@@ -191,7 +191,7 @@ def _merge(base: RuleSet, extra: RuleSet) -> RuleSet:
 
 
 def ensure_default_rules_file(home: Path | None = None) -> Path:
-    from backend.agent._takton_paths import home_dir
+    from backend.agent._tevarn_paths import home_dir
 
     h = Path(home) if home else home_dir()
     path = h / "auto_rules.toml"
@@ -209,15 +209,15 @@ def load_rules(
 ) -> RuleSet:
     """Load rules with mtime-based hot reload (no watcher process needed)."""
     global _CACHED, _CACHED_KEY, _RELOAD_COUNT, _LAST_RELOAD_INFO
-    from backend.agent._takton_paths import home_dir
+    from backend.agent._tevarn_paths import home_dir
 
     h = Path(home) if home else home_dir()
     paths: list[Path] = []
     user = h / "auto_rules.toml"
     paths.append(user)
     if project_root:
-        paths.append(Path(project_root) / ".takton" / "auto_rules.toml")
-    env_p = os.environ.get("TAKTON_AUTO_RULES", "").strip()
+        paths.append(Path(project_root) / ".tevarn" / "auto_rules.toml")
+    env_p = os.environ.get("TEVARN_AUTO_RULES", "").strip()
     if env_p:
         paths.append(Path(env_p).expanduser())
 

@@ -64,7 +64,7 @@ def render_skill_md(name: str, description: str, body: str, meta: dict[str, Any]
         fm.append(f"version: {m['version']}")
     fm.extend(
         [
-            "source: takton-evolution",
+            "source: tevarn-evolution",
             f"distilled_from: {m.get('distilled_from', 'trajectory')}",
             "---",
             "",

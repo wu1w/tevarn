@@ -19,19 +19,19 @@ from backend.main import app
 class TestSecretBootstrap:
     def test_random_secret_generated_and_persisted(self, tmp_path, monkeypatch):
         secrets_file = tmp_path / "secrets.json"
-        monkeypatch.setenv("TAKTON_SECRETS_FILE", str(secrets_file))
+        monkeypatch.setenv("TEVARN_SECRETS_FILE", str(secrets_file))
         # conftest / 宿主环境可能残留密钥 env——全部清掉，强制 default_factory 落盘
         for k in (
-            "TAKTON_JWT_SECRET",
-            "TAKTON_SECRET_KEY",
-            "TAKTON_API_KEY",
+            "TEVARN_JWT_SECRET",
+            "TEVARN_SECRET_KEY",
+            "TEVARN_API_KEY",
             "JWT_SECRET",
             "SECRET_KEY",
             "API_KEY",
         ):
             monkeypatch.delenv(k, raising=False)
-        # 忽略仓库 .env 以免 pydantic 读到 TAKTON_JWT_SECRET
-        monkeypatch.setenv("TAKTON_ENV_FILE", str(tmp_path / "empty.env"))
+        # 忽略仓库 .env 以免 pydantic 读到 TEVARN_JWT_SECRET
+        monkeypatch.setenv("TEVARN_ENV_FILE", str(tmp_path / "empty.env"))
         (tmp_path / "empty.env").write_text("", encoding="utf-8")
 
         from backend.core import config as cfg_mod
@@ -39,8 +39,8 @@ class TestSecretBootstrap:
         # 直接测落盘函数（Settings 可能被全局 env 污染）
         secret = cfg_mod._load_or_generate_secret("jwt_secret")
         assert len(secret) >= 32
-        assert secret != "takton-dev-secret-key-2026"
-        assert secrets_file.exists(), "secret should be persisted to TAKTON_SECRETS_FILE"
+        assert secret != "tevarn-dev-secret-key-2026"
+        assert secrets_file.exists(), "secret should be persisted to TEVARN_SECRETS_FILE"
         if sys.platform != "win32":
             mode = stat.S_IMODE(secrets_file.stat().st_mode)
             assert mode == 0o600
@@ -49,16 +49,16 @@ class TestSecretBootstrap:
         assert secret2 == secret
 
     def test_known_weak_secret_rejected(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("TAKTON_SECRETS_FILE", str(tmp_path / "s.json"))
-        for weak in ("change-me", "takton-dev-secret-key-2026", "change-me-in-production"):
+        monkeypatch.setenv("TEVARN_SECRETS_FILE", str(tmp_path / "s.json"))
+        for weak in ("change-me", "tevarn-dev-secret-key-2026", "change-me-in-production"):
             with pytest.raises(Exception):
                 Settings(jwt_secret=weak)
 
     def test_legacy_env_alias_compatible(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("TAKTON_SECRETS_FILE", str(tmp_path / "s.json"))
-        for k in ("TAKTON_JWT_SECRET", "JWT_SECRET", "SECRET_KEY"):
+        monkeypatch.setenv("TEVARN_SECRETS_FILE", str(tmp_path / "s.json"))
+        for k in ("TEVARN_JWT_SECRET", "JWT_SECRET", "SECRET_KEY"):
             monkeypatch.delenv(k, raising=False)
-        monkeypatch.setenv("TAKTON_SECRET_KEY", "legacy-env-value-0123456789abcdef")
+        monkeypatch.setenv("TEVARN_SECRET_KEY", "legacy-env-value-0123456789abcdef")
         s = Settings()
         assert s.jwt_secret == "legacy-env-value-0123456789abcdef"
 
@@ -68,7 +68,7 @@ class TestSecretBootstrap:
 
 class TestInitialAdminPassword:
     def test_password_generated_and_persisted(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("TAKTON_SECRETS_FILE", str(tmp_path / "secrets.json"))
+        monkeypatch.setenv("TEVARN_SECRETS_FILE", str(tmp_path / "secrets.json"))
         from backend.core.config import get_or_create_initial_admin_password
 
         pw1 = get_or_create_initial_admin_password()
@@ -82,7 +82,7 @@ class TestInitialAdminPassword:
         assert get_or_create_initial_admin_password() == pw1
 
     def test_default_admin_password_no_longer_hardcoded(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("TAKTON_SECRETS_FILE", str(tmp_path / "s.json"))
+        monkeypatch.setenv("TEVARN_SECRETS_FILE", str(tmp_path / "s.json"))
         s = Settings()
         assert s.default_admin_password == ""  # 空 = 首启随机生成，不再是 "admin"
 
@@ -153,7 +153,7 @@ async def test_loopback_anonymous_allowed():
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/api/auth/me")
     assert resp.status_code == 200
-    assert resp.json()["email"] == "admin@takton.dev"
+    assert resp.json()["email"] == "admin@tevarn.dev"
 
 
 # ---------- 统一自检 + 安全端点 ----------
@@ -202,10 +202,10 @@ async def test_generate_bridge_token():
 
 def test_startup_check_fails_on_remote_bind_single_user(tmp_path, monkeypatch):
     """非 loopback 绑定 + single_user_mode → 自检 fail 拒绝启动。"""
-    monkeypatch.setenv("TAKTON_SECRETS_FILE", str(tmp_path / "s.json"))
-    monkeypatch.setenv("TAKTON_APP_HOST", "0.0.0.0")
-    monkeypatch.setenv("TAKTON_SINGLE_USER_MODE", "true")
-    monkeypatch.setenv("TAKTON_SETTINGS_ENCRYPTION_SALT", "x" * 16)
+    monkeypatch.setenv("TEVARN_SECRETS_FILE", str(tmp_path / "s.json"))
+    monkeypatch.setenv("TEVARN_APP_HOST", "0.0.0.0")
+    monkeypatch.setenv("TEVARN_SINGLE_USER_MODE", "true")
+    monkeypatch.setenv("TEVARN_SETTINGS_ENCRYPTION_SALT", "x" * 16)
     s = Settings()
 
     from backend.core import security_check

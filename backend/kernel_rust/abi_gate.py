@@ -49,7 +49,7 @@ class AbiMismatchError(ConnectionError):
         msg = (
             f"kernel host ABI incomplete: missing {miss}. "
             f"host reports {host_methods} methods. "
-            "Rebuild & stage: cargo build -p takton-kernel-host --release "
+            "Rebuild & stage: cargo build -p tevarn-kernel-host --release "
             "&& .\\scripts\\build-kernel-host.ps1 -Release "
             "(or node scripts/ensure-vendor-host.mjs). "
             "Do not continue with a half-running control plane."

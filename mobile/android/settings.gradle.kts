@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "TaktonMobile"
+rootProject.name = "TevarnMobile"
 include(":app")

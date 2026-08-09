@@ -3,7 +3,7 @@
 
 Usage (repo root)::
 
-    cargo build -p takton-kernel-host
+    cargo build -p tevarn-kernel-host
     python scripts/smoke_rust_kernel.py
 """
 
@@ -16,8 +16,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-os.environ.setdefault("TAKTON_KERNEL_BACKEND", "rust")
-os.environ.setdefault("TAKTON_KERNEL_AUTO_START", "1")
+os.environ.setdefault("TEVARN_KERNEL_BACKEND", "rust")
+os.environ.setdefault("TEVARN_KERNEL_AUTO_START", "1")
 
 
 def main() -> int:

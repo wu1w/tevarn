@@ -1,9 +1,9 @@
 """AgentProcess —— Kernel 管理的执行实体。
 
 .. deprecated:: P0-A / R3 去双轨
-    **生产权威**：Rust ``takton_kernel::process``（经 host RPC）。
+    **生产权威**：Rust ``tevarn_kernel::process``（经 host RPC）。
     本模块仅：单元测试直接构造、host 不可用时的 fallback。
-    禁止在此扩展生产状态机；变更请改 crates/takton-kernel。
+    禁止在此扩展生产状态机；变更请改 crates/tevarn-kernel。
 """
 
 from __future__ import annotations

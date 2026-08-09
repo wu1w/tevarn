@@ -13,8 +13,8 @@ _ROOT = Path(__file__).resolve().parents[3]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-os.environ.setdefault("TAKTON_KERNEL_BACKEND", "rust")
-os.environ.setdefault("TAKTON_KERNEL_AUTO_START", "1")
+os.environ.setdefault("TEVARN_KERNEL_BACKEND", "rust")
+os.environ.setdefault("TEVARN_KERNEL_AUTO_START", "1")
 
 
 def _host_ready() -> bool:
@@ -56,7 +56,7 @@ def k():
             time.sleep(0.2)
     if kernel is None:
         if not _host_ready():
-            pytest.skip(f"takton-kernel-host missing/unavailable: {last_err}")
+            pytest.skip(f"tevarn-kernel-host missing/unavailable: {last_err}")
         kernel = RustAgentKernel(auto_start=True)
     yield kernel
     try:

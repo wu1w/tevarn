@@ -285,9 +285,9 @@ def _host_ready() -> bool:
 @pytest.mark.asyncio
 async def test_gate_live_mediate_allow_deny(monkeypatch):
     if not _host_ready():
-        pytest.skip("takton-kernel-host missing")
-    os.environ.setdefault("TAKTON_KERNEL_BACKEND", "rust")
-    os.environ.setdefault("TAKTON_KERNEL_AUTO_START", "1")
+        pytest.skip("tevarn-kernel-host missing")
+    os.environ.setdefault("TEVARN_KERNEL_BACKEND", "rust")
+    os.environ.setdefault("TEVARN_KERNEL_AUTO_START", "1")
 
     from backend.kernel.tool_gate import enforce_tool_gate
     from backend.kernel_rust.client import RustAgentKernel, reset_rust_kernel_for_tests

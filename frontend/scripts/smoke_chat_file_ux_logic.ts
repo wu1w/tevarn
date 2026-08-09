@@ -83,8 +83,8 @@ async function main() {
     const tables = await loadXlsxTables(buf);
     if (!tables[0] || tables[0].rows[0][0] !== 'n') throw new Error(JSON.stringify(tables));
     ok('loadXlsxTables');
-    fs.mkdirSync('/tmp/takton-chat-ux-smoke', { recursive: true });
-    fs.writeFileSync('/tmp/takton-chat-ux-smoke/sample.xlsx', Buffer.from(buf));
+    fs.mkdirSync('/tmp/tevarn-chat-ux-smoke', { recursive: true });
+    fs.writeFileSync('/tmp/tevarn-chat-ux-smoke/sample.xlsx', Buffer.from(buf));
   } catch (e) {
     ko('xlsx', e);
   }
@@ -111,7 +111,7 @@ async function main() {
     const html = await loadDocxHtml(docxBuf);
     if (!html.includes('HelloDocxSmoke')) throw new Error(html);
     ok('loadDocxHtml');
-    fs.writeFileSync('/tmp/takton-chat-ux-smoke/sample.docx', Buffer.from(docxBuf));
+    fs.writeFileSync('/tmp/tevarn-chat-ux-smoke/sample.docx', Buffer.from(docxBuf));
   } catch (e) {
     ko('docx', e);
   }
@@ -133,14 +133,14 @@ async function main() {
     const slides = await loadPptxSlides(pptxBuf);
     if (!slides.some((s) => s.includes('SlideOneText'))) throw new Error(JSON.stringify(slides));
     ok('loadPptxSlides');
-    fs.writeFileSync('/tmp/takton-chat-ux-smoke/sample.pptx', Buffer.from(pptxBuf));
+    fs.writeFileSync('/tmp/tevarn-chat-ux-smoke/sample.pptx', Buffer.from(pptxBuf));
   } catch (e) {
     ko('pptx', e);
   }
 
   console.log('LOGIC_SUMMARY pass=' + pass + ' fail=' + fail);
   fs.writeFileSync(
-    '/tmp/takton-chat-ux-smoke/logic.txt',
+    '/tmp/tevarn-chat-ux-smoke/logic.txt',
     report.join('\n') + '\nSUMMARY pass=' + pass + ' fail=' + fail + '\n'
   );
   if (fail) process.exit(1);

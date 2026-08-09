@@ -223,21 +223,11 @@ def _try_rust_decide_tool(
         pid = str(args.get("_kernel_process_id") or args.get("_process_id") or "") or None
         # Never ship live objects (ConnectionManager / recorder) over JSON-RPC.
         safe_args = sanitize_args_for_kernel(args)
-        # 宿主 ~/.takton → workspace junction，避免 Rust path:workspace 误杀
+        # Absolute-in-workspace / ~/.tevarn → relative (Rust path:workspace deny fix)
         try:
-            from backend.tools.permissions import rewrite_host_path_into_workspace
+            from backend.tools.permissions import normalize_tool_path_args
 
-            for pk in (
-                "path",
-                "filepath",
-                "file",
-                "directory",
-                "dir",
-                "base_path",
-                "database",
-            ):
-                if isinstance(safe_args.get(pk), str) and safe_args[pk].strip():
-                    safe_args[pk] = rewrite_host_path_into_workspace(str(safe_args[pk]))
+            safe_args = normalize_tool_path_args(safe_args)
         except Exception:
             pass
         # Keep identity caps for steward layer (strings only)
@@ -356,6 +346,28 @@ async def decide_tool(
     # host 可用且 agent_court_rust_required 时：Rust 失败 = deny（禁止静默放宽）。
     rust_dec = _try_rust_decide_tool(name, args, skill_contract=skill_contract)
     if rust_dec is not None:
+        # Rust only knows workspace_root; Python extra_roots (user-mentioned
+        # E:\项目\guardian etc.) must still be readable. Override path:workspace
+        # deny when ToolPermissionManager allows the path.
+        if (
+            rust_dec.verdict == "deny"
+            and str(rust_dec.matched_rule or "") == "path:workspace"
+        ):
+            py_ok = _check_path_permission(name, args)
+            if py_ok is None:
+                logger.info(
+                    "path:workspace overridden by extra_roots tool=%s",
+                    name,
+                )
+                return CourtDecision(
+                    tool=name,
+                    args_digest=digest,
+                    verdict="allow",
+                    matched_rule="path:extra_roots",
+                    layer="path",
+                    reason="allowed under run extra_roots / host data roots",
+                    extra=dict(rust_dec.extra or {}),
+                )
         return rust_dec
 
     rust_required = bool(getattr(s, "agent_court_rust_required", True))
@@ -408,7 +420,7 @@ async def decide_tool(
                 reason=(
                     "Python court fallback locked in production (H3). "
                     "Host must serve decide_tool. "
-                    "Rebuild host or set TAKTON_DEV_UNSAFE=1 / "
+                    "Rebuild host or set TEVARN_DEV_UNSAFE=1 / "
                     "agent_court_rust_required=false for local only."
                 ),
             )

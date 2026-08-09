@@ -1,6 +1,6 @@
 """
-Takton 产品手册：对话配置与使用全指南。
-供知识库 seed + configure_takton skill 共用。
+Tevarn 产品手册：对话配置与使用全指南。
+供知识库 seed + configure_tevarn skill 共用。
 """
 
 from __future__ import annotations
@@ -8,10 +8,10 @@ from __future__ import annotations
 # 每个 topic: title + markdown body
 PRODUCT_HANDBOOK: dict[str, dict[str, str]] = {
     "overview": {
-        "title": "Takton 总览：用对话搞定一切",
-        "body": """# Takton 总览：用对话搞定一切
+        "title": "Tevarn 总览：用对话搞定一切",
+        "body": """# Tevarn 总览：用对话搞定一切
 
-Takton 是**自托管多机 Agent 工作台**。目标：尽量在**对话框**里完成配置与使用，少点菜单。
+Tevarn 是**自托管多机 Agent 工作台**。目标：尽量在**对话框**里完成配置与使用，少点菜单。
 
 ## 你可以直接说
 - 「看看现在系统状态 / 用的什么模型」
@@ -79,9 +79,9 @@ Takton 是**自托管多机 Agent 工作台**。目标：尽量在**对话框**�
 | 角色 | 路径 |
 |------|------|
 | 源码/沙箱根 | 仓库目录 |
-| 会话契约 memory/AGENTS | `%APPDATA%\\takton\\data\\workspace` |
-| Skills | `<repo>\\.computers\\main\\home\\.takton\\skills` |
-| grants / tool_results | `%USERPROFILE%\\.takton` |
+| 会话契约 memory/AGENTS | `%APPDATA%\\tevarn\\data\\workspace` |
+| Skills | `<repo>\\.computers\\main\\home\\.tevarn\\skills` |
+| grants / tool_results | `%USERPROFILE%\\.tevarn` |
 
 自查「路径不存在」时按上表核对实际磁盘，再下结论。
 """,
@@ -161,7 +161,7 @@ Takton 是**自托管多机 Agent 工作台**。目标：尽量在**对话框**�
 **工作区 → 设备**
 
 ## 配对
-1. 目标机启动 takton-agent（默认端口 19876 + token）。
+1. 目标机启动 tevarn-agent（默认端口 19876 + token）。
 2. 设备页填名称、host、端口、token → 配对。
 3. online + 延迟显示即成功。
 
@@ -211,7 +211,7 @@ Takton 是**自托管多机 Agent 工作台**。目标：尽量在**对话框**�
         "body": """# 自主进化 TEE v0.1.1
 
 ## 一句话
-Takton **可以根据任务与对话经验自动生成 skill/tool**，写进 **自主进化** 条目，并同步到 **Skills 列表**。
+Tevarn **可以根据任务与对话经验自动生成 skill/tool**，写进 **自主进化** 条目，并同步到 **Skills 列表**。
 
 ## 不要再说「没有」
 - 不要只查 `skills/dynamic.py` 就断言没有自动生成。
@@ -381,7 +381,7 @@ context_window、context_threshold_percent、context_protect_first_n / last_n �
 任务完成/失败等提醒（应用内或通道，以实现为准）。
 
 ## Webhooks
-HTTP 回调：外部事件进 Takton，或结果推到外部。
+HTTP 回调：外部事件进 Tevarn，或结果推到外部。
 
 ## 对话可以说
 - 「任务完成后怎么通知我」

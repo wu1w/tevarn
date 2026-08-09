@@ -1,4 +1,4 @@
-"""Takton 统一时间源
+"""Tevarn 统一时间源
 
 所有「获取当前时间」的调用必须从这里走，禁止裸用 datetime.now() / utcnow()。
 

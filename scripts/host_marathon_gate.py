@@ -25,8 +25,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-os.environ.setdefault("TAKTON_KERNEL_BACKEND", "rust")
-os.environ.setdefault("TAKTON_KERNEL_AUTO_START", "1")
+os.environ.setdefault("TEVARN_KERNEL_BACKEND", "rust")
+os.environ.setdefault("TEVARN_KERNEL_AUTO_START", "1")
 
 
 def fail(msg: str) -> None:
@@ -46,7 +46,7 @@ def main() -> int:
     ap.add_argument(
         "--min-resume",
         type=float,
-        default=float(os.environ.get("TAKTON_MARATHON_RESUME_THRESHOLD", "0.95")),
+        default=float(os.environ.get("TEVARN_MARATHON_RESUME_THRESHOLD", "0.95")),
     )
     args = ap.parse_args()
 

@@ -100,11 +100,11 @@ export function ModelPicker({ disabled = false, onChanged, sessionId }: ModelPic
         load(false);
       }
     };
-    window.addEventListener('takton:settings-changed', onSettingsChanged);
+    window.addEventListener('tevarn:settings-changed', onSettingsChanged);
 
     return () => {
       window.removeEventListener('focus', onFocus);
-      window.removeEventListener('takton:settings-changed', onSettingsChanged);
+      window.removeEventListener('tevarn:settings-changed', onSettingsChanged);
     };
   }, [load]);
 
@@ -160,7 +160,7 @@ export function ModelPicker({ disabled = false, onChanged, sessionId }: ModelPic
         onChanged?.(providerId, modelId, res.provider_name || providerId);
         // 通知设置页 / 子代理模型池同步（Hermes onMainModelChanged）
         window.dispatchEvent(
-          new CustomEvent('takton:settings-changed', {
+          new CustomEvent('tevarn:settings-changed', {
             detail: ['active_provider_id', 'active_model', 'llm_model', 'llm_provider'],
           })
         );

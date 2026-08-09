@@ -18,7 +18,7 @@ import { GlobalChatWs } from '@/components/chat/GlobalChatWs';
 import { useT } from '@/stores/localeStore';
 import { ColResizer } from '@/components/ui/ColResizer';
 
-const SIDEBAR_KEY = 'takton-sidebar-open';
+const SIDEBAR_KEY = 'tevarn-sidebar-open';
 const SIDEBAR_W_KEY = 'tk-sb-w';
 const SIDEBAR_W_DEFAULT = 260;
 const SIDEBAR_W_MIN = 200;
@@ -145,7 +145,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         const res = await fetch('/api/health', { cache: 'no-store' });
         if (res.ok) {
           const data = await res.json().catch(() => null);
-          if (data?.service === 'takton-backend' || data?.status === 'ok') {
+          if (data?.service === 'tevarn-backend' || data?.status === 'ok') {
             if (!cancelled) setBackendReady(true);
             return true;
           }

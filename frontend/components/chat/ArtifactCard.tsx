@@ -8,7 +8,7 @@ import { useT } from '@/stores/localeStore';
 function getToken(): string | null {
   if (typeof window === 'undefined') return null;
   try {
-    const auth = localStorage.getItem('takton-auth');
+    const auth = localStorage.getItem('tevarn-auth');
     return auth ? (JSON.parse(auth)?.state?.token ?? null) : null;
   } catch {
     return null;

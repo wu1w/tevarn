@@ -11,7 +11,7 @@ import {
   uninstallInstalledPackage,
   type SystemLayer,
   type SystemLayersReport,
-  type TaktonPackageItem,
+  type TevarnPackageItem,
 } from '@/lib/api';
 import { useToastStore } from '@/stores/toastStore';
 import { useT } from '@/stores/localeStore';
@@ -68,7 +68,7 @@ export default function SystemLayersPanel({ sessionId }: { sessionId?: string | 
   const t = useT();
   const addToast = useToastStore((s) => s.addToast);
   const [report, setReport] = useState<SystemLayersReport | null>(null);
-  const [packages, setPackages] = useState<TaktonPackageItem[]>([]);
+  const [packages, setPackages] = useState<TevarnPackageItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [busyName, setBusyName] = useState<string | null>(null);
 
@@ -93,7 +93,7 @@ export default function SystemLayersPanel({ sessionId }: { sessionId?: string | 
     void load();
   }, [load]);
 
-  const togglePkg = async (pkg: TaktonPackageItem) => {
+  const togglePkg = async (pkg: TevarnPackageItem) => {
     if (!sessionId) {
       addToast(t('context._e88'), 'info');
       return;
@@ -139,7 +139,7 @@ export default function SystemLayersPanel({ sessionId }: { sessionId?: string | 
     }
   };
 
-  const onUninstall = async (pkg: TaktonPackageItem) => {
+  const onUninstall = async (pkg: TevarnPackageItem) => {
     setBusyName(pkg.name);
     try {
       await uninstallInstalledPackage(pkg.name);
@@ -153,7 +153,7 @@ export default function SystemLayersPanel({ sessionId }: { sessionId?: string | 
   };
 
   /** 仅可写安装根（workspace/packages）内的包允许删除 */
-  const canUninstall = (pkg: TaktonPackageItem) =>
+  const canUninstall = (pkg: TevarnPackageItem) =>
     !pkg.virtual && !!pkg.path && pkg.path.replace(/\\/g, '/').includes('workspace/packages/');
 
   const totals = report?.totals;
@@ -203,7 +203,7 @@ export default function SystemLayersPanel({ sessionId }: { sessionId?: string | 
       <div className="rounded-xl border border-border-default bg-card-bg p-4">
         <div className="mb-3 flex items-start justify-between gap-3">
           <div>
-            <h2 className="text-sm font-semibold text-foreground">Takton Packages</h2>
+            <h2 className="text-sm font-semibold text-foreground">Tevarn Packages</h2>
             <p className="mt-0.5 text-[11px] text-foreground-muted">
               统一 skill / 子代理 / 工作流投影；挂载后只注入 Context 层，不污染核心
             </p>
@@ -232,7 +232,7 @@ export default function SystemLayersPanel({ sessionId }: { sessionId?: string | 
         <div className="max-h-72 space-y-1.5 overflow-y-auto">
           {packages.length === 0 && (
             <div className="py-6 text-center text-xs text-foreground-muted">
-              暂无包。可安装 .takton-pkg.zip，或在 workspace/packages 下放 takton.package.json
+              暂无包。可安装 .tevarn-pkg.zip，或在 workspace/packages 下放 tevarn.package.json
             </div>
           )}
           {packages.map((pkg) => (
@@ -255,7 +255,7 @@ export default function SystemLayersPanel({ sessionId }: { sessionId?: string | 
                 <a
                   href={exportPackageUrl(pkg.name)}
                   download
-                  title="导出为 .takton-pkg.zip"
+                  title="导出为 .tevarn-pkg.zip"
                   className="shrink-0 rounded-md border border-border-subtle px-2 py-1 text-[11px] text-foreground-muted hover:bg-elevated-bg"
                 >
                   导出

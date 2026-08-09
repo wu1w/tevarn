@@ -55,15 +55,15 @@ export interface ElectronAPI {
   /** 用系统默认应用打开已解析的本地文件 */
   openPath?: (filePath: string) => Promise<string>;
 
-  /** 在系统终端拉起 Takton Code TUI（注入 bridge 环境变量） */
-  openTaktonCode?: (opts?: { path?: string; mode?: string }) => Promise<{ ok: boolean; error?: string }>;
+  /** 在系统终端拉起 Tevarn Code TUI（注入 bridge 环境变量） */
+  openTevarnCode?: (opts?: { path?: string; mode?: string }) => Promise<{ ok: boolean; error?: string }>;
 }
 
 declare global {
   interface Window {
     electronAPI?: ElectronAPI;
-    __TAKTON_API_URL__?: string;
-    __TAKTON_WS_URL__?: string;
+    __TEVARN_API_URL__?: string;
+    __TEVARN_WS_URL__?: string;
   }
 }
 

@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -160,100 +161,141 @@ async def _run_llm_round_body(
             f"(total chars: {sum(_msg_chars(m) for m in messages)})"
         )
         _iter_tools = None if force_final_no_tools else (tools if tools else None)
-        async for chunk in llm_service.chat(
-            messages, tools=_iter_tools, stream=True
-        ):
-            # 思考中可打断
-            if loop._should_stop:
-                logger.info(
-                    "Stop during LLM stream for session %s", session_id
-                )
-                break
-
-            # 思考链增量 → 前端可折叠思考块（始终推送，不受 suppress_content_stream 影响）
-            rdelta = getattr(chunk, "reasoning_delta", None) or ""
-            if rdelta:
-                accumulated_reasoning += rdelta
-                try:
-                    if not _think_stream_open:
-                        await loop._push_stream(
-                            session_id, message_id, "<thinking>\n"
-                        )
-                        _think_stream_open = True
-                    await loop._push_stream(session_id, message_id, str(rdelta))
-                except Exception as _re:
-                    logger.debug("push reasoning stream skipped: %s", _re)
-
-            # 推送流式正文；若思考块仍开着则先闭合
-            if chunk.delta:
-                if _think_stream_open and not _think_stream_closed:
-                    try:
-                        await _close_thinking_stream()
-                    except Exception:
-                        pass
-                accumulated_content += chunk.delta
-                if not suppress_content_stream:
-                    await loop._push_stream(
-                        session_id, message_id, chunk.delta
+        # Poll stop every 0.4s even when Codex is silent (long reasoning).
+        # CRITICAL: do NOT use asyncio.wait_for(__anext__) — on timeout it
+        # *cancels* the generator step, killing the SSE mid-reasoning and
+        # causing empty-round thrash (100+ iters / 0 tools in <1 min).
+        # Use create_task + wait(timeout) so only Stop cancels the read.
+        _stream = llm_service.chat(messages, tools=_iter_tools, stream=True)
+        _ait = _stream.__aiter__()
+        _pending: asyncio.Task | None = asyncio.create_task(_ait.__anext__())
+        try:
+            while True:
+                if loop._should_stop:
+                    logger.info(
+                        "Stop during LLM stream for session %s", session_id
                     )
-
-            # 收集 tool call（纯 tool 轮也可能只有 reasoning；出 tool 前先闭合思考块）
-            if chunk.tool_call:
-                if _think_stream_open and not _think_stream_closed:
-                    try:
-                        await _close_thinking_stream()
-                    except Exception:
-                        pass
-                tool_calls.append(chunk.tool_call)
-
-            # 真实用量（T4）：provider 回填时优先于粗估；合并 partial stream
-            _cu = getattr(chunk, "usage", None)
-            if isinstance(_cu, dict) and _cu:
+                    if _pending is not None and not _pending.done():
+                        _pending.cancel()
+                        try:
+                            await _pending
+                        except (asyncio.CancelledError, StopAsyncIteration, Exception):
+                            pass
+                    break
+                assert _pending is not None
+                done, _ = await asyncio.wait({_pending}, timeout=0.4)
+                if not done:
+                    continue  # still waiting for next SSE chunk
                 try:
-                    from backend.services.llm.usage_normalize import merge_usage
+                    chunk = _pending.result()
+                except StopAsyncIteration:
+                    break
+                except asyncio.CancelledError:
+                    break
+                except Exception as _chunk_e:
+                    logger.warning("LLM stream chunk error: %s", _chunk_e)
+                    break
+                _pending = asyncio.create_task(_ait.__anext__())
 
-                    merge_usage(stream_usage, _cu)
-                except Exception:
-                    stream_usage.update(_cu)
+                # 思考链增量 → 前端可折叠思考块（始终推送，不受 suppress_content_stream 影响）
+                rdelta = getattr(chunk, "reasoning_delta", None) or ""
+                if rdelta:
+                    accumulated_reasoning += rdelta
+                    try:
+                        if not _think_stream_open:
+                            await loop._push_stream(
+                                session_id, message_id, "<thinking>\n"
+                            )
+                            _think_stream_open = True
+                        await loop._push_stream(session_id, message_id, str(rdelta))
+                    except Exception as _re:
+                        logger.debug("push reasoning stream skipped: %s", _re)
 
-            # 结束标记
-            if chunk.finish_reason:
-                if chunk.finish_reason == "error":
-                    # P1：连接重置等 error 不得把半截正文当最终答复持久化
-                    err_delta = (chunk.delta or "").strip()
-                    body = (accumulated_content or "").strip()
-                    if err_delta.startswith("[LLM Error") or not body:
+                # 推送流式正文；若思考块仍开着则先闭合
+                if chunk.delta:
+                    if _think_stream_open and not _think_stream_closed:
                         try:
                             await _close_thinking_stream()
                         except Exception:
                             pass
-                        accumulated_content = err_delta or (
-                            "[LLM Error] 模型返回失败且无正文。"
-                            "请检查网络/API Key/模型名后重试。"
+                    accumulated_content += chunk.delta
+                    if not suppress_content_stream:
+                        await loop._push_stream(
+                            session_id, message_id, chunk.delta
                         )
-                        result.action = "break"
-                        from backend.agent.thinking_format import wrap_thinking
 
-                        result.final_content = wrap_thinking(
-                            accumulated_reasoning, accumulated_content
-                        )
-                        result.accumulated_content = accumulated_content
-                        result.accumulated_reasoning = accumulated_reasoning
-                        result.tool_calls = []
-                        # 不落半截为成功 assistant
+                # 收集 tool call（纯 tool 轮也可能只有 reasoning；出 tool 前先闭合思考块）
+                if chunk.tool_call:
+                    if _think_stream_open and not _think_stream_closed:
                         try:
-                            loop.last_exit_reason = "llm_stream_error"
+                            await _close_thinking_stream()
                         except Exception:
                             pass
-                        return result
-                    # 有正文 + error：去掉尾部错误文案，标记需用户知悉
-                    if err_delta and body.endswith(err_delta):
-                        accumulated_content = body[: -len(err_delta)].rstrip()
-                    accumulated_content = (
-                        (accumulated_content or "").rstrip()
-                        + "\n\n[系统] 流式中断，以上为不完整草稿，请重试或点重新生成。"
-                    )
-                break
+                    tool_calls.append(chunk.tool_call)
+
+                # 真实用量（T4）：provider 回填时优先于粗估；合并 partial stream
+                _cu = getattr(chunk, "usage", None)
+                if isinstance(_cu, dict) and _cu:
+                    try:
+                        from backend.services.llm.usage_normalize import merge_usage
+
+                        merge_usage(stream_usage, _cu)
+                    except Exception:
+                        stream_usage.update(_cu)
+
+                # 结束标记
+                if chunk.finish_reason:
+                    if chunk.finish_reason == "error":
+                        # P1：连接重置等 error 不得把半截正文当最终答复持久化
+                        err_delta = (chunk.delta or "").strip()
+                        body = (accumulated_content or "").strip()
+                        if err_delta.startswith("[LLM Error") or not body:
+                            try:
+                                await _close_thinking_stream()
+                            except Exception:
+                                pass
+                            accumulated_content = err_delta or (
+                                "[LLM Error] 模型返回失败且无正文。"
+                                "请检查网络/API Key/模型名后重试。"
+                            )
+                            result.action = "break"
+                            from backend.agent.thinking_format import canonicalize_thinking
+
+                            result.final_content = canonicalize_thinking(
+                                accumulated_reasoning, accumulated_content
+                            )
+                            result.accumulated_content = accumulated_content
+                            result.accumulated_reasoning = accumulated_reasoning
+                            result.tool_calls = []
+                            # 不落半截为成功 assistant
+                            try:
+                                loop.last_exit_reason = "llm_stream_error"
+                            except Exception:
+                                pass
+                            return result
+                        # 有正文 + error：去掉尾部错误文案，标记需用户知悉
+                        if err_delta and body.endswith(err_delta):
+                            accumulated_content = body[: -len(err_delta)].rstrip()
+                        accumulated_content = (
+                            (accumulated_content or "").rstrip()
+                            + "\n\n[系统] 流式中断，以上为不完整草稿，请重试或点重新生成。"
+                        )
+                    break
+        finally:
+            if _pending is not None and not _pending.done():
+                _pending.cancel()
+                try:
+                    await _pending
+                except (asyncio.CancelledError, StopAsyncIteration, Exception):
+                    pass
+            # Close async generator so isolate child is killed
+            try:
+                await _ait.aclose()  # type: ignore[attr-defined]
+            except Exception:
+                try:
+                    await _stream.aclose()  # type: ignore[attr-defined]
+                except Exception:
+                    pass
 
         # 流结束：若仅有 reasoning（或 tool_calls 无正文），闭合思考标签
         try:
@@ -263,10 +305,10 @@ async def _run_llm_round_body(
 
         if loop._should_stop:
             result.action = "break"
-            from backend.agent.thinking_format import wrap_thinking
+            from backend.agent.thinking_format import canonicalize_thinking
 
             result.final_content = (
-                wrap_thinking(accumulated_reasoning, accumulated_content)
+                canonicalize_thinking(accumulated_reasoning, accumulated_content)
                 or final_content
                 or "[Stopped] Generation was cancelled"
             )

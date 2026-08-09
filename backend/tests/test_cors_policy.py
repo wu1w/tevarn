@@ -17,7 +17,7 @@ from backend.core.simple_cors import is_origin_allowed
 @pytest.mark.parametrize(
     "origin",
     [
-        "",  # curl / CLI / takton-code / Electron 主进程反代：不发 Origin
+        "",  # curl / CLI / tevarn-code / Electron 主进程反代：不发 Origin
         "http://127.0.0.1:3000",  # Electron 内置静态服务器
         "http://127.0.0.1:8000",  # 单体模式（后端直接托管前端）
         "http://localhost:3000",  # next dev
@@ -39,7 +39,7 @@ def test_local_usage_is_never_broken(origin):
     [
         "https://evil.com",
         "http://evil.com",
-        "https://takton.dev",  # 官网也不行 —— 没有例外
+        "https://tevarn.dev",  # 官网也不行 —— 没有例外
         "https://127.0.0.1.evil.com",  # 子域名前缀混淆
         "https://evil.com/127.0.0.1",  # 路径混淆
         "http://localhost.evil.com",  # 后缀混淆
@@ -61,10 +61,10 @@ def test_configured_origin_is_allowed(monkeypatch):
     monkeypatch.setattr(
         settings,
         "cors_allowed_origins",
-        "https://takton.mylan.home http://192.168.1.9:3000",
+        "https://tevarn.mylan.home http://192.168.1.9:3000",
         raising=False,
     )
-    assert is_origin_allowed("https://takton.mylan.home") is True
+    assert is_origin_allowed("https://tevarn.mylan.home") is True
     assert is_origin_allowed("http://192.168.1.9:3000") is True
     # 配了别人不等于放开所有
     assert is_origin_allowed("https://evil.com") is False
@@ -74,9 +74,9 @@ def test_trailing_slash_and_case_are_normalized(monkeypatch):
     from backend.core.config import settings
 
     monkeypatch.setattr(
-        settings, "cors_allowed_origins", "https://Takton.MyLan.home/", raising=False
+        settings, "cors_allowed_origins", "https://Tevarn.MyLan.home/", raising=False
     )
-    assert is_origin_allowed("https://takton.mylan.home") is True
+    assert is_origin_allowed("https://tevarn.mylan.home") is True
 
 
 def test_wildcard_is_opt_in_only(monkeypatch):

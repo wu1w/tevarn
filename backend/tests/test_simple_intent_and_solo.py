@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from backend.agent.simple_intent import (
     DISPATCH_TOOL_NAMES,
+    SOLO_STRIP_TOOLS,
     filter_dispatch_tools_from_schema,
+    is_plan_or_read_intent,
     is_simple_session_intent,
+    is_solo_session_intent,
     wants_team_dispatch,
 )
 from backend.agent.tool_policy import PROFILE_EXTRA_TOOLS, resolve_enabled_tool_names
@@ -22,6 +25,19 @@ def test_simple_weather_and_trending():
     assert is_simple_session_intent("GitHub 热门项目")
     assert is_simple_session_intent("看看 trending repos")
     assert is_simple_session_intent("最近 star 最多的开源项目")
+
+
+def test_plan_read_is_solo_not_team():
+    assert is_plan_or_read_intent("读一下文档，总结 M0 阶段")
+    assert is_plan_or_read_intent("帮我做个 M0 计划")
+    assert is_plan_or_read_intent("下一步应该怎么做？")
+    assert is_solo_session_intent("读一下文档")
+    assert is_solo_session_intent("按照文档写个 overview")
+    assert is_solo_session_intent("随便问", mode="plan")
+    assert is_solo_session_intent("随便问", mode="ask")
+    # Team language still wins
+    assert not is_solo_session_intent("派给工程师读文档并改代码")
+    assert not is_solo_session_intent("让工程师改登录页", mode="plan")
 
 
 def test_not_simple_when_team_or_heavy():
@@ -48,6 +64,8 @@ def test_filter_strips_dispatch_tools():
         {"type": "function", "function": {"name": "web_search"}},
         {"type": "function", "function": {"name": "crew_steward"}},
         {"type": "function", "function": {"name": "delegate_task"}},
+        {"type": "function", "function": {"name": "manage_goal"}},
+        {"type": "function", "function": {"name": "okr_goal"}},
         {"type": "function", "function": {"name": "current_time"}},
     ]
     out = filter_dispatch_tools_from_schema(tools, user_text="今天天气")
@@ -59,7 +77,25 @@ def test_filter_strips_dispatch_tools():
     assert "current_time" in names
     assert "crew_steward" not in names
     assert "delegate_task" not in names
+    assert "manage_goal" not in names
+    assert "okr_goal" not in names
     assert DISPATCH_TOOL_NAMES
+    assert "manage_goal" in SOLO_STRIP_TOOLS
+
+
+def test_filter_strips_goal_on_plan_read():
+    tools = [
+        {"type": "function", "function": {"name": "file_read"}},
+        {"type": "function", "function": {"name": "manage_goal"}},
+        {"type": "function", "function": {"name": "crew_steward"}},
+    ]
+    out = filter_dispatch_tools_from_schema(
+        tools, user_text="读一下文档，总结一下现状"
+    )
+    names = {(t.get("function") or {}).get("name") for t in (out or [])}
+    assert "file_read" in names
+    assert "manage_goal" not in names
+    assert "crew_steward" not in names
 
 
 def test_filter_keeps_dispatch_when_team_ask():

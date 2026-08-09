@@ -1,7 +1,7 @@
 """出站 HTTP：尊重用户常规全局代理，不写死端口/不探测本机代理。
 
 优先级（高 → 低）：
-1. 配置/环境变量 TAKTON_HTTPS_PROXY、TAKTON_OUTBOUND_PROXY（显式覆盖）
+1. 配置/环境变量 TEVARN_HTTPS_PROXY、TEVARN_OUTBOUND_PROXY（显式覆盖）
 2. 标准环境变量 HTTPS_PROXY / HTTP_PROXY / ALL_PROXY（及小写同名）
 3. 无代理（直连）
 
@@ -27,8 +27,8 @@ import aiohttp
 logger = logging.getLogger(__name__)
 
 _ENV_KEYS = (
-    "TAKTON_HTTPS_PROXY",
-    "TAKTON_OUTBOUND_PROXY",
+    "TEVARN_HTTPS_PROXY",
+    "TEVARN_OUTBOUND_PROXY",
     "HTTPS_PROXY",
     "https_proxy",
     "ALL_PROXY",
@@ -150,13 +150,13 @@ def format_openai_geo_error(status: int, payload: dict[str, Any] | Any, text: st
             return (
                 "OpenAI 拒绝了当前出口 IP 所在地区（unsupported_country_region_territory）。"
                 f"已检测到代理设置（{urlparse(proxy).scheme}://…），"
-                "请确认代理出口在可用地区（如美/日/新），且 Takton 后端进程已加载该环境变量后重启。"
+                "请确认代理出口在可用地区（如美/日/新），且 Tevarn 后端进程已加载该环境变量后重启。"
             )
         return (
             "OpenAI 拒绝了当前地区（unsupported_country_region_territory）。"
-            "浏览器能登录不代表后端换 token 可用：请为本机/后端配置常规全局代理后重启 Takton，例如：\n"
+            "浏览器能登录不代表后端换 token 可用：请为本机/后端配置常规全局代理后重启 Tevarn，例如：\n"
             "  • 环境变量 HTTPS_PROXY / HTTP_PROXY / ALL_PROXY\n"
-            "  • 或 TAKTON_HTTPS_PROXY=http://127.0.0.1:<你的代理端口>\n"
+            "  • 或 TEVARN_HTTPS_PROXY=http://127.0.0.1:<你的代理端口>\n"
             "Clash/V2Ray 等请开启系统代理或复制 mixed 端口的 HTTP 代理地址。"
         )
     if msg or code:

@@ -1,13 +1,13 @@
 //! Kernel smoke: search + skills + compress + text tool parse (no LLM key required).
 use serde_json::json;
-use takton_mobile_core::context_compress::{compress_messages, estimate_messages};
-use takton_mobile_core::local_tools::ToolRuntime;
-use takton_mobile_core::storage::Store;
-use takton_mobile_core::tool_format::{parse_text_tool_calls, repair_json_args};
+use tevarn_mobile_core::context_compress::{compress_messages, estimate_messages};
+use tevarn_mobile_core::local_tools::ToolRuntime;
+use tevarn_mobile_core::storage::Store;
+use tevarn_mobile_core::tool_format::{parse_text_tool_calls, repair_json_args};
 
 #[tokio::main]
 async fn main() {
-    let dir = std::env::temp_dir().join(format!("takton-kernel-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("tevarn-kernel-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&dir);
     let store = Store::open(&dir).expect("store");
     let tools = ToolRuntime::new(store);

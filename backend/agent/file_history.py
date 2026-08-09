@@ -1,8 +1,8 @@
 
 """Disk-backed file history + redo (Batch2 simplified, no SessionStore).
 
-Snapshots under ``~/.takton/file-history/<session_id>/`` and project
-``.takton/file-history/``. Complements ``file_checkpoint`` pre-write copies.
+Snapshots under ``~/.tevarn/file-history/<session_id>/`` and project
+``.tevarn/file-history/``. Complements ``file_checkpoint`` pre-write copies.
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from backend.agent._takton_paths import home_dir
+from backend.agent._tevarn_paths import home_dir
 from backend.agent.redo import RedoEntry, RedoStack
 
 logger = logging.getLogger(__name__)
@@ -68,7 +68,7 @@ class FileHistory:
         d = self.home / "file-history" / self.session_id
         d.mkdir(parents=True, exist_ok=True)
         # also project-local
-        pd = self.root / ".takton" / "file-history" / self.session_id
+        pd = self.root / ".tevarn" / "file-history" / self.session_id
         pd.mkdir(parents=True, exist_ok=True)
         return d
 
@@ -151,7 +151,7 @@ class FileHistory:
             f.write(json.dumps(pt.to_dict(), ensure_ascii=False) + "\n")
         # mirror to project
         try:
-            pd = self.root / ".takton" / "file-history" / self.session_id
+            pd = self.root / ".tevarn" / "file-history" / self.session_id
             pd.mkdir(parents=True, exist_ok=True)
             (pd / f"{pid}.json").write_text(
                 json.dumps(payload, ensure_ascii=False), encoding="utf-8"

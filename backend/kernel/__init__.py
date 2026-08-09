@@ -1,9 +1,9 @@
-"""Takton Agent Kernel —— 控制平面公开接口。
+"""Tevarn Agent Kernel —— 控制平面公开接口。
 
 P0-A：生产默认 **Rust host**（``get_kernel()`` → ``kernel_rust``）。
 Python 内 ``AgentKernel`` / ``AgentProcess`` 等仅为单测与 fallback。
 
-ABI：``docs/kernel-abi-v1.md`` · 实现：``crates/takton-kernel``
+ABI：``docs/kernel-abi-v1.md`` · 实现：``crates/tevarn-kernel``
 """
 
 from backend.kernel.capability import CapabilityEscalationError, CapabilityToken

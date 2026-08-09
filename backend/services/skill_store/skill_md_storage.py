@@ -3,7 +3,7 @@ SKILL.md 下载与本地存储服务
 
 负责：
 - 从各源下载 SKILL.md 内容
-- 存到本地 ~/.takton/skills/<source>/<name>/SKILL.md
+- 存到本地 ~/.tevarn/skills/<source>/<name>/SKILL.md
 - 提供加载接口供 context pipeline 注入
 """
 
@@ -21,13 +21,13 @@ from backend.schemas.skill_store import UnifiedSkill
 logger = logging.getLogger(__name__)
 
 
-# 默认存储路径：~/.takton/skills/
-_DEFAULT_SKILLS_ROOT = Path.home() / ".takton" / "skills"
+# 默认存储路径：~/.tevarn/skills/
+_DEFAULT_SKILLS_ROOT = Path.home() / ".tevarn" / "skills"
 
 
 def _skills_root() -> Path:
     """获取 skills 存储根目录（支持环境变量覆盖）"""
-    root = os.environ.get("TAKTON_SKILLS_ROOT")
+    root = os.environ.get("TEVARN_SKILLS_ROOT")
     if root:
         return Path(root)
     return _DEFAULT_SKILLS_ROOT
@@ -149,7 +149,7 @@ class SkillMdDownloader:
 
     @staticmethod
     def _convert_clawhub_to_skill_md(skill: UnifiedSkill) -> str:
-        """将 ClawHub 条目转换为 Takton 可用的 SKILL.md（一键转换安装）。
+        """将 ClawHub 条目转换为 Tevarn 可用的 SKILL.md（一键转换安装）。
 
         ClawHub 不提供公开文件下载；用 list API 的元数据生成 frontmatter + 指引正文，
         使小白用户无需 CLI 也能装到本地并注入 system prompt。
@@ -190,7 +190,7 @@ class SkillMdDownloader:
 
         body_parts.extend(
             [
-                "## 来源（ClawHub → Takton 转换）",
+                "## 来源（ClawHub → Tevarn 转换）",
                 "",
                 f"- 源 ID: `clawhub/{skill.id}`",
                 f"- 详情页: {source_url}",
@@ -205,7 +205,7 @@ class SkillMdDownloader:
         body_parts.extend(
             [
                 "",
-                "## 在 Takton 中如何使用",
+                "## 在 Tevarn 中如何使用",
                 "",
                 "本 skill 由 ClawHub 元数据**一键转换**为本地 SKILL.md，会注入 system prompt。",
                 "当用户请求匹配本 skill 的 description / topics 时：",

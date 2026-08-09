@@ -1,4 +1,4 @@
-# Takton 技术手册
+# Tevarn 技术手册
 
 版本：**0.5.4-alpha**
 更新：2026-08-02
@@ -16,12 +16,12 @@
 > - Redis：多 worker 下 busy 门应视为硬依赖；挂掉时退回单机锁。  
 >
 > **Run 快照落盘**  
-> - `~/.takton/run_snapshots/{session}.json`（`agent_run_snapshot_persist`）  
+> - `~/.tevarn/run_snapshots/{session}.json`（`agent_run_snapshot_persist`）  
 > - 默认**截断** tool result / 限制 partial 长度；调试可 `agent_run_snapshot_disk_full_tools=True`  
 > - 本机可读文件，非加密多租户存储  
 >
 > **编制预算（弹性）**  
-> - 硬顶默认 **200 万** token/进程（`agent_workforce_budget_hard_cap` / `TAKTON_WORKFORCE_BUDGET_HARD_CAP`）  
+> - 硬顶默认 **200 万** token/进程（`agent_workforce_budget_hard_cap` / `TEVARN_WORKFORCE_BUDGET_HARD_CAP`）  
 > - **软续航**：默认 **关**（硬顶优先）；显式打开时 `max≤2`（`agent_budget_soft_renew_*` / host `--soft-renew`）  
 > - `agent_budget_hard_cap_only=True` 时关闭 soft renew，仅硬顶  
 > - CEO：`crew_steward top_up` / `set_budget` / `budgets` 仍可人工治理  
@@ -192,7 +192,7 @@ interface SessionState {
 
 ```typescript
 // 初始化时从 localStorage 恢复
-const stored = localStorage.getItem('takton-theme');
+const stored = localStorage.getItem('tevarn-theme');
 if (stored === 'dark' || stored === 'light') {
   document.documentElement.classList.add(stored);
   document.documentElement.setAttribute('data-theme', stored);
@@ -238,10 +238,10 @@ backend/kernel/
 - **观测 API**：`GET /api/kernel/processes`（进程树：能力/预算/状态）、
   `GET /api/kernel/events`（中介审计流，含哈希），Security Console
   `/security` 页 Kernel 区块 5s 轮询展示。
-- **系统服务化（阶段 3）**：`deploy/takton-backend.service`（systemd 加固单元）
+- **系统服务化（阶段 3）**：`deploy/tevarn-backend.service`（systemd 加固单元）
   + `deploy/README.md`（Linux systemd / Windows NSSM）。
 - **审计落盘（阶段 3）**：`kernel/audit_store.py` 事件追加 JSONL
-  （默认 `~/.takton/kernel_events.jsonl`，`agent_kernel_audit_persist` 可关），
+  （默认 `~/.tevarn/kernel_events.jsonl`，`agent_kernel_audit_persist` 可关），
   重启后新事件从磁盘链尾续 `prev_hash`（跨进程链连续），
   `verify_file_chain()` 全量验证；写失败只告警不阻断。
 - **多 Agent 调度器（阶段 2 雏形）**：`kernel/scheduler.py`
@@ -570,7 +570,7 @@ ws.onmessage = (event) => {
 ```bash
 cd frontend
 npm run dist:win
-# 输出: release/Takton Setup 0.1.2.exe
+# 输出: release/Tevarn Setup 0.1.2.exe
 ```
 
 #### Linux
@@ -579,8 +579,8 @@ npm run dist:win
 cd frontend
 npm run dist:linux
 # 输出: 
-#   release/Takton-0.1.2.AppImage
-#   release/takton_0.1.2_amd64.deb
+#   release/Tevarn-0.1.2.AppImage
+#   release/tevarn_0.1.2_amd64.deb
 ```
 
 ### 6.2 服务器部署
@@ -607,10 +607,10 @@ CMD ["python", "backend/main.py"]
 
 ```bash
 # 构建
-docker build -t takton .
+docker build -t tevarn .
 
 # 运行
-docker run -p 8000:8000 -v takton-data:/data takton
+docker run -p 8000:8000 -v tevarn-data:/data tevarn
 ```
 
 #### 手动部署
@@ -635,7 +635,7 @@ python backend/main.py
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `DATABASE_URL` | 数据库连接 | `sqlite:///./takton.db` |
+| `DATABASE_URL` | 数据库连接 | `sqlite:///./tevarn.db` |
 | `SECRET_KEY` | JWT 密钥 | 随机生成 |
 | `QDRANT_URL` | Qdrant 地址 | `http://localhost:6333` |
 | `EMBEDDING_BASE_URL` | Embedding 服务（OpenAI 兼容） | `http://localhost:8086/v1` |
@@ -660,7 +660,7 @@ python backend/main.py
 ```bash
 # 克隆仓库
 git clone https://github.com/wu1w/takton.git
-cd takton
+cd tevarn
 
 # 后端
 python -m venv .venv
@@ -724,8 +724,8 @@ npx playwright test
 
 | 路径 | 说明 |
 |------|------|
-| `~/.takton/` | 用户数据目录（Linux/Mac） |
-| `%APPDATA%/takton/` | 用户数据目录（Windows） |
+| `~/.tevarn/` | 用户数据目录（Linux/Mac） |
+| `%APPDATA%/tevarn/` | 用户数据目录（Windows） |
 | `backend/uploads/` | 上传文件存储 |
 | `frontend/dist/` | 前端构建输出 |
 
@@ -734,20 +734,20 @@ npx playwright test
 - **v0.2.6** (2026-07-23)
   - 主脑 L0–L4：coding profile、工具预算/重试、workspace 契约、hooks、sidecar packs
   - 桌面 Linux 截图链路修复；真显示/Xvfb E2E；高强度 bench 双模型
-  - takton-code TUI lazy import；版本号对齐 0.2.6
+  - tevarn-code TUI lazy import；版本号对齐 0.2.6
 - **v0.2.5** (2026-07-22)
   - 自主进化开关跨重启持久化：`EvolutionConfig` 运行时开关字段（enabled/mode/auto_apply_*/from_*/curator 等 9 项）写入 `evolution_config.json`（与 evolution.db 同目录），启动时 env 默认值 + 持久化覆盖，重启不丢（`backend/evolution/config.py`）
   - 自主进化页资产列表项直接加「查看/删除」小按钮：原先删除藏在右侧详情面板（需先选中），现每项行内可操作，复用 onDelete（确认弹窗 + seed 保护 + toast + 自动刷新），整行 button 改 div 修掉嵌套 button 无效 HTML（`frontend/app/evolution/page.tsx`）
   - bridge 打通 evolution：`/bridge/v1/evolution/{status,assets,from_task}` 三端点（GET 读状态/资产 + POST 回流），复用 bridge_auth，转发 get_evolution_manager，契约收敛在 /bridge/v1/* 下（`backend/api/routes/bridge.py`）
-  - takton-code 源码并入主仓 `takton-code/`：bridge client 新增 evolution_status/evolution_assets/report_outcome 三方法（NullBridge no-op + TaktonBridge HTTP 实现），protocol 注册 EvolutionAssetInfo/EvolutionOutcomeRequest schema + 3 条 BRIDGE_ROUTES。Code 学到的 task outcome 可经 `report_outcome` 回流 Desktop evolution P1 管线生成 skill 资产（端到端实测 FULL CHAIN E2E PASS）
+  - tevarn-code 源码并入主仓 `tevarn-code/`：bridge client 新增 evolution_status/evolution_assets/report_outcome 三方法（NullBridge no-op + TevarnBridge HTTP 实现），protocol 注册 EvolutionAssetInfo/EvolutionOutcomeRequest schema + 3 条 BRIDGE_ROUTES。Code 学到的 task outcome 可经 `report_outcome` 回流 Desktop evolution P1 管线生成 skill 资产（端到端实测 FULL CHAIN E2E PASS）
   - 版本号统一：package.json / frontend/package.json / backend/main.py / bridge.py / README 全量对齐 0.2.5
 
 - **v0.2.4** (2026-07-21)
   - RAG 全家桶接入：Qdrant 向量库 + 本地 Embedding/Reranker 服务（OpenAI 兼容），配置经 settings 持久化至 DB，重启保留
   - 修复 RAG 检索全链路卡死的真 bug：`QdrantRAGService.__init__` 未初始化 `self._ensured_collections`，`_ensure_collection` 首次检索即 AttributeError（`backend/services/rag/qdrant_impl.py`）
   - Chat 式 Reranker 精排：部分模型的 llama.cpp 原生 `/v1/rerank` 因 prompt 模板不兼容返回坏分数（relevance_score 1e-24、排序反转）。新增 `_qwen3_chat_rerank`：走 `/v1/chat/completions` + `enable_thinking=False` + `max_tokens=1` + `top_logprobs=50`，取 yes/no token logprob 做 softmax 归一化得相关性分数（`backend/services/reranker/local.py`）。单 session 复用 + 信号量限 2 路并发，规避 llama-server 突发多连接断连
-  - 顶栏「打开 Takton Code」按钮：TitleBar 新增终端图标按钮，经 `open-takton-code` IPC 在系统终端拉起 takton-code TUI，注入 `TAKTON_CODE_BRIDGE_URL` 桥接当前 backend（复用 LLM/skills/tools/MCP/RAG）
-  - takton-code 内嵌打包：PyInstaller `--onefile` 产物放到 vendor/takton-code/（不进 git，见该目录 README）；打包时可拷入 extraResources。顶栏按钮三级探测：PATH → 开发 bundle venv → 打包 resources
+  - 顶栏「打开 Tevarn Code」按钮：TitleBar 新增终端图标按钮，经 `open-tevarn-code` IPC 在系统终端拉起 tevarn-code TUI，注入 `TEVARN_CODE_BRIDGE_URL` 桥接当前 backend（复用 LLM/skills/tools/MCP/RAG）
+  - tevarn-code 内嵌打包：PyInstaller `--onefile` 产物放到 vendor/tevarn-code/（不进 git，见该目录 README）；打包时可拷入 extraResources。顶栏按钮三级探测：PATH → 开发 bundle venv → 打包 resources
   - 版本号统一：package.json / frontend/package.json / backend/main.py / bridge.py / README 全量对齐 0.2.4
 
 - **v0.1.2** (2026-07-17)

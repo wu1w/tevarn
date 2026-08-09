@@ -15,7 +15,7 @@ def test_resolve_points_at_project_venv() -> None:
     py = Path(resolve_project_python())
     assert py.is_file()
     root = project_root().resolve()
-    # 优先落在仓库 .venv / venv 或 TAKTON_PYTHON
+    # 优先落在仓库 .venv / venv 或 TEVARN_PYTHON
     text = str(py).lower()
     assert str(root).lower() in text or py.name.lower().startswith("python")
 
@@ -49,10 +49,10 @@ def test_rewrite_non_python_unchanged() -> None:
     assert new == cmd
 
 
-def test_rewrite_respects_takton_python_env(monkeypatch, tmp_path: Path) -> None:
+def test_rewrite_respects_tevarn_python_env(monkeypatch, tmp_path: Path) -> None:
     fake = tmp_path / "custom-python.exe"
     fake.write_text("", encoding="utf-8")
-    monkeypatch.setenv("TAKTON_PYTHON", str(fake))
+    monkeypatch.setenv("TEVARN_PYTHON", str(fake))
     assert Path(resolve_project_python()).resolve() == fake.resolve()
     new, changed = rewrite_command_python("python -c pass")
     assert changed is True

@@ -506,27 +506,44 @@ class PipelineContextEngine(ContextEngine):
 
     def _l1_budget(self, messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
         limit = self.max_tool_output_chars
+        # Mid-zone (outside protect tail) gets a tighter cap — Codex/Claude style
+        mid_limit = max(800, min(limit, int(limit * 0.35) or 1500))
+        tail_n = max(1, int(self.protect_last_n or 8))
+        n = len(messages)
         changed = 0
         out: list[dict[str, Any]] = []
-        for m in messages:
+        for idx, m in enumerate(messages):
             role = m.get("role")
             content = m.get("content")
-            if role == "tool" and isinstance(content, str) and len(content) > limit:
+            in_tail = idx >= max(0, n - tail_n)
+            cap = limit if in_tail else mid_limit
+            if role == "tool" and isinstance(content, str) and len(content) > cap:
                 # never use content[-0:] (that is the full string in Python)
-                keep_head = max(32, min(limit // 2, limit - 32))
-                keep_tail = max(32, limit - keep_head)
+                keep_head = max(32, min(cap // 2, cap - 32))
+                keep_tail = max(32, cap - keep_head)
                 omitted = max(0, len(content) - keep_head - keep_tail)
-                m = {
-                    **m,
-                    "content": (
+                try:
+                    from backend.agent.progress_guard import l1_truncate_hint
+
+                    body = l1_truncate_hint(
+                        content,
+                        content[:keep_head],
+                        content[-keep_tail:],
+                        omitted,
+                    )
+                except Exception:
+                    body = (
                         content[:keep_head]
-                        + f"\n…[truncated {omitted} chars by L1 budget]…\n"
+                        + f"\n…[truncated {omitted} chars by L1 budget — "
+                        "use result_load if tool_result_handle present; "
+                        "do not re-file_read]…\n"
                         + content[-keep_tail:]
-                    ),
-                }
+                    )
+                m = {**m, "content": body}
                 changed += 1
             elif role == "assistant" and m.get("tool_calls"):
                 tcs = []
+                arg_cap = limit if in_tail else mid_limit
                 for tc in m["tool_calls"]:
                     if not isinstance(tc, dict):
                         tcs.append(tc)
@@ -534,8 +551,8 @@ class PipelineContextEngine(ContextEngine):
                     tc2 = dict(tc)
                     fn = dict(tc2.get("function") or {})
                     args = fn.get("arguments") or ""
-                    if isinstance(args, str) and len(args) > limit:
-                        fn["arguments"] = args[:limit] + "…[L1 truncated]"
+                    if isinstance(args, str) and len(args) > arg_cap:
+                        fn["arguments"] = args[:arg_cap] + "…[L1 truncated]"
                         tc2["function"] = fn
                         changed += 1
                     tcs.append(tc2)
@@ -592,12 +609,16 @@ class PipelineContextEngine(ContextEngine):
             return messages, 0
 
         tool_n = sum(1 for m in mid if m.get("role") == "tool")
-        if tool_n < 4:
+        # High-cardinality short tool chains (200+ tools, few k tokens) are the
+        # common "layers=[]" case — allow L3 with just 2 mid tools.
+        if tool_n < 2:
             return messages, 0
 
         cleared = 0
         kept_mid: list[dict[str, Any]] = []
         full_for_lookup = rest  # name resolution across head/mid/tail
+        # Lower floor so short tool results still get microcompacted
+        min_clear = min(_MIN_CLEAR_CHARS, 40)
 
         for m in mid:
             if m.get("role") != "tool":
@@ -611,14 +632,14 @@ class PipelineContextEngine(ContextEngine):
             if CLEARED_TOOL_PLACEHOLDER in content and len(content) < 200:
                 kept_mid.append(m)
                 continue
-            if len(content) < _MIN_CLEAR_CHARS:
+            if len(content) < min_clear:
                 kept_mid.append(m)
                 continue
 
-            # Prefer compactable tools; still clear large mid-zone blobs of any tool
+            # Prefer compactable tools; still clear mid-zone blobs of any tool
             # (mid is already outside protect head/tail — safe to reclaim tokens).
             tname = self._tool_name_for_result(full_for_lookup, m.get("tool_call_id"))
-            if not self._is_compactable_tool(tname) and len(content) < 500:
+            if not self._is_compactable_tool(tname) and len(content) < 200:
                 kept_mid.append(m)
                 continue
 
@@ -629,11 +650,54 @@ class PipelineContextEngine(ContextEngine):
             kept_mid.append({**m, "content": new_content})
             cleared += 1
 
-        if cleared < 3:
+        # Partial clear is OK — do NOT require cleared>=3 (that caused empty L3
+        # on short-tool thrash sessions: 286 msgs / 3–6k tokens).
+        if cleared < 1:
             return messages, 0
 
-        # Structure intact → no orphan stripping needed (pairs preserved).
-        return systems + head + kept_mid + tail, cleared
+        # L3b: collapse fully-cleared mid tool *pairs* when mid is huge.
+        # L3 alone keeps rows → 500 short tools still thrash by message count.
+        # Drop oldest cleared assistant+tool pairs beyond keep_mid_tools.
+        keep_mid_tools = int(_cfg("context_l3_keep_mid_tools", 24) or 24)
+        keep_mid_tools = max(8, keep_mid_tools)
+        mid_tool_idxs = [
+            i for i, m in enumerate(kept_mid) if m.get("role") == "tool"
+        ]
+        dropped_pairs = 0
+        if len(mid_tool_idxs) > keep_mid_tools:
+            drop_n = len(mid_tool_idxs) - keep_mid_tools
+            drop_set: set[int] = set()
+            for ti in mid_tool_idxs[:drop_n]:
+                # only drop if body already cleared (safe)
+                body = kept_mid[ti].get("content")
+                if not (
+                    isinstance(body, str) and CLEARED_TOOL_PLACEHOLDER in body
+                ):
+                    continue
+                drop_set.add(ti)
+                # also drop preceding assistant with tool_calls if isolated
+                if ti > 0 and kept_mid[ti - 1].get("role") == "assistant":
+                    prev = kept_mid[ti - 1]
+                    if prev.get("tool_calls"):
+                        drop_set.add(ti - 1)
+            if drop_set:
+                new_mid = [
+                    m for i, m in enumerate(kept_mid) if i not in drop_set
+                ]
+                dropped_pairs = len(kept_mid) - len(new_mid)
+                kept_mid = new_mid
+                cleared += dropped_pairs
+                logger.info(
+                    "L3b collapsed %s cleared mid tool rows (keep_mid_tools=%s)",
+                    dropped_pairs,
+                    keep_mid_tools,
+                )
+
+        # Structure may need pair repair after collapse
+        out = systems + head + kept_mid + tail
+        if dropped_pairs:
+            out = _repair_tool_pairs(out)
+        return out, cleared
 
     # ── L5 ──────────────────────────────────────────────────────────
 

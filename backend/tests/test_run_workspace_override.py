@@ -15,7 +15,7 @@ def test_bind_run_workspace_from_config(tmp_path):
     task = tmp_path / "dual_stress"
     task.mkdir()
     (task / "a.txt").write_text("x", encoding="utf-8")
-    repo = tmp_path / "takton_repo"
+    repo = tmp_path / "tevarn_repo"
     repo.mkdir()
     reset = bind_run_workspace_from_config({"workspace_root": str(task)})
     try:

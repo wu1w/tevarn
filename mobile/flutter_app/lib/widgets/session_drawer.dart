@@ -72,7 +72,7 @@ class SessionDrawer extends StatelessWidget {
                         const PxAvatarT(size: 28),
                         const SizedBox(width: 8),
                         Text(
-                          'TAKTON',
+                          'TEVARN',
                           style: PixelTheme.pixel.copyWith(fontSize: 12),
                         ),
                         const SizedBox(width: 6),

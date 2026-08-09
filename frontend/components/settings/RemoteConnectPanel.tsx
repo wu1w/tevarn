@@ -688,8 +688,8 @@ export function RemoteConnectPanel() {
             </div>
             <p className="text-center text-[11px] text-foreground-dim">
               {zh
-                ? '手机打开 Takton → 连接 → 扫描二维码（无需填 VPS）'
-                : 'Phone: Takton → Connect → Scan (no VPS typing)'}
+                ? '手机打开 Tevarn → 连接 → 扫描二维码（无需填 VPS）'
+                : 'Phone: Tevarn → Connect → Scan (no VPS typing)'}
             </p>
           </div>
         ) : (

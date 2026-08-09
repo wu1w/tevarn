@@ -1,5 +1,5 @@
 """
-Wiki 图谱预置种子数据：Takton / Agent / RAG 通识基础知识
+Wiki 图谱预置种子数据：Tevarn / Agent / RAG 通识基础知识
 
 原则：
 - 仅空库时写入
@@ -14,10 +14,10 @@ from typing import Any
 WIKI_SEED_ENTITIES: list[dict[str, Any]] = [
     # 组织 / 项目
     {
-        "name": "Takton",
+        "name": "Tevarn",
         "entity_type": "project",
         "description": "个人专属 AI Agent 终端，整合对话、知识库、工作流、定时任务与工具生态。",
-        "aliases": ["Takton Agent", "Agent Terminal"],
+        "aliases": ["Tevarn Agent", "Agent Terminal"],
     },
     {
         "name": "Nous Research",
@@ -114,13 +114,13 @@ WIKI_SEED_ENTITIES: list[dict[str, Any]] = [
     {
         "name": "FastAPI",
         "entity_type": "tech",
-        "description": "Python 高性能异步 Web 框架，用于构建 Takton 后端 API。",
+        "description": "Python 高性能异步 Web 框架，用于构建 Tevarn 后端 API。",
         "aliases": [],
     },
     {
         "name": "Next.js",
         "entity_type": "tech",
-        "description": "React 全栈框架，用于构建 Takton 前端界面。",
+        "description": "React 全栈框架，用于构建 Tevarn 前端界面。",
         "aliases": ["NextJS"],
     },
     {
@@ -132,13 +132,13 @@ WIKI_SEED_ENTITIES: list[dict[str, Any]] = [
     {
         "name": "Python",
         "entity_type": "tech",
-        "description": "Takton 后端主要编程语言，拥有丰富的 AI/ML 生态。",
+        "description": "Tevarn 后端主要编程语言，拥有丰富的 AI/ML 生态。",
         "aliases": [],
     },
     {
         "name": "TypeScript",
         "entity_type": "tech",
-        "description": "Takton 前端主要编程语言，提供静态类型支持。",
+        "description": "Tevarn 前端主要编程语言，提供静态类型支持。",
         "aliases": ["TS"],
     },
     {
@@ -150,13 +150,13 @@ WIKI_SEED_ENTITIES: list[dict[str, Any]] = [
     {
         "name": "Electron",
         "entity_type": "tech",
-        "description": "跨平台桌面应用框架，用于将 Takton 打包为桌面客户端。",
+        "description": "跨平台桌面应用框架，用于将 Tevarn 打包为桌面客户端。",
         "aliases": [],
     },
     {
         "name": "SQLAlchemy",
         "entity_type": "tech",
-        "description": "Python ORM 工具，用于 Takton 数据库模型与异步查询。",
+        "description": "Python ORM 工具，用于 Tevarn 数据库模型与异步查询。",
         "aliases": [],
     },
     {
@@ -167,10 +167,10 @@ WIKI_SEED_ENTITIES: list[dict[str, Any]] = [
     },
     # 文档 / 事件
     {
-        "name": "Takton 文档",
+        "name": "Tevarn 文档",
         "entity_type": "docs",
-        "description": "Takton 项目的官方使用文档与开发指南。",
-        "aliases": ["Takton Docs"],
+        "description": "Tevarn 项目的官方使用文档与开发指南。",
+        "aliases": ["Tevarn Docs"],
     },
     {
         "name": "LLM 微调",
@@ -224,17 +224,17 @@ WIKI_SEED_ENTITIES: list[dict[str, Any]] = [
 ]
 
 WIKI_SEED_RELATIONS: list[dict[str, Any]] = [
-    {"source_name": "Takton", "target_name": "Agent", "relation_type": "presents", "evidence": "Takton 是 Agent 终端"},
-    {"source_name": "Takton", "target_name": "知识库", "relation_type": "uses", "evidence": "Takton 使用知识库存储文档"},
-    {"source_name": "Takton", "target_name": "Wiki 图谱", "relation_type": "presents", "evidence": "Takton 提供 Wiki 图谱功能"},
-    {"source_name": "Takton", "target_name": "工作流", "relation_type": "uses", "evidence": "Takton 支持工作流编排"},
-    {"source_name": "Takton", "target_name": "定时任务", "relation_type": "uses", "evidence": "Takton 支持定时任务"},
-    {"source_name": "Takton", "target_name": "FastAPI", "relation_type": "uses", "evidence": "Takton 后端使用 FastAPI"},
-    {"source_name": "Takton", "target_name": "Next.js", "relation_type": "uses", "evidence": "Takton 前端使用 Next.js"},
-    {"source_name": "Takton", "target_name": "Electron", "relation_type": "uses", "evidence": "Takton 桌面端使用 Electron"},
-    {"source_name": "Takton", "target_name": "SQLAlchemy", "relation_type": "uses", "evidence": "Takton 使用 SQLAlchemy 访问数据库"},
-    {"source_name": "Takton", "target_name": "Pydantic", "relation_type": "uses", "evidence": "Takton 使用 Pydantic 做数据校验"},
-    {"source_name": "Takton", "target_name": "Takton 文档", "relation_type": "presents", "evidence": "Takton 项目提供官方文档"},
+    {"source_name": "Tevarn", "target_name": "Agent", "relation_type": "presents", "evidence": "Tevarn 是 Agent 终端"},
+    {"source_name": "Tevarn", "target_name": "知识库", "relation_type": "uses", "evidence": "Tevarn 使用知识库存储文档"},
+    {"source_name": "Tevarn", "target_name": "Wiki 图谱", "relation_type": "presents", "evidence": "Tevarn 提供 Wiki 图谱功能"},
+    {"source_name": "Tevarn", "target_name": "工作流", "relation_type": "uses", "evidence": "Tevarn 支持工作流编排"},
+    {"source_name": "Tevarn", "target_name": "定时任务", "relation_type": "uses", "evidence": "Tevarn 支持定时任务"},
+    {"source_name": "Tevarn", "target_name": "FastAPI", "relation_type": "uses", "evidence": "Tevarn 后端使用 FastAPI"},
+    {"source_name": "Tevarn", "target_name": "Next.js", "relation_type": "uses", "evidence": "Tevarn 前端使用 Next.js"},
+    {"source_name": "Tevarn", "target_name": "Electron", "relation_type": "uses", "evidence": "Tevarn 桌面端使用 Electron"},
+    {"source_name": "Tevarn", "target_name": "SQLAlchemy", "relation_type": "uses", "evidence": "Tevarn 使用 SQLAlchemy 访问数据库"},
+    {"source_name": "Tevarn", "target_name": "Pydantic", "relation_type": "uses", "evidence": "Tevarn 使用 Pydantic 做数据校验"},
+    {"source_name": "Tevarn", "target_name": "Tevarn 文档", "relation_type": "presents", "evidence": "Tevarn 项目提供官方文档"},
     {"source_name": "RAG", "target_name": "知识库", "relation_type": "depends_on", "evidence": "RAG 依赖知识库提供检索源"},
     {"source_name": "RAG", "target_name": "Embedding", "relation_type": "uses", "evidence": "RAG 使用 Embedding 做语义检索"},
     {"source_name": "RAG", "target_name": "向量检索", "relation_type": "uses", "evidence": "RAG 使用向量检索召回文本"},
@@ -255,7 +255,7 @@ WIKI_SEED_RELATIONS: list[dict[str, Any]] = [
     {"source_name": "Next.js", "target_name": "TypeScript", "relation_type": "uses", "evidence": "Next.js 项目通常使用 TypeScript"},
     {"source_name": "React", "target_name": "TypeScript", "relation_type": "uses", "evidence": "React 可配合 TypeScript 使用"},
     {"source_name": "Electron", "target_name": "Next.js", "relation_type": "uses", "evidence": "Electron 内嵌 Next.js 前端"},
-    {"source_name": "Nous Research", "target_name": "Takton", "relation_type": "related_to", "evidence": "Takton 参考 Nous Research 的 Hermes Agent 生态"},
+    {"source_name": "Nous Research", "target_name": "Tevarn", "relation_type": "related_to", "evidence": "Tevarn 参考 Nous Research 的 Hermes Agent 生态"},
     {"source_name": "MCP", "target_name": "工具调用", "relation_type": "related_to", "evidence": "MCP 标准化工具调用协议"},
     {"source_name": "工具调用", "target_name": "Agent", "relation_type": "part_of", "evidence": "工具调用是 Agent 核心能力之一"},
     {"source_name": "提示词工程", "target_name": "Agent", "relation_type": "related_to", "evidence": "提示词工程影响 Agent 行为"},

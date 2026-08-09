@@ -1,7 +1,7 @@
 """Git status API - check git status, branches, and diff
 
 仓库路径优先级：
-1. 环境变量 TAKTON_GIT_REPO / GIT_REPO_PATH
+1. 环境变量 TEVARN_GIT_REPO / GIT_REPO_PATH
 2. settings.file_browser_root 下若存在 .git
 3. 当前工作目录若存在 .git
 4. 均不可用则返回 is_repo=false（不抛 500）
@@ -27,7 +27,7 @@ def _resolve_repo_path() -> Optional[Path]:
     candidates: list[str] = []
 
     env_path = (
-        os.environ.get("TAKTON_GIT_REPO", "").strip()
+        os.environ.get("TEVARN_GIT_REPO", "").strip()
         or os.environ.get("GIT_REPO_PATH", "").strip()
     )
     if env_path:

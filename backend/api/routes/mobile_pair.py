@@ -170,14 +170,14 @@ async def pair_session(body: PairSessionBody) -> dict[str, Any]:
         logger.debug("pair session last_seen update: %s", e)
 
     async with UnitOfWork() as uow:
-        existing = await uow.users.get_by_email("admin@takton.dev")
+        existing = await uow.users.get_by_email("admin@tevarn.dev")
         if existing:
             user = existing
         else:
             default_pw = resolve_default_admin_password()
             user = await uow.users.create(
                 {
-                    "email": "admin@takton.dev",
+                    "email": "admin@tevarn.dev",
                     "username": "admin",
                     "hashed_password": get_password_hash(default_pw),
                     "is_superuser": True,

@@ -1,31 +1,31 @@
 #!/usr/bin/env bash
-# Takton VPS Relay — Ubuntu one-line install
+# Tevarn VPS Relay — Ubuntu one-line install
 #
-#   curl -fsSL https://github.com/wu1w/takton/releases/download/v0.5.7-alpha/install-vps-relay.sh | sudo bash
+#   curl -fsSL https://github.com/wu1w/tevarn/releases/download/v0.5.7-alpha/install-vps-relay.sh | sudo bash
 #
 #   # or from branch (dev):
-#   curl -fsSL https://raw.githubusercontent.com/wu1w/takton/feature/agent-kernel/deploy/vps-relay/install.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/wu1w/tevarn/feature/agent-kernel/deploy/vps-relay/install.sh | sudo bash
 #
 # Optional env:
 #   RELAY_PUBLIC_PORT=80
-#   TAKTON_RELAY_DIR=/opt/takton-vps-relay
-#   TAKTON_GITHUB_REPO=wu1w/takton
-#   TAKTON_RELAY_REF=feature/agent-kernel   # git branch/tag for raw/archive fallback
-#   TAKTON_RELAY_VERSION=v0.5.7-alpha      # GitHub Release tag (preferred package source)
-#   TAKTON_RELAY_ZIP_URL=https://...       # override package zip URL
+#   TEVARN_RELAY_DIR=/opt/tevarn-vps-relay
+#   TEVARN_GITHUB_REPO=wu1w/tevarn
+#   TEVARN_RELAY_REF=feature/agent-kernel   # git branch/tag for raw/archive fallback
+#   TEVARN_RELAY_VERSION=v0.5.7-alpha      # GitHub Release tag (preferred package source)
+#   TEVARN_RELAY_ZIP_URL=https://...       # override package zip URL
 #   RELAY_TOKEN=tr_live_...                # reuse a fixed token (otherwise auto-generated)
 #
 set -euo pipefail
 
-INSTALL_DIR="${TAKTON_RELAY_DIR:-/opt/takton-vps-relay}"
+INSTALL_DIR="${TEVARN_RELAY_DIR:-/opt/tevarn-vps-relay}"
 PUBLIC_PORT="${RELAY_PUBLIC_PORT:-80}"
-GITHUB_REPO="${TAKTON_GITHUB_REPO:-wu1w/takton}"
-RELAY_REF="${TAKTON_RELAY_REF:-feature/agent-kernel}"
-RELAY_VERSION="${TAKTON_RELAY_VERSION:-v0.5.7-alpha}"
+GITHUB_REPO="${TEVARN_GITHUB_REPO:-wu1w/tevarn}"
+RELAY_REF="${TEVARN_RELAY_REF:-feature/agent-kernel}"
+RELAY_VERSION="${TEVARN_RELAY_VERSION:-v0.5.7-alpha}"
 INFO_FILE="${INSTALL_DIR}/INSTALL_INFO.txt"
 
 RED='\033[0;31m'; GRN='\033[0;32m'; CYN='\033[0;36m'; YLW='\033[1;33m'; BLD='\033[1m'; NC='\033[0m'
-info() { echo -e "${CYN}[takton-relay]${NC} $*"; }
+info() { echo -e "${CYN}[tevarn-relay]${NC} $*"; }
 ok()   { echo -e "${GRN}[ok]${NC} $*"; }
 warn() { echo -e "${YLW}[warn]${NC} $*"; }
 err()  { echo -e "${RED}[err]${NC} $*" >&2; }
@@ -33,7 +33,7 @@ err()  { echo -e "${RED}[err]${NC} $*" >&2; }
 need_root() {
   if [[ "${EUID}" -ne 0 ]]; then
     err "请用 root 运行，例如："
-    err "  curl -fsSL https://raw.githubusercontent.com/wu1w/takton/${RELAY_REF}/deploy/vps-relay/install.sh | sudo bash"
+    err "  curl -fsSL https://raw.githubusercontent.com/wu1w/tevarn/${RELAY_REF}/deploy/vps-relay/install.sh | sudo bash"
     exit 1
   fi
 }
@@ -130,16 +130,16 @@ fetch_package_remote() {
   trap 'rm -rf "'"${tmp}"'"' RETURN
 
   # 1) Explicit zip URL
-  if [[ -n "${TAKTON_RELAY_ZIP_URL:-}" ]]; then
-    info "下载包: ${TAKTON_RELAY_ZIP_URL}"
+  if [[ -n "${TEVARN_RELAY_ZIP_URL:-}" ]]; then
+    info "下载包: ${TEVARN_RELAY_ZIP_URL}"
     zip="${tmp}/relay.zip"
-    if download "${TAKTON_RELAY_ZIP_URL}" "${zip}"; then
+    if download "${TEVARN_RELAY_ZIP_URL}" "${zip}"; then
       mkdir -p "${tmp}/unz"
       if unzip -q "${zip}" -d "${tmp}/unz" 2>/dev/null || (have_cmd busybox && busybox unzip -q "${zip}" -d "${tmp}/unz"); then
         extracted="$(find "${tmp}/unz" -type f -name docker-compose.yml | head -n1 | xargs -r dirname)"
         if [[ -n "${extracted}" ]] && package_ok "${extracted}"; then
           copy_package_from "${extracted}"
-          ok "已从 TAKTON_RELAY_ZIP_URL 部署包文件"
+          ok "已从 TEVARN_RELAY_ZIP_URL 部署包文件"
           return 0
         fi
       fi
@@ -150,9 +150,9 @@ fetch_package_remote() {
   # 2) GitHub Release asset
   local ver_plain="${RELAY_VERSION#v}"
   local candidates=(
-    "https://github.com/${GITHUB_REPO}/releases/download/${RELAY_VERSION}/takton-vps-relay-${ver_plain}.zip"
-    "https://github.com/${GITHUB_REPO}/releases/download/${RELAY_VERSION}/takton-vps-relay-${RELAY_VERSION}.zip"
-    "https://github.com/${GITHUB_REPO}/releases/download/${RELAY_VERSION}/takton-vps-relay-0.5.7-alpha.zip"
+    "https://github.com/${GITHUB_REPO}/releases/download/${RELAY_VERSION}/tevarn-vps-relay-${ver_plain}.zip"
+    "https://github.com/${GITHUB_REPO}/releases/download/${RELAY_VERSION}/tevarn-vps-relay-${RELAY_VERSION}.zip"
+    "https://github.com/${GITHUB_REPO}/releases/download/${RELAY_VERSION}/tevarn-vps-relay-0.5.7-alpha.zip"
   )
   for url in "${candidates[@]}"; do
     info "尝试 Release 包: ${url}"
@@ -205,7 +205,7 @@ fetch_package_remote() {
     info "  get ${f}"
     if ! download "${base}/${f}" "${INSTALL_DIR}/${f}"; then
       err "无法下载 ${base}/${f}"
-      err "请检查网络 / 仓库可见性，或设置 TAKTON_RELAY_ZIP_URL"
+      err "请检查网络 / 仓库可见性，或设置 TEVARN_RELAY_ZIP_URL"
       exit 1
     fi
   done
@@ -322,7 +322,7 @@ print_credentials() {
 
   # Persist for later `cat INSTALL_INFO.txt`
   cat > "${INFO_FILE}" <<EOF
-# Takton VPS Relay — install credentials
+# Tevarn VPS Relay — install credentials
 # Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 HOST=${ip}
 PORT=${port}
@@ -335,7 +335,7 @@ EOF
 
   echo ""
   echo -e "${BLD}============================================================${NC}"
-  echo -e "${GRN}${BLD}  Takton VPS 中继已就绪 — 请保存以下信息${NC}"
+  echo -e "${GRN}${BLD}  Tevarn VPS 中继已就绪 — 请保存以下信息${NC}"
   echo -e "${BLD}============================================================${NC}"
   echo ""
   echo -e "  ${BLD}IP / Host${NC} :  ${YLW}${ip}${NC}"
@@ -352,7 +352,7 @@ EOF
   echo ""
   echo "  云厂商安全组请放行 TCP ${port}"
   echo ""
-  echo "  在 PC Takton → 设置 → 远程连接 → 自有 VPS 中继："
+  echo "  在 PC Tevarn → 设置 → 远程连接 → 自有 VPS 中继："
   echo "    1) 填入 Host=${ip}  Port=${port}  Token=上面令牌"
   echo "    2) 检测连通 → 启用中继"
   echo "    3) 匹配手机 · 生成二维码"
@@ -404,7 +404,7 @@ main() {
 
   # Start
   cd "${INSTALL_DIR}"
-  info "构建并启动 takton-relay（首次可能需几分钟）…"
+  info "构建并启动 tevarn-relay（首次可能需几分钟）…"
   ${COMPOSE} up -d --build
 
   local health_ok=0

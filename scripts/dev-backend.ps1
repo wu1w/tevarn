@@ -1,4 +1,4 @@
-# Takton 后端一键重启（Windows，独立进程脱离调用方生命周期）
+# Tevarn 后端一键重启（Windows，独立进程脱离调用方生命周期）
 # 用法: powershell -ExecutionPolicy Bypass -File scripts\dev-backend.ps1
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -16,8 +16,8 @@ if ($conns) {
 
 # 2. 拉起独立隐藏进程（不依赖当前控制台）
 $env:PYTHONPATH = $root
-$env:JWT_SECRET = "takton-dev-secret-key-2026"
-$env:API_KEY = "takton-dev-api-key-2026"
+$env:JWT_SECRET = "tevarn-dev-secret-key-2026"
+$env:API_KEY = "tevarn-dev-api-key-2026"
 $log = Join-Path $root "logs\backend-dev.log"
 New-Item -ItemType Directory -Force -Path (Split-Path $log) | Out-Null
 $args = "-m uvicorn backend.main:app --host 127.0.0.1 --port $port"

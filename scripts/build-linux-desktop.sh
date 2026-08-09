@@ -8,14 +8,14 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 if [[ ! -x .venv/bin/python ]]; then
-  echo "[takton] creating .venv (required for packaging backend deps)..."
+  echo "[tevarn] creating .venv (required for packaging backend deps)..."
   python3 -m venv --copies .venv
 fi
 
-echo "[takton] ensuring prod deps in .venv..."
+echo "[tevarn] ensuring prod deps in .venv..."
 .venv/bin/pip install -U pip setuptools wheel >/dev/null
 .venv/bin/pip install -r backend/requirements-prod.txt
-.venv/bin/python -c "import uvicorn,fastapi,mcp; print('[takton] venv ok')"
+.venv/bin/python -c "import uvicorn,fastapi,mcp; print('[tevarn] venv ok')"
 
 cd frontend
 if [[ ! -d node_modules/electron-builder ]]; then
@@ -25,11 +25,11 @@ fi
 export CSC_IDENTITY_AUTO_DISCOVERY=false
 npm run dist:linux
 
-echo "[takton] artifacts:"
-ls -lah release/Takton-*.AppImage release/takton_*.deb 2>/dev/null || ls -lah release/
+echo "[tevarn] artifacts:"
+ls -lah release/Tevarn-*.AppImage release/tevarn_*.deb 2>/dev/null || ls -lah release/
 if [[ -x release/linux-unpacked/resources/backend/.venv/bin/python ]]; then
-  echo "[takton] OK packaged venv present"
+  echo "[tevarn] OK packaged venv present"
 else
-  echo "[takton] ERROR: packaged backend/.venv missing" >&2
+  echo "[tevarn] ERROR: packaged backend/.venv missing" >&2
   exit 1
 fi

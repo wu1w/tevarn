@@ -42,8 +42,8 @@ async function loginViaApi(page: Page) {
         state: { token, user, isAuthenticated: true, hasHydrated: true },
         version: 0,
       };
-      localStorage.setItem('takton-auth', JSON.stringify(payload));
-      document.cookie = `takton-auth=${token}; path=/; SameSite=Strict`;
+      localStorage.setItem('tevarn-auth', JSON.stringify(payload));
+      document.cookie = `tevarn-auth=${token}; path=/; SameSite=Strict`;
     },
     { token, user }
   );

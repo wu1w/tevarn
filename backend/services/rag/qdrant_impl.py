@@ -73,7 +73,7 @@ class QdrantRAGService(RAGService):
         # 无 user_id 且禁止全局：用不可能命中的 filter，避免返回他人数据
         return {
             "must": [
-                {"key": "user_id", "match": {"value": "__takton_no_user_scope__"}}
+                {"key": "user_id", "match": {"value": "__tevarn_no_user_scope__"}}
             ]
         }
 

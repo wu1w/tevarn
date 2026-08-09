@@ -167,7 +167,7 @@ class EvolutionEngine:
 
             return bool(is_dev_unsafe())
         except Exception:
-            return (os.environ.get("TAKTON_DEV_UNSAFE") or "").strip() in (
+            return (os.environ.get("TEVARN_DEV_UNSAFE") or "").strip() in (
                 "1",
                 "true",
                 "yes",
@@ -177,7 +177,7 @@ class EvolutionEngine:
         """Bit-for-bit style mirror of Rust EvolutionGate::analyze for offline tests.
 
         Production never reaches here without DEV_UNSAFE. Keep in lockstep with
-        crates/takton-kernel/src/evolution_gate.rs::analyze.
+        crates/tevarn-kernel/src/evolution_gate.rs::analyze.
         """
         identity = str(snapshot.get("identity") or "unknown")
         caps = list(snapshot.get("capabilities") or [])

@@ -42,7 +42,7 @@ async def try_handle_web_slash(
     try:
         if cmd.name in ("help", "commands"):
             return build_help_text().replace(
-                "Takton Channel 命令列表", "Takton 命令列表（Web 聊天）"
+                "Tevarn Channel 命令列表", "Tevarn 命令列表（Web 聊天）"
             )
         if cmd.name == "stop":
             return await _cmd_stop(session_id)
@@ -202,7 +202,7 @@ async def _cmd_compact(session_id: uuid.UUID, args: str) -> str:
 async def _cmd_status(session_id: uuid.UUID) -> str:
     from backend.core.config import settings
 
-    lines = ["📊 Takton 状态", ""]
+    lines = ["📊 Tevarn 状态", ""]
     model = getattr(settings, "llm_model", "unknown")
     provider = getattr(settings, "llm_provider", "unknown")
     lines.append(f"🤖 模型: {provider}/{model}")

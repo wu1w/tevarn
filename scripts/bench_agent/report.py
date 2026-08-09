@@ -67,7 +67,7 @@ def _avg(rs: list[dict[str, Any]], key: str) -> float:
 
 def render_markdown(summary: dict[str, Any], meta: dict[str, Any]) -> str:
     lines: list[str] = []
-    lines.append(f"# Takton Agent Bench — {meta.get('label', 'run')}")
+    lines.append(f"# Tevarn Agent Bench — {meta.get('label', 'run')}")
     lines.append("")
     lines.append(
         f"- 提交: `{meta.get('git_sha', 'unknown')}`　模型: `{meta.get('model', '?')}`　"

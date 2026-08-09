@@ -1,7 +1,7 @@
-# Takton Mobile — HarmonyOS (stub)
+# Tevarn Mobile — HarmonyOS (stub)
 
-- Share `takton-mobile-core` as cdylib / NAPI
+- Share `tevarn-mobile-core` as cdylib / NAPI
 - UI: ArkWeb or same HTML assets under `../ui`
-- Pairing to PC Takton uses LAN base URL + JWT login
+- Pairing to PC Tevarn uses LAN base URL + JWT login
 
 Reserved for Phase 2 after Android APK ships.

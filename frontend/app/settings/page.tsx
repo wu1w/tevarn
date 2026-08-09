@@ -1183,7 +1183,7 @@ export default function SettingsPage() {
 
             {pane === 'about' ? (
               <section className="rounded-2xl border border-border-subtle bg-card-bg p-5">
-                <div className="mb-3 text-[13.5px] font-semibold text-foreground">Takton AIOS</div>
+                <div className="mb-3 text-[13.5px] font-semibold text-foreground">Tevarn AIOS</div>
                 <div className="space-y-2 text-[12.5px]">
                   <div className="flex justify-between border-b border-border-subtle py-1.5">
                     <span className="text-foreground-dim">{zh ? '版本' : 'Version'}</span>
@@ -1191,7 +1191,7 @@ export default function SettingsPage() {
                   </div>
                   <div className="flex justify-between border-b border-border-subtle py-1.5">
                     <span className="text-foreground-dim">{zh ? '内核' : 'Kernel'}</span>
-                    <span className="text-foreground">Takton OS kernel</span>
+                    <span className="text-foreground">Tevarn OS kernel</span>
                   </div>
                   <div className="flex justify-between border-b border-border-subtle py-1.5">
                     <span className="text-foreground-dim">{zh ? '设计' : 'Design'}</span>

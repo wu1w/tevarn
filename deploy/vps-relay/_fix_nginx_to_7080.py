@@ -1,4 +1,4 @@
-"""Point existing takton-relay nginx default_server to SSH tunnel port 7080."""
+"""Point existing tevarn-relay nginx default_server to SSH tunnel port 7080."""
 from __future__ import annotations
 
 import os
@@ -7,9 +7,9 @@ import time
 
 import paramiko
 
-HOST = os.environ.get("TAKTON_VPS_HOST", "150.158.109.231")
-USER = os.environ.get("TAKTON_VPS_USER", "ubuntu")
-PASSWORD = os.environ.get("TAKTON_VPS_PASSWORD", "")
+HOST = os.environ.get("TEVARN_VPS_HOST", "150.158.109.231")
+USER = os.environ.get("TEVARN_VPS_USER", "ubuntu")
+PASSWORD = os.environ.get("TEVARN_VPS_PASSWORD", "")
 
 CONF = """
 server {
@@ -17,7 +17,7 @@ server {
     listen [::]:80 default_server;
     server_name _;
 
-    # Takton DEV: SSH reverse tunnel PC:8090 -> VPS:7080
+    # Tevarn DEV: SSH reverse tunnel PC:8090 -> VPS:7080
     location / {
         proxy_pass http://127.0.0.1:7080;
         proxy_http_version 1.1;
@@ -38,7 +38,7 @@ server {
 
 def main() -> None:
     if not PASSWORD:
-        print("Set TAKTON_VPS_PASSWORD", file=sys.stderr)
+        print("Set TEVARN_VPS_PASSWORD", file=sys.stderr)
         sys.exit(1)
     c = paramiko.SSHClient()
     c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -51,13 +51,13 @@ def main() -> None:
         look_for_keys=False,
     )
     sftp = c.open_sftp()
-    with sftp.file("/tmp/takton-relay.conf", "w") as f:
+    with sftp.file("/tmp/tevarn-relay.conf", "w") as f:
         f.write(CONF)
     sftp.close()
 
     cmds = [
-        "sudo cp /etc/nginx/sites-available/takton-relay /etc/nginx/sites-available/takton-relay.bak.dev || true",
-        "sudo mv /tmp/takton-relay.conf /etc/nginx/sites-available/takton-relay",
+        "sudo cp /etc/nginx/sites-available/tevarn-relay /etc/nginx/sites-available/tevarn-relay.bak.dev || true",
+        "sudo mv /tmp/tevarn-relay.conf /etc/nginx/sites-available/tevarn-relay",
         "sudo nginx -t && sudo systemctl reload nginx",
         "curl -sS -m 8 http://127.0.0.1/api/health",
         "curl -sS -m 8 http://127.0.0.1:7080/api/health",

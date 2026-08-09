@@ -1,7 +1,7 @@
 """CapabilityToken —— 能力令牌。
 
 .. deprecated:: P0-A
-    权威实现：Rust ``takton_kernel::capability``。本模块供单测与反序列化兼容。
+    权威实现：Rust ``tevarn_kernel::capability``。本模块供单测与反序列化兼容。
     生产路径令牌由 host ``issue_token`` 签发。
 """
 

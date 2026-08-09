@@ -1,4 +1,4 @@
-"""Takton Package API — 统一 skill / 子代理 / 工作流挂载。"""
+"""Tevarn Package API — 统一 skill / 子代理 / 工作流挂载。"""
 
 from __future__ import annotations
 
@@ -191,7 +191,7 @@ async def export_pkg(
     name: str,
     current_user: Annotated[UserRead, Depends(get_current_user)],
 ):
-    """发布：本地包导出为 .takton-pkg.zip 下载"""
+    """发布：本地包导出为 .tevarn-pkg.zip 下载"""
     from fastapi.responses import Response
 
     from backend.packages.publisher import export_package_zip
@@ -217,7 +217,7 @@ async def install_pkg_upload(
         description="安装后镜像进 Kernel 包管理（签名扫描）",
     ),
 ):
-    """安装：上传 .takton-pkg.zip → 校验 → 解压 →（默认）Kernel 签名扫描镜像（需 admin）"""
+    """安装：上传 .tevarn-pkg.zip → 校验 → 解压 →（默认）Kernel 签名扫描镜像（需 admin）"""
     from backend.packages.market import install_zip_market
 
     data = await file.read(64 * 1024 * 1024 + 1)

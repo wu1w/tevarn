@@ -166,7 +166,7 @@ export function DomainEventBridge() {
   // 暴露连接态给调试（不渲染 UI）
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      (window as unknown as { __taktonDomainLive?: boolean }).__taktonDomainLive = connected;
+      (window as unknown as { __tevarnDomainLive?: boolean }).__tevarnDomainLive = connected;
     }
   }, [connected, lastTopic]);
 

@@ -22,7 +22,7 @@ fs.mkdirSync(OUT, { recursive: true });
   const token = data.access_token;
   await context.addCookies([
     {
-      name: 'takton-auth',
+      name: 'tevarn-auth',
       value: token,
       domain: '127.0.0.1',
       path: '/',
@@ -31,7 +31,7 @@ fs.mkdirSync(OUT, { recursive: true });
   ]);
   await context.addInitScript((payload) => {
     localStorage.setItem(
-      'takton-auth',
+      'tevarn-auth',
       JSON.stringify({
         state: {
           user: payload.user,
@@ -42,7 +42,7 @@ fs.mkdirSync(OUT, { recursive: true });
         version: 0,
       })
     );
-    document.cookie = `takton-auth=${payload.token}; path=/; max-age=604800; SameSite=Lax`;
+    document.cookie = `tevarn-auth=${payload.token}; path=/; max-age=604800; SameSite=Lax`;
   }, { user: data.user, token });
 
   const page = await context.newPage();

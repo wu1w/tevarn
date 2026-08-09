@@ -4,10 +4,10 @@ from __future__ import annotations
 
 BEGINNER_KB_DOCS: list[dict[str, str]] = [
     {
-        "title": "Takton 新手 5 分钟上手",
-        "content": """# Takton 新手 5 分钟上手
+        "title": "Tevarn 新手 5 分钟上手",
+        "content": """# Tevarn 新手 5 分钟上手
 
-Takton 是「多机 Agent 工作台」：用对话指挥本机和家里/公司的电脑。
+Tevarn 是「多机 Agent 工作台」：用对话指挥本机和家里/公司的电脑。
 
 ## 三步开始
 1. 打开首页，在输入框打中文问题，点发送。
@@ -41,8 +41,8 @@ Takton 是「多机 Agent 工作台」：用对话指挥本机和家里/公司�
         "content": """# 远程设备
 
 ## 配对
-1. 在目标机启动 takton-agent（默认端口 19876，需要 token）。
-2. Takton「设备」页：名称、host、端口、token → 配对。
+1. 在目标机启动 tevarn-agent（默认端口 19876，需要 token）。
+2. Tevarn「设备」页：名称、host、端口、token → 配对。
 3. 看到 online 和延迟（如 5ms）即成功。
 
 ## 对话
@@ -125,12 +125,12 @@ Takton 是「多机 Agent 工作台」：用对话指挥本机和家里/公司�
 ## 路径权威（常见漂移）
 | 角色 | 典型路径 |
 |------|----------|
-| 源码/沙箱根 | 仓库目录（如 `Documents\\kimi\\workspace\\takton`） |
-| 桌面会话契约与 memory | `%APPDATA%\\takton\\data\\workspace` |
-| Skills 实际 | `<仓库>\\.computers\\main\\home\\.takton\\skills` |
-| Kernel 旁路状态 | `%USERPROFILE%\\.takton`（grants、tool_results） |
+| 源码/沙箱根 | 仓库目录（如 `Documents\\kimi\\workspace\\tevarn`） |
+| 桌面会话契约与 memory | `%APPDATA%\\tevarn\\data\\workspace` |
+| Skills 实际 | `<仓库>\\.computers\\main\\home\\.tevarn\\skills` |
+| Kernel 旁路状态 | `%USERPROFILE%\\.tevarn`（grants、tool_results） |
 
-若自查提示「AppData workspace / ~/.takton/skills 不存在」：先核对上表 **实际** 路径，不要只信旧文档。
+若自查提示「AppData workspace / ~/.tevarn/skills 不存在」：先核对上表 **实际** 路径，不要只信旧文档。
 
 ## 命令语法
 | 目的 | 用 | 别用 |

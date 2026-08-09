@@ -352,7 +352,7 @@ export default function DevicesPage() {
             <div className="p-6 text-center text-sm text-foreground-dim">{t('channels.loading')}</div>
           ) : devices.length === 0 ? (
             <div className="p-6 text-center text-sm text-foreground-dim">
-              暂无设备。先启动 takton-agent，再点「配对 Agent」。
+              暂无设备。先启动 tevarn-agent，再点「配对 Agent」。
             </div>
           ) : (
             <ul className="divide-y divide-border-subtle">
@@ -430,7 +430,7 @@ export default function DevicesPage() {
                     type="button"onClick={() => {
                       try {
                         sessionStorage.setItem(
-                          'takton-compose-draft',
+                          'tevarn-compose-draft',
                           `@${selected.name} `);
                       } catch { /* ignore */ }
                       router.push('/');

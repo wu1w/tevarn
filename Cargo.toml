@@ -1,21 +1,21 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/takton-kernel",
-    "crates/takton-runtime",
-    "crates/takton-kernel-host",
+    "crates/tevarn-kernel",
+    "crates/tevarn-runtime",
+    "crates/tevarn-kernel-host",
 ]
 default-members = [
-    "crates/takton-kernel",
-    "crates/takton-runtime",
-    "crates/takton-kernel-host",
+    "crates/tevarn-kernel",
+    "crates/tevarn-runtime",
+    "crates/tevarn-kernel-host",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-authors = ["Takton"]
+authors = ["Tevarn"]
 repository = "https://github.com/wu1w/takton"
 
 [workspace.dependencies]

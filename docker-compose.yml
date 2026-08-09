@@ -1,40 +1,40 @@
 version: '3.8'
 
-# Takton Docker 部署
+# Tevarn Docker 部署
 #
 # 安全默认值（2026-07-26 安全加固）：
 # - single_user_mode 默认 false：容器间/宿主机访问均非 loopback，必须走真实账号登录
-# - 不再注入任何弱默认密钥；未设 TAKTON_JWT_SECRET 时容器首启自动生成随机密钥，
-#   持久化到 takton_data volume（/app/data/secrets.json，0600）
+# - 不再注入任何弱默认密钥；未设 TEVARN_JWT_SECRET 时容器首启自动生成随机密钥，
+#   持久化到 tevarn_data volume（/app/data/secrets.json，0600）
 # - qdrant 不对外暴露端口（仅容器网络内可达）；调试时自行加 ports
-# - 环境变量名以 backend/core/config.py 的 Settings 字段为准（env_prefix=TAKTON_）
+# - 环境变量名以 backend/core/config.py 的 Settings 字段为准（env_prefix=TEVARN_）
 
 services:
-  takton-backend:
+  tevarn-backend:
     build:
       context: .
       dockerfile: backend/Dockerfile
     ports:
       - "8000:8000"
     environment:
-      - TAKTON_DB_URL=sqlite+aiosqlite:////app/data/takton.db
-      - TAKTON_QDRANT_URL=http://qdrant:6333
-      - TAKTON_SINGLE_USER_MODE=${TAKTON_SINGLE_USER_MODE:-false}
+      - TEVARN_DB_URL=sqlite+aiosqlite:////app/data/tevarn.db
+      - TEVARN_QDRANT_URL=http://qdrant:6333
+      - TEVARN_SINGLE_USER_MODE=${TEVARN_SINGLE_USER_MODE:-false}
       # 生产建议显式设置强随机值；留空则首启自动生成并持久化到 volume
-      - TAKTON_JWT_SECRET=${TAKTON_JWT_SECRET:-}
-      - TAKTON_SETTINGS_ENCRYPTION_SALT=${TAKTON_SETTINGS_ENCRYPTION_SALT:-}
+      - TEVARN_JWT_SECRET=${TEVARN_JWT_SECRET:-}
+      - TEVARN_SETTINGS_ENCRYPTION_SALT=${TEVARN_SETTINGS_ENCRYPTION_SALT:-}
       # 共享机/非 loopback 场景建议设置桥接令牌（留空 → 回落用户鉴权）
-      - TAKTON_BRIDGE_TOKEN=${TAKTON_BRIDGE_TOKEN:-}
+      - TEVARN_BRIDGE_TOKEN=${TEVARN_BRIDGE_TOKEN:-}
     volumes:
-      - takton_data:/app/data
-      - takton_logs:/app/logs
+      - tevarn_data:/app/data
+      - tevarn_logs:/app/logs
     depends_on:
       - qdrant
     restart: unless-stopped
     networks:
-      - takton
+      - tevarn
 
-  takton-frontend:
+  tevarn-frontend:
     build:
       context: .
       dockerfile: frontend/Dockerfile
@@ -44,10 +44,10 @@ services:
     ports:
       - "3000:3000"
     depends_on:
-      - takton-backend
+      - tevarn-backend
     restart: unless-stopped
     networks:
-      - takton
+      - tevarn
 
   qdrant:
     image: qdrant/qdrant:latest
@@ -58,7 +58,7 @@ services:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
     networks:
-      - takton
+      - tevarn
 
   # 可选：PostgreSQL（替代 SQLite）
   postgres:
@@ -68,21 +68,21 @@ services:
     ports:
       - "5432:5432"
     environment:
-      - POSTGRES_USER=takton
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-takton}
-      - POSTGRES_DB=takton
+      - POSTGRES_USER=tevarn
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-tevarn}
+      - POSTGRES_DB=tevarn
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
     networks:
-      - takton
+      - tevarn
 
 volumes:
-  takton_data:
-  takton_logs:
+  tevarn_data:
+  tevarn_logs:
   qdrant_data:
   postgres_data:
 
 networks:
-  takton:
+  tevarn:
     driver: bridge

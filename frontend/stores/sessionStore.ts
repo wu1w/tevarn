@@ -277,7 +277,7 @@ export const useSessionStore = create<SessionState>()(
             set({ currentSession: null, messages: [], isLoading: false, error: null });
             try {
               window.dispatchEvent(
-                new CustomEvent('takton:session-invalid', {
+                new CustomEvent('tevarn:session-invalid', {
                   detail: { sessionId },
                 })
               );
@@ -421,7 +421,7 @@ export const useSessionStore = create<SessionState>()(
             set({ currentSession: null, messages: [], isLoading: false, error: null });
             try {
               window.dispatchEvent(
-                new CustomEvent('takton:session-invalid', {
+                new CustomEvent('tevarn:session-invalid', {
                   detail: { sessionId },
                 })
               );
@@ -525,7 +525,7 @@ export const useSessionStore = create<SessionState>()(
       },
     }),
     {
-      name: 'takton-session',
+      name: 'tevarn-session',
       partialize: (state) => ({
         currentSession: state.currentSession,
         sessionTitles: state.sessionTitles,
@@ -535,11 +535,11 @@ export const useSessionStore = create<SessionState>()(
       onRehydrateStorage: () => () => {
         if (typeof window === 'undefined') return;
         window.addEventListener('storage', (e) => {
-          if (e.key === 'takton-session' && e.newValue) {
+          if (e.key === 'tevarn-session' && e.newValue) {
             try {
               const parsed = JSON.parse(e.newValue);
               if (parsed?.state) {
-                window.dispatchEvent(new CustomEvent('takton:session-sync', { detail: parsed.state }));
+                window.dispatchEvent(new CustomEvent('tevarn:session-sync', { detail: parsed.state }));
               }
             } catch (err) {
               console.error('session sync parse failed:', err);

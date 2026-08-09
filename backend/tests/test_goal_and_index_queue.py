@@ -20,8 +20,8 @@ from backend.services.rag import identity_index_queue as q
 
 @pytest.fixture(autouse=True)
 def _isolate_queue(tmp_path, monkeypatch):
-    """Point TAKTON_HOME at tmp so queue tests don't touch user data."""
-    monkeypatch.setenv("TAKTON_HOME", str(tmp_path))
+    """Point TEVARN_HOME at tmp so queue tests don't touch user data."""
+    monkeypatch.setenv("TEVARN_HOME", str(tmp_path))
     # reset path cache via new home
     yield
     clear_goal("test-goal-sess")
@@ -67,7 +67,7 @@ def test_apply_manage_goal_mutates_status():
 
 
 def test_index_queue_enqueue_dedupe_and_persist(tmp_path, monkeypatch):
-    monkeypatch.setenv("TAKTON_HOME", str(tmp_path))
+    monkeypatch.setenv("TEVARN_HOME", str(tmp_path))
     q.enqueue(
         entry_id="e1",
         identity_id="i1",
@@ -93,7 +93,7 @@ def test_index_queue_enqueue_dedupe_and_persist(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_index_queue_flush_without_vector_rag(tmp_path, monkeypatch):
-    monkeypatch.setenv("TAKTON_HOME", str(tmp_path))
+    monkeypatch.setenv("TEVARN_HOME", str(tmp_path))
     q.enqueue(
         entry_id="e2",
         identity_id="i2",

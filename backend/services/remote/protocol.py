@@ -1,4 +1,4 @@
-"""Takton remote agent protocol (L1 MVP).
+"""Tevarn remote agent protocol (L1 MVP).
 
 Transport: JSON messages over WebSocket.
 Each request:

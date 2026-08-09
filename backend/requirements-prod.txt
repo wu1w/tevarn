@@ -1,4 +1,4 @@
-# Takton backend - production / desktop packaging only
+# Tevarn backend - production / desktop packaging only
 # Pin versions for reproducible desktop packaging
 # Dev/test deps live in requirements-dev.txt
 # NOTE: comments must stay ASCII-only - pip decodes this file with the OS

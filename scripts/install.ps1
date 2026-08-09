@@ -1,29 +1,29 @@
-# Takton one-click installer (Windows) - installs desktop client (Setup.exe)
-#   iex ((irm https://raw.githubusercontent.com/wu1w/takton/main/scripts/install.ps1) -replace '^﻿','')
+# Tevarn one-click installer (Windows) - installs desktop client (Setup.exe)
+#   iex ((irm https://raw.githubusercontent.com/wu1w/tevarn/main/scripts/install.ps1) -replace '^﻿','')
 #
-# Downloads Takton-Setup from the latest GitHub Release (or TAKTON_RELEASE_TAG) and runs NSIS.
+# Downloads Tevarn-Setup from the latest GitHub Release (or TEVARN_RELEASE_TAG) and runs NSIS.
 # Note: file must stay UTF-8 without BOM for Windows PowerShell irm|iex (PS 5.1 safe).
 # Does NOT set up a separate "web-only" server stack.
 
 $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$Repo = if ($env:TAKTON_REPO) { $env:TAKTON_REPO } else { "wu1w/takton" }
+$Repo = if ($env:TEVARN_REPO) { $env:TEVARN_REPO } else { "wu1w/tevarn" }
 if ($Repo -match "github\.com[:/](?<o>[^/]+)/(?<n>[^/.]+)") {
   $Repo = "$($Matches.o)/$($Matches.n)"
 }
-$TagOverride = $env:TAKTON_RELEASE_TAG
-$AssetOverride = $env:TAKTON_SETUP_ASSET
-$NoStart = $env:TAKTON_NO_START -eq "1"
+$TagOverride = $env:TEVARN_RELEASE_TAG
+$AssetOverride = $env:TEVARN_SETUP_ASSET
+$NoStart = $env:TEVARN_NO_START -eq "1"
 
-function Write-Info([string]$m) { Write-Host "[takton] $m" }
-function Write-Ok([string]$m) { Write-Host "[takton] OK $m" -ForegroundColor Green }
-function Write-Err([string]$m) { Write-Host "[takton] ERROR: $m" -ForegroundColor Red }
+function Write-Info([string]$m) { Write-Host "[tevarn] $m" }
+function Write-Ok([string]$m) { Write-Host "[tevarn] OK $m" -ForegroundColor Green }
+function Write-Err([string]$m) { Write-Host "[tevarn] ERROR: $m" -ForegroundColor Red }
 
 function Get-LatestSetup {
   param([string]$Repository, [string]$Tag, [string]$AssetName)
   $headers = @{
-    "User-Agent" = "takton-install.ps1"
+    "User-Agent" = "tevarn-install.ps1"
     "Accept"     = "application/vnd.github+json"
   }
   if ($Tag) {
@@ -39,9 +39,9 @@ function Get-LatestSetup {
     $hit = $assets | Where-Object { $_.name -eq $AssetName } | Select-Object -First 1
   } else {
     # Prefer current naming; never hardcode an old patch version.
-    $hit = $assets | Where-Object { $_.name -match '^Takton-Setup-.*\.exe$' } | Select-Object -First 1
+    $hit = $assets | Where-Object { $_.name -match '^Tevarn-Setup-.*\.exe$' } | Select-Object -First 1
     if (-not $hit) {
-      $hit = $assets | Where-Object { $_.name -match '^Takton Setup .*\.exe$' } | Select-Object -First 1
+      $hit = $assets | Where-Object { $_.name -match '^Tevarn Setup .*\.exe$' } | Select-Object -First 1
     }
   }
   if (-not $hit) {
@@ -56,7 +56,7 @@ function Get-LatestSetup {
 }
 
 Write-Host ""
-Write-Host "Takton desktop client - one-click install" -ForegroundColor Cyan
+Write-Host "Tevarn desktop client - one-click install" -ForegroundColor Cyan
 Write-Host ""
 
 $setupMeta = $null
@@ -65,7 +65,7 @@ try {
 } catch {
   Write-Info "API resolve failed ($($_.Exception.Message)); falling back to v0.3.1 asset names"
   $fallbackTag = if ($TagOverride) { $TagOverride } else { "v0.3.1" }
-  $fallbackAsset = if ($AssetOverride) { $AssetOverride } else { "Takton-Setup-0.3.1.exe" }
+  $fallbackAsset = if ($AssetOverride) { $AssetOverride } else { "Tevarn-Setup-0.3.1.exe" }
   $setupMeta = [pscustomobject]@{
     Tag  = $fallbackTag
     Name = $fallbackAsset
@@ -76,7 +76,7 @@ try {
 
 Write-Ok "Release $($setupMeta.Tag) → $($setupMeta.Name)"
 
-$work = Join-Path $env:TEMP ("takton-setup-" + [guid]::NewGuid().ToString("n").Substring(0, 8))
+$work = Join-Path $env:TEMP ("tevarn-setup-" + [guid]::NewGuid().ToString("n").Substring(0, 8))
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 $setupPath = Join-Path $work $setupMeta.Name
 
@@ -122,30 +122,30 @@ Write-Ok "Client installed ($($setupMeta.Tag))"
 
 $pf86 = ${env:ProgramFiles(x86)}
 $candidates = @(
-  (Join-Path $env:LOCALAPPDATA "Programs\Takton\Takton.exe"),
-  (Join-Path $env:LOCALAPPDATA "Programs\takton\Takton.exe"),
-  (Join-Path $env:ProgramFiles "Takton\Takton.exe")
+  (Join-Path $env:LOCALAPPDATA "Programs\Tevarn\Tevarn.exe"),
+  (Join-Path $env:LOCALAPPDATA "Programs\tevarn\Tevarn.exe"),
+  (Join-Path $env:ProgramFiles "Tevarn\Tevarn.exe")
 )
 if ($pf86) {
-  $candidates += (Join-Path $pf86 "Takton\Takton.exe")
+  $candidates += (Join-Path $pf86 "Tevarn\Tevarn.exe")
 }
 $exe = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 
 if (-not $exe) {
-  $desk = Join-Path ([Environment]::GetFolderPath("Desktop")) "Takton.lnk"
+  $desk = Join-Path ([Environment]::GetFolderPath("Desktop")) "Tevarn.lnk"
   if (Test-Path $desk) {
     Write-Ok "Shortcut on Desktop: $desk"
   } else {
-    Write-Info "Installer finished. Open Takton from Start Menu if the window did not open."
+    Write-Info "Installer finished. Open Tevarn from Start Menu if the window did not open."
   }
 } else {
   Write-Ok "Found: $exe"
   if (-not $NoStart) {
-    Write-Info "Launching Takton..."
+    Write-Info "Launching Tevarn..."
     Start-Process -FilePath $exe
   }
 }
 
 Write-Host ""
-Write-Ok "Done. Use the Takton desktop app."
+Write-Ok "Done. Use the Tevarn desktop app."
 Write-Host ""

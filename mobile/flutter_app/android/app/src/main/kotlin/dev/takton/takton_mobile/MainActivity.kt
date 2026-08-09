@@ -1,4 +1,4 @@
-package dev.takton.takton_mobile
+package dev.tevarn.tevarn_mobile
 
 import android.os.Build
 import io.flutter.embedding.android.FlutterActivity
@@ -13,7 +13,7 @@ import io.flutter.plugin.common.MethodChannel
  * "display size" scaling (Huawei / Xiaomi) and makes the island drift.
  */
 class MainActivity : FlutterActivity() {
-    private val channelName = "takton/display_cutout"
+    private val channelName = "tevarn/display_cutout"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)

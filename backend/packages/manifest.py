@@ -1,4 +1,4 @@
-"""Takton Package 规范 — 统一 skill / sub_agent / workflow 的可挂载包。
+"""Tevarn Package 规范 — 统一 skill / sub_agent / workflow 的可挂载包。
 
 设计原则（对齐 Pi harness）：
 - 核心 loop 保持精简；能力通过 package 按需挂到会话

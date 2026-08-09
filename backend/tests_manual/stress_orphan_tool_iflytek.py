@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """孤儿 tool 修复的真实网关集成压测（讯飞 Coding Plan / astron-code-latest）。
 
-用 takton 自己的 PipelineContextEngine + OpenAICompatibleService，
+用 tevarn 自己的 PipelineContextEngine + OpenAICompatibleService，
 真实模拟"复杂搜索+开发"的多轮工具调用：每轮 assistant 发起多个 tool_calls、
 tool 返回大段结果，历史不断累积，真实触发 L1/L3/L5 压缩，然后真实调用讯飞端点，
 全程监控是否出现 400（tool 配对错乱 / 孤儿 tool 消息）。
 
 运行：
-    cd /opt/hermes-workspace/takton
+    cd /opt/hermes-workspace/tevarn
     API_KEY=x .venv/bin/python backend/tests_manual/stress_orphan_tool_iflytek.py
 """
 from __future__ import annotations

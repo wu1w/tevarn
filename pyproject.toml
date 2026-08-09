@@ -3,12 +3,12 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "takton"
+name = "tevarn"
 version = "0.5.8-alpha"
-description = "Takton - 个人专属 AI Agent 终端（前后端一体）"
+description = "Tevarn - 个人专属 AI Agent 终端（前后端一体）"
 readme = "README.md"
 requires-python = ">=3.10"
-authors = [{ name = "developer", email = "developer@takton.dev" }]
+authors = [{ name = "developer", email = "developer@tevarn.dev" }]
 dependencies = [
   "fastapi==0.139.0",
   "uvicorn[standard]==0.50.2",
@@ -45,7 +45,7 @@ dev = [
 postgres = ["asyncpg==0.30.0"]
 
 [project.scripts]
-takton = "backend.cli:main"
+tevarn = "backend.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -71,7 +71,7 @@ filterwarnings = [
     "ignore::DeprecationWarning:fastapi.*",
 ]
 markers = [
-    "desktop: manual desktop integration (needs display; TAKTON_RUN_DESKTOP_TESTS=1)",
+    "desktop: manual desktop integration (needs display; TEVARN_RUN_DESKTOP_TESTS=1)",
 ]
 
 # ── Ruff：CI 门禁用的 linter ────────────────────────────────────────
@@ -86,8 +86,8 @@ extend-exclude = [
     "node_modules",
     "backend/static",
     "backend/migrations/versions",
-    "takton-code",
-    "takton-agent",
+    "tevarn-code",
+    "tevarn-agent",
     "tests",  # 已归档：权威测试树为 backend/tests
 ]
 

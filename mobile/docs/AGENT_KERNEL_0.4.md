@@ -1,4 +1,4 @@
-# Takton Mobile Agent Kernel 0.4
+# Tevarn Mobile Agent Kernel 0.4
 
 ## Capabilities (Codex / 豆包-class subset on phone)
 

@@ -24,7 +24,7 @@ from backend.tools.base import BaseTool, ToolRiskLevel, ToolSource
 
 logger = logging.getLogger(__name__)
 
-_HOME = Path(os.path.expanduser("~/.takton"))
+_HOME = Path(os.path.expanduser("~/.tevarn"))
 _CAL_DIR = _HOME / "calendar"
 _CAL_FILE = _CAL_DIR / "events.json"
 _MEDIA_DIR = _HOME / "media"
@@ -56,11 +56,11 @@ def _save_events(events: list[dict[str, Any]]) -> None:
     _ensure_dirs()
     _CAL_FILE.write_text(json.dumps(events, ensure_ascii=False, indent=2), encoding="utf-8")
     # also write ICS
-    ics_path = _CAL_DIR / "takton.ics"
+    ics_path = _CAL_DIR / "tevarn.ics"
     lines = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
-        "PRODID:-//Takton//Calendar//CN",
+        "PRODID:-//Tevarn//Calendar//CN",
         "CALSCALE:GREGORIAN",
     ]
     for e in events:
@@ -77,7 +77,7 @@ def _save_events(events: list[dict[str, Any]]) -> None:
         desc = str(e.get("description") or "").replace("\n", "\\n")
         lines += [
             "BEGIN:VEVENT",
-            f"UID:{uid}@takton",
+            f"UID:{uid}@tevarn",
             f"DTSTART:{start}",
             f"DTEND:{end}",
             f"SUMMARY:{summary}",
@@ -264,7 +264,7 @@ class DocReadTool(BaseTool):
     def _download(self, url: str) -> Path | str:
         _ensure_dirs()
         try:
-            req = Request(url, headers={"User-Agent": "TaktonDocRead/1.0"})
+            req = Request(url, headers={"User-Agent": "TevarnDocRead/1.0"})
             with urlopen(req, timeout=60) as resp:
                 data = resp.read()
                 ctype = resp.headers.get("Content-Type", "")
@@ -361,7 +361,7 @@ class DocWriteTool(BaseTool):
         if not content.strip():
             return "[Error] content required"
         fmt = str(kwargs.get("format") or "md").lower()
-        title = (kwargs.get("title") or "Takton Document").strip()
+        title = (kwargs.get("title") or "Tevarn Document").strip()
         name = (kwargs.get("filename") or "").strip()
         _ensure_dirs()
         if not name:
@@ -468,7 +468,7 @@ class ImageGenerateTool(BaseTool):
             draw = ImageDraw.Draw(img)
             draw.rectangle([20, 20, w - 20, h - 20], outline=(160, 120, 255), width=3)
             # wrap prompt
-            text = f"Takton placeholder\n\n{prompt[:400]}"
+            text = f"Tevarn placeholder\n\n{prompt[:400]}"
             y = 40
             for line in text.split("\n"):
                 draw.text((40, y), line[:80], fill=(230, 220, 255))
@@ -482,7 +482,7 @@ class ImageGenerateTool(BaseTool):
                 "请老板配置其一后重试 image_generate：\n"
                 "  • 环境变量 FAL_KEY 或 FAL_API_KEY（推荐 fal.ai flux）\n"
                 "  • 或 OPENAI_API_KEY（DALL·E）\n"
-                "  • Windows 可在系统环境 / Takton .env 写入后重启后端\n"
+                "  • Windows 可在系统环境 / Tevarn .env 写入后重启后端\n"
                 "也可用 capability_status 查看 image 通道是否就绪。"
             )
         except Exception as e:
@@ -564,7 +564,7 @@ class CalendarTool(BaseTool):
             name="calendar",
             description=(
                 "本地 ICS 日历。action=list|create|update|delete|export。"
-                "create 需 title + start(YYYY-MM-DD or ISO)。数据在 ~/.takton/calendar/"
+                "create 需 title + start(YYYY-MM-DD or ISO)。数据在 ~/.tevarn/calendar/"
             ),
             parameters={
                 "type": "object",
@@ -593,7 +593,7 @@ class CalendarTool(BaseTool):
 
         if action == "export":
             _save_events(events)
-            return f"OK ics={(_CAL_DIR / 'takton.ics').resolve()} json={_CAL_FILE.resolve()}"
+            return f"OK ics={(_CAL_DIR / 'tevarn.ics').resolve()} json={_CAL_FILE.resolve()}"
 
         if action == "list":
             start_day = (kwargs.get("date") or _local_today()).strip()
@@ -652,7 +652,7 @@ class CalendarTool(BaseTool):
             }
             events.append(ev)
             _save_events(events)
-            return f"OK created {eid}\n{json.dumps(ev, ensure_ascii=False, indent=2)}\nics={_CAL_DIR / 'takton.ics'}"
+            return f"OK created {eid}\n{json.dumps(ev, ensure_ascii=False, indent=2)}\nics={_CAL_DIR / 'tevarn.ics'}"
 
         if action == "update":
             eid = (kwargs.get("event_id") or "").strip()

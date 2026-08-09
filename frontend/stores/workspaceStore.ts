@@ -252,7 +252,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       clearUnread: () => set({ unreadTerminal: false }),
     }),
     {
-      name: 'takton-workspace',
+      name: 'tevarn-workspace',
       partialize: (s) => ({
         uiMode: s.uiMode,
         dockOpen: s.dockOpen,

@@ -44,7 +44,7 @@ export function StartupOverlay({ backendReady, stage }: StartupOverlayProps) {
 
         {/* 标题 */}
         <div className="text-center">
-          <h1 className="text-lg font-bold text-foreground">Takton</h1>
+          <h1 className="text-lg font-bold text-foreground">Tevarn</h1>
           <p className="text-xs text-foreground-dim mt-1 font-mono uppercase tracking-widest">
             Agent Terminal
           </p>

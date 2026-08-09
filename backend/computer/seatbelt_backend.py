@@ -125,21 +125,21 @@ class SeatbeltBackend:
             self.workspace_root, ".computers", safe_key, "home"
         )
         self.host_user_home = (
-            os.environ.get("TAKTON_HOST_HOME")
+            os.environ.get("TEVARN_HOST_HOME")
             or os.environ.get("HOME")
             or os.environ.get("USERPROFILE")
             or str(Path.home())
         )
-        self.host_takton_home = os.environ.get("TAKTON_HOME") or os.path.join(
-            self.host_user_home, ".takton"
+        self.host_tevarn_home = os.environ.get("TEVARN_HOME") or os.path.join(
+            self.host_user_home, ".tevarn"
         )
 
     def _ensure_dirs(self) -> None:
         Path(self.agent_home).mkdir(parents=True, exist_ok=True)
         try:
-            from backend.agent._takton_paths import ensure_sandbox_takton_link
+            from backend.agent._tevarn_paths import ensure_sandbox_tevarn_link
 
-            ensure_sandbox_takton_link(self.agent_home, self.host_takton_home)
+            ensure_sandbox_tevarn_link(self.agent_home, self.host_tevarn_home)
         except Exception:
             pass
 
@@ -156,8 +156,8 @@ class SeatbeltBackend:
             "/usr/bin/env",
             "-i",
             f"HOME={self.agent_home}",
-            f"TAKTON_HOME={self.host_takton_home}",
-            f"TAKTON_HOST_HOME={self.host_user_home}",
+            f"TEVARN_HOME={self.host_tevarn_home}",
+            f"TEVARN_HOST_HOME={self.host_user_home}",
             "PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
             "LANG=C.UTF-8",
             "TERM=dumb",

@@ -1,10 +1,10 @@
 /**
- * Takton Mobile E2E — Dioxus UI + real host APIs (no mock data).
+ * Tevarn Mobile E2E — Dioxus UI + real host APIs (no mock data).
  * Run: node e2e/mobile-e2e.mjs
  */
 import { chromium } from "playwright";
 
-const BASE = process.env.TAKTON_MOBILE_URL || "http://127.0.0.1:8080";
+const BASE = process.env.TEVARN_MOBILE_URL || "http://127.0.0.1:8080";
 
 const b = await chromium.launch({
   headless: true,

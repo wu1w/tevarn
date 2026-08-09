@@ -1,6 +1,6 @@
 """best-of-n scoring + optional fanout (Batch 1: score 可用；完整 fanout 依赖 worktree Batch2).
 
-Ported/adapted from takton-code agent/best_of_n.py.
+Ported/adapted from tevarn-code agent/best_of_n.py.
 Default: disabled in settings (agent_best_of_n_enabled=False).
 """
 from __future__ import annotations

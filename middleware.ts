@@ -27,8 +27,8 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // 检查认证 cookie（authStore 持久化为 'takton-auth'）
-  const authCookie = request.cookies.get('takton-auth');
+  // 检查认证 cookie（authStore 持久化为 'tevarn-auth'）
+  const authCookie = request.cookies.get('tevarn-auth');
   const hasAuth = !!authCookie;
 
   // 未登录且访问受保护路由 → 重定向到登录页

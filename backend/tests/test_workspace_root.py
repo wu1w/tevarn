@@ -13,14 +13,14 @@ from backend.tools.permissions import (
 )
 
 
-def test_detect_project_root_finds_takton():
+def test_detect_project_root_finds_tevarn():
     root = detect_project_root(str(Path(__file__).resolve()))
     assert (Path(root) / "backend").is_dir()
     assert (Path(root) / "backend" / "agent" / "tool_policy.py").is_file()
 
 
 def test_default_workspace_is_project_root(monkeypatch):
-    monkeypatch.delenv("TAKTON_FILE_BROWSER_ROOT", raising=False)
+    monkeypatch.delenv("TEVARN_FILE_BROWSER_ROOT", raising=False)
     # force settings default
     from backend.core import config as cfg
 
@@ -37,7 +37,7 @@ def test_default_workspace_is_project_root(monkeypatch):
 
 
 def test_sandbox_workspace_env(monkeypatch, tmp_path):
-    monkeypatch.setenv("TAKTON_FILE_BROWSER_ROOT", str(tmp_path))
+    monkeypatch.setenv("TEVARN_FILE_BROWSER_ROOT", str(tmp_path))
     root = resolve_agent_workspace_root()
     assert Path(root) == tmp_path.resolve()
     mgr = ToolPermissionManager()

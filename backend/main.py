@@ -49,27 +49,40 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 # 原生崩溃时写栈到 logs/faulthandler.log（硬退后可定位）
+# 使用 unbuffered binary：硬杀时比全缓冲文本更可能留下 dump 尾部
 try:
     _fh_dir = Path(__file__).resolve().parents[1] / "logs"
     _fh_dir.mkdir(parents=True, exist_ok=True)
     _fh_path = _fh_dir / "faulthandler.log"
-    _fh_fp = open(_fh_path, "a", encoding="utf-8")  # noqa: SIM115 — 进程级常驻
+    _fh_fp = open(_fh_path, "ab", buffering=0)  # noqa: SIM115 — 进程级常驻
     faulthandler.enable(file=_fh_fp, all_threads=True)
     logger.info("faulthandler enabled → %s", _fh_path)
 except Exception as _fh_e:
     try:
-        faulthandler.enable()
+        faulthandler.enable(all_threads=True)
     except Exception:
         pass
     logger.debug("faulthandler setup skip: %s", _fh_e)
+
+# 崩溃面包屑 + 策略复核（无栈硬退时至少留下 process_breadcrumb.jsonl）
+try:
+    from backend.core.process_guard import install_process_guard, write_breadcrumb
+
+    install_process_guard(role="backend.main")
+    write_breadcrumb(
+        "main_import",
+        loop_policy=type(__import__("asyncio").get_event_loop_policy()).__name__,
+    )
+except Exception as _pg_e:
+    logger.debug("process_guard install skip: %s", _pg_e)
 
 # lifespan 后台任务句柄（shutdown 时取消，避免测试/热重载环关闭时报错）
 _bg_tasks: set[asyncio.Task] = set()
 
 
 def _is_test_mode() -> bool:
-    """audit-fix: 统一 TAKTON_TEST_MODE 判定（两处此前口径不一致：缺 .lower()）。"""
-    return str(os.environ.get("TAKTON_TEST_MODE", "") or "").strip().lower() in {
+    """audit-fix: 统一 TEVARN_TEST_MODE 判定（两处此前口径不一致：缺 .lower()）。"""
+    return str(os.environ.get("TEVARN_TEST_MODE", "") or "").strip().lower() in {
         "1",
         "true",
         "yes",
@@ -118,7 +131,7 @@ async def _seed_default_user() -> None:
     if not settings.single_user_mode:
         return
     repo = AsyncUserRepository()
-    default = await repo.get_by_email("admin@takton.dev")
+    default = await repo.get_by_email("admin@tevarn.dev")
     if default:
         logger.info(f"Default user already exists: {default.id}")
         return
@@ -133,12 +146,12 @@ async def _seed_default_user() -> None:
     from backend.core.security import get_password_hash
     default_pw = (
         (settings.default_admin_password or "").strip()
-        or os.environ.get("TAKTON_DEFAULT_ADMIN_PASSWORD", "").strip()
+        or os.environ.get("TEVARN_DEFAULT_ADMIN_PASSWORD", "").strip()
         or get_or_create_initial_admin_password()
     )
     try:
         user = await repo.create({
-            "email": "admin@takton.dev",
+            "email": "admin@tevarn.dev",
             "username": "admin",
             "hashed_password": get_password_hash(default_pw),
             "is_superuser": True,
@@ -186,7 +199,7 @@ async def _seed_settings() -> None:
         ("qdrant_url", "", "rag", "Qdrant 向量数据库地址（空=本地模式，不启用向量 RAG）"),
         ("qdrant_collection", "knowledge_base", "rag", "Qdrant collection 名称"),
         # General
-        ("system_name", "Takton", "general", "系统名称"),
+        ("system_name", "Tevarn", "general", "系统名称"),
         # Context engine
         ("context_threshold_percent", 0.72, "context", "上下文压缩触发阈值（相对 context_window）"),
         ("context_protect_first_n", 3, "context", "压缩时保护的头部非 system 消息数"),
@@ -252,7 +265,7 @@ async def _seed_beginner_knowledge() -> None:
 
     users = AsyncUserRepository()
     docs = AsyncDocumentRepository()
-    user = await users.get_by_email("admin@takton.dev")
+    user = await users.get_by_email("admin@tevarn.dev")
     if user is None:
         logger.warning("Beginner KB seed skipped: no user")
         return
@@ -377,8 +390,51 @@ async def lifespan(app: FastAPI):
     warn_dev_unsafe_once()
     run_startup_security_check()
 
+    # Event-loop forensics: log actual loop class (Selector vs Proactor)
+    try:
+        _loop = asyncio.get_running_loop()
+        _pol = type(asyncio.get_event_loop_policy()).__name__
+        logger.info(
+            "asyncio loop=%s policy=%s platform=%s",
+            type(_loop).__name__,
+            _pol,
+            sys.platform,
+        )
+        from backend.core.process_guard import write_breadcrumb
+
+        write_breadcrumb(
+            "lifespan_start",
+            loop=type(_loop).__name__,
+            policy=_pol,
+        )
+        if sys.platform == "win32" and "Proactor" in type(_loop).__name__:
+            logger.error(
+                "FATAL-class config: running ProactorEventLoop on Windows — "
+                "Codex/aiohttp multi-SSE may hard-exit with no traceback. "
+                "Launch via: python -m backend.win_boot"
+            )
+    except Exception as _loop_e:
+        logger.debug("loop forensics skip: %s", _loop_e)
+
+    # Light RSS breadcrumb every ~60s (cancel on shutdown)
+    async def _rss_heartbeat() -> None:
+        from backend.core.process_guard import maybe_log_rss, write_breadcrumb
+
+        while True:
+            await asyncio.sleep(60)
+            try:
+                rss = maybe_log_rss(min_interval_s=50.0)
+                if rss is not None and rss >= 1800:
+                    write_breadcrumb("rss_heartbeat", rss_mb=rss)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                pass
+
+    _spawn_bg(_rss_heartbeat(), "rss_heartbeat")
+
     logger.info("=" * 50)
-    logger.info("Takton Backend Starting...")
+    logger.info("Tevarn Backend Starting...")
     logger.info(f"LLM Provider: {settings.llm_provider}")
     logger.info(f"LLM Model: {settings.llm_model}")
     logger.info(f"RAG Service: {settings.rag_service_class}")
@@ -648,7 +704,7 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.debug("data_retention skip: %s", e)
     else:
-        logger.info("Cron scheduler skipped (TAKTON_TEST_MODE)")
+        logger.info("Cron scheduler skipped (TEVARN_TEST_MODE)")
 
     # Seed Wiki Graph 基础通识数据（仅空库时，后台）
     if not _test_mode:
@@ -666,7 +722,7 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"Channel gateway start skipped: {e}")
     else:
-        logger.info("Channel gateway skipped (TAKTON_TEST_MODE)")
+        logger.info("Channel gateway skipped (TEVARN_TEST_MODE)")
 
     # VPS reverse-tunnel agent (outbound to user-owned relay)
     if not _test_mode:
@@ -678,10 +734,23 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"vps tunnel startup skipped: {e}")
 
+    try:
+        from backend.core.process_guard import write_breadcrumb
+
+        write_breadcrumb("lifespan_ready")
+    except Exception:
+        pass
+
     yield  # 应用运行中
 
     # ---- Shutdown ----
-    logger.info("Takton Backend Shutting down...")
+    logger.info("Tevarn Backend Shutting down...")
+    try:
+        from backend.core.process_guard import write_breadcrumb
+
+        write_breadcrumb("lifespan_shutdown")
+    except Exception:
+        pass
 
     try:
         from backend.services.vps_tunnel import get_vps_tunnel
@@ -742,7 +811,7 @@ async def lifespan(app: FastAPI):
 from backend.core.version import product_version as _product_version
 
 app = FastAPI(
-    title="Takton",
+    title="Tevarn",
     description="个人专属异步 Agent 终端后端",
     version=_product_version(),
     lifespan=lifespan,
@@ -784,7 +853,7 @@ app.add_middleware(
 # 静态文件服务：上传的附件、生成的PPT和报告
 # 优先环境变量 / settings（桌面模式写入 userData），否则回退项目 uploads/
 def _resolve_uploads_dir() -> str:
-    env_dir = os.environ.get("TAKTON_UPLOADS_DIR", "").strip()
+    env_dir = os.environ.get("TEVARN_UPLOADS_DIR", "").strip()
     if env_dir:
         return os.path.abspath(env_dir)
     cfg = (getattr(settings, "uploads_dir", None) or "").strip()

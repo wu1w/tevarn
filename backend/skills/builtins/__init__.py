@@ -8,7 +8,7 @@ from . import (
     bash_skill,
     beginner_help_skill,
     calendar_read_skill,
-    configure_takton_skill,
+    configure_tevarn_skill,
     current_time_skill,
     device_status_skill,
     fetch_webpage_skill,
@@ -42,5 +42,5 @@ __all__ = [
     "fetch_webpage_skill",
     "device_status_skill",
     "beginner_help_skill",
-    "configure_takton_skill",
+    "configure_tevarn_skill",
 ]

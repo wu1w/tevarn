@@ -403,7 +403,7 @@ class CrewStewardTool(BaseTool):
         from backend.kernel.workforce import get_workforce_inbox
 
         lines = [
-            f"预算硬顶 hard_cap={hard_cap()}（环境 TAKTON_WORKFORCE_BUDGET_HARD_CAP）",
+            f"预算硬顶 hard_cap={hard_cap()}（环境 TEVARN_WORKFORCE_BUDGET_HARD_CAP）",
             "档案默认（default_token_budget）：",
         ]
         for i in items:
@@ -1031,7 +1031,7 @@ class CrewStewardTool(BaseTool):
         if inbox is None:
             return (
                 "[Error] 收件箱未启用。请确认 dispatcher/persistence 或 "
-                "TAKTON_AIOS_PROFILE=aios-dev"
+                "TEVARN_AIOS_PROFILE=aios-dev"
             )
         try:
             priority = int(kwargs.get("priority") or 0)

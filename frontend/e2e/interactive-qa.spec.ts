@@ -5,8 +5,8 @@ import { test, expect, type Page, type BrowserContext } from '@playwright/test';
 import path from 'path';
 import fs from 'fs';
 
-const BASE = process.env.TAKTON_BASE_URL || 'http://127.0.0.1:3000';
-const API = process.env.TAKTON_API_URL || 'http://127.0.0.1:8000/api';
+const BASE = process.env.TEVARN_BASE_URL || 'http://127.0.0.1:3000';
+const API = process.env.TEVARN_API_URL || 'http://127.0.0.1:8000/api';
 const OUT = path.resolve(__dirname, 'screenshots/interactive-qa');
 
 type Bug = {
@@ -40,7 +40,7 @@ async function authBootstrap(context: BrowserContext) {
   const expires = data.expires_in || 604800;
   await context.addCookies([
     {
-      name: 'takton-auth',
+      name: 'tevarn-auth',
       value: token,
       domain: '127.0.0.1',
       path: '/',
@@ -52,7 +52,7 @@ async function authBootstrap(context: BrowserContext) {
   await context.addInitScript(
     (payload) => {
       localStorage.setItem(
-        'takton-auth',
+        'tevarn-auth',
         JSON.stringify({
           state: {
             user: payload.user,
@@ -63,7 +63,7 @@ async function authBootstrap(context: BrowserContext) {
           version: 0,
         })
       );
-      document.cookie = `takton-auth=${payload.token}; path=/; max-age=${payload.expires}; SameSite=Lax`;
+      document.cookie = `tevarn-auth=${payload.token}; path=/; max-age=${payload.expires}; SameSite=Lax`;
     },
     { user: data.user, token, expires }
   );

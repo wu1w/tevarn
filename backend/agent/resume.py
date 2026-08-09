@@ -17,19 +17,40 @@ async def build_resume_prompt(session_id: uuid.UUID | str) -> str | None:
     g = get_goal(sid)
     cp = await load_checkpoint(sid)
 
+    anchor = ""
+    try:
+        from backend.agent.progress_guard import resume_anchor_block
+        from backend.tools.permissions import resolve_agent_workspace_root
+
+        anchor = resume_anchor_block(resolve_agent_workspace_root() or "")
+    except Exception:
+        anchor = ""
+
     if g is not None and not g.is_complete():
         return (
-            "【系统自动续跑】请继续推进未完成的 Goal，不要重复已完成步骤。"
-            "先用 manage_goal(action=get) 确认进度，再执行剩余 todo。\n\n"
+            "[System auto-resume] Continue the unfinished Goal; do not redo completed steps.\n"
+            "If the previous segment paused on tool-round cap, counters are reset — "
+            "work directly; do not restate force-final/budget/done-list essays.\n"
+            + (anchor + "\n" if anchor else "")
+            + "Call manage_goal(action=get) for progress, then execute remaining todos.\n"
+            "Do not text-only finish while incomplete; avoid disk scans/where/rustup/_diag.\n"
+            "Reply to the user in their language.\n\n"
             + g.summary_for_llm()
         )
 
     if cp:
+        note = str(cp.get("note") or "")
+        # Soft segment wording — never "token budget exhausted"
+        pause_why = "segment tool-round cap"
+        if "token" in note.lower() or "budget_ratio" in note:
+            pause_why = "process token pressure"
         return (
-            "【系统自动续跑】上一轮因轮次上限暂停。"
-            f"segment={cp.get('segment')} iteration={cp.get('iteration')} mode={cp.get('mode')}。"
-            "请从断点继续完成任务，避免重复已完成工作。"
-            + (f"\n备注: {cp.get('note')}" if cp.get("note") else "")
+            f"[System auto-resume] Previous run paused ({pause_why}). "
+            f"segment={cp.get('segment')} iteration={cp.get('iteration')} mode={cp.get('mode')}.\n"
+            + (anchor + "\n" if anchor else "")
+            + "Continue from the checkpoint; avoid redoing finished work; "
+            "no force-final report replay. Reply to the user in their language.\n"
+            + (f"Note: {note}" if note else "")
         )
     return None
 

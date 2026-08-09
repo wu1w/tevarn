@@ -18,12 +18,12 @@ Allow-Credentials: true。在**本地优先**产品里这恰恰是最危险的�
 
 ## 现在的规则
 
-1. **没有 Origin 头** → 非浏览器客户端（curl / CLI / takton-code / Electron 主进程
+1. **没有 Origin 头** → 非浏览器客户端（curl / CLI / tevarn-code / Electron 主进程
    反代）。放行，不加 CORS 头（它们也不需要）。
 2. **Origin 是 loopback**（127.0.0.1 / localhost / ::1，任意端口）→ 放行并回写。
    覆盖 Electron（http://127.0.0.1:<FRONTEND_PORT>）与 next dev（:3000/:3001），
    零配置。
-3. **Origin 在 settings.cors_allowed_origins 里** → 放行并回写。给把 Takton 开给
+3. **Origin 在 settings.cors_allowed_origins 里** → 放行并回写。给把 Tevarn 开给
    局域网 / 自建域名的人留的口子。
 4. **其余** → 403 拒绝。
 
@@ -105,7 +105,7 @@ class SimpleCORSMiddleware(BaseHTTPMiddleware):
         if origin and not is_origin_allowed(origin):
             logger.warning(
                 "CORS: rejected cross-origin request from %s to %s %s "
-                "(set TAKTON_CORS_ALLOWED_ORIGINS to allow it)",
+                "(set TEVARN_CORS_ALLOWED_ORIGINS to allow it)",
                 origin,
                 request.method,
                 request.url.path,
@@ -115,8 +115,8 @@ class SimpleCORSMiddleware(BaseHTTPMiddleware):
                 content={
                     "detail": (
                         f"Cross-origin request from '{origin}' is not allowed. "
-                        "Takton only accepts requests from the local app by default; "
-                        "set TAKTON_CORS_ALLOWED_ORIGINS to permit additional origins."
+                        "Tevarn only accepts requests from the local app by default; "
+                        "set TEVARN_CORS_ALLOWED_ORIGINS to permit additional origins."
                     )
                 },
                 headers={"Vary": "Origin"},

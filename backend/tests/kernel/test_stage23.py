@@ -136,7 +136,7 @@ def test_sandbox_exec_wrap_and_isolation() -> None:
         pytest.skip("bwrap 不可用")
     argv = wrap_python_argv_sandboxed(
         [sys.executable, "-c", "print('OK'); import os; print('ENV', len(os.environ))"],
-        workspace_root="/opt/hermes-workspace/takton",
+        workspace_root="/opt/hermes-workspace/tevarn",
     )
     out = subprocess.run(argv, capture_output=True, text=True, timeout=30)
     assert "OK" in out.stdout
@@ -156,7 +156,7 @@ def test_sandbox_exec_network_blocked() -> None:
     argv = wrap_python_argv_sandboxed(
         [sys.executable, "-c",
          "import urllib.request; urllib.request.urlopen('http://example.com', timeout=3)"],
-        workspace_root="/opt/hermes-workspace/takton",
+        workspace_root="/opt/hermes-workspace/tevarn",
     )
     out = subprocess.run(argv, capture_output=True, text=True, timeout=30)
     assert out.returncode != 0  # 断网 → 异常退出

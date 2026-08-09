@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "dev.takton.mobile"
+    namespace = "dev.tevarn.mobile"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "dev.takton.mobile"
+        applicationId = "dev.tevarn.mobile"
         minSdk = 26
         targetSdk = 34
         versionCode = 1

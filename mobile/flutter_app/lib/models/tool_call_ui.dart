@@ -26,9 +26,51 @@ class ToolCallUi {
 
 enum ToolCallStatus { running, completed, failed }
 
+/// Strip PC-side reasoning blocks that 0.5.8+ persists as tags.
+/// Mobile has no ThinkingBlock — raw tags must never land in the bubble body.
+String stripThinkingBlocks(String? raw) {
+  if (raw == null || raw.isEmpty) return '';
+  var s = raw;
+  // Closed blocks (PC wrap_thinking / stream)
+  s = s.replaceAll(
+    RegExp(
+      r'<thinking\b[^>]*>[\s\S]*?</thinking>'
+      r'|<think\b[^>]*>[\s\S]*?</think>'
+      r'|\[Thinking\][\s\S]*?\[/Thinking\]'
+      r'|【思考】[\s\S]*?【/思考】',
+      caseSensitive: false,
+    ),
+    '',
+  );
+  // Unclosed open tag → drop trailing reasoning (live stream)
+  s = s.replaceAll(
+    RegExp(
+      r'(?:<thinking\b[^>]*>|<think\b[^>]*>|\[Thinking\]|【思考】)[\s\S]*$',
+      caseSensitive: false,
+    ),
+    '',
+  );
+  // Fenced thinking
+  s = s.replaceAll(
+    RegExp(
+      r'```(?:thinking|thought|reasoning)\s*\n[\s\S]*?```',
+      caseSensitive: false,
+    ),
+    '',
+  );
+  return s.trim();
+}
+
+/// True when text is only thinking / empty after strip (not a user-visible answer).
+bool isVisibleBodyEmpty(String? raw) {
+  return stripThinkingBlocks(raw).trim().isEmpty;
+}
+
 /// Split Codex-like tool lines from assistant body text.
+/// Always strips thinking first so tool trails and body stay clean.
 ({List<ToolCallUi> tools, String body}) splitToolTrailFromText(String raw) {
-  final lines = raw.replaceAll('\r\n', '\n').split('\n');
+  final cleaned = stripThinkingBlocks(raw);
+  final lines = cleaned.replaceAll('\r\n', '\n').split('\n');
   final tools = <ToolCallUi>[];
   final body = <String>[];
   var inTrail = true;

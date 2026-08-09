@@ -98,7 +98,7 @@ def load_workspace_contract(
             "### DATA MAP（路径事实 · 必读）",
             f"- **workspace_root（file_read/grep/command 默认边界）**: `{ws}`",
             f"- **宿主数据根（已放行）**: " + (", ".join(f"`{r}`" for r in host_roots) if host_roots else "（无）"),
-            f"- **沙箱内宿主数据镜像**: `{ws}/.computers/<agent>/home/.takton` → 指向宿主 `~/.takton`",
+            f"- **沙箱内宿主数据镜像**: `{ws}/.computers/<agent>/home/.tevarn` → 指向宿主 `~/.tevarn`",
             "- **经营目标 O-KR**: 不在文件里，用工具 **`okr_goal`**（list/update/create），不要 grep 源码",
             "- **会话 Todo 规划卡**: `manage_goal`（与目标页无关）",
             "- Windows：`echo`/`dir` 是 cmd 内置；沙箱里优先 `cmd /c echo ok`、`cmd /c dir`",
@@ -114,7 +114,7 @@ def load_workspace_contract(
     block = (
         "## WORKSPACE CONTRACT（会话启动契约 · 自动注入）\n"
         "下列文件来自项目/workspace 根、桌面 userData workspace "
-        "（`%APPDATA%/takton/data/workspace`）或 `.computers/*/home`。"
+        "（`%APPDATA%/tevarn/data/workspace`）或 `.computers/*/home`。"
         "缺失会标明 [missing]；大文件会截断并带 [truncated]。"
         "用户本轮明确指令优先于契约。"
         "Windows 默认 cmd：串联用 `&`，列目录用 `dir`。\n\n"

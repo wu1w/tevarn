@@ -3,7 +3,7 @@
 /**
  * Per-model usage trend (line) + calendar heatmap.
  * Data: real usage_ledger by_model_day from GET /api/kernel/cost — no mock.
- * Visual language inspired by subscription heatmaps; colors use Takton CSS vars.
+ * Visual language inspired by subscription heatmaps; colors use Tevarn CSS vars.
  */
 
 import React, { useMemo, useState } from 'react';

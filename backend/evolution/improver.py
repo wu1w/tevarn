@@ -364,7 +364,7 @@ def propose_kernel_config(
         "summary": f"Kernel 策略建议：{len(suggestions)} 项"
         f"（{len(denied)} 个被拒能力 / {budget_hits} 次预算耗尽）",
         "content": {
-            "schema": "takton.kernel_config.v1",
+            "schema": "tevarn.kernel_config.v1",
             "suggestions": suggestions,
             "auto_apply": False,  # 建议必须经人工确认
         },

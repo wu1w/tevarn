@@ -1,4 +1,4 @@
-"""Add nginx location /takton-dev/ -> 127.0.0.1:7080 on VPS (port 80 already open)."""
+"""Add nginx location /tevarn-dev/ -> 127.0.0.1:7080 on VPS (port 80 already open)."""
 from __future__ import annotations
 
 import os
@@ -7,17 +7,17 @@ import time
 
 import paramiko
 
-HOST = os.environ.get("TAKTON_VPS_HOST", "150.158.109.231")
-USER = os.environ.get("TAKTON_VPS_USER", "ubuntu")
-PASSWORD = os.environ.get("TAKTON_VPS_PASSWORD", "")
+HOST = os.environ.get("TEVARN_VPS_HOST", "150.158.109.231")
+USER = os.environ.get("TEVARN_VPS_USER", "ubuntu")
+PASSWORD = os.environ.get("TEVARN_VPS_PASSWORD", "")
 
 CONF = r"""
-# Takton DEV reverse tunnel (SSH -R 7080)
+# Tevarn DEV reverse tunnel (SSH -R 7080)
 server {
     listen 80;
     server_name 150.158.109.231;
 
-    location /takton-dev/ {
+    location /tevarn-dev/ {
         proxy_pass http://127.0.0.1:7080/;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -36,7 +36,7 @@ server {
 
 def main() -> None:
     if not PASSWORD:
-        print("Set TAKTON_VPS_PASSWORD", file=sys.stderr)
+        print("Set TEVARN_VPS_PASSWORD", file=sys.stderr)
         sys.exit(1)
     c = paramiko.SSHClient()
     c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -49,17 +49,17 @@ def main() -> None:
         look_for_keys=False,
     )
     sftp = c.open_sftp()
-    path = "/tmp/takton-dev-relay.conf"
+    path = "/tmp/tevarn-dev-relay.conf"
     with sftp.file(path, "w") as f:
         f.write(CONF)
     sftp.close()
 
     cmds = [
-        f"sudo mv {path} /etc/nginx/sites-available/takton-dev-relay",
-        "sudo ln -sfn /etc/nginx/sites-available/takton-dev-relay /etc/nginx/sites-enabled/takton-dev-relay",
+        f"sudo mv {path} /etc/nginx/sites-available/tevarn-dev-relay",
+        "sudo ln -sfn /etc/nginx/sites-available/tevarn-dev-relay /etc/nginx/sites-enabled/tevarn-dev-relay",
         "sudo nginx -t",
         "sudo systemctl reload nginx",
-        "curl -sS -m 8 http://127.0.0.1/takton-dev/api/health || true",
+        "curl -sS -m 8 http://127.0.0.1/tevarn-dev/api/health || true",
         "curl -sS -m 8 http://127.0.0.1:7080/api/health || true",
     ]
     for cmd in cmds:
@@ -71,8 +71,8 @@ def main() -> None:
             print(err)
         time.sleep(0.2)
     c.close()
-    print(f"PUBLIC_URL=http://{HOST}/takton-dev/")
-    print(f"HEALTH=http://{HOST}/takton-dev/api/health")
+    print(f"PUBLIC_URL=http://{HOST}/tevarn-dev/")
+    print(f"HEALTH=http://{HOST}/tevarn-dev/api/health")
 
 
 if __name__ == "__main__":

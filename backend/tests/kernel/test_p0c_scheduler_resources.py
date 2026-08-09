@@ -13,8 +13,8 @@ _ROOT = Path(__file__).resolve().parents[3]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-os.environ.setdefault("TAKTON_KERNEL_BACKEND", "rust")
-os.environ.setdefault("TAKTON_KERNEL_AUTO_START", "1")
+os.environ.setdefault("TEVARN_KERNEL_BACKEND", "rust")
+os.environ.setdefault("TEVARN_KERNEL_AUTO_START", "1")
 
 
 def _host_ready() -> bool:
@@ -34,7 +34,7 @@ def _host_ready() -> bool:
 @pytest.fixture(scope="module")
 def k():
     if not _host_ready():
-        pytest.skip("takton-kernel-host missing")
+        pytest.skip("tevarn-kernel-host missing")
     from backend.kernel_rust.client import RustAgentKernel, reset_rust_kernel_for_tests
 
     reset_rust_kernel_for_tests()
@@ -136,7 +136,7 @@ async def test_llm_admission_rust_path(k) -> None:
     from backend.kernel.kernel import get_kernel, reset_kernel_for_tests
 
     # Ensure get_kernel() returns rust client pointing at same host
-    os.environ["TAKTON_KERNEL_BACKEND"] = "rust"
+    os.environ["TEVARN_KERNEL_BACKEND"] = "rust"
     reset_kernel_for_tests()
     reset_llm_admission_for_tests()
     # force singleton to our k by using k for acquire via direct RPC

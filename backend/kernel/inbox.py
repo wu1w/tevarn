@@ -405,7 +405,7 @@ class InboxService:
             if not is_dev_unsafe():
                 logger.warning(
                     "inbox claim_next: rust host down — refuse pure-SQL claim "
-                    "(set TAKTON_DEV_UNSAFE=1 for local fallback)"
+                    "(set TEVARN_DEV_UNSAFE=1 for local fallback)"
                 )
                 return None
         except Exception:

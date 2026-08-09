@@ -50,8 +50,8 @@ def _node(title: str, *, kind="knowledge", tags=None, content="", user_id=None):
 def test_auto_link_by_shared_tags(repo_db):
     async def _run():
         uid = uuid.uuid4()
-        a = await _node("Takton 部署规范", tags=["takton", "deploy"], user_id=uid)
-        b = await _node("Takton 回滚流程", tags=["takton", "deploy"], user_id=uid)
+        a = await _node("Tevarn 部署规范", tags=["tevarn", "deploy"], user_id=uid)
+        b = await _node("Tevarn 回滚流程", tags=["tevarn", "deploy"], user_id=uid)
         c = await _node("完全不相关的菜谱", tags=["cooking"], user_id=uid)
 
         edges = await _repo().auto_link(a)
@@ -68,8 +68,8 @@ def test_auto_link_by_shared_tags(repo_db):
 
 def test_auto_link_by_title_containment(repo_db):
     async def _run():
-        a = await _node("Takton 部署", tags=[])
-        b = await _node("Takton 部署规范 v2", tags=[])
+        a = await _node("Tevarn 部署", tags=[])
+        b = await _node("Tevarn 部署规范 v2", tags=[])
         edges = await _repo().auto_link(a)
         assert any(e.to_id == b.id for e in edges)
 
@@ -80,8 +80,8 @@ def test_auto_link_respects_max_edges(repo_db):
     async def _run():
         uid = uuid.uuid4()
         for i in range(6):
-            await _node(f"关联候选 {i}", tags=["shared-tag", "takton"], user_id=uid)
-        new = await _node("新节点", tags=["shared-tag", "takton"], user_id=uid)
+            await _node(f"关联候选 {i}", tags=["shared-tag", "tevarn"], user_id=uid)
+        new = await _node("新节点", tags=["shared-tag", "tevarn"], user_id=uid)
         edges = await _repo().auto_link(new, max_edges=3)
         assert len(edges) == 3
 
@@ -107,11 +107,11 @@ def test_remember_tool_reports_auto_link(repo_db):
         tool = MemoryGraphTool()
         await tool.execute(
             action="remember", kind="knowledge",
-            title="Takton 压测口径", content="前端真实发起", tags=["takton"],
+            title="Tevarn 压测口径", content="前端真实发起", tags=["tevarn"],
         )
         out = await tool.execute(
             action="remember", kind="experience",
-            title="Takton 压测排障", content="压测发现的问题", tags=["takton"],
+            title="Tevarn 压测排障", content="压测发现的问题", tags=["tevarn"],
         )
         assert "[remembered]" in out
         assert "自动关联 1 条" in out

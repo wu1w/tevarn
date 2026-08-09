@@ -103,7 +103,7 @@ export default function NodePalette({ nodeTypes, subAgents: subAgentsProp }: Nod
     const payload: PaletteDragPayload = { kind: 'node_type', nodeType: nt };
     e.dataTransfer.setData('application/json', JSON.stringify(payload));
     // 兼容旧 canvas：也塞一份纯 nodeType
-    e.dataTransfer.setData('application/x-takton-node', JSON.stringify(nt));
+    e.dataTransfer.setData('application/x-tevarn-node', JSON.stringify(nt));
     e.dataTransfer.effectAllowed = 'copy';
   };
 
@@ -121,7 +121,7 @@ export default function NodePalette({ nodeTypes, subAgents: subAgentsProp }: Nod
       },
     };
     e.dataTransfer.setData('application/json', JSON.stringify(payload));
-    e.dataTransfer.setData('application/x-takton-node', JSON.stringify(subAgentNodeType));
+    e.dataTransfer.setData('application/x-tevarn-node', JSON.stringify(subAgentNodeType));
     e.dataTransfer.effectAllowed = 'copy';
   };
 

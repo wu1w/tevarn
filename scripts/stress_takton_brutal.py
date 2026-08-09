@@ -1,8 +1,8 @@
 #!/usr/bin/env python
-"""Takton 暴力健壮性压测（API + WebSocket）。
+"""Tevarn 暴力健壮性压测（API + WebSocket）。
 
 用法:
-  python scripts/stress_takton_brutal.py [--base http://127.0.0.1:8090]
+  python scripts/stress_tevarn_brutal.py [--base http://127.0.0.1:8090]
 """
 from __future__ import annotations
 
@@ -84,7 +84,7 @@ class BrutalStress:
         try:
             async with http.get(f"{self.api}/health") as r:
                 body = await r.text()
-                ok = r.status == 200 and "takton" in body.lower()
+                ok = r.status == 200 and "tevarn" in body.lower()
                 self.record(Result("health", ok, f"status={r.status} body={body[:80]}", (time.perf_counter()-t0)*1000))
         except Exception as e:
             self.record(Result("health", False, str(e), (time.perf_counter()-t0)*1000))

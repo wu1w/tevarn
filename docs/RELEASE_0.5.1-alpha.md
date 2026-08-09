@@ -1,4 +1,4 @@
-# Takton 0.5.1-alpha · 2026-08-01
+# Tevarn 0.5.1-alpha · 2026-08-01
 
 **分支**：[`feature/agent-kernel`](https://github.com/wu1w/takton/tree/feature/agent-kernel)  
 **主题**：Host/预算/权限稳定性 + LLM 设置可用性 + 默认工作方式
@@ -27,7 +27,7 @@
 ### 4. 其它
 
 - 工具 stderr 多编码解码（减少 GBK 乱码）
-- 沙箱 `~/.takton` / `TAKTON_HOME` 路径可见性
+- 沙箱 `~/.tevarn` / `TEVARN_HOME` 路径可见性
 - 前端 domain WS、Runtime 健康条、聊天滚动等体验修复
 
 ---

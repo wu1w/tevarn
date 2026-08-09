@@ -1,6 +1,6 @@
-# Takton — AI Agent Operating System (alpha)
+# Tevarn — AI Agent Operating System (alpha)
 
-> Takton is a self-hosted AIOS: a governed multi-agent runtime with a real control-plane
+> Tevarn is a self-hosted AIOS: a governed multi-agent runtime with a real control-plane
 > kernel (process model, capability mediation, token budgets, hash-chained audit),
 > a workforce of persistent agent identities, RAG memory, self-evolution with
 > approval/rollback governance, and multi-channel gateways (Telegram/Discord/Slack/
@@ -36,5 +36,5 @@
 - docs/internal/ROADMAP_0.4.5_to_0.6.md: near-term roadmap
 - docs/archive/2026-07/: archived root reports / audit notes
 - reports/: internal sprint reports (Chinese)
-- takton-code/: standalone code-agent subproject
+- tevarn-code/: standalone code-agent subproject
 - e2e/, frontend/e2e/: Playwright end-to-end suites

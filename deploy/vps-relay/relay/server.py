@@ -1,5 +1,5 @@
 """
-Takton VPS Relay — reverse HTTP/WS tunnel for PC backends.
+Tevarn VPS Relay — reverse HTTP/WS tunnel for PC backends.
 
 PC connects outbound via WebSocket (Bearer master token).
 Phones hit public HTTP(S); traffic is multiplexed to the online tunnel.
@@ -31,9 +31,9 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.websockets import WebSocketState
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
-logger = logging.getLogger("takton-relay")
+logger = logging.getLogger("tevarn-relay")
 
-RELAY_TOKEN = (os.environ.get("RELAY_TOKEN") or os.environ.get("TAKTON_RELAY_TOKEN") or "").strip()
+RELAY_TOKEN = (os.environ.get("RELAY_TOKEN") or os.environ.get("TEVARN_RELAY_TOKEN") or "").strip()
 HTTP_TIMEOUT = float(os.environ.get("RELAY_HTTP_TIMEOUT", "120"))
 MAX_BODY = int(os.environ.get("RELAY_MAX_BODY", str(32 * 1024 * 1024)))
 # When true (default), /t/{id} requires Bearer JWT **or** valid short vpt ticket.
@@ -45,7 +45,7 @@ REQUIRE_EDGE_AUTH = os.environ.get("RELAY_REQUIRE_EDGE_AUTH", "1").strip() not i
     "off",
 )
 
-app = FastAPI(title="takton-relay", version="1.1.0")
+app = FastAPI(title="tevarn-relay", version="1.1.0")
 
 
 def _check_token(auth: Optional[str], query_token: Optional[str] = None) -> bool:
@@ -94,7 +94,7 @@ def _edge_auth_ok(request: Request, tunnel_id: str) -> bool:
     """Public /t/{id} access: Bearer JWT (any non-empty) OR valid short vpt.
 
     JWT is validated by PC backend; relay only checks presence for edge gate.
-    Pair claim during TTL must send X-Takton-Vpt from QR.
+    Pair claim during TTL must send X-Tevarn-Vpt from QR.
     """
     if not REQUIRE_EDGE_AUTH:
         return True
@@ -102,8 +102,8 @@ def _edge_auth_ok(request: Request, tunnel_id: str) -> bool:
     if auth.lower().startswith("bearer ") and len(auth) > 20:
         return True
     vpt = (
-        request.headers.get("x-takton-vpt")
-        or request.headers.get("X-Takton-Vpt")
+        request.headers.get("x-tevarn-vpt")
+        or request.headers.get("X-Tevarn-Vpt")
         or request.query_params.get("vpt")
     )
     return _verify_vpt(tunnel_id, vpt)
@@ -209,7 +209,7 @@ HUB = TunnelHub()
 async def health() -> dict[str, Any]:
     return {
         "ok": True,
-        "service": "takton-relay",
+        "service": "tevarn-relay",
         "tunnels_online": len(HUB._tunnels),
         "token_configured": bool(RELAY_TOKEN),
     }
@@ -224,7 +224,7 @@ async def register(request: Request) -> JSONResponse:
     except Exception:
         body = {}
     tunnel_id = str(body.get("tunnel_id") or "").strip() or f"pc-{secrets.token_hex(8)}"
-    pc_name = str(body.get("pc_name") or "takton-pc").strip() or "takton-pc"
+    pc_name = str(body.get("pc_name") or "tevarn-pc").strip() or "tevarn-pc"
     return JSONResponse(
         {
             "ok": True,
@@ -263,7 +263,7 @@ async def tunnel_ws(websocket: WebSocket) -> None:
     if not tunnel_id:
         await websocket.close(code=4400)
         return
-    pc_name = (websocket.query_params.get("pc_name") or "takton-pc").strip()
+    pc_name = (websocket.query_params.get("pc_name") or "tevarn-pc").strip()
 
     await websocket.accept()
     session = TunnelSession(
@@ -303,7 +303,7 @@ async def tunnel_ws(websocket: WebSocket) -> None:
                     try:
                         data = base64.b64decode(data_b64)
                         # Preserve WebSocket opcode. Chat JSON is text frames;
-                        # always-send_bytes broke Takton agent WS (binary rejected /
+                        # always-send_bytes broke Tevarn agent WS (binary rejected /
                         # clients only parse Text). frp/wstunnel keep frame type
                         # or tunnel raw TCP; we carry opcode on the mux envelope.
                         opcode = str(msg.get("opcode") or "").lower()
@@ -364,7 +364,7 @@ async def _proxy_http(session: TunnelSession, request: Request, path: str) -> Re
     # preserve client info
     headers["x-forwarded-for"] = request.client.host if request.client else ""
     headers["x-forwarded-proto"] = request.url.scheme
-    headers["x-takton-relay"] = "1"
+    headers["x-tevarn-relay"] = "1"
 
     q = request.url.query
     full_path = path if not q else f"{path}?{q}"
@@ -432,7 +432,7 @@ async def proxy_scoped(tunnel_id: str, path: str, request: Request) -> Response:
             {
                 "ok": False,
                 "error": "edge auth required",
-                "hint": "send Authorization Bearer (after pair) or X-Takton-Vpt from QR",
+                "hint": "send Authorization Bearer (after pair) or X-Tevarn-Vpt from QR",
             },
             status_code=401,
         )
@@ -451,7 +451,7 @@ async def proxy_ws_scoped(websocket: WebSocket, tunnel_id: str, path: str) -> No
     # Edge auth for WS: Bearer or vpt query/header
     auth = (websocket.headers.get("authorization") or "").strip()
     vpt = (
-        websocket.headers.get("x-takton-vpt")
+        websocket.headers.get("x-tevarn-vpt")
         or websocket.query_params.get("vpt")
     )
     ok = (not REQUIRE_EDGE_AUTH) or (
@@ -482,7 +482,7 @@ async def proxy_default(path: str, request: Request) -> Response:
             {
                 "ok": False,
                 "error": "PC 未上线中继",
-                "hint": "在 PC「远程连接」启用 VPS 中继，并保持 Takton 运行",
+                "hint": "在 PC「远程连接」启用 VPS 中继，并保持 Tevarn 运行",
             },
             status_code=502,
         )

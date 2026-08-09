@@ -1,10 +1,10 @@
 """AgentKernel —— 控制平面（Python fallback / 单测）。
 
 .. deprecated:: P0-A (0.5)
-    **权威实现已迁移至 Rust** ``takton-kernel`` / ``takton-kernel-host``。
-    生产路径请使用 ``get_kernel()``（默认 ``TAKTON_KERNEL_BACKEND=rust``）。
+    **权威实现已迁移至 Rust** ``tevarn-kernel`` / ``tevarn-kernel-host``。
+    生产路径请使用 ``get_kernel()``（默认 ``TEVARN_KERNEL_BACKEND=rust``）。
 
-    - 新功能 / 行为变更：**禁止**改本文件权威逻辑，改 ``crates/takton-kernel``。
+    - 新功能 / 行为变更：**禁止**改本文件权威逻辑，改 ``crates/tevarn-kernel``。
     - 本类仅保留：单元测试直接 ``AgentKernel()``、host 不可用时的 fallback。
     - ABI：见 ``docs/kernel-abi-v1.md``。
 
@@ -1114,7 +1114,7 @@ class AgentKernel:
         from backend.repositories.notification_repo import AsyncNotificationRepository
         from backend.repositories.user_repo import AsyncUserRepository
 
-        u = await AsyncUserRepository().get_by_email("admin@takton.dev")
+        u = await AsyncUserRepository().get_by_email("admin@tevarn.dev")
         if u is None:
             return
         caps = ", ".join(req.capabilities[:8])
@@ -1489,7 +1489,7 @@ def _resolve_kernel_backend() -> str:
     import os
 
     forced = (
-        os.environ.get("TAKTON_KERNEL_BACKEND")
+        os.environ.get("TEVARN_KERNEL_BACKEND")
         or os.environ.get("agent_kernel_backend")
         or ""
     ).strip().lower()
@@ -1564,11 +1564,11 @@ def _build_python_kernel() -> AgentKernel:
 def get_kernel() -> Any:
     """进程级单例 Kernel。
 
-    默认优先 **Rust Kernel Host**（``TAKTON_KERNEL_BACKEND=rust``）：
-    进程表 / 能力 / mediate / 预算 / 审计链 / 资源账户在 ``takton-kernel`` 中。
+    默认优先 **Rust Kernel Host**（``TEVARN_KERNEL_BACKEND=rust``）：
+    进程表 / 能力 / mediate / 预算 / 审计链 / 资源账户在 ``tevarn-kernel`` 中。
 
-    H2：生产路径 **禁止** 静默降级到 Python（除非 ``TAKTON_DEV_UNSAFE=1``
-    或显式 ``TAKTON_KERNEL_BACKEND=python``）。
+    H2：生产路径 **禁止** 静默降级到 Python（除非 ``TEVARN_DEV_UNSAFE=1``
+    或显式 ``TEVARN_KERNEL_BACKEND=python``）。
     """
     global _kernel_singleton, _kernel_persistence_singleton, _kernel_shared_singleton
     global _kernel_backend_active
@@ -1588,7 +1588,7 @@ def get_kernel() -> Any:
                     logger.error(
                         "H2: Rust kernel host failed to start. "
                         "Fix: .\\scripts\\build-kernel-host.ps1 -Release "
-                        "or set TAKTON_KERNEL_HOST_BIN. See docs/kernel-abi-v1.md"
+                        "or set TEVARN_KERNEL_HOST_BIN. See docs/kernel-abi-v1.md"
                     )
             if is_rust_host_available():
                 _kernel_singleton = get_rust_kernel()
@@ -1602,7 +1602,7 @@ def get_kernel() -> Any:
                         ver.get("kernel"),
                     )
                 except Exception:
-                    logger.info("AgentKernel backend=rust (takton-kernel-host)")
+                    logger.info("AgentKernel backend=rust (tevarn-kernel-host)")
                 return _kernel_singleton
         except Exception as e:
             logger.error(
@@ -1613,9 +1613,9 @@ def get_kernel() -> Any:
             if not allow_python_kernel_fallback():
                 raise RuntimeError(
                     "H2: Rust kernel host required in production. "
-                    "Build: cargo build -p takton-kernel-host --release "
+                    "Build: cargo build -p tevarn-kernel-host --release "
                     "or .\\scripts\\build-kernel-host.ps1 -Release. "
-                    "Dev escape: TAKTON_DEV_UNSAFE=1 or TAKTON_KERNEL_BACKEND=python. "
+                    "Dev escape: TEVARN_DEV_UNSAFE=1 or TEVARN_KERNEL_BACKEND=python. "
                     f"Cause: {e}"
                 ) from e
 
@@ -1623,14 +1623,14 @@ def get_kernel() -> Any:
             raise RuntimeError(
                 "H2: Rust kernel host unavailable and production guard forbids "
                 "Python fallback. Stage host: node scripts/ensure-vendor-host.mjs "
-                "or set TAKTON_DEV_UNSAFE=1 for local-only ungoverned mode."
+                "or set TEVARN_DEV_UNSAFE=1 for local-only ungoverned mode."
             )
 
     _kernel_singleton = _build_python_kernel()
     _kernel_backend_active = "python"
     logger.warning(
         "AgentKernel backend=python (DEPRECATED fixture/fallback; DEV_UNSAFE or "
-        "TAKTON_KERNEL_BACKEND=python). Production must use rust host."
+        "TEVARN_KERNEL_BACKEND=python). Production must use rust host."
     )
     return _kernel_singleton
 

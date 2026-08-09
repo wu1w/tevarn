@@ -20,7 +20,7 @@ export function TitleBar({
   wsState = 'connected',
   retryCount = 0,
   onReconnect,
-  title = 'Takton',
+  title = 'Tevarn',
 }: TitleBarProps) {
   const t = useT();
   const [isElectron, setIsElectron] = useState(false);
@@ -44,15 +44,15 @@ export function TitleBar({
   const [codeHint, setCodeHint] = useState<string>('');
   const handleOpenCode = async () => {
     const api = window.electronAPI;
-    if (!api?.openTaktonCode) return;
+    if (!api?.openTevarnCode) return;
     try {
-      const res = await api.openTaktonCode();
+      const res = await api.openTevarnCode();
       if (!res?.ok) {
-        setCodeHint(res?.error || '打开 Takton Code 失败');
+        setCodeHint(res?.error || '打开 Tevarn Code 失败');
         setTimeout(() => setCodeHint(''), 4000);
       }
     } catch {
-      setCodeHint('打开 Takton Code 失败');
+      setCodeHint('打开 Tevarn Code 失败');
       setTimeout(() => setCodeHint(''), 4000);
     }
   };
@@ -91,8 +91,8 @@ export function TitleBar({
           <div className="relative flex h-full items-center">
             <button
               type="button"
-              aria-label="打开 Takton Code"
-              title="打开 Takton Code（终端编码 Agent，桥接当前后端）"
+              aria-label="打开 Tevarn Code"
+              title="打开 Tevarn Code（终端编码 Agent，桥接当前后端）"
               onClick={handleOpenCode}
               className="flex h-7 w-7 items-center justify-center rounded-md text-foreground-muted transition-colors hover:bg-white/8 hover:text-foreground"
             >

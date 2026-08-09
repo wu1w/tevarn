@@ -83,7 +83,7 @@ async def run_before_tool_call(name: str, arguments: dict[str, Any]) -> BeforeHo
                     block=True,
                     reason=(
                         f"[permission error] 权限检查未能完成（{type(e).__name__}: {e}），"
-                        f"已按拒绝处理。这是 Takton 内部错误，请查看后端日志。"
+                        f"已按拒绝处理。这是 Tevarn 内部错误，请查看后端日志。"
                     ),
                     arguments=args,
                 )

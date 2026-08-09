@@ -87,7 +87,7 @@ async def install_mcp_from_store(
     body: MCPStoreInstallRequest,
     current_user: Annotated[UserRead, Depends(get_current_user)] = None,
 ):
-    """一键安装：目录项 → Takton MCP Server 配置。"""
+    """一键安装：目录项 → Tevarn MCP Server 配置。"""
     svc = get_mcp_store_service()
     item = await svc.resolve_item(body.source, body.id)
     if not item:

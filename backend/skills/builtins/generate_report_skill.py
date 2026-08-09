@@ -152,7 +152,7 @@ class GenerateReportSkill(BaseSkill):
 
 > **报告类型**：{report_type}  
 > **生成时间**：{datetime.now(timezone.utc).astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}  
-> **生成工具**：Takton Agent
+> **生成工具**：Tevarn Agent
 
 ---
 

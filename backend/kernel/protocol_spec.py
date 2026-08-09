@@ -1,4 +1,4 @@
-"""Takton AIOS 互操作协议（0.1）——可移植 Agent Card + A2A-lite 工单信封。
+"""Tevarn AIOS 互操作协议（0.1）——可移植 Agent Card + A2A-lite 工单信封。
 
 设计原则：
 - 对齐业界 Agent-OS / A2A「可描述、可投递」最小集，不假装完整多厂联邦。
@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 PROTOCOL_VERSION = "0.2.0"
-PROTOCOL_NAME = "takton-aios-protocol"
+PROTOCOL_NAME = "tevarn-aios-protocol"
 
 # 标准能力词表（与编制 / mediate 对齐；未知能力仍允许但标 extension）
 STANDARD_CAPABILITIES: dict[str, str] = {
@@ -88,7 +88,7 @@ class AgentSkill:
 
 @dataclass
 class AgentCard:
-    """可移植员工描述（A2A Agent Card 风格 + Takton 扩展）。"""
+    """可移植员工描述（A2A Agent Card 风格 + Tevarn 扩展）。"""
 
     name: str
     description: str
@@ -110,7 +110,7 @@ class AgentCard:
             "protocol": PROTOCOL_NAME,
             "name": self.name,
             "description": self.description,
-            "url": self.url or f"takton://identity/{self.identity_id}",
+            "url": self.url or f"tevarn://identity/{self.identity_id}",
             "version": self.version,
             "protocolVersion": PROTOCOL_VERSION,  # A2A 常见字段
             "capabilities": {
@@ -121,7 +121,7 @@ class AgentCard:
             "defaultInputModes": ["text"],
             "defaultOutputModes": ["text"],
             "skills": [s.to_dict() for s in self.skills],
-            "takton": {
+            "tevarn": {
                 "identity_id": self.identity_id,
                 "status": self.status,
                 "role": self.role,
@@ -173,7 +173,7 @@ def identity_to_agent_card(
     role = getattr(ident, "role", None)
     name = str(getattr(ident, "name", "") or "agent")
     desc_parts = [p for p in (role, duty or persona) if p]
-    description = " — ".join(str(p) for p in desc_parts) or f"Takton employee «{name}»"
+    description = " — ".join(str(p) for p in desc_parts) or f"Tevarn employee «{name}»"
     return AgentCard(
         name=name,
         description=description,

@@ -82,7 +82,7 @@ def _read_package_body(pkg_dir: Path) -> tuple[str, str, list[str]]:
                 body_parts.append(p.read_text(encoding="utf-8", errors="replace")[:200_000])
             except OSError:
                 pass
-    for mf in ("takton.package.json", "package.json"):
+    for mf in ("tevarn.package.json", "package.json"):
         p = pkg_dir / mf
         if p.is_file():
             try:
@@ -388,7 +388,7 @@ def _safe_https_download(url: str, *, max_bytes: int = 64 * 1024 * 1024) -> byte
     opener = urllib.request.build_opener(_NoOpenRedirect())
     req = urllib.request.Request(
         url,
-        headers={"User-Agent": "takton-package-market/1.0"},
+        headers={"User-Agent": "tevarn-package-market/1.0"},
         method="GET",
     )
     with opener.open(req, timeout=60) as resp:  # noqa: S310
@@ -500,7 +500,7 @@ def signing_trust_status() -> dict[str, Any]:
             str(getattr(settings, "agent_package_signing_key", "") or "").strip()
         ),
         "advice": (
-            "Set TAKTON_PKG_SIGNING_KEY (or JWT) and agent_package_trusted_content_hashes "
+            "Set TEVARN_PKG_SIGNING_KEY (or JWT) and agent_package_trusted_content_hashes "
             "for remote installs in production."
         ),
     }

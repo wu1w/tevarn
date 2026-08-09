@@ -395,7 +395,7 @@ class _RemoteScreenState extends State<RemoteScreen> {
                   PxField(
                     label: '邮箱',
                     controller: _email,
-                    hint: 'admin@takton.dev',
+                    hint: 'admin@tevarn.dev',
                     onChanged: (v) => c.formEmail = v,
                   ),
                   PxField(
@@ -573,7 +573,7 @@ class _PairScanSheetState extends State<_PairScanSheet> {
   void _submit() {
     final t = _paste.text.trim();
     if (t.isEmpty) {
-      setState(() => _hint = '请粘贴 takton://pair?… 配对内容');
+      setState(() => _hint = '请粘贴 tevarn://pair?… 配对内容');
       return;
     }
     Navigator.of(context).pop(t);
@@ -738,7 +738,7 @@ class _PairScanSheetState extends State<_PairScanSheet> {
               PxField(
                 label: '或手动粘贴配对内容',
                 controller: _paste,
-                hint: 'takton://pair?…',
+                hint: 'tevarn://pair?…',
               ),
               if (_hint != null) ...[
                 const SizedBox(height: 6),

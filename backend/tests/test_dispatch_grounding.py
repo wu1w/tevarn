@@ -21,7 +21,7 @@ from backend.agent.task_grounding import (
 
 @pytest.fixture(autouse=True)
 def _soft_mode(monkeypatch):
-    monkeypatch.setenv("TAKTON_GROUNDING_MODE", "soft")
+    monkeypatch.setenv("TEVARN_GROUNDING_MODE", "soft")
     clear_policy_cache()
     yield
     clear_policy_cache()
@@ -84,7 +84,7 @@ def test_soft_warn_many_cves():
 
 
 def test_strict_blocks_metrics(monkeypatch):
-    monkeypatch.setenv("TAKTON_GROUNDING_MODE", "strict")
+    monkeypatch.setenv("TEVARN_GROUNDING_MODE", "strict")
     clear_policy_cache()
     r = scan_dispatch_instruction("转化率必须达到 95%")
     assert r.severity == "block"
@@ -160,7 +160,7 @@ def test_footer_still_soft_annotates():
 
 def test_policy_strong_model_relaxes():
     monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setenv("TAKTON_GROUNDING_MODE", "balanced")
+    monkeypatch.setenv("TEVARN_GROUNDING_MODE", "balanced")
     clear_policy_cache()
     p = get_policy("claude-opus-4")
     assert p.mode == "soft"  # strong → one step softer

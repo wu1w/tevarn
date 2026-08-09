@@ -106,7 +106,7 @@ def test_health_check_lifts_high():
     b = suggested_token_budget(
         base=30_000,
         instruction=(
-            "## Takton 系统体检\n### 任务1：后端\n### 任务2：前端\n### 任务3：kernel\n"
+            "## Tevarn 系统体检\n### 任务1：后端\n### 任务2：前端\n### 任务3：kernel\n"
             + ("细节" * 400)
         ),
         role="qa-engineer",

@@ -75,7 +75,7 @@ async def get_service() -> DesktopAgentService:
 
 
 def require_native_permission_proof(
-    proof: Annotated[str | None, Header(alias="X-Takton-Desktop-Permission")] = None,
+    proof: Annotated[str | None, Header(alias="X-Tevarn-Desktop-Permission")] = None,
 ) -> None:
     """Electron 模式下只接受主进程签发的桌面授权请求。"""
     expected = str(settings.desktop_permission_secret or "")
@@ -332,9 +332,9 @@ async def get_saved_shot(
         raise HTTPException(status_code=400, detail="invalid filename")
 
     shot_dirs = [
-        os.environ.get("TAKTON_DESKTOP_SHOT_DIR") or "",
-        os.path.join(tempfile.gettempdir(), "takton_desktop_shots"),
-        os.path.join(tempfile.gettempdir(), "takton_browser_shots"),
+        os.environ.get("TEVARN_DESKTOP_SHOT_DIR") or "",
+        os.path.join(tempfile.gettempdir(), "tevarn_desktop_shots"),
+        os.path.join(tempfile.gettempdir(), "tevarn_browser_shots"),
     ]
     for d in shot_dirs:
         if not d:

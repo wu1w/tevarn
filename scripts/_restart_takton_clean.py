@@ -1,4 +1,4 @@
-"""Kill old Takton, sync local backend into installed app, start Takton.exe, wait health."""
+"""Kill old Tevarn, sync local backend into installed app, start Tevarn.exe, wait health."""
 from __future__ import annotations
 
 import shutil
@@ -8,18 +8,18 @@ import urllib.request
 from pathlib import Path
 
 SRC = Path(__file__).parent.parent / "backend"
-DST = Path.home() / "AppData" / "Local" / "Programs" / "Takton" / "resources" / "backend"
-EXE = Path.home() / "AppData" / "Local" / "Programs" / "Takton" / "Takton.exe"
+DST = Path.home() / "AppData" / "Local" / "Programs" / "Tevarn" / "resources" / "backend"
+EXE = Path.home() / "AppData" / "Local" / "Programs" / "Tevarn" / "Tevarn.exe"
 HEALTHS = (
     "http://127.0.0.1:8000/api/health",
     "http://127.0.0.1:8090/api/health",
 )
 
-SKIP_DIRS = {"__pycache__", ".pytest_cache", "node_modules", ".git", "data", "logs", "uploads", ".takton", ".computers"}
+SKIP_DIRS = {"__pycache__", ".pytest_cache", "node_modules", ".git", "data", "logs", "uploads", ".tevarn", ".computers"}
 SKIP_FILES = {
     ".env",
     "secrets.json",
-    "takton.db",
+    "tevarn.db",
     "initial-credentials.txt",
     "initial_admin_password",
     "workspace_state.json",
@@ -28,10 +28,10 @@ SKIP_SUFFIXES = (".db", ".db-wal", ".db-shm", ".pyc", ".pem")
 
 
 def kill() -> None:
-    subprocess.run(["taskkill", "/F", "/IM", "Takton.exe"], capture_output=True)
+    subprocess.run(["taskkill", "/F", "/IM", "Tevarn.exe"], capture_output=True)
     # kill uvicorn/backend.cli related python
     ps = r"""
-$patterns = @('*uvicorn backend.main*', '*backend.cli*', '*taktonl-0.1.0*backend*', '*Programs\\Takton*uvicorn*')
+$patterns = @('*uvicorn backend.main*', '*backend.cli*', '*tevarnl-0.1.0*backend*', '*Programs\\Tevarn*uvicorn*')
 Get-CimInstance Win32_Process | Where-Object {
   $cl = $_.CommandLine
   if (-not $cl) { return $false }
@@ -94,7 +94,7 @@ def start() -> None:
     if not EXE.exists():
         raise SystemExit(f"missing {EXE}")
     subprocess.Popen([str(EXE)], cwd=str(EXE.parent))
-    print("started Takton.exe")
+    print("started Tevarn.exe")
 
 
 def wait_health() -> str | None:
@@ -126,12 +126,12 @@ def main() -> None:
             "powershell.exe",
             "-NoProfile",
             "-Command",
-            "(Get-Process Takton -ErrorAction SilentlyContinue | Measure-Object).Count",
+            "(Get-Process Tevarn -ErrorAction SilentlyContinue | Measure-Object).Count",
         ],
         capture_output=True,
         text=True,
     )
-    print("takton processes:", (out.stdout or "").strip())
+    print("tevarn processes:", (out.stdout or "").strip())
     if not url:
         raise SystemExit(1)
     print("READY", url)

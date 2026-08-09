@@ -112,7 +112,7 @@ function pruneSitePackages() {
 
 const requiredModules = ['uvicorn', 'fastapi', 'mcp'];
 const missing = requiredModules.filter((m) => !hasModule(m));
-const forceReinstall = process.env.TAKTON_FORCE_PIP === '1';
+const forceReinstall = process.env.TEVARN_FORCE_PIP === '1';
 
 if (!forceReinstall && missing.length === 0 && fs.existsSync(path.join(sitePackages, 'uvicorn'))) {
   console.log('[prepare-win-python] critical deps present (uvicorn/fastapi/mcp), prune only');

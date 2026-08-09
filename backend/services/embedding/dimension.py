@@ -16,7 +16,7 @@ from backend.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# 元数据文件路径（与 takton.db 同目录）
+# 元数据文件路径（与 tevarn.db 同目录）
 _METADATA_DIR = Path(".")
 _METADATA_FILE = _METADATA_DIR / "embedding_metadata.json"
 

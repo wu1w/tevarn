@@ -1,4 +1,4 @@
-//! WebSocket chat session against Takton `WS /api/ws/{session_id}`.
+//! WebSocket chat session against Tevarn `WS /api/ws/{session_id}`.
 //!
 //! Half-open detection (true RTT):
 //! - Send app-level `{"type":"ping"}`; PC replies `{"type":"pong"}` (websocket.py).
@@ -7,7 +7,7 @@
 //! - Protocol WS Ping/Pong only updates last_rx (does not clear app pending).
 //! - Each connection has a unique `conn_id` so host fanout never removes a newer socket.
 
-use crate::client::TaktonClient;
+use crate::client::TevarnClient;
 use crate::error::{Error, Result};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
@@ -69,7 +69,7 @@ impl ChatConnection {
     }
 
     pub async fn connect(
-        client: &TaktonClient,
+        client: &TevarnClient,
         session_id: &str,
         on_event: mpsc::UnboundedSender<ChatEvent>,
     ) -> Result<Arc<Self>> {

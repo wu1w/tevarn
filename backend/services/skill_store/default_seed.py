@@ -1,7 +1,7 @@
 """
 PC 端默认 prompt-skill 种子（幂等）
 
-启动时写入 ~/.takton/skills/<source>/<name>/SKILL.md，
+启动时写入 ~/.tevarn/skills/<source>/<name>/SKILL.md，
 仅在文件不存在时安装（不覆盖用户改过的版本）。
 """
 

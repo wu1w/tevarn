@@ -11,14 +11,14 @@ function setAuthCookie(token: string, expiresInSeconds: number) {
   if (typeof document !== 'undefined') {
     // 使用后端返回的真实过期时间，而不是硬编码的 7 天
     const secure = window.location.protocol === 'https:' ? '; Secure' : '';
-    document.cookie = `takton-auth=${token}; path=/; max-age=${expiresInSeconds}; SameSite=Strict${secure}`;
+    document.cookie = `tevarn-auth=${token}; path=/; max-age=${expiresInSeconds}; SameSite=Strict${secure}`;
   }
 }
 
 function removeAuthCookie() {
   if (typeof document !== 'undefined') {
     const secure = window.location.protocol === 'https:' ? '; Secure' : '';
-    document.cookie = `takton-auth=; path=/; max-age=0; SameSite=Strict${secure}`;
+    document.cookie = `tevarn-auth=; path=/; max-age=0; SameSite=Strict${secure}`;
   }
 }
 
@@ -72,7 +72,7 @@ export const useAuthStore = create<AuthState>()(
         // 清理会话 / WS / 领域事件，避免换账号串数据
         if (typeof window !== 'undefined') {
           try {
-            window.localStorage.removeItem('takton-session');
+            window.localStorage.removeItem('tevarn-session');
           } catch {
             /* ignore */
           }
@@ -124,7 +124,7 @@ export const useAuthStore = create<AuthState>()(
       setHasHydrated: (v) => set({ hasHydrated: v }),
     }),
     {
-      name: 'takton-auth',
+      name: 'tevarn-auth',
       onRehydrateStorage: () => (state) => {
         state?.setHasHydrated(true);
       },

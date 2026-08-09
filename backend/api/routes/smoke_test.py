@@ -122,8 +122,8 @@ async def smoke_chat(
 
     # 读取最近日志提取上下文压缩信息
     try:
-        log_dir = os.environ.get("TAKTON_LOG_DIR", "") or str(Path.home() / ".takton" / "logs")
-        log_path = str(Path(log_dir) / "takton.log")
+        log_dir = os.environ.get("TEVARN_LOG_DIR", "") or str(Path.home() / ".tevarn" / "logs")
+        log_path = str(Path(log_dir) / "tevarn.log")
         with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
             lines = f.readlines()[-200:]  # 只看最近 200 行
         for line in lines:

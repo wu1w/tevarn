@@ -15,7 +15,7 @@ pub enum PlatformKind {
 
 impl PlatformKind {
     pub fn detect() -> Self {
-        if let Ok(p) = std::env::var("TAKTON_MOBILE_PLATFORM") {
+        if let Ok(p) = std::env::var("TEVARN_MOBILE_PLATFORM") {
             return match p.to_lowercase().as_str() {
                 "ios" => Self::Ios,
                 "ipad" => Self::Ipad,

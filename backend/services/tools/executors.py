@@ -376,8 +376,8 @@ async def _browser_playwright(
         from pathlib import Path as _Path
 
         raw = await page.screenshot(type="jpeg", quality=60, full_page=False)
-        out_dir = os.environ.get("TAKTON_BROWSER_SHOT_DIR") or os.path.join(
-            tempfile.gettempdir(), "takton_browser_shots"
+        out_dir = os.environ.get("TEVARN_BROWSER_SHOT_DIR") or os.path.join(
+            tempfile.gettempdir(), "tevarn_browser_shots"
         )
         os.makedirs(out_dir, exist_ok=True)
         out_path = str(_Path(out_dir) / f"browser_{int(time.time() * 1000)}.jpg")
@@ -422,7 +422,10 @@ async def execute_process(config: dict[str, Any], arguments: dict[str, Any]) -> 
         return f"[Error] process not found: {pid}"
 
     if action in ("poll", "status", "log"):
-        return preg.format_process(p)
+        try:
+            return preg.poll_process_throttled(p)
+        except Exception:
+            return preg.format_process(p)
 
     if action in ("kill", "stop"):
         if p.proc and not p.done:
@@ -462,7 +465,7 @@ async def execute_list_devices(config: dict[str, Any], arguments: dict[str, Any]
 
         if not devices:
             lines.append(
-                "(no paired remote devices — pair takton-agent via /devices or POST /api/devices/pair)"
+                "(no paired remote devices — pair tevarn-agent via /devices or POST /api/devices/pair)"
             )
             return "\n".join(lines)
 
@@ -539,7 +542,7 @@ async def execute_remote_exec(config: dict[str, Any], arguments: dict[str, Any])
         if device is None:
             return (
                 f"[Error] device «{device_name}» not found. "
-                "Pair takton-agent at /devices first. list_devices to see names."
+                "Pair tevarn-agent at /devices first. list_devices to see names."
             )
         tr = transport_from_device_config(device.config or {})
         tr.timeout_s = float(arguments.get("timeout") or 45)
@@ -821,6 +824,147 @@ async def enforce_command_policy(
     )
 
 
+# Rust tool policy (Windows Job sandbox):
+# - rustup: always blocked when *invoked* (not when mentioned in `where rustup`)
+# - cargo: allowlist check/build/test/… + version probes
+# - rustc: version probes only
+# - Do NOT block `where cargo` / `dir …\cargo.exe` — false positives caused 复读
+# JobBackend injects MSVC vcvars + healthy RUSTUP_HOME for allowed cargo.
+_CARGO_ALLOW_SUBCMD_RE = re.compile(
+    r"(?i)(?P<exe>(?:[\"']?)(?:[A-Za-z]:[\\/][^\s\"']*[\\/])?cargo(?:\.exe)?[\"']?)\s+"
+    r"(?:check|build|test|metadata|tree|clippy|fmt|doc|fetch|update|clean|report|"
+    r"(?:-|--)?version|-V)\b"
+)
+_CARGO_DENY_SUBCMD_RE = re.compile(
+    r"(?i)\bcargo(?:\.exe)?\s+"
+    r"(?:install|uninstall|publish|login|logout|owner|yank|package|new|init|"
+    r"add|remove|search|fix|vendor|miri|rustc)\b"
+)
+_RUSTC_VERSION_ONLY_RE = re.compile(
+    r"(?i)\brustc(?:\.exe)?\s+(?:-|--)?(?:version|vV|V)\b"
+    r"|\brustc(?:\.exe)?\s+-vV\b"
+)
+# Real executable token — must NOT match env vars RUSTUP_HOME / RUSTUP_TOOLCHAIN
+# (false positive caused agent 复读: blocked set RUSTUP_* → more diagnosis).
+_TOOL_TOKEN_RE = re.compile(
+    r"(?i)(?<![A-Za-z0-9_])(?P<tool>rustup|cargo|rustc)(?:\.exe)?(?![A-Za-z0-9_])"
+)
+
+
+def _strip_lookup_mentions(command: str) -> str:
+    """Remove where/Get-Command/dir path probes so policy only sees real invokes."""
+    c = command or ""
+    c = re.sub(
+        r"(?i)\bwhere(?:\.exe)?(?:\s+/[A-Za-z]+)*\s+(?:[A-Za-z]:\\[^\s&|;]*)?\s*"
+        r"[^\s&|;]*\b(?:cargo|rustc|rustup)(?:\.exe)?[^\s&|;]*",
+        " ",
+        c,
+    )
+    c = re.sub(
+        r"(?i)\bGet-Command\s+[^\s&|;]*\b(?:cargo|rustc|rustup)(?:\.exe)?[^\s&|;]*",
+        " ",
+        c,
+    )
+    c = re.sub(
+        r"(?i)\bwhere(?:\.exe)?\s+[^\s&|;]*\b(?:cargo|rustc|rustup)(?:\.exe)?\b",
+        " ",
+        c,
+    )
+    # Env assignments are not invocations: RUSTUP_HOME=... / set RUSTUP_TOOLCHAIN=...
+    c = re.sub(
+        r"(?i)(?:set\s+)?(?:RUSTUP_HOME|RUSTUP_TOOLCHAIN|CARGO_HOME|RUSTFLAGS)\s*=\s*[^\s&|;]*",
+        " ",
+        c,
+    )
+    return c
+
+
+def _invoked_rust_tools(command: str) -> set[str]:
+    """Tools that appear as executables to run (not path/lookup/env text)."""
+    c = _strip_lookup_mentions(command)
+    # dir/ls of paths containing cargo.exe — not an invoke of cargo
+    if re.search(r"(?i)\b(?:dir|ls|Get-ChildItem|type|Get-Content)\b", c):
+        if not re.search(
+            r"(?i)(?<![A-Za-z0-9_])(?:cargo|rustc|rustup)(?:\.exe)?(?![A-Za-z0-9_])\s+",
+            c,
+        ):
+            return set()
+    found: set[str] = set()
+    for m in _TOOL_TOKEN_RE.finditer(c):
+        # Skip if this token is clearly a path segment (...\cargo\bin) without running
+        start = m.start()
+        # path like \cargo\ or /cargo/
+        if start > 0 and c[start - 1] in "\\/" and (
+            m.end() < len(c) and c[m.end()] in "\\/"
+        ):
+            continue
+        found.add(m.group("tool").lower())
+    return found
+
+
+def _block_agent_rust_tools(command: str) -> str | None:
+    """Return block message, or None if the command may run.
+
+    Policy: rustup always blocked when invoked; cargo check/build/test/version
+    allowed; bare rustc compile blocked. Lookups like ``where cargo`` allowed.
+    """
+    c = (command or "").strip()
+    if not c:
+        return None
+
+    tools = _invoked_rust_tools(c)
+    if not tools:
+        return None
+
+    if "rustup" in tools:
+        try:
+            from backend.agent.progress_guard import cargo_blocked_hint, resolve_project_anchor
+
+            _hint = cargo_blocked_hint(resolve_project_anchor() or "tavarn-guardian")
+        except Exception:
+            _hint = "请用 command：`cargo check -p guardian-server`。"
+        return (
+            "[Blocked] rustup 禁止在 agent 内执行（曾导致 rustc 0xc0000409 拖垮窗口）。"
+            + _hint
+        )
+
+    if _CARGO_DENY_SUBCMD_RE.search(c):
+        try:
+            from backend.agent.progress_guard import cargo_blocked_hint, resolve_project_anchor
+
+            _hint = cargo_blocked_hint(resolve_project_anchor() or "tavarn-guardian")
+        except Exception:
+            _hint = "请用 `cargo check` / `cargo build` / `cargo test`。"
+        return (
+            "[Blocked] 该 cargo 子命令禁止在 agent 内执行（install/publish/new 等）。"
+            + _hint
+        )
+
+    if "cargo" in tools:
+        if _CARGO_ALLOW_SUBCMD_RE.search(c):
+            return None
+        # cargo with no subcommand or unknown — still allow bare `cargo --version`
+        if re.search(r"(?i)\bcargo(?:\.exe)?\s*$", c.strip()):
+            return (
+                "[Blocked] 请指定子命令，例如 `cargo check` / `cargo build` / `cargo -V`。"
+            )
+        return (
+            "[Blocked] cargo 仅放行：check / build / test / metadata / tree / clippy / "
+            "fmt / doc / fetch / update / clean / -V。"
+            f"当前：{c[:120]}"
+        )
+
+    if "rustc" in tools:
+        if _RUSTC_VERSION_ONLY_RE.search(c):
+            return None
+        return (
+            "[Blocked] 裸 rustc 编译禁止；请用 `cargo check` / `cargo build`。"
+            "版本：`rustc -vV`。"
+        )
+
+    return None
+
+
 async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> str:
     """
     命令行工具：执行 shell 命令（P0 增强：cwd / 更长超时 / 输出截断 / 后台）。
@@ -839,6 +983,33 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
     if "\x00" in command:
         return "[Security Blocked] NUL bytes are not allowed in command"
 
+    _rust_block = _block_agent_rust_tools(command)
+    if _rust_block:
+        return _rust_block
+
+    # Normalize before sandbox: strip double cmd /c and rewrite PowerShell cmdlets.
+    # Fixes: '\"rustc --version & ...\"' 不是内部或外部命令
+    try:
+        import sys as _sys
+
+        if _sys.platform == "win32":
+            from backend.core.safe_subprocess import normalize_windows_job_command
+
+            _norm = normalize_windows_job_command(command)
+            if _norm != command:
+                __import__("logging").getLogger(__name__).info(
+                    "normalized windows command: %s → %s",
+                    command[:80],
+                    _norm[:80],
+                )
+                command = _norm
+                arguments = dict(arguments)
+                arguments["command"] = command
+    except Exception as _norm_e:
+        __import__("logging").getLogger(__name__).debug(
+            "command normalize skip: %s", _norm_e
+        )
+
     # P0：编制/本机 command 中的 python 强制项目 venv（避免 PATH 上 hermes 等污染）
     try:
         from backend.core.project_python import rewrite_command_python
@@ -856,35 +1027,115 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
     if blocked:
         return blocked
 
-    timeout = int(arguments.get("timeout") or config.get("timeout") or 120)
-    timeout = max(1, min(timeout, 600))
+    # Default 90s; hard-cap by outer agent_tool_timeout so we never schedule
+    # work that the agent loop will cancel first (was 600 → outer 180 first-win).
+    try:
+        from backend.core.config import settings as _st
+
+        _outer = float(getattr(_st, "agent_tool_timeout_seconds", 180) or 180)
+    except Exception:
+        _outer = 180.0
+    _cap = max(15, int(_outer) - 5) if _outer > 0 else 90
+    timeout = int(arguments.get("timeout") or config.get("timeout") or 90)
+    timeout = max(1, min(timeout, _cap, 180))
     max_output = int(arguments.get("max_output") or config.get("max_output") or 50000)
     max_output = max(1000, min(max_output, 200_000))
-    cwd = (
+    cwd_raw = (
         arguments.get("cwd")
         or arguments.get("working_dir")
         or config.get("working_dir")
         or config.get("base_path")
     )
-    if not cwd:
-        try:
-            from backend.tools.permissions import resolve_agent_workspace_root
-            cwd = resolve_agent_workspace_root()
-        except Exception:
-            cwd = os.getcwd()
-    cwd = os.path.abspath(str(cwd))
+    try:
+        from backend.tools.permissions import resolve_agent_workspace_root
+
+        _ws_root = resolve_agent_workspace_root() or os.getcwd()
+    except Exception:
+        _ws_root = os.getcwd()
+    _ws_root = os.path.abspath(str(_ws_root))
+
+    # Relative cwd must join workspace root — NOT process CWD (install resources/).
+    # Fixes: cwd=tavarn-guardian → Programs\tevarn\resources\tavarn-guardian
+    if not cwd_raw:
+        cwd = _ws_root
+    else:
+        _cr = str(cwd_raw).strip().strip('"')
+        if os.path.isabs(_cr):
+            cwd = os.path.abspath(_cr)
+        else:
+            try:
+                from backend.core.config import settings as _st_cwd
+
+                _ws_rel = bool(getattr(_st_cwd, "agent_cwd_workspace_relative", True))
+            except Exception:
+                _ws_rel = True
+            if _ws_rel:
+                cwd = os.path.abspath(os.path.join(_ws_root, _cr))
+            else:
+                cwd = os.path.abspath(_cr)
+
+    # Never use install-tree fake project as cwd when real workspace exists elsewhere
+    try:
+        from backend.core.config import settings as _st_inst
+
+        if bool(getattr(_st_inst, "agent_block_install_tree_cwd", True)):
+            _norm = os.path.normcase(cwd)
+            if (
+                "programs" in _norm
+                and "tevarn" in _norm
+                and "resources" in _norm
+                and "appdata" not in _norm
+            ):
+                # Prefer real workspace / project anchor under Roaming data
+                from backend.agent.progress_guard import resolve_project_anchor as _rpa_i
+
+                _alt = _rpa_i(_ws_root) or _ws_root
+                if os.path.isdir(_alt) and os.path.normcase(
+                    os.path.abspath(_alt)
+                ) != _norm:
+                    cwd = os.path.abspath(_alt)
+    except Exception:
+        pass
+
     if not os.path.isdir(cwd):
         return f"[Error] cwd does not exist: {cwd}"
+    # Cargo at monorepo parent without Cargo.toml → project anchor (tavarn-guardian/…)
+    try:
+        from backend.agent.progress_guard import (
+            is_cargo_verify_command as _is_cvc_cwd,
+            resolve_project_anchor as _rpa_cwd,
+        )
+
+        if _is_cvc_cwd(command) and not os.path.isfile(os.path.join(cwd, "Cargo.toml")):
+            _anchor = _rpa_cwd(_ws_root) or _rpa_cwd(cwd)
+            if (
+                _anchor
+                and os.path.isdir(_anchor)
+                and os.path.isfile(os.path.join(_anchor, "Cargo.toml"))
+                and os.path.normcase(os.path.abspath(_anchor))
+                != os.path.normcase(cwd)
+            ):
+                cwd = os.path.abspath(_anchor)
+    except Exception:
+        pass
 
     background = bool(arguments.get("background") or arguments.get("bg"))
-    # 长命令自动后台：pytest/pip install/sleep 等不阻塞 agent loop
+    # 长命令自动后台：构建/安装/测试/训练等不阻塞 agent loop
     _auto_bg = bool(arguments.get("auto_bg", True))
     _long_hint = re.search(
-        r"(pytest|py\.test|pip3?\s+install|npm\s+install|pnpm\s+install|"
-        r"yarn\s+add|cargo\s+build|make\s+-j|sleep\s+[5-9]|sleep\s+\d{2,})",
+        r"(pytest|py\.test|unittest|pip3?\s+install|npm\s+(install|ci|run|build)|"
+        r"pnpm\s+(install|add|run)|yarn\s+(add|install|build)|"
+        r"cargo\s+(build|test|check)|go\s+(test|build)|mvn\s+|gradle\s+|"
+        r"make\s+(-j)?|cmake\s+|docker\s+(build|compose|pull)|"
+        r"sleep\s+[5-9]|sleep\s+\d{2,}|curl\s+.*-o\s|wget\s+|"
+        r"python\s+-m\s+(pytest|http\.server|uvicorn)|"
+        r"train|finetune|download)",
         command,
         re.I,
     )
+    # Auto-background only for *clearly* long work.
+    # Do NOT use default timeout alone (default is ~90s) — that wrongly
+    # backgrounded trivial `cmd /c dir` and caused empty process thrash.
     if (
         not background
         and _auto_bg
@@ -894,6 +1145,15 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
         background = True
         logger = __import__("logging").getLogger(__name__)
         logger.info("auto-background long command: %s", command[:120])
+    elif (
+        not background
+        and _auto_bg
+        and timeout >= 120
+        and re.search(r"(install|build|test|train|download|compose)", command, re.I)
+    ):
+        background = True
+        logger = __import__("logging").getLogger(__name__)
+        logger.info("auto-background high-timeout command: %s", command[:120])
 
     if background:
         from backend.services.tools.process_registry import (
@@ -901,11 +1161,13 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
             start_background,
         )
 
-        item = await start_background(command, cwd=cwd)
+        _sid_bg = str(arguments.get("_session_id") or "").strip() or None
+        item = await start_background(command, cwd=cwd, session_id=_sid_bg)
         await asyncio.sleep(0.15)
         return (
             f"[Background started] id={item.id}\n"
             f"Use process tool action=poll process_id={item.id} to check output.\n"
+            f"(完成时系统会自动注入结果，仍可主动 poll。)\n"
             + format_process(item, tail=2000)
         )
 
@@ -916,7 +1178,7 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
         try:
             from backend.computer.manager import get_computer_manager
 
-            return await get_computer_manager().execute(
+            _res = await get_computer_manager().execute(
                 command,
                 agent_key=str(arguments.get("_agent_key") or "main"),
                 agent_label=str(arguments.get("_agent_label") or ""),
@@ -926,6 +1188,15 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
                 timeout=timeout,
                 max_output=max_output,
                 process_id=_kpid,
+            )
+            return await _maybe_cargo_stub_retry(
+                _res,
+                command=command,
+                cwd=cwd,
+                timeout=timeout,
+                max_output=max_output,
+                arguments=arguments,
+                _kpid=_kpid,
             )
         except Exception as _ce:
             # 安全口径：用户要的是隔离，静默降级到本机直跑会破坏预期。
@@ -977,44 +1248,183 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
             if "isolation" in msg.lower() or "sandbox" in msg.lower() or "local" in msg.lower():
                 return f"[Error] isolation denied: {_iso_e}"
 
+    # Foreground with Grok-style timeout→background (do not kill long work).
     try:
-        from backend.core.safe_subprocess import run_capture
-
-        r = await run_capture(
-            command,
-            cwd=cwd if cwd else None,
-            timeout=float(timeout),
-            max_output=int(max_output),
+        from backend.core.safe_subprocess import create_process, needs_shell
+        from backend.services.tools.process_registry import (
+            adopt_running,
+            format_process,
         )
-        if str(r.get("stderr") or "").startswith("[Security Blocked]"):
-            return str(r.get("stderr"))
-        if r.get("code") == 124:
-            return f"[Timeout] Command exceeded {timeout}s and was terminated"
-        out = (r.get("stdout") or "").strip()
-        err = (r.get("stderr") or "").strip()
-        code = r.get("code")
+        from backend.computer.text_decode import decode_process_bytes
+
+        proc = await create_process(command, cwd=cwd if cwd else None)
+        mode = "shell" if needs_shell(command) else "exec"
+        try:
+            stdout_b, stderr_b = await asyncio.wait_for(
+                proc.communicate(), timeout=float(timeout)
+            )
+        except asyncio.TimeoutError:
+            # Leave process running; model can process poll/kill
+            try:
+                item = await adopt_running(
+                    proc,
+                    command,
+                    cwd=cwd,
+                    session_id=str(arguments.get("_session_id") or "").strip() or None,
+                )
+            except Exception as _ad_e:
+                from backend.core.safe_subprocess import kill_process_tree
+
+                await kill_process_tree(proc)
+                return (
+                    f"[Timeout] Command exceeded {timeout}s and was terminated "
+                    f"(background adopt failed: {_ad_e})"
+                )
+            return (
+                f"[Background after timeout] id={item.id}\n"
+                f"Command still running after {timeout}s (not killed).\n"
+                f"Use process tool: action=poll process_id={item.id}\n"
+                f"Then action=kill process_id={item.id} when done.\n"
+                + format_process(item, tail=1500)
+            )
+        except asyncio.CancelledError:
+            from backend.core.safe_subprocess import kill_process_tree
+
+            await kill_process_tree(proc)
+            raise
+
+        out = decode_process_bytes(stdout_b or b"")
+        err = decode_process_bytes(stderr_b or b"")
+        if len(out) > max_output:
+            out = out[:max_output] + f"\n...[stdout truncated]"
+        if len(err) > max(max_output // 2, 1000):
+            err = err[: max_output // 2] + f"\n...[stderr truncated]"
+        code = proc.returncode if proc.returncode is not None else -1
         header = (
             f"[Exit {code}"
             + (f" cwd={cwd}" if cwd else "")
-            + (f" mode={r.get('mode')}" if r.get("mode") else "")
+            + (f" mode={mode}" if mode else "")
             + "]"
         )
-        if err:
-            return f"{header}\nstdout:\n{out or '(empty)'}\n\nstderr:\n{err}"
-        if out:
-            return out
-        # 禁止返回空串或裸 [Error]——Agent 无法自检
-        if code not in (0, None, "0"):
-            return (
+        out_s, err_s = out.strip(), err.strip()
+        if err_s:
+            _local_res = f"{header}\nstdout:\n{out_s or '(empty)'}\n\nstderr:\n{err_s}"
+        elif out_s:
+            _local_res = out_s
+        elif code not in (0, None, "0"):
+            _local_res = (
                 f"{header}\n[No output] 命令无 stdout/stderr。"
                 "Windows 请用 `cmd /c echo ok`、`cmd /c dir`、`where python`。"
             )
-        return f"{header}\n[No output]"
+        else:
+            _local_res = f"{header}\n[No output]"
+        # Local path: stub auto-clean via shell if needed
+        try:
+            from backend.agent.progress_guard import is_metadata_stub_error
+            from backend.core.config import settings as _st_lc
+
+            if (
+                bool(getattr(_st_lc, "agent_cargo_stub_auto_clean", True))
+                and is_metadata_stub_error(_local_res)
+                and re.search(r"(?i)\bcargo(?:\.exe)?\s+(?:check|build|test)\b", command or "")
+            ):
+                clean = "cargo clean"
+                m = re.search(r"(?i)\s-p\s+(\S+)", command or "")
+                if m:
+                    clean = f"cargo clean -p {m.group(1)}"
+                proc2 = await create_process(clean, cwd=cwd if cwd else None)
+                await asyncio.wait_for(proc2.communicate(), timeout=min(float(timeout), 120.0))
+                proc3 = await create_process(command, cwd=cwd if cwd else None)
+                o3, e3 = await asyncio.wait_for(
+                    proc3.communicate(), timeout=float(timeout)
+                )
+                retry_out = decode_process_bytes(o3 or b"") + decode_process_bytes(e3 or b"")
+                return (
+                    f"[auto] metadata stub → `{clean}` then retry.\n"
+                    f"--- first ---\n{_local_res[:1000]}\n--- retry ---\n{retry_out[:max_output]}"
+                )
+        except Exception:
+            pass
+        return _local_res
     except FileNotFoundError:
         return f"[Error] Command not found: {command.split()[0] if command else ''}"
+    except ValueError as e:
+        return f"[Security Blocked] {e}"
     except Exception as e:
         msg = str(e).strip() or type(e).__name__
         return f"[Error] {msg}"
+
+
+async def _maybe_cargo_stub_retry(
+    result: str,
+    *,
+    command: str,
+    cwd: str | None,
+    timeout: int,
+    max_output: int,
+    arguments: dict[str, Any],
+    _kpid: str | None,
+) -> str:
+    """On rustc 'metadata stub' / broken target, cargo clean once then re-check."""
+    try:
+        from backend.core.config import settings as _st
+        from backend.agent.progress_guard import is_metadata_stub_error
+
+        if not bool(getattr(_st, "agent_cargo_stub_auto_clean", True)):
+            return result
+        if not is_metadata_stub_error(result or ""):
+            return result
+        if not re.search(r"(?i)\bcargo(?:\.exe)?\s+(?:check|build|test)\b", command or ""):
+            return result
+    except Exception:
+        return result
+
+    clean_cmd = "cargo clean"
+    # Prefer package-scoped clean when -p present
+    m = re.search(r"(?i)\s-p\s+(\S+)", command or "")
+    if m:
+        clean_cmd = f"cargo clean -p {m.group(1)}"
+    try:
+        from backend.computer.manager import get_computer_manager
+
+        logger = __import__("logging").getLogger(__name__)
+        logger.warning(
+            "cargo metadata stub detected — auto %s then retry: %s",
+            clean_cmd,
+            (command or "")[:100],
+        )
+        await get_computer_manager().execute(
+            clean_cmd,
+            agent_key=str(arguments.get("_agent_key") or "main"),
+            agent_label=str(arguments.get("_agent_label") or ""),
+            session_id=arguments.get("_session_id"),
+            recorder=arguments.get("_run_recorder"),
+            cwd=cwd,
+            timeout=min(int(timeout), 120),
+            max_output=max_output,
+            process_id=_kpid,
+        )
+        retry = await get_computer_manager().execute(
+            command,
+            agent_key=str(arguments.get("_agent_key") or "main"),
+            agent_label=str(arguments.get("_agent_label") or ""),
+            session_id=arguments.get("_session_id"),
+            recorder=arguments.get("_run_recorder"),
+            cwd=cwd,
+            timeout=timeout,
+            max_output=max_output,
+            process_id=_kpid,
+        )
+        return (
+            f"[auto] detected metadata stub → ran `{clean_cmd}` then retried.\n"
+            f"--- first error (truncated) ---\n{(result or '')[:1200]}\n"
+            f"--- retry result ---\n{retry}"
+        )
+    except Exception as e:
+        return (
+            f"{result}\n\n[auto] cargo clean retry failed: {e}. "
+            "请手动：`cargo clean` 后 `cargo check`。"
+        )
 
 
 # file_read 分页参数（T3）
@@ -1114,9 +1524,22 @@ async def execute_file_read(config: dict[str, Any], arguments: dict[str, Any]) -
     模型写 edit 的 old_text 时不得带上（工具描述里已声明）。
     截断永远发生在行边界，并给出可续读的 offset，避免模型基于断裂视图改代码。
     """
-    filepath = arguments.get("filepath", "")
+    filepath = arguments.get("filepath", "") or arguments.get("path", "")
     if not filepath:
         return "[Error] filepath is required"
+    try:
+        from backend.core.config import settings as _st_fr
+        from backend.agent.progress_guard import is_diag_junk_path
+
+        if bool(getattr(_st_fr, "agent_ignore_diag_junk_paths", True)) and is_diag_junk_path(
+            str(filepath)
+        ):
+            return (
+                f"[Blocked] 忽略诊断垃圾路径：{filepath}。"
+                "不要读 _cargo_*/_diag_*/_hello*；请 file_write 业务源码或 cargo check。"
+            )
+    except Exception:
+        pass
     try:
         from backend.tools.permissions import rewrite_host_path_into_workspace
 
@@ -1178,20 +1601,55 @@ async def execute_file_write(config: dict[str, Any], arguments: dict[str, Any]) 
     """
     文件写入工具：写入内容到指定文件
     """
-    filepath = arguments.get("filepath", "")
+    filepath = arguments.get("filepath", "") or arguments.get("path", "")
     content = arguments.get("content", "")
     if not filepath:
         return "[Error] filepath is required"
+
+    try:
+        from backend.agent.progress_guard import is_diag_junk_path
+
+        if is_diag_junk_path(str(filepath)):
+            return (
+                f"[Blocked] 禁止写诊断垃圾：{filepath}。"
+                "请改 crates/.../*.rs 业务源码，不要 _snap/_diag/_cargo dump。"
+            )
+    except Exception:
+        pass
+
+    # Absolute path under workspace → relative (model often passes full Windows path)
+    try:
+        from backend.tools.permissions import rewrite_host_path_into_workspace
+
+        filepath = rewrite_host_path_into_workspace(str(filepath))
+    except Exception:
+        pass
+
+    try:
+        from backend.agent.progress_guard import is_diag_junk_path
+
+        if is_diag_junk_path(str(filepath)):
+            return (
+                f"[Blocked] 禁止写诊断垃圾：{filepath}。"
+                "请改 crates/.../*.rs 业务源码。"
+            )
+    except Exception:
+        pass
 
     base_path = config.get("base_path", "./workspace")
     full_path, base_abs = _resolve_workspace_path(base_path, filepath)
 
     # 路径安全检查
     if not _is_within(full_path, base_abs):
-        return f"[Security Blocked] Path '{filepath}' is outside the allowed directory"
+        return (
+            f"[Security Blocked] Path '{filepath}' is outside the allowed directory "
+            f"(workspace={base_abs}). Use a relative path like 'docs/foo.md'."
+        )
 
     # 确保目录存在
-    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+    parent = os.path.dirname(full_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
 
     try:
         with open(full_path, "w", encoding="utf-8") as f:
@@ -1254,6 +1712,43 @@ async def execute_python(config: dict[str, Any], arguments: dict[str, Any]) -> s
     code = arguments.get("code", "").strip()
     if not code:
         return "[Error] code is required"
+
+    # Python must not shell rustup / unrestricted cargo — use `command` tool so
+    # JobBackend can inject MSVC vcvars. Allow only if code clearly is cargo
+    # check/build/test (still prefer command tool).
+    if re.search(r"(?i)\brustup\b", code):
+        try:
+            from backend.agent.progress_guard import cargo_blocked_hint, resolve_project_anchor
+
+            _h = cargo_blocked_hint(resolve_project_anchor() or "tavarn-guardian")
+        except Exception:
+            _h = "请用 command：`cargo check -p guardian-server`。"
+        return "[Blocked] python 内禁止 rustup。" + _h
+    if re.search(
+        r"(?i)(?:subprocess|os\.system|os\.popen|Popen|run\()\s*.{0,80}\b(?:cargo|rustc)\b"
+        r"|(?:['\"])(?:cargo|rustc)(?:\.exe)?(?:['\"])"
+        r"|\bcargo\s+"
+        r"|\brustc\s+",
+        code,
+    ):
+        # Allow python only for allowlisted cargo subcommands (no rustc compile)
+        if re.search(
+            r"(?i)\bcargo(?:\.exe)?\s+"
+            r"(?:check|build|test|metadata|tree|clippy|fmt|doc|fetch|update|clean)\b",
+            code,
+        ) and not re.search(r"(?i)\brustc\b", code):
+            pass  # allowed, but Job/python env may lack vcvars — still better via command
+        else:
+            try:
+                from backend.agent.progress_guard import (
+                    cargo_blocked_hint,
+                    resolve_project_anchor,
+                )
+
+                _h = cargo_blocked_hint(resolve_project_anchor() or "tavarn-guardian")
+            except Exception:
+                _h = "请用 command：`cargo check -p guardian-server`。"
+            return "[Blocked] python 内请勿直接调 rustc/非白名单 cargo。" + _h
 
     timeout = arguments.get("timeout", config.get("timeout", 30))
 
@@ -1359,10 +1854,10 @@ async def execute_python(config: dict[str, Any], arguments: dict[str, Any]) -> s
 
             tmp_dir = Path(resolve_agent_workspace_root()) / ".computers" / "_tmp"
         except Exception:
-            tmp_dir = Path(tempfile.gettempdir()) / "takton_py"
+            tmp_dir = Path(tempfile.gettempdir()) / "tevarn_py"
         tmp_dir.mkdir(parents=True, exist_ok=True)
         fd, script_path = tempfile.mkstemp(
-            suffix=".py", prefix="takton_py_", dir=str(tmp_dir)
+            suffix=".py", prefix="tevarn_py_", dir=str(tmp_dir)
         )
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
             f.write(code if code.endswith("\n") else code + "\n")
@@ -1411,12 +1906,17 @@ async def execute_python(config: dict[str, Any], arguments: dict[str, Any]) -> s
 
         proc = None  # audit-fix: spawn 本身失败时 Timeout 分支不得引用未绑定变量
         try:
-            proc = await asyncio.create_subprocess_exec(
-                py,
-                script_path,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
+            from backend.core.safe_subprocess import kill_process_tree
+
+            # stdin DEVNULL + process group so outer cancel can tree-kill
+            _spawn: dict = {
+                "stdout": asyncio.subprocess.PIPE,
+                "stderr": asyncio.subprocess.PIPE,
+                "stdin": asyncio.subprocess.DEVNULL,
+            }
+            if sys.platform != "win32":
+                _spawn["start_new_session"] = True
+            proc = await asyncio.create_subprocess_exec(py, script_path, **_spawn)
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=timeout
             )
@@ -1426,14 +1926,27 @@ async def execute_python(config: dict[str, Any], arguments: dict[str, Any]) -> s
                 return f"[Exit {proc.returncode}]\nstdout:\n{out}\n\nstderr:\n{err}"
             return out or "[No output]"
         except asyncio.TimeoutError:
-            # audit-fix: 超时后必须杀掉子进程，否则泄漏（参考 workflow_engine.py:932-937）
             if proc is not None:
                 try:
-                    proc.kill()
-                    await proc.wait()
+                    from backend.core.safe_subprocess import kill_process_tree
+
+                    await kill_process_tree(proc)
+                except Exception:
+                    try:
+                        proc.kill()
+                        await proc.wait()
+                    except Exception:
+                        pass
+            return f"[Timeout] Execution exceeded {timeout}s"
+        except asyncio.CancelledError:
+            if proc is not None:
+                try:
+                    from backend.core.safe_subprocess import kill_process_tree
+
+                    await kill_process_tree(proc)
                 except Exception:
                     pass
-            return f"[Timeout] Execution exceeded {timeout}s"
+            raise
         except Exception as e:
             return f"[Error] {e}"
     finally:
@@ -1590,7 +2103,7 @@ async def execute_edit(config: dict[str, Any], arguments: dict[str, Any]) -> str
     多处匹配时静默替换是最难排查的 agent 故障——模型以为改对了继续往下跑，
     错误在几十轮后才暴露。需要全改时显式传 replace_all=true。
     """
-    filepath = arguments.get("filepath", "")
+    filepath = arguments.get("filepath", "") or arguments.get("path", "")
     old_text = arguments.get("old_text", "")
     new_text = arguments.get("new_text", "")
     replace_all = bool(arguments.get("replace_all") or False)
@@ -1600,6 +2113,17 @@ async def execute_edit(config: dict[str, Any], arguments: dict[str, Any]) -> str
 
     if old_text == new_text:
         return "[Error] old_text and new_text are identical; nothing to change"
+
+    try:
+        from backend.agent.progress_guard import is_diag_junk_path
+
+        if is_diag_junk_path(str(filepath)):
+            return (
+                f"[Blocked] 禁止编辑诊断垃圾：{filepath}。"
+                "请改 crates/... 业务源码。"
+            )
+    except Exception:
+        pass
 
     base_path = config.get("base_path", "./workspace")
     full_path, base_abs = _resolve_workspace_path(base_path, filepath)
@@ -1715,9 +2239,9 @@ async def execute_glob(config: dict[str, Any], arguments: dict[str, Any]) -> str
     include_heavy = bool(arguments.get("include_heavy") or arguments.get("all"))
     # Hard cap: recursive ** globs over huge trees (node_modules etc. already
     # filtered, but scan itself can block 20s+ and stress the process before
-    # Codex SSE). Default 15s; env TAKTON_GLOB_TIMEOUT_SEC overrides.
+    # Codex SSE). Default 15s; env TEVARN_GLOB_TIMEOUT_SEC overrides.
     try:
-        _glob_timeout = float(os.environ.get("TAKTON_GLOB_TIMEOUT_SEC") or "15")
+        _glob_timeout = float(os.environ.get("TEVARN_GLOB_TIMEOUT_SEC") or "15")
     except Exception:
         _glob_timeout = 15.0
     _glob_timeout = max(3.0, min(_glob_timeout, 60.0))

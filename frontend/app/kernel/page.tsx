@@ -190,7 +190,7 @@ export default function KernelPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `takton-aios-backup-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`;
+      a.download = `tevarn-aios-backup-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`;
       a.click();
       URL.revokeObjectURL(url);
       const c = (data as { counts?: Record<string, number> }).counts;
@@ -788,7 +788,7 @@ export default function KernelPage() {
               {zh ? '互操作协议 0.1' : 'Interop protocol 0.1'}
             </div>
             <div style={{ fontSize: 12, color: 'var(--foreground-dim)', lineHeight: 1.55 }}>
-              {(protocol.data?.protocol as string) || 'takton-aios-protocol'} · v
+              {(protocol.data?.protocol as string) || 'tevarn-aios-protocol'} · v
               {String(protocol.data?.protocol_version || '0.1.0')}
             </div>
             <div style={{ fontSize: 11.5, color: 'var(--foreground-muted)', marginTop: 8, lineHeight: 1.55 }}>
@@ -818,10 +818,10 @@ GET  /api/kernel/protocol/surface`}
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {(agentCards.data?.cards ?? []).slice(0, 12).map((c) => {
-                  const takton = (c.takton || {}) as Record<string, unknown>;
+                  const tevarn = (c.tevarn || {}) as Record<string, unknown>;
                   const skills = (c.skills as Array<{ id?: string }> | undefined) ?? [];
                   return (
-                    <div key={String(takton.identity_id || c.name)} style={{ fontSize: 12, padding: '8px 0', borderBottom: '1px solid var(--border-subtle)' }}>
+                    <div key={String(tevarn.identity_id || c.name)} style={{ fontSize: 12, padding: '8px 0', borderBottom: '1px solid var(--border-subtle)' }}>
                       <div style={{ fontWeight: 650 }}>{String(c.name)}</div>
                       <div style={{ fontSize: 11, color: 'var(--foreground-dim)', marginTop: 2 }}>
                         {(c.description as string || '').slice(0, 80)} · caps {skills.map((s) => s.id).filter(Boolean).slice(0, 6).join(', ')}

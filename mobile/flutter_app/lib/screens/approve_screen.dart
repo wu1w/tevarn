@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../bridge/takton_bridge.dart';
+import '../bridge/tevarn_bridge.dart';
 import '../models/app_models.dart';
 import '../services/app_controller.dart';
 import '../theme/pixel_theme.dart';

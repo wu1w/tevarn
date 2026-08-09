@@ -1,7 +1,7 @@
-//! C ABI surface for Flutter FFI (`libtakton_mobile_ffi`).
+//! C ABI surface for Flutter FFI (`libtevarn_mobile_ffi`).
 //! Starts an embedded axum host and proxies method calls over loopback HTTP.
 //! Streaming chat still uses HTTP/WS from Dart (Flutter opens it against the host
-//! base returned by `takton_start_host`).
+//! base returned by `tevarn_start_host`).
 
 use once_cell::sync::OnceCell;
 use serde_json::{json, Value};
@@ -9,8 +9,8 @@ use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use takton_mobile_core::AppConfig;
-use takton_mobile_host::{resolve_ui_dir, start_host, EngineHandle};
+use tevarn_mobile_core::AppConfig;
+use tevarn_mobile_host::{resolve_ui_dir, start_host, EngineHandle};
 
 static RUNTIME: OnceCell<tokio::runtime::Runtime> = OnceCell::new();
 static ENGINE: OnceCell<Mutex<Option<EngineHandle>>> = OnceCell::new();
@@ -117,19 +117,19 @@ fn start_host_inner(preferred_port: i32, data_dir: Option<PathBuf>) -> *mut c_ch
 
 /// Start embedded host on preferred port (0 = OS pick). Returns JSON `{ok, base, port}`.
 #[no_mangle]
-pub extern "C" fn takton_start_host(preferred_port: i32) -> *mut c_char {
+pub extern "C" fn tevarn_start_host(preferred_port: i32) -> *mut c_char {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         start_host_inner(preferred_port, None)
     })) {
         Ok(ptr) => ptr,
-        Err(_) => err_json("native panic in takton_start_host · 请重启应用"),
+        Err(_) => err_json("native panic in tevarn_start_host · 请重启应用"),
     }
 }
 
 /// Start host with an explicit writable data directory (required on Android).
 /// `data_dir` is a UTF-8 C string path from Flutter path_provider.
 #[no_mangle]
-pub extern "C" fn takton_start_host2(
+pub extern "C" fn tevarn_start_host2(
     preferred_port: i32,
     data_dir: *const c_char,
 ) -> *mut c_char {
@@ -142,22 +142,22 @@ pub extern "C" fn takton_start_host2(
         start_host_inner(preferred_port, dir)
     })) {
         Ok(ptr) => ptr,
-        Err(_) => err_json("native panic in takton_start_host2 · 请重启应用"),
+        Err(_) => err_json("native panic in tevarn_start_host2 · 请重启应用"),
     }
 }
 
 /// Generic method call: `method` name + JSON `args` object.
 #[no_mangle]
-pub extern "C" fn takton_call(method: *const c_char, args: *const c_char) -> *mut c_char {
+pub extern "C" fn tevarn_call(method: *const c_char, args: *const c_char) -> *mut c_char {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        takton_call_inner(method, args)
+        tevarn_call_inner(method, args)
     })) {
         Ok(ptr) => ptr,
         Err(_) => err_json("native panic · 请重试或重启应用"),
     }
 }
 
-fn takton_call_inner(method: *const c_char, args: *const c_char) -> *mut c_char {
+fn tevarn_call_inner(method: *const c_char, args: *const c_char) -> *mut c_char {
     let method = match cstr(method) {
         Ok(s) => s,
         Err(e) => return err_json(e),
@@ -174,7 +174,7 @@ fn takton_call_inner(method: *const c_char, args: *const c_char) -> *mut c_char 
         };
         match g.clone() {
             Some(e) => e,
-            None => return err_json("host not started · call takton_start_host first"),
+            None => return err_json("host not started · call tevarn_start_host first"),
         }
     };
     let rt = runtime();
@@ -184,9 +184,9 @@ fn takton_call_inner(method: *const c_char, args: *const c_char) -> *mut c_char 
     }
 }
 
-/// Free a string returned by takton_start_host / takton_call.
+/// Free a string returned by tevarn_start_host / tevarn_call.
 #[no_mangle]
-pub extern "C" fn takton_free(ptr: *mut c_char) {
+pub extern "C" fn tevarn_free(ptr: *mut c_char) {
     if ptr.is_null() {
         return;
     }
@@ -197,9 +197,9 @@ pub extern "C" fn takton_free(ptr: *mut c_char) {
 
 /// Offline motion profile (no host needed).
 #[no_mangle]
-pub extern "C" fn takton_mode_offline() -> *mut c_char {
+pub extern "C" fn tevarn_mode_offline() -> *mut c_char {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let m = takton_mobile_core::MotionProfile::default();
+        let m = tevarn_mobile_core::MotionProfile::default();
         match serde_json::to_string(&json!({
             "ok": true,
             "motion": m,
@@ -211,7 +211,7 @@ pub extern "C" fn takton_mode_offline() -> *mut c_char {
         }
     })) {
         Ok(ptr) => ptr,
-        Err(_) => err_json("native panic in takton_mode_offline"),
+        Err(_) => err_json("native panic in tevarn_mode_offline"),
     }
 }
 

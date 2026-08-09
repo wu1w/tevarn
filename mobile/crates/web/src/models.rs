@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// Single local chat thread id — must match `takton_mobile_core::LOCAL_SESSION_ID`.
+/// Single local chat thread id — must match `tevarn_mobile_core::LOCAL_SESSION_ID`.
 pub const LOCAL_SESSION_ID: &str = "__local__";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

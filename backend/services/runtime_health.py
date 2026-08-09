@@ -67,7 +67,7 @@ def collect_runtime_health() -> dict[str, Any]:
                 {
                     "id": "rebuild_host",
                     "label": "重建 Host",
-                    "hint": "cargo build -p takton-kernel-host --release",
+                    "hint": "cargo build -p tevarn-kernel-host --release",
                 }
             )
         else:
@@ -258,7 +258,7 @@ def collect_runtime_health() -> dict[str, Any]:
                 }
             )
         backend_env = (
-            os.environ.get("TAKTON_KERNEL_BACKEND")
+            os.environ.get("TEVARN_KERNEL_BACKEND")
             or getattr(settings, "agent_kernel_backend", "")
             or ""
         ).strip().lower()

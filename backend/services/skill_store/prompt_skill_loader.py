@@ -2,7 +2,7 @@
 Prompt-Skill 加载与注入策略
 
 负责：
-- 扫描 ~/.takton/skills/ 下已安装的 SKILL.md
+- 扫描 ~/.tevarn/skills/ 下已安装的 SKILL.md
 - 解析 frontmatter（name/description）+ 正文
 - 按策略输出 system prompt 可注入的片段
 

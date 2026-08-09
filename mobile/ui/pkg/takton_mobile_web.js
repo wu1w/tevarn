@@ -1,4 +1,4 @@
-/* @ts-self-types="./takton_mobile_web.d.ts" */
+/* @ts-self-types="./tevarn_mobile_web.d.ts" */
 import { RawInterpreter } from './snippets/dioxus-interpreter-js-53424282ea002554/inline0.js';
 import { setAttributeInner } from './snippets/dioxus-interpreter-js-53424282ea002554/src/js/common.js';
 import { get_select_data } from './snippets/dioxus-web-bf44d47c344f35d0/inline1.js';
@@ -1542,7 +1542,7 @@ function __wbg_get_imports() {
     };
     return {
         __proto__: null,
-        "./takton_mobile_web_bg.js": import0,
+        "./tevarn_mobile_web_bg.js": import0,
         "./snippets/dioxus-web-bf44d47c344f35d0/inline0.js": import1,
     };
 }
@@ -1932,7 +1932,7 @@ async function __wbg_init(module_or_path) {
     }
 
     if (module_or_path === undefined) {
-        module_or_path = new URL('takton_mobile_web_bg.wasm', import.meta.url);
+        module_or_path = new URL('tevarn_mobile_web_bg.wasm', import.meta.url);
     }
     const imports = __wbg_get_imports();
 

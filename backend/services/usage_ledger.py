@@ -2,7 +2,7 @@
 
 The Rust kernel cost_panel is in-process memory only — every host restart
 zeros the UI. This module dual-writes the same charges to a JSON file under
-the Takton data dir so the 用量 page keeps accumulating.
+the Tevarn data dir so the 用量 page keeps accumulating.
 
 Accuracy fields (for compression strategy):
   prompt / completion / cache_read / cache_write per family+model
@@ -29,19 +29,19 @@ _path: Path | None = None
 
 
 def _data_dir() -> Path:
-    env = (os.environ.get("TAKTON_DATA_DIR") or "").strip()
+    env = (os.environ.get("TEVARN_DATA_DIR") or "").strip()
     if env:
         return Path(env)
     appdata = (os.environ.get("APPDATA") or "").strip()
     if appdata:
-        return Path(appdata) / "takton" / "data"
-    return Path.home() / ".takton" / "data"
+        return Path(appdata) / "tevarn" / "data"
+    return Path.home() / ".tevarn" / "data"
 
 
 def ledger_path() -> Path:
     global _path
     if _path is None:
-        override = (os.environ.get("TAKTON_USAGE_LEDGER") or "").strip()
+        override = (os.environ.get("TEVARN_USAGE_LEDGER") or "").strip()
         _path = Path(override) if override else (_data_dir() / "usage_ledger.json")
     return _path
 

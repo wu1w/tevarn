@@ -9,13 +9,13 @@
 
 | 变量 / 配置键 | 说明 | 生产要求 |
 |---------------|------|----------|
-| `TAKTON_PKG_SIGNING_KEY` / `agent_package_signing_key` | 包签名密钥（≥16 字符） | **必设** |
+| `TEVARN_PKG_SIGNING_KEY` / `agent_package_signing_key` | 包签名密钥（≥16 字符） | **必设** |
 | `agent_package_trusted_content_hashes` | 允许的内容 sha256（逗号/空白分隔） | 远程安装时**强烈建议非空** |
 | `agent_package_require_content_hash` | 强制 catalog/查询带 content_sha256 | 生产建议 `true` |
 | `agent_package_market_url` | 远程 catalog JSON URL | 可选；空=仅本地 |
 | JWT secret | host 可从 JWT **派生**签名密钥（开发） | **不可**替代专用 PKG key |
 
-未设置 `TAKTON_PKG_SIGNING_KEY` 时，host 可能使用 JWT 派生或 `insecure_default`——**仅限本地开发**。
+未设置 `TEVARN_PKG_SIGNING_KEY` 时，host 可能使用 JWT 派生或 `insecure_default`——**仅限本地开发**。
 
 ---
 
@@ -27,8 +27,8 @@ python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
 ```env
-TAKTON_PKG_SIGNING_KEY=<上一步输出>
-TAKTON_PKG_REQUIRE_CONTENT_HASH=1
+TEVARN_PKG_SIGNING_KEY=<上一步输出>
+TEVARN_PKG_REQUIRE_CONTENT_HASH=1
 # 或 settings：agent_package_require_content_hash=true
 ```
 
@@ -36,10 +36,10 @@ TAKTON_PKG_REQUIRE_CONTENT_HASH=1
 
 ```env
 # 多个用逗号分隔
-TAKTON_PKG_TRUSTED_CONTENT_HASHES=abc123...,def456...
+TEVARN_PKG_TRUSTED_CONTENT_HASHES=abc123...,def456...
 ```
 
-（具体 env 名以 `backend/core/config.py` 的 `Settings` 字段映射为准：`agent_package_*` → 通常 `TAKTON_AGENT_PACKAGE_*` 或文档中的别名。）
+（具体 env 名以 `backend/core/config.py` 的 `Settings` 字段映射为准：`agent_package_*` → 通常 `TEVARN_AGENT_PACKAGE_*` 或文档中的别名。）
 
 ---
 
@@ -67,7 +67,7 @@ TAKTON_PKG_TRUSTED_CONTENT_HASHES=abc123...,def456...
 
 ## 5. 轮换
 
-1. 生成新 `TAKTON_PKG_SIGNING_KEY`  
+1. 生成新 `TEVARN_PKG_SIGNING_KEY`  
 2. 用新密钥重签已发布包并更新 content hash 白名单  
 3. 滚动重启 host / backend  
 4. 确认 `/api/packages/market/trust` 为 verified  
@@ -78,7 +78,7 @@ TAKTON_PKG_TRUSTED_CONTENT_HASHES=abc123...,def456...
 
 - `backend/core/config.py` — `agent_package_*`  
 - `backend/kernel_rust/client.py` — `_configure_pkg_signing`  
-- `crates/takton-kernel/src/package_mgr.rs`  
+- `crates/tevarn-kernel/src/package_mgr.rs`  
 - `backend/packages/market.py` / `backend/api/routes/packages.py`  
 - [RELEASE_0.5.0-alpha.md](./RELEASE_0.5.0-alpha.md) 已知注意点  
 

@@ -2,7 +2,7 @@
 import sqlite3
 from pathlib import Path
 
-db = Path(r"D:\学习资料\测试文件\项目文件\takton-alpha-aios-0.6-sprint-20260729-0711\takton.db")
+db = Path(r"D:\学习资料\测试文件\项目文件\tevarn-alpha-aios-0.6-sprint-20260729-0711\tevarn.db")
 con = sqlite3.connect(str(db))
 con.row_factory = sqlite3.Row
 cur = con.cursor()

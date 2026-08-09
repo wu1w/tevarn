@@ -1,4 +1,4 @@
 import 'http_bridge.dart';
-import 'takton_bridge.dart';
+import 'tevarn_bridge.dart';
 
-Future<TaktonBridge> createTaktonBridge() async => HttpTaktonBridge();
+Future<TevarnBridge> createTevarnBridge() async => HttpTevarnBridge();

@@ -1,5 +1,5 @@
 """
-configure_takton — 对话配置 / 使用 Takton 全功能。
+configure_tevarn — 对话配置 / 使用 Tevarn 全功能。
 
 AI 时代：用户应尽量通过对话框完成配置与使用。
 本 Skill 内置完整产品手册，不依赖向量 RAG；也可引导 update_config 等工具。
@@ -23,10 +23,10 @@ _LOW_RISK = {c["key"] for c in SETTINGS_CATALOG if c["risk"] == "low"}
 _HIGH_RISK = {c["key"] for c in SETTINGS_CATALOG if c["risk"] == "high"}
 
 
-class ConfigureTaktonSkill(BaseSkill):
-    name = "configure_takton"
+class ConfigureTevarnSkill(BaseSkill):
+    name = "configure_tevarn"
     description = (
-        "【Takton 官方配置与使用助手】当用户要配置或使用本产品任意功能时优先调用："
+        "【Tevarn 官方配置与使用助手】当用户要配置或使用本产品任意功能时优先调用："
         "模型/API、Embedding/RAG/知识库、远程设备@、通道、工具技能、定时、工作流、"
         "MCP、上下文压缩、Wiki、安全、开箱清单。"
         "action=guide 返回某模块完整说明；"
@@ -35,7 +35,7 @@ class ConfigureTaktonSkill(BaseSkill):
         "action=set_setting 写入配置（高风险需 confirm=true）；"
         "action=checklist 开箱步骤；"
         "action=search 在手册中关键词检索。"
-        "用户说「怎么配」「对话框改设置」「教我用 Takton」必须用本 skill。"
+        "用户说「怎么配」「对话框改设置」「教我用 Tevarn」必须用本 skill。"
     )
     parameters = {
         "type": "object",
@@ -169,7 +169,7 @@ class ConfigureTaktonSkill(BaseSkill):
             data = getattr(res, "data", None) or {}
             msg = getattr(res, "message", "") or ""
             return (
-                "【Takton 系统状态】\n"
+                "【Tevarn 系统状态】\n"
                 f"{msg}\n\n"
                 f"```json\n{json.dumps(data, ensure_ascii=False, indent=2, default=str)}\n```\n"
                 "需要改配置请说明键和值；高风险项需你确认。"

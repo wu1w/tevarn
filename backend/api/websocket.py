@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 
 # 当前 agent task 的 run_generation（broadcast 自动打戳，ingest 过滤 late event）
 _run_gen_ctx: contextvars.ContextVar[int | None] = contextvars.ContextVar(
-    "takton_run_generation", default=None
+    "tevarn_run_generation", default=None
 )
 
 from backend.agent import NexusAgentLoop
@@ -106,15 +106,15 @@ def _ws_client_is_loopback(websocket: WebSocket) -> bool:
     """WS 对端是否允许 single_user 免登。
 
     与 HTTP `_may_single_user_free_login` 对齐：真本机 loopback 可以；
-    VPS 隧道注入的 x-takton-relay 一律不可以（即使 socket peer 是 127.0.0.1）。
+    VPS 隧道注入的 x-tevarn-relay 一律不可以（即使 socket peer 是 127.0.0.1）。
     """
     from backend.api.dependencies import _is_loopback_host
 
     try:
         h = websocket.headers
         raw = (
-            h.get("x-takton-relay")
-            or h.get("x-takton-via-relay")
+            h.get("x-tevarn-relay")
+            or h.get("x-tevarn-via-relay")
             or ""
         ).strip().lower()
         if raw in ("1", "true", "yes", "on"):
@@ -962,7 +962,7 @@ async def websocket_endpoint(
         if not active:
             # 单用户本机：仅 loopback 可回落默认 admin（删除用户≠提权）
             if settings.single_user_mode and _ws_client_is_loopback(websocket):
-                default_user = await user_repo_check.get_by_email("admin@takton.dev")
+                default_user = await user_repo_check.get_by_email("admin@tevarn.dev")
                 if default_user and getattr(default_user, "is_active", True):
                     user_id = default_user.id
                     logger.info(
@@ -1002,7 +1002,7 @@ async def websocket_endpoint(
         from backend.repositories.user_repo import AsyncUserRepository
 
         user_repo_check = AsyncUserRepository()
-        default_user = await user_repo_check.get_by_email("admin@takton.dev")
+        default_user = await user_repo_check.get_by_email("admin@tevarn.dev")
         if default_user:
             user_id = default_user.id
         else:
@@ -1013,7 +1013,7 @@ async def websocket_endpoint(
                 await user_repo_check.create(
                     {
                         "id": user_id,
-                        "email": "admin@takton.dev",
+                        "email": "admin@tevarn.dev",
                         "username": "admin",
                         "hashed_password": get_password_hash(
                             resolve_default_admin_password()
@@ -1023,7 +1023,7 @@ async def websocket_endpoint(
                     }
                 )
             except Exception:
-                default_user = await user_repo_check.get_by_email("admin@takton.dev")
+                default_user = await user_repo_check.get_by_email("admin@tevarn.dev")
                 if default_user:
                     user_id = default_user.id
         logger.info(f"Single-user WS: no token, using default user {user_id}")
@@ -1126,7 +1126,7 @@ async def websocket_endpoint(
         ctx_item_repo=ctx_item_repo,
         context_flow_repo=context_flow_repo,
         ws_manager=manager,
-        agent_name="Takton",
+        agent_name="Tevarn",
         user_id=user_id,
         notification_repo=notification_repo,
     )
@@ -1185,6 +1185,29 @@ async def websocket_endpoint(
                         logger.warning("regenerate load history failed: %s", e)
                 if not user_input:
                     continue
+
+                # Short-window dedup: reconnect/double-send same text (mobile/PC)
+                if not regenerate:
+                    try:
+                        from backend.api.chat_dedup import should_drop_duplicate_user
+
+                        if should_drop_duplicate_user(session_id, user_input):
+                            logger.info(
+                                "drop duplicate user_input session=%s len=%s",
+                                str(session_id)[:8],
+                                len(user_input),
+                            )
+                            await manager.broadcast(
+                                session_id,
+                                {
+                                    "type": "status",
+                                    "state": "idle",
+                                    "detail": "忽略重复发送（短时相同内容）",
+                                },
+                            )
+                            continue
+                    except Exception as _dd:
+                        logger.debug("user dedup skip: %s", _dd)
 
                 # ── Web 聊天 /命令（与 Channel slash 对齐）──
                 if (not regenerate) and user_input.startswith("/") and not user_input.startswith("//"):

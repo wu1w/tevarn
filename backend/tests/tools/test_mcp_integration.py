@@ -142,8 +142,8 @@ async def test_execute_add(fake_mcp_client):
 async def test_execute_upper(fake_mcp_client):
     """mcp_upper executes and returns correct result"""
     await register_mcp_server_tools("integration-test-server", fake_mcp_client)
-    result = await ToolRegistry.execute("mcp_upper", {"text": "takton"})
-    assert result == "TAKTON"
+    result = await ToolRegistry.execute("mcp_upper", {"text": "tevarn"})
+    assert result == "TEVARN"
 
 
 # ─── Test: Prefix stripping ───

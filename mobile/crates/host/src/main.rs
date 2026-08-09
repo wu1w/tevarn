@@ -1,8 +1,8 @@
-//! Takton Mobile Host binary — Flutter shell UI + Rust API bridge.
+//! Tevarn Mobile Host binary — Flutter shell UI + Rust API bridge.
 
-use takton_mobile_core::AppConfig;
-use takton_mobile_host::{build_app, resolve_ui_dir, state::AppState};
-use takton_mobile_core::TaktonClient;
+use tevarn_mobile_core::AppConfig;
+use tevarn_mobile_host::{build_app, resolve_ui_dir, state::AppState};
+use tevarn_mobile_core::TevarnClient;
 use std::net::SocketAddr;
 use tracing_subscriber::EnvFilter;
 
@@ -16,17 +16,17 @@ async fn main() -> anyhow::Result<()> {
 
     let config = AppConfig::default();
     let ui_dir = resolve_ui_dir();
-    tracing::info!(?ui_dir, base = %config.base_url, "takton-mobile starting");
+    tracing::info!(?ui_dir, base = %config.base_url, "tevarn-mobile starting");
 
     if !ui_dir.join("index.html").exists() {
         anyhow::bail!(
-            "UI index.html missing under {:?}; build Flutter web first (flutter build web) or set TAKTON_MOBILE_UI",
+            "UI index.html missing under {:?}; build Flutter web first (flutter build web) or set TEVARN_MOBILE_UI",
             ui_dir
         );
     }
 
     std::fs::create_dir_all(&config.data_dir).ok();
-    let client = TaktonClient::new(config.clone())?;
+    let client = TevarnClient::new(config.clone())?;
     let state = AppState::new(client, config.clone())?;
 
     {

@@ -80,7 +80,7 @@ async def test_file_read_execution():
     await load_all_tools()
 
     with tempfile.NamedTemporaryFile("w", delete=False, suffix=".txt") as f:
-        f.write("hello takton v3.0")
+        f.write("hello tevarn v3.0")
         path = f.name
 
     # 关闭安全目录限制（使用真实路径）

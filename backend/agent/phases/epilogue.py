@@ -167,6 +167,61 @@ async def run_epilogue(
     except Exception as e:
         logger.debug("sft collect skipped: %s", e)
 
+    # 8. 保存最终回复前：折叠 force_final 恐吓长文；空/短 handoff 合成用户向小结
+    try:
+        from backend.agent.thinking_format import (
+            ensure_user_facing_final,
+            looks_like_force_final_report,
+            sanitize_force_final_body,
+        )
+
+        if looks_like_force_final_report(final_content) or (
+            goal_mode
+            and final_content
+            and len(final_content) > 2500
+            and (
+                "强制收束" in final_content
+                or "预算将尽" in final_content
+                or "工具轮次已达" in final_content
+                or "force-final" in final_content.lower()
+                or "Segment tool rounds exhausted" in final_content
+                or "Token budget low" in final_content
+            )
+        ):
+            # Never prefer_short=True for goal — that wiped real summaries
+            final_content = sanitize_force_final_body(
+                final_content,
+                goal_mode=bool(goal_mode),
+                prefer_short=False,
+            )
+        # Empty / stock「工具轮次已用尽」→ synthesize from transcript + active goal only
+        _gsum = ""
+        try:
+            from backend.agent.goal_state import get_goal
+
+            _g = get_goal(session_id)
+            if (
+                goal_mode
+                and _g is not None
+                and not _g.is_complete()
+                and str(getattr(_g, "status", "") or "") == "active"
+            ):
+                _gsum = _g.summary_for_llm()
+        except Exception:
+            pass
+        _msgs = getattr(loop, "_last_messages_for_summary", None)
+        final_content = ensure_user_facing_final(
+            final_content,
+            user_input=user_input or "",
+            messages=_msgs if isinstance(_msgs, list) else None,
+            exit_reason=str(getattr(loop, "last_exit_reason", "") or ""),
+            goal_summary=_gsum,
+            tool_rounds=int(tool_rounds or 0),
+            goal_mode=bool(goal_mode),
+        )
+    except Exception as _san_e:
+        logger.debug("force_final sanitize skip: %s", _san_e)
+
     # 8. 保存最终回复 + 同步 CtxItem + 状态 + 通知（同一事务）
     try:
         await loop._persist_final_response(session_id, final_content)
@@ -206,6 +261,26 @@ async def run_epilogue(
     except Exception as e:
         logger.debug("trace save skipped: %s", e)
 
+    # 8.6 Auto-remember high-signal decisions (memory_nodes was always 0)
+    try:
+        from backend.agent.auto_remember import maybe_auto_remember
+
+        _rid = None
+        try:
+            _rc = getattr(loop, "_run_recorder", None)
+            _rid = getattr(_rc, "run_id", None) if _rc else None
+        except Exception:
+            pass
+        await maybe_auto_remember(
+            user_input=user_input or "",
+            final_content=final_content or "",
+            user_id=getattr(loop, "user_id", None),
+            session_id=session_id,
+            run_id=_rid,
+        )
+    except Exception as e:
+        logger.debug("auto_remember skipped: %s", e)
+
     # 9. 推送状态为 idle（无论成功或失败都恢复状态）
     await loop._push_status(session_id, "idle", "Ready")
 
@@ -214,4 +289,233 @@ async def run_epilogue(
         ws_reset()
     except Exception:
         pass
+
+    # 9.5 Finalize orphan executing/planning runs (session idle residual)
+    try:
+        from backend.core.config import settings as _st_or
+
+        if bool(getattr(_st_or, "agent_finalize_orphan_runs_on_idle", True)):
+            await _finalize_orphan_runs(loop, session_id=session_id)
+    except Exception as _or_e:
+        logger.debug("finalize orphan runs skip: %s", _or_e)
+
+    # 10. Goal 未完成且非用户停止 → 自动再开一轮 resume（防 text-only 假完成）
+    try:
+        if not loop._should_stop:
+            await _maybe_auto_resume_incomplete_goal(
+                loop, session_id=session_id, user_input=user_input or ""
+            )
+    except Exception as _ar_e:
+        logger.debug("goal incomplete auto-resume schedule skip: %s", _ar_e)
+
     return final_content
+
+
+async def _finalize_orphan_runs(loop: Any, *, session_id: uuid.UUID) -> None:
+    """Mark stale executing/planning runs terminal when session goes idle.
+
+    Backfill total_tool_calls / total_iterations from run_steps when possible
+    so UI does not show zeros after orphan close.
+    """
+    from datetime import datetime, timezone
+
+    from backend.repositories.agent_run_repo import AsyncAgentRunRepository
+
+    current_id = None
+    try:
+        _rc = getattr(loop, "_run_recorder", None)
+        current_id = getattr(_rc, "run_id", None) if _rc else None
+        # Flush live counters before idle (session may look idle while finishing)
+        if _rc is not None and hasattr(_rc, "_flush_counters_safe"):
+            await _rc._flush_counters_safe()
+    except Exception:
+        current_id = None
+
+    repo = AsyncAgentRunRepository()
+    runs = await repo.list_runs(session_id, limit=30)
+    n = 0
+    for run in runs or []:
+        st = str(getattr(run, "status", "") or "")
+        if st not in ("executing", "planning", "interrupted"):
+            continue
+        rid = getattr(run, "id", None)
+        if current_id and rid and str(rid).replace("-", "") == str(current_id).replace(
+            "-", ""
+        ):
+            # current run — recorder owns terminal transition
+            continue
+        meta = getattr(run, "meta", None) or {}
+        if not isinstance(meta, dict):
+            meta = {}
+        # Backfill counters from steps if totals empty
+        tools_n = int(getattr(run, "total_tool_calls", 0) or 0)
+        iters_n = int(getattr(run, "total_iterations", 0) or 0)
+        try:
+            if tools_n == 0 and hasattr(repo, "count_steps"):
+                tools_n = int(await repo.count_steps(rid, kind="tool") or 0)
+            elif tools_n == 0 and hasattr(repo, "list_steps"):
+                steps = await repo.list_steps(rid, limit=500)
+                tools_n = sum(
+                    1
+                    for s in (steps or [])
+                    if str(getattr(s, "kind", "") or "") == "tool"
+                )
+        except Exception:
+            pass
+        try:
+            if iters_n == 0:
+                cp = getattr(run, "checkpoint", None)
+                if isinstance(cp, str) and cp.strip().startswith("{"):
+                    import json
+
+                    cp = json.loads(cp)
+                if isinstance(cp, dict):
+                    iters_n = int(cp.get("iteration") or 0)
+        except Exception:
+            pass
+        try:
+            data: dict[str, Any] = {
+                "status": "done",
+                "ended_at": datetime.now(timezone.utc),
+                "meta": {
+                    **meta,
+                    "terminal_via": "session_idle_orphan_finalize",
+                    "terminal_at": datetime.now(timezone.utc).isoformat(),
+                },
+            }
+            if tools_n:
+                data["total_tool_calls"] = tools_n
+            if iters_n:
+                data["total_iterations"] = iters_n
+            await repo.update_run(rid, data)
+            n += 1
+        except Exception as e:
+            logger.debug("orphan finalize skip %s: %s", rid, e)
+    if n:
+        logger.info(
+            "finalized %s orphan runs for session=%s", n, str(session_id)[:8]
+        )
+
+
+async def _maybe_auto_resume_incomplete_goal(
+    loop: Any,
+    *,
+    session_id: uuid.UUID,
+    user_input: str,
+) -> None:
+    """If session still has an active incomplete Goal, fire one more resume run."""
+    from backend.core.config import settings
+
+    if not bool(getattr(settings, "agent_goal_incomplete_auto_resume", True)):
+        return
+    # Skip auto-resume after thrash/doom — avoids empty segment chains
+    try:
+        if bool(getattr(settings, "agent_no_autoresume_on_thrash", True)):
+            from backend.agent.goal_facade import is_thrash_exit_reason
+
+            _ex = str(getattr(loop, "last_exit_reason", "") or "").lower()
+            if is_thrash_exit_reason(_ex):
+                logger.info(
+                    "skip goal auto-resume (thrash exit=%s) session=%s",
+                    _ex,
+                    str(session_id)[:8],
+                )
+                try:
+                    await loop._push_status(
+                        session_id,
+                        "thinking",
+                        "因工具空转熔断，已停止自动续跑；请手动发送「请继续」。",
+                    )
+                except Exception:
+                    pass
+                return
+    except Exception:
+        pass
+    from backend.agent.goal_state import get_goal, load_goal_from_db
+
+    await load_goal_from_db(session_id)
+    g = get_goal(session_id)
+    if g is None or g.is_complete():
+        return
+    if str(getattr(g, "status", "") or "") not in ("active", "blocked"):
+        return
+
+    max_chain = max(
+        1, int(getattr(settings, "agent_goal_incomplete_auto_resume_max", 8) or 8)
+    )
+    # Persist chain count on checkpoint extra
+    chain = 0
+    try:
+        from backend.agent.checkpoint import load_checkpoint, save_checkpoint
+
+        cp = await load_checkpoint(session_id) or {}
+        extra = cp.get("extra") if isinstance(cp.get("extra"), dict) else {}
+        chain = int(extra.get("goal_auto_resume_chain") or 0)
+        if chain >= max_chain:
+            logger.warning(
+                "goal auto-resume chain cap %s reached session=%s — stop chaining",
+                max_chain,
+                str(session_id)[:8],
+            )
+            await loop._push_status(
+                session_id,
+                "thinking",
+                f"Goal 仍未完成，但已自动续跑 {max_chain} 轮；请手动发送「请继续」。",
+            )
+            return
+        chain += 1
+        await save_checkpoint(
+            session_id,
+            segment=int(cp.get("segment") or 0),
+            iteration=int(cp.get("iteration") or 0),
+            mode=str(cp.get("mode") or "goal"),
+            note="goal_incomplete_auto_resume",
+            extra={**extra, "goal_auto_resume_chain": chain},
+            run_id=cp.get("run_id"),
+        )
+    except Exception as e:
+        logger.debug("goal auto-resume chain track: %s", e)
+        chain = 1
+
+    uid = getattr(loop, "user_id", None)
+    logger.info(
+        "scheduling goal incomplete auto-resume chain=%s/%s session=%s",
+        chain,
+        max_chain,
+        str(session_id)[:8],
+    )
+    try:
+        await loop._push_status(
+            session_id,
+            "thinking",
+            f"Goal 未完成，自动再续一轮（{chain}/{max_chain}）…",
+        )
+    except Exception:
+        pass
+
+    # Delay slightly so current run fully tears down (WS idle / locks)
+    import asyncio
+
+    async def _delayed() -> None:
+        try:
+            await asyncio.sleep(1.2)
+            from backend.agent.resume import resume_session_agent_background
+
+            await resume_session_agent_background(
+                session_id,
+                user_id=uid,
+                mode="goal",
+            )
+        except Exception as e:
+            logger.warning(
+                "goal incomplete auto-resume failed session=%s: %s",
+                str(session_id)[:8],
+                e,
+            )
+
+    try:
+        asyncio.create_task(
+            _delayed(), name=f"goal-auto-resume:{str(session_id)[:8]}:{chain}"
+        )
+    except Exception:
+        await _delayed()

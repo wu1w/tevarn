@@ -42,29 +42,29 @@ jobs:
 
       - name: Security regression suite (Phase 1.1)
         env:
-          TAKTON_DB_URL: "sqlite+aiosqlite:///./ci-test.db"
-          TAKTON_TEST_MODE: "1"
-          TAKTON_AGENT_DISPATCHER_ENABLED: "false"
-          TAKTON_AGENT_KERNEL_PERSISTENCE: "false"
+          TEVARN_DB_URL: "sqlite+aiosqlite:///./ci-test.db"
+          TEVARN_TEST_MODE: "1"
+          TEVARN_AGENT_DISPATCHER_ENABLED: "false"
+          TEVARN_AGENT_KERNEL_PERSISTENCE: "false"
           # Backend unit/security tests must not attach to an unrelated host.
           # Rust ABI integration has its own isolated job in kernel-ci.yml.
-          TAKTON_AGENT_KERNEL_BACKEND: "python"
-          TAKTON_AGENT_COURT_RUST_REQUIRED: "false"
-          TAKTON_JWT_SECRET: "ci-jwt-secret-not-for-production-use-32b"
-          TAKTON_API_KEY: "ci-api-key-not-for-production-use-32bxxxx"
+          TEVARN_AGENT_KERNEL_BACKEND: "python"
+          TEVARN_AGENT_COURT_RUST_REQUIRED: "false"
+          TEVARN_JWT_SECRET: "ci-jwt-secret-not-for-production-use-32b"
+          TEVARN_API_KEY: "ci-api-key-not-for-production-use-32bxxxx"
         run: python -m pytest backend/tests/security -q
 
       # 唯一权威测试树：backend/tests（根 tests/ 已归档，见 tests/README.md）
       - name: Run tests (backend/tests)
         env:
-          TAKTON_DB_URL: "sqlite+aiosqlite:///./ci-test.db"
-          TAKTON_TEST_MODE: "1"
-          TAKTON_AGENT_DISPATCHER_ENABLED: "false"
-          TAKTON_AGENT_KERNEL_PERSISTENCE: "false"
-          TAKTON_AGENT_KERNEL_BACKEND: "python"
-          TAKTON_AGENT_COURT_RUST_REQUIRED: "false"
-          TAKTON_JWT_SECRET: "ci-jwt-secret-not-for-production-use-32b"
-          TAKTON_API_KEY: "ci-api-key-not-for-production-use-32bxxxx"
+          TEVARN_DB_URL: "sqlite+aiosqlite:///./ci-test.db"
+          TEVARN_TEST_MODE: "1"
+          TEVARN_AGENT_DISPATCHER_ENABLED: "false"
+          TEVARN_AGENT_KERNEL_PERSISTENCE: "false"
+          TEVARN_AGENT_KERNEL_BACKEND: "python"
+          TEVARN_AGENT_COURT_RUST_REQUIRED: "false"
+          TEVARN_JWT_SECRET: "ci-jwt-secret-not-for-production-use-32b"
+          TEVARN_API_KEY: "ci-api-key-not-for-production-use-32bxxxx"
         run: python -m pytest backend/tests -q --tb=short --junitxml=pytest-report.xml
 
       - name: Upload pytest report (on failure)
@@ -83,17 +83,17 @@ jobs:
       # T10：无 host 时软通过；有 artifact / 本地周报时检查阈值
       - name: Eval weekly gate (soft without host)
         env:
-          TAKTON_TEST_MODE: "1"
+          TEVARN_TEST_MODE: "1"
         run: python scripts/ci_eval_gate.py
 
       # H-12：Phase H 硬化单测（不依赖 host 的部分；完整 ABI 见 kernel-ci.yml）
       - name: Phase H hardening unit tests
         env:
-          TAKTON_DB_URL: "sqlite+aiosqlite:///./ci-test.db"
-          TAKTON_TEST_MODE: "1"
-          TAKTON_AGENT_DISPATCHER_ENABLED: "false"
-          TAKTON_AGENT_KERNEL_PERSISTENCE: "false"
-          TAKTON_JWT_SECRET: "ci-jwt-secret-not-for-production-use-32b"
-          TAKTON_API_KEY: "ci-api-key-not-for-production-use-32bxxxx"
-          TAKTON_KERNEL_BACKEND: "python"
+          TEVARN_DB_URL: "sqlite+aiosqlite:///./ci-test.db"
+          TEVARN_TEST_MODE: "1"
+          TEVARN_AGENT_DISPATCHER_ENABLED: "false"
+          TEVARN_AGENT_KERNEL_PERSISTENCE: "false"
+          TEVARN_JWT_SECRET: "ci-jwt-secret-not-for-production-use-32b"
+          TEVARN_API_KEY: "ci-api-key-not-for-production-use-32bxxxx"
+          TEVARN_KERNEL_BACKEND: "python"
         run: python -m pytest backend/tests/kernel/test_phase_h_hardening.py -q --tb=short

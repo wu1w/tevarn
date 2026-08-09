@@ -1,0 +1,16 @@
+[package]
+name = "tevarn-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Tevarn Runtime — Kernel host façade, resource policy, service registry"
+
+[dependencies]
+tevarn-kernel = { path = "../tevarn-kernel" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+parking_lot = { workspace = true }
+tracing = { workspace = true }
+once_cell = { workspace = true }
+anyhow = { workspace = true }

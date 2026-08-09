@@ -3,7 +3,7 @@
 
 Usage:
   export DISPLAY=:99   # or start Xvfb first
-  cd /opt/hermes-workspace/takton
+  cd /opt/hermes-workspace/tevarn
   .venv311/bin/python scripts/bench_agent/desktop_e2e.py
 
 Optional agent loop with LLM:
@@ -54,7 +54,7 @@ class E2EReport:
 def ensure_display(display: str) -> str:
     os.environ["DISPLAY"] = display
     # optional MIT-MAGIC-COOKIE for real seat (gdm/user)
-    xauth = os.environ.get("XAUTHORITY") or os.environ.get("TAKTON_XAUTHORITY")
+    xauth = os.environ.get("XAUTHORITY") or os.environ.get("TEVARN_XAUTHORITY")
     if xauth and Path(xauth).is_file():
         os.environ["XAUTHORITY"] = xauth
     env = {**os.environ, "DISPLAY": display}
@@ -89,7 +89,7 @@ def spawn_fixture_window() -> subprocess.Popen:
             "OK",
             "-timeout",
             "120",
-            "TAKTON_DESKTOP_E2E_FIXTURE",
+            "TEVARN_DESKTOP_E2E_FIXTURE",
         ],
         env=env,
         stdout=subprocess.DEVNULL,
@@ -197,7 +197,7 @@ async def step_click_center(report: E2EReport) -> None:
 
 async def step_type(report: E2EReport) -> None:
     t0 = time.time()
-    res = await run_tool("desktop_type", text="takton_e2e")
+    res = await run_tool("desktop_type", text="tevarn_e2e")
     ms = (time.time() - t0) * 1000
     ok = bool(parse_tool_result(res).get("success"))
     report.add(StepResult("desktop_type", ok, str(res)[:200], ms))
@@ -246,7 +246,7 @@ async def step_agent_loop(report: E2EReport, model_alias: str) -> None:
     names = cpacks("desktop")
     tools = ToolRegistry.get_tools_schema(names)
     sys_msg = (
-        "You are Takton on a Linux desktop. DISPLAY is set. "
+        "You are Tevarn on a Linux desktop. DISPLAY is set. "
         "Call desktop_screenshot once, then briefly say success or failure in Chinese."
     )
     user = "请调用 desktop_screenshot 截取当前屏幕，然后用一句话说明是否成功。"

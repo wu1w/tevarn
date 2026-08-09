@@ -39,7 +39,7 @@ def _assert_password_backend_usable() -> None:
     与其等到用户登录时才炸，不如启动时说清楚。
     """
     try:
-        pwd_context.hash("takton-startup-selfcheck")
+        pwd_context.hash("tevarn-startup-selfcheck")
     except Exception as e:
         try:
             import bcrypt as _b

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Takton 跨平台启动脚本
+Tevarn 跨平台启动脚本
 
 支持 Windows / macOS / Linux 三端：
 1. 自动检测 Python 解释器
@@ -49,7 +49,7 @@ def find_python() -> str:
     ]
     for p in venv_candidates:
         if p.is_file():
-            print(f"[Takton] Using project venv: {p}")
+            print(f"[Tevarn] Using project venv: {p}")
             return str(p)
 
     candidates = ["python3", "python"]
@@ -69,11 +69,11 @@ def find_python() -> str:
                 timeout=5,
             )
             if result.returncode == 0:
-                print(f"[Takton] Using Python: {cmd} ({result.stdout.strip()})")
+                print(f"[Tevarn] Using Python: {cmd} ({result.stdout.strip()})")
                 return cmd
         except Exception:
             continue
-    print("[Takton] WARNING: No Python found, falling back to 'python3'")
+    print("[Tevarn] WARNING: No Python found, falling back to 'python3'")
     return "python3"
 
 
@@ -95,72 +95,72 @@ def find_npm() -> str:
 def ensure_env_file():
     """确保 .env 文件存在，桌面模式下自动生成安全密钥"""
     if not ENV_FILE.exists():
-        print("[Takton] Creating .env with auto-generated secrets...")
+        print("[Tevarn] Creating .env with auto-generated secrets...")
         jwt_secret = secrets.token_hex(32)
         api_key = secrets.token_hex(32)
-        db_path = BACKEND_DIR / "takton.db"
-        content = f"""# Takton 环境配置（自动生成）
-TAKTON_JWT_SECRET={jwt_secret}
-TAKTON_API_KEY={api_key}
-TAKTON_DB_URL=sqlite+aiosqlite:///{db_path}
-TAKTON_LOG_LEVEL=info
-TAKTON_APP_HOST=127.0.0.1
-TAKTON_APP_PORT=8090
-TAKTON_SINGLE_USER_MODE=true
+        db_path = BACKEND_DIR / "tevarn.db"
+        content = f"""# Tevarn 环境配置（自动生成）
+TEVARN_JWT_SECRET={jwt_secret}
+TEVARN_API_KEY={api_key}
+TEVARN_DB_URL=sqlite+aiosqlite:///{db_path}
+TEVARN_LOG_LEVEL=info
+TEVARN_APP_HOST=127.0.0.1
+TEVARN_APP_PORT=8090
+TEVARN_SINGLE_USER_MODE=true
 # 默认零外部依赖：不设 REDIS / QDRANT 即可
 """
         ENV_FILE.write_text(content, encoding="utf-8")
-        print(f"[Takton] .env created at {ENV_FILE}")
+        print(f"[Tevarn] .env created at {ENV_FILE}")
     else:
-        print(f"[Takton] Using existing .env at {ENV_FILE}")
+        print(f"[Tevarn] Using existing .env at {ENV_FILE}")
 
 
 def wait_for_backend(url: str, timeout: int = 30) -> bool:
     """等待后端 HTTP 服务就绪"""
-    print(f"[Takton] Waiting for backend at {url} ...")
+    print(f"[Tevarn] Waiting for backend at {url} ...")
     for i in range(timeout):
         try:
             req = urllib.request.urlopen(url, timeout=2)
             if req.status == 200:
-                print(f"[Takton] Backend ready! ({i+1}s)")
+                print(f"[Tevarn] Backend ready! ({i+1}s)")
                 return True
         except Exception:
             pass
         time.sleep(1)
-    print(f"[Takton] Backend did not respond within {timeout}s")
+    print(f"[Tevarn] Backend did not respond within {timeout}s")
     return False
 
 
 def wait_for_frontend(url: str, timeout: int = 30) -> bool:
     """等待前端 HTTP 服务就绪"""
-    print(f"[Takton] Waiting for frontend at {url} ...")
+    print(f"[Tevarn] Waiting for frontend at {url} ...")
     for i in range(timeout):
         try:
             req = urllib.request.urlopen(url, timeout=2)
             if req.status == 200:
-                print(f"[Takton] Frontend ready! ({i+1}s)")
+                print(f"[Tevarn] Frontend ready! ({i+1}s)")
                 return True
         except Exception:
             pass
         time.sleep(1)
-    print(f"[Takton] Frontend did not respond within {timeout}s")
+    print(f"[Tevarn] Frontend did not respond within {timeout}s")
     return False
 
 
 def find_kernel_host_bin() -> Path | None:
-    """Locate takton-kernel-host (H-01: align with kernel_rust.client._find_host_bin).
+    """Locate tevarn-kernel-host (H-01: align with kernel_rust.client._find_host_bin).
 
     Prefer target/{release,debug} (current ABI) over vendor; newest mtime wins
     within the same tier.
     """
-    env = os.environ.get("TAKTON_KERNEL_HOST_BIN")
+    env = os.environ.get("TEVARN_KERNEL_HOST_BIN")
     if env and Path(env).is_file():
         return Path(env)
-    names = ("takton-kernel-host.exe", "takton-kernel-host")
+    names = ("tevarn-kernel-host.exe", "tevarn-kernel-host")
     dirs = [
         ROOT_DIR / "target" / "release",
         ROOT_DIR / "target" / "debug",
-        ROOT_DIR / "vendor" / "takton-kernel-host",
+        ROOT_DIR / "vendor" / "tevarn-kernel-host",
         ROOT_DIR / "vendor",
     ]
     candidates: list[Path] = []
@@ -187,21 +187,21 @@ def find_kernel_host_bin() -> Path | None:
 def start_kernel_host() -> subprocess.Popen | None:
     """P0-A: start Rust kernel host before backend (control plane)."""
     global _kernel_host_started
-    backend = (os.environ.get("TAKTON_KERNEL_BACKEND") or "rust").strip().lower()
+    backend = (os.environ.get("TEVARN_KERNEL_BACKEND") or "rust").strip().lower()
     if backend == "python":
-        print("[Takton] TAKTON_KERNEL_BACKEND=python — skip kernel host")
+        print("[Tevarn] TEVARN_KERNEL_BACKEND=python — skip kernel host")
         return None
-    listen = os.environ.get("TAKTON_KERNEL_HOST", "127.0.0.1:17890")
+    listen = os.environ.get("TEVARN_KERNEL_HOST", "127.0.0.1:17890")
     # Already up?
     try:
         import socket
 
         h, _, p = listen.rpartition(":")
         with socket.create_connection((h or "127.0.0.1", int(p or 17890)), timeout=0.4):
-            print(f"[Takton] Kernel host already listening on {listen}")
+            print(f"[Tevarn] Kernel host already listening on {listen}")
             _kernel_host_started = True
-            os.environ.setdefault("TAKTON_KERNEL_BACKEND", "rust")
-            os.environ.setdefault("TAKTON_KERNEL_AUTO_START", "0")
+            os.environ.setdefault("TEVARN_KERNEL_BACKEND", "rust")
+            os.environ.setdefault("TEVARN_KERNEL_AUTO_START", "0")
             return None
     except OSError:
         pass
@@ -209,15 +209,15 @@ def start_kernel_host() -> subprocess.Popen | None:
     bin_path = find_kernel_host_bin()
     if bin_path is None:
         print(
-            "[Takton] WARNING: takton-kernel-host not found — backend will use "
+            "[Tevarn] WARNING: tevarn-kernel-host not found — backend will use "
             "DEPRECATED Python kernel fallback.\n"
-            "  Build: cargo build -p takton-kernel-host --release\n"
+            "  Build: cargo build -p tevarn-kernel-host --release\n"
             "  Or:    .\\scripts\\build-kernel-host.ps1 -Release"
         )
         return None
 
     cmd = [str(bin_path), "--listen", listen]
-    print(f"[Takton] Starting kernel host: {' '.join(cmd)}")
+    print(f"[Tevarn] Starting kernel host: {' '.join(cmd)}")
     env = os.environ.copy()
     # P0：stderr=PIPE 无人排空会塞满管道导致 host 假死；默认 DEVNULL
     proc = subprocess.Popen(
@@ -235,36 +235,36 @@ def start_kernel_host() -> subprocess.Popen | None:
     for i in range(50):
         if proc.poll() is not None:
             print(
-                f"[Takton] Kernel host exited early code={proc.returncode} "
-                f"(stderr discarded; set TAKTON_KERNEL_HOST_STDERR=pipe for logs)"
+                f"[Tevarn] Kernel host exited early code={proc.returncode} "
+                f"(stderr discarded; set TEVARN_KERNEL_HOST_STDERR=pipe for logs)"
             )
             return None
         try:
             with socket.create_connection((h or "127.0.0.1", int(p or 17890)), timeout=0.3):
-                print(f"[Takton] Kernel host ready ({i + 1} checks) at {listen}")
+                print(f"[Tevarn] Kernel host ready ({i + 1} checks) at {listen}")
                 _kernel_host_started = True
-                os.environ.setdefault("TAKTON_KERNEL_BACKEND", "rust")
-                os.environ.setdefault("TAKTON_KERNEL_AUTO_START", "0")
+                os.environ.setdefault("TEVARN_KERNEL_BACKEND", "rust")
+                os.environ.setdefault("TEVARN_KERNEL_AUTO_START", "0")
                 return proc
         except OSError:
             time.sleep(0.1)
-    print("[Takton] WARNING: Kernel host did not become ready in time")
+    print("[Tevarn] WARNING: Kernel host did not become ready in time")
     return proc
 
 
 def start_backend(python: str, host: str = "127.0.0.1", port: int = 8000):
     """启动后端 uvicorn 子进程"""
     env = os.environ.copy()
-    env["TAKTON_APP_HOST"] = host
-    env["TAKTON_APP_PORT"] = str(port)
-    env.setdefault("TAKTON_KERNEL_BACKEND", "rust")
+    env["TEVARN_APP_HOST"] = host
+    env["TEVARN_APP_PORT"] = str(port)
+    env.setdefault("TEVARN_KERNEL_BACKEND", "rust")
     if _kernel_host_started:
-        env["TAKTON_KERNEL_AUTO_START"] = "0"
+        env["TEVARN_KERNEL_AUTO_START"] = "0"
 
     cmd = [python, "-m", "uvicorn", "backend.main:app",
            "--host", host, "--port", str(port)]
 
-    print(f"[Takton] Starting backend: {' '.join(cmd)}")
+    print(f"[Tevarn] Starting backend: {' '.join(cmd)}")
     proc = subprocess.Popen(
         cmd,
         cwd=str(ROOT_DIR),
@@ -282,7 +282,7 @@ def start_frontend_dev(npm: str, port: int = 3000):
     env["PORT"] = str(port)
 
     cmd = [npm, "run", "dev"]
-    print(f"[Takton] Starting frontend dev: {' '.join(cmd)}")
+    print(f"[Tevarn] Starting frontend dev: {' '.join(cmd)}")
     proc = subprocess.Popen(
         cmd,
         cwd=str(FRONTEND_DIR),
@@ -297,7 +297,7 @@ def start_frontend_dev(npm: str, port: int = 3000):
 def start_electron(npm: str):
     """启动 Electron 桌面应用"""
     # 先编译 Electron 主进程
-    print("[Takton] Building Electron main process...")
+    print("[Tevarn] Building Electron main process...")
     build_result = subprocess.run(
         [npm, "run", "build:electron"],
         cwd=str(FRONTEND_DIR),
@@ -305,12 +305,12 @@ def start_electron(npm: str):
         text=True,
     )
     if build_result.returncode != 0:
-        print(f"[Takton] Electron build failed: {build_result.stderr}")
+        print(f"[Tevarn] Electron build failed: {build_result.stderr}")
         sys.exit(1)
 
     # 启动 Electron
     cmd = [npm, "run", "electron:prod"]
-    print(f"[Takton] Starting Electron: {' '.join(cmd)}")
+    print(f"[Tevarn] Starting Electron: {' '.join(cmd)}")
     proc = subprocess.Popen(
         cmd,
         cwd=str(FRONTEND_DIR),
@@ -323,7 +323,7 @@ def start_electron(npm: str):
 
 def cleanup(signum=None, frame=None):
     """优雅停止所有子进程"""
-    print("\n[Takton] Shutting down...")
+    print("\n[Tevarn] Shutting down...")
     for proc in processes:
         if proc.poll() is None:
             proc.terminate()
@@ -333,7 +333,7 @@ def cleanup(signum=None, frame=None):
             proc.wait(timeout=3)
         except subprocess.TimeoutExpired:
             proc.kill()
-    print("[Takton] All processes stopped.")
+    print("[Tevarn] All processes stopped.")
     sys.exit(0)
 
 
@@ -346,11 +346,11 @@ def main():
     use_electron = "--electron" in args
     use_prod = "--prod" in args
     # 与 CLI / Electron / TECHNICAL_MANUAL 对齐：默认 8090（可用环境变量覆盖）
-    backend_port = int(os.environ.get("TAKTON_APP_PORT") or os.environ.get("PORT_BACKEND") or "8090")
+    backend_port = int(os.environ.get("TEVARN_APP_PORT") or os.environ.get("PORT_BACKEND") or "8090")
     frontend_port = int(os.environ.get("PORT") or "3000")
 
     print("=" * 50)
-    print("  Takton — 带治理内核的数字员工运行时")
+    print("  Tevarn — 带治理内核的数字员工运行时")
     print(f"  version: {product_version_banner()}")
     print("=" * 50)
     print(f"  Platform: {platform.system()} {platform.machine()}")
@@ -372,7 +372,7 @@ def main():
     # 3. 启动后端
     start_backend(python, port=backend_port)
     if not wait_for_backend(f"http://127.0.0.1:{backend_port}/api/health"):
-        print("[Takton] FATAL: Backend failed to start")
+        print("[Tevarn] FATAL: Backend failed to start")
         cleanup()
         sys.exit(1)
 
@@ -382,13 +382,13 @@ def main():
     else:
         if use_prod:
             # 生产模式：先 build 再 start
-            print("[Takton] Building frontend...")
+            print("[Tevarn] Building frontend...")
             build_result = subprocess.run(
                 [npm, "run", "build"],
                 cwd=str(FRONTEND_DIR),
             )
             if build_result.returncode != 0:
-                print("[Takton] Frontend build failed")
+                print("[Tevarn] Frontend build failed")
                 cleanup()
                 sys.exit(1)
 
@@ -408,7 +408,7 @@ def main():
         if not use_electron:
             if wait_for_frontend(f"http://localhost:{frontend_port}/"):
                 print("\n" + "=" * 50)
-                print("  Takton is running!")
+                print("  Tevarn is running!")
                 print(f"  Backend:  http://localhost:{backend_port}")
                 print(f"  Frontend: http://localhost:{frontend_port}")
                 print("=" * 50)
@@ -420,7 +420,7 @@ def main():
             # 检查子进程是否还活着
             for proc in processes:
                 if proc.poll() is not None:
-                    print(f"[Takton] Process {proc.pid} exited with code {proc.returncode}")
+                    print(f"[Tevarn] Process {proc.pid} exited with code {proc.returncode}")
                     cleanup()
                     sys.exit(1)
     except KeyboardInterrupt:

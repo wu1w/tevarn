@@ -25,7 +25,7 @@ pub mod tsnet_embed;
 pub mod path;
 
 pub use auth::AuthSession;
-pub use client::TaktonClient;
+pub use client::TevarnClient;
 pub use config::{parse_base_url_parts, AppConfig};
 
 pub use error::{Error, Result};
@@ -36,7 +36,8 @@ pub use local_oauth::LocalOauth;
 pub use local_tools::{AgentConfig, ToolRuntime};
 pub use local_agent::{AgentEvent, LocalAgent};
 pub use chat_mode::{
-    normalize_ui_messages, ChatSurface, ModeSnapshot, SendPath, UiChatMessage,
+    normalize_ui_messages, strip_thinking_blocks, ChatSurface, ModeSnapshot, SendPath,
+    UiChatMessage,
 };
 pub use media::{MediaItem, MediaStore};
 pub use session_meta::{SessionMetaStore, LOCAL_ID as LOCAL_SESSION_ID};

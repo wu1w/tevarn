@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from backend.agent._takton_paths import home_dir
+from backend.agent._tevarn_paths import home_dir
 
 logger = logging.getLogger(__name__)
 
