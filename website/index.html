@@ -1,6 +1,6 @@
 <!DOCTYPE html><html lang="zh-CN"><head>
 <meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
 <title>Tevarn — 个人本地开源 AIOS 工作站</title>
 <meta name="description" content="Tevarn：运行在个人电脑上的开源 AIOS 工作站。本地 AI 员工、工具、知识、工单与权限治理，一个桌面工作台。"/>
 <link rel="icon" href="assets/logo.png" type="image/png"/>
@@ -44,7 +44,7 @@
   --sans:'Inter','Noto Sans SC',system-ui,sans-serif;
 }
 *{margin:0;padding:0;box-sizing:border-box}
-html{scroll-behavior:smooth}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%;text-size-adjust:100%}
 body{
   background:var(--bg);
   color:var(--ink);
@@ -54,11 +54,13 @@ body{
   overflow-x:hidden;
   background-image:radial-gradient(rgba(29,35,48,.06) 1px,transparent 1px);
   background-size:24px 24px;
+  min-width:0;
+  -webkit-tap-highlight-color:rgba(109,93,246,.12);
 }
-img{max-width:100%}
+img{max-width:100%;height:auto;display:block}
 a{text-decoration:none;color:inherit}
 ::selection{background:var(--purple);color:#fff}
-.container{max-width:1160px;margin:0 auto;padding:0 24px}
+.container{max-width:1160px;margin:0 auto;padding:0 24px;width:100%}
 .mono{font-family:var(--mono)}
 .px{font-family:var(--px-font);letter-spacing:.04em}
 
@@ -93,15 +95,26 @@ a{text-decoration:none;color:inherit}
 .star-btn:hover{transform:translate(1px,1px);box-shadow:2px 2px 0 var(--ink)}
 .star-btn:active{transform:translate(3px,3px);box-shadow:0 0 0 var(--ink)}
 .star-btn svg{width:15px;height:15px}
-.burger{display:none;background:var(--white);border:var(--bd);box-shadow:3px 3px 0 var(--ink);width:42px;height:38px;cursor:pointer;flex-direction:column;align-items:center;justify-content:center;gap:5px}
+.burger{
+  display:none;background:var(--white);border:var(--bd);box-shadow:3px 3px 0 var(--ink);
+  width:44px;height:44px;cursor:pointer;flex-direction:column;align-items:center;justify-content:center;gap:5px;
+  flex:none;-webkit-appearance:none;appearance:none;
+}
 .burger i{display:block;width:18px;height:2px;background:var(--ink);transition:transform .2s,opacity .2s}
 .burger.open i:nth-child(1){transform:translateY(7px) rotate(45deg)}
 .burger.open i:nth-child(2){opacity:0}
 .burger.open i:nth-child(3){transform:translateY(-7px) rotate(-45deg)}
-.mobile-menu{display:none;border-top:var(--bd);background:var(--card);padding:14px 24px 18px}
-.mobile-menu a{display:block;padding:10px 0;font-weight:600;color:var(--ink2);border-bottom:1px dashed rgba(29,35,48,.15)}
+.mobile-menu{
+  display:none;border-top:var(--bd);background:var(--card);
+  padding:8px 20px calc(18px + env(safe-area-inset-bottom,0px));
+}
+.mobile-menu a{
+  display:block;padding:14px 4px;font-weight:600;font-size:16px;color:var(--ink2);
+  border-bottom:1px dashed rgba(29,35,48,.15);min-height:48px;line-height:1.4;
+}
 .mobile-menu a:last-child{border-bottom:none}
 .mobile-menu.show{display:block}
+body.nav-open{overflow:hidden}
 
 /* ---------- hero ---------- */
 .hero{padding:88px 0 96px;position:relative}
@@ -123,7 +136,7 @@ a{text-decoration:none;color:inherit}
 .hero p.lede strong{color:var(--ink)}
 .hero-facts{font-family:var(--mono);font-size:12.5px;color:var(--ink3);margin-bottom:34px;display:flex;flex-wrap:wrap;gap:8px 18px}
 .hero-facts b{color:var(--cyan);font-weight:700}
-.cta-row{display:flex;gap:16px;flex-wrap:wrap}
+.cta-row{display:flex;gap:16px;flex-wrap:wrap;align-items:stretch}
 .btn{
   display:inline-flex;align-items:center;gap:10px;
   font-weight:700;font-size:15px;padding:14px 26px;
@@ -450,24 +463,84 @@ footer{background:var(--term);color:#A3ABC2;border-top:var(--bd);padding:56px 0 
 @media (max-width:1024px){
   .feat-grid{grid-template-columns:repeat(2,1fr)}
   .court-wrap{grid-template-columns:1fr;gap:40px;padding:40px 32px}
+  .container{padding:0 20px}
 }
 @media (max-width:860px){
   .nav-links{display:none}
   .burger{display:flex}
-  .hero{padding:56px 0 72px}
-  .hero-grid{grid-template-columns:1fr;gap:48px}
-  .hero p.lede{max-width:100%}
+  .nav-inner{height:60px}
+  .hero{padding:40px 0 56px}
+  .hero-grid{grid-template-columns:1fr;gap:36px}
+  .hero h1{font-size:clamp(30px,8.2vw,42px);margin:18px 0 14px}
+  .hero p.lede{max-width:100%;font-size:15.5px}
+  .hero-facts{gap:8px 12px;font-size:11.5px;margin-bottom:22px}
+  .cta-row{flex-direction:column;align-items:stretch;gap:12px}
+  .cta-row .btn{width:100%;justify-content:center}
+  .dl-hint{font-size:12px;line-height:1.5}
+  .console-body{padding:12px;box-shadow:5px 5px 0 var(--purple)}
+  .console-screen{min-height:0;padding:14px 14px;font-size:11.5px;line-height:1.75}
+  .console-badge{right:12px;font-size:10px;padding:3px 8px}
   .dual-grid{grid-template-columns:1fr}
+  .dual-top{padding:20px 18px 0}
+  .dual-card h3{font-size:20px}
+  .dual-mock{padding:0 18px 20px}
+  .dual-foot{padding:12px 18px;flex-wrap:wrap;gap:8px}
   .os-grid{grid-template-columns:1fr}
-  section{padding:68px 0}
+  .dl-grid{grid-template-columns:1fr;max-width:100%}
+  .dl-card{padding:22px 18px 20px}
+  .dl-card h3{font-size:20px}
+  .dl-cmd{flex-direction:column}
+  .dl-cmd code{
+    white-space:pre-wrap;word-break:break-all;font-size:12px;line-height:1.55;padding:12px;
+  }
+  .dl-cmd button{
+    border-left:none;border-top:2px solid var(--ink);
+    width:100%;min-height:48px;padding:12px 16px;
+  }
+  .dl-actions{flex-direction:column;align-items:stretch}
+  .dl-actions .btn,.dl-actions .btn-soft{width:100%;justify-content:center;text-align:center}
+  section{padding:56px 0}
+  .sec-head{margin:0 auto 36px}
+  .sec-head p{font-size:14.5px}
+  .court-wrap{padding:28px 20px}
+  .court-wrap h2{font-size:clamp(24px,6.5vw,32px)}
+  .flow-step{padding:14px 16px}
+  .flow-arrow{padding-left:28px}
+  .court-verdict{font-size:11.5px;padding:12px 14px;overflow-x:auto}
+  .qs-term pre{font-size:12.5px;padding:18px 16px;line-height:1.85}
+  .qt-bar{padding:10px 14px;flex-wrap:wrap;gap:8px}
+  .copy-btn{min-height:36px}
+  .qs-note{font-size:12px;padding:0 4px}
+  .stack-badges{gap:8px}
+  .stack-badges span{font-size:11.5px;padding:6px 10px}
+  footer{padding:40px 0 28px}
+  .foot-grid{flex-direction:column;gap:28px;margin-bottom:28px}
+  .foot-links{flex-direction:column;gap:22px;width:100%}
+  .foot-bottom{flex-direction:column;align-items:flex-start;gap:8px}
 }
 @media (max-width:520px){
-  .feat-grid{grid-template-columns:1fr}
-  .dl-grid{grid-template-columns:1fr}
-  .court-wrap{padding:28px 20px}
-  .hero h1{font-size:38px}
-  .btn{width:100%;justify-content:center}
-  .qs-term pre{font-size:12.5px}
+  .container{padding:0 16px}
+  .feat-grid{grid-template-columns:1fr;gap:14px}
+  .feat-card{padding:18px 16px 20px}
+  .hero{padding:28px 0 40px}
+  .hero h1{font-size:clamp(28px,8.5vw,36px);line-height:1.22}
+  .badge{font-size:11px;padding:5px 10px}
+  .btn{width:100%;justify-content:center;padding:13px 18px;font-size:14.5px}
+  .btn-soft{width:100%;justify-content:center}
+  .star-btn span,.star-btn{font-size:12px}
+  .console-screen{font-size:11px}
+  .mock-window{font-size:11px;padding:12px}
+  .mock-phone{max-width:100%;margin:0 auto}
+  .court-points li{font-size:14px}
+  .os-card .big{font-size:22px}
+  section{padding:48px 0}
+  .px-divider{margin:0 16px;max-width:none}
+}
+/* very small / landscape phones */
+@media (max-width:380px){
+  .hero h1{font-size:26px}
+  .brand .wordmark{font-size:15px}
+  .dl-cmd code{font-size:11px}
 }
 @media (prefers-reduced-motion:reduce){
   .reveal{opacity:1;transform:none;transition:none}
@@ -1004,14 +1077,21 @@ if (vpsCopyBtn) {
 // ---- mobile nav ----
 const burger = document.getElementById('burger');
 const mobileMenu = document.getElementById('mobileMenu');
+function setNavOpen(open) {
+  burger.classList.toggle('open', open);
+  mobileMenu.classList.toggle('show', open);
+  document.body.classList.toggle('nav-open', open);
+  burger.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+burger.setAttribute('aria-expanded', 'false');
+burger.setAttribute('aria-controls', 'mobileMenu');
 burger.addEventListener('click', () => {
-  burger.classList.toggle('open');
-  mobileMenu.classList.toggle('show');
+  setNavOpen(!burger.classList.contains('open'));
 });
-mobileMenu.querySelectorAll('a').forEach(a => a.addEventListener('click', () => {
-  burger.classList.remove('open');
-  mobileMenu.classList.remove('show');
-}));
+mobileMenu.querySelectorAll('a').forEach(a => a.addEventListener('click', () => setNavOpen(false)));
+window.addEventListener('resize', () => {
+  if (window.innerWidth > 860) setNavOpen(false);
+});
 
 // ---- scroll reveal ----
 const io = new IntersectionObserver(entries => {
