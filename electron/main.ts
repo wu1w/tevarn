@@ -42,6 +42,16 @@ try {
 const isDev = !app.isPackaged;
 const platform = process.platform; // 'win32' | 'darwin' | 'linux'
 
+// Product identity (must run before app.ready / userData path resolution)
+try {
+  app.setName('Tevarn');
+  if (platform === 'win32') {
+    app.setAppUserModelId('com.tevarn.agent');
+  }
+} catch {
+  /* ignore pre-ready edge cases */
+}
+
 // ---- 路径 / 端口 ----
 // 后端端口：与 CLI/手册统一默认 8090；候选含历史 8000 以便发现孤儿 Host
 const DEFAULT_BACKEND_PORT = 8090;
@@ -689,9 +699,10 @@ function ensureUserSiteOnSysPath(python: string): void {
       '    sys.path.insert(0, _p)\n' +
       "_ad = os.environ.get('APPDATA') or ''\n" +
       'if _ad:\n' +
-      "    _q = str(Path(_ad) / 'tevarn' / 'python-packages')\n" +
-      '    if os.path.isdir(_q) and _q not in sys.path:\n' +
-      '        sys.path.insert(0, _q)\n' +
+      "    for _sub in ('tevarn', 'takton'):  # product + legacy data dir\n" +
+      "        _q = str(Path(_ad) / _sub / 'python-packages')\n" +
+      '        if os.path.isdir(_q) and _q not in sys.path:\n' +
+      '            sys.path.insert(0, _q)\n' +
       `_res = os.environ.get('TEVARN_RESOURCES_PATH') or r'''${resourcesPath}'''\n` +
       'if _res and os.path.isdir(_res) and _res not in sys.path:\n' +
       '    sys.path.insert(0, _res)\n' +

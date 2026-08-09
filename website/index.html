@@ -687,11 +687,11 @@ footer{background:var(--term);color:#A3ABC2;border-top:var(--bd);padding:56px 0 
 <pre id="qsCode"><span class="cm"># 1. clone the repository</span>
 <span class="p">$</span> git clone https://github.com/wu1w/tevarn.git
 <span class="cm"># 2. switch to the dev branch</span>
-<span class="p">$</span> cd tevarn &amp;&amp; git checkout feature/agent-kernel
+<span class="p">$</span> cd tevarn &amp;&amp; git checkout main
 <span class="cm"># 3. follow README to start — data stays on your machine</span>
 <span class="g">✓ sqlite ready · listening on 127.0.0.1</span> <span class="cursor"></span></pre>
     </div>
-    <p class="qs-note reveal">版本 <span class="mono" style="color:#E6E9F2">0.4.0</span>（feature/agent-kernel 分支）· 详细启动步骤见 <a href="https://github.com/wu1w/tevarn" rel="noopener" target="_blank">仓库 README</a></p>
+    <p class="qs-note reveal">版本 <span class="mono" style="color:#E6E9F2">0.4.0</span>（main 分支）· 详细启动步骤见 <a href="https://github.com/wu1w/tevarn" rel="noopener" target="_blank">仓库 README</a></p>
   </div>
 </section>
 
@@ -712,7 +712,7 @@ footer{background:var(--term);color:#A3ABC2;border-top:var(--bd);padding:56px 0 
       <div class="os-card reveal" style="transition-delay:.07s">
         <div class="os-k">VERSION</div>
         <div class="big">0.4.0</div>
-        <p>活跃开发中（feature/agent-kernel 分支），功能快速迭代。</p>
+        <p>活跃开发中（main 分支），功能快速迭代。</p>
       </div>
       <div class="os-card reveal" style="transition-delay:.14s">
         <div class="os-k">LOCAL-FIRST</div>
@@ -748,14 +748,14 @@ footer{background:var(--term);color:#A3ABC2;border-top:var(--bd);padding:56px 0 
         <div>
           <h5>PROJECT</h5>
           <a href="https://github.com/wu1w/tevarn" rel="noopener" target="_blank">GitHub 仓库</a>
-          <a href="https://github.com/wu1w/tevarn/tree/feature/agent-kernel" rel="noopener" target="_blank">开发分支</a>
+          <a href="https://github.com/wu1w/tevarn/tree/main" rel="noopener" target="_blank">开发分支</a>
           <a href="https://github.com/wu1w/tevarn" rel="noopener" target="_blank">文档 README</a>
         </div>
         <div>
           <h5>RESOURCES</h5>
           <a href="#features">核心特性</a>
           <a href="#quickstart">快速开始</a>
-          <a href="https://github.com/wu1w/tevarn/blob/feature/agent-kernel/LICENSE" rel="noopener" target="_blank">License (MIT)</a>
+          <a href="https://github.com/wu1w/tevarn/blob/main/LICENSE" rel="noopener" target="_blank">License (MIT)</a>
         </div>
       </div>
     </div>
@@ -802,7 +802,7 @@ setTimeout(bootLine, 500);
 // ---- copy quickstart ----
 const copyBtn = document.getElementById('copyBtn');
 copyBtn.addEventListener('click', () => {
-  const text = 'git clone https://github.com/wu1w/tevarn.git\ncd takton && git checkout feature/agent-kernel';
+  const text = 'git clone https://github.com/wu1w/tevarn.git\ncd tevarn && git checkout main';
   navigator.clipboard.writeText(text).then(() => {
     copyBtn.textContent = 'COPIED ✓';
     setTimeout(() => copyBtn.textContent = 'COPY', 1600);
