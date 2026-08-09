@@ -917,7 +917,8 @@ function isSelfHostedOrigin() {
   const h = (location.hostname || '').toLowerCase();
   // VPS / 正式域名同源托管（含 :7000）
   if (h === 'tevarn.com' || h === 'www.tevarn.com' || h === 'dl.tevarn.com') return true;
-  if (h === '150.158.109.231') return true;
+  // Singapore origin / China origin IPs
+  if (h === '45.77.170.214' || h === '150.158.109.231') return true;
   return false;
 }
 
