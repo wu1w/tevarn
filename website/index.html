@@ -913,6 +913,14 @@ const RELEASE = {
   },
 };
 
+function isSelfHostedOrigin() {
+  const h = (location.hostname || '').toLowerCase();
+  // VPS / 正式域名同源托管（含 :7000）
+  if (h === 'tevarn.com' || h === 'www.tevarn.com' || h === 'dl.tevarn.com') return true;
+  if (h === '150.158.109.231') return true;
+  return false;
+}
+
 function detectChinaMirror() {
   const h = (location.hostname || '').toLowerCase();
   const q = location.search || '';
@@ -921,24 +929,38 @@ function detectChinaMirror() {
 }
 
 function wireDownloads() {
-  const cn = detectChinaMirror();
+  const selfHost = isSelfHostedOrigin();
+  const cn = !selfHost && detectChinaMirror();
   const ver = RELEASE.version;
   const tag = RELEASE.ghTag;
   const win = RELEASE.assets.win;
   const apk = RELEASE.assets.apk;
 
-  // 国际：dl.tevarn.com；国内镜像页：加速前缀（避免直连 GitHub / CF）
+  // 1) 官网/VPS 同源：/downloads/
+  // 2) 公共 CDN 镜像页：加速前缀
+  // 3) 其它：dl.tevarn.com
   const ghRelease = `https://github.com/wu1w/tevarn/releases/download/${tag}`;
   const cnProxy = 'https://ghfast.top/';
-  const winUrl = cn ? `${cnProxy}${ghRelease}/${win.file}` : `https://dl.tevarn.com/v${ver}/${win.file}`;
-  const apkUrl = cn ? `${cnProxy}${ghRelease}/${apk.file}` : `https://dl.tevarn.com/v${ver}/${apk.file}`;
-  const winAlt = cn ? `https://dl.tevarn.com/v${ver}/${win.file}` : `${ghRelease}/${win.file}`;
-  const apkAlt = cn ? `https://dl.tevarn.com/v${ver}/${apk.file}` : `${ghRelease}/${apk.file}`;
-
-  // 安装脚本：国际官网域名；国内用 jsdmirror 上的同文件
-  const installScript = cn
-    ? 'https://cdn.jsdmirror.com/gh/wu1w/tevarn@main/website/install-vps-relay.sh'
-    : 'https://tevarn.com/install-vps-relay.sh';
+  let winUrl, apkUrl, winAlt, apkAlt, installScript;
+  if (selfHost) {
+    winUrl = `/downloads/${win.file}`;
+    apkUrl = `/downloads/${apk.file}`;
+    winAlt = `/v${ver}/${win.file}`;
+    apkAlt = `/v${ver}/${apk.file}`;
+    installScript = `${location.origin}/install-vps-relay.sh`;
+  } else if (cn) {
+    winUrl = `${cnProxy}${ghRelease}/${win.file}`;
+    apkUrl = `${cnProxy}${ghRelease}/${apk.file}`;
+    winAlt = `https://dl.tevarn.com/v${ver}/${win.file}`;
+    apkAlt = `https://dl.tevarn.com/v${ver}/${apk.file}`;
+    installScript = 'https://cdn.jsdmirror.com/gh/wu1w/tevarn@main/website/install-vps-relay.sh';
+  } else {
+    winUrl = `https://dl.tevarn.com/v${ver}/${win.file}`;
+    apkUrl = `https://dl.tevarn.com/v${ver}/${apk.file}`;
+    winAlt = `${ghRelease}/${win.file}`;
+    apkAlt = `${ghRelease}/${apk.file}`;
+    installScript = 'https://tevarn.com/install-vps-relay.sh';
+  }
   const vpsCmd = `curl -fsSL ${installScript} | sudo bash`;
 
   const setText = (id, t) => { const el = document.getElementById(id); if (el) el.textContent = t; };
