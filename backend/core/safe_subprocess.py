@@ -23,10 +23,74 @@ logger = logging.getLogger(__name__)
 # 子 shell $() / `` 已单独覆盖。
 _SHELL_META = re.compile(r"[|;&`$<>\n\r]|&&|\|\||>>|<<|\$\(")
 # Windows cmd 注入常见符（在 shell 模式下额外拦截可疑组合）
+# NOTE: bare %VAR% is NOT here — common vars are expanded first; only
+# unknown %FOO% remain suspicious (see expand_safe_windows_env / create_process).
 _WIN_INJECT = re.compile(
-    r"(&\s*&)|(\|\s*\|)|(%\w+%)|(\^)|(`)|(\$\()|(;\s*(rm|del|format|shutdown)\b)",
+    r"(&\s*&)|(\|\s*\|)|(\^)|(`)|(\$\()|(;\s*(rm|del|format|shutdown)\b)",
     re.I,
 )
+
+# Safe cmd env vars agents commonly use for scoop/cargo paths.
+_SAFE_WIN_ENV = frozenset(
+    {
+        "USERPROFILE",
+        "HOME",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "USERNAME",
+        "USERDOMAIN",
+        "SYSTEMROOT",
+        "WINDIR",
+        "TEMP",
+        "TMP",
+        "PATH",
+        "PATHEXT",
+        "CD",
+        "ERRORLEVEL",
+        "COMPUTERNAME",
+        "LOCALAPPDATA",
+        "APPDATA",
+        "PROGRAMFILES",
+        "PROGRAMFILES(X86)",
+        "PROGRAMDATA",
+        "NUMBER_OF_PROCESSORS",
+        "PROCESSOR_ARCHITECTURE",
+        "COMSPEC",
+    }
+)
+_WIN_ENV_TOKEN_RE = re.compile(r"%([^%]+)%")
+
+
+def expand_safe_windows_env(command: str, env: dict[str, str] | None = None) -> str:
+    """Expand allowlisted ``%VAR%`` tokens so cargo/scoop paths work under cmd.
+
+    Rejects remaining ``%UNKNOWN%`` later as injection risk. Without this,
+    legitimate agent commands like
+    ``set RUSTC=%USERPROFILE%\\scoop\\apps\\rust\\...`` were blocked with
+    ``refusing shell command with Windows env-expansion``.
+    """
+    if not command or "%" not in command or sys.platform != "win32":
+        return command
+    src = env if env is not None else os.environ
+
+    def _repl(m: re.Match[str]) -> str:
+        name = (m.group(1) or "").strip()
+        key = name.upper()
+        # normalize ProgramFiles(x86) style
+        if key not in _SAFE_WIN_ENV and name.upper() not in _SAFE_WIN_ENV:
+            return m.group(0)  # leave unknown for later refuse
+        # case-insensitive lookup
+        val = src.get(name)
+        if val is None:
+            for k, v in src.items():
+                if str(k).upper() == key:
+                    val = v
+                    break
+        if val is None or val == "":
+            return m.group(0)
+        return str(val)
+
+    return _WIN_ENV_TOKEN_RE.sub(_repl, command)
 
 
 def needs_shell(command: str) -> bool:
@@ -233,6 +297,98 @@ def _spawn_kwargs() -> dict[str, Any]:
     return kw
 
 
+def _windows_selector_loop() -> bool:
+    """True when running under WindowsSelectorEventLoop.
+
+    asyncio.create_subprocess_exec/shell raise bare NotImplementedError on
+    SelectorEventLoop (Tevarn boot pins this policy). Agent then saw
+    ``[Error] NotImplementedError`` / bg ``exit=-1`` with empty stderr.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    name = type(loop).__name__
+    return "Selector" in name
+
+
+class _ThreadSubprocess:
+    """Process-like wrapper around ``subprocess.Popen`` for SelectorEventLoop.
+
+    Exposes ``communicate`` / ``kill`` / ``returncode`` / ``pid`` so callers of
+    ``create_process`` keep working without asyncio subprocess support.
+    """
+
+    def __init__(self, popen: Any) -> None:
+        self._p = popen
+        self.returncode: int | None = None
+        self.pid = getattr(popen, "pid", None)
+
+    async def communicate(self, input: bytes | None = None) -> tuple[bytes, bytes]:
+        def _run() -> tuple[bytes, bytes]:
+            return self._p.communicate(input=input)
+
+        out, err = await asyncio.to_thread(_run)
+        self.returncode = self._p.returncode
+        return out or b"", err or b""
+
+    def kill(self) -> None:
+        try:
+            self._p.kill()
+        except Exception:
+            pass
+
+    def terminate(self) -> None:
+        try:
+            self._p.terminate()
+        except Exception:
+            pass
+
+    async def wait(self) -> int:
+        def _wait() -> int:
+            return int(self._p.wait())
+
+        code = await asyncio.to_thread(_wait)
+        self.returncode = code
+        return code
+
+
+def _popen_thread_process(
+    command: str,
+    *,
+    use_shell: bool,
+    cwd: str | None,
+    env: dict[str, str] | None,
+) -> _ThreadSubprocess:
+    import subprocess as _sp
+
+    creationflags = 0
+    if sys.platform == "win32":
+        creationflags = int(getattr(_sp, "CREATE_NEW_PROCESS_GROUP", 0) or 0)
+    common = dict(
+        cwd=cwd or None,
+        env=env,
+        stdin=_sp.DEVNULL,
+        stdout=_sp.PIPE,
+        stderr=_sp.PIPE,
+        creationflags=creationflags,
+    )
+    if use_shell:
+        # Windows: prefer explicit cmd.exe so quoting matches JobBackend.
+        if sys.platform == "win32":
+            popen = _sp.Popen(["cmd.exe", "/d", "/c", command], **common)
+        else:
+            popen = _sp.Popen(command, shell=True, **common)
+    else:
+        argv = split_argv(command)
+        if not argv:
+            raise ValueError("empty argv")
+        popen = _sp.Popen(argv, shell=False, **common)
+    return _ThreadSubprocess(popen)
+
+
 async def create_process(
     command: str,
     *,
@@ -240,49 +396,94 @@ async def create_process(
     env: dict[str, str] | None = None,
     stdout=asyncio.subprocess.PIPE,
     stderr=asyncio.subprocess.PIPE,
-) -> asyncio.subprocess.Process:
-    """创建子进程：能 exec 则 exec，否则受限 shell。"""
+) -> Any:
+    """创建子进程：能 exec 则 exec，否则受限 shell。
+
+    On Windows + SelectorEventLoop, falls back to threaded ``subprocess.Popen``
+    (asyncio subprocess APIs are NotImplemented there).
+    """
     err = validate_command_string(command)
     if err:
         raise ValueError(err)
 
+    # Normalize env to str→str (CreateProcess rejects non-str values).
+    run_env: dict[str, str] | None = None
+    if env is not None:
+        run_env = {str(k): str(v) for k, v in env.items() if k is not None and v is not None}
+
+    # Expand safe %USERPROFILE% etc. before inject checks / spawn.
+    if sys.platform == "win32":
+        command = expand_safe_windows_env(command, run_env or dict(os.environ))
+
     use_shell = needs_shell(command)
     if use_shell and sys.platform == "win32" and _WIN_INJECT.search(command):
-        # 高危模式：shell 元字符 + 注入形；仍允许管道类合法命令，
-        # 但拒绝 %ENV% / 双重 && 嵌套等常见 cmd 注入形态。
-        # 若命令同时含管道与 %VAR%，走 shell 但由上层 danger policy 再拦。
-        if re.search(r"%\w+%", command) or re.search(r"`", command):
+        # 高危模式：shell 元字符 + 注入形；仍允许管道类合法命令。
+        if re.search(r"`", command):
             raise ValueError(
-                "refusing shell command with Windows env-expansion/backtick injection risk"
+                "refusing shell command with Windows backtick injection risk"
             )
+    # After safe expansion, any leftover %VAR% is unknown → refuse
+    if sys.platform == "win32" and re.search(r"%\w+%", command):
+        raise ValueError(
+            "refusing shell command with Windows env-expansion/backtick injection risk "
+            f"(unknown %VAR% left after safe expand): {command[:160]}"
+        )
+
+    if _windows_selector_loop():
+        logger.debug(
+            "safe_subprocess: Windows SelectorEventLoop → threaded Popen shell=%s cmd=%s",
+            use_shell,
+            command[:120],
+        )
+        return await asyncio.to_thread(
+            _popen_thread_process,
+            command,
+            use_shell=use_shell,
+            cwd=cwd,
+            env=run_env,
+        )
 
     spawn = _spawn_kwargs()
-    if not use_shell:
-        try:
-            argv = split_argv(command)
-        except ValueError as e:
-            raise ValueError(f"cannot parse command: {e}") from e
-        if not argv:
-            raise ValueError("empty argv")
-        logger.debug("safe_subprocess exec argv0=%s", argv[0][:80])
-        return await asyncio.create_subprocess_exec(
-            *argv,
+    try:
+        if not use_shell:
+            try:
+                argv = split_argv(command)
+            except ValueError as e:
+                raise ValueError(f"cannot parse command: {e}") from e
+            if not argv:
+                raise ValueError("empty argv")
+            logger.debug("safe_subprocess exec argv0=%s", argv[0][:80])
+            return await asyncio.create_subprocess_exec(
+                *argv,
+                cwd=cwd or None,
+                env=run_env,
+                stdout=stdout,
+                stderr=stderr,
+                **spawn,
+            )
+
+        logger.debug("safe_subprocess shell cmd=%s", command[:120])
+        return await asyncio.create_subprocess_shell(
+            command,
             cwd=cwd or None,
-            env=env,
+            env=run_env,
             stdout=stdout,
             stderr=stderr,
             **spawn,
         )
-
-    logger.debug("safe_subprocess shell cmd=%s", command[:120])
-    return await asyncio.create_subprocess_shell(
-        command,
-        cwd=cwd or None,
-        env=env,
-        stdout=stdout,
-        stderr=stderr,
-        **spawn,
-    )
+    except NotImplementedError:
+        # Belt-and-suspenders: some loop policies still reject subprocess APIs.
+        logger.warning(
+            "asyncio subprocess NotImplemented; falling back to threaded Popen cmd=%s",
+            command[:120],
+        )
+        return await asyncio.to_thread(
+            _popen_thread_process,
+            command,
+            use_shell=use_shell,
+            cwd=cwd,
+            env=run_env,
+        )
 
 
 async def run_capture(

@@ -74,12 +74,16 @@ class LocalBackend:
                 error="not_found",
             )
         except Exception as e:
+            # Bare NotImplementedError() has empty str(e) — keep type name so
+            # agents never see a useless "[Error] NotImplementedError" alone.
+            detail = str(e).strip() or type(e).__name__
+            msg = f"{type(e).__name__}: {detail}"
             return ExecResult(
                 stdout="",
-                stderr=str(e),
+                stderr=msg,
                 exit_code=1,
                 duration_ms=(time.monotonic() - t0) * 1000,
                 backend=self.backend_id,
                 sandboxed=False,
-                error=str(e),
+                error=msg,
             )

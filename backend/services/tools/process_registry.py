@@ -76,8 +76,10 @@ def _enqueue_completion(item: BgProcess) -> None:
 
 def format_process(p: BgProcess, *, tail: int = 8000) -> str:
     status = "done" if p.done else "running"
+    # Never hide exit=-1 as a bare number — agents thrash without diagnostics.
+    exit_disp = p.exit_code
     lines = [
-        f"[bg {p.id}] status={status} exit={p.exit_code}",
+        f"[bg {p.id}] status={status} exit={exit_disp}",
         f"command: {p.command}",
     ]
     if p.cwd:
@@ -92,6 +94,19 @@ def format_process(p: BgProcess, *, tail: int = 8000) -> str:
     if err:
         lines.append("--- stderr ---")
         lines.append(err)
+    if p.done and not out and not err:
+        if p.error:
+            lines.append(
+                "(no stdout/stderr; see error= above — often Windows asyncio "
+                "subprocess NotImplemented on SelectorEventLoop, now fixed via "
+                "threaded Popen fallback)"
+            )
+        elif exit_disp not in (0, None):
+            lines.append(
+                f"(no stdout/stderr but exit={exit_disp}. "
+                "Re-run foreground with smaller timeout, or process poll; "
+                "if cargo, prefer `cargo check -p <crate>` under project Cargo.toml cwd.)"
+            )
     if not p.done and not out and not err:
         lines.append("(still running, no output yet)")
     return "\n".join(lines)
@@ -112,6 +127,14 @@ def poll_process_throttled(p: BgProcess, *, tail: int = 8000) -> str:
         max_n = int(getattr(_st, "agent_process_poll_max_while_running", 3) or 3)
     except Exception:
         enabled, min_iv, max_n = True, 8.0, 3
+
+    # cargo test/build legitimately run long with sparse output — looser caps
+    _cmd_l = (p.command or "").lower()
+    if "cargo" in _cmd_l and any(
+        x in _cmd_l for x in (" test", " build", " bench", " check")
+    ):
+        min_iv = max(min_iv, 12.0)
+        max_n = max(max_n, 8)
 
     if p.done or not enabled:
         # reset running counters once done so later log tail is fine
@@ -248,24 +271,37 @@ async def adopt_running(
         try:
             if proc is None:
                 item.exit_code = -1
+                item.error = item.error or "adopt_running: proc is None"
                 return
             out, err = await proc.communicate()
             if out and len(out) > _MAX_OUTPUT_BYTES:
                 out = out[-_MAX_OUTPUT_BYTES:]
             if err and len(err) > _MAX_OUTPUT_BYTES:
                 err = err[-_MAX_OUTPUT_BYTES:]
-            if out:
-                item.stdout = (item.stdout or "") + out.decode(
-                    "utf-8", errors="replace"
-                )
-            if err:
-                item.stderr = (item.stderr or "") + err.decode(
-                    "utf-8", errors="replace"
-                )
-            item.exit_code = proc.returncode
+            try:
+                from backend.computer.text_decode import decode_process_bytes
+
+                if out:
+                    item.stdout = (item.stdout or "") + decode_process_bytes(out)
+                if err:
+                    item.stderr = (item.stderr or "") + decode_process_bytes(err)
+            except Exception:
+                if out:
+                    item.stdout = (item.stdout or "") + out.decode(
+                        "utf-8", errors="replace"
+                    )
+                if err:
+                    item.stderr = (item.stderr or "") + err.decode(
+                        "utf-8", errors="replace"
+                    )
+            item.exit_code = (
+                proc.returncode if proc.returncode is not None else -1
+            )
         except Exception as e:
-            item.error = str(e)
+            # Bare NotImplementedError() has empty str(e) — keep type name.
+            item.error = (str(e).strip() or type(e).__name__)[:2000]
             item.exit_code = -1
+            logger.exception("bg adopt drain failed id=%s: %s", item.id, item.error)
         finally:
             _mark_done_and_notify(item)
 
@@ -330,8 +366,16 @@ async def start_background(
                     run_env = merge_msvc_env(run_env)
                     run_cmd = rewrite_cargo_to_absolute(command, host)
                     run_cmd = prepend_vcvars_call(run_cmd)
-            except Exception:
-                pass
+            except Exception as _msvc_e:
+                logger.debug("bg msvc env merge skip: %s", _msvc_e)
+
+            # Ensure env values are str (CreateProcess / Popen requirement)
+            if run_env is not None:
+                run_env = {
+                    str(k): str(v)
+                    for k, v in run_env.items()
+                    if k is not None and v is not None
+                }
 
             proc = await create_process(
                 run_cmd,
@@ -344,12 +388,29 @@ async def start_background(
                 out = out[-_MAX_OUTPUT_BYTES:]
             if err and len(err) > _MAX_OUTPUT_BYTES:
                 err = err[-_MAX_OUTPUT_BYTES:]
-            item.stdout = out.decode("utf-8", errors="replace")
-            item.stderr = err.decode("utf-8", errors="replace")
-            item.exit_code = proc.returncode
+            try:
+                from backend.computer.text_decode import decode_process_bytes
+
+                item.stdout = decode_process_bytes(out or b"")
+                item.stderr = decode_process_bytes(err or b"")
+            except Exception:
+                item.stdout = (out or b"").decode("utf-8", errors="replace")
+                item.stderr = (err or b"").decode("utf-8", errors="replace")
+            item.exit_code = (
+                proc.returncode if proc.returncode is not None else -1
+            )
         except Exception as e:
-            item.error = str(e)
+            item.error = (str(e).strip() or type(e).__name__)[:2000]
             item.exit_code = -1
+            item.stderr = (item.stderr or "") + (
+                f"\n[bg exception] {type(e).__name__}: {item.error}"
+            )
+            logger.exception(
+                "bg start_background failed id=%s cmd=%s: %s",
+                item.id,
+                (command or "")[:120],
+                item.error,
+            )
         finally:
             _mark_done_and_notify(item)
 

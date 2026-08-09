@@ -175,7 +175,7 @@ def load_msvc_env() -> Mapping[str, str]:
     import tempfile
 
     try:
-        fd, bat_path = tempfile.mkstemp(prefix="tevarn_vcvars_", suffix=".bat")
+        fd, bat_path = tempfile.mkstemp(prefix="takton_vcvars_", suffix=".bat")
         os.close(fd)
         # ASCII bat: call vcvars (banner to nul) then dump env
         body = (
@@ -372,30 +372,60 @@ def discover_scoop_rust_bin(host_home: str = "") -> str | None:
     return None
 
 
+def _cmd_safe_exe(path: str) -> str:
+    """Format an absolute exe path for ``cmd.exe /d /c <command>``.
+
+    Critical Windows quirk: when JobBackend runs
+    ``cmd.exe /d /c <one-arg-string>``, quoting a path *without spaces*
+    (e.g. ``\"C:\\Users\\…\\cargo.exe\" -V``) makes cmd treat the token as
+    ``'\"C:\\…\\cargo.exe\"'`` and fail with “不是内部或外部命令”.
+
+    Only quote when the path contains whitespace; otherwise use the bare path.
+    """
+    p = (path or "").strip()
+    if not p:
+        return p
+    if re.search(r"[\s&()^]", p):
+        # Prefer short 8.3 path to avoid quote hell under cmd /c
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            GetShortPathNameW = ctypes.windll.kernel32.GetShortPathNameW  # type: ignore[attr-defined]
+            GetShortPathNameW.argtypes = [
+                wintypes.LPCWSTR,
+                wintypes.LPWSTR,
+                wintypes.DWORD,
+            ]
+            GetShortPathNameW.restype = wintypes.DWORD
+            buf = ctypes.create_unicode_buffer(520)
+            n = GetShortPathNameW(p, buf, 520)
+            if n and n < 520 and buf.value and " " not in buf.value:
+                return buf.value
+        except Exception:
+            pass
+        return f'"{p}"'
+    return p
+
+
 def rewrite_cargo_to_absolute(command: str, host_home: str = "") -> str:
     """Force ``cargo``/``rustc`` tokens to scoop absolute paths (avoid rustup proxy)."""
     bin_dir = discover_scoop_rust_bin(host_home)
     if not bin_dir or not command:
         return command
-    cargo = os.path.join(bin_dir, "cargo.exe")
-    rustc = os.path.join(bin_dir, "rustc.exe")
-
-    def _sub_cargo(m: re.Match[str]) -> str:
-        return m.group(0).replace(m.group("exe"), f'"{cargo}"')
-
-    def _sub_rustc(m: re.Match[str]) -> str:
-        return m.group(0).replace(m.group("exe"), f'"{rustc}"')
+    cargo = _cmd_safe_exe(os.path.join(bin_dir, "cargo.exe"))
+    rustc = _cmd_safe_exe(os.path.join(bin_dir, "rustc.exe"))
 
     c = command
     # Only bare cargo/rustc tokens, not paths already absolute
     c = re.sub(
         r'(?i)(?<![A-Za-z0-9_./\\:"\'-])(?P<exe>cargo(?:\.exe)?)(?![A-Za-z0-9_])',
-        lambda m: f'"{cargo}"',
+        lambda m: cargo,
         c,
     )
     c = re.sub(
         r'(?i)(?<![A-Za-z0-9_./\\:"\'-])(?P<exe>rustc(?:\.exe)?)(?![A-Za-z0-9_])',
-        lambda m: f'"{rustc}"',
+        lambda m: rustc,
         c,
     )
     # Strip agent attempts to force broken rustup homes in the command itself
@@ -450,10 +480,16 @@ def apply_host_rust_env(env: dict[str, str], host_home: str = "") -> dict[str, s
     out["PATH"] = path
     out.pop("Path", None)
 
-    # Pin absolute cargo/rustc so rustup proxy cannot win
+    # Pin absolute cargo/rustc so rustup proxy cannot win.
+    # Also clear RUSTUP_TOOLCHAIN: mixed scoop-standalone + rustup home caused
+    # agent-visible E0463 "can't find crate for std" even when msvc std exists.
     if scoop_bin:
         out["CARGO"] = os.path.join(scoop_bin, "cargo.exe")
         out["RUSTC"] = os.path.join(scoop_bin, "rustc.exe")
+        rustdoc = os.path.join(scoop_bin, "rustdoc.exe")
+        if os.path.isfile(rustdoc):
+            out["RUSTDOC"] = rustdoc
+        out["RUSTUP_TOOLCHAIN"] = ""
 
     # 2) Pick healthy RUSTUP_HOME (msvc only) or UNSET
     candidates: list[str] = []
@@ -474,9 +510,20 @@ def apply_host_rust_env(env: dict[str, str], host_home: str = "") -> dict[str, s
             chosen = c
             break
 
-    if chosen:
+    if chosen and not scoop_bin:
+        # Prefer rustup home only when we are NOT pinning scoop standalone bins
         out["RUSTUP_HOME"] = chosen
         logger.info("rust_env: RUSTUP_HOME=%s (msvc ok)", chosen)
+    elif scoop_bin:
+        # Scoop standalone rustc has its own sysroot; keep RUSTUP_HOME only as
+        # cargo registry home companion — do not let it override RUSTC selection.
+        if chosen:
+            out["RUSTUP_HOME"] = chosen
+        out["RUSTUP_TOOLCHAIN"] = ""
+        logger.info(
+            "rust_env: scoop rust bin=%s RUSTC pinned; RUSTUP_TOOLCHAIN cleared",
+            scoop_bin,
+        )
     else:
         if out.get("RUSTUP_HOME") or cur:
             logger.warning(

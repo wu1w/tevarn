@@ -32,7 +32,8 @@ TOOL_RESULT_BUDGET: dict[str, int] = {
     "file_read": 12_000,
     "grep": 900,
     "glob": 600,
-    "command": 1200,
+    # cargo/rustc diagnostics are long; 1200 forced head+tail thrash on E0xxx lists
+    "command": 10_000,
     "file_write": 2500,  # 写入确认/回显路径；过短会导致模型重写
     "edit": 2500,
     "apply_patch": 2500,
@@ -42,7 +43,7 @@ TOOL_RESULT_BUDGET: dict[str, int] = {
     "search": 1000,
     "browser": 800,
     "doc_read": 1200,
-    "process": 900,
+    "process": 8_000,
 }
 DEFAULT_TOOL_BUDGET = 12_000
 

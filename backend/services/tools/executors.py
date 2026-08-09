@@ -993,8 +993,16 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
         import sys as _sys
 
         if _sys.platform == "win32":
-            from backend.core.safe_subprocess import normalize_windows_job_command
+            from backend.core.safe_subprocess import (
+                expand_safe_windows_env,
+                normalize_windows_job_command,
+            )
 
+            _exp = expand_safe_windows_env(command)
+            if _exp != command:
+                command = _exp
+                arguments = dict(arguments)
+                arguments["command"] = command
             _norm = normalize_windows_job_command(command)
             if _norm != command:
                 __import__("logging").getLogger(__name__).info(
@@ -1122,10 +1130,26 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
     background = bool(arguments.get("background") or arguments.get("bg"))
     # 长命令自动后台：构建/安装/测试/训练等不阻塞 agent loop
     _auto_bg = bool(arguments.get("auto_bg", True))
+    # cargo check/fmt/clippy usually finish in seconds–minutes; auto-bg caused
+    # process-poll thrash + doom_loop before results arrived. Keep them foreground
+    # (timeout→bg still applies later). Only auto-bg heavy cargo test/build when
+    # explicitly long timeout.
+    _cargo_light = bool(
+        re.search(
+            r"(?i)\bcargo(?:\.exe)?\s+(?:check|fmt|clippy|metadata|tree)\b",
+            command or "",
+        )
+    )
+    _cargo_heavy = bool(
+        re.search(
+            r"(?i)\bcargo(?:\.exe)?\s+(?:test|build|bench)\b",
+            command or "",
+        )
+    )
     _long_hint = re.search(
         r"(pytest|py\.test|unittest|pip3?\s+install|npm\s+(install|ci|run|build)|"
         r"pnpm\s+(install|add|run)|yarn\s+(add|install|build)|"
-        r"cargo\s+(build|test|check)|go\s+(test|build)|mvn\s+|gradle\s+|"
+        r"cargo\s+(?:test|build|bench)\b|go\s+(test|build)|mvn\s+|gradle\s+|"
         r"make\s+(-j)?|cmake\s+|docker\s+(build|compose|pull)|"
         r"sleep\s+[5-9]|sleep\s+\d{2,}|curl\s+.*-o\s|wget\s+|"
         r"python\s+-m\s+(pytest|http\.server|uvicorn)|"
@@ -1136,20 +1160,30 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
     # Auto-background only for *clearly* long work.
     # Do NOT use default timeout alone (default is ~90s) — that wrongly
     # backgrounded trivial `cmd /c dir` and caused empty process thrash.
+    # Never auto-bg light cargo (check/fmt/clippy) — doom_loop on poll thrash.
+    if _cargo_light and not bool(arguments.get("background") or arguments.get("bg")):
+        background = False
+        _auto_bg = False
     if (
         not background
         and _auto_bg
         and _long_hint
         and timeout >= int(AGENT_COMMAND_AUTO_BG_SECONDS)
+        and not _cargo_light
     ):
-        background = True
-        logger = __import__("logging").getLogger(__name__)
-        logger.info("auto-background long command: %s", command[:120])
+        # cargo test/build: only auto-bg when timeout is large (≥90)
+        if _cargo_heavy and timeout < 90:
+            background = False
+        else:
+            background = True
+            logger = __import__("logging").getLogger(__name__)
+            logger.info("auto-background long command: %s", command[:120])
     elif (
         not background
         and _auto_bg
         and timeout >= 120
         and re.search(r"(install|build|test|train|download|compose)", command, re.I)
+        and not _cargo_light
     ):
         background = True
         logger = __import__("logging").getLogger(__name__)
@@ -1163,11 +1197,44 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
 
         _sid_bg = str(arguments.get("_session_id") or "").strip() or None
         item = await start_background(command, cwd=cwd, session_id=_sid_bg)
-        await asyncio.sleep(0.15)
+        # Hybrid await: wait for completion up to a cap so agent gets real
+        # stderr/exit without process-poll thrash. Instant fails still return
+        # immediately with diagnostics.
+        _wait_cap = 0.25
+        try:
+            if re.search(
+                r"(?i)\bcargo(?:\.exe)?\s+(?:check|clippy)\b",
+                command or "",
+            ):
+                _wait_cap = float(min(max(timeout, 15), 90))
+            elif re.search(
+                r"(?i)\bcargo(?:\.exe)?\s+(?:test|build|bench)\b",
+                command or "",
+            ):
+                _wait_cap = float(min(max(timeout, 30), 150))
+            elif re.search(
+                r"(?i)\bcargo(?:\.exe)?\s+",
+                command or "",
+            ):
+                _wait_cap = 3.0
+        except Exception:
+            _wait_cap = 0.25
+        _t0 = __import__("time").monotonic()
+        while not item.done and (__import__("time").monotonic() - _t0) < _wait_cap:
+            await asyncio.sleep(0.5 if _wait_cap >= 3 else 0.15)
+        # If already done, return full format so agent sees stderr / Finished
+        if item.done:
+            return (
+                f"[Background finished] id={item.id}\n"
+                f"(no need to process poll — result below)\n"
+                + format_process(item, tail=max(2000, min(max_output, 12000)))
+            )
         return (
             f"[Background started] id={item.id}\n"
-            f"Use process tool action=poll process_id={item.id} to check output.\n"
-            f"(完成时系统会自动注入结果，仍可主动 poll。)\n"
+            f"Still running after {_wait_cap:.0f}s await; "
+            f"Use process tool action=poll process_id={item.id} "
+            f"(interval ≥8s) or wait for [bg_complete] auto-inject.\n"
+            f"Do NOT spam empty polls — that triggers doom_loop.\n"
             + format_process(item, tail=2000)
         )
 
@@ -1350,9 +1417,19 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
         return f"[Error] Command not found: {command.split()[0] if command else ''}"
     except ValueError as e:
         return f"[Security Blocked] {e}"
+    except NotImplementedError as e:
+        # Windows SelectorEventLoop used to raise bare NotImplementedError from
+        # asyncio.create_subprocess_*; create_process now falls back to Popen.
+        msg = str(e).strip() or "asyncio subprocess not supported on this event loop"
+        return (
+            f"[Error] Command spawn NotImplementedError: {msg}. "
+            "Backend should use threaded Popen fallback (safe_subprocess). "
+            "Restart Tevarn/Takton if this persists after update; "
+            "retry with `cargo -V` then `cargo check -p <crate>`."
+        )
     except Exception as e:
         msg = str(e).strip() or type(e).__name__
-        return f"[Error] {msg}"
+        return f"[Error] {type(e).__name__}: {msg}"
 
 
 async def _maybe_cargo_stub_retry(

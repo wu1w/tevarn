@@ -538,6 +538,12 @@ class Settings(BaseSettings):
     cluster_max_concurrent: int = 3
     # doom-loop：同工具+近似参数连续 thrash（默认 on，替代/增强 ToolRepeatGuard）
     agent_doom_loop_enabled: bool = True
+    # process poll while bg still running is NOT doom (cargo test can take minutes)
+    # thrash force_final after this many identical process-poll rounds (soft-open uses higher)
+    agent_process_poll_thrash: int = 16
+    # poll throttle while bg running (seconds / max empty polls)
+    agent_process_poll_min_interval_s: float = 12.0
+    agent_process_poll_max_while_running: int = 8
     # best-of-n：默认关；完整 fanout 依赖 worktree（Batch2）
     agent_best_of_n_enabled: bool = False
     # 用户消息中本地图片路径 → 多模态 parts

@@ -2075,9 +2075,9 @@ async def run_tool_round(
                 int(getattr(settings, "agent_orch_thrash_force_final", 3) or 3),
             )
         elif _only_process and _bg_running:
-            # rustup reinstall / cargo can run minutes — don't force_final on 2nd poll
+            # cargo test can run many minutes — never thrash-force on poll-while-running
             force_after = max(
-                6, int(getattr(settings, "agent_process_poll_thrash", 8) or 8)
+                12, int(getattr(settings, "agent_process_poll_thrash", 16) or 16)
             )
         else:
             # Default 3: large docs need 2+ offset file_read rounds; 2 was false thrash.
@@ -2085,11 +2085,16 @@ async def run_tool_round(
                 2, int(getattr(settings, "agent_tool_thrash_force_final", 3) or 3)
             )
         prev_fp = (state.last_tool_fingerprint or "").strip()
-        if prev_fp and fp == prev_fp:
+        if _only_process and _bg_running:
+            # Legitimate wait — do not accumulate thrash_streak toward force_final
+            state.thrash_streak = 0
+            state.last_tool_fingerprint = fp
+        elif prev_fp and fp == prev_fp:
             state.thrash_streak = int(state.thrash_streak or 0) + 1
+            state.last_tool_fingerprint = fp
         else:
             state.thrash_streak = 0
-        state.last_tool_fingerprint = fp
+            state.last_tool_fingerprint = fp
 
         # ABAB alternate thrash: file_write helper ↔ command (visible 复读)
         _sig = "|".join(sorted({str(n) for n in _tnames2 if n})) if _tnames2 else ""
@@ -2276,17 +2281,19 @@ async def run_tool_round(
                     state.thrash_streak,
                     session_id,
                 )
-            elif _only_process and _bg_running and state.thrash_streak < 5:
-                # Do NOT say "wait longer then poll again" — that causes thrash.
+            elif _only_process and _bg_running:
+                # Never force_final on poll-while-running (cargo test can be long).
+                state.force_final_no_tools = False
                 messages.append(
                     {
                         "role": "system",
                         "content": (
                             "[Background still running] [bg_complete] will inject when done.\n"
                             "NEXT:\n"
-                            "1) file_write/edit product sources\n"
-                            "2) manage_goal progress\n"
-                            "3) avoid spam process poll / Still-running thrash"
+                            "1) Wait for bg_complete (preferred) — do not spam poll\n"
+                            "2) Or poll once every ≥12s if you must\n"
+                            "3) file_write/edit / manage_goal if you can progress in parallel\n"
+                            "This is NOT a doom loop."
                         ),
                     }
                 )
@@ -2560,12 +2567,65 @@ async def run_tool_round(
         _tripped = False
         _kproc = getattr(loop, "_kernel_process", None)
         _kpid = str(getattr(_kproc, "id", "") or "")
+        # Exempt: process poll while bg job still running (legitimate wait for
+        # cargo test). Counting these as doom_loop caused "finished but stuck"
+        # after cargo check passed and test was still compiling.
+        _process_wait_exempt = False
+        try:
+            _only_proc = bool(_calls) and all(
+                (n or "") == "process" for n, _ in _calls
+            )
+            if _only_proc:
+                for m in reversed(messages[-10:]):
+                    if not isinstance(m, dict) or m.get("role") != "tool":
+                        continue
+                    body = str(m.get("content") or "")
+                    if (
+                        "status=running" in body
+                        or "still running" in body.lower()
+                        or "[Poll throttle]" in body
+                        or "[Blocked] process poll" in body
+                    ):
+                        _process_wait_exempt = True
+                        break
+                    # bg already done this round — do not exempt (allow normal thrash)
+                    if "status=done" in body and "[bg " in body:
+                        break
+        except Exception:
+            _process_wait_exempt = False
+        if _process_wait_exempt:
+            _doom_on = False
+            logger.info(
+                "doom_loop exempt process-poll wait session=%s",
+                session_id,
+            )
+            # Soft steer once: do real work or wait for bg_complete
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "[Background wait] Job still running — not a doom loop.\n"
+                        "Prefer: wait for [bg_complete] auto-inject, or do "
+                        "file_write/edit/manage_goal. Poll at most every ≥8s; "
+                        "do not spam process poll."
+                    ),
+                }
+            )
         if _doom_on and _kpid:
             try:
                 from backend.kernel import get_kernel
 
                 _kk = get_kernel()
                 for _n, _a in _calls:
+                    # Skip process-poll records while waiting (kernel doom counter)
+                    if (n := (_n or "")) == "process":
+                        _aa = _a if isinstance(_a, dict) else {}
+                        _act = str(
+                            (_aa.get("action") if isinstance(_aa, dict) else "")
+                            or "poll"
+                        ).lower()
+                        if _act in ("poll", "status", "log", ""):
+                            continue
                     _args = _a if isinstance(_a, dict) else {"_raw": str(_a or "")}
                     if hasattr(_kk, "doom_record"):
                         _dr = _kk.doom_record(_kpid, _n or "tool", _args)
@@ -2586,12 +2646,22 @@ async def run_tool_round(
                         break
             except Exception:
                 _tripped = False
-        if not _tripped:
+        if not _tripped and _doom_on:
+            # Filter process-poll calls out of local ToolRepeatGuard while waiting
+            _calls_for_doom = _calls
+            _sigs_for_doom = _sigs
+            if _process_wait_exempt:
+                _calls_for_doom = []
+                _sigs_for_doom = []
+            else:
+                # Also drop process|poll from guard when result body is running
+                # (observe happens after execute — check tool messages)
+                pass
             _tripped = (
-                tool_repeat_guard.observe_calls(_calls)
-                if _doom_on and hasattr(tool_repeat_guard, "observe_calls")
-                else tool_repeat_guard.observe(_sigs)
-            ) if _doom_on else False
+                tool_repeat_guard.observe_calls(_calls_for_doom)
+                if hasattr(tool_repeat_guard, "observe_calls")
+                else tool_repeat_guard.observe(_sigs_for_doom)
+            ) if _calls_for_doom or _sigs_for_doom else False
         if _tripped:
             turn_retry.note_and_decide(
                 RetryKind.THRASH, detail=",".join(_sigs)[:180]

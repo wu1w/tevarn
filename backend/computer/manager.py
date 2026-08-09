@@ -546,6 +546,19 @@ class ComputerManager:
                     f"command failed exit={result.exit_code} "
                     f"backend={result.backend} cwd={cwd}"
                 )
+            # Expand bare exception class names (historical NotImplemented thrash)
+            if detail in (
+                "NotImplementedError",
+                "NotImplemented",
+                "RuntimeError",
+                "OSError",
+            ):
+                detail = (
+                    f"{detail}: command spawn/exec failed under backend="
+                    f"{result.backend} cwd={cwd}. "
+                    "On Windows, SelectorEventLoop needs threaded Popen fallback "
+                    "(update/restart backend). Retry cargo with project cwd."
+                )
             if not detail.lower().startswith("[error]"):
                 return f"[Error] {detail}"
             return detail
