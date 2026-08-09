@@ -1,7 +1,6 @@
-﻿"""
-Tevarn 鑷绀惧尯婧愰€傞厤鍣?
+"""Tevarn community skill index adapter.
 
-澶嶇敤鍘熸湁鐨?community_skills_index_url 鏈哄埗锛岃緭鍑?UnifiedSkill 鏍煎紡銆?
+Maps community_skills_index_url JSON rows into UnifiedSkill for the store UI.
 """
 
 from __future__ import annotations
@@ -23,7 +22,7 @@ _DEFAULT_INDEX_URL = (
 
 
 class TevarnCommunityFetcher(SkillStoreFetcher):
-    """Tevarn 瀹樻柟绀惧尯 skill 绱㈠紩閫傞厤鍣?""
+    """Official Tevarn community skill index fetcher."""
 
     source = "tevarn"
     display_name = "Tevarn Community"
@@ -36,7 +35,7 @@ class TevarnCommunityFetcher(SkillStoreFetcher):
         )
 
     async def fetch(self, limit: int = 100) -> list[UnifiedSkill]:
-        """鎷夊彇 tevarn 绀惧尯绱㈠紩"""
+        """Fetch the Tevarn community skill index."""
         if not self.index_url:
             raise RuntimeError("No tevarn community index URL configured")
 
@@ -62,10 +61,10 @@ class TevarnCommunityFetcher(SkillStoreFetcher):
         return skills
 
     def _to_unified(self, item: dict) -> UnifiedSkill:
-        """tevarn 绱㈠紩鍘熷鏁版嵁 鈫?UnifiedSkill"""
+        """Map one index item to UnifiedSkill."""
         name = item.get("name", "")
         schema = item.get("schema") or item.get("skill_schema") or {}
-        
+
         return UnifiedSkill(
             id=name,
             name=name,
@@ -80,6 +79,9 @@ class TevarnCommunityFetcher(SkillStoreFetcher):
             tags=[],
             compatibility=["tevarn"],
             install_command="",
-            raw={"schema": schema, "handler": item.get("handler", "http"), "handler_config": item.get("handler_config", {})},
+            raw={
+                "schema": schema,
+                "handler": item.get("handler", "http"),
+                "handler_config": item.get("handler_config", {}),
+            },
         )
-
