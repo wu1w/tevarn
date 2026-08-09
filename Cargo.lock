@@ -1330,7 +1330,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "takton-kernel"
+name = "target-lexicon"
+version = "0.12.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
+
+[[package]]
+name = "termcolor"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
+dependencies = [
+ "winapi-util",
+]
+
+[[package]]
+name = "tevarn-kernel"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1350,7 +1365,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "takton-kernel-host"
+name = "tevarn-kernel-host"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1358,8 +1373,8 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
- "takton-kernel",
- "takton-runtime",
+ "tevarn-kernel",
+ "tevarn-runtime",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -1367,7 +1382,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "takton-runtime"
+name = "tevarn-runtime"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1375,24 +1390,9 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
- "takton-kernel",
+ "tevarn-kernel",
  "thiserror 2.0.19",
  "tracing",
-]
-
-[[package]]
-name = "target-lexicon"
-version = "0.12.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
-
-[[package]]
-name = "termcolor"
-version = "1.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
-dependencies = [
- "winapi-util",
 ]
 
 [[package]]

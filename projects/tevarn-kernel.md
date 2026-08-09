@@ -1,4 +1,4 @@
-# 项目：takton-kernel（agent-kernel）
+# 项目：tevarn-kernel（agent-kernel）
 
 ## 元信息
 - 类型：产品主线

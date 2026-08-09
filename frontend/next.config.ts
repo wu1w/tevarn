@@ -4,14 +4,13 @@ import type { NextConfig } from "next";
 const isExport = process.env.NEXT_EXPORT === "1";
 
 const nextConfig: NextConfig = {
-  // This app has its own lockfile. Pinning the root prevents Turbopack from
-  // accidentally reusing caches or resolving dependencies from the repo root.
+  // Pin Turbopack project root to this package (avoid monorepo parent lockfile).
+  // Use absolute path — relative "dist" broke under Windows junctions (E:\tevarn-src → …).
   turbopack: {
-    root: process.cwd(),
+    root: __dirname,
   },
   allowedDevOrigins: process.env.ALLOWED_DEV_ORIGINS?.split(',') || ["localhost", "127.0.0.1"],
-  // dev/普通 build 用 .next；仅静态导出写 dist。
-  // 二者共用 dist 时，Electron NEXT_EXPORT 产物会污染 next dev，导致 /usage 等路由偶发 404。
+  // dev/普通 build 用 .next；仅静态导出写 dist（Electron 内置静态服根目录）。
   distDir: isExport ? "dist" : ".next",
   // 静态导出模式：前后端通过 IPC 直连（lib/api.ts 在 Electron 环境返回 http://127.0.0.1:8095/api）
   ...(isExport ? { output: "export" as const, trailingSlash: true } : {}),

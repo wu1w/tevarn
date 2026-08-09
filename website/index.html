@@ -1,0 +1,814 @@
+<!DOCTYPE html><html lang="zh-CN"><head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Tevarn — 个人本地开源 AIOS 工作站</title>
+<meta name="description" content="Tevarn：运行在个人电脑上的开源 AIOS 工作站。本地 AI 员工、工具、知识、工单与权限治理，一个桌面工作台。"/>
+<link rel="icon" href="assets/logo.png" type="image/png"/>
+<link rel="preconnect" href="https://fonts.loli.net"/>
+<link rel="preconnect" href="https://gstatic.loli.net" crossorigin=""/>
+<link href="https://fonts.loli.net/css2?family=Silkscreen:wght@400;700&amp;family=JetBrains+Mono:wght@400;500;700&amp;family=Inter:wght@400;500;600;700;800&amp;family=Noto+Sans+SC:wght@400;500;700;900&amp;display=swap" rel="stylesheet"/>
+<style>
+:root{
+  --bg:#F4F6F8;
+  --card:#FBFCFE;
+  --white:#FFFFFF;
+  --hover:#EEF1F6;
+  --ink:#1D2330;
+  --ink2:#4A5261;
+  --ink3:#7A8291;
+  --purple:#6D5DF6;
+  --cyan:#00A8C0;
+  --pink:#F6489B;
+  --grad:linear-gradient(90deg,#6D5DF6 0%,#00A8C0 100%);
+  --term:#1D2330;
+  --term-deep:#0C0F1A;
+  --green:#4ADE80;
+  --neon-cyan:#22D8EE;
+  --shadow:4px 4px 0 var(--ink);
+  --shadow-press:2px 2px 0 var(--ink);
+  --shadow-purple:5px 5px 0 var(--purple);
+  --bd:2px solid var(--ink);
+  --px-font:'Silkscreen',monospace;
+  --mono:'JetBrains Mono',monospace;
+  --sans:'Inter','Noto Sans SC',system-ui,sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  background:var(--bg);
+  color:var(--ink);
+  font-family:var(--sans);
+  font-size:16px;
+  line-height:1.7;
+  overflow-x:hidden;
+  background-image:radial-gradient(rgba(29,35,48,.06) 1px,transparent 1px);
+  background-size:24px 24px;
+}
+img{max-width:100%}
+a{text-decoration:none;color:inherit}
+::selection{background:var(--purple);color:#fff}
+.container{max-width:1160px;margin:0 auto;padding:0 24px}
+.mono{font-family:var(--mono)}
+.px{font-family:var(--px-font);letter-spacing:.04em}
+
+/* ---------- reveal ---------- */
+.reveal{opacity:0;transform:translateY(26px);transition:opacity .7s cubic-bezier(.22,1,.36,1),transform .7s cubic-bezier(.22,1,.36,1)}
+.reveal.visible{opacity:1;transform:translateY(0)}
+
+/* ---------- nav ---------- */
+.nav{
+  position:sticky;top:0;z-index:100;
+  background:rgba(251,252,254,.92);
+  backdrop-filter:blur(10px);
+  border-bottom:var(--bd);
+}
+.nav-inner{display:flex;align-items:center;justify-content:space-between;height:68px}
+.brand{display:flex;align-items:center;gap:10px}
+.brand img{width:34px;height:34px;image-rendering:pixelated;filter:drop-shadow(1px 1px 0 rgba(109,93,246,.35))}
+.brand .wordmark{font-family:var(--px-font);font-weight:700;font-size:18px;color:var(--ink)}
+.brand .wordmark span{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.nav-links{display:flex;align-items:center;gap:28px}
+.nav-links a.nl{font-size:14px;font-weight:600;color:var(--ink2);position:relative;padding:4px 0;transition:color .2s}
+.nav-links a.nl:hover{color:var(--purple)}
+.nav-links a.nl::after{content:"";position:absolute;left:0;bottom:-2px;width:0;height:2px;background:var(--grad);transition:width .25s}
+.nav-links a.nl:hover::after{width:100%}
+.star-btn{
+  display:inline-flex;align-items:center;gap:8px;
+  font-family:var(--mono);font-size:13px;font-weight:700;
+  background:var(--white);color:var(--ink);
+  border:var(--bd);box-shadow:3px 3px 0 var(--ink);
+  padding:7px 14px;transition:transform .12s,box-shadow .12s;
+}
+.star-btn:hover{transform:translate(1px,1px);box-shadow:2px 2px 0 var(--ink)}
+.star-btn:active{transform:translate(3px,3px);box-shadow:0 0 0 var(--ink)}
+.star-btn svg{width:15px;height:15px}
+.burger{display:none;background:var(--white);border:var(--bd);box-shadow:3px 3px 0 var(--ink);width:42px;height:38px;cursor:pointer;flex-direction:column;align-items:center;justify-content:center;gap:5px}
+.burger i{display:block;width:18px;height:2px;background:var(--ink);transition:transform .2s,opacity .2s}
+.burger.open i:nth-child(1){transform:translateY(7px) rotate(45deg)}
+.burger.open i:nth-child(2){opacity:0}
+.burger.open i:nth-child(3){transform:translateY(-7px) rotate(-45deg)}
+.mobile-menu{display:none;border-top:var(--bd);background:var(--card);padding:14px 24px 18px}
+.mobile-menu a{display:block;padding:10px 0;font-weight:600;color:var(--ink2);border-bottom:1px dashed rgba(29,35,48,.15)}
+.mobile-menu a:last-child{border-bottom:none}
+.mobile-menu.show{display:block}
+
+/* ---------- hero ---------- */
+.hero{padding:88px 0 96px;position:relative}
+.hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:64px;align-items:center}
+.badge{
+  display:inline-flex;align-items:center;gap:8px;
+  font-family:var(--px-font);font-size:12px;
+  background:var(--white);border:var(--bd);box-shadow:3px 3px 0 var(--ink);
+  padding:6px 12px;color:var(--ink);
+}
+.badge .dot{width:8px;height:8px;background:var(--grad)}
+.hero h1{
+  font-family:'Noto Sans SC',sans-serif;font-weight:900;
+  font-size:clamp(40px,5.4vw,58px);line-height:1.18;
+  letter-spacing:.01em;margin:26px 0 20px;
+}
+.hero h1 .grad{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero p.lede{font-size:17px;color:var(--ink2);max-width:520px;margin-bottom:14px}
+.hero p.lede strong{color:var(--ink)}
+.hero-facts{font-family:var(--mono);font-size:12.5px;color:var(--ink3);margin-bottom:34px;display:flex;flex-wrap:wrap;gap:8px 18px}
+.hero-facts b{color:var(--cyan);font-weight:700}
+.cta-row{display:flex;gap:16px;flex-wrap:wrap}
+.btn{
+  display:inline-flex;align-items:center;gap:10px;
+  font-weight:700;font-size:15px;padding:14px 26px;
+  border:var(--bd);cursor:pointer;
+  transition:transform .12s,box-shadow .12s;
+  font-family:var(--sans);
+}
+.btn svg{width:17px;height:17px;flex:none}
+.btn-primary{background:var(--grad);color:#fff;box-shadow:5px 5px 0 var(--ink)}
+.btn-primary:hover{transform:translate(2px,2px);box-shadow:3px 3px 0 var(--ink)}
+.btn-primary:active{transform:translate(5px,5px);box-shadow:0 0 0 var(--ink)}
+.btn-ghost{background:var(--white);color:var(--ink);box-shadow:5px 5px 0 var(--ink)}
+.btn-ghost:hover{transform:translate(2px,2px);box-shadow:3px 3px 0 var(--ink);background:var(--hover)}
+.btn-ghost:active{transform:translate(5px,5px);box-shadow:0 0 0 var(--ink)}
+
+/* ---------- pixel console (hero terminal) ---------- */
+.console{position:relative}
+.console-body{
+  background:var(--white);border:var(--bd);
+  box-shadow:8px 8px 0 var(--purple);
+  padding:14px 14px 18px;position:relative;
+}
+.console-badge{
+  position:absolute;top:-14px;right:22px;z-index:2;
+  font-family:var(--px-font);font-size:11px;
+  background:var(--pink);color:#fff;border:var(--bd);
+  box-shadow:3px 3px 0 var(--ink);padding:4px 10px;
+}
+.console-top{display:flex;align-items:center;justify-content:space-between;padding:2px 4px 12px}
+.console-top .leds{display:flex;gap:8px}
+.console-top .led{width:11px;height:11px;border:2px solid var(--ink)}
+.led.r{background:var(--pink)}.led.y{background:#F5C542}.led.g{background:var(--green)}
+.console-top .label{font-family:var(--px-font);font-size:11px;color:var(--ink3)}
+.console-screen{
+  background:var(--term);border:var(--bd);
+  padding:20px 22px;min-height:340px;
+  font-family:var(--mono);font-size:13px;line-height:1.9;
+  color:#C7D0E0;position:relative;overflow:hidden;
+}
+.console-screen::after{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:repeating-linear-gradient(0deg,rgba(255,255,255,.028) 0 1px,transparent 1px 3px);
+}
+.tl{white-space:pre-wrap;word-break:break-all;opacity:0;transform:translateY(4px);transition:opacity .3s,transform .3s}
+.tl.on{opacity:1;transform:none}
+.tl .p{color:var(--neon-cyan)}
+.tl .g{color:var(--green)}
+.tl .v{color:#8B7CFF}
+.tl .w{color:#7A8291}
+.tl .pk{color:var(--pink)}
+.cursor{display:inline-block;width:9px;height:16px;background:var(--green);vertical-align:-3px;animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.console-base{
+  margin-top:12px;display:flex;justify-content:space-between;align-items:center;
+  font-family:var(--mono);font-size:11px;color:var(--ink3);
+}
+.console-base .keys{display:flex;gap:6px}
+.console-base .key{width:22px;height:12px;border:2px solid var(--ink);background:var(--hover)}
+
+/* ---------- divider ---------- */
+.px-divider{
+  height:4px;max-width:1160px;margin:0 auto;
+  background:repeating-linear-gradient(90deg,var(--ink) 0 10px,transparent 10px 22px);
+  opacity:.14;
+}
+
+/* ---------- sections ---------- */
+section{padding:92px 0}
+.sec-head{text-align:center;max-width:720px;margin:0 auto 56px}
+.sec-tag{
+  display:inline-block;font-family:var(--px-font);font-size:12px;
+  background:var(--white);border:var(--bd);box-shadow:3px 3px 0 var(--ink);
+  padding:5px 12px;margin-bottom:20px;color:var(--purple);
+}
+.sec-head h2{
+  font-family:'Noto Sans SC',sans-serif;font-weight:900;
+  font-size:clamp(30px,3.8vw,42px);line-height:1.25;margin-bottom:16px;
+}
+.sec-head h2 .grad{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.sec-head p{color:var(--ink2);font-size:16px}
+
+/* ---------- features ---------- */
+.feat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:22px}
+.feat-card{
+  background:var(--white);border:var(--bd);box-shadow:var(--shadow);
+  padding:24px 22px 26px;position:relative;
+  transition:transform .15s,box-shadow .15s,background .15s;
+}
+.feat-card:hover{transform:translate(2px,2px);box-shadow:var(--shadow-press);background:var(--hover)}
+.feat-ico{
+  width:44px;height:44px;border:var(--bd);
+  display:flex;align-items:center;justify-content:center;
+  margin-bottom:18px;background:var(--grad);color:#fff;
+  box-shadow:3px 3px 0 var(--ink);
+}
+.feat-ico svg{width:22px;height:22px}
+.feat-ico.pink{background:var(--pink)}
+.feat-ico.cyan{background:var(--cyan)}
+.feat-ico.purple{background:var(--purple)}
+.feat-card h3{font-family:'Noto Sans SC',sans-serif;font-weight:700;font-size:17px;margin-bottom:8px}
+.feat-card p{font-size:13.5px;color:var(--ink2);line-height:1.75}
+.feat-num{position:absolute;top:14px;right:14px;font-family:var(--mono);font-size:11px;color:var(--ink3)}
+
+/* ---------- dual ---------- */
+.dual-grid{display:grid;grid-template-columns:1fr 1fr;gap:28px}
+.dual-card{border:var(--bd);padding:0;overflow:hidden;background:var(--white);transition:transform .15s,box-shadow .15s}
+.dual-card.pc{box-shadow:6px 6px 0 var(--purple)}
+.dual-card.mb{box-shadow:6px 6px 0 var(--cyan)}
+.dual-card.pc:hover{transform:translate(3px,3px);box-shadow:3px 3px 0 var(--purple)}
+.dual-card.mb:hover{transform:translate(3px,3px);box-shadow:3px 3px 0 var(--cyan)}
+.dual-top{padding:26px 28px 0}
+.dual-tag{font-family:var(--px-font);font-size:11px;padding:4px 10px;border:var(--bd);display:inline-block;margin-bottom:16px}
+.dual-card.pc .dual-tag{background:var(--purple);color:#fff;box-shadow:3px 3px 0 var(--ink)}
+.dual-card.mb .dual-tag{background:var(--cyan);color:#fff;box-shadow:3px 3px 0 var(--ink)}
+.dual-card h3{font-family:'Noto Sans SC',sans-serif;font-weight:900;font-size:24px;margin-bottom:10px}
+.dual-card .d-desc{font-size:14.5px;color:var(--ink2);margin-bottom:20px}
+.dual-spec{list-style:none;margin-bottom:26px}
+.dual-spec li{
+  font-family:var(--mono);font-size:12.5px;color:var(--ink2);
+  padding:9px 0;border-top:1px dashed rgba(29,35,48,.18);
+  display:flex;gap:10px;align-items:baseline;
+}
+.dual-spec li::before{content:"▸";color:var(--purple);font-family:var(--mono)}
+.dual-card.mb .dual-spec li::before{color:var(--cyan)}
+.dual-mock{padding:0 28px 28px}
+.mock-window{border:var(--bd);background:var(--term);padding:14px 16px;font-family:var(--mono);font-size:11.5px;line-height:1.9;color:#A3ABC2;box-shadow:inset 0 0 0 1px rgba(255,255,255,.04)}
+.mock-window .bar{display:flex;gap:6px;margin-bottom:10px}
+.mock-window .bar i{width:8px;height:8px;border:1.5px solid #3A4356}
+.mock-window .bar i:nth-child(1){background:var(--pink)}
+.mock-window .bar i:nth-child(2){background:#F5C542}
+.mock-window .bar i:nth-child(3){background:var(--green)}
+.mock-window .g{color:var(--green)}.mock-window .c{color:var(--neon-cyan)}.mock-window .v{color:#8B7CFF}
+.mock-phone{
+  width:150px;margin:0 auto;border:var(--bd);background:var(--term);
+  padding:12px 12px 16px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.04);
+}
+.mock-phone .notch{width:44px;height:5px;background:#3A4356;margin:0 auto 12px}
+.mock-phone .scr{font-family:var(--mono);font-size:10.5px;line-height:1.9;color:#A3ABC2}
+.mock-phone .btn-row{display:flex;gap:6px;margin-top:12px}
+.mock-phone .btn-row i{flex:1;height:14px;border:1.5px solid #3A4356}
+.mock-phone .btn-row i:nth-child(1){background:var(--cyan)}
+.mock-phone .btn-row i:nth-child(2){background:#8B7CFF}
+.dual-foot{
+  border-top:var(--bd);background:var(--hover);
+  font-family:var(--mono);font-size:12px;color:var(--ink3);
+  padding:12px 28px;display:flex;justify-content:space-between;align-items:center;
+}
+.dual-foot b{color:var(--ink)}
+
+/* ---------- court ---------- */
+.court-wrap{
+  background:var(--white);border:var(--bd);box-shadow:8px 8px 0 var(--ink);
+  padding:52px 48px;display:grid;grid-template-columns:1fr 1.1fr;gap:56px;align-items:center;
+}
+.court-tag{display:inline-block;font-family:var(--px-font);font-size:11px;background:var(--pink);color:#fff;border:var(--bd);box-shadow:3px 3px 0 var(--ink);padding:4px 10px;margin-bottom:20px}
+.court-wrap h2{font-family:'Noto Sans SC',sans-serif;font-weight:900;font-size:clamp(28px,3.2vw,38px);line-height:1.3;margin-bottom:16px}
+.court-wrap .c-desc{color:var(--ink2);font-size:15.5px;margin-bottom:24px}
+.court-points{list-style:none}
+.court-points li{display:flex;gap:12px;margin-bottom:12px;font-size:14.5px;color:var(--ink2)}
+.court-points li b{color:var(--ink)}
+.court-points li::before{content:"";flex:none;width:10px;height:10px;margin-top:8px;background:var(--grad);border:2px solid var(--ink)}
+.court-flow{display:flex;flex-direction:column;gap:0}
+.flow-step{
+  background:var(--card);border:var(--bd);box-shadow:4px 4px 0 var(--ink);
+  padding:18px 22px;display:flex;align-items:center;gap:16px;
+  transition:transform .15s,box-shadow .15s;
+}
+.flow-step:hover{transform:translate(2px,2px);box-shadow:2px 2px 0 var(--ink);background:var(--hover)}
+.flow-step .fs-ico{
+  flex:none;width:40px;height:40px;border:var(--bd);
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--px-font);font-size:13px;color:#fff;box-shadow:2px 2px 0 var(--ink);
+}
+.flow-step:nth-child(1) .fs-ico{background:var(--purple)}
+.flow-step:nth-child(3) .fs-ico{background:var(--cyan)}
+.flow-step:nth-child(5) .fs-ico{background:var(--pink)}
+.flow-step h4{font-family:'Noto Sans SC',sans-serif;font-weight:700;font-size:15.5px}
+.flow-step p{font-size:12.5px;color:var(--ink3);font-family:var(--mono)}
+.flow-arrow{
+  align-self:center;height:26px;display:flex;align-items:center;
+  font-family:var(--mono);color:var(--ink3);font-size:14px;padding-left:44px;
+}
+.court-verdict{
+  margin-top:18px;border:var(--bd);background:var(--term);color:#C7D0E0;
+  font-family:var(--mono);font-size:12px;padding:14px 18px;line-height:1.9;
+  box-shadow:4px 4px 0 var(--ink);
+}
+.court-verdict .g{color:var(--green)}.court-verdict .c{color:var(--neon-cyan)}.court-verdict .v{color:#8B7CFF}
+
+/* ---------- quickstart (dark) ---------- */
+.qs{background:var(--term-deep);border-top:var(--bd);border-bottom:var(--bd);position:relative;overflow:hidden}
+.qs::before{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:repeating-linear-gradient(0deg,rgba(255,255,255,.02) 0 1px,transparent 1px 3px);
+}
+.qs .sec-tag{background:var(--term);color:var(--neon-cyan);border-color:#E6E9F2;box-shadow:3px 3px 0 rgba(230,233,242,.9)}
+.qs .sec-head h2{color:#E6E9F2}
+.qs .sec-head p{color:#A3ABC2}
+.qs-term{
+  max-width:780px;margin:0 auto;background:var(--term);
+  border:2px solid #E6E9F2;box-shadow:8px 8px 0 var(--purple);
+  position:relative;
+}
+.qs-term .qt-bar{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:12px 18px;border-bottom:2px solid #3A4356;
+}
+.qt-bar .leds{display:flex;gap:8px}
+.qt-bar .led{width:11px;height:11px;border:2px solid #E6E9F2}
+.qt-bar .label{font-family:var(--px-font);font-size:11px;color:#6D7590}
+.copy-btn{
+  font-family:var(--mono);font-size:11.5px;font-weight:700;
+  background:var(--term-deep);color:var(--neon-cyan);
+  border:2px solid var(--neon-cyan);padding:5px 12px;cursor:pointer;
+  transition:background .15s,color .15s;
+}
+.copy-btn:hover{background:var(--neon-cyan);color:var(--term-deep)}
+.qs-term pre{
+  padding:24px 26px 28px;font-family:var(--mono);font-size:14px;line-height:2.05;
+  color:#C7D0E0;overflow-x:auto;
+}
+.qs-term .cm{color:#6D7590}
+.qs-term .p{color:var(--neon-cyan)}
+.qs-term .g{color:var(--green)}
+.qs-term .v{color:#8B7CFF}
+.qs-note{
+  max-width:780px;margin:22px auto 0;text-align:center;
+  font-family:var(--mono);font-size:12.5px;color:#6D7590;
+}
+.qs-note a{color:var(--neon-cyan);border-bottom:1px dashed var(--neon-cyan)}
+.qs-note a:hover{color:#fff}
+
+/* ---------- opensource ---------- */
+.os-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;margin-bottom:44px}
+.os-card{
+  background:var(--white);border:var(--bd);box-shadow:var(--shadow);
+  padding:26px 24px;transition:transform .15s,box-shadow .15s;
+}
+.os-card:hover{transform:translate(2px,2px);box-shadow:var(--shadow-press);background:var(--hover)}
+.os-card .os-k{font-family:var(--px-font);font-size:11px;color:var(--purple);margin-bottom:12px}
+.os-card h3{font-family:'Noto Sans SC',sans-serif;font-weight:700;font-size:17px;margin-bottom:8px}
+.os-card p{font-size:13.5px;color:var(--ink2)}
+.os-card .big{font-family:var(--mono);font-weight:700;font-size:26px;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.stack-badges{display:flex;flex-wrap:wrap;gap:12px;justify-content:center}
+.stack-badges span{
+  font-family:var(--mono);font-size:12.5px;font-weight:700;
+  background:var(--white);border:var(--bd);box-shadow:3px 3px 0 var(--ink);
+  padding:7px 14px;color:var(--ink);transition:transform .12s,box-shadow .12s;
+  cursor:default;
+}
+.stack-badges span:hover{transform:translate(1px,1px);box-shadow:2px 2px 0 var(--ink)}
+.stack-badges span.hl{background:var(--grad);color:#fff}
+.stack-badges span.pk{background:var(--pink);color:#fff}
+
+/* ---------- footer ---------- */
+footer{background:var(--term);color:#A3ABC2;border-top:var(--bd);padding:56px 0 36px}
+.foot-grid{display:flex;justify-content:space-between;align-items:flex-start;gap:40px;flex-wrap:wrap;margin-bottom:40px}
+.foot-brand{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.foot-brand img{width:38px;height:38px;image-rendering:pixelated;filter:drop-shadow(0 0 8px rgba(139,124,255,.6))}
+.foot-brand .wordmark{font-family:var(--px-font);font-weight:700;font-size:18px;color:#E6E9F2}
+.foot-col p{font-size:13px;color:#6D7590;max-width:340px}
+.foot-links{display:flex;gap:56px}
+.foot-links h5{font-family:var(--px-font);font-size:11px;color:#E6E9F2;margin-bottom:14px}
+.foot-links a{display:block;font-size:13.5px;color:#A3ABC2;padding:5px 0;transition:color .15s}
+.foot-links a:hover{color:var(--neon-cyan)}
+.foot-bottom{
+  border-top:1px dashed #3A4356;padding-top:24px;
+  display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px;
+  font-family:var(--mono);font-size:11.5px;color:#6D7590;
+}
+.foot-bottom .px{font-size:10px}
+
+/* ---------- responsive ---------- */
+@media (max-width:1024px){
+  .feat-grid{grid-template-columns:repeat(2,1fr)}
+  .court-wrap{grid-template-columns:1fr;gap:40px;padding:40px 32px}
+}
+@media (max-width:860px){
+  .nav-links{display:none}
+  .burger{display:flex}
+  .hero{padding:56px 0 72px}
+  .hero-grid{grid-template-columns:1fr;gap:48px}
+  .hero p.lede{max-width:100%}
+  .dual-grid{grid-template-columns:1fr}
+  .os-grid{grid-template-columns:1fr}
+  section{padding:68px 0}
+}
+@media (max-width:520px){
+  .feat-grid{grid-template-columns:1fr}
+  .court-wrap{padding:28px 20px}
+  .hero h1{font-size:38px}
+  .btn{width:100%;justify-content:center}
+  .qs-term pre{font-size:12.5px}
+}
+@media (prefers-reduced-motion:reduce){
+  .reveal{opacity:1;transform:none;transition:none}
+  *{animation:none!important}
+}
+</style>
+</head>
+<body>
+<!-- ============ NAV ============ -->
+<nav class="nav">
+  <div class="container nav-inner">
+    <a class="brand" href="#top">
+      <img src="assets/logo.png" alt="Tevarn Logo"/>
+      <span class="wordmark">TEV<span>ARN</span></span>
+    </a>
+    <div class="nav-links">
+      <a class="nl" href="#features">特性</a>
+      <a class="nl" href="#dual">双端</a>
+      <a class="nl" href="#court">权限法院</a>
+      <a class="nl" href="#quickstart">快速开始</a>
+      <a class="nl" href="#opensource">开源</a>
+      <a class="star-btn" href="https://github.com/wu1w/takton" rel="noopener" target="_blank">
+        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"></path></svg>
+        STAR
+      </a>
+    </div>
+    <button class="burger" id="burger" aria-label="菜单"><i></i><i></i><i></i></button>
+  </div>
+  <div class="mobile-menu" id="mobileMenu">
+    <a href="#features">特性</a>
+    <a href="#dual">双端</a>
+    <a href="#court">权限法院</a>
+    <a href="#quickstart">快速开始</a>
+    <a href="#opensource">开源</a>
+    <a href="https://github.com/wu1w/takton" rel="noopener" target="_blank">GitHub →</a>
+  </div>
+</nav>
+
+<!-- ============ HERO ============ -->
+<header class="hero" id="top">
+  <div class="container hero-grid">
+    <div class="reveal">
+      <span class="badge"><span class="dot"></span>OPENSOURCE AIOS</span>
+      <h1>你的个人本地<br/><span class="grad">开源 AIOS 工作站</span></h1>
+      <p class="lede"><strong>Tevarn</strong> 运行在你自己的电脑上：本地 AI 员工、工具、知识、工单与任务、权限治理 —— 全部收进一个桌面工作台。数据默认留在本机，开源、可审计、可扩展。</p>
+      <div class="hero-facts">
+        <span>LICENSE <b>MIT</b></span>
+        <span>VERSION <b>0.5.x-alpha</b></span>
+        <span>MODE <b>LOCAL-FIRST</b></span>
+        <span>STACK <b>RUST + NEXT.JS + FASTAPI + FLUTTER</b></span>
+      </div>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="https://github.com/wu1w/takton" rel="noopener" target="_blank">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"></path></svg>
+          GitHub 仓库
+        </a>
+        <a class="btn btn-ghost" href="#quickstart">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 3h12v10H2zM4 6l3 2.5L4 11M8.5 11H12"></path></svg>
+          快速开始
+        </a>
+      </div>
+    </div>
+
+    <div class="console reveal" style="transition-delay:.12s">
+      <div class="console-body">
+        <span class="console-badge">LIGHT CONSOLE v0.5</span>
+        <div class="console-top">
+          <div class="leds"><i class="led r"></i><i class="led y"></i><i class="led g"></i></div>
+          <span class="label">TEVARN KERNEL HOST</span>
+        </div>
+        <div class="console-screen" id="heroTerm" aria-label="Tevarn 启动日志演示">
+          <div class="tl"><span class="p">$</span> tevarn boot --local</div>
+          <div class="tl"><span class="g">[OK]</span> kernel host ......... <span class="v">rust</span> @ 127.0.0.1</div>
+          <div class="tl"><span class="g">[OK]</span> sqlite storage ........ <span class="w">local data only</span></div>
+          <div class="tl"><span class="g">[OK]</span> permission court ...... <span class="v">layer / rule / verdict</span></div>
+          <div class="tl"><span class="g">[OK]</span> builtin skills ........ <span class="p">17 loaded</span></div>
+          <div class="tl"><span class="g">[OK]</span> memory bus ............ <span class="pk">online</span></div>
+          <div class="tl"><span class="g">[OK]</span> run model ............. <span class="w">chat · inbox · cron</span></div>
+          <div class="tl"><span class="p">&gt;</span> crew ready. <span class="g">hire your first AI employee_</span><span class="cursor"></span></div>
+        </div>
+        <div class="console-base">
+          <span>127.0.0.1 :: LOCAL ONLY</span>
+          <div class="keys"><i class="key"></i><i class="key"></i><i class="key"></i></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<div class="px-divider"></div>
+
+<!-- ============ FEATURES ============ -->
+<section id="features">
+  <div class="container">
+    <div class="sec-head reveal">
+      <span class="sec-tag">FEATURES / 核心特性</span>
+      <h2>一台机器，<span class="grad">一整支 AI 团队</span></h2>
+      <p>从雇佣 AI 员工到权限治理，从用量账本到技能自生长 —— Tevarn 把 AIOS 的每一层都做成了可运行的真实系统。</p>
+    </div>
+    <div class="feat-grid">
+      <div class="feat-card reveal">
+        <span class="feat-num">01</span>
+        <div class="feat-ico purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="7" width="16" height="12"></rect><path d="M9 7V4h6v3M9 12h.01M15 12h.01M10 16h4"></path></svg></div>
+        <h3>AI 员工 Crew</h3>
+        <p>在本机雇佣并调度 AI 员工，带预算、授权与记忆总线，像管理一支真实团队。</p>
+      </div>
+      <div class="feat-card reveal" style="transition-delay:.05s">
+        <span class="feat-num">02</span>
+        <div class="feat-ico cyan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"></path><rect x="17" y="15" width="4" height="4"></rect></svg></div>
+        <h3>统一 Run 模型</h3>
+        <p>chat / inbox / cron 共享一套运行模型，支持检查点恢复，任务中断也能接续。</p>
+      </div>
+      <div class="feat-card reveal" style="transition-delay:.1s">
+        <span class="feat-num">03</span>
+        <div class="feat-ico pink"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l8 4v6c0 4-3.5 7-8 8-4.5-1-8-4-8-8V7z"></path><path d="M9 12l2 2 4-4"></path></svg></div>
+        <h3>权限法院</h3>
+        <p>一条决策路径，layer / rule / verdict 三级权限治理，Kernel 页可视化全程。</p>
+      </div>
+      <div class="feat-card reveal" style="transition-delay:.15s">
+        <span class="feat-num">04</span>
+        <div class="feat-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16"></rect><path d="M8 9h8M8 13h8M8 17h5"></path></svg></div>
+        <h3>用量与缓存账本</h3>
+        <p>真实 token / billable / prompt-cache 指标，非 mock —— 每一分消耗都有据可查。</p>
+      </div>
+      <div class="feat-card reveal">
+        <span class="feat-num">05</span>
+        <div class="feat-ico cyan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v4M12 17v4M3 12h4M17 12h4"></path><rect x="9" y="9" width="6" height="6"></rect></svg></div>
+        <h3>技能自动生成</h3>
+        <p>Agent 遇到新任务类型会自动编写新工具：17 个内置技能 + 无限扩展空间。</p>
+      </div>
+      <div class="feat-card reveal" style="transition-delay:.05s">
+        <span class="feat-num">06</span>
+        <div class="feat-ico purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="13"></rect><path d="M7 9l3 3-3 3M12 15h5"></path></svg></div>
+        <h3>OS 级能力</h3>
+        <p>文件读写、终端命令、浏览器控制、SQLite 查询 —— 全部经三级权限模型校验。</p>
+      </div>
+      <div class="feat-card reveal" style="transition-delay:.1s">
+        <span class="feat-num">07</span>
+        <div class="feat-ico pink"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.5"></circle><circle cx="18" cy="6" r="2.5"></circle><circle cx="12" cy="18" r="2.5"></circle><path d="M8 8l3 7M16 8l-3 7"></path></svg></div>
+        <h3>智能编排</h3>
+        <p>简单问题单 Agent 直答；复杂任务可选并行草稿扇出 + 汇总（默认关闭）。</p>
+      </div>
+      <div class="feat-card reveal" style="transition-delay:.15s">
+        <span class="feat-num">08</span>
+        <div class="feat-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="13" height="10"></rect><rect x="17" y="9" width="5" height="10"></rect><path d="M5 18h8"></path></svg></div>
+        <h3>双端联动</h3>
+        <p>Windows PC 工作站 + 安卓手机端远程遥控，离开工位也能调度你的 Crew。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="px-divider"></div>
+<!-- ============ DUAL ============ -->
+<section id="dual">
+  <div class="container">
+    <div class="sec-head reveal">
+      <span class="sec-tag">DUAL END / 双端联动</span>
+      <h2>桌面是主场，<span class="grad">手机是遥控器</span></h2>
+      <p>Electron 桌面端承载完整工作站，Flutter 手机端随时接入 —— 同一套本地系统，两种打开方式。</p>
+    </div>
+    <div class="dual-grid">
+      <div class="dual-card pc reveal">
+        <div class="dual-top">
+          <span class="dual-tag">PC WORKSTATION</span>
+          <h3>Windows 工作站</h3>
+          <p class="d-desc">完整 AIOS 桌面工作台：AI 员工、Kernel 可视化、工单任务、用量账本，全在本机运行。Windows 优先，Linux 亦可用。</p>
+          <ul class="dual-spec">
+            <li>electron desktop shell</li>
+            <li>rust kernel host + fastapi</li>
+            <li>sqlite · listen 127.0.0.1 only</li>
+            <li>no forced redis / qdrant</li>
+          </ul>
+        </div>
+        <div class="dual-mock">
+          <div class="mock-window">
+            <div class="bar"><i></i><i></i><i></i></div>
+            <div><span class="c">tevarn@desktop</span> ~ kernel</div>
+            <div><span class="g">●</span> crew: 3 agents online</div>
+            <div><span class="g">●</span> runs: chat / inbox / cron</div>
+            <div><span class="v">●</span> court: verdicts streamed</div>
+          </div>
+        </div>
+        <div class="dual-foot"><span>PLATFORM</span><b>Windows · Linux</b></div>
+      </div>
+      <div class="dual-card mb reveal" style="transition-delay:.1s">
+        <div class="dual-top">
+          <span class="dual-tag">MOBILE REMOTE</span>
+          <h3>手机端遥控</h3>
+          <p class="d-desc">Flutter 构建的安卓手机端（iOS / 鸿蒙同步推进），远程查看运行、审批权限、调度任务 —— 口袋里的 AIOS 控制台。</p>
+          <ul class="dual-spec">
+            <li>flutter · android / ios / harmonyos</li>
+            <li>remote run monitor</li>
+            <li>permission approval on the go</li>
+            <li>same local system, pocket console</li>
+          </ul>
+        </div>
+        <div class="dual-mock">
+          <div class="mock-phone">
+            <div class="notch"></div>
+            <div class="scr">
+              <div><span style="color:var(--neon-cyan)">TEVARN</span> remote</div>
+              <div><span style="color:var(--green)">run #128 done ✓</span></div>
+              <div><span style="color:#8B7CFF">approve? [Y/n]</span></div>
+            </div>
+            <div class="btn-row"><i></i><i></i></div>
+          </div>
+        </div>
+        <div class="dual-foot"><span>PLATFORM</span><b>Android · iOS · 鸿蒙</b></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="px-divider"></div>
+
+<!-- ============ PERMISSION COURT ============ -->
+<section id="court">
+  <div class="container">
+    <div class="court-wrap reveal">
+      <div>
+        <span class="court-tag">PERMISSION COURT</span>
+        <h2>权限法院：<br/>每一次操作，都要过堂</h2>
+        <p class="c-desc">AI 能做事，更要守规矩。Tevarn 把所有 OS 级能力收敛进<span style="color:var(--purple);font-weight:700">一条决策路径</span>，三级权限治理让每一步都可审计、可拦截、可回放。</p>
+        <ul class="court-points">
+          <li><span><b>一条决策路径</b> —— 文件、终端、浏览器、数据库，统一走同一道门</span></li>
+          <li><span><b>三级治理</b> —— layer / rule / verdict 层层校验，权责清晰</span></li>
+          <li><span><b>Kernel 页可视化</b> —— 判决过程实时可见，不是黑盒</span></li>
+        </ul>
+      </div>
+      <div class="court-flow">
+        <div class="flow-step">
+          <span class="fs-ico">L1</span>
+          <div>
+            <h4>LAYER · 层级判定</h4>
+            <p>request enters layer pipeline</p>
+          </div>
+        </div>
+        <div class="flow-arrow">▼</div>
+        <div class="flow-step">
+          <span class="fs-ico">R2</span>
+          <div>
+            <h4>RULE · 规则匹配</h4>
+            <p>matched against policy rules</p>
+          </div>
+        </div>
+        <div class="flow-arrow">▼</div>
+        <div class="flow-step">
+          <span class="fs-ico">V3</span>
+          <div>
+            <h4>VERDICT · 判决执行</h4>
+            <p>allow / deny, fully logged</p>
+          </div>
+        </div>
+        <div class="court-verdict">
+          <div><span class="c">court&gt;</span> fs.write /home/user/notes.md</div>
+          <div><span class="v">layer</span>=os  <span class="v">rule</span>=workspace-only</div>
+          <div><span class="g">verdict: ALLOW</span> · logged to kernel</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ QUICKSTART ============ -->
+<section class="qs" id="quickstart">
+  <div class="container">
+    <div class="sec-head reveal">
+      <span class="sec-tag">QUICKSTART / 快速开始</span>
+      <h2>三条命令，<span class="grad">点亮你的 AIOS</span></h2>
+      <p>克隆仓库，切到开发分支，按 README 启动 —— 全部默认本地运行，无需任何云服务。</p>
+    </div>
+    <div class="qs-term reveal">
+      <div class="qt-bar">
+        <div class="leds"><i class="led r"></i><i class="led y"></i><i class="led g"></i></div>
+        <span class="label">TERMINAL — BASH</span>
+        <button class="copy-btn" id="copyBtn" type="button">COPY</button>
+      </div>
+<pre id="qsCode"><span class="cm"># 1. clone the repository</span>
+<span class="p">$</span> git clone https://github.com/wu1w/takton.git
+<span class="cm"># 2. switch to the dev branch</span>
+<span class="p">$</span> cd takton &amp;&amp; git checkout feature/agent-kernel
+<span class="cm"># 3. follow README to start — data stays on your machine</span>
+<span class="g">✓ sqlite ready · listening on 127.0.0.1</span> <span class="cursor"></span></pre>
+    </div>
+    <p class="qs-note reveal">版本 <span class="mono" style="color:#E6E9F2">0.5.x-alpha</span>（feature/agent-kernel 分支）· 详细启动步骤见 <a href="https://github.com/wu1w/takton" rel="noopener" target="_blank">仓库 README</a></p>
+  </div>
+</section>
+
+<!-- ============ OPENSOURCE ============ -->
+<section id="opensource">
+  <div class="container">
+    <div class="sec-head reveal">
+      <span class="sec-tag">OPEN SOURCE / 开源信息</span>
+      <h2>真开源，<span class="grad">真本地，真指标</span></h2>
+      <p>MIT 协议、个人优先、不是企业 SaaS —— 适合个人开发者、研究者与自动化爱好者。</p>
+    </div>
+    <div class="os-grid">
+      <div class="os-card reveal">
+        <div class="os-k">LICENSE</div>
+        <div class="big">MIT</div>
+        <p>自由使用、修改与分发。源码完全开放，欢迎 Issue 与 PR。</p>
+      </div>
+      <div class="os-card reveal" style="transition-delay:.07s">
+        <div class="os-k">VERSION</div>
+        <div class="big">0.5.x-alpha</div>
+        <p>活跃开发中（feature/agent-kernel 分支），功能快速迭代。</p>
+      </div>
+      <div class="os-card reveal" style="transition-delay:.14s">
+        <div class="os-k">LOCAL-FIRST</div>
+        <div class="big">127.0.0.1</div>
+        <p>默认本机 SQLite、只监听回环地址，不强制 Redis / Qdrant。</p>
+      </div>
+    </div>
+    <div class="stack-badges reveal">
+      <span class="hl">RUST KERNEL HOST</span>
+      <span>NEXT.JS 16</span>
+      <span>FASTAPI</span>
+      <span>ELECTRON</span>
+      <span class="hl">FLUTTER</span>
+      <span>SQLITE</span>
+      <span class="pk">MIT LICENSE</span>
+      <span>WINDOWS-FIRST</span>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FOOTER ============ -->
+<footer>
+  <div class="container">
+    <div class="foot-grid">
+      <div class="foot-col">
+        <div class="foot-brand">
+          <img src="assets/logo.png" alt="Tevarn Logo"/>
+          <span class="wordmark">TEVARN</span>
+        </div>
+        <p>个人本地开源 AIOS 工作站 —— 本地 AI 员工、工具、知识、工单与权限治理，一个桌面工作台。</p>
+      </div>
+      <div class="foot-links">
+        <div>
+          <h5>PROJECT</h5>
+          <a href="https://github.com/wu1w/takton" rel="noopener" target="_blank">GitHub 仓库</a>
+          <a href="https://github.com/wu1w/takton/tree/feature/agent-kernel" rel="noopener" target="_blank">开发分支</a>
+          <a href="https://github.com/wu1w/takton" rel="noopener" target="_blank">文档 README</a>
+        </div>
+        <div>
+          <h5>RESOURCES</h5>
+          <a href="#features">核心特性</a>
+          <a href="#quickstart">快速开始</a>
+          <a href="https://github.com/wu1w/takton/blob/feature/agent-kernel/LICENSE" rel="noopener" target="_blank">License (MIT)</a>
+        </div>
+      </div>
+    </div>
+    <div class="foot-bottom">
+      <span>© 2025 TEVARN · OPEN SOURCE UNDER MIT</span>
+      <span class="px">PIXEL CONSOLE — LIGHT MODE</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+// ---- mobile nav ----
+const burger = document.getElementById('burger');
+const mobileMenu = document.getElementById('mobileMenu');
+burger.addEventListener('click', () => {
+  burger.classList.toggle('open');
+  mobileMenu.classList.toggle('show');
+});
+mobileMenu.querySelectorAll('a').forEach(a => a.addEventListener('click', () => {
+  burger.classList.remove('open');
+  mobileMenu.classList.remove('show');
+}));
+
+// ---- scroll reveal ----
+const io = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) { e.target.classList.add('visible'); io.unobserve(e.target); }
+  });
+}, { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
+document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+
+// ---- hero terminal boot lines ----
+const lines = document.querySelectorAll('#heroTerm .tl');
+let li = 0;
+function bootLine() {
+  if (li < lines.length) {
+    lines[li].classList.add('on');
+    li++;
+    setTimeout(bootLine, li === 1 ? 300 : 340);
+  }
+}
+setTimeout(bootLine, 500);
+
+// ---- copy quickstart ----
+const copyBtn = document.getElementById('copyBtn');
+copyBtn.addEventListener('click', () => {
+  const text = 'git clone https://github.com/wu1w/takton.git\ncd takton && git checkout feature/agent-kernel';
+  navigator.clipboard.writeText(text).then(() => {
+    copyBtn.textContent = 'COPIED ✓';
+    setTimeout(() => copyBtn.textContent = 'COPY', 1600);
+  }).catch(() => { copyBtn.textContent = 'FAILED'; });
+});
+</script>
+
+
+</body></html>
