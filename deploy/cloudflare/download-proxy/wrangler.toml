@@ -1,0 +1,8 @@
+name = "tevarn-download-proxy"
+main = "src/index.js"
+compatibility_date = "2025-08-01"
+account_id = "859f67cd00473260380bf541b95eb4ad"
+workers_dev = true
+
+# Custom domain dl.tevarn.com is attached after first deploy via API / dashboard.
+# routes optional when using custom domains on the worker.

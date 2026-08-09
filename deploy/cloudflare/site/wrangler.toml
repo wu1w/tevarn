@@ -1,0 +1,10 @@
+name = "tevarn-site"
+compatibility_date = "2025-08-01"
+account_id = "859f67cd00473260380bf541b95eb4ad"
+workers_dev = true
+
+# Static marketing site (website/)
+[assets]
+directory = "../../../website"
+not_found_handling = "single-page-application"
+html_handling = "auto-trailing-slash"

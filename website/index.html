@@ -511,7 +511,7 @@ footer{background:var(--term);color:#A3ABC2;border-top:var(--bd);padding:56px 0 
           快速开始
         </a>
       </div>
-      <p class="dl-hint">大陆用户推荐官网直链（Cloudflare R2），无需访问 GitHub。</p>
+      <p class="dl-hint">大陆用户推荐官网直链（Cloudflare），无需访问 GitHub。</p>
     </div>
 
     <div class="console reveal" style="transition-delay:.12s">
@@ -548,7 +548,7 @@ footer{background:var(--term);color:#A3ABC2;border-top:var(--bd);padding:56px 0 
     <div class="sec-head reveal">
       <span class="sec-tag">DOWNLOAD / 安装包</span>
       <h2>官网直链下载，<span class="grad">不经过 GitHub</span></h2>
-      <p>Windows 安装包与 Android APK 托管在 Cloudflare R2（与 tevarn.com 同账号），大陆访问更稳。GitHub Release 仅作备用源。</p>
+      <p>Windows 安装包与 Android APK 经 Cloudflare 边缘节点直链分发（不经过 GitHub），大陆访问更稳。GitHub Release 仅作备用源。</p>
     </div>
     <div class="dl-grid">
       <article class="dl-card reveal">
@@ -585,10 +585,10 @@ footer{background:var(--term);color:#A3ABC2;border-top:var(--bd);padding:56px 0 
       </article>
     </div>
     <div class="dl-note reveal">
-      <strong>直链说明：</strong>主下载地址为 <code id="dlBaseLabel">https://dl.tevarn.com/v0.4.0/…</code>（Cloudflare R2，无需备案）。
-      若直链尚未开通或 404，请用旁边的 <strong>GitHub 备用</strong>，或到
+      <strong>直链说明：</strong>主下载地址为 <code id="dlBaseLabel">https://dl.tevarn.com/v0.4.0/…</code>（Cloudflare 边缘代理，无需备案）。
+      若直链 404，请用旁边的 <strong>GitHub 备用</strong>，或到
       <a href="https://github.com/wu1w/tevarn/releases/tag/v0.4.0" rel="noopener" target="_blank">Releases v0.4.0</a>。
-      校验与发版同步见仓库 <code>docs/WEBSITE_DOWNLOADS.md</code>。
+      部署说明见仓库 <code>docs/WEBSITE_DOWNLOADS.md</code>。
     </div>
   </div>
 </section>
@@ -866,11 +866,11 @@ footer{background:var(--term);color:#A3ABC2;border-top:var(--bd);padding:56px 0 
 </footer>
 
 <script>
-// ---- release download config (R2 primary, GitHub fallback) ----
-// Files live on Cloudflare R2 at dl.tevarn.com — not in git, not via GitHub for CN users.
+// ---- release download config (CF edge primary, GitHub fallback) ----
+// Primary: dl.tevarn.com Worker proxies/caches installers (mainland users never hit github.com).
 const RELEASE = {
   version: '0.4.0',
-  // Primary: Cloudflare R2 custom domain (no ICP; same CF account as tevarn.com)
+  // Primary: Cloudflare Worker custom domain (no ICP)
   cdnBase: 'https://dl.tevarn.com',
   // Fallback: GitHub Releases
   ghTag: 'v0.4.0',
