@@ -127,6 +127,47 @@ a{text-decoration:none;color:inherit}
 .btn-ghost{background:var(--white);color:var(--ink);box-shadow:5px 5px 0 var(--ink)}
 .btn-ghost:hover{transform:translate(2px,2px);box-shadow:3px 3px 0 var(--ink);background:var(--hover)}
 .btn-ghost:active{transform:translate(5px,5px);box-shadow:0 0 0 var(--ink)}
+.btn-soft{
+  background:var(--hover);color:var(--ink2);box-shadow:3px 3px 0 var(--ink);
+  font-size:13px;padding:10px 16px;font-weight:600;
+}
+.btn-soft:hover{transform:translate(1px,1px);box-shadow:2px 2px 0 var(--ink);color:var(--ink)}
+.dl-hint{margin-top:14px;font-size:13px;color:var(--ink3);font-family:var(--mono)}
+
+/* ---------- download ---------- */
+.dl-grid{
+  display:grid;grid-template-columns:1fr 1fr;gap:22px;max-width:920px;margin:0 auto;
+}
+.dl-card{
+  background:var(--white);border:var(--bd);box-shadow:var(--shadow);
+  padding:28px 26px 24px;position:relative;display:flex;flex-direction:column;gap:14px;
+}
+.dl-card:hover{transform:translate(-2px,-2px);box-shadow:6px 6px 0 var(--ink);transition:transform .12s,box-shadow .12s}
+.dl-card .dl-os{
+  font-family:var(--px-font);font-size:12px;color:var(--purple);
+  display:inline-flex;align-items:center;gap:8px;
+}
+.dl-card .dl-os .pill{
+  background:var(--hover);border:1px solid rgba(29,35,48,.18);
+  padding:2px 8px;font-family:var(--mono);font-size:11px;color:var(--ink2);
+}
+.dl-card h3{
+  font-family:'Noto Sans SC',sans-serif;font-weight:900;font-size:24px;line-height:1.25;
+}
+.dl-card p{color:var(--ink2);font-size:14.5px;flex:1}
+.dl-meta{
+  font-family:var(--mono);font-size:12px;color:var(--ink3);
+  display:flex;flex-wrap:wrap;gap:8px 14px;
+}
+.dl-meta b{color:var(--cyan)}
+.dl-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:4px}
+.dl-note{
+  max-width:920px;margin:28px auto 0;padding:16px 18px;
+  background:var(--card);border:var(--bd);box-shadow:3px 3px 0 var(--ink);
+  font-size:13.5px;color:var(--ink2);line-height:1.65;
+}
+.dl-note code{font-family:var(--mono);font-size:12px;background:var(--hover);padding:1px 6px;border:1px solid rgba(29,35,48,.12)}
+.dl-note a{color:var(--purple);font-weight:700;border-bottom:1px dashed rgba(109,93,246,.45)}
 
 /* ---------- pixel console (hero terminal) ---------- */
 .console{position:relative}
@@ -402,6 +443,7 @@ footer{background:var(--term);color:#A3ABC2;border-top:var(--bd);padding:56px 0 
 }
 @media (max-width:520px){
   .feat-grid{grid-template-columns:1fr}
+  .dl-grid{grid-template-columns:1fr}
   .court-wrap{padding:28px 20px}
   .hero h1{font-size:38px}
   .btn{width:100%;justify-content:center}
@@ -422,6 +464,7 @@ footer{background:var(--term);color:#A3ABC2;border-top:var(--bd);padding:56px 0 
       <span class="wordmark">TEV<span>ARN</span></span>
     </a>
     <div class="nav-links">
+      <a class="nl" href="#download">下载</a>
       <a class="nl" href="#features">特性</a>
       <a class="nl" href="#dual">双端</a>
       <a class="nl" href="#court">权限法院</a>
@@ -435,6 +478,7 @@ footer{background:var(--term);color:#A3ABC2;border-top:var(--bd);padding:56px 0 
     <button class="burger" id="burger" aria-label="菜单"><i></i><i></i><i></i></button>
   </div>
   <div class="mobile-menu" id="mobileMenu">
+    <a href="#download">下载安装包</a>
     <a href="#features">特性</a>
     <a href="#dual">双端</a>
     <a href="#court">权限法院</a>
@@ -458,15 +502,16 @@ footer{background:var(--term);color:#A3ABC2;border-top:var(--bd);padding:56px 0 
         <span>STACK <b>RUST + NEXT.JS + FASTAPI + FLUTTER</b></span>
       </div>
       <div class="cta-row">
-        <a class="btn btn-primary" href="https://github.com/wu1w/tevarn" rel="noopener" target="_blank">
-          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"></path></svg>
-          GitHub 仓库
+        <a class="btn btn-primary" href="#download">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 2v8m0 0L5 7m3 3 3-3M3 12h10"></path></svg>
+          下载安装包
         </a>
         <a class="btn btn-ghost" href="#quickstart">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 3h12v10H2zM4 6l3 2.5L4 11M8.5 11H12"></path></svg>
           快速开始
         </a>
       </div>
+      <p class="dl-hint">大陆用户推荐官网直链（Cloudflare R2），无需访问 GitHub。</p>
     </div>
 
     <div class="console reveal" style="transition-delay:.12s">
@@ -494,6 +539,59 @@ footer{background:var(--term);color:#A3ABC2;border-top:var(--bd);padding:56px 0 
     </div>
   </div>
 </header>
+
+<div class="px-divider"></div>
+
+<!-- ============ DOWNLOAD ============ -->
+<section id="download">
+  <div class="container">
+    <div class="sec-head reveal">
+      <span class="sec-tag">DOWNLOAD / 安装包</span>
+      <h2>官网直链下载，<span class="grad">不经过 GitHub</span></h2>
+      <p>Windows 安装包与 Android APK 托管在 Cloudflare R2（与 tevarn.com 同账号），大陆访问更稳。GitHub Release 仅作备用源。</p>
+    </div>
+    <div class="dl-grid">
+      <article class="dl-card reveal">
+        <div class="dl-os">WINDOWS <span class="pill" id="dlWinVer">v0.4.0</span></div>
+        <h3>桌面工作站 Setup</h3>
+        <p>一键安装 Tevarn 桌面端（Electron + 本地后端 + Kernel Host）。适合 Windows 10/11 x64。</p>
+        <div class="dl-meta">
+          <span>FILE <b id="dlWinName">Tevarn-Setup-0.4.0-x64.exe</b></span>
+          <span>SIZE <b id="dlWinSize">~117 MB</b></span>
+        </div>
+        <div class="dl-actions">
+          <a class="btn btn-primary" id="dlWinPrimary" href="#" rel="noopener">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 2v8m0 0L5 7m3 3 3-3M3 12h10"></path></svg>
+            官网直链下载
+          </a>
+          <a class="btn btn-soft" id="dlWinGh" href="#" rel="noopener" target="_blank">GitHub 备用</a>
+        </div>
+      </article>
+      <article class="dl-card reveal" style="transition-delay:.07s">
+        <div class="dl-os">ANDROID <span class="pill" id="dlApkVer">v0.4.0</span></div>
+        <h3>手机遥控端 APK</h3>
+        <p>Flutter 移动端，连接本机 Tevarn 后端，远程看工单、发指令。需先装好桌面端。</p>
+        <div class="dl-meta">
+          <span>FILE <b id="dlApkName">Tevarn-Mobile-0.4.0.apk</b></span>
+          <span>SIZE <b id="dlApkSize">~40 MB</b></span>
+        </div>
+        <div class="dl-actions">
+          <a class="btn btn-primary" id="dlApkPrimary" href="#" rel="noopener">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 2v8m0 0L5 7m3 3 3-3M3 12h10"></path></svg>
+            官网直链下载
+          </a>
+          <a class="btn btn-soft" id="dlApkGh" href="#" rel="noopener" target="_blank">GitHub 备用</a>
+        </div>
+      </article>
+    </div>
+    <div class="dl-note reveal">
+      <strong>直链说明：</strong>主下载地址为 <code id="dlBaseLabel">https://dl.tevarn.com/v0.4.0/…</code>（Cloudflare R2，无需备案）。
+      若直链尚未开通或 404，请用旁边的 <strong>GitHub 备用</strong>，或到
+      <a href="https://github.com/wu1w/tevarn/releases/tag/v0.4.0" rel="noopener" target="_blank">Releases v0.4.0</a>。
+      校验与发版同步见仓库 <code>docs/WEBSITE_DOWNLOADS.md</code>。
+    </div>
+  </div>
+</section>
 
 <div class="px-divider"></div>
 
@@ -691,7 +789,7 @@ footer{background:var(--term);color:#A3ABC2;border-top:var(--bd);padding:56px 0 
 <span class="cm"># 3. follow README to start — data stays on your machine</span>
 <span class="g">✓ sqlite ready · listening on 127.0.0.1</span> <span class="cursor"></span></pre>
     </div>
-    <p class="qs-note reveal">版本 <span class="mono" style="color:#E6E9F2">0.4.0</span>（main 分支）· 详细启动步骤见 <a href="https://github.com/wu1w/tevarn" rel="noopener" target="_blank">仓库 README</a></p>
+    <p class="qs-note reveal">不想从源码跑？直接 <a href="#download" style="color:#8B7CFF;font-weight:700">下载安装包</a>。版本 <span class="mono" style="color:#E6E9F2">0.4.0</span> · 源码见 <a href="https://github.com/wu1w/tevarn" rel="noopener" target="_blank">仓库 README</a></p>
   </div>
 </section>
 
@@ -753,6 +851,7 @@ footer{background:var(--term);color:#A3ABC2;border-top:var(--bd);padding:56px 0 
         </div>
         <div>
           <h5>RESOURCES</h5>
+          <a href="#download">下载安装包</a>
           <a href="#features">核心特性</a>
           <a href="#quickstart">快速开始</a>
           <a href="https://github.com/wu1w/tevarn/blob/main/LICENSE" rel="noopener" target="_blank">License (MIT)</a>
@@ -767,6 +866,51 @@ footer{background:var(--term);color:#A3ABC2;border-top:var(--bd);padding:56px 0 
 </footer>
 
 <script>
+// ---- release download config (R2 primary, GitHub fallback) ----
+// Files live on Cloudflare R2 at dl.tevarn.com — not in git, not via GitHub for CN users.
+const RELEASE = {
+  version: '0.4.0',
+  // Primary: Cloudflare R2 custom domain (no ICP; same CF account as tevarn.com)
+  cdnBase: 'https://dl.tevarn.com',
+  // Fallback: GitHub Releases
+  ghTag: 'v0.4.0',
+  ghBase: 'https://github.com/wu1w/tevarn/releases/download/v0.4.0',
+  assets: {
+    win: {
+      file: 'Tevarn-Setup-0.4.0-x64.exe',
+      size: '~117 MB',
+      label: 'Windows Setup',
+    },
+    apk: {
+      file: 'Tevarn-Mobile-0.4.0.apk',
+      size: '~40 MB',
+      label: 'Android APK',
+    },
+  },
+};
+
+(function wireDownloads() {
+  const ver = RELEASE.version;
+  const base = `${RELEASE.cdnBase}/v${ver}`;
+  const win = RELEASE.assets.win;
+  const apk = RELEASE.assets.apk;
+
+  const setText = (id, t) => { const el = document.getElementById(id); if (el) el.textContent = t; };
+  setText('dlWinVer', `v${ver}`);
+  setText('dlApkVer', `v${ver}`);
+  setText('dlWinName', win.file);
+  setText('dlApkName', apk.file);
+  setText('dlWinSize', win.size);
+  setText('dlApkSize', apk.size);
+  setText('dlBaseLabel', `${base}/…`);
+
+  const bind = (id, href) => { const a = document.getElementById(id); if (a) a.href = href; };
+  bind('dlWinPrimary', `${base}/${win.file}`);
+  bind('dlApkPrimary', `${base}/${apk.file}`);
+  bind('dlWinGh', `${RELEASE.ghBase}/${win.file}`);
+  bind('dlApkGh', `${RELEASE.ghBase}/${apk.file}`);
+})();
+
 // ---- mobile nav ----
 const burger = document.getElementById('burger');
 const mobileMenu = document.getElementById('mobileMenu');
