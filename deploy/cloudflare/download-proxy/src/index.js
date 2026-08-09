@@ -16,8 +16,14 @@ const ASSETS = {
     gh: "https://github.com/wu1w/tevarn/releases/download/v0.4.0/Tevarn-Setup-0.4.0-x64.exe",
     type: "application/octet-stream",
   },
+  // Canonical APK name (replaced 2026-08-09 engine-fix build)
   "v0.4.0/Tevarn-Mobile-0.4.0.apk": {
     gh: "https://github.com/wu1w/tevarn/releases/download/v0.4.0/Tevarn-Mobile-0.4.0.apk",
+    type: "application/vnd.android.package-archive",
+  },
+  // Cache-bust alias — same build as Tevarn-Mobile-0.4.0.apk after engine fix
+  "v0.4.0/Tevarn-Mobile-0.4.0-engine-fix.apk": {
+    gh: "https://github.com/wu1w/tevarn/releases/download/v0.4.0/Tevarn-Mobile-0.4.0-engine-fix.apk",
     type: "application/vnd.android.package-archive",
   },
 };
