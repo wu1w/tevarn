@@ -1,7 +1,7 @@
 ﻿name: tevarn_mobile
 description: Tevarn Pixel Console �?Flutter shell, Rust engine
 publish_to: "none"
-version: 0.5.8+35
+version: 0.4.0+40
 
 environment:
   sdk: '>=3.10.0 <4.0.0'

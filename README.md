@@ -11,7 +11,7 @@
 
 <br/>
 
-[![Version](https://img.shields.io/badge/version-0.5.x--alpha-8B7CFF?style=flat-square)](https://github.com/wu1w/tevarn/tree/feature/agent-kernel)
+[![Version](https://img.shields.io/badge/version-v0.4.0-8B7CFF?style=flat-square)](https://github.com/wu1w/tevarn/releases/tag/v0.4.0)
 [![License](https://img.shields.io/badge/license-MIT-22D8EE?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20first%20%7C%20Linux-1D2330?style=flat-square)](https://github.com/wu1w/tevarn/releases)
 [![Local-first](https://img.shields.io/badge/mode-LOCAL--FIRST-6D5DF6?style=flat-square)](#)
@@ -19,7 +19,7 @@
 
 <br/>
 
-`LICENSE MIT` · `MODE LOCAL-FIRST` · `STACK RUST + NEXT.JS + FASTAPI + FLUTTER`
+`LICENSE MIT` · `VERSION v0.4.0` · `MODE LOCAL-FIRST` · `STACK RUST + NEXT.JS + FASTAPI + FLUTTER`
 
 <br/>
 
@@ -37,8 +37,8 @@
 | 数据默认本机 SQLite · 默认只监听 `127.0.0.1` | 云端 SLA / 强制上云 |
 | **Windows 优先**（Linux 可用） | 必须 Redis / Qdrant 才能跑 |
 
-> **状态**：当前主开发在 [`feature/agent-kernel`](https://github.com/wu1w/tevarn/tree/feature/agent-kernel) · **0.5.x-alpha**。  
-> 历史 Releases **0.3.x** 是较早桌面线，**不含**完整 0.5 Kernel 重写。
+> **状态**：主线为 **`main`** · 当前稳定版 **[v0.4.0](https://github.com/wu1w/tevarn/releases/tag/v0.4.0)**（Tevarn 新主线首发）。  
+> 历史 Releases **0.3.x（Takton）** 为旧桌面线；**0.5.x-alpha** 为预览迭代，现已收敛进 `main` / v0.4.0。
 
 ---
 
@@ -97,18 +97,18 @@ Kernel 页可视化判决过程，不是黑盒。
 ## 快速开始
 
 ```bash
-# 1. 克隆仓库
+# 1. 克隆仓库（默认 main = 新主线）
 git clone https://github.com/wu1w/tevarn.git
 cd tevarn
 
-# 2. 切换到当前主开发分支
-git checkout feature/agent-kernel
+# 2. 使用稳定标签（可选）
+git checkout v0.4.0
 
 # 3. 按下方「开发启动」或安装预编译包
 ```
 
 默认本地运行，无需任何云服务。  
-版本 **0.5.x-alpha** · 分支 `feature/agent-kernel`。
+版本 **v0.4.0** · 分支 **`main`**。
 
 ---
 
@@ -120,16 +120,16 @@ git checkout feature/agent-kernel
 
 | 类型 | 文件名 |
 |------|--------|
-| 安装版 Setup | `Tevarn-Setup-0.5.8-alpha-x64.exe` |
-| 便携版 | `Tevarn-0.5.8-alpha-win-portable.exe` |
-| 压缩包 | `Tevarn-0.5.8-alpha-win-x64.zip` |
-| 手机 APK | `Tevarn-Mobile-0.5.8-alpha.apk` |
+| 安装版 Setup | `Tevarn-Setup-0.4.0-x64.exe` |
+| 便携版 | `Tevarn-0.4.0-win-portable.exe` |
+| 压缩包 | `Tevarn-0.4.0-win-x64.zip` |
+| 手机 APK | `Tevarn-Mobile-0.4.0.apk` |
 
-本地打包输出目录示例：
+在 [Releases · v0.4.0](https://github.com/wu1w/tevarn/releases/tag/v0.4.0) 下载，或本地构建输出：
 
 ```text
-frontend/release/Tevarn-Setup-0.5.8-alpha-x64.exe
-mobile/dist/Tevarn-Mobile-0.5.8-alpha.apk
+frontend/release/Tevarn-Setup-0.4.0-x64.exe
+mobile/dist/Tevarn-Mobile-0.4.0.apk
 ```
 
 ### 从源码打桌面包
@@ -231,7 +231,7 @@ npm run electron:dev
 | | |
 |--|--|
 | **协议** | MIT — 自由使用、修改与分发 |
-| **版本** | 0.5.x-alpha · 活跃开发 |
+| **版本** | **v0.4.0** · 新主线首个稳定版 |
 | **本地优先** | 默认 SQLite · 只监听回环 · 不强制云组件 |
 
 欢迎 Issue 与 PR。
@@ -260,12 +260,12 @@ npx --yes serve website -p 5173
 
 | 线 | 分支 / 版本 | 说明 |
 |----|-------------|------|
-| **当前主开发** | `feature/agent-kernel` · 0.5.x-alpha | Rust Kernel · 编制/工单 · 权限法院 · 用量账本 |
-| **历史线** | `main` / Releases 0.3.x | 较早桌面 Agent；不含完整 0.5 Kernel |
+| **当前主线** | **`main`** · **[v0.4.0](https://github.com/wu1w/tevarn/releases/tag/v0.4.0)** | Tevarn · Rust Kernel · 编制/工单 · 权限法院 · 双端 |
+| **历史预览** | `feature/agent-kernel` / 0.5.x-alpha | 已并入 main，可作历史参考 |
+| **旧桌面线** | Releases 0.3.x（Takton） | 较早桌面 Agent |
 
-- 试用新版 → clone **`feature/agent-kernel`**，并准备 `tevarn-kernel-host`
-- 安装 0.3.x Release **不会**自动获得 0.5 Kernel
-- 品牌由 Takton 更名为 **Tevarn**；环境变量 `TEVARN_*` 优先，仍兼容 `TAKTON_*`
+- 新用户 → clone **`main`** 或下载 **v0.4.0** 安装包  
+- 品牌 **Tevarn**；环境变量 `TEVARN_*` 优先，仍兼容 `TAKTON_*`
 
 ---
 
