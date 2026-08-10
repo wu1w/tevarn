@@ -32,3 +32,7 @@ class MCPServer(Base):
     timeout: Mapped[float] = mapped_column(Float, default=30.0)
     risk_level: Mapped[str] = mapped_column(String(16), default="medium")
     allowed_paths: Mapped[list[str] | None] = mapped_column(JSON, nullable=True, default=None)
+    # Hermes 风格工具白/黑名单：原始 MCP 工具名（非 registry 前缀）
+    # tools_include 非空 → 仅挂载匹配项；为空则挂全部，再减 tools_exclude
+    tools_include: Mapped[list[str] | None] = mapped_column(JSON, nullable=True, default=None)
+    tools_exclude: Mapped[list[str] | None] = mapped_column(JSON, nullable=True, default=None)

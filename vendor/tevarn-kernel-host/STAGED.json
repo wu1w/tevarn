@@ -1,7 +1,7 @@
 ﻿{
-    "dest":  "E:\\项目\\takton-alpha\\vendor\\takton-kernel-host\\takton-kernel-host.exe",
+    "dest":  "E:\\项目\\takton-alpha-src\\vendor\\tevarn-kernel-host\\tevarn-kernel-host.exe",
     "profile":  "release",
-    "staged_at":  "2026-07-31T15:28:33.6071862Z",
-    "source":  "E:\\项目\\takton-alpha\\target\\release\\takton-kernel-host.exe",
+    "staged_at":  "2026-08-09T14:23:53.6083877Z",
+    "source":  "E:\\项目\\takton-alpha-src\\target\\release\\tevarn-kernel-host.exe",
     "note":  "Binary is gitignored (*.exe); rebuild before pack/dist"
 }

@@ -2114,6 +2114,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             brief = compact_capability_brief(
                 None if enabled_tools_filter is None else tool_name_list,
                 scene=scene_plan,
+                user_input=str(enriched_input or user_input or ""),
             )
             try:
                 from backend.tools.builtins.capability_tools import _load_prefs
@@ -2127,6 +2128,25 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             except Exception as _silent_e:
                 logger.debug("suppressed: %s", _silent_e, exc_info=False)
             messages.append({"role": "system", "content": brief})
+            # MCP 密钥交接：独立短提示（不回显密钥），压「先搜索再配」偏航
+            try:
+                from backend.agent.tool_policy import is_mcp_secret_handoff
+
+                if is_mcp_secret_handoff(str(enriched_input or user_input or "")):
+                    messages.append(
+                        {
+                            "role": "system",
+                            "content": (
+                                "【MCP 配置】用户本轮像是在交付 API Key/密钥。"
+                                "请直接 manage_mcp list → update env 写入对应键"
+                                "（如 ASK_ECHO_SEARCH_INFINITY_API_KEY / TAVILY_API_KEY）→ "
+                                "再用 mcp_* 自测。禁止用 web_search 或其它搜索 MCP 去调研「怎么配置」。"
+                                "不要在回复中复述完整密钥。"
+                            ),
+                        }
+                    )
+            except Exception as _mcp_ops_e:
+                logger.debug("mcp ops handoff hint skip: %s", _mcp_ops_e)
         except Exception as e:
             logger.debug("capability inject skipped: %s", e)
 

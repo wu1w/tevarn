@@ -750,8 +750,9 @@ class UseToolPackTool(BaseTool):
             description=(
                 "动态启用额外工具包。当当前工具列表缺少桌面/管理/进化/办公等能力时调用。"
                 "action=list 查看可用 pack；action=enable 并传入 packs 数组以加载。"
-                "常用 pack: desktop, manage, evolution, office, devices, github, data, goal, cluster, web, coding。"
-                "映射提示：OKR/经营目标→goal；注册/生成 skill→evolution；PPT/报告→office；MCP→manage；派工/雇佣→crew。"
+                "常用 pack: desktop, manage, evolution, office, devices, github, data, goal, cluster, web, coding, mcp。"
+                "映射提示：OKR/经营目标→goal；注册/生成 skill→evolution；PPT/报告→office；"
+                "已安装 MCP 运行时工具→mcp（或 integrations）；MCP 配置管理→manage；派工/雇佣→crew。"
                 "packs=['full'] 启用全部工具（慎用，降低智力密度）。"
             ),
             parameters={

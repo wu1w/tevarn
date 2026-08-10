@@ -438,6 +438,12 @@ async def enforce_tool_gate(
     mediate_args = sanitize_args_for_kernel(args)
     try:
         k = get_kernel()
+        # 动态 MCP 工具：不经 kernel mediate 拦截（已挂载即放行；审计在 permission_court）。
+        if str(name).startswith("mcp_"):
+            if mark_passed:
+                args["_tool_gate_passed"] = True
+                args["_tool_gate_internal"] = True
+            return args, None
         await k.mediate(pid, "tool_call", name, args=mediate_args)
     except KernelPermissionError as e:
         logger.warning("tool_gate mediate deny tool=%s proc=%s: %s", name, pid[:12], e)

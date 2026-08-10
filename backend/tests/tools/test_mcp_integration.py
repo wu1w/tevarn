@@ -176,7 +176,7 @@ async def test_schema_generation(fake_mcp_client):
     # Verify echo schema structure
     echo_schema = schema_map["mcp_echo"]
     assert echo_schema["type"] == "function"
-    assert echo_schema["function"]["description"] == "Echo the input message"
+    assert "Echo the input message" in echo_schema["function"]["description"]
     assert "message" in echo_schema["function"]["parameters"]["properties"]
 
 

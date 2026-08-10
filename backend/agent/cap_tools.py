@@ -79,6 +79,16 @@ def filter_tools_for_process(
             ]
         if filtered_names is not None:
             allow = set(filtered_names)
+            # 无 Rust 重建时：host filter_tools 会丢掉动态 mcp_*；
+            # 若进程持有 manage_mcp/mcp，把输入列表中的 mcp_* 再并回去。
+            if caps is not None:
+                from backend.agent.grant_store import tool_matches_crew_caps
+
+                for n in names:
+                    if n.startswith("mcp_") and tool_matches_crew_caps(n, caps):
+                        allow.add(n)
+                if tool_matches_crew_caps("manage_mcp", caps):
+                    allow.add("manage_mcp")
             before = len(tools)
             out = [
                 t

@@ -448,12 +448,17 @@ export default function MarketPage() {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 12 }}>
                 {mcpServers.map((s: MCPServer) => {
                   const st = statusMap.get(s.name);
-                  const ok = st?.connected === true || s.enabled;
+                  // connected = 运行时已连接；enabled 仅表示 DB 开关，不可混用
+                  const connected = st?.connected === true;
+                  const enabled = s.enabled === true;
                   return (
                     <div key={s.id || s.name} style={card}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
                         <div style={{ fontSize: 13, fontWeight: 650, fontFamily: 'var(--font-mono)', color: 'var(--foreground)' }}>{s.name}</div>
-                        <span style={ok ? tagGreen : tagRed}>{ok ? (zh ? '已连接' : 'connected') : (zh ? '断开' : 'offline')}</span>
+                        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                          <span style={enabled ? tagGreen : tagRed}>{enabled ? (zh ? '已启用' : 'enabled') : (zh ? '已禁用' : 'disabled')}</span>
+                          <span style={connected ? tagGreen : tagRed}>{connected ? (zh ? '已连接' : 'connected') : (zh ? '未连接' : 'offline')}</span>
+                        </div>
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--foreground-dim)', marginTop: 6, fontFamily: 'var(--font-mono)' }}>
                         {s.transport || s.command || s.url || '—'}
@@ -462,7 +467,8 @@ export default function MarketPage() {
                         {s.description || (zh ? 'MCP 服务' : 'MCP server')}
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--foreground-dim)', marginTop: 8 }}>
-                        {zh ? '暴露工具' : 'Tools'} · {st?.tool_count ?? '—'}
+                        {zh ? '暴露工具' : 'Tools'} · {st?.tool_count ?? (connected ? 0 : '—')}
+                        {enabled && !connected ? (zh ? ' · 启用但未连上' : ' · enabled, not connected') : ''}
                       </div>
                     </div>
                   );

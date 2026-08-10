@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Iterable
 
@@ -118,6 +119,9 @@ TOOL_PACKS: dict[str, tuple[str, ...]] = {
     "cluster": ("crew_steward", "manage_sub_agent", "delegate_task", "agent_call", "okr_goal"),
     "data": ("sqlite_query", "http"),
     "github": ("github", "manage_git"),
+    # MCP 运行时工具：静态仅 manage_mcp；tools_for_packs 会并入 live mcp_*
+    "mcp": ("manage_mcp",),
+    "integrations": ("manage_mcp",),
 }
 
 # 产品 profile → 默认 pack 集合（scene 关键词仅在 dynamic 扩包）
@@ -206,10 +210,6 @@ _PACK_KEYWORDS: dict[str, tuple[str, ...]] = {
         "cron",
         "定时",
         "webhook",
-        "mcp",
-        "MCP",
-        "mcp 商店",
-        "MCP商店",
         "配置 tevarn",
         "configure",
         "频道",
@@ -218,6 +218,22 @@ _PACK_KEYWORDS: dict[str, tuple[str, ...]] = {
         "改配置",
         "settings",
         "模型列表",
+    ),
+    # MCP 工具包（与 manage 运维包分离，避免只挂 manage_mcp 不挂运行时工具）
+    "mcp": (
+        "mcp",
+        "MCP",
+        "mcp 商店",
+        "MCP商店",
+        "mcp server",
+        "model context protocol",
+        "外部工具",
+        "integrations",
+        "doubao-search",
+        "askecho",
+        "豆包搜索",
+        "search infinity",
+        "Search Infinity",
     ),
     "evolution": (
         "进化",
@@ -354,6 +370,77 @@ _MINIMAL_HINTS = (
     "嗯",
 )
 
+# ── MCP 运维意图（配/装/改/密钥）vs 纯搜索：避免「豆包搜索 MCP」被 web 关键词绑架 ──
+# 不用 \bmcp\b：中文邻接「…搜索MCP」在 Unicode 下左右皆 \w，边界会失效
+_MCP_MARKERS = re.compile(
+    r"(?i)mcp|model\s*context\s*protocol|integrations|"
+    r"doubao-search|askecho|search[\s-]*infinity|"
+    r"豆包搜索|融合信息搜索"
+)
+_MCP_OPS_VERBS = re.compile(
+    r"(?i)配\s*下|配\s*置|安装|挂载|启用|写入|填\s*入|设置|"
+    r"改\s*一下|修改|更新|装\s*上|接\s*上|"
+    r"\binstall\b|\bmount\b|\benable\b|\bconfigure\b|\bupdate\b"
+)
+_MCP_SECRET_HINTS = re.compile(
+    r"(?i)api[_\s-]?key|密钥|secret|access[_\s-]?key|环境变量|\benv\b|token"
+)
+# 明确「要去搜」：保留 web；与产品名里的「搜索」二字区分
+_PURE_SEARCH_VERBS = re.compile(
+    r"(?i)搜\s*一下|搜索\s*一下|帮我\s*搜|联网\s*搜|查\s*一下|"
+    r"search\s+(for|the|about)|\bgoogle\b|用.{0,16}搜"
+)
+# 用户把密钥贴在冒号后（不解析/不记录密钥本体，仅作意图信号）
+_SECRET_HANDOFF_TAIL = re.compile(
+    r"[：:]\s*[A-Za-z0-9_\-]{16,}\s*$"
+)
+
+
+def is_mcp_ops_intent(user_input: str) -> bool:
+    """本轮是否在「配置/安装/写密钥」MCP，而非调用搜索。"""
+    text = (user_input or "").strip()
+    if not text or not _MCP_MARKERS.search(text):
+        return False
+    if _MCP_OPS_VERBS.search(text) or _MCP_SECRET_HINTS.search(text):
+        return True
+    # 「给你自己配下…MCP：<key>」类：动词 + 疑似密钥尾巴
+    if "配" in text and _SECRET_HANDOFF_TAIL.search(text):
+        return True
+    if _SECRET_HANDOFF_TAIL.search(text) and _MCP_MARKERS.search(text):
+        return True
+    return False
+
+
+def should_demote_web_for_mcp_ops(user_input: str) -> bool:
+    """运维 MCP 时，若仅因产品名含「搜索」挂上 web，则降级。"""
+    if not is_mcp_ops_intent(user_input):
+        return False
+    if _PURE_SEARCH_VERBS.search(user_input or ""):
+        return False
+    return True
+
+
+def is_mcp_secret_handoff(user_input: str) -> bool:
+    """用户本轮是否像在交付 MCP API Key（不解析密钥本体）。"""
+    text = (user_input or "").strip()
+    if not text or not is_mcp_ops_intent(text):
+        return False
+    return bool(_SECRET_HANDOFF_TAIL.search(text) or _MCP_SECRET_HINTS.search(text))
+
+
+def mcp_ops_capability_line(*, secret_handoff: bool = False) -> str:
+    """compact brief 用的短运维纪律（控制长度）。"""
+    base = (
+        "MCP ops: manage_mcp list/update env/reload; mcp_* = call live tools. "
+        "Do NOT web_search to research how to configure when Key is given."
+    )
+    if secret_handoff:
+        return (
+            base
+            + " Secret handoff: manage_mcp update name=<server> env={API_KEY:…} then mcp_* verify."
+        )
+    return base
+
 
 @dataclass
 class ScenePlan:
@@ -395,12 +482,37 @@ def wants_full_tools(
 
 def list_pack_catalog() -> dict[str, list[str]]:
     """供 use_tool_pack action=list。"""
-    return {k: list(v) for k, v in TOOL_PACKS.items() if k != "core"}
+    cat = {k: list(v) for k, v in TOOL_PACKS.items() if k != "core"}
+    # mcp pack 展示实时挂载工具名
+    live = live_mcp_tool_names()
+    if live:
+        cat["mcp"] = list(dict.fromkeys([*(cat.get("mcp") or []), *live[:24]]))
+        cat["integrations"] = list(cat["mcp"])
+    return cat
+
+
+def live_mcp_tool_names() -> list[str]:
+    """当前 ToolRegistry 中已注册且 enabled 的 MCP 工具名。"""
+    try:
+        from backend.tools.base import ToolSource
+        from backend.tools.registry import ToolRegistry
+
+        return sorted(
+            t.name
+            for t in ToolRegistry.get_all(source=ToolSource.MCP)
+            if getattr(t, "enabled", True)
+        )
+    except Exception:
+        return []
 
 
 def tools_for_packs(packs: Iterable[str]) -> list[str]:
-    """合并 pack → 去重工具名（core 顺序优先）。"""
+    """合并 pack → 去重工具名（core 顺序优先）。
+
+    pack ``mcp`` / ``integrations`` / ``manage`` 会并入 live ``mcp_*`` 工具。
+    """
     base: set[str] = set(DEFAULT_CHAT_TOOL_WHITELIST)
+    need_mcp_live = False
     for p in packs:
         key = (p or "").strip().lower()
         if key in {"*", "all", "full"}:
@@ -409,6 +521,11 @@ def tools_for_packs(packs: Iterable[str]) -> list[str]:
             continue
         if key in TOOL_PACKS:
             base.update(TOOL_PACKS[key])
+        if key in {"mcp", "integrations", "manage"}:
+            need_mcp_live = True
+    if need_mcp_live:
+        base.update(live_mcp_tool_names())
+        base.add("manage_mcp")
     return _order_tools(base)
 
 
@@ -481,6 +598,15 @@ def infer_scene(
                     reasons.append(f"kw:{kw[:16]}")
                 break
 
+    # MCP 运维纠偏：强制 mcp（manage_mcp 已在 mcp pack），避免产品名「xx搜索」误挂 web
+    if is_mcp_ops_intent(text):
+        if "mcp" not in packs:
+            packs.append("mcp")
+            reasons.append("mcp_ops:force_mcp")
+        if should_demote_web_for_mcp_ops(text) and "web" in packs:
+            packs = [p for p in packs if p != "web"]
+            reasons.append("mcp_ops:demote_web")
+
     # 注入档位
     tier = "standard"
     if not text or len(text) < 8 or any(h in low or h in text for h in _MINIMAL_HINTS):
@@ -543,6 +669,12 @@ def resolve_enabled_tool_names(
     except Exception:
         pass
 
+    # 已连接 MCP 工具时自动挂上 mcp pack（enable/mount 闭环：启用后无需再 use_tool_pack）
+    live_mcp = live_mcp_tool_names()
+    if live_mcp and prof not in {"core"} and "mcp" not in plan.packs and "*" not in plan.packs:
+        plan.packs = list(plan.packs) + ["mcp"]
+        plan.reasons = list(plan.reasons) + [f"live_mcp:{len(live_mcp)}"]
+
     if wants_full_tools(raw_tools, profile=prof) or "*" in plan.packs or "full" in plan.packs:
         plan.profile = "full"
         plan.injection_tier = "rich"
@@ -554,6 +686,9 @@ def resolve_enabled_tool_names(
     # 显式 tools 名单（非 *）
     if names is not None and len(names) > 0:
         base = set(names)
+        # 显式名单仍并入 live MCP，避免启用后会话里看不到
+        if live_mcp:
+            base.update(live_mcp)
         plan.reasons = list(plan.reasons) + ["explicit_tools"]
     else:
         packs = list(plan.packs)
@@ -603,17 +738,39 @@ def compact_capability_brief(
     tool_names: list[str] | None,
     *,
     scene: ScenePlan | None = None,
+    user_input: str = "",
 ) -> str:
     """短 brief + 可选场景说明（compact 契约：总长 <600 字符）。"""
     n = len(tool_names) if tool_names is not None else "all"
+    name_set = set(tool_names or []) if tool_names is not None else set()
+    packs = list(scene.packs or []) if scene else []
+    reasons = list(scene.reasons or []) if scene else []
+    mcp_surface = (
+        "manage_mcp" in name_set
+        or "mcp" in packs
+        or "integrations" in packs
+        or any(str(r).startswith("mcp_ops") for r in reasons)
+        or any(str(t).startswith("mcp_") for t in name_set)
+    )
+    secret_handoff = bool(user_input and is_mcp_secret_handoff(user_input))
+
     lines = [
         "Tool discipline: use tools for facts/files/shell/live data "
         f"(this turn: {n}). Never claim a missing capability before trying the matching tool.",
-        "Coding: read → edit/apply_patch/file_write → command/python verify. "
-        "Prefer one coherent multi-hunk apply_patch or full file_write over many tiny edits. "
-        "Never invent 'command unavailable' — command/python are on the list when coding. "
-        "After fix/build, run tests before claiming done. If a patch returns mismatch/error, re-read and re-patch.",
     ]
+    # MCP 运维纪律靠前，避免被 600 字截断吃掉（配置路径曾过轻）
+    if mcp_surface:
+        lines.append(mcp_ops_capability_line(secret_handoff=secret_handoff))
+        lines.append(
+            "Coding (if needed): read → edit/apply_patch → command/python verify."
+        )
+    else:
+        lines.append(
+            "Coding: read → edit/apply_patch/file_write → command/python verify. "
+            "Prefer one coherent multi-hunk apply_patch or full file_write over many tiny edits. "
+            "Never invent 'command unavailable' — command/python are on the list when coding. "
+            "After fix/build, run tests before claiming done. If a patch returns mismatch/error, re-read and re-patch."
+        )
     if scene and scene.profile != "full":
         lines.append(
             f"Profile/scene: {scene.summary()[:60]}. Need unlisted packs? "
@@ -622,13 +779,13 @@ def compact_capability_brief(
     lines.append(
         "Skill discipline: an installed skill matching the task MUST be followed/loaded before improvising."
     )
-    lines.append(
-        "cwd: session workspace_root (else TEVARN_TASK_ROOT); pass command.cwd for subdirs. "
-        "Prefer file_write/edit over heredoc; batch independent reads."
-    )
+    if not mcp_surface:
+        lines.append(
+            "cwd: session workspace_root (else TEVARN_TASK_ROOT); pass command.cwd for subdirs. "
+            "Prefer file_write/edit over heredoc; batch independent reads."
+        )
     lines.append("Prefer tools over speculation; finish the task.")
     # 仅当本轮工具面真有 crew_steward 时再注入编制纪律（避免普通会话被诱导派工）
-    name_set = set(tool_names or []) if tool_names is not None else set()
     if "crew_steward" in name_set:
         lines.append(
             "Workforce: multi-step team projects → crew_steward list/hire/assign (inbox). "
@@ -646,7 +803,11 @@ def compact_capability_brief(
         lines.append(
             "Business goals (目标页 O-KR): use okr_goal list/update/create when relevant."
         )
-    return "\n".join(lines)
+    text = "\n".join(lines)
+    # compact 契约：硬截断，避免 prompt 膨胀（测试与 runtime 一致）
+    if len(text) >= 600:
+        text = text[:596].rstrip() + "..."
+    return text
 
 
 # pack → skill 标签/关键词加权（与 prompt-skill 对齐）
@@ -654,7 +815,8 @@ SCENE_SKILL_HINTS: dict[str, tuple[str, ...]] = {
     "coding": ("code", "python", "git", "debug", "refactor", "编程", "代码", "test", "lint"),
     "web": ("search", "browser", "web", "http", "crawl", "搜索", "网页"),
     "desktop": ("desktop", "gui", "uia", "click", "screenshot", "桌面", "键鼠"),
-    "manage": ("cron", "config", "ops", "channel", "mcp", "webhook", "运维", "配置"),
+    "manage": ("cron", "config", "ops", "channel", "webhook", "运维", "配置"),
+    "mcp": ("mcp", "MCP", "integrations", "外部工具"),
     "evolution": ("evolution", "skill", "进化", "curator", "tee"),
     "office": ("ppt", "docx", "report", "office", "chart", "tts", "日历", "幻灯"),
     "devices": ("device", "remote", "ssh", "agent", "设备", "远程"),

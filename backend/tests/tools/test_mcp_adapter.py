@@ -117,4 +117,5 @@ async def test_mcp_tool_adapter_source_and_risk():
         parameters={"type": "object", "properties": {}},
     )
     assert adapter.source == ToolSource.MCP
-    assert adapter.risk_level.name == "MEDIUM"
+    # 默认 low：避免 confirm 弹窗挡住已挂载 MCP
+    assert adapter.risk_level.name == "LOW"

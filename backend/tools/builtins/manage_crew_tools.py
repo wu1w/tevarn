@@ -367,7 +367,22 @@ class ManageSkill(BaseTool):
                 if obj is None:
                     return ToolResult(success=False, data={}, message="技能不存在")
                 new_enabled = action == "enable"
+                skill_name = obj.name
                 obj = await repo.toggle_skill(obj.id, new_enabled)
+                # 同步 ToolRegistry，避免 UI/工具切换后 schema 仍可见或不可见
+                try:
+                    from backend.tools.registry import ToolRegistry
+
+                    rt = ToolRegistry.get(skill_name)
+                    if rt is not None:
+                        rt.enabled = new_enabled
+                    elif new_enabled and obj is not None and not getattr(obj, "is_builtin", False):
+                        from backend.skills.dynamic import DynamicSkill
+                        from backend.tools.adapters.dynamic_adapter import DynamicSkillAdapter
+
+                        ToolRegistry.register(DynamicSkillAdapter(DynamicSkill.from_db(obj)))
+                except Exception:
+                    pass
                 return ToolResult(
                     success=True,
                     data=self._to_dict(obj) if obj else {"enabled": new_enabled},

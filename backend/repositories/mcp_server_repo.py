@@ -74,11 +74,13 @@ class MCPServerRepository:
             return merged
 
     async def delete(self, server_id: uuid.UUID) -> bool:
-        server = await self.get_by_id(server_id)
-        if server is None:
-            return False
+        """按 id 在同一 session 内删除，避免 detached instance 误删失败。"""
         from backend.database import AsyncSessionLocal
+
         async with AsyncSessionLocal() as session:
+            server = await session.get(MCPServer, server_id)
+            if server is None:
+                return False
             await session.delete(server)
             await session.commit()
             return True
@@ -103,14 +105,16 @@ class AsyncMCPServerRepository(MCPServerRepository):
         super().__init__(db)
 
     async def get_all_enabled(self) -> list[MCPServer]:
+        # 稳定排序：命名冲突时 flat mcp_{tool} 归属可预期
+        stmt = (
+            select(MCPServer)
+            .where(MCPServer.enabled.is_(True))
+            .order_by(MCPServer.name)
+        )
         if self.db is not None:
-            result = await self.db.execute(
-                select(MCPServer).where(MCPServer.enabled.is_(True))
-            )
+            result = await self.db.execute(stmt)
             return list(result.scalars().all())
         from backend.database import AsyncSessionLocal
         async with AsyncSessionLocal() as session:
-            result = await session.execute(
-                select(MCPServer).where(MCPServer.enabled.is_(True))
-            )
+            result = await session.execute(stmt)
             return list(result.scalars().all())

@@ -93,6 +93,17 @@ pub fn capability_matches(target: &str, capabilities: &BTreeSet<String>) -> bool
             return true;
         }
     }
+    // Dynamic MCP tools (mcp_*) — no catalog entry; allow under manage_mcp / mcp
+    // so Python can mount runtime tools without rebuilding host for every server tool.
+    if target.starts_with("mcp_") || target == "mcp_call" || target == "mcp" {
+        if capabilities.contains("manage_mcp")
+            || capabilities.contains("mcp")
+            || capabilities.contains("integrations")
+            || capabilities.contains("mcp_call")
+        {
+            return true;
+        }
+    }
     // target itself may be abstract; allow any tool that maps to it
     for (tool, cap) in TOOL_TO_CREW_CAP {
         if *cap == target && capabilities.contains(*tool) {

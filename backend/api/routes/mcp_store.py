@@ -31,6 +31,15 @@ _repo = AsyncMCPServerRepository()
 class MCPStoreInstallRequest(BaseModel):
     source: str = Field(..., description="curated | official")
     id: str = Field(..., description="商店条目 id")
+    # 安装时可选工具白名单（原始 MCP 工具名）；空=全量挂载，之后可用 PUT /mcp/{id}/tools 调整
+    tools_include: list[str] | None = Field(
+        default=None,
+        description="可选：仅挂载这些工具（Hermes tools.include）；省略则挂全部",
+    )
+    tools_exclude: list[str] | None = Field(
+        default=None,
+        description="可选：排除工具（仅当 tools_include 为空时生效）",
+    )
 
 
 class MCPStoreInstallResponse(BaseModel):
@@ -123,28 +132,62 @@ async def install_mcp_from_store(
                     if not v.strip():
                         need_env.append(k)
 
+    from backend.mcp_hub.normalize import normalize_server_fields, normalize_tool_name_list
+
+    norm = normalize_server_fields(
+        name=item.name[:64],
+        command=item.command or None,
+        args=list(item.args or []),
+        env=env or {},
+        existing_env={},
+    )
+    # 安装时不写入空密钥，避免子进程被空 Key 覆盖
+    clean_env = {k: v for k, v in (norm["env"] or {}).items() if str(v).strip()}
     create = MCPServerCreate(
         name=item.name[:64],
         transport=item.transport,
-        command=item.command or None,
-        args=item.args or [],
+        command=norm["command"],
+        args=norm["args"],
         url=item.url or None,
-        env=env or {},
+        env=clean_env,
         enabled=True,
         timeout=30.0,
         risk_level=item.risk_level
         if item.risk_level in ("safe", "low", "medium", "high", "dangerous")
-        else "medium",
+        else "low",
         allowed_paths=None,
+        tools_include=normalize_tool_name_list(body.tools_include),
+        tools_exclude=normalize_tool_name_list(body.tools_exclude),
     )
     server = await _repo.create(create)
     sid, sname = _server_id_name(server)
 
+    # 安装后热挂载：enabled 服务器立即连接并注册工具
+    runtime_ok = True
+    runtime_err = ""
+    registered = 0
+    try:
+        from backend.mcp_hub.service import sync_mcp_runtime
+
+        rt = await sync_mcp_runtime(only_server=sname)
+        runtime_ok = bool(rt.get("ok")) and sname in (rt.get("connected") or [])
+        runtime_err = str(rt.get("error") or rt.get("warning") or "")
+        registered = int(rt.get("registered") or 0)
+    except Exception as e:
+        runtime_ok = False
+        runtime_err = str(e)
+
     msg = f"已安装 {item.display_name}"
+    if create.tools_include:
+        msg += f" · 白名单 {len(create.tools_include)} 个工具"
     if need_env:
         msg += f" · 请到「已安装/编辑」填写环境变量: {', '.join(need_env)}"
     if item.note:
         msg += f" · {item.note}"
+    if runtime_ok:
+        msg += f" · 已挂载 {registered} 个工具（可用 PUT /api/mcp/{{id}}/tools 调整白名单）"
+    else:
+        msg += f" · 运行时挂载失败: {runtime_err or 'unknown'}（可点「重新加载 MCP」）"
     return MCPStoreInstallResponse(
         success=True,
         server_id=sid,

@@ -80,6 +80,61 @@ CURATED: list[UnifiedMCP] = [
         note="填 FIRECRAWL_API_KEY 后点重载 MCP；自托管可加 FIRECRAWL_API_URL",
     ),
     UnifiedMCP(
+        id="doubao-search",
+        name="doubao-search",
+        display_name="豆包搜索 / Search Infinity",
+        summary="火山引擎官方联网搜索（中文友好，web_search）",
+        description=(
+            "官方 MCP：mcp-server-askecho-search-infinity（uvx 启动）。"
+            "暴露 web_search 工具，支持网页/图片检索、时效与站点过滤，适合中文 Agent 联网。"
+            "需在控制台开通并创建 API Key："
+            "https://console.volcengine.com/search-infinity/api-key 。"
+            "环境变量优先 ASK_ECHO_SEARCH_INFINITY_API_KEY；"
+            "也可使用 VOLCENGINE_ACCESS_KEY + VOLCENGINE_SECRET_KEY。"
+            "文档：https://docs.volcengine.com/docs/82379/2309827 。"
+            "兼容 Claude Code / Hermes / OpenClaw / Codex / Tevarn。"
+        ),
+        source="curated",
+        source_url=(
+            "https://github.com/volcengine/mcp-server/tree/main/"
+            "server/mcp_server_askecho_search_infinity"
+        ),
+        icon="🫘",
+        category="搜索",
+        tags=[
+            "search",
+            "web",
+            "doubao",
+            "豆包",
+            "volcengine",
+            "askecho",
+            "chinese",
+            "research",
+        ],
+        transport="stdio",
+        command="uvx",
+        args=[
+            "--from",
+            "mcp-server-askecho-search-infinity>=0.2.0",
+            "mcp-server-askecho-search-infinity",
+        ],
+        env_hint=(
+            "ASK_ECHO_SEARCH_INFINITY_API_KEY=\n"
+            "# 或使用 AK/SK：\n"
+            "# VOLCENGINE_ACCESS_KEY=\n"
+            "# VOLCENGINE_SECRET_KEY="
+        ),
+        risk_level="low",
+        version=">=0.2.0",
+        registry_type="pypi",
+        package_id="mcp-server-askecho-search-infinity",
+        popularity=8500,
+        note=(
+            "需本机安装 uv（提供 uvx）；填 ASK_ECHO_SEARCH_INFINITY_API_KEY 后点重载 MCP。"
+            "挂载后工具名为 mcp_web_search（原始名 web_search）。"
+        ),
+    ),
+    UnifiedMCP(
         id="github",
         name="github",
         display_name="GitHub",

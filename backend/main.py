@@ -647,9 +647,9 @@ async def lifespan(app: FastAPI):
 
     # v3.0: 连接 MCP Servers 并注册 MCP 工具（后台；非工单硬依赖）
     try:
-        from backend.mcp_hub.service import load_mcp_tools
+        from backend.mcp_hub.service import sync_mcp_runtime
 
-        _spawn_bg(load_mcp_tools(), "load_mcp_tools")
+        _spawn_bg(sync_mcp_runtime(), "sync_mcp_runtime")
     except Exception as e:
         logger.warning(f"MCP tools loading skipped: {e}")
 

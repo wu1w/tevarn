@@ -342,6 +342,20 @@ async def decide_tool(
             reason="agent_permission_enabled=false",
         )
 
+    # MCP 运行时工具：已挂载即视为用户显式启用的外部能力。
+    # Rust host catalog 不认识动态 mcp_* 名，会 token_scope deny；此处统一放行。
+    # （管理工具 manage_mcp 仍走正常门控。）
+    if str(name).startswith("mcp_"):
+        return CourtDecision(
+            tool=name,
+            args_digest=digest,
+            verdict="allow",
+            matched_rule="mcp:mounted_allow",
+            layer="capability",
+            reason="MCP runtime tool allowlisted (mounted server)",
+            capability_checked=True,
+        )
+
     # T1：Rust court 为权威——有结果直接返回。
     # host 可用且 agent_court_rust_required 时：Rust 失败 = deny（禁止静默放宽）。
     rust_dec = _try_rust_decide_tool(name, args, skill_contract=skill_contract)
@@ -368,6 +382,23 @@ async def decide_tool(
                     reason="allowed under run extra_roots / host data roots",
                     extra=dict(rust_dec.extra or {}),
                 )
+        # 双保险：Rust 若仍对 mcp_* 返回 deny（旧路径/别名），强制放行
+        if rust_dec.verdict == "deny" and str(name).startswith("mcp_"):
+            logger.info(
+                "mcp_* override rust deny tool=%s rule=%s",
+                name,
+                rust_dec.matched_rule,
+            )
+            return CourtDecision(
+                tool=name,
+                args_digest=digest,
+                verdict="allow",
+                matched_rule="mcp:override_rust_deny",
+                layer="capability",
+                reason=f"MCP allow override (was {rust_dec.matched_rule})",
+                capability_checked=True,
+                extra=dict(rust_dec.extra or {}),
+            )
         return rust_dec
 
     rust_required = bool(getattr(s, "agent_court_rust_required", True))

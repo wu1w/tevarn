@@ -105,10 +105,18 @@ async def toggle_tool(
     current_user: Annotated[UserRead, Depends(require_admin)],
     repo: Annotated[ToolRepository, Depends(get_tool_repo)],
 ):
-    """切换工具启用状态（仅管理员）"""
+    """切换工具启用状态（仅管理员），并同步统一 ToolRegistry.enabled。"""
     tool = await repo.toggle_tool(tool_id, data.enabled)
     if tool is None:
         raise HTTPException(status_code=404, detail="Tool not found")
+    try:
+        from backend.tools.registry import ToolRegistry as UnifiedToolRegistry
+
+        ut = UnifiedToolRegistry.get(tool.name)
+        if ut is not None:
+            ut.enabled = bool(data.enabled)
+    except Exception:
+        pass
     return tool
 
 

@@ -19,28 +19,51 @@ class ManageMcp(BaseTool):
         super().__init__(
             name="manage_mcp",
             description=(
-                "管理 MCP Server 配置。action: list/get/add/update/delete。"
-                "add 需要 name 和 transport（stdio|sse）；stdio 需 command，sse 需 url"
+                "管理 MCP Server 配置（安装/改 env/热挂载）。"
+                "action: list/get/add/update/delete/tools/set_tools。"
+                "用户给了 API Key/密钥要配 MCP 时：先 list 看 name，再 update name=<server> "
+                "env={KEY:value}（如 ASK_ECHO_SEARCH_INFINITY_API_KEY / TAVILY_API_KEY），"
+                "勿用 web_search/mcp_* 去「调研怎么配」。update 后会热同步；再用 mcp_* 自测。"
+                "add 需要 name+transport（stdio|sse）；stdio 需 command（tavily/doubao-search 等可省略走默认模板），sse 需 url。"
+                "tools: 列远端工具与白名单；set_tools: tools_include/exclude（原始工具名，支持 *）。"
             ),
             parameters={
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["list", "get", "add", "update", "delete"],
+                        "enum": ["list", "get", "add", "update", "delete", "tools", "set_tools"],
                         "description": "操作类型",
                     },
-                    "server_id": {"type": "string", "description": "get/update/delete 时: MCP Server UUID（与 name 二选一）"},
-                    "name": {"type": "string", "description": "add: 服务名称；get/update/delete 可按名称定位"},
+                    "server_id": {"type": "string", "description": "get/update/delete/tools/set_tools 时: MCP Server UUID（与 name 二选一）"},
+                    "name": {"type": "string", "description": "add: 服务名称；其他 action 可按名称定位"},
                     "transport": {"type": "string", "description": "add/update: 传输方式 stdio | sse"},
                     "command": {"type": "string", "description": "add/update: stdio 启动命令"},
                     "args": {"type": "array", "items": {"type": "string"}, "description": "add/update: 启动参数"},
                     "url": {"type": "string", "description": "add/update: sse 服务地址"},
-                    "env": {"type": "object", "description": "add/update: 环境变量"},
+                    "env": {
+                        "type": "object",
+                        "description": (
+                            "add/update: 环境变量 dict。"
+                            "填 API Key 时写真实键名，如 "
+                            "{\"ASK_ECHO_SEARCH_INFINITY_API_KEY\":\"...\"} 或 "
+                            "{\"TAVILY_API_KEY\":\"...\"}；空值不会覆盖已有密钥。"
+                        ),
+                    },
                     "enabled": {"type": "boolean", "description": "add/update: 是否启用"},
                     "timeout": {"type": "number", "description": "add/update: 超时秒数，默认 30"},
                     "risk_level": {"type": "string", "description": "add/update: 风险等级，默认 medium"},
                     "allowed_paths": {"type": "array", "items": {"type": "string"}, "description": "add/update: 允许访问的路径"},
+                    "tools_include": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "set_tools: 白名单原始工具名（非空则只挂这些；支持 * 通配）",
+                    },
+                    "tools_exclude": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "set_tools: 黑名单（仅当 tools_include 为空时生效）",
+                    },
                 },
                 "required": ["action"],
             },
@@ -62,19 +85,57 @@ class ManageMcp(BaseTool):
             "timeout": obj.timeout,
             "risk_level": obj.risk_level,
             "allowed_paths": obj.allowed_paths,
+            "tools_include": getattr(obj, "tools_include", None),
+            "tools_exclude": getattr(obj, "tools_exclude", None),
         }
+
+    def _format_server_line(self, d: dict[str, Any], *, connected: bool | None = None) -> str:
+        """给人/模型可读的单行摘要（ToolResult 只暴露 message，必须写进 message）。"""
+        bits = [
+            f"name=`{d.get('name')}`",
+            f"id={d.get('id')}",
+            f"enabled={d.get('enabled')}",
+            f"transport={d.get('transport')}",
+        ]
+        if d.get("command"):
+            args = d.get("args") or []
+            bits.append(f"cmd=`{d.get('command')} {' '.join(str(a) for a in args[:4])}`".strip())
+        if connected is not None:
+            bits.append(f"connected={connected}")
+        inc = d.get("tools_include")
+        if inc:
+            bits.append(f"tools_include={inc}")
+        return " · ".join(bits)
 
     async def _resolve_id(self, repo: Any, kwargs: dict[str, Any]) -> uuid_mod.UUID:
         server_id = (kwargs.get("server_id") or "").strip()
         if server_id:
-            return _parse_uuid(server_id, "server_id")
-        name = (kwargs.get("name") or "").strip()
+            try:
+                uid = _parse_uuid(server_id, "server_id")
+                obj = await repo.get_by_id(uid)
+                if obj is not None:
+                    return obj.id
+                # 合法 UUID 但不在库里：模型编造的 id，继续走 name/唯一 server
+            except ValueError:
+                pass
+        name = (kwargs.get("name") or kwargs.get("server_name") or "").strip()
         if name:
             obj = await repo.get_by_name(name)
             if obj is None:
+                all_s = await repo.list_all()
+                for s in all_s:
+                    if str(s.name).lower() == name.lower():
+                        return s.id
                 raise ValueError(f"MCP Server 不存在: {name}")
             return obj.id
-        raise ValueError("需要提供 server_id 或 name")
+        # 唯一 server 时自动选用（list 的 message 过去没带 id，模型会瞎填 UUID）
+        all_s = await repo.list_all()
+        if len(all_s) == 1:
+            return all_s[0].id
+        if not all_s:
+            raise ValueError("没有任何 MCP Server，请先 add 或从商店安装")
+        names = ", ".join(f"`{s.name}`(id={s.id})" for s in all_s[:12])
+        raise ValueError(f"需要提供 server_id 或 name。现有: {names}")
 
     async def execute(self, action: str, **kwargs: Any) -> ToolResult:
         from backend.repositories.mcp_server_repo import AsyncMCPServerRepository
@@ -86,7 +147,31 @@ class ManageMcp(BaseTool):
             try:
                 servers = await repo.list_all()
                 data = [self._to_dict(s) for s in servers]
-                return ToolResult(success=True, data={"servers": data, "count": len(data)}, message=f"共 {len(data)} 个 MCP Server")
+                # 附带连接状态
+                status_map: dict[str, bool] = {}
+                try:
+                    from backend.mcp_hub.service import get_mcp_status
+
+                    for st in await get_mcp_status():
+                        status_map[str(st.get("name") or "")] = bool(st.get("connected"))
+                except Exception:
+                    pass
+                lines = [f"共 {len(data)} 个 MCP Server："]
+                if not data:
+                    lines.append("（空）请 manage_mcp add 或商店安装。")
+                for d in data:
+                    conn = status_map.get(str(d.get("name") or ""))
+                    lines.append(f"- {self._format_server_line(d, connected=conn)}")
+                lines.append(
+                    "下一步: tools name=<上列 name> 查看工具；"
+                    "直接调用 mcp_<tool> 如 mcp_tavily_search；"
+                    "set_tools 可设 tools_include 白名单。"
+                )
+                return ToolResult(
+                    success=True,
+                    data={"servers": data, "count": len(data)},
+                    message="\n".join(lines),
+                )
             except Exception as e:
                 return ToolResult(success=False, data={}, message=f"❌ 列出失败: {e}")
 
@@ -96,7 +181,12 @@ class ManageMcp(BaseTool):
                 obj = await repo.get_by_id(sid)
                 if obj is None:
                     return ToolResult(success=False, data={}, message="MCP Server 不存在")
-                return ToolResult(success=True, data=self._to_dict(obj), message=f"MCP Server `{obj.name}`")
+                d = self._to_dict(obj)
+                return ToolResult(
+                    success=True,
+                    data=d,
+                    message=f"MCP Server {self._format_server_line(d)}",
+                )
             except ValueError as e:
                 return ToolResult(success=False, data={}, message=str(e))
             except Exception as e:
@@ -109,33 +199,65 @@ class ManageMcp(BaseTool):
                 return ToolResult(success=False, data={}, message="add 需要提供 name 和 transport（stdio|sse）")
             if transport not in ("stdio", "sse"):
                 return ToolResult(success=False, data={}, message="transport 必须是 stdio 或 sse")
-            if transport == "stdio" and not (kwargs.get("command") or "").strip():
+            _known_stdio = (
+                "tavily",
+                "firecrawl",
+                "doubao-search",
+                "doubao",
+                "askecho",
+                "askecho-search",
+                "mcp-server-askecho-search-infinity",
+            )
+            if transport == "stdio" and not (kwargs.get("command") or "").strip() and name.lower() not in _known_stdio:
                 return ToolResult(success=False, data={}, message="stdio 传输需要提供 command")
             if transport == "sse" and not (kwargs.get("url") or "").strip():
                 return ToolResult(success=False, data={}, message="sse 传输需要提供 url")
             try:
                 if await repo.get_by_name(name):
                     return ToolResult(success=False, data={}, message=f"MCP Server `{name}` 已存在")
+                from backend.mcp_hub.normalize import normalize_server_fields
+
+                norm = normalize_server_fields(
+                    name=name,
+                    command=kwargs.get("command") or ("npx" if transport == "stdio" else None),
+                    args=list(kwargs.get("args") or []),
+                    env=kwargs.get("env") or {},
+                    existing_env={},
+                )
                 data = MCPServerCreate(
                     name=name,
                     transport=transport,
-                    command=kwargs.get("command") or None,
-                    args=[str(a) for a in (kwargs.get("args") or [])],
+                    command=norm["command"],
+                    args=norm["args"],
                     url=kwargs.get("url") or None,
-                    env={str(k): str(v) for k, v in (kwargs.get("env") or {}).items()},
+                    env=norm["env"],
                     enabled=bool(kwargs.get("enabled", True)),
                     timeout=float(kwargs.get("timeout", 30.0)),
-                    risk_level=str(kwargs.get("risk_level") or "medium"),
+                    risk_level=str(kwargs.get("risk_level") or "low"),
                     allowed_paths=kwargs.get("allowed_paths"),
                 )
                 obj = await repo.create(data)
-                return ToolResult(success=True, data=self._to_dict(obj), message=f"✅ MCP Server `{name}` 已添加")
+                rt = await self._sync_runtime(only_server=name)
+                d = self._to_dict(obj)
+                d["runtime"] = rt
+                ok_rt = bool(rt.get("ok")) and name in (rt.get("connected") or [])
+                msg = f"✅ MCP Server `{name}` 已添加"
+                if ok_rt:
+                    msg += f"并热挂载（{rt.get('registered', 0)} tools）"
+                else:
+                    msg += f"（DB 已写，运行时: {rt.get('error') or rt.get('warning') or 'not connected'}）"
+                return ToolResult(success=True, data=d, message=msg)
             except Exception as e:
                 return ToolResult(success=False, data={}, message=f"❌ 添加失败: {e}")
 
         elif action == "update":
             try:
                 sid = await self._resolve_id(repo, kwargs)
+                existing = await repo.get_by_id(sid)
+                if existing is None:
+                    return ToolResult(success=False, data={}, message="MCP Server 不存在")
+                from backend.mcp_hub.normalize import normalize_server_fields
+
                 patch: dict[str, Any] = {}
                 if kwargs.get("name") is not None:
                     patch["name"] = str(kwargs["name"]).strip()
@@ -144,14 +266,39 @@ class ManageMcp(BaseTool):
                     if t not in ("stdio", "sse"):
                         return ToolResult(success=False, data={}, message="transport 必须是 stdio 或 sse")
                     patch["transport"] = t
-                if kwargs.get("command") is not None:
-                    patch["command"] = str(kwargs["command"])
-                if kwargs.get("args") is not None:
-                    patch["args"] = [str(a) for a in kwargs["args"]]
+                # command/args/env 统一规范化：纠正错包、合并密钥、拒绝脱敏覆盖
+                want_cmd = kwargs.get("command") if kwargs.get("command") is not None else existing.command
+                want_args = kwargs.get("args") if kwargs.get("args") is not None else (existing.args or [])
+                want_env = kwargs.get("env") if kwargs.get("env") is not None else None
+                sname = str(patch.get("name") or existing.name)
+                norm = normalize_server_fields(
+                    name=sname,
+                    command=want_cmd,
+                    args=list(want_args or []),
+                    env=want_env if want_env is not None else {},
+                    existing_env=existing.env or {},
+                )
+                # 只要涉及 stdio 字段或 name=tavily/doubao 类，就写回规范化结果
+                _known_stdio = (
+                    "tavily",
+                    "firecrawl",
+                    "doubao-search",
+                    "doubao",
+                    "askecho",
+                    "askecho-search",
+                    "mcp-server-askecho-search-infinity",
+                )
+                if (
+                    kwargs.get("command") is not None
+                    or kwargs.get("args") is not None
+                    or kwargs.get("env") is not None
+                    or sname.lower() in _known_stdio
+                ):
+                    patch["command"] = norm["command"]
+                    patch["args"] = norm["args"]
+                    patch["env"] = norm["env"]
                 if kwargs.get("url") is not None:
                     patch["url"] = str(kwargs["url"])
-                if kwargs.get("env") is not None:
-                    patch["env"] = {str(k): str(v) for k, v in kwargs["env"].items()}
                 if kwargs.get("enabled") is not None:
                     patch["enabled"] = bool(kwargs["enabled"])
                 if kwargs.get("timeout") is not None:
@@ -160,16 +307,141 @@ class ManageMcp(BaseTool):
                     patch["risk_level"] = str(kwargs["risk_level"])
                 if kwargs.get("allowed_paths") is not None:
                     patch["allowed_paths"] = kwargs["allowed_paths"]
+                if kwargs.get("tools_include") is not None:
+                    from backend.mcp_hub.normalize import normalize_tool_name_list
+
+                    patch["tools_include"] = normalize_tool_name_list(kwargs.get("tools_include"))
+                if kwargs.get("tools_exclude") is not None:
+                    from backend.mcp_hub.normalize import normalize_tool_name_list
+
+                    patch["tools_exclude"] = normalize_tool_name_list(kwargs.get("tools_exclude"))
                 if not patch:
                     return ToolResult(success=False, data={}, message="update 至少需要提供一项更新")
                 obj = await repo.update(sid, MCPServerUpdate(**patch))
                 if obj is None:
                     return ToolResult(success=False, data={}, message="MCP Server 不存在")
-                return ToolResult(success=True, data=self._to_dict(obj), message=f"✅ MCP Server `{obj.name}` 已更新")
+                rt = await self._sync_runtime(only_server=obj.name)
+                d = self._to_dict(obj)
+                d["runtime"] = rt
+                ok_rt = bool(rt.get("ok")) and obj.name in (rt.get("connected") or [])
+                msg = f"✅ MCP Server `{obj.name}` 已更新"
+                if ok_rt:
+                    msg += f"并热同步（connected, {rt.get('registered', 0)} tools）"
+                else:
+                    msg += f"（DB 已写，运行时: {rt.get('error') or rt.get('warning') or 'not connected'}）"
+                return ToolResult(success=True, data=d, message=msg)
             except ValueError as e:
                 return ToolResult(success=False, data={}, message=str(e))
             except Exception as e:
                 return ToolResult(success=False, data={}, message=f"❌ 更新失败: {e}")
+
+        elif action == "tools":
+            # 列出远端工具 + 白名单选中状态
+            try:
+                sid = await self._resolve_id(repo, kwargs)
+                obj = await repo.get_by_id(sid)
+                if obj is None:
+                    return ToolResult(success=False, data={}, message="MCP Server 不存在")
+                from backend.mcp_hub.client import get_mcp_manager
+                from backend.mcp_hub.normalize import tool_name_allowed
+                from backend.tools.adapters.mcp_adapter import mcp_registry_name
+
+                manager = get_mcp_manager()
+                client = manager.get_client(obj.name)
+                if client is None or not getattr(client, "_initialized", False):
+                    await self._sync_runtime(only_server=obj.name)
+                    client = manager.get_client(obj.name)
+                if client is None or not getattr(client, "_initialized", False):
+                    return ToolResult(
+                        success=False,
+                        data=self._to_dict(obj),
+                        message=f"MCP Server `{obj.name}` 未连接，无法列出工具",
+                    )
+                remote = await client.list_tools()
+                inc = getattr(obj, "tools_include", None)
+                exc = getattr(obj, "tools_exclude", None)
+                items = []
+                for t in remote.tools:
+                    items.append(
+                        {
+                            "name": t.name,
+                            "description": (t.description or "")[:300],
+                            "selected": tool_name_allowed(t.name, inc, exc),
+                            "registry_name": mcp_registry_name(obj.name, t.name),
+                        }
+                    )
+                selected = [x["name"] for x in items if x["selected"]]
+                lines = [
+                    f"MCP name=`{obj.name}` id={obj.id} 远端工具 {len(items)} 个，"
+                    f"已挂载/白名单 {len(selected)} 个"
+                    + (f"（include={inc}）" if inc else "（全量）")
+                    + "：",
+                ]
+                for x in items:
+                    mark = "✓" if x["selected"] else "·"
+                    lines.append(
+                        f"  {mark} remote=`{x['name']}` → call `{x['registry_name']}`"
+                        + (f" — {x['description'][:80]}" if x.get("description") else "")
+                    )
+                if selected:
+                    lines.append(
+                        "可直接调用: " + ", ".join(f"`mcp_{n}`" if not n.startswith("mcp_") else f"`{n}`" for n in selected[:8])
+                    )
+                    # 更准确：用 registry_name
+                    lines[-1] = "可直接调用: " + ", ".join(
+                        f"`{x['registry_name']}`" for x in items if x["selected"]
+                    )[:500]
+                return ToolResult(
+                    success=True,
+                    data={
+                        "server": self._to_dict(obj),
+                        "tools": items,
+                        "selected": selected,
+                        "count": len(items),
+                        "selected_count": len(selected),
+                    },
+                    message="\n".join(lines),
+                )
+            except ValueError as e:
+                return ToolResult(success=False, data={}, message=str(e))
+            except Exception as e:
+                return ToolResult(success=False, data={}, message=f"❌ 列出工具失败: {e}")
+
+        elif action == "set_tools":
+            try:
+                sid = await self._resolve_id(repo, kwargs)
+                from backend.mcp_hub.normalize import normalize_tool_name_list
+
+                patch: dict[str, Any] = {}
+                if "tools_include" in kwargs:
+                    patch["tools_include"] = normalize_tool_name_list(kwargs.get("tools_include"))
+                if "tools_exclude" in kwargs:
+                    patch["tools_exclude"] = normalize_tool_name_list(kwargs.get("tools_exclude"))
+                if not patch:
+                    return ToolResult(
+                        success=False,
+                        data={},
+                        message="set_tools 需要 tools_include 和/或 tools_exclude",
+                    )
+                obj = await repo.update(sid, MCPServerUpdate(**patch))
+                if obj is None:
+                    return ToolResult(success=False, data={}, message="MCP Server 不存在")
+                rt = await self._sync_runtime(only_server=obj.name)
+                d = self._to_dict(obj)
+                d["runtime"] = rt
+                return ToolResult(
+                    success=True,
+                    data=d,
+                    message=(
+                        f"✅ MCP `{obj.name}` 工具白名单已更新"
+                        f"（include={d.get('tools_include')} exclude={d.get('tools_exclude')}；"
+                        f"registered={rt.get('registered', 0)}）"
+                    ),
+                )
+            except ValueError as e:
+                return ToolResult(success=False, data={}, message=str(e))
+            except Exception as e:
+                return ToolResult(success=False, data={}, message=f"❌ set_tools 失败: {e}")
 
         elif action == "delete":
             try:
@@ -177,13 +449,31 @@ class ManageMcp(BaseTool):
                 ok = await repo.delete(sid)
                 if not ok:
                     return ToolResult(success=False, data={}, message="MCP Server 不存在")
-                return ToolResult(success=True, data={"server_id": str(sid)}, message=f"✅ MCP Server `{sid}` 已删除")
+                rt = await self._sync_runtime()
+                ok_rt = bool(rt.get("ok"))
+                msg = f"✅ MCP Server `{sid}` 已删除"
+                msg += "并卸载工具" if ok_rt else f"（DB 已删，运行时同步失败: {rt.get('error') or 'unknown'}）"
+                return ToolResult(
+                    success=True,
+                    data={"server_id": str(sid), "runtime": rt},
+                    message=msg,
+                )
             except ValueError as e:
                 return ToolResult(success=False, data={}, message=str(e))
             except Exception as e:
                 return ToolResult(success=False, data={}, message=f"❌ 删除失败: {e}")
 
         return ToolResult(success=False, data={}, message=f"未知 action: {action}")
+
+    async def _sync_runtime(self, only_server: str | None = None) -> dict:
+        """DB 变更后热同步；可只重连单 server，避免全局 close_all 卸光工具。"""
+        try:
+            from backend.mcp_hub.service import sync_mcp_runtime
+
+            return await sync_mcp_runtime(only_server=only_server)
+        except Exception as e:
+            logger.warning("manage_mcp runtime sync failed: %s", e)
+            return {"ok": False, "error": str(e), "connected": []}
 
 
 # ── 消息通道 ──

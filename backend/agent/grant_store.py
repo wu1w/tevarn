@@ -193,6 +193,9 @@ TOOL_TO_CREW_CAP: dict[str, str] = {
     # 唯一映射：current_time 为独立 cap（勿重复键 F601）
     "current_time": "current_time",
     "result_load": "file_read",  # 外置结果回读，与读权限同级
+    # MCP 管理与运行时（动态 mcp_* 走 tool_matches 前缀规则）
+    "manage_mcp": "manage_mcp",
+    "manage_skill": "manage_skill",
 }
 
 
@@ -224,6 +227,8 @@ def sync_catalog_from_kernel(kernel: Any | None = None) -> bool:
         TOOL_TO_CREW_CAP.setdefault("autopilot", "manage_goal")
         TOOL_TO_CREW_CAP.setdefault("crew_steward", "crew_steward")
         TOOL_TO_CREW_CAP.setdefault("clarify", "crew_steward")
+        TOOL_TO_CREW_CAP.setdefault("manage_mcp", "manage_mcp")
+        TOOL_TO_CREW_CAP.setdefault("manage_skill", "manage_skill")
         logger.info("grant_store catalog synced from rust (%s entries)", len(TOOL_TO_CREW_CAP))
         return True
     except Exception as e:
@@ -232,7 +237,10 @@ def sync_catalog_from_kernel(kernel: Any | None = None) -> bool:
 
 
 def tool_matches_crew_caps(tool: str, capabilities: list[str] | set[str] | frozenset[str] | None) -> bool:
-    """工具名是否被编制能力集覆盖（抽象 cap 如 file_rw 可覆盖 file_read/glob/grep）。"""
+    """工具名是否被编制能力集覆盖（抽象 cap 如 file_rw 可覆盖 file_read/glob/grep）。
+
+    动态 MCP 工具（mcp_*）在无 Rust 重建时：持有 manage_mcp / mcp / integrations 即可。
+    """
     if capabilities is None:
         return True
     caps = set(capabilities)
@@ -241,6 +249,11 @@ def tool_matches_crew_caps(tool: str, capabilities: list[str] | set[str] | froze
     abstract = TOOL_TO_CREW_CAP.get(tool)
     if abstract and abstract in caps:
         return True
+    # 运行时 MCP 工具：prefix 规则（与 engineering.manage_mcp 对齐）
+    t = str(tool or "")
+    if t.startswith("mcp_") or t in {"mcp_call", "mcp"}:
+        if caps & {"manage_mcp", "mcp", "integrations", "mcp_call"}:
+            return True
     return False
 
 

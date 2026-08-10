@@ -176,10 +176,38 @@ async def toggle_skill(
     current_user: Annotated[UserRead, Depends(require_admin)],
     repo: Annotated[SkillRepository, Depends(get_skill_repo)],
 ):
-    """切换技能启用状态（仅管理员）"""
+    """切换技能启用状态（仅管理员），并同步 ToolRegistry.enabled。"""
     skill = await repo.toggle_skill(skill_id, data.enabled)
     if skill is None:
         raise HTTPException(status_code=404, detail="Skill not found")
+    try:
+        from backend.tools.registry import ToolRegistry
+
+        tool = ToolRegistry.get(skill.name)
+        if tool is not None:
+            tool.enabled = bool(data.enabled)
+        elif data.enabled and not getattr(skill, "is_builtin", False):
+            # 启用但未在 Registry：尝试热加载动态 skill
+            try:
+                from backend.skills.dynamic import DynamicSkill
+                from backend.tools.adapters.dynamic_adapter import DynamicSkillAdapter
+
+                dynamic = DynamicSkill.from_db(skill)
+                ToolRegistry.register(DynamicSkillAdapter(dynamic))
+            except Exception:
+                pass
+        if not data.enabled:
+            # 进化工具：禁用时也 unregister 以免 schema 残留（enabled 门即可，双保险）
+            hc = getattr(skill, "handler_config", None) or {}
+            if hc.get("evolution") or hc.get("source") == "evolution":
+                try:
+                    from backend.evolution.runtime_tools import unregister_evolved_tool
+
+                    unregister_evolved_tool(skill.name)
+                except Exception:
+                    pass
+    except Exception:
+        pass
     return skill
 
 

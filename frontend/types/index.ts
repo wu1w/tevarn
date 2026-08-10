@@ -443,9 +443,12 @@ export interface MCPServer {
 export interface MCPServerStatus {
   name: string;
   transport: string;
+  /** Runtime: session initialized and list_tools ok */
   connected: boolean;
   tool_count: number;
   error: string | null;
+  /** DB switch — not the same as connected */
+  enabled?: boolean;
 }
 
 export interface MCPServerFormData {

@@ -155,6 +155,12 @@ async def _migrate_tool_columns(conn) -> None:
     await _add_column_if_missing(conn, "tools", "allowed_paths", "JSON DEFAULT NULL")
 
 
+async def _migrate_mcp_columns(conn) -> None:
+    """MCP：Hermes 风格 tools.include / tools.exclude 白名单。"""
+    await _add_column_if_missing(conn, "mcp_servers", "tools_include", "JSON DEFAULT NULL")
+    await _add_column_if_missing(conn, "mcp_servers", "tools_exclude", "JSON DEFAULT NULL")
+
+
 async def _migrate_workforce_columns(conn) -> None:
     """0.6 自主运转：cron_jobs 可挂身份（定时给员工派活）"""
     await _add_column_if_missing(conn, "cron_jobs", "identity_id", "CHAR(36)")
@@ -264,6 +270,7 @@ async def init_db() -> None:
         await _migrate_skill_columns(conn)
         await _migrate_tenant_columns(conn)
         await _migrate_tool_columns(conn)
+        await _migrate_mcp_columns(conn)
         await _migrate_workforce_columns(conn)
         await _migrate_agent_run_columns(conn)
         await _migrate_perf_indexes(conn)

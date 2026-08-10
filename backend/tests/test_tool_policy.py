@@ -108,6 +108,56 @@ def test_compact_brief_mentions_pack():
     assert len(b) < 600
 
 
+def test_mcp_config_intent_demotes_web_not_search_usage():
+    """「配豆包搜索MCP + Key」应运维，不因产品名「搜索」优先 web。"""
+    from backend.agent.tool_policy import is_mcp_ops_intent, is_mcp_secret_handoff
+
+    cfg = "给你自己配下豆包搜索MCP：IWimbUB9VSgFwoNpUmmTHeZZmrvMrarR"
+    assert is_mcp_ops_intent(cfg) is True
+    assert is_mcp_secret_handoff(cfg) is True
+    plan = infer_scene(cfg, profile="dynamic")
+    assert "mcp" in plan.packs
+    assert "web" not in plan.packs
+    assert any(str(r).startswith("mcp_ops") for r in plan.reasons)
+    names, plan2 = resolve_enabled_tool_names(
+        mode="default", profile="dynamic", user_input=cfg
+    )
+    assert names is not None
+    assert "manage_mcp" in names
+    # 纯「试 MCP 搜索」仍应可挂 web/mcp，不是运维 demote
+    use = "再试下MCP搜索能不能用"
+    assert is_mcp_ops_intent(use) is False
+    plan_use = infer_scene(use, profile="dynamic")
+    assert "mcp" in plan_use.packs
+    assert "web" in plan_use.packs or any("搜索" in str(r) for r in plan_use.reasons)
+
+
+def test_mcp_api_key_sentence_gets_mcp_pack():
+    plan = infer_scene("配置 doubao-search 的 API Key", profile="dynamic")
+    assert "mcp" in plan.packs
+    assert "manage_mcp" in (
+        resolve_enabled_tool_names(
+            profile="dynamic", user_input="配置 doubao-search 的 API Key"
+        )[0]
+        or []
+    )
+
+
+def test_compact_brief_mcp_ops_survives_cap():
+    plan = infer_scene(
+        "给你自己配下豆包搜索MCP：IWimbUB9VSgFwoNpUmmTHeZZmrvMrarR",
+        profile="dynamic",
+    )
+    b = compact_capability_brief(
+        ["manage_mcp", "web_search", "use_tool_pack"],
+        scene=plan,
+        user_input="给你自己配下豆包搜索MCP：IWimbUB9VSgFwoNpUmmTHeZZmrvMrarR",
+    )
+    assert "manage_mcp" in b or "MCP ops" in b
+    assert "Do NOT web_search" in b or "web_search" in b
+    assert len(b) < 600
+
+
 def test_system_prompt_evolution_conditional():
     from backend.agent.system_prompt import build_system_prompt
 
