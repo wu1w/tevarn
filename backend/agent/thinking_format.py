@@ -80,6 +80,48 @@ def strip_thinking(text: Optional[str]) -> str:
     return s.strip()
 
 
+def extract_reasoning_content(text: Optional[str]) -> str:
+    """从持久化正文里的 <thinking>…</thinking> 抽出原生 reasoning_content。
+
+    DeepSeek V4 thinking + tools 要求后续请求回传 reasoning_content；
+    Tevarn 落库时把它包进 thinking 标签，回放历史时需还原为独立字段。
+    """
+    if not text:
+        return ""
+    parts: list[str] = []
+
+    def _inner(block: str) -> str:
+        s = block.strip()
+        s = re.sub(
+            r"^<thinking\b[^>]*>|^<think\b[^>]*>|^\[Thinking\]|^【思考】",
+            "",
+            s,
+            count=1,
+            flags=re.I,
+        )
+        s = re.sub(
+            r"</thinking>\s*$|</think>\s*$|\[/Thinking\]\s*$|【/思考】\s*$",
+            "",
+            s,
+            count=1,
+            flags=re.I,
+        )
+        return s.strip()
+
+    for m in _THINK_BLOCK_RE.finditer(text):
+        inner = _inner(m.group(0))
+        if inner:
+            parts.append(inner)
+    # 仅当没有闭合块时，再取未闭合尾巴（流中断）；避免把 </thinking> 前内容二次匹配
+    if not parts:
+        m2 = _THINK_OPEN_UNCLOSED_RE.search(text)
+        if m2:
+            tail = (m2.group(1) or "").strip()
+            if tail:
+                parts.append(tail)
+    return "\n\n".join(parts).strip()
+
+
 def is_visible_empty(text: Optional[str]) -> bool:
     """True when there is no user-visible body after stripping thinking."""
     return not strip_thinking(text)

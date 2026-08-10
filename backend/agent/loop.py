@@ -1634,7 +1634,15 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             raw_content = h.content if h.content is not None else ""
             # Model context: strip thinking tags + collapse force_final scare dumps
             # so auto-resume does not re-feed long 「强制收束」inventories.
+            # DeepSeek V4 tools：thinking 正文需还原为 reasoning_content 字段回传。
+            _reasoning_from_hist = ""
             if h.role == "assistant" and raw_content:
+                try:
+                    from backend.agent.thinking_format import extract_reasoning_content
+
+                    _reasoning_from_hist = extract_reasoning_content(raw_content)
+                except Exception:
+                    _reasoning_from_hist = ""
                 raw_content = _strip_think(raw_content)
                 try:
                     from backend.agent.thinking_format import (
@@ -1652,6 +1660,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 item = {"role": h.role, "content": raw_content or ""}
                 if h.role == "assistant" and tcs:
                     item["tool_calls"] = tcs
+            if h.role == "assistant" and _reasoning_from_hist:
+                item["reasoning_content"] = _reasoning_from_hist
             # tool_call_id 可能存在 JSON tool_calls 旁路或 content 元数据中
             if h.role == "tool":
                 tc_meta = tcs
@@ -3142,10 +3152,14 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 # 将 assistant 的回复（含 tool calls）追加到 messages
                 # content 用 None 兼容部分严格 API（空字符串 + tool_calls 会被拒）
                 # LLM 上下文只带可见正文；UI 持久化可附带 <thinking>
+                # DeepSeek V4 thinking+tools：必须回传 reasoning_content（见官方 thinking_mode 文档）
                 assistant_msg: dict[str, Any] = {
                     "role": "assistant",
                     "content": accumulated_content if accumulated_content else None,
                 }
+                _rc = (accumulated_reasoning or "").strip()
+                if _rc:
+                    assistant_msg["reasoning_content"] = _rc
                 assistant_tool_calls = [
                     {
                         "id": tc.id,

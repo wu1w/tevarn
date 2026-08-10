@@ -445,9 +445,38 @@ class OpenAICompatibleService(LLMService):
             if role == "assistant":
                 tcs = m.get("tool_calls")
                 content = m.get("content")
+                # DeepSeek V4 等：thinking 模式下 tool 轮必须回传 reasoning_content
+                rc = m.get("reasoning_content")
+                if not (isinstance(rc, str) and rc.strip()):
+                    alt = m.get("reasoning")
+                    if isinstance(alt, str) and alt.strip():
+                        rc = alt
+                    elif isinstance(content, str) and content:
+                        try:
+                            from backend.agent.thinking_format import (
+                                extract_reasoning_content,
+                            )
+
+                            rc = extract_reasoning_content(content)
+                        except Exception:
+                            rc = ""
+                if isinstance(rc, str) and rc.strip():
+                    m["reasoning_content"] = rc.strip()
+                else:
+                    m.pop("reasoning_content", None)
+                    m.pop("reasoning", None)
                 if tcs:
                     if content is None or (isinstance(content, str) and not content.strip()):
                         m["content"] = None
+                    elif isinstance(content, str) and ("<thinking" in content.lower() or "<think" in content.lower()):
+                        # 出站 content 去掉 thinking 标签，reasoning 走独立字段
+                        try:
+                            from backend.agent.thinking_format import strip_thinking
+
+                            body = strip_thinking(content)
+                            m["content"] = body if body.strip() else None
+                        except Exception:
+                            pass
                     new_tcs: list[dict[str, Any]] = []
                     if isinstance(tcs, list):
                         for tc in tcs:
@@ -467,6 +496,11 @@ class OpenAICompatibleService(LLMService):
                                 pending_tool_ids.add(str(tid))
                             new_tcs.append(tc2)
                     m["tool_calls"] = new_tcs
+                    if not m.get("reasoning_content"):
+                        logger.warning(
+                            "assistant tool_calls without reasoning_content "
+                            "(DeepSeek V4 thinking+tools may return HTTP 400)"
+                        )
                 else:
                     if content is None:
                         m["content"] = ""
@@ -681,10 +715,18 @@ class OpenAICompatibleService(LLMService):
                         f"供应商 base_url 是否匹配（当前 model={self.model!r}）。"
                     )
                 elif status == 400:
-                    hint = (
-                        " 请求被拒：常见原因是 model 名错误、上下文过长、或工具 schema 不兼容。"
-                        f"（当前 model={self.model!r}）"
-                    )
+                    detail_l = detail.lower()
+                    if "reasoning_content" in detail_l or "thinking mode" in detail_l:
+                        hint = (
+                            " DeepSeek/思考模式：带 tools 的多轮必须回传上一轮 assistant 的 "
+                            "reasoning_content。请升级 Tevarn 或关闭该模型的 thinking/"
+                            f"reasoning_effort=off。（当前 model={self.model!r}）"
+                        )
+                    else:
+                        hint = (
+                            " 请求被拒：常见原因是 model 名错误、上下文过长、或工具 schema 不兼容。"
+                            f"（当前 model={self.model!r}）"
+                        )
                 yield LLMChunk(
                     message_id=message_id,
                     delta=f"[LLM Error {status}] {detail}{hint}",
@@ -894,10 +936,18 @@ class OpenAICompatibleService(LLMService):
                     f"供应商 base_url 是否匹配（当前 model={self.model!r}）。"
                 )
             elif e.status == 400:
-                hint = (
-                    " 请求被拒：常见原因是 model 名错误、上下文过长、或工具 schema 不兼容。"
-                    f"（当前 model={self.model!r}）"
-                )
+                detail_l = detail.lower()
+                if "reasoning_content" in detail_l or "thinking mode" in detail_l:
+                    hint = (
+                        " DeepSeek/思考模式：带 tools 的多轮必须回传上一轮 assistant 的 "
+                        "reasoning_content。请升级 Tevarn 或关闭该模型的 thinking/"
+                        f"reasoning_effort=off。（当前 model={self.model!r}）"
+                    )
+                else:
+                    hint = (
+                        " 请求被拒：常见原因是 model 名错误、上下文过长、或工具 schema 不兼容。"
+                        f"（当前 model={self.model!r}）"
+                    )
             yield LLMChunk(
                 message_id=message_id,
                 delta=f"[LLM Error {e.status}] {detail or e.message}{hint}",

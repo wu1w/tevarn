@@ -2,6 +2,7 @@
 
 from backend.agent.thinking_format import (
     canonicalize_thinking,
+    extract_reasoning_content,
     is_visible_empty,
     looks_like_force_final_report,
     sanitize_force_final_body,
@@ -55,6 +56,14 @@ def test_canonicalize_no_native_keeps_model_tags():
     content = "<thinking>\nonly model\n</thinking>\n\nbody"
     assert canonicalize_thinking("", content) == content
     assert canonicalize_thinking(None, content) == content
+
+
+def test_extract_reasoning_content_from_persisted_thinking():
+    raw = wrap_thinking("plan then tool", "visible reply")
+    assert extract_reasoning_content(raw) == "plan then tool"
+    assert strip_thinking(raw) == "visible reply"
+    # unclosed stream fragment
+    assert "half" in extract_reasoning_content("<thinking>\nhalf")
 
 
 def test_force_final_report_detection_and_sanitize():

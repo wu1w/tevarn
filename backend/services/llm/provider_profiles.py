@@ -135,6 +135,9 @@ _PROFILES: dict[str, ProviderProfile] = {
             r"[-_/]r1\b",
             r"thinking",
             r"deepseek-r1",
+            r"deepseek-v4",
+            r"v4-flash",
+            r"v4-pro",
         ),
     ),
     "opencode": ProviderProfile(
