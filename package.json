@@ -82,6 +82,7 @@
         "to": "backend",
         "filter": [
           "**/*.py",
+          "VERSION",
           "pyproject.toml",
           "requirements.txt",
           "requirements-prod.txt",
