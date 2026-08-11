@@ -668,44 +668,41 @@ async def _run_llm_round_body(
                     scrub_leak_markers,
                 )
 
+                # 本轮 schema：允许 DSML/伪 tool 回收 mcp_* 与检索类（须在 schema 内）
+                schema_names: set[str] = set()
+                try:
+                    for t in (tools or []):
+                        if not isinstance(t, dict):
+                            continue
+                        fn = (
+                            t.get("function")
+                            if isinstance(t.get("function"), dict)
+                            else {}
+                        )
+                        n = str(
+                            (fn or {}).get("name") or t.get("name") or ""
+                        ).strip()
+                        if n:
+                            schema_names.add(n)
+                except Exception:
+                    schema_names = set()
                 recovered, cleaned = recover_tool_calls_from_content(
-                    accumulated_content
+                    accumulated_content,
+                    schema_names=schema_names or None,
                 )
-                # 仅允许本轮 schema / enabled filter 中的工具名（防薄档绕过运维面）
-                if recovered:
-                    allowed: set[str] | None = None
-                    try:
-                        schema_names: set[str] = set()
-                        for t in (tools or []):
-                            if not isinstance(t, dict):
-                                continue
-                            fn = (
-                                t.get("function")
-                                if isinstance(t.get("function"), dict)
-                                else {}
-                            )
-                            n = str(
-                                (fn or {}).get("name") or t.get("name") or ""
-                            ).strip()
-                            if n:
-                                schema_names.add(n)
-                        if schema_names:
-                            allowed = schema_names
-                    except Exception:
-                        allowed = None
-                    if allowed is not None:
-                        kept = [
-                            t
-                            for t in recovered
-                            if str(getattr(t, "name", "") or "") in allowed
-                        ]
-                        if len(kept) != len(recovered):
-                            logger.info(
-                                "pseudo tool recover dropped n=%s not-in-schema session=%s",
-                                len(recovered) - len(kept),
-                                session_id,
-                            )
-                        recovered = kept
+                if recovered and schema_names:
+                    kept = [
+                        t
+                        for t in recovered
+                        if str(getattr(t, "name", "") or "") in schema_names
+                    ]
+                    if len(kept) != len(recovered):
+                        logger.info(
+                            "pseudo tool recover dropped n=%s not-in-schema session=%s",
+                            len(recovered) - len(kept),
+                            session_id,
+                        )
+                    recovered = kept
                 if recovered:
                     tool_calls = list(recovered)
                     accumulated_content = cleaned

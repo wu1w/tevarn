@@ -1355,6 +1355,49 @@ async def run_tool_round(
     except Exception:
         pass
 
+    # 多路大结果外置后：引导 result_load + 总结，降低 DeepSeek 等再搜/DSML 泄漏
+    try:
+        from backend.agent.progress_guard import extract_result_handle as _ext_hid
+
+        _handles: list[str] = []
+        _search_n = 0
+        for _m in messages[-max(16, len(tool_calls) * 3) :]:
+            if not isinstance(_m, dict) or _m.get("role") != "tool":
+                continue
+            _c = str(_m.get("content") or "")
+            _nm = str(_m.get("name") or "")
+            if any(
+                x in _nm.lower()
+                for x in ("search", "tavily", "web_", "fetch", "extract", "scrape")
+            ):
+                _search_n += 1
+            _hid = _ext_hid(_c)
+            if _hid:
+                _handles.append(_hid)
+        _uniq = list(dict.fromkeys(_handles))
+        if len(_uniq) >= 2 and _search_n >= 2:
+            _ids = ", ".join(f'`{h}`' for h in _uniq[:4])
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        f"[Result paging · multi-search] 本轮有 {len(_uniq)} 个外置大结果"
+                        f"（handles: {_ids}）。"
+                        "请优先 `result_load` 分页读取最相关的 1–2 个 handle，"
+                        "然后用中文给出可执行结论；"
+                        "**不要**用近乎重复的 query 再调 web_search/mcp_*_search，"
+                        "也不要把 tool 写成 DSML / 正文标签。"
+                    ),
+                }
+            )
+            logger.info(
+                "multi-search spill converge handles=%s session=%s",
+                len(_uniq),
+                session_id,
+            )
+    except Exception as _ms_e:
+        logger.debug("multi-search spill converge skip: %s", _ms_e)
+
     # ── Rust toolchain diagnosis thrash (where/dir/rustup/_diag 复读) ──
     try:
         from backend.agent.decisive import tool_names_from_calls as _tn_rd

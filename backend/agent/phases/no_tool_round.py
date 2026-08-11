@@ -158,7 +158,7 @@ async def run_no_tool_round(
             logger.debug("goal complete summary nudge skip: %s", _gcd_e)
 
     
-    # S8: 非 Goal 有正文即定稿
+    # S8: 非 Goal 有正文即定稿 —— 但伪 tool / DSML 泄漏禁止当终稿
     if not goal_mode and not force_final_no_tools and not loop._should_stop:
         try:
             from backend.agent.goal_state import get_goal as _gg_ng
@@ -173,6 +173,40 @@ async def run_no_tool_round(
         if not _has_active_goal:
             _body = (accumulated_content or "").strip()
             if _body and not is_empty_assistant_content(accumulated_content):
+                try:
+                    from backend.agent.pseudo_tool_recover import (
+                        looks_like_pseudo_tool_content,
+                        leak_nudge_text,
+                        scrub_leak_markers,
+                    )
+
+                    if looks_like_pseudo_tool_content(_body):
+                        streak = int(
+                            getattr(loop, "_pseudo_tool_leak_streak", 0) or 0
+                        ) + 1
+                        try:
+                            loop._pseudo_tool_leak_streak = streak
+                        except Exception:
+                            pass
+                        messages.append(
+                            {
+                                "role": "system",
+                                "content": leak_nudge_text(streak=streak),
+                            }
+                        )
+                        result.action = "continue"
+                        if streak >= 2:
+                            result.force_final_no_tools = True
+                            result.final_content = scrub_leak_markers(_body)
+                            # 仍 continue 一轮让模型用文字收束；force_final 禁止再 tool
+                        logger.warning(
+                            "no_tool blocked finalize on pseudo-tool leak streak=%s session=%s",
+                            streak,
+                            session_id,
+                        )
+                        return result
+                except Exception as _lk_e:
+                    logger.debug("pseudo leak gate in no_tool skip: %s", _lk_e)
                 result.action = "break"
                 result.final_content = accumulated_content
                 try:

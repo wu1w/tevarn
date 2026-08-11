@@ -191,13 +191,25 @@ def format_spill_envelope(
     preview = _head_tail_preview(full_text or "", budget=SPILL_PREVIEW_CHARS)
     hid = (handle_id or "").strip() or "?"
     tool = (tool_name or "tool").strip()
+    searchish = any(
+        x in tool.lower()
+        for x in ("search", "tavily", "web_", "fetch", "scrape", "extract")
+    )
+    steps = (
+        f"  1) result_load(id=\"{hid}\") — full text (or max_chars / offset to page)\n"
+        f"  2) result_load(id=\"{hid}\", offset=0, max_chars=20000) — first page\n"
+        f"  3) Do NOT re-run the same tool just to 'get full data'\n"
+    )
+    if searchish:
+        steps += (
+            f"  4) After 2+ large search spills: prefer result_load + write answer; "
+            f"avoid near-duplicate web_search/mcp_*_search queries\n"
+        )
     return (
         f"[tool_result_handle id={hid} tool={tool} chars={n}]\n"
         f"FULL BODY is stored externally (not truncated forever — page it).\n"
         f"NEXT STEPS (pick one):\n"
-        f"  1) result_load(id=\"{hid}\") — full text (or max_chars / offset to page)\n"
-        f"  2) result_load(id=\"{hid}\", offset=0, max_chars=20000) — first page\n"
-        f"  3) Do NOT re-run the same tool just to 'get full data'\n"
+        f"{steps}"
         f"--- preview (head+tail, {SPILL_PREVIEW_CHARS} char budget) ---\n"
         f"{preview}\n"
         f"--- end preview; use result_load id={hid} for more ---"
