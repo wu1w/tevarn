@@ -1130,6 +1130,11 @@ async def run_tool_round(
                     await _save_goal(session_id)
                 except Exception as e:
                     logger.debug("save_goal_to_db skipped: %s", e)
+            # 串行工具间让出一轮事件循环（多 session 并发更顺，不改 loop 结构）
+            try:
+                await asyncio.sleep(0)
+            except Exception:
+                pass
         except asyncio.TimeoutError:
             _to = float(getattr(settings, "agent_tool_timeout_seconds", 180) or 180)
             tool_result = f"[Error] Tool '{tc.name}' timed out after {_to:.0f}s"

@@ -529,6 +529,10 @@ class Settings(BaseSettings):
     agent_max_duration_seconds: float = 0.0
     # LLM 调用失败重试次数（含首次）
     agent_llm_retry_attempts: int = 3
+    # 同会话上一轮未结束时，新消息等锁超时（秒）；0=无限等（不推荐）
+    agent_session_lock_wait_secs: float = 120.0
+    # LLM 流式静默超过该秒数推一次「仍在思考」状态；0=关闭
+    agent_llm_stream_heartbeat_secs: float = 8.0
     # 对话默认工具面：core=白名单(~18) | full=全部注册工具
     agent_tool_profile: Literal["coding", "assistant", "ops", "dynamic", "core", "full"] = "dynamic"
     agent_auto_thin_chat: bool = True  # F10: 自动薄档（问候/纯问答）；simple_mode 为会话级手动收窄

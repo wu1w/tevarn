@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
@@ -169,6 +170,15 @@ async def _run_llm_round_body(
         _stream = llm_service.chat(messages, tools=_iter_tools, stream=True)
         _ait = _stream.__aiter__()
         _pending: asyncio.Task | None = asyncio.create_task(_ait.__anext__())
+        # UX: long reasoning silence — status heartbeat (does not cancel SSE)
+        try:
+            _hb_every = float(
+                getattr(settings, "agent_llm_stream_heartbeat_secs", 8.0) or 0.0
+            )
+        except Exception:
+            _hb_every = 8.0
+        _stream_t0 = time.monotonic()
+        _last_hb = _stream_t0
         try:
             while True:
                 if loop._should_stop:
@@ -185,6 +195,19 @@ async def _run_llm_round_body(
                 assert _pending is not None
                 done, _ = await asyncio.wait({_pending}, timeout=0.4)
                 if not done:
+                    if _hb_every > 0:
+                        _now = time.monotonic()
+                        if _now - _last_hb >= _hb_every:
+                            _waited = int(_now - _stream_t0)
+                            try:
+                                await loop._push_status(
+                                    session_id,
+                                    "thinking",
+                                    f"模型仍在生成…（已等待约 {_waited}s）",
+                                )
+                            except Exception:
+                                pass
+                            _last_hb = _now
                     continue  # still waiting for next SSE chunk
                 try:
                     chunk = _pending.result()
@@ -196,6 +219,7 @@ async def _run_llm_round_body(
                     logger.warning("LLM stream chunk error: %s", _chunk_e)
                     break
                 _pending = asyncio.create_task(_ait.__anext__())
+                _last_hb = time.monotonic()  # any chunk resets silence timer
 
                 # 思考链增量 → 前端可折叠思考块（始终推送，不受 suppress_content_stream 影响）
                 rdelta = getattr(chunk, "reasoning_delta", None) or ""

@@ -36,7 +36,11 @@ from backend.repositories import (
 from backend.services.llm import LLMServiceFactory
 
 from .context import ContextManager
-from .session_lock import get_session_lock, remove_session_lock
+from .session_lock import (
+    acquire_session_lock,
+    get_session_lock,
+    remove_session_lock,
+)
 from .tool_errors import sanitize_tool_error, tool_error_next_step
 
 logger = logging.getLogger(__name__)
@@ -696,10 +700,51 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         """
         if _nested:
             return await self._run_inner(session_id, user_input, attachments, mode, sub_agent_ids or [])
-        # 安全修复：获取 session 级锁，防止同一 session 的并发竞态
-        lock = get_session_lock(session_id)
-        async with lock:
-            return await self._run_inner(session_id, user_input, attachments, mode, sub_agent_ids or [])
+        # Session 级串行：等锁超时 + 可见状态，避免「连发消息前端像死锁」
+        try:
+            _lock_wait = float(
+                getattr(settings, "agent_session_lock_wait_secs", 120.0) or 120.0
+            )
+        except Exception:
+            _lock_wait = 120.0
+        _lock = get_session_lock(session_id)
+        if _lock.locked():
+            try:
+                await self._push_status(
+                    session_id,
+                    "thinking",
+                    "上一轮仍在执行，本条消息排队中…",
+                )
+            except Exception:
+                pass
+        lock, ok = await acquire_session_lock(session_id, timeout=_lock_wait)
+        if not ok:
+            try:
+                await self._push_status(
+                    session_id,
+                    "error",
+                    f"会话忙：等待上一轮超过 {_lock_wait:.0f}s，请稍后再发",
+                )
+            except Exception:
+                pass
+            logger.warning(
+                "session_lock wait timeout sid=%s wait=%ss",
+                str(session_id)[:8],
+                _lock_wait,
+            )
+            return (
+                f"⚠️ 会话上一轮仍在执行（已等待 {_lock_wait:.0f}s）。"
+                "请稍后再发，或点停止后再试。"
+            )
+        try:
+            return await self._run_inner(
+                session_id, user_input, attachments, mode, sub_agent_ids or []
+            )
+        finally:
+            try:
+                lock.release()
+            except Exception:
+                pass
 
     async def _run_inner(
         self,
@@ -1199,7 +1244,12 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                             _cfg.get("ban_worker_orch"),
                         )
                 except Exception as _lg_e:
-                    logger.debug("loop_guard configure skip: %s", _lg_e)
+                    # 护栏配置失败会削弱 thrash/orch 早停，但 iteration budget 仍兜底
+                    logger.warning(
+                        "loop_guard configure failed process=%s: %s",
+                        str(getattr(kernel_proc, "id", "") or "")[:8],
+                        _lg_e,
+                    )
                 # 日用场景收窄：coding_research → 默认 engineering profile
                 try:
                     scenario = str(
