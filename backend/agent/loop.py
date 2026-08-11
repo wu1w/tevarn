@@ -148,6 +148,9 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         self._llm_fail_streak = 0
         self._reactive_compact_used = False
         self._goal_complete_summary_nudged = False
+        self._config_micro_loop = None
+        self._thrash_force_final_override = None
+        self._pseudo_tool_leak_streak = 0
 
     # ── Batch3 port helpers（优先 message_store / tool_executor）─────────
     async def _save_message(
@@ -1498,6 +1501,25 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         if _cfg_reply is not None:
             return _cfg_reply
 
+        # P0-1：配 MCP 未命中完整快路径 → 配置微 loop 标记
+        self._config_micro_loop = None
+        self._thrash_force_final_override = None
+        self._pseudo_tool_leak_streak = 0
+        try:
+            from backend.services.config_intent import detect_mcp_micro_loop
+
+            _ml = detect_mcp_micro_loop(user_input or "")
+            if _ml:
+                self._config_micro_loop = _ml
+                logger.info(
+                    "config micro-loop armed label=%s max_iters=%s session=%s",
+                    _ml.get("label"),
+                    _ml.get("max_iters"),
+                    session_id,
+                )
+        except Exception as _ml_e:
+            logger.debug("config micro-loop detect skip: %s", _ml_e)
+
         import time as _time
         _max_dur = float(getattr(settings, "agent_max_duration_seconds", 0) or 0)
         _deadline = (_time.monotonic() + _max_dur) if _max_dur > 0 else None
@@ -2057,6 +2079,66 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         except Exception as _sm_e:
             logger.debug("simple_mode apply skip: %s", _sm_e)
 
+        # P0-1/P0-4：配置微 loop — 仅 manage_mcp 等运维工具，硬顶 iters
+        try:
+            _ml = getattr(self, "_config_micro_loop", None)
+            if isinstance(_ml, dict) and _ml:
+                from backend.core.config import settings as _st_ml
+
+                _cap = int(
+                    _ml.get("max_iters")
+                    or getattr(_st_ml, "agent_config_micro_max_iterations", 5)
+                    or 5
+                )
+                self.max_iterations = min(int(self.max_iterations or _cap), max(2, _cap))
+                _allow = set(_ml.get("tools") or ()) or {
+                    "manage_mcp",
+                    "clarify",
+                    "current_time",
+                    "update_config",
+                    "get_system_status",
+                    "list_available_models",
+                }
+
+                def _micro_keep(t: dict) -> bool:
+                    fn = t.get("function") if isinstance(t.get("function"), dict) else {}
+                    name = str((fn or {}).get("name") or t.get("name") or "")
+                    return name in _allow
+
+                before_ml = len(tools or [])
+                tools = [
+                    t for t in (tools or []) if isinstance(t, dict) and _micro_keep(t)
+                ]
+                enabled_tools_filter = sorted(_allow)
+                try:
+                    self._thrash_force_final_override = bool(
+                        getattr(_st_ml, "agent_thrash_force_final_interactive", True)
+                    )
+                except Exception:
+                    self._thrash_force_final_override = True
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "【配置微循环】本轮仅允许 manage_mcp 等运维工具，最多 "
+                            f"{self.max_iterations} 步。"
+                            "禁止 command/python 探环境、禁止 web_search 调研 MCP。"
+                            "有 Key → manage_mcp update env → reload；"
+                            "无 Key → 一句请用户粘贴「xxx API Key：xxxx」。"
+                            "不要把工具调用写在正文。"
+                        ),
+                    }
+                )
+                logger.info(
+                    "config micro-loop tools %s→%s max_iter=%s session=%s",
+                    before_ml,
+                    len(tools),
+                    self.max_iterations,
+                    session_id,
+                )
+        except Exception as _ml_e:
+            logger.debug("config micro-loop apply skip: %s", _ml_e)
+
         # 直接执行意图：从 schema 去掉 clarify，避免模型「先问再做」
         # 模糊工作句（帮我弄好…）不走 strip，并注入轻量 clarify 偏好（见下）
         try:
@@ -2076,6 +2158,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             if (
                 bool(getattr(settings, "agent_disable_clarify_on_direct", True))
                 and not _vague
+                and not getattr(self, "_config_micro_loop", None)
             ):
                 before_n = len(tools or [])
                 tools = filter_clarify_from_tools(
@@ -2291,6 +2374,12 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 max_iterations=self.max_iterations,
                 push_goal_update=self._push_goal_update,
             )
+            _ml_cap = getattr(self, "_config_micro_loop", None)
+            if isinstance(_ml_cap, dict) and _ml_cap.get("max_iters"):
+                self.max_iterations = min(
+                    int(self.max_iterations or 5),
+                    max(2, int(_ml_cap["max_iters"])),
+                )
         else:
             # Non-goal: optional light note so model does not habitually manage_goal
             try:

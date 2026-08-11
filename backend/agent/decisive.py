@@ -179,6 +179,15 @@ def family_bucket(tool_calls: Iterable[Any] | None) -> str:
             return "process_poll"  # poll-only rounds; hard throttle in process_registry
     except Exception:
         pass
+
+    mcp_ops = sum(
+        1
+        for x in names
+        if x in {"manage_mcp", "update_config", "configure_tevarn"}
+        or str(x).startswith("mcp_")
+    )
+    if mcp_ops * 2 >= n and mcp_ops > 0:
+        return "mcp_ops"
     return ""
 
 
@@ -187,9 +196,23 @@ def thrash_fingerprint(
     *,
     use_family_bucket: bool = True,
 ) -> str:
-    """Fingerprint for thrash guard; may be fam:* for soft orchestration loops."""
+    """Fingerprint for thrash guard; may be fam:* for soft orchestration loops.
+
+    mcp_ops：附带 action 摘要，避免 list→update→reload 被当成同一指纹早停。
+    """
     if use_family_bucket:
         fam = family_bucket(tool_calls)
+        if fam == "mcp_ops":
+            acts: list[str] = []
+            for tc in tool_calls or []:
+                name = getattr(tc, "name", None)
+                if name is None and isinstance(tc, dict):
+                    name = (tc.get("function") or {}).get("name") or tc.get("name")
+                args = _tool_args(tc)
+                act = str(args.get("action") or args.get("op") or "")[:40]
+                acts.append(f"{name}:{act}")
+            acts.sort()
+            return "fam:mcp_ops|" + "|".join(acts)[:180]
         if fam:
             return f"fam:{fam}"
     return tool_round_fingerprint(tool_calls)
@@ -332,6 +355,12 @@ def thrash_force_final_text(*, family: str = "") -> str:
         return (
             "[Shell probe thrash] Many where/dir/Get-Content scans. "
             "Prefer file_write on product sources or cargo check; avoid _snap dumps."
+        )
+    if family == "mcp_ops" or family.startswith("fam:mcp"):
+        return (
+            "[MCP ops thrash] manage_mcp 重复轮次无进展。"
+            "若缺 API Key：一句请用户粘贴「xxx API Key：xxxx」。"
+            "禁止 command/python/web_search 继续探环境。"
         )
     return (
         "[Tool thrash] Same tool/args repeated with zero information gain. "

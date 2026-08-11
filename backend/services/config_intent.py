@@ -1,13 +1,14 @@
 """Config Intent 快路径：一句话配置不进 Agent 大 loop。
 
 识别（轻量正则，无二次 LLM）：
-- MCP 预制 + API Key
+- MCP 预制 + API Key（含 pending 二次贴 key）
+- MCP 无 key → setup_guide（引导贴 key / 已装则 reload）
 - 出站代理 host:port
 - 切换模型
 - 开启/关闭会话简单模式
-- Grok/ChatGPT OAuth 引导（只给路径，不替用户浏览器登录）
+- Grok/ChatGPT OAuth 引导
 
-命中则确定性执行 + 简短回复；未命中返回 None，交还 Agent。
+未命中完整快路径时，detect_mcp_micro_loop 可武装「配置微 loop」。
 """
 
 from __future__ import annotations
@@ -34,24 +35,34 @@ class ConfigIntentMatch:
 _MCP_KEY_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     re.compile(p, re.I | re.S)
     for p in (
-        # 豆包 / doubao ... key ... VALUE
         r"(?P<label>豆包(?:搜索)?|doubao(?:-?search)?|askecho|tavily|firecrawl)"
         r".{0,40}?(?:api\s*key|密钥|key|token)"
         r"\s*[：:=\s]\s*[`\"']?(?P<key>[A-Za-z0-9_\-]{16,})[`\"']?",
-        # 配下 api KEY（前有 豆包/mcp/搜索）
         r"(?:配|配置|设置|加上|写入).{0,24}"
         r"(?P<label>豆包(?:搜索)?|doubao|tavily|firecrawl|mcp).{0,40}"
         r"[`\"']?(?P<key>[A-Za-z0-9_\-]{20,})[`\"']?",
-        # 我给你加了…MCP，你配下 api KEY
         r"(?:mcp|搜索).{0,80}?(?:配|配置).{0,20}?(?:api|key|密钥)"
         r".{0,20}?[`\"']?(?P<key>[A-Za-z0-9_\-]{20,})[`\"']?",
+        r"(?P<label>豆包(?:搜索)?|doubao(?:-?search)?|askecho|tavily|firecrawl)"
+        r".{0,48}?(?:api\s*key|密钥|key|token)\s*[：:]\s*"
+        r"[`\"']?(?P<key>[A-Za-z0-9_\-]{16,})[`\"']?",
     )
 )
+
+_MCP_SETUP_NO_KEY = re.compile(
+    r"(?i)(?:"
+    r"(?:帮我|请|麻烦)?(?:配\s*下|配\s*置|安装|挂载|启用|装\s*上|接\s*上).{0,24}"
+    r"(?:豆包(?:搜索)?|doubao|tavily|firecrawl|askecho|mcp)|"
+    r"(?:豆包(?:搜索)?|doubao|tavily|firecrawl|askecho).{0,16}"
+    r"(?:mcp|搜索).{0,12}(?:配|装|配置|安装)?"
+    r")"
+)
+
+_BARE_KEY = re.compile(r"^\s*[`\"']?([A-Za-z0-9_\-]{20,})[`\"']?\s*$")
 
 _PROXY_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     re.compile(p, re.I)
     for p in (
-        # 非贪婪间隔 + 完整 IPv4，避免 127.0.0.1 被拆成 host=1
         r"(?:代理|proxy|出站代理).{0,16}?"
         r"(?P<host>127\.0\.0\.1|localhost|(?:\d{1,3}\.){3}\d{1,3}|[a-zA-Z][a-zA-Z0-9.-]{0,60})"
         r"\s*[:：]\s*(?P<port>\d{2,5})\b",
@@ -71,7 +82,7 @@ _MODEL_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
 )
 
 _SIMPLE_ON = re.compile(
-    r"(?i)(开启|打开|启用|切换到|用)?\s*(简单模式|精简模式|simple\s*mode)",
+    r"(?i)(开启|打开|启用|切换到|用)\s*(简单模式|精简模式|simple\s*mode)",
 )
 _SIMPLE_OFF = re.compile(
     r"(?i)(关闭|取消|退出)\s*(简单模式|精简模式|simple\s*mode)",
@@ -87,26 +98,71 @@ _OAUTH_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
 )
 
 
+def _guess_mcp_label(
+    text: str, explicit: str = "", *, default: str | None = None
+) -> str | None:
+    """解析预制 label。无产品信号时返回 default（默认 None，禁止静默豆包）。"""
+    label = (explicit or "").strip().lower()
+    if label and label not in {"mcp", "key", "api", "token"}:
+        if re.search(r"豆包|doubao|askecho", label, re.I):
+            return "doubao"
+        if "tavily" in label:
+            return "tavily"
+        if "firecrawl" in label:
+            return "firecrawl"
+        if "fetch" in label:
+            return "fetch"
+        return label
+    t = text or ""
+    if re.search(r"豆包|doubao|askecho", t, re.I):
+        return "doubao"
+    if re.search(r"tavily", t, re.I):
+        return "tavily"
+    if re.search(r"firecrawl", t, re.I):
+        return "firecrawl"
+    if re.search(r"\bfetch\b|mcp-server-fetch", t, re.I):
+        return "fetch"
+    return default
+
+
+def _extract_mcp_key_match(t: str) -> ConfigIntentMatch | None:
+    """从文案抽出合法 key + preset；必须能解析到明确预制。"""
+    for p in _MCP_KEY_PATTERNS:
+        m = p.search(t)
+        if not m:
+            continue
+        key = (m.groupdict().get("key") or "").strip()
+        label_raw = (m.groupdict().get("label") or "").strip().lower()
+        if not key or len(key) < 16:
+            continue
+        label = _guess_mcp_label(t, label_raw, default=None)
+        if not label:
+            continue
+        return ConfigIntentMatch("mcp_key", 0.92, {"label": label, "api_key": key})
+
+    if re.search(r"豆包|doubao|tavily|firecrawl", t, re.I) and re.search(
+        r"(?i)(配|配置|api\s*key|密钥)", t
+    ):
+        km = re.search(r"\b([A-Za-z0-9_\-]{28,})\b", t)
+        if km:
+            label = _guess_mcp_label(t, default=None)
+            if label:
+                return ConfigIntentMatch(
+                    "mcp_key", 0.85, {"label": label, "api_key": km.group(1)}
+                )
+    return None
+
+
 def detect_config_intent(text: str) -> ConfigIntentMatch | None:
     t = (text or "").strip()
     if not t or len(t) > 2000:
         return None
-    # 过长/多句任务：宁可交 Agent，避免误抢（软门禁）
-    if len(t) > 400 and t.count("\n") >= 2:
-        return None
-    # 复杂任务：含「写代码/调试/分析」且无明确 key → 不抢
-    if re.search(
-        r"(?i)(写代码|实现功能|debug|traceback|重构|设计架构|分析一下|帮我查|搜索网页)", t
-    ) and not re.search(r"(?i)(api\s*key|密钥|代理|oauth|简单模式|配下|配置)", t):
-        return None
 
-    # 简单模式开关（优先，短句）
     if _SIMPLE_OFF.search(t) and len(t) < 80:
         return ConfigIntentMatch("simple_mode", 0.95, {"enabled": False})
     if _SIMPLE_ON.search(t) and len(t) < 80 and not re.search(r"(?i)(不是|别|不要)", t):
         return ConfigIntentMatch("simple_mode", 0.9, {"enabled": True})
 
-    # 代理：必须像配置句，且较短
     if re.search(r"(?i)(关闭|停用|取消).{0,6}(代理|proxy)", t) and len(t) < 60:
         return ConfigIntentMatch("proxy", 0.92, {"enabled": False})
     if re.search(r"(?i)(代理|proxy)", t) and len(t) < 160:
@@ -124,89 +180,144 @@ def detect_config_intent(text: str) -> ConfigIntentMatch | None:
                     },
                 )
 
-    # MCP key：必须像「配 key」语境，避免误吞长文里的随机 token
+    if re.search(
+        r"(?i)(写代码|实现功能|debug|traceback|重构|设计架构|分析一下|帮我查|搜索网页)", t
+    ) and not re.search(r"(?i)(api\s*key|密钥|代理|oauth|简单模式|配下|配置|mcp)", t):
+        return None
+
     _mcp_ctx = bool(
-        re.search(r"(?i)(api\s*key|密钥|配下|配置|写入|加上).{0,40}(key|token|密钥)?", t)
-        or re.search(r"(?i)(豆包|doubao|tavily|firecrawl|askecho).{0,40}(key|密钥|token)", t)
+        re.search(r"(?i)(api\s*key|密钥|配下|配置|写入|加上|mcp)", t)
+        or re.search(r"(?i)(豆包|doubao|tavily|firecrawl|askecho)", t)
     )
-    if _mcp_ctx and len(t) < 600:
-        for p in _MCP_KEY_PATTERNS:
-            m = p.search(t)
-            if not m:
-                continue
-            key = (m.groupdict().get("key") or "").strip()
-            label = (m.groupdict().get("label") or "").strip().lower()
-            if not key or len(key) < 16:
-                continue
-            # 若无 label，从全文猜
-            if not label or label == "mcp":
-                if re.search(r"豆包|doubao|askecho", t, re.I):
-                    label = "doubao"
-                elif re.search(r"tavily", t, re.I):
-                    label = "tavily"
-                elif re.search(r"firecrawl", t, re.I):
-                    label = "firecrawl"
-                else:
-                    label = "doubao"  # 用户场景默认豆包
-            return ConfigIntentMatch(
-                "mcp_key",
-                0.92,
-                {"label": label, "api_key": key},
-            )
+    if _mcp_ctx:
+        key_match = _extract_mcp_key_match(t)
+        if key_match is not None:
+            return key_match
 
-        # 裸 key + 豆包语境（仍要求配置动词）
-        if re.search(r"豆包|doubao", t, re.I) and re.search(r"(?i)(配|配置|api)", t):
-            km = re.search(r"\b([A-Za-z0-9_\-]{28,})\b", t)
-            if km:
-                return ConfigIntentMatch(
-                    "mcp_key",
-                    0.85,
-                    {"label": "doubao", "api_key": km.group(1)},
-                )
+    _long_multi = len(t) > 400 and t.count("\n") >= 2
 
-    # OAuth 引导：短指令，避免聊天里顺口提到 login 就短路
+    if not _long_multi and len(t) < 400 and _MCP_SETUP_NO_KEY.search(t):
+        if not re.search(
+            r"(?i)(搜\s*一下|搜索\s*一下|帮我\s*搜|search\s+for|查一下.{0,20}新闻)", t
+        ):
+            label = _guess_mcp_label(t, default=None)
+            if label:
+                return ConfigIntentMatch("mcp_setup_guide", 0.9, {"label": label})
+
     if len(t) < 80:
         for p in _OAUTH_PATTERNS:
             if p.search(t):
                 kind = "oauth_xai" if re.search(r"(?i)grok|xai", t) else "oauth_openai"
                 return ConfigIntentMatch(kind, 0.88, {})
 
-    # 切模型（避免过宽：要求明确动词 + 短句）
     if len(t) < 120 and re.search(r"(?i)(切换|换成|改用|使用模型|模型\s*[：:=])", t):
         for p in _MODEL_PATTERNS:
             m = p.search(t)
             if m:
                 return ConfigIntentMatch(
-                    "switch_model",
-                    0.86,
-                    {"model": m.group("model").strip()},
+                    "switch_model", 0.86, {"model": m.group("model").strip()}
                 )
 
     return None
 
 
+def try_pending_mcp_key(
+    text: str,
+    pending_label: str | None,
+) -> ConfigIntentMatch | None:
+    """上一轮引导后，用户只贴 key / API Key：xxx → mcp_key。"""
+    t = (text or "").strip()
+    if not t or not pending_label:
+        return None
+    label = _guess_mcp_label(pending_label, pending_label, default=None) or str(
+        pending_label
+    ).strip()
+    if not label:
+        return None
+    m = _BARE_KEY.match(t)
+    if m:
+        key = m.group(1)
+    else:
+        m2 = re.search(
+            r"(?i)(?:api\s*key|密钥|key)\s*[：:]\s*[`\"']?([A-Za-z0-9_\-]{16,})[`\"']?\s*$",
+            t,
+        )
+        if m2 and len(t) < 160:
+            key = m2.group(1)
+        else:
+            return None
+    if len(key) < 16:
+        return None
+    return ConfigIntentMatch("mcp_key", 0.88, {"label": label, "api_key": key})
+
+
+def detect_mcp_micro_loop(text: str) -> dict[str, Any] | None:
+    """未命中完整快路径时，是否武装配置微 loop（薄工具面 + 短 max_iters）。"""
+    t = (text or "").strip()
+    if not t:
+        return None
+    if detect_config_intent(t) is not None:
+        return None
+    ops = False
+    try:
+        from backend.agent.tool_policy import is_mcp_ops_intent
+
+        ops = bool(is_mcp_ops_intent(t))
+    except Exception:
+        ops = False
+    if not ops:
+        if not re.search(
+            r"(?i)(manage_mcp|mcp\s*商店|mcp\s*server|配置.{0,8}mcp|装.{0,6}mcp)", t
+        ):
+            return None
+    label = _guess_mcp_label(t, default="") or ""
+    try:
+        from backend.core.config import settings as _st
+
+        _mi = int(getattr(_st, "agent_config_micro_max_iterations", 5) or 5)
+    except Exception:
+        _mi = 5
+    return {
+        "label": label,
+        "max_iters": max(2, _mi),
+        "tools": (
+            "manage_mcp",
+            "clarify",
+            "current_time",
+            "update_config",
+            "get_system_status",
+            "list_available_models",
+        ),
+        "reason": "mcp_ops_without_full_key",
+    }
+
+
 # ── 执行 ──────────────────────────────────────────────────────────
 
 async def execute_config_intent(match: ConfigIntentMatch) -> dict[str, Any]:
-    """执行意图，返回 {ok, message, ...}。"""
     t0 = time.time()
     kind = match.kind
     try:
         if kind == "mcp_key":
             result = await _exec_mcp_key(match.payload)
+        elif kind == "mcp_setup_guide":
+            result = await _exec_mcp_setup_guide(match.payload)
         elif kind == "proxy":
             result = await _exec_proxy(match.payload)
         elif kind == "switch_model":
             result = await _exec_switch_model(match.payload)
         elif kind == "simple_mode":
-            result = {"ok": True, "message": "", "simple_mode": match.payload.get("enabled")}
-            # session 写入在 shortcut 层做
+            result = {
+                "ok": True,
+                "message": "",
+                "simple_mode": match.payload.get("enabled"),
+            }
         elif kind == "oauth_xai":
             result = {
                 "ok": True,
                 "message": (
                     "Grok OAuth 请走**设置 → LLM → Grok OAuth →「Grok 登录」**（设备码）。\n"
-                    "若打不开验证页：先在 **设置 → 通用 → 网络代理** 填 HTTP 代理（如 127.0.0.1:3128）并保存。\n"
+                    "若打不开验证页：先在 **设置 → 通用 → 网络代理** 填 HTTP 代理并保存。\n"
                     "我不会在对话里替你打开浏览器完成授权。"
                 ),
             }
@@ -246,8 +357,14 @@ async def _exec_mcp_key(payload: dict[str, Any]) -> dict[str, Any]:
     from backend.services.mcp_presets import ensure_mcp_preset, find_preset
     from backend.services.secret_redact import mask_token
 
-    label = str(payload.get("label") or "doubao")
+    label = str(payload.get("label") or "").strip()
     api_key = str(payload.get("api_key") or "").strip()
+    if not label:
+        return {
+            "ok": False,
+            "message": "未识别 MCP 预制名。请带上「豆包搜索 / tavily / firecrawl」。",
+            "detail": "missing_label",
+        }
     preset = find_preset(label)
     if preset is None:
         return {
@@ -265,7 +382,7 @@ async def _exec_mcp_key(payload: dict[str, Any]) -> dict[str, Any]:
         f"- 工具注册：{out.get('tools_registered', 0)} 个",
     ]
     if out.get("reload_error"):
-        lines.append(f"- 刷新：有告警 `{out['reload_error'][:120]}`")
+        lines.append(f"- 刷新：有告警 `{str(out['reload_error'])[:120]}`")
     if out.get("probe_ok") is True:
         lines.append(f"- 探活：成功（{out.get('probe_detail')}）")
     elif out.get("probe_ok") is False:
@@ -275,12 +392,113 @@ async def _exec_mcp_key(payload: dict[str, Any]) -> dict[str, Any]:
         )
     else:
         lines.append("- 探活：跳过（无已注册工具）")
-    lines.append("\n直接说「帮我搜一下 ……」即可。若工具仍不可见，**新开会话**以加载 MCP 工具表。")
+    lines.append(
+        "\n直接说「帮我搜一下 ……」即可。若工具仍不可见，**新开会话**以加载 MCP 工具表。"
+    )
+    wrote_ok = bool(out.get("ok", True))
     return {
-        "ok": True,
+        "ok": wrote_ok,
         "message": "\n".join(lines),
         "detail": out.get("action"),
         "data": {k: v for k, v in out.items() if k != "ok"},
+        "clear_pending_mcp": True,
+    }
+
+
+async def _exec_mcp_setup_guide(payload: dict[str, Any]) -> dict[str, Any]:
+    from backend.services.mcp_presets import ensure_mcp_preset, find_preset
+
+    label = str(payload.get("label") or "").strip()
+    if not label:
+        return {
+            "ok": False,
+            "message": "请说明要配置哪个 MCP（豆包搜索 / tavily / firecrawl）。",
+            "detail": "missing_label",
+        }
+    preset = find_preset(label)
+    if preset is None:
+        return {
+            "ok": False,
+            "message": f"未识别的 MCP 预制「{label}」。支持：豆包搜索 / tavily / firecrawl。",
+            "detail": "unknown_preset",
+        }
+
+    try:
+        from backend.mcp_hub.repo import MCPServerRepository
+
+        repo = MCPServerRepository()
+        existing = None
+        for s in await repo.list_all():
+            n = str(getattr(s, "name", "") or "").lower()
+            if preset.id in n or any(
+                a.lower() in n for a in (preset.aliases or ()) if a
+            ):
+                existing = s
+                break
+            if preset.env_key and isinstance(getattr(s, "env", None), dict):
+                if preset.env_key in (s.env or {}):
+                    existing = s
+                    break
+    except Exception:
+        existing = None
+
+    if existing is not None:
+        try:
+            out = await ensure_mcp_preset(
+                preset=preset, api_key="", reload=True, probe=True
+            )
+            return {
+                "ok": True,
+                "message": (
+                    f"**{preset.display_name}** 已在配置中，已触发 reload"
+                    f"（工具 {out.get('tools_registered', 0)} 个）。"
+                    "直接说「帮我搜一下 ……」即可。"
+                ),
+                "detail": out.get("action") or "reloaded",
+                "pending_mcp_label": None,
+                "data": out,
+            }
+        except Exception as e:
+            return {
+                "ok": False,
+                "message": f"已有配置但 reload 失败: {e}",
+                "detail": "reload_failed",
+            }
+
+    if not preset.env_key:
+        try:
+            out = await ensure_mcp_preset(
+                preset=preset, api_key="", reload=True, probe=True
+            )
+            return {
+                "ok": True,
+                "message": (
+                    f"**{preset.display_name}** 无需 API Key，已写入并加载"
+                    f"（工具 {out.get('tools_registered', 0)} 个）。"
+                ),
+                "detail": out.get("action") or "ensured_no_key",
+                "pending_mcp_label": None,
+                "data": out,
+            }
+        except Exception as e:
+            return {
+                "ok": False,
+                "message": f"配置 {preset.display_name} 失败: {e}",
+                "detail": "ensure_failed",
+            }
+
+    env_hint = f"env `{preset.env_key}`"
+    msg = (
+        f"要配置 **{preset.display_name}** MCP（{env_hint}）。\n"
+        f"请**直接发**（一行即可秒配，无需再说明）：\n\n"
+        f"`{preset.display_name} API Key：你的密钥`\n\n"
+        "也可在 **设置 → MCP** 粘贴。我不会进多步工具循环去猜密钥。"
+    )
+    return {
+        "ok": True,
+        "message": msg,
+        "detail": "awaiting_key",
+        "pending_mcp_label": preset.id,
     }
 
 
@@ -311,7 +529,11 @@ async def _exec_proxy(payload: dict[str, Any]) -> dict[str, Any]:
         enabled=enabled, host=host, port=port, scheme=scheme
     )
     if not enabled:
-        return {"ok": True, "message": "已关闭 Tevarn/Takton 出站代理（立即生效）。", "detail": "off"}
+        return {
+            "ok": True,
+            "message": "已关闭 Tevarn/Takton 出站代理（立即生效）。",
+            "detail": "off",
+        }
     return {
         "ok": True,
         "message": (
@@ -345,8 +567,7 @@ async def _exec_switch_model(payload: dict[str, Any]) -> dict[str, Any]:
         base_url = str(getattr(settings, "llm_base_url", "") or "")
 
     effective = OpenAICompatibleService._normalize_model_id(model, base_url)
-    catalog["active_model"] = model  # 保留用户选择名
-    # provider 级 active_model
+    catalog["active_model"] = model
     for p in catalog.get("providers") or []:
         if p.get("id") == pid:
             p["active_model"] = model
@@ -381,10 +602,8 @@ async def try_config_intent_shortcut(
     attachments: list | None = None,
 ) -> str | None:
     """Agent 入口短路。命中返回回复文本，否则 None。"""
-    # 有附件时不抢（可能是分析文件）
     if attachments:
         return None
-    # 子代理 / workforce 不抢
     if getattr(loop, "_parent_run_id", None) or getattr(loop, "_agent_key", None) not in (
         None,
         "",
@@ -394,22 +613,38 @@ async def try_config_intent_shortcut(
         if ak and ak != "main" and not ak.startswith("contact:"):
             return None
 
-    match = detect_config_intent(user_input or "")
+    pending_label: str | None = None
+    try:
+        if loop.session_repo is not None:
+            cfg = await loop.session_repo.get_config(session_id) or {}
+            if isinstance(cfg, dict):
+                pending_label = str(cfg.get("pending_mcp_label") or "").strip() or None
+    except Exception:
+        pending_label = None
+
+    match: ConfigIntentMatch | None = None
+    if pending_label:
+        match = try_pending_mcp_key(user_input or "", pending_label)
+    if match is None:
+        match = detect_config_intent(user_input or "")
     if match is None:
         return None
 
-    # simple_mode 需要 session
     if match.kind == "simple_mode":
         enabled = bool(match.payload.get("enabled"))
         try:
             if loop.session_repo is not None:
-                cfg = await loop.session_repo.get_config(session_id) or {}
-                if not isinstance(cfg, dict):
-                    cfg = {}
-                cfg["simple_mode"] = enabled
+                updates: dict[str, Any] = {"simple_mode": enabled}
                 if enabled:
-                    cfg["simple_mode_max_iterations"] = 8
-                await loop.session_repo.update(session_id, {"config": cfg})
+                    updates["simple_mode_max_iterations"] = 8
+                if hasattr(loop.session_repo, "merge_config_keys"):
+                    await loop.session_repo.merge_config_keys(session_id, updates)
+                else:
+                    cfg = await loop.session_repo.get_config(session_id) or {}
+                    if not isinstance(cfg, dict):
+                        cfg = {}
+                    cfg.update(updates)
+                    await loop.session_repo.update(session_id, {"config": cfg})
         except Exception as e:
             logger.warning("simple_mode session update failed: %s", e)
             reply = f"设置简单模式失败: {e}"
@@ -424,7 +659,9 @@ async def try_config_intent_shortcut(
         try:
             from backend.services.intent_telemetry import record_intent_event
 
-            record_intent_event(kind="simple_mode", ok=True, detail="on" if enabled else "off")
+            record_intent_event(
+                kind="simple_mode", ok=True, detail="on" if enabled else "off"
+            )
         except Exception:
             pass
         await _persist_shortcut(loop, session_id, user_input, reply)
@@ -432,11 +669,48 @@ async def try_config_intent_shortcut(
 
     result = await execute_config_intent(match)
     reply = str(result.get("message") or ("完成" if result.get("ok") else "失败"))
+
+    try:
+        if loop.session_repo is not None:
+            updates: dict[str, Any] = {}
+            remove: list[str] = []
+            if (
+                match.kind == "mcp_key"
+                and result.get("ok")
+                and result.get("clear_pending_mcp")
+            ):
+                remove.append("pending_mcp_label")
+            elif result.get("pending_mcp_label"):
+                updates["pending_mcp_label"] = str(result["pending_mcp_label"])
+            elif (
+                result.get("pending_mcp_label") is None
+                and "pending_mcp_label" in result
+                and result.get("ok")
+            ):
+                remove.append("pending_mcp_label")
+            if updates or remove:
+                if hasattr(loop.session_repo, "merge_config_keys"):
+                    await loop.session_repo.merge_config_keys(
+                        session_id, updates or None, remove=remove or None
+                    )
+                else:
+                    cfg = await loop.session_repo.get_config(session_id) or {}
+                    if not isinstance(cfg, dict):
+                        cfg = {}
+                    cfg.update(updates)
+                    for k in remove:
+                        cfg.pop(k, None)
+                    await loop.session_repo.update(session_id, {"config": cfg})
+    except Exception as e:
+        logger.warning("pending_mcp_label session update failed: %s", e)
+
     await _persist_shortcut(loop, session_id, user_input, reply)
     return reply
 
 
-async def _persist_shortcut(loop: Any, session_id: UUID, user_input: str, reply: str) -> None:
+async def _persist_shortcut(
+    loop: Any, session_id: UUID, user_input: str, reply: str
+) -> None:
     from backend.services.secret_redact import redact_secrets
 
     safe_user = redact_secrets(user_input)
@@ -451,7 +725,6 @@ async def _persist_shortcut(loop: Any, session_id: UUID, user_input: str, reply:
         logger.warning("config intent persist assistant failed: %s", e)
     try:
         await loop._push_status(session_id, "idle", "配置快路径完成")
-        # 广播完整 assistant 文本，便于前端刷新
         ws = getattr(loop, "ws_manager", None)
         if ws is not None:
             await ws.broadcast(

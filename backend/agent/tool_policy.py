@@ -375,13 +375,14 @@ _MINIMAL_HINTS = (
 _MCP_MARKERS = re.compile(
     r"(?i)mcp|model\s*context\s*protocol|integrations|"
     r"doubao-search|askecho|search[\s-]*infinity|"
-    r"豆包搜索|融合信息搜索"
+    r"豆包搜索|融合信息搜索|tavily|firecrawl"
 )
 _MCP_OPS_VERBS = re.compile(
-    r"(?i)配\s*下|配\s*置|安装|挂载|启用|写入|填\s*入|设置|"
-    r"改\s*一下|修改|更新|装\s*上|接\s*上|"
-    r"\binstall\b|\bmount\b|\benable\b|\bconfigure\b|\bupdate\b"
+    r"(?i)配\s*下|配\s*置|安装|挂载|启用|写入|填\s*入|"
+    r"装\s*上|接\s*上|manage_mcp|"
+    r"\binstall\b|\bmount\b|\benable\b|\bconfigure\b"
 )
+_MCP_OPS_WEAK = re.compile(r"(?i)改\s*一下|修改|更新|设置|\bupdate\b")
 _MCP_SECRET_HINTS = re.compile(
     r"(?i)api[_\s-]?key|密钥|secret|access[_\s-]?key|环境变量|\benv\b|token"
 )
@@ -401,13 +402,18 @@ def is_mcp_ops_intent(user_input: str) -> bool:
     text = (user_input or "").strip()
     if not text or not _MCP_MARKERS.search(text):
         return False
-    if _MCP_OPS_VERBS.search(text) or _MCP_SECRET_HINTS.search(text):
+    if _MCP_SECRET_HINTS.search(text) or _SECRET_HANDOFF_TAIL.search(text):
         return True
-    # 「给你自己配下…MCP：<key>」类：动词 + 疑似密钥尾巴
-    if "配" in text and _SECRET_HANDOFF_TAIL.search(text):
-        return True
-    if _SECRET_HANDOFF_TAIL.search(text) and _MCP_MARKERS.search(text):
-        return True
+    for m in _MCP_MARKERS.finditer(text):
+        lo = max(0, m.start() - 24)
+        hi = min(len(text), m.end() + 24)
+        window = text[lo:hi]
+        if _MCP_OPS_VERBS.search(window) or re.search(r"配\s*[下置]", window):
+            return True
+        if _MCP_OPS_WEAK.search(window) and re.search(
+            r"(?i)(env|密钥|api|key|装|配|server)", window
+        ):
+            return True
     return False
 
 
@@ -509,7 +515,8 @@ def live_mcp_tool_names() -> list[str]:
 def tools_for_packs(packs: Iterable[str]) -> list[str]:
     """合并 pack → 去重工具名（core 顺序优先）。
 
-    pack ``mcp`` / ``integrations`` / ``manage`` 会并入 live ``mcp_*`` 工具。
+    仅 pack ``mcp`` / ``integrations`` 并入 live ``mcp_*``；
+    ``manage`` 只保留静态 manage_mcp。
     """
     base: set[str] = set(DEFAULT_CHAT_TOOL_WHITELIST)
     need_mcp_live = False
@@ -521,7 +528,7 @@ def tools_for_packs(packs: Iterable[str]) -> list[str]:
             continue
         if key in TOOL_PACKS:
             base.update(TOOL_PACKS[key])
-        if key in {"mcp", "integrations", "manage"}:
+        if key in {"mcp", "integrations"}:
             need_mcp_live = True
     if need_mcp_live:
         base.update(live_mcp_tool_names())
@@ -669,11 +676,40 @@ def resolve_enabled_tool_names(
     except Exception:
         pass
 
-    # 已连接 MCP 工具时自动挂上 mcp pack（enable/mount 闭环：启用后无需再 use_tool_pack）
+    # P0-3：禁止「有 live MCP 就无脑挂全量 mcp_*」
     live_mcp = live_mcp_tool_names()
-    if live_mcp and prof not in {"core"} and "mcp" not in plan.packs and "*" not in plan.packs:
-        plan.packs = list(plan.packs) + ["mcp"]
-        plan.reasons = list(plan.reasons) + [f"live_mcp:{len(live_mcp)}"]
+    text = (user_input or "").strip()
+    _mcp_ops = bool(text and is_mcp_ops_intent(text))
+    _product = re.search(
+        r"(?i)(mcp|豆包|doubao|askecho|tavily|firecrawl|mcp_\w+)", text or ""
+    )
+    _mcp_use = bool(
+        text
+        and not _mcp_ops
+        and _product
+        and (
+            _PURE_SEARCH_VERBS.search(text)
+            or re.search(
+                r"(?i)(用|调用|试|跑|执行|搜|查).{0,16}(mcp|豆包|doubao|tavily|firecrawl)",
+                text,
+            )
+            or re.search(
+                r"(?i)(mcp|豆包|doubao|tavily|firecrawl).{0,16}(搜|查|用|试|一下)",
+                text,
+            )
+        )
+    )
+    if prof not in {"core"} and "*" not in plan.packs:
+        if _mcp_ops:
+            if "mcp" not in plan.packs:
+                plan.packs = list(plan.packs) + ["mcp"]
+                plan.reasons = list(plan.reasons) + ["mcp_ops:ensure_pack"]
+        elif live_mcp and ("mcp" in plan.packs or "integrations" in plan.packs):
+            plan.reasons = list(plan.reasons) + [f"live_mcp:{len(live_mcp)}"]
+        elif live_mcp and _mcp_use:
+            if "mcp" not in plan.packs:
+                plan.packs = list(plan.packs) + ["mcp"]
+            plan.reasons = list(plan.reasons) + [f"mcp_use:{len(live_mcp)}"]
 
     if wants_full_tools(raw_tools, profile=prof) or "*" in plan.packs or "full" in plan.packs:
         plan.profile = "full"
@@ -683,11 +719,13 @@ def resolve_enabled_tool_names(
     names = _norm_list(raw_tools)
     skills = _norm_list(raw_skills)
 
-    # 显式 tools 名单（非 *）
     if names is not None and len(names) > 0:
         base = set(names)
-        # 显式名单仍并入 live MCP，避免启用后会话里看不到
-        if live_mcp:
+        if live_mcp and (
+            "mcp" in plan.packs
+            or "integrations" in plan.packs
+            or any(str(n).startswith("mcp_") for n in base)
+        ):
             base.update(live_mcp)
         plan.reasons = list(plan.reasons) + ["explicit_tools"]
     else:
@@ -699,7 +737,6 @@ def resolve_enabled_tool_names(
             for p in extra_packs:
                 if p and p not in packs:
                     packs.append(str(p).strip().lower())
-        # 空 packs → 仅 core 白名单
         merged = tools_for_packs(packs)
         base = set(merged)
         base.update(PROFILE_EXTRA_TOOLS.get(prof, ()))
@@ -712,8 +749,30 @@ def resolve_enabled_tool_names(
     base.update(MODE_TOOL_EXTRAS.get(mode_key, ()))
     if extra:
         base.update(str(x).strip() for x in extra if str(x).strip())
-    # meta 始终在
     base.add("use_tool_pack")
+
+    if _mcp_ops and prof not in {"full"}:
+        ops_allow = {
+            "manage_mcp",
+            "use_tool_pack",
+            "clarify",
+            "current_time",
+            "get_system_status",
+            "list_available_models",
+            "update_config",
+            "configure_tevarn",
+            "capability_status",
+            "file_read",
+        }
+        if is_mcp_secret_handoff(text):
+            base = {n for n in base if n in ops_allow or str(n).startswith("mcp_")}
+            base.update(live_mcp)
+            plan.reasons = list(plan.reasons) + ["mcp_ops:thin+verify"]
+        else:
+            base = {n for n in base if n in ops_allow}
+            plan.reasons = list(plan.reasons) + ["mcp_ops:thin_surface"]
+        base.add("manage_mcp")
+        base.add("use_tool_pack")
 
     ordered = _order_tools(base)
     plan.packs = list(dict.fromkeys(plan.packs))
@@ -724,14 +783,21 @@ def merge_tools_with_packs(
     current: list[str] | None,
     packs: Iterable[str],
 ) -> list[str] | None:
-    """中途扩容：None(全量) 保持 None；否则并入 pack。"""
+    """中途扩容：None(全量) 保持 None；否则并入 pack 增量（不重灌整份 core）。"""
     pack_list = [str(p).strip().lower() for p in packs if str(p).strip()]
     if any(p in {"*", "all", "full"} for p in pack_list):
         return None
-    added = tools_for_packs(pack_list)
     if current is None:
         return None
-    return _order_tools(set(current) | set(added))
+    delta: set[str] = set()
+    for p in pack_list:
+        key = (p or "").strip().lower()
+        if key in TOOL_PACKS:
+            delta.update(TOOL_PACKS[key])
+        if key in {"mcp", "integrations"}:
+            delta.update(live_mcp_tool_names())
+            delta.add("manage_mcp")
+    return _order_tools(set(current) | delta)
 
 
 def compact_capability_brief(

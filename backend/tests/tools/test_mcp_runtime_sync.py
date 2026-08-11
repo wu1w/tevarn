@@ -121,9 +121,10 @@ def test_live_mcp_tool_names_and_tools_for_packs():
     assert "mcp_search" in packed
     assert "manage_mcp" in packed
 
-    # manage pack also pulls live mcp
+    # manage pack 不自动拉 live mcp（仅静态 manage_mcp）
     packed_m = tools_for_packs(["manage"])
-    assert "mcp_search" in packed_m
+    assert "manage_mcp" in packed_m
+    assert "mcp_search" not in packed_m
 
 
 def test_tool_matches_crew_caps_mcp_prefix():
@@ -216,7 +217,7 @@ async def test_mcp_adapter_uses_remote_name_and_risk():
     client.call_tool.assert_awaited_once_with("ping", {"x": 1})
 
 
-def test_resolve_enabled_includes_live_mcp():
+def test_resolve_enabled_does_not_auto_include_live_mcp_on_hello():
     from backend.agent.tool_policy import resolve_enabled_tool_names
     from backend.tools.adapters.mcp_adapter import MCPToolAdapter
 
@@ -228,8 +229,34 @@ def test_resolve_enabled_includes_live_mcp():
         user_input="hello",
     )
     assert names is not None
-    assert "mcp_weather" in names
-    assert "mcp" in plan.packs
+    assert "mcp_weather" not in names
+
+
+def test_coding_use_intent_mounts_live_mcp():
+    from backend.agent.tool_policy import resolve_enabled_tool_names
+    from backend.tools.adapters.mcp_adapter import MCPToolAdapter
+
+    ToolRegistry.register(
+        MCPToolAdapter("s", "doubao_search", "d", {"type": "object", "properties": {}})
+    )
+    names, plan = resolve_enabled_tool_names(
+        profile="coding",
+        user_input="用豆包搜一下今天新闻",
+    )
+    assert names is not None
+    assert any(n.startswith("mcp_") for n in names)
+
+
+def test_mcp_ops_thin_surface_no_command():
+    from backend.agent.tool_policy import resolve_enabled_tool_names
+
+    names, plan = resolve_enabled_tool_names(
+        profile="coding",
+        user_input="用 manage_mcp 配置豆包搜索的 env",
+    )
+    assert names is not None
+    assert "manage_mcp" in names
+    assert "command" not in names
 
 
 @pytest.mark.anyio

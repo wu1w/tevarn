@@ -514,6 +514,11 @@ class Settings(BaseSettings):
     agent_progress_discipline_prompt: bool = False  # soft-open: less pre-scare
     agent_goal_stall_force_final: bool = False  # soft-open: no stall hard stop
     agent_thrash_force_final: bool = False  # soft-open: thrash → soft nudge only
+    agent_thrash_force_final_interactive: bool = True
+    agent_mcp_ops_thrash_force_after: int = 5
+    agent_command_family_force_after: int = 5
+    agent_config_micro_max_iterations: int = 5
+    agent_pseudo_tool_recover: bool = True
     agent_timid_force_final: bool = False  # soft-open: no timid hard stop
     # 每 N 个工具轮即使未超阈值也做一次 L1（防慢膨胀）
     agent_midloop_l1_every: int = 3

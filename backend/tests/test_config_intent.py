@@ -44,3 +44,23 @@ def test_clamp_min():
         {"max_results": 3},
     )
     assert out["max_results"] == 5
+
+
+def test_detect_mcp_setup_without_key():
+    from backend.services.config_intent import detect_config_intent
+    m = detect_config_intent("帮我配一下豆包搜索 MCP")
+    assert m is not None
+    assert m.kind == "mcp_setup_guide"
+
+
+def test_generic_configure_mcp_not_doubao():
+    from backend.services.config_intent import detect_config_intent
+    m = detect_config_intent("帮我配置一下 mcp")
+    assert m is None or m.kind != "mcp_setup_guide"
+
+
+def test_pending_api_key_form():
+    from backend.services.config_intent import try_pending_mcp_key
+    m = try_pending_mcp_key("API Key：IWimbUB9VSgFwoNpUmmTHeZZmrvMrarR", "tavily")
+    assert m is not None
+    assert m.payload["label"] == "tavily"

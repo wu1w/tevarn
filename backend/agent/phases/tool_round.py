@@ -2069,7 +2069,12 @@ async def run_tool_round(
                         break
             except Exception:
                 pass
-        if fam:
+        if fam == "mcp_ops":
+            force_after = max(
+                2,
+                int(getattr(settings, "agent_mcp_ops_thrash_force_after", 5) or 5),
+            )
+        elif fam:
             force_after = max(
                 2,
                 int(getattr(settings, "agent_orch_thrash_force_final", 3) or 3),
@@ -2129,6 +2134,15 @@ async def run_tool_round(
             )
         except Exception:
             _hard_thrash = bool(getattr(settings, "agent_thrash_force_final", True))
+        # P0-4：仅配置微 loop / 显式 override 在 soft_open 下硬停
+        try:
+            _micro = bool(getattr(loop, "_config_micro_loop", None))
+            _ov = getattr(loop, "_thrash_force_final_override", None) is True
+            if _ov or _micro:
+                if fam == "mcp_ops" or fam == "" or _ov:
+                    _hard_thrash = True
+        except Exception:
+            pass
         if (
             int(getattr(state, "alternate_thrash_streak", 0) or 0) >= _alt_cap
             and not state.force_final_no_tools
@@ -2163,6 +2177,21 @@ async def run_tool_round(
                 _sig,
                 session_id,
             )
+
+        try:
+            _cmd_n = sum(1 for x in _tnames2 if x == "command")
+            if (
+                _cmd_n * 2 >= len(_tnames2)
+                and _cmd_n > 0
+                and bool(getattr(loop, "_config_micro_loop", None))
+            ):
+                _cfa = max(
+                    2,
+                    int(getattr(settings, "agent_command_family_force_after", 5) or 5),
+                )
+                force_after = min(force_after, _cfa)
+        except Exception:
+            pass
 
         # force_after=2 → streak>=1 即第 2 轮相同；force_after=3 → streak>=2 即第 3 轮
         if (

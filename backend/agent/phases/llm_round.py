@@ -642,6 +642,97 @@ async def _run_llm_round_body(
             "has_tool_calls": bool(tool_calls),
         })
 
+    # 原生 tool_calls 成功 → 重置伪 tool 泄漏计数
+    if tool_calls:
+        try:
+            loop._pseudo_tool_leak_streak = 0
+        except Exception:
+            pass
+
+    # P0-2：无 native tool_calls 时，尝试从正文回收伪 tool
+    if not tool_calls and (accumulated_content or "").strip():
+        try:
+            from backend.core.config import settings as _st_ptr
+
+            _recover_on = bool(
+                getattr(_st_ptr, "agent_pseudo_tool_recover", True)
+            )
+        except Exception:
+            _recover_on = True
+        if _recover_on:
+            try:
+                from backend.agent.pseudo_tool_recover import (
+                    leak_nudge_text,
+                    looks_like_pseudo_tool_content,
+                    recover_tool_calls_from_content,
+                    scrub_leak_markers,
+                )
+
+                recovered, cleaned = recover_tool_calls_from_content(
+                    accumulated_content
+                )
+                if recovered:
+                    tool_calls = list(recovered)
+                    accumulated_content = cleaned
+                    try:
+                        loop._pseudo_tool_leak_streak = 0
+                    except Exception:
+                        pass
+                    logger.info(
+                        "pseudo tool recovered n=%s names=%s session=%s",
+                        len(recovered),
+                        [getattr(t, "name", "?") for t in recovered],
+                        session_id,
+                    )
+                    try:
+                        await loop._push_status(
+                            session_id,
+                            "thinking",
+                            f"已从正文回收 {len(recovered)} 个工具调用…",
+                        )
+                    except Exception:
+                        pass
+                elif looks_like_pseudo_tool_content(accumulated_content):
+                    streak = int(
+                        getattr(loop, "_pseudo_tool_leak_streak", 0) or 0
+                    ) + 1
+                    try:
+                        loop._pseudo_tool_leak_streak = streak
+                    except Exception:
+                        pass
+                    result.messages.append(
+                        {
+                            "role": "system",
+                            "content": leak_nudge_text(streak=streak),
+                        }
+                    )
+                    if streak >= 2:
+                        result.force_final_no_tools = True
+                        result.action = "continue"
+                        result.accumulated_content = scrub_leak_markers(
+                            accumulated_content
+                        )
+                        result.accumulated_reasoning = accumulated_reasoning
+                        result.tool_calls = []
+                        logger.warning(
+                            "pseudo tool leak force_final streak=%s session=%s",
+                            streak,
+                            session_id,
+                        )
+                        return result
+                    result.action = "continue"
+                    result.accumulated_content = accumulated_content
+                    result.accumulated_reasoning = accumulated_reasoning
+                    result.tool_calls = []
+                    logger.warning(
+                        "pseudo tool leak nudge streak=%s session=%s",
+                        streak,
+                        session_id,
+                    )
+                    return result
+            except Exception as _ptr_e:
+                logger.warning("pseudo tool recover skip: %s", _ptr_e)
+
     # 判断是否有 tool calls
     if tool_calls:
         _raw_tcs = list(tool_calls)
