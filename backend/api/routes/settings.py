@@ -1709,9 +1709,17 @@ async def _activate_openai_chatgpt_oauth(
 
     base_url = str(result.get("base_url") or OPENAI_CODEX_LOCAL_BASE)
     try:
-        host = request.headers.get("host") or "127.0.0.1:8090"
-        if "8090" in base_url and host and "127.0.0.1" in base_url:
-            base_url = f"http://{host.split(',')[0].strip()}/api/llm-proxy/openai-codex/v1"
+        # 仅允许 loopback Host，防止 Host 头劫持把 OAuth Bearer 打到外网
+        raw_host = (request.headers.get("host") or "127.0.0.1:8090").split(",")[0].strip()
+        host_l = raw_host.lower()
+        allowed = (
+            host_l.startswith("127.0.0.1")
+            or host_l.startswith("localhost")
+            or host_l.startswith("[::1]")
+        )
+        host = raw_host if allowed else "127.0.0.1:8090"
+        if "8090" in base_url and "127.0.0.1" in base_url:
+            base_url = f"http://{host}/api/llm-proxy/openai-codex/v1"
     except Exception:
         pass
 

@@ -17,6 +17,12 @@ def test_f2_plan_approve_narrow():
     assert is_plan_approve("按计划执行")
     assert not is_plan_approve("开始执行")
     assert not is_plan_approve("开始执行这个任务")
+    # plan_ready 尾注不得再诱导裸「开始执行」
+    from backend.agent.phases import no_tool_round as ntr
+    import inspect
+    src = inspect.getsource(ntr)
+    assert "按计划执行" in src
+    assert "「开始执行」后" not in src
 
 
 def test_f3_micro_loop():

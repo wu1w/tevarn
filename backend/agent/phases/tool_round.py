@@ -2581,6 +2581,14 @@ async def run_tool_round(
                 )
             except Exception as _cf:
                 logger.debug("cap re-filter after pack expand: %s", _cf)
+            # Plan 未批准：扩 pack 后必须再收窄只读 schema（Court 兜底不够防 thrash）
+            if getattr(loop, "_plan_mode_active", False):
+                try:
+                    from backend.agent.plan_intent import filter_tools_for_plan
+
+                    state.tools = filter_tools_for_plan(state.tools)
+                except Exception as _pf:
+                    logger.debug("plan re-filter after pack expand: %s", _pf)
             await loop._push_status(
                 session_id,
                 "thinking",

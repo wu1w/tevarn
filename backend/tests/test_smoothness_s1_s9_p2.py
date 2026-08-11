@@ -12,6 +12,12 @@ def test_mcp_add_custom():
     from backend.services.config_intent import detect_config_intent
     m = detect_config_intent("添加 mcp github 用 npx -y @modelcontextprotocol/server-github")
     assert m and m.kind == "mcp_add_custom"
+    # S9：execute 必须挂接 mcp_add_custom（此前死路径）
+    import inspect
+    from backend.services import config_intent as ci
+    src = inspect.getsource(ci.execute_config_intent)
+    assert 'kind == "mcp_add_custom"' in src or "kind == 'mcp_add_custom'" in src
+    assert "_exec_mcp_add_custom" in src
 
 def test_plan_intent():
     from backend.agent.plan_intent import is_plan_request, is_plan_approve

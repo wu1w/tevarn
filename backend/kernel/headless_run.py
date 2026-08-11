@@ -99,34 +99,46 @@ async def run_headless(
         loop._thrash_force_final_override = True
     except Exception:
         pass
+    _prev_ask_mode = None
     if always_approve:
         # soft hint — permission headless still applies secrets deny
+        # 必须还原：禁止进程级永久改写全局 ask 模式
         try:
             from backend.core.config import settings
 
+            _prev_ask_mode = getattr(settings, "agent_permission_ask_mode", None)
             settings.agent_permission_ask_mode = "local_allow"  # type: ignore[attr-defined]
         except Exception:
-            pass
+            _prev_ask_mode = None
     if identity_id:
         loop._agent_key = f"wf:{identity_id}"  # type: ignore[attr-defined]
         loop._agent_label = str(identity_id)[:8]  # type: ignore[attr-defined]
 
     try:
-        result = await loop.run(sid, text_prompt, attachments=None, mode=mode)
-        text = result if isinstance(result, str) else str(result or "")
-        return {
-            "ok": True,
-            "text": text,
-            "session_id": str(sid),
-            "identity_id": identity_id,
-            "duration_ms": int((time.time() - started) * 1000),
-        }
-    except Exception as e:
-        logger.exception("headless run failed")
-        return {
-            "ok": False,
-            "error": str(e),
-            "text": "",
-            "session_id": str(sid) if sid else None,
-            "duration_ms": int((time.time() - started) * 1000),
-        }
+        try:
+            result = await loop.run(sid, text_prompt, attachments=None, mode=mode)
+            text = result if isinstance(result, str) else str(result or "")
+            return {
+                "ok": True,
+                "text": text,
+                "session_id": str(sid),
+                "identity_id": identity_id,
+                "duration_ms": int((time.time() - started) * 1000),
+            }
+        except Exception as e:
+            logger.exception("headless run failed")
+            return {
+                "ok": False,
+                "error": str(e),
+                "text": "",
+                "session_id": str(sid) if sid else None,
+                "duration_ms": int((time.time() - started) * 1000),
+            }
+    finally:
+        if always_approve and _prev_ask_mode is not None:
+            try:
+                from backend.core.config import settings
+
+                settings.agent_permission_ask_mode = _prev_ask_mode  # type: ignore[attr-defined]
+            except Exception:
+                pass

@@ -315,7 +315,13 @@ class ConnectionManager:
         带 run_generation 且与当前 generation 不符 → 丢弃（旧 task late event）。
         """
         msg_type = message.get("type")
-        if msg_type not in ("stream_delta", "status", "tool_event", "error"):
+        if msg_type not in (
+            "stream_delta",
+            "status",
+            "tool_event",
+            "error",
+            "content_reset",
+        ):
             return
 
         msg_gen = message.get("run_generation")
@@ -333,6 +339,30 @@ class ConnectionManager:
             snap.generation = cur_gen
         if running:
             snap.agent_running = True
+
+        # 伪 tool 回收后：用干净正文覆盖 partial，避免切页 sync 恢复脏文本
+        if msg_type == "content_reset":
+            cleaned = message.get("content")
+            if cleaned is None:
+                cleaned = ""
+            mid = message.get("message_id")
+            try:
+                snap.partial_content = str(cleaned)
+            except Exception:
+                pass
+            if mid:
+                try:
+                    snap.stream_message_id = str(mid)
+                except Exception:
+                    pass
+            try:
+                # 清掉未 flush 的 delta 缓冲（list 或 str）
+                if hasattr(snap, "_delta_buf"):
+                    snap._delta_buf = []  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            self._maybe_flush_snapshot(session_id)
+            return
 
         if msg_type == "stream_delta":
             content = message.get("content") or ""

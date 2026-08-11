@@ -671,6 +671,41 @@ async def _run_llm_round_body(
                 recovered, cleaned = recover_tool_calls_from_content(
                     accumulated_content
                 )
+                # 仅允许本轮 schema / enabled filter 中的工具名（防薄档绕过运维面）
+                if recovered:
+                    allowed: set[str] | None = None
+                    try:
+                        schema_names: set[str] = set()
+                        for t in (tools or []):
+                            if not isinstance(t, dict):
+                                continue
+                            fn = (
+                                t.get("function")
+                                if isinstance(t.get("function"), dict)
+                                else {}
+                            )
+                            n = str(
+                                (fn or {}).get("name") or t.get("name") or ""
+                            ).strip()
+                            if n:
+                                schema_names.add(n)
+                        if schema_names:
+                            allowed = schema_names
+                    except Exception:
+                        allowed = None
+                    if allowed is not None:
+                        kept = [
+                            t
+                            for t in recovered
+                            if str(getattr(t, "name", "") or "") in allowed
+                        ]
+                        if len(kept) != len(recovered):
+                            logger.info(
+                                "pseudo tool recover dropped n=%s not-in-schema session=%s",
+                                len(recovered) - len(kept),
+                                session_id,
+                            )
+                        recovered = kept
                 if recovered:
                     tool_calls = list(recovered)
                     accumulated_content = cleaned
@@ -707,7 +742,9 @@ async def _run_llm_round_body(
                                         or ""
                                     )
                                     or None,
-                                    "recovered_tools": [getattr(t, "name", "") for t in recovered],
+                                    "recovered_tools": [
+                                        getattr(t, "name", "") for t in recovered
+                                    ],
                                 },
                             )
                     except Exception as _cr_e:

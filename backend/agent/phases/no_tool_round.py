@@ -67,8 +67,9 @@ async def run_no_tool_round(
                 _g = get_gate(session_id=str(session_id))
                 _tail = (
                     "\n\n---\n计划已就绪，状态：**plan_ready**。"
-                    "回复「批准计划」或「开始执行」后开始改代码；"
+                    "回复「批准计划」或「按计划执行」后开始改代码；"
                     "「推翻计划」可重来。"
+                    "（裸「开始执行」不会批准，避免误触。）"
                 )
                 if _g.state == PlanState.PLAN_READY and "批准计划" not in _body:
                     result.final_content = _body + _tail

@@ -430,6 +430,9 @@ async def execute_config_intent(match: ConfigIntentMatch) -> dict[str, Any]:
             result = await _exec_mcp_key(match.payload)
         elif kind == "mcp_setup_guide":
             result = await _exec_mcp_setup_guide(match.payload)
+        elif kind == "mcp_add_custom":
+            # S9：自定义 MCP 一句话安装（detect 已有，此前未挂接执行器）
+            result = await _exec_mcp_add_custom(match.payload)
         elif kind == "proxy":
             result = await _exec_proxy(match.payload)
         elif kind == "switch_model":
@@ -552,9 +555,9 @@ async def _exec_mcp_setup_guide(payload: dict[str, Any]) -> dict[str, Any]:
         }
 
     try:
-        from backend.mcp_hub.repo import MCPServerRepository
+        from backend.repositories.mcp_server_repo import AsyncMCPServerRepository
 
-        repo = MCPServerRepository()
+        repo = AsyncMCPServerRepository()
         existing = None
         for s in await repo.list_all():
             n = str(getattr(s, "name", "") or "").lower()

@@ -141,18 +141,16 @@ class MCPClient:
         cmd = (command or "").strip()
         out_args = list(args or [])
         # Electron 精简 PATH：优先 host_commands 解析 npx/uvx/node
+        # 子进程 env：白名单 + PATH 补全 + 用户 extra（勿整表继承 os.environ 灌密钥）
+        used_curated_env = False
         try:
             from backend.core.host_commands import build_process_env, resolve_host_command
 
             resolved = resolve_host_command(cmd)
             if resolved and resolved != cmd:
                 cmd = resolved
-            # 子进程 env：补全 PATH + 代理 + 用户 env
-            base_env = build_process_env(env)
-            if env is not None:
-                env = base_env
-            else:
-                env = base_env
+            env = build_process_env(env)
+            used_curated_env = True
         except Exception:
             pass
         if sys.platform == "win32" and cmd:
@@ -205,10 +203,21 @@ class MCPClient:
                             break
                 if resolved:
                     cmd = resolved
-        if env is not None:
-            merged = {str(k): str(v) for k, v in os.environ.items()}
-            merged.update({str(k): str(v) for k, v in env.items() if v is not None})
-            env = merged
+        if not used_curated_env:
+            # host_commands 不可用时的回退：仍尽量用白名单；最后才全表继承
+            try:
+                from backend.core.host_commands import build_process_env as _bpe
+
+                env = _bpe(env)
+            except Exception:
+                if env is not None:
+                    merged = {str(k): str(v) for k, v in os.environ.items()}
+                    merged.update(
+                        {str(k): str(v) for k, v in env.items() if v is not None}
+                    )
+                    env = merged
+                else:
+                    env = {str(k): str(v) for k, v in os.environ.items()}
         return cmd, out_args, env
 
     async def _connect_sse(self) -> None:

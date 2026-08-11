@@ -23,7 +23,9 @@ class MCPServerConfig(BaseModel):
     command: Optional[str] = None
     args: list[str] = Field(default_factory=list)
     url: Optional[str] = None
+    # 响应中 value 脱敏为 ***；明文仅写路径/管理员显式 reveal
     env: dict[str, str] = Field(default_factory=dict)
+    env_keys: list[str] = Field(default_factory=list)
     enabled: bool = True
     timeout: float = 30.0
     risk_level: str = Field(default="medium")

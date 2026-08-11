@@ -159,25 +159,20 @@ async def sync_mcp_runtime(only_server: str | None = None) -> dict[str, Any]:
 
     try:
         if only:
+            # 安全热更：先 reconnect（失败保留旧连接），成功后再换 registry
             unregistered = 0
-            try:
-                unregistered = unregister_mcp_server_tools(only)
-            except Exception as e:
-                logger.debug("unregister_mcp_server_tools %s: %s", only, e)
-
-            old = manager.get_client(only)
-            if old is not None:
-                try:
-                    await old.close()
-                except Exception:
-                    pass
-                try:
-                    manager._clients.pop(only, None)
-                except Exception:
-                    pass
-
+            registered = 0
+            warning = None
             row = await repo.get_by_name(only)
             if row is None:
+                try:
+                    unregistered = unregister_mcp_server_tools(only)
+                except Exception as e:
+                    logger.debug("unregister_mcp_server_tools %s: %s", only, e)
+                try:
+                    await manager.disconnect(only)
+                except Exception as e:
+                    logger.debug("disconnect missing server %s: %s", only, e)
                 logger.info(
                     "sync_mcp_runtime: only_server=%s not in DB (unregistered=%s)",
                     only,
@@ -191,28 +186,53 @@ async def sync_mcp_runtime(only_server: str | None = None) -> dict[str, Any]:
                     "warning": f"server '{only}' not in DB",
                 }
 
-            registered = 0
-            warning = None
-            if row.enabled:
-                cfg = _row_to_config(row)
-                client = MCPClient(cfg)
+            if not row.enabled:
                 try:
-                    await client.connect()
-                    manager._clients[cfg.name] = client
-                    registered = await register_mcp_server_tools(
-                        cfg.name,
-                        client,
-                        risk_level=getattr(row, "risk_level", None),
-                        tools_include=getattr(row, "tools_include", None),
-                        tools_exclude=getattr(row, "tools_exclude", None),
-                    )
+                    unregistered = unregister_mcp_server_tools(only)
                 except Exception as e:
-                    warning = str(e)
-                    logger.warning("Failed to connect MCP server '%s': %s", only, e)
-                    try:
-                        await client.close()
-                    except Exception:
-                        pass
+                    logger.debug("unregister_mcp_server_tools %s: %s", only, e)
+                try:
+                    await manager.disconnect(only)
+                except Exception as e:
+                    logger.debug("disconnect disabled server %s: %s", only, e)
+                return {
+                    "ok": True,
+                    "connected": manager.list_connected(),
+                    "registered": 0,
+                    "unregistered": unregistered,
+                    "warning": f"server '{only}' disabled",
+                }
+
+            cfg = _row_to_config(row)
+            client = await manager.reconnect(cfg)
+            if client is None:
+                warning = f"Failed to connect MCP server '{only}' (kept previous if any)"
+                logger.warning("%s", warning)
+                return {
+                    "ok": False,
+                    "connected": manager.list_connected(),
+                    "registered": 0,
+                    "unregistered": 0,
+                    "warning": warning,
+                    "error": warning,
+                }
+
+            try:
+                unregistered = unregister_mcp_server_tools(only)
+            except Exception as e:
+                logger.debug("unregister_mcp_server_tools %s: %s", only, e)
+            try:
+                registered = await register_mcp_server_tools(
+                    cfg.name,
+                    client,
+                    risk_level=getattr(row, "risk_level", None),
+                    tools_include=getattr(row, "tools_include", None),
+                    tools_exclude=getattr(row, "tools_exclude", None),
+                )
+            except Exception as e:
+                warning = str(e)
+                logger.warning("register tools after reconnect %s: %s", only, e)
+
             connected = manager.list_connected()
             logger.info(
                 "sync_mcp_runtime: only=%s connected=%s registered=%s warning=%s",

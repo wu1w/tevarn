@@ -682,6 +682,17 @@ def infer_scene(
         for p in base:
             if p not in packs and p != "*":
                 packs.append(p)
+        # 固定 profile 仍允许显式搜索/MCP 意图增量挂包（避免 coding 下「有嘴无 web」）
+        if not _thin:
+            for pack, kws in _PACK_KEYWORDS.items():
+                if pack not in {"web", "mcp", "manage", "office"}:
+                    continue
+                for kw in kws:
+                    if kw.lower() in low or kw in text:
+                        if pack not in packs:
+                            packs.append(pack)
+                            reasons.append(f"profile_kw:{kw[:16]}")
+                        break
         tier = "standard"
         if _thin or (not text or len(text) < 8 or any(h in low or h in text for h in _MINIMAL_HINTS)):
             tier = "minimal"
@@ -929,7 +940,7 @@ def resolve_enabled_tool_names(
     elif (
         is_search_only_intent(text)
         and not _mcp_ops
-        and prof not in {"full", "coding", "ops"}
+        and prof not in {"full"}
     ):
         keep = set(THIN_SEARCH_TOOLS)
         for n in list(base):

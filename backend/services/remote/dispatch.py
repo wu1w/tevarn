@@ -47,7 +47,20 @@ async def try_handle_at_device(user_id: uuid.UUID, message: str) -> str | None:
             if len(content) > 2500:
                 content = content[:2500] + "\n…[truncated]"
             return _card(device.name, f"📄 read {path}", content, latency=None)
-        # exec
+        # exec — 与工具/API 路径一致：过权限控制台命令策略
+        from backend.services.tools.executors import enforce_command_policy
+
+        blocked = await enforce_command_policy(
+            body,
+            {"command": body, "_user_id": str(user_id)},
+            where=f"@{device.name}",
+        )
+        if blocked:
+            return (
+                f"🤖 @{device.name}\n"
+                f"────────────────\n"
+                f"❌ 策略拦截: {blocked}"
+            )
         result = await tr.call("exec.run", {"command": body})
         ping = None
         try:

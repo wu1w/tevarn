@@ -36,7 +36,11 @@ class RemoteExecRequest(BaseModel):
 def _ensure_owner(device, user_id: uuid.UUID) -> None:
     if device is None:
         raise HTTPException(status_code=404, detail="Device not found")
-    if getattr(device, "user_id", None) and device.user_id != user_id:
+    owner = getattr(device, "user_id", None)
+    # 无主设备不得对任意登录用户放行（防 IDOR）
+    if owner is None:
+        raise HTTPException(status_code=403, detail="Device has no owner")
+    if owner != user_id:
         raise HTTPException(status_code=403, detail="Access denied")
 
 
@@ -353,6 +357,20 @@ async def remote_exec(
         RemoteAgentError,
         transport_from_device_config,
     )
+    from backend.services.tools.executors import enforce_command_policy
+
+    # 与工具路径 remote_exec 对齐：远程 shell 必须过权限控制台三态
+    blocked = await enforce_command_policy(
+        data.command,
+        {
+            "command": data.command,
+            "cwd": data.cwd,
+            "_user_id": str(current_user.id),
+        },
+        where=f"@{getattr(device, 'name', device_id)}",
+    )
+    if blocked:
+        raise HTTPException(status_code=403, detail=blocked)
 
     try:
         tr = transport_from_device_config(device.config or {})

@@ -257,13 +257,13 @@ async def ensure_mcp_preset(
     reload_error = None
     if reload:
         try:
-            from backend.mcp_hub.service import load_mcp_tools
-
-            await load_mcp_tools()
+            from backend.mcp_hub.service import sync_mcp_runtime
             from backend.mcp_hub.client import get_mcp_manager
 
+            sname = str(getattr(obj, "name", None) or name or "")
+            await sync_mcp_runtime(only_server=sname or None)
             mgr = get_mcp_manager()
-            client = mgr.get_client(obj.name if obj else name)
+            client = mgr.get_client(sname)
             if client is not None:
                 try:
                     listed = await client.list_tools()

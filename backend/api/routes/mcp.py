@@ -36,10 +36,13 @@ def get_mcp_server_repo():
     return _mcp_repo
 
 
-async def _hot_reload() -> dict:
-    """配置变更后热同步 MCP 连接与 ToolRegistry。"""
+async def _hot_reload(only_server: str | None = None) -> dict:
+    """配置变更后热同步 MCP 连接与 ToolRegistry。
+
+    only_server 非空时只重连该服，避免全量 close_all 卸光其它 MCP。
+    """
     try:
-        result = await sync_mcp_runtime()
+        result = await sync_mcp_runtime(only_server=only_server)
         if not result.get("ok"):
             logger.warning("MCP hot reload incomplete: %s", result.get("error"))
         elif result.get("warning"):
@@ -48,6 +51,20 @@ async def _hot_reload() -> dict:
     except Exception as e:
         logger.exception("MCP hot reload failed: %s", e)
         return {"ok": False, "error": str(e), "connected": [], "unregistered": 0}
+
+
+def _public_mcp_config(row: object, *, reveal_env: bool = False) -> MCPServerConfig:
+    """API 响应：默认脱敏 env 值，只暴露 env_keys。"""
+    cfg = MCPServerConfig.model_validate(row)
+    raw_env = dict(cfg.env or {})
+    keys = sorted(str(k) for k in raw_env.keys())
+    if reveal_env:
+        return cfg.model_copy(update={"env_keys": keys})
+    redacted = {
+        str(k): ("***" if str(v or "").strip() else "")
+        for k, v in raw_env.items()
+    }
+    return cfg.model_copy(update={"env": redacted, "env_keys": keys})
 
 
 def _attach_runtime(payload: dict, runtime: dict) -> dict:
@@ -67,9 +84,9 @@ async def list_mcp_servers(
     current_user: Annotated[UserRead, Depends(get_current_user)],
     repo: Annotated[AsyncMCPServerRepository, Depends(get_mcp_server_repo)],
 ):
-    """列出所有 MCP Server 配置"""
+    """列出所有 MCP Server 配置（env 值脱敏）。"""
     rows = await repo.list_all()
-    return [MCPServerConfig.model_validate(r) for r in rows]
+    return [_public_mcp_config(r) for r in rows]
 
 
 @router.post("", response_model=MCPServerConfig)
@@ -107,8 +124,8 @@ async def create_mcp_server(
         dump["env"] = norm["env"]
         upd = MCPServerUpdate(**dump)
         updated = await repo.update(existing.id, upd)
-        rt = await _hot_reload()
-        cfg = MCPServerConfig.model_validate(updated)
+        rt = await _hot_reload(only_server=data.name)
+        cfg = _public_mcp_config(updated)
         if not rt.get("ok"):
             logger.error("MCP create/upsert runtime sync failed: %s", rt.get("error"))
         return cfg
@@ -130,10 +147,10 @@ async def create_mcp_server(
         }
     )
     server = await repo.create(data)
-    rt = await _hot_reload()
+    rt = await _hot_reload(only_server=data.name)
     if not rt.get("ok"):
         logger.error("MCP create runtime sync failed: %s", rt.get("error"))
-    return MCPServerConfig.model_validate(server)
+    return _public_mcp_config(server)
 
 
 @router.put("/{server_id}", response_model=MCPServerConfig)
@@ -173,8 +190,8 @@ async def update_mcp_server(
     updated = await repo.update(server_id, MCPServerUpdate(**dump))
     if updated is None:
         raise HTTPException(status_code=404, detail="MCP server not found")
-    await _hot_reload()
-    return MCPServerConfig.model_validate(updated)
+    await _hot_reload(only_server=name)
+    return _public_mcp_config(updated)
 
 
 @router.put("/{server_id}/toggle", response_model=MCPServerConfig)
@@ -188,8 +205,8 @@ async def toggle_mcp_server(
     server = await repo.toggle(server_id, data.enabled)
     if server is None:
         raise HTTPException(status_code=404, detail="MCP server not found")
-    await _hot_reload()
-    return MCPServerConfig.model_validate(server)
+    await _hot_reload(only_server=str(getattr(server, "name", "") or ""))
+    return _public_mcp_config(server)
 
 
 @router.delete("/{server_id}")
@@ -199,10 +216,12 @@ async def delete_mcp_server(
     repo: Annotated[AsyncMCPServerRepository, Depends(get_mcp_server_repo)],
 ):
     """删除 MCP Server 并热同步（断开连接 + 卸载工具）。"""
+    existing = await repo.get_by_id(server_id)
+    sname = str(getattr(existing, "name", "") or "") if existing else ""
     success = await repo.delete(server_id)
     if not success:
         raise HTTPException(status_code=404, detail="MCP server not found")
-    await _hot_reload()
+    await _hot_reload(only_server=sname or None)
     return {"deleted": True}
 
 
@@ -347,4 +366,4 @@ async def set_mcp_server_tools(
         await sync_mcp_runtime(only_server=updated.name)
     except Exception as e:
         logger.warning("tools policy sync failed: %s", e)
-    return MCPServerConfig.model_validate(updated)
+    return _public_mcp_config(updated)
