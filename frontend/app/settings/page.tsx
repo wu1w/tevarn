@@ -6,9 +6,12 @@ import { useSettings } from '@/lib/api-hooks';
 import {
   applySettingsBatch,
   getModelCatalog,
+  getNetworkProxy,
   getRagPresets,
+  putNetworkProxy,
   setCatalogFallback,
   testEmbedding,
+  testNetworkProxy,
   testQdrant,
   testReranker,
   type ModelCatalog,
@@ -167,6 +170,16 @@ export default function SettingsPage() {
   const [imageKey, setImageKey] = useState('');
   const [imageSaving, setImageSaving] = useState(false);
 
+  /* Network proxy (Windows-style) */
+  const [proxyEnabled, setProxyEnabled] = useState(false);
+  const [proxyScheme, setProxyScheme] = useState('http');
+  const [proxyHost, setProxyHost] = useState('');
+  const [proxyPort, setProxyPort] = useState('');
+  const [proxyResolved, setProxyResolved] = useState('');
+  const [proxySaving, setProxySaving] = useState(false);
+  const [proxyTesting, setProxyTesting] = useState(false);
+  const proxyInited = React.useRef(false);
+
   const refreshCatalog = useCallback(async (fetchModels = false) => {
     try {
       setCatalogLoading(true);
@@ -220,7 +233,31 @@ export default function SettingsPage() {
     setImageProvider(mapVal(settings, 'image_provider', 'openai-compatible') || 'openai-compatible');
     setImageUrl(mapVal(settings, 'image_base_url'));
     setImageModel(mapVal(settings, 'image_model'));
+
+    // 代理：优先 settings KV，再 GET /network/proxy 补 resolved
+    setProxyEnabled(boolVal(settings, 'outbound_proxy_enabled'));
+    setProxyScheme(mapVal(settings, 'outbound_proxy_scheme', 'http') || 'http');
+    setProxyHost(mapVal(settings, 'outbound_proxy_host'));
+    const pPort = mapVal(settings, 'outbound_proxy_port');
+    setProxyPort(pPort && pPort !== '0' ? pPort : '');
   }, [settings]);
+
+  useEffect(() => {
+    if (proxyInited.current) return;
+    proxyInited.current = true;
+    void (async () => {
+      try {
+        const p = await getNetworkProxy();
+        setProxyEnabled(Boolean(p.outbound_proxy_enabled));
+        setProxyScheme(p.outbound_proxy_scheme || 'http');
+        setProxyHost(p.outbound_proxy_host || '');
+        setProxyPort(p.outbound_proxy_port ? String(p.outbound_proxy_port) : '');
+        setProxyResolved(p.resolved_proxy || '');
+      } catch {
+        /* ignore */
+      }
+    })();
+  }, []);
 
   const hasEmbedKey = useMemo(() => Boolean(mapVal(settings, 'embedding_api_key')), [settings]);
   const hasRerankKey = useMemo(() => Boolean(mapVal(settings, 'reranker_api_key')), [settings]);
@@ -500,6 +537,61 @@ export default function SettingsPage() {
     }
   };
 
+  const handleSaveProxy = async () => {
+    setProxySaving(true);
+    try {
+      const portNum = proxyPort.trim() ? Number(proxyPort.trim()) : 0;
+      if (proxyEnabled) {
+        if (!proxyHost.trim()) {
+          addToast(zh ? '请填写代理地址（IP 或主机名）' : 'Proxy host is required', 'error');
+          return;
+        }
+        if (!proxyHost.includes('://') && (!portNum || portNum <= 0 || portNum > 65535)) {
+          addToast(zh ? '请填写有效端口（1–65535）' : 'Valid port required (1–65535)', 'error');
+          return;
+        }
+      }
+      const res = await putNetworkProxy({
+        outbound_proxy_enabled: proxyEnabled,
+        outbound_proxy_scheme: proxyScheme || 'http',
+        outbound_proxy_host: proxyHost.trim(),
+        outbound_proxy_port: portNum || 0,
+      });
+      setProxyResolved(res.built_url || '');
+      addToast(res.message || (zh ? '代理已保存' : 'Proxy saved'), 'success');
+      await refetch();
+      try {
+        const p = await getNetworkProxy();
+        setProxyResolved(p.resolved_proxy || res.built_url || '');
+      } catch {
+        /* ignore */
+      }
+    } catch (e: unknown) {
+      const msg =
+        (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+        (e instanceof Error ? e.message : t('settings.saveFailed'));
+      addToast(String(msg), 'error');
+    } finally {
+      setProxySaving(false);
+    }
+  };
+
+  const handleTestProxy = async () => {
+    setProxyTesting(true);
+    try {
+      // 测试前先保存当前表单，避免「改了没存就测」
+      if (proxyEnabled) {
+        await handleSaveProxy();
+      }
+      const r = await testNetworkProxy();
+      addToast(r.message, r.ok ? 'success' : 'error');
+    } catch (e: unknown) {
+      addToast(e instanceof Error ? e.message : t('settings.testFailed'), 'error');
+    } finally {
+      setProxyTesting(false);
+    }
+  };
+
   /* status */
   const llmProvider = mapVal(settings, 'llm_provider');
   const llmModel = mapVal(settings, 'llm_model');
@@ -575,6 +667,140 @@ export default function SettingsPage() {
             {pane === 'general' ? (
               <>
                 <LanguageCard />
+                {/* 网络代理 — Windows 风格：开关 + 地址 + 端口 */}
+                <section className="rounded-2xl border border-border-subtle bg-card-bg p-5">
+                  <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-[13.5px] font-semibold text-foreground">
+                      {zh ? '网络代理' : 'Network proxy'}
+                    </div>
+                    {proxyResolved ? (
+                      <span className="font-mono text-[10.5px] text-foreground-dim">
+                        {zh ? '生效：' : 'Active: '}
+                        {proxyResolved}
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="mb-4 text-[11.5px] leading-relaxed text-foreground-muted">
+                    {zh
+                      ? '供后端出站使用（Grok / ChatGPT OAuth、模型 API 等）。类似 Windows「使用代理服务器」：填写本地代理 IP 与端口，例如 Clash/V2 的 7890 或本机隧道 3128。保存后立即生效，无需重启。'
+                      : 'Used by backend outbound (Grok/ChatGPT OAuth, model APIs). Like Windows “Use a proxy server”: host + port (e.g. Clash 7890). Applies immediately.'}
+                  </p>
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-medium text-foreground">
+                        {zh ? '使用代理服务器' : 'Use a proxy server'}
+                      </div>
+                      <div className="mt-0.5 text-[11px] text-foreground-dim">
+                        {zh ? '仅影响 Tevarn 后端出站，不改系统全局代理' : 'Affects Tevarn backend only, not system proxy'}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={proxyEnabled}
+                      onClick={() => setProxyEnabled((v) => !v)}
+                      className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border-2 border-transparent transition ${
+                        proxyEnabled
+                          ? 'bg-gradient-to-r from-brand-purple to-brand-cyan'
+                          : 'bg-elevated-bg'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-5 w-5 transform rounded-full bg-card-bg shadow transition ${
+                          proxyEnabled ? 'translate-x-5' : 'translate-x-0.5'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                  <div
+                    className={`grid gap-3 sm:grid-cols-[7rem_1fr_6.5rem] ${
+                      proxyEnabled ? '' : 'pointer-events-none opacity-50'
+                    }`}
+                  >
+                    <Field label={zh ? '类型' : 'Type'}>
+                      <select
+                        className={inputCls}
+                        value={proxyScheme}
+                        onChange={(e) => setProxyScheme(e.target.value)}
+                        disabled={!proxyEnabled}
+                      >
+                        <option value="http">HTTP</option>
+                        <option value="https">HTTPS</option>
+                        <option value="socks5">SOCKS5</option>
+                        <option value="socks5h">SOCKS5h</option>
+                      </select>
+                    </Field>
+                    <Field
+                      label={zh ? '地址' : 'Address'}
+                      hint={zh ? '例如 127.0.0.1' : 'e.g. 127.0.0.1'}
+                    >
+                      <input
+                        className={monoInputCls}
+                        value={proxyHost}
+                        onChange={(e) => setProxyHost(e.target.value)}
+                        placeholder="127.0.0.1"
+                        disabled={!proxyEnabled}
+                        autoComplete="off"
+                      />
+                    </Field>
+                    <Field label={zh ? '端口' : 'Port'}>
+                      <input
+                        className={monoInputCls}
+                        value={proxyPort}
+                        onChange={(e) => setProxyPort(e.target.value.replace(/[^\d]/g, ''))}
+                        placeholder="7890"
+                        inputMode="numeric"
+                        disabled={!proxyEnabled}
+                        autoComplete="off"
+                      />
+                    </Field>
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className={btnPrimary}
+                      disabled={proxySaving}
+                      onClick={() => void handleSaveProxy()}
+                    >
+                      {proxySaving
+                        ? zh
+                          ? '保存中…'
+                          : 'Saving…'
+                        : zh
+                          ? '保存代理'
+                          : 'Save proxy'}
+                    </button>
+                    <button
+                      type="button"
+                      className={btnGhost}
+                      disabled={proxyTesting || proxySaving}
+                      onClick={() => void handleTestProxy()}
+                    >
+                      {proxyTesting
+                        ? zh
+                          ? '测试中…'
+                          : 'Testing…'
+                        : zh
+                          ? '测试连通（auth.x.ai）'
+                          : 'Test (auth.x.ai)'}
+                    </button>
+                  </div>
+                </section>
+                <section className="rounded-2xl border border-border-subtle bg-card-bg p-5">
+                  <div className="mb-1 text-[13.5px] font-semibold text-foreground">
+                    {zh ? '对话偏好' : 'Chat preferences'}
+                  </div>
+                  <p className="mb-3 text-[11.5px] text-foreground-muted">
+                    {zh
+                      ? '简单模式：更少工具、更短循环、多确认。也可在对话里说「开启/关闭简单模式」。'
+                      : 'Simple mode: fewer tools, shorter loops. Or say “enable/disable simple mode” in chat.'}
+                  </p>
+                  <div className="text-[12px] text-foreground-dim">
+                    {zh
+                      ? '配置类一句话（配 MCP Key、设代理、切模型）会走快路径，不进入长 Agent 循环。'
+                      : 'One-liner config (MCP key, proxy, model) uses a fast path — no long agent loop.'}
+                  </div>
+                </section>
                 <section className="rounded-2xl border border-border-subtle bg-card-bg p-5">
                   <div className="mb-3 text-[13.5px] font-semibold text-foreground">
                     {zh ? '通知' : 'Notifications'}
@@ -1183,7 +1409,7 @@ export default function SettingsPage() {
 
             {pane === 'about' ? (
               <section className="rounded-2xl border border-border-subtle bg-card-bg p-5">
-                <div className="mb-3 text-[13.5px] font-semibold text-foreground">Tevarn AIOS</div>
+                <div className="mb-3 text-[13.5px] font-semibold text-foreground">Takton AIOS</div>
                 <div className="space-y-2 text-[12.5px]">
                   <div className="flex justify-between border-b border-border-subtle py-1.5">
                     <span className="text-foreground-dim">{zh ? '版本' : 'Version'}</span>
@@ -1191,7 +1417,7 @@ export default function SettingsPage() {
                   </div>
                   <div className="flex justify-between border-b border-border-subtle py-1.5">
                     <span className="text-foreground-dim">{zh ? '内核' : 'Kernel'}</span>
-                    <span className="text-foreground">Tevarn OS kernel</span>
+                    <span className="text-foreground">Takton OS kernel</span>
                   </div>
                   <div className="flex justify-between border-b border-border-subtle py-1.5">
                     <span className="text-foreground-dim">{zh ? '设计' : 'Design'}</span>

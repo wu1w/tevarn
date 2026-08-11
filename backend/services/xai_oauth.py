@@ -8,6 +8,7 @@ xAI Grok OAuth（SuperGrok / X Premium+）设备码登录
 - 之后以 Bearer access_token 调用 https://api.x.ai/v1
 
 注意：xAI 可能对 OAuth 推理有订阅档位限制；若 403 可改用 API Key 路径。
+所有出站请求走 outbound_session（尊重设置页代理 / 环境变量）。
 """
 
 from __future__ import annotations
@@ -33,12 +34,26 @@ XAI_OAUTH_DEVICE_CODE_URL = f"{XAI_OAUTH_ISSUER}/oauth2/device/code"
 _pending: dict[str, dict[str, Any]] = {}
 
 
+def _connect_fail_message(exc: BaseException) -> str:
+    from backend.core.outbound_http import format_proxy_hint
+
+    return (
+        f"连接 auth.x.ai 失败: {exc}。"
+        f"{format_proxy_hint()}"
+        " Grok OAuth 需后端能访问 auth.x.ai（国内网络通常需要代理）。"
+    )
+
+
 async def discover_token_endpoint(timeout: float = 15.0) -> str:
+    from backend.core.outbound_http import outbound_session
+
     try:
-        async with aiohttp.ClientSession() as session:
+        async with outbound_session(
+            timeout=aiohttp.ClientTimeout(total=timeout)
+        ) as (session, proxy):
             async with session.get(
                 XAI_OAUTH_DISCOVERY_URL,
-                timeout=aiohttp.ClientTimeout(total=timeout),
+                proxy=proxy,
             ) as resp:
                 if resp.status != 200:
                     return f"{XAI_OAUTH_ISSUER}/oauth2/token"
@@ -53,30 +68,44 @@ async def discover_token_endpoint(timeout: float = 15.0) -> str:
 
 async def start_device_login() -> dict[str, Any]:
     """发起设备码登录，返回用户需打开的 URL 与 user_code。"""
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            XAI_OAUTH_DEVICE_CODE_URL,
-            headers={
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Accept": "application/json",
-            },
-            data={
-                "client_id": XAI_OAUTH_CLIENT_ID,
-                "scope": XAI_OAUTH_SCOPE,
-            },
-            timeout=aiohttp.ClientTimeout(total=20),
-        ) as resp:
-            text = await resp.text()
-            if resp.status != 200:
-                return {
-                    "ok": False,
-                    "message": f"申请设备码失败 (HTTP {resp.status})",
-                    "detail": text[:300],
-                }
-            try:
-                payload = await resp.json(content_type=None)
-            except Exception:
-                return {"ok": False, "message": "设备码响应无法解析", "detail": text[:300]}
+    from backend.core.outbound_http import outbound_session
+
+    try:
+        async with outbound_session(
+            timeout=aiohttp.ClientTimeout(total=20)
+        ) as (session, proxy):
+            async with session.post(
+                XAI_OAUTH_DEVICE_CODE_URL,
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
+                },
+                data={
+                    "client_id": XAI_OAUTH_CLIENT_ID,
+                    "scope": XAI_OAUTH_SCOPE,
+                },
+                proxy=proxy,
+            ) as resp:
+                text = await resp.text()
+                if resp.status != 200:
+                    return {
+                        "ok": False,
+                        "message": f"申请设备码失败 (HTTP {resp.status})",
+                        "detail": text[:300],
+                    }
+                try:
+                    payload = await resp.json(content_type=None)
+                except Exception:
+                    return {
+                        "ok": False,
+                        "message": "设备码响应无法解析",
+                        "detail": text[:300],
+                    }
+    except RuntimeError as e:
+        return {"ok": False, "message": str(e)}
+    except Exception as e:
+        logger.warning("xAI device login start failed: %s", e)
+        return {"ok": False, "message": _connect_fail_message(e)}
 
     required = (
         "device_code",
@@ -128,6 +157,8 @@ async def start_device_login() -> dict[str, Any]:
 
 async def poll_device_login(device_code: str) -> dict[str, Any]:
     """轮询一次设备码授权结果。"""
+    from backend.core.outbound_http import outbound_session
+
     meta = _pending.get(device_code)
     if not meta:
         return {
@@ -147,86 +178,99 @@ async def poll_device_login(device_code: str) -> dict[str, Any]:
         }
 
     token_endpoint = str(meta.get("token_endpoint") or "")
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            token_endpoint,
-            headers={
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Accept": "application/json",
-            },
-            data={
-                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-                "client_id": XAI_OAUTH_CLIENT_ID,
-                "device_code": device_code,
-            },
-            timeout=aiohttp.ClientTimeout(total=20),
-        ) as resp:
-            text = await resp.text()
-            try:
-                payload = await resp.json(content_type=None) if text else {}
-            except Exception:
-                payload = {}
+    try:
+        async with outbound_session(
+            timeout=aiohttp.ClientTimeout(total=20)
+        ) as (session, proxy):
+            async with session.post(
+                token_endpoint,
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
+                },
+                data={
+                    "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                    "client_id": XAI_OAUTH_CLIENT_ID,
+                    "device_code": device_code,
+                },
+                proxy=proxy,
+            ) as resp:
+                text = await resp.text()
+                try:
+                    payload = await resp.json(content_type=None) if text else {}
+                except Exception:
+                    payload = {}
 
-            if resp.status == 200 and payload.get("access_token"):
-                _pending.pop(device_code, None)
-                access = str(payload["access_token"])
-                refresh = str(payload.get("refresh_token") or "")
-                expires_in_tok = int(payload.get("expires_in") or 3600)
-                expires_at = (
-                    datetime.now(timezone.utc) + timedelta(seconds=max(60, expires_in_tok - 60))
-                ).isoformat()
-                return {
-                    "ok": True,
-                    "status": "authorized",
-                    "access_token": access,
-                    "refresh_token": refresh,
-                    "expires_at": expires_at,
-                    "expires_in": expires_in_tok,
-                    "base_url": DEFAULT_XAI_BASE_URL,
-                    "message": "Grok OAuth 登录成功",
-                }
+                if resp.status == 200 and payload.get("access_token"):
+                    _pending.pop(device_code, None)
+                    access = str(payload["access_token"])
+                    refresh = str(payload.get("refresh_token") or "")
+                    expires_in_tok = int(payload.get("expires_in") or 3600)
+                    expires_at = (
+                        datetime.now(timezone.utc)
+                        + timedelta(seconds=max(60, expires_in_tok - 60))
+                    ).isoformat()
+                    return {
+                        "ok": True,
+                        "status": "authorized",
+                        "access_token": access,
+                        "refresh_token": refresh,
+                        "expires_at": expires_at,
+                        "expires_in": expires_in_tok,
+                        "base_url": DEFAULT_XAI_BASE_URL,
+                        "message": "Grok OAuth 登录成功",
+                    }
 
-            error_code = str(payload.get("error") or "")
-            if error_code == "authorization_pending":
-                return {
-                    "ok": False,
-                    "status": "pending",
-                    "message": "等待浏览器中完成授权…",
-                    "interval": int(meta.get("interval") or 5),
-                }
-            if error_code == "slow_down":
-                return {
-                    "ok": False,
-                    "status": "pending",
-                    "message": "请稍候…",
-                    "interval": min(int(meta.get("interval") or 5) + 2, 15),
-                }
-            if error_code == "expired_token":
-                _pending.pop(device_code, None)
-                return {
-                    "ok": False,
-                    "status": "expired",
-                    "message": "设备码已过期，请重新登录",
-                }
-            if error_code == "access_denied":
-                _pending.pop(device_code, None)
-                return {
-                    "ok": False,
-                    "status": "denied",
-                    "message": "用户拒绝了授权",
-                }
+                error_code = str(payload.get("error") or "")
+                if error_code == "authorization_pending":
+                    return {
+                        "ok": False,
+                        "status": "pending",
+                        "message": "等待浏览器中完成授权…",
+                        "interval": int(meta.get("interval") or 5),
+                    }
+                if error_code == "slow_down":
+                    return {
+                        "ok": False,
+                        "status": "pending",
+                        "message": "请稍候…",
+                        "interval": min(int(meta.get("interval") or 5) + 2, 15),
+                    }
+                if error_code == "expired_token":
+                    _pending.pop(device_code, None)
+                    return {
+                        "ok": False,
+                        "status": "expired",
+                        "message": "设备码已过期，请重新登录",
+                    }
+                if error_code == "access_denied":
+                    _pending.pop(device_code, None)
+                    return {
+                        "ok": False,
+                        "status": "denied",
+                        "message": "用户拒绝了授权",
+                    }
 
-            if resp.status >= 400:
-                desc = (
-                    payload.get("error_description")
-                    or payload.get("error")
-                    or text[:200]
-                )
-                return {
-                    "ok": False,
-                    "status": "error",
-                    "message": f"轮询失败: {desc}",
-                }
+                if resp.status >= 400:
+                    desc = (
+                        payload.get("error_description")
+                        or payload.get("error")
+                        or text[:200]
+                    )
+                    return {
+                        "ok": False,
+                        "status": "error",
+                        "message": f"轮询失败: {desc}",
+                    }
+    except RuntimeError as e:
+        return {"ok": False, "status": "error", "message": str(e)}
+    except Exception as e:
+        logger.warning("xAI device login poll failed: %s", e)
+        return {
+            "ok": False,
+            "status": "error",
+            "message": _connect_fail_message(e),
+        }
 
     return {
         "ok": False,
@@ -238,48 +282,58 @@ async def poll_device_login(device_code: str) -> dict[str, Any]:
 
 async def refresh_access_token(refresh_token: str) -> dict[str, Any]:
     """用 refresh_token 刷新 access_token。"""
+    from backend.core.outbound_http import outbound_session
+
     if not refresh_token or not str(refresh_token).strip():
         return {"ok": False, "message": "缺少 refresh_token，请重新 OAuth 登录"}
     token_endpoint = await discover_token_endpoint()
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            token_endpoint,
-            headers={
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Accept": "application/json",
-            },
-            data={
-                "grant_type": "refresh_token",
-                "client_id": XAI_OAUTH_CLIENT_ID,
-                "refresh_token": refresh_token.strip(),
-            },
-            timeout=aiohttp.ClientTimeout(total=20),
-        ) as resp:
-            text = await resp.text()
-            try:
-                payload = await resp.json(content_type=None) if text else {}
-            except Exception:
-                payload = {}
-            if resp.status != 200 or not payload.get("access_token"):
+    try:
+        async with outbound_session(
+            timeout=aiohttp.ClientTimeout(total=20)
+        ) as (session, proxy):
+            async with session.post(
+                token_endpoint,
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
+                },
+                data={
+                    "grant_type": "refresh_token",
+                    "client_id": XAI_OAUTH_CLIENT_ID,
+                    "refresh_token": refresh_token.strip(),
+                },
+                proxy=proxy,
+            ) as resp:
+                text = await resp.text()
+                try:
+                    payload = await resp.json(content_type=None) if text else {}
+                except Exception:
+                    payload = {}
+                if resp.status != 200 or not payload.get("access_token"):
+                    return {
+                        "ok": False,
+                        "message": payload.get("error_description")
+                        or payload.get("error")
+                        or f"刷新失败 HTTP {resp.status}",
+                        "status_code": resp.status,
+                        "detail": text[:300],
+                    }
+                expires_in_tok = int(payload.get("expires_in") or 3600)
+                expires_at = (
+                    datetime.now(timezone.utc)
+                    + timedelta(seconds=max(60, expires_in_tok - 60))
+                ).isoformat()
                 return {
-                    "ok": False,
-                    "message": payload.get("error_description")
-                    or payload.get("error")
-                    or f"刷新失败 HTTP {resp.status}",
-                    "status_code": resp.status,
-                    "detail": text[:300],
+                    "ok": True,
+                    "access_token": str(payload["access_token"]),
+                    "refresh_token": str(payload.get("refresh_token") or refresh_token),
+                    "expires_at": expires_at,
+                    "expires_in": expires_in_tok,
                 }
-            expires_in_tok = int(payload.get("expires_in") or 3600)
-            expires_at = (
-                datetime.now(timezone.utc) + timedelta(seconds=max(60, expires_in_tok - 60))
-            ).isoformat()
-            return {
-                "ok": True,
-                "access_token": str(payload["access_token"]),
-                "refresh_token": str(payload.get("refresh_token") or refresh_token),
-                "expires_at": expires_at,
-                "expires_in": expires_in_tok,
-            }
+    except RuntimeError as e:
+        return {"ok": False, "message": str(e)}
+    except Exception as e:
+        return {"ok": False, "message": _connect_fail_message(e)}
 
 
 def token_needs_refresh(expires_at: str | None, skew_seconds: int = 120) -> bool:

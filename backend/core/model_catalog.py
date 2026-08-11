@@ -206,6 +206,51 @@ def mask_catalog_for_client(catalog: dict[str, Any]) -> dict[str, Any]:
             if mid not in model_ids:
                 model_ids.append(mid)
         p["models"] = [{"id": mid, "disabled": mid in disabled_set} for mid in model_ids]
+        # 选用名 vs 上游实际名（Kimi 等会映射 k3-256k → kimi-for-coding）
+        try:
+            from backend.services.llm.openai_compatible import OpenAICompatibleService
+
+            sel = ""
+            if p.get("id") == active_pid:
+                sel = active_model or str(p.get("active_model") or "")
+            else:
+                sel = str(p.get("active_model") or "")
+            base = str(p.get("llm_base_url") or "")
+            if sel:
+                p["selected_model"] = sel
+                p["effective_model"] = OpenAICompatibleService.resolve_effective_model_id(
+                    sel, base
+                )
+            else:
+                p["selected_model"] = ""
+                p["effective_model"] = ""
+        except Exception:
+            p["selected_model"] = active_model if p.get("id") == active_pid else ""
+            p["effective_model"] = p.get("selected_model") or ""
+    # 目录级回显
+    try:
+        from backend.services.llm.openai_compatible import OpenAICompatibleService
+
+        ap = next(
+            (x for x in (out.get("providers") or []) if x.get("id") == active_pid),
+            None,
+        )
+        base = str((ap or {}).get("llm_base_url") or "")
+        out["selected_model"] = active_model
+        out["effective_model"] = (
+            OpenAICompatibleService.resolve_effective_model_id(active_model, base)
+            if active_model
+            else ""
+        )
+        out["effective_differs"] = bool(
+            out["effective_model"]
+            and active_model
+            and out["effective_model"] != active_model
+        )
+    except Exception:
+        out["selected_model"] = active_model
+        out["effective_model"] = active_model
+        out["effective_differs"] = False
     return out
 
 

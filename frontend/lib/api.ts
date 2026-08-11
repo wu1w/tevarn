@@ -57,7 +57,7 @@ function resolveBaseUrl(): string {
     if (isLocalHost && (port === '3000' || port === '3001' || port === '')) {
       return '/api';
     }
-    const injected = (window as unknown as { __TEVARN_API_URL__?: string }).__TEVARN_API_URL__;
+    const injected = (window as unknown as { __TAKTON_API_URL__?: string }).__TAKTON_API_URL__;
     if (injected) {
       const url = injected.replace(/\/$/, '');
       // 保证以 /api 结尾
@@ -90,7 +90,7 @@ export { api as apiClient };
 api.interceptors.request.use((config) => {
   config.baseURL = resolveBaseUrl();
   if (typeof window !== 'undefined') {
-    const auth = localStorage.getItem('tevarn-auth');
+    const auth = localStorage.getItem('takton-auth');
     if (auth) {
       try {
         const parsed = JSON.parse(auth);
@@ -159,7 +159,7 @@ function formatApiError(error: {
 
   if (!error.response) {
     if (error.code === 'ECONNABORTED') return t('api._e5');
-    return `Cannot connect to backend (${base}${path})。Ensure the app has started, or restart Tevarn.`;
+    return `Cannot connect to backend (${base}${path})。Ensure the app has started, or restart Takton.`;
   }
 
   if (status === 404) return 'API not found (404)';
@@ -180,7 +180,7 @@ api.interceptors.response.use(
     const ct = String(response.headers?.['content-type'] || '');
     if (ct.includes('text/html') || (typeof response.data === 'string' && response.data.includes('<!DOCTYPE'))) {
       const err = new Error('API returned HTML instead of JSON');
-      useToastStore.getState().addToast('API address misconfigured — restart Tevarn', 'error');
+      useToastStore.getState().addToast('API address misconfigured — restart Takton', 'error');
       return Promise.reject(err);
     }
     return response;
@@ -197,9 +197,9 @@ api.interceptors.response.use(
       !_isLoggingOut
     ) {
       _isLoggingOut = true;
-      localStorage.removeItem('tevarn-auth');
-      localStorage.removeItem('tevarn-session');
-      document.cookie = 'tevarn-auth=; path=/; max-age=0; SameSite=Strict';
+      localStorage.removeItem('takton-auth');
+      localStorage.removeItem('takton-session');
+      document.cookie = 'takton-auth=; path=/; max-age=0; SameSite=Strict';
       // 延迟重置标志，避免并发401重复触发
       setTimeout(() => { _isLoggingOut = false; }, 1000);
       window.location.href = '/login';
@@ -407,7 +407,7 @@ export async function importCommunitySkills(selected: string[], url?: string): P
 
 // ====== Skill Store APIs (multi-source) ======
 
-export type SkillSource = 'tevarn' | 'clawhub' | 'awesome-claude' | 'awesome-hermes' | 'mattpocock' | 'openai' | 'custom';
+export type SkillSource = 'takton' | 'clawhub' | 'awesome-claude' | 'awesome-hermes' | 'mattpocock' | 'openai' | 'custom';
 
 export interface SkillStats {
   stars: number;
@@ -760,7 +760,7 @@ export type VpsMeshStatus = {
   latency_ms?: number;
 };
 
-/** 配对 L1 tevarn-agent */
+/** 配对 L1 takton-agent */
 export async function pairDevice(data: {
   name: string;
   host: string;
@@ -2505,6 +2505,12 @@ export interface CatalogProvider {
 export interface ModelCatalog {
   active_provider_id: string;
   active_model: string;
+  /** 用户选用名（通常等于 active_model） */
+  selected_model?: string;
+  /** 上游实际请求 model id（如 k3-256k → kimi-for-coding） */
+  effective_model?: string;
+  /** 选用名与上游实际名是否不同 */
+  effective_differs?: boolean;
   fallback_provider_id?: string;
   fallback_model?: string;
   providers: CatalogProvider[];
@@ -2685,6 +2691,45 @@ export async function pollXaiOauth(deviceCode: string): Promise<{
 
 export async function logoutXaiOauth(): Promise<{ ok: boolean; message: string; catalog?: ModelCatalog }> {
   const res = await api.post('/settings/oauth/xai/logout', {});
+  return res.data;
+}
+
+// ====== 出站代理（设置页 · 网络） ======
+
+export type NetworkProxyConfig = {
+  outbound_proxy_enabled: boolean;
+  outbound_proxy_scheme: string;
+  outbound_proxy_host: string;
+  outbound_proxy_port: number;
+  outbound_https_proxy?: string;
+  resolved_proxy?: string;
+  active?: boolean;
+};
+
+export async function getNetworkProxy(): Promise<NetworkProxyConfig> {
+  const res = await api.get('/settings/network/proxy');
+  return res.data;
+}
+
+export async function putNetworkProxy(body: {
+  outbound_proxy_enabled: boolean;
+  outbound_proxy_scheme: string;
+  outbound_proxy_host: string;
+  outbound_proxy_port: number;
+  outbound_https_proxy?: string | null;
+}): Promise<{ ok: boolean; message: string; resolved_active?: boolean; built_url?: string }> {
+  const res = await api.put('/settings/network/proxy', body);
+  return res.data;
+}
+
+export async function testNetworkProxy(): Promise<{
+  ok: boolean;
+  message: string;
+  status_code?: number;
+  elapsed_sec?: number;
+  proxy_active?: boolean;
+}> {
+  const res = await api.post('/settings/network/proxy/test', {});
   return res.data;
 }
 
@@ -2898,7 +2943,7 @@ export async function getSystemLayers(params?: {
   return res.data;
 }
 
-export interface TevarnPackageItem {
+export interface TaktonPackageItem {
   name: string;
   version: string;
   type: string;
@@ -2914,7 +2959,7 @@ export interface TevarnPackageItem {
 }
 
 export async function listPackages(sessionId?: string, source?: string): Promise<{
-  packages: TevarnPackageItem[];
+  packages: TaktonPackageItem[];
   attached: string[];
   count: number;
 }> {
@@ -2958,12 +3003,12 @@ export interface PackageInstallResult {
   error?: string;
 }
 
-/** 发布：本地包导出为 .tevarn-pkg.zip 的下载 URL（浏览器直接触发下载） */
+/** 发布：本地包导出为 .takton-pkg.zip 的下载 URL（浏览器直接触发下载） */
 export function exportPackageUrl(name: string): string {
   return `${resolveBaseUrl()}/packages/export/${encodeURIComponent(name)}`;
 }
 
-/** 安装：上传 .tevarn-pkg.zip */
+/** 安装：上传 .takton-pkg.zip */
 export async function installPackageFile(file: File, overwrite = false): Promise<PackageInstallResult> {
   const form = new FormData();
   form.append('file', file);

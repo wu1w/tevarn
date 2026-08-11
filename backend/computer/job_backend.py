@@ -242,7 +242,12 @@ class JobBackend:
 
         job = _JobHandle(self.memory_limit, self.process_limit)
         host_home = self.host_user_home or os.environ.get("USERPROFILE") or ""
-        path = os.environ.get("PATH", "")
+        try:
+            from backend.core.host_commands import enrich_path
+
+            path = enrich_path(os.environ.get("PATH", ""))
+        except Exception:
+            path = os.environ.get("PATH", "")
         # Ensure common host tool dirs (scoop/cargo/rustup) stay on PATH even if
         # Electron launched with a thin env.
         extras: list[str] = []

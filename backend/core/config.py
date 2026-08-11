@@ -231,6 +231,12 @@ class Settings(BaseSettings):
     # ChatGPT OAuth / Codex 订阅：部分请求需要 Account-Id 头
     openai_chatgpt_account_id: str = ""
 
+    # Windows 风格手动代理（设置页）：开关 + 类型 + 地址 + 端口
+    outbound_proxy_enabled: bool = False
+    outbound_proxy_scheme: str = "http"  # http | https | socks5 | socks5h
+    outbound_proxy_host: str = ""
+    outbound_proxy_port: int = 0
+
     # 出站 HTTPS 代理（可选覆盖）。常规用户更推荐系统/终端里设 HTTPS_PROXY；
     # 此项仅在需要单独给 Tevarn 指定代理时使用。
     outbound_https_proxy: str = Field(
@@ -538,6 +544,8 @@ class Settings(BaseSettings):
     cluster_max_concurrent: int = 3
     # doom-loop：同工具+近似参数连续 thrash（默认 on，替代/增强 ToolRepeatGuard）
     agent_doom_loop_enabled: bool = True
+    # 连续相同指纹次数阈值（2=第二次相同即 trip；软提示仍由 tool_round 更早注入）
+    agent_doom_loop_threshold: int = 2
     # process poll while bg still running is NOT doom (cargo test can take minutes)
     # thrash force_final after this many identical process-poll rounds (soft-open uses higher)
     agent_process_poll_thrash: int = 16

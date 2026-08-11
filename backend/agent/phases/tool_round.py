@@ -2305,6 +2305,20 @@ async def run_tool_round(
             else:
                 if _hard_thrash:
                     state.force_final_no_tools = True
+                    try:
+                        if not getattr(loop, "last_exit_reason", None) or loop.last_exit_reason in (
+                            "",
+                            "completed",
+                            None,
+                        ):
+                            loop.last_exit_reason = "thrash"
+                            loop.last_exit_detail = {
+                                "code": "thrash",
+                                "fingerprint": str(fp)[:120],
+                                "streak": int(state.thrash_streak or 0),
+                            }
+                    except Exception:
+                        pass
                     messages.append(
                         {
                             "role": "system",
@@ -2686,7 +2700,7 @@ async def run_tool_round(
                 _status = f"{_dx['title']} — {_dx['message'][:80]}"
             except Exception:
                 _status = "检测到重复工具调用，已熔断并改为直接作答…"
-            await loop._push_status(session_id, "thinking", _status)
+            await loop._push_status(session_id, "running", _status)
             try:
                 from backend.agent.progress_guard import doom_loop_handoff as _dlh
 

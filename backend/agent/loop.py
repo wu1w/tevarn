@@ -1,4 +1,4 @@
-﻿"""
+"""
 Nexus Agent Loop
 极简 Agent 核心循环，自主实现 User -> LLM -> Tool Call -> 执行 -> LLM -> 回复
 集成 CtxItem 上下文系统、ContextFlow 记录、Task 进度追踪、Auto Optimize、TTL 清理
@@ -1483,12 +1483,20 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         # @device 远程执行（L1）：命中则短路，不进工具循环（phases/prologue）
         from backend.agent.phases.prologue import (
             expand_continue_phrase,
+            try_config_intent_shortcut_safe,
             try_device_shortcut,
         )
 
         _device_card = await try_device_shortcut(self, session_id, user_input, attachments)
         if _device_card is not None:
             return _device_card
+
+        # Config Intent：MCP key / 代理 / 切模型 / 简单模式 / OAuth 引导（轻量短路）
+        _cfg_reply = await try_config_intent_shortcut_safe(
+            self, session_id, user_input, attachments
+        )
+        if _cfg_reply is not None:
+            return _cfg_reply
 
         import time as _time
         _max_dur = float(getattr(settings, "agent_max_duration_seconds", 0) or 0)
@@ -1991,6 +1999,63 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             scene_plan.summary(),
             "ALL" if enabled_tools_filter is None else len(enabled_tools_filter),
         )
+
+        # 会话级简单模式：少工具、短循环、软提示（不硬改模型决策逻辑）
+        try:
+            if isinstance(config, dict) and config.get("simple_mode"):
+                _sm_cap = int(config.get("simple_mode_max_iterations") or 8)
+                self.max_iterations = min(int(self.max_iterations or _sm_cap), max(4, _sm_cap))
+                _allow = {
+                    "file_read",
+                    "file_write",
+                    "file_list",
+                    "list_dir",
+                    "web_search",
+                    "search",
+                    "fetch_webpage",
+                    "python",
+                    "command",
+                    "manage_mcp",
+                    "get_system_status",
+                    "update_config",
+                    "list_available_models",
+                    "clarify",
+                    "memory",
+                    "memory_pref",
+                }
+
+                def _simple_keep(t: dict) -> bool:
+                    fn = t.get("function") if isinstance(t.get("function"), dict) else {}
+                    name = str((fn or {}).get("name") or t.get("name") or "")
+                    if name in _allow:
+                        return True
+                    if name.startswith("mcp_") and any(
+                        x in name for x in ("search", "fetch", "scrape", "web")
+                    ):
+                        return True
+                    return False
+
+                before_sm = len(tools or [])
+                tools = [t for t in (tools or []) if isinstance(t, dict) and _simple_keep(t)]
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "【会话·简单模式】工具已收窄、循环更短。"
+                            "优先直接回答或少量工具；涉及破坏性操作时先简短确认。"
+                            "不要派工/编制/长链探索。用户可说「关闭简单模式」退出。"
+                        ),
+                    }
+                )
+                logger.info(
+                    "simple_mode tools %s→%s max_iter=%s session=%s",
+                    before_sm,
+                    len(tools),
+                    self.max_iterations,
+                    session_id,
+                )
+        except Exception as _sm_e:
+            logger.debug("simple_mode apply skip: %s", _sm_e)
 
         # 直接执行意图：从 schema 去掉 clarify，避免模型「先问再做」
         # 模糊工作句（帮我弄好…）不走 strip，并注入轻量 clarify 偏好（见下）
@@ -3541,6 +3606,12 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 "kernel_iteration_exhausted",
                 "kernel_budget_precheck",
                 "doom_loop",
+                "thrash",
+            )
+            and not (
+                self.last_exit_reason in ("doom_loop", "thrash")
+                and len((final_content or "").strip()) >= 80
+                and not (final_content or "").strip().startswith("正在")
             )
         ):
             try:

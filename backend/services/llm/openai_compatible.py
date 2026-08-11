@@ -247,6 +247,11 @@ class OpenAICompatibleService(LLMService):
             logger.debug("apply_reasoning_effort skipped", exc_info=True)
 
     @staticmethod
+    def resolve_effective_model_id(model: str, base_url: str) -> str:
+        """公开：选用名 → 上游实际 model id（供 UI / 快路径回显）。"""
+        return OpenAICompatibleService._normalize_model_id(model, base_url)
+
+    @staticmethod
     def _normalize_model_id(model: str, base_url: str) -> str:
         """Kimi Code 仅接受 kimi-for-coding / kimi-for-coding-highspeed。"""
         m = (model or "").strip()
@@ -254,6 +259,8 @@ class OpenAICompatibleService(LLMService):
         if "kimi.com/coding" in b or "api.kimi.com/coding" in b:
             aliases = {
                 "k3": "kimi-for-coding",
+                "k3-256k": "kimi-for-coding",
+                "k3_256k": "kimi-for-coding",
                 "kimi-k3": "kimi-for-coding",
                 "kimi_k3": "kimi-for-coding",
                 "k3-highspeed": "kimi-for-coding-highspeed",

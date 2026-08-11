@@ -71,6 +71,12 @@ _KEY_MAP: dict[str, str] = {
     "agent_permission_headless": "agent_permission_headless",
     "agent_permission_profile": "agent_permission_profile",
     "agent_permission_ask_mode": "agent_permission_ask_mode",
+    # 出站代理（设置页 · 网络）
+    "outbound_proxy_enabled": "outbound_proxy_enabled",
+    "outbound_proxy_scheme": "outbound_proxy_scheme",
+    "outbound_proxy_host": "outbound_proxy_host",
+    "outbound_proxy_port": "outbound_proxy_port",
+    "outbound_https_proxy": "outbound_https_proxy",
 }
 
 # 这些 key 变更后需要重建对应服务单例
@@ -307,5 +313,11 @@ async def load_settings_from_db() -> list[str]:
     rows = await repo.list_all() or []
     payload = {r.key: r.value for r in rows}
     applied = apply_settings_dict(payload, reset=True)
+    try:
+        from backend.core.outbound_http import sync_proxy_env_from_settings
+
+        sync_proxy_env_from_settings()
+    except Exception:
+        pass
     logger.info("Loaded %d runtime settings from DB", len(applied))
     return applied

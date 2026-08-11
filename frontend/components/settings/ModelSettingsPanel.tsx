@@ -301,7 +301,7 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
   }, [selectedProviderId]);
 
   const notifySettingsChanged = (keys: string[]) => {
-    window.dispatchEvent(new CustomEvent('tevarn:settings-changed', { detail: keys }));
+    window.dispatchEvent(new CustomEvent('takton:settings-changed', { detail: keys }));
   };
 
   const applyMainModel = async () => {
@@ -622,7 +622,11 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
       setOpenaiState(r.state || '');
       setOpenaiCallback('');
       try {
-        window.open(r.authorization_url, '_blank', 'noopener,noreferrer');
+        if (typeof window !== 'undefined' && window.electronAPI?.openExternal) {
+          void window.electronAPI.openExternal(r.authorization_url);
+        } else {
+          window.open(r.authorization_url, '_blank', 'noopener,noreferrer');
+        }
       } catch {
         /* ignore */
       }
@@ -731,12 +735,13 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
       setXaiUserCode(r.user_code || '');
       setXaiVerifyUrl(r.verification_uri_complete || r.verification_uri || '');
       try {
-        if (r.verification_uri_complete || r.verification_uri) {
-          window.open(
-            r.verification_uri_complete || r.verification_uri,
-            '_blank',
-            'noopener,noreferrer',
-          );
+        const url = r.verification_uri_complete || r.verification_uri || '';
+        if (url) {
+          if (typeof window !== 'undefined' && window.electronAPI?.openExternal) {
+            void window.electronAPI.openExternal(url);
+          } else {
+            window.open(url, '_blank', 'noopener,noreferrer');
+          }
         }
       } catch {
         /* ignore */
@@ -811,6 +816,12 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
 
   const activeLabel = catalog?.active_model
     ? `${catalog.active_provider_id || ''} · ${catalog.active_model}`: t('settings.noActiveModel');
+  const effectiveModel = (catalog?.effective_model || '').trim();
+  const selectedModelLabel = (catalog?.selected_model || catalog?.active_model || '').trim();
+  const effectiveDiffers = Boolean(
+    catalog?.effective_differs ||
+      (effectiveModel && selectedModelLabel && effectiveModel !== selectedModelLabel),
+  );
 
   return (
     <div className="space-y-6">
@@ -821,6 +832,29 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
           <p className="mt-0.5 text-xs text-foreground-muted">
             {t('settings.llmConfigHint') || 'Select provider + model, then Apply (Hermes-style).'}
           </p>
+          {catalog?.active_model ? (
+            <div className="mt-2 rounded-lg border border-border-subtle bg-elevated-bg/50 px-3 py-2 text-[11px] leading-relaxed text-foreground-muted">
+              <div>
+                当前选用：{' '}
+                <span className="font-mono text-foreground">
+                  {catalog.active_provider_id || '—'} / {selectedModelLabel || '—'}
+                </span>
+              </div>
+              {effectiveDiffers ? (
+                <div className="mt-1 text-warning-text">
+                  上游实际请求：{' '}
+                  <span className="font-mono">{effectiveModel}</span>
+                  <span className="ml-1 text-foreground-dim">
+                    （供应商会映射模型 id，属正常；用量账本按实际上游名计）
+                  </span>
+                </div>
+              ) : effectiveModel ? (
+                <div className="mt-0.5 text-foreground-dim">
+                  上游实际：<span className="font-mono">{effectiveModel}</span>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <select

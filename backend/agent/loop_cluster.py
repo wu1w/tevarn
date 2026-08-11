@@ -320,6 +320,8 @@ class LoopClusterMixin:
 
         if not schema:
             return cleaned
+        # 软夹紧：数值 min/max 越界时 clamp，减少「max_results=3 < min 5」类无意义失败
+        cleaned = self._clamp_tool_args(schema, cleaned)
         try:
             from jsonschema import ValidationError, validate
 
@@ -329,6 +331,40 @@ class LoopClusterMixin:
         except ValidationError as e:
             raise ValueError(f"Invalid tool arguments: {e.message}") from e
         return cleaned
+
+    def _clamp_tool_args(self, schema: dict, cleaned: dict) -> dict:
+        """按 JSON Schema properties 的 minimum/maximum/minLength 做软夹紧（不改类型）。"""
+        props = schema.get("properties") if isinstance(schema, dict) else None
+        if not isinstance(props, dict) or not cleaned:
+            return cleaned
+        out = dict(cleaned)
+        for key, spec in props.items():
+            if key not in out or not isinstance(spec, dict):
+                continue
+            val = out[key]
+            if isinstance(val, bool):
+                continue
+            if isinstance(val, (int, float)):
+                lo = spec.get("minimum")
+                hi = spec.get("maximum")
+                try:
+                    if lo is not None and val < lo:
+                        out[key] = type(val)(lo)
+                    if hi is not None and val > hi:
+                        out[key] = type(val)(hi)
+                except Exception:
+                    pass
+            elif isinstance(val, str):
+                min_len = spec.get("minLength")
+                max_len = spec.get("maxLength")
+                try:
+                    if isinstance(max_len, int) and max_len > 0 and len(val) > max_len:
+                        out[key] = val[:max_len]
+                    # minLength 不填充假数据，留给校验
+                    _ = min_len
+                except Exception:
+                    pass
+        return out
 
     async def _load_tools(
         self,

@@ -1,20 +1,19 @@
 """
 MCP 服务模块
 
-对齐 Hermes `/reload-mcp` 与 OpenClaw `mcp reload`：
-- 按 server 安全重连（先连新后换旧）
-- 仅对成功连接的 server 注册工具
-- 禁用/删除的 server 卸工具并断开
+- 从数据库读取 MCP Server 配置
+- 连接启用 server、注册到 ToolRegistry
+- sync_mcp_runtime：热同步（支持 only_server）
+- 启动时 rewire 裸 npx/uvx → 绝对路径
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
+from pathlib import Path
 from typing import Any
 
-from backend.mcp_hub.client import MCPClientManager, MCPServerConfig
-from backend.mcp_hub.normalize import merge_env, normalize_stdio_command_args
+from backend.mcp_hub.client import MCPClient, MCPClientManager, MCPServerConfig
 from backend.repositories.mcp_server_repo import AsyncMCPServerRepository
 from backend.tools.adapters.mcp_adapter import (
     register_mcp_server_tools,
@@ -24,158 +23,287 @@ from backend.tools.adapters.mcp_adapter import (
 
 logger = logging.getLogger(__name__)
 
-_sync_lock = asyncio.Lock()
+
+def _resolve_cmd(cmd: str | None) -> str | None:
+    """运行时解析命令路径；不改 DB。
+
+    npx/npm 允许解析到 .cmd（Connect 时用），但 rewire 不会把 .cmd 写回 DB。
+    """
+    if not cmd:
+        return cmd
+    raw = str(cmd).strip()
+    try:
+        from backend.core.host_commands import resolve_host_command
+
+        low = raw.lower()
+        # 已是绝对路径则不动
+        if "\\" in raw or "/" in raw:
+            try:
+                if Path(raw).is_file():
+                    return raw
+            except Exception:
+                pass
+        if low in ("npx", "npx.cmd", "uvx", "uvx.exe", "uv", "uv.exe", "node", "node.exe", "npm", "npm.cmd") or (
+            "\\" not in raw and "/" not in raw
+        ):
+            resolved = resolve_host_command(raw)
+            if resolved and Path(resolved).is_file():
+                return resolved
+    except Exception:
+        pass
+    return raw
 
 
 def _row_to_config(s: Any) -> MCPServerConfig:
-    cmd, args = normalize_stdio_command_args(
-        str(getattr(s, "name", "") or ""),
-        getattr(s, "command", None),
-        list(getattr(s, "args", None) or []),
-    )
-    env = merge_env(None, getattr(s, "env", None) or {})
     return MCPServerConfig(
         name=s.name,
         transport=s.transport,
-        command=cmd,
-        args=args,
+        command=_resolve_cmd(s.command),
+        args=list(s.args or []),
         url=s.url,
-        env=env,
+        env=dict(s.env or {}),
         enabled=bool(s.enabled),
         timeout=float(getattr(s, "timeout", 30.0) or 30.0),
     )
 
 
-async def unregister_mcp_tools_from_registry() -> int:
-    return unregister_all_mcp_tools()
+def _should_persist_rewire(original: str, resolved: str) -> bool:
+    """是否把解析结果写回 DB。
+
+    禁止持久化 npx.cmd / npm.cmd：跨机路径易失效，且 .cmd 在部分 CreateProcess
+    场景下不可靠；连接时由 _resolve_cmd 动态解析即可。
+    仅持久化真实可执行文件（uvx/uv/node 的 .exe 或 POSIX 二进制）。
+    """
+    if not resolved or resolved == original:
+        return False
+    low = Path(resolved).name.lower()
+    # 永不把 shell 包装器写进 DB
+    if low in ("npx.cmd", "npx.bat", "npm.cmd", "npm.bat", "npx", "npm"):
+        return False
+    if low.endswith(".cmd") or low.endswith(".bat") or low.endswith(".ps1"):
+        return False
+    base = original.strip().lower().removesuffix(".exe").removesuffix(".cmd")
+    # 只对已知工具做 DB rewire
+    if base not in ("uvx", "uv", "node"):
+        return False
+    try:
+        return Path(resolved).is_file()
+    except Exception:
+        return False
+
+
+async def rewire_bare_mcp_commands() -> int:
+    """把 DB 里裸 uvx/uv/node 写成绝对路径；npx 保持裸名，运行时再解析。"""
+    from backend.core.host_commands import resolve_host_command
+    from backend.schemas.mcp import MCPServerUpdate
+
+    repo = AsyncMCPServerRepository()
+    n = 0
+    try:
+        servers = await repo.list_all()
+    except Exception:
+        return 0
+    for s in servers or []:
+        cmd = (s.command or "").strip()
+        if not cmd:
+            continue
+        # 已是路径则跳过
+        if "\\" in cmd or "/" in cmd:
+            continue
+        low = cmd.lower().removesuffix(".exe").removesuffix(".cmd")
+        # 不 rewire npx/npm 进 DB
+        if low not in ("uvx", "uv", "node"):
+            continue
+        resolved = resolve_host_command(cmd)
+        try:
+            if not _should_persist_rewire(cmd, resolved or ""):
+                continue
+            await repo.update(s.id, MCPServerUpdate(command=resolved))
+            n += 1
+            logger.info("rewired MCP %s command %r → %r", s.name, cmd, resolved)
+        except Exception as e:
+            logger.debug("rewire skip %s: %s", s.name, e)
+    return n
 
 
 async def load_mcp_tools(manager: MCPClientManager | None = None) -> MCPClientManager:
-    """兼容旧调用：全量同步。"""
-    await sync_mcp_runtime(manager)
+    """全量加载（兼容旧调用）；内部走 sync_mcp_runtime。"""
+    await sync_mcp_runtime()
     if manager is None:
         from backend.mcp_hub.client import get_mcp_manager
 
-        return get_mcp_manager()
+        manager = get_mcp_manager()
     return manager
 
 
-async def sync_mcp_runtime(
-    manager: MCPClientManager | None = None,
-    *,
-    only_server: str | None = None,
-) -> dict[str, Any]:
-    """DB enabled 集合 → 运行时连接 + ToolRegistry。
+async def sync_mcp_runtime(only_server: str | None = None) -> dict[str, Any]:
+    """热同步 MCP 连接与 ToolRegistry。
 
-    - only_server: 只重连指定 server（manage_mcp update 用）
-    - 非破坏：reconnect 失败时保留旧连接与旧工具
+    only_server:
+      - None：全量 close_all → 连全部 enabled → 重挂工具
+      - 名字：只卸/重连该 server（避免全局卸光）
+
+    返回:
+      {ok, connected, registered, unregistered, error?, warning?}
     """
-    async with _sync_lock:
-        from backend.mcp_hub.client import get_mcp_manager
+    from backend.mcp_hub.client import get_mcp_manager
 
-        if manager is None:
-            manager = get_mcp_manager()
+    try:
+        await rewire_bare_mcp_commands()
+    except Exception as e:
+        logger.debug("rewire_bare_mcp_commands skip: %s", e)
 
-        repo = AsyncMCPServerRepository()
-        try:
-            all_rows = await repo.list_all()
-        except Exception:
-            all_rows = await repo.get_all_enabled()
+    manager = get_mcp_manager()
+    repo = AsyncMCPServerRepository()
+    only = (only_server or "").strip() or None
 
-        enabled_rows = [s for s in all_rows if getattr(s, "enabled", False)]
-        if only_server:
-            enabled_rows = [s for s in enabled_rows if s.name == only_server]
-            # 若 only 指向已禁用 server，仍要断开
-            if not enabled_rows:
-                await manager.disconnect(only_server)
-                n = unregister_mcp_server_tools(only_server)
+    try:
+        if only:
+            unregistered = 0
+            try:
+                unregistered = unregister_mcp_server_tools(only)
+            except Exception as e:
+                logger.debug("unregister_mcp_server_tools %s: %s", only, e)
+
+            old = manager.get_client(only)
+            if old is not None:
+                try:
+                    await old.close()
+                except Exception:
+                    pass
+                try:
+                    manager._clients.pop(only, None)
+                except Exception:
+                    pass
+
+            row = await repo.get_by_name(only)
+            if row is None:
+                logger.info(
+                    "sync_mcp_runtime: only_server=%s not in DB (unregistered=%s)",
+                    only,
+                    unregistered,
+                )
                 return {
                     "ok": True,
-                    "unregistered": n,
                     "connected": manager.list_connected(),
-                    "error": None,
-                    "warning": f"server_disabled_or_missing:{only_server}",
+                    "registered": 0,
+                    "unregistered": unregistered,
+                    "warning": f"server '{only}' not in DB",
                 }
 
-        enabled_names = {s.name for s in enabled_rows}
-        risk_by_server = {
-            s.name: str(getattr(s, "risk_level", None) or "low") for s in enabled_rows
-        }
+            registered = 0
+            warning = None
+            if row.enabled:
+                cfg = _row_to_config(row)
+                client = MCPClient(cfg)
+                try:
+                    await client.connect()
+                    manager._clients[cfg.name] = client
+                    registered = await register_mcp_server_tools(
+                        cfg.name,
+                        client,
+                        risk_level=getattr(row, "risk_level", None),
+                        tools_include=getattr(row, "tools_include", None),
+                        tools_exclude=getattr(row, "tools_exclude", None),
+                    )
+                except Exception as e:
+                    warning = str(e)
+                    logger.warning("Failed to connect MCP server '%s': %s", only, e)
+                    try:
+                        await client.close()
+                    except Exception:
+                        pass
+            connected = manager.list_connected()
+            logger.info(
+                "sync_mcp_runtime: only=%s connected=%s registered=%s warning=%s",
+                only,
+                connected,
+                registered,
+                warning,
+            )
+            return {
+                "ok": warning is None,
+                "connected": connected,
+                "registered": registered,
+                "unregistered": unregistered,
+                "warning": warning,
+                "error": warning,
+            }
 
-        # 断开已禁用且不在 only 范围外的？
-        if only_server is None:
-            for name in list(manager.list_connected()):
-                if name not in enabled_names:
-                    await manager.disconnect(name)
-                    unregister_mcp_server_tools(name)
+        unregistered = 0
+        try:
+            unregistered = unregister_all_mcp_tools()
+        except Exception as e:
+            logger.debug("unregister_all_mcp_tools: %s", e)
 
-        connected: list[str] = []
-        failed: list[str] = []
-        registered_total = 0
+        await manager.close_all()
 
-        for s in enabled_rows:
-            cfg = _row_to_config(s)
-            client = await manager.reconnect(cfg)
-            if client is None or not getattr(client, "_initialized", False):
-                failed.append(s.name)
-                # 连接失败：卸该 server 旧工具，避免僵尸
-                unregister_mcp_server_tools(s.name)
+        servers = await repo.get_all_enabled()
+        configs = [_row_to_config(s) for s in (servers or [])]
+        meta_by_name = {s.name: s for s in (servers or [])}
+
+        await manager.connect(configs)
+
+        registered = 0
+        for name in manager.list_connected():
+            client = manager.get_client(name)
+            if client is None:
                 continue
-            # 成功：先卸该 server 旧工具再注册
-            unregister_mcp_server_tools(s.name)
+            row = meta_by_name.get(name)
             try:
-                inc = getattr(s, "tools_include", None)
-                exc = getattr(s, "tools_exclude", None)
-                count = await register_mcp_server_tools(
-                    s.name,
+                n = await register_mcp_server_tools(
+                    name,
                     client,
-                    risk_level=risk_by_server.get(s.name, "low"),
-                    tools_include=list(inc) if inc else None,
-                    tools_exclude=list(exc) if exc else None,
+                    risk_level=getattr(row, "risk_level", None) if row else None,
+                    tools_include=getattr(row, "tools_include", None) if row else None,
+                    tools_exclude=getattr(row, "tools_exclude", None) if row else None,
                 )
-                registered_total += count
-                connected.append(s.name)
+                registered += int(n or 0)
                 logger.info(
                     "Registered %s MCP tools from server '%s' (include=%s exclude=%s)",
-                    count,
-                    s.name,
-                    inc,
-                    exc,
+                    n,
+                    name,
+                    getattr(row, "tools_include", None) if row else None,
+                    getattr(row, "tools_exclude", None) if row else None,
                 )
             except Exception as e:
-                logger.warning(
-                    "Failed to register MCP tools from '%s': %s", s.name, e
-                )
-                failed.append(s.name)
+                logger.warning("Failed to register MCP tools from '%s': %s", name, e)
 
+        connected = manager.list_connected()
+        enabled_names = [c.name for c in configs]
         warning = None
-        if failed:
-            warning = f"connect_failed:{','.join(failed)}"
-            logger.warning("sync_mcp_runtime partial: %s", warning)
+        missing = [n for n in enabled_names if n not in connected]
+        if missing:
+            warning = f"failed to connect: {', '.join(missing)}"
 
         logger.info(
             "sync_mcp_runtime: connected=%s registered=%s warning=%s",
             connected,
-            registered_total,
+            registered,
             warning,
         )
         return {
-            "ok": len(failed) == 0 or len(connected) > 0,
-            "unregistered": 0,
+            "ok": True if not missing else False,
             "connected": connected,
-            "registered": registered_total,
-            "error": None if connected or not failed else f"all_failed:{failed}",
+            "registered": registered,
+            "unregistered": unregistered,
             "warning": warning,
-            "enabled_count": len(enabled_rows),
-            "failed": failed,
+            "error": warning,
+        }
+    except Exception as e:
+        logger.exception("sync_mcp_runtime failed: %s", e)
+        return {
+            "ok": False,
+            "connected": [],
+            "registered": 0,
+            "unregistered": 0,
+            "error": str(e),
         }
 
 
 async def get_mcp_status() -> list[dict]:
-    """enabled vs connected 分离；tool_count 优先 Registry/缓存。"""
+    """获取所有 MCP Server 的连接状态（enabled/connected 分离）。"""
     from backend.mcp_hub.client import get_mcp_manager
-    from backend.tools.base import ToolSource
-    from backend.tools.registry import ToolRegistry
 
     manager = get_mcp_manager()
     repo = AsyncMCPServerRepository()
@@ -184,33 +312,24 @@ async def get_mcp_status() -> list[dict]:
     except Exception:
         servers = await repo.get_all_enabled()
 
-    reg_count: dict[str, int] = {}
-    try:
-        for t in ToolRegistry.get_all(source=ToolSource.MCP):
-            sn = str(getattr(t, "server_name", "") or "")
-            if sn:
-                reg_count[sn] = reg_count.get(sn, 0) + 1
-    except Exception:
-        pass
-
-    status = []
-    for s in servers:
+    status: list[dict] = []
+    for s in servers or []:
         client = manager.get_client(s.name)
-        live = client is not None and bool(getattr(client, "_initialized", False))
-        connected = bool(getattr(s, "enabled", False)) and live
-        tool_count = reg_count.get(s.name, 0)
-        if live and tool_count <= 0:
-            tool_count = int(getattr(client, "_cached_tool_count", 0) or 0)
+        connected = client is not None and bool(getattr(client, "_initialized", False))
+        tool_count = 0
         error = None
-        if not getattr(s, "enabled", False):
-            connected = False
-        elif getattr(s, "enabled", False) and not connected:
-            error = "not connected"
+        if client is not None and connected:
+            try:
+                tools = await client.list_tools()
+                tool_count = len(tools.tools)
+            except Exception as e:
+                error = str(e)
+                connected = False
         status.append(
             {
                 "name": s.name,
                 "transport": s.transport,
-                "enabled": bool(getattr(s, "enabled", False)),
+                "enabled": bool(s.enabled),
                 "connected": connected,
                 "tool_count": tool_count,
                 "error": error,

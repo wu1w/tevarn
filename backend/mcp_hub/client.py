@@ -140,6 +140,21 @@ class MCPClient:
 
         cmd = (command or "").strip()
         out_args = list(args or [])
+        # Electron 精简 PATH：优先 host_commands 解析 npx/uvx/node
+        try:
+            from backend.core.host_commands import build_process_env, resolve_host_command
+
+            resolved = resolve_host_command(cmd)
+            if resolved and resolved != cmd:
+                cmd = resolved
+            # 子进程 env：补全 PATH + 代理 + 用户 env
+            base_env = build_process_env(env)
+            if env is not None:
+                env = base_env
+            else:
+                env = base_env
+        except Exception:
+            pass
         if sys.platform == "win32" and cmd:
             base = os.path.basename(cmd).lower()
             if base in {"npx", "npm", "node", "npx.cmd", "npm.cmd", "node.exe"}:
