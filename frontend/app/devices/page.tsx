@@ -13,7 +13,6 @@ import {
   remoteListFs,
   remoteReadFile,
   remoteExecDevice,
-  discoverAgents,
   heartbeatDevice,
 } from '@/lib/api';
 import { useConfirm } from '@/components/desktop/ConfirmDialog';
@@ -49,10 +48,6 @@ export default function DevicesPage() {
   const [execCmd, setExecCmd] = useState('echo hello');
   const [execOut, setExecOut] = useState<string | null>(null);
   const [executing, setExecuting] = useState(false);
-  const [discovering, setDiscovering] = useState(false);
-  const [discovered, setDiscovered] = useState<
-    Array<{ name: string; host: string; port: number; addresses?: string[] }>
-  >([]);
 
   const selected = useMemo(
     () => devices.find((d) => d.id === selectedId) || null,
@@ -221,19 +216,6 @@ export default function DevicesPage() {
     }
   };
 
-  const handleDiscover = async () => {
-    setDiscovering(true);
-    try {
-      const r = await discoverAgents(3000);
-      setDiscovered(r.agents || []);
-      if ((r.agents || []).length) setShowPair(true);
-    } catch (e) {
-      console.error(e);
-      setDiscovered([]);
-    } finally {
-      setDiscovering(false);
-    }
-  };
 
   const handleDelete = async (id: string) => {
     const ok = await confirm(t('devices._e5'));
@@ -267,12 +249,6 @@ export default function DevicesPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           <button
-            type="button"onClick={() => void handleDiscover()}
-            disabled={discovering}
-            className="rounded-xl border border-border-default bg-card-bg px-3 py-2 text-sm text-foreground-muted hover:border-brand-cyan/30 hover:text-brand-cyan disabled:opacity-50">
-            {discovering ? t('devices._e6') : t('devices._e7')}
-          </button>
-          <button
             type="button"onClick={() => {
               setShowPair((v) => !v);
               setPairError(null);
@@ -286,26 +262,7 @@ export default function DevicesPage() {
       {showPair && (
         <div className="mb-4 tk-card/60 p-4">
           <h2 className="mb-3 text-sm font-semibold text-foreground">{t('devices._e3')}</h2>
-          {discovered.length > 0 && (
-            <div className="mb-3 space-y-1">
-              <div className="text-xs text-foreground-dim">发现的服务（点击填入）</div>
-              {discovered.map((a, i) => (
-                <button
-                  key={`${a.host}:${a.port}:${i}`}
-                  type="button"onClick={() =>
-                    setPairForm((f) => ({
-                      ...f,
-                      name: a.name || f.name || 'agent',
-                      host: a.host,
-                      port: a.port,
-                    }))
-                  }
-                  className="block w-full rounded-lg border border-border-subtle bg-input-bg px-3 py-2 text-left text-xs text-foreground hover:border-brand-purple/40">
-                  {a.name} · {a.host}:{a.port}
-                </button>
-              ))}
-            </div>
-          )}
+
           <form onSubmit={handlePair} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <input
               placeholder={t('devices._e4')}

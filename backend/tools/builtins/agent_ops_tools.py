@@ -114,15 +114,15 @@ class DeviceOnboardTool(BaseTool):
         super().__init__(
             name="device_onboard",
             description=(
-                "远程设备开箱：action=guide|discover|status。"
-                "说明如何安装/配对 tevarn-agent；discover 扫描局域网；status 看已配对设备。"
+                "远程设备开箱：action=guide|status。"
+                "说明如何安装/配对 tevarn-agent；status 看已配对设备。mDNS 发现已下线，请手动配对或设置→远程连接。"
             ),
             parameters={
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["guide", "discover", "status"],
+                        "enum": ["guide", "status"],
                         "default": "guide",
                     },
                     "timeout_ms": {"type": "integer", "default": 2500},
@@ -146,18 +146,13 @@ class DeviceOnboardTool(BaseTool):
                 "   或在对话里：@remote-pc hostname\n"
                 "5. 本机无需配对，直接 remote_exec device=local 或 command 工具。\n"
                 "\n"
-                "Discover: device_onboard action=discover（mDNS 扫描局域网 agent）\n"
+                "配对：设置 → 远程连接（二维码）或 /devices 手动填写 host/port/token\n"
             )
         if action == "discover":
-            try:
-                from backend.services.remote.mdns import browse_agents
-
-                found = await browse_agents(timeout_ms=int(kwargs.get("timeout_ms") or 2500))
-                if not found:
-                    return "No agents discovered on LAN (mDNS). Start tevarn-agent or pair manually."
-                return json.dumps(found, ensure_ascii=False, indent=2)
-            except Exception as e:
-                return f"[Error] discover failed: {e}"
+            return (
+                "Device discovery (mDNS) has been removed. "
+                "Pair manually on /devices or use Settings → Remote (QR)."
+            )
         # status
         from backend.services.tools.executors import execute_list_devices
 

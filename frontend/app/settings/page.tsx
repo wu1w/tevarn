@@ -119,7 +119,7 @@ const btnPrimary =
 const btnGhost =
   'rounded-xl border border-border-default bg-card-bg px-4 py-2.5 text-sm text-foreground-muted hover:bg-card-bg-hover hover:text-foreground disabled:opacity-50';
 
-type SettingsPane = 'general' | 'llm' | 'channels' | 'remote' | 'backend' | 'about';
+type SettingsPane = 'general' | 'network' | 'llm' | 'channels' | 'remote' | 'backend' | 'about';
 
 export default function SettingsPage() {
   const addToast = useToastStore((s) => s.addToast);
@@ -617,7 +617,8 @@ export default function SettingsPage() {
   const zh = useZh();
   const PANES: Array<{ id: SettingsPane; zh: string; en: string }> = [
     { id: 'general', zh: '通用', en: 'General' },
-    { id: 'llm', zh: 'LLM（模型）', en: 'LLM' },
+    { id: 'network', zh: '网络代理', en: 'Network' },
+    { id: 'llm', zh: 'LLM / 知识库', en: 'LLM / RAG' },
     { id: 'channels', zh: '对外渠道', en: 'Channels' },
     { id: 'remote', zh: '远程连接', en: 'Remote' },
     { id: 'backend', zh: '执行后端', en: 'Runtime' },
@@ -630,7 +631,7 @@ export default function SettingsPage() {
         <div className="mb-6">
           <h1 className="text-lg font-semibold tracking-tight text-foreground">{t('settings.title')}</h1>
           <p className="mt-1 text-sm text-foreground-muted">
-            {zh ? '偏好 · 模型（LLM）· 对外渠道 · 运行环境' : 'Preferences · LLM · Channels · Runtime'}
+            {zh ? '偏好 · 网络代理 · 模型/知识库 · 远程连接 · 运行环境' : 'Prefs · Proxy · LLM/RAG · Remote · Runtime'}
           </p>
         </div>
 
@@ -664,9 +665,9 @@ export default function SettingsPage() {
           </div>
         ) : (
           <>
-            {pane === 'general' ? (
+            {pane === 'general' || pane === 'network' ? (
               <>
-                <LanguageCard />
+                {pane === 'general' ? <LanguageCard /> : null}
                 {/* 网络代理 — Windows 风格：开关 + 地址 + 端口 */}
                 <section className="rounded-2xl border border-border-subtle bg-card-bg p-5">
                   <div className="mb-1 flex flex-wrap items-center justify-between gap-2">

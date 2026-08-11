@@ -168,11 +168,12 @@ async def discover_agents(
     current_user: Annotated[UserRead, Depends(get_current_user)],
     timeout_ms: int = 2500,
 ):
-    """mDNS 浏览 `_tevarn-agent._tcp.local`（无 zeroconf 时返回空列表）。"""
-    from backend.services.remote.mdns import browse_agents
-
-    agents = await browse_agents(timeout_ms=min(max(timeout_ms, 500), 8000))
-    return {"agents": agents}
+    """设备发现已下线。请手动配对或使用设置→远程连接二维码。"""
+    return {
+        "agents": [],
+        "deprecated": True,
+        "message": "Device discovery (mDNS) removed. Pair manually or use Settings → Remote QR.",
+    }
 
 
 @router.get("/{device_id}", response_model=DeviceRead)

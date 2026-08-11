@@ -818,18 +818,6 @@ export async function remoteExecDevice(
 }
 
 /** mDNS / 扫描发现局域网 agent */
-export async function discoverAgents(timeoutMs: number = 2500): Promise<{
-  agents: Array<{
-    name: string;
-    host: string;
-    port: number;
-    addresses?: string[];
-    properties?: Record<string, string>;
-  }>;
-}> {
-  const res = await api.get('/devices/discover', { params: { timeout_ms: timeoutMs } });
-  return res.data;
-}
 
 // ====== Workflow APIs ======
 

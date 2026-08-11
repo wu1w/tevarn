@@ -9,8 +9,8 @@ from typing import Any
 # context_engine 四五个地方且口径不一（0.45~0.75）。统一收敛到此：
 #   COMPRESS_THRESHOLD      常规触发线（默认 0.85，仍可被 settings 覆盖）
 #   COMPRESS_THRESHOLD_DEEP 长会话条数压力（≥soft 条数）场景的更深触发线
-COMPRESS_THRESHOLD: float = 0.85
-COMPRESS_THRESHOLD_DEEP: float = 0.75
+COMPRESS_THRESHOLD: float = 0.78
+COMPRESS_THRESHOLD_DEEP: float = 0.68
 
 
 class ContextEngine(ABC):
