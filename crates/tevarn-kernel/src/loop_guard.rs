@@ -109,8 +109,9 @@ impl Default for LoopGuardConfig {
             role_kind: RoleKind::Chat,
             thoroughness: None,
             max_tool_rounds: 40,
-            max_crew_total: 8,
-            max_orch_per_round: 1,
+            // Relaxed defaults: multi-engineer dispatch is normal for steward/chat
+            max_crew_total: 24,
+            max_orch_per_round: 4,
             budget_force_ratio: 0.85,
             max_file_reads: 80,
             ban_worker_orch: false,
@@ -145,15 +146,16 @@ impl LoopGuardConfig {
                 c.ban_worker_orch = true;
             }
             RoleKind::Steward => {
-                c.max_tool_rounds = 40;
-                c.max_crew_total = 3;
-                c.max_orch_per_round = 1;
+                c.max_tool_rounds = 80;
+                // Was 3/1 — multi-hire parallel dispatch hit caps too fast
+                c.max_crew_total = 24;
+                c.max_orch_per_round = 8;
                 c.ban_worker_orch = false;
             }
             RoleKind::Chat => {
-                c.max_tool_rounds = 40;
-                c.max_crew_total = 3;
-                c.max_orch_per_round = 1;
+                c.max_tool_rounds = 60;
+                c.max_crew_total = 16;
+                c.max_orch_per_round = 6;
                 c.ban_worker_orch = false;
             }
         }
@@ -397,20 +399,21 @@ impl LoopGuardSupervisor {
             st.round_families.drain(0..excess);
         }
 
-        // Sliding window: ≥3 orch-heavy in last 5 rounds → force final
+        // Sliding window: ≥6 orch-heavy in last 8 rounds → force final
+        // (was ≥3/5 — multi-round hire/dispatch looked like thrash too early)
         let window: Vec<&str> = st
             .round_families
             .iter()
             .rev()
-            .take(5)
+            .take(8)
             .map(|s| s.as_str())
             .collect();
         let orch_n = window.iter().filter(|f| **f == "orch").count();
-        if orch_n >= 3 {
+        if orch_n >= 6 {
             st.trip(
                 "orch_window_thrash",
                 &format!(
-                    "orchestration-heavy rounds {orch_n}/5 in sliding window — stop dispatching"
+                    "orchestration-heavy rounds {orch_n}/8 in sliding window — stop dispatching"
                 ),
             );
             return GuardDecision::ForceFinal {

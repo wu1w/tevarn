@@ -284,16 +284,17 @@ async def run_tool_round(
         from backend.agent.decisive import orchestration_cap_results
         from backend.agent.progress_guard import soft_open_mode as _so_orch
 
-        # Soft-open: do not skip crew/delegate mid-round (was max=1 → false 编制上限)
+        # Soft-open: generous; hard mode still uses settings default (≥8) not 1
         if _so_orch():
             _max_orch = int(
-                getattr(settings, "agent_max_orch_tools_per_round", 16) or 16
+                getattr(settings, "agent_max_orch_tools_per_round", 24) or 24
             )
-            _max_orch = max(_max_orch, 16)
+            _max_orch = max(_max_orch, 24)
         else:
             _max_orch = int(
-                getattr(settings, "agent_max_orch_tools_per_round", 1) or 1
+                getattr(settings, "agent_max_orch_tools_per_round", 8) or 8
             )
+            _max_orch = max(_max_orch, 8)
         _orch_skip = orchestration_cap_results(tool_calls, max_orch=_max_orch)
         _capped_results = {**_capped_results, **_orch_skip}
         if _orch_skip:
@@ -359,7 +360,7 @@ async def run_tool_round(
             _br = await asyncio.to_thread(begin_round, _kpid_lg, _names)
             if isinstance(_br, dict) and _br.get("status") == "force_final":
                 _br_code = str(_br.get("code") or "max_tool_rounds")
-                # Soft-open: orch_window_thrash / crew caps must not hard-stop steward
+                # Soft-open / product default: orch thrash must not hard-stop steward dispatch
                 _soft_orch_ff = False
                 try:
                     from backend.agent.progress_guard import soft_open_mode as _so_br
@@ -371,9 +372,10 @@ async def run_tool_round(
                         "orch_per_round_cap",
                     ):
                         _soft_orch_ff = True
+                    # Default agent_orch_window_force_final=False: always soft for window thrash
+                    # even when non-goal soft_open is off (main cause of "派单被系统节流")
                     if (
-                        _so_br()
-                        and not bool(
+                        not bool(
                             getattr(_st_br, "agent_orch_window_force_final", False)
                         )
                         and _br_code == "orch_window_thrash"
@@ -446,13 +448,25 @@ async def run_tool_round(
                     )
                     if isinstance(_pt, dict) and _pt.get("status") == "block":
                         _pt_code = str(_pt.get("code") or "")
-                        # Soft-open: steward crew/orch caps are walls — allow through
+                        # Soft-open or relaxed product defaults: steward crew/orch caps soft-allow
+                        # (still ban worker_orch_banned — workers must not re-dispatch)
                         try:
                             from backend.agent.progress_guard import (
                                 soft_open_mode as _so_pt,
                             )
+                            from backend.core.config import settings as _st_pt
 
-                            if _so_pt() and _pt_code in (
+                            _soft_pt = _so_pt()
+                            # When soft_open off but window force_final disabled, still soft
+                            # crew/orch per-round caps for main chat (not worker ban).
+                            if not _soft_pt and not bool(
+                                getattr(_st_pt, "agent_orch_window_force_final", False)
+                            ):
+                                _soft_pt = _pt_code in (
+                                    "crew_total_cap",
+                                    "orch_per_round_cap",
+                                )
+                            if _soft_pt and _pt_code in (
                                 "crew_total_cap",
                                 "orch_per_round_cap",
                                 "orch_per_round_zero",

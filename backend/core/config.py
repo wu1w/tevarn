@@ -477,8 +477,9 @@ class Settings(BaseSettings):
     # Only high-step converge nudges. Set agent_soft_open_mode=False to restore
     # deliver/must_write/thrash force_final hard gates.
     agent_soft_open_mode: bool = True
-    # True：仅 goal 长任务享受 soft_open；闲聊/搜索/短工程硬 thrash（更接近 Grok）
-    agent_soft_open_goal_only: bool = True
+    # True：仅 goal 长任务享受 soft_open；False（默认）：主会话/派工也不硬掐 thrash
+    # 用户反馈：非 goal 派工易被 LoopGuard 编排窗口硬停 → 默认放开
+    agent_soft_open_goal_only: bool = False
     agent_converge_nudge_after: int = 16  # soft 「注意收束」after N tool rounds
     agent_converge_nudge_every: int = 10  # re-nudge interval after first
     agent_pure_read_nudge_after: int = 4  # pure-read rounds before soft write nudge
@@ -695,11 +696,11 @@ class Settings(BaseSettings):
     # 连续相同工具指纹轮次 → force_final（禁止再工具）
     agent_tool_thrash_force_final: int = 2
     # 连续「编制主导 / result_load 主导」轮次 → force_final（参数不同也会收）
-    # PR4: 收紧到 2（滑动窗口仍由 Rust loop_guard 权威）
-    agent_orch_thrash_force_final: int = 2
+    # 放宽：多轮并行派工常见，2 轮太紧
+    agent_orch_thrash_force_final: int = 5
     # 单轮最多执行的编制类工具（crew_steward/delegate/agent_call…），多余跳过
     # Soft-open default: generous; set agent_soft_open_mode=False + lower values to tighten
-    agent_max_orch_tools_per_round: int = 16
+    agent_max_orch_tools_per_round: int = 24
     # PR1–PR4 loop_guard（Rust 权威；Python bridge 降级）
     agent_loop_guard_enabled: bool = True
     # 实现类 worker 工具轮硬顶（0=用 role 默认 20）
@@ -708,7 +709,8 @@ class Settings(BaseSettings):
     agent_research_max_tool_rounds: int = 0
     # 主会话/管家 crew_steward 成功次数上限（soft-open: 高；0=用 role 默认再被 soft 抬高）
     agent_crew_steward_max_per_run: int = 999
-    # Soft-open: ignore orch_window_thrash force_final from Rust begin_round
+    # False（默认）：orch_window_thrash 只 soft 提示，不硬 force_final（无论是否 goal）
+    # True：严格按 Rust begin_round force_final 掐断本轮工具
     agent_orch_window_force_final: bool = False
     # Token 使用比 ≥ 此值 → force_final（对齐 Codex turn 收束）
     agent_budget_force_ratio: float = 0.85

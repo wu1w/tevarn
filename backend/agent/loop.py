@@ -1133,8 +1133,9 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                                     _soft_crew = _so_crew()
                                 except Exception:
                                     _soft_crew = True
-                                _crew_def = 999 if _soft_crew else 3
-                                _orch_def = 16 if _soft_crew else 1
+                                # Hard mode still keeps usable headroom (was 3/1 → false throttle)
+                                _crew_def = 999 if _soft_crew else 24
+                                _orch_def = 24 if _soft_crew else 8
                                 _cfg["max_crew_total"] = int(
                                     getattr(
                                         settings,
@@ -1156,7 +1157,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                                         int(_cfg["max_crew_total"] or 0), 999
                                     )
                                     _cfg["max_orch_per_round"] = max(
-                                        int(_cfg["max_orch_per_round"] or 0), 16
+                                        int(_cfg["max_orch_per_round"] or 0), 24
                                     )
                         # Goal / long coding: never let loop_guard be tighter than
                         # the iteration budget (was 40 → blocked file_write mid-scaffold).

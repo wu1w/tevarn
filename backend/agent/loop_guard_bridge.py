@@ -113,17 +113,17 @@ def build_loop_guard_config(
         cfg["max_orch_per_round"] = 0
         cfg["ban_worker_orch"] = True
     elif role == "steward":
-        # Goal / coding steward: 40 was too low (file_write blocked mid-scaffold)
+        # Goal / coding steward: generous dispatch headroom for multi-hire
         cfg["max_tool_rounds"] = int(pl.get("max_tool_rounds") or 100)
         cfg["max_file_reads"] = int(pl.get("max_file_reads") or 80)
         cfg["max_crew_total"] = 999
-        cfg["max_orch_per_round"] = 16
+        cfg["max_orch_per_round"] = 24
         cfg["ban_worker_orch"] = False
     else:
         cfg["max_tool_rounds"] = int(pl.get("max_tool_rounds") or 80)
         cfg["max_file_reads"] = int(pl.get("max_file_reads") or 80)
         cfg["max_crew_total"] = 999
-        cfg["max_orch_per_round"] = 16
+        cfg["max_orch_per_round"] = 24
         cfg["ban_worker_orch"] = False
     # Settings overrides
     try:
@@ -169,7 +169,7 @@ def build_loop_guard_config(
             if soft_open_mode() and not cfg.get("ban_worker_orch"):
                 cfg["max_crew_total"] = max(int(cfg.get("max_crew_total") or 0), 999)
                 cfg["max_orch_per_round"] = max(
-                    int(cfg.get("max_orch_per_round") or 0), 16
+                    int(cfg.get("max_orch_per_round") or 0), 24
                 )
         except Exception:
             pass
