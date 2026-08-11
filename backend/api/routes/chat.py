@@ -76,27 +76,97 @@ async def chat_completion(
     agent.max_iterations = int(getattr(app_settings, "agent_max_iterations", 25) or 25)
 
     async def event_stream():
-        try:
-            result = await agent.run(sid, user_input, mode="default")
-            chunk = {
-                "id": f"chatcmpl-{uuid.uuid4().hex}",
-                "object": "chat.completion.chunk",
-                "created": int(asyncio.get_event_loop().time()),
-                "model": "tevarn",
-                "choices": [{
-                    "index": 0,
-                    "delta": {"role": "assistant", "content": result or ""},
-                    "finish_reason": "stop",
-                }]
-            }
-            yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-            yield "data: [DONE]\n\n"
-        except Exception as e:
-            logger.exception(f"Chat completion error: {e}")
-            yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
-            yield "data: [DONE]\n\n"
+        """True SSE: stream stream_delta as OpenAI chunks while agent runs."""
+        q: asyncio.Queue = asyncio.Queue()
+        completion_id = f"chatcmpl-{uuid.uuid4().hex}"
 
-    return StreamingResponse(
+        class _QueueWsManager:
+            async def broadcast(self, session_id, message):  # noqa: ANN001
+                try:
+                    await q.put(message if isinstance(message, dict) else {"type": "raw", "data": message})
+                except Exception:
+                    pass
+
+        agent.ws_manager = _QueueWsManager()
+
+        async def _runner() -> None:
+            try:
+                result = await agent.run(sid, user_input, mode="default")
+                await q.put({"type": "_done", "result": result or ""})
+            except Exception as e:
+                logger.exception("Chat completion error: %s", e)
+                await q.put({"type": "_error", "detail": str(e)})
+
+        task = asyncio.create_task(_runner())
+        role_sent = False
+        try:
+            while True:
+                msg = await q.get()
+                mtype = (msg or {}).get("type")
+                if mtype == "stream_delta":
+                    content = msg.get("content") or ""
+                    if not content:
+                        continue
+                    delta: dict = {"content": content}
+                    if not role_sent:
+                        delta = {"role": "assistant", "content": content}
+                        role_sent = True
+                    chunk = {
+                        "id": completion_id,
+                        "object": "chat.completion.chunk",
+                        "created": int(asyncio.get_event_loop().time()),
+                        "model": data.model or "tevarn",
+                        "choices": [{
+                            "index": 0,
+                            "delta": delta,
+                            "finish_reason": None,
+                        }],
+                    }
+                    yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                elif mtype == "_done":
+                    final = msg.get("result") or ""
+                    if final and not role_sent:
+                        chunk = {
+                            "id": completion_id,
+                            "object": "chat.completion.chunk",
+                            "created": int(asyncio.get_event_loop().time()),
+                            "model": data.model or "tevarn",
+                            "choices": [{
+                                "index": 0,
+                                "delta": {"role": "assistant", "content": final},
+                                "finish_reason": "stop",
+                            }],
+                        }
+                        yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                    else:
+                        chunk = {
+                            "id": completion_id,
+                            "object": "chat.completion.chunk",
+                            "created": int(asyncio.get_event_loop().time()),
+                            "model": data.model or "tevarn",
+                            "choices": [{
+                                "index": 0,
+                                "delta": {},
+                                "finish_reason": "stop",
+                            }],
+                        }
+                        yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                    yield "data: [DONE]\n\n"
+                    break
+                elif mtype == "_error":
+                    yield f"data: {json.dumps({'error': msg.get('detail')}, ensure_ascii=False)}\n\n"
+                    yield "data: [DONE]\n\n"
+                    break
+        finally:
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except Exception:
+                    pass
+
+    return StreamingResponse
+return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
         headers={

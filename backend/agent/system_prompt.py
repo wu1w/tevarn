@@ -251,7 +251,7 @@ PLATFORM_HINTS = {
 SURFACE_CHAT_GUIDANCE = (
     "# This-turn surface: chat\n"
     "Prefer a direct answer. Tools are minimal (time / clarify / expand). "
-    "If you need files, shell, or search, call use_tool_pack to enable packs "
+    "Needed tools are usually preloaded. Only call use_tool_pack if a pack is clearly missing "
     "before improvising missing tools."
 )
 

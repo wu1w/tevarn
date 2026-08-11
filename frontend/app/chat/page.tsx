@@ -1146,7 +1146,8 @@ const handleUserMessageAck = useCallback(
         content: string,
         attachments: Attachment[] = [],
         mode: ChatMode = 'default',
-        subAgentIds?: string[]
+        subAgentIds?: string[],
+        control?: 'steer' | 'queue' | 'interrupt'
       ) => {
         // 防连点/连 Enter：父级 isStreaming 尚未置位时的竞态；停止态按会话
         const stopCheckSid = currentSession?.id || '';
@@ -1257,7 +1258,7 @@ const handleUserMessageAck = useCallback(
 
           setStreamStatusDetail(mode === 'cluster' ? t('chat.clusterWorking') : t('chat.thinking'));
           // 只发可发送附件，避免把失败 chip 带进 WS
-          const sent = sendMessage(content, sendableAtts, mode, subAgentIds);
+          const sent = sendMessage(content, sendableAtts, mode, subAgentIds, control ? { control } : undefined);
           if (!sent) {
             addToast(t('chat.sendFailedDisconnected'), 'error');
             dropGhost();
@@ -1904,10 +1905,9 @@ const handleUserMessageAck = useCallback(
                                               onSend={handleSend}
                                               onGenerateImage={handleGenerateImage}
                                               disabled={
-                                                isStreaming ||
                                                 isGeneratingImage ||
                                                 creatingSession ||
-                                                // 被踢后禁用输入，只保留横幅「夺取连接」，避免发送=无确认抢主
+                                                // 被踢后禁用输入；streaming 时仍可 steer/queue（P0）
                                                 kickedByPeer
                                               }
                                               isStreaming={isStreaming}
@@ -1920,7 +1920,7 @@ const handleUserMessageAck = useCallback(
                                                   : creatingSession
                                                   ? t('chat.creating')
                                                   : isStreaming
-                                                    ? t('chat.aiReplying')
+                                                    ? (t('chat.steerPlaceholder') || '输入纠偏指令，Enter 发送 · 可排队')
                                                     : uiMode === 'pro' && !workspaceRoot
                                                       ? t('chat.proSelectProject')
                                                       : !currentSession

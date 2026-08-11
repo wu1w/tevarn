@@ -3072,6 +3072,32 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         )
 
         for _global_iter in range(_total_iters + 1):  # +1 允许 grace 终答
+            # P0 control_inbox：用户 steer 在下一安全边界注入（短 controller note）
+            try:
+                from backend.agent.control_inbox import (
+                    format_steer_block,
+                    get_inbox,
+                )
+
+                _steers = get_inbox(session_id).drain_steers()
+                if _steers:
+                    _block = format_steer_block(_steers)
+                    if _block:
+                        messages.append({"role": "user", "content": _block})
+                        await self._push_status(
+                            session_id,
+                            "thinking",
+                            f"Applying user steer ({len(_steers)})…",
+                        )
+                        logger.info(
+                            "steer injected n=%s session=%s iter=%s",
+                            len(_steers),
+                            str(session_id)[:8],
+                            _global_iter,
+                        )
+            except Exception as _steer_e:
+                logger.debug("steer inject skip: %s", _steer_e)
+
             # ── Kernel 仲裁点（Phase 2）：挂起等待 / 事前预算 / 调度让出。
             # 放在预算 consume 之前——挂起等待不该消耗 iteration 配额。
             _gate = await self._kernel_iteration_gate(session_id, messages)

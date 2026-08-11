@@ -708,7 +708,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
       }>,
       mode?: string,
       subAgentIds?: string[],
-      opts?: { regenerate?: boolean }
+      opts?: { regenerate?: boolean; control?: 'steer' | 'queue' | 'interrupt' | 'stop' }
     ) => {
       if (wsRef.current?.readyState !== WebSocket.OPEN) {
         onError?.('WebSocket not connected');

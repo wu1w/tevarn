@@ -1340,8 +1340,71 @@ async def websocket_endpoint(
                 except Exception as ge:
                     logger.debug("goal inject skip: %s", ge)
 
-                # 若上一轮仍在跑：先请求停止并尽量等退出，避免叠跑 / late delta
+                # P0 control_inbox：运行中可 steer / queue，不必杀旧 run
+                # control: steer | queue | interrupt | stop（缺省：运行中→steer，空闲→新 run）
+                control = str(data.get("control") or "").strip().lower()
                 if manager.has_running_agent(session_id):
+                    if not control:
+                        control = "steer"
+                    if control in ("steer", "queue"):
+                        from backend.agent.control_inbox import get_inbox
+
+                        box = get_inbox(session_id)
+                        meta = {
+                            "mode": mode,
+                            "attachments": attachments if isinstance(attachments, list) else [],
+                        }
+                        if control == "steer":
+                            box.push_steer(user_input, meta=meta)
+                            await manager.broadcast(
+                                session_id,
+                                {
+                                    "type": "status",
+                                    "state": "thinking",
+                                    "detail": "Steer applied — will take effect at next safe step",
+                                },
+                            )
+                            await manager.broadcast(
+                                session_id,
+                                {
+                                    "type": "run_event",
+                                    "event": "steer_accepted",
+                                    "detail": user_input[:200],
+                                },
+                            )
+                        else:
+                            box.push_queue(user_input, meta=meta)
+                            n = box.peek_pending_count()
+                            await manager.broadcast(
+                                session_id,
+                                {
+                                    "type": "status",
+                                    "state": "thinking",
+                                    "detail": f"Queued ({n}) — runs after current turn",
+                                },
+                            )
+                            await manager.broadcast(
+                                session_id,
+                                {
+                                    "type": "run_event",
+                                    "event": "queue_accepted",
+                                    "detail": f"pending={n}",
+                                },
+                            )
+                        continue
+                    if control == "stop":
+                        if not manager.stop_agent_loop(session_id):
+                            agent.stop()
+                        await manager.broadcast(
+                            session_id,
+                            {
+                                "type": "status",
+                                "state": "idle",
+                                "detail": "Generation stopped by user",
+                            },
+                        )
+                        continue
+                    # interrupt / replace：旧行为 — 停旧开新
                     if not manager.stop_agent_loop(session_id):
                         agent.stop()
                     await manager.broadcast(
@@ -1615,6 +1678,42 @@ async def _run_agent_safe(
         # 正常结束：若 epilogue 已推 idle，快照会在 ingest 时清理；双保险
         if _still_current() and not manager.has_running_agent(session_id):
             manager.end_run_snapshot(session_id)
+        # P0：跑完后消费 queue（下一条排队输入）
+        if _still_current():
+            try:
+                from backend.agent.control_inbox import get_inbox
+
+                nxt = get_inbox(session_id).pop_queued()
+                if nxt and (nxt.content or "").strip():
+                    await manager.broadcast(
+                        session_id,
+                        {
+                            "type": "status",
+                            "state": "thinking",
+                            "detail": "Starting queued message…",
+                        },
+                    )
+                    agent._should_stop = False
+                    manager.begin_run_snapshot(session_id)
+                    next_gen = manager.current_run_generation(session_id)
+                    meta = nxt.meta or {}
+                    next_mode = str(meta.get("mode") or mode or "default")
+                    next_atts = meta.get("attachments") if isinstance(meta.get("attachments"), list) else []
+                    task = asyncio.create_task(
+                        _run_agent_safe(
+                            agent,
+                            session_id,
+                            nxt.content.strip(),
+                            next_atts,
+                            next_mode,
+                            None,
+                            run_generation=next_gen,
+                        ),
+                        name=f"agent:{session_id}:queued:g{next_gen}",
+                    )
+                    manager.track_agent_task(session_id, task, loop=agent)
+            except Exception as qe:
+                logger.debug("queue drain skip: %s", qe)
     except asyncio.CancelledError:
         logger.info(f"Agent loop cancelled for session {session_id}")
         if _still_current():

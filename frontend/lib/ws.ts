@@ -52,7 +52,7 @@ export function createUserInputMessage(
   attachments?: Array<{ filename: string; url: string; type: string; text_content?: string }>,
   mode?: string,
   subAgentIds?: string[],
-  opts?: { regenerate?: boolean }
+  opts?: { regenerate?: boolean; control?: 'steer' | 'queue' | 'interrupt' | 'stop' }
 ): {
   type: 'user_input' | 'regenerate';
   content: string;
@@ -60,6 +60,7 @@ export function createUserInputMessage(
   mode: string;
   sub_agent_ids?: string[];
   regenerate?: boolean;
+  control?: string;
 } {
   const regenerate = Boolean(opts?.regenerate);
   const msg: {
@@ -69,6 +70,7 @@ export function createUserInputMessage(
     mode: string;
     sub_agent_ids?: string[];
     regenerate?: boolean;
+    control?: string;
   } = {
     type: regenerate ? 'regenerate' : 'user_input',
     content,
@@ -79,6 +81,7 @@ export function createUserInputMessage(
   if (subAgentIds && subAgentIds.length > 0) {
     msg.sub_agent_ids = subAgentIds;
   }
+  if (opts?.control) msg.control = opts.control;
   return msg;
 }
 

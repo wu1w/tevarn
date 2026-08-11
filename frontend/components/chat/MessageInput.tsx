@@ -42,7 +42,7 @@ export interface MessageInputHandle {
 }
 
 interface MessageInputProps {
-  onSend: (content: string, attachments: Attachment[], mode: ChatMode, subAgentIds?: string[]) => void;
+  onSend: (content: string, attachments: Attachment[], mode: ChatMode, subAgentIds?: string[], control?: 'steer' | 'queue' | 'interrupt') => void;
   onGenerateImage?: (prompt: string) => void;
   disabled?: boolean;
   placeholder?: string;
@@ -351,7 +351,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     return true;
   };
 
-  const handleSend = () => {
+  const handleSend = (control?: 'steer' | 'queue' | 'interrupt') => {
     const trimmed = content.trim();
     const readyAtts = attachments.filter(isSendableAttachment);
     const pending = attachments.some((a) => a.status === 'uploading');
@@ -360,6 +360,10 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       attachments.every((a) => a.status === 'error' || !isSendableAttachment(a));
     if (!trimmed && readyAtts.length === 0 && attachments.length === 0) return;
     if (disabled) return;
+    // 运行中：有正文默认 steer；显式 control 优先
+    const effectiveControl =
+      control || (isStreaming ? ('steer' as const) : undefined);
+    if (isStreaming && !effectiveControl) return;
     if (sendingRef.current) return;
     // 有文件还在上传：不发送，提示等一下（绝不自动在上传完发送）
     if (pending || uploading) {
@@ -413,7 +417,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       type,
       text_content,
     }));
-    onSend(trimmed, payload, mode, subIds);
+    onSend(trimmed, payload, mode, subIds, effectiveControl);
     setContent('');
     attachments.forEach((a) => a.previewUrl && URL.revokeObjectURL(a.previewUrl));
     setAttachments([]);
@@ -430,11 +434,11 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     }, 600);
   };
 
-  // 父级进入 streaming/disabled 时保持锁；结束再放行
+  // 仅 disabled 锁发送；streaming 时允许 steer/queue（P0 control_inbox）
   useEffect(() => {
-    if (isStreaming || disabled) {
+    if (disabled) {
       sendingRef.current = true;
-    } else {
+    } else if (!isStreaming) {
       sendingRef.current = false;
     }
   }, [isStreaming, disabled]);
@@ -577,6 +581,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     !disabled &&
     !uploading &&
     !attachments.some((a) => a.status === 'uploading');
+  const canSteer = isStreaming && !!content.trim() && !disabled && !uploading;
 
   const handleComposerPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement | null;
@@ -885,26 +890,54 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
             <span className="animate-pulse text-[10px] text-foreground-dim">{t('chat.uploading')}</span>
           )}
           <span className="flex-1" />
-          <button
-            type="button"
-            onClick={isStreaming ? () => onStopStreaming?.() : handleSend}
-            disabled={isStreaming ? !onStopStreaming : !canSend}
-            aria-label={isStreaming ? t('chat.stopGenerating') : t('chat.sendBtn')}
-            className={`px-btn inline-flex h-8 flex-shrink-0 items-center gap-1.5 rounded-[3px] px-3.5 text-xs font-semibold tracking-tight text-white disabled:cursor-not-allowed disabled:opacity-100 ${
-              isStreaming
-                ? 'bg-status-offline hover:brightness-105'
-                : canSend
+          {isStreaming ? (
+            <div className="flex flex-shrink-0 items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => onStopStreaming?.()}
+                disabled={!onStopStreaming}
+                aria-label={t('chat.stopGenerating')}
+                className="px-btn inline-flex h-8 items-center gap-1 rounded-[3px] border border-border-subtle bg-elevated-bg px-2.5 text-[11px] font-medium text-foreground-muted hover:border-status-offline/40 hover:text-status-offline disabled:opacity-40"
+              >
+                <span className="inline-block h-2.5 w-2.5 rounded-[1px] bg-current opacity-90" aria-hidden />
+                {t('chat.stopGenerating')}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSend('queue')}
+                disabled={!canSteer}
+                title={t('chat.queueHint') || 'Queue for after this run'}
+                className="px-btn inline-flex h-8 items-center rounded-[3px] border border-border-subtle bg-elevated-bg px-2.5 text-[11px] font-medium text-foreground-muted hover:border-brand-cyan/40 hover:text-brand-cyan disabled:opacity-40"
+              >
+                {t('chat.queue') || '排队'}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSend('steer')}
+                disabled={!canSteer}
+                aria-label={t('chat.steer') || 'Steer'}
+                className="px-btn inline-flex h-8 items-center gap-1.5 rounded-[3px] bg-brand-purple px-3.5 text-xs font-semibold tracking-tight text-white hover:brightness-105 disabled:cursor-not-allowed disabled:bg-brand-purple/50"
+              >
+                <IconSend className="h-3.5 w-3.5 opacity-90" />
+                {t('chat.steer') || '纠偏'}
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => handleSend()}
+              disabled={!canSend}
+              aria-label={t('chat.sendBtn')}
+              className={`px-btn inline-flex h-8 flex-shrink-0 items-center gap-1.5 rounded-[3px] px-3.5 text-xs font-semibold tracking-tight text-white disabled:cursor-not-allowed disabled:opacity-100 ${
+                canSend
                   ? 'bg-brand-purple hover:brightness-105'
-                  : /* 空输入仍保持 demo 实心电紫，仅略降饱和，避免 opacity 洗成淡紫 */
-                    'bg-brand-purple/80'
-            }`}
-          >
-            <span>{isStreaming ? t('chat.stopGenerating') : t('chat.sendBtn')}</span>
-            {!isStreaming && <IconSend className="h-3.5 w-3.5 opacity-90" />}
-            {isStreaming && (
-              <span className="inline-block h-3 w-3 rounded-[1px] bg-current opacity-90" aria-hidden />
-            )}
-          </button>
+                  : 'bg-brand-purple/80'
+              }`}
+            >
+              <span>{t('chat.sendBtn')}</span>
+              <IconSend className="h-3.5 w-3.5 opacity-90" />
+            </button>
+          )}
         </div>
       </div>
 

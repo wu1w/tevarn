@@ -824,6 +824,33 @@ def resolve_enabled_tool_names(
         ):
             plan.packs = list(plan.packs) + ["coding"]
             plan.reasons = list(plan.reasons) + ["workspace_bound"]
+        # P0 Intent Router：coding 场景关键词命中则预挂 coding pack（不必等 use_tool_pack）
+        if (
+            not _thin_skip
+            and "coding" not in plan.packs
+            and "*" not in plan.packs
+            and any(r.startswith("pack:coding") or r == "coding" for r in (plan.reasons or []))
+        ):
+            plan.packs = list(plan.packs) + ["coding"]
+            plan.reasons = list(plan.reasons) + ["intent_preload:coding"]
+        # 关键词兜底：infer_scene 已把 coding 放进 packs 时保持；否则再扫一次
+        if (
+            not _thin_skip
+            and "coding" not in plan.packs
+            and "*" not in plan.packs
+            and user_input
+        ):
+            _cu = user_input.lower()
+            if any(
+                k in _cu
+                for k in (
+                    "代码", "bug", "修复", "refactor", "pytest", "编译", "报错",
+                    "traceback", ".py", ".ts", "git ", "commit", "实现", "函数",
+                    "file", "edit", "patch",
+                )
+            ):
+                plan.packs = list(plan.packs) + ["coding"]
+                plan.reasons = list(plan.reasons) + ["intent_preload:coding_kw"]
     except Exception:
         pass
 
