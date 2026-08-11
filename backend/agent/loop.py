@@ -2143,9 +2143,9 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 tools = [t for t in (tools or []) if isinstance(t, dict) and _thin_keep(t)]
                 if before != len(tools):
                     logger.info("auto_thin_chat tools %s→%s max_iter=%s session=%s", before, len(tools), self.max_iterations, session_id)
-                    messages.append({"role": "system", "content": "【薄档对话】工具已收窄，优先直接文字回答。需要文件/终端时可 use_tool_pack 扩容。"})
+                    messages.append({"role": "system", "content": "【薄档】优先直接回答。需要文件/终端/搜索时用 use_tool_pack 扩容。"})
             elif _kind == "thin" and _already_thin and not getattr(self, "_config_micro_loop", None):
-                messages.append({"role": "system", "content": "【薄档对话】优先直接文字回答；需要文件/终端时可 use_tool_pack 扩容。"})
+                messages.append({"role": "system", "content": "【薄档】优先直接回答；需要文件/终端/搜索时用 use_tool_pack 扩容。"})
             elif _kind == "search" and not _already_thin:
                 def _s_keep(t):
                     fn = t.get("function") if isinstance(t.get("function"), dict) else {}
@@ -2234,7 +2234,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 _code_ctx = ("代码" in _ui2 or "函数" in _ui2 or "模块" in _ui2 or ".py" in _ui2)
                 _code_act = any(k in _ui2 for k in ("修复", "重构", "实现", "重写", "patch"))
                 if any(k in _ui2 for k in _diff_keys) or (_code_ctx and _code_act):
-                    messages.append({"role": "system", "content": "【呈现】优先给出 unified diff / 变更文件列表与验证命令，少写过程 status 散文。"})
+                    messages.append({"role": "system", "content": "【呈现】优先 unified diff / 变更文件列表 + 验证命令；少写过程散文。"})
         except Exception:
             pass
 
@@ -2280,12 +2280,12 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     {
                         "role": "system",
                         "content": (
-                            "【配置微循环】本轮仅允许 manage_mcp 等运维工具，最多 "
+                            "【配置微循环】仅 manage_mcp 等运维工具，≤"
                             f"{self.max_iterations} 步。"
-                            "禁止 command/python 探环境、禁止 web_search 调研 MCP。"
-                            "有 Key → manage_mcp update env → reload；"
-                            "无 Key → 一句请用户粘贴「xxx API Key：xxxx」。"
-                            "不要把工具调用写在正文。"
+                            "有 Key → update env → reload → 必要时 mcp_* 验证；"
+                            "无 Key → 请用户粘贴「xxx API Key：xxxx」。"
+                            "禁止 command/python 探环境、禁止 web_search 调研配置；"
+                            "工具调用走协议，不要写在正文。"
                         ),
                     }
                 )

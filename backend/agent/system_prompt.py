@@ -41,18 +41,15 @@ USER_LANGUAGE_RULE = (
 )
 
 TOOL_USE_ENFORCEMENT = (
-    "# Tool-use enforcement\n"
-    "You MUST use your tools to take action — do not describe what you would do "
-    "or plan to do without actually doing it. When you say you will perform an "
-    "action (e.g. 'I will run the tests', 'Let me check the file'), you MUST "
-    "immediately make the corresponding tool call in the same response. Never "
-    "end your turn with a promise of future action — execute it now.\n"
-    "Keep working until the task is actually complete. Do not stop with a summary "
-    "of what you plan to do next time. If you have tools available that can "
-    "accomplish the task, use them instead of telling the user what you would do.\n"
-    "Every response should either (a) contain tool calls that make progress, or "
-    "(b) deliver a final result to the user. Responses that only describe "
-    "intentions without acting are not acceptable."
+    "# Tool use\n"
+    "When action is required (files, shell, search, config, live data), use tools "
+    "in the same turn — do not only describe what you would do.\n"
+    "When the user only needs a conversational answer and tools are unnecessary, "
+    "reply in plain text with no tool calls.\n"
+    "If you say you will run a command or open a file, actually issue the tool call "
+    "now. Do not end a turn with an unfulfilled promise.\n"
+    "Every response should either (a) make progress with tools, or (b) deliver a "
+    "final answer to the user."
 )
 
 TASK_COMPLETION = (
@@ -250,6 +247,35 @@ PLATFORM_HINTS = {
     ),
 }
 
+# Surface-aware soft fences（与本轮工具面匹配，对齐 Grok 薄 schema）
+SURFACE_CHAT_GUIDANCE = (
+    "# This-turn surface: chat\n"
+    "Prefer a direct answer. Tools are minimal (time / clarify / expand). "
+    "If you need files, shell, or search, call use_tool_pack to enable packs "
+    "before improvising missing tools."
+)
+
+SURFACE_SEARCH_GUIDANCE = (
+    "# This-turn surface: search\n"
+    "Use web_search / search / fetch as needed; budget 3–6 queries, then synthesize. "
+    "Do not open files or run shell unless the user explicitly asked. "
+    "Cite sources briefly when answering."
+)
+
+SURFACE_CODING_GUIDANCE = (
+    "# This-turn surface: coding\n"
+    "Path: read relevant files → edit/apply_patch → verify with command/python. "
+    "Batch independent reads. Prefer unified diff style when presenting changes. "
+    "Do not claim a tool is unavailable when it is in your tool list."
+)
+
+SURFACE_MCP_GUIDANCE = (
+    "# This-turn surface: MCP ops\n"
+    "Use manage_mcp (list / update env / reload). Call mcp_* only for live tool use. "
+    "Do not web_search how to configure when the user already provided a key. "
+    "If a key is missing, ask once for `name API Key：xxxx`."
+)
+
 # 运行模式提示词（native_reasoning=True 时用无 <thinking> 变体，防双通道思考）
 MODE_PROMPTS = {
     "deepthink": (
@@ -268,9 +294,15 @@ MODE_PROMPTS = {
     ),
     "search": (
         "# Search Mode\n"
-        "When the user asks about current events, real-time data, or anything "
-        "you're unsure about, proactively use the web_search tool to find "
-        "up-to-date information. Always cite your sources."
+        "Proactively use web_search / search for current events and facts you "
+        "are unsure about. Budget a few queries, then synthesize a clear answer. "
+        "Cite sources. Avoid opening the full coding toolkit for pure research."
+    ),
+    "plan": (
+        "# Plan Mode\n"
+        "Produce a structured plan only — title, summary, steps, risks, verification. "
+        "Do not write files or run destructive commands until the user approves "
+        "(e.g. 「批准计划」 / approve plan). Prefer read-only tools if needed."
     ),
     "goal": (
         "# Goal Mode — Autonomous Task Execution\n"
@@ -357,8 +389,45 @@ def build_system_prompt(
     if has_tools:
         stable_parts.append(TOOL_USE_ENFORCEMENT)
         stable_parts.append(TASK_COMPLETION)
-        stable_parts.append(PARALLEL_TOOL_CALLS)
-        stable_parts.append(SEARCH_CONVERGENCE)
+        # 并行 / 搜索收敛：仅在工具面可能用到时注入，避免闲聊膨胀
+        _codingish = bool(
+            tool_set
+            & {
+                "file_read", "file_write", "edit", "apply_patch",
+                "command", "python", "grep", "glob",
+            }
+        ) or not tools_known
+        _searchish = bool(
+            tool_set & {"web_search", "search", "fetch_webpage", "browser", "http"}
+        ) or not tools_known
+        if _codingish or _searchish or not tools_known:
+            stable_parts.append(PARALLEL_TOOL_CALLS)
+        if _searchish or not tools_known:
+            stable_parts.append(SEARCH_CONVERGENCE)
+
+        # Surface fence: match this-turn tool list (Grok-style thin schema)
+        if tools_known:
+            _mcp = "manage_mcp" in tool_set or any(
+                str(t).startswith("mcp_") for t in tool_set
+            )
+            _chat_only = (
+                not _codingish
+                and not _searchish
+                and not _mcp
+                and tool_set <= {
+                    "use_tool_pack", "current_time", "clarify", "session_search",
+                    "doc_read", "list_available_models", "get_system_status",
+                    "capability_status", "result_load",
+                }
+            )
+            if _mcp and not _codingish:
+                stable_parts.append(SURFACE_MCP_GUIDANCE)
+            elif _chat_only:
+                stable_parts.append(SURFACE_CHAT_GUIDANCE)
+            elif _searchish and not _codingish:
+                stable_parts.append(SURFACE_SEARCH_GUIDANCE)
+            elif _codingish:
+                stable_parts.append(SURFACE_CODING_GUIDANCE)
 
         if "memory" in tool_set or "memory_pref" in tool_set:
             stable_parts.append(MEMORY_GUIDANCE)

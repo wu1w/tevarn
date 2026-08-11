@@ -464,13 +464,13 @@ def is_mcp_secret_handoff(user_input: str) -> bool:
 def mcp_ops_capability_line(*, secret_handoff: bool = False) -> str:
     """compact brief 用的短运维纪律（控制长度）。"""
     base = (
-        "MCP ops: manage_mcp list/update env/reload; mcp_* = call live tools. "
-        "Do NOT web_search to research how to configure when Key is given."
+        "MCP ops: manage_mcp list/update env/reload; mcp_* = live calls only. "
+        "No web_search for how-to when Key is already given."
     )
     if secret_handoff:
         return (
             base
-            + " Secret handoff: manage_mcp update name=<server> env={API_KEY:…} then mcp_* verify."
+            + " Secret: manage_mcp update name=<server> env={API_KEY:…} → reload → mcp_* verify."
         )
     return base
 
@@ -486,7 +486,7 @@ class ScenePlan:
 
     def summary(self) -> str:
         return (
-            f"packs={self.packs or ['core']} tier={self.injection_tier} "
+            f"packs={self.packs or ['meta']} tier={self.injection_tier} "
             f"({', '.join(self.reasons[:4]) or 'default'})"
         )
 
@@ -1003,37 +1003,64 @@ def compact_capability_brief(
     )
     secret_handoff = bool(user_input and is_mcp_secret_handoff(user_input))
 
+    # Surface classification (empty-base + packs)
+    coding_tools = {
+        "file_read", "file_write", "edit", "apply_patch", "command", "python",
+        "grep", "glob", "process", "shell_session",
+    }
+    search_tools = {"web_search", "search", "fetch_webpage", "browser", "http"}
+    has_coding = bool(name_set & coding_tools) if tool_names is not None else True
+    has_search = bool(name_set & search_tools) if tool_names is not None else False
+    chat_only = (
+        tool_names is not None
+        and not has_coding
+        and not has_search
+        and not mcp_surface
+    )
+
     lines = [
-        "Tool discipline: use tools for facts/files/shell/live data "
-        f"(this turn: {n}). Never claim a missing capability before trying the matching tool.",
+        f"Tool surface this turn: {n} tool(s). "
+        "Use a listed tool when you need facts/files/shell/live data; "
+        "never claim a capability is missing before trying the matching tool.",
     ]
-    # MCP 运维纪律靠前，避免被 600 字截断吃掉（配置路径曾过轻）
     if mcp_surface:
         lines.append(mcp_ops_capability_line(secret_handoff=secret_handoff))
+    elif chat_only:
         lines.append(
-            "Coding (if needed): read → edit/apply_patch → command/python verify."
+            "Chat surface: answer directly in text. "
+            "Need files/shell/search? use_tool_pack(action='enable', packs=[...])."
         )
-    else:
+    elif has_search and not has_coding:
         lines.append(
-            "Coding: read → edit/apply_patch/file_write → command/python verify. "
-            "Prefer one coherent multi-hunk apply_patch or full file_write over many tiny edits. "
-            "Never invent 'command unavailable' — command/python are on the list when coding. "
-            "After fix/build, run tests before claiming done. If a patch returns mismatch/error, re-read and re-patch."
+            "Search surface: web_search/search then synthesize (budget a few queries). "
+            "Do not open coding tools unless the user asked to change code."
         )
+    elif has_coding:
+        cmd_listed = "command" in name_set or "python" in name_set
+        lines.append(
+            "Coding surface: read → edit/apply_patch/file_write"
+            + (" → command/python verify" if cmd_listed else "")
+            + ". Prefer one coherent multi-hunk patch over many tiny edits. "
+            "Batch independent reads. After fix/build, verify before claiming done."
+        )
+        if cmd_listed:
+            lines.append(
+                "cwd: session workspace_root (else TEVARN_TASK_ROOT); "
+                "prefer file_write/edit over heredoc."
+            )
     if scene and scene.profile != "full":
         lines.append(
-            f"Profile/scene: {scene.summary()[:60]}. Need unlisted packs? "
-            "call use_tool_pack(action='enable', packs=[...]) ('list' to see)."
+            f"Scene: {scene.summary()[:72]}. "
+            "Missing pack? use_tool_pack enable (or list)."
         )
-    lines.append(
-        "Skill discipline: an installed skill matching the task MUST be followed/loaded before improvising."
-    )
-    if not mcp_surface:
+    if not chat_only:
         lines.append(
-            "cwd: session workspace_root (else TEVARN_TASK_ROOT); pass command.cwd for subdirs. "
-            "Prefer file_write/edit over heredoc; batch independent reads."
+            "Skill: follow a matching installed skill before improvising."
         )
-    lines.append("Prefer tools over speculation; finish the task.")
+    if chat_only:
+        lines.append("Prefer a clear final answer; skip tools when unnecessary.")
+    else:
+        lines.append("Prefer tools over speculation; finish the task.")
     # 仅当本轮工具面真有 crew_steward 时再注入编制纪律（避免普通会话被诱导派工）
     if "crew_steward" in name_set:
         lines.append(
