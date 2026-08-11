@@ -29,17 +29,32 @@ class RunBrief:
         *,
         action: str = "edit",
         checkpoint: str | None = None,
+        checkpoint_id: str | None = None,
+        backend: str | None = None,
     ) -> None:
         p = (path or "").strip()
         if not p:
             return
         # de-dupe by path, keep last action
         self.changed_files = [c for c in self.changed_files if c.get("path") != p]
-        entry = {"path": p, "action": action}
+        entry: dict[str, str] = {"path": p, "action": action}
+        # python path snapshot
         if checkpoint:
             entry["checkpoint"] = checkpoint
             if checkpoint not in self.checkpoints:
                 self.checkpoints.append(checkpoint)
+        # rust kernel checkpoint id
+        if checkpoint_id:
+            entry["checkpoint_id"] = str(checkpoint_id)
+            tag = f"rust:{checkpoint_id}"
+            if tag not in self.checkpoints:
+                self.checkpoints.append(tag)
+        if backend:
+            entry["backend"] = backend
+        elif checkpoint_id:
+            entry["backend"] = "rust"
+        elif checkpoint:
+            entry["backend"] = "python"
         self.changed_files.append(entry)
 
     def note_test(

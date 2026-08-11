@@ -2330,14 +2330,24 @@ export async function rejectEvolutionProposal(id: string): Promise<EvolutionProp
 }
 
 
-/** Restore workspace file from Python file_checkpoint snapshot path */
-export async function restoreFileCheckpoint(snapshotPath: string): Promise<{
+/** Unified restore: Python snapshot path or Rust checkpoint id (`rust:<id>`). */
+export async function restoreFileCheckpoint(
+  snapshotPathOrId: string,
+  opts?: { checkpointId?: string }
+): Promise<{
   ok: boolean;
   restored?: string;
   from?: string;
+  backend?: string;
   error?: string;
+  result?: unknown;
 }> {
-  const res = await api.post('/files/checkpoint/restore', { path: snapshotPath });
+  const body: Record<string, string> = {};
+  const raw = (snapshotPathOrId || '').trim();
+  if (opts?.checkpointId) body.checkpoint_id = opts.checkpointId;
+  if (raw.startsWith('rust:')) body.checkpoint_id = raw.slice(5);
+  else if (raw) body.path = raw;
+  const res = await api.post('/files/checkpoint/restore', body);
   return res.data;
 }
 

@@ -8,7 +8,7 @@ import React, { useState } from 'react';
 import { useZh } from '@/hooks/useZh';
 
 export type CodingDelivery = {
-  changed_files?: Array<{ path: string; action?: string; checkpoint?: string }>;
+  changed_files?: Array<{ path: string; action?: string; checkpoint?: string; checkpoint_id?: string; backend?: string }>;
   tests?: Array<{ command?: string; passed?: boolean | null; summary?: string }>;
   blockers?: string[];
   checkpoints?: string[];
@@ -107,14 +107,14 @@ export function CodingDeliveryCard({ delivery, onRollback }: Props) {
           ) : null}
           {cps.length > 0 && onRollback ? (
             <div className="flex flex-wrap gap-1.5 pt-1">
-              {cps.filter((c) => c && !c.startsWith('(patch')).slice(-3).map((c) => (
+              {cps.filter((c) => c && !c.startsWith('(patch')).slice(-5).map((c) => (
                 <button
                   key={c}
                   type="button"
                   onClick={() => onRollback(c)}
                   className="rounded-md border border-border-subtle bg-elevated-bg px-2 py-0.5 text-[10px] text-foreground-muted hover:border-brand-cyan/40 hover:text-brand-cyan"
                 >
-                  {zh ? '回滚检查点' : 'Rollback'} · {c.split('/').pop()}
+                  {zh ? '回滚' : 'Rollback'} · {c.startsWith('rust:') ? `rust:${c.slice(5, 13)}` : (c.split('/').pop() || c)}
                 </button>
               ))}
             </div>

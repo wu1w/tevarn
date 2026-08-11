@@ -622,16 +622,67 @@ async def restore_file_checkpoint(
     body: dict,
     current_user: Annotated[UserRead, Depends(get_current_user)] = None,
 ):
-    """Restore a workspace file from a Python file_checkpoint snapshot path.
+    """Unified restore: Python file snapshot **or** Rust kernel checkpoint.
 
-    Body: { "path": "<snapshot absolute or relative path under .tevarn/checkpoints>" }
+    Body (any one of):
+      - { "path": "<.tevarn/checkpoints/... snapshot file>" }  → Python
+      - { "checkpoint_id": "<rust id>" }                       → Kernel
+      - { "path": "rust:<id>" }                                → Kernel (delivery card tag)
     """
-    from backend.agent.file_checkpoint import restore_checkpoint_file
+    body = body or {}
+    raw = str(body.get("path") or body.get("snapshot") or "").strip()
+    cp_id = str(body.get("checkpoint_id") or "").strip()
 
-    raw = str((body or {}).get("path") or (body or {}).get("snapshot") or "").strip()
-    if not raw:
-        raise HTTPException(status_code=400, detail="path required")
-    result = restore_checkpoint_file(raw)
-    if not result.get("ok"):
-        raise HTTPException(status_code=400, detail=result.get("error") or "restore failed")
-    return result
+    # delivery card may pass "rust:<id>"
+    if raw.startswith("rust:"):
+        cp_id = raw[5:].strip() or cp_id
+        raw = ""
+
+    # Heuristic: pure id without path separators → try kernel
+    if not cp_id and raw and "/" not in raw and "\\" not in raw and "checkpoints" not in raw:
+        cp_id = raw
+        raw = ""
+
+    errors: list[str] = []
+
+    # 1) Rust kernel path
+    if cp_id:
+        try:
+            from backend.kernel import get_kernel
+
+            k = get_kernel()
+            if hasattr(k, "_acall"):
+                result = await k._acall("checkpoint_restore", {"checkpoint_id": cp_id})
+                if isinstance(result, dict) and result.get("ok") is False:
+                    errors.append(str(result.get("error") or result))
+                else:
+                    return {
+                        "ok": True,
+                        "backend": "rust",
+                        "checkpoint_id": cp_id,
+                        "result": result,
+                    }
+            else:
+                errors.append("Rust kernel host unavailable")
+        except Exception as e:
+            errors.append(f"rust restore: {e}")
+
+    # 2) Python file snapshot
+    if raw:
+        from backend.agent.file_checkpoint import restore_checkpoint_file
+
+        result = restore_checkpoint_file(raw)
+        if result.get("ok"):
+            result["backend"] = "python"
+            return result
+        errors.append(str(result.get("error") or "python restore failed"))
+
+    if not cp_id and not raw:
+        raise HTTPException(
+            status_code=400,
+            detail="path or checkpoint_id required",
+        )
+    raise HTTPException(
+        status_code=400,
+        detail="; ".join(errors) or "restore failed",
+    )

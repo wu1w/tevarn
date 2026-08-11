@@ -203,8 +203,15 @@ async def builtin_track_write_after(
                 or ""
             ).strip()
             cp = str((arguments or {}).get("_checkpoint_path") or "").strip() or None
+            cp_id = str((arguments or {}).get("_checkpoint_id") or "").strip() or None
             if path:
-                brief.note_file_change(path, action=name, checkpoint=cp)
+                brief.note_file_change(
+                    path,
+                    action=name,
+                    checkpoint=cp,
+                    checkpoint_id=cp_id,
+                    backend="rust" if cp_id else ("python" if cp else None),
+                )
             elif name == "apply_patch":
                 # try extract paths from patch text / files list
                 import re as _re
@@ -226,9 +233,15 @@ async def builtin_track_write_after(
                         paths.append(p[:200])
                 if paths:
                     for p in paths[:12]:
-                        brief.note_file_change(p, action=name, checkpoint=cp)
+                        brief.note_file_change(
+                            p, action=name, checkpoint=cp, checkpoint_id=cp_id,
+                            backend="rust" if cp_id else ("python" if cp else None),
+                        )
                 else:
-                    brief.note_file_change(f"(patch via {name})", action=name, checkpoint=cp)
+                    brief.note_file_change(
+                        f"(patch via {name})", action=name, checkpoint=cp, checkpoint_id=cp_id,
+                        backend="rust" if cp_id else ("python" if cp else None),
+                    )
         if name in ("command", "shell", "process", "python"):
             cmd = str(
                 (arguments or {}).get("command")
