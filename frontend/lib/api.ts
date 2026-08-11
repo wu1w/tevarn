@@ -2329,6 +2329,18 @@ export async function rejectEvolutionProposal(id: string): Promise<EvolutionProp
   return res.data;
 }
 
+
+/** Restore workspace file from Python file_checkpoint snapshot path */
+export async function restoreFileCheckpoint(snapshotPath: string): Promise<{
+  ok: boolean;
+  restored?: string;
+  from?: string;
+  error?: string;
+}> {
+  const res = await api.post('/files/checkpoint/restore', { path: snapshotPath });
+  return res.data;
+}
+
 export async function rollbackEvolutionProposal(id: string): Promise<EvolutionProposal> {
   const res = await api.post(`/kernel/evolution/proposals/${id}/rollback`);
   return res.data;

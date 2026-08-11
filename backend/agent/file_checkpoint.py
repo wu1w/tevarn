@@ -79,4 +79,63 @@ def list_recent_checkpoints(limit: int = 20) -> list[str]:
     return [str(p) for p in dirs[:limit]]
 
 
-__all__ = ["snapshot_path_for_tool", "list_recent_checkpoints"]
+def restore_checkpoint_file(snapshot_path: str) -> dict[str, Any]:
+    """Restore a file from a Python-side checkpoint snapshot path.
+
+    Uses INDEX.txt written by snapshot_path_for_tool:
+      tool_name\ttarget_abs\tsnapshot_abs
+    """
+    snap = Path(str(snapshot_path or "")).expanduser()
+    try:
+        snap = snap.resolve()
+    except OSError:
+        return {"ok": False, "error": "invalid snapshot path"}
+    if not snap.is_file():
+        return {"ok": False, "error": f"snapshot not found: {snap}"}
+
+    # Walk up a few levels for INDEX.txt (nested rel paths under ts dir)
+    index_file: Path | None = None
+    for parent in [snap.parent, *list(snap.parents)[:4]]:
+        cand = parent / "INDEX.txt"
+        if cand.is_file():
+            index_file = cand
+            break
+    if index_file is None:
+        return {"ok": False, "error": "INDEX.txt not found near snapshot"}
+
+    target: Path | None = None
+    snap_s = str(snap)
+    try:
+        for line in index_file.read_text(encoding="utf-8").splitlines():
+            parts = line.split("\t")
+            if len(parts) < 3:
+                continue
+            dest = parts[2].strip()
+            if dest == snap_s or Path(dest).resolve() == snap:
+                target = Path(parts[1].strip())
+                break
+    except Exception as e:
+        return {"ok": False, "error": f"read INDEX failed: {e}"}
+
+    if target is None:
+        return {"ok": False, "error": "no INDEX mapping for this snapshot"}
+
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(snap, target)
+        return {
+            "ok": True,
+            "restored": str(target),
+            "from": str(snap),
+            "index": str(index_file),
+        }
+    except Exception as e:
+        return {"ok": False, "error": f"restore copy failed: {e}"}
+
+
+__all__ = [
+    "snapshot_path_for_tool",
+    "list_recent_checkpoints",
+    "restore_checkpoint_file",
+]
+

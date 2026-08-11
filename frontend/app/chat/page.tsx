@@ -1235,6 +1235,7 @@ const handleUserMessageAck = useCallback(
         let optimisticContent = displayContent;
         if (control === 'steer') optimisticContent = `【纠偏】${displayContent}`;
         else if (control === 'queue') optimisticContent = `【排队】${displayContent}`;
+        else if (control === 'interrupt') optimisticContent = displayContent; // 与 interrupt 后新 run persist 对齐
         const userMsg: Message = {
           id: optId,
           session_id: session.id,
@@ -1252,7 +1253,11 @@ const handleUserMessageAck = useCallback(
           setIsStreaming(true);
           setStreamingContent('');
           setLiveToolCalls([]);
-          setStreamStatusDetail(t('chat.connectingSend'));
+          setStreamStatusDetail(
+            control === 'interrupt'
+              ? (t('chat.interruptStarting') || '停止当前任务并开始新任务…')
+              : t('chat.connectingSend')
+          );
         } else if (control === 'steer') {
           setStreamStatusDetail(t('chat.steerApplied') || '纠偏已提交');
         } else if (control === 'queue') {
@@ -1923,7 +1928,26 @@ const handleUserMessageAck = useCallback(
                       ) : null}
                       {codingDelivery ? (
                         <div className="px-3 pb-2">
-                          <CodingDeliveryCard delivery={codingDelivery} />
+                          <CodingDeliveryCard
+                            delivery={codingDelivery}
+                            onRollback={async (checkpoint) => {
+                              try {
+                                const { restoreFileCheckpoint } = await import('@/lib/api');
+                                const r = await restoreFileCheckpoint(checkpoint);
+                                if (r?.ok) {
+                                  addToast(
+                                    (t('chat.checkpointRestored') as string) ||
+                                      `已回滚: ${r.restored || checkpoint}`,
+                                    'success'
+                                  );
+                                } else {
+                                  addToast(r?.error || '回滚失败', 'error');
+                                }
+                              } catch (e) {
+                                addToast((e as Error)?.message || '回滚失败', 'error');
+                              }
+                            }}
+                          />
                         </div>
                       ) : null}
                       <MessageInput

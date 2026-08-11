@@ -107,7 +107,7 @@ export function CodingDeliveryCard({ delivery, onRollback }: Props) {
           ) : null}
           {cps.length > 0 && onRollback ? (
             <div className="flex flex-wrap gap-1.5 pt-1">
-              {cps.slice(-3).map((c) => (
+              {cps.filter((c) => c && !c.startsWith('(patch')).slice(-3).map((c) => (
                 <button
                   key={c}
                   type="button"

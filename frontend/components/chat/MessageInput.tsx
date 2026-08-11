@@ -913,6 +913,15 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
               </button>
               <button
                 type="button"
+                onClick={() => handleSend('interrupt')}
+                disabled={!canSteer}
+                title={t('chat.interruptHint') || 'Stop current run and start a new task with this message'}
+                className="px-btn inline-flex h-8 items-center rounded-[3px] border border-border-subtle bg-elevated-bg px-2.5 text-[11px] font-medium text-foreground-muted hover:border-warning-text/50 hover:text-warning-text disabled:opacity-40"
+              >
+                {t('chat.newTask') || '新任务'}
+              </button>
+              <button
+                type="button"
                 onClick={() => handleSend('steer')}
                 disabled={!canSteer}
                 aria-label={t('chat.steer') || 'Steer'}

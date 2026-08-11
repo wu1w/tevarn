@@ -315,13 +315,30 @@ class DelegateTaskTool(BaseTool):
             ctx = (kwargs.get("context") or "").strip()
             instruction = goal if not ctx else f"{goal}\n\n上下文：{ctx}"
             steward_sid = str(kwargs.get("_session_id") or "").strip() or None
-            return await assign_to_employee(
+            raw = await assign_to_employee(
                 who,
                 instruction,
                 priority=5,
                 via="delegate_task",
                 steward_session_id=steward_sid,
             )
+            try:
+                from backend.agent.subagent_result import (
+                    format_structured_for_parent,
+                    structure_subagent_result,
+                )
+
+                structured = structure_subagent_result(
+                    raw if isinstance(raw, (str, dict)) else str(raw),
+                    default_summary=f"delegated to {who}",
+                )
+                if not structured.get("recommended_next_action"):
+                    structured["recommended_next_action"] = (
+                        "Follow up on the assigned job or check workforce inbox status."
+                    )
+                return format_structured_for_parent(structured)
+            except Exception:
+                return raw
 
         return (
             "[Error] 编制中尚无员工。请先 crew_steward action=hire 入编，"

@@ -615,3 +615,23 @@ async def ensure_agent_md_file(
         "exists": True,
         "size": target.stat().st_size,
     }
+
+
+@router.post("/checkpoint/restore")
+async def restore_file_checkpoint(
+    body: dict,
+    current_user: Annotated[UserRead, Depends(get_current_user)] = None,
+):
+    """Restore a workspace file from a Python file_checkpoint snapshot path.
+
+    Body: { "path": "<snapshot absolute or relative path under .tevarn/checkpoints>" }
+    """
+    from backend.agent.file_checkpoint import restore_checkpoint_file
+
+    raw = str((body or {}).get("path") or (body or {}).get("snapshot") or "").strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="path required")
+    result = restore_checkpoint_file(raw)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error") or "restore failed")
+    return result
