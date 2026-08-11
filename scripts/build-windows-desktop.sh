@@ -11,7 +11,7 @@ export CSC_IDENTITY_AUTO_DISCOVERY=false
 export ELECTRON_BUILDER_CACHE="${ELECTRON_BUILDER_CACHE:-$ROOT/.cache/electron-builder}"
 export TEVARN_SKIP_VENDOR_HOST="${TEVARN_SKIP_VENDOR_HOST:-1}"
 
-echo "[tevarn] == Windows desktop pack 0.5.5-alpha =="
+echo "[tevarn] == Windows desktop pack 0.4.2 =="
 
 # Strip packager/dev API keys & OAuth tokens; refuse secret files in tree
 echo "[tevarn] pack-sanitize (no developer credentials in artifact)..."
@@ -41,9 +41,9 @@ if [[ ! -d win-python/Lib/site-packages/uvicorn ]]; then
   exit 1
 fi
 
-# 2) Optional kernel host (Windows .exe). Skip if absent — backend falls back to python kernel.
+# 2) Optional kernel host (Windows .exe). Skip if absent 鈥?backend falls back to python kernel.
 if [[ ! -f vendor/tevarn-kernel-host/tevarn-kernel-host.exe ]]; then
-  echo "[tevarn] note: no Windows kernel host exe — packing with TEVARN_SKIP_VENDOR_HOST=1 (python kernel)"
+  echo "[tevarn] note: no Windows kernel host exe 鈥?packing with TEVARN_SKIP_VENDOR_HOST=1 (python kernel)"
   export TEVARN_SKIP_VENDOR_HOST=1
   mkdir -p vendor/tevarn-kernel-host
   echo "Python kernel fallback for this build" > vendor/tevarn-kernel-host/README.md
@@ -65,7 +65,7 @@ node -e "
 const fs=require('fs');
 const p='package.json';
 const d=JSON.parse(fs.readFileSync(p,'utf8'));
-d.version='0.5.5-alpha';
+d.version='0.4.2';
 fs.writeFileSync(p, JSON.stringify(d,null,2)+'\n');
 console.log('frontend version', d.version);
 "
@@ -87,10 +87,10 @@ if [[ ! -f ../electron/dist/main.js ]]; then
 fi
 
 # 4) electron-builder Windows targets
-# Prefer nsis (one-click) + portable. On Linux, nsis needs wine — fall back to portable+zip.
+# Prefer nsis (one-click) + portable. On Linux, nsis needs wine 鈥?fall back to portable+zip.
 TARGETS="nsis,portable"
 if ! command -v wine64 >/dev/null 2>&1 && ! command -v wine >/dev/null 2>&1; then
-  echo "[tevarn] wine not found — building portable + zip (still double-clickable .exe)"
+  echo "[tevarn] wine not found 鈥?building portable + zip (still double-clickable .exe)"
   TARGETS="portable,zip"
 fi
 

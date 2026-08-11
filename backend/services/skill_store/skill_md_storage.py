@@ -3,7 +3,7 @@ SKILL.md 下载与本地存储服务
 
 负责：
 - 从各源下载 SKILL.md 内容
-- 存到本地 ~/.tevarn/skills/<source>/<name>/SKILL.md
+- 存到本地 ~/.takton/skills/<source>/<name>/SKILL.md
 - 提供加载接口供 context pipeline 注入
 """
 
@@ -21,16 +21,61 @@ from backend.schemas.skill_store import UnifiedSkill
 logger = logging.getLogger(__name__)
 
 
-# 默认存储路径：~/.tevarn/skills/
-_DEFAULT_SKILLS_ROOT = Path.home() / ".tevarn" / "skills"
+# 默认存储路径：~/.takton/skills/
+_DEFAULT_SKILLS_ROOT = Path.home() / ".takton" / "skills"
 
 
 def _skills_root() -> Path:
-    """获取 skills 存储根目录（支持环境变量覆盖）"""
-    root = os.environ.get("TEVARN_SKILLS_ROOT")
+    """主写入根（安装/卸载）；支持 TAKTON_SKILLS_ROOT 覆盖。"""
+    root = os.environ.get("TAKTON_SKILLS_ROOT")
     if root:
         return Path(root)
     return _DEFAULT_SKILLS_ROOT
+
+
+def _extra_skills_roots() -> list[Path]:
+    """额外扫描根：workspace/userData 上的 skills（只读并入 list）。"""
+    roots: list[Path] = []
+    for env_key in ("TAKTON_FILE_BROWSER_ROOT", "TEVARN_HOME", "TAKTON_HOME"):
+        raw = (os.environ.get(env_key) or "").strip()
+        if not raw:
+            continue
+        p = Path(raw)
+        # file_browser_root 往往是 workspace 本身
+        candidates = [p / "skills", p / "data" / "workspace" / "skills"]
+        if p.name.lower() == "workspace":
+            candidates.append(p / "skills")
+        for c in candidates:
+            roots.append(c)
+    appdata = (os.environ.get("APPDATA") or "").strip()
+    if appdata:
+        ad = Path(appdata)
+        roots.extend(
+            [
+                ad / "Tevarn" / "data" / "workspace" / "skills",
+                ad / "takton" / "data" / "workspace" / "skills",
+            ]
+        )
+    home = Path.home()
+    roots.extend(
+        [
+            home / ".tevarn" / "skills",
+            home / "AppData" / "Roaming" / "takton" / "data" / "workspace" / "skills",
+        ]
+    )
+    # 去重保序
+    seen: set[str] = set()
+    out: list[Path] = []
+    for r in roots:
+        try:
+            key = str(r.resolve()).lower()
+        except OSError:
+            key = str(r).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(r)
+    return out
 
 
 def _sanitize_name(name: str) -> str:
@@ -87,26 +132,79 @@ class SkillMdStorage:
         return True
 
     def list_installed(self) -> list[dict]:
-        """列出所有已安装的 prompt-skill"""
+        """列出已安装 prompt-skill（主 root + workspace 等额外根，按 source/name 去重）。"""
         installed: list[dict] = []
-        if not self.root.exists():
-            return installed
-        for source_dir in self.root.iterdir():
-            if not source_dir.is_dir():
-                continue
-            source = source_dir.name
-            for skill_dir in source_dir.iterdir():
-                if not skill_dir.is_dir():
+        seen: set[str] = set()
+
+        def _scan(root: Path, *, default_source: str | None = None) -> None:
+            if not root.exists() or not root.is_dir():
+                return
+            # 布局 A：root/<source>/<name>/SKILL.md
+            # 布局 B：root/<name>/SKILL.md（workspace 扁平）
+            try:
+                children = list(root.iterdir())
+            except OSError:
+                return
+            for child in children:
+                if not child.is_dir():
                     continue
-                md_path = skill_dir / "SKILL.md"
-                if not md_path.exists():
+                direct_md = child / "SKILL.md"
+                if direct_md.is_file():
+                    source = default_source or "workspace"
+                    name = child.name
+                    key = f"{source}/{name}".lower()
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    try:
+                        size = direct_md.stat().st_size
+                    except OSError:
+                        size = 0
+                    installed.append(
+                        {
+                            "source": source,
+                            "name": name,
+                            "path": str(direct_md),
+                            "size": size,
+                        }
+                    )
                     continue
-                installed.append({
-                    "source": source,
-                    "name": skill_dir.name,
-                    "path": str(md_path),
-                    "size": md_path.stat().st_size,
-                })
+                source = child.name
+                try:
+                    skill_dirs = list(child.iterdir())
+                except OSError:
+                    continue
+                for skill_dir in skill_dirs:
+                    if not skill_dir.is_dir():
+                        continue
+                    md_path = skill_dir / "SKILL.md"
+                    if not md_path.is_file():
+                        continue
+                    key = f"{source}/{skill_dir.name}".lower()
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    try:
+                        size = md_path.stat().st_size
+                    except OSError:
+                        size = 0
+                    installed.append(
+                        {
+                            "source": source,
+                            "name": skill_dir.name,
+                            "path": str(md_path),
+                            "size": size,
+                        }
+                    )
+
+        _scan(self.root)
+        for extra in _extra_skills_roots():
+            try:
+                if extra.resolve() == self.root.resolve():
+                    continue
+            except OSError:
+                pass
+            _scan(extra, default_source="workspace")
         return installed
 
 
@@ -149,7 +247,7 @@ class SkillMdDownloader:
 
     @staticmethod
     def _convert_clawhub_to_skill_md(skill: UnifiedSkill) -> str:
-        """将 ClawHub 条目转换为 Tevarn 可用的 SKILL.md（一键转换安装）。
+        """将 ClawHub 条目转换为 Takton 可用的 SKILL.md（一键转换安装）。
 
         ClawHub 不提供公开文件下载；用 list API 的元数据生成 frontmatter + 指引正文，
         使小白用户无需 CLI 也能装到本地并注入 system prompt。
@@ -190,7 +288,7 @@ class SkillMdDownloader:
 
         body_parts.extend(
             [
-                "## 来源（ClawHub → Tevarn 转换）",
+                "## 来源（ClawHub → Takton 转换）",
                 "",
                 f"- 源 ID: `clawhub/{skill.id}`",
                 f"- 详情页: {source_url}",
@@ -205,7 +303,7 @@ class SkillMdDownloader:
         body_parts.extend(
             [
                 "",
-                "## 在 Tevarn 中如何使用",
+                "## 在 Takton 中如何使用",
                 "",
                 "本 skill 由 ClawHub 元数据**一键转换**为本地 SKILL.md，会注入 system prompt。",
                 "当用户请求匹配本 skill 的 description / topics 时：",

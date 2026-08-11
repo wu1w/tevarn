@@ -1,9 +1,10 @@
-"""出站 HTTP：尊重用户常规全局代理，不写死端口/不探测本机代理。
+"""出站 HTTP：尊重设置页代理 / 环境变量，不写死端口、不探测本机代理。
 
 优先级（高 → 低）：
-1. 配置/环境变量 TEVARN_HTTPS_PROXY、TEVARN_OUTBOUND_PROXY（显式覆盖）
-2. 标准环境变量 HTTPS_PROXY / HTTP_PROXY / ALL_PROXY（及小写同名）
-3. 无代理（直连）
+1. 设置页手动代理：outbound_proxy_enabled + host + port（Windows 风格）
+2. 完整 URL 配置：settings.outbound_https_proxy / https_proxy
+3. 环境变量 TAKTON_/TEVARN_HTTPS_PROXY、HTTPS_PROXY / HTTP_PROXY / ALL_PROXY
+4. 无代理（直连）
 
 用法：
     async with outbound_session(timeout=...) as (session, proxy):
@@ -27,6 +28,8 @@ import aiohttp
 logger = logging.getLogger(__name__)
 
 _ENV_KEYS = (
+    "TAKTON_HTTPS_PROXY",
+    "TAKTON_OUTBOUND_PROXY",
     "TEVARN_HTTPS_PROXY",
     "TEVARN_OUTBOUND_PROXY",
     "HTTPS_PROXY",
@@ -37,12 +40,67 @@ _ENV_KEYS = (
     "http_proxy",
 )
 
+_ALLOWED_SCHEMES = frozenset({"http", "https", "socks5", "socks5h", "socks4", "socks4a", "socks"})
+
+
+def _normalize_scheme(raw: str | None) -> str:
+    s = (raw or "http").strip().lower().replace("://", "")
+    if s in _ALLOWED_SCHEMES:
+        return "socks5" if s == "socks" else s
+    return "http"
+
+
+def build_proxy_url_from_parts(
+    *,
+    enabled: bool,
+    host: str,
+    port: int | str | None,
+    scheme: str = "http",
+) -> str | None:
+    """由设置页字段拼出代理 URL；未启用或字段不全返回 None。"""
+    if not enabled:
+        return None
+    host = (host or "").strip().strip("\"'")
+    if not host:
+        return None
+    # 用户把完整 URL 填进地址栏时直接用
+    if "://" in host:
+        return host.rstrip("/")
+    try:
+        # 兼容 DB 里二次 JSON 编码成 '"3128"' 的情况
+        port_s = str(port or 0).strip().strip("\"'")
+        p = int(port_s or 0)
+    except (TypeError, ValueError):
+        p = 0
+    if p <= 0 or p > 65535:
+        return None
+    sch = _normalize_scheme(str(scheme or "http").strip().strip("\"'"))
+    # 去掉 host 里误带的端口
+    if host.count(":") == 1 and not host.startswith("["):
+        h, maybe_port = host.rsplit(":", 1)
+        if maybe_port.isdigit():
+            host = h
+            if p <= 0:
+                p = int(maybe_port)
+    return f"{sch}://{host}:{p}"
+
 
 def resolve_proxy_url() -> str | None:
     """解析当前应使用的出站代理 URL；无则返回 None。"""
     try:
         from backend.core.config import settings
 
+        # 1) 设置页结构化代理（最高优先）
+        structured = build_proxy_url_from_parts(
+            enabled=bool(getattr(settings, "outbound_proxy_enabled", False)),
+            host=str(getattr(settings, "outbound_proxy_host", "") or ""),
+            port=getattr(settings, "outbound_proxy_port", 0),
+            scheme=str(getattr(settings, "outbound_proxy_scheme", "http") or "http"),
+        )
+        if structured:
+            return structured
+
+        # 2) 完整 URL 字段
         for attr in ("outbound_https_proxy", "https_proxy"):
             v = str(getattr(settings, attr, "") or "").strip()
             if v:
@@ -50,6 +108,7 @@ def resolve_proxy_url() -> str | None:
     except Exception:
         pass
 
+    # 3) 环境变量
     for key in _ENV_KEYS:
         v = (os.environ.get(key) or "").strip()
         if v:
@@ -127,6 +186,43 @@ async def outbound_session(
         await session.close()
 
 
+def sync_proxy_env_from_settings() -> str | None:
+    """把当前 resolve_proxy_url() 同步到进程环境（供子进程 / trust_env）。
+
+    返回当前生效的代理 URL（或 None）。
+    """
+    resolved = resolve_proxy_url()
+    keys = (
+        "HTTPS_PROXY",
+        "HTTP_PROXY",
+        "ALL_PROXY",
+        "https_proxy",
+        "http_proxy",
+        "all_proxy",
+    )
+    if resolved:
+        for k in keys:
+            os.environ[k] = resolved
+    else:
+        for k in keys:
+            os.environ.pop(k, None)
+    return resolved
+
+
+def format_proxy_hint() -> str:
+    """给错误消息用的代理配置提示。"""
+    proxy = resolve_proxy_url()
+    if proxy:
+        u = urlparse(proxy)
+        host = u.hostname or "…"
+        port = u.port or ""
+        return f"当前已配置代理 {u.scheme}://{host}:{port}，请确认代理出口可用且后端已加载设置。"
+    return (
+        "请在设置 → 网络/代理 中启用「使用代理服务器」并填写地址与端口"
+        "（如 127.0.0.1:7890 / 3128），或设置环境变量 HTTPS_PROXY 后重启。"
+    )
+
+
 def format_openai_geo_error(status: int, payload: dict[str, Any] | Any, text: str) -> str:
     """把 OpenAI 地区限制等错误翻成可操作的中文说明。"""
     code = ""
@@ -145,19 +241,10 @@ def format_openai_geo_error(status: int, payload: dict[str, Any] | Any, text: st
         or "country, region, or territory not supported" in blob
         or ("request_forbidden" in blob and "country" in blob)
     ):
-        proxy = resolve_proxy_url()
-        if proxy:
-            return (
-                "OpenAI 拒绝了当前出口 IP 所在地区（unsupported_country_region_territory）。"
-                f"已检测到代理设置（{urlparse(proxy).scheme}://…），"
-                "请确认代理出口在可用地区（如美/日/新），且 Tevarn 后端进程已加载该环境变量后重启。"
-            )
         return (
-            "OpenAI 拒绝了当前地区（unsupported_country_region_territory）。"
-            "浏览器能登录不代表后端换 token 可用：请为本机/后端配置常规全局代理后重启 Tevarn，例如：\n"
-            "  • 环境变量 HTTPS_PROXY / HTTP_PROXY / ALL_PROXY\n"
-            "  • 或 TEVARN_HTTPS_PROXY=http://127.0.0.1:<你的代理端口>\n"
-            "Clash/V2Ray 等请开启系统代理或复制 mixed 端口的 HTTP 代理地址。"
+            "OpenAI 拒绝了当前出口 IP 所在地区（unsupported_country_region_territory）。"
+            + format_proxy_hint()
+            + " 代理出口需在可用地区（如美/日/新）。"
         )
     if msg or code:
         return f"换取令牌失败 (HTTP {status}): {msg or code}"

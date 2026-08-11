@@ -573,18 +573,60 @@ async def fetch_provider_models(
     """
     从供应商实时拉取模型列表（非 mock）。
     支持 Ollama / OpenAI / Anthropic / OpenAI 兼容端点。
+
+    出站走 outbound_session（尊重设置页代理 / HTTPS_PROXY）。
+    本机 Ollama 等 loopback 地址不走代理。
     """
     import aiohttp
 
+    from backend.core.outbound_http import outbound_session, resolve_proxy_url
+
     base_url = (base_url or "").rstrip("/")
     provider = (provider or "").strip().lower()
-    timeout = aiohttp.ClientTimeout(total=20)
+    timeout = aiohttp.ClientTimeout(total=25)
+
+    def _is_loopback(url: str) -> bool:
+        u = (url or "").lower()
+        return any(x in u for x in ("127.0.0.1", "localhost", "[::1]", "0.0.0.0"))
+
+    def _proxy_hint() -> str:
+        p = resolve_proxy_url()
+        if p:
+            return f"当前已配置出站代理（{p.split('://')[0]}://…）。"
+        return (
+            "若服务在境外，请在设置 → 通用 → 网络代理 启用 HTTP 代理"
+            "（如 127.0.0.1:7890 / 3128）后重试。"
+        )
 
     try:
         if provider == "ollama":
             url = f"{base_url}/api/tags"
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=timeout) as resp:
+            # 本机 Ollama 直连，避免被系统/出站代理拐走
+            if _is_loopback(base_url):
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url, timeout=timeout) as resp:
+                        text = await resp.text()
+                        if resp.status >= 400:
+                            return {
+                                "ok": False,
+                                "models": [],
+                                "message": f"无法拉取 Ollama 模型 (HTTP {resp.status})",
+                                "detail": text[:300],
+                            }
+                        body = await resp.json(content_type=None)
+                        names = [
+                            m.get("name") or m.get("model") or ""
+                            for m in (body.get("models") or [])
+                        ]
+                        models = _sort_model_ids([n for n in names if n])
+                        return {
+                            "ok": True,
+                            "models": models,
+                            "message": f"已从 Ollama 拉取 {len(models)} 个模型",
+                            "source": url,
+                        }
+            async with outbound_session(timeout=timeout) as (session, proxy):
+                async with session.get(url, proxy=proxy) as resp:
                     text = await resp.text()
                     if resp.status >= 400:
                         return {
@@ -625,8 +667,9 @@ async def fetch_provider_models(
                     "message": "请先填写 API Key 再拉取模型列表",
                 }
 
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers, timeout=timeout) as resp:
+        # 远程供应商必须走出站代理链路（与 OAuth/Grok 一致）
+        async with outbound_session(timeout=timeout) as (session, proxy):
+            async with session.get(url, headers=headers, proxy=proxy) as resp:
                 text = await resp.text()
                 if resp.status >= 400:
                     hint = "请检查 API Key 与服务地址"
@@ -640,6 +683,7 @@ async def fetch_provider_models(
                         "message": f"拉取模型失败 (HTTP {resp.status})。{hint}",
                         "detail": text[:300],
                         "source": url,
+                        "proxy_active": bool(proxy or resolve_proxy_url()),
                     }
                 try:
                     body = await resp.json(content_type=None)
@@ -693,26 +737,28 @@ async def fetch_provider_models(
                 return {
                     "ok": True,
                     "models": models,
-                    "message": f"已从供应商拉取 {len(models)} 个模型",
+                    "message": f"已从供应商拉取 {len(models)} 个模型"
+                    + (f"（经代理）" if (proxy or resolve_proxy_url()) else ""),
                     "source": url,
+                    "proxy_active": bool(proxy or resolve_proxy_url()),
                 }
     except aiohttp.ClientConnectorError:
         return {
             "ok": False,
             "models": [],
-            "message": f"无法连接到 {base_url}。请确认服务已启动、地址正确。",
+            "message": f"无法连接到 {base_url}。{_proxy_hint()}",
         }
     except TimeoutError:
         return {
             "ok": False,
             "models": [],
-            "message": "拉取模型超时。服务响应过慢或不可达。",
+            "message": f"拉取模型超时。{_proxy_hint()}",
         }
     except Exception as e:
         return {
             "ok": False,
             "models": [],
-            "message": f"拉取模型失败：{e}",
+            "message": f"拉取模型失败：{e}。{_proxy_hint()}",
         }
 
 
@@ -1140,7 +1186,7 @@ async def test_embedding(
             svc = LocalEmbeddingService()
 
         EmbeddingServiceFactory.reset()
-        vec = await svc.embed_query("tevarn embedding ping")
+        vec = await svc.embed_query("takton embedding ping")
         dim = len(vec) if vec else 0
         if dim <= 0:
             return {"ok": False, "message": f"Embedding 返回空向量 · provider={provider} · {base}"}
@@ -1443,6 +1489,170 @@ async def xai_oauth_logout(
         "message": "已退出 Grok OAuth",
         "catalog": model_catalog_mod.mask_catalog_for_client(catalog),
     }
+
+
+@router.get("/network/proxy")
+async def get_network_proxy(
+    current_user: Annotated[UserRead, Depends(require_admin)],
+):
+    """读取出站代理配置（设置页 · 网络）。"""
+    from backend.core.config import settings
+    from backend.core.outbound_http import resolve_proxy_url
+
+    enabled = bool(getattr(settings, "outbound_proxy_enabled", False))
+    scheme = str(getattr(settings, "outbound_proxy_scheme", "http") or "http")
+    host = str(getattr(settings, "outbound_proxy_host", "") or "")
+    port = int(getattr(settings, "outbound_proxy_port", 0) or 0)
+    full = str(getattr(settings, "outbound_https_proxy", "") or "")
+    resolved = resolve_proxy_url()
+    # 不把完整代理 URL 的认证段回显给前端
+    resolved_safe = ""
+    if resolved:
+        from urllib.parse import urlparse
+
+        u = urlparse(resolved)
+        host_s = u.hostname or ""
+        port_s = f":{u.port}" if u.port else ""
+        resolved_safe = f"{u.scheme}://{host_s}{port_s}"
+    return {
+        "outbound_proxy_enabled": enabled,
+        "outbound_proxy_scheme": scheme,
+        "outbound_proxy_host": host,
+        "outbound_proxy_port": port,
+        "outbound_https_proxy": full,
+        "resolved_proxy": resolved_safe,
+        "active": bool(resolved),
+    }
+
+
+class NetworkProxyBody(BaseModel):
+    outbound_proxy_enabled: bool = False
+    outbound_proxy_scheme: str = "http"
+    outbound_proxy_host: str = ""
+    outbound_proxy_port: int = 0
+    # 可选：完整 URL 覆盖（高级）；空字符串表示清除
+    outbound_https_proxy: str | None = None
+
+
+@router.put("/network/proxy")
+async def put_network_proxy(
+    data: NetworkProxyBody,
+    request: Request,
+    current_user: Annotated[UserRead, Depends(require_admin)],
+    repo: Annotated[SettingRepository, Depends(get_setting_repo)],
+):
+    """保存出站代理并立即写入运行时（无需重启）。"""
+    from backend.core.outbound_http import build_proxy_url_from_parts, resolve_proxy_url
+    from backend.core.runtime_settings import apply_settings_dict
+
+    scheme = (data.outbound_proxy_scheme or "http").strip().lower() or "http"
+    if scheme not in ("http", "https", "socks5", "socks5h", "socks4"):
+        scheme = "http"
+    host = (data.outbound_proxy_host or "").strip()
+    try:
+        port = int(data.outbound_proxy_port or 0)
+    except (TypeError, ValueError):
+        port = 0
+    if port < 0 or port > 65535:
+        raise HTTPException(status_code=400, detail="端口须在 0–65535")
+
+    if data.outbound_proxy_enabled and not host:
+        raise HTTPException(status_code=400, detail="启用代理时请填写地址（IP 或主机名）")
+    if data.outbound_proxy_enabled and "://" not in host and port <= 0:
+        raise HTTPException(status_code=400, detail="启用代理时请填写端口")
+
+    items: dict[str, Any] = {
+        "outbound_proxy_enabled": bool(data.outbound_proxy_enabled),
+        "outbound_proxy_scheme": scheme,
+        "outbound_proxy_host": host,
+        "outbound_proxy_port": port,
+    }
+    if data.outbound_https_proxy is not None:
+        items["outbound_https_proxy"] = str(data.outbound_https_proxy or "").strip()
+
+    for k, v in items.items():
+        await repo.upsert(k, v, "network")
+    apply_settings_dict(items, reset=False)
+
+    built = build_proxy_url_from_parts(
+        enabled=bool(data.outbound_proxy_enabled),
+        host=host,
+        port=port,
+        scheme=scheme,
+    )
+    from backend.core.outbound_http import sync_proxy_env_from_settings
+
+    resolved = sync_proxy_env_from_settings()
+
+    await log_action(
+        AuditAction.SETTINGS_UPDATE,
+        request=request,
+        user_id=current_user.id,
+        resource_type="network_proxy",
+        resource_id="outbound",
+        details={
+            "enabled": bool(data.outbound_proxy_enabled),
+            "scheme": scheme,
+            "host": host,
+            "port": port,
+            "active": bool(resolved),
+        },
+    )
+    return {
+        "ok": True,
+        "message": (
+            f"代理已{'启用' if resolved else '关闭'}"
+            + (f"：{scheme}://{host}:{port}" if built else "")
+        ),
+        "resolved_active": bool(resolved),
+        "built_url": built or "",
+    }
+
+
+@router.post("/network/proxy/test")
+async def test_network_proxy(
+    current_user: Annotated[UserRead, Depends(require_admin)],
+):
+    """探测当前出站代理：请求 auth.x.ai OIDC 发现文档。"""
+    import time
+
+    import aiohttp
+
+    from backend.core.outbound_http import outbound_session, resolve_proxy_url
+
+    proxy = resolve_proxy_url()
+    t0 = time.time()
+    try:
+        async with outbound_session(
+            timeout=aiohttp.ClientTimeout(total=15)
+        ) as (session, req_proxy):
+            async with session.get(
+                "https://auth.x.ai/.well-known/openid-configuration",
+                proxy=req_proxy,
+            ) as resp:
+                text = await resp.text()
+                dt = round(time.time() - t0, 2)
+                ok = resp.status == 200 and "issuer" in (text or "")
+                return {
+                    "ok": ok,
+                    "status_code": resp.status,
+                    "elapsed_sec": dt,
+                    "proxy_active": bool(proxy),
+                    "message": (
+                        f"连通成功（HTTP {resp.status}，{dt}s）"
+                        if ok
+                        else f"代理可达但响应异常 HTTP {resp.status}（{dt}s）"
+                    ),
+                }
+    except Exception as e:
+        dt = round(time.time() - t0, 2)
+        return {
+            "ok": False,
+            "status_code": 0,
+            "elapsed_sec": dt,
+            "proxy_active": bool(proxy),
+            "message": f"连通失败（{dt}s）: {e}",
+        }
 
 
 @router.post("/oauth/openai/start")
@@ -2312,6 +2522,12 @@ async def apply_settings_batch(
                 "system_name": "general",
                 "sft_usage_log_enabled": "privacy",
                 "sft_usage_log_path": "privacy",
+                # 出站代理（设置页 · 网络）
+                "outbound_proxy_enabled": "network",
+                "outbound_proxy_scheme": "network",
+                "outbound_proxy_host": "network",
+                "outbound_proxy_port": "network",
+                "outbound_https_proxy": "network",
             }
 
     # 元数据字段只用于登记目录，不落库为独立 setting
@@ -2932,7 +3148,7 @@ async def generate_bridge_token(
         key="bridge_token",
         value=token,
         category="security",
-        description="Tevarn Code ↔ Desktop 桥接令牌（设置页生成）",
+        description="Takton Code ↔ Desktop 桥接令牌（设置页生成）",
     )
     apply_setting_value("bridge_token", token)
     await log_action(

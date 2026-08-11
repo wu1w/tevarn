@@ -218,7 +218,7 @@ async def _handle_oauth_callback(request: web.Request) -> web.Response:
         _store_result(state, {"ok": False, "message": f"授权被拒绝: {msg}"})
         page = _html_page(
             "授权失败",
-            f"<p>{html.escape(msg)}</p><p>请回到 Tevarn 设置页重试。</p>",
+            f"<p>{html.escape(msg)}</p><p>请回到 Takton 设置页重试。</p>",
             ok=False,
         )
         return web.Response(text=page, content_type="text/html", charset="utf-8")
@@ -226,7 +226,7 @@ async def _handle_oauth_callback(request: web.Request) -> web.Response:
     if not code:
         page = _html_page(
             "缺少授权码",
-            "<p>回调 URL 里没有 <code>code</code>。请回到 Tevarn 重新点「ChatGPT 登录」。</p>",
+            "<p>回调 URL 里没有 <code>code</code>。请回到 Takton 重新点「ChatGPT 登录」。</p>",
             ok=False,
         )
         return web.Response(text=page, content_type="text/html", charset="utf-8")
@@ -245,7 +245,7 @@ async def _handle_oauth_callback(request: web.Request) -> web.Response:
     if result.get("ok"):
         page = _html_page(
             "ChatGPT 登录成功",
-            "<p>订阅额度 OAuth 已完成。请回到 <strong>Tevarn</strong> 设置页"
+            "<p>订阅额度 OAuth 已完成。请回到 <strong>Takton</strong> 设置页"
             "（会自动激活供应商），本页可关闭。</p>"
             "<p style='margin-top:1rem;font-size:.8rem'>若设置页未自动更新，点一次刷新即可。</p>",
             ok=True,
@@ -258,7 +258,7 @@ async def _handle_oauth_callback(request: web.Request) -> web.Response:
     page = _html_page(
         "登录未完成",
         f"<p>{html.escape(msg)}</p>"
-        "<p>也可复制地址栏完整 URL，粘贴回 Tevarn「完成登录」。</p>"
+        "<p>也可复制地址栏完整 URL，粘贴回 Takton「完成登录」。</p>"
         f"<p><code>{html.escape(callback_url[:220])}</code></p>",
         ok=False,
     )
@@ -306,7 +306,7 @@ async def ensure_callback_server() -> dict[str, Any]:
 
         async def _root(_request: web.Request) -> web.Response:
             page = _html_page(
-                "Tevarn ChatGPT OAuth",
+                "Takton ChatGPT OAuth",
                 "<p>回调服务已就绪。请在授权页完成登录，浏览器会自动跳转到本服务。</p>",
                 ok=True,
             )
@@ -333,7 +333,7 @@ async def ensure_callback_server() -> dict[str, Any]:
                 "port": OPENAI_OAUTH_CALLBACK_PORT,
                 "message": (
                     f"无法监听 {OPENAI_OAUTH_CALLBACK_PORT} 端口（{e}）。"
-                    "授权后请复制地址栏完整 URL 粘贴回 Tevarn。"
+                    "授权后请复制地址栏完整 URL 粘贴回 Takton。"
                 ),
             }
 
@@ -358,7 +358,7 @@ async def start_pkce_login_async() -> dict[str, Any]:
     if listen.get("listening"):
         info["message"] = (
             "已打开登录页。授权后浏览器会跳到 localhost:1455 并自动完成；"
-            "请回到 Tevarn 等待「登录成功」（也可关闭回调页）。"
+            "请回到 Takton 等待「登录成功」（也可关闭回调页）。"
         )
     elif listen.get("message"):
         info["message"] = str(listen["message"])
@@ -437,11 +437,13 @@ async def complete_pkce_login(callback_url: str, *, state: str | None = None) ->
     except RuntimeError as e:
         return {"ok": False, "message": str(e)}
     except Exception as e:
+        from backend.core.outbound_http import format_proxy_hint
+
         return {
             "ok": False,
             "message": (
                 f"连接 auth.openai.com 失败: {e}。"
-                "若在受限地区，请配置 HTTPS_PROXY / TEVARN_HTTPS_PROXY 后重启后端。"
+                f"{format_proxy_hint()}"
             ),
         }
 

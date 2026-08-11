@@ -81,6 +81,31 @@ def test_family_bucket_orch_and_result_load():
     assert family_bucket([one_read]) == ""
 
 
+def test_family_bucket_command_family():
+    cmds = [
+        SimpleNamespace(name="command", id=f"c{i}", arguments={"command": f"cmd /c echo {i}"})
+        for i in range(4)
+    ]
+    assert family_bucket(cmds) == "command_family"
+    assert thrash_fingerprint(cmds) == "fam:command_family"
+    assert "终端" in thrash_force_final_text(family="fam:command_family") or "Command" in thrash_force_final_text(
+        family="fam:command_family"
+    )
+
+
+def test_family_bucket_cargo_and_probe():
+    cargo = [
+        SimpleNamespace(name="command", id=f"c{i}", arguments={"command": "cargo check"})
+        for i in range(3)
+    ]
+    assert family_bucket(cargo) == "cargo_verify"
+    probe = [
+        SimpleNamespace(name="command", id=f"p{i}", arguments={"command": "where python"})
+        for i in range(3)
+    ]
+    assert family_bucket(probe) == "shell_probe"
+
+
 def test_thrash_fingerprint_collapses_orch_heavy():
     a = [
         SimpleNamespace(name="crew_steward", id="1", arguments={"name": "alice"}),

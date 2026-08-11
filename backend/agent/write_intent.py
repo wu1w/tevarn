@@ -118,6 +118,25 @@ def is_write_intent(user_input: str) -> bool:
     t = (user_input or "").strip()
     if not t:
         return False
+    # Prefer Rust harness authority when host is up (parity with harness_resolve)
+    try:
+        import os
+
+        be = (os.environ.get("TAKTON_KERNEL_BACKEND") or "").strip().lower()
+        if be not in {"python", "py", "off", "0", "none"}:
+            from backend.kernel import get_kernel
+
+            k = get_kernel()
+            if hasattr(k, "harness_resolve"):
+                r = k.harness_resolve(text=t)
+                if isinstance(r, dict) and "write_intent" in r:
+                    return bool(r.get("write_intent"))
+            elif hasattr(k, "_call"):
+                r = k._call("harness_resolve", {"text": t}) or {}
+                if isinstance(r, dict) and "write_intent" in r:
+                    return bool(r.get("write_intent"))
+    except Exception:
+        pass
     if not _WRITE_RE.search(t):
         return False
     if _REVIEW_RE.search(t) and not _WRITE_VERB_RE.search(t):

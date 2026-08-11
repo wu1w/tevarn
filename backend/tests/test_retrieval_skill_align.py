@@ -17,14 +17,16 @@ from backend.services.skill_store.prompt_skill_loader import (
 def test_injection_knobs_thresholds():
     m = injection_knobs("minimal")
     assert m["rag"] is False
-    assert m["prompt_skills"] is False
+    # 轻环保留目录摘要，不塞全文
+    assert m["prompt_skills"] is True
+    assert m["skill_mode"] == "summary"
     assert m["skill_max_full"] == 0
 
     s = injection_knobs("standard")
     assert s["rag"] is True
     assert float(s["rag_min_score"]) >= 0.55
     assert int(s["skill_max_full"]) == 1
-    assert float(s["skill_threshold"]) >= 0.9
+    assert 0.8 <= float(s["skill_threshold"]) <= 0.9
 
     r = injection_knobs("rich")
     assert float(r["rag_min_score"]) < float(s["rag_min_score"])
@@ -103,11 +105,13 @@ def test_build_injection_disabled():
     assert plan.mode == "off"
 
 
-def test_greeting_scene_disables_skills_via_knobs():
+def test_greeting_scene_summary_only_skills_via_knobs():
     plan = infer_scene("你好", profile="dynamic")
     kn = injection_knobs(plan.injection_tier)
     assert plan.injection_tier == "minimal"
-    assert kn["prompt_skills"] is False
+    assert kn["prompt_skills"] is True
+    assert kn["skill_mode"] == "summary"
+    assert kn["skill_max_full"] == 0
 
 
 def test_scene_skill_hints_cover_main_packs():

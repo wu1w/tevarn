@@ -298,7 +298,15 @@ class AnthropicService(LLMService):
         if not stream:
             try:
                 session = ensure_session(self)
-                async with session.post(url, json=payload, headers=self._get_headers(), timeout=request_timeout()) as resp:
+                from .http_session import request_proxy_kwargs
+
+                async with session.post(
+                    url,
+                    json=payload,
+                    headers=self._get_headers(),
+                    timeout=request_timeout(),
+                    **request_proxy_kwargs(url),
+                ) as resp:
                     resp.raise_for_status()
                     data = await resp.json()
                     content_parts = []
@@ -335,9 +343,12 @@ class AnthropicService(LLMService):
 
         try:
             session = ensure_session(self)
+            from .http_session import request_proxy_kwargs
+
             async with session.post(
                 url, json=payload, headers=self._get_headers(),
                 timeout=stream_timeout(),
+                **request_proxy_kwargs(url),
             ) as resp:
                 resp.raise_for_status()
                 async for line in resp.content:

@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Iterable
 
@@ -83,12 +84,13 @@ TOOL_PACKS: dict[str, tuple[str, ...]] = {
         "manage_cron",
         "manage_channel",
         "manage_mcp",
+        "manage_skill",  # 自定义可执行 skill 与 MCP 同属管理面
         "manage_webhook",
         "manage_git",
         "manage_package",
         "manage_profile",
         "manage_knowledge",
-        "configure_tevarn",
+        "configure_takton",
         "update_config",
         "get_system_status",
         "list_available_models",
@@ -210,7 +212,7 @@ _PACK_KEYWORDS: dict[str, tuple[str, ...]] = {
         "MCP",
         "mcp 商店",
         "MCP商店",
-        "配置 tevarn",
+        "配置 takton",
         "configure",
         "频道",
         "channel",
@@ -256,7 +258,7 @@ _PACK_KEYWORDS: dict[str, tuple[str, ...]] = {
     "devices": (
         "远程",
         "设备",
-        "tevarn-agent",
+        "takton-agent",
         "remote",
         "onboard",
         "ssh",
@@ -398,9 +400,119 @@ def list_pack_catalog() -> dict[str, list[str]]:
     return {k: list(v) for k, v in TOOL_PACKS.items() if k != "core"}
 
 
-def tools_for_packs(packs: Iterable[str]) -> list[str]:
-    """合并 pack → 去重工具名（core 顺序优先）。"""
+def live_mcp_tool_names() -> list[str]:
+    """当前 ToolRegistry 中已注册且 enabled 的 MCP 工具名。"""
+    try:
+        from backend.tools.base import ToolSource
+        from backend.tools.registry import ToolRegistry
+
+        return sorted(
+            t.name
+            for t in ToolRegistry.get_all(source=ToolSource.MCP)
+            if getattr(t, "enabled", True)
+        )
+    except Exception:
+        return []
+
+
+def live_custom_tool_names() -> list[str]:
+    """用户可执行 skill / DB tool（DYNAMIC|DB），不含 pack 内置与 MCP。"""
+    try:
+        from backend.tools.base import ToolSource
+        from backend.tools.registry import ToolRegistry
+
+        out: list[str] = []
+        for src in (ToolSource.DYNAMIC, ToolSource.DB):
+            for t in ToolRegistry.get_all(source=src):
+                if not getattr(t, "enabled", True):
+                    continue
+                n = str(getattr(t, "name", "") or "").strip()
+                if n:
+                    out.append(n)
+        return sorted(set(out))
+    except Exception:
+        return []
+
+
+def select_live_custom_tools(
+    user_input: str,
+    live_names: list[str] | None = None,
+    *,
+    matching_only: bool = True,
+) -> list[str]:
+    """Matching-only：用户点名自定义 skill/tool 名时才挂上（避免全量 dump）。"""
+    live = list(live_names if live_names is not None else live_custom_tool_names())
+    if not live:
+        return []
+    if not matching_only:
+        return live
+    raw = user_input or ""
+    if not raw.strip():
+        return []
+    text_l = raw.lower()
+    # 配置 manage_skill 轮不挂全部自定义 schema
+    try:
+        from backend.agent.simple_intent import is_mcp_configure_intent
+
+        # 创建/管理 skill 时同样不 dump 全部可执行 skill
+        if is_mcp_configure_intent(raw) and "skill" in text_l:
+            return []
+    except Exception:
+        pass
+    out: list[str] = []
+    for name in live:
+        nl = name.lower()
+        # 全名或去分隔符后的片段出现在用户话里
+        if nl in text_l or name in raw:
+            out.append(name)
+            continue
+        compact = nl.replace("-", "").replace("_", "")
+        if len(compact) >= 3 and compact in text_l.replace("-", "").replace("_", ""):
+            out.append(name)
+            continue
+        # 多段名：任一段 token（≥3）命中
+        parts = [p for p in re.split(r"[-_\s]+", nl) if len(p) >= 3]
+        if any(p in text_l for p in parts):
+            out.append(name)
+    return out
+
+
+def is_mcp_ops_intent(user_input: str) -> bool:
+    """本轮是否在配置/安装/写密钥 MCP（非单纯调用搜索）。"""
+    try:
+        from backend.agent.simple_intent import is_mcp_configure_intent
+
+        return is_mcp_configure_intent(user_input)
+    except Exception:
+        pass
+    import re
+
+    text = (user_input or "").strip()
+    if not text:
+        return False
+    # 收紧：多字 ops，避免单字误触发
+    if not re.search(r"(?i)\bmcp\b|manage_mcp|豆包|tavily|firecrawl|api\s*key|密钥", text):
+        return False
+    return bool(
+        re.search(
+            r"(?i)配置|安装|reload|热同步|api\s*key|密钥|env\s*[={]|配一下|配下|写密钥",
+            text,
+        )
+    )
+
+
+def tools_for_packs(
+    packs: Iterable[str],
+    *,
+    mcp_names: Iterable[str] | None = None,
+) -> list[str]:
+    """合并 pack → 去重工具名（core 顺序优先）。
+
+    pack ``mcp`` / ``integrations`` 并入 **匹配后的** live ``mcp_*``（Grok 风格）；
+    ``manage`` 只给 manage_mcp 等管理工具，避免 80+ schema 默认塞满。
+    """
     base: set[str] = set(DEFAULT_CHAT_TOOL_WHITELIST)
+    need_mcp_live = False
     for p in packs:
         key = (p or "").strip().lower()
         if key in {"*", "all", "full"}:
@@ -409,6 +521,14 @@ def tools_for_packs(packs: Iterable[str]) -> list[str]:
             continue
         if key in TOOL_PACKS:
             base.update(TOOL_PACKS[key])
+        if key in {"mcp", "integrations"}:
+            need_mcp_live = True
+    if need_mcp_live:
+        if mcp_names is not None:
+            base.update(str(n) for n in mcp_names if str(n).strip())
+        else:
+            base.update(live_mcp_tool_names())
+        base.add("manage_mcp")
     return _order_tools(base)
 
 
@@ -537,11 +657,73 @@ def resolve_enabled_tool_names(
                 bound = bool(fb) and fb not in (".", "workspace", "")
             except Exception:
                 bound = False
-        if bound and "coding" not in plan.packs and "*" not in plan.packs:
+        # core / L0 薄面：禁止 workspace 再塞 coding pack
+        if (
+            bound
+            and prof not in {"core"}
+            and "coding" not in plan.packs
+            and "*" not in plan.packs
+        ):
             plan.packs = list(plan.packs) + ["coding"]
             plan.reasons = list(plan.reasons) + ["workspace_bound"]
     except Exception:
         pass
+
+    # live MCP：Grok 风格 matching-only（Rust harness_select_mcp 权威）
+    live_mcp_all = live_mcp_tool_names()
+    try:
+        from backend.core.config import settings as _mcp_s
+
+        _auto = bool(getattr(_mcp_s, "agent_mcp_auto_attach_live", False))
+        _matching = bool(getattr(_mcp_s, "agent_mcp_matching_only", True))
+    except Exception:
+        _auto = False
+        _matching = True
+    _mcp_use = False
+    _mcp_cfg = False
+    try:
+        from backend.agent.simple_intent import (
+            is_mcp_configure_intent,
+            is_mcp_use_intent,
+            select_live_mcp_tools,
+        )
+
+        _mcp_use = is_mcp_use_intent(user_input)
+        _mcp_cfg = is_mcp_configure_intent(user_input)
+        live_mcp = select_live_mcp_tools(
+            user_input,
+            live_mcp_all,
+            matching_only=_matching,
+            auto_attach_all=_auto,
+        )
+    except Exception:
+        live_mcp = list(live_mcp_all) if _auto else []
+        try:
+            _mcp_cfg = is_mcp_ops_intent(user_input)
+        except Exception:
+            _mcp_cfg = False
+    # 配置意图：只挂 manage_mcp，不 dump live schema
+    if _mcp_cfg and not _auto:
+        live_mcp = []
+    # matching 命中（含自定义 server 名）→ 视为使用意图，不必写死在预制正则里
+    if live_mcp and not _mcp_cfg and not _mcp_use:
+        _mcp_use = True
+    if (
+        live_mcp
+        and "mcp" not in plan.packs
+        and "*" not in plan.packs
+        and (_auto or _mcp_use)
+    ):
+        plan.packs = list(plan.packs) + ["mcp"]
+        plan.reasons = list(plan.reasons) + [f"mcp_match:{len(live_mcp)}"]
+    # MCP 配置：assistant/core 加 manage_mcp，不加 mcp pack 的全量 live
+    if _mcp_cfg and not _auto:
+        plan.reasons = list(plan.reasons) + ["mcp_configure:manage_only"]
+
+    # 自定义可执行 skill/DB tool：matching-only 挂载（同类问题：只在 registry 却不在 pack）
+    live_custom = select_live_custom_tools(user_input, matching_only=True)
+    if live_custom:
+        plan.reasons = list(plan.reasons) + [f"custom_tool_match:{len(live_custom)}"]
 
     if wants_full_tools(raw_tools, profile=prof) or "*" in plan.packs or "full" in plan.packs:
         plan.profile = "full"
@@ -554,6 +736,17 @@ def resolve_enabled_tool_names(
     # 显式 tools 名单（非 *）
     if names is not None and len(names) > 0:
         base = set(names)
+        # 仅匹配后的 live（禁止 80+ schema）
+        if live_mcp and (
+            _mcp_use
+            or any(str(n).startswith("mcp_") for n in names)
+            or "manage_mcp" in names
+            or _auto
+        ):
+            base.update(live_mcp)
+        base.update(live_custom)
+        if _mcp_cfg:
+            base.add("manage_mcp")
         plan.reasons = list(plan.reasons) + ["explicit_tools"]
     else:
         packs = list(plan.packs)
@@ -564,10 +757,13 @@ def resolve_enabled_tool_names(
             for p in extra_packs:
                 if p and p not in packs:
                     packs.append(str(p).strip().lower())
-        # 空 packs → 仅 core 白名单
-        merged = tools_for_packs(packs)
+        # 空 packs → 仅 core 白名单；mcp pack 用匹配子集
+        merged = tools_for_packs(packs, mcp_names=live_mcp)
         base = set(merged)
         base.update(PROFILE_EXTRA_TOOLS.get(prof, ()))
+        base.update(live_custom)
+        if _mcp_cfg:
+            base.add("manage_mcp")
         if skills is not None and len(skills) > 0:
             if not (len(skills) == 1 and skills[0].lower() in {"*", "all"}):
                 base.update(skills)
@@ -588,12 +784,42 @@ def resolve_enabled_tool_names(
 def merge_tools_with_packs(
     current: list[str] | None,
     packs: Iterable[str],
+    *,
+    user_input: str = "",
+    mcp_names: Iterable[str] | None = None,
 ) -> list[str] | None:
-    """中途扩容：None(全量) 保持 None；否则并入 pack。"""
+    """中途扩容：None(全量) 保持 None；否则并入 pack。
+
+    Grok-style: pack ``mcp`` never dumps all live schemas — matching-only unless
+    ``agent_mcp_auto_attach_live`` is on.
+    """
     pack_list = [str(p).strip().lower() for p in packs if str(p).strip()]
     if any(p in {"*", "all", "full"} for p in pack_list):
         return None
-    added = tools_for_packs(pack_list)
+    selected_mcp: list[str] | None = None
+    if mcp_names is not None:
+        selected_mcp = [str(n) for n in mcp_names if str(n).strip()]
+    elif any(p in {"mcp", "integrations"} for p in pack_list):
+        try:
+            from backend.core.config import settings as _s
+
+            _auto = bool(getattr(_s, "agent_mcp_auto_attach_live", False))
+            _matching = bool(getattr(_s, "agent_mcp_matching_only", True))
+        except Exception:
+            _auto = False
+            _matching = True
+        try:
+            from backend.agent.simple_intent import select_live_mcp_tools
+
+            selected_mcp = select_live_mcp_tools(
+                user_input,
+                live_mcp_tool_names(),
+                matching_only=_matching,
+                auto_attach_all=_auto,
+            )
+        except Exception:
+            selected_mcp = list(live_mcp_tool_names()) if _auto else []
+    added = tools_for_packs(pack_list, mcp_names=selected_mcp)
     if current is None:
         return None
     return _order_tools(set(current) | set(added))
@@ -604,48 +830,53 @@ def compact_capability_brief(
     *,
     scene: ScenePlan | None = None,
 ) -> str:
-    """短 brief + 可选场景说明（compact 契约：总长 <600 字符）。"""
+    """短 brief + Tevarn 运行时纪律（注入每轮；宜短）。"""
     n = len(tool_names) if tool_names is not None else "all"
+    name_set = set(tool_names or []) if tool_names is not None else set()
     lines = [
-        "Tool discipline: use tools for facts/files/shell/live data "
-        f"(this turn: {n}). Never claim a missing capability before trying the matching tool.",
+        "Tevarn runtime: only tools listed this turn exist. "
+        f"Count={n}. Prefer specialized tools over shell.",
+        "Anti-thrash: if http/mcp already returned enough body, ANSWER now — "
+        "do not re-fetch alternate URLs. Progress chatter is not a final reply.",
+        "MCP: matching-only — user names a server/product (built-in OR any custom "
+        "already registered) → attach matching mcp_* only. Configure/install: "
+        "one-shot key for presets, else manage_mcp add/update (any command/env). "
+        "Custom executable skills: manage_skill create hot-registers; user names "
+        "skill → attach that tool only. Never invent unlisted MCP/skill tools.",
+        "Windows: cmd default; chain with &; dir not ls. "
+        "Paths outside workspace need host-allowed roots (APPDATA Tevarn/takton, install dir).",
         "Coding: read → edit/apply_patch/file_write → command/python verify. "
-        "Prefer one coherent multi-hunk apply_patch or full file_write over many tiny edits. "
-        "Never invent 'command unavailable' — command/python are on the list when coding. "
-        "After fix/build, run tests before claiming done. If a patch returns mismatch/error, re-read and re-patch.",
+        "Batch independent reads. After fix, run tests before claiming done.",
     ]
     if scene and scene.profile != "full":
         lines.append(
-            f"Profile/scene: {scene.summary()[:60]}. Need unlisted packs? "
-            "call use_tool_pack(action='enable', packs=[...]) ('list' to see)."
+            f"Profile/scene: {scene.summary()[:60]}. Need packs? "
+            "use_tool_pack(action='enable', packs=[...]) (action=list first)."
+        )
+    else:
+        lines.append(
+            "Need extra packs? use_tool_pack(action='list'|'enable', packs=[...])."
         )
     lines.append(
-        "Skill discipline: an installed skill matching the task MUST be followed/loaded before improvising."
+        "Skills: if a skill block/index matches the task, follow it before improvising."
     )
-    lines.append(
-        "cwd: session workspace_root (else TEVARN_TASK_ROOT); pass command.cwd for subdirs. "
-        "Prefer file_write/edit over heredoc; batch independent reads."
-    )
-    lines.append("Prefer tools over speculation; finish the task.")
-    # 仅当本轮工具面真有 crew_steward 时再注入编制纪律（避免普通会话被诱导派工）
-    name_set = set(tool_names or []) if tool_names is not None else set()
+    if "result_load" in name_set or tool_names is None:
+        lines.append("Large tool bodies may spill → result_load with the handle id.")
     if "crew_steward" in name_set:
         lines.append(
-            "Workforce: multi-step team projects → crew_steward list/hire/assign (inbox). "
-            "Simple Q&A / weather / trending / one-shot search / short facts: "
-            "answer yourself with tools in this session — do NOT hire/assign. "
-            "Do NOT spawn temp subagents for team work."
+            "Workforce: multi-step team → crew_steward list/hire/assign. "
+            "Simple Q&A/search: answer in-session, do NOT hire/assign."
         )
-    if tool_names is not None and "okr_goal" in name_set:
+    if "okr_goal" in name_set or tool_names is None:
         lines.append(
-            "Business goals (目标页 O-KR): use okr_goal list/update/create. "
-            "Do NOT use manage_goal (session todos) or grep the repo for goals."
+            "Business goals (目标页 O-KR): okr_goal. Session todos: manage_goal. "
+            "Do not grep the repo for goals."
         )
-    if tool_names is None:
-        # full-tools 模式：仍提示 okr，但不默认推派工
+    if "manage_mcp" in name_set:
         lines.append(
-            "Business goals (目标页 O-KR): use okr_goal list/update/create when relevant."
+            "MCP configure: manage_mcp for keys/reload; do not dump secrets into workspace files."
         )
+    lines.append("Finish with a real deliverable, not a promise to act next turn.")
     return "\n".join(lines)
 
 
@@ -670,6 +901,7 @@ def injection_knobs(tier: str) -> dict[str, object]:
     """注入档位 → loop / prompt-skill / RAG 开关与阈值。"""
     t = (tier or "standard").strip().lower()
     if t == "minimal":
+        # 轻环仍不塞全文 skill，但保留短目录，避免「已装 skill 完全不可见」
         return {
             "rag": False,
             "wiki": False,
@@ -678,7 +910,7 @@ def injection_knobs(tier: str) -> dict[str, object]:
             "wiki_limit": 0,
             "entity_limit": 0,
             "rag_min_score": 0.85,
-            "prompt_skills": False,
+            "prompt_skills": True,
             "skill_mode": "summary",
             "skill_threshold": 9.0,
             "skill_max_full": 0,
@@ -699,7 +931,7 @@ def injection_knobs(tier: str) -> dict[str, object]:
             "skill_max_full": 2,
             "wiki_min_score": 0.12,
         }
-    # standard：宁缺毋滥
+    # standard：阈值贴近 settings 默认 0.85，避免 0.95 饿死非点名全文
     return {
         "rag": True,
         "wiki": True,
@@ -710,7 +942,7 @@ def injection_knobs(tier: str) -> dict[str, object]:
         "rag_min_score": 0.58,
         "prompt_skills": True,
         "skill_mode": "auto",
-        "skill_threshold": 0.95,
+        "skill_threshold": 0.85,
         "skill_max_full": 1,
         "wiki_min_score": 0.2,
     }

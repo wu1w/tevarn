@@ -14,57 +14,27 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _logger = logging.getLogger(__name__)
 
-
-def _bootstrap_legacy_env() -> None:
-    """Map TAKTON_* → TEVARN_* so older installs / shells keep working.
-
-    New code and Electron inject TEVARN_*. Legacy TAKTON_* is copied only when
-    the TEVARN_ counterpart is unset.
-    """
-    try:
-        legacy = [(k, v) for k, v in os.environ.items() if k.startswith("TAKTON_")]
-        for k, v in legacy:
-            nk = "TEVARN_" + k[len("TAKTON_") :]
-            if nk not in os.environ or not str(os.environ.get(nk) or "").strip():
-                os.environ[nk] = v
-        # Home dir: prefer TEVARN_HOME, else TAKTON_HOME, else migrate ~/.takton
-        if not (os.environ.get("TEVARN_HOME") or "").strip():
-            old = (os.environ.get("TAKTON_HOME") or "").strip()
-            if old:
-                os.environ["TEVARN_HOME"] = old
-            else:
-                home = Path.home()
-                tevarn = home / ".tevarn"
-                takton = home / ".takton"
-                if not tevarn.exists() and takton.exists():
-                    os.environ["TEVARN_HOME"] = str(takton)
-    except Exception:
-        pass
-
-
-_bootstrap_legacy_env()
-
 # 公开仓库中出现过的已知弱密钥（显式设置这些值一律拒绝）
 _KNOWN_WEAK_SECRETS = frozenset({
     "change-me",
     "change-me-in-production",
     "nexus-api-key-change-me",
-    "tevarn-dev-secret-key-2026",
-    "tevarn-dev-api-key-2026",
+    "takton-dev-secret-key-2026",
+    "takton-dev-api-key-2026",
 })
 
 
 def _secrets_file_path() -> Path:
-    override = os.environ.get("TEVARN_SECRETS_FILE", "").strip()
+    override = os.environ.get("TAKTON_SECRETS_FILE", "").strip()
     if override:
         return Path(override)
-    return Path.home() / ".tevarn" / "secrets.json"
+    return Path.home() / ".takton" / "secrets.json"
 
 
 def _load_or_generate_secret(kind: str) -> str:
     """首次启动生成随机密钥并持久化到本地文件，之后复用（重启后已签发 token 不失效）。
 
-    环境变量（TEVARN_JWT_SECRET 等）由 pydantic 优先于 default_factory 处理，
+    环境变量（TAKTON_JWT_SECRET 等）由 pydantic 优先于 default_factory 处理，
     本函数只兜底"未配置环境变量"的场景，保证默认值不再是源码里的已知字符串。
     """
     path = _secrets_file_path()
@@ -107,7 +77,7 @@ def get_or_create_initial_admin_password() -> str:
         os.chmod(path, 0o600)
         _logger.warning(
             "Initial admin password generated and written to %s — "
-            "log in with admin@tevarn.dev and change it immediately",
+            "log in with admin@takton.dev and change it immediately",
             path,
         )
         return pw
@@ -172,21 +142,84 @@ def _settings_env_file() -> str | None:
     leaves a .env next to resources or the portable exe. Product secrets live in
     Electron userData (secrets.json + encrypted DB settings).
 
-    - TEVARN_ENV_FILE=/path  → explicit only
-    - TEVARN_PACKAGED=1      → no dotenv
-    - TEVARN_LOAD_DOTENV=0   → no dotenv
+    - TAKTON_ENV_FILE=/path  → explicit only
+    - TAKTON_PACKAGED=1      → no dotenv
+    - TAKTON_LOAD_DOTENV=0   → no dotenv
     - else                   → ``.env`` (source-tree / start.py convenience)
     """
-    explicit = (os.environ.get("TEVARN_ENV_FILE") or "").strip()
+    explicit = (os.environ.get("TAKTON_ENV_FILE") or "").strip()
     if explicit:
         return explicit
-    packaged = (os.environ.get("TEVARN_PACKAGED") or "").strip().lower()
+    packaged = (os.environ.get("TAKTON_PACKAGED") or "").strip().lower()
     if packaged in ("1", "true", "yes", "on"):
         return None
-    load = (os.environ.get("TEVARN_LOAD_DOTENV") or "1").strip().lower()
+    load = (os.environ.get("TAKTON_LOAD_DOTENV") or "1").strip().lower()
     if load in ("0", "false", "no", "off"):
         return None
     return ".env"
+
+
+def _sqlite_url_for_path(path: Path) -> str:
+    """Build aiosqlite URL for an absolute path (Windows-safe)."""
+    s = str(path.expanduser().resolve()).replace("\\", "/")
+    # Absolute Windows path: sqlite+aiosqlite:///C:/Users/...
+    return f"sqlite+aiosqlite:///{s}"
+
+
+def _default_db_url() -> str:
+    """Stable user-data SQLite; never cwd ``./takton.db`` under install resources.
+
+    Desktop should inject ``TAKTON_DB_URL``; this fallback stops the backend from
+    creating an empty MCP/session DB next to the packaged resources when cwd is
+    ``Programs/Tevarn/resources``. Prefer an existing Tevarn/takton user DB.
+    """
+    appdata = (os.environ.get("APPDATA") or os.environ.get("LOCALAPPDATA") or "").strip()
+    home = Path.home()
+    candidates: list[Path] = []
+    if appdata:
+        ad = Path(appdata)
+        candidates.extend(
+            [
+                ad / "Tevarn" / "data" / "tevarn.db",
+                ad / "Tevarn" / "data" / "takton.db",
+                ad / "takton" / "data" / "takton.db",
+                ad / "Takton" / "data" / "takton.db",
+            ]
+        )
+    # Explicit product home env (optional)
+    for env_key in ("TEVARN_HOME", "TAKTON_HOME"):
+        raw = (os.environ.get(env_key) or "").strip()
+        if not raw:
+            continue
+        base = Path(raw)
+        if base.name.lower() == "data":
+            candidates.append(base / "tevarn.db")
+            candidates.append(base / "takton.db")
+        else:
+            candidates.append(base / "data" / "tevarn.db")
+            candidates.append(base / "data" / "takton.db")
+    candidates.extend(
+        [
+            home / ".tevarn" / "tevarn.db",
+            home / ".takton" / "takton.db",
+        ]
+    )
+    for p in candidates:
+        try:
+            if p.is_file() and p.stat().st_size > 0:
+                return _sqlite_url_for_path(p)
+        except OSError:
+            continue
+    # Product default: Tevarn userData (create parent only; sqlite creates file)
+    if appdata:
+        target = Path(appdata) / "Tevarn" / "data" / "tevarn.db"
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            return _sqlite_url_for_path(target)
+        except OSError:
+            pass
+    # Last resort: legacy relative (dev only)
+    return "sqlite+aiosqlite:///./takton.db"
 
 
 class Settings(BaseSettings):
@@ -196,27 +229,28 @@ class Settings(BaseSettings):
         env_file=_settings_env_file(),
         env_file_encoding="utf-8",
         extra="ignore",
-        env_prefix="TEVARN_",  # 桌面模式通过 TEVARN_* 环境变量注入
+        env_prefix="TAKTON_",  # 桌面模式通过 TAKTON_* 环境变量注入
         protected_namespaces=(),  # 允许 settings_encryption_salt 等含 "settings_" 前缀的字段名
         populate_by_name=True,  # 允许代码级 Settings(jwt_secret=...) 传参（alias 不屏蔽字段名）
     )
 
     # Database —— alpha 权威存储默认 SQLite（可离家 / 备份 / 工单状态机）
     # Redis 不是主库；见 docs/internal/STORAGE.md
-    db_url: str = "sqlite+aiosqlite:///./tevarn.db"
+    # 默认落用户数据目录（%APPDATA%/Tevarn/data/tevarn.db），避免 cwd=resources 时空库
+    db_url: str = Field(default_factory=_default_db_url)
 
     # Security
-    # 默认随机生成并持久化到 ~/.tevarn/secrets.json（可用 TEVARN_SECRETS_FILE 覆盖），
-    # 源码不再含已知默认密钥；alias 兼容旧变量名 TEVARN_SECRET_KEY（deprecated）。
+    # 默认随机生成并持久化到 ~/.takton/secrets.json（可用 TAKTON_SECRETS_FILE 覆盖），
+    # 源码不再含已知默认密钥；alias 兼容旧变量名 TAKTON_SECRET_KEY（deprecated）。
     jwt_secret: str = Field(
         default_factory=lambda: _load_or_generate_secret("jwt_secret"),
-        validation_alias=AliasChoices("TEVARN_JWT_SECRET", "TEVARN_SECRET_KEY"),
+        validation_alias=AliasChoices("TAKTON_JWT_SECRET", "TAKTON_SECRET_KEY"),
     )
     api_key: str = Field(
         default_factory=lambda: _load_or_generate_secret("api_key"),
-        validation_alias=AliasChoices("TEVARN_API_KEY"),
+        validation_alias=AliasChoices("TAKTON_API_KEY"),
     )
-    # Tevarn Code ↔ Desktop bridge 可选独立 Bearer token。
+    # Takton Code ↔ Desktop bridge 可选独立 Bearer token。
     # 留空 → 回落 get_current_user（single_user_mode 下 loopback 免 token）。
     # 设置后 → /bridge/v1/* 强制校验该 token（共享机/非 loopback 加固）。
     bridge_token: Optional[str] = None
@@ -231,16 +265,23 @@ class Settings(BaseSettings):
     # ChatGPT OAuth / Codex 订阅：部分请求需要 Account-Id 头
     openai_chatgpt_account_id: str = ""
 
-    # 出站 HTTPS 代理（可选覆盖）。常规用户更推荐系统/终端里设 HTTPS_PROXY；
-    # 此项仅在需要单独给 Tevarn 指定代理时使用。
+    # 出站 HTTPS 代理（完整 URL 覆盖，如 http://127.0.0.1:7890）。
+    # 设置页「代理」优先用下面的 enabled/host/port 结构化字段；此项作兼容/环境变量回落。
     outbound_https_proxy: str = Field(
         default="",
         validation_alias=AliasChoices(
+            "TAKTON_HTTPS_PROXY",
+            "TAKTON_OUTBOUND_PROXY",
             "TEVARN_HTTPS_PROXY",
             "TEVARN_OUTBOUND_PROXY",
             "outbound_https_proxy",
         ),
     )
+    # Windows 风格手动代理（设置页）：开关 + 类型 + 地址 + 端口
+    outbound_proxy_enabled: bool = False
+    outbound_proxy_scheme: str = "http"  # http | https | socks5 | socks5h
+    outbound_proxy_host: str = ""
+    outbound_proxy_port: int = 0
 
     # 新会话默认模型（学 hermes model.default）：独立选项，创建会话时快照用，
     # 与 provider 连接配置解耦；留空则用当前 provider 配置的 llm_model
@@ -249,14 +290,12 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.7
     # 思考强度：off | low | medium | high | max（按模型/供应商映射到 API 参数）
     reasoning_effort: str = "medium"
-    # Goal/code 长任务对本 run 的 reasoning_effort 封顶（防 high 思考刷屏；不改用户全局设置）
-    agent_goal_reasoning_effort_cap: str = "medium"
     # 当前模型上下文窗口（选模型时写入；用于截断/摘要/auto-optimize）
     context_window: int = 128000
     # Agent 多步工具循环上限（长链/编码任务需要更高，默认 40）
-    agent_max_iterations: int = 40
+    agent_max_iterations: int = 20
     # 聊天 run 快照是否落盘（跳页/崩溃后可恢复 partial；默认开）
-    # 落盘路径：~/.tevarn/run_snapshots/ — 本机可读，非多租户隔离（见 run_snapshot_store）
+    # 落盘路径：~/.takton/run_snapshots/ — 本机可读，非多租户隔离（见 run_snapshot_store）
     agent_run_snapshot_persist: bool = True
     # 落盘是否保留工具 result 全文（默认 False：截断 args/result，防共享机泄露）
     agent_run_snapshot_disk_full_tools: bool = False
@@ -265,12 +304,6 @@ class Settings(BaseSettings):
     max_tool_result_length: int = 12_000
     # 单次工具执行超时（秒）；0 = 不限制
     agent_tool_timeout_seconds: float = 180.0
-    # 连续工具超时 N 次后 force_final（不必等 thrash 指纹 2 轮）
-    agent_tool_timeout_force_final: int = 2
-    # 回合结束自动把高信号决策写入 memory_graph（无需模型主动 remember）
-    memory_auto_remember_chat: bool = True
-    # WebSocket 相同 user 短时去重窗口（秒）；0=关闭
-    chat_user_dedup_seconds: float = 8.0
     # T1：同一轮内的只读工具并发执行（system_prompt 的 PARALLEL_TOOL_CALLS 段
     # 已向模型承诺并发；此前实现是串行 for 循环）。整批含写类工具时自动退回串行。
     agent_tool_parallel: bool = True
@@ -278,8 +311,8 @@ class Settings(BaseSettings):
     # Kernel 控制平面：loop 运行纳入 AgentProcess 生命周期管理 + 中介审计。
     # 关闭后退回纯旧路径（不影响功能，仅失去 kernel 可观测性）。
     agent_kernel_enabled: bool = True
-    # Kernel 实现：rust = tevarn-kernel-host（默认倾向）；python = 进程内旧实现
-    # 也可由环境变量 TEVARN_KERNEL_BACKEND 覆盖
+    # Kernel 实现：rust = takton-kernel-host（默认倾向）；python = 进程内旧实现
+    # 也可由环境变量 TAKTON_KERNEL_BACKEND 覆盖
     agent_kernel_backend: str = "rust"
     # P0-B：无显式 capabilities 时禁止静默全开——默认只读 Intent（grantable）
     # 关闭则恢复兼容模式（capabilities=None 全放行）
@@ -322,7 +355,7 @@ class Settings(BaseSettings):
     agent_skill_sandbox: str = "auto"
     # ── Kernel 审计落盘（阶段 3）──
     agent_kernel_audit_persist: bool = True
-    # 空 = 默认 ~/.tevarn/kernel_events.jsonl
+    # 空 = 默认 ~/.takton/kernel_events.jsonl
     agent_kernel_audit_path: str = ""
     # 主进程能力显式化：开启后挂注册表全集快照（等效放行，
     # 但使 subagent 继承/narrow 生效）；Intent 最小权限落地的前置。
@@ -366,7 +399,7 @@ class Settings(BaseSettings):
     agent_dispatcher_max_identity_concurrent: int = 1
     # 异步兜底预算：身份未设默认预算时按此硬顶（0 = 显式不限，不推荐）
     agent_workforce_fallback_budget: int = 100_000
-    # 编制预算硬顶（CEO 显式 / 自动抬升上限）；可用环境 TEVARN_WORKFORCE_BUDGET_HARD_CAP 覆盖
+    # 编制预算硬顶（CEO 显式 / 自动抬升上限）；可用环境 TAKTON_WORKFORCE_BUDGET_HARD_CAP 覆盖
     agent_workforce_budget_hard_cap: int = 2_000_000
     # 编制 soft_renew：默认关（硬顶叙事）。长任务/marathon 可显式打开。
     # CEO/主会话不依赖此开关，走 chat_elastic 动态 top_up。
@@ -460,55 +493,6 @@ class Settings(BaseSettings):
     # 触顶 max_iterations 后是否自动开下一段
     agent_auto_continue: bool = True
     agent_auto_continue_max_segments: int = 5
-    # Goal 未完成时：模型无工具收工 → 本 run 内强制再续；run 结束后再开新 run
-    agent_goal_incomplete_keep_going: bool = True
-    agent_goal_incomplete_nudge_max: int = 16
-    # run 正常结束后若 Goal 仍 active，自动 resume 新一轮（防 text-only 假完成）
-    agent_goal_incomplete_auto_resume: bool = True
-    agent_goal_incomplete_auto_resume_max: int = 8
-    # P0/P1 progress guard
-    # Soft-open (default): no hard tool walls; model free to read/write/cargo.
-    # Only high-step converge nudges. Set agent_soft_open_mode=False to restore
-    # deliver/must_write/thrash force_final hard gates.
-    agent_soft_open_mode: bool = True
-    agent_converge_nudge_after: int = 16  # soft 「注意收束」after N tool rounds
-    agent_converge_nudge_every: int = 10  # re-nudge interval after first
-    agent_pure_read_nudge_after: int = 4  # pure-read rounds before soft write nudge
-    agent_pure_read_deliver_after: int = 99  # soft-open: never strip tools (was 4)
-    agent_manage_goal_cadence_rounds: int = 12  # soft-open: rare goal bookkeeping nudge
-    agent_result_load_thrash_after: int = 5  # same handle re-page thrash
-    agent_file_read_cap_deliver_mode: bool = False  # soft-open: no deliver strip on cap
-    agent_cargo_stub_auto_clean: bool = True  # metadata stub → cargo clean retry once
-    agent_ignore_diag_junk_paths: bool = True  # soft warn only under soft-open
-    agent_finalize_orphan_runs_on_idle: bool = True
-    # Empty-progress / cargo-fix (OpenHands + Codex-inspired)
-    agent_no_write_nudge_after: int = 6  # soft nudge only under soft-open
-    agent_same_path_reread_max: int = 8  # same path file_read cap per run
-    agent_cargo_fix_block_recheck: bool = False  # soft-open: allow re-check freely
-    # Thrash-hardening: defaults soft; hard walls only when soft_open_mode=False
-    agent_deliver_block_whole_file_grep: bool = False
-    agent_deliver_skip_for_audit: bool = True  # review/audit tasks don't strip file_read
-    agent_cargo_error_class_gate: bool = True  # only source E0xxx arms must_write *flag*
-    agent_block_probe_overwrite: bool = False  # soft-open: no hard block
-    agent_doom_handoff_enrich: bool = True  # short useful doom handoff
-    # Soft thrash / poll (no hard walls by default)
-    agent_process_poll_block_enabled: bool = False  # soft-open: no poll throttle block
-    agent_process_poll_min_interval_s: float = 8.0
-    agent_process_poll_max_while_running: int = 8
-    agent_process_poll_thrash: int = 12  # soft force_after when process-only
-    agent_next_action_menus: bool = False  # soft-open: less wall-y NEXT spam
-    agent_blocked_next_menu: bool = False  # alias; menus use agent_next_action_menus
-    agent_family_thrash_must_write_only_source: bool = True
-    agent_cwd_workspace_relative: bool = True
-    agent_block_install_tree_cwd: bool = True  # keep: security, not thrash theater
-    # After thrash/empty-stream exits: do NOT open a new segment / auto-resume.
-    # (Was False under soft-open → empty thrash could burn 5×40 iters.)
-    agent_no_autoresume_on_thrash: bool = True
-    agent_resume_soft_rules: bool = True
-    agent_progress_discipline_prompt: bool = False  # soft-open: less pre-scare
-    agent_goal_stall_force_final: bool = False  # soft-open: no stall hard stop
-    agent_thrash_force_final: bool = False  # soft-open: thrash → soft nudge only
-    agent_timid_force_final: bool = False  # soft-open: no timid hard stop
     # 每 N 个工具轮即使未超阈值也做一次 L1（防慢膨胀）
     agent_midloop_l1_every: int = 3
     # 单次 agent.run 墙钟上限（秒）；0 = 不限制
@@ -538,6 +522,8 @@ class Settings(BaseSettings):
     cluster_max_concurrent: int = 3
     # doom-loop：同工具+近似参数连续 thrash（默认 on，替代/增强 ToolRepeatGuard）
     agent_doom_loop_enabled: bool = True
+    # 连续相同指纹次数阈值（2=第二次相同即 trip；软提示仍由 tool_round 更早注入）
+    agent_doom_loop_threshold: int = 2
     # best-of-n：默认关；完整 fanout 依赖 worktree（Batch2）
     agent_best_of_n_enabled: bool = False
     # 用户消息中本地图片路径 → 多模态 parts
@@ -571,7 +557,7 @@ class Settings(BaseSettings):
     #   deny  —— 全拒绝（最严；无人值守只做只读也不行）
     agent_permission_headless: str = "safe"
     # 无前端 WS 时自动批准危险确认（CI / headless marathon）。默认关；
-    # 也可用环境变量 TEVARN_HEADLESS_AUTO_APPROVE=1 打开。
+    # 也可用环境变量 TAKTON_HEADLESS_AUTO_APPROVE=1 打开。
     agent_permission_auto_approve_no_fe: bool = False
     agent_permission_enabled: bool = True
     # T4 prompt caching：Volatile 层（秒级时间戳/记忆）不并入 messages[0] 的 system 块，
@@ -607,7 +593,7 @@ class Settings(BaseSettings):
     agent_computer_docker_image: str = "python:3.12-slim"
     agent_computer_ssh_host: str = ""      # user@host；空 = 未配置
     agent_computer_ssh_port: int = 22
-    agent_computer_ssh_workdir: str = "~/tevarn-ws"
+    agent_computer_ssh_workdir: str = "~/takton-ws"
     # 沙箱档位：off | workspace | read_only | strict（见 computer/profiles.py）
     agent_sandbox_profile: str = "workspace"
     # Grok-style allow/ask/deny 规则（字符串列表或 JSON）
@@ -630,7 +616,7 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from: str = ""
     smtp_use_tls: bool = True
-    # 写文件工具前自动快照到 .tevarn/checkpoints/
+    # 写文件工具前自动快照到 .takton/checkpoints/
     agent_file_checkpoint: bool = True
     # 搜索：有 Key 时 web_search/search 优先 Tavily
     tavily_api_key: str = ""
@@ -639,26 +625,23 @@ class Settings(BaseSettings):
     # 「读一下 NAS 上的文件」是核心用法，照搬服务端 SSRF 防护会把它拦死。
     # 云厂商元数据端点（169.254.169.254 等）无论此开关如何都硬拦，
     # 那些地址在个人设备上没有任何正当用途。
-    # 把 Tevarn 跑在服务器/共享主机上时建议设为 True。
+    # 把 Takton 跑在服务器/共享主机上时建议设为 True。
     agent_block_private_network: bool = False
 
     # Context engine (Claude Code–style pipeline + Hermes meter)
-    # 0.85 token gate; message-count pressure still forces earlier L5 (see compress_history_if_needed)
+    # 0.55：长会话更早压；旧 0.72 会拖到 ~10 万 prompt 才动手
     context_threshold_percent: float = 0.85  # audit-fix: 对齐主流 ~92% 策略，过早压缩导致长任务遗忘
     context_protect_first_n: int = 3
     context_protect_last_n: int = 8
     # 消息条数软/硬上限：超软限强制压；超硬限硬截断中间
-    # Tighter than 48/90 — tool thrash hits count long before token 85%
-    context_max_messages_soft: int = 40
-    context_max_messages_hard: int = 72
-    context_max_tool_output_chars: int = 6_000
-    # After L3 clear, keep at most this many mid-zone tool rows (drop older cleared)
-    context_l3_keep_mid_tools: int = 24
+    context_max_messages_soft: int = 48
+    context_max_messages_hard: int = 90
+    context_max_tool_output_chars: int = 8_000
     context_enable_l1: bool = True
     context_enable_l3: bool = True
     context_enable_l5: bool = True
-    # 工具轮中消息过多时允许偶发 L5（每 N 个 tool round 最多 1 次；极端 bloat 每轮）
-    context_midloop_l5_every_rounds: int = 2
+    # 工具轮中消息过多时允许偶发 L5（每 N 个 tool round 最多 1 次）
+    context_midloop_l5_every_rounds: int = 4
     # 空 = 使用主 LLM；可单独指定便宜模型做 L5 摘要
     context_compress_model: str = ""
     # 用户说「直接执行/按我说的」时禁用 clarify
@@ -668,19 +651,41 @@ class Settings(BaseSettings):
     # 连续「编制主导 / result_load 主导」轮次 → force_final（参数不同也会收）
     # PR4: 收紧到 2（滑动窗口仍由 Rust loop_guard 权威）
     agent_orch_thrash_force_final: int = 2
+    # Interactive chat：command/shell 族 thrash 硬停（不依赖完全相同参数）
+    # 工程 write_intent / workforce 不受影响；对齐 Claude/Codex 早停而非 soft nudge 拖轮
+    agent_thrash_force_final_interactive: bool = True
+    # Grok: family thrash always on; thresholds = consecutive same-family rounds
+    agent_command_family_force_after: int = 3
+    agent_command_family_force_after_ops: int = 6
+    agent_command_family_force_after_eng: int = 8
+    # http/web 换 URL 空转：第 2 轮同族即收束（force_after=1 → streak>=1）
+    agent_http_fetch_force_after: int = 1
+    agent_probe_force_after: int = 2
+    # 轻意图降档：L0/L1 跳过 engineering + steward full-open，压 max_iters
+    # Grok-style hard caps: chat 8 / ops 12 / coding 20（防空转拉长）
+    agent_light_intent_downgrade: bool = True
+    agent_light_l0_max_iters: int = 8
+    agent_light_l1_max_iters: int = 10
+    # L2 运维中档 max_iters
+    agent_ops_l2_max_iters: int = 12
+    # chat 历史硬顶
+    agent_chat_history_hard_cap: int = 40
+    agent_ops_history_hard_cap: int = 48
+    # live MCP 全量 schema：默认关
+    agent_mcp_auto_attach_live: bool = False
+    # MCP 仅匹配产品名
+    agent_mcp_matching_only: bool = True
     # 单轮最多执行的编制类工具（crew_steward/delegate/agent_call…），多余跳过
-    # Soft-open default: generous; set agent_soft_open_mode=False + lower values to tighten
-    agent_max_orch_tools_per_round: int = 16
+    # PR4 / Grok-style: default 1
+    agent_max_orch_tools_per_round: int = 1
     # PR1–PR4 loop_guard（Rust 权威；Python bridge 降级）
     agent_loop_guard_enabled: bool = True
     # 实现类 worker 工具轮硬顶（0=用 role 默认 20）
     agent_worker_max_tool_rounds: int = 20
     # 调研类 worker 工具轮硬顶（0=用 thoroughness 默认）
     agent_research_max_tool_rounds: int = 0
-    # 主会话/管家 crew_steward 成功次数上限（soft-open: 高；0=用 role 默认再被 soft 抬高）
-    agent_crew_steward_max_per_run: int = 999
-    # Soft-open: ignore orch_window_thrash force_final from Rust begin_round
-    agent_orch_window_force_final: bool = False
+    # 主会话/管家 crew_steward 成功次数上限
+    agent_crew_steward_max_per_run: int = 3
     # Token 使用比 ≥ 此值 → force_final（对齐 Codex turn 收束）
     agent_budget_force_ratio: float = 0.85
     # 编制回调写入 CEO 会话的正文上限
@@ -768,7 +773,7 @@ class Settings(BaseSettings):
 
     # Application
     # Default loopback. Desktop Electron uses 127.0.0.1 + single_user so security_check passes.
-    # LAN / mobile pair: TEVARN_APP_HOST=0.0.0.0 requires TEVARN_SINGLE_USER_MODE=false
+    # LAN / mobile pair: TAKTON_APP_HOST=0.0.0.0 requires TAKTON_SINGLE_USER_MODE=false
     # (Electron auto-sets single_user=false when host is non-loopback unless overridden).
     app_host: str = "127.0.0.1"
     # 产品 / Next dev 代理默认后端端口（与 next.config rewrites、前端 resolveWsBaseUrl 对齐）
@@ -778,12 +783,12 @@ class Settings(BaseSettings):
     settings_encryption_salt: str = ""
     # 文件浏览器 / Agent 工具工作区根目录
     # 默认 "." = 项目根（编码助手可读 backend/ 等）；桌面模式由 Electron 注入 userData/workspace
-    # 相对路径相对项目根解析；也可用环境变量 TEVARN_FILE_BROWSER_ROOT 覆盖
+    # 相对路径相对项目根解析；也可用环境变量 TAKTON_FILE_BROWSER_ROOT 覆盖
     file_browser_root: str = "."
     # 上传目录（桌面模式由 Electron 注入 userData/uploads）
     uploads_dir: str = ""
     # 单用户模式默认管理员密码（仅首次创建用户时使用；桌面由 Electron 注入随机值）。
-    # 留空（默认）→ 首次创建用户时随机生成并写入 ~/.tevarn/initial_admin_password（0600）。
+    # 留空（默认）→ 首次创建用户时随机生成并写入 ~/.takton/initial_admin_password（0600）。
     default_admin_password: str = ""
     # Electron 主进程与其拉起的后端共享；配置后 renderer 不能直接授予桌面权限。
     desktop_permission_secret: str = ""
@@ -791,8 +796,8 @@ class Settings(BaseSettings):
     single_user_mode: bool = True
     # 允许的跨源 Origin（空格/逗号分隔）。默认空 = 只放行 loopback，
     # 覆盖 Electron 与 next dev，零配置即可用。
-    # 把 Tevarn 开给局域网或自建域名时在这里加，例如：
-    #   TEVARN_CORS_ALLOWED_ORIGINS="https://tevarn.mylan.home http://192.168.1.9:3000"
+    # 把 Takton 开给局域网或自建域名时在这里加，例如：
+    #   TAKTON_CORS_ALLOWED_ORIGINS="https://takton.mylan.home http://192.168.1.9:3000"
     # 设为 "*" 等于关闭跨源保护 —— 配合 single_user_mode 会让任意网页拿到 admin，
     # 只在你清楚后果时使用。
     cors_allowed_origins: str = ""
@@ -804,10 +809,10 @@ class Settings(BaseSettings):
     @model_validator(mode="before")
     @classmethod
     def _warn_legacy_env_names(cls, data):
-        """旧变量名 TEVARN_SECRET_KEY 仍生效但告警，引导迁移到 TEVARN_JWT_SECRET。"""
-        if isinstance(data, dict) and "TEVARN_SECRET_KEY" in data:
+        """旧变量名 TAKTON_SECRET_KEY 仍生效但告警，引导迁移到 TAKTON_JWT_SECRET。"""
+        if isinstance(data, dict) and "TAKTON_SECRET_KEY" in data:
             _logger.warning(
-                "TEVARN_SECRET_KEY is deprecated; please rename to TEVARN_JWT_SECRET"
+                "TAKTON_SECRET_KEY is deprecated; please rename to TAKTON_JWT_SECRET"
             )
         return data
 
@@ -819,13 +824,13 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"{info.field_name} is using a known insecure default value. "
                 f"Please set a strong random value via environment variable "
-                f"(e.g. TEVARN_{info.field_name.upper()})."
+                f"(e.g. TAKTON_{info.field_name.upper()})."
             )
         return v
 
     @model_validator(mode="after")
     def _apply_aios_dev_profile(self):
-        """TEVARN_AIOS_PROFILE=aios-dev：打开编制/派活相关开关（Redis 仍默认关）。"""
+        """TAKTON_AIOS_PROFILE=aios-dev：打开编制/派活相关开关（Redis 仍默认关）。"""
         profile = (self.aios_profile or "").strip().lower()
         if profile != "aios-dev":
             return self

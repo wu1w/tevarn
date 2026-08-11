@@ -189,11 +189,11 @@ class OpenAICompatibleService(LLMService):
         except Exception:
             key_on = True
         if getattr(prof, "openai_prompt_cache_key", False) and key_on:
-            # Prefer session-stable key (tevarn:{session_id}); hash only as last resort.
+            # Prefer session-stable key (takton:{session_id}); hash only as last resort.
             key = str(self.prompt_cache_key or "").strip()
-            if key and not key.startswith("tevarn:") and len(key) >= 32:
+            if key and not key.startswith("takton:") and len(key) >= 32:
                 # bare session uuid from older callers → normalize
-                key = f"tevarn:{key[:32]}"
+                key = f"takton:{key[:32]}"
             if not key:
                 try:
                     import hashlib
@@ -228,7 +228,7 @@ class OpenAICompatibleService(LLMService):
                 enabled=True,
                 mark_tools=False,
             )
-            payload["_tevarn_explicit_cache"] = True
+            payload["_takton_explicit_cache"] = True
 
         if getattr(prof, "tools_before_system", False):
             reorder_tools_before_system_messages(payload)
@@ -254,21 +254,30 @@ class OpenAICompatibleService(LLMService):
         if "kimi.com/coding" in b or "api.kimi.com/coding" in b:
             aliases = {
                 "k3": "kimi-for-coding",
+                "k3-256k": "kimi-for-coding",
+                "k3_256k": "kimi-for-coding",
                 "kimi-k3": "kimi-for-coding",
                 "kimi_k3": "kimi-for-coding",
+                "kimi-k3-256k": "kimi-for-coding",
                 "k3-highspeed": "kimi-for-coding-highspeed",
                 "k3_highspeed": "kimi-for-coding-highspeed",
                 "k3-hs": "kimi-for-coding-highspeed",
+                "k3-256k-highspeed": "kimi-for-coding-highspeed",
             }
             key = m.lower()
             if key in aliases:
                 fixed = aliases[key]
-                logger.warning("Kimi Code model id %r mapped to %r", m, fixed)
+                logger.info("Kimi Code model id %r mapped to %r", m, fixed)
                 return fixed
             if m and m not in ("kimi-for-coding", "kimi-for-coding-highspeed"):
                 logger.warning("Kimi Code unexpected model %r; use kimi-for-coding", m)
                 return "kimi-for-coding"
         return m
+
+    @staticmethod
+    def resolve_effective_model_id(model: str, base_url: str) -> str:
+        """公开：选用名 → 上游实际 model id（供 UI / 快路径回显）。"""
+        return OpenAICompatibleService._normalize_model_id(model, base_url)
 
     def _get_headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -548,7 +557,7 @@ class OpenAICompatibleService(LLMService):
             pending_tool_ids.clear()
 
         # llama.cpp / 多数 chat template：system 只能出现在开头且通常只能一条。
-        # Tevarn 会注入多段 system（主 prompt + 工具说明 + 运行时注记）→ 400
+        # Takton 会注入多段 system（主 prompt + 工具说明 + 运行时注记）→ 400
         # 「System message must be at the beginning」。合并为单条置顶。
         system_parts: list[str] = []
         non_system: list[dict[str, Any]] = []
@@ -592,18 +601,19 @@ class OpenAICompatibleService(LLMService):
             payload["tool_choice"] = "auto"
         self._apply_profile_payload_hooks(payload, safe_messages)
         # Do not send internal flags to provider
-        payload.pop("_tevarn_explicit_cache", None)
+        payload.pop("_takton_explicit_cache", None)
 
         message_id = uuid.uuid4()
 
         if not stream:
             try:
-                from .http_session import ensure_session, request_timeout
+                from .http_session import ensure_session, request_proxy_kwargs, request_timeout
 
                 session = ensure_session(self)
                 async with session.post(
                     url, json=payload, headers=self._get_headers(),
                     timeout=request_timeout(),
+                    **request_proxy_kwargs(url),
                 ) as resp:
                     resp.raise_for_status()
                     data = await resp.json()
@@ -731,12 +741,13 @@ class OpenAICompatibleService(LLMService):
             return out
 
         try:
-            from .http_session import ensure_session, stream_timeout
+            from .http_session import ensure_session, request_proxy_kwargs, stream_timeout
 
             session = ensure_session(self)
             async with session.post(
                 url, json=payload, headers=self._get_headers(),
                 timeout=stream_timeout(),
+                **request_proxy_kwargs(url),
             ) as resp:
                 resp.raise_for_status()
                 # TCP 分片安全：不能把每个 chunk 当成完整 SSE 行（半行 JSON 会静默丢事件）

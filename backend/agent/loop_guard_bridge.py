@@ -28,16 +28,50 @@ def classify_role_kind(
     identity_role: str | None = None,
     instruction: str | None = None,
     payload: dict[str, Any] | None = None,
+    light_loop: bool = False,
+    ops_loop: bool = False,
 ) -> str:
-    """research | implement | steward | chat."""
+    """research | implement | steward | chat. Prefer Rust loop_guard_resolve_role."""
     pl = payload if isinstance(payload, dict) else {}
+    try:
+        import os
+
+        be = (os.environ.get("TAKTON_KERNEL_BACKEND") or "").strip().lower()
+        if be not in {"python", "py", "off", "0", "none"}:
+            from backend.kernel import get_kernel
+
+            k = get_kernel()
+            params = {
+                "workforce": bool(workforce),
+                "identity_name": identity_name or "",
+                "identity_role": identity_role or "",
+                "instruction": instruction or "",
+                "light_loop": bool(light_loop),
+                "ops_loop": bool(ops_loop),
+                "payload": pl,
+                "role_kind": pl.get("role_kind") or pl.get("role"),
+            }
+            r = None
+            if hasattr(k, "loop_guard_resolve_role"):
+                r = k.loop_guard_resolve_role(**params)
+            elif hasattr(k, "_call"):
+                r = k._call("loop_guard_resolve_role", params)
+            if isinstance(r, dict) and r.get("role_kind"):
+                rk = str(r.get("role_kind") or "").strip().lower()
+                if rk in ("research", "implement", "steward", "chat"):
+                    return rk
+    except Exception:
+        pass
+    # Python fallback (no force chat→steward)
+    if light_loop or ops_loop:
+        return "chat"
     explicit = str(pl.get("role_kind") or pl.get("role") or "").strip().lower()
     if explicit in ("research", "implement", "steward", "chat", "explore"):
         return "research" if explicit == "explore" else explicit
     blob = f"{identity_name or ''} {identity_role or ''}"
     if re.search(r"(研究|research|explore|分析师)", blob, re.I):
         return "research"
-    if re.search(r"(CEO|管家|steward|编制)", blob, re.I) and not workforce:
+    if re.search(r"(CEO|管家|steward|大管家)", blob, re.I) and not workforce:
         return "steward"
     instr = instruction or ""
     if workforce and _RESEARCH_HINT.search(instr):
@@ -69,13 +103,95 @@ def build_loop_guard_config(
     identity_role: str | None = None,
     instruction: str | None = None,
     payload: dict[str, Any] | None = None,
+    light_loop: bool = False,
+    ops_loop: bool = False,
+    max_iters: int | None = None,
+    harness_mode: str | None = None,
 ) -> dict[str, Any]:
+    """Build loop_guard config. Prefer full Rust plan; no Python force-steward."""
+    pl = payload if isinstance(payload, dict) else {}
+    try:
+        import os
+
+        be = (os.environ.get("TAKTON_KERNEL_BACKEND") or "").strip().lower()
+        if be not in {"python", "py", "off", "0", "none"}:
+            from backend.kernel import get_kernel
+
+            k = get_kernel()
+            params: dict[str, Any] = {
+                "workforce": bool(workforce),
+                "identity_name": identity_name or "",
+                "identity_role": identity_role or "",
+                "instruction": instruction or "",
+                "light_loop": bool(light_loop),
+                "ops_loop": bool(ops_loop),
+                "payload": pl,
+                "role_kind": pl.get("role_kind") or pl.get("role"),
+                "thoroughness": pl.get("thoroughness"),
+                "harness_mode": harness_mode
+                or pl.get("harness_mode")
+                or "",
+            }
+            if max_iters is not None:
+                params["max_iters"] = int(max_iters)
+            r = None
+            if hasattr(k, "loop_guard_resolve_role"):
+                r = k.loop_guard_resolve_role(**params)
+            elif hasattr(k, "_call"):
+                r = k._call("loop_guard_resolve_role", params)
+            if isinstance(r, dict) and r.get("role_kind"):
+                cfg = dict(r)
+                # settings overrides still apply
+                try:
+                    from backend.core.config import settings
+
+                    role = str(cfg.get("role_kind") or "")
+                    if role == "implement":
+                        ov = int(getattr(settings, "agent_worker_max_tool_rounds", 0) or 0)
+                        if ov > 0:
+                            cfg["max_tool_rounds"] = ov
+                    if role == "research":
+                        ov_r = int(
+                            getattr(settings, "agent_research_max_tool_rounds", 0) or 0
+                        )
+                        if ov_r > 0:
+                            cfg["max_tool_rounds"] = ov_r
+                    if role == "chat" and max_iters:
+                        cfg["max_tool_rounds"] = int(max_iters)
+                    elif role == "chat":
+                        cfg["max_tool_rounds"] = int(
+                            getattr(settings, "agent_light_l0_max_iters", 8) or 8
+                        )
+                    if not cfg.get("ban_worker_orch"):
+                        cap = int(
+                            getattr(settings, "agent_crew_steward_max_per_run", 0) or 0
+                        )
+                        if cap > 0:
+                            cfg["max_crew_total"] = cap
+                        orch = getattr(settings, "agent_max_orch_tools_per_round", None)
+                        if orch is not None:
+                            cfg["max_orch_per_round"] = max(0, int(orch))
+                    ratio = float(
+                        getattr(settings, "agent_budget_force_ratio", 0.85) or 0.85
+                    )
+                    if 0 < ratio <= 1:
+                        cfg["budget_force_ratio"] = ratio
+                except Exception:
+                    pass
+                if cfg.get("thoroughness") is None:
+                    cfg.pop("thoroughness", None)
+                return cfg
+    except Exception as e:
+        logger.debug("loop_guard_resolve_role fallback: %s", e)
+
     role = classify_role_kind(
         workforce=workforce,
         identity_name=identity_name,
         identity_role=identity_role,
         instruction=instruction,
         payload=payload,
+        light_loop=light_loop,
+        ops_loop=ops_loop,
     )
     thoroughness = resolve_thoroughness(payload, instruction)
     cfg: dict[str, Any] = {
@@ -84,16 +200,6 @@ def build_loop_guard_config(
         "thoroughness": thoroughness if role == "research" else None,
         "budget_force_ratio": 0.85,
     }
-    pl = payload if isinstance(payload, dict) else {}
-    if pl.get("max_tool_rounds") is not None:
-        try:
-            cfg["max_tool_rounds"] = int(pl["max_tool_rounds"])
-        except Exception:
-            pass
-    if pl.get("token_budget") is not None:
-        # not used by configure directly; budget comes from process
-        pass
-    # Defaults match Rust LoopGuardConfig::for_role
     if role == "research":
         th = thoroughness
         cfg["max_tool_rounds"] = {"quick": 6, "medium": 12, "very_thorough": 16}.get(
@@ -106,26 +212,22 @@ def build_loop_guard_config(
         cfg["max_orch_per_round"] = 0
         cfg["ban_worker_orch"] = True
     elif role == "implement":
-        # Scaffolding multi-crate projects needs more than 20 write rounds
-        cfg["max_tool_rounds"] = int(pl.get("max_tool_rounds") or 60)
-        cfg["max_file_reads"] = 80
+        cfg["max_tool_rounds"] = int((pl or {}).get("max_tool_rounds") or 20)
+        cfg["max_file_reads"] = 50
         cfg["max_crew_total"] = 0
         cfg["max_orch_per_round"] = 0
         cfg["ban_worker_orch"] = True
     elif role == "steward":
-        # Goal / coding steward: 40 was too low (file_write blocked mid-scaffold)
-        cfg["max_tool_rounds"] = int(pl.get("max_tool_rounds") or 100)
-        cfg["max_file_reads"] = int(pl.get("max_file_reads") or 80)
-        cfg["max_crew_total"] = 999
-        cfg["max_orch_per_round"] = 16
+        cfg["max_tool_rounds"] = 40
+        cfg["max_crew_total"] = 3
+        cfg["max_orch_per_round"] = 1
         cfg["ban_worker_orch"] = False
     else:
-        cfg["max_tool_rounds"] = int(pl.get("max_tool_rounds") or 80)
-        cfg["max_file_reads"] = int(pl.get("max_file_reads") or 80)
-        cfg["max_crew_total"] = 999
-        cfg["max_orch_per_round"] = 16
-        cfg["ban_worker_orch"] = False
-    # Settings overrides
+        cfg["max_tool_rounds"] = int(max_iters or 8)
+        cfg["max_file_reads"] = 16
+        cfg["max_crew_total"] = 0
+        cfg["max_orch_per_round"] = 0
+        cfg["ban_worker_orch"] = True
     try:
         from backend.core.config import settings
 
@@ -136,22 +238,11 @@ def build_loop_guard_config(
             ov_r = int(getattr(settings, "agent_research_max_tool_rounds", 0) or 0)
             if ov_r > 0 and role == "research":
                 cfg["max_tool_rounds"] = ov_r
-        # Chat/steward coding: align with goal iteration budget when higher
-        if role in ("chat", "steward"):
-            try:
-                goal_iters = int(
-                    getattr(settings, "agent_goal_max_iterations", 100) or 100
-                )
-            except Exception:
-                goal_iters = 100
-            try:
-                chat_iters = int(getattr(settings, "agent_max_iterations", 40) or 40)
-            except Exception:
-                chat_iters = 40
-            cfg["max_tool_rounds"] = max(
-                int(cfg.get("max_tool_rounds") or 40),
-                goal_iters,
-                chat_iters,
+        if role == "chat":
+            cfg["max_tool_rounds"] = int(
+                max_iters
+                or getattr(settings, "agent_light_l0_max_iters", 8)
+                or 8
             )
         cap = int(getattr(settings, "agent_crew_steward_max_per_run", 0) or 0)
         if cap > 0 and not cfg.get("ban_worker_orch"):
@@ -162,17 +253,6 @@ def build_loop_guard_config(
         ratio = float(getattr(settings, "agent_budget_force_ratio", 0.85) or 0.85)
         if 0 < ratio <= 1:
             cfg["budget_force_ratio"] = ratio
-        # Soft-open: never trip steward on tiny crew/orch caps (user: open walls)
-        try:
-            from backend.agent.progress_guard import soft_open_mode
-
-            if soft_open_mode() and not cfg.get("ban_worker_orch"):
-                cfg["max_crew_total"] = max(int(cfg.get("max_crew_total") or 0), 999)
-                cfg["max_orch_per_round"] = max(
-                    int(cfg.get("max_orch_per_round") or 0), 16
-                )
-        except Exception:
-            pass
     except Exception:
         pass
     if cfg.get("thoroughness") is None:
@@ -290,17 +370,7 @@ def pre_tool(process_id: str, tool: str, args: dict[str, Any] | None = None) -> 
     if isinstance(r, dict) and r.get("status"):
         return r
     # local fallback
-    st = _LOCAL.setdefault(
-        pid,
-        {
-            "config": {},
-            "tool_rounds": 0,
-            "crew_total": 0,
-            "trunc": {},
-            "file_reads": 0,
-            "path_reads": {},
-        },
-    )
+    st = _LOCAL.setdefault(pid, {"config": {}, "tool_rounds": 0, "crew_total": 0, "trunc": {}})
     cfg = st.get("config") or {}
     if cfg.get("ban_worker_orch") and name in _ORCH:
         return {
@@ -308,66 +378,11 @@ def pre_tool(process_id: str, tool: str, args: dict[str, Any] | None = None) -> 
             "code": "worker_orch_banned",
             "tool": name,
             "message": (
-                f"[LoopGuard] Worker jobs must not call {name}. "
-                "Finish the task and conclude; do not re-dispatch."
+                f"[LoopGuard] 子工单禁止再调用 {name}。请直接完成任务并给出结论，勿再派工。"
             ),
         }
     if name in ("file_read", "read"):
         path = str(a.get("path") or a.get("file") or a.get("file_path") or "")
-        # diag junk paths
-        try:
-            from backend.core.config import settings as _st
-            from backend.agent.progress_guard import is_diag_junk_path
-
-            if bool(getattr(_st, "agent_ignore_diag_junk_paths", True)) and path and is_diag_junk_path(path):
-                return {
-                    "status": "block",
-                    "code": "diag_junk_blocked",
-                    "tool": name,
-                    "message": (
-                        f"[LoopGuard] Ignore diagnostic junk path: {path}\n"
-                        "Do not read _cargo_*/_diag_*/_hello*; edit product sources or cargo check."
-                    ),
-                }
-        except Exception:
-            pass
-        mx_fr = int(cfg.get("max_file_reads") or 80)
-        fr = int(st.get("file_reads") or 0)
-        if mx_fr > 0 and fr >= mx_fr:
-            return {
-                "status": "block",
-                "code": "max_file_reads",
-                "tool": name,
-                "message": (
-                    f"[LoopGuard] file_read cap reached for this run ({mx_fr}). "
-                    "Prefer file_write/edit + cargo check + manage_goal; "
-                    "page large output with result_load."
-                ),
-            }
-        # Same-path re-read cap (Claude Code community pattern / OpenHands stuck)
-        if path:
-            try:
-                from backend.core.config import settings as _st2
-
-                _cap = max(1, int(getattr(_st2, "agent_same_path_reread_max", 3) or 3))
-            except Exception:
-                _cap = 3
-            _key = path.replace("\\", "/").lower()
-            _pr = st.setdefault("path_reads", {})
-            _cnt = int(_pr.get(_key) or 0)
-            has_offset = bool(a.get("offset") or a.get("start_line") or a.get("limit"))
-            # allow 1 extra if offset pagination
-            _eff = _cap + (1 if has_offset else 0)
-            if _cnt >= _eff:
-                return {
-                    "status": "block",
-                    "code": "same_path_reread",
-                    "tool": name,
-                    "message": (
-                        f"[LoopGuard] Same path read {_cnt} times: {path}\n"
-                        "Prefer file_write/edit from what you have, or narrow grep."
-                    ),
-                }
         has_offset = bool(a.get("offset") or a.get("start_line") or a.get("limit"))
         if path and st.get("trunc", {}).get(path) and not has_offset:
             return {
@@ -375,8 +390,8 @@ def pre_tool(process_id: str, tool: str, args: dict[str, Any] | None = None) -> 
                 "code": "truncated_reread_blocked",
                 "tool": name,
                 "message": (
-                    f"[LoopGuard] File already read truncated: {path}\n"
-                    "Do not re-read whole file; use offset/limit, grep, or result_load."
+                    f"[LoopGuard] 文件已截断读过：{path}\n"
+                    "禁止整文件重读。请用 offset/limit 或 grep。"
                 ),
             }
     return {"status": "allow", "process_id": pid}
@@ -414,26 +429,9 @@ def post_tool(
         )
         if isinstance(r, dict):
             return r
-        st = _LOCAL.setdefault(
-            pid,
-            {
-                "config": {},
-                "tool_rounds": 0,
-                "crew_total": 0,
-                "trunc": {},
-                "file_reads": 0,
-                "path_reads": {},
-            },
-        )
+        st = _LOCAL.setdefault(pid, {"config": {}, "tool_rounds": 0, "crew_total": 0, "trunc": {}})
         if name in _ORCH:
             st["crew_total"] = int(st.get("crew_total") or 0) + 1
-        if name in ("file_read", "read"):
-            st["file_reads"] = int(st.get("file_reads") or 0) + 1
-            path = str(a.get("path") or a.get("file") or a.get("file_path") or "")
-            if path:
-                _key = path.replace("\\", "/").lower()
-                _pr = st.setdefault("path_reads", {})
-                _pr[_key] = int(_pr.get(_key) or 0) + 1
         if truncated and name in ("file_read", "read"):
             path = str(a.get("path") or a.get("file") or a.get("file_path") or "")
             if path:
@@ -452,41 +450,27 @@ def budget_check(process_id: str) -> dict[str, Any]:
 
 
 def force_final_message(code: str, reason: str = "") -> str:
-    """System-only inject for force_final. Keep SHORT — never demand long inventories.
-
-    Long 已完成/未完成 reports get persisted as assistant body and replay on auto-resume.
-    Goal segment end must NOT sound like token budget exhaustion.
-    """
     if code in ("max_tool_rounds",):
         return (
-            "[Segment tool rounds exhausted] Cap reached; the next segment will "
-            "auto-resume with a fresh counter. No more tools this turn.\n"
-            "Visible reply to the user (in their language): a **clear progress "
-            "summary**, not a one-liner — cover:\n"
-            "1) What was completed this segment (concrete files/checks)\n"
-            "2) Goal/todo status and what remains\n"
-            "3) Recommended next steps for the following segment\n"
-            "Do NOT write long tool-call inventories, 'force-final reports', or "
-            "budget-scare essays. Do NOT leave the visible body empty."
+            "【强制收束·轮次上限】本工单工具轮次已达硬顶（对齐 Claude Code max_turns）。"
+            "下一轮禁止再调工具：用中文列出已完成/未完成、证据路径与卡点。"
             + (f" ({reason})" if reason else "")
         )
     if code in ("budget_ratio",):
-        # Real process token pressure (distinct from tool-round segment end)
         return (
-            "[Token budget low] Process token use is near the cap. "
-            "No more tools this turn; one or two sentences on the blocker — "
-            "no empty report frames or long status lists."
+            "【强制收束·预算 85%】Token 预算将尽。禁止再调工具；"
+            "立即给出当前结论与未完成项，勿写空报告框架。"
             + (f" ({reason})" if reason else "")
         )
     if code in ("orch_window_thrash", "crew_total_cap"):
         return (
-            "[Orch rounds end] Crew dispatch cap or sliding-window thrash hit. "
-            "No more crew_steward/delegate; briefly summarize existing job results."
+            "【强制收束·编制空转】编制/派工已达上限或滑动窗口 thrash。"
+            "禁止再 crew_steward/delegate：汇总已有工单结果给主人。"
             + (f" ({reason})" if reason else "")
         )
     return (
-        "[LoopGuard end] Tools disabled for this turn. "
-        "Short handoff in the user's language; no long inventories or status replay."
+        "【强制收束】LoopGuard 触发。"
+        "下一轮禁止工具，直接中文终答。"
         + (f" code={code} {reason}" if code or reason else "")
     )
 

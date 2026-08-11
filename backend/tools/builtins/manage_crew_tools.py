@@ -15,6 +15,37 @@ from backend.tools.builtins.self_config import ToolResult
 logger = logging.getLogger(__name__)
 
 
+def _sync_dynamic_skill_runtime(obj: Any, *, remove: bool = False) -> dict[str, Any]:
+    """DB skill 变更后热挂/卸载 ToolRegistry（对齐 manage_mcp 热同步）。"""
+    name = str(getattr(obj, "name", "") or "").strip()
+    if not name:
+        return {"ok": False, "error": "empty_name"}
+    try:
+        from backend.tools.registry import ToolRegistry
+
+        if remove or not bool(getattr(obj, "enabled", True)):
+            try:
+                ToolRegistry.unregister(name)
+            except Exception:
+                pass
+            return {"ok": True, "action": "unregistered", "name": name}
+        if bool(getattr(obj, "is_builtin", False)):
+            return {"ok": True, "action": "skip_builtin", "name": name}
+        from backend.skills.dynamic import DynamicSkill
+        from backend.tools.adapters.dynamic_adapter import DynamicSkillAdapter
+
+        try:
+            ToolRegistry.unregister(name)
+        except Exception:
+            pass
+        dynamic = DynamicSkill.from_db(obj)
+        ToolRegistry.register(DynamicSkillAdapter(dynamic))
+        return {"ok": True, "action": "registered", "name": name}
+    except Exception as e:
+        logger.warning("dynamic skill runtime sync failed name=%s: %s", name, e)
+        return {"ok": False, "error": str(e), "name": name}
+
+
 # ── 子代理 ──
 
 class ManageSubAgent(BaseTool):
@@ -311,7 +342,12 @@ class ManageSkill(BaseTool):
                     "enabled": bool(kwargs.get("enabled", True)),
                     "is_builtin": False,
                 })
-                return ToolResult(success=True, data=self._to_dict(obj), message=f"✅ 技能 `{name}` 已创建")
+                rt = _sync_dynamic_skill_runtime(obj)
+                return ToolResult(
+                    success=True,
+                    data={**self._to_dict(obj), "runtime": rt},
+                    message=f"✅ 技能 `{name}` 已创建并热挂载到工具表",
+                )
             except Exception as e:
                 return ToolResult(success=False, data={}, message=f"❌ 创建失败: {e}")
 
@@ -341,7 +377,12 @@ class ManageSkill(BaseTool):
                 if not patch:
                     return ToolResult(success=False, data={}, message="update 至少需要提供一项更新")
                 obj = await repo.update(obj.id, patch)
-                return ToolResult(success=True, data=self._to_dict(obj), message=f"✅ 技能 `{obj.name}` 已更新")
+                rt = _sync_dynamic_skill_runtime(obj) if obj else {"ok": False}
+                return ToolResult(
+                    success=True,
+                    data={**(self._to_dict(obj) if obj else {}), "runtime": rt},
+                    message=f"✅ 技能 `{obj.name if obj else ''}` 已更新并热同步",
+                )
             except ValueError as e:
                 return ToolResult(success=False, data={}, message=str(e))
             except Exception as e:
@@ -354,8 +395,15 @@ class ManageSkill(BaseTool):
                     return ToolResult(success=False, data={}, message="技能不存在")
                 if obj.is_builtin:
                     return ToolResult(success=False, data={}, message="内置技能不允许删除，可用 disable 禁用")
+                sid = str(obj.id)
+                sname = obj.name
                 await repo.delete(obj.id)
-                return ToolResult(success=True, data={"skill_id": str(obj.id)}, message=f"✅ 技能 `{obj.name}` 已删除")
+                rt = _sync_dynamic_skill_runtime(obj, remove=True)
+                return ToolResult(
+                    success=True,
+                    data={"skill_id": sid, "name": sname, "runtime": rt},
+                    message=f"✅ 技能 `{sname}` 已删除并卸载工具",
+                )
             except ValueError as e:
                 return ToolResult(success=False, data={}, message=str(e))
             except Exception as e:
@@ -368,10 +416,15 @@ class ManageSkill(BaseTool):
                     return ToolResult(success=False, data={}, message="技能不存在")
                 new_enabled = action == "enable"
                 obj = await repo.toggle_skill(obj.id, new_enabled)
+                rt = (
+                    _sync_dynamic_skill_runtime(obj)
+                    if obj is not None
+                    else {"ok": False}
+                )
                 return ToolResult(
                     success=True,
-                    data=self._to_dict(obj) if obj else {"enabled": new_enabled},
-                    message=f"✅ 技能已{'启用' if new_enabled else '禁用'}",
+                    data={**(self._to_dict(obj) if obj else {"enabled": new_enabled}), "runtime": rt},
+                    message=f"✅ 技能已{'启用并热挂载' if new_enabled else '禁用并卸载'}",
                 )
             except ValueError as e:
                 return ToolResult(success=False, data={}, message=str(e))

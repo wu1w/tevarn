@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 import time as _time
 import uuid
 from dataclasses import dataclass
@@ -45,31 +44,9 @@ class ToolRoundState:
     # 工具空转：相同指纹连续轮次
     thrash_streak: int = 0
     last_tool_fingerprint: str = ""
-    # ABAB 交替空转（file_write helper → command → 再写脚本…）
-    last_tool_name_sig: str = ""
-    alternate_thrash_streak: int = 0
     # audit-fix(#5)：同一工具名连续失败熔断（不论参数）
     last_failed_tool: str = ""
     same_tool_fail_streak: int = 0
-    # Outer/inner timeouts — force final after N (default 2), don't wait thrash×2
-    timeout_fail_streak: int = 0
-    # User asked to write files but model only explores (glob/command/read)
-    explore_only_streak: int = 0
-    write_intent_hard_nudge: bool = False
-    # Toolchain diagnosis thrash (where cargo / rustup / Missing manifest / _diag)
-    rust_diag_streak: int = 0
-    # P0/P1 progress guard
-    deliver_mode: bool = False  # file_read cap / pure-read → write+cargo only
-    pure_read_streak: int = 0
-    rounds_since_manage_goal: int = 0
-    rounds_since_write: int = 0
-    result_load_same_streak: int = 0
-    last_result_handle: str = ""
-    # cargo compile fail → must write before another check
-    cargo_fix_streak: int = 0
-    must_write_before_cargo: bool = False
-    cargo_error_paths: str = ""  # comma-joined
-    cargo_error_class: str = ""  # compile_source | path_env | …
     # simple-session turn: block re-adding crew via use_tool_pack
     simple_turn: bool = False
 
@@ -231,19 +208,18 @@ async def run_tool_round(
     # 编制扇出上限：实测一轮 7–10 个 crew_steward 空转；超出合成结果，仍回 tool 消息。
     # PR4: default max_orch=1; Rust loop_guard is authoritative for workers.
     _capped_results: dict[str, str] = {}
-    # Hard gate: simple/solo turn never executes dispatch or goal tools even if schema leaked.
+    # Hard gate: simple_turn never executes dispatch tools even if schema leaked.
     # Does NOT require tool_call_id — synthesize a stable key when missing.
     if state.simple_turn:
         try:
             from backend.agent.simple_intent import (
                 DISPATCH_TOOL_NAMES,
                 SIMPLE_NOTE_MARKER,
-                SOLO_STRIP_TOOLS,
             )
 
             for tc in tool_calls or []:
                 _tn = str(getattr(tc, "name", "") or "")
-                if _tn not in SOLO_STRIP_TOOLS:
+                if _tn not in DISPATCH_TOOL_NAMES:
                     continue
                 _cid = str(getattr(tc, "id", "") or "").strip()
                 if not _cid:
@@ -253,8 +229,8 @@ async def run_tool_round(
                     except Exception:
                         pass
                 _capped_results[_cid] = (
-                    f"[simple_turn] tool '{_tn}' denied — "
-                    "answer in-session only (no crew/manage_goal/okr)."
+                    f"[simple_turn] dispatch tool '{_tn}' denied — "
+                    "answer in-session only (no crew_steward/delegate)."
                 )
                 logger.warning(
                     "simple_turn hard-deny tool=%s id=%s session=%s",
@@ -262,19 +238,19 @@ async def run_tool_round(
                     _cid,
                     session_id,
                 )
-            # If the whole round was only stripped tools, nudge model to final answer
+            # If the whole round was only dispatch tools, nudge model to final answer
             # (do NOT force_final — web_search etc. may still be needed next round).
             if tool_calls and all(
-                str(getattr(tc, "name", "") or "") in SOLO_STRIP_TOOLS
+                str(getattr(tc, "name", "") or "") in DISPATCH_TOOL_NAMES
                 for tc in tool_calls
             ):
                 messages.append(
                     {
                         "role": "system",
                         "content": (
-                            f"{SIMPLE_NOTE_MARKER} Orchestration/goal tools were denied this turn. "
-                            "Answer from existing info or file_read/web_search/current_time; "
-                            "do not call crew/delegate/manage_goal again."
+                            f"{SIMPLE_NOTE_MARKER} 本轮编排工具已全部拒绝。"
+                            "请仅用已有信息或 web_search/current_time 直接最终作答，"
+                            "禁止再调用 crew/delegate。"
                         ),
                     }
                 )
@@ -282,24 +258,16 @@ async def run_tool_round(
             logger.debug("simple_turn hard-deny skip: %s", _st_e)
     try:
         from backend.agent.decisive import orchestration_cap_results
-        from backend.agent.progress_guard import soft_open_mode as _so_orch
 
-        # Soft-open: do not skip crew/delegate mid-round (was max=1 → false 编制上限)
-        if _so_orch():
-            _max_orch = int(
-                getattr(settings, "agent_max_orch_tools_per_round", 16) or 16
-            )
-            _max_orch = max(_max_orch, 16)
-        else:
-            _max_orch = int(
-                getattr(settings, "agent_max_orch_tools_per_round", 1) or 1
-            )
-        _orch_skip = orchestration_cap_results(tool_calls, max_orch=_max_orch)
-        _capped_results = {**_capped_results, **_orch_skip}
-        if _orch_skip:
+        _max_orch = int(getattr(settings, "agent_max_orch_tools_per_round", 1) or 1)
+        _capped_results = {
+            **_capped_results,
+            **orchestration_cap_results(tool_calls, max_orch=_max_orch),
+        }
+        if _capped_results:
             logger.warning(
                 "orchestration cap: skipped %s crew/delegate calls (max=%s) session=%s",
-                len(_orch_skip),
+                len(_capped_results),
                 _max_orch,
                 session_id,
             )
@@ -358,73 +326,29 @@ async def run_tool_round(
             # audit-fix: sync kernel RPC → to_thread，避免阻塞事件循环
             _br = await asyncio.to_thread(begin_round, _kpid_lg, _names)
             if isinstance(_br, dict) and _br.get("status") == "force_final":
-                _br_code = str(_br.get("code") or "max_tool_rounds")
-                # Soft-open: orch_window_thrash / crew caps must not hard-stop steward
-                _soft_orch_ff = False
-                try:
-                    from backend.agent.progress_guard import soft_open_mode as _so_br
-                    from backend.core.config import settings as _st_br
-
-                    if _so_br() and _br_code in (
-                        "orch_window_thrash",
-                        "crew_total_cap",
-                        "orch_per_round_cap",
-                    ):
-                        _soft_orch_ff = True
-                    if (
-                        _so_br()
-                        and not bool(
-                            getattr(_st_br, "agent_orch_window_force_final", False)
+                state.force_final_no_tools = True
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": force_final_message(
+                            str(_br.get("code") or "max_tool_rounds"),
+                            str(_br.get("reason") or ""),
+                        ),
+                    }
+                )
+                logger.warning(
+                    "loop_guard begin_round force_final process=%s %s",
+                    _kpid_lg[:8],
+                    _br,
+                )
+                # Block all tools this round (Claude max_turns style)
+                for tc in tool_calls or []:
+                    _cid = str(getattr(tc, "id", "") or "")
+                    if _cid:
+                        _capped_results[_cid] = (
+                            f"[LoopGuard] { _br.get('code') }: tools blocked — "
+                            "write final answer only."
                         )
-                        and _br_code == "orch_window_thrash"
-                    ):
-                        _soft_orch_ff = True
-                except Exception:
-                    pass
-                if _soft_orch_ff:
-                    messages.append(
-                        {
-                            "role": "system",
-                            "content": (
-                                f"[LoopGuard soft] {_br_code}: heavy orchestration "
-                                "detected. Prefer digesting existing jobs or doing "
-                                "real work; tools are still allowed (not a hard ban)."
-                            ),
-                        }
-                    )
-                    logger.info(
-                        "loop_guard begin_round soft-open skip force_final process=%s %s",
-                        _kpid_lg[:8],
-                        _br,
-                    )
-                else:
-                    state.force_final_no_tools = True
-                    try:
-                        loop.last_exit_reason = _br_code
-                    except Exception:
-                        pass
-                    messages.append(
-                        {
-                            "role": "system",
-                            "content": force_final_message(
-                                _br_code,
-                                str(_br.get("reason") or ""),
-                            ),
-                        }
-                    )
-                    logger.warning(
-                        "loop_guard begin_round force_final process=%s %s",
-                        _kpid_lg[:8],
-                        _br,
-                    )
-                    # Block all tools this round (Claude max_turns style)
-                    for tc in tool_calls or []:
-                        _cid = str(getattr(tc, "id", "") or "")
-                        if _cid:
-                            _capped_results[_cid] = (
-                                f"[LoopGuard] {_br.get('code')}: tools blocked — "
-                                "write final answer only."
-                            )
             else:
                 for tc in tool_calls or []:
                     _cid = str(getattr(tc, "id", "") or "")
@@ -445,121 +369,10 @@ async def run_tool_round(
                         _args,
                     )
                     if isinstance(_pt, dict) and _pt.get("status") == "block":
-                        _pt_code = str(_pt.get("code") or "")
-                        # Soft-open: steward crew/orch caps are walls — allow through
-                        try:
-                            from backend.agent.progress_guard import (
-                                soft_open_mode as _so_pt,
-                            )
-
-                            if _so_pt() and _pt_code in (
-                                "crew_total_cap",
-                                "orch_per_round_cap",
-                                "orch_per_round_zero",
-                            ):
-                                logger.info(
-                                    "loop_guard soft-open allow orch block code=%s tool=%s",
-                                    _pt_code,
-                                    getattr(tc, "name", ""),
-                                )
-                                continue
-                        except Exception:
-                            pass
-                        _msg_pt = str(
+                        _capped_results[_cid] = str(
                             _pt.get("message")
                             or f"[LoopGuard] blocked {getattr(tc, 'name', '')}"
                         )
-                        _capped_results[_cid] = _msg_pt
-                        # P0: file_read cap → deliver-only mode
-                        try:
-                            from backend.agent.progress_guard import (
-                                deliver_mode_nudge,
-                                filter_names_deliver_only,
-                                filter_tools_deliver_only,
-                                is_file_read_cap_message,
-                            )
-                            from backend.core.config import settings as _st_dm
-
-                            from backend.agent.progress_guard import soft_open_mode as _so_fr
-
-                            if (
-                                not _so_fr()
-                                and bool(
-                                    getattr(
-                                        _st_dm,
-                                        "agent_file_read_cap_deliver_mode",
-                                        False,
-                                    )
-                                )
-                                and (
-                                    _pt.get("code") == "max_file_reads"
-                                    or is_file_read_cap_message(_msg_pt)
-                                )
-                            ):
-                                try:
-                                    from backend.agent.progress_guard import (
-                                        should_arm_deliver_mode as _should_dm,
-                                    )
-
-                                    _arm_dm = _should_dm(
-                                        str(user_input or ""),
-                                        reason="file_read_cap",
-                                    )
-                                except Exception:
-                                    _arm_dm = True
-                                if _arm_dm:
-                                    try:
-                                        from backend.agent.progress_guard import (
-                                            soft_open_mode as _so_frc,
-                                        )
-
-                                        _so = bool(_so_frc())
-                                    except Exception:
-                                        _so = False
-                                    if _so:
-                                        # Soft-open: nudge only, never strip tools
-                                        messages.append(
-                                            {
-                                                "role": "system",
-                                                "content": deliver_mode_nudge(),
-                                            }
-                                        )
-                                        logger.info(
-                                            "file_read cap soft-nudge (no deliver strip) "
-                                            "session=%s",
-                                            session_id,
-                                        )
-                                    else:
-                                        state.deliver_mode = True
-                                        state.tools = filter_tools_deliver_only(
-                                            state.tools
-                                        )
-                                        if isinstance(
-                                            state.enabled_tools_filter, list
-                                        ):
-                                            state.enabled_tools_filter = (
-                                                filter_names_deliver_only(
-                                                    state.enabled_tools_filter
-                                                )
-                                            )
-                                        messages.append(
-                                            {
-                                                "role": "system",
-                                                "content": deliver_mode_nudge(),
-                                            }
-                                        )
-                                        logger.warning(
-                                            "deliver_mode ON (file_read cap) session=%s",
-                                            session_id,
-                                        )
-                                else:
-                                    logger.info(
-                                        "skip deliver_mode on file_read cap "
-                                        "(review-only task) session=%s",
-                                        session_id,
-                                    )
-                        except Exception as _dm_e:
-                            logger.debug("deliver_mode arm skip: %s", _dm_e)
                         logger.info(
                             "loop_guard pre_tool block tool=%s code=%s process=%s",
                             getattr(tc, "name", ""),
@@ -574,161 +387,6 @@ async def run_tool_round(
                         )
         except Exception as _lge:
             logger.debug("loop_guard pre-round skip: %s", _lge)
-
-    # Consume proactive bg cargo_fix arm (from loop inject before LLM)
-    try:
-        from backend.agent.progress_guard import (
-            cargo_fix_nudge as _cfn_cons,
-            consume_session_cargo_fix as _cons_cf,
-        )
-
-        _cf_pending = _cons_cf(str(session_id))
-        if _cf_pending and _cf_pending.get("must_write"):
-            state.must_write_before_cargo = True
-            try:
-                from backend.agent.progress_guard import soft_open_mode as _so_cf
-
-                if not _so_cf():
-                    state.deliver_mode = True
-            except Exception:
-                state.deliver_mode = True
-            _ps = list(_cf_pending.get("paths") or [])
-            if _ps:
-                state.cargo_error_paths = ",".join(_ps[:5])
-            # nudge may already be in messages from inject; reinforce once
-            if not any(
-                isinstance(m, dict)
-                and m.get("role") == "system"
-                and "编译失败·强制改代码" in str(m.get("content") or "")
-                for m in (messages or [])[-6:]
-            ):
-                messages.append(
-                    {"role": "system", "content": _cfn_cons(_ps)}
-                )
-            logger.info(
-                "consume session cargo_fix source=%s paths=%s session=%s",
-                _cf_pending.get("source"),
-                state.cargo_error_paths[:60],
-                session_id,
-            )
-    except Exception as _cons_e:
-        logger.debug("consume cargo_fix skip: %s", _cons_e)
-
-    # Deliver / cargo-fix gates BEFORE execute (state from previous round)
-    # Soft-open mode: skip hard walls entirely (model free; only later soft nudges).
-    try:
-        from backend.agent.progress_guard import (
-            blocked_with_next as _bwn,
-            command_from_tool as _cmd_pre,
-            extract_tool_args as _args_pre,
-            is_cargo_verify_command as _is_cvc_pre,
-            is_deliver_allowed_command as _is_dac_pre,
-            is_deliver_allowed_grep as _is_dag_pre,
-            is_diag_junk_path as _is_junk_pre,
-            is_probe_overwrite as _is_probe_pre,
-            is_progress_write as _is_pw_pre,
-            mark_bg_notified as _mark_bg,
-            parse_bg_process_id as _parse_bg,
-            soft_open_mode as _soft_open,
-        )
-
-        _dm = bool(getattr(state, "deliver_mode", False)) and not _soft_open()
-        _mw = bool(getattr(state, "must_write_before_cargo", False)) and not _soft_open()
-        for _tc in tool_calls or []:
-            _cid = str(getattr(_tc, "id", "") or "")
-            _nm = str(getattr(_tc, "name", "") or "")
-            if not _cid or _cid in _capped_results:
-                continue
-            # Always block junk path writes (not just deliver)
-            if _nm in ("file_write", "edit", "apply_patch", "desktop_write_file"):
-                _a = _args_pre(_tc)
-                _p = str(
-                    _a.get("path")
-                    or _a.get("filepath")
-                    or _a.get("file")
-                    or _a.get("file_path")
-                    or ""
-                )
-                if _p and _is_junk_pre(_p):
-                    _capped_results[_cid] = _bwn(
-                        f"[Blocked] Diagnostic junk path write denied: {_p}.",
-                        "junk_write",
-                    )
-                    continue
-                if _mw and not _is_pw_pre(_nm, _a):
-                    _capped_results[_cid] = _bwn(
-                        "[Blocked] After cargo compile failure, edit product sources. "
-                        f"Targets: {getattr(state, 'cargo_error_paths', '') or 'error --> path'}.",
-                        "must_write_blocks_cargo",
-                        paths=str(getattr(state, "cargo_error_paths", "") or ""),
-                    )
-                    continue
-                # Block thrash probe clobber of lib.rs when cargo_fix is armed
-                if _mw and _nm == "file_write":
-                    _body = str(
-                        _a.get("content") or _a.get("text") or _a.get("code") or ""
-                    )
-                    if _p and _is_probe_pre(_p, _body):
-                        _capped_results[_cid] = _bwn(
-                            f"[Blocked] Probe-like overwrite of product source: {_p}.",
-                            "probe_overwrite",
-                        )
-                        continue
-            if _soft_open() or not (_dm or _mw):
-                continue
-            if _nm == "python" and _dm:
-                _capped_results[_cid] = _bwn(
-                    "[Blocked] deliver mode: no python dump.",
-                    "deliver_blocks_shell",
-                )
-                continue
-            if _nm == "file_read" and _dm:
-                _capped_results[_cid] = _bwn(
-                    "[Blocked] deliver mode: no file_read.",
-                    "deliver_blocks_read",
-                )
-                continue
-            if _nm == "glob" and _dm:
-                _capped_results[_cid] = _bwn(
-                    "[Blocked] deliver mode: no glob scan.",
-                    "deliver_blocks_read",
-                )
-                continue
-            # Whole-file grep thrash (.* / ^ / [\s\S]) blocked in deliver
-            if _nm == "grep" and (_dm or _mw):
-                _ga = _args_pre(_tc)
-                _gpat = str(_ga.get("pattern") or _ga.get("query") or "")
-                _gpath = str(_ga.get("path") or _ga.get("glob") or "")
-                if not _is_dag_pre(_gpat, _gpath):
-                    _capped_results[_cid] = _bwn(
-                        "[Blocked] deliver mode: no whole-file grep "
-                        "(patterns like .* / ^ / [\\s\\S]).",
-                        "whole_file_grep",
-                    )
-                    continue
-            if _nm != "command":
-                continue
-            _cmd = _cmd_pre(_tc)
-            if _mw and _is_cvc_pre(_cmd):
-                _capped_results[_cid] = _bwn(
-                    "[Blocked] Compile errors unfixed: no cargo check/build yet."
-                    + (
-                        f" Targets: {getattr(state, 'cargo_error_paths', '')}"
-                        if getattr(state, "cargo_error_paths", "")
-                        else ""
-                    ),
-                    "must_write_blocks_cargo",
-                    paths=str(getattr(state, "cargo_error_paths", "") or ""),
-                )
-                continue
-            if _dm and not _is_dac_pre(_cmd):
-                _capped_results[_cid] = _bwn(
-                    "[Blocked] deliver mode allows only cargo check/build/test/clean "
-                    "and git status/diff.",
-                    "deliver_blocks_shell",
-                )
-    except Exception as _pre_dm:
-        logger.debug("deliver pre-gate skip: %s", _pre_dm)
 
     # T1：本轮只读工具先并发跑完，结果按 tool_call_id 缓存。
     # 下面的串行主体一行不动地照常走（WS 事件 / 持久化 / messages 顺序全部不变），
@@ -851,27 +509,6 @@ async def run_tool_round(
                 _tool_timeout = float(
                     getattr(settings, "agent_tool_timeout_seconds", 180) or 0
                 )
-                # Cap per-call by outer budget so tool-internal timeout never
-                # schedules work the agent loop will cancel first.
-                if _tool_timeout > 0 and isinstance(validated_args, dict):
-                    try:
-                        _req = float(
-                            validated_args.get("timeout")
-                            or validated_args.get("timeout_seconds")
-                            or 0
-                        )
-                    except (TypeError, ValueError):
-                        _req = 0.0
-                    if _req > 0:
-                        validated_args["timeout"] = max(
-                            1, int(min(_req, _tool_timeout - 2))
-                        )
-                    elif tc.name in ("command", "python", "shell_session"):
-                        # Explicit default under outer ceiling
-                        validated_args.setdefault(
-                            "timeout",
-                            max(15, int(min(90, _tool_timeout - 5))),
-                        )
                 if _tool_timeout > 0:
                     tool_result = await _await_with_timeout_cleanup(
                         loop._execute_registered_tool(tc.name, validated_args),
@@ -1029,18 +666,16 @@ async def run_tool_round(
                         messages.append({
                             "role": "system",
                             "content": (
-                                "Previous command was blocked by security policy. "
-                                "Prefer file_write/edit/apply_patch for files, or a simple "
-                                "one-line shell. Do not retry the same blocked command."
+                                "上一命令被安全策略拦截。请改用 file_write/edit/apply_patch 写文件；"
+                                "或使用单行 shell（避免无必要复杂注入）。不要重复同一被拦命令。"
                             ),
                         })
                     elif _ck == _RK.TOOL_TRANSIENT and "127" in str(tool_result):
                         messages.append({
                             "role": "system",
                             "content": (
-                                "Command exit 127 (not found). Check cwd is the task "
-                                "workspace; try python -m or full path. Do not repeat "
-                                "the same command in the wrong directory."
+                                "命令 Exit 127（未找到）。请检查 cwd 是否在任务工作区、"
+                                "是否需 python -m / 完整路径；不要在错误目录重复同一命令。"
                             ),
                         })
                     if _act == "force_final":
@@ -1132,63 +767,12 @@ async def run_tool_round(
                 )
             except Exception:
                 pass
-            # UI must leave "running" — success/exception paths push end; timeout did not.
-            try:
-                await loop._push_tool_event(
-                    session_id,
-                    phase="end",
-                    tool_call_id=tc.id,
-                    name=tc.name,
-                    arguments=args_dict if isinstance(args_dict, dict) else {},
-                    status="failed",
-                    result=tool_result,
-                    duration_ms=(_time.monotonic() - _tc_t0) * 1000,
-                )
-            except Exception:
-                pass
-            if task_id is not None:
-                try:
-                    await loop._push_task_update(
-                        session_id, task_id, 0, "failed", tool_result[:200]
-                    )
-                except Exception:
-                    pass
-            # Fast force-final: consecutive timeouts are the most expensive thrash.
-            try:
-                state.timeout_fail_streak = int(
-                    getattr(state, "timeout_fail_streak", 0) or 0
-                ) + 1
-                _to_cap = max(
-                    1,
-                    int(getattr(settings, "agent_tool_timeout_force_final", 2) or 2),
-                )
-                if state.timeout_fail_streak >= _to_cap:
-                    state.force_final_no_tools = True
-                    messages.append(
-                        {
-                            "role": "system",
-                            "content": (
-                                f"[tool_timeout_force_final] Tool '{tc.name}' timed out "
-                                f"{state.timeout_fail_streak}×. Stop calling long-running "
-                                "tools; answer with what you have, or use background/"
-                                "narrower commands."
-                            ),
-                        }
-                    )
-                    logger.warning(
-                        "tool timeout force_final name=%s streak=%s session=%s",
-                        tc.name,
-                        state.timeout_fail_streak,
-                        session_id,
-                    )
-            except Exception:
-                pass
 
         except Exception as e:
             logger.error(f"Tool execution error: {e}")
-            from backend.agent.tool_errors import sanitize_tool_error
+            from backend.agent.loop import _sanitize_tool_error
 
-            tool_result = sanitize_tool_error(tc.name, e)
+            tool_result = _sanitize_tool_error(tc.name, e)
             try:
                 state.sft_tools.append(
                     {
@@ -1219,10 +803,8 @@ async def run_tool_round(
         # Durable Run：记录工具步骤（成功/失败/超时统一在此落库）
         if _rc is not None:
             try:
-                from backend.agent.tool_result_contract import is_tool_error as _is_terr
-
                 _tr_str = str(tool_result)
-                _tc_ok = not _is_terr(_tr_str)
+                _tc_ok = not _tr_str.startswith(("[Error", "[Security Blocked]"))
                 await _rc.tool_step(
                     tc.name,
                     args_summary=json.dumps(
@@ -1248,56 +830,15 @@ async def run_tool_round(
         # audit-fix(#5)：同一工具名连续失败计数（不论参数）——成功/换工具即清零
         try:
             _tn_fail = str(getattr(tc, "name", "") or "")
-            _res_s = str(tool_result or "")
-            if is_tool_error(_res_s):
+            if is_tool_error(str(tool_result or "")):
                 if _tn_fail and _tn_fail == state.last_failed_tool:
                     state.same_tool_fail_streak = int(state.same_tool_fail_streak or 0) + 1
                 else:
                     state.last_failed_tool = _tn_fail
                     state.same_tool_fail_streak = 1
-                # Inner command/python timeouts return [Timeout] without raising
-                # asyncio.TimeoutError — still count toward timeout force_final.
-                _is_to = (
-                    _res_s.lstrip().startswith("[Timeout]")
-                    or "timed out after" in _res_s.lower()
-                    or "exceeded" in _res_s.lower()
-                    and "terminat" in _res_s.lower()
-                )
-                if _is_to:
-                    # Outer TimeoutError path already +1; avoid double-count when
-                    # message also says timed out after (same branch sets tool_result).
-                    if "Tool '" in _res_s and "timed out after" in _res_s:
-                        pass  # already counted in except TimeoutError
-                    else:
-                        state.timeout_fail_streak = int(
-                            getattr(state, "timeout_fail_streak", 0) or 0
-                        ) + 1
-                        _to_cap = max(
-                            1,
-                            int(
-                                getattr(settings, "agent_tool_timeout_force_final", 2)
-                                or 2
-                            ),
-                        )
-                        if (
-                            state.timeout_fail_streak >= _to_cap
-                            and not state.force_final_no_tools
-                        ):
-                            state.force_final_no_tools = True
-                            messages.append(
-                                {
-                                    "role": "system",
-                                    "content": (
-                                        f"[tool_timeout_force_final] Tool '{tc.name}' "
-                                        f"timed out {state.timeout_fail_streak}×. "
-                                        "Answer with available results."
-                                    ),
-                                }
-                            )
             else:
                 state.last_failed_tool = ""
                 state.same_tool_fail_streak = 0
-                state.timeout_fail_streak = 0
         except Exception:
             pass
 
@@ -1355,572 +896,7 @@ async def run_tool_round(
     except Exception:
         pass
 
-    # ── Rust toolchain diagnosis thrash (where/dir/rustup/_diag 复读) ──
-    try:
-        from backend.agent.decisive import tool_names_from_calls as _tn_rd
-
-        _rd_names = _tn_rd(tool_calls)
-        _rd_blob = " ".join(
-            str(getattr(tc, "result", None) or getattr(tc, "output", None) or "")[:400]
-            for tc in (tool_calls or [])
-        )
-        # also pull from messages just appended (tool role)
-        for _m in messages[-max(12, len(tool_calls) * 2) :]:
-            if isinstance(_m, dict) and _m.get("role") == "tool":
-                _rd_blob += " " + str(_m.get("content") or "")[:500]
-        _is_rust_diag = bool(
-            re.search(
-                r"(?i)Missing manifest|RUSTUP_HOME|\[Blocked\].{0,40}rustup|"
-                r"\[Blocked\].{0,40}cargo|where\s+cargo|_cargo_check|_diag_rust|"
-                r"rustup default|toolchain.*msvc|\.rustup\\toolchains",
-                _rd_blob,
-            )
-        ) or bool(
-            re.search(
-                r"(?i)(_cargo_|_diag_|_reinstall_rust|vcvars|rustup)",
-                " ".join(
-                    str(getattr(tc, "arguments", None) or getattr(tc, "args", None) or "")
-                    for tc in (tool_calls or [])
-                ),
-            )
-        )
-        _only_cmd_proc = bool(_rd_names) and all(
-            n in ("command", "process", "python", "file_write") for n in _rd_names
-        )
-        _wrote_src = any(
-            n in ("file_write", "edit", "apply_patch") for n in _rd_names
-        ) and not re.search(
-            r"(?i)_cargo_|_diag_|_reinstall|_hello\.|_t\.rs",
-            " ".join(
-                str(getattr(tc, "arguments", None) or getattr(tc, "args", None) or "")
-                for tc in (tool_calls or [])
-            ),
-        )
-        if _wrote_src:
-            state.rust_diag_streak = 0
-        elif _is_rust_diag and _only_cmd_proc:
-            state.rust_diag_streak = int(getattr(state, "rust_diag_streak", 0) or 0) + 1
-            if state.rust_diag_streak == 1:
-                messages.append(
-                    {
-                        "role": "system",
-                        "content": (
-                            "[Stop toolchain thrash] Job already pins scoop cargo + MSVC. "
-                            "Avoid where/dir/.rustup/rustup/_diag/_cargo_*.bat/RUSTUP_*. "
-                            "Next: `cargo check -p <crate>` or file_write for compile errors."
-                        ),
-                    }
-                )
-                logger.warning(
-                    "rust_diag soft stop streak=%s session=%s",
-                    state.rust_diag_streak,
-                    session_id,
-                )
-            # Soft-open: only force_final after 4 pure diag rounds (was 2 — cut
-            # mid-implementation when cargo check / env noise co-occurred).
-            if state.rust_diag_streak >= 4 and not state.force_final_no_tools:
-                state.force_final_no_tools = True
-                messages.append(
-                    {
-                        "role": "system",
-                        "content": (
-                            "[rust/cargo env thrash] Many env-diagnostic rounds. "
-                            "No tools this turn: short summary of last cargo error and "
-                            "files already edited; no more diagnostic scripts or force-final essays."
-                        ),
-                    }
-                )
-                logger.warning(
-                    "rust_diag force_final streak=%s session=%s",
-                    state.rust_diag_streak,
-                    session_id,
-                )
-            elif state.rust_diag_streak >= 2:
-                logger.warning(
-                    "rust_diag soft stop streak=%s session=%s",
-                    state.rust_diag_streak,
-                    session_id,
-                )
-        elif not _is_rust_diag:
-            # decay slowly when doing real work
-            if int(getattr(state, "rust_diag_streak", 0) or 0) > 0 and _wrote_src:
-                state.rust_diag_streak = 0
-    except Exception as _rd_e:
-        logger.debug("rust_diag guard skip: %s", _rd_e)
-
-    # ── Write-intent: flexible coding focus (NO hard write-only lock) ─
-    # Hard WRITE_ONLY strips caused 复读卡死. Soft policy only:
-    #  - nudge to write after pure-explore streaks
-    #  - optionally demote web/crew (keep file_read/command/python)
-    #  - never force_final text-only for write intent
-    #  - re-apply flex if already focused (pack expand may re-add noise)
-    _write_intent_active = False
-    try:
-        from backend.agent.write_intent import (
-            is_write_intent,
-            WRITE_TOOLS,
-            EXPLORE_TOOLS,
-            filter_names_coding_flex,
-            filter_tools_coding_flex,
-            write_intent_nudge_text,
-        )
-
-        _write_intent_active = is_write_intent(user_input or "")
-        if _write_intent_active:
-            _names = []
-            try:
-                from backend.agent.decisive import tool_names_from_calls as _tn
-
-                _names = _tn(tool_calls)
-            except Exception:
-                _names = [str(getattr(t, "name", "") or "") for t in tool_calls]
-            _wrote = any(n in WRITE_TOOLS for n in _names)
-            _only_explore = bool(_names) and all(
-                n in EXPLORE_TOOLS or n in ("crew_steward", "clarify", "manage_goal")
-                for n in _names
-            )
-            # Pure multi-read without write also counts toward explore streak
-            _only_read = bool(_names) and all(
-                n in ("file_read", "doc_read", "glob", "grep") for n in _names
-            )
-            if _wrote:
-                state.explore_only_streak = 0
-                # keep flex focus after first write (still demote web/crew noise)
-            elif _only_explore or _only_read:
-                state.explore_only_streak = int(
-                    getattr(state, "explore_only_streak", 0) or 0
-                ) + 1
-                if state.explore_only_streak == 2:
-                    messages.append(
-                        {
-                            "role": "system",
-                            "content": write_intent_nudge_text(soft=True),
-                        }
-                    )
-                    logger.info(
-                        "write_intent soft nudge streak=%s session=%s",
-                        state.explore_only_streak,
-                        session_id,
-                    )
-                # Soft focus after 3 explore-only rounds: drop web/crew only
-                if state.explore_only_streak >= 3:
-                    state.force_final_no_tools = False
-                    state.write_intent_hard_nudge = True
-                    before_n = len(state.tools or [])
-                    state.tools = filter_tools_coding_flex(state.tools)
-                    state.enabled_tools_filter = filter_names_coding_flex(
-                        state.enabled_tools_filter
-                        if isinstance(state.enabled_tools_filter, list)
-                        else None
-                    )
-                    # Escalate nudge text every 3 pure-explore rounds
-                    messages.append(
-                        {
-                            "role": "system",
-                            "content": write_intent_nudge_text(soft=False),
-                        }
-                    )
-                    logger.info(
-                        "write_intent CODING_FLEX tools %s→%s streak=%s session=%s",
-                        before_n,
-                        len(state.tools or []),
-                        state.explore_only_streak,
-                        session_id,
-                    )
-            # Already focused: keep coding-flex applied every round
-            if getattr(state, "write_intent_hard_nudge", False):
-                state.force_final_no_tools = False
-                state.tools = filter_tools_coding_flex(state.tools)
-                state.enabled_tools_filter = filter_names_coding_flex(
-                    state.enabled_tools_filter
-                    if isinstance(state.enabled_tools_filter, list)
-                    else None
-                )
-    except Exception as _wi_e:
-        logger.debug("write_intent guard skip: %s", _wi_e)
-
-    # ── Progress guard (cargo-fix → write, pure-read, deliver shell lock) ──
-    try:
-        from backend.agent.decisive import tool_names_from_calls as _tn_pg
-        from backend.agent.progress_guard import (
-            READ_ONLY_TOOLS as _PG_READ,
-            SCAN_TOOLS as _PG_SCAN,
-            cargo_fix_nudge as _cf_nudge,
-            command_from_tool as _cmd_from,
-            deliver_mode_nudge as _dm_nudge,
-            extract_result_handle as _ext_h,
-            extract_tool_args as _ext_args,
-            filter_names_deliver_only as _fn_del,
-            filter_tools_deliver_only as _ft_del,
-            is_cargo_compile_failure as _is_cf,
-            is_cargo_verify_command as _is_cvc,
-            is_deliver_allowed_command as _is_dac,
-            is_file_read_cap_message as _is_fr_cap,
-            is_progress_write as _is_pw,
-            is_shell_probe_command as _is_sp,
-            manage_goal_cadence_nudge as _mg_nudge,
-            no_write_progress_nudge as _nw_nudge,
-            parse_cargo_error_paths as _parse_cpaths,
-            pure_read_nudge as _pr_nudge,
-            result_load_nudge as _rl_nudge,
-        )
-        from backend.core.config import settings as _st_pg
-
-        _pnames = _tn_pg(tool_calls)
-        _had_manage = "manage_goal" in _pnames
-        _had_result_load = "result_load" in _pnames
-
-        # Real source writes only (not _snap dumps)
-        _wrote_pg = False
-        for _tc in tool_calls or []:
-            _n = str(getattr(_tc, "name", "") or "")
-            if _is_pw(_n, _ext_args(_tc)):
-                _wrote_pg = True
-                break
-
-        _only_read_pg = bool(_pnames) and all(
-            n in _PG_READ or n in _PG_SCAN for n in _pnames
-        )
-        # Shell probes / dump commands count as empty-progress "read"
-        _probe_cmds = 0
-        _cargo_cmds = 0
-        _junk_writes = 0
-        for _tc in tool_calls or []:
-            _nm = str(getattr(_tc, "name", "") or "")
-            if _nm in ("file_write", "edit", "apply_patch"):
-                if not _is_pw(_nm, _ext_args(_tc)):
-                    _junk_writes += 1
-            if _nm != "command":
-                continue
-            _cmd = _cmd_from(_tc)
-            if _is_cvc(_cmd):
-                _cargo_cmds += 1
-            elif _is_sp(_cmd):
-                _probe_cmds += 1
-
-        if _wrote_pg:
-            state.pure_read_streak = 0
-            state.rounds_since_write = 0
-            state.cargo_fix_streak = 0
-            state.must_write_before_cargo = False
-            state.cargo_error_paths = ""
-        else:
-            state.rounds_since_write = int(
-                getattr(state, "rounds_since_write", 0) or 0
-            ) + 1
-            # junk write / pure-read / shell probe = empty progress
-            if _only_read_pg or _probe_cmds > 0 or _junk_writes > 0:
-                state.pure_read_streak = int(
-                    getattr(state, "pure_read_streak", 0) or 0
-                ) + 1
-
-        if _had_manage:
-            state.rounds_since_manage_goal = 0
-        else:
-            state.rounds_since_manage_goal = int(
-                getattr(state, "rounds_since_manage_goal", 0) or 0
-            ) + 1
-
-        # Tool result blob (this round) — include process poll tails
-        _blob_pg = ""
-        for _m in messages[-max(24, len(tool_calls) * 3 + 4) :]:
-            if isinstance(_m, dict) and _m.get("role") == "tool":
-                _blob_pg += "\n" + str(_m.get("content") or "")[:6000]
-
-        try:
-            from backend.agent.progress_guard import soft_open_mode as _so_fr2
-
-            _allow_fr_del = not _so_fr2()
-        except Exception:
-            _allow_fr_del = True
-        if (
-            _allow_fr_del
-            and _is_fr_cap(_blob_pg)
-            and bool(getattr(_st_pg, "agent_file_read_cap_deliver_mode", False))
-        ):
-            state.deliver_mode = True
-
-        # Cargo compile failure → force write
-        # CRITICAL: auto-bg cargo surfaces via process poll, not command tool
-        try:
-            from backend.agent.progress_guard import (
-                is_bg_cargo_compile_failure as _is_bg_cf,
-                is_bg_cargo_success as _is_bg_ok,
-            )
-        except Exception:
-            _is_bg_cf = lambda _t: False  # type: ignore
-            _is_bg_ok = lambda _t: False  # type: ignore
-
-        _process_cargo_fail = "process" in _pnames and _is_bg_cf(_blob_pg)
-        # Suppress re-arm if this pid already notified via bg_complete inject
-        if _process_cargo_fail:
-            try:
-                from backend.agent.progress_guard import (
-                    mark_bg_notified as _mbn,
-                    parse_bg_process_id as _pbid,
-                )
-
-                _pid_poll = _pbid(_blob_pg)
-                if _pid_poll and not _mbn(str(session_id), _pid_poll):
-                    # already notified — keep must_write if set, skip streak++/nudge
-                    _process_cargo_fail = False
-                    if not getattr(state, "must_write_before_cargo", False):
-                        # ensure gate still on if inject already armed state
-                        state.must_write_before_cargo = True
-                        state.deliver_mode = True
-            except Exception:
-                pass
-        _process_cargo_ok = "process" in _pnames and _is_bg_ok(_blob_pg)
-        # is_cargo_compile_failure is narrowed to compile_source (E0xxx / could not compile)
-        _cargo_fail = (_cargo_cmds > 0 and _is_cf(_blob_pg)) or _process_cargo_fail
-        _cargo_cls = ""
-        try:
-            from backend.agent.progress_facade import classify_cargo_error as _cls_cargo
-
-            if _cargo_cmds > 0 or "process" in _pnames:
-                _cargo_cls = _cls_cargo(_blob_pg)
-        except Exception:
-            _cargo_cls = "compile_source" if _cargo_fail else ""
-
-        if _cargo_fail:
-            state.cargo_error_class = _cargo_cls or "compile_source"
-            state.cargo_fix_streak = int(
-                getattr(state, "cargo_fix_streak", 0) or 0
-            ) + 1
-            state.must_write_before_cargo = True
-            try:
-                from backend.agent.progress_guard import soft_open_mode as _so_carm
-
-                if not _so_carm():
-                    state.deliver_mode = True
-            except Exception:
-                state.deliver_mode = True
-            _paths = _parse_cpaths(_blob_pg)
-            if _paths:
-                state.cargo_error_paths = ",".join(_paths[:5])
-            # Dedup with bg_complete inject / later poll
-            try:
-                from backend.agent.progress_guard import (
-                    mark_bg_notified as _mbn2,
-                    parse_bg_process_id as _pbid2,
-                )
-
-                _pid_arm = _pbid2(_blob_pg)
-                if _pid_arm:
-                    _mbn2(str(session_id), _pid_arm)
-            except Exception:
-                pass
-            messages.append(
-                {
-                    "role": "system",
-                    "content": _cf_nudge(
-                        (state.cargo_error_paths or "").split(",")
-                        if state.cargo_error_paths
-                        else _paths
-                    ),
-                }
-            )
-            logger.warning(
-                "cargo_fix arm streak=%s bg=%s paths=%s session=%s",
-                state.cargo_fix_streak,
-                _process_cargo_fail,
-                (state.cargo_error_paths or "")[:80],
-                session_id,
-            )
-        elif _cargo_cls == "path_env" and (_cargo_cmds > 0 or "process" in _pnames):
-            # Wrong cwd / missing manifest: soft redirect, NO must_write gate
-            state.cargo_error_class = "path_env"
-            try:
-                from backend.agent.progress_guard import path_env_cargo_nudge as _pen
-
-                messages.append({"role": "system", "content": _pen()})
-            except Exception:
-                messages.append(
-                    {
-                        "role": "system",
-                        "content": (
-                            "[Cargo path/workspace] Run cargo check at the project "
-                            "anchor cwd; do not randomly rewrite .rs just to pass a gate."
-                        ),
-                    }
-                )
-            logger.info("cargo path_env (no must_write) session=%s", session_id)
-        elif (_cargo_cmds > 0 or _process_cargo_ok) and not _is_cf(_blob_pg):
-            if re.search(r"(?i)Finished|exit=0|\[Exit 0|status=done\s+exit=0", _blob_pg):
-                state.cargo_fix_streak = 0
-                state.must_write_before_cargo = False
-                state.cargo_error_class = ""
-
-        # result_load thrash on same handle
-        _hid = _ext_h(_blob_pg)
-        if _had_result_load and _hid:
-            if _hid == (getattr(state, "last_result_handle", "") or ""):
-                state.result_load_same_streak = int(
-                    getattr(state, "result_load_same_streak", 0) or 0
-                ) + 1
-            else:
-                state.result_load_same_streak = 1
-                state.last_result_handle = _hid
-            _rl_cap = max(
-                2, int(getattr(_st_pg, "agent_result_load_thrash_after", 3) or 3)
-            )
-            if state.result_load_same_streak >= _rl_cap:
-                messages.append(
-                    {
-                        "role": "system",
-                        "content": _rl_nudge(_hid)
-                        + " 立刻 file_write/edit 修编译错误，停止分页。",
-                    }
-                )
-        elif not _had_result_load:
-            state.result_load_same_streak = 0
-
-        # Pure-read / probe imbalance
-        _pr_after = max(
-            1, int(getattr(_st_pg, "agent_pure_read_nudge_after", 2) or 2)
-        )
-        _pr_del = max(
-            _pr_after + 1,
-            int(getattr(_st_pg, "agent_pure_read_deliver_after", 4) or 4),
-        )
-        if (
-            state.pure_read_streak >= _pr_after
-            and not state.force_final_no_tools
-            and (
-                state.pure_read_streak == _pr_after
-                or state.pure_read_streak % 2 == 0
-            )
-        ):
-            messages.append(
-                {
-                    "role": "system",
-                    "content": _pr_nudge(streak=state.pure_read_streak),
-                }
-            )
-        # Soft-open: never arm deliver (was arm→clear dead path). Hard profile only.
-        try:
-            from backend.agent.progress_guard import soft_open_mode as _so_arm
-
-            _soft_open_now = bool(_so_arm())
-        except Exception:
-            _soft_open_now = False
-        if state.pure_read_streak >= _pr_del and not _soft_open_now:
-            try:
-                from backend.agent.progress_guard import should_arm_deliver_mode as _sad
-
-                if _sad(str(user_input or ""), reason="pure_read"):
-                    state.deliver_mode = True
-                else:
-                    logger.info(
-                        "skip deliver_mode pure_read (review-only) session=%s",
-                        session_id,
-                    )
-            except Exception:
-                state.deliver_mode = True
-
-        # Wire dead counter: no real write for N rounds
-        _nw = max(2, int(getattr(_st_pg, "agent_no_write_nudge_after", 3) or 3))
-        if (
-            int(getattr(state, "rounds_since_write", 0) or 0) >= _nw
-            and not state.force_final_no_tools
-            and (
-                state.rounds_since_write == _nw
-                or state.rounds_since_write % 2 == 0
-            )
-        ):
-            _arm_nw = True
-            try:
-                from backend.agent.progress_guard import should_arm_deliver_mode as _sad2
-
-                _arm_nw = _sad2(str(user_input or ""), reason="no_write")
-            except Exception:
-                _arm_nw = True
-            # Soft-open: nudge only — do not arm deliver_mode (no strip)
-            if _arm_nw and not _soft_open_now:
-                state.deliver_mode = True
-            messages.append(
-                {
-                    "role": "system",
-                    "content": _nw_nudge(rounds=state.rounds_since_write),
-                }
-            )
-            logger.info(
-                "no_write progress nudge rounds=%s deliver=%s soft_open=%s session=%s",
-                state.rounds_since_write,
-                bool(getattr(state, "deliver_mode", False)),
-                _soft_open_now,
-                session_id,
-            )
-
-        # manage_goal cadence — only in goal_mode (casual Q&A must not be nagged)
-        _mg_every = max(
-            3, int(getattr(_st_pg, "agent_manage_goal_cadence_rounds", 5) or 5)
-        )
-        if (
-            goal_mode
-            and state.rounds_since_manage_goal >= _mg_every
-            and not state.force_final_no_tools
-        ):
-            messages.append({"role": "system", "content": _mg_nudge()})
-            state.rounds_since_manage_goal = 0
-            logger.info("manage_goal cadence nudge session=%s", session_id)
-
-        # Apply deliver-only tool strip — hard profile only (soft-open never arms)
-        try:
-            from backend.agent.progress_guard import soft_open_mode as _so_strip
-
-            _hard_strip = not _so_strip()
-        except Exception:
-            _hard_strip = True
-        if _hard_strip and (
-            getattr(state, "deliver_mode", False)
-            or getattr(state, "must_write_before_cargo", False)
-        ):
-            state.force_final_no_tools = False
-            state.deliver_mode = True
-            state.tools = _ft_del(state.tools)
-            state.enabled_tools_filter = _fn_del(
-                state.enabled_tools_filter
-                if isinstance(state.enabled_tools_filter, list)
-                else None
-            )
-            if state.pure_read_streak == _pr_del:
-                messages.append({"role": "system", "content": _dm_nudge()})
-    except Exception as _pg_e:
-        logger.debug("progress_guard skip: %s", _pg_e)
-
-    # Soft-open: high-step converge reminder only (no ban)
-    try:
-        from backend.agent.progress_guard import (
-            converge_nudge_text as _cnv,
-            soft_open_mode as _so_cnv,
-        )
-        from backend.core.config import settings as _st_cnv
-
-        if _so_cnv() and not state.force_final_no_tools:
-            _after = max(6, int(getattr(_st_cnv, "agent_converge_nudge_after", 16) or 16))
-            _every = max(4, int(getattr(_st_cnv, "agent_converge_nudge_every", 10) or 10))
-            # tool_rounds is completed count from prior rounds (incremented at end)
-            _tr = int(getattr(state, "tool_rounds", 0) or 0) + 1
-            if _tr >= _after and (
-                _tr == _after or ((_tr - _after) % _every == 0)
-            ):
-                messages.append(
-                    {
-                        "role": "system",
-                        "content": _cnv(tool_rounds=_tr),
-                    }
-                )
-                logger.info(
-                    "converge soft nudge rounds=%s session=%s",
-                    _tr,
-                    session_id,
-                )
-    except Exception as _cnv_e:
-        logger.debug("converge nudge skip: %s", _cnv_e)
-
     # 果断化：单轮仅 1 个只读工具 → 提示下轮并行/开改
-    # Skip timid after timeouts OR write-intent — timid pushes more tools and worsens thrash.
     try:
         from backend.agent.decisive import (
             batch_read_nudge_text,
@@ -1931,24 +907,7 @@ async def run_tool_round(
         )
 
         _tnames = tool_names_from_calls(tool_calls)
-        # Alternating single-tool rounds (write script / run / write / run) already
-        # look like "复读"; timid nudges push MORE single tools and make it worse.
-        _alt = int(getattr(state, "alternate_thrash_streak", 0) or 0)
-        _skip_timid = (
-            int(getattr(state, "timeout_fail_streak", 0) or 0) > 0
-            or _write_intent_active
-            or _alt >= 2
-            or (
-                len(_tnames) == 1
-                and _tnames[0] in ("process", "command", "file_write")
-                and _alt >= 1
-            )
-        )
-        if (
-            is_timid_read_round(_tnames, tool_calls)
-            and not state.force_final_no_tools
-            and not _skip_timid
-        ):
+        if is_timid_read_round(_tnames, tool_calls) and not state.force_final_no_tools:
             state.timid_read_streak += 1
             state.timid_write_streak = 0
             messages.append(
@@ -1965,50 +924,24 @@ async def run_tool_round(
                 _tnames,
                 session_id,
             )
-            # 连续 4 轮单点窥探：硬收束（soft-open 下仅软提醒）
+            # 连续 4 轮单点窥探：强制交卷
             if state.timid_read_streak >= 4:
-                try:
-                    from backend.agent.progress_guard import soft_open_mode as _so_tm
-                    from backend.core.config import settings as _st_tm
-
-                    _hard_tm = (
-                        not _so_tm()
-                        and bool(getattr(_st_tm, "agent_timid_force_final", True))
-                    )
-                except Exception:
-                    _hard_tm = True
-                if _hard_tm:
-                    state.force_final_no_tools = True
-                    messages.append(
-                        {
-                            "role": "system",
-                            "content": (
-                                "[Read thrash] Many single-read turns. "
-                                "No tools this turn: short conclusion/gaps in the user's language."
-                            ),
-                        }
-                    )
-                else:
-                    messages.append(
-                        {
-                            "role": "system",
-                            "content": (
-                                "[Read-heavy] Many single-read turns. "
-                                "Prefer batched reads or edit/file_write; tools still allowed."
-                            ),
-                        }
-                    )
+                state.force_final_no_tools = True
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "【强制收束】已连续多轮只做单次只读。"
+                            "下一轮禁止工具：直接输出当前结论与缺口。"
+                        ),
+                    }
+                )
                 logger.warning(
-                    "timid read %s streak=%s session=%s",
-                    "force_final" if state.force_final_no_tools else "soft",
+                    "timid read force_final streak=%s session=%s",
                     state.timid_read_streak,
                     session_id,
                 )
-        elif (
-            is_timid_write_round(_tnames)
-            and not state.force_final_no_tools
-            and not _skip_timid
-        ):
+        elif is_timid_write_round(_tnames) and not state.force_final_no_tools:
             state.timid_write_streak += 1
             state.timid_read_streak = 0
             messages.append(
@@ -2023,13 +956,6 @@ async def run_tool_round(
                 "timid write nudge streak=%s names=%s session=%s",
                 state.timid_write_streak,
                 _tnames,
-                session_id,
-            )
-        elif _skip_timid:
-            logger.info(
-                "timid nudge suppressed (timeout_streak=%s write_intent=%s) session=%s",
-                getattr(state, "timeout_fail_streak", 0),
-                _write_intent_active,
                 session_id,
             )
         else:
@@ -2047,43 +973,75 @@ async def run_tool_round(
             thrash_force_final_text,
         )
 
-        from backend.agent.decisive import tool_names_from_calls as _tnfc2
-
         fam = family_bucket(tool_calls)
-        fp = thrash_fingerprint(tool_calls, use_family_bucket=True)
-        _tnames2 = _tnfc2(tool_calls)
-        _only_process = bool(_tnames2) and all(n == "process" for n in _tnames2)
-        # process poll of still-running bg job is not thrash — need more polls
-        _bg_running = False
-        if _only_process:
-            try:
-                for m in reversed(messages[-6:]):
-                    if m.get("role") != "tool":
-                        continue
-                    body = str(m.get("content") or "")
-                    if "status=running" in body or "status=running" in body.lower():
-                        _bg_running = True
-                        break
-                    if "[bg " in body and "running" in body.lower():
-                        _bg_running = True
-                        break
-            except Exception:
-                pass
-        if fam:
+        _intent = str(getattr(loop, "_loop_intent", "") or "L3")
+        _wf = bool(getattr(loop, "_workforce_mode", False)) or str(
+            getattr(loop, "_agent_key", "") or ""
+        ).startswith("wf:")
+        _write_intent = bool(getattr(loop, "_write_intent", False)) or bool(
+            getattr(state, "write_intent", False)
+        )
+        _light = bool(getattr(loop, "_light_loop", False))
+        _ops = bool(getattr(loop, "_ops_loop", False)) or _intent == "L2"
+        # Grok-style: ALWAYS family thrash for fetch/command/probe/orch.
+        # Old L3 "exact only" killed family thrash → 46× command empty loop.
+        # Write/workforce only raise the command threshold, never disable family.
+        _use_family_fp = True
+        fp = thrash_fingerprint(tool_calls, use_family_bucket=_use_family_fp)
+
+        _hb_thr = getattr(loop, "_harness_bundle", None) or {}
+        _rust_after = int(_hb_thr.get("cmd_family_force_after") or 0)
+        # Hard force thresholds (streak >= force_after → stop). streak counts
+        # consecutive same family/exact fp after first match (1 = second round).
+        if fam == "http_fetch":
             force_after = max(
-                2,
-                int(getattr(settings, "agent_orch_thrash_force_final", 3) or 3),
+                1, int(getattr(settings, "agent_http_fetch_force_after", 1) or 1)
             )
-        elif _only_process and _bg_running:
-            # rustup reinstall / cargo can run minutes — don't force_final on 2nd poll
+            _family_hard = True
+        elif fam in {"shell_probe", "process_poll"}:
+            force_after = max(1, int(getattr(settings, "agent_probe_force_after", 2) or 2))
+            _family_hard = True
+        elif fam == "command_family":
+            _family_hard = True
+            if _light or _intent in {"L0", "L1"}:
+                force_after = max(
+                    1,
+                    _rust_after
+                    or int(getattr(settings, "agent_command_family_force_after", 3) or 3),
+                )
+            elif _ops:
+                force_after = max(
+                    1,
+                    _rust_after
+                    or int(
+                        getattr(settings, "agent_command_family_force_after_ops", 6) or 6
+                    ),
+                )
+            elif _write_intent or _wf:
+                # real engineering shell: wider but not infinite
+                force_after = max(
+                    1,
+                    int(getattr(settings, "agent_command_family_force_after_eng", 8) or 8),
+                )
+            else:
+                # coding chat without write_intent (e.g. review + accidental shell)
+                force_after = max(1, 4)
+        elif fam in {"orch_heavy", "result_load_heavy", "cargo_verify"}:
+            _family_hard = True
             force_after = max(
-                6, int(getattr(settings, "agent_process_poll_thrash", 8) or 8)
+                1, int(getattr(settings, "agent_orch_thrash_force_final", 2) or 2)
+            )
+        elif fam:
+            _family_hard = True
+            force_after = max(
+                1, int(getattr(settings, "agent_orch_thrash_force_final", 2) or 2)
             )
         else:
-            # Default 3: large docs need 2+ offset file_read rounds; 2 was false thrash.
+            _family_hard = False
             force_after = max(
-                2, int(getattr(settings, "agent_tool_thrash_force_final", 3) or 3)
+                1, int(getattr(settings, "agent_tool_thrash_force_final", 2) or 2)
             )
+
         prev_fp = (state.last_tool_fingerprint or "").strip()
         if prev_fp and fp == prev_fp:
             state.thrash_streak = int(state.thrash_streak or 0) + 1
@@ -2091,240 +1049,83 @@ async def run_tool_round(
             state.thrash_streak = 0
         state.last_tool_fingerprint = fp
 
-        # ABAB alternate thrash: file_write helper ↔ command (visible 复读)
-        _sig = "|".join(sorted({str(n) for n in _tnames2 if n})) if _tnames2 else ""
-        _prev_sig = (getattr(state, "last_tool_name_sig", "") or "").strip()
+        # BUGFIX: was max(2, force_after) which made force_after=1 useless
+        _need = max(1, int(force_after))
+        _cmd_hard = False
         if (
-            _sig
-            and _prev_sig
-            and _sig != _prev_sig
-            and len(_tnames2) == 1
-            and _sig in ("command", "file_write", "python", "process")
-            and _prev_sig in ("command", "file_write", "python", "process")
+            (_family_hard or not fam)
+            and bool(getattr(settings, "agent_thrash_force_final_interactive", True))
+            and not state.force_final_no_tools
+            and prev_fp
+            and fp == prev_fp
+            and int(state.thrash_streak or 0) >= _need
         ):
-            state.alternate_thrash_streak = int(
-                getattr(state, "alternate_thrash_streak", 0) or 0
-            ) + 1
-        elif _sig and _sig == _prev_sig:
-            # same single-tool family — leave alternate alone; exact thrash handles it
-            pass
-        else:
-            state.alternate_thrash_streak = 0
-        if _sig:
-            state.last_tool_name_sig = _sig
+            _cmd_hard = True
 
-        _alt_cap = max(
-            4, int(getattr(settings, "agent_alternate_thrash_force_final", 6) or 6)
-        )
-        try:
-            from backend.agent.progress_guard import soft_open_mode as _so_th
-
-            _hard_thrash = not _so_th() and bool(
-                getattr(settings, "agent_thrash_force_final", True)
-            )
-        except Exception:
-            _hard_thrash = bool(getattr(settings, "agent_thrash_force_final", True))
+        # Soft hint only when threshold > 1 (give one warn before hard stop)
         if (
-            int(getattr(state, "alternate_thrash_streak", 0) or 0) >= _alt_cap
+            not _cmd_hard
+            and _need > 1
+            and prev_fp
+            and fp == prev_fp
+            and int(state.thrash_streak or 0) == 1
+            and fam not in {"http_fetch", "shell_probe"}
             and not state.force_final_no_tools
         ):
-            if _hard_thrash:
-                state.force_final_no_tools = True
-                messages.append(
-                    {
-                        "role": "system",
-                        "content": (
-                            "[Alternate thrash] Many write-script → command → rewrite loops. "
-                            "No tools this turn: short blocker + paths already on disk; "
-                            "no more _cargo_*.py / _diag_*.py or long lists."
-                        ),
-                    }
-                )
-            else:
-                messages.append(
-                    {
-                        "role": "system",
-                        "content": (
-                            "[Pace] Many write-script → run-command alternations. "
-                            "Prefer editing product sources and verifying; tools still allowed."
-                        ),
-                    }
-                )
-            logger.warning(
-                "alternate thrash %s streak=%s sig=%s→%s session=%s",
-                "force_final" if state.force_final_no_tools else "soft",
-                state.alternate_thrash_streak,
-                _prev_sig,
-                _sig,
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "【轻提示·工具重复】上一轮已调用相同工具族/相近参数。"
+                        "请换策略，或直接根据已有结果作答；禁止再空转。"
+                    ),
+                }
+            )
+            logger.info(
+                "tool thrash soft hint fp=%s streak=%s fam=%s session=%s",
+                fp,
+                state.thrash_streak,
+                fam or "-",
                 session_id,
             )
-
-        # force_after=2 → streak>=1 即第 2 轮相同；force_after=3 → streak>=2 即第 3 轮
-        if (
+        if _cmd_hard or (
             prev_fp
             and fp == prev_fp
-            and state.thrash_streak >= max(1, force_after - 1)
+            and int(state.thrash_streak or 0) >= _need
             and not state.force_final_no_tools
         ):
-            # cargo/shell family → deliver; must_write ONLY if real compile_source
-            # soft-open: soft nudge only, never strip tools / hard stop
-            if fam in ("cargo_verify", "shell_probe"):
-                if _hard_thrash:
-                    state.deliver_mode = True
-                    _mw_ok = False
-                    try:
-                        from backend.core.config import settings as _st_ft
-
-                        _gate = bool(
-                            getattr(
-                                _st_ft,
-                                "agent_family_thrash_must_write_only_source",
-                                True,
-                            )
-                        )
-                    except Exception:
-                        _gate = True
-                    if fam == "cargo_verify":
-                        if _gate:
-                            _mw_ok = (
-                                str(getattr(state, "cargo_error_class", "") or "")
-                                == "compile_source"
-                            )
-                        else:
-                            _mw_ok = True
-                    state.must_write_before_cargo = _mw_ok
-                    state.force_final_no_tools = False
-                    try:
-                        from backend.agent.progress_guard import (
-                            filter_names_deliver_only as _fnd2,
-                            filter_tools_deliver_only as _ftd2,
-                        )
-
-                        state.tools = _ftd2(state.tools)
-                        if isinstance(state.enabled_tools_filter, list):
-                            state.enabled_tools_filter = _fnd2(
-                                state.enabled_tools_filter
-                            )
-                    except Exception:
-                        pass
-                messages.append(
-                    {
-                        "role": "system",
-                        "content": thrash_force_final_text(family=fam)
-                        if _hard_thrash
-                        else (
-                            f"[Pace] Repeated {fam} rounds. "
-                            "Prefer editing sources before another check; any tool still OK."
-                        ),
+            state.force_final_no_tools = True
+            # 结构化退出码：便于 API/用量/诊断；epilogue 仍会 push idle
+            try:
+                if not getattr(loop, "last_exit_reason", None) or loop.last_exit_reason in (
+                    "",
+                    "completed",
+                    None,
+                ):
+                    loop.last_exit_reason = "thrash"
+                    loop.last_exit_detail = {
+                        "code": "thrash",
+                        "fingerprint": str(fp)[:120],
+                        "streak": int(state.thrash_streak or 0),
+                        "family": fam or "",
                     }
-                )
-                logger.warning(
-                    "family thrash fam=%s hard=%s streak=%s session=%s",
-                    fam,
-                    _hard_thrash,
-                    state.thrash_streak,
-                    session_id,
-                )
-            elif fam == "process_poll":
-                # Hard throttle is in process_registry; soft nudge only
-                messages.append(
-                    {
-                        "role": "system",
-                        "content": (
-                            "[process thrash] Wait for [bg_complete]; do not spam poll.\n"
-                            "NEXT:\n"
-                            "1) file_write/edit to progress\n"
-                            "2) wait for bg_complete\n"
-                            "3) avoid Still-running empty polls"
-                        ),
-                    }
-                )
-                logger.info(
-                    "process_poll thrash soft session=%s streak=%s",
-                    session_id,
-                    state.thrash_streak,
-                )
-            # Write-intent: thrash → soft coding focus, NEVER strip reads/command.
-            # Hard write-only lock caused 复读卡死; keep full coding toolkit.
-            elif _write_intent_active:
-                try:
-                    from backend.agent.write_intent import (
-                        filter_names_coding_flex as _fnw,
-                        filter_tools_coding_flex as _ftw,
-                        write_intent_nudge_text as _win,
-                    )
-
-                    state.force_final_no_tools = False
-                    state.write_intent_hard_nudge = True
-                    state.tools = _ftw(state.tools)
-                    state.enabled_tools_filter = _fnw(
-                        state.enabled_tools_filter
-                        if isinstance(state.enabled_tools_filter, list)
-                        else None
-                    )
-                    messages.append(
-                        {
-                            "role": "system",
-                            "content": _win(soft=False),
-                        }
-                    )
-                except Exception:
-                    pass
-                logger.warning(
-                    "tool thrash→coding_flex fp=%s streak=%s session=%s",
-                    fp,
-                    state.thrash_streak,
-                    session_id,
-                )
-            elif _only_process and _bg_running and state.thrash_streak < 5:
-                # Do NOT say "wait longer then poll again" — that causes thrash.
-                messages.append(
-                    {
-                        "role": "system",
-                        "content": (
-                            "[Background still running] [bg_complete] will inject when done.\n"
-                            "NEXT:\n"
-                            "1) file_write/edit product sources\n"
-                            "2) manage_goal progress\n"
-                            "3) avoid spam process poll / Still-running thrash"
-                        ),
-                    }
-                )
-                logger.info(
-                    "process poll thrash deferred (bg running) streak=%s session=%s",
-                    state.thrash_streak,
-                    session_id,
-                )
-            else:
-                if _hard_thrash:
-                    state.force_final_no_tools = True
-                    messages.append(
-                        {
-                            "role": "system",
-                            "content": thrash_force_final_text(
-                                family=fp if fam else ""
-                            ),
-                        }
-                    )
-                else:
-                    messages.append(
-                        {
-                            "role": "system",
-                            "content": (
-                                "[Pace] Tool pattern is repeating. "
-                                "Change approach (read different files / edit / verify). "
-                                "Tools still allowed — not a ban."
-                            ),
-                        }
-                    )
-                logger.warning(
-                    "tool thrash %s fp=%s streak=%s fam=%s session=%s",
-                    "force_final" if state.force_final_no_tools else "soft",
-                    fp,
-                    state.thrash_streak,
-                    fam or "-",
-                    session_id,
-                )
+            except Exception:
+                pass
+            messages.append(
+                {
+                    "role": "system",
+                    "content": thrash_force_final_text(
+                        family=str(fam or fp or "")
+                    ),
+                }
+            )
+            logger.warning(
+                "tool thrash force_final fp=%s streak=%s fam=%s session=%s",
+                fp,
+                state.thrash_streak,
+                fam or "-",
+                session_id,
+            )
     except Exception as _th_e:
         logger.debug("tool thrash guard skipped: %s", _th_e)
 
@@ -2339,79 +1140,29 @@ async def run_tool_round(
             and state.last_failed_tool
             and not state.force_final_no_tools
         ):
-            # Cargo compile fails → force WRITE (not text force_final)
-            _is_cargo_tool = str(state.last_failed_tool) in ("command", "process")
-            _blob_fail = ""
-            for _m in messages[-12:]:
-                if isinstance(_m, dict) and _m.get("role") == "tool":
-                    _blob_fail += str(_m.get("content") or "")[:2000]
-            _armed_cargo_fix = False
-            try:
-                from backend.agent.progress_guard import (
-                    cargo_fix_nudge as _cfn,
-                    is_cargo_compile_failure as _icf,
-                    parse_cargo_error_paths as _pcp,
-                )
-
-                if _is_cargo_tool and _icf(_blob_fail):
-                    try:
-                        from backend.agent.progress_guard import soft_open_mode as _so_cf
-
-                        _soft_cf = _so_cf()
-                    except Exception:
-                        _soft_cf = False
-                    if not _soft_cf:
-                        state.must_write_before_cargo = True
-                        state.deliver_mode = True
-                    state.force_final_no_tools = False
-                    _ps = _pcp(_blob_fail)
-                    if _ps:
-                        state.cargo_error_paths = ",".join(_ps[:5])
-                    messages.append(
-                        {
-                            "role": "system",
-                            "content": (
-                                _cfn(_ps)
-                                + (
-                                    f"\n（command 已失败 {state.same_tool_fail_streak} 次 → 建议改代码）"
-                                    if _soft_cf
-                                    else f"\n（command 已失败 {state.same_tool_fail_streak} 次 → 强制改代码）"
-                                )
-                            ),
-                        }
-                    )
-                    logger.warning(
-                        "same-tool fail→cargo_fix streak=%s session=%s",
-                        state.same_tool_fail_streak,
-                        session_id,
-                    )
-                    _armed_cargo_fix = True
-            except Exception as _cf_e:
-                logger.debug("cargo_fix arm from fail breaker: %s", _cf_e)
-
-            if not _armed_cargo_fix:
-                state.force_final_no_tools = True
-                turn_retry.note_and_decide(
-                    RetryKind.THRASH,
-                    detail=f"same_tool_fail:{state.last_failed_tool}x{state.same_tool_fail_streak}",
-                )
-                messages.append(
-                    {
-                        "role": "system",
-                        "content": (
-                            f"[Tool breaker] {state.last_failed_tool} failed "
-                            f"{state.same_tool_fail_streak} times (any args). "
-                            "Change approach or stop retrying that tool; answer from "
-                            "existing info in the user's language."
-                        ),
-                    }
-                )
-                logger.warning(
-                    "same-tool fail breaker: tool=%s streak=%s session=%s",
-                    state.last_failed_tool,
-                    state.same_tool_fail_streak,
-                    session_id,
-                )
+            state.force_final_no_tools = True
+            turn_retry.note_and_decide(
+                RetryKind.THRASH,
+                detail=f"same_tool_fail:{state.last_failed_tool}x{state.same_tool_fail_streak}",
+            )
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        f"【工具熔断】工具 {state.last_failed_tool} 已连续失败 "
+                        f"{state.same_tool_fail_streak} 次（不论参数）。"
+                        "请换方案或停止重试：禁止再调用该工具，"
+                        "仅根据已有信息直接给出最终答复。"
+                    ),
+                }
+            )
+            logger.warning(
+                "same-tool fail breaker: tool=%s streak=%s session=%s",
+                state.last_failed_tool,
+                state.same_tool_fail_streak,
+                session_id,
+            )
+            # 熔断后清零，避免 force_final 被覆盖时每轮重复触发
             state.same_tool_fail_streak = 0
             state.last_failed_tool = ""
     except Exception as _fb_e:
@@ -2461,7 +1212,30 @@ async def run_tool_round(
                         "use_tool_pack: blocked crew/full expand on simple_turn"
                     )
                     continue
-            new_filter = merge_tools_with_packs(state.enabled_tools_filter, packs)
+            # Grok thin: never expand mcp pack to full dump mid-turn
+            if getattr(loop, "_light_loop", False) or getattr(
+                loop, "_ops_loop", False
+            ):
+                packs = [
+                    p
+                    for p in packs
+                    if p
+                    not in {
+                        "crew",
+                        "cluster",
+                        "full",
+                        "*",
+                        "all",
+                        "everything",
+                    }
+                ]
+                if not packs:
+                    continue
+            new_filter = merge_tools_with_packs(
+                state.enabled_tools_filter,
+                packs,
+                user_input=str(user_input or ""),
+            )
             # simple_turn: never accept filter=None (ALL tools)
             if state.simple_turn and new_filter is None:
                 logger.info("use_tool_pack: rejected ALL expand on simple_turn")
@@ -2477,14 +1251,14 @@ async def run_tool_round(
                     if pk not in state.scene_plan.packs:
                         state.scene_plan.packs.append(pk)
         if expanded_any:
-            # Re-strip dispatch+goal tools if simple_turn (merge may have re-added names)
+            # Re-strip dispatch tools if simple_turn (merge may have re-added names)
             if state.simple_turn and state.enabled_tools_filter is not None:
-                from backend.agent.simple_intent import SOLO_STRIP_TOOLS
+                from backend.agent.simple_intent import DISPATCH_TOOL_NAMES
 
                 state.enabled_tools_filter = [
                     n
                     for n in state.enabled_tools_filter
-                    if n not in SOLO_STRIP_TOOLS
+                    if n not in DISPATCH_TOOL_NAMES
                 ]
             state.tools = await loop._load_tools(
                 session_id,
@@ -2496,32 +1270,8 @@ async def run_tool_round(
                 from backend.agent.simple_intent import filter_dispatch_tools_from_schema
 
                 state.tools = filter_dispatch_tools_from_schema(
-                    state.tools, force=True, strip_goal_tools=True
+                    state.tools, force=True
                 )
-            # write-intent soft focus: pack expand must not re-open web/crew noise
-            if getattr(state, "write_intent_hard_nudge", False):
-                from backend.agent.write_intent import (
-                    filter_names_coding_flex,
-                    filter_tools_coding_flex,
-                )
-
-                state.tools = filter_tools_coding_flex(state.tools)
-                if isinstance(state.enabled_tools_filter, list):
-                    state.enabled_tools_filter = filter_names_coding_flex(
-                        state.enabled_tools_filter
-                    )
-            # deliver mode survives pack expand
-            if getattr(state, "deliver_mode", False):
-                from backend.agent.progress_guard import (
-                    filter_names_deliver_only,
-                    filter_tools_deliver_only,
-                )
-
-                state.tools = filter_tools_deliver_only(state.tools)
-                if isinstance(state.enabled_tools_filter, list):
-                    state.enabled_tools_filter = filter_names_deliver_only(
-                        state.enabled_tools_filter
-                    )
             # K-03：pack 扩容后必须再次按进程能力裁剪（防可见性泄漏）
             try:
                 from backend.agent.cap_tools import filter_tools_for_process
@@ -2616,29 +1366,18 @@ async def run_tool_round(
                 _status = f"{_dx['title']} — {_dx['message'][:80]}"
             except Exception:
                 _status = "检测到重复工具调用，已熔断并改为直接作答…"
-            await loop._push_status(session_id, "thinking", _status)
-            try:
-                from backend.agent.progress_guard import doom_loop_handoff as _dlh
-
-                _doom_msg = _dlh(
-                    deliver_mode=bool(getattr(state, "deliver_mode", False)),
-                    must_write=bool(getattr(state, "must_write_before_cargo", False)),
-                    cargo_paths=str(getattr(state, "cargo_error_paths", "") or ""),
-                    cargo_class=str(getattr(state, "cargo_error_class", "") or ""),
-                    last_tools=",".join(
-                        str(getattr(tc, "name", "") or "") for tc in (tool_calls or [])[:6]
-                    ),
-                )
-            except Exception:
-                _doom_msg = (
-                    "[Tool thrash trip] Same tool+args repeated; tools stopped. "
-                    "Answer from existing results in the user's language; "
-                    "next: change parameters/tools."
-                )
+            # 熔断后仍需再走一轮 LLM 出最终答；用 running 而非 thinking，
+            # 避免前端 thinking 动画在 force_final 收口阶段误导用户
+            await loop._push_status(session_id, "running", _status)
             messages.append(
                 {
                     "role": "system",
-                    "content": _doom_msg,
+                    "content": (
+                        "【工具空转熔断 / doom loop】你连续多次调用了相同工具（参数几乎相同）。"
+                        "禁止再调用任何工具。请仅根据已有工具结果，用自然语言直接给出最终答复。\n"
+                        "用户侧恢复：换参数/换工具后重试；或控制台 resume 挂起进程；"
+                        "查看 /api/kernel/policy/{process_id} 与 decision_trail。"
+                    ),
                 }
             )
             state.force_final_no_tools = True
@@ -2659,14 +1398,13 @@ async def run_tool_round(
                 {
                     "role": "system",
                     "content": (
-                        "[Multi-agent formatting] Crew/workers involved this turn. "
-                        "Final answer in Markdown — keep tables (|), headings, lists, form fields.\n"
-                        "1) Section per worker or one merged table (append rows, do not drop columns).\n"
-                        "2) Do not collapse into a 2–3 paragraph prose-only summary.\n"
-                        "3) Deduplicate lightly; keep details and numbers.\n"
-                        "4) Do not dump tool JSON/raw logs.\n"
-                        "Call more tools if needed; otherwise emit the formatted final answer "
-                        "in the user's language."
+                        "【多 agent 整理·版式优先】本轮涉及编制/多员工。"
+                        "最终答复请用 Markdown **保留表格（|）、标题、列表、表单字段**；\n"
+                        "1) 可分节汇总各员工结果，或合并到同一张表（追加行，勿删列）；\n"
+                        "2) 禁止压成两三段纯文字摘要；\n"
+                        "3) 去掉明显重复即可，细节与数值尽量保留；\n"
+                        "4) 不要堆砌工具 JSON/原始日志。\n"
+                        "若还需工具再调；否则直接输出带版式的最终答复。"
                     ),
                 }
             )
@@ -2682,20 +1420,14 @@ async def run_tool_round(
         if do_l1 and hasattr(eng, "_l1_budget"):
             state.messages, _n = eng._l1_budget(messages)  # type: ignore[attr-defined]
             messages = state.messages
-        soft_n = int(getattr(settings, "context_max_messages_soft", 40) or 40)
-        hard_n = int(getattr(settings, "context_max_messages_hard", 72) or 72)
-        l5_every = int(getattr(settings, "context_midloop_l5_every_rounds", 2) or 2)
-        n_msg = len(messages)
-        bloat = n_msg >= soft_n
-        extreme = n_msg >= hard_n or n_msg >= max(soft_n * 2, soft_n + 20)
+        soft_n = int(getattr(settings, "context_max_messages_soft", 48) or 48)
+        l5_every = int(getattr(settings, "context_midloop_l5_every_rounds", 4) or 4)
+        bloat = len(messages) >= soft_n
         allow_mid_l5 = (
             bloat
             and l5_every > 0
             and state.tool_rounds > 0
-            and (
-                extreme
-                or state.tool_rounds % l5_every == 0
-            )
+            and state.tool_rounds % l5_every == 0
         )
         # audit-fix(#1)：阈值默认引用单点常量（0.55/0.45 → 0.85/0.75）；
         # settings.context_threshold_percent 覆盖机制保留
@@ -2710,8 +1442,6 @@ async def run_tool_round(
         )
         if bloat:
             thr = min(thr, COMPRESS_THRESHOLD_DEEP)
-        if extreme:
-            thr = min(thr, 0.35)
         need = eng.should_compress_preflight(messages) or bloat
         if need or allow_mid_l5:
             state.messages, mid_meta = await compress_history_if_needed(

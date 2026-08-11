@@ -35,7 +35,6 @@ async def run_no_tool_round(
     seg_size: int,
     messages: list[dict[str, Any]],
     accumulated_content: str,
-    accumulated_reasoning: str = "",
     goal_mode: bool,
     goal_nudge_count: int,
     turn_retry: Any,
@@ -56,132 +55,48 @@ async def run_no_tool_round(
         completion_followups=completion_followups,
     )
 
-    # ── Goal 已完成：要求面向用户的完整总结（避免空/极短收束）──
-    if not loop._should_stop:
-        try:
-            from backend.agent.goal_state import get_goal as _gg_done
-            from backend.agent.robust import is_empty_assistant_content as _empty_done
+    # ── Goal 模式 nudge ──
+    if goal_mode:
+        from backend.agent.goal_state import get_goal
 
-            _g_done = _gg_done(session_id)
-            if (
-                _g_done is not None
-                and _g_done.is_complete()
-                and (
-                    _empty_done(accumulated_content)
-                    or len((accumulated_content or "").strip()) < 120
-                )
-            ):
+        g = get_goal(session_id)
+        incomplete = g is not None and not g.is_complete()
+        # 无 todo 也算未规划完成（允许 1 次纯文本规划后必须建 todo）
+        no_plan = g is None or (not g.todos and g.status != "completed")
+        if (incomplete or no_plan) and goal_nudge_count < 8 and iteration < seg_size - 1:
+            result.goal_nudge_count += 1
+            # 把当前文本当作中间思考，要求继续
+            if accumulated_content:
                 messages.append(
                     {
-                        "role": "system",
-                        "content": (
-                            "[System] Goal is complete. Tools optional. "
-                            "Write a full user-facing summary in the user's language: "
-                            "what was done, verification evidence (e.g. cargo check), "
-                            "remaining risks, and suggested follow-ups. "
-                            "Do not reply with only a one-liner or empty body."
-                        ),
+                        "role": "assistant",
+                        "content": accumulated_content,
                     }
                 )
-                result.force_final_no_tools = True
-                result.action = "continue"
-                logger.info(
-                    "goal complete summary nudge session=%s",
+                # 中间内容推到流，便于 UI 展示
+                await loop._push_status(
                     session_id,
+                    "thinking",
+                    f"Goal 未完成，继续执行 ({result.goal_nudge_count})…",
                 )
-                return result
-        except Exception as _gcd_e:
-            logger.debug("goal complete summary nudge skip: %s", _gcd_e)
-
-    # ── Goal 未完成：禁止 text-only 假收工（不限 mode=goal）──
-    # 自动续跑常以 mode=default 注入 Goal 摘要，旧逻辑只在 goal_mode 下 nudge，
-    # 导致模型说「继续读…」却不调工具 → run 直接 done。
-    if not force_final_no_tools and not loop._should_stop:
-        try:
-            from backend.agent.goal_state import get_goal
-            from backend.core.config import settings as _st
-
-            g = get_goal(session_id)
-            incomplete = (
-                g is not None
-                and not g.is_complete()
-                and str(getattr(g, "status", "") or "") not in ("cancelled", "completed")
+            nudge = (
+                "Goal 尚未达成。请：\n"
+                "1) 若还没有 todo，调用 manage_goal 创建任务列表；\n"
+                "2) 推进未完成项并 update_todo；\n"
+                "3) 全部完成后 manage_goal(action=complete) 再给出最终总结。\n"
+                "不要在未完成时停止。"
             )
-            # 无 todo 的 active goal / goal_mode 空规划
-            no_plan = bool(
-                goal_mode
-                and (g is None or (not getattr(g, "todos", None) and g.status != "completed"))
-            ) or (
-                g is not None
-                and str(getattr(g, "status", "") or "") == "active"
-                and not getattr(g, "todos", None)
+            if g:
+                nudge += "\n\n" + g.summary_for_llm()
+            messages.append({"role": "user", "content": nudge})
+            logger.info(
+                f"Goal nudge #{result.goal_nudge_count} for session {session_id}"
             )
-            keep = bool(getattr(_st, "agent_goal_incomplete_keep_going", True))
-            max_nudges = max(
-                8, int(getattr(_st, "agent_goal_incomplete_nudge_max", 16) or 16)
-            )
-            # 有未完成 Goal 时始终 keep-going；纯 goal_mode 空规划同样
-            should_nudge = keep and (incomplete or no_plan) and goal_nudge_count < max_nudges
-            if should_nudge:
-                result.goal_nudge_count += 1
-                if accumulated_content:
-                    messages.append(
-                        {
-                            "role": "assistant",
-                            "content": accumulated_content,
-                        }
-                    )
-                    await loop._push_status(
-                        session_id,
-                        "thinking",
-                        f"Goal 未完成，自动续跑 ({result.goal_nudge_count}/{max_nudges})…",
-                    )
-                nudge = (
-                    "[System] Goal is incomplete — do not finish with text only. "
-                    "Call tools now:\n"
-                    "1) manage_goal(action=get) for remaining todos;\n"
-                    "2) file_write/edit code, or cargo check;\n"
-                    "3) update_todo / manage_goal(complete).\n"
-                    "Do not only say 'reading/aligning' without tools. "
-                    "Reply to the user in their language."
-                )
-                if g:
-                    nudge += "\n\n" + g.summary_for_llm()
-                messages.append({"role": "user", "content": nudge})
-                # 确保下一轮可调工具
-                result.force_final_no_tools = False
-                logger.info(
-                    "Goal incomplete auto-continue nudge=%s/%s session=%s goal_mode=%s",
-                    result.goal_nudge_count,
-                    max_nudges,
-                    session_id,
-                    goal_mode,
-                )
-                result.action = "continue"
-                return result
-        except Exception as _gn_e:
-            logger.debug("goal incomplete nudge skip: %s", _gn_e)
+            result.action = "continue"
+            return result
 
     # ── 空正文：TurnRetryState 分类重试 / 耗尽则 force_final ──
-    # 注意：force_final 后再空 → 必须 break，否则会 100+ 轮空转（has_tools=False）
     if is_empty_assistant_content(accumulated_content) and not loop._should_stop:
-        # Already in force_final and still blank → stop the run (no more thrash)
-        if force_final_no_tools:
-            logger.warning(
-                "empty content after force_final — break thrash session=%s",
-                session_id,
-            )
-            result.action = "break"
-            result.final_content = (
-                accumulated_content
-                or accumulated_reasoning
-                or "[Stopped] Model returned empty replies repeatedly. Please retry."
-            )
-            try:
-                loop.last_exit_reason = "empty_content_thrash"
-            except Exception:
-                pass
-            return result
         action = turn_retry.note_and_decide(
             RetryKind.EMPTY_CONTENT, detail="empty assistant content"
         )
@@ -198,14 +113,12 @@ async def run_no_tool_round(
                 {
                     "role": "system",
                     "content": (
-                        "Your last turn had no visible body. Answer the user in "
-                        "their language with natural prose."
+                        "你上一轮没有输出任何可见正文。请直接用自然语言回答用户。"
                         + (
-                            " You already used tools: give a final answer from "
-                            "tool results (e.g. key stdout lines); do not return blank."
+                            "你刚才已调用过工具：必须根据工具结果给出最终中文答复"
+                            "（例如复述 command 的 stdout 关键行），禁止只返回空白。"
                             if last_tool_round_count > 0
-                            else " If you need file/command facts, call tools first; "
-                            "do not return blank only."
+                            else "若需要文件/命令事实，先调用工具再回答；不要只输出空白。"
                         )
                     ),
                 }
@@ -219,23 +132,6 @@ async def run_no_tool_round(
             result.action = "continue"
             return result
         if action == "force_final":
-            # Only one force_final attempt for empty content
-            if _empty_reply_retries > empty_reply_max + 1:
-                logger.warning(
-                    "empty content force_final exhausted — break session=%s n=%s",
-                    session_id,
-                    _empty_reply_retries,
-                )
-                result.action = "break"
-                result.final_content = (
-                    accumulated_reasoning
-                    or "[Stopped] Empty model replies. Please retry the last message."
-                )
-                try:
-                    loop.last_exit_reason = "empty_content_thrash"
-                except Exception:
-                    pass
-                return result
             result.force_final_no_tools = True
             await loop._push_status(
                 session_id,
@@ -246,8 +142,7 @@ async def run_no_tool_round(
                 {
                     "role": "system",
                     "content": (
-                        "Immediately give a concise final answer in the user's "
-                        "language. Do not call more tools."
+                        "请立刻用简洁中文给出最终回答，不要再调用工具。"
                     ),
                 }
             )
@@ -305,6 +200,43 @@ async def run_no_tool_round(
                 return result
         except Exception as _cg_e:
             logger.debug("completion gate skipped: %s", _cg_e)
+
+    # ── 过程话当结论（「用 Python 拉完整 README」）→ 强制再写一轮无工具答案 ──
+    if not loop._should_stop and last_tool_round_count > 0:
+        try:
+            from backend.agent.decisive import (
+                is_progress_only_reply,
+                progress_only_force_answer_text,
+            )
+
+            _prog_n = int(getattr(loop, "_progress_only_retries", 0) or 0)
+            if is_progress_only_reply(accumulated_content) and _prog_n < 1:
+                loop._progress_only_retries = _prog_n + 1
+                result.force_final_no_tools = True
+                await loop._push_status(
+                    session_id,
+                    "thinking",
+                    "上轮只是过程句，要求给出实质结论…",
+                )
+                if accumulated_content:
+                    messages.append(
+                        {"role": "assistant", "content": accumulated_content}
+                    )
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": progress_only_force_answer_text(),
+                    }
+                )
+                logger.info(
+                    "progress-only reply rejected session=%s len=%s",
+                    session_id,
+                    len(accumulated_content or ""),
+                )
+                result.action = "continue"
+                return result
+        except Exception as _po_e:
+            logger.debug("progress-only check skipped: %s", _po_e)
 
     # ── 得到最终回复 ──
     result.action = "break"

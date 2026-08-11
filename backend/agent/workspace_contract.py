@@ -95,13 +95,17 @@ def load_workspace_contract(
         ws = resolve_agent_workspace_root()
         host_roots = host_data_roots()[:6]
         map_lines = [
-            "### DATA MAP（路径事实 · 必读）",
+            "### DATA MAP（路径事实 · 必读 · Tevarn）",
             f"- **workspace_root（file_read/grep/command 默认边界）**: `{ws}`",
             f"- **宿主数据根（已放行）**: " + (", ".join(f"`{r}`" for r in host_roots) if host_roots else "（无）"),
-            f"- **沙箱内宿主数据镜像**: `{ws}/.computers/<agent>/home/.tevarn` → 指向宿主 `~/.tevarn`",
-            "- **经营目标 O-KR**: 不在文件里，用工具 **`okr_goal`**（list/update/create），不要 grep 源码",
-            "- **会话 Todo 规划卡**: `manage_goal`（与目标页无关）",
-            "- Windows：`echo`/`dir` 是 cmd 内置；沙箱里优先 `cmd /c echo ok`、`cmd /c dir`",
+            "- **安装目录（只读自检）**: `%LOCALAPPDATA%\\Programs\\Tevarn\\`（及 resources/）",
+            "- **用户数据（权威库）**: `%APPDATA%\\Tevarn\\data\\tevarn.db`（MCP/会话/设置）；**不要**用安装目录 `resources\\takton.db`",
+            f"- **沙箱镜像**: `{ws}/.computers/<agent>/home/.takton` → 宿主 `~/.takton` 或 `~/.tevarn`",
+            "- **经营目标 O-KR**: 工具 **`okr_goal`**（list/update/create），不要 grep 源码",
+            "- **会话 Todo**: `manage_goal`（与目标页无关）",
+            "- **MCP**: 用户点名**任意已注册**服务才挂 `mcp_*`（含自定义）；预制一句话装 KEY；自定义 add 用 `manage_mcp`，勿 list 空转",
+            "- Windows：默认 **cmd**；串联 `&`；列目录 `dir`；勿默认 PowerShell",
+            "- 详见同契约中的 **TOOLS.md**（工具/MCP/空转纪律）",
         ]
         sections.insert(0, "\n".join(map_lines))
         meta["data_map"] = {"workspace_root": ws, "host_roots": host_roots}
@@ -114,7 +118,7 @@ def load_workspace_contract(
     block = (
         "## WORKSPACE CONTRACT（会话启动契约 · 自动注入）\n"
         "下列文件来自项目/workspace 根、桌面 userData workspace "
-        "（`%APPDATA%/tevarn/data/workspace`）或 `.computers/*/home`。"
+        "（`%APPDATA%/takton/data/workspace`）或 `.computers/*/home`。"
         "缺失会标明 [missing]；大文件会截断并带 [truncated]。"
         "用户本轮明确指令优先于契约。"
         "Windows 默认 cmd：串联用 `&`，列目录用 `dir`。\n\n"

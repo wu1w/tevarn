@@ -45,6 +45,8 @@ pub mod isolation;
 pub mod checkpoint;
 pub mod policy;
 pub mod loop_guard;
+pub mod harness;
+pub mod context_policy;
 pub mod cargo_classify;
 pub mod run_gate;
 
@@ -71,8 +73,17 @@ pub use process_snapshot::{ProcessSnapshot, ProcessSnapshotStore};
 pub use result_store::{ResultHandle, ResultSpillStore};
 pub use policy::{IterationBudgetState, PolicyDecision, PolicySupervisor};
 pub use loop_guard::{
-    LoopGuardConfig, LoopGuardSupervisor, RoleKind, Thoroughness, result_looks_truncated,
+    result_looks_truncated, resolve_role_from_value as loop_guard_resolve_role_from_value,
+    LoopGuardConfig, LoopGuardSupervisor, RoleKind, Thoroughness,
 };
+pub use harness::{
+    classify_loop_intent, is_write_intent as harness_is_write_intent, mcp_product_keywords,
+    resolve_from_value as harness_resolve_from_value, resolve_harness_mode, select_live_mcp_tools,
+    select_mcp_from_value as harness_select_mcp_from_value,
+    simple_session_from_value as harness_simple_session_from_value, HarnessLimits, HarnessMode,
+    LoopIntent,
+};
+pub use context_policy::decide_compact_from_value as context_decide_compact_from_value;
 pub use cargo_classify::{classify_cargo_error, classify_cargo_error_json};
 pub use cache_metrics::CacheMetrics;
 pub use cost::CostLedger;
@@ -221,6 +232,12 @@ pub const ABI_METHODS: &[&str] = &[
     "loop_guard_post_tool",
     "loop_guard_budget_check",
     "loop_guard_status",
+    // Grok-style harness (thin default, MCP matching, turn caps)
+    "harness_resolve",
+    "harness_select_mcp",
+    "harness_simple_session",
+    "loop_guard_resolve_role",
+    "context_decide_compact",
     // Pure thrash/progress helpers (stateless)
     "cargo_classify",
     "cache_record",

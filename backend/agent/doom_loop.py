@@ -18,7 +18,7 @@ class DoomLoopGuard:
     or inject a steer note (Grok/Claude-style thrash protection for tools).
     """
 
-    threshold: int = 3
+    threshold: int = 2  # 更早软熔断；与 tool thrash 对齐
     window: list[tuple[str, float]] = field(default_factory=list)
     last_fingerprint: str | None = None
     streak: int = 0

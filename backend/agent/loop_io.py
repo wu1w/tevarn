@@ -381,13 +381,19 @@ class LoopIOMixin:
             msg_repo = AsyncMessageRepository(db)
             ctx_repo = AsyncCtxItemRepository(db)
             await ctx_repo.prune_by_ttl(session_id=session_id, ttl="session")
-            saved = await msg_repo.save_message(session_id, "user", enriched_input)
+            try:
+                from backend.services.secret_redact import redact_secrets
+
+                store_text = redact_secrets(enriched_input)
+            except Exception:
+                store_text = enriched_input
+            saved = await msg_repo.save_message(session_id, "user", store_text)
             await ctx_repo.create({
                 "session_id": session_id,
                 "scope": "session",
                 "kind": "message",
                 "key": f"user_{int(datetime.now(timezone.utc).timestamp() * 1000)}",
-                "value": enriched_input,
+                "value": store_text,
                 "tokens": max(8, round(len(enriched_input) / 3.4)),
                 "pinned": False,
                 "ttl": "session",
@@ -521,6 +527,12 @@ class LoopIOMixin:
                 "（本轮未生成可见正文：可能只调用了工具且后续未总结。"
                 "请再发一条消息，或点「请继续」。若持续空白，可检查设备/RAG 相关工具是否报错。）"
             )
+        try:
+            from backend.services.secret_redact import redact_secrets
+
+            text = redact_secrets(text)
+        except Exception:
+            pass
         async with get_db_context() as db:
             msg_repo = AsyncMessageRepository(db)
             ctx_repo = AsyncCtxItemRepository(db)
@@ -570,10 +582,9 @@ class LoopIOMixin:
 
             parts.append(f"\n\n[附件 {i}: {filename}]")
             if text_content:
-                # 文本文件直接附内容（提高上限，避免 PRD 被截断后模型反复 file_read）
-                _att_cap = 50000
-                content_preview = text_content[:_att_cap]
-                if len(text_content) > _att_cap:
+                # 文本文件直接附内容
+                content_preview = text_content[:8000]
+                if len(text_content) > 8000:
                     content_preview += "\n...（内容已截断）"
                 parts.append(content_preview)
             elif file_type in {"jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"}:

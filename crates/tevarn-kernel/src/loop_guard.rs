@@ -1,4 +1,4 @@
-//! Loop thrash / fan-out guards (aligned with Claude Code max_turns + Grok explore caps).
+﻿//! Loop thrash / fan-out guards (aligned with Claude Code max_turns + Grok explore caps).
 //!
 //! Authority lives in the kernel so Python cannot drift. Python consults these RPCs
 //! before tool execution and after each tool round.
@@ -42,8 +42,8 @@ pub enum RoleKind {
 impl RoleKind {
     pub fn parse(s: &str) -> Self {
         match s.trim().to_ascii_lowercase().as_str() {
-            "research" | "explore" | "researcher" | "研究员" => Self::Research,
-            "implement" | "engineer" | "impl" | "工程师" | "coding" => Self::Implement,
+            "research" | "explore" | "researcher" | "鐮旂┒鍛? => Self::Research,
+            "implement" | "engineer" | "impl" | "宸ョ▼甯? | "coding" => Self::Implement,
             "steward" | "ceo" | "main" => Self::Steward,
             _ => Self::Chat,
         }
@@ -62,8 +62,8 @@ pub enum Thoroughness {
 impl Thoroughness {
     pub fn parse(s: &str) -> Self {
         match s.trim().to_ascii_lowercase().as_str() {
-            "quick" | "fast" | "浅" => Self::Quick,
-            "very_thorough" | "very-thorough" | "thorough" | "deep" | "深" => Self::VeryThorough,
+            "quick" | "fast" | "娴? => Self::Quick,
+            "very_thorough" | "very-thorough" | "thorough" | "deep" | "娣? => Self::VeryThorough,
             _ => Self::Medium,
         }
     }
@@ -150,15 +150,17 @@ impl LoopGuardConfig {
                 c.max_orch_per_round = 1;
                 c.ban_worker_orch = false;
             }
+            // Grok-style interactive thin: hard turn cap, no crew fan-out
             RoleKind::Chat => {
-                c.max_tool_rounds = 40;
-                c.max_crew_total = 3;
-                c.max_orch_per_round = 1;
-                c.ban_worker_orch = false;
+                c.max_tool_rounds = 8;
+                c.max_file_reads = 16;
+                c.max_crew_total = 0;
+                c.max_orch_per_round = 0;
+                c.ban_worker_orch = true;
             }
         }
         if workforce && matches!(role, RoleKind::Chat) {
-            // Unknown workforce → treat as implement-ish, still ban recursive crew
+            // Unknown workforce 鈫?treat as implement-ish, still ban recursive crew
             c.max_tool_rounds = 16;
             c.ban_worker_orch = true;
             c.max_crew_total = 0;
@@ -179,6 +181,265 @@ impl LoopGuardConfig {
             "max_file_reads": self.max_file_reads,
             "ban_worker_orch": self.ban_worker_orch,
         })
+    }
+}
+
+fn contains_ci(hay: &str, needle: &str) -> bool {
+    hay.to_ascii_lowercase()
+        .contains(&needle.to_ascii_lowercase())
+}
+
+fn contains_any_ci(hay: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|n| contains_ci(hay, n))
+}
+
+/// Resolve RoleKind from identity / instruction / harness flags.
+/// Authority for loop_guard 鈥?Python must not force-upgrade chat鈫抯teward.
+pub fn resolve_role_kind(
+    workforce: bool,
+    identity_name: &str,
+    identity_role: &str,
+    instruction: &str,
+    explicit_role: Option<&str>,
+    light_loop: bool,
+    ops_loop: bool,
+) -> RoleKind {
+    // Grok thin: harness light/ops always chat (ban crew)
+    if light_loop || ops_loop {
+        return RoleKind::Chat;
+    }
+    if let Some(ex) = explicit_role {
+        let ex_l = ex.trim().to_ascii_lowercase();
+        // harness tip "coding" is NOT an explicit RoleKind 鈥?skip so identity can win
+        if ex_l != "coding" && ex_l != "code" {
+            let p = RoleKind::parse(ex);
+            if !matches!(p, RoleKind::Chat) || ex_l == "chat" {
+                if workforce && matches!(p, RoleKind::Chat) {
+                    // fall through
+                } else {
+                    return p;
+                }
+            }
+        }
+    }
+    let blob = format!("{identity_name} {identity_role}");
+    if contains_any_ci(&blob, &["鐮旂┒", "research", "explore", "鍒嗘瀽甯?, "鐮旂┒鍛?]) {
+        return RoleKind::Research;
+    }
+    // Real steward/CEO identity only 鈥?never force plain chat to steward
+    if !workforce
+        && contains_any_ci(
+            &blob,
+            &["CEO", "ceo", "绠″", "steward", "Steward", "澶х瀹?],
+        )
+    {
+        return RoleKind::Steward;
+    }
+    let instr = instruction;
+    if workforce {
+        if contains_any_ci(
+            instr,
+            &[
+                "璋冪爺",
+                "鐮旂┒",
+                "research",
+                "explore",
+                "鍙",
+                "read only",
+                "read-only",
+                "GitHub",
+                "璇勪及",
+                "鍒嗘瀽",
+                "鎬庝箞瀹炵幇",
+                "鏈€灏忔敼鍔?,
+                "鎴愮啛鍋氭硶",
+                "瀹樻柟",
+            ],
+        ) {
+            return RoleKind::Research;
+        }
+        return RoleKind::Implement;
+    }
+    // Main-chat engineering (harness coding, non-steward): implement-like caps
+    // so multi-step code work is not starved at Chat max_tool_rounds=15
+    if contains_any_ci(
+        instr,
+        &[
+            "閲嶆瀯",
+            "鏀逛唬鐮?,
+            "瀹炵幇",
+            "淇?bug",
+            "淇bug",
+            "pytest",
+            "缂栬瘧",
+            "鐧诲綍椤?,
+            "code review",
+            "review pr",
+            "apply_patch",
+            "github.com",
+            "pull request",
+        ],
+    ) {
+        return RoleKind::Implement;
+    }
+    RoleKind::Chat
+}
+
+pub fn resolve_thoroughness(payload_th: Option<&str>, instruction: &str) -> Thoroughness {
+    if let Some(t) = payload_th {
+        return Thoroughness::parse(t);
+    }
+    if contains_any_ci(instruction, &["蹇€?, "绮楃湅", "quick", "鎵竴鐪?]) {
+        return Thoroughness::Quick;
+    }
+    if contains_any_ci(
+        instruction,
+        &["娣卞叆", "绌峰敖", "鍏ㄩ潰", "very thorough", "very_thorough", "deep"],
+    ) {
+        return Thoroughness::VeryThorough;
+    }
+    Thoroughness::Medium
+}
+
+/// Full loop_guard plan from RPC params (role + config). No process mutation.
+pub fn resolve_role_from_value(params: &Value) -> Value {
+    let workforce = params
+        .get("workforce")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let identity_name = params
+        .get("identity_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let identity_role = params
+        .get("identity_role")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let instruction = params
+        .get("instruction")
+        .or_else(|| params.get("text"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let light = params
+        .get("light_loop")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let ops = params
+        .get("ops_loop")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let explicit = params
+        .get("role_kind")
+        .or_else(|| params.get("role"))
+        .and_then(|v| v.as_str())
+        .or_else(|| {
+            params
+                .get("payload")
+                .and_then(|p| p.get("role_kind").or_else(|| p.get("role")))
+                .and_then(|v| v.as_str())
+        });
+    let th_s = params
+        .get("thoroughness")
+        .and_then(|v| v.as_str())
+        .or_else(|| {
+            params
+                .get("payload")
+                .and_then(|p| p.get("thoroughness"))
+                .and_then(|v| v.as_str())
+        });
+    let role = resolve_role_kind(
+        workforce,
+        identity_name,
+        identity_role,
+        instruction,
+        explicit,
+        light,
+        ops,
+    );
+    let th = if matches!(role, RoleKind::Research) {
+        Some(resolve_thoroughness(th_s, instruction))
+    } else {
+        None
+    };
+    let mut cfg = LoopGuardConfig::for_role(workforce, role, th);
+    // Optional max_iters override from harness
+    if let Some(m) = params.get("max_tool_rounds").and_then(|v| v.as_u64()) {
+        if m > 0 {
+            cfg.max_tool_rounds = m as u32;
+        }
+    } else if let Some(m) = params.get("max_iters").and_then(|v| v.as_u64()) {
+        if m > 0 && (light || ops) {
+            cfg.max_tool_rounds = m as u32;
+        }
+    }
+    // harness_mode=coding + non-thin 鈫?ensure engineering rounds
+    let hmode = params
+        .get("harness_mode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if !light
+        && !ops
+        && hmode.eq_ignore_ascii_case("coding")
+        && matches!(role, RoleKind::Chat)
+    {
+        // non-steward coding main: implement-like budget
+        cfg.role_kind = RoleKind::Implement;
+        cfg.max_tool_rounds = 40;
+        cfg.max_file_reads = 50;
+        cfg.max_crew_total = 0;
+        cfg.max_orch_per_round = 0;
+        cfg.ban_worker_orch = true;
+    }
+    if !light
+        && !ops
+        && hmode.eq_ignore_ascii_case("coding")
+        && matches!(role, RoleKind::Steward)
+    {
+        cfg.max_tool_rounds = cfg.max_tool_rounds.max(40);
+    }
+    if light || ops {
+        cfg.role_kind = RoleKind::Chat;
+        cfg.ban_worker_orch = true;
+        cfg.max_crew_total = 0;
+        cfg.max_orch_per_round = 0;
+    }
+    let mut d = cfg.to_dict();
+    if let Some(obj) = d.as_object_mut() {
+        obj.insert("authority".into(), json!("rust"));
+        // serde may emit enum variant; normalize to plain string for Python
+        obj.insert(
+            "role_kind".into(),
+            json!(match role {
+                RoleKind::Chat => "chat",
+                RoleKind::Steward => "steward",
+                RoleKind::Research => "research",
+                RoleKind::Implement => "implement",
+            }),
+        );
+    }
+    d
+}
+
+#[cfg(test)]
+mod role_tests {
+    use super::*;
+
+    #[test]
+    fn thin_never_steward() {
+        let r = resolve_role_kind(false, "澶х瀹?, "CEO", "澶╂皵鎬庝箞鏍?, None, true, false);
+        assert_eq!(r, RoleKind::Chat);
+    }
+
+    #[test]
+    fn identity_steward_when_coding() {
+        let r = resolve_role_kind(false, "澶х瀹?, "CEO", "閲嶆瀯鐧诲綍椤?, None, false, false);
+        assert_eq!(r, RoleKind::Steward);
+    }
+
+    #[test]
+    fn workforce_implement() {
+        let r = resolve_role_kind(true, "宸ョ▼甯圓", "engineer", "瀹炵幇鎺ュ彛", None, false, false);
+        assert_eq!(r, RoleKind::Implement);
     }
 }
 
@@ -397,7 +658,7 @@ impl LoopGuardSupervisor {
             st.round_families.drain(0..excess);
         }
 
-        // Sliding window: ≥3 orch-heavy in last 5 rounds → force final
+        // Sliding window: 鈮? orch-heavy in last 5 rounds 鈫?force final
         let window: Vec<&str> = st
             .round_families
             .iter()
@@ -410,7 +671,7 @@ impl LoopGuardSupervisor {
             st.trip(
                 "orch_window_thrash",
                 &format!(
-                    "orchestration-heavy rounds {orch_n}/5 in sliding window — stop dispatching"
+                    "orchestration-heavy rounds {orch_n}/5 in sliding window 鈥?stop dispatching"
                 ),
             );
             return GuardDecision::ForceFinal {
@@ -469,8 +730,8 @@ impl LoopGuardSupervisor {
                 reason: "workforce workers cannot call crew_steward/delegate (no recursive fan-out)"
                     .into(),
                 message: format!(
-                    "[LoopGuard] 子工单禁止再调用 {tool}。请用已有工具直接完成任务，\
-                     用中文给出结论/卡点；勿再派工或 crew_steward。"
+                    "[LoopGuard] 瀛愬伐鍗曠姝㈠啀璋冪敤 {tool}銆傝鐢ㄥ凡鏈夊伐鍏风洿鎺ュ畬鎴愪换鍔★紝\
+                     鐢ㄤ腑鏂囩粰鍑虹粨璁?鍗＄偣锛涘嬁鍐嶆淳宸ユ垨 crew_steward銆?
                 ),
             };
         }
@@ -484,7 +745,7 @@ impl LoopGuardSupervisor {
                     code: "orch_per_round_zero".into(),
                     reason: "max_orch_per_round=0".into(),
                     message: format!(
-                        "[LoopGuard] 本 run 不允许编制类工具 {tool}。请直接干活或交卷。"
+                        "[LoopGuard] 鏈?run 涓嶅厑璁哥紪鍒剁被宸ュ叿 {tool}銆傝鐩存帴骞叉椿鎴栦氦鍗枫€?
                     ),
                 };
             }
@@ -498,7 +759,7 @@ impl LoopGuardSupervisor {
                         st.orch_this_round, st.config.max_orch_per_round
                     ),
                     message: format!(
-                        "[Orchestration cap] 本轮 {tool} 已达上限 {}。请消化已有工单结果，勿批量空派。",
+                        "[Orchestration cap] 鏈疆 {tool} 宸茶揪涓婇檺 {}銆傝娑堝寲宸叉湁宸ュ崟缁撴灉锛屽嬁鎵归噺绌烘淳銆?,
                         st.config.max_orch_per_round
                     ),
                 };
@@ -513,7 +774,7 @@ impl LoopGuardSupervisor {
                         st.crew_total, st.config.max_crew_total
                     ),
                     message: format!(
-                        "[LoopGuard] 本会话编制调用已达上限 {}。请汇总已有工单结果给主人，禁止再派。",
+                        "[LoopGuard] 鏈細璇濈紪鍒惰皟鐢ㄥ凡杈句笂闄?{}銆傝姹囨€诲凡鏈夊伐鍗曠粨鏋滅粰涓讳汉锛岀姝㈠啀娲俱€?,
                         st.config.max_crew_total
                     ),
                 };
@@ -542,9 +803,9 @@ impl LoopGuardSupervisor {
                             code: "truncated_reread_blocked".into(),
                             reason: format!("path {path} was truncated; full re-read blocked"),
                             message: format!(
-                                "[LoopGuard] 文件已截断读过：{path}\n\
-                                 禁止整文件重读。请改用 offset/limit 续读，或 grep 定点；\
-                                 或直接基于已有片段下结论。"
+                                "[LoopGuard] 鏂囦欢宸叉埅鏂杩囷細{path}\n\
+                                 绂佹鏁存枃浠堕噸璇汇€傝鏀圭敤 offset/limit 缁锛屾垨 grep 瀹氱偣锛沑
+                                 鎴栫洿鎺ュ熀浜庡凡鏈夌墖娈典笅缁撹銆?
                             ),
                         };
                     }
@@ -560,7 +821,7 @@ impl LoopGuardSupervisor {
                         st.file_reads, st.config.max_file_reads
                     ),
                     message: format!(
-                        "[LoopGuard] 本 run file_read 次数已达上限 {}。请停止扫文件，直接给出结论与缺口。",
+                        "[LoopGuard] 鏈?run file_read 娆℃暟宸茶揪涓婇檺 {}銆傝鍋滄鎵枃浠讹紝鐩存帴缁欏嚭缁撹涓庣己鍙ｃ€?,
                         st.config.max_file_reads
                     ),
                 };
@@ -702,7 +963,7 @@ pub fn result_looks_truncated(text: &str) -> bool {
         || t.contains("chars omitted")
         || t.contains("[truncated]")
         || t.contains("persisted-output")
-        || t.contains("…省略")
+        || t.contains("鈥︾渷鐣?)
         || t.contains("...[")
         || t.contains("more lines]")
 }

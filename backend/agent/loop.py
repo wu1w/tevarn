@@ -36,16 +36,89 @@ from backend.repositories import (
 from backend.services.llm import LLMServiceFactory
 
 from .context import ContextManager
-from .session_lock import get_session_lock, remove_session_lock
-from .tool_errors import sanitize_tool_error, tool_error_next_step
 
 logger = logging.getLogger(__name__)
 
-# Thin re-exports: keep historical ``from backend.agent.loop import _…`` working
-_sanitize_tool_error = sanitize_tool_error
-_tool_error_next_step = tool_error_next_step
-_get_session_lock = get_session_lock
-_remove_session_lock = remove_session_lock
+
+def _sanitize_tool_error(tool_name: str, exc: Exception) -> str:
+    """工具错误脱敏 + 下一步建议（Phase 4.3）。
+
+    生产模式不回传 SQL/堆栈；调试模式带详情。
+    禁止返回无正文的「[Error]」或裸异常类名（Agent 会误判为执行器未注册）。
+    """
+    import os
+
+    exc_type = type(exc).__name__
+    raw = str(exc or "").strip()
+    if os.environ.get("TAKTON_DEBUG", "").lower() in ("1", "true", "yes"):
+        return f"[Error] Failed to execute {tool_name}: {exc_type}: {raw or '(no message)'}"
+
+    msg = raw[:200].lower()
+    hint = _tool_error_next_step(tool_name, exc_type, msg)
+    # NotImplementedError 常见于 _executor 未绑定 / 抽象类未实现
+    if exc_type == "NotImplementedError" or "notimplemented" in msg:
+        return (
+            f"[Error] 工具 {tool_name} 执行路径未就绪（{exc_type}"
+            f"{(': ' + raw) if raw else ''}）。"
+            f"{hint}"
+        )
+    return (
+        f"[Error] 工具 {tool_name} 执行失败（{exc_type}"
+        f"{(': ' + raw[:120]) if raw else ''}）。"
+        f"{hint}"
+    )
+
+
+def _tool_error_next_step(tool_name: str, exc_type: str, msg_lower: str) -> str:
+    """面向用户的下一步建议（不泄内部路径细节）。"""
+    name = (tool_name or "").lower()
+    if "notimplemented" in exc_type.lower() or "notimplemented" in msg_lower:
+        return "下一步：重启后端使 ToolRegistry 重新加载；确认用 command/python 而非未实现的别名。"
+    if "permission" in msg_lower or "denied" in msg_lower or "not allowed" in msg_lower:
+        return "下一步：检查权限规则/员工能力白名单，或在审批中心放行后重试。"
+    if "超出" in msg_lower or "cwd" in msg_lower and ("workspace" in msg_lower or "允许" in msg_lower):
+        return "下一步：在 workspace 内设 cwd，或配置 TAKTON_DEV_ROOT / session workspace_root。"
+    if "not found" in msg_lower or "no such file" in msg_lower or "filenotfound" in exc_type.lower():
+        return "下一步：用 glob/list 确认路径是否存在，或改用工作区内的相对路径。"
+    if "timeout" in msg_lower or "timed out" in msg_lower:
+        return "下一步：缩小命令范围、拆分长任务，或提高超时后重试。"
+    if "json" in msg_lower or "decode" in msg_lower or "parse" in msg_lower:
+        return "下一步：检查参数 JSON 是否合法，字段名是否与工具 schema 一致。"
+    if name in ("file_read", "file_write", "edit", "glob", "grep"):
+        return "下一步：确认路径在 workspace 内，必要时先 file_read/glob 再编辑。"
+    if name in ("command", "run_shell", "bash", "shell", "python"):
+        return (
+            "下一步：Windows 用 `cmd /c echo ok` / `where python` 自检；"
+            "python 工具传 code= 短片段；勿传空 command。"
+        )
+    if "ppt" in name or name == "generate_ppt":
+        return "下一步：确认已安装 python-pptx；可先生成大纲 JSON 再导出 pptx。"
+    if "network" in msg_lower or "connection" in msg_lower or "http" in name:
+        return "下一步：检查网络/URL 是否可达，或改用本地缓存内容。"
+    return "下一步：查看后端日志中的同名工具错误详情后重试。"
+    return "下一步：根据工具说明调整参数后重试；仍失败可设 TAKTON_DEBUG=1 查看服务端日志。"
+
+
+# 安全修复：按 session_id 的并发锁，防止同一 session 的 agent loop 竞态执行
+_session_locks: dict[uuid.UUID, asyncio.Lock] = {}
+_SESSION_LOCK_MAX = 1024  # 防止内存泄漏：最多保留的锁数量
+
+
+def _get_session_lock(session_id: uuid.UUID) -> asyncio.Lock:
+    """获取 session 级别的执行锁"""
+    if session_id not in _session_locks:
+        # 清理机制：超过上限时移除最早的锁（已结束的session不会再使用）
+        if len(_session_locks) >= _SESSION_LOCK_MAX:
+            oldest_key = next(iter(_session_locks))
+            del _session_locks[oldest_key]
+        _session_locks[session_id] = asyncio.Lock()
+    return _session_locks[session_id]
+
+
+def _remove_session_lock(session_id: uuid.UUID) -> None:
+    """Session 结束后清理锁，防止内存泄漏"""
+    _session_locks.pop(session_id, None)
+
 
 
 class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBase):
@@ -80,7 +153,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         ctx_item_repo: CtxItemRepository | None = None,
         context_flow_repo: ContextFlowRepository | None = None,
         ws_manager=None,
-        agent_name: str = "Tevarn",
+        agent_name: str = "Takton",
         user_id: uuid.UUID | None = None,
         notification_repo: NotificationRepository | None = None,
         progress_sink=None,
@@ -109,7 +182,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             user_id=user_id,
         )
         self.context_manager = ContextManager(ctx_item_repo=ctx_item_repo)
-        # 长链/编码任务默认允许更多工具轮次；可用 TEVARN_AGENT_MAX_ITERATIONS 覆盖
+        # 长链/编码任务默认允许更多工具轮次；可用 TAKTON_AGENT_MAX_ITERATIONS 覆盖
         self.max_iterations = int(getattr(settings, "agent_max_iterations", 25) or 25)
         # 停止信号
         self._should_stop = False
@@ -686,7 +759,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         if _nested:
             return await self._run_inner(session_id, user_input, attachments, mode, sub_agent_ids or [])
         # 安全修复：获取 session 级锁，防止同一 session 的并发竞态
-        lock = get_session_lock(session_id)
+        lock = _get_session_lock(session_id)
         async with lock:
             return await self._run_inner(session_id, user_input, attachments, mode, sub_agent_ids or [])
 
@@ -868,6 +941,13 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                                         self._contact_agent = _contact_early
                             except Exception as _silent_e:
                                 logger.debug("suppressed: %s", _silent_e, exc_info=False)
+                        self._is_steward_early = bool(_is_steward_early)
+                        if _is_steward_early and not getattr(
+                            self, "_identity_name", None
+                        ):
+                            self._identity_name = (
+                                _contact_early or "大管家"
+                            )
                         _hist_est = 0
                         try:
                             if self.message_repo is not None:
@@ -1071,7 +1151,56 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     recorder.kernel_process_id = kernel_proc.id
                 except Exception as _silent_e:
                     logger.debug("suppressed: %s", _silent_e, exc_info=False)
-                # PR1–PR4: configure Rust loop_guard (max rounds / ban worker orch / crew cap)
+                # Grok harness FIRST (single resolve), then loop_guard matches thin/ops/coding
+                try:
+                    from backend.agent.simple_intent import resolve_harness_bundle
+
+                    _wf_flag = bool(getattr(self, "_workforce_mode", False)) or str(
+                        getattr(self, "_agent_key", "") or ""
+                    ).startswith("wf:")
+                    _hb = resolve_harness_bundle(
+                        str(user_input or ""),
+                        workforce=_wf_flag,
+                        mode=mode,
+                    )
+                    self._harness_bundle = _hb
+                    self._harness_mode = str(_hb.get("harness_mode") or "chat")
+                    _li = str(_hb.get("loop_intent") or "L0")
+                    self._loop_intent = _li
+                    self._light_loop = bool(
+                        getattr(settings, "agent_light_intent_downgrade", True)
+                    ) and bool(_hb.get("light_loop"))
+                    self._ops_loop = bool(_hb.get("ops_loop"))
+                    try:
+                        from backend.agent.write_intent import is_write_intent as _iwi
+
+                        self._write_intent = bool(_iwi(str(user_input or "")))
+                    except Exception:
+                        self._write_intent = False
+                    if self._light_loop or self._ops_loop:
+                        _cap = int(_hb.get("max_iters") or 8)
+                        self.max_iterations = min(
+                            int(self.max_iterations or _cap), max(3, _cap)
+                        )
+                    logger.info(
+                        "harness %s intent=%s light=%s ops=%s max_iters=%s process=%s auth=%s",
+                        self._harness_mode,
+                        _li,
+                        self._light_loop,
+                        self._ops_loop,
+                        self.max_iterations,
+                        str(kernel_proc.id)[:8],
+                        _hb.get("authority"),
+                    )
+                except Exception as _li_e:
+                    self._light_loop = False
+                    self._ops_loop = False
+                    self._loop_intent = "L3"
+                    self._write_intent = False
+                    self._harness_mode = "coding"
+                    self._harness_bundle = None
+                    logger.debug("light intent classify skip: %s", _li_e)
+                # PR1–PR4: loop_guard AFTER harness (thin chat must not force-steward)
                 try:
                     if bool(getattr(settings, "agent_loop_guard_enabled", True)):
                         from backend.agent.loop_guard_bridge import (
@@ -1088,103 +1217,91 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                             or str(getattr(self, "_run_origin", "") or "")
                             in ("inbox", "cron", "workforce")
                         )
-                        # audit-fix(#9)：原实现引用未定义的 messages（NameError 被
-                        # except 吞掉，instruction 恒为空串）。改用函数参数 user_input。
                         _instr = (
                             user_input.strip()
                             if isinstance(user_input, str) and user_input.strip()
                             else ""
                         )
+                        # Rust RoleKind authority — no Python force chat→steward
+                        _thin = bool(getattr(self, "_light_loop", False)) or bool(
+                            getattr(self, "_ops_loop", False)
+                        )
+                        _hb_lg = getattr(self, "_harness_bundle", None) or {}
+                        _cap_g = int(
+                            _hb_lg.get("max_iters")
+                            or getattr(settings, "agent_light_l0_max_iters", 8)
+                            or 8
+                        )
+                        # Early steward signal (identity often bound later)
+                        _id_name = str(
+                            getattr(self, "_identity_name", None)
+                            or _meta.get("identity_name")
+                            or getattr(self, "_contact_agent", None)
+                            or ""
+                        )
+                        if not _id_name and bool(
+                            getattr(self, "_is_steward_early", False)
+                        ):
+                            _id_name = "大管家"
+                        _payload_lg = dict(_meta) if isinstance(_meta, dict) else {}
+                        _payload_lg["harness_mode"] = str(
+                            _hb_lg.get("harness_mode")
+                            or getattr(self, "_harness_mode", "")
+                            or ""
+                        )
                         _cfg = build_loop_guard_config(
                             workforce=_wf,
-                            identity_name=str(
-                                getattr(self, "_identity_name", None)
-                                or _meta.get("identity_name")
+                            identity_name=_id_name,
+                            identity_role=str(
+                                getattr(self, "_identity_role", None)
+                                or _meta.get("identity_role")
                                 or ""
                             ),
-                            identity_role=None,
                             instruction=_instr
                             or str(_meta.get("instruction") or ""),
-                            payload=_meta if isinstance(_meta, dict) else None,
+                            payload=_payload_lg,
+                            light_loop=bool(getattr(self, "_light_loop", False)),
+                            ops_loop=bool(getattr(self, "_ops_loop", False)),
+                            max_iters=_cap_g if _thin else int(
+                                _hb_lg.get("max_iters") or 40
+                            ),
+                            harness_mode=str(
+                                _hb_lg.get("harness_mode")
+                                or getattr(self, "_harness_mode", "")
+                                or ""
+                            ),
                         )
-                        # Steward full-open chat: allow crew with cap
-                        if not _wf and not str(
-                            getattr(self, "_agent_key", "") or ""
-                        ).startswith("wf:"):
-                            if _cfg.get("role_kind") in ("chat", "steward"):
-                                _cfg["role_kind"] = "steward"
-                                _cfg["ban_worker_orch"] = False
-                                try:
-                                    from backend.agent.progress_guard import (
-                                        soft_open_mode as _so_crew,
-                                    )
-
-                                    _soft_crew = _so_crew()
-                                except Exception:
-                                    _soft_crew = True
-                                _crew_def = 999 if _soft_crew else 3
-                                _orch_def = 16 if _soft_crew else 1
-                                _cfg["max_crew_total"] = int(
-                                    getattr(
-                                        settings,
-                                        "agent_crew_steward_max_per_run",
-                                        _crew_def,
-                                    )
-                                    or _crew_def
-                                )
-                                _cfg["max_orch_per_round"] = int(
-                                    getattr(
-                                        settings,
-                                        "agent_max_orch_tools_per_round",
-                                        _orch_def,
-                                    )
-                                    or _orch_def
-                                )
-                                if _soft_crew:
-                                    _cfg["max_crew_total"] = max(
-                                        int(_cfg["max_crew_total"] or 0), 999
-                                    )
-                                    _cfg["max_orch_per_round"] = max(
-                                        int(_cfg["max_orch_per_round"] or 0), 16
-                                    )
-                        # Goal / long coding: never let loop_guard be tighter than
-                        # the iteration budget (was 40 → blocked file_write mid-scaffold).
-                        try:
-                            _goalish = bool(
-                                goal_mode
-                                or str(mode or "").lower() in ("goal", "default")
-                            )
-                            _iter_budget = int(
-                                getattr(self, "max_iterations", 0)
-                                or getattr(settings, "agent_max_iterations", 40)
-                                or 40
-                            )
-                            if _goalish:
-                                _iter_budget = max(
-                                    _iter_budget,
-                                    int(
-                                        getattr(
-                                            settings, "agent_goal_max_iterations", 100
-                                        )
-                                        or 100
-                                    ),
-                                )
-                            _mr0 = int(_cfg.get("max_tool_rounds") or 0)
-                            if _iter_budget > 0:
-                                _cfg["max_tool_rounds"] = max(_mr0, _iter_budget)
-                        except Exception as _mr_e:
-                            logger.debug("loop_guard budget align skip: %s", _mr_e)
-                        await asyncio.to_thread(  # audit-fix: sync RPC → to_thread
+                        await asyncio.to_thread(
                             configure_for_process, str(kernel_proc.id), _cfg
                         )
-                        # Do NOT shrink max_iterations to match guard (that capped
-                        # goal runs at ~42 and hit LoopGuard mid multi-crate write).
+                        try:
+                            _mr = int(_cfg.get("max_tool_rounds") or 0)
+                            # Only clamp max_iterations for thin chat/ops — never starve coding
+                            if _mr > 0 and _thin:
+                                self.max_iterations = min(
+                                    int(self.max_iterations or _mr),
+                                    max(3, _mr),
+                                )
+                            elif (
+                                _mr > 0
+                                and not _thin
+                                and int(self.max_iterations or 0) > 0
+                            ):
+                                # coding/steward: raise soft ceiling to guard, never shrink below harness
+                                self.max_iterations = max(
+                                    int(self.max_iterations or _mr),
+                                    int(_mr),
+                                )
+                        except Exception as _silent_e:
+                            logger.debug("suppressed: %s", _silent_e, exc_info=False)
                         logger.info(
-                            "loop_guard configured process=%s role=%s max_rounds=%s ban_orch=%s",
+                            "loop_guard configured process=%s role=%s max_rounds=%s ban_orch=%s thin=%s auth=%s",
                             str(kernel_proc.id)[:8],
                             _cfg.get("role_kind"),
                             _cfg.get("max_tool_rounds"),
                             _cfg.get("ban_worker_orch"),
+                            _thin,
+                            _cfg.get("authority"),
                         )
                 except Exception as _lg_e:
                     logger.debug("loop_guard configure skip: %s", _lg_e)
@@ -1199,11 +1316,17 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         or "engineering"
                     )
                     mode_l = str(mode or "").lower()
-                    if scenario == "coding_research" and mode_l not in (
-                        "ask",
-                        "plan",
-                        "explore",
-                        "chat",
+                    if (
+                        not bool(getattr(self, "_light_loop", False))
+                        and not bool(getattr(self, "_ops_loop", False))
+                        and scenario == "coding_research"
+                        and mode_l
+                        not in (
+                            "ask",
+                            "plan",
+                            "explore",
+                            "chat",
+                        )
                     ):
                         if hasattr(kernel, "_call"):
                             applied = await kernel._acall(
@@ -1251,7 +1374,12 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         # 注意：coding_profile 之后 process.capabilities 已被收窄，
                         # 直接 issue_token(["*"]) 会被 kernel 以「超出进程能力集」拒绝；
                         # 必须先 apply_intent / escalate 扩进程，再挂令牌。
+                        # 轻意图跳过 full-open，避免 L0/L1 也变成全权限 engineering steward。
                         try:
+                            if bool(getattr(self, "_light_loop", False)) or bool(
+                                getattr(self, "_ops_loop", False)
+                            ):
+                                raise RuntimeError("skip_steward_full_open_light_ops")
                             from backend.agent.workforce_dispatch import (
                                 ensure_steward_kernel_full_open_async,
                                 is_steward_contact,
@@ -1482,6 +1610,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         # @device 远程执行（L1）：命中则短路，不进工具循环（phases/prologue）
         from backend.agent.phases.prologue import (
             expand_continue_phrase,
+            try_config_intent_shortcut_safe,
             try_device_shortcut,
         )
 
@@ -1489,22 +1618,19 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         if _device_card is not None:
             return _device_card
 
+        # Config Intent：MCP key / 代理 / 切模型 / 简单模式 / OAuth 引导（轻量短路）
+        _cfg_reply = await try_config_intent_shortcut_safe(
+            self, session_id, user_input, attachments
+        )
+        if _cfg_reply is not None:
+            return _cfg_reply
+
         import time as _time
         _max_dur = float(getattr(settings, "agent_max_duration_seconds", 0) or 0)
         _deadline = (_time.monotonic() + _max_dur) if _max_dur > 0 else None
 
-        # 「请继续」/「接着下一项」→ 自动接 Goal/checkpoint 续跑（phases/prologue）
-        # Keep raw phrase for vague-work / continue classification after expand.
-        _raw_user_phrase = str(user_input or "")
+        # 「请继续」→ 自动接 Goal/checkpoint 续跑（phases/prologue）
         user_input, mode = await expand_continue_phrase(session_id, user_input, mode)
-        try:
-            self._raw_user_phrase = _raw_user_phrase[:500]
-            self._continue_phrase_expanded = bool(
-                user_input != _raw_user_phrase and user_input
-            )
-        except Exception:
-            self._raw_user_phrase = _raw_user_phrase[:500]
-            self._continue_phrase_expanded = False
 
         # 处理附件内容注入
         enriched_input = self._build_user_input_with_attachments(user_input, attachments or [])
@@ -1566,22 +1692,42 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
 
         config = await self.session_repo.get_config(session_id)
 
-        # 本轮 workspace 覆盖（session.config + 用户消息中的绝对路径如 E:\项目\guardian）
+        # 本轮 workspace 覆盖（session.config.workspace_root|file_browser_root|cwd + allowed_roots）
         _ws_reset = lambda: None  # noqa: E731
         try:
             from backend.tools.permissions import bind_run_workspace_from_config
 
-            _ws_reset = bind_run_workspace_from_config(
-                config if isinstance(config, dict) else {},
-                user_text=str(user_input or ""),
-            )
+            _ws_reset = bind_run_workspace_from_config(config if isinstance(config, dict) else {})
         except Exception as _ws_e:
             logger.debug("workspace bind skipped: %s", _ws_e)
 
         # 3. 加载历史消息（保留 tool_calls / tool_call_id，避免多轮工具链断裂）
-        # 动态 limit：按 context_window 估算最大消息数，避免只加载 100 条导致压缩无法触发
+        # Grok-style：chat/ops 硬顶 history；复用已解析的 harness_bundle
         _ctx_win = int(getattr(settings, "context_window", 128_000) or 128_000)
-        _est_limit = max(200, _ctx_win // 50)  # 每 50 tokens 一条消息的保守估计
+        _est_limit = max(90, min(200, _ctx_win // 200))
+        try:
+            _hb0 = getattr(self, "_harness_bundle", None)
+            if not isinstance(_hb0, dict) or not _hb0.get("harness_mode"):
+                from backend.agent.simple_intent import resolve_harness_bundle
+
+                _hb0 = resolve_harness_bundle(
+                    str(user_input or ""),
+                    workforce=bool(getattr(self, "_workforce_mode", False))
+                    or str(getattr(self, "_agent_key", "") or "").startswith("wf:"),
+                    mode=mode,
+                )
+                self._harness_bundle = _hb0
+            _cap_h = int((_hb0 or {}).get("history_cap") or 0)
+            if _cap_h > 0:
+                _est_limit = min(_est_limit, max(16, _cap_h))
+        except Exception:
+            try:
+                _est_limit = min(
+                    _est_limit,
+                    int(getattr(settings, "agent_chat_history_hard_cap", 48) or 48),
+                )
+            except Exception:
+                _est_limit = min(_est_limit, 48)
         # 编制工单：跳过历史，避免跨单上下文膨胀导致首包打穿 token 预算
         _skip_hist = bool(
             getattr(self, "_workforce_skip_history", False)
@@ -1598,51 +1744,17 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 session_id, limit=_est_limit
             )
             logger.info(
-                "Loaded %d history messages for session %s (limit=%d)",
+                "Loaded %d history messages for session %s (limit=%d harness=%s)",
                 len(history),
                 session_id,
                 _est_limit,
+                (getattr(self, "_harness_bundle", None) or {}).get("harness_mode"),
             )
-            # Re-bind extra_roots from recent user turns (e.g. prior msg has E:\项目\guardian,
-            # current is「再试下」) so path:workspace does not thrash on re-try.
-            try:
-                from backend.tools.permissions import bind_run_workspace_from_config
-
-                _path_bits = [str(user_input or "")]
-                for h in reversed(list(history or [])):
-                    if getattr(h, "role", None) == "user" and getattr(h, "content", None):
-                        _path_bits.append(str(h.content)[:4000])
-                        if len(_path_bits) >= 6:
-                            break
-                _ws_reset = bind_run_workspace_from_config(
-                    config if isinstance(config, dict) else {},
-                    user_text="\n".join(_path_bits),
-                )
-            except Exception as _ws2_e:
-                logger.debug("workspace rebind after history skip: %s", _ws2_e)
         history_dicts: list[dict[str, Any]] = []
-        try:
-            from backend.agent.thinking_format import strip_thinking as _strip_think
-        except Exception:
-            def _strip_think(x: str | None) -> str:  # type: ignore[misc]
-                return (x or "")
-
         for h in history:
             if h.role not in ("user", "assistant", "tool"):
                 continue
             raw_content = h.content if h.content is not None else ""
-            # Model context: strip thinking tags + collapse force_final scare dumps
-            # so auto-resume does not re-feed long 「强制收束」inventories.
-            if h.role == "assistant" and raw_content:
-                raw_content = _strip_think(raw_content)
-                try:
-                    from backend.agent.thinking_format import (
-                        strip_force_final_scare_for_context as _strip_ff,
-                    )
-
-                    raw_content = _strip_ff(raw_content)
-                except Exception:
-                    pass
             tcs = getattr(h, "tool_calls", None)
             # 严格 API：assistant 带 tool_calls 时 content 不能是 ""（须 null）
             if h.role == "assistant" and tcs and not (raw_content or "").strip():
@@ -1664,14 +1776,6 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         item["tool_call_id"] = first["id"]
             history_dicts.append(item)
 
-        # Codex-style pair repair before context assembly
-        try:
-            from backend.agent.history_normalize import normalize_history_for_llm
-
-            history_dicts = normalize_history_for_llm(history_dicts)
-        except Exception as _nh_e:
-            logger.debug("normalize_history_for_llm skip: %s", _nh_e)
-
         # 刚写入的用户消息已在 history 末尾，build 时不再重复追加同一条
         # （context 仍会 append user_input；下面剥离 history 中与当前输入相同的尾部 user）
         if (
@@ -1683,69 +1787,85 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         else:
             history_for_build = history_dicts
 
-        # Pre-compress fat history BEFORE dumb truncate in build_messages.
-        # Without this, load 5000 → keep ~500 tail with no L5 summary of the head
-        # (root cause vs Grok/Codex/Hermes smooth long-context).
-        try:
-            _soft_pre = int(getattr(settings, "context_max_messages_soft", 40) or 40)
-            if len(history_for_build) >= max(24, _soft_pre):
-                from backend.agent.context_compress import compress_history_if_needed
-                from backend.agent.context_engine import (
-                    COMPRESS_THRESHOLD_DEEP,
-                    get_context_engine,
-                )
-
-                _eng_pre = get_context_engine(session_id)
-                try:
-                    _eng_pre.on_session_reset()
-                except Exception:
-                    pass
-                history_for_build, _pre_meta = await compress_history_if_needed(
-                    list(history_for_build),
-                    session_id=session_id,
-                    threshold=min(
-                        float(
-                            getattr(settings, "context_threshold_percent", 0.85) or 0.85
-                        ),
-                        float(COMPRESS_THRESHOLD_DEEP),
-                        0.55,
-                    ),
-                    allow_l5=True,
-                    micro_only=False,
-                    # Critical: never head/tail-wipe pre-build history to ~5 msgs
-                    aggressive_hard_drop=False,
-                )
-                if (_pre_meta or {}).get("compressed") or (_pre_meta or {}).get(
-                    "pre_build_soft_trim"
-                ):
-                    logger.info(
-                        "pre-build history compress session=%s layers=%s msgs=%s "
-                        "soft_trim=%s pre_hard=%s",
-                        session_id,
-                        (_pre_meta or {}).get("layers"),
-                        len(history_for_build),
-                        (_pre_meta or {}).get("pre_build_soft_trim"),
-                        (_pre_meta or {}).get("pre_hard_drop"),
-                    )
-        except Exception as _pre_e:
-            logger.debug("pre-build history compress skip: %s", _pre_e)
-
-        # 4. 场景预判（先于 system/skill 组装，保证 prompt-skill 与工具面一致）
+        # 4. 意图分级（必须在 early infer_scene 之前，避免 coding scene 污染 light prompt）
         from backend.agent.tool_policy import (
             infer_scene,
             injection_knobs,
         )
 
+        _ut_early = str(enriched_input or user_input or "")
+        try:
+            from backend.agent.write_intent import is_write_intent
+
+            _hb = getattr(self, "_harness_bundle", None)
+            if not isinstance(_hb, dict) or not _hb.get("harness_mode"):
+                from backend.agent.simple_intent import resolve_harness_bundle
+
+                _wf_early = bool(getattr(self, "_workforce_mode", False)) or str(
+                    getattr(self, "_agent_key", "") or ""
+                ).startswith("wf:")
+                _hb = resolve_harness_bundle(
+                    str(user_input or _ut_early),
+                    workforce=_wf_early,
+                    mode=mode,
+                )
+                self._harness_bundle = _hb
+            self._harness_mode = str(_hb.get("harness_mode") or "chat")
+            self._loop_intent = str(_hb.get("loop_intent") or "L0")
+            self._write_intent = bool(is_write_intent(_ut_early))
+            self._light_loop = bool(
+                getattr(settings, "agent_light_intent_downgrade", True)
+            ) and bool(_hb.get("light_loop"))
+            self._ops_loop = bool(_hb.get("ops_loop"))
+            _cap_e = int(_hb.get("max_iters") or 8)
+            if self._light_loop or self._ops_loop:
+                self.max_iterations = min(
+                    int(self.max_iterations or _cap_e), max(3, _cap_e)
+                )
+            logger.info(
+                "loop harness=%s intent=%s light=%s ops=%s write=%s max_iters=%s auth=%s",
+                getattr(self, "_harness_mode", "?"),
+                self._loop_intent,
+                self._light_loop,
+                getattr(self, "_ops_loop", False),
+                self._write_intent,
+                self.max_iterations,
+                _hb.get("authority"),
+            )
+        except Exception as _e_int:
+            self._loop_intent = "L3"
+            self._light_loop = False
+            self._ops_loop = False
+            self._write_intent = False
+            self._harness_mode = "coding"
+            logger.debug("early intent classify skip: %s", _e_int)
+
         _early_profile = str(
-            (config or {}).get("tool_profile")
+            (getattr(self, "_harness_bundle", None) or {}).get("tool_profile")
+            or (config or {}).get("tool_profile")
             or getattr(settings, "agent_tool_profile", "coding")
             or "coding"
         ).strip().lower()
+        if bool(getattr(self, "_light_loop", False)):
+            _early_profile = str(
+                (getattr(self, "_harness_bundle", None) or {}).get("tool_profile")
+                or (
+                    "core"
+                    if getattr(self, "_loop_intent", "") == "L0"
+                    else "assistant"
+                )
+            )
+        elif bool(getattr(self, "_ops_loop", False)):
+            _early_profile = "ops"
         scene_plan = infer_scene(
             enriched_input or user_input or "",
             mode=mode or "default",
             profile=_early_profile,
         )
+        # L0/L1：强制 minimal injection，避免 skill/RAG 再胀
+        if bool(getattr(self, "_light_loop", False)):
+            scene_plan.injection_tier = "minimal"
+            self._force_minimal_injection = True
         inject_opts = injection_knobs(scene_plan.injection_tier)
 
         # 5. 组装 messages（CtxItem 优先；skill 按场景+档位注入）
@@ -1792,9 +1912,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         if mode == "report":
             mode_extra.extend(["generate_report", "render_chart"])
         if mode == "goal":
-            from backend.agent.goal_facade import goal_mode_tool_extras
-
-            mode_extra.extend(goal_mode_tool_extras())
+            mode_extra.extend(["manage_goal", "autopilot", "okr_goal"])
         if mode == "cluster":
             mode_extra.extend(
                 [
@@ -1808,23 +1926,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
 
 
         # 联系 CEO/管家：强制编制工具面（分析→assign 员工，不起子代理闷跑）
-        # Solo plan/read/simple turns skip STEWARD_FORCE_TOOLS + crew pack mount.
         _contact_agent = ""
         _is_steward_session = False
-        _solo_early = False
-        try:
-            from backend.agent.simple_intent import (
-                is_solo_session_intent as _is_solo_early_fn,
-                wants_team_dispatch as _wants_team_early,
-            )
-
-            _ut_early = str(user_input or enriched_input or "")
-            if not _wants_team_early(_ut_early):
-                _solo_early = bool(
-                    _is_solo_early_fn(_ut_early, mode=mode or "default")
-                )
-        except Exception:
-            _solo_early = False
         try:
             from backend.agent.workforce_dispatch import (
                 STEWARD_FORCE_TOOLS,
@@ -1885,40 +1988,128 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         )
                 except Exception as _id_e:
                     logger.debug("contact identity resolve skip: %s", _id_e)
-            if _is_steward_session and not _solo_early:
+            if _is_steward_session:
                 mode_extra.extend(STEWARD_FORCE_TOOLS)
                 # 此时才确定是 CEO/管家：扩进程能力 + 令牌全开
                 # （仅 issue_token(["*"]) 会在 coding_profile 后失败）
+                # 轻意图（L0/L1）跳过 full-open，保持薄权限面
                 try:
-                    from backend.agent.workforce_dispatch import (
-                        ensure_steward_kernel_full_open_async,
-                    )
-                    from backend.kernel import get_kernel as _gk
-
-                    kp = getattr(self, "_kernel_process", None)
-                    if kp is not None and bool(
-                        getattr(settings, "agent_kernel_enabled", True)
+                    if bool(getattr(self, "_light_loop", False)) or bool(
+                        getattr(self, "_ops_loop", False)
                     ):
-                        k = _gk()
-                        ok_fo = await ensure_steward_kernel_full_open_async(k, kp.id)
-                        fresh = k.get_process(kp.id)
-                        if fresh is not None:
-                            self._kernel_process = fresh
                         logger.info(
-                            "steward full-open (post-detect) process=%s ok=%s",
-                            str(kp.id)[:8],
-                            ok_fo,
+                            "steward full-open skipped (intent=%s light=%s ops=%s)",
+                            getattr(self, "_loop_intent", "?"),
+                            getattr(self, "_light_loop", False),
+                            getattr(self, "_ops_loop", False),
                         )
+                    else:
+                        from backend.agent.workforce_dispatch import (
+                            ensure_steward_kernel_full_open_async,
+                        )
+                        from backend.kernel import get_kernel as _gk
+
+                        kp = getattr(self, "_kernel_process", None)
+                        if kp is not None and bool(
+                            getattr(settings, "agent_kernel_enabled", True)
+                        ):
+                            k = _gk()
+                            ok_fo = await ensure_steward_kernel_full_open_async(k, kp.id)
+                            fresh = k.get_process(kp.id)
+                            if fresh is not None:
+                                self._kernel_process = fresh
+                            logger.info(
+                                "steward full-open (post-detect) process=%s ok=%s",
+                                str(kp.id)[:8],
+                                ok_fo,
+                            )
                 except Exception as _fo:
                     logger.warning("steward full-open post-detect skip: %s", _fo)
-            elif _is_steward_session and _solo_early:
-                logger.info(
-                    "steward solo early: skip STEWARD_FORCE_TOOLS session=%s",
-                    session_id,
-                )
 
         except Exception as _st_e:
             logger.debug("steward session detect skipped: %s", _st_e)
+
+        # Grok harness：强制 core/assistant/ops 工具面（覆盖未走 kernel 分支）
+        try:
+            from backend.agent.simple_intent import resolve_harness_bundle
+
+            _hb2 = getattr(self, "_harness_bundle", None)
+            if not isinstance(_hb2, dict) or not _hb2.get("harness_mode"):
+                _wf2 = bool(getattr(self, "_workforce_mode", False)) or str(
+                    getattr(self, "_agent_key", "") or ""
+                ).startswith("wf:")
+                _hb2 = resolve_harness_bundle(
+                    str(user_input or enriched_input or ""),
+                    workforce=_wf2,
+                    mode=mode,
+                )
+                self._harness_bundle = _hb2
+                self._harness_mode = str(_hb2.get("harness_mode") or "chat")
+                self._loop_intent = str(_hb2.get("loop_intent") or "L0")
+                self._light_loop = bool(
+                    getattr(settings, "agent_light_intent_downgrade", True)
+                ) and bool(_hb2.get("light_loop"))
+                self._ops_loop = bool(_hb2.get("ops_loop"))
+            if bool(getattr(self, "_light_loop", False)):
+                tool_profile = str(
+                    (_hb2 or {}).get("tool_profile")
+                    or (
+                        "core"
+                        if getattr(self, "_loop_intent", "") == "L0"
+                        else "assistant"
+                    )
+                )
+                _ban = {
+                    "crew_steward",
+                    "delegate_task",
+                    "agent_call",
+                    "manage_sub_agent",
+                }
+                mode_extra = [
+                    x for x in list(mode_extra or []) if str(x) not in _ban
+                ]
+                if (_hb2 or {}).get("ban_use_tool_pack") or getattr(
+                    self, "_loop_intent", ""
+                ) == "L0":
+                    mode_extra = [
+                        x for x in mode_extra if str(x) != "use_tool_pack"
+                    ]
+                if getattr(self, "_loop_intent", "") == "L1" or (
+                    _hb2 or {}
+                ).get("mcp_configure"):
+                    mode_extra = list(mode_extra) + ["manage_mcp"]
+                _cap2 = int(
+                    (_hb2 or {}).get("max_iters")
+                    or getattr(settings, "agent_light_l0_max_iters", 8)
+                    or 15
+                )
+                self.max_iterations = min(
+                    int(self.max_iterations or _cap2), max(3, _cap2)
+                )
+                _is_steward_session = False
+                scene_plan = None
+            elif bool(getattr(self, "_ops_loop", False)):
+                tool_profile = "ops"
+                _ban = {
+                    "crew_steward",
+                    "delegate_task",
+                    "agent_call",
+                    "manage_sub_agent",
+                }
+                mode_extra = [
+                    x for x in list(mode_extra or []) if str(x) not in _ban
+                ]
+                _cap_o = int(
+                    (_hb2 or {}).get("max_iters")
+                    or getattr(settings, "agent_ops_l2_max_iters", 20)
+                    or 20
+                )
+                self.max_iterations = min(
+                    int(self.max_iterations or _cap_o), max(6, _cap_o)
+                )
+                scene_plan = None
+        except Exception as _lp_e:
+            logger.debug("light tool profile skip: %s", _lp_e)
 
         enabled_tools_filter, scene_plan = resolve_enabled_tool_names(
             mode=mode or "default",
@@ -1928,11 +2119,13 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             extra=mode_extra,
             user_input=enriched_input or user_input or "",
             scene=scene_plan,
-            # Solo plan/read: do not mount crew pack even on CEO contact
-            extra_packs=(
-                ["crew"] if (_is_steward_session and not _solo_early) else None
-            ),
+            extra_packs=["crew"] if _is_steward_session else None,
         )
+        # Preserve Grok light minimal injection after re-resolve (skills + RAG)
+        if bool(getattr(self, "_force_minimal_injection", False)) or bool(
+            getattr(self, "_light_loop", False)
+        ):
+            scene_plan.injection_tier = "minimal"
         inject_opts = injection_knobs(scene_plan.injection_tier)
         if mode_extra and enabled_skills is not None:
             enabled_skills = list(set(list(enabled_skills) + mode_extra))
@@ -1981,26 +2174,73 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             "ALL" if enabled_tools_filter is None else len(enabled_tools_filter),
         )
 
+        # 会话级简单模式：少工具、短循环、软提示（不硬改模型决策逻辑）
+        _session_simple = False
+        try:
+            if isinstance(config, dict) and config.get("simple_mode"):
+                _session_simple = True
+                _sm_cap = int(config.get("simple_mode_max_iterations") or 8)
+                self.max_iterations = min(int(self.max_iterations or _sm_cap), max(4, _sm_cap))
+                _allow = {
+                    "file_read",
+                    "file_write",
+                    "file_list",
+                    "list_dir",
+                    "web_search",
+                    "search",
+                    "fetch_webpage",
+                    "python",
+                    "command",
+                    "manage_mcp",
+                    "get_system_status",
+                    "update_config",
+                    "list_available_models",
+                    "clarify",
+                    "memory",
+                    "memory_pref",
+                }
+                # MCP 搜索工具（名称前缀）
+                def _simple_keep(t: dict) -> bool:
+                    fn = t.get("function") if isinstance(t.get("function"), dict) else {}
+                    name = str((fn or {}).get("name") or t.get("name") or "")
+                    if name in _allow:
+                        return True
+                    if name.startswith("mcp_") and any(
+                        x in name for x in ("search", "fetch", "scrape", "web")
+                    ):
+                        return True
+                    return False
+
+                before_sm = len(tools or [])
+                tools = [t for t in (tools or []) if isinstance(t, dict) and _simple_keep(t)]
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "【会话·简单模式】工具已收窄、循环更短。"
+                            "优先直接回答或少量工具；涉及破坏性操作时先简短确认。"
+                            "不要派工/编制/长链探索。用户可说「关闭简单模式」退出。"
+                        ),
+                    }
+                )
+                logger.info(
+                    "simple_mode tools %s→%s max_iter=%s session=%s",
+                    before_sm,
+                    len(tools),
+                    self.max_iterations,
+                    session_id,
+                )
+        except Exception as _sm_e:
+            logger.debug("simple_mode apply skip: %s", _sm_e)
+
         # 直接执行意图：从 schema 去掉 clarify，避免模型「先问再做」
-        # 模糊工作句（帮我弄好…）不走 strip，并注入轻量 clarify 偏好（见下）
         try:
             from backend.agent.direct_intent import (
                 filter_clarify_from_tools,
                 is_direct_execute_intent,
             )
-            from backend.agent.vague_intent import is_vague_work_intent
 
-            _phrase_for_clarify = str(
-                getattr(self, "_raw_user_phrase", None)
-                or user_input
-                or enriched_input
-                or ""
-            )
-            _vague = is_vague_work_intent(_phrase_for_clarify)
-            if (
-                bool(getattr(settings, "agent_disable_clarify_on_direct", True))
-                and not _vague
-            ):
+            if bool(getattr(settings, "agent_disable_clarify_on_direct", True)):
                 before_n = len(tools or [])
                 tools = filter_clarify_from_tools(
                     tools, user_text=str(user_input or enriched_input or "")
@@ -2015,93 +2255,69 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                             {
                                 "role": "system",
                                 "content": (
-                                    "[Direct execute] User asked to act on the instruction. "
-                                    "No clarify/questions; use tools now and deliver results. "
-                                    "Reply to the user in their language."
+                                    "【直接执行】用户已要求按指令直接做。"
+                                    "禁止 clarify/反问；立即工具落地并交付结论。"
                                 ),
                             }
                         )
-            elif _vague:
-                # Soft note only — does not force a tool call or change tool packs
-                try:
-                    from backend.agent.vague_intent import vague_work_system_note
-
-                    messages.append(
-                        {"role": "system", "content": vague_work_system_note()}
-                    )
-                    logger.info(
-                        "vague work note injected (keep clarify) session=%s",
-                        session_id,
-                    )
-                except Exception:
-                    pass
         except Exception as _di_e:
             logger.debug("direct intent tool filter skip: %s", _di_e)
 
-        # 写盘意图 + 附件已内嵌：首轮注入，阻止「再 file_read 同一 PRD」复读
-        try:
-            from backend.agent.write_intent import (
-                attachment_text_already_in_input,
-                is_write_intent,
-                write_intent_early_system_note,
-            )
-
-            _wi_text = str(enriched_input or user_input or "")
-            if is_write_intent(_wi_text):
-                _att_embedded = attachment_text_already_in_input(
-                    _wi_text, attachments or []
-                )
-                messages.append(
-                    {
-                        "role": "system",
-                        "content": write_intent_early_system_note(
-                            attachment_embedded=_att_embedded
-                        ),
-                    }
-                )
-                logger.info(
-                    "write_intent early note session=%s attachment_embedded=%s",
-                    session_id,
-                    _att_embedded,
-                )
-        except Exception as _wi0_e:
-            logger.debug("write_intent early note skip: %s", _wi0_e)
-
-        # P0: solo 硬短路 — plan/read/simple 去掉派工+goal 工具，禁止进 Inbox/manage_goal
-        _simple_turn = bool(_solo_early)
+        # P0: 简单查询 / L0 light 硬短路 — 去掉派工；L0 再去掉 use_tool_pack
+        _simple_turn = False
         try:
             from backend.agent.simple_intent import (
-                SOLO_STRIP_TOOLS,
                 filter_dispatch_tools_from_schema,
-                is_solo_session_intent,
+                is_simple_session_intent,
                 simple_session_system_note,
             )
 
             _ut = str(user_input or enriched_input or "")
-            if _simple_turn or is_solo_session_intent(_ut, mode=mode or "default"):
+            _light0 = bool(getattr(self, "_light_loop", False)) and getattr(
+                self, "_loop_intent", ""
+            ) == "L0"
+            if is_simple_session_intent(_ut) or _light0:
                 _simple_turn = True
                 before_n = len(tools or [])
-                tools = filter_dispatch_tools_from_schema(
-                    tools, user_text=_ut, mode=mode or "default", force=True
-                )
+                tools = filter_dispatch_tools_from_schema(tools, user_text=_ut, force=True)
+                # L0：schema 去掉 use_tool_pack，防止中途胀面
+                if _light0 and tools:
+                    tools = [
+                        t
+                        for t in tools
+                        if str(
+                            ((t.get("function") or {}).get("name") if isinstance(t, dict) else "")
+                            or (t.get("name") if isinstance(t, dict) else "")
+                            or ""
+                        )
+                        != "use_tool_pack"
+                    ]
                 # Keep filter list in sync so use_tool_pack cannot re-add crew mid-turn
                 if enabled_tools_filter is not None:
+                    _strip = {
+                        "crew_steward",
+                        "delegate_task",
+                        "agent_call",
+                        "manage_sub_agent",
+                    }
+                    if _light0:
+                        _strip.add("use_tool_pack")
                     enabled_tools_filter = [
-                        n
-                        for n in enabled_tools_filter
-                        if n not in SOLO_STRIP_TOOLS
+                        n for n in enabled_tools_filter if n not in _strip
                     ]
                 stripped = before_n - len(tools or [])
-                messages.append(
-                    {"role": "system", "content": simple_session_system_note()}
-                )
+                if is_simple_session_intent(_ut) or _light0:
+                    messages.append(
+                        {"role": "system", "content": simple_session_system_note()}
+                    )
                 logger.info(
-                    "solo intent: stripped %s dispatch/goal tools session=%s",
+                    "simple/light0 intent: stripped %s tools session=%s simple_turn=%s",
                     stripped,
                     session_id,
+                    _simple_turn,
                 )
         except Exception as _si_e:
-            logger.debug("solo intent tool filter skip: %s", _si_e)
+            logger.debug("simple intent tool filter skip: %s", _si_e)
 
         # 短纪律 brief + 场景/扩包提示
         try:
@@ -2168,53 +2384,34 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 session_id,
             )
 
-        # Goal 模式：薄封装（promote / inject / max_iter）— 逻辑在 goal_facade
-        # Casual read/summarize Q&A must NOT auto-promote into goal + manage_goal.
-        from backend.agent.goal_facade import prepare_goal_runtime, resolve_goal_mode
-
-        _origin = ""
-        try:
-            _origin = str(
-                getattr(self, "_run_origin", None)
-                or (config or {}).get("origin")
-                or ""
-            )
-        except Exception:
-            _origin = ""
-        goal_mode = await resolve_goal_mode(
-            session_id,
-            mode,
-            user_input=str(user_input or enriched_input or ""),
-            origin=_origin,
-        )
+        # Goal 模式：更高轮次 + 初始化 goal 状态
+        goal_mode = mode == "goal"
         if goal_mode:
-            self.max_iterations = await prepare_goal_runtime(
-                session_id=session_id,
-                messages=messages,
-                enriched_input=enriched_input,
-                max_iterations=self.max_iterations,
-                push_goal_update=self._push_goal_update,
+            from backend.agent.goal_state import (
+                ensure_goal,
+                get_goal,
+                load_goal_from_db,
+                save_goal_to_db,
             )
-        else:
-            # Non-goal: optional light note so model does not habitually manage_goal
-            try:
-                from backend.agent.goal_state import get_goal as _gg_ng
 
-                _g_ng = _gg_ng(session_id)
-                if _g_ng is not None and _g_ng.is_complete():
-                    messages.append(
-                        {
-                            "role": "system",
-                            "content": (
-                                "[Normal chat] No active Goal for this turn. "
-                                "Answer the user directly (read/summarize/plan as asked). "
-                                "Do **not** call manage_goal unless the user explicitly "
-                                "asks about todos or wants a new goal."
-                            ),
-                        }
-                    )
-            except Exception:
-                pass
+            goal_iters = int(getattr(settings, "agent_goal_max_iterations", 100) or 100)
+            self.max_iterations = max(self.max_iterations, goal_iters)
+            await load_goal_from_db(session_id)
+            ensure_goal(session_id, title=enriched_input[:120], description=enriched_input[:2000])
+            await self._push_goal_update(session_id)
+            # 注入当前 goal 摘要
+            g0 = get_goal(session_id)
+            if g0:
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "Goal runtime status (keep updated via manage_goal + autopilot):\n"
+                            + g0.summary_for_llm()
+                            + "\nFor multi-step work: autopilot action=start goal=... then next/reflect/complete."
+                        ),
+                    }
+                )
 
         # 集群模式：注入所选子代理人物设定（协调者视角）/ 真·并行草稿扇出（phases/cluster_mode）
         from backend.agent.phases.cluster_mode import prepare_cluster_mode
@@ -2275,7 +2472,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             except Exception as _fs:
                 logger.debug("follow global LLM skip: %s", _fs)
         # 会话稳定 prompt_cache_key：同会话多轮强制同一 namespace（提高 cache_read）
-        _cache_key = f"tevarn:{str(session_id).replace('-', '')[:32]}"
+        _cache_key = f"takton:{str(session_id).replace('-', '')[:32]}"
         if isinstance(llm_snapshot, dict):
             _snap = dict(llm_snapshot)
             _snap.setdefault("session_id", str(session_id))
@@ -2288,78 +2485,6 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 setattr(llm_service, "prompt_cache_key", _cache_key)
         except Exception as _silent_e:
             logger.debug("suppressed: %s", _silent_e, exc_info=False)
-
-        # Coding / write / goal：压低 reasoning_effort。Codex high 时静默期极长，
-        # 前端只显示「思考中」且 Stop 要等下一个 SSE chunk 才生效。
-        try:
-            from backend.services.llm.reasoning_effort import normalize_effort
-
-            _mode_l = str(mode or "").strip().lower()
-            _profile = str(
-                (config or {}).get("tool_profile")
-                or getattr(settings, "agent_tool_profile", "coding")
-                or "coding"
-            ).strip().lower()
-            _writeish = False
-            try:
-                from backend.agent.write_intent import is_write_intent as _iwi
-
-                _writeish = _iwi(str(user_input or enriched_input or ""))
-            except Exception:
-                _writeish = False
-            # 「做 / 实现 / bootstrap / 落地」也算写意图（is_write_intent 偏窄）
-            if not _writeish:
-                import re as _re_w
-
-                _writeish = bool(
-                    _re_w.search(
-                        r"(?i)(实现|落地|bootstrap|开工|改代码|写代码|执行计划|开始做)",
-                        str(user_input or enriched_input or ""),
-                    )
-                )
-            _cap_coding = bool(goal_mode) or _mode_l in (
-                "goal",
-                "code",
-            ) or _profile in ("coding", "code", "engineer") or _writeish
-            if _cap_coding:
-                _cap = str(
-                    getattr(settings, "agent_goal_reasoning_effort_cap", "medium")
-                    or "medium"
-                ).strip().lower()
-                # Write/implement: prefer low to cut silent reasoning stalls
-                if _writeish or _mode_l in ("goal", "code"):
-                    _cap = "low" if _cap in ("medium", "high", "max", "xhigh") else _cap
-                _order = ("off", "low", "minimal", "medium", "high", "max", "xhigh")
-                _cur = normalize_effort(
-                    getattr(getattr(llm_service, "config", None), "reasoning_effort", None)
-                    or getattr(llm_service, "reasoning_effort", None)
-                    or getattr(settings, "reasoning_effort", "medium"),
-                    default="medium",
-                )
-                _cap_n = normalize_effort(_cap, default="medium")
-                if (_order.index(_cur) if _cur in _order else 3) > (
-                    _order.index(_cap_n) if _cap_n in _order else 3
-                ):
-                    for _obj in (
-                        getattr(llm_service, "config", None),
-                        llm_service,
-                    ):
-                        if _obj is None:
-                            continue
-                        try:
-                            if hasattr(_obj, "reasoning_effort"):
-                                setattr(_obj, "reasoning_effort", _cap_n)
-                        except Exception:
-                            pass
-                    logger.info(
-                        "coding reasoning_effort capped %s→%s session=%s writeish=%s",
-                        _cur,
-                        _cap_n,
-                        str(session_id)[:8],
-                        _writeish,
-                    )
-        except Exception as _re_cap:
-            logger.debug("reasoning_effort cap skip: %s", _re_cap)
 
         # 本轮实际模型 → 前端状态条（避免 Picker 与真实调用不一致）
         try:
@@ -2442,8 +2567,15 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 getattr(settings, "context_max_messages_soft", 48) or 48
             ):
                 thr = min(thr, COMPRESS_THRESHOLD_DEEP)
+            _hb_cx = getattr(self, "_harness_bundle", None) or {}
             messages, compress_meta = await compress_history_if_needed(
-                messages, session_id=session_id, threshold=thr, allow_l5=True
+                messages,
+                session_id=session_id,
+                threshold=thr,
+                allow_l5=True,
+                light_loop=bool(getattr(self, "_light_loop", False)),
+                ops_loop=bool(getattr(self, "_ops_loop", False)),
+                history_cap=int(_hb_cx.get("history_cap") or 0),
             )
             if compress_meta.get("compressed"):
                 layers = compress_meta.get("layers") or []
@@ -2554,7 +2686,6 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         final_content = ""
         _sft_tools: list = []  # SFT usage log buffer
         accumulated_content = ""
-        accumulated_reasoning = ""
         goal_nudge_count = 0
 
         # 透明化轨迹收集
@@ -2576,8 +2707,22 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             logger.debug("entity extraction skipped: %s", e)
 
         # 分段预算：单段 max_iterations，可自动续多段（Goal / 长任务）
+        # Grok thin: light/ops 禁止 auto-continue ×N（Rust harness.auto_continue=false）
+        _hb_ac = getattr(self, "_harness_bundle", None) or {}
         _auto_cont = bool(getattr(settings, "agent_auto_continue", True))
         _max_seg = int(getattr(settings, "agent_auto_continue_max_segments", 5) or 1)
+        if "auto_continue" in _hb_ac:
+            _auto_cont = bool(_hb_ac.get("auto_continue"))
+        if "max_segments" in _hb_ac:
+            try:
+                _max_seg = max(1, int(_hb_ac.get("max_segments") or 1))
+            except Exception:
+                pass
+        if bool(getattr(self, "_light_loop", False)) or bool(
+            getattr(self, "_ops_loop", False)
+        ):
+            _auto_cont = False
+            _max_seg = 1
         if not _auto_cont:
             _max_seg = 1
         _seg_size = max(1, int(self.max_iterations))
@@ -2590,33 +2735,9 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         _timid_write_streak = 0
         _thrash_streak = 0
         _last_tool_fingerprint = ""
-        _last_tool_name_sig = ""
-        _alternate_thrash_streak = 0
         # audit-fix(#5)：同一工具名连续失败熔断计数（跨工具轮保持）
         _last_failed_tool = ""
         _same_tool_fail_streak = 0
-        # write-intent / timeout：必须跨工具轮保持，否则 explore_only 永远=1、软提示不触发
-        _timeout_fail_streak = 0
-        _explore_only_streak = 0
-        _write_intent_hard_nudge = False
-        _rust_diag_streak = 0
-        # New top-level run: drop leftover session cargo_fix arm so review
-        # turns do not inherit write-gate from a prior bg cargo failure.
-        try:
-            from backend.agent.progress_guard import consume_session_cargo_fix
-
-            consume_session_cargo_fix(str(session_id))
-        except Exception:
-            pass
-        _deliver_mode = False
-        _pure_read_streak = 0
-        _rounds_since_manage_goal = 0
-        _rounds_since_write = 0
-        _result_load_same_streak = 0
-        _last_result_handle = ""
-        _cargo_fix_streak = 0
-        _must_write_before_cargo = False
-        _cargo_error_paths = ""
         _completion_followups = 0
         _tools_used_run: list[str] = []
         self._reactive_compact_used = False
@@ -2626,7 +2747,11 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         _empty_reply_retries = 0
         _empty_reply_max = int(getattr(settings, "agent_empty_reply_retries", 2) or 2)
         _tool_repeat_guard = ToolRepeatGuard(
-            max_repeat=int(getattr(settings, "agent_tool_repeat_max", 3) or 3)
+            max_repeat=int(
+                getattr(settings, "agent_doom_loop_threshold", None)
+                or getattr(settings, "agent_tool_repeat_max", 2)
+                or 2
+            )
         )
         _force_final_no_tools = False
         # audit-fix(#13)：Goal 停滞检测——连续 3 轮无新工具调用且 goal 状态
@@ -2693,31 +2818,20 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     _bc = await asyncio.to_thread(budget_check, _kpid_iter)  # audit-fix
                     if isinstance(_bc, dict) and _bc.get("status") == "force_final":
                         _force_final_no_tools = True
-                        _ff_code = str(_bc.get("code") or "budget_ratio")
-                        _loop_exit_reason = _ff_code
-                        try:
-                            self.last_exit_reason = _ff_code
-                        except Exception:
-                            pass
+                        _loop_exit_reason = str(_bc.get("code") or "budget_ratio")
                         messages.append(
                             {
                                 "role": "system",
                                 "content": force_final_message(
-                                    _ff_code,
+                                    str(_bc.get("code") or "budget_ratio"),
                                     str(_bc.get("reason") or ""),
                                 ),
                             }
                         )
-                        # UI status: only true token ratio uses 额度措辞；勿与工具轮混淆
-                        _st = (
-                            "Token 额度将尽，本轮交卷中…"
-                            if _ff_code in ("budget_ratio",)
-                            else "本段工具轮用尽，交卷中…"
-                        )
                         await self._push_status(
                             session_id,
                             "thinking",
-                            _st,
+                            "预算将尽，强制交卷中…",
                         )
                         logger.warning(
                             "loop_guard budget force_final process=%s %s",
@@ -2818,27 +2932,6 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         break
                     if goal_mode and g_chk is not None and g_chk.is_complete():
                         break
-                    # Thrash/doom 段结束：勿自动开下一段（防空转续跑刷屏）
-                    try:
-                        if bool(
-                            getattr(settings, "agent_no_autoresume_on_thrash", True)
-                        ):
-                            from backend.agent.goal_facade import is_thrash_exit_reason
-
-                            _ex = str(
-                                getattr(self, "last_exit_reason", "")
-                                or _loop_exit_reason
-                                or ""
-                            )
-                            if is_thrash_exit_reason(_ex):
-                                logger.info(
-                                    "skip auto-continue segment (thrash exit=%s) session=%s",
-                                    _ex,
-                                    session_id,
-                                )
-                                break
-                    except Exception:
-                        pass
                     await save_checkpoint(
                         session_id,
                         segment=_segment,
@@ -2855,56 +2948,12 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         "thinking",
                         f"自动续跑第 {_segment + 1}/{_max_seg} 段…",
                     )
-                    # Reset LoopGuard tool_rounds for the new segment (configure
-                    # replaces GuardState with tool_rounds=0). Prevents
-                    # max_tool_rounds=40 blocking file_write on seg 2+.
-                    try:
-                        if (
-                            bool(getattr(settings, "agent_loop_guard_enabled", True))
-                            and _kpid_iter
-                        ):
-                            from backend.agent.loop_guard_bridge import (
-                                build_loop_guard_config,
-                                configure_for_process,
-                            )
-
-                            _cfg2 = build_loop_guard_config(
-                                workforce=bool(
-                                    getattr(self, "_workforce", False)
-                                ),
-                                identity_name=str(
-                                    getattr(self, "_identity_name", None) or ""
-                                ),
-                                identity_role=None,
-                                instruction=str(user_input or "")[:2000],
-                                payload=None,
-                            )
-                            _cfg2["role_kind"] = "steward"
-                            _cfg2["max_tool_rounds"] = max(
-                                int(_cfg2.get("max_tool_rounds") or 40),
-                                int(_seg_size) * max(1, int(_max_seg)),
-                            )
-                            await asyncio.to_thread(
-                                configure_for_process, str(_kpid_iter), _cfg2
-                            )
-                            logger.info(
-                                "loop_guard reset for segment=%s max_rounds=%s process=%s",
-                                _segment,
-                                _cfg2.get("max_tool_rounds"),
-                                str(_kpid_iter)[:8],
-                            )
-                    except Exception as _lg_reset_e:
-                        logger.debug("loop_guard segment reset skip: %s", _lg_reset_e)
                     messages.append(
                         {
                             "role": "user",
                             "content": (
-                                "[System auto-resume] Previous segment exhausted; continue from checkpoint. "
-                                "Do not redo finished work. "
-                                "Avoid spam process poll, retrying the same Blocked command, "
-                                "and whole-file grep.\n"
-                                "NEXT: edit error paths → one cargo check → manage_goal. "
-                                "Reply to the user in their language."
+                                "【系统自动续跑】上一轮次段已用尽，请从断点继续，"
+                                "不要重复已完成工作。"
                                 + (
                                     "\n" + g_chk.summary_for_llm()
                                     if g_chk and not g_chk.is_complete()
@@ -2955,34 +3004,6 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
 
             # 调用 LLM（流式，phases/llm_round）
             from backend.agent.phases.llm_round import run_llm_round
-            # Every sample: pair-complete history (timeout/cancel/compress orphans)
-            try:
-                from backend.agent.history_normalize import normalize_history_for_llm
-
-                messages = normalize_history_for_llm(messages)
-            except Exception as _nh2:
-                logger.debug("mid-loop normalize_history skip: %s", _nh2)
-
-            # BG complete proactive inject (Claude-style: harness delivers results)
-            try:
-                from backend.agent.progress_guard import apply_bg_completions_to_messages
-
-                _n_bg = apply_bg_completions_to_messages(
-                    str(session_id), messages, max_n=8
-                )
-                if _n_bg:
-                    await self._push_status(
-                        session_id,
-                        "thinking",
-                        f"后台任务完成 ×{_n_bg}，已注入结果…",
-                    )
-                    logger.info(
-                        "bg_complete inject n=%s session=%s",
-                        _n_bg,
-                        str(session_id)[:8],
-                    )
-            except Exception as _bg_inj:
-                logger.debug("bg_complete inject skip: %s", _bg_inj)
 
             _lr = await run_llm_round(
                 self,
@@ -3000,7 +3021,6 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             )
             messages = _lr.messages
             accumulated_content = _lr.accumulated_content
-            accumulated_reasoning = getattr(_lr, "accumulated_reasoning", "") or ""
             tool_calls = _lr.tool_calls
             if _lr.force_final_no_tools is not None:
                 _force_final_no_tools = _lr.force_final_no_tools
@@ -3021,48 +3041,21 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         _goal_stall_rounds = 0
                     _goal_last_sig = _sig
                     if _goal_stall_rounds >= 3:
-                        try:
-                            from backend.agent.progress_guard import soft_open_mode as _so_gs
-                            from backend.core.config import settings as _st_gs
-
-                            _hard_gs = (
-                                not _so_gs()
-                                and bool(
-                                    getattr(_st_gs, "agent_goal_stall_force_final", True)
-                                )
-                            )
-                        except Exception:
-                            _hard_gs = True
-                        if _hard_gs:
-                            _force_final_no_tools = True
-                            _loop_exit_reason = "goal_stalled"
-                            messages.append(
-                                {
-                                    "role": "system",
-                                    "content": (
-                                        "[Goal stall] 3 turns with no tools and no goal change. "
-                                        "No tools this turn: short blocker in the user's language; "
-                                        "no long inventories."
-                                    ),
-                                }
-                            )
-                        else:
-                            # Soft-open: remind only; do not hard-stop the model
-                            messages.append(
-                                {
-                                    "role": "system",
-                                    "content": (
-                                        "[Converge] Goal has no tool progress for several turns. "
-                                        "Prefer manage_goal updates or file_write/edit + verify; "
-                                        "tools still allowed. Reply to the user in their language."
-                                    ),
-                                }
-                            )
-                            _goal_stall_rounds = 0  # re-arm after soft nudge
+                        _force_final_no_tools = True
+                        _loop_exit_reason = "goal_stalled"
+                        messages.append(
+                            {
+                                "role": "system",
+                                "content": (
+                                    "【Goal 停滞熔断】已连续 3 轮无新工具调用且 goal 状态"
+                                    "无变化。禁止再调用工具：请基于已有进展直接总结"
+                                    "已完成/未完成项与阻塞原因，给出最终答复。"
+                                ),
+                            }
+                        )
                         logger.warning(
-                            "goal stall %s rounds=%s session=%s",
-                            "force_final" if _hard_gs else "soft",
-                            _goal_stall_rounds if _hard_gs else 3,
+                            "goal stall force_final rounds=%s session=%s",
+                            _goal_stall_rounds,
                             session_id,
                         )
                 except Exception as _gs_e:
@@ -3070,56 +3063,13 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             if _lr.action == "continue":
                 continue
             if _lr.action == "break":
-                from backend.agent.thinking_format import (
-                    canonicalize_thinking,
-                    ensure_user_facing_final,
-                    sanitize_force_final_body,
-                )
-
-                final_content = canonicalize_thinking(
-                    accumulated_reasoning, _lr.final_content or accumulated_content
-                )
-                if _force_final_no_tools:
-                    # Keep real user summaries; only collapse scare inventories.
-                    # prefer_short=goal_mode used to wipe segment progress to a one-liner.
-                    final_content = sanitize_force_final_body(
-                        final_content,
-                        goal_mode=goal_mode,
-                        exit_code=_loop_exit_reason
-                        or str(getattr(self, "last_exit_reason", "") or ""),
-                        prefer_short=False,
-                    )
-                try:
-                    _gs = ""
-                    from backend.agent.goal_state import get_goal as _ggx
-
-                    _gx = _ggx(session_id)
-                    if (
-                        goal_mode
-                        and _gx is not None
-                        and not _gx.is_complete()
-                        and str(getattr(_gx, "status", "") or "") == "active"
-                    ):
-                        _gs = _gx.summary_for_llm()
-                    final_content = ensure_user_facing_final(
-                        final_content,
-                        user_input=str(user_input or enriched_input or ""),
-                        messages=list(messages or []),
-                        exit_reason=_loop_exit_reason
-                        or str(getattr(self, "last_exit_reason", "") or ""),
-                        goal_summary=_gs,
-                        tool_rounds=int(_tool_rounds or 0),
-                        goal_mode=goal_mode,
-                    )
-                except Exception:
-                    pass
+                final_content = _lr.final_content
                 break
 
             # 判断是否有 tool calls
             if tool_calls:
                 # 将 assistant 的回复（含 tool calls）追加到 messages
                 # content 用 None 兼容部分严格 API（空字符串 + tool_calls 会被拒）
-                # LLM 上下文只带可见正文；UI 持久化可附带 <thinking>
                 assistant_msg: dict[str, Any] = {
                     "role": "assistant",
                     "content": accumulated_content if accumulated_content else None,
@@ -3140,16 +3090,12 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 assistant_msg["tool_calls"] = assistant_tool_calls
                 messages.append(assistant_msg)
 
-                # 持久化中间 assistant（含 tool_calls + 思考块），便于跨轮续跑与 UI 回放
+                # 持久化中间 assistant（含 tool_calls），便于跨轮续跑
                 try:
-                    from backend.agent.thinking_format import canonicalize_thinking
-
                     await self._save_message(
                         session_id,
                         "assistant",
-                        canonicalize_thinking(
-                            accumulated_reasoning, accumulated_content or ""
-                        ),
+                        accumulated_content or "",
                         tool_calls=assistant_tool_calls,
                     )
                 except Exception as e:
@@ -3203,23 +3149,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     last_tool_round_count=_last_tool_round_count,
                     thrash_streak=_thrash_streak,
                     last_tool_fingerprint=_last_tool_fingerprint,
-                    last_tool_name_sig=_last_tool_name_sig,
-                    alternate_thrash_streak=_alternate_thrash_streak,
                     last_failed_tool=_last_failed_tool,
                     same_tool_fail_streak=_same_tool_fail_streak,
-                    timeout_fail_streak=_timeout_fail_streak,
-                    explore_only_streak=_explore_only_streak,
-                    write_intent_hard_nudge=_write_intent_hard_nudge,
-                    rust_diag_streak=_rust_diag_streak,
-                    deliver_mode=_deliver_mode,
-                    pure_read_streak=_pure_read_streak,
-                    rounds_since_manage_goal=_rounds_since_manage_goal,
-                    rounds_since_write=_rounds_since_write,
-                    result_load_same_streak=_result_load_same_streak,
-                    last_result_handle=_last_result_handle,
-                    cargo_fix_streak=_cargo_fix_streak,
-                    must_write_before_cargo=_must_write_before_cargo,
-                    cargo_error_paths=_cargo_error_paths,
                     simple_turn=_simple_turn,
                 )
                 await run_tool_round(
@@ -3232,7 +3163,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     segment=_segment,
                     global_iter=_global_iter,
                     goal_mode=goal_mode,
-                    user_input=str(enriched_input or user_input or ""),
+                    user_input=user_input,
                     l1_every=_l1_every,
                     checkpoint_every=_checkpoint_every,
                     turn_retry=_turn_retry,
@@ -3244,10 +3175,6 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 tools = _tr_state.tools
                 enabled_tools_filter = _tr_state.enabled_tools_filter
                 _force_final_no_tools = _tr_state.force_final_no_tools
-                if _force_final_no_tools and not _loop_exit_reason:
-                    _loop_exit_reason = str(
-                        getattr(self, "last_exit_reason", "") or "max_tool_rounds"
-                    )
                 _suppress_content_stream = _tr_state.suppress_content_stream
                 _multi_source_pending = _tr_state.multi_source_pending
                 _timid_read_streak = _tr_state.timid_read_streak
@@ -3256,51 +3183,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 _last_tool_round_count = _tr_state.last_tool_round_count
                 _thrash_streak = _tr_state.thrash_streak
                 _last_tool_fingerprint = _tr_state.last_tool_fingerprint
-                _last_tool_name_sig = str(
-                    getattr(_tr_state, "last_tool_name_sig", "") or ""
-                )
-                _alternate_thrash_streak = int(
-                    getattr(_tr_state, "alternate_thrash_streak", 0) or 0
-                )
                 _last_failed_tool = _tr_state.last_failed_tool
                 _same_tool_fail_streak = _tr_state.same_tool_fail_streak
-                _timeout_fail_streak = int(
-                    getattr(_tr_state, "timeout_fail_streak", 0) or 0
-                )
-                _explore_only_streak = int(
-                    getattr(_tr_state, "explore_only_streak", 0) or 0
-                )
-                _write_intent_hard_nudge = bool(
-                    getattr(_tr_state, "write_intent_hard_nudge", False)
-                )
-                _rust_diag_streak = int(
-                    getattr(_tr_state, "rust_diag_streak", 0) or 0
-                )
-                _deliver_mode = bool(getattr(_tr_state, "deliver_mode", False))
-                _pure_read_streak = int(
-                    getattr(_tr_state, "pure_read_streak", 0) or 0
-                )
-                _rounds_since_manage_goal = int(
-                    getattr(_tr_state, "rounds_since_manage_goal", 0) or 0
-                )
-                _rounds_since_write = int(
-                    getattr(_tr_state, "rounds_since_write", 0) or 0
-                )
-                _result_load_same_streak = int(
-                    getattr(_tr_state, "result_load_same_streak", 0) or 0
-                )
-                _last_result_handle = str(
-                    getattr(_tr_state, "last_result_handle", "") or ""
-                )
-                _cargo_fix_streak = int(
-                    getattr(_tr_state, "cargo_fix_streak", 0) or 0
-                )
-                _must_write_before_cargo = bool(
-                    getattr(_tr_state, "must_write_before_cargo", False)
-                )
-                _cargo_error_paths = str(
-                    getattr(_tr_state, "cargo_error_paths", "") or ""
-                )
                 continue
 
             else:
@@ -3314,7 +3198,6 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     seg_size=_seg_size,
                     messages=messages,
                     accumulated_content=accumulated_content,
-                    accumulated_reasoning=accumulated_reasoning,
                     goal_mode=goal_mode,
                     goal_nudge_count=goal_nudge_count,
                     turn_retry=_turn_retry,
@@ -3332,103 +3215,30 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     _force_final_no_tools = _nr.force_final_no_tools
                 if _nr.action == "continue":
                     continue
-                from backend.agent.thinking_format import (
-                    canonicalize_thinking,
-                    ensure_user_facing_final,
-                    sanitize_force_final_body,
-                )
-
-                # 最终答复附带本轮 reasoning，UI 折叠展示；逻辑层 empty 检查仍用 body
-                final_content = canonicalize_thinking(
-                    accumulated_reasoning, _nr.final_content or accumulated_content
-                )
-                if _force_final_no_tools:
-                    # Keep real user summaries; only collapse scare inventories.
-                    # prefer_short=goal_mode used to wipe segment progress to a one-liner.
-                    final_content = sanitize_force_final_body(
-                        final_content,
-                        goal_mode=goal_mode,
-                        exit_code=_loop_exit_reason
-                        or str(getattr(self, "last_exit_reason", "") or ""),
-                        prefer_short=False,
-                    )
-                try:
-                    _gs2 = ""
-                    from backend.agent.goal_state import get_goal as _ggx2
-
-                    _gx2 = _ggx2(session_id)
-                    if (
-                        goal_mode
-                        and _gx2 is not None
-                        and not _gx2.is_complete()
-                        and str(getattr(_gx2, "status", "") or "") == "active"
-                    ):
-                        _gs2 = _gx2.summary_for_llm()
-                    final_content = ensure_user_facing_final(
-                        final_content,
-                        user_input=str(user_input or enriched_input or ""),
-                        messages=list(messages or []),
-                        exit_reason=_loop_exit_reason
-                        or str(getattr(self, "last_exit_reason", "") or ""),
-                        goal_summary=_gs2,
-                        tool_rounds=int(_tool_rounds or 0),
-                        goal_mode=goal_mode,
-                    )
-                except Exception:
-                    pass
+                final_content = _nr.final_content
                 break
         else:
-            # 用尽全部分段预算（工具/迭代段，不是 token 预算）
+            # 用尽全部分段预算
             logger.warning(
                 "Max iteration budget (%s segs x %s) reached for session %s",
                 _max_seg,
                 _seg_size,
                 session_id,
             )
-            from backend.agent.thinking_format import (
-                canonicalize_thinking,
-                short_segment_handoff_message,
-            )
-
-            from backend.agent.thinking_format import ensure_user_facing_final
-
-            _raw_end = accumulated_content or (
-                short_segment_handoff_message(goal_mode=goal_mode)
-                + f"（{_max_seg}×{_seg_size} 段上限）"
-            )
-            _gsum_end = ""
-            try:
-                from backend.agent.goal_state import get_goal as _gg_end
-
-                _ge = _gg_end(session_id)
-                if (
-                    goal_mode
-                    and _ge is not None
-                    and not _ge.is_complete()
-                    and str(getattr(_ge, "status", "") or "") == "active"
-                ):
-                    _gsum_end = _ge.summary_for_llm()
-            except Exception:
-                pass
-            _raw_end = ensure_user_facing_final(
-                _raw_end,
-                user_input=str(user_input or enriched_input or ""),
-                messages=list(messages or []),
-                exit_reason="max_segment_budget",
-                goal_summary=_gsum_end,
-                tool_rounds=int(_tool_rounds or 0),
-                goal_mode=goal_mode,
-            )
-            final_content = canonicalize_thinking(
-                accumulated_reasoning,
-                _raw_end,
+            final_content = accumulated_content or (
+                f"[提示] 已达最大工具轮次预算 ({_max_seg}×{_seg_size})，任务可能未完成。"
+                "可发送「请继续」或调用 /api/sessions/{id}/resume 续跑。"
             )
             if goal_mode:
                 from backend.agent.goal_state import get_goal, save_goal_to_db
 
                 g = get_goal(session_id)
                 if g and not g.is_complete():
-                    # 不再把完整 goal summary 拼进 assistant 正文（续跑 prompt 会带）
+                    final_content += (
+                        "\n\n---\n**Goal 进度**\n```\n"
+                        + g.summary_for_llm()
+                        + "\n```\n可发送「请继续」恢复 Goal 模式推进。"
+                    )
                     try:
                         await save_goal_to_db(session_id)
                         from backend.agent.checkpoint import save_checkpoint
@@ -3438,17 +3248,11 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                             segment=_segment,
                             iteration=_total_iters,
                             mode=mode,
-                            note="segment_tool_rounds_exhausted",
+                            note="budget_exhausted",
                             run_id=str(_rc.run_id) if _rc is not None and _rc.run_id else None,
                         )
                     except Exception as _silent_e:
                         logger.debug("suppressed: %s", _silent_e, exc_info=False)
-
-        # Stash messages so epilogue can synthesize a user summary if body empty
-        try:
-            self._last_messages_for_summary = list(messages or [])
-        except Exception:
-            self._last_messages_for_summary = None
 
         # 收尾聚合（phases/epilogue；行为冻结 tests/test_loop_freeze.py）
         from backend.agent.phases.epilogue import run_epilogue
@@ -3491,6 +3295,9 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         except Exception:
             self.last_exit_detail = {"code": self.last_exit_reason}
         # 非正常完成时把恢复提示并入 final（避免静默）
+        # doom_loop 且已有完整交付时不挂 resume 脚注，避免 UI「完成却未收口」
+        _fc = (final_content or "").strip()
+        _substantial = len(_fc) >= 80 and not _fc.startswith("正在")
         if (
             final_content
             and self.last_exit_reason
@@ -3506,6 +3313,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 "kernel_budget_precheck",
                 "doom_loop",
             )
+            and not (self.last_exit_reason == "doom_loop" and _substantial)
         ):
             try:
                 from backend.agent.exit_reasons import format_exit_user_message

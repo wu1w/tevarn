@@ -1366,6 +1366,14 @@ fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: 
                 .unwrap_or("");
             Ok(kernel.loop_guard_status(pid))
         }
+        // Grok-style harness: thin default + matching MCP (authority in Rust)
+        "harness_resolve" => Ok(tevarn_kernel::harness_resolve_from_value(params)),
+        "harness_select_mcp" => Ok(tevarn_kernel::harness_select_mcp_from_value(params)),
+        "harness_simple_session" => Ok(tevarn_kernel::harness_simple_session_from_value(params)),
+        "loop_guard_resolve_role" => {
+            Ok(tevarn_kernel::loop_guard_resolve_role_from_value(params))
+        }
+        "context_decide_compact" => Ok(tevarn_kernel::context_decide_compact_from_value(params)),
         // Stateless progress helper — thrash arming for cargo failures
         "cargo_classify" => {
             let text = params

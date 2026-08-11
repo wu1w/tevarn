@@ -10,7 +10,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.api.dependencies import get_current_user, require_admin
-from backend.mcp_hub.service import get_mcp_status, load_mcp_tools
+from backend.mcp_hub.service import get_mcp_status, load_mcp_tools, sync_mcp_runtime
 from backend.repositories.mcp_server_repo import AsyncMCPServerRepository
 from backend.schemas.mcp import (
     MCPServerConfig,
@@ -63,16 +63,20 @@ async def create_mcp_server(
             )
         upd = MCPServerUpdate(**data.model_dump(exclude={"name"}))
         updated = await repo.update(existing.id, upd)
-        await _hot_reload()
+        await _hot_reload(only_server=str(getattr(updated, "name", "") or data.name))
         return MCPServerConfig.model_validate(updated)
     server = await repo.create(data)
+    await _hot_reload(only_server=str(getattr(server, "name", "") or data.name))
     return MCPServerConfig.model_validate(server)
 
 
-async def _hot_reload() -> None:
+async def _hot_reload(only_server: str | None = None) -> None:
     """配置变更后热重连 MCP 会话，让新 env/args 立即生效。"""
     try:
-        await load_mcp_tools()
+        if only_server:
+            await sync_mcp_runtime(only_server=only_server)
+        else:
+            await load_mcp_tools()
     except Exception:
         pass
 
@@ -104,6 +108,7 @@ async def toggle_mcp_server(
     server = await repo.toggle(server_id, data.enabled)
     if server is None:
         raise HTTPException(status_code=404, detail="MCP server not found")
+    await _hot_reload(only_server=str(getattr(server, "name", "") or ""))
     return MCPServerConfig.model_validate(server)
 
 
@@ -117,6 +122,7 @@ async def delete_mcp_server(
     success = await repo.delete(server_id)
     if not success:
         raise HTTPException(status_code=404, detail="MCP server not found")
+    await _hot_reload()
     return {"deleted": True}
 
 

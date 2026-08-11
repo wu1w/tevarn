@@ -48,6 +48,27 @@ async def try_device_shortcut(
         return None
 
 
+async def try_config_intent_shortcut_safe(
+    loop: Any,
+    session_id: uuid.UUID,
+    user_input: str,
+    attachments: list[dict[str, Any]] | None,
+) -> str | None:
+    """一句话配置快路径（MCP key / 代理 / 模型 / 简单模式 / OAuth 引导）。
+
+    失败返回 None，不阻断正常 Agent loop。
+    """
+    try:
+        from backend.services.config_intent import try_config_intent_shortcut
+
+        return await try_config_intent_shortcut(
+            loop, session_id, user_input or "", attachments
+        )
+    except Exception as e:
+        logger.warning("config intent shortcut failed: %s", e)
+        return None
+
+
 async def expand_continue_phrase(
     session_id: uuid.UUID,
     user_input: str,

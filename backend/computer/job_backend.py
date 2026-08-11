@@ -32,9 +32,7 @@ _JOB_OBJECT_LIMIT_JOB_MEMORY = 0x00000200
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 _JobObjectExtendedLimitInformation = 9
 
-# cargo/rustc + link can peak well above 2–3GB; 4GB was tight and produced
-# rustc AppCrash under multi-agent cargo test/clippy. 6GB still bounds runaway.
-_DEFAULT_MEMORY_LIMIT = 6 * 1024 * 1024 * 1024  # 单进程 / Job 合计 6GB
+_DEFAULT_MEMORY_LIMIT = 4 * 1024 * 1024 * 1024  # 单进程 / Job 合计 4GB
 _DEFAULT_ACTIVE_PROCESS_LIMIT = 128
 
 
@@ -161,24 +159,24 @@ class JobBackend:
             self.workspace_root, ".computers", safe_key, "home"
         )
         # Capture *host* profile before we rewrite USERPROFILE for the job.
-        # Used so tools can still open real ~/.tevarn logs (self-check / ops).
+        # Used so tools can still open real ~/.takton logs (self-check / ops).
         self.host_user_home = (
-            os.environ.get("TEVARN_HOST_HOME")
+            os.environ.get("TAKTON_HOST_HOME")
             or os.environ.get("USERPROFILE")
             or os.environ.get("HOME")
             or str(Path.home())
         )
-        self.host_tevarn_home = (
-            os.environ.get("TEVARN_HOME")
-            or ntpath.join(self.host_user_home, ".tevarn")
+        self.host_takton_home = (
+            os.environ.get("TAKTON_HOME")
+            or ntpath.join(self.host_user_home, ".takton")
         )
 
     def _ensure_dirs(self) -> None:
         Path(self.agent_home).mkdir(parents=True, exist_ok=True)
         try:
-            from backend.agent._tevarn_paths import ensure_sandbox_tevarn_link
+            from backend.agent._takton_paths import ensure_sandbox_takton_link
 
-            ensure_sandbox_tevarn_link(self.agent_home, self.host_tevarn_home)
+            ensure_sandbox_takton_link(self.agent_home, self.host_takton_home)
         except Exception:
             pass
 
@@ -200,7 +198,7 @@ class JobBackend:
         except Exception:
             pass
         # 开发仓显式 env
-        for env_key in ("TEVARN_DEV_ROOT", "TEVARN_REPO_ROOT", "TEVARN_FILE_BROWSER_ROOT"):
+        for env_key in ("TAKTON_DEV_ROOT", "TAKTON_REPO_ROOT", "TAKTON_FILE_BROWSER_ROOT"):
             raw = (os.environ.get(env_key) or "").strip()
             if raw:
                 roots.append(raw)
@@ -225,50 +223,31 @@ class JobBackend:
                 return None
         return (
             f"cwd 超出允许范围（workspace={self.workspace_root} 及宿主/开发数据根）: {real}。"
-            "请在 workspace 内执行，或把目录配进 session workspace_root / TEVARN_DEV_ROOT。"
+            "请在 workspace 内执行，或把目录配进 session workspace_root / TAKTON_DEV_ROOT。"
         )
 
     def _run_sync(self, command: str, cwd: str, timeout: int) -> tuple[str, str, int]:
         """同步执行（在线程中跑）：Job Object 包裹 cmd 进程。"""
         import subprocess
 
-        # Always wrap as cmd.exe /d /c <cmd> — strip model-added outer cmd /c first.
-        try:
-            from backend.core.safe_subprocess import normalize_windows_job_command
-
-            command = normalize_windows_job_command(command)
-        except Exception:
-            pass
-
         job = _JobHandle(self.memory_limit, self.process_limit)
-        host_home = self.host_user_home or os.environ.get("USERPROFILE") or ""
-        path = os.environ.get("PATH", "")
-        # Ensure common host tool dirs (scoop/cargo/rustup) stay on PATH even if
-        # Electron launched with a thin env.
-        extras: list[str] = []
-        if host_home:
-            extras.extend(
-                [
-                    os.path.join(host_home, "scoop", "shims"),
-                    os.path.join(host_home, "scoop", "apps", "rust", "current", "bin"),
-                    os.path.join(host_home, "scoop", "persist", "rustup", ".cargo", "bin"),
-                    os.path.join(host_home, "scoop", "apps", "rustup", "current", ".cargo", "bin"),
-                    os.path.join(host_home, ".cargo", "bin"),
-                    os.path.join(host_home, ".rustup", "toolchains"),
-                ]
-            )
-        for p in extras:
-            if p and os.path.isdir(p) and p.lower() not in path.lower():
-                path = p + os.pathsep + path
+        # PATH 补全：Electron 精简环境里裸 npx/uvx 会找不到
+        try:
+            from backend.core.host_commands import enrich_path
+
+            path_val = enrich_path(os.environ.get("PATH", ""))
+        except Exception:
+            path_val = os.environ.get("PATH", "")
         env = {
             "HOME": self.agent_home,
-            # Keep host USERPROFILE so rustup/cargo resolve host toolchains
-            # (sandbox profile only for HOME-style isolation of writes).
-            "USERPROFILE": host_home or self.agent_home,
-            # Real host paths for Tevarn data / logs (do not use sandbox USERPROFILE)
-            "TEVARN_HOST_HOME": self.host_user_home,
-            "TEVARN_HOME": self.host_tevarn_home,
-            "PATH": path,
+            "USERPROFILE": self.agent_home,
+            # Real host paths for Takton data / logs (do not use sandbox USERPROFILE)
+            "TAKTON_HOST_HOME": self.host_user_home,
+            "TAKTON_HOME": self.host_takton_home,
+            "PATH": path_val,
+            "PATHEXT": os.environ.get(
+                "PATHEXT", ".COM;.EXE;.BAT;.CMD;.VBS;.JS;.WS;.MSC"
+            ),
             "SYSTEMROOT": os.environ.get("SYSTEMROOT", r"C:\Windows"),
             "TEMP": os.environ.get("TEMP", r"C:\Windows\Temp"),
             "TMP": os.environ.get("TMP", r"C:\Windows\Temp"),
@@ -277,46 +256,27 @@ class JobBackend:
             "PYTHONIOENCODING": "utf-8",
             "PYTHONUTF8": "1",
         }
-        # Preserve host identity / cargo target (RUSTUP_HOME resolved below)
-        for k in (
-            "CARGO_TARGET_DIR",
-            "RUSTFLAGS",
-            "HOMEDRIVE",
-            "HOMEPATH",
-            "USERNAME",
-            "USERDOMAIN",
-            "APPDATA",
-            "LOCALAPPDATA",
-            "CARGO_HOME",
-            "RUSTUP_HOME",
-        ):
+        # Preserve HOMEDRIVE/HOMEPATH so host_home() can recover real profile
+        for k in ("HOMEDRIVE", "HOMEPATH", "USERNAME", "USERDOMAIN", "APPDATA", "LOCALAPPDATA"):
             if os.environ.get(k):
                 env[k] = os.environ[k]
-
-        # Healthy rust + MSVC: fix broken RUSTUP_HOME (missing msvc rustc) which
-        # caused cargo "Missing manifest" → agent where/dir/rustup 复读.
+        # 出站代理：npx 拉包 / 网络工具需要
         try:
-            from backend.core.msvc_env import (
-                apply_host_rust_env,
-                merge_msvc_env,
-                needs_msvc_toolchain,
-                prepend_vcvars_call,
-                rewrite_cargo_to_absolute,
-            )
+            from backend.core.outbound_http import resolve_proxy_url
 
-            env = apply_host_rust_env(env, host_home)
-            env = merge_msvc_env(env)
-            if needs_msvc_toolchain(command):
-                command = rewrite_cargo_to_absolute(command, host_home)
-                command = prepend_vcvars_call(command)
-                logger.info(
-                    "job_backend: rust+MSVC ready RUSTUP_HOME=%s CARGO=%s",
-                    env.get("RUSTUP_HOME", "(unset→scoop)"),
-                    env.get("CARGO", "?"),
-                )
-        except Exception as _msvc_e:
-            logger.debug("job_backend rust/msvc merge skip: %s", _msvc_e)
-
+            proxy = resolve_proxy_url()
+            if proxy:
+                for pk in (
+                    "HTTP_PROXY",
+                    "HTTPS_PROXY",
+                    "ALL_PROXY",
+                    "http_proxy",
+                    "https_proxy",
+                    "all_proxy",
+                ):
+                    env[pk] = proxy
+        except Exception:
+            pass
         try:
             from backend.computer.text_decode import decode_process_bytes
 

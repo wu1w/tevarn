@@ -129,7 +129,12 @@ class ManageMcp(BaseTool):
                     allowed_paths=kwargs.get("allowed_paths"),
                 )
                 obj = await repo.create(data)
-                return ToolResult(success=True, data=self._to_dict(obj), message=f"✅ MCP Server `{name}` 已添加")
+                rt = await self._sync_runtime(only_server=name)
+                return ToolResult(
+                    success=True,
+                    data={**self._to_dict(obj), "runtime": rt},
+                    message=f"✅ MCP Server `{name}` 已添加并热同步",
+                )
             except Exception as e:
                 return ToolResult(success=False, data={}, message=f"❌ 添加失败: {e}")
 
@@ -165,7 +170,12 @@ class ManageMcp(BaseTool):
                 obj = await repo.update(sid, MCPServerUpdate(**patch))
                 if obj is None:
                     return ToolResult(success=False, data={}, message="MCP Server 不存在")
-                return ToolResult(success=True, data=self._to_dict(obj), message=f"✅ MCP Server `{obj.name}` 已更新")
+                rt = await self._sync_runtime(only_server=obj.name)
+                return ToolResult(
+                    success=True,
+                    data={**self._to_dict(obj), "runtime": rt},
+                    message=f"✅ MCP Server `{obj.name}` 已更新并热同步",
+                )
             except ValueError as e:
                 return ToolResult(success=False, data={}, message=str(e))
             except Exception as e:
@@ -177,13 +187,28 @@ class ManageMcp(BaseTool):
                 ok = await repo.delete(sid)
                 if not ok:
                     return ToolResult(success=False, data={}, message="MCP Server 不存在")
-                return ToolResult(success=True, data={"server_id": str(sid)}, message=f"✅ MCP Server `{sid}` 已删除")
+                rt = await self._sync_runtime()
+                return ToolResult(
+                    success=True,
+                    data={"server_id": str(sid), "runtime": rt},
+                    message=f"✅ MCP Server `{sid}` 已删除并热同步",
+                )
             except ValueError as e:
                 return ToolResult(success=False, data={}, message=str(e))
             except Exception as e:
                 return ToolResult(success=False, data={}, message=f"❌ 删除失败: {e}")
 
         return ToolResult(success=False, data={}, message=f"未知 action: {action}")
+
+    async def _sync_runtime(self, only_server: str | None = None) -> dict:
+        """DB 变更后热同步 MCP 工具注册表。"""
+        try:
+            from backend.mcp_hub.service import sync_mcp_runtime
+
+            return await sync_mcp_runtime(only_server=only_server)
+        except Exception as e:
+            logger.warning("manage_mcp runtime sync failed: %s", e)
+            return {"ok": False, "error": str(e), "connected": []}
 
 
 # ── 消息通道 ──

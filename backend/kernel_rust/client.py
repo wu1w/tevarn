@@ -1,4 +1,4 @@
-"""JSON-RPC client for tevarn-kernel-host — AgentKernel-compatible API."""
+"""JSON-RPC client for takton-kernel-host — AgentKernel-compatible API."""
 
 from __future__ import annotations
 
@@ -18,19 +18,19 @@ from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_HOST = os.environ.get("TEVARN_KERNEL_HOST", "127.0.0.1:17890")
+DEFAULT_HOST = os.environ.get("TAKTON_KERNEL_HOST", "127.0.0.1:17890")
 # Agent mediate can be slower; UI side-channel uses _UI_RPC_TIMEOUT.
-_RPC_TIMEOUT = float(os.environ.get("TEVARN_KERNEL_RPC_TIMEOUT", "8"))
-_UI_RPC_TIMEOUT = float(os.environ.get("TEVARN_KERNEL_UI_RPC_TIMEOUT", "2.0"))
+_RPC_TIMEOUT = float(os.environ.get("TAKTON_KERNEL_RPC_TIMEOUT", "8"))
+_UI_RPC_TIMEOUT = float(os.environ.get("TAKTON_KERNEL_UI_RPC_TIMEOUT", "2.0"))
 # Full host restart wipes the in-memory process table. Prefer soft reconnect;
 # hard restart only when host is proven stuck (port up, ping dead) after soft fails.
 # Default cooldown raised (was 8s) to stop thrash during marathon / assign storms.
-_RESTART_COOLDOWN_S = float(os.environ.get("TEVARN_KERNEL_RESTART_COOLDOWN", "45.0"))
-# Cap hard restarts per rolling window (env TEVARN_KERNEL_HARD_RESTART_MAX, 0=unlimited)
-_HARD_RESTART_MAX = int(os.environ.get("TEVARN_KERNEL_HARD_RESTART_MAX", "3"))
-_HARD_RESTART_WINDOW_S = float(os.environ.get("TEVARN_KERNEL_HARD_RESTART_WINDOW", "3600"))
+_RESTART_COOLDOWN_S = float(os.environ.get("TAKTON_KERNEL_RESTART_COOLDOWN", "45.0"))
+# Cap hard restarts per rolling window (env TAKTON_KERNEL_HARD_RESTART_MAX, 0=unlimited)
+_HARD_RESTART_MAX = int(os.environ.get("TAKTON_KERNEL_HARD_RESTART_MAX", "3"))
+_HARD_RESTART_WINDOW_S = float(os.environ.get("TAKTON_KERNEL_HARD_RESTART_WINDOW", "3600"))
 # 0/false: never hard-restart (soft only); operator uses REST restart
-_HARD_RESTART_ENABLED = os.environ.get("TEVARN_KERNEL_HARD_RESTART", "1").strip().lower() not in (
+_HARD_RESTART_ENABLED = os.environ.get("TAKTON_KERNEL_HARD_RESTART", "1").strip().lower() not in (
     "0",
     "false",
     "no",
@@ -43,7 +43,7 @@ _hard_restart_times: list[float] = []
 # stuck mediate cannot queue-block panel APIs (Next proxy 500 / socket hang up).
 _RPC_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="kernel-rpc")
 _UI_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="kernel-ui")
-_RPC_RESULT_TIMEOUT = float(os.environ.get("TEVARN_KERNEL_RPC_RESULT_TIMEOUT", "40"))
+_RPC_RESULT_TIMEOUT = float(os.environ.get("TAKTON_KERNEL_RPC_RESULT_TIMEOUT", "40"))
 # Background / best-effort RPCs: soft reconnect only (never taskkill).
 _SOFT_ONLY_METHODS = frozenset(
     {
@@ -70,8 +70,6 @@ _SOFT_ONLY_METHODS = frozenset(
         "charge_tokens",
         "resource_release",
         "resource_usage",
-        # pure progress classifier — never hard-restart host
-        "cargo_classify",
         # usage / cost: never hard-restart host on these (they also dual-write durable)
         "cost_charge",
         "cost_panel",
@@ -480,40 +478,40 @@ class _JsonRpcClient:
 
 
 def _find_host_bin() -> Path | None:
-    """Locate tevarn-kernel-host binary.
+    """Locate takton-kernel-host binary.
 
     Prefer ``target/release`` / ``target/debug`` (current ABI), then vendor,
-    then Electron packaged layout (``resources/tevarn-kernel-host``).
+    then Electron packaged layout (``resources/takton-kernel-host``).
 
     Ranking: target/* first; within a tier pick newest mtime so an old vendor
     copy does not shadow a fresher build.
     """
-    env = os.environ.get("TEVARN_KERNEL_HOST_BIN")
+    env = os.environ.get("TAKTON_KERNEL_HOST_BIN")
     if env and Path(env).is_file():
         return Path(env)
     here = Path(__file__).resolve()
     # repo root in source tree; process.resourcesPath in Electron pack
     # (…/resources/backend/kernel_rust/client.py → parents[2] == resources)
     root = here.parents[2]
-    names = ("tevarn-kernel-host.exe", "tevarn-kernel-host")
+    names = ("takton-kernel-host.exe", "takton-kernel-host")
 
     def _host_dirs(base: Path) -> list[Path]:
         return [
             base / "target" / "release",
             base / "target" / "debug",
-            base / "vendor" / "tevarn-kernel-host",
+            base / "vendor" / "takton-kernel-host",
             base / "vendor",
-            # Electron extraResources → resources/tevarn-kernel-host/
-            base / "tevarn-kernel-host",
+            # Electron extraResources → resources/takton-kernel-host/
+            base / "takton-kernel-host",
             # nested under resources/ when cwd is install root
-            base / "resources" / "tevarn-kernel-host",
-            base / "resources" / "vendor" / "tevarn-kernel-host",
+            base / "resources" / "takton-kernel-host",
+            base / "resources" / "vendor" / "takton-kernel-host",
         ]
 
     dirs: list[Path] = _host_dirs(root)
     extra_roots = [
-        Path(os.environ.get("TEVARN_ROOT", "") or ""),
-        Path(os.environ.get("TEVARN_RESOURCES_PATH", "") or ""),
+        Path(os.environ.get("TAKTON_ROOT", "") or ""),
+        Path(os.environ.get("TAKTON_RESOURCES_PATH", "") or ""),
         Path.cwd(),
         here.parents[1],  # backend/
         here.parents[1].parent,  # resources/ (packaged) or repo root
@@ -618,18 +616,18 @@ def stop_kernel_host() -> None:
 
 
 def _kill_stale_host_processes() -> None:
-    """仅终止名为 tevarn-kernel-host 的残留进程（超时恢复用）。"""
+    """仅终止名为 takton-kernel-host 的残留进程（超时恢复用）。"""
     try:
         if sys.platform == "win32":
             subprocess.run(
-                ["taskkill", "/F", "/IM", "tevarn-kernel-host.exe"],
+                ["taskkill", "/F", "/IM", "takton-kernel-host.exe"],
                 capture_output=True,
                 timeout=5,
                 check=False,
             )
         else:
             subprocess.run(
-                ["pkill", "-f", "tevarn-kernel-host"],
+                ["pkill", "-f", "takton-kernel-host"],
                 capture_output=True,
                 timeout=5,
                 check=False,
@@ -656,7 +654,7 @@ def restart_kernel_host(
     with _recovery_lock:
         if not _HARD_RESTART_ENABLED:
             logger.warning(
-                "kernel host hard-restart disabled (TEVARN_KERNEL_HARD_RESTART=0); soft-only"
+                "kernel host hard-restart disabled (TAKTON_KERNEL_HARD_RESTART=0); soft-only"
             )
             return is_rust_host_available(host)
         now = time.time()
@@ -702,7 +700,7 @@ def restart_kernel_host(
 
 
 def start_kernel_host(host: str = DEFAULT_HOST, *, extra_args: list[str] | None = None) -> bool:
-    """Spawn tevarn-kernel-host if binary exists. Returns True if host is up.
+    """Spawn takton-kernel-host if binary exists. Returns True if host is up.
 
     Product default enables soft budget renew. Tests may pass
     ``extra_args=["--no-soft-renew"]``.
@@ -713,10 +711,10 @@ def start_kernel_host(host: str = DEFAULT_HOST, *, extra_args: list[str] | None 
     bin_path = _find_host_bin()
     if bin_path is None:
         logger.error(
-            "tevarn-kernel-host binary not found. Build with:\n"
-            "  cargo build -p tevarn-kernel-host --release\n"
+            "takton-kernel-host binary not found. Build with:\n"
+            "  cargo build -p takton-kernel-host --release\n"
             "  .\\scripts\\build-kernel-host.ps1 -Release\n"
-            "Or set TEVARN_KERNEL_HOST_BIN to the executable path."
+            "Or set TAKTON_KERNEL_HOST_BIN to the executable path."
         )
         return False
     with _host_lock:
@@ -727,8 +725,8 @@ def start_kernel_host(host: str = DEFAULT_HOST, *, extra_args: list[str] | None 
             cmd.extend(extra_args)
         try:
             # P0：stderr=PIPE 无人排空 → Windows 管道写满后 host 阻塞 → RPC 全超时
-            # 启动期若需诊断，设 TEVARN_KERNEL_HOST_STDERR=pipe 并起 drain 线程
-            _stderr_mode = (os.environ.get("TEVARN_KERNEL_HOST_STDERR") or "devnull").strip().lower()
+            # 启动期若需诊断，设 TAKTON_KERNEL_HOST_STDERR=pipe 并起 drain 线程
+            _stderr_mode = (os.environ.get("TAKTON_KERNEL_HOST_STDERR") or "devnull").strip().lower()
             popen_kwargs: dict[str, Any] = {
                 "stdout": subprocess.DEVNULL,
                 "stderr": (
@@ -812,13 +810,13 @@ class RustAgentKernel:
         self.identity_registry: Any | None = None
         self._scheduler_proxy = _SchedulerProxy(self)
         if auto_start and not is_rust_host_available(host):
-            if os.environ.get("TEVARN_KERNEL_AUTO_START", "1") not in ("0", "false", "False"):
+            if os.environ.get("TAKTON_KERNEL_AUTO_START", "1") not in ("0", "false", "False"):
                 started = start_kernel_host(host)
                 if not started and not is_rust_host_available(host):
                     raise ConnectionError(
-                        f"tevarn-kernel-host unavailable at {host} "
+                        f"takton-kernel-host unavailable at {host} "
                         "(binary missing or failed to start). "
-                        "Build: cargo build -p tevarn-kernel-host --release"
+                        "Build: cargo build -p takton-kernel-host --release"
                     )
         # H-14：host 已在线时少重试；刚拉起时稍多
         if is_rust_host_available(host):
@@ -868,7 +866,7 @@ class RustAgentKernel:
 
     def _configure_pkg_signing(self) -> None:
         """Push package HMAC key so we never rely on public insecure_default in app mode."""
-        key = (os.environ.get("TEVARN_PKG_SIGNING_KEY") or "").strip()
+        key = (os.environ.get("TAKTON_PKG_SIGNING_KEY") or "").strip()
         if not key:
             try:
                 from backend.core.config import settings
@@ -963,17 +961,17 @@ class RustAgentKernel:
                 pass
 
     def _inject_rpc_auth(self, params: dict[str, Any] | None) -> dict[str, Any]:
-        """注入 RPC 鉴权：env 或 ~/.tevarn/rpc.secret（与 host ensure_rpc_secret 对齐）。"""
+        """注入 RPC 鉴权：env 或 ~/.takton/rpc.secret（与 host ensure_rpc_secret 对齐）。"""
         p = dict(params or {})
-        secret = (os.environ.get("TEVARN_KERNEL_RPC_SECRET") or "").strip()
+        secret = (os.environ.get("TAKTON_KERNEL_RPC_SECRET") or "").strip()
         if not secret:
             try:
                 home = os.environ.get("USERPROFILE") or os.environ.get("HOME") or ""
-                sp = Path(home) / ".tevarn" / "rpc.secret"
+                sp = Path(home) / ".takton" / "rpc.secret"
                 if sp.is_file():
                     secret = sp.read_text(encoding="utf-8", errors="replace").strip()
                     if secret:
-                        os.environ["TEVARN_KERNEL_RPC_SECRET"] = secret
+                        os.environ["TAKTON_KERNEL_RPC_SECRET"] = secret
             except Exception:
                 secret = ""
         if secret:
@@ -1730,6 +1728,74 @@ class RustAgentKernel:
         return (
             self._call("loop_guard_status", {"process_id": str(process_id)}) or {}
         )
+
+    def harness_resolve(
+        self,
+        *,
+        text: str = "",
+        workforce: bool = False,
+        mode: str | None = None,
+        write_intent: bool | None = None,
+        **_extra: Any,
+    ) -> dict[str, Any]:
+        """Grok-style harness decision (Rust authority)."""
+        payload: dict[str, Any] = {
+            "text": str(text or ""),
+            "workforce": bool(workforce),
+            "mode": mode,
+        }
+        if write_intent is not None:
+            payload["write_intent"] = bool(write_intent)
+        return self._call("harness_resolve", payload) or {}
+
+    def harness_select_mcp(
+        self,
+        *,
+        text: str = "",
+        live_tools: list[str] | None = None,
+        matching_only: bool = True,
+        auto_attach_all: bool = False,
+        **_extra: Any,
+    ) -> dict[str, Any]:
+        """Matching-only MCP attach (Rust authority)."""
+        return (
+            self._call(
+                "harness_select_mcp",
+                {
+                    "text": str(text or ""),
+                    "live_tools": list(live_tools or []),
+                    "matching_only": bool(matching_only),
+                    "auto_attach_all": bool(auto_attach_all),
+                },
+            )
+            or {}
+        )
+
+    def harness_simple_session(
+        self,
+        *,
+        text: str = "",
+        tool_names: list[str] | None = None,
+        max_chars: int = 200,
+        force: bool | None = None,
+        **_extra: Any,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "text": str(text or ""),
+            "tool_names": list(tool_names or []),
+            "max_chars": int(max_chars),
+        }
+        if force is not None:
+            payload["force"] = bool(force)
+        return self._call("harness_simple_session", payload) or {}
+
+    def loop_guard_resolve_role(self, **params: Any) -> dict[str, Any]:
+        """Rust RoleKind + LoopGuardConfig plan (no force chat→steward)."""
+        return self._call("loop_guard_resolve_role", dict(params or {})) or {}
+
+    def context_decide_compact(self, **params: Any) -> dict[str, Any]:
+        """Rust history compact decision (assembly stays Python)."""
+        return self._call("context_decide_compact", dict(params or {})) or {}
 
     def cache_record(
         self,

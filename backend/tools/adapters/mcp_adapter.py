@@ -89,10 +89,35 @@ class MCPToolAdapter(BaseTool):
         return await client.call_tool(remote_name, clean)
 
 
+def unregister_all_mcp_tools(registry=None) -> int:
+    """移除 ToolRegistry 中全部 MCP 来源工具。"""
+    from backend.tools.registry import ToolRegistry
+
+    target = registry or ToolRegistry
+    names = [t.name for t in target.get_all(source=ToolSource.MCP)]
+    for n in names:
+        target.unregister(n)
+    return len(names)
+
+
+def unregister_mcp_server_tools(server_name: str, registry=None) -> int:
+    """移除指定 server 注册的 MCP 工具。"""
+    from backend.tools.registry import ToolRegistry
+
+    target = registry or ToolRegistry
+    removed = 0
+    for t in list(target.get_all(source=ToolSource.MCP)):
+        if getattr(t, "server_name", None) == server_name:
+            target.unregister(t.name)
+            removed += 1
+    return removed
+
+
 async def register_mcp_server_tools(
     server_name: str,
     client: MCPClient,
     registry=None,
+    **_kwargs: Any,
 ) -> int:
     """从 MCP Server 拉取工具列表并注册到统一 ToolRegistry"""
     from backend.tools.registry import ToolRegistry

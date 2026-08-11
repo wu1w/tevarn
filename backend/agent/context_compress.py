@@ -38,7 +38,9 @@ async def compress_history_if_needed(
     threshold: float = COMPRESS_THRESHOLD,  # audit-fix(#1)：0.75 → 单点常量 0.85
     allow_l5: bool = True,
     micro_only: bool = False,
-    aggressive_hard_drop: bool = True,
+    light_loop: bool = False,
+    ops_loop: bool = False,
+    history_cap: int = 0,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """
     若估算 token 超过阈值预算，运行 pipeline (L1/L3/L5)。
@@ -46,12 +48,6 @@ async def compress_history_if_needed(
     allow_l5 / micro_only:
       工具轮 mid-loop 应传 allow_l5=False（或 micro_only=True），
       只做 L1/L3，避免 Claude Code 风格的「全量摘要」打断同轮长任务。
-
-    aggressive_hard_drop:
-      When True (default mid-loop), message-count hard path may keep only
-      head+tail (~10 msgs). Pre-build history load must pass False — otherwise
-      3000+ tool rows collapse to ~5 and the model loses the whole session
-      (seen as Codex empty-input / 400 + amnesiac turns).
 
     注意：阈值判断用**本调用局部 TokenMeter**，不再改写全局 engine.threshold_percent
    （多 session 并发压缩时避免互相踩阈值）。
@@ -73,6 +69,12 @@ async def compress_history_if_needed(
     n_msg = len(messages)
     soft_n = int(getattr(settings, "context_max_messages_soft", 48) or 48)
     hard_n = int(getattr(settings, "context_max_messages_hard", 90) or 90)
+    # audit-fix(#11)：条数压力排除非首条 system nudge
+    n_effective = sum(
+        1
+        for i, m in enumerate(messages)
+        if not (isinstance(m, dict) and m.get("role") == "system" and i > 0)
+    )
     meta_base: dict[str, Any] = {
         "compressed": False,
         "tokens_before": tokens,
@@ -80,157 +82,154 @@ async def compress_history_if_needed(
         "budget": getattr(local_meter, "threshold_tokens", 0) or 0,
         "threshold_percent": thr,
         "message_count": n_msg,
+        "effective_count": n_effective,
     }
 
-    # 消息条数过多：强制压缩（不等 token 阈值）
-    # audit-fix(#11)：条数压力统计排除 system nudge——运行时注入的提示消息
-    # （tool_round 的 timid/thrash/goal 提示等都是非首条 system），它们会
-    # 虚增条数导致过早触发 L5 深度压缩。特征：role=='system' 且非首条。
-    n_effective = sum(
-        1
-        for i, m in enumerate(messages)
-        if not (isinstance(m, dict) and m.get("role") == "system" and i > 0)
-    )
-    count_pressure = n_effective >= soft_n
-    if count_pressure and not micro_only:
-        # 长会话优先允许 L5；硬上限时强制 allow
-        allow_l5 = True
-        # audit-fix(#1)：深度阈值 0.45 → 单点常量 COMPRESS_THRESHOLD_DEEP(0.75)
-        thr = min(thr, COMPRESS_THRESHOLD_DEEP)
-        local_meter = TokenMeter(context_window=window, threshold_percent=thr)
-        meta_base["count_pressure"] = True
-        meta_base["threshold_percent"] = thr
-
-    # always cheap L1; full compress when over threshold or preflight
-    over = (
-        local_meter.should_compress(tokens)
-        or engine.should_compress_preflight(messages)
-        or count_pressure
-        or n_msg >= hard_n
-    )
-    if not over and n_msg < 8:
-        # still run L1 only for oversized tool blobs
-        if hasattr(engine, "_l1_budget"):
-            out, n = engine._l1_budget([dict(m) for m in messages])  # type: ignore[attr-defined]
-            if n:
-                meta_base.update(
-                    {
-                        "compressed": True,
-                        "tokens_after": estimate_msgs_tokens(out),
-                        "layers": [f"L1:{n}"],
-                    }
-                )
-                return out, meta_base
-        return messages, meta_base
-
-    # 超硬上限：必须先尝试真摘要/L3，禁止无 summary 静默砍中段（失忆主因之一）
-    work = [dict(m) for m in messages] if messages else []
-    if n_msg >= hard_n and not micro_only:
-        try:
-            # Force a real compress pass first (L1/L3 + L5 if under threshold relax)
-            pre_out, pre_meta = await engine.compress(
-                work,
-                current_tokens=tokens,
-                session_id=session_id,
-                allow_l5=True,
-                micro_only=False,
-            )
-            meta_base["pre_hard_compress"] = pre_meta
-            work = pre_out
-            tokens = estimate_msgs_tokens(work)
-        except Exception as e:
-            logger.debug("pre-hard compress failed: %s", e)
-
-    # Aggressive head/tail hard drop (~10 msgs) is mid-loop emergency only.
-    # Pre-build / long-session load must NOT do this — it caused 3538→5 amnesia.
-    if (
-        aggressive_hard_drop
-        and n_msg >= hard_n
-        and hasattr(engine, "_hard_truncate")
-    ):
-        try:
-            # Only hard-drop if still extremely bloated after L1/L3/L5
-            if len(work) >= max(hard_n * 2, 120):
-                old_tail = getattr(engine, "protect_last_n", 8)
-                try:
-                    # Keep more tail than before (was 6 → near-total amnesia)
-                    engine.protect_last_n = max(int(old_tail), 24)  # type: ignore[attr-defined]
-                    work, n_drop = engine._hard_truncate(work)  # type: ignore[attr-defined]
-                finally:
-                    engine.protect_last_n = old_tail  # type: ignore[attr-defined]
-                if n_drop:
-                    meta_base["pre_hard_drop"] = n_drop
-                    tokens = estimate_msgs_tokens(work)
-                    logger.info(
-                        "pre_hard_drop n=%s after summary attempt session=%s kept=%s",
-                        n_drop,
-                        session_id,
-                        len(work),
-                    )
-        except Exception:
-            pass
-    elif not aggressive_hard_drop and len(work) >= max(hard_n * 3, 200):
-        # Soft pre-build floor: keep last N tool-heavy turns, pin dropped user asks
-        try:
-            soft_keep = max(hard_n, int(getattr(settings, "context_max_messages_hard", 72) or 72) * 2)
-            soft_keep = min(soft_keep, 160)
-            if len(work) > soft_keep:
-                dropped = work[:-soft_keep]
-                pins: list[str] = []
-                for m in dropped:
-                    if isinstance(m, dict) and m.get("role") == "user":
-                        c = str(m.get("content") or "").strip()
-                        if c and not c.startswith("【") and len(pins) < 6:
-                            pins.append(" ".join(c.split())[:120])
-                pin = (" Prior asks: " + " | ".join(pins)) if pins else ""
-                marker = {
-                    "role": "system",
-                    "content": (
-                        f"[pre-build soft trim: dropped {len(dropped)} older msgs; "
-                        f"kept last {soft_keep}.{pin}]"
-                    ),
-                }
-                work = [marker] + work[-soft_keep:]
-                meta_base["pre_build_soft_trim"] = len(dropped)
-                tokens = estimate_msgs_tokens(work)
-                logger.info(
-                    "pre_build_soft_trim dropped=%s kept=%s session=%s",
-                    len(dropped),
-                    len(work),
-                    session_id,
-                )
-        except Exception as e:
-            logger.debug("pre_build soft trim skip: %s", e)
-
-    # Message-count pressure: lower engine threshold for THIS call so L5 can fire
-    # on high-cardinality short-tool sessions (3–6k tokens, 90+ msgs).
-    _old_thr = None
-    if count_pressure and not micro_only and hasattr(engine, "threshold_percent"):
-        try:
-            _old_thr = float(engine.threshold_percent)
-            # Dual gate: allow L5 from ~35% of window when message-bloated
-            engine.threshold_percent = min(_old_thr, 0.35)
-            if hasattr(engine, "meter") and engine.meter is not None:
-                engine.meter.threshold_percent = engine.threshold_percent
-        except Exception:
-            _old_thr = None
-
+    # Rust compact decision (authority); assembly stays Python
+    decision: dict[str, Any] = {}
     try:
-        out, meta = await engine.compress(
-            work,
-            current_tokens=tokens,
-            session_id=session_id,
-            allow_l5=allow_l5,
-            micro_only=micro_only,
+        import os
+
+        be = (os.environ.get("TAKTON_KERNEL_BACKEND") or "").strip().lower()
+        if be not in {"python", "py", "off", "0", "none"}:
+            from backend.kernel import get_kernel
+
+            k = get_kernel()
+            params = {
+                "tokens": tokens,
+                "message_count": n_msg,
+                "effective_count": n_effective,
+                "context_window": window,
+                "threshold_percent": thr,
+                "soft_n": soft_n,
+                "hard_n": hard_n,
+                "micro_only": bool(micro_only),
+                "allow_l5": bool(allow_l5),
+                "light_loop": bool(light_loop),
+                "ops_loop": bool(ops_loop),
+                "history_cap": int(
+                    history_cap
+                    or getattr(settings, "agent_chat_history_hard_cap", 0)
+                    or 0
+                ),
+            }
+            if hasattr(k, "context_decide_compact"):
+                decision = k.context_decide_compact(**params) or {}
+            elif hasattr(k, "_call"):
+                decision = k._call("context_decide_compact", params) or {}
+            if isinstance(decision, dict) and decision.get("authority") == "rust":
+                thr = float(decision.get("threshold_percent") or thr)
+                allow_l5 = bool(decision.get("allow_l5", allow_l5))
+                soft_n = int(decision.get("soft_n") or soft_n)
+                hard_n = int(decision.get("hard_n") or hard_n)
+                local_meter = TokenMeter(context_window=window, threshold_percent=thr)
+                meta_base["threshold_percent"] = thr
+                meta_base["compact_decision"] = {
+                    k2: decision.get(k2)
+                    for k2 in (
+                        "should_compress",
+                        "reasons",
+                        "force_hard_truncate",
+                        "skip_pipeline",
+                        "authority",
+                    )
+                }
+                if decision.get("skip_pipeline"):
+                    if hasattr(engine, "_l1_budget"):
+                        out, n = engine._l1_budget([dict(m) for m in messages])  # type: ignore[attr-defined]
+                        if n:
+                            meta_base.update(
+                                {
+                                    "compressed": True,
+                                    "tokens_after": estimate_msgs_tokens(out),
+                                    "layers": [f"L1:{n}"],
+                                }
+                            )
+                            return out, meta_base
+                    return messages, meta_base
+                count_pressure = bool(decision.get("should_compress")) and (
+                    "count_soft" in (decision.get("reasons") or [])
+                    or "count_hard" in (decision.get("reasons") or [])
+                )
+                if count_pressure:
+                    meta_base["count_pressure"] = True
+                over = bool(decision.get("should_compress")) or engine.should_compress_preflight(
+                    messages
+                )
+                force_hard = bool(decision.get("force_hard_truncate"))
+            else:
+                decision = {}
+    except Exception as e:
+        logger.debug("context_decide_compact skip: %s", e)
+        decision = {}
+
+    if not decision:
+        # Python fallback (previous logic)
+        count_pressure = n_effective >= soft_n
+        if count_pressure and not micro_only:
+            allow_l5 = True
+            thr = min(thr, COMPRESS_THRESHOLD_DEEP)
+            local_meter = TokenMeter(context_window=window, threshold_percent=thr)
+            meta_base["count_pressure"] = True
+            meta_base["threshold_percent"] = thr
+        over = (
+            local_meter.should_compress(tokens)
+            or engine.should_compress_preflight(messages)
+            or count_pressure
+            or n_msg >= hard_n
         )
-    finally:
-        if _old_thr is not None:
+        force_hard = n_msg >= hard_n
+        if not over and n_msg < 8:
+            if hasattr(engine, "_l1_budget"):
+                out, n = engine._l1_budget([dict(m) for m in messages])  # type: ignore[attr-defined]
+                if n:
+                    meta_base.update(
+                        {
+                            "compressed": True,
+                            "tokens_after": estimate_msgs_tokens(out),
+                            "layers": [f"L1:{n}"],
+                        }
+                    )
+                    return out, meta_base
+            return messages, meta_base
+    else:
+        if not over:
+            if hasattr(engine, "_l1_budget"):
+                out, n = engine._l1_budget([dict(m) for m in messages])  # type: ignore[attr-defined]
+                if n:
+                    meta_base.update(
+                        {
+                            "compressed": True,
+                            "tokens_after": estimate_msgs_tokens(out),
+                            "layers": [f"L1:{n}"],
+                        }
+                    )
+                    return out, meta_base
+            return messages, meta_base
+
+    # 超硬上限：先硬砍中间，再走 pipeline
+    work = messages
+    if force_hard and hasattr(engine, "_hard_truncate"):
+        try:
+            old_tail = getattr(engine, "protect_last_n", 8)
             try:
-                engine.threshold_percent = _old_thr
-                if hasattr(engine, "meter") and engine.meter is not None:
-                    engine.meter.threshold_percent = _old_thr
-            except Exception:
-                pass
+                engine.protect_last_n = min(int(old_tail), 6)  # type: ignore[attr-defined]
+                work, n_drop = engine._hard_truncate([dict(m) for m in work])  # type: ignore[attr-defined]
+            finally:
+                engine.protect_last_n = old_tail  # type: ignore[attr-defined]
+            if n_drop:
+                meta_base["pre_hard_drop"] = n_drop
+                tokens = estimate_msgs_tokens(work)
+        except Exception:
+            work = messages
+
+    out, meta = await engine.compress(
+        work,
+        current_tokens=tokens,
+        session_id=session_id,
+        allow_l5=allow_l5,
+        micro_only=micro_only,
+    )
     meta_base.update(meta)
     return out, meta_base
 

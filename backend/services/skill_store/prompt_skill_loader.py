@@ -2,7 +2,7 @@
 Prompt-Skill 加载与注入策略
 
 负责：
-- 扫描 ~/.tevarn/skills/ 下已安装的 SKILL.md
+- 扫描 ~/.takton/skills/ 下已安装的 SKILL.md
 - 解析 frontmatter（name/description）+ 正文
 - 按策略输出 system prompt 可注入的片段
 
@@ -149,7 +149,20 @@ class PromptSkillLoader:
         for item in raw_list:
             source = item["source"]
             name = item["name"]
-            content = storage.read(source, name)
+            content = None
+            # 优先用 list 给出的绝对 path（workspace 额外根可能不在 primary skills root）
+            p = item.get("path") or ""
+            if p:
+                try:
+                    from pathlib import Path
+
+                    pp = Path(p)
+                    if pp.is_file():
+                        content = pp.read_text(encoding="utf-8")
+                except Exception:
+                    content = None
+            if not content:
+                content = storage.read(source, name)
             if not content:
                 continue
 

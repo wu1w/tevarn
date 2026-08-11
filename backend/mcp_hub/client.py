@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import Any
@@ -74,10 +75,29 @@ class MCPClient:
         if not self.config.command:
             raise ValueError(f"MCP server '{self.name}' stdio transport requires command")
 
+        # Windows / Electron 精简 PATH 下裸 npx、uvx 常失败 → 解析绝对路径并补全 PATH
+        from backend.core.host_commands import build_process_env, resolve_host_command
+
+        raw_cmd = str(self.config.command or "").strip()
+        resolved_cmd = resolve_host_command(raw_cmd)
+        if resolved_cmd != raw_cmd:
+            logger.info(
+                "MCP server '%s' command resolved %r → %r",
+                self.name,
+                raw_cmd,
+                resolved_cmd,
+            )
+        # 合并：宿主 PATH 补全 + 用户 env（API Key 等）；PATH 以补全版为准
+        child_env = build_process_env(self.config.env)
+        if resolved_cmd.lower().endswith((".cmd", ".bat")) and "PATHEXT" not in child_env:
+            child_env["PATHEXT"] = os.environ.get(
+                "PATHEXT", ".COM;.EXE;.BAT;.CMD;.VBS;.JS;.WS;.MSC"
+            )
+
         server_params = StdioServerParameters(
-            command=self.config.command,
+            command=resolved_cmd,
             args=self.config.args or [],
-            env=self.config.env,
+            env=child_env,
         )
         # audit-fix: stdio_client 不暴露子进程句柄；在 enter 期间临时包裹
         # SDK 内部的 _create_platform_compatible_process 捕获 proc，
