@@ -5,6 +5,7 @@
 import {
   WSMessage,
   StreamDeltaMessage,
+  ContentResetMessage,
   StatusUpdateMessage,
   TaskUpdateMessage,
   MemoryUpdatedMessage,
@@ -91,4 +92,8 @@ export function createSyncMessage(lastMessageId?: string): { type: 'sync'; last_
 
 export function createStopMessage(): { type: 'stop' } {
   return { type: 'stop' };
+}
+
+export function isContentReset(msg: WSMessage): msg is ContentResetMessage {
+  return msg.type === 'content_reset';
 }

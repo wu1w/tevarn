@@ -477,6 +477,8 @@ class Settings(BaseSettings):
     # Only high-step converge nudges. Set agent_soft_open_mode=False to restore
     # deliver/must_write/thrash force_final hard gates.
     agent_soft_open_mode: bool = True
+    # True：仅 goal 长任务享受 soft_open；闲聊/搜索/短工程硬 thrash（更接近 Grok）
+    agent_soft_open_goal_only: bool = True
     agent_converge_nudge_after: int = 16  # soft 「注意收束」after N tool rounds
     agent_converge_nudge_every: int = 10  # re-nudge interval after first
     agent_pure_read_nudge_after: int = 4  # pure-read rounds before soft write nudge

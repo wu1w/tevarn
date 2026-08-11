@@ -10,9 +10,11 @@ import type {
   ToolEventMessage,
   RunEventMessage,
 } from '@/types';
+// ContentReset handled via handlers
 
 export type ChatWsHandlers = {
   onStreamDelta?: (msg: StreamDeltaMessage) => void;
+  onContentReset?: (msg: import('@/types').ContentResetMessage) => void;
   onStatusUpdate?: (msg: StatusUpdateMessage) => void;
   onSyncResponse?: (payload: {
     messages: Array<{ id: string; role: string; content: string; created_at?: string | null }>;

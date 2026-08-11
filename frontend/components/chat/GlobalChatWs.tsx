@@ -37,6 +37,9 @@ export function GlobalChatWs() {
     onStreamDelta: (msg: StreamDeltaMessage) => {
       chatWsHandlers().onStreamDelta?.(msg);
     },
+    onContentReset: (msg) => {
+      chatWsHandlers().onContentReset?.(msg);
+    },
     onStatusUpdate: (msg: StatusUpdateMessage) => {
       chatWsHandlers().onStatusUpdate?.(msg);
     },

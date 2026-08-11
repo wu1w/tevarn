@@ -445,6 +445,23 @@ function ChatPageInner() {
       });
     }, [currentSession?.id, isStoppingSid]);
 
+    /** 伪 tool 回收：用后端清洗后的 content 替换已流式气泡 */
+    const handleContentReset = useCallback((msg: { content?: string; reason?: string }) => {
+      const sid = currentSession?.id || '';
+      if (isStoppingSid(sid)) return;
+      const cleaned = typeof msg.content === 'string' ? msg.content : '';
+      streamingContentRef.current = cleaned;
+      setStreamingContent(cleaned);
+      if (sid) {
+        streamSessionApi().patch(sid, {
+          content: cleaned,
+          isStreaming: true,
+          agentRunning: true,
+        });
+      }
+    }, [currentSession?.id, isStoppingSid]);
+
+
     const handleToolEvent = useCallback((msg: ToolEventMessage) => {
       const sid = currentSession?.id || '';
       if (isStoppingSid(sid)) return;
@@ -919,6 +936,7 @@ const handleUserMessageAck = useCallback(
     };
     useChatWsBridge.getState().setHandlers({
       onStreamDelta: handleStreamDelta,
+      onContentReset: handleContentReset,
       onStatusUpdate: handleStatusUpdate,
       onSyncResponse: handleSyncResponse,
       onUserMessageAck: handleUserMessageAck,
@@ -998,6 +1016,7 @@ const handleUserMessageAck = useCallback(
     };
   }, [
     handleStreamDelta,
+    handleContentReset,
     handleStatusUpdate,
     handleSyncResponse,
     handleUserMessageAck,

@@ -23,6 +23,7 @@ import type {
 } from '@/types';
 import {
   isStreamDelta,
+  isContentReset,
   isStatusUpdate,
   isTaskUpdate,
   isMemoryUpdated,
@@ -151,6 +152,7 @@ interface UseWebSocketOptions {
   sessionId: string;
   token?: string | null;
   onStreamDelta?: (msg: StreamDeltaMessage) => void;
+  onContentReset?: (msg: import('@/types').ContentResetMessage) => void;
   onStatusUpdate?: (msg: StatusUpdateMessage) => void;
   onTaskUpdate?: (msg: TaskUpdateMessage) => void;
   onMemoryUpdated?: (msg: MemoryUpdatedMessage) => void;
@@ -430,6 +432,8 @@ export function useWebSocket(options: UseWebSocketOptions) {
 
         if (isStreamDelta(msg)) {
           optionsRef.current.onStreamDelta?.(msg);
+        } else if (isContentReset(msg)) {
+          optionsRef.current.onContentReset?.(msg);
         } else if (isStatusUpdate(msg)) {
           optionsRef.current.onStatusUpdate?.(msg);
         } else if (isTaskUpdate(msg)) {

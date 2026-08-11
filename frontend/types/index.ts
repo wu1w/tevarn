@@ -470,6 +470,7 @@ export interface MCPServerFormData {
 export type WSMessageType =
   | 'slash_result'
   | 'stream_delta'
+  | 'content_reset'
   | 'status'
   | 'memory_updated'
   | 'task_update'
@@ -500,6 +501,16 @@ export interface StreamDeltaMessage extends WSMessage {
   message_id: string;
   content: string;
 }
+
+/** 伪 tool 从正文回收后：用干净 content 替换已流式气泡 */
+export interface ContentResetMessage extends WSMessage {
+  type: 'content_reset';
+  reason?: string;
+  content?: string;
+  recovered_tools?: string[];
+  session_id?: string;
+}
+
 
 export interface StatusUpdateMessage extends WSMessage {
   type: 'status';

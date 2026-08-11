@@ -150,6 +150,11 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         self._goal_complete_summary_nudged = False
         self._plan_mode_active = False
         self._headless_run = False
+        try:
+            from backend.agent.progress_guard import set_soft_open_for_run
+            set_soft_open_for_run(None)  # reset each run
+        except Exception:
+            pass
         self._config_micro_loop = None
         self._thrash_force_final_override = None
         self._pseudo_tool_leak_streak = 0
@@ -2081,7 +2086,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         except Exception as _sm_e:
             logger.debug("simple_mode apply skip: %s", _sm_e)
 
-        # S1/S3/S10/S12: thin/search caps + plan mode + diff-first
+# S1/S3/S10/S12: thin/search caps + plan mode + diff-first
         try:
             from backend.agent.tool_policy import (
                 is_search_only_intent,
@@ -2113,7 +2118,23 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     self._thrash_force_final_override = True
             except Exception:
                 pass
-            if _kind == "thin" and not getattr(self, "_config_micro_loop", None):
+            # 工具面收敛：resolve 已标 thin/search surface 时不再二次裁剪 schema
+            _reasons = list(getattr(scene_plan, "reasons", None) or [])
+            _already_thin = any(
+                r in _reasons
+                for r in (
+                    "thin_chat_surface",
+                    "auto_thin_chat",
+                    "search_thin_surface",
+                    "mcp_ops:thin_surface",
+                    "mcp_ops:thin+verify",
+                )
+            )
+            if (
+                _kind == "thin"
+                and not getattr(self, "_config_micro_loop", None)
+                and not _already_thin
+            ):
                 def _thin_keep(t):
                     fn = t.get("function") if isinstance(t.get("function"), dict) else {}
                     name = str((fn or {}).get("name") or t.get("name") or "")
@@ -2123,7 +2144,9 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 if before != len(tools):
                     logger.info("auto_thin_chat tools %s→%s max_iter=%s session=%s", before, len(tools), self.max_iterations, session_id)
                     messages.append({"role": "system", "content": "【薄档对话】工具已收窄，优先直接文字回答。需要文件/终端时可 use_tool_pack 扩容。"})
-            elif _kind == "search":
+            elif _kind == "thin" and _already_thin and not getattr(self, "_config_micro_loop", None):
+                messages.append({"role": "system", "content": "【薄档对话】优先直接文字回答；需要文件/终端时可 use_tool_pack 扩容。"})
+            elif _kind == "search" and not _already_thin:
                 def _s_keep(t):
                     fn = t.get("function") if isinstance(t.get("function"), dict) else {}
                     name = str((fn or {}).get("name") or t.get("name") or "")
@@ -2503,6 +2526,23 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             user_input=str(user_input or enriched_input or ""),
             origin=_origin,
         )
+
+        # soft_open：非 goal 硬闸；goal 保留 soft（更接近 Grok 早停）
+        try:
+            from backend.agent.progress_guard import set_soft_open_for_run
+            from backend.core.config import settings as _st_so
+
+            _goal_only = bool(getattr(_st_so, "agent_soft_open_goal_only", True))
+            _global_soft = bool(getattr(_st_so, "agent_soft_open_mode", True))
+            if not _global_soft:
+                set_soft_open_for_run(False)
+            elif _goal_only and not goal_mode:
+                set_soft_open_for_run(False)
+            else:
+                set_soft_open_for_run(True if goal_mode else None)
+        except Exception as _so_e:
+            logger.debug("set_soft_open_for_run skip: %s", _so_e)
+
         if goal_mode:
             self.max_iterations = await prepare_goal_runtime(
                 session_id=session_id,

@@ -415,12 +415,25 @@ def doom_loop_handoff(
     return "\n".join(lines)
 
 
+# 本轮 run 级 soft_open 覆盖（loop 在非 goal 时设为 False）
+_soft_open_run: bool | None = None
+
+
+def set_soft_open_for_run(enabled: bool | None) -> None:
+    """loop 入口设置：None=跟随全局配置；False=本轮硬闸门。"""
+    global _soft_open_run
+    _soft_open_run = enabled
+
+
 def soft_open_mode() -> bool:
     """True: no hard tool walls (deliver/must_write/thrash force_final).
 
-    Default ON. Only high-step converge nudges remain. Flip
-    ``agent_soft_open_mode=False`` to restore legacy hard gates.
+    全局 ``agent_soft_open_mode`` 默认 True；若 ``agent_soft_open_goal_only``
+    且本轮非 goal，loop 会 set_soft_open_for_run(False)，使非 goal 硬停 thrash。
     """
+    global _soft_open_run
+    if _soft_open_run is not None:
+        return bool(_soft_open_run)
     try:
         from backend.core.config import settings as _st
 
