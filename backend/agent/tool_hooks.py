@@ -206,8 +206,29 @@ async def builtin_track_write_after(
             if path:
                 brief.note_file_change(path, action=name, checkpoint=cp)
             elif name == "apply_patch":
-                # patch may not have single path — mark generic
-                brief.note_file_change(f"(patch via {name})", action=name, checkpoint=cp)
+                # try extract paths from patch text / files list
+                import re as _re
+                patch_blob = str(
+                    (arguments or {}).get("patch")
+                    or (arguments or {}).get("diff")
+                    or (arguments or {}).get("input")
+                    or result
+                    or ""
+                )
+                found = _re.findall(
+                    r"(?m)^(?:\+\+\+ |--- |\*\*\* Update File: |diff --git a/)(.+)$",
+                    patch_blob,
+                )
+                paths = []
+                for f in found:
+                    p = f.strip().split()[0].lstrip("ab/")
+                    if p and p not in paths and p != "/dev/null":
+                        paths.append(p[:200])
+                if paths:
+                    for p in paths[:12]:
+                        brief.note_file_change(p, action=name, checkpoint=cp)
+                else:
+                    brief.note_file_change(f"(patch via {name})", action=name, checkpoint=cp)
         if name in ("command", "shell", "process", "python"):
             cmd = str(
                 (arguments or {}).get("command")
@@ -218,9 +239,16 @@ async def builtin_track_write_after(
             if any(h in cmd for h in _TEST_HINT):
                 res_l = (result or "").lower()
                 passed = None
-                if "passed" in res_l or "ok" in res_l[:200]:
-                    passed = True
-                if "failed" in res_l or "error" in res_l or "traceback" in res_l:
+                # 收紧：避免 "ok" 出现在无关输出里误判
+                if "passed" in res_l or " test session starts" in res_l:
+                    if "failed" not in res_l and "error" not in res_l and "traceback" not in res_l:
+                        passed = True
+                if (
+                    "failed" in res_l
+                    or "traceback" in res_l
+                    or "errors=" in res_l
+                    or " FAILURES " in (result or "")
+                ):
                     passed = False
                 brief.note_test(cmd[:120], passed=passed, summary=(result or "")[:200])
     except Exception:

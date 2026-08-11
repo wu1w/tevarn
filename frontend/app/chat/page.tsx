@@ -1230,13 +1230,16 @@ const handleUserMessageAck = useCallback(
           displayContent = parts.join('\n');
         }
 
-        // 乐观：临时 id，sync/load 后用服务端 id reconcile，避免双气泡
+        // 乐观：临时 id；steer/queue 与后端落库前缀对齐，便于 ack reconcile
         const optId = `optimistic:${generateUUID()}`;
+        let optimisticContent = displayContent;
+        if (control === 'steer') optimisticContent = `【纠偏】${displayContent}`;
+        else if (control === 'queue') optimisticContent = `【排队】${displayContent}`;
         const userMsg: Message = {
           id: optId,
           session_id: session.id,
           role: 'user',
-          content: displayContent,
+          content: optimisticContent,
           tool_calls: null,
           token_count: null,
           created_at: new Date().toISOString(),
@@ -1244,18 +1247,28 @@ const handleUserMessageAck = useCallback(
         addMessage(userMsg);
         useSessionStore.getState().touchSessionActivity(session.id);
         setStoppingSid(session.id, false);
-        setIsStreaming(true);
-        setStreamingContent('');
-        setLiveToolCalls([]);
-        setStreamStatusDetail(t('chat.connectingSend'));
+        // steer/queue 不打断当前 streaming 状态机
+        if (!control || control === 'interrupt') {
+          setIsStreaming(true);
+          setStreamingContent('');
+          setLiveToolCalls([]);
+          setStreamStatusDetail(t('chat.connectingSend'));
+        } else if (control === 'steer') {
+          setStreamStatusDetail(t('chat.steerApplied') || '纠偏已提交');
+        } else if (control === 'queue') {
+          setStreamStatusDetail(t('chat.queued') || '已排队，本轮结束后执行');
+        }
 
         const dropGhost = () => {
           useSessionStore.getState().removeMessage(optId);
-          if (useSessionStore.getState().currentSession?.id === session!.id) {
-            setIsStreaming(false);
-            setStreamStatusDetail(null);
+          // 仅新 run / interrupt 失败时清 streaming；steer/queue 失败不能误关当前 run
+          if (!control || control === 'interrupt') {
+            if (useSessionStore.getState().currentSession?.id === session!.id) {
+              setIsStreaming(false);
+              setStreamStatusDetail(null);
+            }
+            streamSessionApi().markIdle(session!.id);
           }
-          streamSessionApi().markIdle(session!.id);
         };
 
         try {

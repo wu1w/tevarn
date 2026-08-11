@@ -1353,7 +1353,39 @@ async def websocket_endpoint(
                         meta = {
                             "mode": mode,
                             "attachments": attachments if isinstance(attachments, list) else [],
+                            # drain 时跳过二次 persist（此处已落库）
+                            "skip_user_persist": True,
                         }
+                        # 落库 + ack：避免乐观气泡无 server id，以及 queue 开跑时双写
+                        display = (
+                            f"【纠偏】{user_input}"
+                            if control == "steer"
+                            else f"【排队】{user_input}"
+                        )
+                        try:
+                            mid = None
+                            if not regenerate:
+                                saved = await message_repo.create(
+                                    {
+                                        "session_id": session_id,
+                                        "role": "user",
+                                        "content": display,
+                                    }
+                                )
+                                mid = str(getattr(saved, "id", "") or "") or None
+                            await manager.broadcast(
+                                session_id,
+                                {
+                                    "type": "user_message_ack",
+                                    "id": mid or "",
+                                    "role": "user",
+                                    "content": display,
+                                    "control": control,
+                                },
+                            )
+                        except Exception as pe:
+                            logger.debug("steer/queue persist skip: %s", pe)
+
                         if control == "steer":
                             box.push_steer(user_input, meta=meta)
                             await manager.broadcast(
@@ -1698,9 +1730,16 @@ async def _run_agent_safe(
                         },
                     )
                     agent._should_stop = False
+                    # 已在 queue 时落库 → 避免 agent.run 再写一条用户消息
+                    meta = nxt.meta or {}
+                    agent._skip_user_persist = bool(meta.get("skip_user_persist", True))
+                    # 新 generation，隔离上一轮 late event
+                    try:
+                        manager.bump_run_generation(session_id)
+                    except Exception:
+                        pass
                     manager.begin_run_snapshot(session_id)
                     next_gen = manager.current_run_generation(session_id)
-                    meta = nxt.meta or {}
                     next_mode = str(meta.get("mode") or mode or "default")
                     next_atts = meta.get("attachments") if isinstance(meta.get("attachments"), list) else []
                     task = asyncio.create_task(
