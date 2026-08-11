@@ -39,3 +39,30 @@ def test_loop_decision_notes():
     note = same_tool_failure("edit").as_controller_note()
     assert "edit" in note
     assert thrash().decision == "force_final"
+
+
+def test_run_brief_and_events_seq():
+    from backend.agent.run_brief import drop_brief, get_brief, reset_brief
+    from backend.agent.run_events import reset_seq, _next_seq
+
+    sid = "33333333-3333-3333-3333-333333333333"
+    drop_brief(sid)
+    reset_seq(sid)
+    b = reset_brief(sid, goal="fix bug")
+    b.note_file_change("a.py", action="edit", checkpoint="/tmp/cp")
+    b.note_test("pytest -q", passed=True, summary="ok")
+    d = b.delivery_payload()
+    assert d and len(d["changed_files"]) == 1
+    assert d["tests"][0]["passed"] is True
+    assert _next_seq(sid) == 1
+    assert _next_seq(sid) == 2
+
+
+def test_subagent_structure():
+    from backend.agent.subagent_result import format_structured_for_parent, structure_subagent_result
+
+    s = structure_subagent_result('{"summary": "done", "changed_files": ["x.py"]}')
+    assert s["summary"] == "done"
+    assert "x.py" in s["changed_files"]
+    text = format_structured_for_parent(s)
+    assert "Subagent" in text

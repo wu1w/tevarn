@@ -798,6 +798,20 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         )
         self._run_recorder = recorder
         await recorder.start(input_summary=user_input or "")
+        try:
+            from backend.agent.run_brief import reset_brief
+            from backend.agent.run_events import reset_seq, emit_run_event
+            reset_brief(session_id, goal=str(user_input or "")[:500])
+            reset_seq(session_id)
+            await emit_run_event(
+                self.ws_manager,
+                session_id,
+                "run.started",
+                detail=(user_input or "")[:120],
+                run_id=str(getattr(recorder, "run_id", "") or "") or None,
+            )
+        except Exception as _rb_e:
+            logger.debug("run_brief start skip: %s", _rb_e)
         # Phase 2.1/2.2：Run id 回写 loop，供 process.meta / inbox 关联
         self._agent_run_id = getattr(recorder, "run_id", None)
         # Phase 2.4：Goal 挂 Run 链

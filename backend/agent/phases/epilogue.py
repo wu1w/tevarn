@@ -48,6 +48,32 @@ async def run_epilogue(
     except Exception:
         pass
 
+    # P1 coding delivery: emit structured brief to FE
+    try:
+        from backend.agent.run_brief import get_brief, drop_brief
+        from backend.agent.run_events import emit_run_event
+
+        brief = get_brief(session_id)
+        delivery = brief.delivery_payload()
+        if delivery:
+            await emit_run_event(
+                getattr(loop, "ws_manager", None),
+                session_id,
+                "coding.delivery",
+                detail=f"files={len(delivery.get('changed_files') or [])} tests={len(delivery.get('tests') or [])}",
+                payload=delivery,
+            )
+        await emit_run_event(
+            getattr(loop, "ws_manager", None),
+            session_id,
+            "run.completed" if not loop._should_stop else "run.cancelled",
+            detail=(final_content or "")[:120],
+        )
+        if not loop._should_stop:
+            drop_brief(session_id)
+    except Exception as _del_e:
+        logger.debug("coding delivery emit skip: %s", _del_e)
+
     # 7.5 多信源最终聚合（额外一次无工具 LLM，避免「四个都对」并列）
     try:
         if final_content and not loop._should_stop:

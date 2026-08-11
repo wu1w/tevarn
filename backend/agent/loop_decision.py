@@ -34,6 +34,12 @@ class LoopDecision:
             return action or "Ask the user a concise clarifying question."
         return action
 
+    def as_system_message(self) -> dict[str, str] | None:
+        note = self.as_controller_note()
+        if not note:
+            return None
+        return {"role": "system", "content": f"[Controller] {note}"}
+
 
 def force_final(reason: str = "budget") -> LoopDecision:
     return LoopDecision(
@@ -56,4 +62,42 @@ def thrash(reason: str = "thrash") -> LoopDecision:
         decision="force_final",
         reason=reason,
         next_action="You are looping. Summarize progress and stop.",
+    )
+
+
+def security_blocked() -> LoopDecision:
+    return LoopDecision(
+        decision="redirect",
+        reason="security_blocked",
+        next_action="Prefer file_write/edit/apply_patch; do not retry the blocked command.",
+    )
+
+
+def command_not_found() -> LoopDecision:
+    return LoopDecision(
+        decision="redirect",
+        reason="exit_127",
+        next_action="Command not found — fix cwd or use full path; do not repeat the same command.",
+    )
+
+
+def soft_orch_window(code: str = "orch_window_thrash") -> LoopDecision:
+    return LoopDecision(
+        decision="redirect",
+        reason=code,
+        next_action="Heavy orchestration detected — digest existing jobs or do real work; tools still allowed.",
+    )
+
+
+def from_guard_code(code: str, reason: str = "") -> LoopDecision:
+    """Map loop_guard codes to decisions."""
+    c = (code or "").strip().lower()
+    if "thrash" in c or "budget" in c or "max_turn" in c:
+        return force_final(c or reason or "guard")
+    if "window" in c:
+        return soft_orch_window(c)
+    return LoopDecision(
+        decision="force_final",
+        reason=c or reason,
+        next_action="Write final answer only; tools blocked this round.",
     )

@@ -452,43 +452,20 @@ def budget_check(process_id: str) -> dict[str, Any]:
 
 
 def force_final_message(code: str, reason: str = "") -> str:
-    """System-only inject for force_final. Keep SHORT — never demand long inventories.
+    """Short controller note (LoopDecision) — avoid long system essays."""
+    try:
+        from backend.agent.loop_decision import from_guard_code
 
-    Long 已完成/未完成 reports get persisted as assistant body and replay on auto-resume.
-    Goal segment end must NOT sound like token budget exhaustion.
-    """
-    if code in ("max_tool_rounds",):
-        return (
-            "[Segment tool rounds exhausted] Cap reached; the next segment will "
-            "auto-resume with a fresh counter. No more tools this turn.\n"
-            "Visible reply to the user (in their language): a **clear progress "
-            "summary**, not a one-liner — cover:\n"
-            "1) What was completed this segment (concrete files/checks)\n"
-            "2) Goal/todo status and what remains\n"
-            "3) Recommended next steps for the following segment\n"
-            "Do NOT write long tool-call inventories, 'force-final reports', or "
-            "budget-scare essays. Do NOT leave the visible body empty."
-            + (f" ({reason})" if reason else "")
-        )
-    if code in ("budget_ratio",):
-        # Real process token pressure (distinct from tool-round segment end)
-        return (
-            "[Token budget low] Process token use is near the cap. "
-            "No more tools this turn; one or two sentences on the blocker — "
-            "no empty report frames or long status lists."
-            + (f" ({reason})" if reason else "")
-        )
-    if code in ("orch_window_thrash", "crew_total_cap"):
-        return (
-            "[Orch rounds end] Crew dispatch cap or sliding-window thrash hit. "
-            "No more crew_steward/delegate; briefly summarize existing job results."
-            + (f" ({reason})" if reason else "")
-        )
+        note = from_guard_code(code, reason).as_controller_note()
+        if note:
+            return f"[Controller] {note}"
+    except Exception:
+        pass
     return (
-        "[LoopGuard end] Tools disabled for this turn. "
-        "Short handoff in the user's language; no long inventories or status replay."
-        + (f" code={code} {reason}" if code or reason else "")
-    )
+        "[Controller] Stop tools and answer the user now. "
+        + (f"code={code} {reason}" if code or reason else "")
+    ).strip()
+
 
 
 def reset_local_for_tests() -> None:

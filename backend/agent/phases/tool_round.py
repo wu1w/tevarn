@@ -384,16 +384,10 @@ async def run_tool_round(
                 except Exception:
                     pass
                 if _soft_orch_ff:
-                    messages.append(
-                        {
-                            "role": "system",
-                            "content": (
-                                f"[LoopGuard soft] {_br_code}: heavy orchestration "
-                                "detected. Prefer digesting existing jobs or doing "
-                                "real work; tools are still allowed (not a hard ban)."
-                            ),
-                        }
-                    )
+                    from backend.agent.loop_decision import soft_orch_window
+                    _sm = soft_orch_window(str(_br_code or "")).as_system_message()
+                    if _sm:
+                        messages.append(_sm)
                     logger.info(
                         "loop_guard begin_round soft-open skip force_final process=%s %s",
                         _kpid_lg[:8],
@@ -1040,23 +1034,15 @@ async def run_tool_round(
                         _ck, detail=f"{getattr(tc,'name', '')}:{(str(tool_result))[:80]}"
                     )
                     if str(tool_result).startswith("[Security Blocked]"):
-                        messages.append({
-                            "role": "system",
-                            "content": (
-                                "Previous command was blocked by security policy. "
-                                "Prefer file_write/edit/apply_patch for files, or a simple "
-                                "one-line shell. Do not retry the same blocked command."
-                            ),
-                        })
+                        from backend.agent.loop_decision import security_blocked
+                        _msg = security_blocked().as_system_message()
+                        if _msg:
+                            messages.append(_msg)
                     elif _ck == _RK.TOOL_TRANSIENT and "127" in str(tool_result):
-                        messages.append({
-                            "role": "system",
-                            "content": (
-                                "Command exit 127 (not found). Check cwd is the task "
-                                "workspace; try python -m or full path. Do not repeat "
-                                "the same command in the wrong directory."
-                            ),
-                        })
+                        from backend.agent.loop_decision import command_not_found
+                        _msg = command_not_found().as_system_message()
+                        if _msg:
+                            messages.append(_msg)
                     if _act == "force_final":
                         state.force_final_no_tools = True
             except Exception:

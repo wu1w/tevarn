@@ -1364,14 +1364,16 @@ async def websocket_endpoint(
                                     "detail": "Steer applied — will take effect at next safe step",
                                 },
                             )
-                            await manager.broadcast(
-                                session_id,
-                                {
-                                    "type": "run_event",
-                                    "event": "steer_accepted",
-                                    "detail": user_input[:200],
-                                },
-                            )
+                            try:
+                                from backend.agent.run_events import emit_run_event
+                                await emit_run_event(
+                                    manager,
+                                    session_id,
+                                    "steer_accepted",
+                                    detail=user_input[:200],
+                                )
+                            except Exception:
+                                pass
                         else:
                             box.push_queue(user_input, meta=meta)
                             n = box.peek_pending_count()
@@ -1383,14 +1385,16 @@ async def websocket_endpoint(
                                     "detail": f"Queued ({n}) — runs after current turn",
                                 },
                             )
-                            await manager.broadcast(
-                                session_id,
-                                {
-                                    "type": "run_event",
-                                    "event": "queue_accepted",
-                                    "detail": f"pending={n}",
-                                },
-                            )
+                            try:
+                                from backend.agent.run_events import emit_run_event
+                                await emit_run_event(
+                                    manager,
+                                    session_id,
+                                    "queue_accepted",
+                                    detail=f"pending={n}",
+                                )
+                            except Exception:
+                                pass
                         continue
                     if control == "stop":
                         if not manager.stop_agent_loop(session_id):

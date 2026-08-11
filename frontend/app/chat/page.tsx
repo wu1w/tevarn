@@ -19,6 +19,7 @@ import { useChatWsBridge } from '@/stores/chatWsBridge';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { useSessionStore } from '@/stores/sessionStore';
 import { Message, StatusUpdateMessage, StreamDeltaMessage, GoalUpdateMessage, GoalState, ToolEventMessage, RunEventMessage } from '@/types';
+import { CodingDeliveryCard, type CodingDelivery } from '@/components/chat/CodingDeliveryCard';
 import { useTerminalStore } from '@/stores/terminalStore';
 import { generateImage, type SessionRecoveryPayload } from '@/lib/api';
 import { ChatRecoveryCard } from '@/components/chat/ChatRecoveryCard';
@@ -84,6 +85,7 @@ function ChatPageInner() {
         const [isTransparencyOpen, setIsTransparencyOpen] = useState(false);
         const [highlightMessageId, setHighlightMessageId] = useState<string | null>(null);
         const [isStreaming, setIsStreaming] = useState(false);
+  const [codingDelivery, setCodingDelivery] = useState<CodingDelivery | null>(null);
         /** Stop 后等待服务端 idle，避免假停后仍收 stream_delta（按会话，防切会话误伤） */
         const [isStopping, setIsStopping] = useState(false);
         const stoppingBySessionRef = useRef<Record<string, boolean>>({});
@@ -754,6 +756,14 @@ function ChatPageInner() {
 
   // Durable Run 生命周期事件 → 状态行（tool.* 已由 tool_event 覆盖，不重复显示）
   const handleRunEvent = useCallback((msg: RunEventMessage) => {
+      // P1 coding delivery card
+      if (msg.event === 'coding.delivery' && msg.payload) {
+        setCodingDelivery(msg.payload as CodingDelivery);
+        return;
+      }
+      if (msg.event === 'run.started') {
+        setCodingDelivery(null);
+      }
       const d = msg.data || {};
       if (msg.topic === 'run.status_changed') {
         const to = d.to || '';
@@ -1897,6 +1907,11 @@ const handleUserMessageAck = useCallback(
                             setRecovery(null);
                           }}
                         />
+                      ) : null}
+                      {codingDelivery ? (
+                        <div className="px-3 pb-2">
+                          <CodingDeliveryCard delivery={codingDelivery} />
+                        </div>
                       ) : null}
                       <MessageInput
                                               ref={composerRef}

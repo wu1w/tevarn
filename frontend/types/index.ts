@@ -571,20 +571,46 @@ export interface ToolEventMessage extends WSMessage {
 
 export interface RunEventMessage extends WSMessage {
   type: 'run_event';
-  topic: string; // run.* / tool.* / approval.*
+  /** legacy bus topic style */
+  topic?: string;
   ts?: string;
   data?: {
     run_id?: string | null;
     from?: string;
     to?: string;
-    note?: string;
     tool?: string;
-    status?: string;
     approved?: boolean;
-    error?: string | null;
-    [k: string]: unknown;
+    agent_key?: string;
+    agent_label?: string;
+    phase?: string;
+    command?: string;
+    stdout_tail?: string;
+    stderr_tail?: string;
+    exit_code?: number;
+    sandboxed?: boolean;
+    backend?: string;
+    duration_ms?: number;
+    [key: string]: unknown;
   };
+  /** control_inbox / coding delivery style */
+  event?: string;
+  seq?: number;
+  timestamp?: number;
+  detail?: string;
+  run_id?: string;
+  payload?: {
+    changed_files?: Array<{ path: string; action?: string; checkpoint?: string }>;
+    tests?: Array<{ command?: string; passed?: boolean | null; summary?: string }>;
+    blockers?: string[];
+    checkpoints?: string[];
+    next_action?: string;
+    goal?: string;
+    [key: string]: unknown;
+  };
+  status?: string;
+  phase?: string;
 }
+
 
 export interface MemoryUpdatedMessage extends WSMessage {
   type: 'memory_updated';

@@ -173,6 +173,61 @@ async def builtin_write_checkpoint_before(name: str, arguments: dict[str, Any]) 
 
 
 
+
+# ── built-in: track write into RunBrief (coding delivery) ──────
+
+_TEST_HINT = ("pytest", "cargo test", "npm test", "go test", "unittest", "jest ")
+
+
+async def builtin_track_write_after(
+    name: str, arguments: dict, result: str
+) -> str:
+    """Record changed files / tests for coding delivery card."""
+    try:
+        sid = str(
+            (arguments or {}).get("_session_id")
+            or (arguments or {}).get("session_id")
+            or ""
+        ).strip()
+        if not sid:
+            return result
+        from backend.agent.run_brief import get_brief
+
+        brief = get_brief(sid)
+        if name in _WRITE_TOOLS:
+            path = str(
+                (arguments or {}).get("path")
+                or (arguments or {}).get("file")
+                or (arguments or {}).get("filepath")
+                or (arguments or {}).get("file_path")
+                or ""
+            ).strip()
+            cp = str((arguments or {}).get("_checkpoint_path") or "").strip() or None
+            if path:
+                brief.note_file_change(path, action=name, checkpoint=cp)
+            elif name == "apply_patch":
+                # patch may not have single path — mark generic
+                brief.note_file_change(f"(patch via {name})", action=name, checkpoint=cp)
+        if name in ("command", "shell", "process", "python"):
+            cmd = str(
+                (arguments or {}).get("command")
+                or (arguments or {}).get("cmd")
+                or (arguments or {}).get("code")
+                or ""
+            ).lower()
+            if any(h in cmd for h in _TEST_HINT):
+                res_l = (result or "").lower()
+                passed = None
+                if "passed" in res_l or "ok" in res_l[:200]:
+                    passed = True
+                if "failed" in res_l or "error" in res_l or "traceback" in res_l:
+                    passed = False
+                brief.note_test(cmd[:120], passed=passed, summary=(result or "")[:200])
+    except Exception:
+        pass
+    return result
+
+
 # ── Batch2: permission rules + file history ────────────────────
 
 _EDIT_TOOLS = frozenset(
@@ -705,6 +760,8 @@ def ensure_builtin_hooks_registered() -> None:
         register_before_tool_call(builtin_permission_before, critical=True)
     if builtin_file_history_before not in _before_handlers:
         register_before_tool_call(builtin_file_history_before)
+    if builtin_track_write_after not in _after_handlers:
+        register_after_tool_call(builtin_track_write_after)
 
 __all__ = [
     "BeforeHookResult",
@@ -717,4 +774,5 @@ __all__ = [
     "builtin_write_checkpoint_before",
     "builtin_permission_before",
     "builtin_file_history_before",
+    "builtin_track_write_after",
 ]
