@@ -358,17 +358,31 @@ _KNOWLEDGE_HINTS = (
 )
 
 _MINIMAL_HINTS = (
-    "你好",
-    "嗨",
-    "在吗",
-    "hello",
-    "hi ",
-    "thanks",
-    "谢谢",
-    "好的",
-    "ok",
-    "嗯",
+    "你好", "嗨", "在吗", "hello", "hi ", "thanks", "谢谢", "好的", "ok", "嗯",
+    "再见", "拜拜", "bye", "morning", "晚安",
 )
+_CHAT_QA_HINTS = (
+    "是什么", "什么是", "为什么", "怎么理解", "解释一下", "讲讲", "说说",
+    "你是谁", "你能做什么", "介绍一下你", "用一句话", "简单说说",
+    "explain", "what is", "who are you", "tell me about",
+)
+_CODING_FORCE_HINTS = (
+    "写代码", "改代码", "修 bug", "修bug", "实现", "重构", "debug", "traceback",
+    "报错", "编译", "单元测试", "文件", "目录", "仓库", "repo", "commit", "git ",
+    "cargo", "npm ", "python ", "函数", "class ", "patch", "apply_patch",
+    "读一下", "打开文件", "编辑",
+)
+_SEARCH_ONLY_HINTS = (
+    "搜一下", "搜索一下", "帮我搜", "联网搜", "查一下新闻", "search for", "google ",
+)
+THIN_CHAT_TOOLS: frozenset[str] = frozenset({
+    "current_time", "clarify", "session_search", "doc_read", "use_tool_pack",
+    "list_available_models", "get_system_status", "capability_status",
+})
+THIN_SEARCH_TOOLS: frozenset[str] = frozenset({
+    "web_search", "search", "fetch_webpage", "current_time", "clarify",
+    "use_tool_pack", "result_load",
+})
 
 # ── MCP 运维意图（配/装/改/密钥）vs 纯搜索：避免「豆包搜索 MCP」被 web 关键词绑架 ──
 # 不用 \bmcp\b：中文邻接「…搜索MCP」在 Unicode 下左右皆 \w，边界会失效
@@ -553,6 +567,64 @@ def _order_tools(names: set[str]) -> list[str]:
     return ordered
 
 
+
+def is_thin_chat_intent(user_input: str) -> bool:
+    text = (user_input or "").strip()
+    if not text:
+        return True
+    if len(text) > 280:
+        return False
+    low = text.lower()
+    if any(h in low or h in text for h in _CODING_FORCE_HINTS):
+        return False
+    if _PURE_SEARCH_VERBS.search(text) or any(h in low or h in text for h in _SEARCH_ONLY_HINTS):
+        return False
+    if is_mcp_ops_intent(text):
+        return False
+    if any(h in low or h in text for h in _MINIMAL_HINTS):
+        return True
+    if len(text) < 8:
+        return True
+    if len(text) <= 80 and any(h in low or h in text for h in _CHAT_QA_HINTS):
+        if not re.search(
+            r"(?i)(搜\s*一下|search\s+for|打开文件|改代码|写代码|运行命令|执行脚本|安装\s|配置\s|命令行|终端里)",
+            text,
+        ):
+            return True
+    return False
+
+
+def is_search_only_intent(user_input: str) -> bool:
+    text = (user_input or "").strip()
+    if not text or is_mcp_ops_intent(text):
+        return False
+    if any(h in text.lower() or h in text for h in _CODING_FORCE_HINTS):
+        return False
+    if _PURE_SEARCH_VERBS.search(text) or any(
+        h in text.lower() or h in text for h in _SEARCH_ONLY_HINTS
+    ):
+        return True
+    return False
+
+
+def scene_max_iterations(scene_kind: str, *, default: int = 40) -> int:
+    try:
+        from backend.core.config import settings as _st
+        chat_cap = int(getattr(_st, "agent_chat_max_iterations", 6) or 6)
+        search_cap = int(getattr(_st, "agent_search_max_iterations", 15) or 15)
+        coding_cap = int(getattr(_st, "agent_coding_max_iterations", 40) or 40)
+    except Exception:
+        chat_cap, search_cap, coding_cap = 6, 15, 40
+    kind = (scene_kind or "").strip().lower()
+    if kind in {"thin", "chat", "minimal", "core"}:
+        return max(2, chat_cap)
+    if kind in {"search", "web"}:
+        return max(4, search_cap)
+    if kind in {"coding", "goal", "ops", "full"}:
+        return max(8, coding_cap)
+    return max(4, default)
+
+
 def infer_scene(
     user_input: str,
     *,
@@ -577,23 +649,45 @@ def infer_scene(
     if prof == "full":
         return ScenePlan(packs=["*"], injection_tier="rich", reasons=["profile:full"], profile=prof)
 
+    _auto_thin = True
+    try:
+        from backend.core.config import settings as _st
+        _auto_thin = bool(getattr(_st, "agent_auto_thin_chat", True))
+    except Exception:
+        pass
+    _thin = bool(
+        _auto_thin
+        and mode_key in {"default", "chat", ""}
+        and is_thin_chat_intent(text)
+        and not packs
+    )
+
     if prof in {"core", "coding", "assistant", "ops"}:
-        # 固定 profile：可叠 ChatMode packs，不做关键词扩包
         base = list(PROFILE_BASE_PACKS.get(prof, ()))
         for p in base:
             if p not in packs and p != "*":
                 packs.append(p)
         tier = "standard"
-        if not text or len(text) < 8 or any(h in low or h in text for h in _MINIMAL_HINTS):
-            if prof in {"coding", "core", "assistant"} and not packs:
-                tier = "minimal"
+        if _thin or (not text or len(text) < 8 or any(h in low or h in text for h in _MINIMAL_HINTS)):
+            tier = "minimal"
+            reasons.append("thin_injection")
         if any(h in low or h in text for h in _KNOWLEDGE_HINTS) or len(text) > 400:
-            tier = "rich"
+            if tier != "minimal":
+                tier = "rich"
         return ScenePlan(
             packs=packs,
             injection_tier=tier,
             reasons=reasons or [f"profile:{prof}"],
             profile=prof,
+        )
+
+    # dynamic：薄档优先
+    if _thin:
+        return ScenePlan(
+            packs=[],
+            injection_tier="minimal",
+            reasons=reasons + ["auto_thin_chat"],
+            profile="core",
         )
 
     # dynamic：关键词扩包
@@ -604,6 +698,14 @@ def infer_scene(
                     packs.append(pack)
                     reasons.append(f"kw:{kw[:16]}")
                 break
+
+    # 搜索-only：只挂 web
+    if is_search_only_intent(text) and mode_key in {"default", "search", "chat", ""}:
+        if "web" not in packs:
+            packs.append("web")
+            reasons.append("search_only:web")
+        packs = [p for p in packs if p not in {"coding", "desktop", "cluster", "goal"}]
+        reasons.append("search_only:strip_coding")
 
     # MCP 运维纠偏：强制 mcp（manage_mcp 已在 mcp pack），避免产品名「xx搜索」误挂 web
     if is_mcp_ops_intent(text):
@@ -670,7 +772,13 @@ def resolve_enabled_tool_names(
                 bound = bool(fb) and fb not in (".", "workspace", "")
             except Exception:
                 bound = False
-        if bound and "coding" not in plan.packs and "*" not in plan.packs:
+        _thin_skip = "auto_thin_chat" in (plan.reasons or [])
+        if (
+            bound
+            and not _thin_skip
+            and "coding" not in plan.packs
+            and "*" not in plan.packs
+        ):
             plan.packs = list(plan.packs) + ["coding"]
             plan.reasons = list(plan.reasons) + ["workspace_bound"]
     except Exception:
@@ -773,6 +881,34 @@ def resolve_enabled_tool_names(
             plan.reasons = list(plan.reasons) + ["mcp_ops:thin_surface"]
         base.add("manage_mcp")
         base.add("use_tool_pack")
+
+    # S1: 自动薄档
+    if (
+        "auto_thin_chat" in (plan.reasons or [])
+        or (
+            plan.injection_tier == "minimal"
+            and not plan.packs
+            and not _mcp_ops
+            and is_thin_chat_intent(text)
+        )
+    ):
+        base = {n for n in base if n in THIN_CHAT_TOOLS} or set(THIN_CHAT_TOOLS)
+        plan.reasons = list(plan.reasons) + ["thin_chat_surface"]
+    elif (
+        is_search_only_intent(text)
+        and not _mcp_ops
+        and prof not in {"full", "coding", "ops"}
+    ):
+        keep = set(THIN_SEARCH_TOOLS)
+        for n in list(base):
+            if str(n).startswith("mcp_") and any(
+                x in str(n) for x in ("search", "fetch", "scrape", "web")
+            ):
+                keep.add(n)
+        base = {n for n in base if n in keep}
+        if "web_search" not in base and "search" not in base:
+            base.add("web_search")
+        plan.reasons = list(plan.reasons) + ["search_thin_surface"]
 
     ordered = _order_tools(base)
     plan.packs = list(dict.fromkeys(plan.packs))

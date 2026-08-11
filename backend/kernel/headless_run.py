@@ -79,11 +79,26 @@ async def run_headless(
         user_id=uid,
         notification_repo=AsyncNotificationRepository(),
     )
-    if max_iterations:
-        try:
+    try:
+        from backend.core.config import settings as _st_h
+        _h_cap = int(getattr(_st_h, "agent_headless_max_iterations", 12) or 12)
+    except Exception:
+        _h_cap = 12
+    try:
+        if max_iterations:
             loop.max_iterations = max(1, int(max_iterations))
+        else:
+            loop.max_iterations = max(1, min(int(loop.max_iterations or _h_cap), _h_cap))
+    except Exception:
+        try:
+            loop.max_iterations = _h_cap
         except Exception:
             pass
+    try:
+        loop._headless_run = True
+        loop._thrash_force_final_override = True
+    except Exception:
+        pass
     if always_approve:
         # soft hint — permission headless still applies secrets deny
         try:

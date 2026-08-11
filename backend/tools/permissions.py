@@ -644,16 +644,23 @@ class ToolPermissionManager:
         return True, ""
 
     def needs_confirmation(self, tool: BaseTool, arguments: dict[str, Any]) -> bool:
-        """判断是否需要用户确认"""
+        """判断是否需要用户确认。S7: 只读默认不确认。"""
+        name = str(getattr(tool, "name", "") or "")
+        try:
+            from backend.agent.progress_guard import READ_ONLY_TOOLS
+            if name in READ_ONLY_TOOLS:
+                return False
+        except Exception:
+            if name in {"file_read", "grep", "glob", "web_search", "search", "current_time", "doc_read"}:
+                return False
         if tool.requires_confirmation:
+            if name in {"file_read", "web_search", "grep", "glob"}:
+                return False
             return True
-
         if tool.risk_level == ToolRiskLevel.DANGEROUS:
-            # 写操作类参数需要确认
             dangerous_params = ["content", "new_text", "body", "code", "command"]
             if any(p in arguments for p in dangerous_params):
                 return True
-
         return False
 
 

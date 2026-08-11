@@ -153,6 +153,114 @@ def _extract_mcp_key_match(t: str) -> ConfigIntentMatch | None:
     return None
 
 
+
+_MCP_ADD_STDIO = re.compile(
+    r"(?i)(?:添加|挂载|安装|接入|add|install|mount)\s*"
+    r"(?:一个\s*)?(?:mcp|MCP)(?:\s*server)?\s*"
+    r"(?:名叫|名称|name\s*[=：:]?\s*)?"
+    r"[`\"']?(?P<name>[A-Za-z][\w.-]{1,48})[`\"']?\s*"
+    r"(?:，|,|：|:|\s+)*"
+    r"(?:用\s*)?(?P<command>npx|uvx|node|python3?|bun)\s+"
+    r"(?P<args>.+)$"
+)
+_MCP_ADD_STDIO_LOOSE = re.compile(
+    r"(?i)(?:添加|挂载|安装|add|install)\s+(?:mcp|MCP).{0,40}?"
+    r"(?P<command>npx|uvx)\s+(?P<args>-y\s+\S+|\S+)"
+)
+_MCP_ADD_SSE = re.compile(
+    r"(?i)(?:添加|挂载|安装|add)\s+(?:mcp|MCP).{0,40}?"
+    r"(?:url|地址|endpoint)\s*[=：:]\s*"
+    r"(?P<url>https?://\S+)"
+)
+_MCP_ADD_NAME_URL = re.compile(
+    r"(?i)(?:mcp|MCP)\s+(?:sse\s+)?(?:name\s*[=：:]\s*)?"
+    r"[`\"']?(?P<name>[A-Za-z][\w.-]{1,48})[`\"']?.{0,20}?"
+    r"(?:url\s*[=：:]\s*)(?P<url>https?://\S+)"
+)
+
+
+def _split_mcp_args(raw: str) -> list[str]:
+    s = (raw or "").strip().strip("`\"'")
+    if not s:
+        return []
+    if s.startswith("["):
+        try:
+            import json
+            arr = json.loads(s)
+            if isinstance(arr, list):
+                return [str(x) for x in arr]
+        except Exception:
+            pass
+    parts: list[str] = []
+    buf = ""
+    in_q = ""
+    for ch in s:
+        if in_q:
+            if ch == in_q:
+                in_q = ""
+            else:
+                buf += ch
+            continue
+        if ch in "\"'":
+            in_q = ch
+            continue
+        if ch.isspace():
+            if buf:
+                parts.append(buf)
+                buf = ""
+            continue
+        buf += ch
+    if buf:
+        parts.append(buf)
+    return parts
+
+
+def _detect_mcp_add(t: str) -> ConfigIntentMatch | None:
+    m = _MCP_ADD_SSE.search(t) or _MCP_ADD_NAME_URL.search(t)
+    if m:
+        gd = m.groupdict()
+        url = (gd.get("url") or "").strip().rstrip(",.;")
+        name = (gd.get("name") or "").strip()
+        if not name:
+            try:
+                from urllib.parse import urlparse
+                host = urlparse(url).hostname or "mcp-sse"
+                name = re.sub(r"[^a-zA-Z0-9_-]", "-", host)[:32] or "mcp-sse"
+            except Exception:
+                name = "mcp-sse"
+        if url.startswith("http"):
+            return ConfigIntentMatch(
+                "mcp_add_custom", 0.9,
+                {"name": name, "transport": "sse", "url": url},
+            )
+    m = _MCP_ADD_STDIO.search(t)
+    if m:
+        gd = m.groupdict()
+        name = (gd.get("name") or "").strip()
+        command = (gd.get("command") or "npx").strip()
+        args = _split_mcp_args(gd.get("args") or "")
+        if name and args:
+            return ConfigIntentMatch(
+                "mcp_add_custom", 0.92,
+                {"name": name, "transport": "stdio", "command": command, "args": args},
+            )
+    m = _MCP_ADD_STDIO_LOOSE.search(t)
+    if m:
+        command = (m.group("command") or "npx").strip()
+        args = _split_mcp_args(m.group("args") or "")
+        name = "mcp-custom"
+        for a in args:
+            if a.startswith("@") or "/" in a:
+                name = re.sub(r"[^a-zA-Z0-9_-]", "-", a.split("/")[-1])[:40] or name
+                break
+        if args:
+            return ConfigIntentMatch(
+                "mcp_add_custom", 0.85,
+                {"name": name, "transport": "stdio", "command": command, "args": args},
+            )
+    return None
+
+
 def detect_config_intent(text: str) -> ConfigIntentMatch | None:
     t = (text or "").strip()
     if not t or len(t) > 2000:
@@ -217,6 +325,13 @@ def detect_config_intent(text: str) -> ConfigIntentMatch | None:
                 return ConfigIntentMatch(
                     "switch_model", 0.86, {"model": m.group("model").strip()}
                 )
+
+    if len(t) < 500 and re.search(
+        r"(?i)(添加|挂载|安装|接入|add|install|mount).{0,16}(mcp|MCP)", t
+    ):
+        add = _detect_mcp_add(t)
+        if add is not None:
+            return add
 
     return None
 
@@ -499,6 +614,108 @@ async def _exec_mcp_setup_guide(payload: dict[str, Any]) -> dict[str, Any]:
         "message": msg,
         "detail": "awaiting_key",
         "pending_mcp_label": preset.id,
+    }
+
+
+
+async def _exec_mcp_add_custom(payload: dict[str, Any]) -> dict[str, Any]:
+    """S9: 自定义 MCP 快路径 — 写库 + 热挂载。"""
+    name = str(payload.get("name") or "").strip()
+    transport = str(payload.get("transport") or "stdio").strip().lower()
+    command = str(payload.get("command") or "").strip() or None
+    args = payload.get("args") or []
+    if not isinstance(args, list):
+        args = [str(args)]
+    args = [str(a) for a in args if str(a).strip()]
+    url = str(payload.get("url") or "").strip() or None
+    env = payload.get("env") if isinstance(payload.get("env"), dict) else {}
+
+    if not name:
+        return {"ok": False, "message": "需要 MCP 名称（name）。", "detail": "missing_name"}
+    if transport not in ("stdio", "sse"):
+        return {"ok": False, "message": "transport 须为 stdio 或 sse。", "detail": "bad_transport"}
+    if transport == "stdio" and not command:
+        return {"ok": False, "message": "stdio 需要 command（如 npx / uvx）。", "detail": "missing_command"}
+    if transport == "sse" and not url:
+        return {"ok": False, "message": "sse 需要 url。", "detail": "missing_url"}
+
+    try:
+        from backend.mcp_hub.normalize import normalize_server_fields
+        from backend.repositories.mcp_server_repo import AsyncMCPServerRepository
+        from backend.schemas.mcp import MCPServerCreate
+    except Exception as e:
+        return {"ok": False, "message": f"MCP 模块不可用: {e}", "detail": "import"}
+
+    repo = AsyncMCPServerRepository()
+    try:
+        existing = await repo.get_by_name(name)
+        if existing is not None:
+            return {
+                "ok": False,
+                "message": f"MCP Server `{name}` 已存在。可用 manage_mcp update 或换名。",
+                "detail": "exists",
+            }
+    except Exception:
+        pass
+
+    try:
+        norm = normalize_server_fields(
+            name=name,
+            command=command if transport == "stdio" else None,
+            args=list(args) if transport == "stdio" else [],
+            env=env or {},
+            existing_env={},
+        )
+        data = MCPServerCreate(
+            name=name,
+            transport=transport,
+            command=norm.get("command") if transport == "stdio" else None,
+            args=list(norm.get("args") or []) if transport == "stdio" else [],
+            url=url if transport == "sse" else None,
+            env=dict(norm.get("env") or env or {}),
+            enabled=True,
+            timeout=30.0,
+            risk_level="low",
+        )
+        obj = await repo.create(data)
+    except Exception as e:
+        return {"ok": False, "message": f"写入 MCP 配置失败: {e}", "detail": "create_failed"}
+
+    tools_n = 0
+    rt_note = ""
+    try:
+        from backend.tools.builtins.manage_integration_tools import ManageMcp
+        tool = ManageMcp()
+        if hasattr(tool, "_sync_runtime"):
+            rt = await tool._sync_runtime(only_server=name)
+            if isinstance(rt, dict):
+                tools_n = int(rt.get("registered") or 0)
+                rt_note = "connected" if name in (rt.get("connected") or []) else str(
+                    rt.get("error") or rt.get("warning") or ""
+                )
+    except Exception as e:
+        rt_note = str(e)[:160]
+
+    lines = [
+        f"**自定义 MCP `{name}`** 已用快路径写入（未进多步 Agent）。",
+        f"- transport：`{transport}`",
+    ]
+    if transport == "stdio":
+        lines.append(f"- 启动：`{command} {' '.join(args)}`".rstrip())
+    else:
+        lines.append(f"- url：`{url}`")
+    if tools_n:
+        lines.append(f"- 热挂载：已注册约 {tools_n} 个工具")
+    elif rt_note:
+        lines.append(f"- 运行时：{rt_note[:160]}（配置已在库中）")
+    else:
+        lines.append("- 运行时：已触发同步；若工具不可见请新开一轮对话")
+    lines.append(f"需要密钥时直接说：`{name} API Key：xxxx` 或设置 → MCP。")
+    return {
+        "ok": True,
+        "message": "\n".join(lines),
+        "detail": "added",
+        "data": {"name": name, "transport": transport, "tools_registered": tools_n},
     }
 
 

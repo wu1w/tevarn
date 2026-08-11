@@ -148,6 +148,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         self._llm_fail_streak = 0
         self._reactive_compact_used = False
         self._goal_complete_summary_nudged = False
+        self._plan_mode_active = False
+        self._headless_run = False
         self._config_micro_loop = None
         self._thrash_force_final_override = None
         self._pseudo_tool_leak_streak = 0
@@ -2078,6 +2080,134 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 )
         except Exception as _sm_e:
             logger.debug("simple_mode apply skip: %s", _sm_e)
+
+        # S1/S3/S10/S12: thin/search caps + plan mode + diff-first
+        try:
+            from backend.agent.tool_policy import (
+                is_search_only_intent,
+                is_thin_chat_intent,
+                scene_max_iterations,
+                THIN_CHAT_TOOLS,
+                THIN_SEARCH_TOOLS,
+            )
+            _ui = user_input or ""
+            _kind = "coding"
+            if getattr(self, "_config_micro_loop", None):
+                _kind = "thin"
+            elif is_thin_chat_intent(_ui) and not goal_mode:
+                _kind = "thin"
+            elif is_search_only_intent(_ui) and not goal_mode:
+                _kind = "search"
+            elif goal_mode:
+                _kind = "goal"
+            _cap = scene_max_iterations(_kind, default=int(self.max_iterations or 40))
+            if not goal_mode or _kind == "thin":
+                self.max_iterations = min(int(self.max_iterations or _cap), _cap)
+            try:
+                from backend.core.config import settings as _st_iv
+                if (
+                    not goal_mode
+                    and bool(getattr(_st_iv, "agent_interactive_force_thrash", True))
+                    and _kind in {"thin", "search", "chat"}
+                ):
+                    self._thrash_force_final_override = True
+            except Exception:
+                pass
+            if _kind == "thin" and not getattr(self, "_config_micro_loop", None):
+                def _thin_keep(t):
+                    fn = t.get("function") if isinstance(t.get("function"), dict) else {}
+                    name = str((fn or {}).get("name") or t.get("name") or "")
+                    return name in THIN_CHAT_TOOLS
+                before = len(tools or [])
+                tools = [t for t in (tools or []) if isinstance(t, dict) and _thin_keep(t)]
+                if before != len(tools):
+                    logger.info("auto_thin_chat tools %s→%s max_iter=%s session=%s", before, len(tools), self.max_iterations, session_id)
+                    messages.append({"role": "system", "content": "【薄档对话】工具已收窄，优先直接文字回答。需要文件/终端时可 use_tool_pack 扩容。"})
+            elif _kind == "search":
+                def _s_keep(t):
+                    fn = t.get("function") if isinstance(t.get("function"), dict) else {}
+                    name = str((fn or {}).get("name") or t.get("name") or "")
+                    if name in THIN_SEARCH_TOOLS:
+                        return True
+                    if name.startswith("mcp_") and any(x in name for x in ("search", "fetch", "scrape", "web")):
+                        return True
+                    return False
+                before = len(tools or [])
+                tools = [t for t in (tools or []) if isinstance(t, dict) and _s_keep(t)]
+                if before != len(tools):
+                    logger.info("search_thin tools %s→%s max_iter=%s session=%s", before, len(tools), self.max_iterations, session_id)
+        except Exception as _sc_e:
+            logger.debug("scene max_iters/thin apply skip: %s", _sc_e)
+
+        try:
+            from backend.agent.plan_intent import (
+                filter_tools_for_plan,
+                is_complex_for_auto_plan,
+                is_plan_approve,
+                is_plan_reject,
+                is_plan_request,
+                plan_system_prompt,
+            )
+            from backend.agent.plan_session import (
+                approve_plan,
+                get_gate,
+                requires_plan_approval,
+                start_plan,
+            )
+            from backend.agent.plan_gate import PlanState
+
+            _mode_l = str(mode or "").strip().lower()
+            _ui = user_input or ""
+            _sid_s = str(session_id)
+            _gate = get_gate(session_id=_sid_s)
+            if is_plan_reject(_ui):
+                try:
+                    _gate.reject()
+                except Exception:
+                    pass
+                messages.append({"role": "system", "content": "计划已驳回，请重新给出修订计划。"})
+                self._plan_mode_active = True
+            if is_plan_approve(_ui) and _gate.state == PlanState.PLAN_READY:
+                try:
+                    approve_plan(session_id=_sid_s)
+                    self._plan_mode_active = False
+                    messages.append({"role": "system", "content": "计划已批准，进入执行阶段。按步骤修改并验证。"})
+                    logger.info("plan approved session=%s", session_id)
+                except Exception as _ap_e:
+                    logger.warning("plan approve failed: %s", _ap_e)
+            _want_plan = (
+                _mode_l == "plan"
+                or is_plan_request(_ui)
+                or (
+                    bool(getattr(__import__("backend.core.config", fromlist=["settings"]).settings, "agent_plan_mode_auto", True))
+                    and is_complex_for_auto_plan(_ui)
+                    and _mode_l in {"default", "deepthink", "goal", ""}
+                    and _gate.state in (PlanState.IDLE, PlanState.CANCELLED, PlanState.DONE)
+                )
+            )
+            if _gate.state == PlanState.BUILDING:
+                _want_plan = False
+                self._plan_mode_active = False
+            elif requires_plan_approval(session_id=_sid_s, chat_mode=_mode_l) or _want_plan:
+                if _gate.state in (PlanState.IDLE, PlanState.CANCELLED, PlanState.DONE):
+                    start_plan(session_id=_sid_s)
+                self._plan_mode_active = True
+                before = len(tools or [])
+                tools = filter_tools_for_plan(tools)
+                messages.append({"role": "system", "content": plan_system_prompt()})
+                logger.info("plan mode armed tools %s→%s session=%s state=%s", before, len(tools or []), session_id, _gate.state)
+        except Exception as _pl_e:
+            logger.debug("plan mode apply skip: %s", _pl_e)
+
+        try:
+            from backend.core.config import settings as _st_df
+            if bool(getattr(_st_df, "agent_diff_first", True)) and not getattr(self, "_plan_mode_active", False):
+                _ui2 = (user_input or "").lower()
+                if any(k in _ui2 for k in ("修", "改", "实现", "fix", "bug", "refactor", "patch", "代码")):
+                    messages.append({"role": "system", "content": "【呈现】优先给出 unified diff / 变更文件列表与验证命令，少写过程 status 散文。"})
+        except Exception:
+            pass
+
 
         # P0-1/P0-4：配置微 loop — 仅 manage_mcp 等运维工具，硬顶 iters
         try:

@@ -54,9 +54,11 @@ WRITE_TOOLS = frozenset(
     {"file_write", "edit", "apply_patch", "desktop_write_file", "doc_write"}
 )
 
-READ_ONLY_TOOLS = frozenset(
-    {"file_read", "doc_read", "glob", "grep", "result_load"}
-)
+READ_ONLY_TOOLS = frozenset({
+    "file_read", "doc_read", "glob", "grep", "result_load",
+    "web_search", "search", "current_time", "session_search",
+    "list_available_models", "get_system_status", "capability_status", "fetch_webpage",
+})
 
 _DIAG_NAME_RE = re.compile(
     r"(?i)(?:^|[/\\])_(?:cargo|diag|reinstall|hello|t_msvc|check|run_|gen_|find_|clean_)"

@@ -56,6 +56,35 @@ async def run_no_tool_round(
         completion_followups=completion_followups,
     )
 
+    # P2: Plan 模式无工具 → 收计划
+    if getattr(loop, "_plan_mode_active", False) and (accumulated_content or "").strip():
+        try:
+            from backend.agent.plan_session import submit_plan_markdown, get_gate
+            from backend.agent.plan_gate import PlanState
+            _body = (accumulated_content or "").strip()
+            if len(_body) > 40:
+                submit_plan_markdown(_body, session_id=str(session_id))
+                _g = get_gate(session_id=str(session_id))
+                _tail = (
+                    "\n\n---\n计划已就绪，状态：**plan_ready**。"
+                    "回复「批准计划」或「开始执行」后开始改代码；"
+                    "「推翻计划」可重来。"
+                )
+                if _g.state == PlanState.PLAN_READY and "批准计划" not in _body:
+                    result.final_content = _body + _tail
+                else:
+                    result.final_content = accumulated_content
+                result.action = "break"
+                try:
+                    loop.last_exit_reason = "plan_ready"
+                except Exception:
+                    pass
+                logger.info("plan submitted session=%s len=%s", session_id, len(_body))
+                return result
+        except Exception as _ps_e:
+            logger.debug("plan submit skip: %s", _ps_e)
+
+
     # ── Goal 已完成：最多 1 次「完整总结」nudge，禁止短回复死循环复读 ──
     # 旧逻辑：content < 120 就 continue，且不看 force_final → 每轮短答再 nudge，
     # 手机端看到同段话反复刷（日志: goal complete summary nudge × N）。
@@ -126,6 +155,31 @@ async def run_no_tool_round(
                 return result
         except Exception as _gcd_e:
             logger.debug("goal complete summary nudge skip: %s", _gcd_e)
+
+    
+    # S8: 非 Goal 有正文即定稿
+    if not goal_mode and not force_final_no_tools and not loop._should_stop:
+        try:
+            from backend.agent.goal_state import get_goal as _gg_ng
+            _g_ng = _gg_ng(session_id)
+            _has_active_goal = (
+                _g_ng is not None
+                and not _g_ng.is_complete()
+                and str(getattr(_g_ng, "status", "") or "") not in ("cancelled", "completed")
+            )
+        except Exception:
+            _has_active_goal = False
+        if not _has_active_goal:
+            _body = (accumulated_content or "").strip()
+            if _body and not is_empty_assistant_content(accumulated_content):
+                result.action = "break"
+                result.final_content = accumulated_content
+                try:
+                    loop.last_exit_reason = "non_goal_text_final"
+                except Exception:
+                    pass
+                logger.info("no_tool non-goal finalize len=%s session=%s", len(_body), session_id)
+                return result
 
     # ── Goal 未完成：禁止 text-only 假收工（不限 mode=goal）──
     # 自动续跑常以 mode=default 注入 Goal 摘要，旧逻辑只在 goal_mode 下 nudge，

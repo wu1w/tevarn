@@ -692,6 +692,20 @@ async def _run_llm_round_body(
                         )
                     except Exception:
                         pass
+                    try:
+                        ws = getattr(loop, "ws_manager", None)
+                        if ws is not None:
+                            await ws.broadcast(
+                                session_id,
+                                {
+                                    "type": "content_reset",
+                                    "reason": "pseudo_tool_recover",
+                                    "content": cleaned or "",
+                                    "recovered_tools": [getattr(t, "name", "") for t in recovered],
+                                },
+                            )
+                    except Exception as _cr_e:
+                        logger.debug("content_reset broadcast skip: %s", _cr_e)
                 elif looks_like_pseudo_tool_content(accumulated_content):
                     streak = int(
                         getattr(loop, "_pseudo_tool_leak_streak", 0) or 0

@@ -527,7 +527,15 @@ class Settings(BaseSettings):
     # LLM 调用失败重试次数（含首次）
     agent_llm_retry_attempts: int = 3
     # 对话默认工具面：core=白名单(~18) | full=全部注册工具
-    agent_tool_profile: Literal["coding", "assistant", "ops", "dynamic", "core", "full"] = "coding"
+    agent_tool_profile: Literal["coding", "assistant", "ops", "dynamic", "core", "full"] = "dynamic"
+    agent_auto_thin_chat: bool = True
+    agent_interactive_force_thrash: bool = True
+    agent_plan_mode_auto: bool = True
+    agent_headless_max_iterations: int = 12
+    agent_diff_first: bool = True
+    agent_chat_max_iterations: int = 6
+    agent_search_max_iterations: int = 15
+    agent_coding_max_iterations: int = 40
     # default 模式是否按复杂度自动集群（默认关，避免主脑被拆散）
     agent_auto_cluster: bool = False
     # 空正文重试 / 工具重复熔断（loop 读取，缺省有 fallback）
