@@ -16,7 +16,14 @@ import re
 from dataclasses import dataclass, field
 from typing import Iterable
 
-# ── 核心白名单（任何 non-full 模式的底座）────────────────────────
+# ── Grok CLI 风格：空底座 + pack 累加 ────────────────────────────
+# ALWAYS_META：任何 non-full 轮次都挂的最小元工具（扩容/时间/澄清）
+ALWAYS_META_TOOLS: tuple[str, ...] = (
+    "use_tool_pack",
+    "current_time",
+    "clarify",
+)
+# 兼容旧名：完整「曾用默认白名单」仅作排序参考与 core pack 内容，不再自动并入每轮
 DEFAULT_CHAT_TOOL_WHITELIST: tuple[str, ...] = (
     "file_read",
     "file_write",
@@ -35,8 +42,8 @@ DEFAULT_CHAT_TOOL_WHITELIST: tuple[str, ...] = (
     "doc_read",
     "session_search",
     "clarify",
-    "result_load",  # 外置大结果回读（与 result_spill 配对）
-    "use_tool_pack",  # meta：动态扩容
+    "result_load",
+    "use_tool_pack",
 )
 
 # ── 可热插拔能力包 ─────────────────────────────────────────────
@@ -126,10 +133,11 @@ TOOL_PACKS: dict[str, tuple[str, ...]] = {
 
 # 产品 profile → 默认 pack 集合（scene 关键词仅在 dynamic 扩包）
 PROFILE_BASE_PACKS: dict[str, tuple[str, ...]] = {
-    "coding": ("coding", "web"),
-    "assistant": ("coding", "web"),
-    "ops": ("coding", "web", "manage", "devices"),
-    "dynamic": (),  # 由场景推断
+    # Grok-style: coding 不默认挂 web；搜索意图再加 web pack
+    "coding": ("coding",),
+    "assistant": ("coding",),
+    "ops": ("coding", "manage", "devices"),
+    "dynamic": (),  # 由场景推断；无关键词时默认 coding（见 infer_scene）
     "core": (),
     "full": ("*",),
 }
@@ -155,8 +163,8 @@ PROFILE_EXTRA_TOOLS: dict[str, tuple[str, ...]] = {
         "get_system_status",
         "capability_status",
     ),
-    "dynamic": ("use_tool_pack",),
-    "core": ("use_tool_pack",),
+    "dynamic": ("use_tool_pack", "current_time", "clarify"),
+    "core": ("use_tool_pack", "current_time", "clarify"),
 }
 
 MODE_TOOL_EXTRAS: dict[str, tuple[str, ...]] = {
@@ -532,18 +540,20 @@ def live_mcp_tool_names() -> list[str]:
 
 
 def tools_for_packs(packs: Iterable[str]) -> list[str]:
-    """合并 pack → 去重工具名（core 顺序优先）。
+    """合并 pack → 去重工具名（Grok：空底座 + pack 累加）。
 
     仅 pack ``mcp`` / ``integrations`` 并入 live ``mcp_*``；
     ``manage`` 只保留静态 manage_mcp。
+    ``core`` pack 显式请求时才并入 DEFAULT 全量白名单。
     """
-    base: set[str] = set(DEFAULT_CHAT_TOOL_WHITELIST)
+    base: set[str] = set(ALWAYS_META_TOOLS)
     need_mcp_live = False
-    for p in packs:
-        key = (p or "").strip().lower()
+    pack_list = [((p or "").strip().lower()) for p in packs]
+    for key in pack_list:
         if key in {"*", "all", "full"}:
             return []  # 信号：调用方应视作 full
         if key == "core":
+            base.update(DEFAULT_CHAT_TOOL_WHITELIST)
             continue
         if key in TOOL_PACKS:
             base.update(TOOL_PACKS[key])
@@ -753,6 +763,11 @@ def infer_scene(
         ):
             packs = [p for p in packs if p != "web"]
             reasons.append("coding_no_web")
+
+    # 无 pack 的 dynamic 默认：coding（不挂 web），对齐工程主脑
+    if not packs:
+        packs = ["coding"]
+        reasons.append("dynamic:default_coding")
 
     return ScenePlan(packs=packs, injection_tier=tier, reasons=reasons or ["dynamic:default"], profile=prof)
 

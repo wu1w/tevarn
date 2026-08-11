@@ -446,17 +446,25 @@ function ChatPageInner() {
     }, [currentSession?.id, isStoppingSid]);
 
     /** 伪 tool 回收：用后端清洗后的 content 替换已流式气泡 */
-    const handleContentReset = useCallback((msg: { content?: string; reason?: string }) => {
+    const handleContentReset = useCallback((msg: { content?: string; reason?: string; message_id?: string }) => {
       const sid = currentSession?.id || '';
       if (isStoppingSid(sid)) return;
+      const store = streamSessionApi();
+      const curMid = sid ? store.get(sid).streamMessageId : null;
+      const mid = (msg.message_id || '').trim();
+      // 多气泡：仅当 message_id 匹配当前流或未指定 id 时重置
+      if (mid && curMid && mid !== curMid) {
+        return;
+      }
       const cleaned = typeof msg.content === 'string' ? msg.content : '';
       streamingContentRef.current = cleaned;
       setStreamingContent(cleaned);
       if (sid) {
-        streamSessionApi().patch(sid, {
+        store.patch(sid, {
           content: cleaned,
           isStreaming: true,
           agentRunning: true,
+          streamMessageId: mid || curMid,
         });
       }
     }, [currentSession?.id, isStoppingSid]);

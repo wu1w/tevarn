@@ -68,8 +68,16 @@ def looks_like_casual_or_read_only(user_input: str | None) -> bool:
         t,
     ):
         return True
-    # Short pure questions
+    # Short pure questions / greetings / one-shot search
     if len(t) <= 80 and t.endswith(("？", "?")):
+        return True
+    if len(t) <= 40 and re.search(
+        r"(?i)^(你好|嗨|在吗|hello|hi|thanks|谢谢|好的)[\s!！。.~～]*$", t
+    ):
+        return True
+    if re.search(
+        r"(?i)(搜\s*一下|搜索\s*一下|帮我\s*搜|查一下新闻|search\s+for)", t
+    ) and not re.search(r"(?i)(目标|todo|拆解|分步|plan\s*mode)", t):
         return True
     return False
 

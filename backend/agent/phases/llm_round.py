@@ -701,6 +701,12 @@ async def _run_llm_round_body(
                                     "type": "content_reset",
                                     "reason": "pseudo_tool_recover",
                                     "content": cleaned or "",
+                                    "message_id": str(
+                                        getattr(loop, "_stream_message_id", None)
+                                        or getattr(loop, "stream_message_id", None)
+                                        or ""
+                                    )
+                                    or None,
                                     "recovered_tools": [getattr(t, "name", "") for t in recovered],
                                 },
                             )

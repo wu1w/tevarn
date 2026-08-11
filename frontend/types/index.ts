@@ -507,6 +507,7 @@ export interface ContentResetMessage extends WSMessage {
   type: 'content_reset';
   reason?: string;
   content?: string;
+  message_id?: string;
   recovered_tools?: string[];
   session_id?: string;
 }
