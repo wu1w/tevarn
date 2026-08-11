@@ -2108,7 +2108,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 if (
                     not goal_mode
                     and bool(getattr(_st_iv, "agent_interactive_force_thrash", True))
-                    and _kind in {"thin", "search", "chat"}
+                    and _kind in {"thin", "search", "chat", "coding"}
                 ):
                     self._thrash_force_final_override = True
             except Exception:
@@ -2203,7 +2203,14 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             from backend.core.config import settings as _st_df
             if bool(getattr(_st_df, "agent_diff_first", True)) and not getattr(self, "_plan_mode_active", False):
                 _ui2 = (user_input or "").lower()
-                if any(k in _ui2 for k in ("修", "改", "实现", "fix", "bug", "refactor", "patch", "代码")):
+                _diff_keys = (
+                    "修bug", "修 bug", "写代码", "改代码", "实现功能",
+                    "traceback", "refactor", "apply_patch", "typeerror",
+                    "编译错误", "单元测试",
+                )
+                _code_ctx = ("代码" in _ui2 or "函数" in _ui2 or "模块" in _ui2 or ".py" in _ui2)
+                _code_act = any(k in _ui2 for k in ("修复", "重构", "实现", "重写", "patch"))
+                if any(k in _ui2 for k in _diff_keys) or (_code_ctx and _code_act):
                     messages.append({"role": "system", "content": "【呈现】优先给出 unified diff / 变更文件列表与验证命令，少写过程 status 散文。"})
         except Exception:
             pass

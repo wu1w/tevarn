@@ -10,9 +10,13 @@ _PLAN_REQUEST = re.compile(
     r"plan\s*mode|make\s+a\s+plan|write\s+a\s+plan|"
     r"不要直接改|先别改代码|只出方案)"
 )
+# F2: 禁止裸「开始执行」——必须带「计划」语义
 _PLAN_APPROVE = re.compile(
-    r"(?i)(批准计划|同意计划|按计划执行|开始执行计划|执行计划|"
-    r"approve\s*(the\s*)?plan|lgtm|开始执行|按这个做)"
+    r"(?i)("
+    r"批准计划|同意计划|按计划执行|开始执行计划|执行该计划|执行此计划|"
+    r"approve\s*(the\s*)?plan|lgtm\s*(the\s*)?plan|"
+    r"按(这个|此|该)计划(做|执行|来)"
+    r")"
 )
 _PLAN_REJECT = re.compile(
     r"(?i)(推翻计划|重做计划|不要这个计划|reject\s*plan|改计划)"
@@ -34,7 +38,11 @@ def is_plan_request(text: str) -> bool:
 
 
 def is_plan_approve(text: str) -> bool:
-    return bool(_PLAN_APPROVE.search(text or ""))
+    """仅明确批准计划；裸「开始执行」不命中。"""
+    t = (text or "").strip()
+    if not t:
+        return False
+    return bool(_PLAN_APPROVE.search(t))
 
 
 def is_plan_reject(text: str) -> bool:
@@ -52,7 +60,7 @@ def plan_system_prompt() -> str:
     return (
         "【Plan 模式】本轮只做计划，禁止写文件、禁止执行破坏性命令。\n"
         "请输出结构化计划（标题/摘要/步骤/风险/验证）。\n"
-        "完成后等待用户说「批准计划」或「开始执行」再动代码。"
+        "完成后等待用户说「批准计划」或「按计划执行」再动代码。"
     )
 
 

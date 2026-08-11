@@ -528,7 +528,7 @@ class Settings(BaseSettings):
     agent_llm_retry_attempts: int = 3
     # 对话默认工具面：core=白名单(~18) | full=全部注册工具
     agent_tool_profile: Literal["coding", "assistant", "ops", "dynamic", "core", "full"] = "dynamic"
-    agent_auto_thin_chat: bool = True
+    agent_auto_thin_chat: bool = True  # F10: 自动薄档（问候/纯问答）；simple_mode 为会话级手动收窄
     agent_interactive_force_thrash: bool = True
     agent_plan_mode_auto: bool = True
     agent_headless_max_iterations: int = 12

@@ -367,10 +367,11 @@ _CHAT_QA_HINTS = (
     "explain", "what is", "who are you", "tell me about",
 )
 _CODING_FORCE_HINTS = (
-    "写代码", "改代码", "修 bug", "修bug", "实现", "重构", "debug", "traceback",
+    "写代码", "改代码", "修 bug", "修bug", "修这个", "修复", "修好",
+    "实现", "重构", "debug", "traceback", "typeerror", "type error",
     "报错", "编译", "单元测试", "文件", "目录", "仓库", "repo", "commit", "git ",
     "cargo", "npm ", "python ", "函数", "class ", "patch", "apply_patch",
-    "读一下", "打开文件", "编辑",
+    "读一下", "打开文件", "编辑", " bug", "bug ",
 )
 _SEARCH_ONLY_HINTS = (
     "搜一下", "搜索一下", "帮我搜", "联网搜", "查一下新闻", "search for", "google ",
@@ -384,6 +385,10 @@ THIN_SEARCH_TOOLS: frozenset[str] = frozenset({
     "use_tool_pack", "result_load",
 })
 
+_WEB_SURFACE_TOOLS = frozenset({
+    "web_search", "search", "browser", "http", "fetch_webpage",
+})
+
 # ── MCP 运维意图（配/装/改/密钥）vs 纯搜索：避免「豆包搜索 MCP」被 web 关键词绑架 ──
 # 不用 \bmcp\b：中文邻接「…搜索MCP」在 Unicode 下左右皆 \w，边界会失效
 _MCP_MARKERS = re.compile(
@@ -392,8 +397,8 @@ _MCP_MARKERS = re.compile(
     r"豆包搜索|融合信息搜索|tavily|firecrawl"
 )
 _MCP_OPS_VERBS = re.compile(
-    r"(?i)配\s*下|配\s*置|安装|挂载|启用|写入|填\s*入|"
-    r"装\s*上|接\s*上|manage_mcp|"
+    r"(?i)配\s*一?\s*下|配\s*置|配\s*个|安装|挂载|启用|写入|填\s*入|"
+    r"装\s*上|接\s*上|manage_mcp|帮我\s*配|"
     r"\binstall\b|\bmount\b|\benable\b|\bconfigure\b"
 )
 _MCP_OPS_WEAK = re.compile(r"(?i)改\s*一下|修改|更新|设置|\bupdate\b")
@@ -422,7 +427,7 @@ def is_mcp_ops_intent(user_input: str) -> bool:
         lo = max(0, m.start() - 24)
         hi = min(len(text), m.end() + 24)
         window = text[lo:hi]
-        if _MCP_OPS_VERBS.search(window) or re.search(r"配\s*[下置]", window):
+        if _MCP_OPS_VERBS.search(window) or re.search(r"配\s*一?\s*[下置个]", window):
             return True
         if _MCP_OPS_WEAK.search(window) and re.search(
             r"(?i)(env|密钥|api|key|装|配|server)", window
@@ -707,6 +712,12 @@ def infer_scene(
         packs = [p for p in packs if p not in {"coding", "desktop", "cluster", "goal"}]
         reasons.append("search_only:strip_coding")
 
+    # F9: 「添加 mcp github …」不要挂 github/git pack
+    if re.search(r"(?i)(添加|挂载|安装|add|install).{0,16}(mcp|MCP)", text):
+        if "github" in packs:
+            packs = [p for p in packs if p != "github"]
+            reasons.append("mcp_strip_github")
+
     # MCP 运维纠偏：强制 mcp（manage_mcp 已在 mcp pack），避免产品名「xx搜索」误挂 web
     if is_mcp_ops_intent(text):
         if "mcp" not in packs:
@@ -736,6 +747,12 @@ def infer_scene(
         if "coding" not in packs:
             packs.append("coding")
             reasons.append("coding_signal")
+        # F5: 纯本地修 bug 不挂 web/browser
+        if "web" in packs and not is_search_only_intent(text) and not re.search(
+            r"(?i)(搜|search|联网|网页|浏览器|http)", text
+        ):
+            packs = [p for p in packs if p != "web"]
+            reasons.append("coding_no_web")
 
     return ScenePlan(packs=packs, injection_tier=tier, reasons=reasons or ["dynamic:default"], profile=prof)
 
@@ -909,6 +926,21 @@ def resolve_enabled_tool_names(
         if "web_search" not in base and "search" not in base:
             base.add("web_search")
         plan.reasons = list(plan.reasons) + ["search_thin_surface"]
+
+    # F5: 纯 coding 去掉 web 表面（DEFAULT 底座含 browser/search）
+    if (
+        "coding_no_web" in (plan.reasons or [])
+        or (
+            "coding" in (plan.packs or [])
+            and "web" not in (plan.packs or [])
+            and not is_search_only_intent(text)
+            and not _mcp_ops
+        )
+    ):
+        before = set(base)
+        base = {n for n in base if n not in _WEB_SURFACE_TOOLS}
+        if before != base:
+            plan.reasons = list(plan.reasons) + ["coding_no_web_surface"]
 
     ordered = _order_tools(base)
     plan.packs = list(dict.fromkeys(plan.packs))

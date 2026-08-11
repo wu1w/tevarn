@@ -61,7 +61,7 @@ class UserInput(WSMessage):
     type: Literal["user_input"] = "user_input"
     content: str
     attachments: list[dict[str, Any]] = Field(default_factory=list)
-    mode: Literal["default", "deepthink", "search", "ppt", "report", "goal"] = "default"
+    mode: Literal["default", "deepthink", "search", "ppt", "report", "goal", "plan"] = "default"
 
 
 class GoalUpdate(WSMessage):

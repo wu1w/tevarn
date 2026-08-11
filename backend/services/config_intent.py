@@ -367,11 +367,19 @@ def try_pending_mcp_key(
 
 
 def detect_mcp_micro_loop(text: str) -> dict[str, Any] | None:
-    """未命中完整快路径时，是否武装配置微 loop（薄工具面 + 短 max_iters）。"""
+    """未命中完整快路径时，是否武装配置微 loop（薄工具面 + 短 max_iters）。
+
+    F3: 「配一下/配置 … MCP」即使 is_mcp_ops_intent 漏检，也强制微 loop。
+    """
     t = (text or "").strip()
     if not t:
         return None
     if detect_config_intent(t) is not None:
+        return None
+    # 明确在搜网页 → 不武装配置微 loop
+    if re.search(
+        r"(?i)(搜\s*一下|搜索\s*一下|帮我\s*搜|search\s+for|查一下.{0,20}新闻)", t
+    ) and not re.search(r"(?i)(配|配置|安装|api\s*key|密钥)", t):
         return None
     ops = False
     try:
@@ -380,11 +388,17 @@ def detect_mcp_micro_loop(text: str) -> dict[str, Any] | None:
         ops = bool(is_mcp_ops_intent(t))
     except Exception:
         ops = False
+    # F3 双保险：口语配/装 + mcp 标记
     if not ops:
-        if not re.search(
-            r"(?i)(manage_mcp|mcp\s*商店|mcp\s*server|配置.{0,8}mcp|装.{0,6}mcp)", t
+        if re.search(
+            r"(?i)(manage_mcp|mcp\s*商店|mcp\s*server|"
+            r"配\s*一?\s*下.{0,24}mcp|配置.{0,12}mcp|装.{0,8}mcp|"
+            r"mcp.{0,12}(配|装|配置|安装))",
+            t,
         ):
-            return None
+            ops = True
+    if not ops:
+        return None
     label = _guess_mcp_label(t, default="") or ""
     try:
         from backend.core.config import settings as _st
@@ -407,7 +421,6 @@ def detect_mcp_micro_loop(text: str) -> dict[str, Any] | None:
     }
 
 
-# ── 执行 ──────────────────────────────────────────────────────────
 
 async def execute_config_intent(match: ConfigIntentMatch) -> dict[str, Any]:
     t0 = time.time()
