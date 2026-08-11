@@ -76,6 +76,9 @@ class InstallResponse(BaseModel):
     source: str
     path: str = ""
     error: str = ""
+    # prompt-only | clawhub-metadata | … — 明确不是 ToolRegistry 工具安装
+    message: str = ""
+    install_kind: str = "prompt-only"
 
 
 @router.get("/sources", response_model=list[dict])
@@ -238,11 +241,24 @@ async def install_skill(
             error=f"Write failed: {e}",
         )
 
+    kind = "prompt-only"
+    note = (
+        "已安装为 prompt-skill（SKILL.md → system 注入）。"
+        "不会新增可调用 tool；勿期望 ToolRegistry 出现新函数。"
+    )
+    if payload.source == "clawhub":
+        kind = "clawhub-metadata"
+        note = (
+            "ClawHub 元数据已转换为本地 SKILL.md（prompt-only）。"
+            "无完整 OpenClaw 运行时；勿重装、勿要求本机 openclaw CLI。"
+        )
     return InstallResponse(
         success=True,
         skill_id=payload.skill_id,
         source=payload.source,
         path=str(path),
+        message=note,
+        install_kind=kind,
     )
 
 

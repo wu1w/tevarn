@@ -359,6 +359,8 @@ def thrash_force_final_text(*, family: str = "") -> str:
     if family == "mcp_ops" or family.startswith("fam:mcp"):
         return (
             "[MCP ops thrash] manage_mcp 重复轮次无进展。"
+            "若上次 message 含【自动收束】或 Failed to connect：停止对本 server 的 add/update/reload；"
+            "向用户说明连接失败原因（网络/URL/timeout/包名），不要再装。"
             "若缺 API Key：一句请用户粘贴「xxx API Key：xxxx」。"
             "禁止 command/python/web_search 继续探环境。"
         )

@@ -4,7 +4,9 @@ MCP 客户端基础封装
 对齐 Hermes / OpenClaw 实践：
 - stdio：command/args/env（env 与系统 PATH 合并，密钥不覆盖空值）
 - Windows：npx → npx.cmd
+- 远程：sse + streamable-http（官方 MCP Streamable HTTP）
 - 单 server 重连：先连新再换旧，避免「先 close_all 再失败」导致工具全丢
+- 连接超时：用 config.timeout 包一层 wait_for（mcp-remote 冷启动可调高）
 """
 
 from __future__ import annotations
@@ -31,7 +33,7 @@ class MCPServerConfig:
     """单个 MCP Server 配置"""
 
     name: str
-    transport: str  # "stdio" | "sse"
+    transport: str  # "stdio" | "sse" | "streamable-http"
     command: str | None = None
     args: list[str] | None = None
     url: str | None = None
@@ -40,10 +42,51 @@ class MCPServerConfig:
     timeout: float = 30.0
 
 
+def _normalize_transport(transport: str | None) -> str:
+    try:
+        from backend.mcp_hub.normalize import normalize_transport
+
+        return normalize_transport(transport)
+    except Exception:
+        t = (transport or "").strip().lower().replace(" ", "").replace("_", "-")
+        if t in ("http", "https", "streamablehttp"):
+            return "streamable-http"
+        return t
+
+
+def _connect_timeout_seconds(config: MCPServerConfig) -> float:
+    """连接超时：尊重 config.timeout；stdio + mcp-remote/npx 冷启动抬底。"""
+    try:
+        base = float(getattr(config, "timeout", None) or 30.0)
+    except (TypeError, ValueError):
+        base = 30.0
+    base = max(10.0, min(base, 300.0))
+    transport = _normalize_transport(config.transport)
+    if transport == "stdio":
+        blob = " ".join(
+            [
+                str(config.command or ""),
+                *list(config.args or []),
+                str(config.name or ""),
+            ]
+        ).lower()
+        # npx -y mcp-remote 首次下载可能 >30s
+        if "mcp-remote" in blob or "mcp_remote" in blob:
+            base = max(base, 120.0)
+        elif any(x in blob for x in ("npx", "uvx", "@latest")):
+            base = max(base, 60.0)
+    return base
+
+
 class MCPClient:
     """MCP 客户端连接管理器"""
 
     def __init__(self, config: MCPServerConfig):
+        # 规范 transport，避免 DB 里 http / streamable_http 直穿
+        try:
+            config.transport = _normalize_transport(config.transport) or config.transport
+        except Exception:
+            pass
         self.config = config
         self.name = config.name
         self._session: ClientSession | None = None
@@ -58,12 +101,30 @@ class MCPClient:
         if not self.config.enabled:
             raise RuntimeError(f"MCP server '{self.name}' is disabled")
 
-        if self.config.transport == "stdio":
-            await self._connect_stdio()
-        elif self.config.transport == "sse":
-            await self._connect_sse()
-        else:
-            raise ValueError(f"Unsupported transport: {self.config.transport}")
+        transport = _normalize_transport(self.config.transport)
+        self.config.transport = transport or self.config.transport
+        connect_timeout = _connect_timeout_seconds(self.config)
+
+        async def _do_connect() -> None:
+            if transport == "stdio":
+                await self._connect_stdio()
+            elif transport == "sse":
+                await self._connect_sse()
+            elif transport == "streamable-http":
+                await self._connect_streamable_http()
+            else:
+                raise ValueError(
+                    f"Unsupported transport: {self.config.transport} "
+                    f"(supported: stdio, sse, streamable-http)"
+                )
+
+        try:
+            await asyncio.wait_for(_do_connect(), timeout=connect_timeout)
+        except asyncio.TimeoutError as e:
+            raise TimeoutError(
+                f"MCP server '{self.name}' connect timed out after "
+                f"{connect_timeout:.0f}s (transport={transport})"
+            ) from e
 
         self._initialized = True
         try:
@@ -80,8 +141,9 @@ class MCPClient:
             self._cached_tool_count = 0
             self._cached_remote_tools = []
         logger.info(
-            "MCP server '%s' connected (tools≈%s)",
+            "MCP server '%s' connected (transport=%s tools≈%s)",
             self.name,
+            transport,
             self._cached_tool_count,
         )
 
@@ -231,6 +293,88 @@ class MCPClient:
         await session.initialize()
         self._session = session
 
+    async def _connect_streamable_http(self) -> None:
+        """官方 Streamable HTTP（MCP 2025-03+）；DeepWiki 等远程服务首选。
+
+        兼容 mcp 1.x（streamablehttp_client → 3-tuple）与 2.x
+        （streamable_http_client → 2-tuple / TransportStreams）。
+        """
+        if not self.config.url:
+            raise ValueError(
+                f"MCP server '{self.name}' streamable-http transport requires url"
+            )
+
+        client_fn = None
+        legacy = False
+        try:
+            from mcp.client.streamable_http import streamable_http_client as client_fn
+        except ImportError:
+            try:
+                from mcp.client.streamable_http import (
+                    streamablehttp_client as client_fn,
+                )
+
+                legacy = True
+            except ImportError as e:
+                raise RuntimeError(
+                    "mcp package missing streamable_http client; upgrade `mcp`"
+                ) from e
+
+        try:
+            http_timeout = float(getattr(self.config, "timeout", None) or 30.0)
+        except (TypeError, ValueError):
+            http_timeout = 30.0
+        http_timeout = max(10.0, min(http_timeout, 300.0))
+
+        if legacy:
+            # mcp 1.x: timeout / sse_read_timeout 关键字参数
+            streams = await self._exit_stack.enter_async_context(
+                client_fn(
+                    self.config.url,
+                    timeout=http_timeout,
+                    sse_read_timeout=max(http_timeout, 300.0),
+                )
+            )
+        else:
+            # mcp 2.x: 可选自定义 http_client；失败则用 SDK 默认
+            try:
+                from mcp.client.streamable_http import create_mcp_http_client
+
+                try:
+                    import httpx2 as _httpx  # type: ignore
+                except ImportError:
+                    import httpx as _httpx  # type: ignore
+
+                timeout_obj = _httpx.Timeout(
+                    http_timeout, read=max(http_timeout, 300.0)
+                )
+                http_client = create_mcp_http_client(timeout=timeout_obj)
+                # 我们创建的 client 需自行管理生命周期
+                await self._exit_stack.enter_async_context(http_client)
+                streams = await self._exit_stack.enter_async_context(
+                    client_fn(self.config.url, http_client=http_client)
+                )
+            except Exception as e:
+                logger.debug(
+                    "streamable-http custom http_client skip (%s); use defaults",
+                    e,
+                )
+                streams = await self._exit_stack.enter_async_context(
+                    client_fn(self.config.url)
+                )
+
+        # 1.x: (read, write, get_session_id)；2.x: (read, write)
+        try:
+            read, write = streams[0], streams[1]
+        except Exception as e:
+            raise RuntimeError(
+                f"unexpected streamable-http streams shape: {type(streams)!r}"
+            ) from e
+
+        session = await self._exit_stack.enter_async_context(ClientSession(read, write))
+        await session.initialize()
+        self._session = session
+
     async def list_tools(self) -> ListToolsResult:
         if self._session is None or not self._initialized:
             raise RuntimeError(f"MCP server '{self.name}' not connected")
@@ -321,6 +465,8 @@ class MCPClientManager:
     def __init__(self):
         self._clients: dict[str, MCPClient] = {}
         self._lock = asyncio.Lock()
+        # 最近一次连接失败原因（供 sync/manage_mcp 写清错误，避免 agent 盲重试）
+        self._last_errors: dict[str, str] = {}
 
     async def connect(self, configs: list[MCPServerConfig]) -> None:
         for config in configs:
@@ -328,10 +474,17 @@ class MCPClientManager:
                 continue
             await self.reconnect(config)
 
+    def last_error(self, server_name: str) -> str | None:
+        return self._last_errors.get(server_name)
+
+    def pop_last_error(self, server_name: str) -> str | None:
+        return self._last_errors.pop(server_name, None)
+
     async def reconnect(self, config: MCPServerConfig) -> MCPClient | None:
         """先连新后换旧（Hermes/OpenClaw 式安全热更）。失败则保留旧连接。"""
         if not config.enabled:
             await self.disconnect(config.name)
+            self._last_errors.pop(config.name, None)
             return None
 
         async with self._lock:
@@ -339,8 +492,10 @@ class MCPClientManager:
             try:
                 await new_client.connect()
             except Exception as e:
+                err = f"{type(e).__name__}: {e}"
+                self._last_errors[config.name] = err
                 logger.warning(
-                    "Failed to connect MCP server '%s': %s", config.name, e
+                    "Failed to connect MCP server '%s': %s", config.name, err
                 )
                 try:
                     await new_client.close()
@@ -348,6 +503,7 @@ class MCPClientManager:
                     pass
                 return self._clients.get(config.name)
 
+            self._last_errors.pop(config.name, None)
             old = self._clients.pop(config.name, None)
             self._clients[config.name] = new_client
             if old is not None:
@@ -360,6 +516,7 @@ class MCPClientManager:
     async def disconnect(self, server_name: str) -> None:
         async with self._lock:
             old = self._clients.pop(server_name, None)
+            self._last_errors.pop(server_name, None)
         if old is not None:
             try:
                 await old.close()
@@ -380,6 +537,7 @@ class MCPClientManager:
         async with self._lock:
             clients = list(self._clients.values())
             self._clients.clear()
+            self._last_errors.clear()
         await asyncio.gather(
             *[client.close() for client in clients],
             return_exceptions=True,

@@ -143,15 +143,28 @@ async def install_mcp_from_store(
     )
     # 安装时不写入空密钥，避免子进程被空 Key 覆盖
     clean_env = {k: v for k, v in (norm["env"] or {}).items() if str(v).strip()}
+    from backend.mcp_hub.normalize import is_url_transport, normalize_transport
+
+    transport = normalize_transport(item.transport) or "stdio"
+    # 远程 / mcp-remote 冷启动：给更宽默认超时
+    install_timeout = 30.0
+    low_name = (item.name or "").lower()
+    joined_args = " ".join(str(a) for a in (item.args or [])).lower()
+    if is_url_transport(transport) or "mcp-remote" in joined_args or low_name in (
+        "deepwiki",
+        "mcp-remote",
+    ):
+        install_timeout = 120.0 if "mcp-remote" in joined_args else 60.0
+
     create = MCPServerCreate(
         name=item.name[:64],
-        transport=item.transport,
-        command=norm["command"],
-        args=norm["args"],
+        transport=transport,
+        command=norm["command"] if transport == "stdio" else (item.command or None),
+        args=norm["args"] if transport == "stdio" else list(item.args or []),
         url=item.url or None,
         env=clean_env,
         enabled=True,
-        timeout=30.0,
+        timeout=install_timeout,
         risk_level=item.risk_level
         if item.risk_level in ("safe", "low", "medium", "high", "dangerous")
         else "low",
@@ -171,7 +184,9 @@ async def install_mcp_from_store(
 
         rt = await sync_mcp_runtime(only_server=sname)
         runtime_ok = bool(rt.get("ok")) and sname in (rt.get("connected") or [])
-        runtime_err = str(rt.get("error") or rt.get("warning") or "")
+        runtime_err = str(
+            rt.get("connect_error") or rt.get("error") or rt.get("warning") or ""
+        )
         registered = int(rt.get("registered") or 0)
     except Exception as e:
         runtime_ok = False
@@ -187,9 +202,14 @@ async def install_mcp_from_store(
     if runtime_ok:
         msg += f" · 已挂载 {registered} 个工具（可用 PUT /api/mcp/{{id}}/tools 调整白名单）"
     else:
-        msg += f" · 运行时挂载失败: {runtime_err or 'unknown'}（可点「重新加载 MCP」）"
+        # 安装失败自动收束：DB 已写，但勿诱导 UI/agent 立刻连环重装
+        msg += (
+            f" · 运行时挂载失败: {runtime_err or 'unknown'}。"
+            f"【自动收束】配置已保存；请检查网络/URL/timeout 后再点「重新加载 MCP」，"
+            f"勿反复卸载重装同一 server。"
+        )
     return MCPStoreInstallResponse(
-        success=True,
+        success=runtime_ok,  # 连接失败时 success=false，便于前端/agent 收束
         server_id=sid,
         server_name=sname,
         message=msg,

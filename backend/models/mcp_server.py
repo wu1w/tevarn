@@ -23,7 +23,7 @@ class MCPServer(Base):
     )
     name: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    transport: Mapped[str] = mapped_column(String(16))  # stdio | sse
+    transport: Mapped[str] = mapped_column(String(16))  # stdio | sse | streamable-http
     command: Mapped[str | None] = mapped_column(String(512), nullable=True)
     args: Mapped[list[str]] = mapped_column(JSON, default=list)
     url: Mapped[str | None] = mapped_column(String(512), nullable=True)

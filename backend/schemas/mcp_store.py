@@ -3,7 +3,7 @@
 
 MCP 与 Skills 不同：Claude Code / Hermes / OpenClaw / Codex 共享同一 MCP 协议，
 真正的公共池是 Official MCP Registry（registry.modelcontextprotocol.io）。
-Tevarn 精选目录 + 官方 Registry 一起聚合，安装时映射为本机 stdio/sse 配置。
+Tevarn 精选目录 + 官方 Registry 一起聚合，安装时映射为本机 stdio/sse/streamable-http 配置。
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ class UnifiedMCP(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
     # 安装映射（写入 Tevarn MCP 配置）
-    transport: Literal["stdio", "sse"] = "stdio"
+    transport: Literal["stdio", "sse", "streamable-http"] = "stdio"
     command: str = ""
     args: list[str] = Field(default_factory=list)
     url: str = ""

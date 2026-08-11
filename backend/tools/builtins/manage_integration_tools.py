@@ -24,7 +24,10 @@ class ManageMcp(BaseTool):
                 "用户给了 API Key/密钥要配 MCP 时：先 list 看 name，再 update name=<server> "
                 "env={KEY:value}（如 ASK_ECHO_SEARCH_INFINITY_API_KEY / TAVILY_API_KEY），"
                 "勿用 web_search/mcp_* 去「调研怎么配」。update 后会热同步；再用 mcp_* 自测。"
-                "add 需要 name+transport（stdio|sse）；stdio 需 command（tavily/doubao-search 等可省略走默认模板），sse 需 url。"
+                "add 需要 name+transport（stdio|sse|streamable-http）；"
+                "stdio 需 command（tavily/doubao-search/deepwiki 等可省略走默认模板）；"
+                "sse/streamable-http 需 url（如 DeepWiki https://mcp.deepwiki.com/mcp）。"
+                "连接失败时 message 会带【自动收束】：停止对本 server 的 add/update 重试，向用户说明原因。"
                 "tools: 列远端工具与白名单；set_tools: tools_include/exclude（原始工具名，支持 *）。"
             ),
             parameters={
@@ -37,10 +40,16 @@ class ManageMcp(BaseTool):
                     },
                     "server_id": {"type": "string", "description": "get/update/delete/tools/set_tools 时: MCP Server UUID（与 name 二选一）"},
                     "name": {"type": "string", "description": "add: 服务名称；其他 action 可按名称定位"},
-                    "transport": {"type": "string", "description": "add/update: 传输方式 stdio | sse"},
+                    "transport": {
+                        "type": "string",
+                        "description": "add/update: 传输方式 stdio | sse | streamable-http（http 别名亦可）",
+                    },
                     "command": {"type": "string", "description": "add/update: stdio 启动命令"},
                     "args": {"type": "array", "items": {"type": "string"}, "description": "add/update: 启动参数"},
-                    "url": {"type": "string", "description": "add/update: sse 服务地址"},
+                    "url": {
+                        "type": "string",
+                        "description": "add/update: sse / streamable-http 服务地址",
+                    },
                     "env": {
                         "type": "object",
                         "description": (
@@ -194,11 +203,27 @@ class ManageMcp(BaseTool):
 
         elif action == "add":
             name = (kwargs.get("name") or "").strip()
-            transport = (kwargs.get("transport") or "").strip()
-            if not name or not transport:
-                return ToolResult(success=False, data={}, message="add 需要提供 name 和 transport（stdio|sse）")
-            if transport not in ("stdio", "sse"):
-                return ToolResult(success=False, data={}, message="transport 必须是 stdio 或 sse")
+            transport_raw = (kwargs.get("transport") or "").strip()
+            if not name or not transport_raw:
+                return ToolResult(
+                    success=False,
+                    data={},
+                    message="add 需要提供 name 和 transport（stdio|sse|streamable-http）",
+                )
+            from backend.mcp_hub.normalize import (
+                SUPPORTED_TRANSPORTS,
+                is_url_transport,
+                normalize_server_fields,
+                normalize_transport,
+            )
+
+            transport = normalize_transport(transport_raw)
+            if transport not in SUPPORTED_TRANSPORTS:
+                return ToolResult(
+                    success=False,
+                    data={},
+                    message="transport 必须是 stdio / sse / streamable-http（http 别名会映射为 streamable-http）",
+                )
             _known_stdio = (
                 "tavily",
                 "firecrawl",
@@ -207,15 +232,31 @@ class ManageMcp(BaseTool):
                 "askecho",
                 "askecho-search",
                 "mcp-server-askecho-search-infinity",
+                "deepwiki",
+                "mcp-remote",
             )
-            if transport == "stdio" and not (kwargs.get("command") or "").strip() and name.lower() not in _known_stdio:
+            if (
+                transport == "stdio"
+                and not (kwargs.get("command") or "").strip()
+                and name.lower() not in _known_stdio
+            ):
                 return ToolResult(success=False, data={}, message="stdio 传输需要提供 command")
-            if transport == "sse" and not (kwargs.get("url") or "").strip():
-                return ToolResult(success=False, data={}, message="sse 传输需要提供 url")
+            if is_url_transport(transport) and not (kwargs.get("url") or "").strip():
+                return ToolResult(
+                    success=False,
+                    data={},
+                    message=f"{transport} 传输需要提供 url",
+                )
             try:
                 if await repo.get_by_name(name):
                     return ToolResult(success=False, data={}, message=f"MCP Server `{name}` 已存在")
-                from backend.mcp_hub.normalize import normalize_server_fields
+
+                default_timeout = 30.0
+                if name.lower() in ("deepwiki", "mcp-remote") or "mcp-remote" in str(
+                    kwargs.get("args") or []
+                ):
+                    default_timeout = 120.0
+                timeout_val = float(kwargs.get("timeout", default_timeout))
 
                 norm = normalize_server_fields(
                     name=name,
@@ -227,12 +268,12 @@ class ManageMcp(BaseTool):
                 data = MCPServerCreate(
                     name=name,
                     transport=transport,
-                    command=norm["command"],
-                    args=norm["args"],
+                    command=norm["command"] if transport == "stdio" else (kwargs.get("command") or None),
+                    args=norm["args"] if transport == "stdio" else list(kwargs.get("args") or []),
                     url=kwargs.get("url") or None,
                     env=norm["env"],
                     enabled=bool(kwargs.get("enabled", True)),
-                    timeout=float(kwargs.get("timeout", 30.0)),
+                    timeout=timeout_val,
                     risk_level=str(kwargs.get("risk_level") or "low"),
                     allowed_paths=kwargs.get("allowed_paths"),
                 )
@@ -241,12 +282,20 @@ class ManageMcp(BaseTool):
                 d = self._to_dict(obj)
                 d["runtime"] = rt
                 ok_rt = bool(rt.get("ok")) and name in (rt.get("connected") or [])
-                msg = f"✅ MCP Server `{name}` 已添加"
                 if ok_rt:
-                    msg += f"并热挂载（{rt.get('registered', 0)} tools）"
-                else:
-                    msg += f"（DB 已写，运行时: {rt.get('error') or rt.get('warning') or 'not connected'}）"
-                return ToolResult(success=True, data=d, message=msg)
+                    msg = (
+                        f"✅ MCP Server `{name}` 已添加并热挂载"
+                        f"（{rt.get('registered', 0)} tools, transport={transport}）"
+                    )
+                    return ToolResult(success=True, data=d, message=msg)
+                # 安装失败自动收束：配置已落库，禁止 agent 再 add/update 空转
+                err = rt.get("connect_error") or rt.get("error") or rt.get("warning") or "not connected"
+                d["db_written"] = True
+                d["conclude"] = True
+                msg = self._connect_fail_conclude_message(
+                    name=name, action="add", err=str(err), transport=transport
+                )
+                return ToolResult(success=False, data=d, message=msg)
             except Exception as e:
                 return ToolResult(success=False, data={}, message=f"❌ 添加失败: {e}")
 
@@ -256,15 +305,23 @@ class ManageMcp(BaseTool):
                 existing = await repo.get_by_id(sid)
                 if existing is None:
                     return ToolResult(success=False, data={}, message="MCP Server 不存在")
-                from backend.mcp_hub.normalize import normalize_server_fields
+                from backend.mcp_hub.normalize import (
+                    SUPPORTED_TRANSPORTS,
+                    normalize_server_fields,
+                    normalize_transport,
+                )
 
                 patch: dict[str, Any] = {}
                 if kwargs.get("name") is not None:
                     patch["name"] = str(kwargs["name"]).strip()
                 if kwargs.get("transport") is not None:
-                    t = str(kwargs["transport"]).strip()
-                    if t not in ("stdio", "sse"):
-                        return ToolResult(success=False, data={}, message="transport 必须是 stdio 或 sse")
+                    t = normalize_transport(str(kwargs["transport"]).strip())
+                    if t not in SUPPORTED_TRANSPORTS:
+                        return ToolResult(
+                            success=False,
+                            data={},
+                            message="transport 必须是 stdio / sse / streamable-http",
+                        )
                     patch["transport"] = t
                 # command/args/env 统一规范化：纠正错包、合并密钥、拒绝脱敏覆盖
                 want_cmd = kwargs.get("command") if kwargs.get("command") is not None else existing.command
@@ -278,7 +335,7 @@ class ManageMcp(BaseTool):
                     env=want_env if want_env is not None else {},
                     existing_env=existing.env or {},
                 )
-                # 只要涉及 stdio 字段或 name=tavily/doubao 类，就写回规范化结果
+                # 只要涉及 stdio 字段或 name=tavily/doubao/deepwiki 类，就写回规范化结果
                 _known_stdio = (
                     "tavily",
                     "firecrawl",
@@ -287,6 +344,8 @@ class ManageMcp(BaseTool):
                     "askecho",
                     "askecho-search",
                     "mcp-server-askecho-search-infinity",
+                    "deepwiki",
+                    "mcp-remote",
                 )
                 if (
                     kwargs.get("command") is not None
@@ -324,12 +383,22 @@ class ManageMcp(BaseTool):
                 d = self._to_dict(obj)
                 d["runtime"] = rt
                 ok_rt = bool(rt.get("ok")) and obj.name in (rt.get("connected") or [])
-                msg = f"✅ MCP Server `{obj.name}` 已更新"
                 if ok_rt:
-                    msg += f"并热同步（connected, {rt.get('registered', 0)} tools）"
-                else:
-                    msg += f"（DB 已写，运行时: {rt.get('error') or rt.get('warning') or 'not connected'}）"
-                return ToolResult(success=True, data=d, message=msg)
+                    msg = (
+                        f"✅ MCP Server `{obj.name}` 已更新并热同步"
+                        f"（connected, {rt.get('registered', 0)} tools）"
+                    )
+                    return ToolResult(success=True, data=d, message=msg)
+                err = rt.get("connect_error") or rt.get("error") or rt.get("warning") or "not connected"
+                d["db_written"] = True
+                d["conclude"] = True
+                msg = self._connect_fail_conclude_message(
+                    name=obj.name,
+                    action="update",
+                    err=str(err),
+                    transport=str(obj.transport or ""),
+                )
+                return ToolResult(success=False, data=d, message=msg)
             except ValueError as e:
                 return ToolResult(success=False, data={}, message=str(e))
             except Exception as e:
@@ -429,13 +498,28 @@ class ManageMcp(BaseTool):
                 rt = await self._sync_runtime(only_server=obj.name)
                 d = self._to_dict(obj)
                 d["runtime"] = rt
+                ok_rt = bool(rt.get("ok")) and obj.name in (rt.get("connected") or [])
+                if ok_rt:
+                    return ToolResult(
+                        success=True,
+                        data=d,
+                        message=(
+                            f"✅ MCP `{obj.name}` 工具白名单已更新"
+                            f"（include={d.get('tools_include')} exclude={d.get('tools_exclude')}；"
+                            f"registered={rt.get('registered', 0)}）"
+                        ),
+                    )
+                err = rt.get("connect_error") or rt.get("error") or rt.get("warning") or "not connected"
+                d["db_written"] = True
+                d["conclude"] = True
                 return ToolResult(
-                    success=True,
+                    success=False,
                     data=d,
-                    message=(
-                        f"✅ MCP `{obj.name}` 工具白名单已更新"
-                        f"（include={d.get('tools_include')} exclude={d.get('tools_exclude')}；"
-                        f"registered={rt.get('registered', 0)}）"
+                    message=self._connect_fail_conclude_message(
+                        name=obj.name,
+                        action="set_tools",
+                        err=str(err),
+                        transport=str(obj.transport or ""),
                     ),
                 )
             except ValueError as e:
@@ -465,6 +549,34 @@ class ManageMcp(BaseTool):
 
         return ToolResult(success=False, data={}, message=f"未知 action: {action}")
 
+    @staticmethod
+    def _connect_fail_conclude_message(
+        *,
+        name: str,
+        action: str,
+        err: str,
+        transport: str = "",
+    ) -> str:
+        """连接失败时的自动收束文案：阻止 agent 对本 server 空转重装。"""
+        tips: list[str] = []
+        low = (err or "").lower()
+        if "timeout" in low or "timed out" in low:
+            tips.append("可把 timeout 调到 90–120（mcp-remote/npx 冷启动慢）后由用户再试一次")
+        if "streamable" in low or transport in ("streamable-http", "sse"):
+            tips.append("确认 url 可达（DeepWiki 用 https://mcp.deepwiki.com/mcp）；网络/代理不可达则勿重试")
+        if "mcp-remote" in low or "npx" in low:
+            tips.append("确认本机 Node/npx 可用；或改用 transport=streamable-http + 官方 url 直连")
+        if not tips:
+            tips.append("检查 transport/url/command、本机运行时与网络；勿用 web_search/command 空探")
+        tip_line = "；".join(tips)
+        return (
+            f"⚠️ MCP `{name}` {action}：配置已写入 DB，但连接失败。\n"
+            f"原因: {err}\n"
+            f"【自动收束】请立即停止对本 server 的 manage_mcp add/update/reload 重试循环；"
+            f"向用户用一两句话说明失败原因与可选修复（{tip_line}）。"
+            f"不要再进入下一轮安装/改配置工具调用。"
+        )
+
     async def _sync_runtime(self, only_server: str | None = None) -> dict:
         """DB 变更后热同步；可只重连单 server，避免全局 close_all 卸光工具。"""
         try:
@@ -473,7 +585,7 @@ class ManageMcp(BaseTool):
             return await sync_mcp_runtime(only_server=only_server)
         except Exception as e:
             logger.warning("manage_mcp runtime sync failed: %s", e)
-            return {"ok": False, "error": str(e), "connected": []}
+            return {"ok": False, "error": str(e), "connected": [], "conclude": True}
 
 
 # ── 消息通道 ──

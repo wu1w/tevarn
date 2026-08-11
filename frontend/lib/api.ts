@@ -3208,7 +3208,7 @@ export interface UnifiedMCPStoreItem {
   icon: string;
   category: string;
   tags: string[];
-  transport: 'stdio' | 'sse';
+  transport: 'stdio' | 'sse' | 'streamable-http';
   command: string;
   args: string[];
   url: string;

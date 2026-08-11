@@ -21,16 +21,22 @@ from backend.schemas.skill_store import UnifiedSkill
 logger = logging.getLogger(__name__)
 
 
-# 默认存储路径：~/.tevarn/skills/
-_DEFAULT_SKILLS_ROOT = Path.home() / ".tevarn" / "skills"
-
-
 def _skills_root() -> Path:
-    """获取 skills 存储根目录（支持环境变量覆盖）"""
+    """skills 存储根目录。
+
+    优先级：
+      1. TEVARN_SKILLS_ROOT
+      2. home_dir() / \"skills\"（与 agent 沙箱 junction 对齐，勿裸用 Path.home()）
+    """
     root = os.environ.get("TEVARN_SKILLS_ROOT")
     if root:
         return Path(root)
-    return _DEFAULT_SKILLS_ROOT
+    try:
+        from backend.agent._tevarn_paths import home_dir
+
+        return home_dir() / "skills"
+    except Exception:
+        return Path.home() / ".tevarn" / "skills"
 
 
 def _sanitize_name(name: str) -> str:
@@ -190,10 +196,11 @@ class SkillMdDownloader:
 
         body_parts.extend(
             [
-                "## 来源（ClawHub → Tevarn 转换）",
+                "## 来源（ClawHub → Tevarn 元数据转换）",
                 "",
                 f"- 源 ID: `clawhub/{skill.id}`",
                 f"- 详情页: {source_url}",
+                "- **类型: prompt-only**（无新 function tool；不进入 ToolRegistry）",
             ]
         )
         if version:
@@ -207,12 +214,13 @@ class SkillMdDownloader:
                 "",
                 "## 在 Tevarn 中如何使用",
                 "",
-                "本 skill 由 ClawHub 元数据**一键转换**为本地 SKILL.md，会注入 system prompt。",
-                "当用户请求匹配本 skill 的 description / topics 时：",
-                "1. 按上方说明协助用户完成任务；",
-                "2. 若需要完整 OpenClaw 运行时实现，可提示用户访问详情页，或使用原生 CLI：",
-                f"   `{install_cmd}`",
-                "3. 能用现有工具（web/file/bash 等）直接完成的，优先直接做。",
+                "本条目由 ClawHub 列表元数据**转换**为本地 SKILL.md，**仅注入 system prompt**。",
+                "不是可调用工具安装。勿反复重装；**不要**要求本机执行 `openclaw` CLI。",
+                "当用户请求匹配 description / topics 时：",
+                "1. 优先用 Tevarn 已有工具（file_read / command / web_search 等）直接完成；",
+                "2. 需要完整 OpenClaw 运行时能力时，引导用户打开详情页自行了解（非本机安装路径）：",
+                f"   详情: {source_url}",
+                f"   参考命令（可选，非 Tevarn 内置）: `{install_cmd}`",
                 "",
                 "## 兼容提示",
                 "",
@@ -260,16 +268,37 @@ class SkillMdDownloader:
 
     @staticmethod
     async def _fetch_text(url: str) -> str | None:
-        """下载文本内容，失败返回 None"""
+        """下载文本内容，失败返回 None。强制公网 URL 校验，禁止跟随重定向（防 SSRF）。"""
+        try:
+            from backend.core.net_safety import UnsafeURLError, validate_public_url
+
+            validate_public_url(url)
+        except Exception as e:
+            # UnsafeURLError 或 import 失败
+            logger.debug("Blocked/invalid skill download URL %s: %s", url, e)
+            return None
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                     url,
                     timeout=aiohttp.ClientTimeout(total=20),
+                    allow_redirects=False,
                 ) as resp:
+                    if resp.status in (301, 302, 303, 307, 308):
+                        logger.debug(
+                            "skill download refused redirect %s -> %s",
+                            url,
+                            resp.headers.get("Location", ""),
+                        )
+                        return None
                     if resp.status != 200:
                         return None
-                    return await resp.text()
+                    # 512KB 上限，与 url_review 对齐
+                    raw = await resp.content.read(512_000 + 1)
+                    if len(raw) > 512_000:
+                        logger.debug("skill download too large: %s", url)
+                        return None
+                    return raw.decode("utf-8", errors="replace")
         except Exception as e:
             logger.debug("Failed to fetch %s: %s", url, e)
             return None

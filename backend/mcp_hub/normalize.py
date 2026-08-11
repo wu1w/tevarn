@@ -66,6 +66,25 @@ _SERVER_DEFAULTS: dict[str, dict[str, Any]] = {
         "args": list(_DOUBAO_SEARCH_ARGS),
         "env_keys": ["ASK_ECHO_SEARCH_INFINITY_API_KEY"],
     },
+    # DeepWiki 官方远程：stdio 经 mcp-remote 桥接 streamable-http（冷启动需更长 timeout）
+    "deepwiki": {
+        "command": "npx",
+        "args": [
+            "-y",
+            "mcp-remote@latest",
+            "https://mcp.deepwiki.com/mcp",
+            "--transport",
+            "http-only",
+        ],
+        "env_keys": [],
+        "timeout": 120.0,
+    },
+    "mcp-remote": {
+        "command": "npx",
+        "args": ["-y", "mcp-remote@latest"],
+        "env_keys": [],
+        "timeout": 120.0,
+    },
 }
 
 _REDACTED = frozenset(
@@ -83,6 +102,30 @@ _REDACTED = frozenset(
 )
 
 _ENV_VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)")
+
+# transport 别名 → 规范名（DB / schema / client 统一）
+_TRANSPORT_ALIASES: dict[str, str] = {
+    "stdio": "stdio",
+    "sse": "sse",
+    "streamable-http": "streamable-http",
+    "streamable_http": "streamable-http",
+    "streamablehttp": "streamable-http",
+    "http": "streamable-http",
+    "https": "streamable-http",
+}
+SUPPORTED_TRANSPORTS = frozenset({"stdio", "sse", "streamable-http"})
+
+
+def normalize_transport(value: str | None) -> str:
+    """规范化 transport；未知值原样小写返回（由调用方校验）。"""
+    raw = (value or "").strip().lower().replace(" ", "")
+    if not raw:
+        return ""
+    return _TRANSPORT_ALIASES.get(raw, raw)
+
+
+def is_url_transport(transport: str | None) -> bool:
+    return normalize_transport(transport) in ("sse", "streamable-http")
 
 
 def is_redacted_secret(value: Any) -> bool:

@@ -301,6 +301,37 @@ CURATED: list[UnifiedMCP] = [
         registry_type="npm",
         popularity=3900,
     ),
+    UnifiedMCP(
+        id="deepwiki",
+        name="deepwiki",
+        display_name="DeepWiki",
+        summary="GitHub 仓库文档问答（官方远程 Streamable HTTP）",
+        description=(
+            "DeepWiki 官方 MCP：read_wiki_structure / read_wiki_contents / ask_question。"
+            "无需 API Key。首选 transport=streamable-http，"
+            "URL=https://mcp.deepwiki.com/mcp。"
+            "若直连失败，可用 mcp-remote 桥："
+            "npx -y mcp-remote@latest https://mcp.deepwiki.com/mcp --transport http-only"
+            "（stdio，timeout 建议 120）。"
+            "文档：https://docs.devin.ai/work-with-devin/deepwiki-mcp"
+        ),
+        source="curated",
+        source_url="https://docs.devin.ai/work-with-devin/deepwiki-mcp",
+        icon="📚",
+        category="开发工具",
+        tags=["docs", "github", "wiki", "deepwiki", "remote", "streamable-http"],
+        transport="streamable-http",
+        url="https://mcp.deepwiki.com/mcp",
+        risk_level="low",
+        version="remote",
+        registry_type="remote",
+        package_id="",
+        popularity=11000,
+        note=(
+            "streamable-http 直连；网络不可达时改用 stdio+mcp-remote 预设并提高 timeout。"
+            "连接失败会自动收束，勿反复重装。"
+        ),
+    ),
 ]
 
 
@@ -366,18 +397,23 @@ def _map_official_item(entry: dict[str, Any]) -> UnifiedMCP | None:
             else:
                 note = f"暂不支持 registryType={registry_type} 的一键安装，请自定义配置"
         else:
-            note = f"包 transport={pkg_transport}，Tevarn 当前主支持 stdio/sse"
+            note = f"包 transport={pkg_transport}，Tevarn 当前主支持 stdio/sse/streamable-http"
     elif remotes:
         remote = remotes[0]
-        rtype = (remote.get("type") or "").lower()
+        rtype = (remote.get("type") or "").lower().replace("_", "-")
         url = remote.get("url") or ""
-        # streamable-http / sse 均尝试以 sse URL 接入
-        if url and rtype in ("sse", "streamable-http", "http"):
-            transport = "sse"
+        # 官方 remotes：按真实类型映射（不再把 streamable-http 误映为 sse）
+        if url and rtype in ("sse", "streamable-http", "http", "https"):
+            if rtype in ("streamable-http", "http", "https"):
+                transport = "streamable-http"
+            else:
+                transport = "sse"
             installable = True
             registry_type = "remote"
-            if rtype == "streamable-http":
-                note = "官方为 streamable-http，已映射为 SSE URL（若连接失败请用自定义）"
+            if rtype in ("streamable-http", "http", "https"):
+                note = "官方 streamable-http 远程；Tevarn 原生接入"
+            else:
+                note = "官方 SSE 远程"
         else:
             note = f"远程类型 {rtype} 暂不支持一键安装"
 
@@ -385,6 +421,7 @@ def _map_official_item(entry: dict[str, Any]) -> UnifiedMCP | None:
         note = "缺少 packages/remotes 安装信息"
 
     sid = _slug(full_name.replace("/", "__"))
+    _allowed = ("stdio", "sse", "streamable-http")
     return UnifiedMCP(
         id=sid,
         name=sid,
@@ -396,7 +433,7 @@ def _map_official_item(entry: dict[str, Any]) -> UnifiedMCP | None:
         icon="📦",
         category="官方 Registry",
         tags=["official-registry", full_name.split("/")[0] if "/" in full_name else "mcp"],
-        transport=transport if transport in ("stdio", "sse") else "stdio",  # type: ignore
+        transport=transport if transport in _allowed else "stdio",  # type: ignore
         command=command,
         args=args,
         url=url,

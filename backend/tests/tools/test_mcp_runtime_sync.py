@@ -99,7 +99,8 @@ async def test_sync_mcp_runtime_unregisters_then_registers():
         patch.object(manager, "close_all", new_callable=AsyncMock),
         patch("backend.mcp_hub.client.get_mcp_manager", return_value=manager),
     ):
-        result = await sync_mcp_runtime(manager)
+        # sync_mcp_runtime 签名为 only_server: str | None（manager 走 get_mcp_manager）
+        result = await sync_mcp_runtime()
 
     assert result["ok"] is True
     assert ToolRegistry.get("mcp_zombie") is None

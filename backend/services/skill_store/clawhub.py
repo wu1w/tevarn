@@ -84,7 +84,7 @@ class ClawHubFetcher(SkillStoreFetcher):
         # compatibility hints
         compatibility = ["openclaw", "hermes", "claude-code"]  # SKILL.md 格式通用
         
-        # 下载链接：ClawHub 无公开下载 API，标记为 None（前端禁用安装按钮）
+        # 无公开 SKILL.md 下载：安装时由 downloader 合成 prompt-only 元数据 md
         skill_md_url = None
         
         # 容错：API 可能返回 null/None，统一转为空字符串
@@ -93,19 +93,25 @@ class ClawHubFetcher(SkillStoreFetcher):
         
         # source_repo：ClawHub 详情页（用于跳转）
         source_repo = f"{self.DETAIL_BASE}/{slug}"
+        summary = _safe_str(item.get("summary"))
+        desc = _safe_str(item.get("description"))
+        # 明确标注：安装 ≠ 可调用 tool
+        summary_note = (summary or desc or slug)[:160]
+        if "prompt-only" not in summary_note.lower():
+            summary_note = f"[prompt-only 元数据] {summary_note}"
         
         return UnifiedSkill(
             id=slug,
             name=slug.replace("-", "_").replace("/", "__"),  # tevarn skill name 只允许 [a-zA-Z0-9_]
             display_name=_safe_str(item.get("displayName") or slug),
-            summary=_safe_str(item.get("summary")),
-            description=_safe_str(item.get("description")),
+            summary=summary_note,
+            description=desc or summary,
             source="clawhub",
             source_url=source_repo,
             source_repo=source_repo,
             skill_md_url=skill_md_url,
             topics=item.get("topics") or [],
-            tags=tag_list,
+            tags=list(dict.fromkeys([*tag_list, "prompt-only", "metadata-convert"])),
             license=latest.get("license"),
             author="",
             version=latest.get("version", ""),
@@ -115,7 +121,8 @@ class ClawHubFetcher(SkillStoreFetcher):
                 installs=stats_raw.get("installs", 0),
                 versions=stats_raw.get("versions", 0),
             ),
-            install_command=f"openclaw skills install @{slug}",
+            # 展示用；Tevarn 内不会执行 openclaw
+            install_command=f"(prompt-only) see {source_repo}",
             compatibility=compatibility,
             created_at=self._ms_to_dt(item.get("createdAt")),
             updated_at=self._ms_to_dt(item.get("updatedAt")),

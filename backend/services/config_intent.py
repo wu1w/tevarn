@@ -215,6 +215,22 @@ def _split_mcp_args(raw: str) -> list[str]:
     return parts
 
 
+def _infer_remote_mcp_transport(url: str) -> str:
+    """从 URL 推断远程 transport：/sse → sse，其余 http(s) 默认 streamable-http。"""
+    u = (url or "").strip().lower()
+    path = u
+    try:
+        from urllib.parse import urlparse
+
+        path = (urlparse(u).path or "").lower()
+    except Exception:
+        pass
+    if path.rstrip("/").endswith("/sse") or "/sse" in path or "transport=sse" in u:
+        return "sse"
+    # DeepWiki 等：/mcp 或裸 https URL → streamable-http
+    return "streamable-http"
+
+
 def _detect_mcp_add(t: str) -> ConfigIntentMatch | None:
     m = _MCP_ADD_SSE.search(t) or _MCP_ADD_NAME_URL.search(t)
     if m:
@@ -224,14 +240,15 @@ def _detect_mcp_add(t: str) -> ConfigIntentMatch | None:
         if not name:
             try:
                 from urllib.parse import urlparse
-                host = urlparse(url).hostname or "mcp-sse"
-                name = re.sub(r"[^a-zA-Z0-9_-]", "-", host)[:32] or "mcp-sse"
+                host = urlparse(url).hostname or "mcp-remote"
+                name = re.sub(r"[^a-zA-Z0-9_-]", "-", host)[:32] or "mcp-remote"
             except Exception:
-                name = "mcp-sse"
+                name = "mcp-remote"
         if url.startswith("http"):
+            transport = _infer_remote_mcp_transport(url)
             return ConfigIntentMatch(
                 "mcp_add_custom", 0.9,
-                {"name": name, "transport": "sse", "url": url},
+                {"name": name, "transport": transport, "url": url},
             )
     m = _MCP_ADD_STDIO.search(t)
     if m:
@@ -493,44 +510,61 @@ async def _exec_mcp_key(payload: dict[str, Any]) -> dict[str, Any]:
     if not label:
         return {
             "ok": False,
-            "message": "未识别 MCP 预制名。请带上「豆包搜索 / tavily / firecrawl」。",
+            "message": "未识别 MCP 预制名。请带上「豆包搜索 / tavily / firecrawl / deepwiki」。",
             "detail": "missing_label",
         }
     preset = find_preset(label)
     if preset is None:
         return {
             "ok": False,
-            "message": f"未识别的 MCP 预制「{label}」。支持：豆包搜索 / tavily / firecrawl。",
+            "message": (
+                f"未识别的 MCP 预制「{label}」。"
+                "支持：豆包搜索 / tavily / firecrawl / deepwiki / mcp-remote-deepwiki。"
+            ),
             "detail": "unknown_preset",
         }
     out = await ensure_mcp_preset(preset=preset, api_key=api_key, reload=True, probe=True)
     key_m = mask_token(api_key)
     lines = [
         f"**{preset.display_name}** 已用快路径配置（未进入多步 Agent 循环）。",
-        f"- Key：`{key_m}` → env `{preset.env_key}`",
-        f"- 服务名：`{out.get('server_name')}`（{out.get('action')}）",
-        f"- 启动：`{out.get('runner_note')}`",
-        f"- 工具注册：{out.get('tools_registered', 0)} 个",
     ]
-    if out.get("reload_error"):
-        lines.append(f"- 刷新：有告警 `{str(out['reload_error'])[:120]}`")
+    if preset.env_key:
+        lines.append(f"- Key：`{key_m}` → env `{preset.env_key}`")
+    lines.extend(
+        [
+            f"- 服务名：`{out.get('server_name')}`（{out.get('action')}）",
+            f"- 传输：`{out.get('transport') or preset.transport}` · timeout={out.get('timeout') or preset.timeout}",
+            f"- 启动：`{out.get('runner_note')}`",
+            f"- 工具注册：{out.get('tools_registered', 0)} 个",
+        ]
+    )
+    if out.get("reload_error") or out.get("connect_error"):
+        err = out.get("connect_error") or out.get("reload_error")
+        lines.append(f"- 连接：失败 `{str(err)[:160]}`")
+        if out.get("conclude"):
+            lines.append(
+                "- 【自动收束】配置已写入；请停止对本 server 的重复安装/改配，"
+                "向用户说明原因（网络/URL/timeout）。"
+            )
     if out.get("probe_ok") is True:
         lines.append(f"- 探活：成功（{out.get('probe_detail')}）")
     elif out.get("probe_ok") is False:
         lines.append(
             f"- 探活：未通过（{out.get('probe_detail')}）。"
-            "配置已写入；可新开一轮对话再试搜索。"
+            "配置已写入；可新开一轮对话再试。"
         )
-    else:
+    elif out.get("ok"):
         lines.append("- 探活：跳过（无已注册工具）")
-    lines.append(
-        "\n直接说「帮我搜一下 ……」即可。若工具仍不可见，**新开会话**以加载 MCP 工具表。"
-    )
+    if out.get("ok"):
+        lines.append(
+            "\n直接说「帮我搜一下 ……」或使用对应 mcp_* 工具即可。"
+            "若工具仍不可见，**新开会话**以加载 MCP 工具表。"
+        )
     wrote_ok = bool(out.get("ok", True))
     return {
         "ok": wrote_ok,
         "message": "\n".join(lines),
-        "detail": out.get("action"),
+        "detail": out.get("action") if wrote_ok else "connect_failed",
         "data": {k: v for k, v in out.items() if k != "ok"},
         "clear_pending_mcp": True,
     }
@@ -543,14 +577,17 @@ async def _exec_mcp_setup_guide(payload: dict[str, Any]) -> dict[str, Any]:
     if not label:
         return {
             "ok": False,
-            "message": "请说明要配置哪个 MCP（豆包搜索 / tavily / firecrawl）。",
+            "message": "请说明要配置哪个 MCP（豆包搜索 / tavily / firecrawl / deepwiki）。",
             "detail": "missing_label",
         }
     preset = find_preset(label)
     if preset is None:
         return {
             "ok": False,
-            "message": f"未识别的 MCP 预制「{label}」。支持：豆包搜索 / tavily / firecrawl。",
+            "message": (
+                f"未识别的 MCP 预制「{label}」。"
+                "支持：豆包搜索 / tavily / firecrawl / deepwiki / mcp-remote-deepwiki。"
+            ),
             "detail": "unknown_preset",
         }
 
@@ -635,9 +672,9 @@ async def _exec_mcp_setup_guide(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _exec_mcp_add_custom(payload: dict[str, Any]) -> dict[str, Any]:
-    """S9: 自定义 MCP 快路径 — 写库 + 热挂载。"""
+    """S9: 自定义 MCP 快路径 — 写库 + 热挂载（stdio/sse/streamable-http）。"""
     name = str(payload.get("name") or "").strip()
-    transport = str(payload.get("transport") or "stdio").strip().lower()
+    transport_raw = str(payload.get("transport") or "stdio").strip().lower()
     command = str(payload.get("command") or "").strip() or None
     args = payload.get("args") or []
     if not isinstance(args, list):
@@ -646,21 +683,49 @@ async def _exec_mcp_add_custom(payload: dict[str, Any]) -> dict[str, Any]:
     url = str(payload.get("url") or "").strip() or None
     env = payload.get("env") if isinstance(payload.get("env"), dict) else {}
 
-    if not name:
-        return {"ok": False, "message": "需要 MCP 名称（name）。", "detail": "missing_name"}
-    if transport not in ("stdio", "sse"):
-        return {"ok": False, "message": "transport 须为 stdio 或 sse。", "detail": "bad_transport"}
-    if transport == "stdio" and not command:
-        return {"ok": False, "message": "stdio 需要 command（如 npx / uvx）。", "detail": "missing_command"}
-    if transport == "sse" and not url:
-        return {"ok": False, "message": "sse 需要 url。", "detail": "missing_url"}
-
     try:
-        from backend.mcp_hub.normalize import normalize_server_fields
+        from backend.mcp_hub.normalize import (
+            SUPPORTED_TRANSPORTS,
+            is_url_transport,
+            normalize_server_fields,
+            normalize_transport,
+        )
         from backend.repositories.mcp_server_repo import AsyncMCPServerRepository
         from backend.schemas.mcp import MCPServerCreate
     except Exception as e:
         return {"ok": False, "message": f"MCP 模块不可用: {e}", "detail": "import"}
+
+    transport = normalize_transport(transport_raw) or transport_raw
+    if url and (not transport or transport == "stdio"):
+        transport = _infer_remote_mcp_transport(url)
+
+    if not name:
+        return {"ok": False, "message": "需要 MCP 名称（name）。", "detail": "missing_name"}
+    if transport not in SUPPORTED_TRANSPORTS:
+        return {
+            "ok": False,
+            "message": "transport 须为 stdio / sse / streamable-http。",
+            "detail": "bad_transport",
+        }
+    if transport == "stdio" and not command:
+        return {
+            "ok": False,
+            "message": "stdio 需要 command（如 npx / uvx）。",
+            "detail": "missing_command",
+        }
+    if is_url_transport(transport) and not url:
+        return {
+            "ok": False,
+            "message": f"{transport} 需要 url。",
+            "detail": "missing_url",
+        }
+
+    timeout = 30.0
+    joined = " ".join(args).lower()
+    if is_url_transport(transport):
+        timeout = 60.0
+    if "mcp-remote" in joined or name.lower() in ("deepwiki", "mcp-remote"):
+        timeout = 120.0
 
     repo = AsyncMCPServerRepository()
     try:
@@ -687,10 +752,10 @@ async def _exec_mcp_add_custom(payload: dict[str, Any]) -> dict[str, Any]:
             transport=transport,
             command=norm.get("command") if transport == "stdio" else None,
             args=list(norm.get("args") or []) if transport == "stdio" else [],
-            url=url if transport == "sse" else None,
+            url=url if is_url_transport(transport) else None,
             env=dict(norm.get("env") or env or {}),
             enabled=True,
-            timeout=30.0,
+            timeout=timeout,
             risk_level="low",
         )
         obj = await repo.create(data)
@@ -699,39 +764,73 @@ async def _exec_mcp_add_custom(payload: dict[str, Any]) -> dict[str, Any]:
 
     tools_n = 0
     rt_note = ""
+    connected = False
     try:
         from backend.tools.builtins.manage_integration_tools import ManageMcp
+
         tool = ManageMcp()
         if hasattr(tool, "_sync_runtime"):
             rt = await tool._sync_runtime(only_server=name)
             if isinstance(rt, dict):
                 tools_n = int(rt.get("registered") or 0)
-                rt_note = "connected" if name in (rt.get("connected") or []) else str(
-                    rt.get("error") or rt.get("warning") or ""
-                )
+                connected = name in (rt.get("connected") or []) and bool(rt.get("ok"))
+                if connected:
+                    rt_note = "connected"
+                else:
+                    rt_note = str(
+                        rt.get("connect_error")
+                        or rt.get("error")
+                        or rt.get("warning")
+                        or "not connected"
+                    )
     except Exception as e:
         rt_note = str(e)[:160]
 
     lines = [
         f"**自定义 MCP `{name}`** 已用快路径写入（未进多步 Agent）。",
-        f"- transport：`{transport}`",
+        f"- transport：`{transport}` · timeout={timeout:.0f}s",
     ]
     if transport == "stdio":
         lines.append(f"- 启动：`{command} {' '.join(args)}`".rstrip())
     else:
         lines.append(f"- url：`{url}`")
-    if tools_n:
-        lines.append(f"- 热挂载：已注册约 {tools_n} 个工具")
-    elif rt_note:
-        lines.append(f"- 运行时：{rt_note[:160]}（配置已在库中）")
-    else:
-        lines.append("- 运行时：已触发同步；若工具不可见请新开一轮对话")
-    lines.append(f"需要密钥时直接说：`{name} API Key：xxxx` 或设置 → MCP。")
+    if connected:
+        if tools_n:
+            lines.append(f"- 热挂载：已注册约 {tools_n} 个工具")
+        lines.append(f"需要密钥时直接说：`{name} API Key：xxxx` 或设置 → MCP。")
+        return {
+            "ok": True,
+            "message": "\n".join(lines),
+            "detail": "added",
+            "data": {
+                "name": name,
+                "transport": transport,
+                "tools_registered": tools_n,
+                "timeout": timeout,
+            },
+        }
+
+    lines.append(f"- 运行时：连接失败 — {rt_note[:200]}")
+    lines.append(
+        "【自动收束】配置已写入 DB；请停止对本 server 的 add/update 重试，"
+        "向用户说明原因（网络/URL/timeout/transport）。"
+        "DeepWiki 类可用 streamable-http + 官方 /mcp URL，"
+        "或 stdio + mcp-remote（timeout≥120）。"
+    )
     return {
-        "ok": True,
+        "ok": False,
         "message": "\n".join(lines),
-        "detail": "added",
-        "data": {"name": name, "transport": transport, "tools_registered": tools_n},
+        "detail": "connect_failed",
+        "data": {
+            "name": name,
+            "transport": transport,
+            "tools_registered": tools_n,
+            "db_written": True,
+            "conclude": True,
+            "runtime_error": rt_note[:300],
+            "timeout": timeout,
+            "server_id": str(getattr(obj, "id", "") or ""),
+        },
     }
 
 

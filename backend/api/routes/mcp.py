@@ -67,16 +67,29 @@ def _public_mcp_config(row: object, *, reveal_env: bool = False) -> MCPServerCon
     return cfg.model_copy(update={"env": redacted, "env_keys": keys})
 
 
-def _attach_runtime(payload: dict, runtime: dict) -> dict:
-    """把热同步结果附到响应（不改 ORM schema，仅 dict 扩展场景用）。"""
-    payload = dict(payload)
-    payload["runtime"] = {
-        "ok": bool(runtime.get("ok")),
-        "connected": list(runtime.get("connected") or []),
-        "error": runtime.get("error"),
-        "warning": runtime.get("warning"),
-    }
-    return payload
+def _with_runtime(cfg: MCPServerConfig, runtime: dict, *, name: str | None = None) -> MCPServerConfig:
+    """把热同步结果附到 MCPServerConfig（列表接口不带这些字段）。"""
+    sname = name or cfg.name
+    connected_list = list(runtime.get("connected") or [])
+    connected = sname in connected_list
+    ok = bool(runtime.get("ok")) and connected
+    err = None
+    if not ok:
+        err = str(
+            runtime.get("connect_error")
+            or runtime.get("error")
+            or runtime.get("warning")
+            or "not connected"
+        )[:500]
+    return cfg.model_copy(
+        update={
+            "runtime_ok": ok,
+            "runtime_connected": connected,
+            "runtime_error": err,
+            "runtime_conclude": not ok,
+            "runtime_registered": int(runtime.get("registered") or 0),
+        }
+    )
 
 
 @router.get("", response_model=list[MCPServerConfig])
@@ -128,7 +141,7 @@ async def create_mcp_server(
         cfg = _public_mcp_config(updated)
         if not rt.get("ok"):
             logger.error("MCP create/upsert runtime sync failed: %s", rt.get("error"))
-        return cfg
+        return _with_runtime(cfg, rt, name=data.name)
     # 规范化 command/args/env（纠正 tavily 错包等）
     from backend.mcp_hub.normalize import normalize_server_fields
 
@@ -150,7 +163,7 @@ async def create_mcp_server(
     rt = await _hot_reload(only_server=data.name)
     if not rt.get("ok"):
         logger.error("MCP create runtime sync failed: %s", rt.get("error"))
-    return _public_mcp_config(server)
+    return _with_runtime(_public_mcp_config(server), rt, name=data.name)
 
 
 @router.put("/{server_id}", response_model=MCPServerConfig)
@@ -190,8 +203,10 @@ async def update_mcp_server(
     updated = await repo.update(server_id, MCPServerUpdate(**dump))
     if updated is None:
         raise HTTPException(status_code=404, detail="MCP server not found")
-    await _hot_reload(only_server=name)
-    return _public_mcp_config(updated)
+    rt = await _hot_reload(only_server=name)
+    if not rt.get("ok"):
+        logger.error("MCP update runtime sync failed: %s", rt.get("error"))
+    return _with_runtime(_public_mcp_config(updated), rt, name=name)
 
 
 @router.put("/{server_id}/toggle", response_model=MCPServerConfig)

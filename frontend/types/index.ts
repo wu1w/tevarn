@@ -427,7 +427,7 @@ export interface MCPServer {
   id: string;
   name: string;
   description: string | null;
-  transport: 'stdio' | 'sse';
+  transport: 'stdio' | 'sse' | 'streamable-http';
   command: string | null;
   args: string[] | null;
   url: string | null;
@@ -454,7 +454,7 @@ export interface MCPServerStatus {
 export interface MCPServerFormData {
   name: string;
   description?: string;
-  transport: 'stdio' | 'sse';
+  transport: 'stdio' | 'sse' | 'streamable-http';
   command?: string;
   args?: string;
   url?: string;

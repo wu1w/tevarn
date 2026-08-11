@@ -23,6 +23,7 @@ const RISK_OPTIONS = [
 const TRANSPORT_OPTIONS = [
   { value: 'stdio' as const, labelKey: 'mcpPage.transport.stdio' },
   { value: 'sse' as const, labelKey: 'mcpPage.transport.sse' },
+  { value: 'streamable-http' as const, labelKey: 'mcpPage.transport.streamableHttp' },
 ];
 
 const TAB_ACTIVE = 'bg-brand-purple text-white shadow-sm shadow-brand-purple/15';
@@ -73,18 +74,39 @@ export default function MCPPage() {
         addToast(t('mcpPage.stdioCmdRequired'), 'error');
         return;
       }
-      if (form.transport === 'sse' && !form.url?.trim()) {
+      if (
+        (form.transport === 'sse' || form.transport === 'streamable-http') &&
+        !form.url?.trim()
+      ) {
         addToast(t('mcpPage.sseUrlRequired'), 'error');
         return;
       }
       setSubmitting(true);
       try {
         if (editingId) {
-          await updateMutation.mutateAsync({ id: editingId, data: form });
-          addToast(t('mcpPage.updated'), 'success');
+          const updated = await updateMutation.mutateAsync({ id: editingId, data: form });
+          const rtOk = (updated as { runtime_ok?: boolean | null })?.runtime_ok;
+          if (rtOk === false) {
+            addToast(
+              (updated as { runtime_error?: string | null })?.runtime_error ||
+                t('mcpPage.updated'),
+              'error',
+            );
+          } else {
+            addToast(t('mcpPage.updated'), 'success');
+          }
         } else {
-          await createMutation.mutateAsync(form);
-          addToast(t('mcpPage.created'), 'success');
+          const created = await createMutation.mutateAsync(form);
+          const rtOk = (created as { runtime_ok?: boolean | null })?.runtime_ok;
+          if (rtOk === false) {
+            addToast(
+              (created as { runtime_error?: string | null })?.runtime_error ||
+                t('mcpPage.created'),
+              'error',
+            );
+          } else {
+            addToast(t('mcpPage.created'), 'success');
+          }
         }
         resetForm();
         setTab('installed');
@@ -191,7 +213,10 @@ export default function MCPPage() {
                   <select
                     value={form.transport}
                     onChange={(e) =>
-                      setForm((f) => ({ ...f, transport: e.target.value as 'stdio' | 'sse' }))
+                      setForm((f) => ({
+                        ...f,
+                        transport: e.target.value as 'stdio' | 'sse' | 'streamable-http',
+                      }))
                     }
                     className="w-full rounded-xl border border-border-default bg-input-bg px-3 py-2 text-sm text-foreground"
                   >
@@ -240,12 +265,18 @@ export default function MCPPage() {
                 </div>
               ) : (
                 <div>
-                  <label className="mb-1 block text-xs text-foreground-muted">SSE URL</label>
+                  <label className="mb-1 block text-xs text-foreground-muted">
+                    {form.transport === 'streamable-http' ? 'Streamable HTTP URL' : 'SSE URL'}
+                  </label>
                   <input
                     type="text"
                     value={form.url}
                     onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))}
-                    placeholder="http://127.0.0.1:3001/sse"
+                    placeholder={
+                      form.transport === 'streamable-http'
+                        ? 'https://mcp.deepwiki.com/mcp'
+                        : 'http://127.0.0.1:3001/sse'
+                    }
                     className="w-full rounded-xl border border-border-default bg-input-bg px-3 py-2 font-mono text-sm text-foreground"
                   />
                 </div>

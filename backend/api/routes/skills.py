@@ -105,9 +105,16 @@ async def create_skill(
     payload = data.model_dump()
     payload["is_builtin"] = False
     try:
-        return await repo.create(payload)
+        created = await repo.create(payload)
     except IntegrityError as exc:
         raise HTTPException(status_code=409, detail="Skill name already exists") from exc
+    try:
+        from backend.skills.runtime_sync import sync_dynamic_skill_row
+
+        sync_dynamic_skill_row(created)
+    except Exception:
+        pass
+    return created
 
 
 @router.put("/{skill_id}", response_model=SkillRead)
@@ -123,6 +130,7 @@ async def update_skill(
         raise HTTPException(status_code=404, detail="Skill not found")
     if skill.is_builtin:
         raise HTTPException(status_code=403, detail="Built-in skills cannot be edited")
+    old_name = skill.name
     if data.name is not None:
         existing = await repo.get_skill_by_name(data.name)
         if existing is not None and existing.id != skill_id:
@@ -133,6 +141,12 @@ async def update_skill(
         raise HTTPException(status_code=409, detail="Skill name already exists") from exc
     if updated is None:
         raise HTTPException(status_code=404, detail="Skill not found")
+    try:
+        from backend.skills.runtime_sync import sync_dynamic_skill_row
+
+        sync_dynamic_skill_row(updated, old_name=old_name)
+    except Exception:
+        pass
     return updated
 
 
@@ -154,6 +168,12 @@ async def delete_skill(
     success = await repo.delete(skill_id)
     if not success:
         raise HTTPException(status_code=404, detail="Skill not found")
+    try:
+        from backend.skills.runtime_sync import unregister_dynamic_skill
+
+        unregister_dynamic_skill(skill_name)
+    except Exception:
+        pass
     evo_deleted = 0
     if is_evolved:
         try:
@@ -176,28 +196,15 @@ async def toggle_skill(
     current_user: Annotated[UserRead, Depends(require_admin)],
     repo: Annotated[SkillRepository, Depends(get_skill_repo)],
 ):
-    """切换技能启用状态（仅管理员），并同步 ToolRegistry.enabled。"""
+    """切换技能启用状态（仅管理员），并热同步 ToolRegistry。"""
     skill = await repo.toggle_skill(skill_id, data.enabled)
     if skill is None:
         raise HTTPException(status_code=404, detail="Skill not found")
     try:
-        from backend.tools.registry import ToolRegistry
+        from backend.skills.runtime_sync import sync_dynamic_skill_row
 
-        tool = ToolRegistry.get(skill.name)
-        if tool is not None:
-            tool.enabled = bool(data.enabled)
-        elif data.enabled and not getattr(skill, "is_builtin", False):
-            # 启用但未在 Registry：尝试热加载动态 skill
-            try:
-                from backend.skills.dynamic import DynamicSkill
-                from backend.tools.adapters.dynamic_adapter import DynamicSkillAdapter
-
-                dynamic = DynamicSkill.from_db(skill)
-                ToolRegistry.register(DynamicSkillAdapter(dynamic))
-            except Exception:
-                pass
+        sync_dynamic_skill_row(skill)
         if not data.enabled:
-            # 进化工具：禁用时也 unregister 以免 schema 残留（enabled 门即可，双保险）
             hc = getattr(skill, "handler_config", None) or {}
             if hc.get("evolution") or hc.get("source") == "evolution":
                 try:
@@ -277,7 +284,13 @@ async def import_community_skills(
             continue
         data = skill_create.model_dump()
         data["is_builtin"] = False
-        await repo.create(data)
+        created = await repo.create(data)
+        try:
+            from backend.skills.runtime_sync import sync_dynamic_skill_row
+
+            sync_dynamic_skill_row(created)
+        except Exception:
+            pass
         imported += 1
 
-    return {"imported": imported}
+    return {"imported": imported, "note": "imported skills hot-registered to ToolRegistry"}

@@ -897,6 +897,7 @@
   "mcpPage.risk.dangerousDesc": "Can run system commands / network proxy",
   "mcpPage.transport.stdio": "stdio (local command)",
   "mcpPage.transport.sse": "SSE (remote URL)",
+  "mcpPage.transport.streamableHttp": "Streamable HTTP (remote URL)",
   "channels.title": "Message Channels",
   "channels.subtitle": "Connect messaging platforms so the Agent can send and receive messages",
   "channels.add": "Add",

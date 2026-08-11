@@ -897,6 +897,7 @@
   "mcpPage.risk.dangerousDesc": "可执行系统命令/网络代理",
   "mcpPage.transport.stdio": "stdio（本地命令）",
   "mcpPage.transport.sse": "SSE（远程 URL）",
+  "mcpPage.transport.streamableHttp": "Streamable HTTP（远程 URL）",
   "channels.title": "消息通道",
   "channels.subtitle": "连接通信平台，让 Agent 收发消息",
   "channels.add": "添加",

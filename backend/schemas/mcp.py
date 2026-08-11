@@ -10,7 +10,23 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+# stdio | sse | streamable-http（http/streamable_http 别名由 normalize_transport 收束）
+_MCP_TRANSPORT_PATTERN = r"^(stdio|sse|streamable-http|streamable_http|http)$"
+
+
+def _coerce_transport(v: str | None) -> str | None:
+    if v is None:
+        return None
+    try:
+        from backend.mcp_hub.normalize import normalize_transport
+
+        n = normalize_transport(str(v))
+        return n or str(v)
+    except Exception:
+        return str(v)
 
 
 class MCPServerConfig(BaseModel):
@@ -19,7 +35,7 @@ class MCPServerConfig(BaseModel):
     id: uuid.UUID
     name: str = Field(..., min_length=1, max_length=64)
     description: Optional[str] = None
-    transport: str = Field(..., pattern=r"^(stdio|sse)$")
+    transport: str = Field(..., pattern=_MCP_TRANSPORT_PATTERN)
     command: Optional[str] = None
     args: list[str] = Field(default_factory=list)
     url: Optional[str] = None
@@ -36,8 +52,21 @@ class MCPServerConfig(BaseModel):
     # ORM 表暂无时间戳列；可选以免 ResponseValidationError
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    # 热同步结果（非 ORM；create/update 后填充，列表接口通常为 null）
+    runtime_ok: Optional[bool] = None
+    runtime_connected: Optional[bool] = None
+    runtime_error: Optional[str] = None
+    runtime_conclude: Optional[bool] = None
+    runtime_registered: Optional[int] = None
 
     model_config = {"from_attributes": True}
+
+    @field_validator("transport", mode="before")
+    @classmethod
+    def _norm_transport(cls, v: object) -> object:
+        if v is None:
+            return v
+        return _coerce_transport(str(v)) or v
 
 
 class MCPServerCreate(BaseModel):
@@ -45,7 +74,7 @@ class MCPServerCreate(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=64)
     description: Optional[str] = None
-    transport: str = Field(..., pattern=r"^(stdio|sse)$")
+    transport: str = Field(..., pattern=_MCP_TRANSPORT_PATTERN)
     command: Optional[str] = None
     args: list[str] = Field(default_factory=list)
     url: Optional[str] = None
@@ -57,13 +86,20 @@ class MCPServerCreate(BaseModel):
     tools_include: Optional[list[str]] = None
     tools_exclude: Optional[list[str]] = None
 
+    @field_validator("transport", mode="before")
+    @classmethod
+    def _norm_transport(cls, v: object) -> object:
+        if v is None:
+            return v
+        return _coerce_transport(str(v)) or v
+
 
 class MCPServerUpdate(BaseModel):
     """更新 MCP Server"""
 
     name: Optional[str] = Field(None, min_length=1, max_length=64)
     description: Optional[str] = None
-    transport: Optional[str] = Field(None, pattern=r"^(stdio|sse)$")
+    transport: Optional[str] = Field(None, pattern=_MCP_TRANSPORT_PATTERN)
     command: Optional[str] = None
     args: Optional[list[str]] = None
     url: Optional[str] = None
@@ -74,6 +110,13 @@ class MCPServerUpdate(BaseModel):
     allowed_paths: Optional[list[str]] = None
     tools_include: Optional[list[str]] = None
     tools_exclude: Optional[list[str]] = None
+
+    @field_validator("transport", mode="before")
+    @classmethod
+    def _norm_transport(cls, v: object) -> object:
+        if v is None:
+            return v
+        return _coerce_transport(str(v)) or v
 
 
 class MCPServerToolsPolicy(BaseModel):

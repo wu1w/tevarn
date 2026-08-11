@@ -55,9 +55,16 @@ def _resolve_cmd(cmd: str | None) -> str | None:
 
 
 def _row_to_config(s: Any) -> MCPServerConfig:
+    transport = str(getattr(s, "transport", "") or "stdio")
+    try:
+        from backend.mcp_hub.normalize import normalize_transport
+
+        transport = normalize_transport(transport) or transport
+    except Exception:
+        pass
     return MCPServerConfig(
         name=s.name,
-        transport=s.transport,
+        transport=transport,
         command=_resolve_cmd(s.command),
         args=list(s.args or []),
         url=s.url,
@@ -206,7 +213,17 @@ async def sync_mcp_runtime(only_server: str | None = None) -> dict[str, Any]:
             cfg = _row_to_config(row)
             client = await manager.reconnect(cfg)
             if client is None:
-                warning = f"Failed to connect MCP server '{only}' (kept previous if any)"
+                detail = ""
+                try:
+                    detail = (manager.pop_last_error(only) or "").strip()
+                except Exception:
+                    detail = ""
+                if not detail:
+                    detail = "unknown connect error"
+                warning = (
+                    f"Failed to connect MCP server '{only}': {detail} "
+                    f"(kept previous if any)"
+                )
                 logger.warning("%s", warning)
                 return {
                     "ok": False,
@@ -215,6 +232,8 @@ async def sync_mcp_runtime(only_server: str | None = None) -> dict[str, Any]:
                     "unregistered": 0,
                     "warning": warning,
                     "error": warning,
+                    "connect_error": detail,
+                    "conclude": True,
                 }
 
             try:
@@ -293,8 +312,21 @@ async def sync_mcp_runtime(only_server: str | None = None) -> dict[str, Any]:
         enabled_names = [c.name for c in configs]
         warning = None
         missing = [n for n in enabled_names if n not in connected]
+        connect_errors: dict[str, str] = {}
         if missing:
-            warning = f"failed to connect: {', '.join(missing)}"
+            bits: list[str] = []
+            for n in missing:
+                detail = ""
+                try:
+                    detail = (manager.pop_last_error(n) or "").strip()
+                except Exception:
+                    detail = ""
+                if detail:
+                    connect_errors[n] = detail
+                    bits.append(f"{n} ({detail})")
+                else:
+                    bits.append(n)
+            warning = f"failed to connect: {', '.join(bits)}"
 
         logger.info(
             "sync_mcp_runtime: connected=%s registered=%s warning=%s",
@@ -309,6 +341,8 @@ async def sync_mcp_runtime(only_server: str | None = None) -> dict[str, Any]:
             "unregistered": unregistered,
             "warning": warning,
             "error": warning,
+            "connect_errors": connect_errors or None,
+            "conclude": bool(missing),
         }
     except Exception as e:
         logger.exception("sync_mcp_runtime failed: %s", e)
