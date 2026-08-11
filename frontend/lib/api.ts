@@ -2958,6 +2958,9 @@ export interface TaktonPackageItem {
   attached?: boolean;
 }
 
+/** @deprecated alias — UI still imports TevarnPackageItem in places */
+export type TevarnPackageItem = TaktonPackageItem;
+
 export async function listPackages(sessionId?: string, source?: string): Promise<{
   packages: TaktonPackageItem[];
   attached: string[];

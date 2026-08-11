@@ -87,10 +87,33 @@ function unzip(zipPath, dest) {
   } catch {
     /* try python */
   }
-  run('python3', [
-    '-c',
-    `import zipfile; zipfile.ZipFile(${JSON.stringify(zipPath)}).extractall(${JSON.stringify(dest)})`,
-  ]);
+  // Windows hosts usually have `python`, not `python3`
+  const pyCandidates = process.platform === 'win32' ? ['python', 'py', 'python3'] : ['python3', 'python'];
+  let lastErr = null;
+  for (const py of pyCandidates) {
+    try {
+      run(py, [
+        '-c',
+        `import zipfile; zipfile.ZipFile(${JSON.stringify(zipPath)}).extractall(${JSON.stringify(dest)})`,
+      ]);
+      return;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  // PowerShell Expand-Archive fallback (Windows)
+  if (process.platform === 'win32') {
+    try {
+      execSync(
+        `powershell -NoProfile -Command "Expand-Archive -LiteralPath '${zipPath.replace(/'/g, "''")}' -DestinationPath '${dest.replace(/'/g, "''")}' -Force"`,
+        { stdio: 'inherit' },
+      );
+      return;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  fail(`unzip failed for ${zipPath}: ${lastErr && lastErr.message ? lastErr.message : lastErr}`);
 }
 
 function writeWinRequirements() {
