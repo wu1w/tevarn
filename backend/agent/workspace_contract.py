@@ -97,7 +97,7 @@ def load_workspace_contract(
         map_lines = [
             "### DATA MAP（路径事实 · 必读）",
             f"- **workspace_root（file_read/grep/command 默认边界）**: `{ws}`",
-            f"- **宿主数据根（已放行）**: " + (", ".join(f"`{r}`" for r in host_roots) if host_roots else "（无）"),
+            "- **宿主数据根（已放行）**: " + (", ".join(f"`{r}`" for r in host_roots) if host_roots else "（无）"),
             f"- **沙箱内宿主数据镜像**: `{ws}/.computers/<agent>/home/.tevarn` → 指向宿主 `~/.tevarn`",
             "- **经营目标 O-KR**: 不在文件里，用工具 **`okr_goal`**（list/update/create），不要 grep 源码",
             "- **会话 Todo 规划卡**: `manage_goal`（与目标页无关）",

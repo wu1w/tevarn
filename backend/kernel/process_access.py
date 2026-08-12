@@ -146,9 +146,10 @@ async def assert_user_owns_process(
         try:
             import uuid as _uuid
 
+            from sqlalchemy import select
+
             from backend.database import AsyncSessionLocal
             from backend.models.session import Session as SessionModel
-            from sqlalchemy import select
 
             sid = _uuid.UUID(psid)
             async with AsyncSessionLocal() as db:
@@ -173,9 +174,10 @@ async def assert_user_owns_process(
         try:
             import uuid as _uuid
 
+            from sqlalchemy import select
+
             from backend.database import AsyncSessionLocal
             from backend.models.agent_identity import AgentIdentity
-            from sqlalchemy import select
 
             aid = _uuid.UUID(iid)
             async with AsyncSessionLocal() as db:
@@ -236,9 +238,10 @@ async def assert_user_owns_identity(
     try:
         import uuid as _uuid
 
+        from sqlalchemy import select
+
         from backend.database import AsyncSessionLocal
         from backend.models.agent_identity import AgentIdentity
-        from sqlalchemy import select
 
         aid = _uuid.UUID(iid_raw)
     except Exception as e:

@@ -228,7 +228,7 @@ def _fetch_remote_catalog(url: str) -> list[dict[str, Any]]:
     if not url or not str(url).strip().startswith("https://"):
         return []
     try:
-        from backend.core.net_safety import UnsafeURLError, validate_public_url
+        from backend.core.net_safety import validate_public_url
 
         validate_public_url(url)
     except Exception as e:
@@ -359,9 +359,10 @@ def _safe_https_download(url: str, *, max_bytes: int = 64 * 1024 * 1024) -> byte
 
     最多跟随 5 跳；禁止 http 降级与私网目标。
     """
-    from backend.core.net_safety import UnsafeURLError, validate_public_url
     import urllib.error
     import urllib.request
+
+    from backend.core.net_safety import UnsafeURLError, validate_public_url
 
     if not str(url).lower().startswith("https://"):
         raise UnsafeURLError("only https allowed")

@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import shutil
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -331,8 +331,8 @@ async def ensure_mcp_preset(
     connect_error = None
     if reload:
         try:
-            from backend.mcp_hub.service import sync_mcp_runtime
             from backend.mcp_hub.client import get_mcp_manager
+            from backend.mcp_hub.service import sync_mcp_runtime
 
             sname = str(getattr(obj, "name", None) or name or "")
             rt = await sync_mcp_runtime(only_server=sname or None)

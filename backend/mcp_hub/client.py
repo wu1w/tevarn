@@ -151,7 +151,7 @@ class MCPClient:
         if not self.config.command:
             raise ValueError(f"MCP server '{self.name}' stdio transport requires command")
 
-        from backend.mcp_hub.normalize import normalize_stdio_command_args, merge_env
+        from backend.mcp_hub.normalize import merge_env, normalize_stdio_command_args
 
         command, args = normalize_stdio_command_args(
             self.name,
@@ -206,7 +206,10 @@ class MCPClient:
         # 子进程 env：白名单 + PATH 补全 + 用户 extra（勿整表继承 os.environ 灌密钥）
         used_curated_env = False
         try:
-            from backend.core.host_commands import build_process_env, resolve_host_command
+            from backend.core.host_commands import (
+                build_process_env,
+                resolve_host_command,
+            )
 
             resolved = resolve_host_command(cmd)
             if resolved and resolved != cmd:

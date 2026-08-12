@@ -10,7 +10,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-
 _OFF = frozenset({"off", "none", "disabled", "false", "0", ""})
 
 

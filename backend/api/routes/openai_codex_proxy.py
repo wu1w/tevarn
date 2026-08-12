@@ -1086,7 +1086,11 @@ async def chat_completions(request: Request):
     url = f"{UPSTREAM}/responses"
     timeout = _codex_upstream_timeout()
 
-    from backend.core.outbound_http import outbound_session, proxy_is_socks, resolve_proxy_url
+    from backend.core.outbound_http import (
+        outbound_session,
+        proxy_is_socks,
+        resolve_proxy_url,
+    )
     from backend.services.llm.codex_sse_isolate import (
         consume_sse_bytes_to_events,
         isolate_enabled,
@@ -1420,6 +1424,7 @@ async def chat_completions(request: Request):
             )
 
     async def _gen():
+        nonlocal token
         conv = _CodexStreamToChat(model)
         try:
             _sem = await _acquire_codex_sem("stream")

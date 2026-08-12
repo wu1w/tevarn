@@ -152,10 +152,9 @@ async def pair_session(body: PairSessionBody) -> dict[str, Any]:
     - 过去 VPS 路径靠隧道剥 XFF 伪装 127.0.0.1 才能 auto-login，脆弱且易 403
     - claim 已经证明手机持有一次性配对码；device token 是合法的会话凭证
     """
-    from backend.core.security import create_access_token
-    from backend.core.unit_of_work import UnitOfWork
     from backend.api.dependencies import resolve_default_admin_password
-    from backend.core.security import get_password_hash
+    from backend.core.security import create_access_token, get_password_hash
+    from backend.core.unit_of_work import UnitOfWork
     from backend.schemas import UserRead
 
     token = (body.token or "").strip()

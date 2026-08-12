@@ -270,7 +270,7 @@ class SkillMdDownloader:
     async def _fetch_text(url: str) -> str | None:
         """下载文本内容，失败返回 None。强制公网 URL 校验，禁止跟随重定向（防 SSRF）。"""
         try:
-            from backend.core.net_safety import UnsafeURLError, validate_public_url
+            from backend.core.net_safety import validate_public_url
 
             validate_public_url(url)
         except Exception as e:

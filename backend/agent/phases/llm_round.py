@@ -283,7 +283,9 @@ async def _run_llm_round_body(
                                 "请检查网络/API Key/模型名后重试。"
                             )
                             result.action = "break"
-                            from backend.agent.thinking_format import canonicalize_thinking
+                            from backend.agent.thinking_format import (
+                                canonicalize_thinking,
+                            )
 
                             result.final_content = canonicalize_thinking(
                                 accumulated_reasoning, accumulated_content
@@ -402,7 +404,7 @@ async def _run_llm_round_body(
             # 通知前端清 streaming 缓冲（status 即可）
             try:
                 await loop._push_status(
-                    session_id, "thinking", f"重试中 · 新一轮输出…"
+                    session_id, "thinking", "重试中 · 新一轮输出…"
                 )
             except Exception:
                 pass

@@ -1580,7 +1580,11 @@ def get_kernel() -> Any:
     backend = _resolve_kernel_backend()
     if backend == "rust":
         try:
-            from backend.kernel_rust import get_rust_kernel, is_rust_host_available, start_kernel_host
+            from backend.kernel_rust import (
+                get_rust_kernel,
+                is_rust_host_available,
+                start_kernel_host,
+            )
 
             if not is_rust_host_available():
                 started = start_kernel_host()

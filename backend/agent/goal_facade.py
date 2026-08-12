@@ -164,12 +164,12 @@ async def prepare_goal_runtime(
     optionally pushing a WS goal update. Caller assigns returned int to
     ``self.max_iterations``.
     """
-    from backend.core.config import settings
     from backend.agent.goal_state import (
         ensure_goal,
         get_goal,
         load_goal_from_db,
     )
+    from backend.core.config import settings
 
     goal_iters = int(getattr(settings, "agent_goal_max_iterations", 100) or 100)
     raised = max(int(max_iterations or 0), goal_iters)

@@ -344,6 +344,7 @@ async def start_background(
             run_env = dict(env) if env else None
             try:
                 import os as _os
+
                 from backend.core.msvc_env import (
                     apply_host_rust_env,
                     merge_msvc_env,

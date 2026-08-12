@@ -26,7 +26,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Optional
-from urllib.parse import quote, urlencode
+from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 

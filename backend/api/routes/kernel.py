@@ -244,7 +244,7 @@ async def process_tree(
         p["tools_visible_count"] = meta.get("tools_visible_count")
         by_id[pid] = p
     roots: list[dict[str, Any]] = []
-    for pid, p in by_id.items():
+    for _pid, p in by_id.items():
         parent = p.get("parent_id")
         if parent and str(parent) in by_id:
             by_id[str(parent)]["children"].append(p)
@@ -272,6 +272,7 @@ async def governance_status(
 ):
     """H2 治理基线快照：旁路开关、soft renew、密钥来源、生产守卫。"""
     from backend.core.config import settings
+    from backend.kernel import get_kernel_backend
     from backend.kernel.production_guard import (
         allow_compat_full_open,
         allow_kernel_disabled,
@@ -279,7 +280,6 @@ async def governance_status(
         is_dev_unsafe,
         is_production_guard,
     )
-    from backend.kernel import get_kernel_backend
 
     hmac_src = "unknown"
     try:
@@ -668,7 +668,10 @@ async def host_watchdog_api(
 
 async def _require_process_owner(process_id: str, current_user: UserRead, *, live: bool = False):
     """归属校验：不通过则 HTTPException。"""
-    from backend.kernel.process_access import assert_user_owns_process, ownership_http_exc
+    from backend.kernel.process_access import (
+        assert_user_owns_process,
+        ownership_http_exc,
+    )
 
     kernel = get_kernel()
     try:
@@ -682,7 +685,10 @@ async def _require_process_owner(process_id: str, current_user: UserRead, *, liv
 
 async def _require_identity_owner(identity_id: str, current_user: UserRead):
     """编制身份归属校验：不通过则 HTTPException。"""
-    from backend.kernel.process_access import assert_user_owns_identity, ownership_http_exc
+    from backend.kernel.process_access import (
+        assert_user_owns_identity,
+        ownership_http_exc,
+    )
 
     try:
         return await assert_user_owns_identity(
@@ -2473,7 +2479,8 @@ async def sample_process_rss(
     """资源加深：采样 RSS（交互进程须 session 匹配）。"""
     from backend.kernel import get_kernel
     from backend.kernel.process_access import assert_process_accessible
-    from backend.kernel.resource_os import sample_and_report, status as ros_status
+    from backend.kernel.resource_os import sample_and_report
+    from backend.kernel.resource_os import status as ros_status
 
     k = get_kernel()
     try:
@@ -2694,10 +2701,10 @@ async def eval_run_api(
     weekly: bool = Query(True, description="跑完后写入周报"),
 ):
     """债 #2：触发 Eval Harness 四套固定集并可选写周报。"""
-    from backend.services.weekly_report import collect_weekly_report, persist_eval_run
-
     # 在线程中跑同步 eval，避免阻塞过久时可后续改后台任务
     import asyncio
+
+    from backend.services.weekly_report import collect_weekly_report, persist_eval_run
 
     def _run():
         from scripts.tevarn_eval import (
@@ -3154,8 +3161,8 @@ async def list_session_workforce_jobs(
     try:
         import uuid as _uuid
 
-        from backend.core.unit_of_work import UnitOfWork
         from backend.api.dependencies import assert_session_owner
+        from backend.core.unit_of_work import UnitOfWork
 
         async with UnitOfWork() as uow:
             sess = await uow.sessions.get_by_id(_uuid.UUID(sid))
@@ -3225,10 +3232,11 @@ async def budget_retry_inbox_item(
 
     body: { amount?: int=300000, also_default?: bool=true, reason?: str }
     """
+    from sqlalchemy import select
+
     from backend.agent.workforce_budget import clamp_ceo_budget, hard_cap
     from backend.kernel.workforce import get_workforce_inbox
     from backend.models.agent_identity import AgentInboxItem
-    from sqlalchemy import select
 
     inbox = get_workforce_inbox()
     if inbox is None:

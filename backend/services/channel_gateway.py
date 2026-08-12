@@ -789,8 +789,9 @@ class ChannelGateway:
         self._stop_flags[sid] = True
         stopped = False
         try:
-            from backend.api.websocket import manager as ws_manager
             import uuid as _uuid
+
+            from backend.api.websocket import manager as ws_manager
 
             uid = _uuid.UUID(str(sid)) if not isinstance(sid, _uuid.UUID) else sid
             if ws_manager.stop_agent_loop(uid):

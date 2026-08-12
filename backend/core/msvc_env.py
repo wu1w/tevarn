@@ -120,7 +120,7 @@ def _fallback_msvc_paths(vcvars: str) -> dict[str, str]:
         build_dir = os.path.dirname(os.path.abspath(vcvars))
         # .../VC/Auxiliary/Build
         vc_dir = os.path.dirname(os.path.dirname(build_dir))  # .../VC
-        vs_root = os.path.dirname(vc_dir)  # BuildTools or VS root
+        _vs_root = os.path.dirname(vc_dir)  # BuildTools or VS root
     except Exception:
         return {}
     msvc_tools = os.path.join(vc_dir, "Tools", "MSVC")

@@ -59,8 +59,8 @@ async def run_no_tool_round(
     # P2: Plan 模式无工具 → 收计划
     if getattr(loop, "_plan_mode_active", False) and (accumulated_content or "").strip():
         try:
-            from backend.agent.plan_session import submit_plan_markdown, get_gate
             from backend.agent.plan_gate import PlanState
+            from backend.agent.plan_session import get_gate, submit_plan_markdown
             _body = (accumulated_content or "").strip()
             if len(_body) > 40:
                 submit_plan_markdown(_body, session_id=str(session_id))
@@ -175,8 +175,8 @@ async def run_no_tool_round(
             if _body and not is_empty_assistant_content(accumulated_content):
                 try:
                     from backend.agent.pseudo_tool_recover import (
-                        looks_like_pseudo_tool_content,
                         leak_nudge_text,
+                        looks_like_pseudo_tool_content,
                         scrub_leak_markers,
                     )
 

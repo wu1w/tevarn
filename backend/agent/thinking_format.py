@@ -250,7 +250,6 @@ def _goal_summary_looks_completed(goal_summary: str) -> bool:
     g = (goal_summary or "").strip()
     if not g:
         return False
-    low = g.lower()
     if re.search(r"(?i)status:\s*(completed|cancelled|idle)", g):
         return True
     if "All actionable todos done" in g:

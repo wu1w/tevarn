@@ -68,7 +68,10 @@ def stream_timeout() -> aiohttp.ClientTimeout:
 
 def _current_proxy_url() -> str | None:
     try:
-        from backend.core.outbound_http import resolve_proxy_url, sync_proxy_env_from_settings
+        from backend.core.outbound_http import (
+            resolve_proxy_url,
+            sync_proxy_env_from_settings,
+        )
 
         # 保持进程 env 与设置页一致，供 trust_env 读取
         sync_proxy_env_from_settings()

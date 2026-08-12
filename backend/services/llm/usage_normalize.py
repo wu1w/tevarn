@@ -123,7 +123,6 @@ def normalize_usage(
         return {}
 
     fam = (family or "").strip()
-    fam_l = fam.lower()
     cache_read = 0
     cache_write = 0
 
@@ -142,8 +141,8 @@ def normalize_usage(
             _i(pdet.get("cache_write_tokens")),
             _i(pdet.get("cache_write_input_tokens")),
         )
-    odet = _details(raw, "output_tokens_details", "completion_tokens_details")
-    # (no cache in output details for now)
+    # output_tokens_details: no cache fields used today
+    _ = _details(raw, "output_tokens_details", "completion_tokens_details")
 
     cache_read = max(
         cache_read,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-_FALLBACK = "0.5.4-alpha"
+_FALLBACK = "0.4.2"
 
 
 def product_version() -> str:

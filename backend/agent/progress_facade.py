@@ -20,7 +20,6 @@ from backend.agent.progress_guard import (  # noqa: E402,F401
     WRITE_TOOLS,
     classify_grep_pattern,
     doom_loop_handoff,
-    is_cargo_compile_failure as _py_is_cargo_compile_failure,
     is_deliver_allowed_command,
     is_deliver_allowed_grep,
     is_diag_junk_path,
@@ -31,6 +30,9 @@ from backend.agent.progress_guard import (  # noqa: E402,F401
 )
 from backend.agent.progress_guard import (  # noqa: E402
     classify_cargo_error as _py_classify_cargo_error,
+)
+from backend.agent.progress_guard import (
+    is_cargo_compile_failure as _py_is_cargo_compile_failure,
 )
 
 _RUST_CLASSIFY_TRIED = False

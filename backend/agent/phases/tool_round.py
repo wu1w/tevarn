@@ -236,7 +236,6 @@ async def run_tool_round(
     if state.simple_turn:
         try:
             from backend.agent.simple_intent import (
-                DISPATCH_TOOL_NAMES,
                 SIMPLE_NOTE_MARKER,
                 SOLO_STRIP_TOOLS,
             )
@@ -249,7 +248,7 @@ async def run_tool_round(
                 if not _cid:
                     _cid = f"simple-deny-{_tn}-{id(tc)}"
                     try:
-                        setattr(tc, "id", _cid)
+                        tc.id = _cid
                     except Exception:
                         pass
                 _capped_results[_cid] = (
@@ -349,6 +348,8 @@ async def run_tool_round(
             from backend.agent.loop_guard_bridge import (
                 begin_round,
                 force_final_message,
+            )
+            from backend.agent.loop_guard_bridge import (
                 pre_tool as lg_pre_tool,
             )
 
@@ -486,9 +487,10 @@ async def run_tool_round(
                                 filter_tools_deliver_only,
                                 is_file_read_cap_message,
                             )
+                            from backend.agent.progress_guard import (
+                                soft_open_mode as _so_fr,
+                            )
                             from backend.core.config import settings as _st_dm
-
-                            from backend.agent.progress_guard import soft_open_mode as _so_fr
 
                             if (
                                 not _so_fr()
@@ -587,6 +589,8 @@ async def run_tool_round(
     try:
         from backend.agent.progress_guard import (
             cargo_fix_nudge as _cfn_cons,
+        )
+        from backend.agent.progress_guard import (
             consume_session_cargo_fix as _cons_cf,
         )
 
@@ -627,16 +631,32 @@ async def run_tool_round(
     try:
         from backend.agent.progress_guard import (
             blocked_with_next as _bwn,
+        )
+        from backend.agent.progress_guard import (
             command_from_tool as _cmd_pre,
+        )
+        from backend.agent.progress_guard import (
             extract_tool_args as _args_pre,
+        )
+        from backend.agent.progress_guard import (
             is_cargo_verify_command as _is_cvc_pre,
+        )
+        from backend.agent.progress_guard import (
             is_deliver_allowed_command as _is_dac_pre,
+        )
+        from backend.agent.progress_guard import (
             is_deliver_allowed_grep as _is_dag_pre,
+        )
+        from backend.agent.progress_guard import (
             is_diag_junk_path as _is_junk_pre,
+        )
+        from backend.agent.progress_guard import (
             is_probe_overwrite as _is_probe_pre,
+        )
+        from backend.agent.progress_guard import (
             is_progress_write as _is_pw_pre,
-            mark_bg_notified as _mark_bg,
-            parse_bg_process_id as _parse_bg,
+        )
+        from backend.agent.progress_guard import (
             soft_open_mode as _soft_open,
         )
 
@@ -1505,11 +1525,11 @@ async def run_tool_round(
     _write_intent_active = False
     try:
         from backend.agent.write_intent import (
-            is_write_intent,
-            WRITE_TOOLS,
             EXPLORE_TOOLS,
+            WRITE_TOOLS,
             filter_names_coding_flex,
             filter_tools_coding_flex,
+            is_write_intent,
             write_intent_nudge_text,
         )
 
@@ -1592,24 +1612,59 @@ async def run_tool_round(
         from backend.agent.decisive import tool_names_from_calls as _tn_pg
         from backend.agent.progress_guard import (
             READ_ONLY_TOOLS as _PG_READ,
+        )
+        from backend.agent.progress_guard import (
             SCAN_TOOLS as _PG_SCAN,
+        )
+        from backend.agent.progress_guard import (
             cargo_fix_nudge as _cf_nudge,
+        )
+        from backend.agent.progress_guard import (
             command_from_tool as _cmd_from,
+        )
+        from backend.agent.progress_guard import (
             deliver_mode_nudge as _dm_nudge,
+        )
+        from backend.agent.progress_guard import (
             extract_result_handle as _ext_h,
+        )
+        from backend.agent.progress_guard import (
             extract_tool_args as _ext_args,
+        )
+        from backend.agent.progress_guard import (
             filter_names_deliver_only as _fn_del,
+        )
+        from backend.agent.progress_guard import (
             filter_tools_deliver_only as _ft_del,
+        )
+        from backend.agent.progress_guard import (
             is_cargo_compile_failure as _is_cf,
+        )
+        from backend.agent.progress_guard import (
             is_cargo_verify_command as _is_cvc,
-            is_deliver_allowed_command as _is_dac,
+        )
+        from backend.agent.progress_guard import (
             is_file_read_cap_message as _is_fr_cap,
+        )
+        from backend.agent.progress_guard import (
             is_progress_write as _is_pw,
+        )
+        from backend.agent.progress_guard import (
             is_shell_probe_command as _is_sp,
+        )
+        from backend.agent.progress_guard import (
             manage_goal_cadence_nudge as _mg_nudge,
+        )
+        from backend.agent.progress_guard import (
             no_write_progress_nudge as _nw_nudge,
+        )
+        from backend.agent.progress_guard import (
             parse_cargo_error_paths as _parse_cpaths,
+        )
+        from backend.agent.progress_guard import (
             pure_read_nudge as _pr_nudge,
+        )
+        from backend.agent.progress_guard import (
             result_load_nudge as _rl_nudge,
         )
         from backend.core.config import settings as _st_pg
@@ -1693,6 +1748,8 @@ async def run_tool_round(
         try:
             from backend.agent.progress_guard import (
                 is_bg_cargo_compile_failure as _is_bg_cf,
+            )
+            from backend.agent.progress_guard import (
                 is_bg_cargo_success as _is_bg_ok,
             )
         except Exception:
@@ -1705,6 +1762,8 @@ async def run_tool_round(
             try:
                 from backend.agent.progress_guard import (
                     mark_bg_notified as _mbn,
+                )
+                from backend.agent.progress_guard import (
                     parse_bg_process_id as _pbid,
                 )
 
@@ -1750,6 +1809,8 @@ async def run_tool_round(
             try:
                 from backend.agent.progress_guard import (
                     mark_bg_notified as _mbn2,
+                )
+                from backend.agent.progress_guard import (
                     parse_bg_process_id as _pbid2,
                 )
 
@@ -1878,7 +1939,9 @@ async def run_tool_round(
         ):
             _arm_nw = True
             try:
-                from backend.agent.progress_guard import should_arm_deliver_mode as _sad2
+                from backend.agent.progress_guard import (
+                    should_arm_deliver_mode as _sad2,
+                )
 
                 _arm_nw = _sad2(str(user_input or ""), reason="no_write")
             except Exception:
@@ -1941,6 +2004,8 @@ async def run_tool_round(
     try:
         from backend.agent.progress_guard import (
             converge_nudge_text as _cnv,
+        )
+        from backend.agent.progress_guard import (
             soft_open_mode as _so_cnv,
         )
         from backend.core.config import settings as _st_cnv
@@ -2094,7 +2159,6 @@ async def run_tool_round(
             thrash_fingerprint,
             thrash_force_final_text,
         )
-
         from backend.agent.decisive import tool_names_from_calls as _tnfc2
 
         fam = family_bucket(tool_calls)
@@ -2279,6 +2343,8 @@ async def run_tool_round(
                     try:
                         from backend.agent.progress_guard import (
                             filter_names_deliver_only as _fnd2,
+                        )
+                        from backend.agent.progress_guard import (
                             filter_tools_deliver_only as _ftd2,
                         )
 
@@ -2332,7 +2398,11 @@ async def run_tool_round(
                 try:
                     from backend.agent.write_intent import (
                         filter_names_coding_flex as _fnw,
+                    )
+                    from backend.agent.write_intent import (
                         filter_tools_coding_flex as _ftw,
+                    )
+                    from backend.agent.write_intent import (
                         write_intent_nudge_text as _win,
                     )
 
@@ -2447,13 +2517,19 @@ async def run_tool_round(
             try:
                 from backend.agent.progress_guard import (
                     cargo_fix_nudge as _cfn,
+                )
+                from backend.agent.progress_guard import (
                     is_cargo_compile_failure as _icf,
+                )
+                from backend.agent.progress_guard import (
                     parse_cargo_error_paths as _pcp,
                 )
 
                 if _is_cargo_tool and _icf(_blob_fail):
                     try:
-                        from backend.agent.progress_guard import soft_open_mode as _so_cf
+                        from backend.agent.progress_guard import (
+                            soft_open_mode as _so_cf,
+                        )
 
                         _soft_cf = _so_cf()
                     except Exception:
@@ -2591,7 +2667,9 @@ async def run_tool_round(
                 user_input=user_input,
             )
             if state.simple_turn:
-                from backend.agent.simple_intent import filter_dispatch_tools_from_schema
+                from backend.agent.simple_intent import (
+                    filter_dispatch_tools_from_schema,
+                )
 
                 state.tools = filter_dispatch_tools_from_schema(
                     state.tools, force=True, strip_goal_tools=True
@@ -2717,7 +2795,7 @@ async def run_tool_round(
                 _kk = get_kernel()
                 for _n, _a in _calls:
                     # Skip process-poll records while waiting (kernel doom counter)
-                    if (n := (_n or "")) == "process":
+                    if (_n or "") == "process":
                         _aa = _a if isinstance(_a, dict) else {}
                         _act = str(
                             (_aa.get("action") if isinstance(_aa, dict) else "")

@@ -382,8 +382,8 @@ class ClarifyTool(BaseTool):
 
         # 用户已明确「直接执行/按我说的」：拒绝 clarify，逼模型动手
         try:
-            from backend.core.config import settings as _settings
             from backend.agent.direct_intent import is_direct_execute_intent
+            from backend.core.config import settings as _settings
 
             if bool(getattr(_settings, "agent_disable_clarify_on_direct", True)):
                 hint = str(
@@ -793,7 +793,6 @@ class UseToolPackTool(BaseTool):
         )
 
     async def execute(self, **kwargs: Any) -> Any:
-        import json
 
         from backend.agent.tool_policy import (
             TOOL_PACKS,

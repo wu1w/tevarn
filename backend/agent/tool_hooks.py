@@ -191,8 +191,8 @@ async def builtin_track_write_after(
         ).strip()
         if not sid:
             return result
-        from backend.agent.run_brief import get_brief
         from backend.agent.coding_loop import observe_tool
+        from backend.agent.run_brief import get_brief
 
         brief = get_brief(sid)
         try:

@@ -1040,7 +1040,7 @@ class RustAgentKernel:
             )
             raise TimeoutError(
                 f"kernel RPC timeout method={method} after {_RPC_RESULT_TIMEOUT}s"
-            )
+            ) from None
 
     def _invoke_call(
         self, method: str, params: dict[str, Any] | None = None
@@ -1151,7 +1151,7 @@ class RustAgentKernel:
                     last = e2
                     time.sleep(0.2 * attempt)
                     continue
-            raise last
+            raise last from None
 
     def ensure_and_mediate_sync(
         self,

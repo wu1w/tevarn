@@ -738,7 +738,7 @@ async def fetch_provider_models(
                     "ok": True,
                     "models": models,
                     "message": f"已从供应商拉取 {len(models)} 个模型"
-                    + (f"（经代理）" if (proxy or resolve_proxy_url()) else ""),
+                    + ("（经代理）" if (proxy or resolve_proxy_url()) else ""),
                     "source": url,
                     "proxy_active": bool(proxy or resolve_proxy_url()),
                 }
@@ -1149,7 +1149,6 @@ async def test_embedding(
 ):
     """探测 Embedding：自适应 OpenAI / Ollama / TEI 等多端点。"""
     from backend.core.config import settings as app_settings
-    from backend.core.runtime_settings import apply_settings_dict
     from backend.services.embedding.factory import EmbeddingServiceFactory
     from backend.services.embedding.local_compatible import LocalEmbeddingService
     from backend.services.embedding.ollama import OllamaEmbeddingService
@@ -1219,7 +1218,6 @@ async def test_qdrant(
     import aiohttp
 
     from backend.core.config import settings as app_settings
-    from backend.core.runtime_settings import apply_settings_dict
     from backend.services.endpoint_probe import probe_qdrant
 
     items = {k: v for k, v in data.model_dump().items() if v is not None and v != ""}
@@ -1542,7 +1540,7 @@ async def put_network_proxy(
     repo: Annotated[SettingRepository, Depends(get_setting_repo)],
 ):
     """保存出站代理并立即写入运行时（无需重启）。"""
-    from backend.core.outbound_http import build_proxy_url_from_parts, resolve_proxy_url
+    from backend.core.outbound_http import build_proxy_url_from_parts
     from backend.core.runtime_settings import apply_settings_dict
 
     scheme = (data.outbound_proxy_scheme or "http").strip().lower() or "http"
@@ -1705,7 +1703,10 @@ async def _activate_openai_chatgpt_oauth(
     repo: SettingRepository,
 ) -> dict:
     """把 OAuth 令牌写入 model catalog 并设为当前供应商。"""
-    from backend.services.openai_oauth import OPENAI_CODEX_LOCAL_BASE, mark_result_consumed
+    from backend.services.openai_oauth import (
+        OPENAI_CODEX_LOCAL_BASE,
+        mark_result_consumed,
+    )
 
     base_url = str(result.get("base_url") or OPENAI_CODEX_LOCAL_BASE)
     try:

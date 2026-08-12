@@ -1,16 +1,17 @@
-"""Unified run event emission with monotonic seq + durable spill.
+"""Unified run event emission with durable monotonic seq + spill.
 
 Wire format (single protocol — both FE styles filled):
   {
     type: "run_event",
     session_id, event, topic,   # event == topic (canonical)
-    seq, run_id?, generation?,
+    seq, run_id, generation, event_id,
     timestamp,                  # unix float
-    ts,                         # ISO-ish for legacy
+    ts,                         # ISO for legacy
     detail?, data?, payload?
   }
 
-Spill: ~/.tevarn/run_events/{session}.jsonl for reconnect replay (same-host).
+Seq is durable: continues from max seq in spill file across process restarts.
+reset_seq() no longer zeroes counters (generation is the run boundary).
 """
 from __future__ import annotations
 
@@ -27,24 +28,14 @@ logger = logging.getLogger(__name__)
 
 _lock = threading.Lock()
 _seq: dict[str, int] = {}
+_seq_loaded: set[str] = set()
 _MAX_SPILL_LINES = 500
-
-
-def _next_seq(session_id: str) -> int:
-    with _lock:
-        n = _seq.get(session_id, 0) + 1
-        _seq[session_id] = n
-        return n
-
-
-def reset_seq(session_id: uuid.UUID | str) -> None:
-    with _lock:
-        _seq.pop(str(session_id), None)
 
 
 def _spill_dir() -> Path:
     try:
         from backend.core.config import get_tevarn_home
+
         p = get_tevarn_home() / "run_events"
         p.mkdir(parents=True, exist_ok=True)
         return p
@@ -60,72 +51,140 @@ def _spill_dir() -> Path:
 
 
 def _spill_path(session_id: str) -> Path:
-    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in session_id)[:80]
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in session_id)[:64]
     return _spill_dir() / f"{safe}.jsonl"
 
 
-def _append_spill(session_id: str, msg: dict[str, Any]) -> None:
+def _max_seq_from_spill(session_id: str) -> int:
+    path = _spill_path(session_id)
+    if not path.is_file():
+        return 0
+    max_s = 0
     try:
-        path = _spill_path(session_id)
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                    s = int(obj.get("seq") or 0)
+                    if s > max_s:
+                        max_s = s
+                except Exception:
+                    continue
+    except Exception as e:
+        logger.debug("spill max seq read skip: %s", e)
+    return max_s
+
+
+def _ensure_seq_loaded(session_id: str) -> None:
+    """Hydrate in-memory counter from durable spill once per process."""
+    if session_id in _seq_loaded:
+        return
+    max_s = _max_seq_from_spill(session_id)
+    cur = _seq.get(session_id, 0)
+    if max_s > cur:
+        _seq[session_id] = max_s
+    _seq_loaded.add(session_id)
+
+
+def _next_seq(session_id: str) -> int:
+    with _lock:
+        _ensure_seq_loaded(session_id)
+        n = _seq.get(session_id, 0) + 1
+        _seq[session_id] = n
+        return n
+
+
+def reset_seq(session_id: uuid.UUID | str) -> None:
+    """Run boundary marker — does NOT zero durable seq (prevents after_seq holes).
+
+    Historical name kept for call-site compatibility.
+    """
+    sid = str(session_id)
+    with _lock:
+        _ensure_seq_loaded(sid)
+        # intentionally do not pop/zero
+
+
+def _append_spill(session_id: str, msg: dict[str, Any]) -> None:
+    path = _spill_path(session_id)
+    lock_path = path.with_suffix(".lock")
+    try:
+        # Cross-process lock for append + trim
+        try:
+            import fcntl
+
+            with open(lock_path, "a+", encoding="utf-8") as lf:
+                fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
+                with open(path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(msg, ensure_ascii=False) + "\n")
+                # trim
+                try:
+                    lines = path.read_text(encoding="utf-8").splitlines()
+                    if len(lines) > _MAX_SPILL_LINES:
+                        path.write_text(
+                            "\n".join(lines[-_MAX_SPILL_LINES:]) + "\n",
+                            encoding="utf-8",
+                        )
+                except Exception:
+                    pass
+                fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+            return
+        except ImportError:
+            pass
         with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(msg, ensure_ascii=False, default=str) + "\n")
-        # soft trim
+            f.write(json.dumps(msg, ensure_ascii=False) + "\n")
         try:
             lines = path.read_text(encoding="utf-8").splitlines()
             if len(lines) > _MAX_SPILL_LINES:
                 path.write_text(
-                    "\n".join(lines[-_MAX_SPILL_LINES:]) + "\n",
-                    encoding="utf-8",
+                    "\n".join(lines[-_MAX_SPILL_LINES:]) + "\n", encoding="utf-8"
                 )
         except Exception:
             pass
     except Exception as e:
-        logger.debug("run_event spill skip: %s", e)
+        logger.debug("spill append skip: %s", e)
 
 
 def load_recent_events(
     session_id: uuid.UUID | str,
     *,
     after_seq: int = 0,
-    limit: int = 100,
+    limit: int = 40,
 ) -> list[dict[str, Any]]:
     """Load spilled events for reconnect replay (seq > after_seq)."""
-    path = _spill_path(str(session_id))
+    sid = str(session_id)
+    path = _spill_path(sid)
     if not path.is_file():
         return []
     out: list[dict[str, Any]] = []
     try:
-        for line in path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-            except Exception:
-                continue
-            if not isinstance(obj, dict):
-                continue
-            try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(obj, dict):
+                    continue
                 seq = int(obj.get("seq") or 0)
-            except (TypeError, ValueError):
-                seq = 0
-            if seq <= after_seq:
-                continue
-            out.append(obj)
-        if limit and len(out) > limit:
+                if seq <= after_seq:
+                    continue
+                out.append(obj)
+        if limit > 0 and len(out) > limit:
             out = out[-limit:]
     except Exception as e:
         logger.debug("load_recent_events skip: %s", e)
     return out
 
 
-def clear_spill(session_id: uuid.UUID | str) -> None:
-    try:
-        path = _spill_path(str(session_id))
-        if path.is_file():
-            path.unlink()
-    except Exception:
-        pass
+def begin_run_events(session_id: uuid.UUID | str) -> None:
+    """Hydrate seq from spill at run start (no zeroing)."""
     reset_seq(session_id)
 
 
@@ -140,43 +199,37 @@ async def emit_run_event(
     data: dict[str, Any] | None = None,
     generation: int | None = None,
 ) -> int:
-    """Broadcast a unified run_event; returns seq (0 if skipped)."""
     sid = str(session_id)
-    event_name = (event or "").strip() or "run.unknown"
     seq = _next_seq(sid)
     now = time.time()
-    ts_iso = datetime.now(timezone.utc).isoformat()
-
-    # Merge data/payload — both keys always present for FE dual-style handlers
-    body: dict[str, Any] = {}
-    if data:
-        body.update(data)
-    if payload:
-        body.update(payload)
-    if detail and "detail" not in body:
-        body["detail"] = detail[:500]
+    body = dict(payload or data or {})
+    # Force identity fields onto payload for consumers that only read data
     if run_id:
         body.setdefault("run_id", run_id)
+    if generation is not None:
+        body.setdefault("generation", int(generation))
+        body.setdefault("run_generation", int(generation))
+    body.setdefault("session_id", sid)
 
+    event_id = f"{sid}:{seq}:{uuid.uuid4().hex[:8]}"
     msg: dict[str, Any] = {
         "type": "run_event",
         "session_id": sid,
-        # canonical + legacy
-        "event": event_name,
-        "topic": event_name,
+        "event": event,
+        "topic": event,
         "seq": seq,
+        "event_id": event_id,
         "timestamp": now,
-        "ts": ts_iso,
+        "ts": datetime.now(timezone.utc).isoformat(),
         "data": body,
         "payload": body,
     }
-    if detail:
-        msg["detail"] = detail[:500]
+    if detail is not None:
+        msg["detail"] = str(detail)[:500]
     if run_id:
-        msg["run_id"] = run_id
+        msg["run_id"] = str(run_id)
     if generation is not None:
-        msg["generation"] = generation
-        msg["run_generation"] = generation
+        msg["generation"] = int(generation)
 
     _append_spill(sid, msg)
 

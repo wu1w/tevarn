@@ -79,14 +79,14 @@ def _ensure_loaded() -> None:
                             sigs = entry.get("sigs") or entry.get("signatures") or []
                             ts = entry.get("updated_at") or entry.get("ts") or now
                             if isinstance(sigs, list):
-                                _session_grants[key] = set(str(s) for s in sigs)
+                                _session_grants[key] = {str(s) for s in sigs}
                                 try:
                                     _session_grant_ts[key] = float(ts)
                                 except (TypeError, ValueError):
                                     _session_grant_ts[key] = now
                         elif isinstance(entry, list):
                             # Legacy: sid -> [sigs]
-                            _session_grants[key] = set(str(s) for s in entry)
+                            _session_grants[key] = {str(s) for s in entry}
                             _session_grant_ts[key] = now
                     logger.info(
                         "session grants loaded from disk sessions=%s path=%s",

@@ -226,9 +226,10 @@ def collect_runtime_health() -> dict[str, Any]:
     court = {}
     degraded_modes: list[dict[str, Any]] = []
     try:
+        import os
+
         from backend.core.config import settings
         from backend.kernel.production_guard import is_dev_unsafe, is_production_guard
-        import os
 
         rust_req = bool(getattr(settings, "agent_court_rust_required", True))
         prod = is_production_guard()
@@ -373,11 +374,11 @@ def try_restart_host() -> dict[str, Any]:
     inside an async route.
     """
     try:
-        from backend.kernel_rust.client import (
-            restart_kernel_host,
-            is_rust_host_available,
-        )
         from backend.kernel import get_kernel
+        from backend.kernel_rust.client import (
+            is_rust_host_available,
+            restart_kernel_host,
+        )
 
         # force=True: UI click must kill even when TCP port still "open" (hung host)
         ok = restart_kernel_host(force=True)

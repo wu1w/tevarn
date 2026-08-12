@@ -316,8 +316,8 @@ def pre_tool(process_id: str, tool: str, args: dict[str, Any] | None = None) -> 
         path = str(a.get("path") or a.get("file") or a.get("file_path") or "")
         # diag junk paths
         try:
-            from backend.core.config import settings as _st
             from backend.agent.progress_guard import is_diag_junk_path
+            from backend.core.config import settings as _st
 
             if bool(getattr(_st, "agent_ignore_diag_junk_paths", True)) and path and is_diag_junk_path(path):
                 return {

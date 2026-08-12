@@ -270,7 +270,7 @@ async def iter_codex_sse_isolated(
 
 def _spawn_worker_sync(
     cmd: list[str], env: dict[str, str], worker: Path
-) -> "subprocess.Popen[bytes]":
+) -> Any:
     """Sync Popen — works under SelectorEventLoop (asyncio subprocess does not on win32)."""
     import subprocess
 

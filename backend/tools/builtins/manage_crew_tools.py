@@ -415,7 +415,9 @@ class ManageSkill(BaseTool):
                     hc = getattr(obj, "handler_config", None) or {}
                     if hc.get("evolution") or hc.get("source") == "evolution":
                         try:
-                            from backend.evolution.runtime_tools import unregister_evolved_tool
+                            from backend.evolution.runtime_tools import (
+                                unregister_evolved_tool,
+                            )
 
                             unregister_evolved_tool(skill_name)
                         except Exception:

@@ -592,7 +592,9 @@ async def lifespan(app: FastAPI):
     try:
         await _seed_skills()
         try:
-            from backend.services.skill_store.default_seed import ensure_default_prompt_skills
+            from backend.services.skill_store.default_seed import (
+                ensure_default_prompt_skills,
+            )
 
             seed_result = ensure_default_prompt_skills()
             if seed_result.get("installed"):

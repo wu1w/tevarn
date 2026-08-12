@@ -140,7 +140,7 @@ async def _cmd_new(session_id: uuid.UUID, user_id: uuid.UUID | str | None) -> st
                 "type": "slash_result",
                 "command": "new",
                 "reply": (
-                    f"✅ 新会话已创建"
+                    "✅ 新会话已创建"
                     + (f"（继续联系 {contact_name}）" if contact_name else "")
                 ),
                 "new_session_id": str(new_id),

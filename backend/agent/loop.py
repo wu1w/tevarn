@@ -800,19 +800,25 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         await recorder.start(input_summary=user_input or "")
         try:
             from backend.agent.run_brief import reset_brief
-            from backend.agent.run_events import reset_seq, emit_run_event
+            from backend.agent.run_events import emit_run_event, reset_seq
             reset_brief(session_id, goal=str(user_input or "")[:500])
             reset_seq(session_id)
+            _gen = None
+            try:
+                _gen = int(getattr(self, "_run_generation", None) or 0) or None
+            except Exception:
+                _gen = None
             await emit_run_event(
                 self.ws_manager,
                 session_id,
                 "run.started",
                 detail=(user_input or "")[:120],
                 run_id=str(getattr(recorder, "run_id", "") or "") or None,
+                generation=_gen,
             )
             # Coding loop SM: understand → … → deliver
             try:
-                from backend.agent.coding_loop import start_coding_loop, phase_label
+                from backend.agent.coding_loop import phase_label, start_coding_loop
                 from backend.agent.run_events import emit_run_event as _emit_cl
 
                 cl = start_coding_loop(
@@ -837,6 +843,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         detail=phase_label(cl.phase),
                         payload={"phase": cl.phase.value, "active": True},
                         run_id=str(getattr(recorder, "run_id", "") or "") or None,
+                        generation=_gen,
                     )
             except Exception as _cl_e:
                 logger.debug("coding_loop start skip: %s", _cl_e)
@@ -1957,6 +1964,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         try:
             from backend.agent.simple_intent import (
                 is_solo_session_intent as _is_solo_early_fn,
+            )
+            from backend.agent.simple_intent import (
                 wants_team_dispatch as _wants_team_early,
             )
 
@@ -2185,11 +2194,11 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             # F821 fix: goal_mode resolved later; provisional from mode until then
             goal_mode = str(mode or "").strip().lower() in ("goal", "okr")
             from backend.agent.tool_policy import (
+                THIN_CHAT_TOOLS,
+                THIN_SEARCH_TOOLS,
                 is_search_only_intent,
                 is_thin_chat_intent,
                 scene_max_iterations,
-                THIN_CHAT_TOOLS,
-                THIN_SEARCH_TOOLS,
             )
             _ui = user_input or ""
             _kind = "coding"
@@ -2259,6 +2268,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             logger.debug("scene max_iters/thin apply skip: %s", _sc_e)
 
         try:
+            from backend.agent.plan_gate import PlanState
             from backend.agent.plan_intent import (
                 filter_tools_for_plan,
                 is_complex_for_auto_plan,
@@ -2273,7 +2283,6 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 requires_plan_approval,
                 start_plan,
             )
-            from backend.agent.plan_gate import PlanState
 
             _mode_l = str(mode or "").strip().lower()
             _ui = user_input or ""
@@ -2751,7 +2760,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             llm_service = LLMServiceFactory.get_service_for_snapshot(llm_snapshot)
         try:
             if hasattr(llm_service, "prompt_cache_key"):
-                setattr(llm_service, "prompt_cache_key", _cache_key)
+                llm_service.prompt_cache_key = _cache_key
         except Exception as _silent_e:
             logger.debug("suppressed: %s", _silent_e, exc_info=False)
 
@@ -2814,7 +2823,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                             continue
                         try:
                             if hasattr(_obj, "reasoning_effort"):
-                                setattr(_obj, "reasoning_effort", _cap_n)
+                                _obj.reasoning_effort = _cap_n
                         except Exception:
                             pass
                     logger.info(
@@ -3487,7 +3496,9 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
 
             # BG complete proactive inject (Claude-style: harness delivers results)
             try:
-                from backend.agent.progress_guard import apply_bg_completions_to_messages
+                from backend.agent.progress_guard import (
+                    apply_bg_completions_to_messages,
+                )
 
                 _n_bg = apply_bg_completions_to_messages(
                     str(session_id), messages, max_n=8
@@ -3544,7 +3555,9 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     _goal_last_sig = _sig
                     if _goal_stall_rounds >= 3:
                         try:
-                            from backend.agent.progress_guard import soft_open_mode as _so_gs
+                            from backend.agent.progress_guard import (
+                                soft_open_mode as _so_gs,
+                            )
                             from backend.core.config import settings as _st_gs
 
                             _hard_gs = (
@@ -3913,10 +3926,9 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             )
             from backend.agent.thinking_format import (
                 canonicalize_thinking,
+                ensure_user_facing_final,
                 short_segment_handoff_message,
             )
-
-            from backend.agent.thinking_format import ensure_user_facing_final
 
             _raw_end = accumulated_content or (
                 short_segment_handoff_message(goal_mode=goal_mode)

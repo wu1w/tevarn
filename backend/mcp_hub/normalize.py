@@ -185,7 +185,7 @@ def normalize_stdio_command_args(
 
     # 扫描 args 中的错误包名
     fixed = False
-    for i, a in enumerate(out_args):
+    for _i, a in enumerate(out_args):
         key = a.strip()
         if key in _BAD_NPM_ARGS:
             # 替换整段 args 为推荐模板（保留 -y 风格）

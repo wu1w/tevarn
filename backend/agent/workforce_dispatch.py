@@ -257,7 +257,7 @@ def _proc_has_star_or_goals(proc: Any) -> bool:
     caps = list(getattr(proc, "capabilities", None) or [])
     tok = getattr(proc, "token", None)
     tok_caps = _token_cap_list(tok)
-    bag = set(str(c) for c in caps) | set(tok_caps)
+    bag = {str(c) for c in caps} | set(tok_caps)
     if "*" in bag:
         return True
     if "okr_goal" in bag and "manage_goal" in bag:

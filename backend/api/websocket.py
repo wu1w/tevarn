@@ -1784,6 +1784,7 @@ async def _run_agent_safe(
     try:
         # Phase 2.2：chat 路径显式 origin（不靠 mode 默认猜）
         agent._run_origin = "chat"
+        agent._run_generation = int(run_generation) if run_generation else 0
         await agent.run(
             session_id,
             user_input,

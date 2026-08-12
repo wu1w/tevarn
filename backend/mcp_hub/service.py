@@ -13,7 +13,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from backend.mcp_hub.client import MCPClient, MCPClientManager, MCPServerConfig
+from backend.mcp_hub.client import MCPClientManager, MCPServerConfig
 from backend.repositories.mcp_server_repo import AsyncMCPServerRepository
 from backend.tools.adapters.mcp_adapter import (
     register_mcp_server_tools,

@@ -207,7 +207,7 @@ class SkillStoreService:
                 items.append(
                     InstallPackItemResult(skill_id=sid, success=True, path=str(path))
                 )
-            except Exception as e:
+            except Exception:
                 alt = await self._download_matt_alt(sid, downloader)
                 if alt:
                     try:

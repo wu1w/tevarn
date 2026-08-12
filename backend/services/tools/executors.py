@@ -918,7 +918,10 @@ def _block_agent_rust_tools(command: str) -> str | None:
 
     if "rustup" in tools:
         try:
-            from backend.agent.progress_guard import cargo_blocked_hint, resolve_project_anchor
+            from backend.agent.progress_guard import (
+                cargo_blocked_hint,
+                resolve_project_anchor,
+            )
 
             _hint = cargo_blocked_hint(resolve_project_anchor() or "tavarn-guardian")
         except Exception:
@@ -930,7 +933,10 @@ def _block_agent_rust_tools(command: str) -> str | None:
 
     if _CARGO_DENY_SUBCMD_RE.search(c):
         try:
-            from backend.agent.progress_guard import cargo_blocked_hint, resolve_project_anchor
+            from backend.agent.progress_guard import (
+                cargo_blocked_hint,
+                resolve_project_anchor,
+            )
 
             _hint = cargo_blocked_hint(resolve_project_anchor() or "tavarn-guardian")
         except Exception:
@@ -1095,7 +1101,9 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
                 and "appdata" not in _norm
             ):
                 # Prefer real workspace / project anchor under Roaming data
-                from backend.agent.progress_guard import resolve_project_anchor as _rpa_i
+                from backend.agent.progress_guard import (
+                    resolve_project_anchor as _rpa_i,
+                )
 
                 _alt = _rpa_i(_ws_root) or _ws_root
                 if os.path.isdir(_alt) and os.path.normcase(
@@ -1111,6 +1119,8 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
     try:
         from backend.agent.progress_guard import (
             is_cargo_verify_command as _is_cvc_cwd,
+        )
+        from backend.agent.progress_guard import (
             resolve_project_anchor as _rpa_cwd,
         )
 
@@ -1317,12 +1327,12 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
 
     # Foreground with Grok-style timeout→background (do not kill long work).
     try:
+        from backend.computer.text_decode import decode_process_bytes
         from backend.core.safe_subprocess import create_process, needs_shell
         from backend.services.tools.process_registry import (
             adopt_running,
             format_process,
         )
-        from backend.computer.text_decode import decode_process_bytes
 
         proc = await create_process(command, cwd=cwd if cwd else None)
         mode = "shell" if needs_shell(command) else "exec"
@@ -1363,9 +1373,9 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
         out = decode_process_bytes(stdout_b or b"")
         err = decode_process_bytes(stderr_b or b"")
         if len(out) > max_output:
-            out = out[:max_output] + f"\n...[stdout truncated]"
+            out = out[:max_output] + "\n...[stdout truncated]"
         if len(err) > max(max_output // 2, 1000):
-            err = err[: max_output // 2] + f"\n...[stderr truncated]"
+            err = err[: max_output // 2] + "\n...[stderr truncated]"
         code = proc.returncode if proc.returncode is not None else -1
         header = (
             f"[Exit {code}"
@@ -1444,8 +1454,8 @@ async def _maybe_cargo_stub_retry(
 ) -> str:
     """On rustc 'metadata stub' / broken target, cargo clean once then re-check."""
     try:
-        from backend.core.config import settings as _st
         from backend.agent.progress_guard import is_metadata_stub_error
+        from backend.core.config import settings as _st
 
         if not bool(getattr(_st, "agent_cargo_stub_auto_clean", True)):
             return result
@@ -1605,8 +1615,8 @@ async def execute_file_read(config: dict[str, Any], arguments: dict[str, Any]) -
     if not filepath:
         return "[Error] filepath is required"
     try:
-        from backend.core.config import settings as _st_fr
         from backend.agent.progress_guard import is_diag_junk_path
+        from backend.core.config import settings as _st_fr
 
         if bool(getattr(_st_fr, "agent_ignore_diag_junk_paths", True)) and is_diag_junk_path(
             str(filepath)
@@ -1795,7 +1805,10 @@ async def execute_python(config: dict[str, Any], arguments: dict[str, Any]) -> s
     # check/build/test (still prefer command tool).
     if re.search(r"(?i)\brustup\b", code):
         try:
-            from backend.agent.progress_guard import cargo_blocked_hint, resolve_project_anchor
+            from backend.agent.progress_guard import (
+                cargo_blocked_hint,
+                resolve_project_anchor,
+            )
 
             _h = cargo_blocked_hint(resolve_project_anchor() or "tavarn-guardian")
         except Exception:

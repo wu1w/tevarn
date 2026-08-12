@@ -12,7 +12,6 @@ import base64
 import json
 import logging
 import os
-import socket
 import time
 from typing import Any, Optional
 

@@ -367,25 +367,25 @@ def _popen_thread_process(
     creationflags = 0
     if sys.platform == "win32":
         creationflags = int(getattr(_sp, "CREATE_NEW_PROCESS_GROUP", 0) or 0)
-    common = dict(
-        cwd=cwd or None,
-        env=env,
-        stdin=_sp.DEVNULL,
-        stdout=_sp.PIPE,
-        stderr=_sp.PIPE,
-        creationflags=creationflags,
-    )
+    common = {
+        "cwd": cwd or None,
+        "env": env,
+        "stdin": _sp.DEVNULL,
+        "stdout": _sp.PIPE,
+        "stderr": _sp.PIPE,
+        "creationflags": creationflags,
+    }
     if use_shell:
         # Windows: prefer explicit cmd.exe so quoting matches JobBackend.
         if sys.platform == "win32":
-            popen = _sp.Popen(["cmd.exe", "/d", "/c", command], **common)
+            popen = _sp.Popen(["cmd.exe", "/d", "/c", command], **common)  # type: ignore[call-overload, arg-type]
         else:
-            popen = _sp.Popen(command, shell=True, **common)
+            popen = _sp.Popen(command, shell=True, **common)  # type: ignore[call-overload, arg-type]
     else:
         argv = split_argv(command)
         if not argv:
             raise ValueError("empty argv")
-        popen = _sp.Popen(argv, shell=False, **common)
+        popen = _sp.Popen(argv, shell=False, **common)  # type: ignore[call-overload, arg-type]
     return _ThreadSubprocess(popen)
 
 

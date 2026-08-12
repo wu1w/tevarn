@@ -37,8 +37,8 @@
 | 数据默认本机 SQLite · 默认只监听 `127.0.0.1` | 云端 SLA / 强制上云 |
 | **Windows 优先**（Linux 可用） | 必须 Redis / Qdrant 才能跑 |
 
-> **状态**：主线为 **`main`** · 当前稳定版 **[v0.4.0](https://github.com/wu1w/tevarn/releases/tag/v0.4.0)**（Tevarn 新主线首发）。  
-> 历史 Releases **0.3.x（Takton）** 为旧桌面线；**0.5.x-alpha** 为预览迭代，现已收敛进 `main` / v0.4.0。
+> **状态**：主线为 **`main`** · 当前稳定版 **[v0.4.2](https://github.com/wu1w/tevarn/releases/tag/v0.4.0)**（Tevarn 新主线首发）。  
+> 历史 Releases **0.3.x（Takton）** 为旧桌面线；**0.5.x-alpha** 为预览迭代，现已收敛进 `main` / v0.4.2。
 
 ---
 
@@ -102,13 +102,13 @@ git clone https://github.com/wu1w/tevarn.git
 cd tevarn
 
 # 2. 使用稳定标签（可选）
-git checkout v0.4.0
+git checkout v0.4.2
 
 # 3. 按下方「开发启动」或安装预编译包
 ```
 
 默认本地运行，无需任何云服务。  
-版本 **v0.4.0** · 分支 **`main`**。
+版本 **v0.4.2** · 分支 **`main`**。
 
 ---
 
@@ -239,7 +239,7 @@ npm run electron:dev
 | | |
 |--|--|
 | **协议** | MIT — 自由使用、修改与分发 |
-| **版本** | **v0.4.0** · 新主线首个稳定版 |
+| **版本** | **v0.4.2** · 新主线 |
 | **本地优先** | 默认 SQLite · 只监听回环 · 不强制云组件 |
 
 欢迎 Issue 与 PR。
@@ -274,11 +274,11 @@ https://cdn.jsdmirror.com/gh/wu1w/tevarn@main/website/index.html
 
 | 线 | 分支 / 版本 | 说明 |
 |----|-------------|------|
-| **当前主线** | **`main`** · **[v0.4.0](https://github.com/wu1w/tevarn/releases/tag/v0.4.0)** | Tevarn · Rust Kernel · 编制/工单 · 权限法院 · 双端 |
+| **当前主线** | **`main`** · **[v0.4.2](https://github.com/wu1w/tevarn/releases/tag/v0.4.2)** | Tevarn · Rust Kernel · 编制/工单 · 权限法院 · 双端 |
 | **历史预览** | `feature/agent-kernel` / 0.5.x-alpha | 已并入 main，可作历史参考 |
 | **旧桌面线** | Releases 0.3.x（Takton） | 较早桌面 Agent |
 
-- 新用户 → clone **`main`** 或下载 **v0.4.0** 安装包  
+- 新用户 → clone **`main`** 或下载 **v0.4.2** 安装包  
 - 品牌 **Tevarn**；环境变量 `TEVARN_*` 优先，仍兼容 `TAKTON_*`
 
 ---

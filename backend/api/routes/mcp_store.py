@@ -132,7 +132,10 @@ async def install_mcp_from_store(
                     if not v.strip():
                         need_env.append(k)
 
-    from backend.mcp_hub.normalize import normalize_server_fields, normalize_tool_name_list
+    from backend.mcp_hub.normalize import (
+        normalize_server_fields,
+        normalize_tool_name_list,
+    )
 
     norm = normalize_server_fields(
         name=item.name[:64],

@@ -202,8 +202,8 @@ def format_spill_envelope(
     )
     if searchish:
         steps += (
-            f"  4) After 2+ large search spills: prefer result_load + write answer; "
-            f"avoid near-duplicate web_search/mcp_*_search queries\n"
+            "  4) After 2+ large search spills: prefer result_load + write answer; "
+            "avoid near-duplicate web_search/mcp_*_search queries\n"
         )
     return (
         f"[tool_result_handle id={hid} tool={tool} chars={n}]\n"

@@ -50,14 +50,13 @@ async def run_epilogue(
 
     # P1 coding delivery: emit structured brief to FE
     try:
-        from backend.agent.run_brief import get_brief, drop_brief
-        from backend.agent.run_events import emit_run_event
         from backend.agent.coding_loop import (
             drop_coding_loop,
-            get_coding_loop,
             mark_deliver,
             phase_label,
         )
+        from backend.agent.run_brief import drop_brief, get_brief
+        from backend.agent.run_events import emit_run_event
 
         cl = mark_deliver(session_id)
         brief = get_brief(session_id)
@@ -93,12 +92,18 @@ async def run_epilogue(
             )
         )
         if not _already:
+            _gen = None
+            try:
+                _gen = int(getattr(loop, "_run_generation", None) or 0) or None
+            except Exception:
+                _gen = None
             await emit_run_event(
                 getattr(loop, "ws_manager", None),
                 session_id,
                 "run.completed" if not loop._should_stop else "run.cancelled",
                 detail=(final_content or "")[:120],
                 run_id=str(getattr(_rec, "run_id", "") or "") or None,
+                generation=_gen,
             )
             try:
                 loop._terminal_event_emitted = True

@@ -669,6 +669,7 @@ async def restore_file_checkpoint(
     if not root_for_restore and session_id_raw and current_user is not None:
         try:
             import uuid as _uuid
+
             from backend.repositories.session_repo import AsyncSessionRepository
 
             srepo = AsyncSessionRepository()
@@ -708,9 +709,10 @@ async def restore_file_checkpoint(
     errors: list[str] = []
 
     def _try_python(key: str) -> dict | None:
+        from contextlib import nullcontext
+
         from backend.agent.file_checkpoint import restore_checkpoint_file
         from backend.tools.permissions import run_workspace_context
-        from contextlib import nullcontext
 
         ctx = (
             run_workspace_context(root_for_restore)

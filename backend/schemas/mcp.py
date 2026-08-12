@@ -12,7 +12,6 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-
 # stdio | sse | streamable-http（http/streamable_http 别名由 normalize_transport 收束）
 _MCP_TRANSPORT_PATTERN = r"^(stdio|sse|streamable-http|streamable_http|http)$"
 

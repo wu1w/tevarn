@@ -50,9 +50,9 @@ async def bind_workspace(
             except Exception:
                 pass
         try:
-            from backend.repositories.setting_repo import AsyncSettingRepository
-            from backend.core.runtime_settings import apply_settings_dict
             from backend.core.config import settings as _settings
+            from backend.core.runtime_settings import apply_settings_dict
+            from backend.repositories.setting_repo import AsyncSettingRepository
 
             repo = AsyncSettingRepository()
             await repo.upsert("file_browser_root", str(root), "workspace")
