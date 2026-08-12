@@ -86,6 +86,8 @@ function ChatPageInner() {
         const [highlightMessageId, setHighlightMessageId] = useState<string | null>(null);
         const [isStreaming, setIsStreaming] = useState(false);
   const [codingDelivery, setCodingDelivery] = useState<CodingDelivery | null>(null);
+  const [injectedSkills, setInjectedSkills] = useState<string[]>([]);
+  const [planPhase, setPlanPhase] = useState<string | null>(null);
 
   // 切会话时清交付卡，避免串台（推迟 setState，减少 effect 级联）
   useEffect(() => {
@@ -807,6 +809,22 @@ function ChatPageInner() {
       }
       if (ev === 'run.started') {
         setCodingDelivery(null);
+      setInjectedSkills([]);
+      setPlanPhase(null);
+      }
+      if (ev === 'skills.injected') {
+        const skills = (d as { skills?: string[] }).skills || [];
+        if (Array.isArray(skills) && skills.length) {
+          setInjectedSkills(skills.map(String));
+          setStreamStatusDetail(
+            `Skills · ${skills.slice(0, 4).join(', ')}${skills.length > 4 ? '…' : ''}`,
+          );
+        }
+      }
+      if (ev === 'plan.phase' || ev === 'run.planning') {
+        const ph = String((d as { phase?: string }).phase || msg.detail || 'planning');
+        setPlanPhase(ph);
+        setStreamStatusDetail(`Plan · ${ph}`);
       }
       if (ev === 'coding.phase') {
         const phase = String((d as { phase?: string }).phase || msg.detail || '');
@@ -1962,6 +1980,8 @@ const handleUserMessageAck = useCallback(
                       {/* 统一状态条：健康 / 沙箱 / 能力 / 记录 / 工单 */}
                       <div className="relative">
                         <ChatStatusStrip
+                          planLabel={planPhase}
+                          skillLabels={injectedSkills}
                           phaseLabel={
                             codingDelivery?.phase_label ||
                             codingDelivery?.phase ||

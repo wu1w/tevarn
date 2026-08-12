@@ -23,6 +23,8 @@ export function ChatStatusStrip({
   softRenew,
   liveModel,
   phaseLabel,
+  planLabel,
+  skillLabels,
   zh = true,
 }: {
   sessionId?: string | null;
@@ -33,6 +35,8 @@ export function ChatStatusStrip({
   liveModel?: string | null;
   /** Live coding/plan phase label from run events */
   phaseLabel?: string | null;
+  planLabel?: string | null;
+  skillLabels?: string[] | null;
   zh?: boolean;
 }) {
   const addToast = useToastStore((s) => s.addToast);
@@ -82,6 +86,8 @@ export function ChatStatusStrip({
     ['pending', 'claimed', 'running', 'leased'].includes((i.status || '').toLowerCase()),
   );
   const phaseChip = (phaseLabel || '').trim();
+  const planChip = (planLabel || '').trim();
+  const skillChip = (skillLabels || []).filter(Boolean).slice(0, 3).join(', ');
 
 
   useEffect(() => {
@@ -145,6 +151,19 @@ export function ChatStatusStrip({
       {phaseChip ? (
         <span className="rounded-md bg-brand-cyan/15 px-1.5 py-0.5 text-[10px] font-medium text-brand-cyan">
           {phaseChip}
+        </span>
+      ) : null}
+      {planChip ? (
+        <span className="rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-300">
+          Plan · {planChip}
+        </span>
+      ) : null}
+      {skillChip ? (
+        <span
+          className="max-w-[140px] truncate rounded-md bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-300"
+          title={(skillLabels || []).join(', ')}
+        >
+          Skills · {skillChip}
         </span>
       ) : null}
       <div className="flex h-[24px] items-center gap-1.5 overflow-hidden px-3">

@@ -74,72 +74,89 @@ def _product_version() -> str:
             return ""
 
 
-def _warn_if_stale_static(root: Path) -> None:
-    """Log loudly if static tree looks older than source VERSION (e.g. 0.5.4-alpha)."""
+def _static_version_info(root: Path) -> dict:
+    """Inspect static tree for version.json / alpha markers."""
+    prod = _product_version()
+    found = ""
+    stale = False
+    reason = ""
     try:
-        prod = _product_version()
-        # Scan a few text/html/js for APP_VERSION or 0.5.4-alpha markers
-        markers = ("0.5.4-alpha", "APP_VERSION")
-        stale = False
-        found_ver = ""
-        for rel in ("index.html", "manifest.json", "version.json"):
-            p = root / rel
-            if not p.is_file():
-                continue
-            try:
-                text = p.read_text(encoding="utf-8", errors="ignore")[:8000]
-            except Exception:
-                continue
-            if "0.5.4-alpha" in text:
-                stale = True
-                found_ver = "0.5.4-alpha"
-                break
-            if "0.4.0" in text and prod.startswith("0.4.2"):
-                # soft warn only
-                found_ver = "0.4.0"
-        # Also peek _next static chunks is expensive; check version.json if present
         vj = root / "version.json"
         if vj.is_file():
             try:
                 import json
                 data = json.loads(vj.read_text(encoding="utf-8"))
-                found_ver = str(data.get("version") or data.get("app_version") or found_ver)
-                if found_ver and prod and found_ver != prod:
-                    stale = True
+                found = str(data.get("version") or data.get("app_version") or "").strip()
             except Exception:
                 pass
-        if stale or (found_ver and prod and found_ver != prod and found_ver.startswith("0.5.")):
-            logger.warning(
-                "frontend static at %s looks stale (found=%s product=%s). "
-                "Rebuild with: cd frontend && NEXT_EXPORT=1 npm run build. "
-                "Set TEVARN_FRONTEND_STATIC to a fresh export to override.",
-                root,
-                found_ver or "unknown",
-                prod or "unknown",
-            )
-        # Write a small stamp for operators
-        try:
-            stamp = root / ".tevarn_static_stamp"
-            # do not write into read-only mounts
-            if root.joinpath("index.html").is_file() and os.access(root, os.W_OK):
-                stamp.write_text(
-                    f"served_from={root}\nproduct={prod}\nfound={found_ver}\n",
-                    encoding="utf-8",
-                )
-        except Exception:
-            pass
+        if not found:
+            for rel in ("index.html", "manifest.json"):
+                p = root / rel
+                if not p.is_file():
+                    continue
+                try:
+                    text = p.read_text(encoding="utf-8", errors="ignore")[:12000]
+                except Exception:
+                    continue
+                if "0.5.4-alpha" in text:
+                    found = "0.5.4-alpha"
+                    break
+        if found in {"0.5.4-alpha", "0.5.4"}:
+            stale = True
+            reason = f"legacy_alpha:{found}"
+        elif found and prod:
+            try:
+                fp = tuple(int(x) for x in found.split(".")[:2] if x.isdigit() or x.replace(".","").isdigit() or True)
+                # simpler string compare major.minor
+                fmm = ".".join(found.split(".")[:2])
+                pmm = ".".join(prod.split(".")[:2])
+                if fmm and pmm and fmm != pmm:
+                    stale = True
+                    reason = f"version_mismatch:{found}!={prod}"
+            except Exception:
+                if found != prod:
+                    stale = True
+                    reason = f"version_mismatch:{found}!={prod}"
+        # backend/static without version.json under product 0.4.2 → treat as stale
+        if not found and root.name == "static" and prod:
+            stale = True
+            reason = "legacy_static_no_version_json"
     except Exception as e:
-        logger.debug("static version check skip: %s", e)
+        logger.debug("static version inspect skip: %s", e)
+    return {"product": prod, "found": found, "stale": stale, "reason": reason}
+
+
+def is_static_stale(root: Path) -> bool:
+    return bool(_static_version_info(root).get("stale"))
+
+
+def _warn_if_stale_static(root: Path) -> bool:
+    """Log if stale; return True when tree should not be served (unless override)."""
+    info = _static_version_info(root)
+    if not info.get("stale"):
+        return False
+    logger.warning(
+        "frontend static at %s STALE (found=%s product=%s reason=%s). "
+        "Rebuild: cd frontend && npm run build:export. "
+        "Emergency override: TEVARN_ALLOW_STALE_STATIC=1",
+        root,
+        info.get("found") or "unknown",
+        info.get("product") or "unknown",
+        info.get("reason") or "stale",
+    )
+    return True
 
 
 def resolve_frontend_static() -> Path | None:
     env = (os.environ.get("TEVARN_FRONTEND_STATIC") or "").strip()
+    allow_stale = (os.environ.get("TEVARN_ALLOW_STALE_STATIC") or "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
     candidates: list[Path] = []
     if env:
         candidates.append(Path(env).expanduser().resolve())
 
     here = Path(__file__).resolve().parent  # backend/
-    # 优先 next export / dist，再落 legacy backend/static（避免 07-27 旧包盖住新导出）
     candidates.extend(
         [
             here.parent / "frontend" / "out",
@@ -148,7 +165,7 @@ def resolve_frontend_static() -> Path | None:
         ]
     )
 
-    valid: list[tuple[int, float, Path]] = []
+    valid: list[tuple[int, float, Path, bool]] = []
     for c in candidates:
         try:
             if not c.is_dir() or not (c / "index.html").is_file():
@@ -158,23 +175,30 @@ def resolve_frontend_static() -> Path | None:
                 mtime = (c / "index.html").stat().st_mtime
             except OSError:
                 mtime = 0.0
-            valid.append((cov, mtime, c))
+            stale = is_static_stale(c)
+            if stale and not allow_stale:
+                _warn_if_stale_static(c)
+                logger.error(
+                    "skipping stale frontend static %s (set TEVARN_ALLOW_STALE_STATIC=1 to force)",
+                    c,
+                )
+                continue
+            if stale and allow_stale:
+                _warn_if_stale_static(c)
+            valid.append((cov, mtime, c, stale))
         except OSError:
             continue
 
     if not valid:
-        return None
-    # 路由覆盖优先，其次 mtime
-    valid.sort(key=lambda t: (t[0], t[1]), reverse=True)
-    chosen = valid[0][2]
-    _warn_if_stale_static(chosen)
-    if len(valid) > 1 and valid[0][0] < 5:
         logger.warning(
-            "Frontend static at %s has low route coverage (%s). "
-            "Re-export with NEXT_EXPORT=1 to restore agents/kernel/… pages.",
-            chosen,
-            valid[0][0],
+            "no valid frontend static tree found (all missing or stale). "
+            "API-only mode; run: cd frontend && npm run build:export"
         )
+        return None
+    # Prefer non-stale, then route coverage, then mtime
+    valid.sort(key=lambda t: (0 if t[3] else 1, t[0], t[1]), reverse=True)
+    chosen = valid[0][2]
+    logger.info("frontend static chosen: %s (coverage check done)", chosen)
     return chosen
 
 

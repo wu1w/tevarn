@@ -705,6 +705,26 @@ async def restore_file_checkpoint(
         cp_id = raw
         raw = ""
 
+    # Shared-deploy safety: opaque restore requires session_id (binds workspace + ownership)
+    _opaque = bool(cp_id) or (
+        bool(raw) and "/" not in raw and chr(92) not in raw and "checkpoints" not in raw
+    )
+    if _opaque and not session_id_raw:
+        allow_loose = False
+        try:
+            from backend.core.config import settings
+            # single-user / local desktop may allow without session
+            allow_loose = bool(getattr(settings, "file_browser_local", False)) or bool(
+                getattr(settings, "single_user_mode", False)
+            )
+        except Exception:
+            allow_loose = False
+        if not allow_loose:
+            raise HTTPException(
+                status_code=400,
+                detail="session_id required for checkpoint restore",
+            )
+
     errors: list[str] = []
 
     def _try_python(key: str) -> dict | None:

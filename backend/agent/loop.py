@@ -683,6 +683,24 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     self._contract_wl_ready = True
         wl = getattr(self, "_contract_whitelist", None)
         if wl and name not in wl:
+            # Builtins: warn but do not hard-block (skill.yaml often omits core tools)
+            is_builtin = False
+            try:
+                from backend.tools.base import ToolSource
+                from backend.tools.registry import ToolRegistry
+                t = ToolRegistry.get(name)
+                if t is not None and getattr(t, "source", None) == ToolSource.BUILTIN:
+                    is_builtin = True
+            except Exception:
+                # heuristic: non mcp_/non package prefix
+                is_builtin = not name.startswith("mcp_") and not name.startswith("pkg_")
+            if is_builtin:
+                logger.warning(
+                    "skill contract: builtin '%s' not in package tools whitelist %s — allowing with warn",
+                    name,
+                    sorted(wl)[:20],
+                )
+                return None
             return (
                 f"[Skill Contract Blocked] 工具 '{name}' 不在已挂载包的 tools 白名单内"
                 f"（白名单: {', '.join(sorted(wl))}）。"
@@ -1943,6 +1961,43 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             prompt_skill_max_full=int(inject_opts.get("skill_max_full") or 0),
             inject_prompt_skills=bool(inject_opts.get("prompt_skills", True)),
         )
+        # P1: surface which prompt skills were considered/injected (best-effort)
+        try:
+            from backend.services.skill_store.prompt_skill_loader import (
+                get_prompt_skill_loader,
+            )
+            _loader = get_prompt_skill_loader()
+            _skills = _loader.list_installed()
+            _mode = str(inject_opts.get("skill_mode") or "auto")
+            if _mode not in ("summary", "auto", "full"):
+                _mode = "auto"
+            _sel = _loader.select_full_skills(
+                _skills,
+                str(enriched_input or user_input or ""),
+                mode=_mode,  # type: ignore[arg-type]
+                max_full=int(inject_opts.get("skill_max_full") or 2) or 2,
+                threshold=float(inject_opts.get("skill_threshold") or 0.95),
+                scene_packs=list(scene_plan.packs),
+            )
+            _names = []
+            for m in _sel or []:
+                sk = getattr(m, "skill", None)
+                nm = getattr(sk, "name", None) if sk is not None else None
+                if nm:
+                    _names.append(str(nm))
+            if _names:
+                from backend.agent.run_events import emit_run_event
+                await emit_run_event(
+                    getattr(self, "ws_manager", None),
+                    session_id,
+                    "skills.injected",
+                    detail=", ".join(_names[:8]),
+                    payload={"skills": _names[:16], "scene_packs": list(scene_plan.packs)},
+                    run_id=str(getattr(getattr(self, "_run_recorder", None), "run_id", "") or "") or None,
+                    generation=int(getattr(self, "_run_generation", 0) or 0) or None,
+                )
+        except Exception as _sk_e:
+            logger.debug("skills.injected emit skip: %s", _sk_e)
 
         # 记录初始上下文访问流
         if accessed_items and self.context_flow_repo is not None:
@@ -2328,6 +2383,18 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     pass
                 messages.append({"role": "system", "content": "计划已驳回，请重新给出修订计划。"})
                 self._plan_mode_active = True
+                try:
+                    from backend.agent.run_events import emit_run_event
+                    await emit_run_event(
+                        getattr(self, "ws_manager", None),
+                        session_id,
+                        "plan.phase",
+                        detail="planning",
+                        payload={"phase": "planning", "active": True},
+                        generation=int(getattr(self, "_run_generation", 0) or 0) or None,
+                    )
+                except Exception:
+                    pass
             if is_plan_approve(_ui) and _gate.state == PlanState.PLAN_READY:
                 try:
                     approve_plan(session_id=_sid_s)
@@ -3815,6 +3882,55 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 messages = _tr_state.messages
                 tools = _tr_state.tools
                 enabled_tools_filter = _tr_state.enabled_tools_filter
+                # P0: MCP reload mid-run → merge live mcp_* into next LLM tool surface
+                try:
+                    from backend.mcp_hub.service import consume_tools_dirty
+                    from backend.agent.tool_policy import live_mcp_tool_names
+                    if consume_tools_dirty():
+                        live = live_mcp_tool_names()
+                        if live:
+                            if enabled_tools_filter is not None:
+                                enabled_tools_filter = sorted(
+                                    set(enabled_tools_filter) | set(live) | {"manage_mcp"}
+                                )
+                            # rebuild schema names into tools list via skill manager if available
+                            try:
+                                sm = getattr(self, "skill_manager", None) or getattr(
+                                    self, "tool_executor", None
+                                )
+                                if sm is not None and hasattr(sm, "get_openai_tools"):
+                                    tools = sm.get_openai_tools(
+                                        None
+                                        if enabled_tools_filter is None
+                                        else enabled_tools_filter
+                                    )
+                                elif isinstance(tools, list) and tools:
+                                    have = {
+                                        (t.get("function") or {}).get("name")
+                                        for t in tools
+                                        if isinstance(t, dict)
+                                    }
+                                    # leave schema rebuild to next resolve; filter is enough for allow
+                                    _ = have
+                            except Exception:
+                                pass
+                            messages.append(
+                                {
+                                    "role": "system",
+                                    "content": (
+                                        "[MCP] 工具表已热更新，新的 mcp_* 已并入本轮可用列表："
+                                        + ", ".join(live[:24])
+                                        + ("…" if len(live) > 24 else "")
+                                    ),
+                                }
+                            )
+                            logger.info(
+                                "MCP tools refreshed mid-run session=%s n=%s",
+                                session_id,
+                                len(live),
+                            )
+                except Exception as _mcp_rf:
+                    logger.debug("MCP tools refresh skip: %s", _mcp_rf)
                 _force_final_no_tools = _tr_state.force_final_no_tools
                 if _force_final_no_tools and not _loop_exit_reason:
                     _loop_exit_reason = str(

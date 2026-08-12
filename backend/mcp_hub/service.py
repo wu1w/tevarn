@@ -23,6 +23,23 @@ from backend.tools.adapters.mcp_adapter import (
 
 logger = logging.getLogger(__name__)
 
+# After manage_mcp reload/sync, agent loop refreshes tool schemas next LLM round
+_TOOLS_DIRTY: bool = False
+
+
+def mark_tools_dirty() -> None:
+    global _TOOLS_DIRTY
+    _TOOLS_DIRTY = True
+
+
+def consume_tools_dirty() -> bool:
+    global _TOOLS_DIRTY
+    if _TOOLS_DIRTY:
+        _TOOLS_DIRTY = False
+        return True
+    return False
+
+
 
 def _resolve_cmd(cmd: str | None) -> str | None:
     """运行时解析命令路径；不改 DB。
@@ -144,6 +161,8 @@ async def load_mcp_tools(manager: MCPClientManager | None = None) -> MCPClientMa
 
 
 async def sync_mcp_runtime(only_server: str | None = None) -> dict[str, Any]:
+    """Hot-sync MCP; marks tool surface dirty so open agent runs refresh schemas."""
+
     """热同步 MCP 连接与 ToolRegistry。
 
     only_server:
@@ -260,6 +279,7 @@ async def sync_mcp_runtime(only_server: str | None = None) -> dict[str, Any]:
                 registered,
                 warning,
             )
+            mark_tools_dirty()
             return {
                 "ok": warning is None,
                 "connected": connected,
@@ -334,6 +354,7 @@ async def sync_mcp_runtime(only_server: str | None = None) -> dict[str, Any]:
             registered,
             warning,
         )
+        mark_tools_dirty()
         return {
             "ok": True if not missing else False,
             "connected": connected,
