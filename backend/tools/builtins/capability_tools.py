@@ -9,6 +9,8 @@ P0–P2 能力补齐工具：
 """
 from __future__ import annotations
 
+from backend.core.config import get_tevarn_home
+
 import asyncio
 import json
 import logging
@@ -24,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 # session_id -> autopilot state
 _AUTOPILOTS: dict[str, dict[str, Any]] = {}
-_PREFS_DIR = Path(os.path.expanduser("~/.tevarn/memory"))
+_PREFS_DIR = (get_tevarn_home() / "memory")
 _PREFS_FILE = _PREFS_DIR / "user_preferences.json"
 
 

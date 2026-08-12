@@ -33,7 +33,7 @@ def _spill_dir() -> Path:
         return p
     except Exception:
         try:
-            p = Path.home() / ".tevarn" / "run_events"
+            p = get_tevarn_home() / "run_events"
             p.mkdir(parents=True, exist_ok=True)
             return p
         except Exception:

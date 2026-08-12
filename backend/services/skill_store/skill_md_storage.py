@@ -9,6 +9,8 @@ SKILL.md 下载与本地存储服务
 
 from __future__ import annotations
 
+from backend.core.config import get_tevarn_home
+
 import logging
 import os
 import re
@@ -36,7 +38,7 @@ def _skills_root() -> Path:
 
         return home_dir() / "skills"
     except Exception:
-        return Path.home() / ".tevarn" / "skills"
+        return get_tevarn_home() / "skills"
 
 
 def _sanitize_name(name: str) -> str:

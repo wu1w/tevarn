@@ -20,7 +20,7 @@ def _default_audit_path() -> str:
         from backend.core.config import get_tevarn_home
         return str(get_tevarn_home() / "kernel_events.jsonl")
     except Exception:
-        return os.path.expanduser("~/.tevarn/kernel_events.jsonl")
+        return str(get_tevarn_home() / "kernel_events.jsonl")
 
 
 _DEFAULT_PATH = _default_audit_path()

@@ -24,7 +24,9 @@
     "prepare:win-python-cross": "node ../scripts/prepare-win-python-cross.js",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "pack:sanitize": "node ../scripts/pack-sanitize-env.mjs"
+    "pack:sanitize": "node ../scripts/pack-sanitize-env.mjs",
+    "write:static-version": "node -e \"const fs=require('fs');const v=require('./package.json').version;const dirs=['out','dist'];for (const out of dirs){try{fs.mkdirSync(out,{recursive:true});fs.writeFileSync(out+'/version.json',JSON.stringify({version:v,built_at:new Date().toISOString()},null,2));console.log('wrote',out+'/version.json',v);}catch(e){}}\"",
+    "build:export": "cross-env NEXT_EXPORT=1 npm run build && npm run write:static-version"
   },
   "dependencies": {
     "@radix-ui/react-checkbox": "^1.3.7",

@@ -21,13 +21,11 @@ def _telemetry_path() -> Path:
     override = (os.environ.get("TAKTON_INTENT_TELEMETRY") or os.environ.get("TEVARN_INTENT_TELEMETRY") or "").strip()
     if override:
         return Path(override)
-    # 与 secrets / run_snapshots 同级
-    home = Path.home()
-    for name in (".tevarn", ".takton"):
-        d = home / name
-        if d.is_dir():
-            return d / "intent_telemetry.jsonl"
-    return home / ".takton" / "intent_telemetry.jsonl"
+    try:
+        from backend.core.config import get_tevarn_home
+        return get_tevarn_home() / "intent_telemetry.jsonl"
+    except Exception:
+        return Path.home() / ".tevarn" / "intent_telemetry.jsonl"
 
 
 def record_intent_event(

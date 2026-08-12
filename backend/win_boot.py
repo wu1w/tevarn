@@ -14,6 +14,8 @@ On non-Windows this is a thin uvicorn wrapper (policy no-op).
 """
 from __future__ import annotations
 
+from backend.core.config import get_tevarn_home
+
 import argparse
 import asyncio
 import os
@@ -64,7 +66,7 @@ def _arm_faulthandler() -> Path | None:
         # Prefer resources/logs next to package; fall back to ~/.tevarn/logs
         candidates = [
             Path(__file__).resolve().parents[1] / "logs",
-            Path(os.environ.get("TEVARN_HOME") or (Path.home() / ".tevarn")) / "logs",
+            Path(os.environ.get("TEVARN_HOME") or (get_tevarn_home())) / "logs",
         ]
         fh_dir = candidates[0]
         try:

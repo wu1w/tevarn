@@ -8,6 +8,8 @@ Wave A 办公/多模态工具：
 """
 from __future__ import annotations
 
+from backend.core.config import get_tevarn_home
+
 import asyncio
 import base64
 import json
@@ -24,7 +26,7 @@ from backend.tools.base import BaseTool, ToolRiskLevel, ToolSource
 
 logger = logging.getLogger(__name__)
 
-_HOME = Path(os.path.expanduser("~/.tevarn"))
+_HOME = get_tevarn_home()
 _CAL_DIR = _HOME / "calendar"
 _CAL_FILE = _CAL_DIR / "events.json"
 _MEDIA_DIR = _HOME / "media"

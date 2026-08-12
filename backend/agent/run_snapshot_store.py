@@ -14,6 +14,8 @@ Privacy (P2):
 """
 from __future__ import annotations
 
+from backend.core.config import get_tevarn_home
+
 import json
 import logging
 import os
@@ -55,7 +57,7 @@ def _dir() -> Path:
 
         root = Path(os.environ.get("TEVARN_HOME") or (host_home() / ".tevarn"))
     except Exception:
-        root = Path(os.environ.get("TEVARN_HOME") or Path.home() / ".tevarn")
+        root = Path(os.environ.get("TEVARN_HOME") or get_tevarn_home())
     d = root / "run_snapshots"
     d.mkdir(parents=True, exist_ok=True)
     return d

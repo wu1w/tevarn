@@ -62,6 +62,76 @@ def _route_coverage(root: Path) -> int:
     return n
 
 
+
+def _product_version() -> str:
+    try:
+        from backend.core.version import product_version
+        return str(product_version() or "").strip()
+    except Exception:
+        try:
+            return (Path(__file__).resolve().parent / "VERSION").read_text().strip()
+        except Exception:
+            return ""
+
+
+def _warn_if_stale_static(root: Path) -> None:
+    """Log loudly if static tree looks older than source VERSION (e.g. 0.5.4-alpha)."""
+    try:
+        prod = _product_version()
+        # Scan a few text/html/js for APP_VERSION or 0.5.4-alpha markers
+        markers = ("0.5.4-alpha", "APP_VERSION")
+        stale = False
+        found_ver = ""
+        for rel in ("index.html", "manifest.json", "version.json"):
+            p = root / rel
+            if not p.is_file():
+                continue
+            try:
+                text = p.read_text(encoding="utf-8", errors="ignore")[:8000]
+            except Exception:
+                continue
+            if "0.5.4-alpha" in text:
+                stale = True
+                found_ver = "0.5.4-alpha"
+                break
+            if "0.4.0" in text and prod.startswith("0.4.2"):
+                # soft warn only
+                found_ver = "0.4.0"
+        # Also peek _next static chunks is expensive; check version.json if present
+        vj = root / "version.json"
+        if vj.is_file():
+            try:
+                import json
+                data = json.loads(vj.read_text(encoding="utf-8"))
+                found_ver = str(data.get("version") or data.get("app_version") or found_ver)
+                if found_ver and prod and found_ver != prod:
+                    stale = True
+            except Exception:
+                pass
+        if stale or (found_ver and prod and found_ver != prod and found_ver.startswith("0.5.")):
+            logger.warning(
+                "frontend static at %s looks stale (found=%s product=%s). "
+                "Rebuild with: cd frontend && NEXT_EXPORT=1 npm run build. "
+                "Set TEVARN_FRONTEND_STATIC to a fresh export to override.",
+                root,
+                found_ver or "unknown",
+                prod or "unknown",
+            )
+        # Write a small stamp for operators
+        try:
+            stamp = root / ".tevarn_static_stamp"
+            # do not write into read-only mounts
+            if root.joinpath("index.html").is_file() and os.access(root, os.W_OK):
+                stamp.write_text(
+                    f"served_from={root}\nproduct={prod}\nfound={found_ver}\n",
+                    encoding="utf-8",
+                )
+        except Exception:
+            pass
+    except Exception as e:
+        logger.debug("static version check skip: %s", e)
+
+
 def resolve_frontend_static() -> Path | None:
     env = (os.environ.get("TEVARN_FRONTEND_STATIC") or "").strip()
     candidates: list[Path] = []
@@ -97,6 +167,7 @@ def resolve_frontend_static() -> Path | None:
     # 路由覆盖优先，其次 mtime
     valid.sort(key=lambda t: (t[0], t[1]), reverse=True)
     chosen = valid[0][2]
+    _warn_if_stale_static(chosen)
     if len(valid) > 1 and valid[0][0] < 5:
         logger.warning(
             "Frontend static at %s has low route coverage (%s). "

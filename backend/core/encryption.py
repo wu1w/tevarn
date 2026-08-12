@@ -30,7 +30,7 @@ def _secrets_file_path() -> Path:
         from backend.core.config import get_tevarn_home
         return get_tevarn_home() / "secrets.json"
     except Exception:
-        return Path.home() / ".tevarn" / "secrets.json"
+        return get_tevarn_home() / "secrets.json"
 
 
 def _derive_key_from_jwt_secret() -> bytes:

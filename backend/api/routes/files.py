@@ -719,7 +719,11 @@ async def restore_file_checkpoint(
             else nullcontext()
         )
         with ctx:
-            result = restore_checkpoint_file(key)
+            result = restore_checkpoint_file(
+                key,
+                session_id=session_id_raw or None,
+                user_id=str(getattr(current_user, "id", "") or "") or None,
+            )
         if result.get("ok"):
             result["backend"] = "python"
             if root_for_restore:

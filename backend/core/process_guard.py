@@ -12,6 +12,8 @@ Design constraints (keep thin):
 """
 from __future__ import annotations
 
+from backend.core.config import get_tevarn_home
+
 import atexit
 import json
 import logging
@@ -32,7 +34,7 @@ _last_rss_log = 0.0
 
 def breadcrumb_path() -> Path:
     """Prefer ~/.tevarn/logs (user-writable); fall back next to package."""
-    home = os.environ.get("TEVARN_HOME") or str(Path.home() / ".tevarn")
+    home = os.environ.get("TEVARN_HOME") or str(get_tevarn_home())
     p = Path(home) / "logs" / "process_breadcrumb.jsonl"
     try:
         p.parent.mkdir(parents=True, exist_ok=True)

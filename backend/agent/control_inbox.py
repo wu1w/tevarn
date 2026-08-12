@@ -68,7 +68,7 @@ def _inbox_dir() -> Path:
         return base
     except Exception:
         try:
-            base = Path.home() / ".tevarn" / "control_inbox"
+            base = get_tevarn_home() / "control_inbox"
             base.mkdir(parents=True, exist_ok=True)
             return base
         except Exception:

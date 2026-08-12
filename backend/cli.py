@@ -15,6 +15,8 @@ Tevarn CLI — Kernel Host / 控制台命令
 
 from __future__ import annotations
 
+from backend.core.config import get_tevarn_home
+
 import argparse
 import json
 import os
@@ -42,7 +44,7 @@ def _base_url(args: argparse.Namespace) -> str:
 
 
 def _token_path() -> Path:
-    home = Path.home() / ".tevarn"
+    home = get_tevarn_home()
     home.mkdir(parents=True, exist_ok=True)
     return home / "cli_token"
 

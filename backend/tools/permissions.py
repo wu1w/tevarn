@@ -16,6 +16,8 @@
 """
 from __future__ import annotations
 
+from backend.core.config import get_tevarn_home
+
 import logging
 import os
 import re
@@ -128,7 +130,7 @@ def host_data_roots() -> list[str]:
         # 不要放行整个用户主目录——只放行 Tevarn 数据树
     except Exception:
         try:
-            p = Path.home() / ".tevarn"
+            p = get_tevarn_home()
             roots.append(str(p.resolve()))
         except OSError:
             pass
@@ -260,7 +262,7 @@ def rewrite_host_path_into_workspace(path: str) -> str:
     except Exception:
         candidates = []
         try:
-            candidates.append((Path.home() / ".tevarn").resolve())
+            candidates.append((get_tevarn_home()).resolve())
         except OSError:
             return path
 

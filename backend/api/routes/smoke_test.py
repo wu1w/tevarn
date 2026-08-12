@@ -1,3 +1,4 @@
+from backend.core.config import get_tevarn_home
 """
 冒烟测试专用路由
 提供同步 HTTP 接口，方便后端直接调用模拟用户对话，
@@ -122,7 +123,7 @@ async def smoke_chat(
 
     # 读取最近日志提取上下文压缩信息
     try:
-        log_dir = os.environ.get("TEVARN_LOG_DIR", "") or str(Path.home() / ".tevarn" / "logs")
+        log_dir = os.environ.get("TEVARN_LOG_DIR", "") or str(get_tevarn_home() / "logs")
         log_path = str(Path(log_dir) / "tevarn.log")
         with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
             lines = f.readlines()[-200:]  # 只看最近 200 行

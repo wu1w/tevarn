@@ -40,7 +40,7 @@ def _data_dir() -> Path:
     appdata = (os.environ.get("APPDATA") or "").strip()
     if appdata:
         return Path(appdata) / "tevarn" / "data"
-    return Path.home() / ".tevarn" / "data"
+    return get_tevarn_home() / "data"
 
 
 def ledger_path() -> Path:

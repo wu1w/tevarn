@@ -154,19 +154,33 @@ def register_checkpoint(
     snapshot_path: str,
     target_path: str,
     tool: str = "",
+    session_id: str | None = None,
+    user_id: str | None = None,
+    workspace_id: str | None = None,
 ) -> str:
-    """Register a snapshot and return opaque id (thread + cross-process locked)."""
+    """Register a snapshot and return opaque id (thread + cross-process locked).
+
+    Optional ownership fields bind restore to the creating session/user.
+    """
     root = _project_root()
     cid = uuid.uuid4().hex
 
     def _do() -> None:
         reg = _load_registry(root)
-        reg[cid] = {
+        entry: dict[str, Any] = {
             "snapshot": str(snapshot_path),
             "target": str(target_path),
             "tool": tool,
             "created_at": datetime.now(timezone.utc).isoformat(),
+            "workspace_root": str(root),
         }
+        if session_id:
+            entry["session_id"] = str(session_id)
+        if user_id:
+            entry["user_id"] = str(user_id)
+        if workspace_id:
+            entry["workspace_id"] = str(workspace_id)
+        reg[cid] = entry
         if len(reg) > 400:
             items = sorted(
                 reg.items(),
@@ -248,10 +262,22 @@ def snapshot_path_for_tool(name: str, arguments: dict[str, Any]) -> str | None:
     idx = dest_root / "INDEX.txt"
     with idx.open("a", encoding="utf-8") as f:
         f.write(f"{name}\t{target}\t{dest}\n")
+    _sid = str(
+        (arguments or {}).get("_session_id")
+        or (arguments or {}).get("session_id")
+        or ""
+    ).strip() or None
+    _uid = str(
+        (arguments or {}).get("_user_id")
+        or (arguments or {}).get("user_id")
+        or ""
+    ).strip() or None
     cid = register_checkpoint(
         snapshot_path=str(dest),
         target_path=str(target),
         tool=name,
+        session_id=_sid,
+        user_id=_uid,
     )
     # also write id into index for operators
     with idx.open("a", encoding="utf-8") as f:
@@ -267,12 +293,18 @@ def list_recent_checkpoints(limit: int = 20) -> list[str]:
     return [str(p) for p in dirs[:limit]]
 
 
-def restore_checkpoint_file(snapshot_path_or_id: str) -> dict[str, Any]:
+def restore_checkpoint_file(
+    snapshot_path_or_id: str,
+    *,
+    session_id: str | None = None,
+    user_id: str | None = None,
+) -> dict[str, Any]:
     """Restore by opaque id (preferred) or legacy snapshot path.
 
     Security:
       - registry targets must stay under project root
       - legacy path snapshots must live under .tevarn/checkpoints/
+      - if registry has session_id/user_id, caller must match when provided
     """
     raw = str(snapshot_path_or_id or "").strip()
     if not raw:
@@ -284,6 +316,13 @@ def restore_checkpoint_file(snapshot_path_or_id: str) -> dict[str, Any]:
     # Opaque id path
     entry = lookup_checkpoint(raw)
     if entry and entry.get("backend") == "python" and entry.get("snapshot"):
+        # Ownership gate (shared-deploy safety)
+        reg_sid = str(entry.get("session_id") or "").strip()
+        reg_uid = str(entry.get("user_id") or "").strip()
+        if reg_sid and session_id and str(session_id).strip() != reg_sid:
+            return {"ok": False, "error": "checkpoint session mismatch"}
+        if reg_uid and user_id and str(user_id).strip() != reg_uid:
+            return {"ok": False, "error": "checkpoint owner mismatch"}
         snap = Path(str(entry["snapshot"])).expanduser()
         target = Path(str(entry.get("target") or "")).expanduser()
         try:
