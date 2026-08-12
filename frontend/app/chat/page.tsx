@@ -109,6 +109,7 @@ function ChatPageInner() {
         /** 流式活动时间戳：长时间无 delta 则视为卡住，露出恢复入口 */
         const lastStreamActivityRef = useRef<number>(0);
         const seenRunEventIdsRef = useRef<Set<string>>(new Set());
+        const currentRunGenerationRef = useRef<number>(0);
         /** 假 Resuming：等 sync 完成后再 arm 短超时（弱网 auth+sync 常 >4s） */
         const syncSeenForResumeRef = useRef<Record<string, boolean>>({});
         const pendingResumeFallbackRef = useRef<Record<string, () => void>>({});
@@ -780,6 +781,19 @@ function ChatPageInner() {
           seenRunEventIdsRef.current = new Set(
             [...seenRunEventIdsRef.current].slice(-400),
           );
+        }
+      }
+      // Drop late events from prior runs
+      const msgGen = Number(
+        (msg as { run_generation?: number; generation?: number }).run_generation ??
+          (msg as { generation?: number }).generation ??
+          0,
+      );
+      if (msgGen > 0) {
+        if (msgGen > currentRunGenerationRef.current) {
+          currentRunGenerationRef.current = msgGen;
+        } else if (msgGen < currentRunGenerationRef.current) {
+          return;
         }
       }
 

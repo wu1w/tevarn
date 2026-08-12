@@ -315,6 +315,7 @@ def test_reset_run_state_clears_run_level_state(wf) -> None:
         loop._should_stop = True
         loop._search_fp_counter = {"abc": 3}
         loop._kernel_process_options = {"token_budget": 12345}
+        # leftover options without pending must not survive reset
         loop._kernel_process = object()
         loop._run_recorder = object()
         loop._contract_wl_ready = True

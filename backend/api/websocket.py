@@ -793,19 +793,43 @@ class ConnectionManager:
             if msg_type not in ("session_deleted", "error"):
                 return
 
-        # 打戳 run_generation（来自 agent task contextvar），供 ingest/前端过滤 late event
+        # Stamp + filter by run_generation (stream + run_event)
         if isinstance(message, dict) and message.get("type") in (
             "stream_delta",
             "status",
             "tool_event",
             "error",
+            "run_event",
         ):
             if message.get("run_generation") is None:
-                ctx_gen = _run_gen_ctx.get()
-                if ctx_gen is not None:
-                    message = {**message, "run_generation": int(ctx_gen)}
+                # Prefer explicit generation field from emitter
+                if message.get("generation") is not None:
+                    message = {
+                        **message,
+                        "run_generation": int(message["generation"]),
+                    }
+                else:
+                    ctx_gen = _run_gen_ctx.get()
+                    if ctx_gen is not None:
+                        message = {**message, "run_generation": int(ctx_gen)}
             if not message.get("session_id"):
                 message = {**message, "session_id": str(session_id)}
+            # Drop late events from prior runs before they reach the browser
+            msg_gen = message.get("run_generation")
+            if msg_gen is not None:
+                try:
+                    cur = self.current_run_generation(session_id)
+                    if cur and int(msg_gen) != int(cur):
+                        logger.debug(
+                            "drop late gen=%s cur=%s type=%s session=%s",
+                            msg_gen,
+                            cur,
+                            message.get("type") or message.get("event"),
+                            session_id,
+                        )
+                        return
+                except Exception:
+                    pass
 
         try:
             if not self.is_session_deleted(session_id):

@@ -1629,7 +1629,7 @@ class WorkforceDispatcher:
             _item_payload = {}
         _owner = getattr(ident, "user_id", None)
         _owner_s = str(_owner) if _owner else None
-        loop._kernel_process_options = {
+        loop._pending_kernel_options = {
             "capabilities": list(ident.capabilities) if ident.capabilities is not None else None,
             "token_budget": _budget,
             "meta": {
@@ -1685,8 +1685,8 @@ class WorkforceDispatcher:
             _mr = int(_lg_cfg.get("max_tool_rounds") or 16)
             # Python iteration budget ≈ tool rounds + 2 grace for final text
             loop.max_iterations = max(4, min(_mr + 2, 24))
-            if isinstance(loop._kernel_process_options, dict):
-                _meta = loop._kernel_process_options.setdefault("meta", {})
+            if isinstance(getattr(loop, "_pending_kernel_options", None), dict):
+                _meta = loop._pending_kernel_options.setdefault("meta", {})
                 if isinstance(_meta, dict):
                     _meta["loop_guard"] = _lg_cfg
                     _meta["role_kind"] = _role

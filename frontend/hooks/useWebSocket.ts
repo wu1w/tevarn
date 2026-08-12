@@ -345,7 +345,11 @@ export function useWebSocket(options: UseWebSocketOptions) {
       const doSync = () => {
         try {
           const lastId = optionsRef.current.getLastMessageId?.();
-          ws.send(JSON.stringify({ type: 'sync', last_message_id: lastId || undefined }));
+          ws.send(
+            JSON.stringify(
+              createSyncMessage(lastId || undefined, lastEventSeqRef.current)
+            )
+          );
         } catch {
           /* ignore */
         }

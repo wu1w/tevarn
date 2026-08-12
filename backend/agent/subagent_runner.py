@@ -138,14 +138,14 @@ async def run_subagent(
         # 预置进程能力为空列表时 create_process 会走 intent 挂载；
         # 若 sub_agent 声明了 capabilities，同步进 process options
         if cap_list:
-            child._kernel_process_options = {
-                **(getattr(child, "_kernel_process_options", None) or {}),
+            child._pending_kernel_options = {
+                **(getattr(child, "_pending_kernel_options", None) or getattr(child, "_kernel_process_options", None) or {}),
                 "capabilities": cap_list,
                 "intent": child._intent_declaration,
             }
         else:
-            child._kernel_process_options = {
-                **(getattr(child, "_kernel_process_options", None) or {}),
+            child._pending_kernel_options = {
+                **(getattr(child, "_pending_kernel_options", None) or getattr(child, "_kernel_process_options", None) or {}),
                 "capabilities": [],  # 显式空 → 再由 intent 填 grantable
                 "intent": child._intent_declaration,
             }

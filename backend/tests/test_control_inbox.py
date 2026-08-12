@@ -43,7 +43,7 @@ def test_loop_decision_notes():
 
 def test_run_brief_and_events_seq():
     from backend.agent.run_brief import drop_brief, get_brief, reset_brief
-    from backend.agent.run_events import reset_seq, _next_seq
+    from backend.agent.run_events import reset_seq
 
     sid = "33333333-3333-3333-3333-333333333333"
     drop_brief(sid)

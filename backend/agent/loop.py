@@ -133,26 +133,20 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
     def _reset_run_state(self) -> None:
         """Worker 池复用前重置 run 级状态（Alpha Review #2）。
 
-        WorkforceWorker 池让 loop 实例跨工单存活——init 重资源
-        （repo 引用、RAG 懒加载缓存、context_manager）复用是收益，
-        但 run 级状态泄漏是事故。每 run 前显式归零：
-        - _kernel_process：进程归属每工单新建
-        - _kernel_process_options：若 dispatcher 已注入本轮预算/能力则 **保留**
-        - _run_recorder：durable run 记录器每 run 新建
-        - _search_fp_counter：重复搜索计数器跨工单累积会误拦截
-        - _contract_wl_*：身份能力可能已变更，契约白名单重载
-        - _should_stop：上一单的停止信号不能带进下一单
+        Consume one-shot ``_pending_kernel_options`` (dispatcher/subagent inject
+        before run) into ``_kernel_process_options`` for THIS run only — never
+        inherit leftover options from a previous turn.
         """
-        # Dispatcher may set options *before* run(); do not wipe them here.
-        _preserve_opts = getattr(self, "_kernel_process_options", None)
+        # One-shot: pending → options; always clear leftover options first.
+        pending = getattr(self, "_pending_kernel_options", None)
+        self._pending_kernel_options = None
         self._kernel_process = None
-        self._kernel_process_options = _preserve_opts
+        self._kernel_process_options = dict(pending) if isinstance(pending, dict) else None
         self._last_kernel_process_id = None
         # 编制字段由 dispatcher 在派工时重设，此处不清 _workforce/_identity_*
-        # （worker 池复用同一员工；跨工单身份不变）
         self._run_recorder = None
         self._search_fp_counter = {}
-        self._search_total_calls = 0  # P1：跨工单泄漏会误 ban 下一单全部搜索
+        self._search_total_calls = 0
         self._contract_wl_ready = False
         self._contract_whitelist = None
         self._should_stop = False
@@ -161,14 +155,20 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         self._goal_complete_summary_nudged = False
         self._plan_mode_active = False
         self._headless_run = False
+        # MUST clear exit markers so next run cannot inherit fail codes
+        self.last_exit_reason = None
+        self.last_exit_detail = None
+        self.last_iterations = None
+        self.last_tool_rounds = None
         try:
             from backend.agent.progress_guard import set_soft_open_for_run
-            set_soft_open_for_run(None)  # reset each run
+            set_soft_open_for_run(None)
         except Exception:
             pass
         self._config_micro_loop = None
         self._thrash_force_final_override = None
         self._pseudo_tool_leak_streak = 0
+        self._terminal_event_emitted = False
 
     # ── Batch3 port helpers（优先 message_store / tool_executor）─────────
     async def _save_message(
@@ -1527,23 +1527,28 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 "llm_error",
                 "provider_error",
                 "kernel_token_budget_exhausted",
+                "kernel_budget_precheck",
+                "budget_exhausted",
+                "goal_stalled",
                 "doom_loop",
                 "thrash",
                 "max_tool_rounds",
                 "error",
+                "tool_error",
             }
-            if self._should_stop:
+            _user_stop = bool(self._should_stop) and _exit not in _fail_codes
+            if _user_stop:
                 await recorder.cancel("stopped by user")
+                _kstate, _kreason = "killed", "stopped by user"
             elif _exit in _fail_codes:
                 await recorder.finish_fail(
                     error=f"{_exit}: {(result or '')[:400]}"
                 )
+                _kstate, _kreason = "failed", _exit
             else:
                 await recorder.finish_ok(final_summary=result or "")
-            await _release_kernel_slot(
-                state="killed" if self._should_stop else "completed",
-                reason="stopped by user" if self._should_stop else None,
-            )
+                _kstate, _kreason = "completed", None
+            await _release_kernel_slot(state=_kstate, reason=_kreason)
             return result
         except asyncio.CancelledError:
             # P0：CancelledError 是 BaseException；清理段用 shield 防二次 cancel 打断漏槽

@@ -254,6 +254,7 @@ async def emit_run_event(
         msg_base["run_id"] = str(run_id)
     if generation is not None:
         msg_base["generation"] = int(generation)
+        msg_base["run_generation"] = int(generation)
 
     seq, msg = _atomic_emit(sid, event, msg_base)
 
