@@ -44,6 +44,21 @@ def _bootstrap_legacy_env() -> None:
 
 _bootstrap_legacy_env()
 
+
+def get_tevarn_home() -> Path:
+    """Canonical data root: $TEVARN_HOME or ~/.tevarn (after legacy bootstrap)."""
+    raw = (os.environ.get("TEVARN_HOME") or "").strip()
+    if raw:
+        p = Path(raw).expanduser()
+    else:
+        p = Path.home() / ".tevarn"
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    return p
+
+
 # 公开仓库中出现过的已知弱密钥（显式设置这些值一律拒绝）
 _KNOWN_WEAK_SECRETS = frozenset({
     "change-me",

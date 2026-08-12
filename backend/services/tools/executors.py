@@ -1377,7 +1377,7 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
         if err_s:
             _local_res = f"{header}\nstdout:\n{out_s or '(empty)'}\n\nstderr:\n{err_s}"
         elif out_s:
-            _local_res = out_s
+            _local_res = f"{header}\n{out_s}"
         elif code not in (0, None, "0"):
             _local_res = (
                 f"{header}\n[No output] 命令无 stdout/stderr。"

@@ -214,6 +214,8 @@ export function useWebSocket(options: UseWebSocketOptions) {
   const [kickedByPeer, setKickedByPeer] = useState(false);
   const kickedByPeerRef = useRef(false);
   const wsRef = useRef<WebSocket | null>(null);
+  /** Monotonic run_event seq for reconnect cursor */
+  const lastEventSeqRef = useRef<number>(0);
   const activeSessionRef = useRef<string>('');
   const reconnectAttempts = useRef(0);
   const pingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -441,6 +443,8 @@ export function useWebSocket(options: UseWebSocketOptions) {
         } else if (isToolEvent(msg)) {
           optionsRef.current.onToolEvent?.(msg);
         } else if (isRunEvent(msg)) {
+          const seq = typeof (msg as RunEventMessage).seq === 'number' ? (msg as RunEventMessage).seq! : 0;
+          if (seq > lastEventSeqRef.current) lastEventSeqRef.current = seq;
           optionsRef.current.onRunEvent?.(msg);
         } else if (isScreenshot(msg)) {
           optionsRef.current.onScreenshot?.(msg);
@@ -726,7 +730,9 @@ export function useWebSocket(options: UseWebSocketOptions) {
 
   const sendSync = useCallback((lastMessageId?: string) => {
     if (wsRef.current?.readyState !== WebSocket.OPEN) return false;
-    wsRef.current.send(JSON.stringify(createSyncMessage(lastMessageId)));
+    wsRef.current.send(
+      JSON.stringify(createSyncMessage(lastMessageId, lastEventSeqRef.current))
+    );
     return true;
   }, []);
 
@@ -749,6 +755,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
       kickedByPeerRef.current = false;
       setKickedByPeer(false);
       reconnectAttempts.current = 0;
+      lastEventSeqRef.current = 0;
       connect(sessionId, { force: true });
     }, 0);
     return () => {

@@ -44,13 +44,19 @@ def reset_seq(session_id: uuid.UUID | str) -> None:
 
 def _spill_dir() -> Path:
     try:
-        p = Path.home() / ".tevarn" / "run_events"
+        from backend.core.config import get_tevarn_home
+        p = get_tevarn_home() / "run_events"
         p.mkdir(parents=True, exist_ok=True)
         return p
     except Exception:
-        p = Path.cwd() / ".tevarn" / "run_events"
-        p.mkdir(parents=True, exist_ok=True)
-        return p
+        try:
+            p = Path.home() / ".tevarn" / "run_events"
+            p.mkdir(parents=True, exist_ok=True)
+            return p
+        except Exception:
+            p = Path.cwd() / ".tevarn" / "run_events"
+            p.mkdir(parents=True, exist_ok=True)
+            return p
 
 
 def _spill_path(session_id: str) -> Path:

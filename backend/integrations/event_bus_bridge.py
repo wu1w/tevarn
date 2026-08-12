@@ -1,18 +1,16 @@
-"""EventBus → WebSocket 活动流桥（Phase 0.5.2 W2-3）
+"""EventBus → WebSocket via unified run_events.emit_run_event.
 
-订阅进程内 event_bus 的 run.* / tool.* / approval.* 事件，
-按 payload.session_id 转发到对应会话的 WS 连接，消息类型 run_event。
-前端活动流订阅 run_event 即可展示运行生命周期（状态迁移 / 工具步骤 / 确认请求）。
+All bus topics (run.* / tool.* / approval.* / computer.*) are forwarded with the
+same wire format as direct emit_run_event calls:
 
-- 无 session_id 的事件不转发（纯内部事件）
-- 连接不存在时 broadcast 静默忽略（ConnectionManager 既有行为）
-- start/stop 幂等；转发异常只记 debug，不影响总线其他订阅者
+  { type, event, topic, seq, session_id, timestamp, ts, data, payload, run_id? }
+
+This collapses the dual-protocol split (legacy topic/data-only vs seq/event).
 """
 from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
@@ -49,22 +47,37 @@ class EventBusWSBridge:
     async def _forward(self, topic: str, payload: dict[str, Any]) -> None:
         if self.ws_manager is None:
             return
-        sid_raw = payload.get("session_id")
+        sid_raw = (payload or {}).get("session_id")
         if not sid_raw:
             return
         try:
             sid = uuid.UUID(str(sid_raw))
         except (ValueError, AttributeError):
             return
-        msg = {
-            "type": "run_event",
-            "topic": topic,
-            "session_id": str(sid),
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "data": payload,
-        }
         try:
-            await self.ws_manager.broadcast(sid, msg)
+            from backend.agent.run_events import emit_run_event
+
+            run_id = (payload or {}).get("run_id")
+            gen = (payload or {}).get("generation") or (payload or {}).get(
+                "run_generation"
+            )
+            detail = None
+            if isinstance(payload, dict):
+                detail = payload.get("detail") or payload.get("note") or payload.get(
+                    "message"
+                )
+                if detail is not None:
+                    detail = str(detail)[:500]
+            await emit_run_event(
+                self.ws_manager,
+                sid,
+                topic,  # event == topic
+                detail=detail,
+                run_id=str(run_id) if run_id else None,
+                payload=dict(payload or {}),
+                data=dict(payload or {}),
+                generation=int(gen) if gen is not None else None,
+            )
         except Exception as e:
             logger.debug("run_event forward failed topic=%s: %s", topic, e)
 

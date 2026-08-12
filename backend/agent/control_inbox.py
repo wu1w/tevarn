@@ -62,13 +62,19 @@ class ControlMessage:
 
 def _inbox_dir() -> Path:
     try:
-        base = Path.home() / ".tevarn" / "control_inbox"
+        from backend.core.config import get_tevarn_home
+        base = get_tevarn_home() / "control_inbox"
         base.mkdir(parents=True, exist_ok=True)
         return base
     except Exception:
-        base = Path.cwd() / ".tevarn" / "control_inbox"
-        base.mkdir(parents=True, exist_ok=True)
-        return base
+        try:
+            base = Path.home() / ".tevarn" / "control_inbox"
+            base.mkdir(parents=True, exist_ok=True)
+            return base
+        except Exception:
+            base = Path.cwd() / ".tevarn" / "control_inbox"
+            base.mkdir(parents=True, exist_ok=True)
+            return base
 
 
 def _spill_path(session_id: str) -> Path:

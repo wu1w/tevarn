@@ -324,11 +324,16 @@ def observe_tool(
         )
         if _TEST_HINT.search(cmd):
             st.tests_run += 1
-            res_l = (result or "").lower()
-            failed = any(
-                x in res_l
-                for x in ("failed", "traceback", "error", "failures")
-            ) and "passed" not in res_l[:400]
+            res = result or ""
+            res_l = res.lower()
+            m_ex = re.search(r"\[Exit\s+(-?\d+)\]", res)
+            if m_ex:
+                failed = int(m_ex.group(1)) != 0
+            else:
+                failed = any(
+                    x in res_l
+                    for x in ("failed", "traceback", "error", "failures")
+                ) and "passed" not in res_l[:400]
             if failed:
                 st.tests_failed += 1
             if st.phase in (

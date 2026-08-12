@@ -1607,6 +1607,25 @@ async def websocket_endpoint(
                             }
                             for m in messages
                         ]
+                    # run_event cursor replay (same try as message sync)
+                    try:
+                        after_seq = int(
+                            data.get("after_seq") or data.get("last_event_seq") or 0
+                        )
+                    except (TypeError, ValueError):
+                        after_seq = 0
+                    try:
+                        from backend.agent.run_events import load_recent_events
+
+                        for ev in load_recent_events(
+                            session_id, after_seq=after_seq, limit=80
+                        ):
+                            payload = dict(ev)
+                            payload["replay"] = True
+                            await manager.broadcast(session_id, payload)
+                    except Exception as _re_e:
+                        logger.debug("sync run_event replay skip: %s", _re_e)
+
                     snap_fields = (
                         snap.to_sync_fields()
                         if snap is not None

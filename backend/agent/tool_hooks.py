@@ -259,20 +259,32 @@ async def builtin_track_write_after(
                 or ""
             ).lower()
             if any(h in cmd for h in _TEST_HINT):
-                res_l = (result or "").lower()
+                import re as _re
+                res = result or ""
+                res_l = res.lower()
                 passed = None
-                # 收紧：避免 "ok" 出现在无关输出里误判
-                if "passed" in res_l or " test session starts" in res_l:
-                    if "failed" not in res_l and "error" not in res_l and "traceback" not in res_l:
-                        passed = True
-                if (
-                    "failed" in res_l
-                    or "traceback" in res_l
-                    or "errors=" in res_l
-                    or " FAILURES " in (result or "")
-                ):
-                    passed = False
-                brief.note_test(cmd[:120], passed=passed, summary=(result or "")[:200])
+                # Primary: [Exit N] from command tool
+                m_ex = _re.search(r"\[Exit\s+(-?\d+)\]", res)
+                if m_ex:
+                    code = int(m_ex.group(1))
+                    passed = code == 0
+                else:
+                    # Fallback: textual heuristics
+                    if "passed" in res_l or " test session starts" in res_l:
+                        if "failed" not in res_l and "error" not in res_l and "traceback" not in res_l:
+                            passed = True
+                    if (
+                        "failed" in res_l
+                        or "traceback" in res_l
+                        or "errors=" in res_l
+                        or " FAILURES " in res
+                    ):
+                        passed = False
+                brief.note_test(
+                    cmd[:120],
+                    passed=passed,
+                    summary=(res)[:200],
+                )
     except Exception:
         pass
     return result

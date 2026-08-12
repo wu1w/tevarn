@@ -89,8 +89,16 @@ export function createPingMessage(): { type: 'ping' } {
   return { type: 'ping' };
 }
 
-export function createSyncMessage(lastMessageId?: string): { type: 'sync'; last_message_id?: string } {
-  return { type: 'sync', last_message_id: lastMessageId };
+export function createSyncMessage(
+  lastMessageId?: string,
+  afterSeq?: number
+): { type: 'sync'; last_message_id?: string; after_seq?: number } {
+  const msg: { type: 'sync'; last_message_id?: string; after_seq?: number } = {
+    type: 'sync',
+  };
+  if (lastMessageId) msg.last_message_id = lastMessageId;
+  if (typeof afterSeq === 'number' && afterSeq >= 0) msg.after_seq = afterSeq;
+  return msg;
 }
 
 export function createStopMessage(): { type: 'stop' } {
