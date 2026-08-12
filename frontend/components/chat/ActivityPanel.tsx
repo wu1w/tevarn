@@ -39,14 +39,18 @@ export function ActivityPanel({
 
   useEffect(() => {
     if (running > 0 && !userCollapsed) {
-      setOpen(true);
+      const id = window.setTimeout(() => setOpen(true), 0);
+      return () => window.clearTimeout(id);
     }
   }, [running, userCollapsed]);
 
   useEffect(() => {
     if (!isStreaming && items.length === 0) {
-      setOpen(false);
-      setUserCollapsed(false);
+      const id = window.setTimeout(() => {
+        setOpen(false);
+        setUserCollapsed(false);
+      }, 0);
+      return () => window.clearTimeout(id);
     }
   }, [isStreaming, items.length]);
 

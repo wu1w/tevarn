@@ -22,6 +22,7 @@ export function ChatStatusStrip({
   toolsCount,
   softRenew,
   liveModel,
+  phaseLabel,
   zh = true,
 }: {
   sessionId?: string | null;
@@ -30,6 +31,8 @@ export function ChatStatusStrip({
   softRenew?: number | null;
   /** 本轮实际模型（WS status 推送） */
   liveModel?: string | null;
+  /** Live coding/plan phase label from run events */
+  phaseLabel?: string | null;
   zh?: boolean;
 }) {
   const addToast = useToastStore((s) => s.addToast);
@@ -78,6 +81,8 @@ export function ChatStatusStrip({
   const jobLive = jobItems.some((i) =>
     ['pending', 'claimed', 'running', 'leased'].includes((i.status || '').toLowerCase()),
   );
+  const phaseChip = (phaseLabel || '').trim();
+
 
   useEffect(() => {
     if (!data) return;
@@ -137,6 +142,11 @@ export function ChatStatusStrip({
 
   return (
     <div ref={rootRef} className="relative border-t border-border-subtle">
+      {phaseChip ? (
+        <span className="rounded-md bg-brand-cyan/15 px-1.5 py-0.5 text-[10px] font-medium text-brand-cyan">
+          {phaseChip}
+        </span>
+      ) : null}
       <div className="flex h-[24px] items-center gap-1.5 overflow-hidden px-3">
         {data ? (
           <button

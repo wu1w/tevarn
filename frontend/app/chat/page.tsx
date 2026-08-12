@@ -87,9 +87,10 @@ function ChatPageInner() {
         const [isStreaming, setIsStreaming] = useState(false);
   const [codingDelivery, setCodingDelivery] = useState<CodingDelivery | null>(null);
 
-  // 切会话时清交付卡，避免串台
+  // 切会话时清交付卡，避免串台（推迟 setState，减少 effect 级联）
   useEffect(() => {
-    setCodingDelivery(null);
+    const t = window.setTimeout(() => setCodingDelivery(null), 0);
+    return () => window.clearTimeout(t);
   }, [currentSession?.id]);
         /** Stop 后等待服务端 idle，避免假停后仍收 stream_delta（按会话，防切会话误伤） */
         const [isStopping, setIsStopping] = useState(false);
@@ -106,7 +107,7 @@ function ChatPageInner() {
           if (cur === sid) setIsStopping(v);
         }, []);
         /** 流式活动时间戳：长时间无 delta 则视为卡住，露出恢复入口 */
-        const lastStreamActivityRef = useRef<number>(Date.now());
+        const lastStreamActivityRef = useRef<number>(0);
         /** 假 Resuming：等 sync 完成后再 arm 短超时（弱网 auth+sync 常 >4s） */
         const syncSeenForResumeRef = useRef<Record<string, boolean>>({});
         const pendingResumeFallbackRef = useRef<Record<string, () => void>>({});
@@ -174,8 +175,9 @@ function ChatPageInner() {
     try {
       const d = sessionStorage.getItem('tevarn-compose-draft');
       if (d) {
-        setEditingContent(d);
         sessionStorage.removeItem('tevarn-compose-draft');
+        const id = window.setTimeout(() => setEditingContent(d), 0);
+        return () => window.clearTimeout(id);
       }
     } catch { /* ignore */ }
   }, []);
@@ -383,8 +385,8 @@ function ChatPageInner() {
   // 长时间 thinking 无 delta → 卡住，露出恢复/停止入口
   React.useEffect(() => {
     if (!isStreaming || isStopping) {
-      setStreamStuck(false);
-      return;
+      const id = window.setTimeout(() => setStreamStuck(false), 0);
+      return () => window.clearTimeout(id);
     }
     const STUCK_MS = 90_000;
     const tick = window.setInterval(() => {
@@ -1075,25 +1077,38 @@ const handleUserMessageAck = useCallback(
   const isConnected = bridgeApi?.isConnected ?? false;
   const isConnecting = bridgeApi?.isConnecting ?? false;
   const kickedByPeer = bridgeApi?.kickedByPeer ?? false;
-  const reclaimConnection = () => bridgeApi?.reclaimConnection();
-  const sendMessage = (
-    content: string,
-    attachments?: Array<{
-      filename: string;
-      url: string;
-      type: string;
-      text_content?: string;
-    }>,
-    mode?: string,
-    subAgentIds?: string[],
-    opts?: { regenerate?: boolean; control?: 'steer' | 'queue' | 'interrupt' | 'stop' },
-  ) =>
-    bridgeApi?.sendMessage(content, attachments, mode, subAgentIds, opts) ?? false;
-  const sendStop = () => bridgeApi?.sendStop() ?? false;
-  const waitForConnection = (sid?: string, ms?: number) =>
-    bridgeApi?.waitForConnection(sid, ms) ?? Promise.resolve(false);
-  const connect = (sid?: string, opts?: { force?: boolean }) =>
-    bridgeApi?.connect(sid, opts);
+  const reclaimConnection = useCallback(
+    () => bridgeApi?.reclaimConnection(),
+    [bridgeApi],
+  );
+  const sendMessage = useCallback(
+    (
+      content: string,
+      attachments?: Array<{
+        filename: string;
+        url: string;
+        type: string;
+        text_content?: string;
+      }>,
+      mode?: string,
+      subAgentIds?: string[],
+      opts?: { regenerate?: boolean; control?: 'steer' | 'queue' | 'interrupt' | 'stop' },
+    ) => bridgeApi?.sendMessage(content, attachments, mode, subAgentIds, opts) ?? false,
+    [bridgeApi],
+  );
+  const sendStop = useCallback(
+    () => bridgeApi?.sendStop() ?? false,
+    [bridgeApi],
+  );
+  const waitForConnection = useCallback(
+    (sid?: string, ms?: number) =>
+      bridgeApi?.waitForConnection(sid, ms) ?? Promise.resolve(false),
+    [bridgeApi],
+  );
+  const connect = useCallback(
+    (sid?: string, opts?: { force?: boolean }) => bridgeApi?.connect(sid, opts),
+    [bridgeApi],
+  );
 
   // 保持 streaming/stopping 最新值供 BroadcastChannel hello 回复
   React.useEffect(() => {
@@ -1109,8 +1124,11 @@ const handleUserMessageAck = useCallback(
     const sid = currentSession?.id || '';
     tabChannelRef.current?.close();
     tabChannelRef.current = null;
-    setPeerOccupied(false);
-    if (!sid) return;
+    if (!sid) {
+      const id = window.setTimeout(() => setPeerOccupied(false), 0);
+      return () => window.clearTimeout(id);
+    }
+    const idClear = window.setTimeout(() => setPeerOccupied(false), 0);
     let peerLiveUntil = 0;
     const ch = openSessionTabChannel(sid, (msg) => {
       if (msg.type === 'stream_state' || msg.type === 'peer_claim') {
@@ -1145,6 +1163,7 @@ const handleUserMessageAck = useCallback(
       }
     }, 3000);
     return () => {
+      window.clearTimeout(idClear);
       window.clearInterval(tick);
       ch.close();
       if (tabChannelRef.current === ch) tabChannelRef.current = null;
@@ -1913,6 +1932,13 @@ const handleUserMessageAck = useCallback(
                       {/* 统一状态条：健康 / 沙箱 / 能力 / 记录 / 工单 */}
                       <div className="relative">
                         <ChatStatusStrip
+                          phaseLabel={
+                            codingDelivery?.phase_label ||
+                            codingDelivery?.phase ||
+                            (streamStatusDetail && /understand|plan|edit|test|review|deliver/i.test(streamStatusDetail)
+                              ? streamStatusDetail
+                              : null)
+                          }
                           sessionId={currentSession?.id}
                           capsCount={runCaps?.caps}
                           toolsCount={runCaps?.tools}

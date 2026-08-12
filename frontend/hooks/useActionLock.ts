@@ -8,11 +8,8 @@ import { useRef, useCallback, useEffect, useState } from 'react';
  * - wrapped 用 ref 做同步互斥（必须同步，state 更新要等下一次渲染才可见，
  *   连点两下会在同一帧内都读到旧值而双发）
  * - locked 用 state 暴露给 UI，才能真正驱动按钮禁用/加载态
- *
- * 此前 locked 直接返回 lockedRef.current —— ref 变化不触发重渲染，
- * 消费者拿到的永远是上一次渲染时的值（实际恒为 false），
- * 任何依赖它做禁用的按钮都不会亮起。
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function useActionLock<T extends (...args: any[]) => any>(
   fn: T,
   cooldownMs: number = 500
@@ -33,7 +30,6 @@ export function useActionLock<T extends (...args: any[]) => any>(
         if (timerRef.current) clearTimeout(timerRef.current);
         timerRef.current = setTimeout(() => {
           lockedRef.current = false;
-          // 卸载后不再 setState，避免 React 警告
           if (mountedRef.current) setLocked(false);
         }, cooldownMs);
       }
@@ -56,9 +52,6 @@ export function useActionLock<T extends (...args: any[]) => any>(
  * 局部冷却 hook：用于单个组件内的多个按钮。
  */
 export function useLocalCooldown() {
-  // ref 做同步互斥；state 镜像一份供渲染读取。
-  // 原实现 isCooling 只读 ref，冷却状态变化不触发重渲染，
-  // JSX 里的禁用态永远不会更新。
   const idsRef = useRef<Set<string>>(new Set());
   const [coolingIds, setCoolingIds] = useState<Set<string>>(new Set());
   const mountedRef = useRef(true);
@@ -80,6 +73,7 @@ export function useLocalCooldown() {
   );
 
   const run = useCallback(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async <T extends (...args: any[]) => any>(id: string, fn: T, cooldownMs = 500): Promise<ReturnType<T> | undefined> => {
       if (idsRef.current.has(id)) return undefined;
       idsRef.current.add(id);

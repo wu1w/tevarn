@@ -30,7 +30,8 @@ export function CodingDeliveryCard({ delivery, onRollback }: Props) {
   const tests = delivery.tests || [];
   const blockers = delivery.blockers || [];
   const cps = delivery.checkpoints || [];
-  if (!files.length && !tests.length && !blockers.length) return null;
+  const hasPhase = Boolean(delivery.phase_label || delivery.phase);
+  if (!files.length && !tests.length && !blockers.length && !hasPhase) return null;
 
   return (
     <div className="mt-2 overflow-hidden rounded-xl border border-border-subtle bg-card-bg/80 text-[12px]">

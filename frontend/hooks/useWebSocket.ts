@@ -494,7 +494,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
             try {
               const lastId = optionsRef.current.getLastMessageId?.();
               wsRef.current?.send(
-                JSON.stringify({ type: 'sync', last_message_id: lastId || undefined })
+                JSON.stringify(createSyncMessage(lastId || undefined, lastEventSeqRef.current))
               );
             } catch {
               /* ignore */
@@ -805,10 +805,11 @@ export function useWebSocket(options: UseWebSocketOptions) {
     connect(sid, { force: true });
   }, [connect]);
 
-  // 登出 / token 清空：强制断连
+  // 登出 / token 清空：强制断连（推迟到下一 macrotask，避免 effect 内同步 setState）
   useEffect(() => {
     if (!token) {
-      disconnect();
+      const t = window.setTimeout(() => disconnect(), 0);
+      return () => window.clearTimeout(t);
     }
   }, [token, disconnect]);
 

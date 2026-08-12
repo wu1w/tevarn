@@ -33,6 +33,13 @@ const eslintConfig = defineConfig([
     files: ["**/*.cjs", "scripts/**/*.js"],
     rules: { "@typescript-eslint/no-require-imports": "off" },
   },
+  {
+    files: ["e2e/**", "**/*.spec.ts", "**/*.spec.tsx"],
+    rules: {
+      "@typescript-eslint/no-explicit-any": "off",
+      "react-hooks/set-state-in-effect": "off",
+    },
+  },
   globalIgnores([
     ".next/**",
     "out/**",
