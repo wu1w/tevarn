@@ -1465,6 +1465,13 @@ async def websocket_endpoint(
                                 logger.info("stop cleared %s queued msgs session=%s", n, session_id)
                         except Exception:
                             pass
+                        try:
+                            from backend.agent.coding_loop import drop_coding_loop
+                            from backend.agent.run_brief import drop_brief
+                            drop_coding_loop(session_id)
+                            drop_brief(session_id)
+                        except Exception:
+                            pass
                         await manager.broadcast(
                             session_id,
                             {

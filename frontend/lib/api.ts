@@ -2345,8 +2345,16 @@ export async function restoreFileCheckpoint(
   const body: Record<string, string> = {};
   const raw = (snapshotPathOrId || '').trim();
   if (opts?.checkpointId) body.checkpoint_id = opts.checkpointId;
-  if (raw.startsWith('rust:')) body.checkpoint_id = raw.slice(5);
-  else if (raw) body.path = raw;
+  if (raw.startsWith('rust:')) {
+    body.checkpoint_id = raw.slice(5);
+    body.backend = 'rust';
+  } else if (/^[0-9a-fA-F]{32}$/.test(raw)) {
+    body.checkpoint_id = raw;
+    body.backend = 'python';
+  } else if (raw) {
+    body.path = raw;
+    body.backend = 'python';
+  }
   const res = await api.post('/files/checkpoint/restore', body);
   return res.data;
 }

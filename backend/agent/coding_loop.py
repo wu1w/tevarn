@@ -205,16 +205,28 @@ def start_coding_loop(
     force: bool = False,
     user_input: str = "",
     mode: str = "default",
+    run_id: str | None = None,
 ) -> CodingLoopState:
+    """Start or reset coding SM for this session.
+
+    Always re-initializes when activating so stop/error leftover state cannot
+    leak into the next run (audit P1).
+    """
     st = get_coding_loop(session_id)
-    if st.active and not force:
-        return st
     activate = force or should_activate_coding_loop(user_input or goal, mode=mode)
     if not activate:
+        # hard reset idle — clear any leftover counters
         st.active = False
         st.phase = CodingPhase.IDLE
+        st.files_touched = 0
+        st.tests_run = 0
+        st.tests_failed = 0
+        st.iters_in_phase = 0
+        st.last_nudge_phase = ""
+        st.history = []
         return st
     now = time.time()
+    prev = st.phase.value if st.active else CodingPhase.IDLE.value
     st.active = True
     st.phase = CodingPhase.UNDERSTAND
     st.started_at = now
@@ -223,11 +235,13 @@ def start_coding_loop(
     st.tests_run = 0
     st.tests_failed = 0
     st.iters_in_phase = 0
+    st.last_nudge_phase = ""
     st.history = [
         {
-            "from": CodingPhase.IDLE.value,
+            "from": prev,
             "to": CodingPhase.UNDERSTAND.value,
             "reason": "start",
+            "run_id": (run_id or "")[:64],
             "t": now,
         }
     ]
@@ -405,7 +419,26 @@ def mark_deliver(session_id: uuid.UUID | str) -> CodingLoopState:
     return st
 
 
+def take_phase_event(session_id: uuid.UUID | str) -> dict[str, Any] | None:
+    """If phase just changed, return payload for coding.phase emit (once)."""
+    st = get_coding_loop(session_id)
+    if not st.active or not st.history:
+        return None
+    last = st.history[-1]
+    if last.get("_emitted"):
+        return None
+    last["_emitted"] = True
+    return {
+        "phase": st.phase.value,
+        "from": last.get("from"),
+        "to": last.get("to"),
+        "reason": last.get("reason"),
+        "active": True,
+    }
+
+
 def phase_label(phase: CodingPhase | str) -> str:
+
     p = phase.value if isinstance(phase, CodingPhase) else str(phase)
     labels = {
         "idle": "Idle",

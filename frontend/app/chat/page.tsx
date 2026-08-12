@@ -1,6 +1,6 @@
 'use client';
 
-import React, { Suspense, useState, useCallback, useRef } from 'react';
+import React, { Suspense, useState, useCallback, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import { ChatWindow } from '@/components/chat/ChatWindow';
 import { ProjectGroupView } from '@/components/chat/ProjectGroupView';
@@ -788,7 +788,7 @@ function ChatPageInner() {
         // do not return — allow topic-style fallthrough no-ops
       }
       if (msg.topic === 'run.status_changed' || ev === 'run.status_changed') {
-        const to = d.to || '';
+        const to = String((d as { to?: unknown }).to ?? '');
         const keyMap: Record<string, Parameters<typeof t>[0]> = {
           planning: 'run.planning',
           executing: 'chat.executing',
@@ -798,9 +798,9 @@ function ChatPageInner() {
         const key = keyMap[to];
         if (key) setStreamStatusDetail(t(key));
       } else if (msg.topic === 'approval.requested' || ev === 'approval.requested') {
-        setStreamStatusDetail(`${t('run.waiting')}: ${d.tool || ''}`.trim());
+        setStreamStatusDetail(`${t('run.waiting')}: ${String((d as { tool?: unknown }).tool ?? '')}`.trim());
       } else if (msg.topic === 'approval.resolved' || ev === 'approval.resolved') {
-        setStreamStatusDetail(d.approved ? t('run.approved') : t('run.denied'));
+        setStreamStatusDetail((d as { approved?: unknown }).approved ? t('run.approved') : t('run.denied'));
       } else if (msg.topic === 'run.completed' || ev === 'run.completed') {
         setStreamStatusDetail(t('run.done'));
       } else if (msg.topic === 'run.failed' || ev === 'run.failed') {

@@ -103,7 +103,7 @@ async def chat_completion(
         return {
             "id": f"chatcmpl-{uuid.uuid4().hex}",
             "object": "chat.completion",
-            "created": int(asyncio.get_event_loop().time()),
+            "created": int(__import__("time").time()),
             "model": getattr(data, "model", None) or "tevarn",
             "choices": [{
                 "index": 0,
@@ -153,7 +153,7 @@ async def chat_completion(
                     chunk = {
                         "id": completion_id,
                         "object": "chat.completion.chunk",
-                        "created": int(asyncio.get_event_loop().time()),
+                        "created": int(__import__("time").time()),
                         "model": data.model or "tevarn",
                         "choices": [{
                             "index": 0,
@@ -168,7 +168,7 @@ async def chat_completion(
                         chunk = {
                             "id": completion_id,
                             "object": "chat.completion.chunk",
-                            "created": int(asyncio.get_event_loop().time()),
+                            "created": int(__import__("time").time()),
                             "model": data.model or "tevarn",
                             "choices": [{
                                 "index": 0,
@@ -181,7 +181,7 @@ async def chat_completion(
                         chunk = {
                             "id": completion_id,
                             "object": "chat.completion.chunk",
-                            "created": int(asyncio.get_event_loop().time()),
+                            "created": int(__import__("time").time()),
                             "model": data.model or "tevarn",
                             "choices": [{
                                 "index": 0,

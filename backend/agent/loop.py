@@ -2694,6 +2694,14 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         llm_snapshot = getattr(self, "_llm_snapshot_override", None) or (
             (config or {}).get("llm") if isinstance(config, dict) else None
         )
+        # OpenAI-compat / API: per-request model override
+        _req_model = str(getattr(self, "_request_model", None) or "").strip()
+        if _req_model:
+            if isinstance(llm_snapshot, dict):
+                llm_snapshot = dict(llm_snapshot)
+                llm_snapshot["model"] = _req_model
+            else:
+                llm_snapshot = {"model": _req_model}
         _is_wf_llm = str(getattr(self, "_agent_key", "") or "").startswith("wf:") or bool(
             getattr(self, "_workforce", False)
         )
@@ -3145,15 +3153,26 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             except Exception as _steer_e:
                 logger.debug("steer inject skip: %s", _steer_e)
 
-            # Coding loop: phase tick + soft controller nudge
+            # Coding loop: phase tick + soft controller nudge + live phase events
             try:
                 from backend.agent.coding_loop import (
                     controller_nudge,
-                    get_coding_loop,
+                    phase_label,
+                    take_phase_event,
                     tick_iteration,
                 )
+                from backend.agent.run_events import emit_run_event as _emit_ph
 
                 tick_iteration(session_id)
+                _pev = take_phase_event(session_id)
+                if _pev:
+                    await _emit_ph(
+                        self.ws_manager,
+                        session_id,
+                        "coding.phase",
+                        detail=phase_label(_pev.get("phase") or ""),
+                        payload=_pev,
+                    )
                 _nudge = controller_nudge(session_id)
                 if _nudge:
                     messages.append({"role": "system", "content": _nudge})

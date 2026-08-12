@@ -647,60 +647,110 @@ async def restore_file_checkpoint(
     body: dict,
     current_user: Annotated[UserRead, Depends(get_current_user)] = None,
 ):
-    """Unified restore: Python file snapshot **or** Rust kernel checkpoint.
+    """Unified restore: Python registry id / path, or Rust kernel id.
 
-    Body (any one of):
-      - { "path": "<.tevarn/checkpoints/... snapshot file>" }  → Python
-      - { "checkpoint_id": "<rust id>" }                       → Kernel
-      - { "path": "rust:<id>" }                                → Kernel (delivery card tag)
+    Preferred body (explicit — no guessing):
+      { "backend": "python"|"rust", "checkpoint_id": "...", "path": "..." }
+
+    Compatibility:
+      - path starting with rust: → rust
+      - 32-char hex opaque id → try **python registry first**, then rust
+      - filesystem path under checkpoints/ → python
     """
     body = body or {}
     raw = str(body.get("path") or body.get("snapshot") or "").strip()
     cp_id = str(body.get("checkpoint_id") or "").strip()
+    backend = str(body.get("backend") or "").strip().lower()
 
-    # delivery card may pass "rust:<id>"
     if raw.startswith("rust:"):
+        backend = backend or "rust"
         cp_id = raw[5:].strip() or cp_id
         raw = ""
 
-    # Heuristic: pure id without path separators → try kernel
-    if not cp_id and raw and "/" not in raw and "\\" not in raw and "checkpoints" not in raw:
+    # Opaque id in path field
+    if not cp_id and raw and "/" not in raw and chr(92) not in raw and "checkpoints" not in raw:
         cp_id = raw
         raw = ""
 
     errors: list[str] = []
 
-    # 1) Rust kernel path
-    if cp_id:
-        try:
-            from backend.kernel import get_kernel
-
-            k = get_kernel()
-            if hasattr(k, "_acall"):
-                result = await k._acall("checkpoint_restore", {"checkpoint_id": cp_id})
-                if isinstance(result, dict) and result.get("ok") is False:
-                    errors.append(str(result.get("error") or result))
-                else:
-                    return {
-                        "ok": True,
-                        "backend": "rust",
-                        "checkpoint_id": cp_id,
-                        "result": result,
-                    }
-            else:
-                errors.append("Rust kernel host unavailable")
-        except Exception as e:
-            errors.append(f"rust restore: {e}")
-
-    # 2) Python file snapshot
-    if raw:
+    def _try_python(key: str) -> dict | None:
         from backend.agent.file_checkpoint import restore_checkpoint_file
 
-        result = restore_checkpoint_file(raw)
+        result = restore_checkpoint_file(key)
         if result.get("ok"):
             result["backend"] = "python"
             return result
         errors.append(str(result.get("error") or "python restore failed"))
+        return None
+
+    async def _try_rust(key: str) -> dict | None:
+        try:
+            from backend.kernel import get_kernel
+
+            k = get_kernel()
+            if not hasattr(k, "_acall"):
+                errors.append("Rust kernel host unavailable")
+                return None
+            result = await k._acall("checkpoint_restore", {"checkpoint_id": key})
+            if isinstance(result, dict) and result.get("ok") is False:
+                errors.append(str(result.get("error") or result))
+                return None
+            return {
+                "ok": True,
+                "backend": "rust",
+                "checkpoint_id": key,
+                "result": result,
+            }
+        except Exception as e:
+            errors.append(f"rust restore: {e}")
+            return None
+
+    # Explicit backend
+    if backend == "python":
+        key = cp_id or raw
+        if not key:
+            raise HTTPException(status_code=400, detail="python restore needs checkpoint_id or path")
+        hit = _try_python(key)
+        if hit:
+            return hit
+        raise HTTPException(status_code=400, detail="; ".join(errors) or "python restore failed")
+
+    if backend == "rust":
+        if not cp_id:
+            raise HTTPException(status_code=400, detail="rust restore needs checkpoint_id")
+        hit = await _try_rust(cp_id)
+        if hit:
+            return hit
+        raise HTTPException(status_code=400, detail="; ".join(errors) or "rust restore failed")
+
+    # Auto: opaque hex (32) → python registry first, then rust
+    if cp_id:
+        import re as _re
+        if _re.fullmatch(r"[0-9a-fA-F]{32}", cp_id):
+            hit = _try_python(cp_id)
+            if hit:
+                return hit
+            hit = await _try_rust(cp_id)
+            if hit:
+                return hit
+        elif cp_id.startswith("rust:"):
+            hit = await _try_rust(cp_id[5:])
+            if hit:
+                return hit
+        else:
+            # non-hex id: rust first, python fallback
+            hit = await _try_rust(cp_id)
+            if hit:
+                return hit
+            hit = _try_python(cp_id)
+            if hit:
+                return hit
+
+    if raw:
+        hit = _try_python(raw)
+        if hit:
+            return hit
 
     if not cp_id and not raw:
         raise HTTPException(
