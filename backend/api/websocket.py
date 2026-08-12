@@ -1431,6 +1431,14 @@ async def websocket_endpoint(
                     if control == "stop":
                         if not manager.stop_agent_loop(session_id):
                             agent.stop()
+                        # stop 丢弃未执行的 queue，避免之后被意外执行
+                        try:
+                            from backend.agent.control_inbox import get_inbox
+                            n = get_inbox(session_id).clear_queue()
+                            if n:
+                                logger.info("stop cleared %s queued msgs session=%s", n, session_id)
+                        except Exception:
+                            pass
                         await manager.broadcast(
                             session_id,
                             {
@@ -1440,9 +1448,14 @@ async def websocket_endpoint(
                             },
                         )
                         continue
-                    # interrupt / replace：旧行为 — 停旧开新
+                    # interrupt / replace：旧行为 — 停旧开新；丢弃残留 queue
                     if not manager.stop_agent_loop(session_id):
                         agent.stop()
+                    try:
+                        from backend.agent.control_inbox import get_inbox
+                        get_inbox(session_id).clear_queue()
+                    except Exception:
+                        pass
                     await manager.broadcast(
                         session_id,
                         {

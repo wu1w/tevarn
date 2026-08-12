@@ -59,7 +59,8 @@ def snapshot_path_for_tool(name: str, arguments: dict[str, Any]) -> str | None:
         # outside root — still checkpoint under .tevarn with flat name
         rel = Path("_external") / target.name
 
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    import uuid as _uuid
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + "_" + _uuid.uuid4().hex[:8]
     dest_root = root / ".tevarn" / "checkpoints" / ts
     dest = dest_root / rel
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -82,9 +83,12 @@ def list_recent_checkpoints(limit: int = 20) -> list[str]:
 def restore_checkpoint_file(snapshot_path: str) -> dict[str, Any]:
     """Restore a file from a Python-side checkpoint snapshot path.
 
-    Uses INDEX.txt written by snapshot_path_for_tool:
-      tool_name\ttarget_abs\tsnapshot_abs
+    Security:
+      - snapshot must live under ``<project>/.tevarn/checkpoints/``
+      - target from INDEX must stay under project root (no arbitrary overwrite)
     """
+    root = _project_root().resolve()
+    cp_root = (root / ".tevarn" / "checkpoints").resolve()
     snap = Path(str(snapshot_path or "")).expanduser()
     try:
         snap = snap.resolve()
@@ -92,12 +96,20 @@ def restore_checkpoint_file(snapshot_path: str) -> dict[str, Any]:
         return {"ok": False, "error": "invalid snapshot path"}
     if not snap.is_file():
         return {"ok": False, "error": f"snapshot not found: {snap}"}
+    # Must be under checkpoints root
+    try:
+        snap.relative_to(cp_root)
+    except ValueError:
+        return {"ok": False, "error": "snapshot outside .tevarn/checkpoints"}
 
-    # Walk up a few levels for INDEX.txt (nested rel paths under ts dir)
     index_file: Path | None = None
-    for parent in [snap.parent, *list(snap.parents)[:4]]:
+    for parent in [snap.parent, *list(snap.parents)[:6]]:
         cand = parent / "INDEX.txt"
         if cand.is_file():
+            try:
+                cand.resolve().relative_to(cp_root)
+            except ValueError:
+                continue
             index_file = cand
             break
     if index_file is None:
@@ -111,7 +123,11 @@ def restore_checkpoint_file(snapshot_path: str) -> dict[str, Any]:
             if len(parts) < 3:
                 continue
             dest = parts[2].strip()
-            if dest == snap_s or Path(dest).resolve() == snap:
+            try:
+                dest_p = Path(dest).resolve()
+            except OSError:
+                dest_p = None
+            if dest == snap_s or dest_p == snap:
                 target = Path(parts[1].strip())
                 break
     except Exception as e:
@@ -121,11 +137,21 @@ def restore_checkpoint_file(snapshot_path: str) -> dict[str, Any]:
         return {"ok": False, "error": "no INDEX mapping for this snapshot"}
 
     try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(snap, target)
+        target_res = target.expanduser().resolve()
+    except OSError:
+        return {"ok": False, "error": "invalid target path"}
+    # Target must remain under project root
+    try:
+        target_res.relative_to(root)
+    except ValueError:
+        return {"ok": False, "error": "restore target outside project root"}
+
+    try:
+        target_res.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(snap, target_res)
         return {
             "ok": True,
-            "restored": str(target),
+            "restored": str(target_res),
             "from": str(snap),
             "index": str(index_file),
         }

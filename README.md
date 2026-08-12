@@ -11,7 +11,7 @@
 
 <br/>
 
-[![Version](https://img.shields.io/badge/version-v0.4.0-8B7CFF?style=flat-square)](https://github.com/wu1w/tevarn/releases/tag/v0.4.0)
+[![Version](https://img.shields.io/badge/version-v0.4.2-8B7CFF?style=flat-square)](https://github.com/wu1w/tevarn/releases/tag/v0.4.2)
 [![License](https://img.shields.io/badge/license-MIT-22D8EE?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20first%20%7C%20Linux-1D2330?style=flat-square)](https://github.com/wu1w/tevarn/releases)
 [![Local-first](https://img.shields.io/badge/mode-LOCAL--FIRST-6D5DF6?style=flat-square)](#)
@@ -19,7 +19,7 @@
 
 <br/>
 
-`LICENSE MIT` · `VERSION v0.4.0` · `MODE LOCAL-FIRST` · `STACK RUST + NEXT.JS + FASTAPI + FLUTTER`
+`LICENSE MIT` · `VERSION v0.4.2` · `MODE LOCAL-FIRST` · `STACK RUST + NEXT.JS + FASTAPI + FLUTTER`
 
 <br/>
 

@@ -21,7 +21,20 @@ from backend.schemas.user import UserRead
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/files", tags=["Files"])
 
-LOCAL_ENABLED = bool(os.environ.get("FILE_BROWSER_LOCAL", "").strip())
+def _env_truthy(name: str, default: str = "") -> bool:
+    """True only for 1/true/yes/on (case-insensitive). '0'/'false'/'off' → False."""
+    v = (os.environ.get(name, default) or "").strip().lower()
+    if not v:
+        return False
+    if v in ("0", "false", "no", "off", "disabled", "disable"):
+        return False
+    if v in ("1", "true", "yes", "on", "enabled", "enable"):
+        return True
+    # unknown non-empty: treat as disabled (safe default)
+    return False
+
+
+LOCAL_ENABLED = _env_truthy("FILE_BROWSER_LOCAL")
 LOCAL_ROOT = os.path.abspath("/")
 
 
@@ -272,6 +285,18 @@ async def read_file(
         ".env", ".gitignore", "Dockerfile", "Makefile", ".gitattributes"
     ):
         raise HTTPException(status_code=403, detail="File type not allowed")
+
+    # P2: hard cap to protect memory / UI (2 MiB)
+    _MAX_READ = 2 * 1024 * 1024
+    try:
+        size = target.stat().st_size
+    except OSError:
+        size = 0
+    if size > _MAX_READ:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large to read inline ({size} bytes > {_MAX_READ}). Use download.",
+        )
 
     try:
         content = target.read_text(encoding="utf-8", errors="replace")

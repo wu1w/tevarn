@@ -49,23 +49,34 @@ async def chat_completion(
     notification_repo=Depends(get_notification_repo),
 ):
     """OpenAI-compatible /v1/chat/completions endpoint with SSE streaming."""
-    # Auto-create or get session
+    uid = uuid.UUID(current_user.id) if isinstance(current_user.id, str) else current_user.id
+
+    # Auto-create or get session — must belong to current user
     if data.session_id:
         try:
             sid = uuid.UUID(data.session_id)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid session_id") from None
+        session = await session_repo.get(sid)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        owner = getattr(session, "user_id", None)
+        if owner is not None and str(owner) != str(uid):
+            raise HTTPException(status_code=403, detail="Session does not belong to current user")
     else:
-        uid = uuid.UUID(current_user.id) if isinstance(current_user.id, str) else current_user.id
         session = await session_repo.create({"user_id": uid, "config": {}})
         sid = session.id
 
     user_messages = [m for m in data.messages if m.role == "user"]
     if not user_messages:
         raise HTTPException(status_code=400, detail="No user message found")
+    # Prefer last user message; join prior user turns lightly for context if few
     user_input = user_messages[-1].content
-
-    uid = uuid.UUID(current_user.id) if isinstance(current_user.id, str) else current_user.id
+    if len(user_messages) > 1 and isinstance(user_input, str) and len(user_input) < 500:
+        # short follow-up: prepend previous user line as context hint
+        prev = user_messages[-2].content
+        if isinstance(prev, str) and prev.strip() and prev.strip() != user_input.strip():
+            user_input = f"(prior: {prev.strip()[:300]})\n{user_input}"
     agent = NexusAgentLoop(
         session_repo=session_repo, message_repo=message_repo,
         task_repo=task_repo, ctx_item_repo=ctx_item_repo,
@@ -74,6 +85,34 @@ async def chat_completion(
     )
     from backend.core.config import settings as app_settings
     agent.max_iterations = int(getattr(app_settings, "agent_max_iterations", 25) or 25)
+    # Best-effort: prefer request model for this completion when agent supports it
+    if getattr(data, "model", None):
+        try:
+            agent._request_model = str(data.model)
+        except Exception:
+            pass
+
+    # OpenAI compat: stream=false returns a single completion object
+    if getattr(data, "stream", True) is False:
+        try:
+            result = await agent.run(sid, user_input, mode="default")
+        except Exception as e:
+            logger.exception("Chat completion (non-stream) error: %s", e)
+            raise HTTPException(status_code=500, detail=str(e)) from e
+        text = result or ""
+        return {
+            "id": f"chatcmpl-{uuid.uuid4().hex}",
+            "object": "chat.completion",
+            "created": int(asyncio.get_event_loop().time()),
+            "model": getattr(data, "model", None) or "tevarn",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": text},
+                "finish_reason": "stop",
+            }],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            "session_id": str(sid),
+        }
 
     async def event_stream():
         """True SSE: stream stream_delta as OpenAI chunks while agent runs."""
@@ -165,8 +204,7 @@ async def chat_completion(
                 except Exception:
                     pass
 
-    return StreamingResponse
-return StreamingResponse(
+    return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
         headers={

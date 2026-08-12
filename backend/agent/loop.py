@@ -3093,7 +3093,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     get_inbox,
                 )
 
-                _steers = get_inbox(session_id).drain_steers()
+                _box = get_inbox(session_id)
+                _steers = _box.claim_steers()
                 if _steers:
                     _block = format_steer_block(_steers)
                     if _block:
@@ -3109,6 +3110,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                             str(session_id)[:8],
                             _global_iter,
                         )
+                    # ack only after successful inject (crash between claim→ack re-delivers)
+                    _box.ack_claimed()
             except Exception as _steer_e:
                 logger.debug("steer inject skip: %s", _steer_e)
 
