@@ -8,6 +8,8 @@ import React, { useState } from 'react';
 import { useZh } from '@/hooks/useZh';
 
 export type CodingDelivery = {
+  phase?: string;
+  phase_label?: string;
   changed_files?: Array<{ path: string; action?: string; checkpoint?: string; checkpoint_id?: string; backend?: string }>;
   tests?: Array<{ command?: string; passed?: boolean | null; summary?: string }>;
   blockers?: string[];
@@ -39,6 +41,11 @@ export function CodingDeliveryCard({ delivery, onRollback }: Props) {
       >
         <span className="font-medium text-foreground">
           {zh ? '本轮交付' : 'Delivery'}
+          {delivery.phase_label || delivery.phase ? (
+            <span className="ml-2 rounded bg-brand-cyan/15 px-1.5 py-0.5 text-[10px] font-medium text-brand-cyan">
+              {delivery.phase_label || delivery.phase}
+            </span>
+          ) : null}
           <span className="ml-2 font-normal text-foreground-dim">
             {files.length ? `${files.length} ${zh ? '文件' : 'files'}` : ''}
             {tests.length ? ` · ${tests.length} ${zh ? '测试' : 'tests'}` : ''}

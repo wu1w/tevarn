@@ -22,6 +22,7 @@ class RunBrief:
     blockers: list[str] = field(default_factory=list)
     next_action: str = ""
     checkpoints: list[str] = field(default_factory=list)
+    phase: str = ""
 
     def note_file_change(
         self,
@@ -88,6 +89,7 @@ class RunBrief:
             "blockers": list(self.blockers),
             "next_action": self.next_action,
             "checkpoints": list(self.checkpoints)[-10:],
+            "phase": self.phase or "",
         }
 
     def delivery_payload(self) -> dict[str, Any] | None:

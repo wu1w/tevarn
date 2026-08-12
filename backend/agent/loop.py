@@ -810,6 +810,28 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 detail=(user_input or "")[:120],
                 run_id=str(getattr(recorder, "run_id", "") or "") or None,
             )
+            # Coding loop SM: understand → … → deliver
+            try:
+                from backend.agent.coding_loop import start_coding_loop, phase_label
+                from backend.agent.run_events import emit_run_event as _emit_cl
+
+                cl = start_coding_loop(
+                    session_id,
+                    goal=str(user_input or "")[:500],
+                    user_input=str(user_input or ""),
+                    mode=str(mode or "default"),
+                )
+                if cl.active:
+                    await _emit_cl(
+                        self.ws_manager,
+                        session_id,
+                        "coding.phase",
+                        detail=phase_label(cl.phase),
+                        payload={"phase": cl.phase.value, "active": True},
+                        run_id=str(getattr(recorder, "run_id", "") or "") or None,
+                    )
+            except Exception as _cl_e:
+                logger.debug("coding_loop start skip: %s", _cl_e)
         except Exception as _rb_e:
             logger.debug("run_brief start skip: %s", _rb_e)
         # Phase 2.1/2.2：Run id 回写 loop，供 process.meta / inbox 关联
@@ -3114,6 +3136,21 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     _box.ack_claimed()
             except Exception as _steer_e:
                 logger.debug("steer inject skip: %s", _steer_e)
+
+            # Coding loop: phase tick + soft controller nudge
+            try:
+                from backend.agent.coding_loop import (
+                    controller_nudge,
+                    get_coding_loop,
+                    tick_iteration,
+                )
+
+                tick_iteration(session_id)
+                _nudge = controller_nudge(session_id)
+                if _nudge:
+                    messages.append({"role": "system", "content": _nudge})
+            except Exception as _cln_e:
+                logger.debug("coding_loop nudge skip: %s", _cln_e)
 
             # ── Kernel 仲裁点（Phase 2）：挂起等待 / 事前预算 / 调度让出。
             # 放在预算 consume 之前——挂起等待不该消耗 iteration 配额。

@@ -52,17 +52,36 @@ async def run_epilogue(
     try:
         from backend.agent.run_brief import get_brief, drop_brief
         from backend.agent.run_events import emit_run_event
+        from backend.agent.coding_loop import (
+            drop_coding_loop,
+            get_coding_loop,
+            mark_deliver,
+            phase_label,
+        )
 
+        cl = mark_deliver(session_id)
         brief = get_brief(session_id)
         delivery = brief.delivery_payload()
-        if delivery:
+        if delivery is not None or (cl.active and cl.phase.value != "idle"):
+            delivery = delivery or {}
+            delivery["phase"] = cl.phase.value if cl.active else delivery.get("phase")
+            delivery["phase_label"] = phase_label(cl.phase) if cl.active else ""
+            delivery["coding_loop"] = cl.to_dict() if cl.active else None
             await emit_run_event(
                 getattr(loop, "ws_manager", None),
                 session_id,
                 "coding.delivery",
-                detail=f"files={len(delivery.get('changed_files') or [])} tests={len(delivery.get('tests') or [])}",
+                detail=f"phase={delivery.get('phase')} files={len(delivery.get('changed_files') or [])} tests={len(delivery.get('tests') or [])}",
                 payload=delivery,
             )
+            if cl.active:
+                await emit_run_event(
+                    getattr(loop, "ws_manager", None),
+                    session_id,
+                    "coding.phase",
+                    detail=phase_label(cl.phase),
+                    payload={"phase": cl.phase.value, "active": cl.active},
+                )
         await emit_run_event(
             getattr(loop, "ws_manager", None),
             session_id,
@@ -71,6 +90,7 @@ async def run_epilogue(
         )
         if not loop._should_stop:
             drop_brief(session_id)
+            drop_coding_loop(session_id)
     except Exception as _del_e:
         logger.debug("coding delivery emit skip: %s", _del_e)
 

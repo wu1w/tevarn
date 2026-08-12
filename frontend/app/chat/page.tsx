@@ -776,6 +776,10 @@ function ChatPageInner() {
       if (ev === 'run.started') {
         setCodingDelivery(null);
       }
+      if (ev === 'coding.phase') {
+        const phase = String((d as { phase?: string }).phase || msg.detail || '');
+        if (phase) setStreamStatusDetail(`${t('chat.executing') || '执行中'} · ${phase}`);
+      }
       // terminal events — clear streaming status
       if (ev === 'run.completed' || ev === 'run.cancelled' || ev === 'run.failed') {
         if (ev === 'run.completed') setStreamStatusDetail(t('run.done'));

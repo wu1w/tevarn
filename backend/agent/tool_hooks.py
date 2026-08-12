@@ -192,8 +192,17 @@ async def builtin_track_write_after(
         if not sid:
             return result
         from backend.agent.run_brief import get_brief
+        from backend.agent.coding_loop import observe_tool
 
         brief = get_brief(sid)
+        try:
+            st = observe_tool(sid, name, arguments=arguments or {}, result=result or "")
+            if st is not None and getattr(st, "active", False):
+                ph = getattr(st, "phase", None)
+                if ph is not None:
+                    brief.phase = ph.value if hasattr(ph, "value") else str(ph)
+        except Exception:
+            pass
         if name in _WRITE_TOOLS:
             path = str(
                 (arguments or {}).get("path")
