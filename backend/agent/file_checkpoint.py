@@ -20,6 +20,92 @@ logger = logging.getLogger(__name__)
 _reg_lock = threading.Lock()
 
 
+class _RegistryFileLock:
+    """Cross-process exclusive lock for registry.json (fcntl / msvcrt / O_EXCL)."""
+
+    def __init__(self, lock_path: Path) -> None:
+        self.lock_path = lock_path
+        self._fh: Any = None
+
+    def __enter__(self) -> "_RegistryFileLock":
+        import os
+        import time
+
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        self._fh = open(self.lock_path, "a+", encoding="utf-8")
+        try:
+            import fcntl
+
+            fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX)
+            return self
+        except ImportError:
+            pass
+        try:
+            import msvcrt
+
+            self._fh.seek(0)
+            if self._fh.read(1) == "":
+                self._fh.write("0")
+                self._fh.flush()
+            self._fh.seek(0)
+            msvcrt.locking(self._fh.fileno(), msvcrt.LK_LOCK, 1)
+            return self
+        except Exception:
+            try:
+                self._fh.close()
+            except Exception:
+                pass
+            self._fh = None
+            for _ in range(100):
+                try:
+                    fd = os.open(
+                        str(self.lock_path) + ".x",
+                        os.O_CREAT | os.O_EXCL | os.O_RDWR,
+                    )
+                    self._fh = fd
+                    return self
+                except FileExistsError:
+                    time.sleep(0.02)
+            return self
+
+    def __exit__(self, *args: Any) -> None:
+        import os
+
+        try:
+            if self._fh is not None and not isinstance(self._fh, int):
+                try:
+                    import fcntl
+
+                    fcntl.flock(self._fh.fileno(), fcntl.LOCK_UN)
+                except Exception:
+                    try:
+                        import msvcrt
+
+                        self._fh.seek(0)
+                        msvcrt.locking(self._fh.fileno(), msvcrt.LK_UNLCK, 1)
+                    except Exception:
+                        pass
+                self._fh.close()
+            elif isinstance(self._fh, int):
+                try:
+                    os.close(self._fh)
+                except Exception:
+                    pass
+                try:
+                    os.unlink(str(self.lock_path) + ".x")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+
+def _with_registry_lock(root: Path | None, fn: Any) -> Any:
+    path = _registry_path(root)
+    lock_path = path.with_suffix(".lock")
+    with _RegistryFileLock(lock_path):
+        return fn()
+
+
 def _project_root() -> Path:
     try:
         from backend.tools.permissions import (
@@ -69,10 +155,11 @@ def register_checkpoint(
     target_path: str,
     tool: str = "",
 ) -> str:
-    """Register a snapshot and return opaque id."""
+    """Register a snapshot and return opaque id (thread + cross-process locked)."""
     root = _project_root()
     cid = uuid.uuid4().hex
-    with _reg_lock:
+
+    def _do() -> None:
         reg = _load_registry(root)
         reg[cid] = {
             "snapshot": str(snapshot_path),
@@ -80,9 +167,7 @@ def register_checkpoint(
             "tool": tool,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
-        # soft cap
         if len(reg) > 400:
-            # drop oldest by created_at
             items = sorted(
                 reg.items(),
                 key=lambda kv: str((kv[1] or {}).get("created_at") or ""),
@@ -90,6 +175,9 @@ def register_checkpoint(
             for k, _ in items[: len(reg) - 400]:
                 reg.pop(k, None)
         _save_registry(reg, root)
+
+    with _reg_lock:
+        _with_registry_lock(root, _do)
     return cid
 
 
@@ -99,12 +187,19 @@ def lookup_checkpoint(checkpoint_id: str) -> dict[str, Any] | None:
         return {"backend": "rust", "id": cid[5:]}
     if not cid:
         return None
+    root = _project_root()
+    entry: dict[str, Any] | None = None
+
+    def _do() -> None:
+        nonlocal entry
+        reg = _load_registry(root)
+        found = reg.get(cid)
+        if found:
+            entry = {"backend": "python", "id": cid, **found}
+
     with _reg_lock:
-        reg = _load_registry()
-        entry = reg.get(cid)
-        if not entry:
-            return None
-        return {"backend": "python", "id": cid, **entry}
+        _with_registry_lock(root, _do)
+    return entry
 
 
 def _resolve_target(name: str, arguments: dict[str, Any]) -> Path | None:

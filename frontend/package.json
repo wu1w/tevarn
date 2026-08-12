@@ -23,6 +23,7 @@
     "prepare:win-python": "node ../scripts/prepare-win-python.js",
     "prepare:win-python-cross": "node ../scripts/prepare-win-python-cross.js",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit",
     "pack:sanitize": "node ../scripts/pack-sanitize-env.mjs"
   },
   "dependencies": {
